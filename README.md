@@ -31,7 +31,7 @@ but could be ported to any application built with a Python interpreter.
 ## Examples
 <details>
 <p>
-   <summary>Connecting nodes</summary>
+   <summary>Connect/Disconnect/Set attributes nodes</summary>
 
    ```python
    from rig import Node
@@ -41,7 +41,13 @@ but could be ported to any application built with a Python interpreter.
 
    # Connect pCube2.t to pCube1.t
    obj2.t << obj1.t
-   
+
+   # Disconnect any incomming connection to pCube2.t
+   obj2.t << None
+
+   # setAttr on pCube2.t to 1,2,3
+   obj2.t << [1,2,3]
+
    ```
 </p>
 </details>
