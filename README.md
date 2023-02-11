@@ -30,6 +30,7 @@ but could be ported to any application built with a Python interpreter.
 
 ## Examples
 <details>
+<p>
    <summary>Connecting nodes</summary>
    ```python
    from rig import Node
@@ -40,27 +41,8 @@ but could be ported to any application built with a Python interpreter.
    # Connect pCube2.t to pCube1.t
    obj2.t << obj1.t
    ```
+</p>
 </details>
-
-
-<details>
-  <summary>Click me</summary>
-  
-  ### Heading
-  1. Foo
-  2. Bar
-     * Baz
-     * Qux
-
-  ### Some Code
-  ```js
-  function logSomething(something) {
-    console.log('Something', something);
-  }
-  ```
-</details>
-
-
 
 
 ## Requirements
