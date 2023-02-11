@@ -31,13 +31,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 import maya.cmds as mc
-import rig.commands  as rc
-import rig.nodes     as rn
-import rig.functions as rf
+import rig2.commands  as rc
+import rig2.nodes     as rn
+import rig2.functions as rf
 
-from rig.attributes import Int, Float, String, Enum, lock, hide
-from rig import Node, List, container, condition
-from rig import trigonometry as trig
+from rig2.attributes import Int, Float, String, Enum, lock, hide
+from rig2 import Node, List, container, condition
+from rig2 import trigonometry as trig
 
 from collections import namedtuple
 

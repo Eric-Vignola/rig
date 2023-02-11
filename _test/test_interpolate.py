@@ -50,12 +50,10 @@ from ..interpolate import transform, sequence
 class TestInterpolate(unittest.TestCase):
 
     def setUp(self):
-        print ('berp')
         pass
 
 
     def testElerp(self):
-
         mc.file(new=True, f=True)
         obj1 = polyCube()[0]
         obj2 = polyCube()[0]

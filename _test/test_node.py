@@ -231,8 +231,15 @@ class TestNode(unittest.TestCase):
 
         self.assertEqual(mc.getAttr(str(obj3.t)), [(10.0, 20.0, 30.0)]) 
 
-
-
+        
+        # Test disconnect attr
+        connections = bool(mc.listConnections(str(obj3.t), s=True, d=False, p=True))
+        self.assertEqual(connections, True)
+        
+        obj3.t << None
+        connections = bool(mc.listConnections(str(obj3.t), s=True, d=False, p=True))
+        self.assertEqual(connections, False)        
+        
 
     def testArithmetic(self):
 

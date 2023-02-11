@@ -31,17 +31,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 import maya.cmds     as mc
-import rig.commands  as rc
-import rig.nodes     as rn
-import rig.functions as rf
+import rig2.commands  as rc
+import rig2.nodes     as rn
+import rig2.functions as rf
 import numbers
 
-from rig.attributes import Float, Vector, Enum, lock, hide
-from rig import Node, List, container, condition
-from rig import matrix
-from rig import interpolate
-from rig import constant
-from rig._language import _is_sequence
+from rig2.attributes import Float, Vector, Enum, lock, hide
+from rig2 import Node, List, container, condition
+from rig2 import matrix
+from rig2 import interpolate
+from rig2 import constant
+from rig2._language import _is_sequence
 
 
 
@@ -498,30 +498,20 @@ def create_rail(position_controls,
 
 
 
-#import rig
+#import rig2
+#rig2.options(create_container = True)
 
-## set this to false to expose the crazyness within
-#rig.options(create_container=True)
-
-## create a few control locators and select them
-#position_controls = rc.ls(sl=True)    # will define the curve's control points
-#orient_controls   = position_controls # defines which controllers will orient the riders
-#scale_controls    = position_controls # defines which controllers will scale the riders
-
-## pick u coordinates where "riders" will be positioned
-#u = [x/10.0 for x in list(range(11))]
-
-# Choose a Maya supported curve degree (1,2,3,5,7)
+#import numpy as np
+#position_controls = rc.ls(sl=True)
+#u = np.linspace(0,1,20)
 #degree = 3
-
-# Choose if the curve is open or closed
 #periodic = True
 
 
 #create_rail(position_controls,
             #u,
-            #scale_controls=scale_controls,
-            #orient_controls=orient_controls,
+            #scale_controls=position_controls,
+            #orient_controls=position_controls,
             #degree=degree, 
             #periodic=periodic,
             #aim_axis=1, up_axis=0)

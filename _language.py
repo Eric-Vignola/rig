@@ -1163,8 +1163,7 @@ class Container():
             sets attr or connects [src] to [dst]
             [dst] is always presumed to be a Node with an attr
             """
-            
-        
+
             # is src a node?
             if _is_node(src):
                 if '.' in src:
@@ -1213,9 +1212,12 @@ class Container():
                 raise Exception("Don't know how to handle {} for set/plug purposes.".format(dst))
             
     
+        # Disconnect Attr
+        if src is None:
+            _disconnect_attr(str(dst))        
 
         # if destination is typed, trust the user knows what they want
-        if dst.__data__.type == 'typed':
+        elif dst.__data__.type == 'typed':
             #print (f'compound to typed {src} ---> {dst}')
             _set_or_connect(src, dst, force=force)
             
