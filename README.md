@@ -32,6 +32,7 @@ but could be ported to any application built with a Python interpreter.
 <details>
 <p>
    <summary>Connecting nodes</summary>
+
    ```python
    from rig import Node
 
@@ -40,6 +41,7 @@ but could be ported to any application built with a Python interpreter.
 
    # Connect pCube2.t to pCube1.t
    obj2.t << obj1.t
+   
    ```
 </p>
 </details>
