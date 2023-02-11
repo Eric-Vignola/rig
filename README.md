@@ -29,16 +29,19 @@ This implementation is still a work in progress, was written for Autodesk Maya,
 but could be ported to any application built with a Python interpreter.
 
 ## Examples
-Connecting nodes
-```python
-from rig import Node
+<details>
+   <summary>Connecting nodes</summary>
+   ```python
+   from rig import Node
 
-obj1 = Node('pCube1')
-obj2 = Node('pCube2')
+   obj1 = Node('pCube1')
+   obj2 = Node('pCube2')
 
-# Connect pCube2.t to pCube1.t
-obj2.t << obj1.t
-```
+   # Connect pCube2.t to pCube1.t
+   obj2.t << obj1.t
+   ```
+</details>
+
 
 ## Requirements
 Autodesk Maya (for this implementation).
