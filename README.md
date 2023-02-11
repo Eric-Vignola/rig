@@ -31,7 +31,7 @@ but could be ported to any application built with a Python interpreter.
 ## Examples
 <details>
 <p>
-   <summary>connect/disconnect/set attributes nodes</summary>
+   <summary>connect/disconnect/set attributes on nodes</summary>
 
    ```python
    from rig import Node
@@ -55,7 +55,7 @@ but could be ported to any application built with a Python interpreter.
 
 <details>
 <p>
-   <summary>Working with lists</summary>
+   <summary>working with lists</summary>
 
    ```python
    from rig import Node, List
