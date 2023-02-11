@@ -53,6 +53,37 @@ but could be ported to any application built with a Python interpreter.
 </details>
 
 
+<details>
+<p>
+   <summary>Working with lists</summary>
+
+   ```python
+   from rig import Node, List
+
+   node_list = List(['pCube1','pCube2','pCube3','pCube4'])
+   node = Node('pCube5')
+
+   # Set all elements of node_list to [0,0,0]
+   node_list.t << [[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
+   # or
+   node_list.t << 0
+   
+   # Connect pCube5.t to all elements of node_list.t
+   node_list.t << node.t
+
+   # Disconnect any incomming connections to node_list
+   node_list.t << None
+
+   # Connect pCube1 and pCube2 to pCube3 and pCube4
+   node_list[2:].t << node_list[:2].t
+
+   ```
+</p>
+</details>
+
+
+
+
 ## Requirements
 Autodesk Maya (for this implementation).
 
