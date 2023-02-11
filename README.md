@@ -3,27 +3,42 @@ A Python-based language to reduce the generation of complex node
 networks into a simpler human readable form.
 
 ## About
-In 3D applications built on solid node.attribute foundations (ex: Maya, Houdini)
-the core act of "rigging" can be reduced into a few major steps:
+In 3D applications built on node.attribute foundations (ex: Maya, Houdini)
+the core act of "rigging" can be reduced into a few major axes:
 
 When we rig, we:
 * Create nodes (ex: math nodes, shapes, deformers, etc...)
-* Add attributes and set their values. (ex: set a boolean switch to a math node)
+* Set attribute values. (ex: set a boolean switch to a math node)
 * Connect nodes to one another into a complex network.
 
 With Rig, these operations can be reduced into a human readable Python script,
 which simplifies the act of building a complex network of nodes.
 
-In addition, Rig supports Numpy-like vectorized operations on asymmetric lists.
+setAttr/connectAttr are done via the __lshift__ operator (<<), everything else
+follows standard Python lexical structure.
+
+In addition, Rig supports vectorized operations on asymmetric lists.
 This adds to the language's simplicity and lets users code in stacked sequences.
 
-Rig is entirely memoized, and keeps track of repeated operations to minimize waste.
+Most rig functions are memoized to keep track of repeated operations to minimize waste.
 
 Finally, Rig has a built in translator to logically connect attribute of
 different types.
 
 This implementation is still a work in progress, was written for Autodesk Maya,
 but could be ported to any application built with a Python interpreter.
+
+## Examples
+Connecting nodes
+```python
+from rig import Node
+
+obj1 = Node('pCube1')
+obj2 = Node('pCube2')
+
+# Connect pCube2.t to pCube1.t
+obj2.t << obj1.t
+```
 
 ## Requirements
 Autodesk Maya (for this implementation).
