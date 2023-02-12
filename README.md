@@ -145,7 +145,6 @@ but could be ported to any application built with a Python interpreter.
    # not specifying an enum value will default to 'False:True'
    node_list[:2] << Enum('switch')
 
-
    ```
 </p>
 </details>
@@ -195,7 +194,6 @@ but could be ported to any application built with a Python interpreter.
 
    # decompose pCube1's world matrix and plug it directly in pCube2.t
    obj2.t << obj1.wm
-
 
    # perform a point/matrix operation using a constant
    obj2.t << [10,0,0] * obj1.wm
