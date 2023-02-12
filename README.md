@@ -77,6 +77,14 @@ but could be ported to any application built with a Python interpreter.
    # Connect pCube1 and pCube2 to pCube3 and pCube4
    node_list[2:].t << node_list[:2].t
 
+   # ---------------------------------------------------- #
+
+   # add two lists in parallel
+   new_node_list = List(['pCube6','pCube7','pCube8','pCube9'])
+   added = new_node_list.t + node_list.t
+   print (added) # List([Node(add1.output3D), Node(add2.output3D), Node(add3.output3D), Node(add4.output3D)])
+
+
    ```
 </p>
 </details>
@@ -93,15 +101,77 @@ but could be ported to any application built with a Python interpreter.
 
    # add pCube1.tx to pCube2.tx
    add = obj1.tx + obj2.tx
-   print (add) # Result: Node('plusMinusAverage1.output1D')
+   print (add) # Node('add1.output1D') where add1 is a plusMinusAverage node
 
    # divide that by 4
    divided = add / 4
-   print (divided) # Result: Node('multiplyDivide1.output')
+   print (divided) # Node('mult1.output') where mult1 is a multiplyDivide node
 
    # to the power of 2
    power = divided ** 2
-   print (power) # Result: Node('multiplyDivide2.output')
+   print (power) # Node('pow1.output') where pow1 is a multiplyDivide node
+
+   ```
+</p>
+</details>
+
+
+<details>
+<p>
+   <summary>injecting new attributes</summary>
+
+   ```python
+   from rig import Node, List
+   from rig.attributes import Float, Vector, Enum, lock
+
+   obj1 = Node('pCube1')
+   
+   # create pCube1.awesomeFloat as a float attribute, set it to 5 and finally lock it
+   obj1 << Float('awesomeFloat') << 5 << lock
+
+   # add a Vector to a List
+   node_list = List(['pCube1','pCube2','pCube3','pCube4'])
+   node_list << Vector('awesomeVector')
+
+   # add an Enum to the list, set default value to be 'green'
+   node_list << Enum('color', en=['red','green','blue'], dv=1)
+
+   # add another enum to the first two elements of the list.
+   # not specifying an enum value will default to 'False:True'
+   node_list[:2] << Enum('switch')
+
+
+   ```
+</p>
+</details>
+
+
+<details>
+<p>
+   <summary>working with commands, functions and nodes</summary>
+
+   ```python
+   from rig import Node
+   import rig.commands as rc  # these are maya.cmds which output as rig node instances
+   import rig.functions as rf # common python functions that can handle connections 
+   import rig.nodes as rn     # createNode wrappers for all defined maya node types
+                              # non createNode keyword arguments will be used for injection.
+
+   # get all the cameras transforms wrapped in a List instance
+   cameras = rc.listRelatives(rc.ls(type='camera'), p=True) # List([Node(front), Node(persp), Node(side), Node(top)])
+
+   # use rf.max() similar to max()
+   rf.max([1,5,4,2]) # returns 5, just like max would
+
+   # use rf.max() with nodes
+   rf.max(cameras.tx) # returns a container who's output will be the highest .tx attribute value
+
+   # create a network node called test 
+   node = rn.network(n='test') # Node('test')
+
+   # create a multiplyDivide node and set it's operation attribute to 'power'
+   node = rn.multiplyDivide(operation=3)
+   
 
    ```
 </p>
