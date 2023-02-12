@@ -94,10 +94,12 @@ but could be ported to any application built with a Python interpreter.
    <summary>simple math operations</summary>
 
    ```python
+   
    from rig import Node
 
    obj1 = Node('pCube1')
    obj2 = Node('pCube2')
+   obj3 = Node('pCube3')
 
    # add pCube1.tx to pCube2.tx
    add = obj1.tx + obj2.tx
@@ -110,6 +112,9 @@ but could be ported to any application built with a Python interpreter.
    # to the power of 2
    power = divided ** 2
    print (power) # Node('pow1.output') where pow1 is a multiplyDivide node
+
+   # simple lerp operation between two .tx positions driven by .ty
+   obj3.tx << (obj2.tx - obj1.tx) * obj3.ty + obj1.tx
 
    ```
 </p>
@@ -172,10 +177,38 @@ but could be ported to any application built with a Python interpreter.
    # create a multiplyDivide node and set it's operation attribute to 'power'
    node = rn.multiplyDivide(operation=3)
    
+   ```
+</p>
+</details>
+
+
+<details>
+<p>
+   <summary>use shorthand connections </summary>
+
+   ```python
+   from rig import Node
+
+   obj1 = Node('pCube1')
+   obj2 = Node('pCube2')
+   obj3 = Node('pCube3')
+
+   # decompose pCube1's world matrix and plug it directly in pCube2.t
+   obj2.t << obj1.wm
+
+
+   # perform a point/matrix operation using a constant
+   obj2.t << [10,0,0] * obj1.wm
+
+   # perform a point/matrix operation using pCube3.t
+   obj2.t << obj3.t * obj1.wm
 
    ```
 </p>
 </details>
+
+
+
 
 
 ## Requirements
