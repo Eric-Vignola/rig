@@ -91,38 +91,6 @@ but could be ported to any application built with a Python interpreter.
 
 <details>
 <p>
-   <summary>simple math operations</summary>
-
-   ```python
-   
-   from rig import Node
-
-   obj1 = Node('pCube1')
-   obj2 = Node('pCube2')
-   obj3 = Node('pCube3')
-
-   # add pCube1.tx to pCube2.tx
-   add = obj1.tx + obj2.tx
-   print (add) # Node('add1.output1D') where add1 is a plusMinusAverage node
-
-   # divide that by 4
-   divided = add / 4
-   print (divided) # Node('mult1.output') where mult1 is a multiplyDivide node
-
-   # to the power of 2
-   power = divided ** 2
-   print (power) # Node('pow1.output') where pow1 is a multiplyDivide node
-
-   # simple lerp operation between two .tx positions driven by .ty
-   obj3.tx << (obj2.tx - obj1.tx) * obj3.ty + obj1.tx
-
-   ```
-</p>
-</details>
-
-
-<details>
-<p>
    <summary>injecting new attributes</summary>
 
    ```python
@@ -149,6 +117,39 @@ but could be ported to any application built with a Python interpreter.
 </p>
 </details>
 
+<details>
+<p>
+   <summary>simple math operations</summary>
+
+   ```python
+   
+   from rig import Node
+   from rig.attributes import Float
+
+   obj1 = Node('pCube1')
+   obj2 = Node('pCube2')
+   obj3 = Node('pCube3')
+
+   # add pCube1.tx to pCube2.tx
+   add = obj1.tx + obj2.tx
+   print (add) # Node('add1.output1D') where add1 is a plusMinusAverage node
+
+   # divide that by 4
+   divided = add / 4
+   print (divided) # Node('mult1.output') where mult1 is a multiplyDivide node
+
+   # to the power of 2
+   power = divided ** 2
+   print (power) # Node('pow1.output') where pow1 is a multiplyDivide node
+
+   # add a 'weight' attribute to pCube3 and do a simple lerp operation
+   # between pCube1.t and pCube2.t driven by pCube3.weight
+   obj3 << Float('weight', min=0, max=1)
+   obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
+
+   ```
+</p>
+</details>
 
 <details>
 <p>
@@ -179,7 +180,6 @@ but could be ported to any application built with a Python interpreter.
    ```
 </p>
 </details>
-
 
 <details>
 <p>
