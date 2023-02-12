@@ -83,25 +83,29 @@ but could be ported to any application built with a Python interpreter.
 
 <details>
 <p>
-   <summary>simple math operations and basic functions</summary>
+   <summary>simple math operations</summary>
 
    ```python
-   from rig import Node, List
-   import rig.functions as rf
+   from rig import Node
 
-   node_list = List(['pCube1','pCube2','pCube3','pCube4'])
-   obj1 = Node('pCube5')
-   obj2 = Node('pCube6')
+   obj1 = Node('pCube1')
+   obj2 = Node('pCube2')
 
-   # take the highest value of node_list.t, multiplied by pCube5.t and injected into pCube6.t
-   obj2.t << rf.max(node_list.t) * obj1.t
+   # add pCube1.tx to pCube2.tx
+   add = obj1.tx + obj2.tx
+   print (add) # Result: Node('plusMinusAverage1.output1D')
+
+   # divide that by 4
+   divided = add / 4
+   print (divided) # Result: Node('multiplyDivide1.output')
+
+   # to the power of 2
+   power = divided ** 2
+   print (power) # Result: Node('multiplyDivide2.output')
 
    ```
 </p>
 </details>
-
-
-
 
 
 ## Requirements
