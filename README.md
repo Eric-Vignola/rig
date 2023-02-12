@@ -14,8 +14,8 @@ When we rig, we:
 With Rig, these operations can be reduced into a human readable Python script,
 which simplifies the act of building a complex network of nodes.
 
-setAttr/connectAttr are done via the __lshift__ operator (<<), everything else
-follows standard Python lexical structure.
+setAttr/connectAttr are done via the __lshift__ operator (<<) and is referred
+to as "injection". Everything else follows standard Python lexical structure.
 
 In addition, Rig supports vectorized operations on asymmetric lists.
 This adds to the language's simplicity and lets users code in stacked sequences.
@@ -80,6 +80,26 @@ but could be ported to any application built with a Python interpreter.
    ```
 </p>
 </details>
+
+<details>
+<p>
+   <summary>simple math operations and basic functions</summary>
+
+   ```python
+   from rig import Node, List
+   import rig.functions as rf
+
+   node_list = List(['pCube1','pCube2','pCube3','pCube4'])
+   obj1 = Node('pCube5')
+   obj2 = Node('pCube6')
+
+   # take the highest value of node_list.t, multiplied by pCube5.t and injected into pCube6.t
+   obj2.t << rf.max(node_list.t) * obj1.t
+
+   ```
+</p>
+</details>
+
 
 
 
