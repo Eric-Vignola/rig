@@ -205,7 +205,60 @@ but could be ported to any application built with a Python interpreter.
 </p>
 </details>
 
+<details>
+<p>
+   <summary>components, multi attributes, aliases </summary>
 
+   ```python
+   import rig.commands as rc
+   from rig.attributes import Float
+
+   """
+   you can interface with components and multi attributes like list objects
+   """
+   # create a polySphere
+   obj = rc.polySphere()[0]
+   print (obj.vtx)      # not specifying an index will return the first unconnected component
+   print (obj.vtx[0])   # prints the first component
+   print (obj.vtx[:])   # prints all components
+   print (obj.vtx[::2]) # prints every even component
+
+   # move every other vertex to 0,0,0 using injection
+   obj.vtx[::2] << [0,0,0]
+
+   # ----------------------------------------------------------------- #
+
+   # add a multi attr to the object
+   obj << Float('weight', m=True)
+   print (obj.weight) # not specifying an index will return the first unset index
+
+   # set the first 4 indices
+   obj.weight[:4] << [0,2,4,6]
+   print (obj.weight) # prints the first unset index (4)
+
+   # ----------------------------------------------------------------- #
+
+   # create 3 dummy shapes and a target to receive blendShapes
+   happy   = rc.polyCube(name='happy')[0]
+   sad     = rc.polyCube(name='sad')[0]
+   neutral = rc.polyCube(name='neutral')[0]
+   target  = rc.polyCube(name='target')[0]
+
+   # create the blendShape
+   morph = rc.blendShape([happy,sad,neutral,target])[0]
+
+   # list all the morph aliases
+   print (morph.weight[:]) # [Node(happy), Node(sad), Node(neutral)]
+
+   # set happy to 1
+   morph.happy << 1
+
+   # reset all the shapes to 0
+   morph.weight[:] << 0
+
+   ```
+</p>
+</details>
 
 
 
