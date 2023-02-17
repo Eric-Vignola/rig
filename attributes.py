@@ -518,7 +518,6 @@ def _clone_attribute(src_node_attr,
     If src_node_attr is a sequence, attribute cloning will be derived from
     the first entry.
     """
-
     # is this a number, string, or sequence
     if isinstance(src_node_attr, bool):
         dst_node << Bool(attr_name, multi=bool(multi))
@@ -529,8 +528,9 @@ def _clone_attribute(src_node_attr,
     elif not _is_node(src_node_attr) and isinstance(src_node_attr, str):
         dst_node << String(attr_name, multi=bool(multi))
     
-    elif not _is_list(src_node_attr) and _is_sequence(src_node_attr):
+    elif not _is_list(src_node_attr) and _is_sequence(src_node_attr) and not any(_is_node(x) for x in src_node_attr):
         count = len(src_node_attr)
+        
         if count == 3:
             dst_node << Vector(attr_name, multi=bool(multi))
         elif count == 4:
@@ -543,7 +543,6 @@ def _clone_attribute(src_node_attr,
     
     # source is a Node    
     else:
-    
         # sequence is assumed to be all same type
         if not _is_sequence(src_node_attr):
             obj = str(src_node_attr)
@@ -558,7 +557,9 @@ def _clone_attribute(src_node_attr,
                 multi = _is_array(src_node_attr)
                 
         else:
-            obj = str(src_node_attr[0])
+            # find the first node in the sequence and use it
+            # to establish the attribute type
+            obj = next(obj for obj in src_node_attr if _is_node(obj))
             node, attr = obj.split('.')[0], ('.'.join(obj.split('.')[1:])).split('[')[0]  
             compound   = _is_compound(src_node_attr[0])
             
@@ -611,7 +612,8 @@ def _clone_attribute(src_node_attr,
                            'doubleAngle':  Angle,
                            'doubleLinear': Float,
                            'double':       Float,
-                           'float':        Float, 
+                           'float':        Float,
+                           'double3':      Vector, 
                            'bool':         Bool,
                            'string':       String,
                            'time':         Time, 

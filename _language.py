@@ -1179,7 +1179,10 @@ class Container():
                     mc.setAttr(str(dst), src)
                 except:
                     for x, y in sequences([src], _get_compound(dst)):
-                        mc.setAttr(str(y), x)            
+                        try:
+                            mc.setAttr(str(y), x)
+                        except:
+                            pass
         
             # is data a string?
             elif _is_basestring(src):
@@ -2075,7 +2078,9 @@ class Node(str):
 
         else:
             try:
-                elements = mc.listAttr('{}[*]'.format(node))
+                name = '.'.join(node.split('.')[:-1])
+                elements = [f'{name}.{x}' for x in mc.listAttr('{}[*]'.format(node))]
+                
             except:
                 elements = []
                 
