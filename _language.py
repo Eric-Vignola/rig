@@ -2064,12 +2064,12 @@ class Node(str):
 
 
         # if we're not slicing, return as index
-        if not isinstance(obj, slice): 
+        if not isinstance(obj, slice) and not _is_sequence(obj): 
             token = '{}[{}]'.format(node, obj)
             return Node(token)
 
 
-        # if we are slicing, return List depending on node type
+        # if we are slicing/multi indexing, return List depending on node type
         if self.__data__.point:
             elements = mc.ls('{}[*]'.format(node), fl=True)
             
@@ -2084,6 +2084,9 @@ class Node(str):
             except:
                 elements = []
                 
+                
+            # find the max index, if user asks for a higher index on a multiattr,
+            # give the user what they ask.
             index = None
             try:
                 # using this instead of testing size via getAttr(size=True) to get
@@ -2099,12 +2102,19 @@ class Node(str):
             
             
             if not index is None:
-                stop = index if (obj.stop is None or obj.stop < 0) else obj.stop
+                if isinstance(obj, slice):
+                    stop = index if (obj.stop is None or obj.stop < 0) else obj.stop
+                else:
+                    stop = index if max(obj) < 0 else max(obj) + 1
+                    
                 elements = ['{}[{}]'.format(node, i) for i in range(stop)]
 
 
         # return the sliced list
-        return List(elements[slice(obj.start, obj.stop, obj.step)])
+        if isinstance(obj, slice):
+            return List(elements[slice(obj.start, obj.stop, obj.step)])
+        else:
+            return List([elements[x] for x in obj])
     
 
 
@@ -2375,4 +2385,3 @@ class Node(str):
     def __rdiv__(self, other):
         # python 2.7
         return self.__rtruediv__(other)
-    
