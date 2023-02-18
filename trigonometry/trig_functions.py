@@ -286,7 +286,7 @@ def asind(token):
         >>> asin(pCube1.t)  # returns a network which passes pCube1's [tx, ty, tz] into an arc sine  functions.
     """ 
     if isinstance(token, numbers.Real):
-        return math.asin(math.radians(token))
+        return math.degrees(math.asin(token))
     
 
     with container('asind1'):
@@ -352,7 +352,7 @@ def acosd(token):
         >>> acosd(pCube1.t)  # returns a network which passes pCube1's [tx, ty, tz] into an arc cosine functions.
     """
     if isinstance(token, numbers.Real):
-        return math.acos(math.radians(token))
+        return math.degrees(math.acos(token))
 
 
     with container('acosd1'):
@@ -419,7 +419,7 @@ def atand(token):
         >>> acosd(pCube1.t)  # returns a network which passes pCube1's [tx, ty, tz] into an arc tan functions.
     """
     if isinstance(token, numbers.Real):
-        return math.atan(math.radians(token))
+        return math.degrees(math.atan(token))
 
 
     with container('atand1'):
