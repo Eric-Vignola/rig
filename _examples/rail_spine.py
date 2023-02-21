@@ -312,7 +312,7 @@ def create_rail(position_controls,
                       
                             
                     # orient weights frozen state
-                    orient_weights = condition(rail.scaleProjection==0, 
+                    orient_weights = condition(rail.rotateProjection==0, 
                                                orient_weights >> None,
                                                orient_weights)                      
                             
