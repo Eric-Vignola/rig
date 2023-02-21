@@ -187,8 +187,8 @@ def vectorize(func, favor_index=None):
         if args or kargs:
     
             # trigger vectorization only if a List is given
-            valid_args  = args and any([_is_list(x) for x in args])
-            valid_kargs = kargs and any([_is_list(x) for x in kargs.values()])
+            valid_args  = True#args and any([_is_list(x) for x in args])
+            valid_kargs = True#kargs and any([_is_list(x) for x in kargs.values()])
 
             if valid_args or valid_kargs:
                 max_count = None
@@ -1164,6 +1164,8 @@ class Container():
             [dst] is always presumed to be a Node with an attr
             """
 
+            _disconnect_attr(str(dst))
+            
             # is src a node?
             if _is_node(src):
                 if '.' in src:
@@ -2385,3 +2387,4 @@ class Node(str):
     def __rdiv__(self, other):
         # python 2.7
         return self.__rtruediv__(other)
+    

@@ -31,17 +31,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 import maya.cmds     as mc
-import rig2.commands  as rc
-import rig2.nodes     as rn
-import rig2.functions as rf
+import rig.commands  as rc
+import rig.nodes     as rn
+import rig.functions as rf
 import numbers
 
-from rig2.attributes import Float, Vector, Enum, lock, hide
-from rig2 import Node, List, container, condition
-from rig2 import matrix
-from rig2 import interpolate
-from rig2 import constant
-from rig2._language import _is_sequence
+from rig.attributes import Float, Vector, Enum, lock, hide
+from rig import Node, List, container, condition
+from rig import matrix
+from rig import interpolate
+from rig import constant
+from rig._language import _is_sequence
 
 
 
@@ -309,6 +309,12 @@ def create_rail(position_controls,
                                                     
                             orient_weights.append(1-(0-orient_weights[1]))
                             orient_vectors.append(orient_vectors[1])
+                      
+                            
+                    # orient weights frozen state
+                    orient_weights = condition(rail.scaleProjection==0, 
+                                               orient_weights >> None,
+                                               orient_weights)                      
                             
                         
             # scale
@@ -332,6 +338,13 @@ def create_rail(position_controls,
                                                     
                             scale_weights.append(1-(0-scale_weights[1]))
                             scale_vectors.append(scale_vectors[1])
+                            
+                            
+                    # scale weights frozen state
+                    scale_weights = condition(rail.scaleProjection==0, 
+                                              scale_weights >> None,
+                                              scale_weights)                    
+                            
 
 
     
@@ -498,8 +511,7 @@ def create_rail(position_controls,
 
 
 
-#import rig2
-#rig2.options(create_container = True)
+#import rig
 
 #import numpy as np
 #position_controls = rc.ls(sl=True)

@@ -121,10 +121,11 @@ def slerp(input1, input2, weight=0.5):
         # quiet div by zero
         sine = sin(angle)
         test = (sine==0)
+
         #_div = (input1 * sin(rev(weight) * angle) + input2 * sin(weight * angle)) / sine
         #_div.operation = condition(sine==0, 0, 2)
         _div = (input1 * sin(rev(weight) * angle) + input2 * sin(weight * angle)) / 1
-        _div.operation = condition(test, 0, 2) 
+        _div.operation << condition(test, 0, 2) 
         _div.input2 << sine
 
         output = condition(test, input1, _div)

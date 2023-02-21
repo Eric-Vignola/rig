@@ -245,10 +245,10 @@ but could be ported to any application built with a Python interpreter.
    target  = rc.polyCube(name='target')[0]
 
    # create the blendShape
-   morph = rc.blendShape([happy,sad,neutral,target], n='morph')[0] # Node(morph)
+   morph = rc.blendShape([happy,sad,neutral,target])[0]
 
    # list all the morph aliases
-   print (morph.weight[:]) # [Node(morph.happy), Node(morph.sad), Node(morph.neutral)]
+   print (morph.weight[:]) # [Node(happy), Node(sad), Node(neutral)]
 
    # set happy to 1
    morph.happy << 1
