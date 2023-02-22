@@ -32,9 +32,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import maya.cmds as mc
 
-from .._language import container, memoize, _is_sequence, _get_compound
+from .._language import container, memoize, vectorize, _is_sequence, _get_compound
 from .._language import constant, container, condition
 from ..functions import unit, cross, min, max, choice
+from ..functions import dot   as _dot
+from ..functions import cross as _cross
 
 
 X = [1,0,0]
@@ -42,6 +44,7 @@ Y = [0,1,0]
 Z = [0,0,1]
 
 
+@vectorize
 @memoize
 def toMatrix(aim_vector, up_vector=Y, aim_axis=X, up_axis=Y, position=None):
     """ 
@@ -57,83 +60,22 @@ def toMatrix(aim_vector, up_vector=Y, aim_axis=X, up_axis=Y, position=None):
         >>> toMatrix(pCube1.t, pCube2.t)
     """
     
-    # If aimMatrix exists
-    if 'aimMatrix' in mc.ls(nt=True):
-        
-        node = container.createNode('aimMatrix', n='vectorToMatrix1')
-        node.primaryMode           << 1 # aim
-        node.secondaryMode         << 2 # align
-        
-        node.primaryTargetVector   << aim_vector
-        node.secondaryTargetVector << up_vector
-        
-        node.primaryInputAxis      << aim_axis
-        node.secondaryInputAxis    << up_axis
-
-        return node.outputMatrix
+    node = container.createNode('aimMatrix', n='vectorToMatrix1')
+    node.primaryMode           << 1 # aim
+    node.secondaryMode         << 2 # align
     
+    node.primaryTargetVector   << aim_vector
+    node.secondaryTargetVector << up_vector
     
-    
-    # construct an aimMatrix setup
-    # in this mode, the aim/up axis must be absolute (X:0, Y:1, Z:2)
-    if _is_sequence(aim_axis):
-        aim_axis = aim_axis.index(max([abs(x) for x in aim_axis]))
-        
-    if _is_sequence(up_axis):
-        up_axis = up_axis.index(max([abs(x) for x in up_axis]))
-    
-    
-    with container('vectorToMatrix1'):
+    node.primaryInputAxis      << aim_axis
+    node.secondaryInputAxis    << up_axis
 
-        V0 = unit(aim_vector)
-        V2 = cross(aim_vector, up_vector, normalize=True)
-        V1 = cross(V2, aim_vector, normalize=True)
-
-        # Figure out which axis we're trying to extrapolate
-        ii = aim_axis
-        jj = up_axis        
-        kk = ( min(ii,jj) - max(ii,jj) + min(ii,jj) ) % 3
-
-        # catch the axis flip condition
-        #flip = constant(0)
-        flip = (((ii == 0) & (jj == 2)) | 
-                ((ii == 1) & (jj == 0)) |
-                ((ii == 2) & (jj == 1)))
-
-        V2 = condition(flip, -V2, V2)
+    return node.outputMatrix
 
 
-        # catch the remapped ii/jj/kk axes condition
-        # 0,1 == 0,1,2 ---> 0,1,2 # IDENTICAL
-        # 0,2 == 0,2,1 ---> 0,2,1 # IDENTICAL
-        # 1,0 == 1,0,2 ---> 1,0,2 # IDENTICAL
-        # 1,2 == 1,2,0 ---> 2,0,1 # !!! REMAP !!!
-        # 2,0 == 2,0,1 ---> 1,2,0 # !!! REMAP !!!
-        # 2,1 == 2,1,0 ---> 2,1,0 # IDENTICAL
-        test0 = ((ii == 1) & (jj == 2))
-        test1 = ((ii == 2) & (jj == 0))
-
-        ii = condition(test0, 2, ii)
-        jj = condition(test0, 0, jj)
-        kk = condition(test0, 1, kk)
-
-        ii = condition(test1, 1, ii)
-        jj = condition(test1, 2, jj)
-        kk = condition(test1, 0, kk)
 
 
-        # plug into a a 4x4 matrix
-        choice_x = constant(choice(V0,V1,V2, selector=ii))
-        choice_y = constant(choice(V0,V1,V2, selector=jj))
-        choice_z = constant(choice(V0,V1,V2, selector=kk))
-
-
-        return matrix(x=choice_x,
-                      y=choice_y,
-                      z=choice_z,
-                      position=position)
-
-
+@vectorize
 @memoize
 def toEuler(aim_vector, up_vector, aim_axis=X, up_axis=Y, rotate_order=0):
     """ 
@@ -162,6 +104,7 @@ def toEuler(aim_vector, up_vector, aim_axis=X, up_axis=Y, rotate_order=0):
         return container.publish_output(output, 'output')
 
 
+@vectorize
 @memoize
 def toQuaternion(aim_vector, up_vector, aim_axis=X, up_axis=Y):
     """ 
@@ -191,6 +134,7 @@ def toQuaternion(aim_vector, up_vector, aim_axis=X, up_axis=Y):
         return container.publish_output(output, 'output')
 
 
+@vectorize
 @memoize
 def determinant(x, y, z):
     """ 
@@ -216,3 +160,54 @@ def determinant(x, y, z):
         o = X[0]*(Y[1]*Z[2] - Y[2]*Z[1]) - X[1]*(Y[0]*Z[2] - Y[2]*Z[0]) + X[2]*(Y[0]*Z[1] - Y[1]*Z[0])
 
         return container.publish_output(o, 'determinant')
+
+
+@vectorize
+@memoize
+def angleBetween(vector1, vector2):
+    """ 
+    angleBetween(vector1, vector2)
+
+        Returns the angle between two vectors in degrees.
+
+
+        Examples
+        --------
+        >>> angleBetween(pCube1.t, pCube2.t)
+    """
+
+    node = container.createNode('angleBetween')        
+    node.vector1 << input1
+    node.vector2 << input2
+    
+    return node.angle
+
+
+# _dot is already vectorized and memoized
+def dot(vector1, vector2, normalize=False):
+    """ 
+    dot(vector1, vector2, normalize=False)
+
+        Returns the dot product between two vectors.
+
+
+        Examples
+        --------
+        >>> dot(pCube1.t, pCube2.t)
+    """
+    return _dot(input1, input2, normalize=normalize)
+
+
+# _cross is already vectorized and memoized
+def cross(vector1, vector2, normalize=False):
+    """ 
+    cross(vector1, vector2, normalize=False)
+
+        Returns the cross product between two vectors.
+
+
+        Examples
+        --------
+        >>> cross(pCube1.t, pCube2.t)
+    """
+    return _cross(input1, input2, normalize=normalize)

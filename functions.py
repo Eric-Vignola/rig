@@ -497,7 +497,7 @@ def dot(input1, input2, normalize=False):
     node.input1 << input1
     node.input2 << input2
 
-    return node.output
+    return node.outputX
 
 
 @vectorize

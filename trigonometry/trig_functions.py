@@ -38,6 +38,10 @@ from .._language import container, condition, _get_compound
 from .._language import constant, _plus_minus_average, _multiply_divide
 from ..functions import rev, abs, min, max
 
+import maya.cmds as mc
+mc.loadPlugin("quatNodes", quiet=True)
+
+
 # ------------------------------- TRIGONOMETRY ------------------------------- #
 
 @vectorize
@@ -370,9 +374,9 @@ def acosd(token):
             node.vector1Y << adj
             node.vector2X << condition(abs(target)==1, 1, adj)
 
-            result = condition(target < 0, -node.angle, node.angle)
-
-            results.append(result)
+            #result = condition(target < 0, -node.angle, node.angle)
+            #results.append(result)
+            results.append(node.angle)
 
         if len(results) > 1:
             output = constant(results)
