@@ -30,7 +30,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from ._language import Node, List
-from ._language import _constant, constant
-from ._language import condition, container
-from ._language import options
+
+from .vector_functions import determinant
+from .vector_functions import toEuler
+from .vector_functions import toMatrix
+from .vector_functions import toQuaternion
+from .vector_functions import angleBetween, dot, cross
