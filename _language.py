@@ -1164,12 +1164,12 @@ class Container():
             [dst] is always presumed to be a Node with an attr
             """
 
-            _disconnect_attr(str(dst))
             
             # is src a node?
             if _is_node(src):
                 if '.' in src:
                     dst = str(dst)
+                    _disconnect_attr(dst)
                     mc.connectAttr(str(src), dst, force=force)
                     self._cleanup_unit_conversion(dst)
                 else:
@@ -1188,7 +1188,10 @@ class Container():
         
             # is data a string?
             elif _is_basestring(src):
-                mc.setAttr(str(dst), src, type='string')
+                try:
+                    mc.setAttr(str(dst), src, type='string')
+                except:
+                    pass
         
         
             # is data a sequence?
@@ -1196,7 +1199,10 @@ class Container():
                 
                 # are we setting a matrix?
                 if _get_attr_type(dst) == 'matrix':
-                    mc.setAttr(str(dst), *src, type='matrix')
+                    try:
+                        mc.setAttr(str(dst), *src, type='matrix')
+                    except:
+                        pass
                 
                 # try to set a vector, or quaternion
                 else:
