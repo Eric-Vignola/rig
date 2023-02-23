@@ -177,8 +177,8 @@ def angleBetween(vector1, vector2):
     """
 
     node = container.createNode('angleBetween')        
-    node.vector1 << input1
-    node.vector2 << input2
+    node.vector1 << vector1
+    node.vector2 << vector2
     
     return node.angle
 
@@ -195,7 +195,7 @@ def dot(vector1, vector2, normalize=False):
         --------
         >>> dot(pCube1.t, pCube2.t)
     """
-    return _dot(input1, input2, normalize=normalize)
+    return _dot(vector1, vector2, normalize=normalize)
 
 
 # _cross is already vectorized and memoized
@@ -210,4 +210,4 @@ def cross(vector1, vector2, normalize=False):
         --------
         >>> cross(pCube1.t, pCube2.t)
     """
-    return _cross(input1, input2, normalize=normalize)
+    return _cross(vector1, vector2, normalize=normalize)

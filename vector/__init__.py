@@ -35,4 +35,4 @@ from .vector_functions import determinant
 from .vector_functions import toEuler
 from .vector_functions import toMatrix
 from .vector_functions import toQuaternion
-
+from .vector_functions import angleBetween, dot, cross
