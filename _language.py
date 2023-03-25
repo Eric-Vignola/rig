@@ -1835,73 +1835,68 @@ class List(om.MObject):
 
 
 
-
-def _resolve_attribute(token, alias=True):
+def _resolve_attribute(token):
     """
     Resolves any attributes to long form and appends any missing index.
     """
     token = str(token)
-
+    is_point = False
+    
     # if we have an attribute
     if '.' in token:
         
-        # init the tracker to resolve aliases
-        attribute_tracker = om.MSelectionList()
-        if alias:
-            try:
-                attribute_tracker.add(token)        
-                token = attribute_tracker.getSelectionStrings()[0]
-            except:
-                pass
+        # resolve aliases
+        tracker  = om.MSelectionList()
+        indexed  = token.endswith(']')
+        index    = None
         
-        
-        # strip out any given index value
-        indexed = token.endswith(']')
-        index = None
-        if indexed:
-            index = int(re.findall('\[(.*?)\]',token)[-1])
-            token = '['.join(token.split('[')[:-1])        
-        
-        
-        # is this a controil point?
-        is_point = False
         try:
-            try:
-                test0 = not bool(mc.nodeType(f'{token}', inherited=True)) # will fail controlPoints, etc...
-            except:
-                test0 = True
+            tracker.add(token) # try adding the token as is
+        except:
+            tracker.add(f'{token}[0]') # in case of un-indexed alias eg: pCube1.vtx
+            
 
-            test1 = 'controlPoint' in mc.nodeType(f'{token}[0]', inherited=True) 
-            is_point = test0 and test1
+        # catch supported controlPoints
+        try:   
+            dag_path, component = tracker.getComponent(0)
+            if component.apiTypeStr in ['kMeshVertComponent',
+                                        'kCurveCVComponent',
+                                        'kSurfaceCVComponent',
+                                        'kLatticeComponent']:
+        
+                geometry = om.MItGeometry(dag_path, component)
+                name     = dag_path.partialPathName()
+                index    = geometry.index()
+                is_point = True
+                
+                # if this was an indexed token, return contolPoint
+                if indexed:
+                    return f'{name}.controlPoints[{index}]', is_point
+                
+                # reset the tracker to the proper plug
+                else:
+                    tracker.clear()
+                    tracker.add(f'{name}.controlPoints')
         except:
             pass
-
-
-        # fix control point (.cv, .vtx, etc..) to .controlPoints
-        if is_point:
-            token = re.sub('\..*','.controlPoints', token)             
-        
-        
-        # reset tracker
-        attribute_tracker.clear()
-        attribute_tracker.add(token)
-        plug = attribute_tracker.getPlug(0)
-        token = attribute_tracker.getSelectionStrings()[0] # will return the long attribute name
-
-        # if no index was given see if we need to extrapolate one
-        if not indexed:
-
-            if plug.isArray:
+                
+                
+        # resolve the alias
+        token = tracker.getSelectionStrings()[0]
+            
+        # extrapolate a default index if plug is array and no index given
+        try:
+            plug = tracker.getPlug(0)
+            if not indexed and plug.isArray:
                 index = 0     
                 try:
-                    # if control point find the first unconnected point
+                    # if control point, find the first unconnected point
                     if is_point:
                         if plug.numConnectedElements():
                             for i in range(plug.numElements()-1, -1, -1):
-                                if not plug.elementByLogicalIndex(i).isConnected():
+                                if not plug.elementByLogicalIndex(i).isConnected:
                                     index = i
-                                    break
-            
+                              
             
                     # numeric array, find the next unset index
                     else:
@@ -1911,14 +1906,23 @@ def _resolve_attribute(token, alias=True):
                             index = 0
                 except:
                     pass  
+        except:
+            pass
         
-    
+ 
         # append extrapolated index and record the attribute
         if not index is None:
             token = f'{token}[{index}]'
 
 
-    return token   
+    # force partial name (pCube1 --> pCubeShape1)
+    try:
+        name = tracker.getDagPath(0).partialPathName()
+        token = token.split('.')
+        token[0] = name
+        return '.'.join(token), is_point
+    except:
+        return token, is_point
 
 
               
@@ -1951,12 +1955,12 @@ class Node(str):
         
             
         # Resolve any missing index and attribute long names
-        token = _resolve_attribute(token)
+        token, is_point = _resolve_attribute(token)
 
         # do we have a plug?
         if '.' in token:
             self.__data__.array = token.endswith(']')
-            self.__data__.point = '.controlPoints[' in token and self.__data__.array
+            self.__data__.point = is_point
 
             # get some plug info
             if not self.__data__.array:
@@ -2011,7 +2015,7 @@ class Node(str):
         TODO: THIS IS JUST FOR REAL TIME MAYA DEBUG SO
               PROPER INDEX SHOWS UP WHEN HIGHLIGHT-EXECUTE
         """
-        token = _resolve_attribute(token)
+        token = _resolve_attribute(token)[0]
         return super().__new__(cls, token)
 
 
@@ -2393,4 +2397,3 @@ class Node(str):
     def __rdiv__(self, other):
         # python 2.7
         return self.__rtruediv__(other)
-    
