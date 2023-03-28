@@ -1835,104 +1835,104 @@ class List(om.MObject):
 
 
 
-    def _resolve_attribute(token):
-        """
-        Resolves any attributes to long form and appends any missing index.
-        """
-        token = str(token)
-        is_point = False
+def _resolve_attribute(token):
+    """
+    Resolves any attributes to long form and appends any missing index.
+    """
+    token = str(token)
+    is_point = False
+    
+    # if we have an attribute
+    if '.' in token:
         
-        # if we have an attribute
-        if '.' in token:
-            
-            # resolve aliases
-            tracker  = om.MSelectionList()
-            indexed  = token.endswith(']')
-            index    = None
-            
-            try:
-                tracker.add(token) # try adding the token as is
-            except:
-                tracker.add(f'{token}[0]') # in case of un-indexed alias eg: pCube1.vtx
-                
-    
-            # catch supported controlPoints
-            try:   
-                dag_path, component = tracker.getComponent(0)
-    
-                if component.apiTypeStr in ['kMeshVertComponent',
-                                            'kCurveCVComponent',
-                                            'kSurfaceCVComponent',
-                                            'kLatticeComponent',
-                                            'kMeshMapComponent']:
-            
-                    geometry  = om.MItGeometry(dag_path, component)
-                    name      = dag_path.partialPathName()
-                    index     = geometry.index()
-                    is_point  = True
-                    attr_name = 'controlPoints'
-                    
-                    if component.apiTypeStr == 'kMeshMapComponent':
-                        attr_name = 'uvpt'
-                        is_point  = False
-                    
-    
-                    # if this was an indexed token, return contolPoint
-                    if indexed:
-                        return f'{name}.{attr_name}[{index}]', is_point
-                    
-                    # reset the tracker to the proper plug
-                    else:
-                        tracker.clear()
-                        tracker.add(f'{name}.{attr_name}')
-                       
-            except:
-                pass
-                    
-                    
-            # resolve the alias
-            token = tracker.getSelectionStrings()[0]
-             
-                
-            # extrapolate a default index if plug is array and no index given
-            try:
-                plug = tracker.getPlug(0)
-                if not indexed and plug.isArray:
-                    index = 0     
-                    try:
-                        # if control point, find the first unconnected point
-                        if is_point:
-                            if plug.numConnectedElements():
-                                for i in range(plug.numElements()-1, -1, -1):
-                                    if not plug.elementByLogicalIndex(i).isConnected:
-                                        index = i
-                                  
-                
-                        # numeric array, find the next unset index
-                        else:
-                            try:
-                                index = plug.elementByPhysicalIndex(plug.numElements()-1).logicalIndex()+1
-                            except:
-                                index = 0
-                    except:
-                        pass  
-            except:
-                pass
-            
-     
-            # append extrapolated index and record the attribute
-            if not index is None:
-                token = f'{token}[{index}]'
-    
-    
-        # force partial name (pCube1 --> pCubeShape1)
+        # resolve aliases
+        tracker  = om.MSelectionList()
+        indexed  = token.endswith(']')
+        index    = None
+        
         try:
-            name = tracker.getDagPath(0).partialPathName()
-            token = token.split('.')
-            token[0] = name
-            return '.'.join(token), is_point
+            tracker.add(token) # try adding the token as is
         except:
-            return token, is_point
+            tracker.add(f'{token}[0]') # in case of un-indexed alias eg: pCube1.vtx
+            
+
+        # catch supported controlPoints
+        try:   
+            dag_path, component = tracker.getComponent(0)
+
+            if component.apiTypeStr in ['kMeshVertComponent',
+                                        'kCurveCVComponent',
+                                        'kSurfaceCVComponent',
+                                        'kLatticeComponent',
+                                        'kMeshMapComponent']:
+        
+                geometry  = om.MItGeometry(dag_path, component)
+                name      = dag_path.partialPathName()
+                index     = geometry.index()
+                is_point  = True
+                attr_name = 'controlPoints'
+                
+                if component.apiTypeStr == 'kMeshMapComponent':
+                    attr_name = 'uvpt'
+                    is_point  = False
+                
+
+                # if this was an indexed token, return contolPoint
+                if indexed:
+                    return f'{name}.{attr_name}[{index}]', is_point
+                
+                # reset the tracker to the proper plug
+                else:
+                    tracker.clear()
+                    tracker.add(f'{name}.{attr_name}')
+                   
+        except:
+            pass
+                
+                
+        # resolve the alias
+        token = tracker.getSelectionStrings()[0]
+         
+            
+        # extrapolate a default index if plug is array and no index given
+        try:
+            plug = tracker.getPlug(0)
+            if not indexed and plug.isArray:
+                index = 0     
+                try:
+                    # if control point, find the first unconnected point
+                    if is_point:
+                        if plug.numConnectedElements():
+                            for i in range(plug.numElements()-1, -1, -1):
+                                if not plug.elementByLogicalIndex(i).isConnected:
+                                    index = i
+                              
+            
+                    # numeric array, find the next unset index
+                    else:
+                        try:
+                            index = plug.elementByPhysicalIndex(plug.numElements()-1).logicalIndex()+1
+                        except:
+                            index = 0
+                except:
+                    pass  
+        except:
+            pass
+        
+ 
+        # append extrapolated index and record the attribute
+        if not index is None:
+            token = f'{token}[{index}]'
+
+
+    # force partial name (pCube1 --> pCubeShape1)
+    try:
+        name = tracker.getDagPath(0).partialPathName()
+        token = token.split('.')
+        token[0] = name
+        return '.'.join(token), is_point
+    except:
+        return token, is_point
 
 
               
