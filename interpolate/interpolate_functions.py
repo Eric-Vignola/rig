@@ -33,13 +33,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import numbers
 
 from .._language import container, memoize, vectorize
-from .._language import condition, container, constant
+from .._language import condition, container, _constant
+from .._language import _get_compound,  _is_compound
+from .._generators import sequences
 
 from ..functions import rev, choice, mag, searchSortedLeft
 from ..trigonometry import radians, sin
-from ..matrix import interpolate as matrix_interpolate
 from ..matrix import decompose, compose
 from ..quaternion import interpolate as quat_interpolate
+
+
+import maya.cmds as mc
+MAYA_VERSION = int(mc.about(version=True))
+
 
 
 # ------------------------------ INTERPOLATORS ------------------------------- #
@@ -58,6 +64,42 @@ def lerp(input1, input2, weight=0.5):
     if all([isinstance(x, numbers.Real) for x in [input1, input2, weight]]):
         return (input2 - input1) * weight + input1
     
+    
+    # new acos node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(input1) and not _is_compound(input2) and not _is_compound(weight):
+            node = container.createNode('lerp')
+            node.input1 << input1
+            node.input2 << input2
+            node.weight << weight
+            return node.output
+        
+        else:
+            with container('lerp1'):
+                input1 = container.publish_input(input1, 'input1')
+                input2 = container.publish_input(input2, 'input2')
+                weight = container.publish_input(weight, 'weight')
+                
+                input_plugs1 = _get_compound(input1)
+                input_plugs2 = _get_compound(input2)
+                input_weight = _get_compound(weight)
+                output_plugs = []
+                
+                for p1,p2,w in sequences(input_plugs1, input_plugs2, input_weight):
+                    node = container.createNode('lerp')
+                    node.input1 << p1
+                    node.input2 << p2
+                    node.weight << w
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')      
+
+
+    # default to old method    
     with container('lerp1'):
         input1 = container.publish_input(input1, 'input1')
         input2 = container.publish_input(input2, 'input2')
@@ -209,3 +251,34 @@ def sequence(x, xp, yp, method=lerp):
         
         return container.publish_output(output, 'output')
     
+
+
+
+## TODO
+#def smoothclamp(x, mi, mx):
+    #if x < mi:
+        #return mi
+    #if x >= mx:
+        #return mx
+    
+    #x = (x - mi) / (mx - mi)
+    #x = x * x * (3 - 2 * x)
+    #return x * (mx - mi) + mi
+
+
+#def smootherclamp(x, mi, mx):
+    #if x < mi:
+        #return mi
+    #if x >= mx:
+        #return mx
+    
+    #x = (x - mi) / (mx - mi)
+    #x = x * x * x * (x * (x * 6 - 15) + 10);
+    #return x * (mx - mi) + mi
+
+
+#def sigmoid(x, mi, mx):
+    #x = (x - mi) / (mx - mi)
+    #x = (1+200**(-x+0.5))**-1
+    #return x * (mx - mi) + mi
+

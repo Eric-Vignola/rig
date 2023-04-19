@@ -38,6 +38,7 @@ from ..functions import unit, cross, min, max, choice
 from ..functions import dot   as _dot
 from ..functions import cross as _cross
 
+MAYA_VERSION = int(mc.about(version=True))
 
 X = [1,0,0]
 Y = [0,1,0]
@@ -148,18 +149,41 @@ def determinant(x, y, z):
         >>> determinant(pCube1.t, pCube2.t, pCube3.t)
         """
 
+
     with container('vectorDeterminant1'):
-        x = container.publish_input(x, 'vector1')
-        y = container.publish_input(y, 'vector2')
-        z = container.publish_input(z, 'vector3')
+        x = container.publish_input(x, 'input1')
+        y = container.publish_input(y, 'input2')
+        z = container.publish_input(z, 'input3')
         
         X = _get_compound(x)
         Y = _get_compound(y)
         Z = _get_compound(z)
 
+
+        # new determinant node type in Maya 2024
+        if MAYA_VERSION >= 2024:
+            
+            # create a matrix from the given inputs
+            M = container.createNode('fourByFourMatrix')
+            for plug, comp in sequences([M.in00, M.in01, M.in02], X):
+                plug << comp
+    
+            for plug, comp in sequences([M.in10, M.in11, M.in12], Y):
+                plug << comp 
+    
+            for plug, comp in sequences([M.in20, M.in21, M.in22], Z):
+                plug << comp        
+            
+            # use new determinant node
+            node = container.createNode('determinant')
+            node.input << M.output
+            return node.output
+    
+    
+        # default to old method
         o = X[0]*(Y[1]*Z[2] - Y[2]*Z[1]) - X[1]*(Y[0]*Z[2] - Y[2]*Z[0]) + X[2]*(Y[0]*Z[1] - Y[1]*Z[0])
 
-        return container.publish_output(o, 'determinant')
+        return container.publish_output(o, 'output')
 
 
 @vectorize

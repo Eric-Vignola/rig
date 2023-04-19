@@ -40,6 +40,9 @@ from .._language import _matrix_add, _matrix_inverse
 
 from ..functions import rev
 
+import maya.cmds as mc
+MAYA_VERSION = int(mc.about(version=True))
+
 
 
 # ---------------------------------- MATRIX ---------------------------------- #'
@@ -329,6 +332,7 @@ def matrix(x=None, y=None, z=None, position=None):
 
     return node.output
 
+
 @vectorize
 @memoize
 def determinant(token):
@@ -341,9 +345,16 @@ def determinant(token):
         >>> determinant(pCube1.wm)
         """
 
-
+    # new determinant node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        node = container.createNode('determinant')
+        node.input << token
+        return node.output
+    
+    
+    # default to old method
     with container('matrixDeterminant1'):
-        token = container.publish_input(token, 'inMatrix')
+        token = container.publish_input(token, 'input')
         
         X = multiply([1,0,0], token, local=True)
         Y = multiply([0,1,0], token, local=True)
@@ -355,4 +366,4 @@ def determinant(token):
 
         output = X[0]*(Y[1]*Z[2] - Y[2]*Z[1]) - X[1]*(Y[0]*Z[2] - Y[2]*Z[0]) + X[2]*(Y[0]*Z[1] - Y[1]*Z[0])
 
-        return container.publish_output(output, 'determinant')
+        return container.publish_output(output, 'output')

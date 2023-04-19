@@ -41,10 +41,12 @@ import maya.cmds as mc
 import numbers
 import math
 
-
 from ._language import container, memoize, condition, List, Node, vectorize
-from ._language import _is_sequence, _is_node, _is_compound, _is_matrix
+from ._language import _is_sequence, _is_node, _is_compound, _is_matrix, _get_compound
 from ._language import _plus_minus_average, _multiply_divide,  _constant
+from ._generators import sequences
+
+MAYA_VERSION = int(mc.about(version=True))
 
 
 def _sequence_to_node(obj):
@@ -85,8 +87,8 @@ def frame():
 
 
 # ----------------------------- COMMON COMMANDS ------------------------------ #
-@vectorize
-@memoize
+#@vectorize
+#@memoize
 def clamp(token, min_value, max_value):
     """ 
     clamp(<token>, <min_value>, <max_value>)
@@ -98,6 +100,43 @@ def clamp(token, min_value, max_value):
         >>> clamp(pCube1.ty, 0, pCube2.ty) # clamps pCube1.ty value between 0 and pCube2.ty
         >>> clamp(pCube1.t, -1, 1) # clamps [tx, ty, tz] of pCube1 between -1 and 1
     """
+    
+    #new clampRange node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not any([_is_compound(x) for x in [token, min_value, max_value]]):
+            node = container.createNode('clampRange', name='clamp1')
+            node.input << token
+            node.minimum << min_value
+            node.maximum << max_value
+            return node.output
+        
+        else:
+            
+            with container('clamp1'):    
+                token     = container.publish_input(token,     'input')
+                min_value = container.publish_input(min_value, 'min')
+                max_value = container.publish_input(max_value, 'max')
+                
+                tokens   = _get_compound(token)
+                minimums = _get_compound(min_value)
+                maximums = _get_compound(max_value)
+                plugs    = []
+                
+                for x,y,z in sequences(tokens, minimums, maximums):
+                    node = container.createNode('clampRange', name='clamp1')
+                    node.input   << x
+                    node.minimum << y
+                    node.maximum << z
+                    plugs.append(node.output)
+                
+                count  = len(plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << plugs
+                
+                return container.publish_output(output, 'output')         
+        
+        
+    # default to old method    
     with container('clamp1'):
         token     = container.publish_input(token,     'input')
         min_value = container.publish_input(min_value, 'min')
@@ -107,6 +146,49 @@ def clamp(token, min_value, max_value):
         result    = condition(token > max_value, max_value, less_than)
         
         return container.publish_output(result, 'output')
+    
+    
+#@vectorize
+#@memoize    
+#def smoothclamp(token, min_value, max_value):
+    #""" 
+    #smoothclamp(<token>, <min_value>, <max_value>)
+
+        #Clamps values between a min and a max using smoothclamp
+
+        #Examples
+        #--------
+        #>>> trunc(pCube1.t)
+        #>>> trunc(pCube1.tx)
+    #"""
+    #if isinstance(token, numbers.Real):
+        #return math.trunc(token) 
+
+    ## new ceil node type in Maya 2024
+    #if MAYA_VERSION >= 2024:
+        #if not _is_compound(token):
+            #node = container.createNode('smoothStep', name='smoothclamp1')
+            #node.input << token
+            #return node.output
+        
+        #else:
+            #with container('smoothclamp1'):
+                #input_plugs  = _get_compound(token)
+                #output_plugs = []
+                
+                #for p in input_plugs:
+                    #node = container.createNode('smoothStep', name='smoothclamp1')
+                    #node.input << p
+                    #output_plugs.append(node.output)
+                
+                #count  = len(output_plugs)
+                #output = _constant([0]*count, name='output_plug1')
+                #output << output_plugs
+                
+                #return container.publish_output(output, 'output')         
+        
+        
+
     
 
 @vectorize
@@ -124,11 +206,37 @@ def abs(token):
     """
     if isinstance(token, numbers.Real):
         return builtins.abs(token)
-
+    
+    # new absolute node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('absolute', name='abs1')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('abs1'):
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('absolute', name='abs1')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output') 
+               
+               
+    # default to old method
     with container('abs1'):
         token  = container.publish_input(token, 'input')
         result = condition(token < 0, -token, token)
         return container.publish_output(result, 'output')
+
 
 @vectorize
 @memoize
@@ -167,7 +275,33 @@ def round(token, digits):
     """
     if all([isinstance(x, numbers.Real) for x in [token, digits]]):
         return builtins.round(token, digits)
-
+    
+    ## new round node type in Maya 2024 - SKIP THE NODE DOESN'T HAVE A N DIGIT INPUT
+    #if MAYA_VERSION >= 2024:
+        #if not _is_compound(token):
+            #node = container.createNode('round', name='round1')
+            #node.input << token
+            #return node.output
+        
+        #else:
+            #with container('round1'):
+                #token = container.publish_input(token, 'input') 
+                #input_plugs  = _get_compound(token)
+                #output_plugs = []
+                
+                #for p in input_plugs:
+                    #node = container.createNode('round', name='round1')
+                    #node.input << p
+                    #output_plugs.append(node.output)
+                
+                #count  = len(output_plugs)
+                #output = _constant([0]*count, name='output_plug1')
+                #output << output_plugs
+                
+                #return container.publish_output(output, 'output')         
+        
+        
+    # default to old method      
     with container('round1'):
         token  = container.publish_input(token, 'input')
         scale  = 10 ** -digits
@@ -191,6 +325,31 @@ def floor(token):
     if isinstance(token, numbers.Real):
         return math.floor(token) 
 
+    # new floor node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('floor', name='floor1')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('floor1'):
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('floor', name='floor1')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')         
+        
+        
+    # default to old method    
     with container('floor1'):
         token  = container.publish_input(token, 'input')
         result = _constant(token - 0.4999999, dtype='long')
@@ -211,14 +370,87 @@ def ceil(token):
         >>> ceil(pCube1.tx)
     """
     if isinstance(token, numbers.Real):
-        return math.floor(token) 
+        return math.ceil(token) 
 
+    # new ceil node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('ceil', name='ceil1')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('ceil1'):
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('ceil', name='ceil1')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')         
+        
+        
+    # default to old method
     with container('ceil1'):
         token  = container.publish_input(token, 'input')
         result = _constant(token + 0.4999999, dtype='long')
         return container.publish_output(result, 'output')
 
 
+
+@vectorize
+@memoize    
+def trunc(token):
+    """ 
+    trunc(<token>)
+
+        Returns the truncated value of the input.
+
+        Examples
+        --------
+        >>> trunc(pCube1.t)
+        >>> trunc(pCube1.tx)
+    """
+    if isinstance(token, numbers.Real):
+        return math.trunc(token) 
+
+    # new ceil node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('truncate', name='trunc1')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('trunc1'):
+                token = container.publish_input(token, 'input')
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('truncate', name='trunc1')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')         
+        
+        
+    # default to old method
+    with container('trunc1'):
+        token  = container.publish_input(token, 'input')
+        result = condition(token < 0, ceil(token), floor(token))   
+        return container.publish_output(result, 'output')
+    
 
 @memoize
 def sum(tokens):
@@ -253,6 +485,7 @@ def avg(tokens):
     if all([isinstance(x, numbers.Real) for x in tokens]):
         return builtins.sum(tokens)/float(len(tokens))
 
+    # new average node type in Maya 2024 SKIP, adds nothing plusMinusAverage can't do
     return _plus_minus_average(*tokens, operation=3, name='avg1') 
 
 
@@ -274,6 +507,35 @@ def max(tokens):
 
     if len(tokens) < 2:
         raise Exception('max() requires minimum 2 inputs, given: {}'.format(tokens))
+    
+    
+    # new min node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not any([_is_compound(x) for x in tokens]):
+            node = container.createNode('max', name='max1')
+            for item in tokens:
+                node.input << item
+            return node.output
+        
+        else:
+            with container('max1'):
+                # get the highest plug count and create a node for each
+                input_plugs  = [_get_compound(x) for x in tokens]
+                output_plugs = List()
+                
+                for plugs in sequences(*input_plugs):
+                    output_plugs.append(container.createNode('max', name='max1'))
+                    for p in plugs:
+                        output_plugs[-1].input << p
+
+                # final output
+                count  = len(builtins.max(input_plugs, key=len))
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs.output
+                
+                return container.publish_output(output, 'output')     
+    
+    
 
     with container('max1'):
         tokens = container.publish_input(tokens, 'input')
@@ -301,7 +563,36 @@ def min(tokens):
 
     if len(tokens) < 2:
         raise Exception('min() requires minimum 2 inputs, given: {}'.format(tokens))
+    
+    
+    # new min node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not any([_is_compound(x) for x in tokens]):
+            node = container.createNode('min', name='min1')
+            for item in tokens:
+                node.input << item
+            return node.output
+        
+        else:
+            with container('min1'):
+                # get the highest plug count and create a node for each
+                input_plugs  = [_get_compound(x) for x in tokens]
+                output_plugs = List()
+                
+                for plugs in sequences(*input_plugs):
+                    output_plugs.append(container.createNode('min', name='min1'))
+                    for p in plugs:
+                        output_plugs[-1].input << p
 
+                # final output
+                count  = len(builtins.max(input_plugs, key=len))
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs.output
+                
+                return container.publish_output(output, 'output') 
+               
+               
+    # default to old method    
     with container('min1'):
         tokens = container.publish_input(tokens, 'input')
         
@@ -379,7 +670,7 @@ def sqrt(token):
 @memoize
 def pow(base, exponent):
     """ 
-    sqrt(<base>, <exponent>)
+    pow(<base>, <exponent>)
 
         Returns the the power of base to the exponent. (same as doing x ** y)
 
@@ -414,6 +705,7 @@ def mag(token):
             return builtins.sum([x**2 for x in token])**0.5
 
 
+    # new length node type in Maya 2024 SKIP, adds nothing distanceBetween can't do
     node = container.createNode('distanceBetween', name='mag1')
     
     if _is_matrix(token):
@@ -539,6 +831,13 @@ def unit(token):
             --------
             >>> unit(pCube1.t)
     """
+    # new normalize node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        node = container.createNode('normalize', name='unit1')
+        node.input << token
+        return node.output
+             
+    # default to old method    
     with container('unit1'):
         token  = container.publish_input(token, 'input')
         

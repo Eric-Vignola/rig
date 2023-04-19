@@ -41,6 +41,8 @@ from functools import wraps
 from ._generators import sequences, arguments
 from .attributes import _clone_attribute
 
+MAYA_VERSION = int(mc.about(version=True))
+
 
 # Container Options
 CREATE_CONTAINER = True
@@ -2214,19 +2216,18 @@ class Node(str):
 
     @memoize
     def __radd__(self, other):
-        
         # Are we doing matrix addition
         if _is_matrix(self):
             return _matrix_add(other, self)
-        
+    
         # Or Quaternion?
         elif _is_quaternion(self):
             return _quaternion_add(other, self)
-        
-        # y + x
+    
+        # Or a point Matrix multiplication?
+    
+        # x + y
         return _plus_minus_average(other, self, operation=1, name='add1')
-    
-    
     
     @memoize
     def __sub__(self, other):
@@ -2246,14 +2247,15 @@ class Node(str):
     def __rsub__(self, other):
         # Are we doing matrix subtraction
         if _is_matrix(self):
-            return _matrix_multiply(other, _matrix_inverse(self))
+            return _matrix_multiply(_matrix_inverse(other), self)
         
         # Or Quaternion?
         elif _is_quaternion(self):
-            return _quaternion_subtract(other, self)   
+            return _quaternion_subtract(other, self)        
         
-        # y - x
-        return _plus_minus_average(other, self, operation=2, name='sub1')        
+        # x - y
+        return _plus_minus_average(other, self, operation=2, name='sub1')
+    
 
     @memoize
     def __mul__(self, other):
@@ -2271,7 +2273,7 @@ class Node(str):
 
     @memoize
     def __rmul__(self, other):
-        # Are we doing matrix multiplication
+        # mult matrix
         if _is_matrix(self) or _is_matrix(other):
             return _matrix_multiply(other, self)
         
@@ -2279,8 +2281,9 @@ class Node(str):
         elif _is_quaternion(self) or _is_quaternion(other):
             return _quaternion_multiply(other, self)
         
-        # y * x
-        return _multiply_divide(other, self, operation=1, name='mul1')    
+        # x * y
+        return _multiply_divide(other, self, operation=1, name='mul1')
+    
     
     @memoize
     def __truediv__(self, other):
@@ -2307,61 +2310,187 @@ class Node(str):
     def __floordiv__(self, other):
         # x // y
         with container('floordiv1'):
-            return _constant(self/other - 0.4999999, dtype='long')
+            input1 = container.publish_input(self,  'input1')
+            input2 = container.publish_input(other, 'input2')
+            
+            output = _constant(input1/input2 - 0.4999999, dtype='long')
+            
+            return container.publish_output(output, 'output')  
 
     @memoize     
     def __rfloordiv__(self, other):
         # y // x
         with container('floordiv1'):
-            return _constant(other/self - 0.4999999, dtype='long')    
+            input1 = container.publish_input(other, 'input1')
+            input2 = container.publish_input(self,  'input2')
+            
+            output = _constant(input1/input2 - 0.4999999, dtype='long')
+            
+            return container.publish_output(output, 'output')
+        
 
     @memoize
     def __mod__(self, other):
         # x % y
+        
+        # new modulo node in Maya 2024
+        if MAYA_VERSION >= 2024:
+            if not _is_compound(self) and not _is_compound(other):
+                node = container.createNode('modulo')
+                node.input   << self
+                node.modulus << other
+                return node.output
+            
+            else:
+                with container('modulo1'):
+                    input_plug   = container.publish_input(self,  'input')
+                    modulus_plug = container.publish_input(other, 'modulus')
+                    
+                    input_plugs   = _get_compound(input_plug)
+                    modulus_plugs = _get_compound(modulus_plug)
+                    output_plugs  = []
+                    
+                    for x, y in sequences(input_plugs, modulus_plugs):
+                        node = container.createNode('modulo')
+                        node.input   << x
+                        node.modulus << y
+                        output_plugs.append(node.output)
+                        
+                    count  = len(output_plugs)
+                    output = _constant([0]*count, name='output_plug1')
+                    output << output_plugs
+                    
+                    return container.publish_output(output, 'output')                    
+              
+                
+        # default to old method
         with container('modulo1'):
-            return self - _constant(self/other - 0.4999999, dtype='long') * other
+            input_plug   = container.publish_input(self,  'input')
+            modulus_plug = container.publish_input(other, 'modulus')
+            
+            output = self - _constant(input_plug/modulus_plug - 0.4999999, dtype='long') * other
+            
+            return container.publish_output(output, 'output')
+            
 
     @memoize
     def __rmod__(self, other):
         # x % y
+        # new modulo node in Maya 2024
+        if MAYA_VERSION >= 2024:
+            if not _is_compound(self) and not _is_compound(other):
+                node = container.createNode('modulo')
+                node.input   << other
+                node.modulus << self
+                return node.output
+            
+            else:
+                with container('modulo1'):
+                    input_plug   = container.publish_input(other, 'input')
+                    modulus_plug = container.publish_input(self,  'modulus')
+                    
+                    input_plugs   = _get_compound(input_plug)
+                    modulus_plugs = _get_compound(modulus_plug)
+                    output_plugs  = []
+                    
+                    for x, y in sequences(input_plugs, modulus_plugs):
+                        node = container.createNode('modulo')
+                        node.input   << x
+                        node.modulus << y
+                        output_plugs.append(node.output)
+                        
+                    count  = len(output_plugs)
+                    output = _constant([0]*count, name='output_plug1')
+                    output << output_plugs
+                    
+                    return container.publish_output(output, 'output')                    
+              
+                
+        # default to old method
         with container('modulo1'):
-            return self - _constant(other/self - 0.4999999, dtype='long') * other    
+            input_plug   = container.publish_input(other, 'input')
+            modulus_plug = container.publish_input(self,  'modulus')
+            
+            output = self - _constant(input_plug/modulus_plug - 0.4999999, dtype='long') * other
+            
+            return container.publish_output(output, 'output')
+
+
+
+
+
 
     @memoize    
     def __and__(self, other):
         # x & y
+        # new and node in Maya 2024 * SKIP: requires int() hack
         with container('logical_and1'):
-            return ((self!=0) + (other!=0)) == 2
+            input1 = container.publish_input(self,  'input1')
+            input2 = container.publish_input(other, 'input2')
+            
+            output = ((input1!=0) + (input2!=0)) == 2
+            
+            return container.publish_output(output, 'output')
+            
 
     @memoize    
     def __rand__(self, other):
         # y & x
         with container('logical_and1'):
-            return ((other!=0) + (self!=0)) == 2    
+            input1 = container.publish_input(other, 'input1')
+            input2 = container.publish_input(self,  'input2')
+            
+            output = ((input1!=0) + (input2!=0)) == 2
+            
+            return container.publish_output(output, 'output')
+        
 
     @memoize 
     def __or__(self, other):
         # x | y
+        # new and node in Maya 2024 * SKIP: requires int() hack
         with container('logical_or1'):
-            return ((self!=0) + (other != 0)) > 0
+            input1 = container.publish_input(self,  'input1')
+            input2 = container.publish_input(other, 'input2')
+            
+            output = ((input1!=0) + (input2 != 0)) > 0
+        
+            return container.publish_output(output, 'output')
 
     @memoize 
     def __ror__(self, other):
         # y | x
+        # new and node in Maya 2024 * SKIP: requires int() hack
         with container('logical_or1'):
-            return ((other!=0) + (self != 0)) > 0
+            input1 = container.publish_input(other, 'input1')
+            input2 = container.publish_input(self,  'input2')
+            
+            output = ((input1!=0) + (input2 != 0)) > 0
+        
+            return container.publish_output(output, 'output')
+        
 
     @memoize
     def __xor__(self, other):
         # x ^ y
         with container('logical_xor1'):
-            return ((self!=0) + (other != 0)) == 1
+            input1 = container.publish_input(self,  'input1')
+            input2 = container.publish_input(other, 'input2')
+            
+            output = ((input1!=0) + (input2 != 0)) == 1
+            
+            return container.publish_output(output, 'output')
 
     @memoize
     def __rxor__(self, other):
         # y ^ x
         with container('logical_xor1'):
-            return ((other!=0) + (self != 0)) == 1        
+            input1 = container.publish_input(other, 'input1')
+            input2 = container.publish_input(self,  'input2')
+            
+            output = ((input1!=0) + (input2 != 0)) == 1
+            
+            return container.publish_output(output, 'output')
 
     @memoize    
     def __neg__(self):

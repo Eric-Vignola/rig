@@ -83,7 +83,10 @@ for name in mc.ls(nt=True):
         return Node(node)
         
     '''
-    
-    exec(code.format(name))
+    try:
+        exec(code.format(name))
+    except:
+        print (f'Failed to register node: {name}')
+        
 
     

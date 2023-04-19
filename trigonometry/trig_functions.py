@@ -34,12 +34,15 @@ import math
 import numbers
 
 from .._language import memoize, vectorize
-from .._language import container, condition, _get_compound
-from .._language import constant, _plus_minus_average, _multiply_divide
-from ..functions import rev, abs, min, max
+from .._language import container, condition, _get_compound,  _is_compound
+from .._language import constant, _multiply_divide, _constant
+from ..functions import rev, abs
+from .._generators import sequences
 
 import maya.cmds as mc
 mc.loadPlugin("quatNodes", quiet=True)
+
+MAYA_VERSION = int(mc.about(version=True))
 
 
 # ------------------------------- TRIGONOMETRY ------------------------------- #
@@ -98,9 +101,17 @@ def sin(token):
     if isinstance(token, numbers.Real):
         return math.sin(token)
     
+        
 
+
+    # default to old method
     with container('sin1'):
         token = container.publish_input(token, 'input')
+        
+        # new cos node type in Maya 2024
+        if MAYA_VERSION >= 2024:
+            output = sind(degrees(token))
+            return container.publish_output(output, 'output')    
         
         results = []
         for target in _get_compound(token):
@@ -132,7 +143,33 @@ def sind(token):
     if isinstance(token, numbers.Real):
         return math.sin(math.radians(token))
 
-
+    # new sin node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('sin')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('sin1'):
+                token = container.publish_input(token, 'input')
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('sin')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')
+            
+            
+    
+    # default to old method     
     with container('sind1'):
         token = container.publish_input(token, 'input')
         
@@ -165,22 +202,29 @@ def cos(token):
     if isinstance(token, numbers.Real):
         return math.cos(token)
 
-
     with container('cos1'):
         token = container.publish_input(token, 'input')
         
-        results = []
-        for target in _get_compound(token):
-            node = container.createNode('eulerToQuat')
-            node.inputRotateX << target*(360./math.pi)
-            results.append(node.outputQuatW)
-
-        if len(results) > 1:
-            output = constant(results)
-        else:
-            output = results[0]
+        # new cos node type in Maya 2024
+        if MAYA_VERSION >= 2024:
+            output = cosd(degrees(token))
+            return container.publish_output(output, 'output')      
         
-        return container.publish_output(output, 'output')
+
+    # default to old method        
+    results = []
+    for target in _get_compound(token):
+        node = container.createNode('eulerToQuat')
+        node.inputRotateX << target*(360./math.pi)
+        results.append(node.outputQuatW)
+
+    if len(results) > 1:
+        output = constant(results)
+    else:
+        output = results[0]
+    
+    return container.publish_output(output, 'output')
+    
 
 @vectorize
 @memoize
@@ -199,6 +243,33 @@ def cosd(token):
         return math.cos(math.radians(token))
 
 
+    # new cos node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('cos')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('cosd1'):
+                token = container.publish_input(token, 'input')                
+            
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('cos')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')      
+
+
+    # default to old method
     with container('cosd1'):
         token = container.publish_input(token, 'input')
         
@@ -207,14 +278,14 @@ def cosd(token):
             node = container.createNode('eulerToQuat')
             node.inputRotateX << target*2
             results.append(node.outputQuatW)
-
+    
         if len(results) > 1:
             output = constant(results)
         else:
             output = results[0]
             
         return container.publish_output(output, 'output')
-    
+        
 
 @vectorize
 @memoize 
@@ -231,7 +302,13 @@ def tan(token):
     """  
     if isinstance(token, numbers.Real):
         return math.tan(token)
+    
+     
+    # new tan node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        return tand(degrees(token))
 
+    # default to old method
     with container('tan1'):
         token = container.publish_input(token, 'input')
         
@@ -262,9 +339,35 @@ def tand(token):
     if isinstance(token, numbers.Real):
         return math.tan(math.radians(token))
 
+
+    # new tan node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('tan')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('tan1'):
+                token = container.publish_input(token, 'input')
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('tan')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')     
+
+    # default to old method
     with container('tand1'):
         token = container.publish_input(token, 'input')
-        
+                
         _sind = sind(token)
         _cosd = cosd(token)
         _div = _sind/_cosd
@@ -292,12 +395,42 @@ def asind(token):
     if isinstance(token, numbers.Real):
         return math.degrees(math.asin(token))
     
-
+    # new acos node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('asin')
+            node.input << token
+            return node.output
+        
+        else:
+            with container('asin1'):
+                token = container.publish_input(token, 'input')
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('asin')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')
+            
+            
+    # default to old method
     with container('asind1'):
         token = container.publish_input(token, 'input')
         
+        # new asin node type in Maya 2024
+        if MAYA_VERSION >= 2024:
+            output = degrees(acos(token))
+            return container.publish_output(output, 'output')
+        
+        
         results = []
-
         for target in _get_compound(token):
             node = container.createNode('angleBetween')
             node.vector1 << 0
@@ -359,9 +492,35 @@ def acosd(token):
         return math.degrees(math.acos(token))
 
 
-    with container('acosd1'):
-        token = container.publish_input(token, 'input')
+    # new acos node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(token):
+            node = container.createNode('acos')
+            node.input << token
+            return node.output
         
+        else:
+            with container('acos1'):
+                token = container.publish_input(token, 'input')
+                input_plugs  = _get_compound(token)
+                output_plugs = []
+                
+                for p in input_plugs:
+                    node = container.createNode('acos')
+                    node.input << p
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')
+            
+            
+    # default to old method
+    with container('acos1'):
+        token = container.publish_input(token, 'input')
+            
         results = []
 
         for target in _get_compound(token):
@@ -373,9 +532,6 @@ def acosd(token):
             node.vector1X << target
             node.vector1Y << adj
             node.vector2X << condition(abs(target)==1, 1, adj)
-
-            #result = condition(target < 0, -node.angle, node.angle)
-            #results.append(result)
             results.append(node.angle)
 
         if len(results) > 1:
@@ -396,16 +552,15 @@ def acos(token):
 
         Examples
         --------
-        >>> asin(pCube1.tx) # returns a network which passes pCube1's translateX into an arc cosine approximation function.
-        >>> asin(pCube1.t)  # returns a network which passes pCube1's [tx, ty, tz] into an arc cosine approximation functions.
+        >>> acos(pCube1.tx) # returns a network which passes pCube1's translateX into an arc cosine approximation function.
+        >>> acos(pCube1.t)  # returns a network which passes pCube1's [tx, ty, tz] into an arc cosine approximation functions.
     """
     if isinstance(token, numbers.Real):
         return math.acos(token)
-
+    
     with container('acos1'):
-        token = container.publish_input(token, 'input')
+        token  = container.publish_input(token, 'input')
         output = radians(acosd(token))
-        
         return container.publish_output(output, 'output')
     
 
@@ -475,11 +630,17 @@ def atan(token):
 def atan2(y,x):
     if all([isinstance(x, numbers.Real) for x in [y, x]]):
         return math.atan2(y, x)
-
+    
     with container('atan2'):
         y = container.publish_input(y, 'y')
         x = container.publish_input(x, 'x')
         
+        # new atan2 node type in Maya 2024
+        if MAYA_VERSION >= 2024:
+            return radians(atan2d(y, x))
+    
+    
+        # default to old method
         div = y/x
         div.operation << condition(x==0, 0, 2) # quiet div by zero
         div = atan(div)
@@ -506,10 +667,40 @@ def atan2d(y, x):
         >>> asin(pCube1.tx) # returns a network which passes pCube1's translateX into an arc tan approximation function.
         >>> asin(pCube1.t)  # returns a network which passes pCube1's [tx, ty, tz] into an arc tan approximation functions.
     """
+    
+    # new atan2 node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not _is_compound(y) and not _is_compound(x):
+            node = container.createNode('atan2')
+            node.input1 << y
+            node.input2 << x
+            return node.output
+        
+        else:
+            with container('atan2d_1'):
+                y = container.publish_input(y, 'y')
+                x = container.publish_input(x, 'y')
+                
+                input_plugs1  = _get_compound(y)
+                input_plugs2  = _get_compound(x)
+                output_plugs = []
+                
+                for y,x in sequences(input_plugs1, input_plugs2):
+                    node = container.createNode('atan2')
+                    node.input1 << y
+                    node.input2 << x
+                    output_plugs.append(node.output)
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                return container.publish_output(output, 'output')    
+    
+    
+    # default to old method
     with container('atan2d_1'):
         y = container.publish_input(y, 'y')
-        x = container.publish_input(x, 'x')
-        
-        out = atan2(radians(y), radians(x))
-        
+        x = container.publish_input(x, 'x')           
+        out = degrees(atan2(radians(y), radians(x)))
         return container.publish_output(out, 'output')
