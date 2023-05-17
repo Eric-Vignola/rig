@@ -260,9 +260,7 @@ setup = create_setup('camera1', 5)
 # populate image planes with texture files
 # also use the $HOME env variable to demonstrate environment variable support
 import glob
-images = [x.replace('\\','/') for x in glob.glob(os.path.expandvars(r'Z:\fbavatars\_common\library\maya\scripts\python\3rd-party\rig2\_examples\images\*.jpg'))]
-images = [x.replace(os.path.expandvars('$HOME'),'$HOME') for x in images]
-
+images = [x.replace('\\','/') for x in glob.glob(os.path.expandvars(r'.\_examples\images\*.jpg'))]
 setup.shapes.image[:] << images
 
 

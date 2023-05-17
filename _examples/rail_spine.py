@@ -130,7 +130,8 @@ def create_rail(position_controls,
         if control_up is None:
             control_up = up_axis
             
-        position_controls = List(position_controls) 
+
+        position_controls = List(position_controls)
         orient_controls   = _order_controls(orient_controls, position_controls)
         scale_controls    = _order_controls(scale_controls,  position_controls)
         
@@ -512,13 +513,12 @@ def create_rail(position_controls,
 
 
 #import rig
-
+#import rig.commands as rc
 #import numpy as np
 #position_controls = rc.ls(sl=True)
 #u = np.linspace(0,1,20)
 #degree = 3
-#periodic = True
-
+#periodic = False
 
 #create_rail(position_controls,
             #u,
