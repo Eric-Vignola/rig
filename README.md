@@ -59,8 +59,8 @@ but could be ported to any application built with a Python interpreter.
    # will interpret this as a new variable creation.
    obj1 = Node('pCube1.t')
    obj2 = Node('pCube2')
-   obj1 << obj2.t
-   obj1 = obj2.t # !!! will assign object Node('pCube2.t') to obj1
+   obj1 << obj2.t # pCube2.t will be connected to pCube1.t
+   obj1 = obj2.t  # !!! will assign object Node('pCube2.t') to obj1
 
    ```
 </p>
@@ -98,9 +98,9 @@ but could be ported to any application built with a Python interpreter.
 
    # Be carefult to always specify an attribute, otherwise python
    # will interpret this as a new variable creation.
-   node_list1 = node_list[2:].t
-   node_list2 = node_list[:2]
-   node_list1 << node_list2.t # will connect obj2.t to obj1.t
+   node_list1 = node_list[2:].t # define a new sublist + .t attribute
+   node_list2 = node_list[:2]   # define a new sublist
+   node_list1 << node_list2.t   # will connect obj2.t to obj1.t
    obj1 = obj2.t # !!! will assign variable obj1 as obj2.t
 
    
