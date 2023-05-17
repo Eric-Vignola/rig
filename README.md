@@ -14,8 +14,8 @@ When we rig, we:
 With Rig, these operations can be reduced into a human readable Python script,
 which simplifies the act of building a complex network of nodes.
 
-setAttr/connectAttr are done via the __lshift__ operator (<<) and is referred
-to as "injection". Everything else follows standard Python lexical structure.
+setAttr/connectAttr are done via the __setattr__ (=) or __lshift__ (<<)operators. This is referred
+to as "injection". Everything else follows standard Python lexical structure. The only limitation of __setattr__ (=) over __lshift__ (<<) is that if an attribute is not specified, python will interpret a (=) as a new object assignment.
 
 In addition, Rig supports vectorized operations on asymmetric lists.
 This adds to the language's simplicity and lets users code in stacked sequences.
@@ -48,6 +48,20 @@ but could be ported to any application built with a Python interpreter.
    # setAttr on pCube2.t to 1,2,3
    obj2.t << [1,2,3]
 
+   # ---------------------------------------------------- #
+
+   # For readability, you can also use __setattr__ (=)
+   obj2.t = obj1.t  # same as obj2.t << obj1.t
+   obj2.t = None    # same as obj2.t << None
+   obj2.t = [1,2,3] # same as obj2.t << [1,2,3]
+
+   # Be carefult to always specify an attribute, otherwise python
+   # will interpret this as a new variable creation.
+   obj1 = Node('pCube1.t')
+   obj2 = Node('pCube2')
+   obj1 << obj2.t
+   obj1 = obj2.t # !!! will assign object Node('pCube2.t') to obj1
+
    ```
 </p>
 </details>
@@ -65,8 +79,6 @@ but could be ported to any application built with a Python interpreter.
 
    # Set all elements of node_list to [0,0,0]
    node_list.t << [[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
-   # or
-   node_list.t << 0
    
    # Connect pCube5.t to all elements of node_list.t
    node_list.t << node.t
@@ -79,10 +91,25 @@ but could be ported to any application built with a Python interpreter.
 
    # ---------------------------------------------------- #
 
+   # For readability, you can also use __setattr__ (=)
+   node_list.t = [[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
+   node_list.t = node.t
+   node_list[2:].t = node_list[:2].t
+
+   # Be carefult to always specify an attribute, otherwise python
+   # will interpret this as a new variable creation.
+   node_list1 = node_list[2:].t
+   node_list2 = node_list[:2]
+   node_list1 << node_list2.t # will connect obj2.t to obj1.t
+   obj1 = obj2.t # !!! will assign variable obj1 as obj2.t
+
+   
+   # ---------------------------------------------------- #
+
    # add two lists in parallel
    new_node_list = List(['pCube6','pCube7','pCube8','pCube9'])
    added = new_node_list.t + node_list.t
-   print (added) # List([Node(add1.output3D), Node(add2.output3D), Node(add3.output3D), Node(add4.output3D)])
+   print(added) # List([Node(add1.output3D), Node(add2.output3D), Node(add3.output3D), Node(add4.output3D)])
 
 
    ```
@@ -132,20 +159,30 @@ but could be ported to any application built with a Python interpreter.
 
    # add pCube1.tx to pCube2.tx
    add = obj1.tx + obj2.tx
-   print (add) # Node('add1.output1D') where add1 is a plusMinusAverage node
+   print(add) # Node('add1.output1D') where add1 is a plusMinusAverage node
 
    # divide that by 4
    divided = add / 4
-   print (divided) # Node('mult1.output') where mult1 is a multiplyDivide node
+   print(divided) # Node('mult1.output') where mult1 is a multiplyDivide node
 
    # to the power of 2
    power = divided ** 2
-   print (power) # Node('pow1.output') where pow1 is a multiplyDivide node
+   print(power) # Node('pow1.output') where pow1 is a multiplyDivide node
 
    # add a 'weight' attribute to pCube3 and do a simple lerp operation
    # between pCube1.t and pCube2.t driven by pCube3.weight
    obj3 << Float('weight', min=0, max=1)
    obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
+
+   # ---------------------------------------------------- #
+
+   # For readability, you can also use __setattr__ (=)
+   obj3.t = (obj2.t - obj1.t) * obj3.weight + obj1.t
+
+   # Be carefult to always specify an attribute, otherwise python
+   # will interpret this as a new variable creation.
+   obj3 = Node('pCube3.t')
+   obj3 = (obj2.t - obj1.t) * obj3.weight + obj1.t # !!! will assign the last operator output to obj3
 
    ```
 </p>
@@ -194,12 +231,18 @@ but could be ported to any application built with a Python interpreter.
 
    # decompose pCube1's world matrix and plug it directly in pCube2.t
    obj2.t << obj1.wm
+   # or 
+   obj2.t = obj1.wm
 
    # perform a point/matrix operation using a constant
    obj2.t << [10,0,0] * obj1.wm
+   # or
+   obj2.t = [10,0,0] * obj1.wm
 
    # perform a point/matrix operation using pCube3.t
    obj2.t << obj3.t * obj1.wm
+   # or
+   obj2.t = obj3.t * obj1.wm
 
    ```
 </p>
@@ -218,10 +261,10 @@ but could be ported to any application built with a Python interpreter.
    """
    # create a polySphere
    obj = rc.polySphere()[0]
-   print (obj.vtx)      # not specifying an index will return the first unconnected component
-   print (obj.vtx[0])   # prints the first component
-   print (obj.vtx[:])   # prints all components
-   print (obj.vtx[::2]) # prints every even component
+   print(obj.vtx)      # not specifying an index will return the first unconnected component
+   print(obj.vtx[0])   # prints the first component
+   print(obj.vtx[:])   # prints all components
+   print(obj.vtx[::2]) # prints every even component
 
    # move every other vertex to 0,0,0 using injection
    obj.vtx[::2] << [0,0,0]
@@ -230,11 +273,11 @@ but could be ported to any application built with a Python interpreter.
 
    # add a multi attr to the object
    obj << Float('weight', m=True)
-   print (obj.weight) # not specifying an index will return the first unset index
+   print(obj.weight) # not specifying an index will return the first unset index
 
    # set the first 4 indices
    obj.weight[:4] << [0,2,4,6]
-   print (obj.weight) # prints the first unset index (4)
+   print(obj.weight) # prints the first unset index (4)
 
    # ----------------------------------------------------------------- #
 
@@ -248,7 +291,7 @@ but could be ported to any application built with a Python interpreter.
    morph = rc.blendShape([happy,sad,neutral,target], n='morph')[0] # Node(morph)
 
    # list all the morph aliases
-   print (morph.weight[:]) # [Node(morph.happy), Node(morph.sad), Node(morph.neutral)]
+   print(morph.weight[:]) # [Node(morph.happy), Node(morph.sad), Node(morph.neutral)]
 
    # set happy to 1
    morph.happy << 1
