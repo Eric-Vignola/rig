@@ -1473,9 +1473,8 @@ class List(om.MObject):
     __CLASS_TYPE__ = 'List'
 
     def __init__(self, items=[]):
-        self.values = []
         self.__initialize__(items)
-        
+          
     def __nonzero__(self):
         return len(self.values) > 0    
 
@@ -1489,11 +1488,12 @@ class List(om.MObject):
         self.__initialize__(items)
 
     def __initialize__(self, items):
-        self.values = []
+        self.__dict__['values'] = []
+
         if items:
             if _is_sequence(items):
                 if _is_list(items):
-                    self.values = list(items.values)
+                    self.__dict__['values'] = list(items.values)
                 else:
                     for x in items:
                         if isinstance(x, numbers.Real):
@@ -1525,7 +1525,7 @@ class List(om.MObject):
         return Node(self.values[key])
 
     def __getattr__(self, name):
-        return List([x.__getattr__(name) if _is_node(x) else x for x in self.values])
+        return List([x.__getattr__(name) if _is_node(x) else x for x in self.__dict__['values']])
 
     def __setitem__(self, key, value):
         self.values[key] = value
@@ -1607,6 +1607,14 @@ class List(om.MObject):
         return results    
     
     # ---------------------------- ASSIGNMENT METHODS ---------------------------- #
+    def __setattr__(self, name, obj):
+        """
+        Handles set/connectAttr calls
+        ex: List(['pCube1','pCube2']).tx = List(['pCube3','pCube4']).tx
+        """
+        return self.__getattr__(name).__lshift__(obj)    
+    
+    
     def __lshift__(self, other):
         if self.values:
             
@@ -1953,7 +1961,7 @@ class Node(str):
         sets the object's internal data structure
         """
         tracker = om.MSelectionList() 
-        self.__data__ = namespace()
+        self.__dict__['__data__'] = namespace()
         self.__data__.node      = None  # stores proper MFn used to query data
         self.__data__.attribute = None  # stores a str()  of the attribute
         self.__data__.compound  = None  # stores a list() of the compound children names
@@ -2018,9 +2026,6 @@ class Node(str):
             
             
         
-            
-        
-      
     def __new__(cls, token):
         """
         Resolves missing index upon creation.
@@ -2161,13 +2166,13 @@ class Node(str):
     
     
     # ---------------------- ASSIGNMENT/CONNECTION OPERATOR ---------------------- #
-    #def __setattr__(self, name, obj):
-        #"""
-        #Handles set/connectAttr calls
-        #ex: Node('pCube1').t = Node('pCube2').t
-            #Node('pCube1').t = [1,2,3]
-        #"""
-        #return self.__getattr__(name).__lshift__(obj)
+    def __setattr__(self, name, obj):
+        """
+        Handles set/connectAttr calls
+        ex: Node('pCube1').t = Node('pCube2').t
+            Node('pCube1').t = [1,2,3]
+        """
+        return self.__getattr__(name).__lshift__(obj)
     
     
     def __rshift__(self, other):
