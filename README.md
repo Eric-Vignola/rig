@@ -14,8 +14,7 @@ When we rig, we:
 With Rig, these operations can be reduced into a human readable Python script,
 which simplifies the act of building a complex network of nodes.
 
-setAttr/connectAttr are done via the __setattr__ (=) or __lshift__ (<<)operators. This is referred
-to as "injection". Everything else follows standard Python lexical structure. The only limitation of __setattr__ (=) over __lshift__ (<<) is that if an attribute is not specified, python will interpret a (=) as a new object assignment.
+setAttr/connectAttr are done via the __setattr__ (=) or __lshift__ (<<) operators. This is referred to as "injection". Everything else follows standard Python lexical structure. The only limitation of __setattr__ (=) over __lshift__ (<<) is that if an attribute is not specified, python will interpret a (=) as a new object assignment.
 
 In addition, Rig supports vectorized operations on asymmetric lists.
 This adds to the language's simplicity and lets users code in stacked sequences.
