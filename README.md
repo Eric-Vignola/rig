@@ -14,7 +14,7 @@ When we rig, we:
 With Rig, these operations can be reduced into a human readable Python script,
 which simplifies the act of building a complex network of nodes.
 
-setAttr/connectAttr are done via the __setattr__ (=) or __lshift__ (<<) operators. This is referred to as "injection". Everything else follows standard Python lexical structure. The only limitation of __setattr__ (=) over __lshift__ (<<) is that if an attribute is not specified, python will interpret a (=) as a new object assignment.
+setAttr/connectAttr calls are done via the __lshift__ (<<) operator. This is referred to as "injection". Everything else follows standard Python lexical structure.
 
 In addition, Rig supports vectorized operations on asymmetric lists.
 This adds to the language's simplicity and lets users code in stacked sequences.
@@ -47,20 +47,6 @@ but could be ported to any application built with a Python interpreter.
    # setAttr on pCube2.t to 1,2,3
    obj2.t << [1,2,3]
 
-   # ---------------------------------------------------- #
-
-   # For readability, you can also use __setattr__ (=)
-   obj2.t = obj1.t  # same as obj2.t << obj1.t
-   obj2.t = None    # same as obj2.t << None
-   obj2.t = [1,2,3] # same as obj2.t << [1,2,3]
-
-   # Be carefult to always specify an attribute, otherwise python
-   # will interpret this as a new variable creation.
-   obj1 = Node('pCube1.t')
-   obj2 = Node('pCube2')
-   obj1 << obj2.t # pCube2.t will be connected to pCube1.t
-   obj1 = obj2.t  # !!! will assign object Node('pCube2.t') to obj1
-
    ```
 </p>
 </details>
@@ -88,24 +74,7 @@ but could be ported to any application built with a Python interpreter.
    # Connect pCube1 and pCube2 to pCube3 and pCube4
    node_list[2:].t << node_list[:2].t
 
-   # ---------------------------------------------------- #
-
-   # For readability, you can also use __setattr__ (=)
-   node_list.t = [[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
-   node_list.t = node.t
-   node_list[2:].t = node_list[:2].t
-
-   # Be carefult to always specify an attribute, otherwise python
-   # will interpret this as a new variable creation.
-   node_list1 = node_list[2:].t # define a new sublist + .t attribute
-   node_list2 = node_list[:2]   # define a new sublist
-   node_list1 << node_list2.t   # will connect obj2.t to obj1.t
-   obj1 = obj2.t # !!! will assign variable obj1 as obj2.t
-
-   
-   # ---------------------------------------------------- #
-
-   # add two lists in parallel
+   # Add two lists in parallel
    new_node_list = List(['pCube6','pCube7','pCube8','pCube9'])
    added = new_node_list.t + node_list.t
    print(added) # List([Node(add1.output3D), Node(add2.output3D), Node(add3.output3D), Node(add4.output3D)])
@@ -173,16 +142,6 @@ but could be ported to any application built with a Python interpreter.
    obj3 << Float('weight', min=0, max=1)
    obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
 
-   # ---------------------------------------------------- #
-
-   # For readability, you can also use __setattr__ (=)
-   obj3.t = (obj2.t - obj1.t) * obj3.weight + obj1.t
-
-   # Be carefult to always specify an attribute, otherwise python
-   # will interpret this as a new variable creation.
-   obj3 = Node('pCube3.t')
-   obj3 = (obj2.t - obj1.t) * obj3.weight + obj1.t # !!! will assign the last operator output to obj3
-
    ```
 </p>
 </details>
@@ -230,18 +189,12 @@ but could be ported to any application built with a Python interpreter.
 
    # decompose pCube1's world matrix and plug it directly in pCube2.t
    obj2.t << obj1.wm
-   # or 
-   obj2.t = obj1.wm
 
    # perform a point/matrix operation using a constant
    obj2.t << [10,0,0] * obj1.wm
-   # or
-   obj2.t = [10,0,0] * obj1.wm
 
    # perform a point/matrix operation using pCube3.t
    obj2.t << obj3.t * obj1.wm
-   # or
-   obj2.t = obj3.t * obj1.wm
 
    ```
 </p>
