@@ -477,8 +477,10 @@ class Note(_Attribute):
         
         self.kargs['keyable']  = False
         self.kargs['writable'] = False
+        self.kargs['hidden']   = True
         self.kargs.pop('k', None)
         self.kargs.pop('w', None)
+        self.kargs.pop('h', None)
         
         if not text is None:
             self.notes = text
