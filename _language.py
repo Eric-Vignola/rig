@@ -35,11 +35,12 @@ import maya.api.OpenMaya as om
 import re
 import pickle
 import numbers
+import codecs
 
 from functools import wraps
 
 from ._generators import sequences, arguments
-from .attributes import _clone_attribute
+from .attributes import _clone_attribute, Note, lock
 
 MAYA_VERSION = int(mc.about(version=True))
 
@@ -78,13 +79,13 @@ def _name_to_pickle(node_attr):
     return '.'.join(split)
 
 
-def _pickle_to_name(uuid_attr):
+def _pickle_to_name(uuid_attr, uid=True):
     """ convets a memo key back to a Node """
     if isinstance(uuid_attr, (list, set, tuple)):
-        return [_pickle_to_name(x) for x in uuid_attr]
+        return [_pickle_to_name(x, uid=uid) for x in uuid_attr]
 
     split = uuid_attr.split('.')
-    node  = mc.ls(split[0], uid=True)
+    node  = mc.ls(split[0], uid=uid)
 
     if node:
         split[0] = node[0]
@@ -903,7 +904,7 @@ class Container():
         if self.create_container:
             new_container = None
             if not self.containers:
-                new_container = mc.createNode('container', name=name)
+                new_container = Node(mc.createNode('container', name=name))
                 
             self.containers.append(new_container)    
                 
@@ -911,13 +912,35 @@ class Container():
     
     
     def __enter__(self):
+        # enter the container creation interface
         return self
     
     
     def __exit__(self, exception_type, exception_val, trace):
+        
+        # upon exiting the interace, create an inventory of the contained
+        # nodes and their published attrs or future node explorer interface
+        if self.containers and len(self.containers) == 1:
+            data = {}
+            attrs = mc.container(self.containers[0], query=True, bindAttr=True)
+            data['plugs'] = [_name_to_pickle(x) for x in attrs[0::2]]
+            data['names'] = attrs[1::2]
+            data['nodes'] = mc.container(self.containers[0], query=True, nodeList=True)
+            data['nodes'] = [_name_to_pickle(x) for x in data['nodes']] 
+            
+            data = codecs.encode(pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL), "base64").decode()
+            self.containers[0] << Note(data) << lock
+            
+        # manage scope
         self.containers = self.containers[:-1]
+        
+        # set published state
         if not self.containers:
             self.published = None
+            
+
+          
+            
             
     
     def _cleanup_unit_conversion(self, plugs):
@@ -1514,6 +1537,10 @@ class List(om.MObject):
         return len(self.values)
 
     def __getitem__(self, key):
+        # if given a string, rebuild as node.attr
+        if isinstance(key, str):
+            return List([x.__getattr__(key) if _is_node(x) else x for x in self.__dict__['values']])
+        
         if isinstance(key, slice):
             return List(self.values[key])
         elif _is_sequence(key):
@@ -2092,11 +2119,12 @@ class Node(str):
             node = '['.join(node.split('[')[:-1])
 
 
-        # if we're not slicing, return as index
+        # if given a string, rebuild as node.attr
         if isinstance(obj, str):
             token = '{}.{}'.format(node, obj)
             return Node(token)            
             
+        # if we're not slicing, return as index
         if not isinstance(obj, slice) and not _is_sequence(obj): 
             token = '{}[{}]'.format(node, obj)
             return Node(token)
