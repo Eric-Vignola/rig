@@ -1514,10 +1514,6 @@ class List(om.MObject):
         return len(self.values)
 
     def __getitem__(self, key):
-        # if given a string, rebuild as node.attr
-        if isinstance(key, str):
-            return List([x.__getattr__(key) if _is_node(x) else x for x in self.__dict__['values']])
-        
         if isinstance(key, slice):
             return List(self.values[key])
         elif _is_sequence(key):
@@ -2096,12 +2092,11 @@ class Node(str):
             node = '['.join(node.split('[')[:-1])
 
 
-        # if given a string, rebuild as node.attr
+        # if we're not slicing, return as index
         if isinstance(obj, str):
             token = '{}.{}'.format(node, obj)
             return Node(token)            
             
-        # if we're not slicing, return as index
         if not isinstance(obj, slice) and not _is_sequence(obj): 
             token = '{}[{}]'.format(node, obj)
             return Node(token)
