@@ -29,7 +29,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
-
+import maya.mel as mel
 import maya.cmds as mc
 import maya.api.OpenMaya as om
 import re
@@ -40,7 +40,7 @@ import codecs
 from functools import wraps
 
 from ._generators import sequences, arguments
-from .attributes import _clone_attribute, Note, lock
+from .attributes import _clone_attribute, String, lock
 
 MAYA_VERSION = int(mc.about(version=True))
 
@@ -929,7 +929,8 @@ class Container():
             data['nodes'] = [_name_to_pickle(x) for x in data['nodes']] 
             
             data = codecs.encode(pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL), "base64").decode()
-            self.containers[0] << Note(data) << lock
+            self.containers[0] << String('__container_data__', h=True)
+            self.containers[0].__container_data__ << data << lock
             
         # manage scope
         self.containers = self.containers[:-1]
@@ -1395,8 +1396,59 @@ class Container():
         return node_attr    
     
     
+    @staticmethod
+    def _get_node_editor():
+        return mel.eval('getCurrentNodeEditor()')
+    
+    @staticmethod
+    def _get_container_data(node):
+        data = mc.getAttr(f'{node}.__container_data__')
+        data = pickle.loads(codecs.decode(data.encode(), "base64"))
+        data['plugs'] = _pickle_to_name(data['plugs'], uid=False)
+        data['nodes'] = _pickle_to_name(data['nodes'], uid=False)
+        
+        return data
+        
+    @staticmethod
+    def expand(node, update=True):
+        # expands a container's contents
+        data = container._get_container_data(node)
+        mc.container(node, edit=True, removeNode=data['nodes'])
+        
+        if update:
+            editor = container._get_node_editor()
+            
+            if editor:
+                mc.nodeEditor(editor, e=True, frameAll=True, addNode=data['nodes'])
+                mc.nodeEditor(editor, e=True, frameAll=True, removeNode=node)
+                
+            
+        return data['nodes']
     
     
+    @staticmethod
+    def collapse(node, update=True):
+        # collapses the container back to its components
+        data = container._get_container_data(node)
+    
+        # restore the scope
+        mc.container(node, edit=True, addNode=data['nodes'], force=True)
+        
+        # restore the published inputs and outputs
+        for i in range(len(data['plugs'])):
+            mc.container('cumsum1', 
+                         edit=True, 
+                         publishAndBind=[data['plugs'][i], data['names'][i]])
+    
+    
+        if update:
+            editor = container._get_node_editor()
+            
+            if editor:        
+                mc.nodeEditor(editor, e=True, frameAll=True, removeNode=data['nodes'])
+                mc.nodeEditor(editor, e=True, frameAll=True, addNode=node)    
+
+
 
               
             
