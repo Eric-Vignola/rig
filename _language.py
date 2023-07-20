@@ -84,6 +84,9 @@ def _pickle_to_name(uuid_attr, uid=True):
     if isinstance(uuid_attr, (list, set, tuple)):
         return [_pickle_to_name(x, uid=uid) for x in uuid_attr]
 
+    if uuid_attr is None:
+        return uuid_attr
+    
     split = uuid_attr.split('.')
     node  = mc.ls(split[0], uid=uid)
 
@@ -923,10 +926,10 @@ class Container():
         if self.containers and len(self.containers) == 1:
             data = {}
             attrs = mc.container(self.containers[0], query=True, bindAttr=True)
-            data['plugs'] = [_name_to_pickle(x) for x in attrs[0::2]]
-            data['names'] = attrs[1::2]
+            data['plugs'] = [_name_to_pickle(x) for x in attrs[0::2]] if attrs else None
+            data['names'] = attrs[1::2] if attrs else None
             data['nodes'] = mc.container(self.containers[0], query=True, nodeList=True)
-            data['nodes'] = [_name_to_pickle(x) for x in data['nodes']] 
+            data['nodes'] = [_name_to_pickle(x) for x in data['nodes']] if data['nodes'] else None
             
             data = codecs.encode(pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL), "base64").decode()
             self.containers[0] << String('__container_data__', h=True)
@@ -1435,11 +1438,12 @@ class Container():
         mc.container(node, edit=True, addNode=data['nodes'], force=True)
         
         # restore the published inputs and outputs
-        for i in range(len(data['plugs'])):
-            mc.container('cumsum1', 
-                         edit=True, 
-                         publishAndBind=[data['plugs'][i], data['names'][i]])
-    
+        if data['plugs'] is not None:
+            for i in range(len(data['plugs'])):
+                mc.container('cumsum1', 
+                             edit=True, 
+                             publishAndBind=[data['plugs'][i], data['names'][i]])
+        
     
         if update:
             editor = container._get_node_editor()
