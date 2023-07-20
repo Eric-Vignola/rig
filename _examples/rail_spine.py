@@ -36,8 +36,8 @@ import rig.nodes     as rn
 import rig.functions as rf
 import numbers
 
-from rig.attributes import Float, Vector, Enum, lock, hide
-from rig import Node, List, container, condition
+from rig.attributes import Float, Enum, lock, hide
+from rig import Node, List, container, condition, options
 from rig import matrix
 from rig import interpolate
 from rig import constant
@@ -511,20 +511,62 @@ def create_rail(position_controls,
 
 
 
+    # return rail node
+    return rail
 
-#import rig
-#import rig.commands as rc
-#import numpy as np
-#position_controls = rc.ls(sl=True)
-#u = np.linspace(0,1,20)
-#degree = 3
-#periodic = False
 
-#create_rail(position_controls,
-            #u,
-            #scale_controls=position_controls,
-            #orient_controls=position_controls,
-            #degree=degree, 
-            #periodic=periodic,
-            #aim_axis=1, up_axis=0)
-            
+if __name__ == '__main__':
+    
+    #--- EXAMPLE WORKFLOW ---#
+
+    # set rig option create_containers=False to see the madness
+    options(create_container=True)
+
+    # create 5 control locators
+    position_controls = List()
+    for i in range(5):
+        position_controls.append(rc.spaceLocator()[0])
+        position_controls[i].ty << i * 5
+        
+    # lets make 20 x 0-1 float u values for each rail "rider"
+    count = 20
+    u = [(x / (count - 1)) for x in range(count)]
+    
+    # set the curve as cubic (degree 3) and open (periodic=False)
+    degree = 3
+    periodic = False
+    
+    # set debug to expose useful values and draw rail "riders" as cubes
+    debug = True
+    
+    # create the rail spine
+    rail = create_rail(position_controls,
+                       u,
+                       scale_controls=position_controls,
+                       orient_controls=position_controls,
+                       degree=degree, 
+                       periodic=periodic,
+                       aim_axis=1,
+                       up_axis=0,
+                       debug=debug)
+    
+                       
+    # set stretch value to 0
+    rail.stretch << 0
+    
+    # set scale projection from "frozen" to "clamped"
+    rail.scaleProjection << 2
+    
+    # move/scale a controller
+    position_controls[1].tx << 10
+    position_controls[1].s  << [5, .1, 5]
+    
+    
+    # !!! if you containers were created, use the command below to reveal the mess'o'wires !!!
+    # expand the contents of the container
+    #container.expand('railNode1')
+    
+    # collapse the contents of the container
+    #container.collapse('railNode1')
+    
+    # have fun!

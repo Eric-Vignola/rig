@@ -34,6 +34,7 @@ import maya.cmds as mc
 import rig.commands  as rc
 import rig.nodes     as rn
 import rig.functions as rf
+import rig
 
 from rig.attributes import Int, Float, String, Enum, lock, hide
 from rig import Node, List, container, condition
@@ -248,26 +249,22 @@ def create_setup(camera,                    # name of the camera to create
         
         
     
+if __name__ == '__main__':
+        
+    #--- EXAMPLE WORKFLOW ---#
+    import glob, os
+    
+    # create the camera setup with 5 image planes
+    setup = create_setup('camera1', 5)
+    
+    
+    # populate image planes with texture files.
+    image_path = os.path.abspath(fr'{rig.__file__}\..')
+    images = [x.replace('\\','/') for x in glob.glob(os.path.expandvars(fr'{image_path}\_examples\images\*.jpg'))]
+    if images:
+        setup.shapes.image[:] << images
 
-"""
-#--- EXAMPLE WORKFLOW ---#
+    
+    # have fun!
+    
 
-# create the camera setup with 5 image planes
-setup = create_setup('camera1', 5)
-
-
-
-# populate image planes with texture files
-# also use the $HOME env variable to demonstrate environment variable support
-import glob
-images = [x.replace('\\','/') for x in glob.glob(os.path.expandvars(r'.\_examples\images\*.jpg'))]
-setup.shapes.image[:] << images
-
-
-# activate all alpha channels but the last one
-setup.planes.alpha[:-1] << 1
-
-
-# have fun!
-
-"""
