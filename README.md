@@ -28,6 +28,10 @@ This implementation is still a work in progress, was written for Autodesk Maya,
 but could be ported to any application built with a Python interpreter.
 
 ## Examples
+
+The *_examples* folder contains scripts you can run directly from your script editor to get a feel for how the language works. And if you're just curious, scratch the surface by expanding the sections below!
+
+
 <details>
 <p>
    <summary>connect/disconnect/set attributes on nodes</summary>
@@ -62,8 +66,11 @@ but could be ported to any application built with a Python interpreter.
    node_list = List(['pCube1','pCube2','pCube3','pCube4'])
    node = Node('pCube5')
 
-   # Set all elements of node_list to [0,0,0]
+   # Set translation of all elements of node_list to [0,0,0]
    node_list.t << [[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
+
+   # or simply
+   node_list.t << 0
    
    # Connect pCube5.t to all elements of node_list.t
    node_list.t << node.t
@@ -254,8 +261,6 @@ but could be ported to any application built with a Python interpreter.
    ```
 </p>
 </details>
-
-
 
 ## Requirements
 Autodesk Maya (for this implementation).
