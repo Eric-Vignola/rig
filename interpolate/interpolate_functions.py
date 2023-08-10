@@ -37,7 +37,7 @@ from .._language import condition, container, _constant
 from .._language import _get_compound,  _is_compound
 from .._generators import sequences
 
-from ..functions import rev, choice, mag, searchSortedLeft
+from ..functions import rev, choice, mag, searchsorted, clamp
 from ..trigonometry import radians, sin
 from ..matrix import decompose, compose
 from ..quaternion import interpolate as quat_interpolate
@@ -236,7 +236,7 @@ def sequence(x, xp, yp, method=lerp):
         yp = container.publish_input(yp, 'yp')          
     
         # get the boundaries
-        i  = searchSortedLeft(xp[:-1], x, return_index=True)
+        i  = searchsorted(xp[:-1], x, return_index=True, side='left')
         x0 = choice(xp[:-1], selector=i)
         x1 = choice(xp[1:],  selector=i)
         y0 = choice(yp[:-1], selector=i)
@@ -253,29 +253,169 @@ def sequence(x, xp, yp, method=lerp):
     
 
 
-
-## TODO
-#def smoothclamp(x, mi, mx):
-    #if x < mi:
-        #return mi
-    #if x >= mx:
-        #return mx
     
-    #x = (x - mi) / (mx - mi)
-    #x = x * x * (3 - 2 * x)
-    #return x * (mx - mi) + mi
-
-
-#def smootherclamp(x, mi, mx):
-    #if x < mi:
-        #return mi
-    #if x >= mx:
-        #return mx
+@vectorize
+@memoize    
+def smoothstep(input1, input2, weight=0.5, normalize=False):
     
-    #x = (x - mi) / (mx - mi)
-    #x = x * x * x * (x * (x * 6 - 15) + 10);
-    #return x * (mx - mi) + mi
+    """ 
+    smoothstep(<token>, <min_value>, <max_value>)
 
+        Perform a smoothstep interpolation between two values
+        https://en.wikipedia.org/wiki/Smoothstep
+
+        Examples
+        --------
+        >>> smoothstep(pCube1.tx)
+    """
+    if all([isinstance(x, numbers.Real) for x in [weight, input1, input2]]):
+        x = clamp((weight - input1) / (input2 - input1), 0.0, 1.0)
+        x = x * x * (3.0 - 2.0 * x)
+        
+        if not normalize:
+            return x
+        
+        return  x * (input2 - input1) + input1
+
+
+    # new ceil node type in Maya 2024
+    if MAYA_VERSION >= 2024:
+        if not any([_is_compound(weight), _is_compound(input1), _is_compound(input2)]):
+            if not normalize:
+                node = container.createNode('smoothStep', name='smoothStep1')
+                node.input     << weight
+                node.leftEdge  << input1 
+                node.rightEdge << input2 
+                return node.output
+            
+            else:
+                with container('smoothstep1'):
+                    input1 = _get_compound(container.publish_input(input1, 'min'))
+                    input2 = _get_compound(container.publish_input(input2, 'max'))
+                    weight = _get_compound(container.publish_input(weight, 'weight'))
+                    
+                    node = container.createNode('smoothStep', name='smoothStep1')
+                    node.input     << weight
+                    node.leftEdge  << input1 
+                    node.rightEdge << input2
+                    
+                    output = node.output * (input2 - input1) + input1
+                    
+                    return container.publish_output(output, 'output')                   
+        
+        else:
+            with container('smoothstep1'):
+                input1 = _get_compound(container.publish_input(input1, 'min'))
+                input2 = _get_compound(container.publish_input(input2, 'max'))
+                weight = _get_compound(container.publish_input(weight, 'weight'))
+            
+                output_plugs = []
+                for plugs in sequences(weight, input1, input2):
+                    node = container.createNode('smoothStep', name='smoothStep1')
+                    node.input     << plugs[0]
+                    node.leftEdge  << plugs[1]
+                    node.rightEdge << plugs[2]
+                    output_plugs.append(node.output)                    
+                
+                count  = len(output_plugs)
+                output = _constant([0]*count, name='output_plug1')
+                output << output_plugs
+                
+                if not normalize:
+                    output = output * (input2 - input1) + input1
+                    
+                return container.publish_output(output, 'output')
+
+        
+        
+    # old fashioned way
+    with container('smoothstep1'):
+        weight     = container.publish_input(weight,     'input')
+        input1 = container.publish_input(input1, 'min')
+        input2 = container.publish_input(input2, 'max')
+        
+        x = clamp((weight - input1) / (input2 - input1), 0.0, 1.0)
+        output = x * x * (3.0 - 2.0 * x)
+        
+        if not normalize:
+            output = output * (input2 - input1) + input1
+            
+        return container.publish_output(output, 'output')       
+
+
+
+@vectorize
+@memoize    
+def smootherstep(input1, input2, weight=0.5, normalize=False):
+    
+    """ 
+    smootherstep(<token>, <min_value>, <max_value>)
+
+        Perform a smootherstep interpolation between two values
+        https://en.wikipedia.org/wiki/Smoothstep
+
+        Examples
+        --------
+        >>> smootherstep(pCube1.tx)
+    """
+    if all([isinstance(x, numbers.Real) for x in [weight, input1, input2]]):
+        x = clamp((weight - input1) / (input2 - input1), 0.0, 1.0)
+        x = x * x * x * (x * (x * 6 - 15) + 10)
+        
+        if not normalize:
+            return x
+
+        return  x * (input2 - input1) + input1
+    
+    
+    with container('smootherstep1'):
+        input1 = container.publish_input(input1, 'min')
+        input2 = container.publish_input(input2, 'max')
+        weight = container.publish_input(weight, 'weight')
+        
+        x = clamp((weight - input1) / (input2 - input1), 0.0, 1.0)
+        output = x * x * x * (x * (x * 6 - 15) + 10)
+        
+        if not normalize:
+            output = output * (input2 - input1) + input1
+            
+        return container.publish_output(output, 'output')    
+    
+    
+    
+    
+    
+    
+#@vectorize
+#@memoize
+#def sigmoid(token, min_val=0, max_val=1):
+    #"""
+    #sigmoid(<token>, <min_value>, <max_value>)
+
+        #Clamps values between a min and a max using a sigmoid function
+        #https://en.wikipedia.org/wiki/Smoothstep
+        #https://en.wikipedia.org/wiki/Sigmoid_function
+
+        #Examples
+        #--------
+        #>>> smoothclamp(pCube1.tx)
+    
+    #"""
+    
+    #with container('exponentRange1'):
+        #token   = container.publish_input(token, 'input')
+        #min_val = container.publish_input(min_val, 'min')
+        #max_val = container.publish_input(max_val, 'max')
+        
+        #delta  = token - min_val
+        #spread = max_val - min_val
+        #test   = delta/spread
+        #ratio  = 1 - exp(-1 * abs(test))
+        
+        #output = min_val + (ratio * spread * sign(test))
+        #return container.publish_output(output, 'output')
+        
+          
 
 #def sigmoid(x, mi, mx):
     #x = (x - mi) / (mx - mi)

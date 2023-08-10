@@ -376,7 +376,7 @@ def create_rail(position_controls,
             
             edge0    = tangent0.allCoordinates
             tangent0 = rf.unit(tangent_aim * tangent0.orientMatrix) * current_length * rail.translateProjection
-
+            
     
             # tangent1 will be located at the end of the rail
             # at a reasonable near 1 value to allow collapsed start points.    

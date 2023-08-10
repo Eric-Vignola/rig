@@ -29,6 +29,8 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
+
+
 import maya.mel as mel
 import maya.cmds as mc
 import maya.api.OpenMaya as om
@@ -594,21 +596,21 @@ def _matrix_multiply(*tokens, **kargs):
     if kargs:      
         raise Exception('Unsupported keyword args: {}'.format(kargs.keys()))
 
-    # are we doing point matrix mult?
+    # are we doing point matrix mult? if so figure out which token 
+    # is a matrix and which token is a vector
+    # TODO: QUATERNION LOGIC?
     if len(tokens) == 2:
         count = 0
         matrix_index = 0
         vector_index = 0
 
         for i, obj in enumerate(tokens):
-            
             if _is_matrix(obj):
                 matrix_index = i
                 count +=1
             else:
                 vector_index = i
-            
-                
+             
         if count == 1:
             node = container.createNode('pointMatrixMult')
             node.inMatrix << tokens[matrix_index]
@@ -633,6 +635,29 @@ def _matrix_add(*tokens, **kargs):
 
 
     if weights is None:
+        
+        # are we doing point matrix add? if so figure out which token 
+        # is a matrix and which token is a vector
+        # TODO: QUATERNION LOGIC?
+        if len(tokens) == 2:
+            count = 0
+            matrix_index = 0
+            vector_index = 0
+    
+            for i, obj in enumerate(tokens):
+                if _is_matrix(obj):
+                    matrix_index = i
+                    count +=1
+                else:
+                    vector_index = i
+    
+            if count == 1:
+            
+                # decompose the matrix and add vector to outputTranslate
+                node = _decompose_matrix(tokens[matrix_index])
+                return _plus_minus_average(node.outputTranslate, tokens[vector_index], operation=1, name='add1')
+                
+        
         node = container.createNode('addMatrix')
         for obj in tokens:
             node.matrixIn << obj 
@@ -1915,6 +1940,16 @@ class List(om.MObject):
         return result
 
 
+    # ----------------------------- BUILTIN OPERATORS ---------------------------- #
+    @memoize
+    def __abs__(self):
+        result = List()
+        for x in self.values:
+            result.append(abs(x))
+            
+        return result 
+
+
     # --------------------- PYTHON 2.7 COMPATIBILITY METHODS --------------------- #
     def __getslice__(self, i, j):
         return self.__getitem__(slice(i, j))
@@ -2294,11 +2329,11 @@ class Node(str):
     def __add__(self, other):
         
         # Are we doing matrix addition
-        if _is_matrix(self):
+        if _is_matrix(self) or _is_matrix(other):
             return _matrix_add(self, other)
 
         # Or Quaternion?
-        elif _is_quaternion(self):
+        elif _is_quaternion(self) or _is_quaternion(other):
             return _quaternion_add(self, other)
         
         # Or a point Matrix multiplication?
@@ -2310,11 +2345,11 @@ class Node(str):
     @memoize
     def __radd__(self, other):
         # Are we doing matrix addition
-        if _is_matrix(self):
+        if _is_matrix(self) or _is_matrix(other):
             return _matrix_add(other, self)
     
         # Or Quaternion?
-        elif _is_quaternion(self):
+        elif _is_quaternion(self) or _is_quaternion(other):
             return _quaternion_add(other, self)
     
         # Or a point Matrix multiplication?
@@ -2325,11 +2360,11 @@ class Node(str):
     @memoize
     def __sub__(self, other):
         # Are we doing matrix subtraction
-        if _is_matrix(self):
+        if _is_matrix(self) or _is_matrix(other):
             return _matrix_multiply(self, _matrix_inverse(other))
         
         # Or Quaternion?
-        elif _is_quaternion(self):
+        elif _is_quaternion(self) or _is_quaternion(other):
             return _quaternion_subtract(self, other)        
         
         # x - y
@@ -2339,11 +2374,11 @@ class Node(str):
     @memoize
     def __rsub__(self, other):
         # Are we doing matrix subtraction
-        if _is_matrix(self):
+        if _is_matrix(self) or _is_matrix(other):
             return _matrix_multiply(_matrix_inverse(other), self)
         
         # Or Quaternion?
-        elif _is_quaternion(self):
+        elif _is_quaternion(self) or _is_quaternion(other):
             return _quaternion_subtract(other, self)        
         
         # x - y
@@ -2371,7 +2406,7 @@ class Node(str):
             return _matrix_multiply(other, self)
         
         # Or Quaternion?
-        elif _is_quaternion(self) or _is_quaternion(other):
+        elif _is_quaternion(self):
             return _quaternion_multiply(other, self)
         
         # x * y
@@ -2615,6 +2650,40 @@ class Node(str):
     @memoize
     def __lt__(self, other):
         return _condition_op(self, '<',  other)
+    
+
+    # ----------------------------- BUILTIN OPERATORS ---------------------------- #
+    @memoize
+    def __abs__(self):
+        # new absolute node type in Maya 2024
+        if MAYA_VERSION >= 2024:
+            if not _is_compound(self):
+                node = container.createNode('absolute', name='abs1')
+                node.input << self
+                return node.output
+            
+            else:
+                with container('abs1'):
+                    input_plugs  = _get_compound(self)
+                    output_plugs = []
+                    
+                    for p in input_plugs:
+                        node = container.createNode('absolute', name='abs1')
+                        node.input << p
+                        output_plugs.append(node.output)
+                    
+                    count  = len(output_plugs)
+                    output = _constant([0]*count, name='output_plug1')
+                    output << output_plugs
+                    
+                    return container.publish_output(output, 'output') 
+                   
+                   
+        # default to old method
+        with container('abs1'):
+            token  = container.publish_input(self, 'input')
+            result = condition(token < 0, -token, token)
+            return container.publish_output(result, 'output')          
     
     
     

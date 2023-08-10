@@ -35,3 +35,6 @@ from .interpolate_functions import elerp
 from .interpolate_functions import slerp
 from .interpolate_functions import sequence
 from .interpolate_functions import transform
+from .interpolate_functions import smoothstep
+from .interpolate_functions import smootherstep
+#from .interpolate_functions import sigmoid

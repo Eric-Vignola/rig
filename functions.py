@@ -88,7 +88,7 @@ def frame():
 
 # ----------------------------- COMMON COMMANDS ------------------------------ #
 #@vectorize
-#@memoize
+@memoize
 def clamp(token, min_value, max_value):
     """ 
     clamp(<token>, <min_value>, <max_value>)
@@ -101,9 +101,13 @@ def clamp(token, min_value, max_value):
         >>> clamp(pCube1.t, -1, 1) # clamps [tx, ty, tz] of pCube1 between -1 and 1
     """
     
+    if builtins.all([isinstance(x, numbers.Real) for x in [token, min_value, max_value]]):
+        return max(min(token, max_value), min_value)
+    
+    
     #new clampRange node type in Maya 2024
     if MAYA_VERSION >= 2024:
-        if not any([_is_compound(x) for x in [token, min_value, max_value]]):
+        if not builtins.any([_is_compound(x) for x in [token, min_value, max_value]]):
             node = container.createNode('clampRange', name='clamp1')
             node.input << token
             node.minimum << min_value
@@ -146,49 +150,6 @@ def clamp(token, min_value, max_value):
         result    = condition(token > max_value, max_value, less_than)
         
         return container.publish_output(result, 'output')
-    
-    
-#@vectorize
-#@memoize    
-#def smoothclamp(token, min_value, max_value):
-    #""" 
-    #smoothclamp(<token>, <min_value>, <max_value>)
-
-        #Clamps values between a min and a max using smoothclamp
-
-        #Examples
-        #--------
-        #>>> trunc(pCube1.t)
-        #>>> trunc(pCube1.tx)
-    #"""
-    #if isinstance(token, numbers.Real):
-        #return math.trunc(token) 
-
-    ## new ceil node type in Maya 2024
-    #if MAYA_VERSION >= 2024:
-        #if not _is_compound(token):
-            #node = container.createNode('smoothStep', name='smoothclamp1')
-            #node.input << token
-            #return node.output
-        
-        #else:
-            #with container('smoothclamp1'):
-                #input_plugs  = _get_compound(token)
-                #output_plugs = []
-                
-                #for p in input_plugs:
-                    #node = container.createNode('smoothStep', name='smoothclamp1')
-                    #node.input << p
-                    #output_plugs.append(node.output)
-                
-                #count  = len(output_plugs)
-                #output = _constant([0]*count, name='output_plug1')
-                #output << output_plugs
-                
-                #return container.publish_output(output, 'output')         
-        
-        
-
     
 
 @vectorize
@@ -273,7 +234,7 @@ def round(token, digits):
         >>> round(pCube1.t,1)
 
     """
-    if all([isinstance(x, numbers.Real) for x in [token, digits]]):
+    if builtins.all([isinstance(x, numbers.Real) for x in [token, digits]]):
         return builtins.round(token, digits)
     
     ## new round node type in Maya 2024 - SKIP THE NODE DOESN'T HAVE A N DIGIT INPUT
@@ -463,7 +424,7 @@ def sum(tokens):
         --------
         >>> sum(pCube1.t, pCube2.t, pCube3.t, pCube4.t)
     """  
-    if not any([_is_node(x) for x in tokens]):
+    if not builtins.any([_is_node(x) for x in tokens]):
         return builtins.sum(tokens)
 
     return _plus_minus_average(*tokens, operation=1, name='sum1')
@@ -482,7 +443,7 @@ def avg(tokens):
         --------
         >>> avg(pCube1.t, pCube2.t, pCube3.t, pCube4.t)
     """   
-    if all([isinstance(x, numbers.Real) for x in tokens]):
+    if builtins.all([isinstance(x, numbers.Real) for x in tokens]):
         return builtins.sum(tokens)/float(len(tokens))
 
     # new average node type in Maya 2024 SKIP, adds nothing plusMinusAverage can't do
@@ -501,7 +462,7 @@ def max(tokens):
         --------
         >>> max(pCube1.t, pCube2.t, pCube3.t, pCube4.t)
     """ 
-    if not any([_is_node(x) for x in tokens]):
+    if not builtins.any([_is_node(x) for x in tokens]):
         return builtins.max(tokens)    
 
 
@@ -511,7 +472,7 @@ def max(tokens):
     
     # new min node type in Maya 2024
     if MAYA_VERSION >= 2024:
-        if not any([_is_compound(x) for x in tokens]):
+        if not builtins.any([_is_compound(x) for x in tokens]):
             node = container.createNode('max', name='max1')
             for item in tokens:
                 node.input << item
@@ -558,7 +519,7 @@ def min(tokens):
         --------
         >>> min(pCube1.t, pCube2.t, pCube3.t, pCube4.t)
     """ 
-    if not any([_is_node(x) for x in tokens]):
+    if not builtins.any([_is_node(x) for x in tokens]):
         return builtins.min(tokens)  
 
     if len(tokens) < 2:
@@ -567,7 +528,7 @@ def min(tokens):
     
     # new min node type in Maya 2024
     if MAYA_VERSION >= 2024:
-        if not any([_is_compound(x) for x in tokens]):
+        if not builtins.any([_is_compound(x) for x in tokens]):
             node = container.createNode('min', name='min1')
             for item in tokens:
                 node.input << item
@@ -681,7 +642,7 @@ def pow(base, exponent):
 
     """
 
-    if all([isinstance(x, numbers.Real) for x in [base, exponent]]):
+    if builtins.all([isinstance(x, numbers.Real) for x in [base, exponent]]):
         return base ** exponent
     
     return _multiply_divide(base, exponent, operation=3, name='pow1')
@@ -701,7 +662,7 @@ def mag(token):
         >>> mag(pCube1.wm) # Computes the magnitude of the 4x4 matrix's position component.
     """
     if _is_sequence(token):
-        if all([isinstance(x, numbers.Real) for x in token]):
+        if builtins.all([isinstance(x, numbers.Real) for x in token]):
             return builtins.sum([x**2 for x in token])**0.5
 
 
@@ -774,11 +735,11 @@ def dot(input1, input2, normalize=False):
     """ 
     dot(<input1>, <input2>, normalize=<True/False/input3>)
 
-            Uses a vectorProduct to do a dot product between two vector inputs.
+        Uses a vectorProduct to do a dot product between two vector inputs.
 
-            Examples
-            --------
-            >>> dot(pCube1.t, pCube2.t)
+        Examples
+        --------
+        >>> dot(pCube1.t, pCube2.t)
     """
     #sum( [a[i][0]*b[i] for i in range(len(b))] ) 
     # TODO: TEST FOR MATRICES AND DO MATRIX DOT PRODUCT?
@@ -796,13 +757,13 @@ def dot(input1, input2, normalize=False):
 @memoize
 def cross(input1, input2, normalize=False):
     """ 
-    dot(<input1>, <input2>, normalize=<True/False/input3>)
+    cross(<input1>, <input2>, normalize=<True/False/input3>)
 
-            Uses a vectorProduct to do a cross product between two vector inputs.
+        Uses a vectorProduct to do a cross product between two vector inputs.
 
-            Examples
-            --------
-            >>> dot(pCube1.t, pCube2.t)
+        Examples
+        --------
+        >>> dot(pCube1.t, pCube2.t)
     """
     #c = [a[1]*b[2] - a[2]*b[1],
          #a[2]*b[0] - a[0]*b[2],
@@ -825,11 +786,11 @@ def unit(token):
     """ 
     unit(<input>)
 
-            Creates a network that yields a unit vector.
+        Creates a network that yields a unit vector.
 
-            Examples
-            --------
-            >>> unit(pCube1.t)
+        Examples
+        --------
+        >>> unit(pCube1.t)
     """
     # new normalize node type in Maya 2024
     if MAYA_VERSION >= 2024:
@@ -891,72 +852,214 @@ def dist(input1, input2):
 
 
 
-@vectorize
+#@memoize   
+#def searchSortedLeft(tokens, query, return_index=True):
+    #with container('searchSortedLeft1'):
+        #tokens = container.publish_input(tokens, 'input')
+        #query  = container.publish_input(query,  'query')
+        
+        #if not return_index:
+            #result = tokens[0]
+            #for t in tokens[1:]:
+                #result = condition(t <= query, t, result)
+                
+        #else:
+            #result = 0
+            #i = 1
+            #for t in tokens[1:]:
+                #result = condition(t <= query, i, result)
+                #i+=1
+                
+        #return container.publish_output(result, 'output')
+
+
+
+#@memoize
+#def searchSortedRight(tokens, query, return_index=True):
+    
+    #with container('searchSortedRight1'):
+        #tokens = container.publish_input(tokens, 'input')
+        #query  = container.publish_input(query,  'query')
+        
+        #if not return_index:
+            #result = tokens[-1]
+            #for t in tokens[:-1][::-1]:
+                #result = condition(t >= query, t, result)
+                
+        #else:
+            #result = len(tokens)-1
+            #i = len(tokens)-2
+            #for t in tokens[:-1][::-1]:
+                #result = condition(t >= query, i, result)
+                #i-=1
+
+        #return container.publish_output(result, 'output')
+    
+    
+    
 @memoize
-def exponentRange(token, min_val=0, max_val=1):
+def searchsorted(tokens, query, return_index=True, side='left'):
     
-    with container('exponentRange1'):
-        token   = container.publish_input(token, 'input')
-        min_val = container.publish_input(min_val, 'min')
-        max_val = container.publish_input(max_val, 'max')
-        
-        delta  = token - min_val
-        spread = max_val - min_val
-        test   = delta/spread
-        ratio  = 1 - exp(-1 * abs(test))
-        
-        output = min_val + (ratio * spread * sign(test))
-        return container.publish_output(output, 'output')
+    """ 
+    searchsorted(<tokens>)
 
-    
-    
+        Find the index into a sorted array of tokens such that,
+        if the corresponding query value were inserted
+        before the indices, the order of tokens would be preserved.
 
-@memoize   
-def searchSortedLeft(tokens, query, return_index=False):
-    with container('searchSortedLeft1'):
+        Examples
+        --------
+        >>> searchsorted([pCube1.ty, pCube2.ty, pCube3.ty])
+    """
+    
+    with container('searchsorted'):
         tokens = container.publish_input(tokens, 'input')
         query  = container.publish_input(query,  'query')
         
-        if not return_index:
-            result = tokens[0]
-            for t in tokens[1:]:
-                result = condition(t <= query, t, result)
-                
-        else:
-            result = 0
-            i = 1
-            for t in tokens[1:]:
-                result = condition(t <= query, i, result)
-                i+=1
-                
-        return container.publish_output(result, 'output')
-
-
-
-@memoize
-def searchSortedRight(tokens, query, return_index=False):
-    
-    with container('searchSortedRight1'):
-        tokens = container.publish_input(tokens, 'input')
-        query  = container.publish_input(query,  'query')
         
-        if not return_index:
-            result = tokens[-1]
-            for t in tokens[:-1][::-1]:
-                result = condition(t >= query, t, result)
-                
-        else:
-            result = len(tokens)-1
-            i = len(tokens)-2
-            for t in tokens[:-1][::-1]:
-                result = condition(t >= query, i, result)
-                i-=1
+        if side == 'left':
+            if not return_index:
+                result = tokens[0]
+                for t in tokens[1:]:
+                    result = condition(t <= query, t, result)
+            else:
+                result = 0
+                i = 1
+                for t in tokens[1:]:
+                    result = condition(t <= query, i, result)
+                    i+=1
+                       
+                        
+        elif side == 'right':
+            if not return_index:
+                result = tokens[-1]
+                for t in tokens[:-1][::-1]:
+                    result = condition(t >= query, t, result)
+            else:
+                result = len(tokens)-1
+                i = len(tokens)-2
+                for t in tokens[:-1][::-1]:
+                    result = condition(t >= query, i, result)
+                    i-=1
+        
+        
+        return container.publish_output(result, 'output')
+            
+        
+    
+@memoize
+def all(tokens):
+    
+    """ 
+    all(<tokens>)
 
+        Returns True if all argument are non-zero.
+
+        Examples
+        --------
+        >>> all([pCube1.ty, pCube2.ty, pCube3.ty])
+    """
+    
+    if builtins.all([isinstance(x, numbers.Real) for x in tokens]):
+        return builtins.all(tokens)
+    
+    with container('all1'):
+        tokens = container.publish_input(tokens, 'input')
+        total  = sum([(1 - (x==0)) for x in tokens])
+        result = condition(total == len(tokens), True, False)
         return container.publish_output(result, 'output')
     
+@memoize
+def any(tokens):
+    
+    """ 
+    any(<tokens>)
+
+        Returns True if any argument is non-zero.
+
+        Examples
+        --------
+        >>> any([pCube1.ty, pCube2.ty, pCube3.ty])
+    """    
+    
+    if builtins.all([isinstance(x, numbers.Real) for x in tokens]):
+        return builtins.any(tokens)
+    
+    with container('all1'):
+        tokens = container.publish_input(tokens, 'input')
+        total  = sum([(1 - (x==0)) for x in tokens])
+        result = condition(total > 0, True, False)
+        return container.publish_output(result, 'output')
+      
+      
+      
+@memoize
+def argmin(tokens):
+    
+    """ 
+    argmin(<tokens>)
+
+        Returns the index of the lowest value. Similar to numpy.argmin
+
+        Examples
+        --------
+        >>> argmin([pCube1.ty, pCube2.ty, pCube3.ty])
+    """
+    
+    if builtins.all([isinstance(x, numbers.Real) for x in tokens]):
+        return tokens.index(builtins.min(tokens))
+    
+    with container('argmin1'):
+        tokens = container.publish_input(tokens, 'input')
+        target = min(tokens)
+        result = 0
+        
+        for i, t in enumerate(tokens[1:]):
+            result = condition(t==target, i+1, result)            
+            
+        return container.publish_output(result, 'output')
+    
+      
+@memoize
+def argmax(tokens):
+    
+    """ 
+    argmax(<tokens>)
+
+        Returns the index of the highest value. Similar to numpy.argmin
+
+        Examples
+        --------
+        >>> argmax([pCube1.ty, pCube2.ty, pCube3.ty])
+    """    
+    
+    if builtins.all([isinstance(x, numbers.Real) for x in tokens]):
+        return tokens.index(builtins.max(tokens))  
+    
+    
+    with container('argmax1'):
+        tokens = container.publish_input(tokens, 'input')
+        target = max(tokens)
+        result = 0
+        
+        for i, t in enumerate(tokens[1:]):
+            result = condition(t==target, i+1, result)
+
+        return container.publish_output(result, 'output')        
+
     
 @memoize   
 def diff(tokens):
+    
+    """ 
+    diff(<tokens>)
+
+        Returns the discrete difference between tokens. Similat to numpy.diff
+
+        Examples
+        --------
+        >>> diff([pCube1.ty, pCube2.ty, pCube3.ty])
+    """
     
     with container('diff1'):
         tokens = container.publish_input(tokens, 'input')
@@ -970,6 +1073,16 @@ def diff(tokens):
 
 @memoize  
 def cumsum(tokens):
+    """ 
+    cumsum(<tokens>)
+
+        Returns the cumulative sums of a list of tokens. Similat to numpy.cumsum
+
+        Examples
+        --------
+        >>> cumsum([pCube1.ty, pCube2.ty, pCube3.ty])
+    """
+    
     with container('cumsum1'):
         tokens = container.publish_input(tokens, 'input')
         
