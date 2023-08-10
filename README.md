@@ -39,6 +39,7 @@ The *_examples* folder contains scripts you can run directly from your script ed
    ```python
    from rig import Node
 
+   # Manually create two cubes and create python Node objects to manipulate them
    obj1 = Node('pCube1')
    obj2 = Node('pCube2')
 
@@ -63,6 +64,7 @@ The *_examples* folder contains scripts you can run directly from your script ed
    ```python
    from rig import Node, List
 
+   # Manually create four cubes and create a python List object to manipulate them
    node_list = List(['pCube1','pCube2','pCube3','pCube4'])
    node = Node('pCube5')
 
@@ -96,10 +98,12 @@ The *_examples* folder contains scripts you can run directly from your script ed
    <summary>injecting new attributes</summary>
 
    ```python
+   import rig.commands as rc  # these are maya.cmds which output as rig node instances
    from rig import Node, List
    from rig.attributes import Float, Vector, Enum, lock
 
-   obj1 = Node('pCube1')
+   # create a cube via rig.commands (wrapped maya.cmds)
+   obj1 = rc.polyCube()[0]
    
    # create pCube1.awesomeFloat as a float attribute, set it to 5 and finally lock it
    obj1 << Float('awesomeFloat') << 5 << lock
@@ -128,9 +132,10 @@ The *_examples* folder contains scripts you can run directly from your script ed
    from rig import Node
    from rig.attributes import Float
 
-   obj1 = Node('pCube1')
-   obj2 = Node('pCube2')
-   obj3 = Node('pCube3')
+   # create 3 cubes
+   obj1 = rc.polyCube()[0]
+   obj2 = rc.polyCube()[0]
+   obj3 = rc.polyCube()[0]
 
    # add pCube1.tx to pCube2.tx
    add = obj1.tx + obj2.tx
@@ -190,9 +195,9 @@ The *_examples* folder contains scripts you can run directly from your script ed
    ```python
    from rig import Node
 
-   obj1 = Node('pCube1')
-   obj2 = Node('pCube2')
-   obj3 = Node('pCube3')
+   obj1 = rc.polyCube()[0]
+   obj2 = rc.polyCube()[0]
+   obj3 = rc.polyCube()[0]
 
    # decompose pCube1's world matrix and plug it directly in pCube2.t
    obj2.t << obj1.wm
