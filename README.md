@@ -12,7 +12,43 @@ When we rig, we:
 * Connect nodes to one another into a complex network.
 
 With Rig, these operations can be reduced into a human readable Python script,
-which simplifies the act of building a complex network of nodes.
+and simplifies the act of building a complex network of nodes.
+
+<details>
+<p>
+   <summary>For example...</summary>
+   
+In Maya: 
+   * 1- Create two transforms.
+   * 2- Elevate the translate attribute of the first transform to the 2nd power. 
+   * 3- Plug the result into the second transform's translate attribute.
+
+   ```python
+   import maya.cmds as mc
+
+   obj1 = mc.createNode('transform')       # create first transform (returns str())
+   obj2 = mc.createNode('transform')       # create first transform (returns str())
+   power = mc.createNode('multiplyDivide') # create multiplyDivide node (returns str())
+   mc.setAttr(f'{power}.operation', 3)     # sets multiplyDivide node's operation to "power"
+   mc.setAttr(f'{power}.input2', 2, 2, 2)  # sets multiplyDivide node's input2 to 2 (x ** 2)
+   mc.connectAttr(f'{obj1}.t',f'{power}.input1') # plug 1st transform's .t attribute into input1
+   mc.connectAttr(f'{power}.output',f'{obj2}.t') # plug output to 2nd transform's .t attribute
+
+   ```
+
+   With Rig, becomes this:
+
+   ```python
+   import rig.commands as rc
+   obj1 = rc.createNode('transform')
+   obj2 = rc.createNode('transform')
+   obj2.t << obj1.t ** 2 # 5 lines of code into one
+
+   ```
+
+</p>
+</details>
+
 
 setAttr/connectAttr calls are done via the __lshift__ (<<) operator. This is referred to as "injection". Everything else follows standard Python lexical structure.
 
