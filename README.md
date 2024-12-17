@@ -2,6 +2,8 @@
 A Python-based language to reduce the generation of complex node
 networks into a simpler human readable form.
 
+![](https://github.com/Eric-Vignola/rig/blob/main/_examples/ye_olde_lerp.gif)
+
 ## About
 In 3D applications built on node.attribute foundations (ex: Maya, Houdini)
 the core act of "rigging" can be reduced into a few major axes:
