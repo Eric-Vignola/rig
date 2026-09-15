@@ -1,0 +1,82 @@
+# Team-wide default container options for the ``rig`` package.
+#
+# Read once at import time by ``rig._internal.container._load_defaults_from_file``.
+# Each ``[options] key = value`` pair overrides the matching attribute on
+# ``ContainerOptions``, so a studio can ship a tuned default set without
+# touching the code. Per-call ``rig.set_options(...)`` always wins over
+# anything set here.
+#
+# The loader fails open: a missing file, an unparseable file, or a key that
+# is not a ContainerOptions attribute all leave the in-code defaults in
+# place. A typo'd key is therefore a silent no-op -- ``TestShippedDefaultsFile``
+# in ``_tests/test_rig/test_defaults.py`` parses this file and asserts every
+# active key is real, precisely so a typo cannot go unnoticed.
+#
+# Every value below matches the in-code default, so loading this file is a
+# behavioural no-op as shipped. Change a value here to move the whole team.
+
+[options]
+
+# Create real Maya container nodes for ``with container("name"):`` blocks.
+# Set false to make every container block scope-only -- useful when you want
+# to see every node in the Node Editor without opening containers.
+create_containers = true
+
+# Pass skipSelect=True to createNode, so building a graph does not disturb
+# the user's current selection.
+skip_selection = true
+
+# Call ``cleanup()`` automatically when a container block exits. Off by
+# default: cleanup deletes nodes, and that should be an explicit act.
+cleanup_on_exit = false
+
+# Nested ``with container():`` blocks flatten into the outermost container
+# rather than creating real Maya sub-containers. Set false to get true
+# nesting, which also activates publish_input / publish_output.
+flatten_containers = true
+
+# Allow publish_input / publish_output to addAttr and wire on the container.
+# Set false to make them passthrough and return the source unchanged.
+publish_attributes = true
+
+# Pull auto-inserted unitConversion nodes into the active container.
+# Default false: the Node Editor's "Hide Unit Conversion Nodes" view option
+# renders any container member that connects to a unitConversion OUTSIDE its
+# container, so absorbing the conversion makes the rest of the container
+# appear to leak. Set true if you want the conversions inside, at the cost
+# of that visual leak.
+absorb_unit_conversions = false
+
+
+# ---------------------------------------------------------------------------
+# Deliberately NOT exposed as committed team-wide defaults.
+#
+# Each of these is a debug toggle, an experimental capability, or an
+# environment pin. Shipping a silent non-default for any of them would change
+# behaviour for everyone with no obvious cause, so they stay commented out and
+# the in-code default wins. ``test_unsafe_options_stay_commented`` enforces
+# this -- uncommenting one will fail the suite.
+#
+# Set them per-session with ``rig.set_options(...)`` instead.
+# ---------------------------------------------------------------------------
+
+# Type-aware shorthand dispatch (matrix -> transform channels, etc.).
+# Debug-only toggle: turning it off changes what ``<<`` builds.
+# use_shorthand = true
+
+# Target Maya version for version-keyed node dispatch. Must track the live
+# runtime -- a committed pin would silently build graphs for the wrong Maya.
+# The in-code default is None, which TOML cannot express in any case.
+# maya_version = 2025
+
+# Natively publish MULTI / array attributes on the container. Experimental:
+# Maya's Node Editor renders a published array alias without indices and
+# rejects interactive bare-parent fan-in connects. Flip on once Autodesk
+# fixes array publishing.
+# native_multi_publish = false
+
+# Fold all-literal math to a Python value instead of building nodes
+# (``abs(-5)`` -> ``5``). Setting this false makes every rig command
+# materialize its network -- a debug/demo aid. Prefer the scoped
+# ``with force_nodes():`` over a committed global.
+# constant_folding = true
