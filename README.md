@@ -2,7 +2,7 @@
 A Python-based language to reduce the generation of complex node
 networks into a simpler human readable form.
 
-![](https://github.com/Eric-Vignola/rig/blob/v1/_examples/ye_olde_lerp.gif)
+![](https://github.com/Eric-Vignola/rig/blob/main/examples/ye_olde_lerp.gif)
 
 ## About
 In 3D applications built on node.attribute foundations (ex: Maya, Houdini)
