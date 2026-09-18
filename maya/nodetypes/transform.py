@@ -4,6 +4,7 @@ Transform node class
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Union
 
@@ -13,6 +14,36 @@ from maya.api import OpenMaya
 from rig.maya import pycmds
 from rig.maya.attribute import Attribute
 from rig.maya.nodetypes.dag_node import DAGNode, PyNode
+
+LOGGER = logging.getLogger(__name__)
+
+# the exact Maya node types serialize_hierarchy() captures,
+# a locator is a "transform" holding a locator shape.
+SERIALIZED_NODE_TYPES = ("transform", "joint")
+
+# cmds.addAttr(dataType=...) names of the typed attribute data kinds
+TYPED_DATA_NAMES = {
+    OpenMaya.MFnData.kString:      "string",
+    OpenMaya.MFnData.kStringArray: "stringArray",
+    OpenMaya.MFnData.kDoubleArray: "doubleArray",
+    OpenMaya.MFnData.kFloatArray:  "floatArray",
+    OpenMaya.MFnData.kIntArray:    "Int32Array",
+    OpenMaya.MFnData.kVectorArray: "vectorArray",
+    OpenMaya.MFnData.kPointArray:  "pointArray",
+    OpenMaya.MFnData.kMatrix:      "matrix",
+}
+
+# array data types older serialized hierarchies stored under "attributeType",
+# cmds.addAttr() only accepts them as "dataType".
+# "matrix" is left out, it is valid as both.
+LEGACY_DATA_TYPES = (
+    "stringArray",
+    "doubleArray",
+    "floatArray",
+    "Int32Array",
+    "vectorArray",
+    "pointArray",
+)
 
 
 class Transform(DAGNode):
@@ -272,10 +303,9 @@ class Transform(DAGNode):
                 self.name, c=True, ni=True, f=False, type="locator"
             )
 
+            # the shape's localScale/localPosition are not carried, only the kind
             if locators:
-                node.node_type      = "locator"
-                node.local_scale    = locators[-1].localScale.get()
-                node.local_position = locators[-1].localPosition.get()
+                node.node_type = "locator"
 
         node.scale        = np.array(self.s.get()[0])
         node.rotate       = np.array(self.r.get()[0])
@@ -288,25 +318,61 @@ class Transform(DAGNode):
         attrs = self.list_attr(ud=True)
         if attrs:
             node.user_defined_attributes = {}
-            for att in self.list_attr(ud=True):
+            for att in attrs:
                 try:
-                    data = {}
-                    if att.data_type == "string":
-                        data["dataType"] = att.data_type
-                    else:
-                        data["attributeType"] = att.data_type
-
-                    data["value"]       = att.get()
-                    data["keyable"]     = att.is_keyable
-                    data["channel_box"] = att.is_channel_box
-
-                    node.user_defined_attributes[att.name] = data
+                    node.user_defined_attributes[att.name] = self._serialize_user_attr(att)
 
                 # gracfully pass on this one
-                except Exception:
-                    pass
+                except Exception as e:
+                    LOGGER.warning(f"Skipped user defined attr {att.full_name}: {e}")
 
         return node
+
+    @staticmethod
+    def _serialize_user_attr(att: Attribute) -> dict:
+        """Returns the cmds.addAttr() spec of a user defined attr, with its value,
+        keyable and channel box states. Compound parents carry no value, their
+        children do. Multi values are [logical index, value] pairs.
+        """
+        data = {}
+
+        # a multi's own plug reports "compound", addAttr() wants the element
+        # type. it is read off the attribute, a getAttr on an element would
+        # create it.
+        if att.is_multi:
+            data["multi"] = True
+            if att.is_typed:
+                data_type = OpenMaya.MFnTypedAttribute(att.mobject).attrType()
+                if data_type not in TYPED_DATA_NAMES:
+                    raise ValueError(f"Unsupported multi data type: {data_type}")
+                data["dataType"] = TYPED_DATA_NAMES[data_type]
+            else:
+                data["attributeType"] = att.attribute_type
+            data["value"] = [[int(i), att[i].get()] for i in att.get_logical_indices()]
+
+        else:
+            # typed attrs (string, stringArray, doubleArray, etc.)
+            # are created with cmds.addAttr(dataType=...)
+            if att.is_typed:
+                data["dataType"] = att.data_type
+            else:
+                data["attributeType"] = att.data_type
+
+            if att.plug.isCompound:
+                data["numberOfChildren"] = att.num_children
+            else:
+                data["value"] = att.get()
+
+        if data.get("attributeType") == "enum":
+            data["enumName"] = ":".join(att.enums)
+
+        parent = att.get_parent()
+        if parent is not None:
+            data["parent"] = parent.name
+
+        data["keyable"]     = att.is_keyable
+        data["channel_box"] = att.is_channel_box
+        return data
 
     def serialize_hierarchy(self) -> HierarchyData:
         """Serialize a whole hierarchy.
@@ -324,6 +390,18 @@ class Transform(DAGNode):
             )
 
             for child in children:
+                # type="transform" also lists every type derived from it
+                # (constraints, ikHandles, etc.), a TransformData can't describe
+                # those, skip them along with what is under them.
+                if cmds.nodeType(child.name) not in SERIALIZED_NODE_TYPES:
+                    below = cmds.listRelatives(
+                        child.name, ad=True, type="transform", f=True
+                    )
+                    for name in [child.name] + (below or []):
+                        node_type          = cmds.nodeType(name)
+                        skipped[node_type] = skipped.get(node_type, 0) + 1
+                    continue
+
                 tree.append(child.serialize())
                 _recurse(child)
 
@@ -332,8 +410,13 @@ class Transform(DAGNode):
         root.parent_node = None
 
         # recurse through the hierarchy
-        tree = [root]
+        tree    = [root]
+        skipped = {}
         _recurse(self)
+
+        if skipped:
+            counts = ", ".join(f"{v} {k}" for k, v in sorted(skipped.items()))
+            LOGGER.warning(f"Skipped nodes that can't be serialized: {counts}")
 
         return HierarchyData(tree)
 
@@ -352,11 +435,28 @@ class Transform(DAGNode):
         Returns:
             A Skeleton object with updated node names (in case of duplication)
         """
-        from cgmath.hierarchy import HierarchyData
+        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, HierarchyData
 
         # make a copy of the hierarchy to handle new names
         # without affecting source data and set the desired parent.
         hierarchy = hierarchy.copy()
+
+        # drop the nodes that can't be rebuilt from this data (constraints, ikHandles,
+        # etc. found in older files) along with what is under them.
+        # parents come first, same as the creation loop below expects.
+        skipped = {}
+        dropped = set()
+        for node in hierarchy:
+            if node.node_type in SUPPORTED_NODE_TYPES:
+                if id(node.get_parent()) not in dropped:
+                    continue
+            dropped.add(id(node))
+            skipped[node.node_type] = skipped.get(node.node_type, 0) + 1
+
+        if skipped:
+            hierarchy.list[:] = [x for x in hierarchy.list if id(x) not in dropped]
+            counts            = ", ".join(f"{v} {k}" for k, v in sorted(skipped.items()))
+            LOGGER.warning(f"Skipped nodes that can't be created: {counts}")
 
         # if a parent is specified, make set the transforms relative to it
         if parent is not None:
@@ -376,9 +476,12 @@ class Transform(DAGNode):
         # create the hierarchy at identity before setting any attributes,
         # this is to avoid any default attrs being set by Maya.
         for node in hierarchy:
+            # use the parent's long name, the new node is created in world
+            # and may shadow the parent's short name.
             parent = node.get_parent()
             if parent:
-                parent = str(parent)
+                parent = getattr(parent, "name", parent)
+                parent = parent.long_name if isinstance(parent, DAGNode) else str(parent)
 
             # create node
             if node.node_type != "locator":
@@ -387,14 +490,14 @@ class Transform(DAGNode):
                     name = node.name
                     obj  = pycmds.polyCube(name=name, w=100, h=100, d=100, ch=False)[0]
                     if parent is not None:
-                        cmds.parent(obj, parent)
+                        cmds.parent(obj.long_name, parent)
                 else:
                     obj = PyNode.create(node.node_type, name=node, parent=parent)
 
             else:
                 obj = pycmds.spaceLocator(name=node.name)[0]
                 if parent is not None:
-                    cmds.parent(obj, parent)
+                    cmds.parent(obj.long_name, parent)
 
             # rename the node's string name wiht the PyNode object
             # in case of scene duplicate during parenting.
@@ -405,22 +508,69 @@ class Transform(DAGNode):
             node = node.name
             node.set_attrs(skip_missing=True, **hierarchy[i].to_attributes())
 
-            # add user defined attrs
-            if hierarchy[i].user_defined_attributes:
-                for name, attr in hierarchy[i].user_defined_attributes.items():
-                    attr        = attr.copy()
-                    value       = attr.pop("value", None)
-                    channel_box = attr.pop("channel_box", None)
-
-                    att = node.add_attr(name, **attr)
-
-                    if channel_box is not None and channel_box:
-                        att.is_channel_box = channel_box
-
-                    if value is not None:
-                        att.set(value)
+        # add user defined attrs once every transform is set,
+        # so a bad attr can never leave the hierarchy at identity.
+        for i, node in enumerate(hierarchy):
+            node  = node.name
+            specs = hierarchy[i].user_defined_attributes
+            if specs:
+                cls._create_user_attrs(node, specs)
 
         # return the created nodes
         created = [str(x.name) for x in hierarchy]
         cmds.select(created)
         return created
+
+    @staticmethod
+    def _create_user_attrs(node: DAGNode, specs: dict) -> None:
+        """Adds the user defined attrs of a serialized node and sets their values.
+
+        Every attr is added first, in file order: a compound only exists once
+        its children, which follow it, are added. Values are set second, on
+        the attrs that exist. A failure is logged and never stops the rest.
+        """
+        # pass 1: add
+        failed = set()
+        for name, attr in specs.items():
+            attr = {k: v for k, v in attr.items() if k not in ("value", "channel_box")}
+
+            # older files stored array data types as "attributeType"
+            if attr.get("attributeType") in LEGACY_DATA_TYPES:
+                attr["dataType"] = attr.pop("attributeType")
+
+            try:
+                node.add_attr(name, **attr)
+            except Exception as e:
+                failed.add(name)
+                LOGGER.warning(f"Skipped user defined attr {node}.{name}: {e}")
+
+        # pass 2: channel box and values
+        for name, attr in specs.items():
+            if name in failed:
+                continue
+
+            att = node.find_attr(name, quiet=True)
+            if att is None:
+                LOGGER.warning(
+                    f"User defined attr {node}.{name} was not created, "
+                    "a compound parent is missing children"
+                )
+                continue
+
+            try:
+                if attr.get("channel_box"):
+                    att.is_channel_box = True
+
+                value = attr.get("value")
+                if value is None:
+                    continue
+
+                # a multi's value is [logical index, value] pairs
+                if attr.get("multi"):
+                    for index, element in value:
+                        att[index].set(element)
+                else:
+                    att.set(value)
+
+            except Exception as e:
+                LOGGER.warning(f"Skipped user defined attr {node}.{name} value: {e}")

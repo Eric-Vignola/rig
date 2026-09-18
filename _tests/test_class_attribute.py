@@ -180,6 +180,18 @@ class TestAttributeClass(MayaTestCase):
         self.assertEqual(ids, [1, 4])
         self.assertEqual(vals, [1.0, 4.0])
 
+    def test_counted_array_attr_from_list(self):
+        # a single list is expanded to the (count, *items) form of cmds.setAttr()
+        for typ in ("stringArray", "vectorArray", "pointArray"):
+            val  = TYPE_DICT[typ]["val"]
+            attr = self.node.add_attr(f"test_{typ}_list", dataType=typ)
+            attr.set(val)
+            self.assertTrue(self.assert_list_equal(attr.get(), val))
+
+            # the explicit form still works
+            attr.set(len(val), *val)
+            self.assertTrue(self.assert_list_equal(attr.get(), val))
+
     def test_connections(self):
         attr1 = self.node.tx
         attr2 = self.node.ty

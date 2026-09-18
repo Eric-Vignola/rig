@@ -60,12 +60,23 @@ class DAGNode(DGNode):
         """[Internal] Creates a node of this type.
         This class can only use Maya APIs and must return a node name string.
         """
+        # resolve the parent to its long name before creating anything,
+        # the new node is created in world and may shadow the parent's short name.
+        if parent:
+            if isinstance(parent, DAGNode):
+                parent = parent.long_name
+            else:
+                found = cmds.ls(str(parent), long=True)
+                if len(found) != 1:
+                    raise ValueError(f"Parent must match one node: {parent} -> {found}")
+                parent = found[0]
+
         node = cmds.createNode(cls.NATIVE_NODE_TYPE, **kwargs)
         sel  = OpenMaya.MSelectionList()
         sel.add(node)
         mdagpath = sel.getDagPath(0)
         if parent:
-            cmds.parent(node, parent)
+            cmds.parent(mdagpath.fullPathName(), parent)
         return mdagpath.partialPathName()
 
     # --- properties and utils

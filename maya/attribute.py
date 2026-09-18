@@ -38,6 +38,9 @@ ATTR_TYPE_TO_FN = {
     OpenMaya.MFn.kUnitAttribute: OpenMaya.MFnUnitAttribute,
 }
 
+# typed array attrs cmds.setAttr() sets as (count, *items) instead of a list
+COUNTED_ARRAY_TYPES = ("stringArray", "vectorArray", "pointArray")
+
 # Geometry data type strings as reported by `cmds.getAttr(..., type=True)`.
 # `cmds.getAttr` cannot serialize these to Python values (it returns None and
 # emits a Maya error), so `Attribute.get()` dispatches to a smart fallback
@@ -650,6 +653,8 @@ class Attribute(str):
 
         Convenience features:
             - automatically assign `type` argument, if not provided.
+            - a single list given to a `stringArray`, `vectorArray` or `pointArray`
+              attr is expanded to the (count, *items) form cmds.setAttr() expects.
 
         Args:
             args, kwargs: args supported by cmds.setAttr()
@@ -662,10 +667,19 @@ class Attribute(str):
             if self.is_typed or typ == "matrix":
                 kwargs["type"] = typ
 
+        # special handling for counted array attrs
+        # - cmds.setAttr() wants the item count first, then the unpacked items
+        if (
+            len(args) == 1
+            and isinstance(args[0], (list, tuple, np.ndarray))
+            and self.data_type in COUNTED_ARRAY_TYPES
+        ):
+            cmds.setAttr(self.full_name, len(args[0]), *args[0], **kwargs)
+
         # special handling for compound attrs
         # - use the unpacked first argument if it is a valid iterable
         #   and attr type ends with a digit (double2, double3, etc.)
-        if (
+        elif (
             len(args) == 1
             and isinstance(args[0], (list, tuple, np.ndarray))
             and str(self.data_type)[-1].isdigit()
@@ -839,6 +853,8 @@ class Attribute(str):
 
     def get_parent(self) -> Attribute | None:
         """Returns the parent attribute, if any."""
+        if not self.plug.isChild:
+            return None
         plug = self.plug.parent()
         if plug and not plug.attribute().isNull():
             return Attribute(plug)
