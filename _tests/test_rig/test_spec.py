@@ -201,3 +201,33 @@ class TestOverwrite(MayaTestCase):
         node << Float("blend", min=-5, max=5, overwrite=False)
         # Original kept.
         self.assertEqual(cmds.attributeQuery("blend", node="ctrl", min=True), [0.0])
+
+class TestUnderscoreNames(MayaTestCase):
+    """Attributes whose name starts with ``_`` (``__parked__``) go through the
+    same paths as any other name; only names the node does NOT have keep
+    raising, so Python's private/dunder probes stay cheap and harmless."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_leading_underscore_spec_returns_plug(self):
+        node = Node.create("transform", name="ctrl")
+        plug = node << Float("__parked__")
+        self.assertEqual(str(plug), "ctrl.__parked__")
+        plug << 3.5
+        self.assertEqual(node.__parked__ >> None, 3.5)
+        node.__parked__ = 4.0
+        self.assertEqual(cmds.getAttr("ctrl.__parked__"), 4.0)
+
+    def test_leading_underscore_no_overwrite_returns_existing(self):
+        node = Node.create("transform", name="ctrl")
+        node << Float("_x") << 2
+        plug = node << Float("_x", overwrite=False)
+        self.assertEqual(str(plug), "ctrl._x")
+        self.assertEqual(plug >> None, 2.0)
+
+    def test_missing_underscore_name_still_raises(self):
+        node = Node.create("transform", name="ctrl")
+        with self.assertRaises(AttributeError):
+            node._nope
+        with self.assertRaises(AttributeError):
+            node.__deepcopy__

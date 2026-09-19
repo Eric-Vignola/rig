@@ -28,7 +28,7 @@ Op               Meaning
 ``a | b``        logical OR network
 ``a ^ b``        logical XOR network
 ``-a``           negate
-``~a``           ``1 - a``
+``~a``           logical NOT network
 ``a == b``       condition node (returns its output, NOT a bool!)
 ``a != b``       condition node
 ``<``, ``<=``,   condition nodes
@@ -49,6 +49,7 @@ from __future__ import annotations
 import itertools
 import logging
 import numbers
+import re
 from typing import Any
 
 import numpy as np
@@ -63,6 +64,9 @@ from rig.spec._base import _clone_attribute
 
 
 LOGGER = logging.getLogger(__name__)
+
+# An attribute name Maya keeps: what ``plug >> "name"`` clones under.
+_ATTR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class InjectionError(RuntimeError):
@@ -421,7 +425,7 @@ class Plug(Attribute):
         """
         from rig._internal.list import PlugList
         from rig._internal.shorthand import shorthand
-        from rig._internal.types import _is_attribute_spec
+        from rig._internal.types import _is_attribute_spec, _is_member_spec
 
         # Disconnect.
         if other is None:
@@ -437,6 +441,11 @@ class Plug(Attribute):
                 "the plug). Use 'plug << PlugList([...])' -- an INSTANCE -- to "
                 "connect."
             )
+
+        # Collection spec: a component plug becomes a member (the spec
+        # decides what a non-component plug means); returns this plug.
+        if _is_member_spec(other):
+            return other.inject(self)
 
         # Attribute spec.
         if _is_attribute_spec(other):
@@ -496,6 +505,14 @@ class Plug(Attribute):
         ``plug >> Node`` => clone this plug's spec onto the target node,
         return the new Plug.
 
+        ``plug >> "newName"`` => clone this plug's spec onto the SAME node
+        under ``newName``; ``plug >> "other.newName"`` onto another node.
+        Both go through the same :func:`_clone_attribute` call as
+        ``plug >> Node`` (multi indices mirrored, no connection made) and
+        then copy the current value; a name the target already has is a
+        ``TypeError`` (a clone never overwrites). Parking spells it:
+        ``node.cosinePower >> "__cosinePower__"``.
+
         ``plug >> container_node`` (when target is a Maya ``container``):
         publish this plug onto the container. Auto-routes to
         ``publish_input`` if the source plug is writable (a knob/input
@@ -509,13 +526,20 @@ class Plug(Attribute):
         ``rig.container`` instance): same as above, dispatched
         to the active container scope.
 
+        ``vtx[:8] >> Tag("x")`` (a collection spec) => query membership:
+        the native ids of these components that are in the collection.
+
         Anything else => ``TypeError`` (use ``<<`` to connect).
         """
         from rig._internal.list import PlugList
         from rig._internal.node import Node
+        from rig._internal.types import _is_member_spec
 
         if other is None:
             return self.get()
+
+        if _is_member_spec(other):
+            return other.query(self)
 
         # Retired connection-query sentinels.
         if other is PlugList or other is Plug:
@@ -592,10 +616,45 @@ class Plug(Attribute):
                 return self
             return self.__rshift__(leaf_frame.container_node)
 
+        if isinstance(other, str):
+            return self._clone_as(other)
+
         raise TypeError(
             f"'>>' from Plug({self}) to {type(other).__name__} is not supported. "
             f"Use '<<' to connect, or '>> None' to get the value."
         )
+
+    def _clone_as(self, target: str) -> "Plug":
+        """``plug >> "name"`` / ``plug >> "node.name"``: the named clone."""
+        from rig._internal.node import Node
+
+        node_name, sep, attr_name = target.rpartition(".")
+        if not sep:
+            node_name, attr_name = str(self.node), target
+        if not _ATTR_NAME_RE.fullmatch(attr_name):
+            raise TypeError(
+                f"'>>' clones an attribute under a plain name; {attr_name!r} is not "
+                f"one (identifiers of [A-Za-z0-9_] not starting with a digit)"
+            )
+        if not node_name or not cmds.objExists(node_name):
+            raise TypeError(
+                f"'>>' clones onto an existing node and '{node_name}' does not exist; "
+                f"write plug >> 'name' for the same node or plug >> 'node.name'"
+            )
+        dst_node = Node(node_name)
+        if dst_node._dg_node.has_attr(attr_name):
+            raise TypeError(
+                f"'{node_name}' already has an attribute '{attr_name}': '>>' clones, "
+                f"it never overwrites. Pick another name, or destroy it first "
+                f"({node_name} << destroy({attr_name!r}))"
+            )
+        new_plug = _clone_attribute(self, dst_node, attr_name=attr_name)
+        try:
+            if not self.is_multi:
+                new_plug << self.get()
+        except Exception as e:
+            LOGGER.debug("could not copy the value of %s onto %s: %s", self, new_plug, e)
+        return new_plug
 
     # -- arithmetic operators (each delegates to a NodeOp in _math_nodes) -- #
 
@@ -1870,13 +1929,19 @@ def _fanout_channel(src: Any, dst: Any) -> None:
     Gives a per-channel slot the same vocabulary a whole plug has: ``None``
     disconnects (as ``plug << None`` does), an ``_AttrSpec`` applies itself
     (``lock`` / ``hide`` / ``skip``), everything else is a set-or-connect.
+    A collection spec has no per-channel meaning and raises.
     """
-    from rig._internal.types import _is_attribute_spec
+    from rig._internal.types import _is_attribute_spec, _is_member_spec
 
     if src is None:
         _disconnect_incoming(dst)
     elif _is_attribute_spec(src):
         src.apply(dst)
+    elif _is_member_spec(src):
+        raise TypeError(
+            f"{src!r} is a collection spec and cannot be fanned into channel "
+            f"{dst}; inject it into the node or its components"
+        )
     else:
         _set_or_connect(src, dst)
 

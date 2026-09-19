@@ -40,7 +40,7 @@ from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.node import Node
 from rig._internal.plug import Plug
-from rig._internal.types import _is_attribute_spec
+from rig._internal.types import _is_attribute_spec, _is_components, _is_member_spec
 
 
 class PlugList(list):
@@ -104,7 +104,10 @@ class PlugList(list):
                 getattr(x, key) if isinstance(x, (Plug, Node)) else x for x in self
             )
         if isinstance(key, (list, tuple)):
-            return PlugList(super().__getitem__(k) for k in key)
+            # ``list.__getitem__`` explicitly: a zero-argument ``super()``
+            # inside a generator expression loses its ``__class__`` cell and
+            # raises ``TypeError: super(type, obj)`` instead of indexing.
+            return PlugList([list.__getitem__(self, k) for k in key])
         return super().__getitem__(key)
 
     # -- inject broadcast -- #
@@ -118,9 +121,23 @@ class PlugList(list):
                 "INSTANCE -- to connect."
             )
 
-        # Spec broadcast -- apply the same spec to every element node.
+        # Collection spec -- the whole list is the left-hand side (grouped
+        # per node by the spec); sits BEFORE the attribute-spec fan-out so a
+        # Components element is never fanned out element by element.
+        if _is_member_spec(other):
+            return other.inject(self)
+
+        # Spec broadcast -- apply the same spec to every element node. An
+        # element that cannot take an attribute is a TypeError naming it,
+        # raised before anything is applied; nothing is silently dropped.
         if _is_attribute_spec(other):
-            return PlugList(other.apply(x) for x in self if isinstance(x, (Plug, Node)))
+            for i, x in enumerate(self):
+                if not isinstance(x, (Plug, Node)):
+                    raise TypeError(
+                        f"element [{i}] ({x!r}) is not a Plug or a Node and cannot "
+                        f"take an attribute spec"
+                    )
+            return PlugList(other.apply(x) for x in self)
 
         # v4.F.b: empty PlugList from ``multi[:]`` slicing on an
         # unpopulated multi + a sequence source -> route the write
@@ -139,9 +156,11 @@ class PlugList(list):
                 parent << other
                 return self
 
-        # Asymmetric broadcast.
+        # Asymmetric broadcast. A Components element dispatches too, so
+        # ``PlugList([cube.f[:2], cube.f[2:]]) << [Tag("a"), Tag("b")]``
+        # pairs each selection with its own spec.
         for s, o in sequences(list(self), other):
-            if isinstance(s, (Plug, Node)):
+            if isinstance(s, (Plug, Node)) or _is_components(s):
                 s << o
         return self
 
@@ -151,6 +170,8 @@ class PlugList(list):
         """Broadcast ``__rshift__`` across each element.
 
         - ``pluglist >> None`` => :meth:`get` (numpy-aware stacked value).
+        - ``pluglist >> Tag("x")`` (a collection spec) => query membership of
+          the whole list at once; the spec answers with a plain value.
         - ``pluglist >> Node`` => clone each plug's spec onto the target,
           returning a :class:`PlugList` of new :class:`Plug` instances.
         - Other RHS types delegate to each element's :meth:`Plug.__rshift__`,
@@ -163,6 +184,9 @@ class PlugList(list):
         if other is None:
             return self.get()
 
+        if _is_member_spec(other):
+            return other.query(self)
+
         # Retired connection-query sentinel.
         if other is PlugList:
             raise TypeError(
@@ -171,7 +195,7 @@ class PlugList(list):
 
         results = []
         for x, y in sequences(list(self), other):
-            if isinstance(x, (Plug, Node)):
+            if isinstance(x, (Plug, Node)) or _is_components(x):
                 results.append(x >> y)
             else:
                 results.append(x)

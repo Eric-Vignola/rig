@@ -101,6 +101,41 @@ class TestPlugListSlicing(MayaTestCase):
         pl   = PlugList([node])
         self.assertIs(pl[0], node)
 
+    # -- list / tuple keys (fancy indexing) -- #
+
+    def test_list_key_returns_pluglist_of_those_slots(self):
+        # Regression: a zero-argument ``super()`` inside a generator
+        # expression raised ``TypeError: super(type, obj)`` for every list
+        # key, so ``pl[[0, 2]]`` was broken.
+        for i in range(3):
+            Node.create("transform", name=f"c{i}")
+        pl  = PlugList(["c0", "c1", "c2"]).tx
+        sub = pl[[0, 2]]
+        self.assertIsInstance(sub, PlugList)
+        self.assertEqual([str(x) for x in sub], ["c0.translateX", "c2.translateX"])
+
+    def test_tuple_key_and_negative_index(self):
+        for i in range(3):
+            Node.create("transform", name=f"c{i}")
+        pl = PlugList(["c0", "c1", "c2"]).tx
+        self.assertEqual([str(x) for x in pl[(1,)]], ["c1.translateX"])
+        self.assertEqual([str(x) for x in pl[[-1, 0]]], ["c2.translateX", "c0.translateX"])
+
+    def test_list_key_out_of_range_raises_indexerror(self):
+        Node.create("transform", name="c0")
+        with self.assertRaises(IndexError):
+            PlugList(["c0"]).tx[[3]]
+
+    def test_list_key_on_component_slice(self):
+        cube  = cmds.polyCube(name="pc")[0]
+        shape = Node(cmds.listRelatives(cube, shapes=True)[0])
+        sub   = shape.vtx[:8][[0, 2]]
+        self.assertIsInstance(sub, PlugList)
+        self.assertEqual(
+            [str(x) for x in sub],
+            [f"{shape}.controlPoints[0]", f"{shape}.controlPoints[2]"],
+        )
+
 
 class TestPlugListArithmetic(MayaTestCase):
     TEST_START_NEW_SCENE = True

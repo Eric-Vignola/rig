@@ -408,8 +408,9 @@ class TestNodeComponentAliasResolution(MayaTestCase):
         cube  = cmds.polyCube(name="cube_for_unknown")[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
         node  = Node(shape)
-        # `e` (edges) is a component type but NOT in the alias map and
-        # has no underlying plug -- must still raise AttributeError.
+        # A name that is neither an attribute, a plug-backed component alias
+        # nor a face/edge selection (`f` / `e` resolve to Components now)
+        # must still raise AttributeError.
         with self.assertRaises(AttributeError):
             _ = node.completely_made_up_attribute_xyz
 

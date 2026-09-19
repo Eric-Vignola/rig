@@ -615,6 +615,97 @@ class TestPlugIntrospection(MayaTestCase):
             _ = node.tx >> 5  # invalid RHS for >>
 
 
+class TestPlugRshiftNamedClone(MayaTestCase):
+    """``plug >> "name"`` clones onto the same node, ``plug >> "node.name"``
+    onto another; both are the ``plug >> Node`` clone under a chosen name,
+    plus the value. A taken name refuses: a clone never overwrites."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        from rig.spec import Color, Float
+
+        self.src = Node.create("transform", name="src")
+        self.dst = Node.create("transform", name="dst")
+        self.src << Float("blend", min=0, max=1) << 0.25
+        self.src << Color("tint") << [0.1, 0.2, 0.3]
+
+    def test_bare_name_clones_onto_the_same_node_with_the_value(self):
+        before = set(cmds.ls())
+        plug   = self.src.blend >> "blend2"
+        self.assertIsInstance(plug, Plug)
+        self.assertEqual(str(plug), "src.blend2")
+        self.assertEqual(set(cmds.ls()), before)
+        self.assertEqual(cmds.attributeQuery("blend2", node="src", attributeType=True), "double")
+        self.assertAlmostEqual(cmds.getAttr("src.blend2"), 0.25)
+        # the source is untouched and independent
+        self.assertAlmostEqual(cmds.getAttr("src.blend"), 0.25)
+        plug << 0.75
+        self.assertAlmostEqual(cmds.getAttr("src.blend"), 0.25)
+
+    def test_dotted_name_clones_onto_another_node(self):
+        plug = self.src.blend >> "dst.mix"
+        self.assertEqual(str(plug), "dst.mix")
+        self.assertTrue(cmds.attributeQuery("mix", node="dst", exists=True))
+        self.assertFalse(cmds.attributeQuery("mix", node="src", exists=True))
+        self.assertAlmostEqual(cmds.getAttr("dst.mix"), 0.25)
+
+    def test_compound_clones_as_a_compound(self):
+        import numpy as np
+
+        plug = self.src.tint >> "dst.tint"
+        self.assertEqual(cmds.attributeQuery("tint", node="dst", attributeType=True), "double3")
+        self.assertEqual(len(cmds.attributeQuery("tint", node="dst", listChildren=True)), 3)
+        np.testing.assert_array_almost_equal(plug >> None, [0.1, 0.2, 0.3])
+        same = self.src.tint >> "__tint__"
+        self.assertEqual(str(same), "src.__tint__")
+        self.assertEqual(same.num_children, 3)
+        np.testing.assert_array_almost_equal(same >> None, [0.1, 0.2, 0.3])
+
+    def test_underscore_names_work(self):
+        plug = self.src.blend >> "__blend__"
+        self.assertEqual(str(plug), "src.__blend__")
+        self.assertAlmostEqual(self.src.__blend__ >> None, 0.25)
+        self.assertIn("__blend__", cmds.listAttr("src", userDefined=True))
+
+    def test_existing_name_refuses_and_writes_nothing(self):
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(TypeError, "never overwrites"):
+            self.src.blend >> "tint"
+        with self.assertRaisesRegex(TypeError, "never overwrites"):
+            self.src.blend >> "dst.translateX"
+        with self.assertRaisesRegex(TypeError, "does not exist"):
+            self.src.blend >> "nope.mix"
+        with self.assertRaisesRegex(TypeError, "not one"):
+            self.src.blend >> "1bad"
+        with self.assertRaisesRegex(TypeError, "not one"):
+            self.src.blend >> "dst."
+        self.assertEqual(set(cmds.ls()), before)
+        self.assertAlmostEqual(cmds.getAttr("src.tint")[0][0], 0.1)
+        self.assertEqual(cmds.listAttr("src", userDefined=True), ["blend", "tint", "tintR", "tintG", "tintB"])
+
+    def test_incoming_connection_is_not_moved_like_rshift_node(self):
+        driver = Node.create("transform", name="driver")
+        self.src.blend << driver.tx
+        driver.tx << 0.5
+        named = self.src.blend >> "blendCopy"
+        cloned = self.src.blend >> self.dst
+        for plug in (named, cloned):
+            self.assertEqual(list(plug.get_inputs()), [])
+        self.assertEqual(
+            cmds.listConnections("src.blend", source=True, destination=False, plugs=True),
+            ["driver.translateX"],
+        )
+        self.assertEqual(
+            cmds.listConnections("driver.translateX", source=False, destination=True, plugs=True),
+            ["src.blend"],
+        )
+        # the named clone carries the evaluated value, the Node clone the default
+        self.assertAlmostEqual(cmds.getAttr("src.blendCopy"), 0.5)
+        self.assertAlmostEqual(cmds.getAttr("dst.blend"), 0.0)
+
+
 class TestPlugRshiftNumpy(MayaTestCase):
     """``Plug >> None`` returns numpy arrays for compound numeric attrs."""
 

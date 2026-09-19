@@ -25,6 +25,34 @@ Operator conventions:
       addAttr-spec / type-shorthand. Chains because it returns the LHS.
     * ``>>`` (left-to-right) -- introspect: ``plug >> None`` reads the value;
       ``plug >> Node`` clones the attr-spec onto another node.
+    * ``<<`` with a collection spec (``Tag("x")``) makes the LHS a member
+      and returns the LHS, so collections chain: ``cube.f[:3] << Tag("a")
+      << Tag("b")``. An attribute spec returns the new plug instead (a
+      value goes next): ``<<`` returns what the next ``<<`` should target.
+    * ``-Spec("x")`` removes the LHS from that collection; ``Spec()`` (the
+      same object as ``Spec(None)``) names no particular one: on ``<<`` it
+      purges, removing the LHS from every collection of that kind; on
+      ``>>`` it enumerates, ``cube >> Tag()`` being ``Tag.of(cube)``.
+    * ``>>`` with a collection spec queries a plain value (the native ids
+      of the LHS that are members); a missing collection is a ValueError.
+      ``node >> Float("x")`` DECLARES an output attr, ``node >> Tag("x")``
+      QUERIES: the RHS family decides.
+    * An attribute plug on the left stands for its node, for every kind:
+      ``cube.tx << Layer("x")`` and ``cube.t >> Layer()`` act on ``cube``.
+      Component plugs (``cube.vtx[:3]``) keep their own meaning, and a
+      deformer's ``componentTagExpression`` plug receives a ``Tag``'s name.
+    * A node on the left of a per-node kind means the collection itself:
+      ``cube << Tag("x")`` creates the tag, ``cube << -Tag("x")`` deletes
+      it; its components (``cube.vtx[:5]``, ``cube.f``) mean membership.
+    * Materials (``rig.shade``) are exclusive: ``cube << Blinn("x")`` moves
+      the LHS into x's shading engine (built on first use);
+      ``-Material("x")`` carves the LHS out; ``Material()`` leaves it in
+      no engine (green); ``Default()`` reverts to initialShadingGroup.
+    * ``Layer`` (display layers) is exclusive and holds objects only, never
+      components: ``cube << Layer("x")`` moves cube (its children follow
+      through the DAG without joining); ``-Layer("x")`` and ``Layer()``
+      both land in defaultLayer, which reads as "no layer" (``cube >>
+      Layer()`` is ``None`` there).
     * ``+ - * / ** // %`` -- Pythonic math (build ``plusMinusAverage``,
       ``multiplyDivide``, ``modulo``, ...). Matrix and quaternion are
       detected and routed to the right node type.
@@ -66,8 +94,10 @@ from rig import (
     functions,
     interpolate,
     matrix,
+    membership,
     quaternion,
     random,
+    shade,
     trigonometry,
     tween,
     vector,
@@ -110,6 +140,7 @@ from rig._internal.memoize import memoize, prune_memoize_caches, vectorize
 from rig._internal.node import lift, Node
 from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
+from rig.membership import Components, Layer, Tag
 
 # v4.T: Re-export the spec submodule's public API for top-level
 # ergonomic imports. Spec types are value types used inline
@@ -150,6 +181,10 @@ __all__ = [
     "PlugList",
     "Container",
     "InjectionError",
+    # Membership (collection specs and the component carrier)
+    "Components",
+    "Layer",
+    "Tag",
     # Container management
     "container",
     "set_options",
@@ -182,6 +217,9 @@ __all__ = [
     "tween",
     # Function libraries (v2.D)
     "random",
+    # Membership grammar
+    "membership",
+    "shade",
     # Cross-type dispatch verbs (Model A)
     "dist",
     "lerp",

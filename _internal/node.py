@@ -25,8 +25,15 @@ from typing import Any, Union
 import numpy as np
 from rig.maya.attribute import Attribute
 from rig.maya.nodetypes._base import PyNode
-from rig.maya.nodetypes.dg_node import DGNode
+from rig.maya.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
 from rig._internal.plug import _maybe_component_plug, Plug
+
+
+# Names that ``__getattr__`` resolves as geometry components AFTER the real
+# attribute lookup fails: faces / edges become a ``Components`` (they have no
+# plug), and the point aliases (``vtx`` / ``cv`` / ``pt`` / ...) reach through
+# a transform to its single geometry shape.
+_COMPONENT_TOKENS = frozenset({"f", "e"}) | _COMPONENT_ALIASES
 
 
 class Node:
@@ -122,10 +129,42 @@ class Node:
 
     def __getattr__(self, attr_name: str) -> Any:
         """Delegate to the underlying ``DGNode``; re-wrap ``Attribute`` returns
-        as :class:`Plug`."""
+        as :class:`Plug`.
+
+        Real attributes always win (``curveShape.f`` is ``form``,
+        ``meshShape.face`` is a live plug). Only once the lookup has raised
+        do ``f`` / ``e`` become a :class:`Components` on a mesh shape or a
+        transform with exactly one mesh shape, and do the point aliases
+        (``vtx`` / ``cv`` / ``pt`` / ``map`` / ``uv``) resolve through a
+        transform with exactly one geometry shape (``Node("pCube1").vtx``).
+        Two shapes raise an ``AttributeError`` naming them.
+        """
         if attr_name.startswith("_"):
-            raise AttributeError(attr_name)
-        result = getattr(self._dg_node, attr_name)
+            # Python probes private and dunder names constantly
+            # (``__deepcopy__``, ``_ipython_canary_method_should_not_exist_``),
+            # so only a Maya attribute that really exists on the node gets
+            # through; ``_dg_node`` itself is the slot this lookup runs on.
+            if attr_name == "_dg_node" or not self._dg_node.has_attr(attr_name):
+                raise AttributeError(attr_name)
+        try:
+            result = getattr(self._dg_node, attr_name)
+        except AttributeError:
+            if attr_name in _COMPONENT_TOKENS:
+                # Lazy: members.py imports Node at module top.
+                from rig._internal.members import (
+                    _maybe_components,
+                    _single_geometry_shape,
+                )
+
+                if attr_name in ("f", "e"):
+                    components = _maybe_components(self, attr_name)
+                    if components is not None:
+                        return components
+                else:
+                    shape = _single_geometry_shape(self)
+                    if shape is not None:
+                        return getattr(shape, attr_name)
+            raise
         if isinstance(result, Attribute) and not isinstance(result, Plug):
             # Upgrade multi-dimensional geometry components (NURBS-surface
             # ``cv``, lattice ``pt``) to a ComponentPlug so ``node.cv[u][v]`` /
@@ -154,9 +193,12 @@ class Node:
     def __setattr__(self, name: str, value: Any) -> None:
         """``node.tx = 5`` is sugar for ``node.tx << 5``.
 
-        Internal state (``_``-prefix) bypasses to normal ``__setattr__``.
+        Internal state (``_``-prefix) bypasses to normal ``__setattr__``
+        unless the node really has an attribute of that name.
         """
-        if name.startswith("_"):
+        if name.startswith("_") and (
+            name == "_dg_node" or not self._dg_node.has_attr(name)
+        ):
             object.__setattr__(self, name, value)
             return
         plug = self.__getattr__(name)
@@ -167,6 +209,9 @@ class Node:
     def __lshift__(self, other: Any) -> Any:
         """``node << X`` -- dispatches by RHS type:
 
+        - Collection spec (``Tag``, a material, ...) -- makes this node a
+          member (``node << Tag("x")`` on a per-node kind means the
+          collection itself) and returns the node.
         - ``_AttrSpec`` (``Float``, ``Vector``, ``lock``, ...) -- adds an
           attribute on this node.
         - **Matrix-shaped source on a transform** -- applies the matrix to
@@ -180,7 +225,15 @@ class Node:
         - Anything else => ``TypeError`` (use ``node.<attr> << value`` to
           target a specific channel).
         """
-        from rig._internal.types import _is_attribute_spec, _is_matrix
+        from rig._internal.types import (
+            _is_attribute_spec,
+            _is_matrix,
+            _is_member_spec,
+        )
+
+        # 0. Collection-spec injection -- membership; returns the node.
+        if _is_member_spec(other):
+            return other.inject(self)
 
         # 1. Attribute-spec injection -- add an attribute on this node.
         if _is_attribute_spec(other):
@@ -252,14 +305,20 @@ class Node:
         metadata / constants (downstream code can READ them; nothing
         can clobber them).
 
+        ``node >> Tag("x")`` (a collection spec) QUERIES membership and
+        returns a plain value: the RHS family decides between declaring
+        an output attribute and asking a question.
+
         Anything else raises :class:`TypeError` (use :class:`Plug`'s
         ``>>`` for value introspection or attr-spec cloning).
         """
         # Lazy imports to avoid circulars.
-        from rig._internal.types import _is_attribute_spec
+        from rig._internal.types import _is_attribute_spec, _is_member_spec
 
         if other is None:
             return self._dg_node
+        if _is_member_spec(other):
+            return other.query(self)
         if _is_attribute_spec(other):
             # Stamp writable=False onto a fresh copy of the spec so the
             # caller's instance is untouched (specs may be reused).

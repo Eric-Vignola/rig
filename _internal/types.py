@@ -66,6 +66,24 @@ def _is_attribute_spec(obj: Any) -> bool:
     return isinstance(obj, _AttrSpec)
 
 
+def _is_member_spec(obj: Any) -> bool:
+    """Return ``True`` if ``obj`` is a collection spec
+    (:class:`rig._internal.members._MemberSpec`: ``Tag``, a material, ...)."""
+    # Local import: members.py imports Node / Plug / PlugList at module top,
+    # so it must never be loaded while this module is being imported.
+    from rig._internal.members import _MemberSpec
+
+    return isinstance(obj, _MemberSpec)
+
+
+def _is_components(obj: Any) -> bool:
+    """Return ``True`` if ``obj`` is a :class:`rig._internal.members.Components`
+    (``cube.f[:3]``, ``Components(node, "vtx", ids)``)."""
+    from rig._internal.members import Components
+
+    return isinstance(obj, Components)
+
+
 # ---------- Sequence / scalar tests ------------------------------------- #
 
 
