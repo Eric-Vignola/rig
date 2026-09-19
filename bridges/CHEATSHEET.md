@@ -17,7 +17,7 @@ Concepts and the file map live in [`README.md`](README.md).
 | 3 | [Values pass through](#3-values-pass-through) | `getAttr`, `objExists`, `nodeType`, `xform`, `listAttr`, the two wrap traps |
 | 4 | [Arguments go in as strings](#4-arguments-go-in-as-strings) | `Node` / list-of-`Node` / `Plug` arguments, in args and kwargs |
 | 5 | [The `_NO_COERCE` list](#5-the-_no_coerce-list) | nine commands whose arguments reach Maya untouched |
-| 6 | [Every result joins the active container](#6-every-result-joins-the-active-container) | the query gotcha, `container=False`, what refuses |
+| 6 | [Only created nodes join the active container](#6-only-created-nodes-join-the-active-container) | queries and edits never capture, `container=False`, what refuses |
 | 7 | [`Node.wrap` for manual use](#7-nodewrap-for-manual-use) | converting raw `maya.cmds` results |
 | 8 | [Factories: the create kwargs](#8-factories-the-create-kwargs) | `name` / `n`, `parent` / `p`, `shared` / `s`, `skipSelect` / `ss` |
 | 9 | [Attribute kwargs go through `<<`](#9-attribute-kwargs-go-through-) | scalars, compounds, multis, plugs, matrices, specs come after |
@@ -184,52 +184,58 @@ have worked; the bridge does not rely on that anywhere else.
 
 ---
 
-## 6. Every result joins the active container
+## 6. Only created nodes join the active container
 
-Inside `with container(...)`, whatever a wrapper returns is added to the
-container — created or merely looked up. A query captures the queried node.
+Inside `with container(...)`, the nodes a wrapper *creates* are added to the
+container — tracked through Maya's node-added message, not read off the
+result. A query never captures what it finds; an edit never captures what it
+touches.
 
 ```python
 cmds.file(new=True, force=True)
 ctrl = rc.createNode("transform", name="ctrl")           # made OUTSIDE any scope
 mesh = rc.polyCube(name="mesh")[0]
 with container("build") as ctn:
-    driven = rc.createNode("transform", name="driven")   # created here: joins, as expected
-    found  = rc.ls("ctrl")                               # a query -- and ctrl joins too
+    driven = rc.createNode("transform", name="driven")   # created here: joins
+    found  = rc.ls("ctrl")                               # a query: ctrl stays out
     shape  = rc.listRelatives(mesh, s=True)              # so does meshShape
-    value  = rc.getAttr("ctrl.t")                        # a value: nothing to add, nothing happens
-print(repr(ctn), cmds.container("build", q=True, nodeList=True))   # Container("build") ['driven', 'ctrl', 'meshShape']
+    value  = rc.getAttr("ctrl.t")                        # a value: nothing to add
+print(repr(ctn), cmds.container("build", q=True, nodeList=True))   # Container("build") ['driven']
 ```
 
-Commands that return the nodes they touched capture those too:
+Commands that return nodes they merely touched capture none of them, and a
+command that creates more than it returns enrols all of it:
 
 ```python
 cmds.file(new=True, force=True)
 kid = rc.createNode("transform", name="kid")
 with container("build"):
     root = rn.transform(name="root")
-    rc.parent(kid, root)                                 # returns the child, so the child joins
-print(cmds.container("build", q=True, nodeList=True))    # ['root', 'kid']
+    rc.parent(kid, root)                                 # returns the child; the child stays out
+    box  = rc.polyCube(name="box")                       # returns transform + polyCube; the shape joins too
+print(cmds.container("build", q=True, nodeList=True))    # ['root', 'polyCube1', 'box', 'boxShape']
 ```
 
-`container=False` opts out. It is popped before the call reaches Maya, on any
-command, whether or not the command creates anything:
+`container=False` keeps the created nodes out. It is popped before the call
+reaches Maya, on any command; on a query it is accepted and changes nothing:
 
 ```python
 cmds.file(new=True, force=True)
 ctrl = rc.createNode("transform", name="ctrl")
 with container("build"):
     driven = rc.createNode("transform", name="driven")
-    found  = rc.ls("ctrl", container=False)
+    found  = rc.ls("ctrl", container=False)              # same as without the flag
     loose  = rc.createNode("transform", name="loose", container=False)
 print(cmds.container("build", q=True, nodeList=True))    # ['driven']
 ```
 
-Maya's default nodes refuse membership with a warning per node and stay out:
+Maya's default nodes refuse membership with a warning per node and stay out
+— which you only see when one is *created* in a scope, since a query no
+longer offers them:
 
 ```python
 with container("scope"):
-    cams = rc.ls(type="camera")                          # Warning: Skipping 'perspShape'. Node cannot be added to assets. (x4)
+    cams = rc.ls(type="camera")                          # quiet: a query adds nothing
 print(cams, cmds.container("scope", q=True, nodeList=True))
 # PlugList([Node("frontShape"), Node("perspShape"), Node("sideShape"), Node("topShape")]) None
 ```

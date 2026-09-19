@@ -31,11 +31,46 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from maya import cmds as _mc
+from maya.api import OpenMaya as _om
 from rig._internal.node import Node
 
 
 # Per-command wrapper cache. Built lazily by ``__getattr__``.
 _WRAPPER_CACHE: dict = {}
+
+
+def _call_tracking_creation(fn: Callable, args: tuple, kwargs: dict) -> tuple:
+    """Call ``fn`` and return ``(result, created)``: the full names of the
+    nodes Maya created during the call.
+
+    A node-added callback is the only exact way to tell what a command
+    made from what it merely returned: a query returns nodes it looked up,
+    ``parent`` and ``rename`` return nodes that already existed, and
+    ``polyCube`` makes a shape it never returns. A node the command created
+    and deleted again within the call is dropped (its handle is no longer
+    valid).
+    """
+    handles = []
+
+    def on_added(obj, _client_data):
+        handles.append(_om.MObjectHandle(obj))
+
+    callback_id = _om.MDGMessage.addNodeAddedCallback(on_added, "dependNode")
+    try:
+        result = fn(*args, **kwargs)
+    finally:
+        _om.MMessage.removeCallback(callback_id)
+
+    created = []
+    for handle in handles:
+        if not handle.isValid():
+            continue
+        obj = handle.object()
+        if obj.hasFn(_om.MFn.kDagNode):
+            created.append(_om.MFnDagNode(obj).fullPathName())
+        else:
+            created.append(_om.MFnDependencyNode(obj).name())
+    return result, created
 
 
 # Commands that should NOT have their args auto-coerced (they take callback
@@ -121,16 +156,21 @@ def _make_wrapper(name: str) -> Callable:
             args   = tuple(_coerce(a) for a in args)
             kwargs = {k: _coerce(v) for k, v in kwargs.items()}
 
-        result = fn(*args, **kwargs)
+        # Only the nodes this call CREATES join the active container scope;
+        # a query, a parent or a rename never moves a node into it. Track
+        # creation only when a scope is open, so the callback costs nothing
+        # otherwise.
+        from rig._internal.container import container
 
-        # Auto-add created nodes to the active container scope.
-        if add_to_container and result:
-            from rig._internal.container import container
-
-            try:
-                container.add(result)
-            except Exception:
-                pass
+        if add_to_container and container._stack:
+            result, created = _call_tracking_creation(fn, args, kwargs)
+            if created:
+                try:
+                    container.add(created)
+                except Exception:
+                    pass
+        else:
+            result = fn(*args, **kwargs)
 
         return _wrap_result(result)
 

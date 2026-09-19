@@ -93,6 +93,56 @@ class TestCommandsWrappers(MayaTestCase):
         self.assertTrue(result)
 
 
+class TestCommandsContainerScope(MayaTestCase):
+    """Only the nodes a call CREATES join the active container: a query,
+    a parent or a rename never moves a node in; creation is tracked through
+    Maya's node-added message, not read off the result."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _members(self, name):
+        return sorted(cmds.container(name, query=True, nodeList=True) or [])
+
+    def test_created_nodes_join_queries_and_edits_never_capture(self):
+        from rig import container
+
+        ctrl = rc.createNode("transform", name="ctrl")          # outside any scope
+        mesh = rc.polyCube(name="mesh")[0]
+        with container("build"):
+            driven = rc.createNode("transform", name="driven")
+            rc.ls("ctrl")                                        # a query
+            rc.listRelatives(mesh, s=True)                       # a query
+            rc.getAttr("ctrl.t")                                 # a value
+            rc.parent(ctrl, driven)                              # an edit: returns the child
+            rc.rename(mesh, "renamed")                           # an edit: returns the node
+        self.assertEqual(self._members("build"), ["driven"])
+        self.assertIsNone(cmds.container(query=True, findContainer=["driven|ctrl"]))
+        self.assertIsNone(cmds.container(query=True, findContainer=["renamed"]))
+        self.assertIsNone(cmds.container(query=True, findContainer=["renamedShape"]))
+
+    def test_creation_is_tracked_not_read_off_the_result(self):
+        from rig import container
+
+        with container("build"):
+            rc.polyCube(name="box")                              # returns transform + polyCube; the shape joins too
+        self.assertEqual(self._members("build"), ["box", "boxShape", "polyCube1"])
+
+    def test_container_false_keeps_created_nodes_out_and_is_harmless_on_a_query(self):
+        from rig import container
+
+        rc.createNode("transform", name="ctrl")
+        with container("build"):
+            rc.createNode("transform", name="driven")
+            found = rc.ls("ctrl", container=False)
+            rc.createNode("transform", name="loose", container=False)
+        self.assertEqual([str(x) for x in found], ["ctrl"])
+        self.assertEqual(self._members("build"), ["driven"])
+
+    def test_no_scope_means_no_tracking(self):
+        n = rc.createNode("transform", name="free")
+        self.assertIsNone(cmds.container(query=True, findContainer=[str(n)]))
+
+
 class TestNodeWrap(MayaTestCase):
     """v4.C: explicit ``Node.wrap()`` for direct ``maya.cmds`` results."""
 

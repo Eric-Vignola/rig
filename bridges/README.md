@@ -122,12 +122,13 @@ Pass names (`str(node)`) to those. In Maya 2025 `maya.cmds` stringifies a
 `Node` on its own, so `rc.expression(o=node)` happens to work anyway; the
 bridge converts explicitly rather than lean on that.
 
-### Every result joins the active container
+### Only the nodes a call creates join the active container
 
-This is the one behaviour to keep in mind. Inside a `with container("name"):`
-block, **whatever a wrapper returns is added to that container** — the
-wrapper cannot tell a node it created from a node it merely looked up. So a
-*query* inside a scope captures the queried node:
+Inside a `with container("name"):` block, **the nodes a wrapper creates are
+added to that container** — and nothing else. The wrapper watches Maya's
+node-added message for the duration of the call, so it knows what the
+command made as opposed to what it merely returned. A query, a `parent` or a
+`rename` returns nodes that already existed and moves none of them:
 
 ```python
 from rig import container
@@ -136,22 +137,24 @@ cmds.file(new=True, force=True)
 ctrl = rc.createNode("transform", name="ctrl")           # made OUTSIDE any scope
 with container("build"):
     driven = rn.transform(name="driven")
-    rc.ls("ctrl")                                         # a query...
-print(cmds.container("build", q=True, nodeList=True))    # ['driven', 'ctrl'] -- ...and ctrl is now a member
+    rc.ls("ctrl")                                         # a query: looks, never captures
+    rc.parent(ctrl, driven)                               # an edit: moves ctrl in the DAG, not into the scope
+print(cmds.container("build", q=True, nodeList=True))    # ['driven']
 ```
 
-`rc.listRelatives(mesh, s=True)` captures the shape, `rc.parent(kid, root)`
-captures `kid` (the command returns the child), `rc.ls(type="transform")`
-captures every transform in the scene. Value results are harmless: a
-`float`, a `bool` or a list of tuples has no node to add and is ignored
-quietly. Maya's default cameras refuse membership with a warning per node
-(`Skipping 'perspShape'. Node cannot be added to assets.`) and stay out.
+Creation is tracked exactly, not by what comes back: `rc.polyCube()` returns
+the transform and the `polyCube` node, and the mesh shape it also made joins
+with them. Value results are harmless: a `float`, a `bool` or a list of
+tuples has nothing to add. Maya's default cameras refuse membership with a
+warning per node (`Skipping 'perspShape'. Node cannot be added to assets.`)
+and stay out.
 
-The opt-out is `container=False`. The wrapper pops it before Maya sees it, on
-every command — `rc.ls("ctrl", container=False)`,
-`rc.delete(node, container=False)` — and the factories take it too:
-`rn.transform(name="loose", container=False)`. Outside any `with container`
-block there is nothing to join, and the flag changes nothing.
+The opt-out is `container=False`: the created nodes stay where Maya put
+them. The wrapper pops the flag before Maya sees it, on every command —
+`rc.createNode("transform", container=False)` — and the factories take it
+too: `rn.transform(name="loose", container=False)`. On a query it is
+accepted and changes nothing, and outside any `with container` block there
+is nothing to join.
 
 ### A factory is `createNode` plus `<<`
 

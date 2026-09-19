@@ -1176,9 +1176,19 @@ class TestMaterialContainer(MayaTestCase):
     def _owner(self, node):
         return cmds.container(query=True, findContainer=[str(node)])
 
-    def test_new_network_joins_the_scope_geometry_does_not(self):
+    def test_a_new_network_stays_out_of_the_scope_by_default(self):
         with container("look"):
             self.cube << Blinn("red")
+        self.assertIsNone(self._owner("red"))
+        self.assertIsNone(self._owner("redSG"))
+        for info in cmds.listConnections("redSG.message", type="materialInfo"):
+            self.assertIsNone(self._owner(info))
+        self.assertIsNone(cmds.container("look", query=True, nodeList=True))
+        self.assertEqual(_members("redSG"), ["cubeShape"])
+
+    def test_container_true_enrols_the_network_geometry_never(self):
+        with container("look"):
+            self.cube << Blinn("red", container=True)
         members = cmds.container("look", query=True, nodeList=True)
         info    = cmds.listConnections("redSG.message", type="materialInfo")
         self.assertEqual(sorted(members), sorted(["red", "redSG", *info]))
@@ -1190,19 +1200,19 @@ class TestMaterialContainer(MayaTestCase):
     def test_no_flatten_prefix_in_a_nested_scope(self):
         with container("outer"):
             with container("inner"):
-                self.cube << Blinn("red")
+                self.cube << Blinn("red", container=True)
         self.assertTrue(cmds.objExists("red"))
         self.assertFalse(cmds.objExists("inner_red"))
         self.assertEqual(self._owner("red"), "outer")
         self.assertEqual(self._owner("redSG"), "outer")
 
-    def test_found_nodes_are_never_moved_and_container_false_opts_out(self):
+    def test_found_nodes_are_never_moved(self):
         self.cube << Blinn("red")
         other = _cube("other")
         with container("look"):
-            other << Blinn("red")
-            other << Blinn("free", container=False)
-            other.f[:2] << Blinn("inside")
+            other << Blinn("red", container=True)      # found: stays where it is
+            other << Blinn("free")                     # new, default: out
+            other.f[:2] << Blinn("inside", container=True)
         self.assertIsNone(self._owner("red"))
         self.assertIsNone(self._owner("redSG"))
         self.assertIsNone(self._owner("free"))
@@ -1226,9 +1236,9 @@ class TestMaterialContainer(MayaTestCase):
         self.assertIsNone(self._owner("loose"))
         self.assertEqual(cmds.container("look", query=True, nodeList=True), None)
 
-    def test_deleting_the_container_leaves_the_mesh_green_and_repair_fixes(self):
+    def test_deleting_an_enrolled_container_leaves_the_mesh_green_and_repair_fixes(self):
         with container("look"):
-            self.cube << Blinn("red")
+            self.cube << Blinn("red", container=True)
         cmds.delete("look")
         self.assertFalse(cmds.objExists("red"))
         self.assertEqual(_engines(self.shape), [])

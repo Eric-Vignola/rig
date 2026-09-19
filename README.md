@@ -122,7 +122,9 @@ additive.
   every node the DSL creates is added to `x`; nested blocks flatten into
   the outermost, prefixing their nodes with the inner block's name
   (`inner_add1`); `preserve=True` makes a real sub-container instead.
-  Geometry, display layers and found materials never join;
+  Only nodes a call *creates* join: a query, a `parent` or a `rename`
+  never moves a node in. Geometry, display layers and materials never
+  join (`container=True` on a material spec opts a per-asset look in);
   `container=False` opts any `rc` / `rn` call out.
 - **Memoization.** A function or operator called twice with the same
   plugs and the same literals returns the same output plug; the cache

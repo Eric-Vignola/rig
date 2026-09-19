@@ -119,12 +119,10 @@ def create_setup(
                 container = False,
             )
 
-            # Plane node joins the container; transform reparents under camera
-            # (container=False: rc.parent returns the transform, and an rc
-            # result inside the scope joins the container).
+            # Plane node joins the container; transform reparents under camera.
             container.add(plane)
 
-            rc.parent(transform, parent or camera_xform, container=False)
+            rc.parent(transform, parent or camera_xform)
 
             # Offset the plane along -Z relative to the camera.
             transform.tz << (i + 1) * -offset
@@ -136,16 +134,18 @@ def create_setup(
             transform.r  << lock << hide
             transform.v  << lock << hide
 
-            shape = rc.listRelatives(transform, type="mesh", container=False)[0]
+            shape = rc.listRelatives(transform, type="mesh")[0]
 
             # File texture for color, and the material it feeds: injecting
             # the spec builds the lambert, its shading engine and
             # materialInfo, applies the kwargs and assigns the shape.
-            # unique=True keeps a rebuild on its OWN material.
+            # unique=True keeps a rebuild on its OWN material; container=True
+            # makes this per-plane look part of the planes' container.
             texture  = rn.file()
             material = Lambert(
                 name_suffix.lower(),
                 unique       = True,
+                container    = True,
                 diffuse      = 1,
                 color        = texture.outColor,
                 ambientColor = texture.outColor,

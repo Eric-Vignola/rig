@@ -93,6 +93,7 @@ transform, a `namedtuple` of `Node`s and `PlugList`s for the image rigs.
 | `Lambert(name, unique=True, ...)`; `shape << material` | | | yes | yes |
 | `set_options(create_containers=...)` | | demo | | |
 | `container=False` on a factory, then `rc.parent` | yes | yes | yes | `container=False` only |
+| `Lambert(..., container=True)` — a per-plane look opts into the container | | | yes | yes |
 
 `rc` is `rig.bridges.commands`, `rn` is `rig.bridges.nodes`, `rf` is
 `rig.functions`.
@@ -436,6 +437,7 @@ texture  = rn.file()
 material = Lambert(
     name,
     unique       = True,
+    container    = True,
     diffuse      = 1,
     color        = texture.outColor,
     ambientColor = texture.outColor,
@@ -449,8 +451,10 @@ meets `<<`. Then the shader, `<name>SG`, its `materialInfo` and the
 `defaultShaderList1` link are built in one go, the kwargs are applied as
 attribute injections (a value sets `diffuse`, a plug connects the texture
 into `color` and `ambientColor`), and the shape is moved into the engine
-with one `cmds.sets(forceElement=...)`. All of it joins the active
-container, and the spec keeps working as the material afterwards:
+with one `cmds.sets(forceElement=...)`. A material is a scene-level asset
+and stays out of the active container by default; `container=True` opts
+this per-plane look in, so deleting the plane's container takes its look
+with it. The spec keeps working as the material afterwards:
 `material.transparency << ...` reaches the lambert's plug. `unique=True` keeps the old behaviour on a
 rebuild: a second `create_plane(name="run")` gets its own `run1` and
 `run1SG` instead of re-using `run`. `m.node` is the material `Node` the

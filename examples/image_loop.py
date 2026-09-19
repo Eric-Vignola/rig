@@ -119,9 +119,7 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
             container = False,      # transform stays at scene root
         )
         container.add(plane)  # but the polyPlane node is rig-owned
-        # container=False: an rc query inside the scope would otherwise add
-        # the shape it returns to the container.
-        shape = rc.listRelatives(transform, type="mesh", container=False)[0]
+        shape = rc.listRelatives(transform, type="mesh")[0]
 
         # ---- Animated file texture ------------------------------------------
         texture = rn.file()
@@ -134,10 +132,12 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
         # viewport). Injecting the spec builds the lambert, its shading
         # engine and materialInfo, applies the kwargs and assigns the shape;
         # unique=True keeps a second create_plane(name=...) on its OWN
-        # material. The spec stays the handle for the material's plugs.
+        # material; container=True makes this per-plane look part of the
+        # plane's container. The spec stays the handle for the material's plugs.
         material = Lambert(
             name,
             unique       = True,
+            container    = True,
             diffuse      = 1,
             color        = texture.outColor,
             ambientColor = texture.outColor,

@@ -2206,9 +2206,10 @@ print(cmds.listConnections("skin.color", plugs=True), cmds.getAttr("skin.reflect
 ```
 
 A `PlugList` on the left is one material, one engine, one `cmds.sets`.
-`unique=True` builds a fresh network per `<<`; inside `with container():`
-the network joins the scope (the geometry never does) unless
-`container=False`.
+`unique=True` builds a fresh network per `<<`. A material is a shared,
+scene-level asset: inside `with container():` a new network stays out of
+the scope unless `container=True` (a per-asset look); the geometry never
+joins.
 
 ```python
 PlugList([cube, other.f[:2]]) << Lambert("both")
@@ -2220,9 +2221,9 @@ other << spec
 print(sorted(cmds.ls("plane*", type="lambert")))   # ['plane', 'plane1']
 
 with container("look"):
-    cube << Blinn("inside")                     # the network joins 'look'
-    cube << Blinn("free", container=False)      # opts out
-print(cmds.container(query=True, findContainer=["inside"]), cmds.container(query=True, findContainer=["free"]))   # look None
+    cube << Blinn("free")                       # stays out: a material is a scene asset
+    cube << Blinn("inside", container=True)     # opts in: the network joins 'look'
+print(cmds.container(query=True, findContainer=["free"]), cmds.container(query=True, findContainer=["inside"]))   # None look
 ```
 
 Membership is exclusive and materials bind faces or whole objects (a

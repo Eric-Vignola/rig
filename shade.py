@@ -79,12 +79,13 @@ instance whose engine holds the whole object there cannot be released at
 all: that removal is refused. Membership is always read from the shape's
 own plugs, so every operation costs one shape, never the scene. ``.rename``
 follows the ``<mat>SG`` convention; ``.delete`` refuses Maya default and
-referenced nodes. Building networks
-inside ``with container():`` enrols the shader, its engine and materialInfo
-in the scope (``container=False`` opts out); deleting that container later
-destroys the network and leaves the geometry green -- ``repair()`` fixes it.
-The created nodes keep their names (no flatten prefix) and the geometry is
-never captured.
+referenced nodes. A material is a shared, scene-level asset, so a network
+built inside ``with container():`` stays OUT of the scope by default;
+``container=True`` enrols the shader, its engine and materialInfo (a
+per-asset look), in which case deleting that container later destroys the
+network and leaves the geometry green -- ``repair()`` fixes it. The created
+nodes keep their names (no flatten prefix) and the geometry is never
+captured.
 """
 
 from __future__ import annotations
@@ -678,8 +679,9 @@ class Material(_MemberSpec):
     ``normalCamera=bump.outNormal`` connects) and skipped on a found material
     unless ``update=True``; ``unique=True`` builds a fresh network on every
     ``<<`` (the name is then not an idempotent key; ``.node`` follows the
-    last network this spec built); ``container=False`` keeps a new network
-    out of the active ``with container():``.
+    last network this spec built); ``container=True`` puts a new network
+    into the active ``with container():`` (a material is a shared,
+    scene-level asset and stays out by default).
 
     ``members << spec`` moves the members into the material's engine (one
     ``cmds.sets(forceElement)``), ``members << -spec`` takes them out (faces
@@ -1023,7 +1025,10 @@ class Material(_MemberSpec):
                 f"Maya keeps, or pass unique=True to build a fresh network on purpose"
             )
         engine = ShadingEngine.for_material(material, create=True)
-        if self._container is not False:
+        if self._container is True:
+            # A material is a scene-level, shared asset: it stays out of the
+            # active rig container unless asked (deleting the container
+            # would otherwise take the look with it).
             from rig._internal.container import container
 
             container.add([material, engine.name, *engine.get_material_info()])
