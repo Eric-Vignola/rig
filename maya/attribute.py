@@ -24,6 +24,8 @@ DATA_TYPE_TO_FN = {
     OpenMaya.MFn.kGeometryData: OpenMaya.MFnGeometryData,
     OpenMaya.MFn.kMeshData: OpenMaya.MFnMeshData,
     OpenMaya.MFn.kNurbsCurveData: OpenMaya.MFnNurbsCurveData,
+    OpenMaya.MFn.kNurbsSurfaceData: OpenMaya.MFnNurbsSurfaceData,
+    OpenMaya.MFn.kLatticeData: OpenMaya.MFnGeometryData,
 }
 
 ATTR_TYPE_TO_FN = {
@@ -161,18 +163,48 @@ class Attribute(str):
     def __gt__(self, other: Any) -> bool:
         return self.full_name > str(other)
 
-    def __getitem__(self, key: int | slice) -> Attribute | list:
+    def __getitem__(
+        self, key: int | slice | list | tuple | np.ndarray
+    ) -> Attribute | list:
         """Return attribute at a given logical index, if this is a multi-attr.
            If given a slice, return a list of attributes.
+           If given a sequence of integers (a list, tuple or ndarray of ids),
+           return a list of attributes at those logical indices.
         Example:
         ```
         attr = mesh.componentTags[1]
         attrs = blendShape.weight[1:3]
+        attrs = mesh.vtx[[0, 4, 7]]
         ```
         """
 
-        if isinstance(key, int):
-            return self.element_by_logical_index(key)
+        if isinstance(key, (int, np.integer)):
+            return self.element_by_logical_index(int(key))
+
+        elif isinstance(key, (list, tuple, np.ndarray)):
+            # Fancy indexing with the ids a membership query returns
+            # (``mesh.vtx[ids]``). Geometry components are range-checked
+            # against the point count like a slice is bounded by it; a plain
+            # multi keeps Maya's sparse semantics (missing elements are
+            # created on access, same as ``plug[5]``).
+            ids      = np.asarray(key)
+            integral = np.issubdtype(ids.dtype, np.integer)
+            if ids.dtype == bool or (ids.size and not integral):
+                raise TypeError(f"Indices must be integers, not {ids.dtype}")
+            if ids.ndim != 1:
+                raise TypeError(
+                    f"Indices must be a flat sequence, got shape {ids.shape}"
+                )
+            if self._component_type in (
+                "kMeshVertComponent",
+                "kCurveCVComponent",
+                "kSurfaceCVComponent",
+            ):
+                count = self.node.num_weight_points
+                ids   = np.where(ids < 0, ids + count, ids)
+                if ids.size and (ids.min() < 0 or ids.max() >= count):
+                    raise IndexError(f"{self} index out of range for {count} points")
+            return [self.element_by_logical_index(int(index)) for index in ids]
 
         elif isinstance(key, slice):
             # figure out the maximum range of the slice

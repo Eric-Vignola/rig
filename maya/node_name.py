@@ -83,3 +83,31 @@ def iter_component_ranges(prefix: str, ids: list[int]) -> Iterator[str]:
             yield f"{prefix}[{start}]"
         else:
             yield f"{prefix}[{start}:{end}]"
+
+
+def iter_component_tokens(prefix: str, ids: Any) -> Iterator[str]:
+    """Range strings for component ids of any dimension, sorted and unique.
+
+    (N,) ids are :func:`iter_component_ranges`; (N, 2) and (N, 3)
+    coordinates are grouped on their leading axes and ranged on the last,
+    the forms surfaces and lattices store.
+
+    e.g.
+    ```python
+    list(iter_component_tokens("cv", [[1, 0], [1, 1], [2, 5]]))
+    # ["cv[1][0:1]", "cv[2][5]"]
+    ```
+    """
+    import numpy as np
+
+    ids = np.unique(np.asarray(ids, dtype=int), axis=0)
+    if ids.size == 0:
+        return
+    if ids.ndim == 1:
+        yield from iter_component_ranges(prefix, ids.tolist())
+        return
+    leads = ids[:, :-1]
+    for lead in np.unique(leads, axis=0):
+        head = prefix + "".join(f"[{k}]" for k in lead)
+        tail = ids[np.all(leads == lead, axis=1), -1]
+        yield from iter_component_ranges(head, tail.tolist())
