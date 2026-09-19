@@ -18,6 +18,7 @@ from rig.maya.constants import Axis
 from rig.maya.nodetypes.dag_node import DAGNode, PyNode
 from rig.maya.nodetypes.geometry import Geometry
 from rig.maya.nodetypes.object_set import ObjectSet
+from rig.maya.nodetypes.shading_engine import ShadingEngine
 from rig.maya.plugins import load_plugin
 from scipy.spatial import cKDTree
 
@@ -231,7 +232,7 @@ class Mesh(Geometry):
 
     def get_materials(
         self, as_pairs: bool = False
-    ) -> list[DAGNode] | list[tuple[ObjectSet, DAGNode]]:
+    ) -> list[DAGNode] | list[tuple[ShadingEngine, DAGNode]]:
         """Returns a list of materials associated with this geometry.
 
         Args:
@@ -246,16 +247,17 @@ class Mesh(Geometry):
             return nodes
 
         for sg in shading_engines:
-            sg = ObjectSet(sg)
+            sg = ShadingEngine(sg)
             # skip empty shading engines
             if not sg.get_members(as_components=True):
                 continue
 
+            # skip shading engines with no material
             mat = cmds.listConnections(
                 f"{sg}.surfaceShader", source=True, destination=False, plugs=False
             )
             if not mat:
-                cmds.error(f"{sg} has no material")
+                continue
             mat = PyNode(mat[0])
             if not as_pairs:
                 nodes.append(mat)
@@ -264,7 +266,7 @@ class Mesh(Geometry):
 
         return nodes
 
-    def get_shading_engines(self) -> list[ObjectSet]:
+    def get_shading_engines(self) -> list[ShadingEngine]:
         """Returns a list of shading engines associated with this geometry.
 
         Args:

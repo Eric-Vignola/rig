@@ -68,12 +68,28 @@ class ObjectSet(DGNode):
     def get_or_create(cls, name: str) -> ObjectSet:
         """Creates an object set or return the existing one.
 
+        The name is looked up as given and in the current namespace (where
+        ``create`` puts a new node). A node of that name that is not a set of
+        this type raises a TypeError: the caller named something else, and a
+        set called ``name1`` beside it would silently fork.
+
         Args:
             name: An object set name to find or create.
 
         Returns:
             An ObjectSet instance.
         """
-        if cmds.ls(name, type=cls.NATIVE_NODE_TYPE):
-            return cls(name)
+        namespace = cmds.namespaceInfo(currentNamespace=True)
+        for candidate in (name, f"{namespace}:{name}"):
+            if not cmds.objExists(candidate):
+                continue
+            if cmds.ls(candidate, type=cls.NATIVE_NODE_TYPE):
+                # PyNode picks the most derived registered class, so a
+                # shadingEngine comes back as a ShadingEngine, equal to any
+                # other wrapper of it.
+                return PyNode(candidate)
+            node_type = cmds.nodeType(cmds.ls(candidate, long=True)[0])
+            raise TypeError(
+                f"'{candidate}' exists and is a {node_type}, not a {cls.NATIVE_NODE_TYPE}"
+            )
         return cls.create(name=name)
