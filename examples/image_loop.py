@@ -32,8 +32,9 @@ import os
 import re
 from collections import namedtuple
 
-from rig import condition, container, functions as rf, Plug
+from rig import condition, container, functions as rf
 from rig.bridges import commands as rc, nodes as rn
+from rig.shade import Lambert
 from rig.spec import Float, Int, lock, String
 
 
@@ -121,19 +122,11 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
         shape = rc.listRelatives(transform, type="mesh")[0]
 
         # ---- Material + shading group ---------------------------------------
-        material = rc.shadingNode("lambert", asShader=True, name=name)
-        material.diffuse      << 0
-        material.ambientColor << 1  # full-bright in viewport
-
-        sg = rc.sets(
-            name            = "{}SG".format(name),
-            empty           = True,
-            renderable      = True,
-            noSurfaceShader = True,
-        )
-        sg.surfaceShader             << material.outColor
-        Plug("defaultShaderList1.s") << material.msg
-        rc.sets(shape, e=True, forceElement=sg)
+        # unique=True keeps today's behaviour: a second create_plane(name=...)
+        # gets its OWN material. ambientColor=1 is full-bright in the viewport.
+        m = Lambert(name, unique=True, diffuse=0, ambientColor=1)
+        shape << m
+        material = m.node
 
         # ---- Animated file texture ------------------------------------------
         texture = rn.file()

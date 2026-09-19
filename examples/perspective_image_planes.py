@@ -31,11 +31,11 @@ from rig import (
     container,
     dist,
     functions as rf,
-    Plug,
     PlugList,
     trigonometry as trig,
 )
 from rig.bridges import commands as rc, nodes as rn
+from rig.shade import Lambert
 from rig.spec import Enum, Float, hide, Int, lock, String
 
 
@@ -137,24 +137,12 @@ def create_setup(
             transform.r  << lock << hide
             transform.v  << lock << hide
 
-            # Shading network for the plane.
-            material_name = name_suffix.lower()
-            material      = rc.shadingNode("lambert", asShader=True, name=material_name)
-            material.diffuse      << 0
-            material.ambientColor << 1
-
-            shading_engine = rc.sets(
-                name            = "{}SG".format(material_name),
-                empty           = True,
-                renderable      = True,
-                noSurfaceShader = True,
-            )
-            shading_engine.surfaceShader << material.outColor
-
-            # Hypershade backwards-compat + assign shader to plane.
-            Plug("defaultShaderList1.s") << material.msg
+            # Shading network for the plane. unique=True keeps today's
+            # behaviour: a rebuild gets its OWN material.
             shape = rc.listRelatives(transform, type="mesh")[0]
-            rc.sets(shape, e=True, forceElement=shading_engine)
+            m     = Lambert(name_suffix.lower(), unique=True, diffuse=0, ambientColor=1)
+            shape << m
+            material = m.node
 
             # File texture for color.
             texture = rn.file()
