@@ -1,319 +1,329 @@
-# Rig
-A Python-based language to reduce the generation of complex node
-networks into a simpler human readable form.
+# `rig` — a Pythonic node-network DSL for Maya
+
+Rigging in a node-based DCC comes down to three verbs: create nodes, set
+attributes, connect them. `rig` turns those verbs into Python operators
+on wrapped Maya objects, so a network reads like the maths it computes
+and a build script reads like a description of the rig instead of a
+transcript of `createNode` / `setAttr` / `connectAttr` calls. It uses
+Maya's own nodes (no plug-in, nothing custom saved in the scene), picks
+the native math nodes on Maya 2024+ and the `plusMinusAverage` /
+`multiplyDivide` / `condition` networks before, vectorizes over lists,
+and memoizes so the same expression twice costs one network.
 
 ![](https://github.com/Eric-Vignola/rig/blob/main/examples/ye_olde_lerp.gif)
 
-## About
-In 3D applications built on node.attribute foundations (ex: Maya, Houdini)
-the core act of "rigging" can be reduced into a few major axes:
-
-When we rig, we:
-* Create nodes (ex: math nodes, shapes, deformers, etc...)
-* Set attribute values. (ex: set a boolean switch to a math node)
-* Connect nodes to one another into a complex network.
-
-With Rig, these operations can be reduced into a human readable Python script,
-and simplifies the act of building a complex network of nodes.
-
-<details>
-<p>
-   <summary>For example...</summary>
-   
-In Maya: 
-   * 1- Create two transforms.
-   * 2- Elevate the translate attribute of the first transform to the 2nd power. 
-   * 3- Plug the result into the second transform's translate attribute.
-
-   ```python
-   import maya.cmds as mc
-
-   obj1 = mc.createNode('transform')       # create first transform (returns str())
-   obj2 = mc.createNode('transform')       # create first transform (returns str())
-   power = mc.createNode('multiplyDivide') # create multiplyDivide node (returns str())
-   mc.setAttr(f'{power}.operation', 3)     # sets multiplyDivide node's operation to "power"
-   mc.setAttr(f'{power}.input2', 2, 2, 2)  # sets multiplyDivide node's input2 to 2 (x ** 2)
-   mc.connectAttr(f'{obj1}.t',f'{power}.input1') # plug 1st transform's .t attribute into input1
-   mc.connectAttr(f'{power}.output',f'{obj2}.t') # plug output to 2nd transform's .t attribute
-
-   ```
-
-   With Rig, becomes this:
-
-   ```python
-   from rig.bridges import commands as rc
-   obj1 = rc.createNode('transform')
-   obj2 = rc.createNode('transform')
-   obj2.t << obj1.t ** 2 # 5 lines of code into one
-
-   ```
-
-</p>
-</details>
-
-
-setAttr/connectAttr calls are done via the __lshift__ (<<) operator. This is referred to as "injection". Everything else follows standard Python lexical structure.
-
-In addition, Rig supports vectorized operations on asymmetric lists.
-This adds to the language's simplicity and lets users code in stacked sequences.
-
-Most rig functions are memoized to keep track of repeated operations to minimize waste.
-
-Finally, Rig has a built in translator to logically connect attribute of
-different types.
-
-This implementation is still a work in progress, was written for Autodesk Maya,
-but could be ported to any application built with a Python interpreter.
-
-## Examples
-
-The *examples* folder contains scripts you can run directly from your script editor to get a feel for how the language works. And if you're just curious, scratch the surface by expanding the sections below!
-
-
-<details>
-<p>
-   <summary>connect/disconnect/set attributes on nodes</summary>
-
-   ```python
-   from rig import Node
-
-   # Manually create two cubes and create python Node objects to manipulate them
-   obj1 = Node('pCube1')
-   obj2 = Node('pCube2')
-
-   # Connect pCube2.t to pCube1.t
-   obj2.t << obj1.t
-
-   # Disconnect any incomming connection to pCube2.t
-   obj2.t << None
-
-   # setAttr on pCube2.t to 1,2,3
-   obj2.t << [1,2,3]
-
-   ```
-</p>
-</details>
-
-
-<details>
-<p>
-   <summary>working with lists</summary>
-
-   ```python
-   from rig import Node, PlugList
-
-   # Manually create four cubes and create a python PlugList object to manipulate them
-   node_list = PlugList(['pCube1','pCube2','pCube3','pCube4'])
-   node = Node('pCube5')
-
-   # Set translation of all elements of node_list to [0,0,0]
-   node_list.t << [[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
-
-   # or simply
-   node_list.t << 0
-   
-   # Connect pCube5.t to all elements of node_list.t
-   node_list.t << node.t
-
-   # Disconnect any incomming connections to node_list
-   node_list.t << None
-
-   # Connect pCube1 and pCube2 to pCube3 and pCube4
-   node_list[2:].t << node_list[:2].t
-
-   # Add two lists in parallel
-   new_node_list = PlugList(['pCube6','pCube7','pCube8','pCube9'])
-   added = new_node_list.t + node_list.t
-   print(added) # PlugList([Plug("add1.output3D"), Plug("add2.output3D"), Plug("add3.output3D"), Plug("add4.output3D")])
-
-
-   ```
-</p>
-</details>
-
-<details>
-<p>
-   <summary>injecting new attributes</summary>
-
-   ```python
-   from rig.bridges import commands as rc  # these are maya.cmds which output as rig node instances
-   from rig import Node, PlugList
-   from rig.spec import Float, Vector, Enum, lock
-
-   # create a cube via rig.commands (wrapped maya.cmds)
-   obj1 = rc.polyCube()[0]
-   
-   # create pCube1.awesomeFloat as a float attribute, set it to 5 and finally lock it
-   obj1 << Float('awesomeFloat') << 5 << lock
-
-   # add a Vector to a PlugList
-   node_list = PlugList(['pCube1','pCube2','pCube3','pCube4'])
-   node_list << Vector('awesomeVector')
-
-   # add an Enum to the list, set default value to be 'green'
-   node_list << Enum('color', en=['red','green','blue'], dv=1)
-
-   # add another enum to the first two elements of the list.
-   # not specifying an enum value will default to 'False:True'
-   node_list[:2] << Enum('switch')
-
-   ```
-</p>
-</details>
-
-<details>
-<p>
-   <summary>simple math operations</summary>
-
-   ```python
-   
-   from rig import Node
-   from rig.bridges import commands as rc
-   from rig.spec import Float
-
-   # create 3 cubes
-   obj1 = rc.polyCube()[0]
-   obj2 = rc.polyCube()[0]
-   obj3 = rc.polyCube()[0]
-
-   # add pCube1.tx to pCube2.tx
-   add = obj1.tx + obj2.tx
-   print(add) # add1.output where add1 is a sum node (plusMinusAverage before Maya 2024)
-
-   # divide that by 4
-   divided = add / 4
-   print(divided) # div1.output where div1 is a divide node (multiplyDivide before Maya 2024)
-
-   # to the power of 2
-   power = divided ** 2
-   print(power) # pow1.output where pow1 is a power node (multiplyDivide before Maya 2024)
-
-   # add a 'weight' attribute to pCube3 and do a simple lerp operation
-   # between pCube1.t and pCube2.t driven by pCube3.weight
-   obj3 << Float('weight', min=0, max=1)
-   obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
-
-   ```
-</p>
-</details>
-
-<details>
-<p>
-   <summary>working with commands, functions and nodes</summary>
-
-   ```python
-   from rig import Node
-   from rig.bridges import commands as rc  # these are maya.cmds which output as rig node instances
-   import rig.functions as rf              # common python functions that can handle connections 
-   from rig.bridges import nodes as rn     # createNode wrappers for all defined maya node types
-                                           # non createNode keyword arguments will be used for injection.
-
-   # get all the cameras transforms wrapped in a PlugList instance
-   cameras = rc.listRelatives(rc.ls(type='camera'), p=True) # PlugList([Node("front"), Node("persp"), Node("side"), Node("top")])
-
-   # use rf.max() similar to max()
-   rf.max([1,5,4,2]) # returns 5, just like max would
-
-   # use rf.max() with nodes
-   rf.max(cameras.tx) # returns a plug who's value will be the highest .tx attribute value
-
-   # create a network node called test 
-   node = rn.network(n='test') # Node("test")
-
-   # create a multiplyDivide node and set it's operation attribute to 'power'
-   node = rn.multiplyDivide(operation=3)
-   
-   ```
-</p>
-</details>
-
-<details>
-<p>
-   <summary>use shorthand connections </summary>
-
-   ```python
-   from rig import Node
-   from rig.bridges import commands as rc
-
-   obj1 = rc.polyCube()[0]
-   obj2 = rc.polyCube()[0]
-   obj3 = rc.polyCube()[0]
-
-   # decompose pCube1's world matrix and plug it directly in pCube2.t
-   obj2.t << obj1.wm
-
-   # perform a point/matrix operation using a constant
-   obj2.t << [10,0,0] * obj1.wm
-
-   # perform a point/matrix operation using pCube3.t
-   obj2.t << obj3.t * obj1.wm
-
-   ```
-</p>
-</details>
-
-<details>
-<p>
-   <summary>components, multi attributes, aliases </summary>
-
-   ```python
-   from rig.bridges import commands as rc
-   from rig.spec import Float
-
-   """
-   you can interface with components and multi attributes like list objects
-   """
-   # create a polySphere (components live on the shape)
-   obj = rc.listRelatives(rc.polySphere()[0], s=True)[0]
-   print(obj.vtx)      # not specifying an index will return the component array itself
-   print(obj.vtx[0])   # prints the first component
-   print(obj.vtx[:])   # prints all components
-   print(obj.vtx[::2]) # prints every even component
-
-   # move every other vertex to 0,0,0 using injection
-   obj.vtx[::2] << [0,0,0]
-
-   # ----------------------------------------------------------------- #
-
-   # add a multi attr to the object
-   obj << Float('weight', m=True)
-   print(obj.weight) # not specifying an index will return the multi attribute itself
-
-   # set the first 4 indices
-   obj.weight[:4] << [0,2,4,6]
-   print(obj.weight[:]) # prints the 4 indices that were set
-
-   # ----------------------------------------------------------------- #
-
-   # create 3 dummy shapes and a target to receive blendShapes
-   happy   = rc.polyCube(name='happy')[0]
-   sad     = rc.polyCube(name='sad')[0]
-   neutral = rc.polyCube(name='neutral')[0]
-   target  = rc.polyCube(name='target')[0]
-
-   # create the blendShape
-   morph = rc.blendShape([happy,sad,neutral,target], n='morph')[0] # Node("morph")
-
-   # list all the morph aliases
-   print(morph.weight[:]) # PlugList([Plug("morph.happy"), Plug("morph.sad"), Plug("morph.neutral")])
-
-   # set happy to 1
-   morph.happy << 1
-
-   # reset all the shapes to 0
-   morph.weight[:] << 0
-
-   ```
-</p>
-</details>
+---
+
+## Quick taste
+
+Every `python` block on this page runs top to bottom as one script, in
+mayapy or the Script Editor. The first block is the setup: it initializes
+`maya.standalone` when it can and is a no-op inside Maya.
+
+```python
+from maya import standalone
+try:
+    standalone.initialize()          # running from mayapy; inside Maya this raises and is skipped
+except Exception:
+    pass
+from maya import cmds
+cmds.file(new=True, force=True)
+```
+
+Three cubes, a lerp driven by a new attribute, a container around the
+network, a component tag and a material.
+
+```python
+from rig import Node, PlugList, container, Tag
+from rig.spec import Float, lock
+from rig.bridges import commands as rc
+from rig.shade import Blinn, Material
+
+obj1, obj2, obj3 = [rc.polyCube(name=n)[0] for n in ("cube1", "cube2", "cube3")]
+obj2.t << [10, 0, 0]                                   # setAttr
+obj3 << Float("weight", min=0, max=1) << 0.25          # addAttr, then setAttr on the new plug
+
+with container("ye_olde_lerp"):                        # nodes built inside join the container
+    obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
+
+print(obj3.t >> None)                                            # [2.5 0.  0. ]
+print(cmds.container("ye_olde_lerp", q=True, nodeList=True))    # ['sub1', 'mul1', 'add1']
+
+obj1.f[:3] << Tag("lid")                               # a face component tag on cube1Shape
+print(obj1 >> Tag("lid"))                              # [0 1 2]
+
+obj1 << Blinn("red", color=(1, 0, 0))                  # builds red + redSG, assigns cube1
+print(Material.of(obj1))                               # [Blinn('red')]
+```
+
+The lerp is three nodes (`subtract`, `multiply`, `sum` on Maya 2024+;
+`plusMinusAverage` and `multiplyDivide` before) wired in the order the
+expression reads. `rc.polyCube` is `cmds.polyCube` returning `Node`s
+instead of strings; `Node("cube1")` wraps a node that already exists.
+
+---
+
+## The language in one table
+
+Two operators carry the language. `<<` points the way data flows in;
+`>>` points the way it flows out.
+
+| Spelling | Meaning | Returns |
+|---|---|---|
+| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr`, a plug is `connectAttr`, `None` disconnects | `a`, so it chains |
+| `a >> None` | **introspect**: read the value (`getAttr`) | a float, a NumPy array, a string... |
+| `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
+| `node << Float("x")` | add an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide` | the new plug, so its value goes next |
+| `node >> Float("x")` | add an output-only (non-writable) attribute | the new plug |
+| `node.tx = 5` | sugar for `node.tx << 5` | |
+| `a + b`, `a - b`, `a * b`, `a / b`, `a ** b`, `a // b`, `a % b` | arithmetic builds nodes. Matrices and quaternions are detected and routed to `multMatrix`, `quatProd`...; `[x, y, z] * m` is point-by-matrix | the output plug |
+| `-a`, `~a` | negate; logical NOT | the output plug |
+| `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes | the output plug, **never a bool** |
+| `a & b`, `a \| b`, `a ^ b` | logical AND / OR / XOR networks | the output plug |
+| `members << Tag("x")` | **membership**: put the left-hand side in the collection, created if missing | the LHS, so collections chain |
+| `members << -Tag("x")` | remove the LHS from that collection | the LHS |
+| `members << Tag()` | purge: out of every collection of that kind | the LHS |
+| `members >> Tag("x")` | query: which of the LHS are in it | a plain value: native ids, or a bool |
+| `members >> Tag()` | enumerate: the collections holding the LHS | a list of specs; an exclusive kind (`Layer`) answers the one collection, or `None` |
+| `node.tx << Layer("x")` | an attribute plug on the left stands for its node | |
+| `with container("name"):` | every node built inside joins a Maya container | |
+
+The membership rows read the same for every kind: `Tag` (component
+tags) and `Layer` (display layers) from `rig.membership`, and the
+materials from `rig.shade` (`Blinn`, `Lambert`, `Phong`, `PhongE`,
+`SurfaceShader`, `StandardSurface`, `OpenPBRSurface`, with `Material`
+for any surface shader and `Default` for `initialShadingGroup`).
+Materials and layers are exclusive, so `<<` moves the LHS; tags are
+additive.
+
+---
+
+## Conventions
+
+- **Injection is right-to-left and returns the left-hand side.**
+  `obj.t << [1, 2, 3] << lock` reads "t receives 1,2,3, then a lock". The
+  one exception is an attribute spec: `node << Float("w")` returns the
+  **new plug**, because the next thing you inject is its value.
+  Collection specs return the LHS again, so `cube.f[:3] << Tag("a") << Tag("b")`.
+- **`PlugList` vectorizes, under two broadcast rules.** Attribute access
+  maps over the list (`cubes.t` is a `PlugList` of plugs). The
+  **operators** (`<<`, `+`, `==`...) pair elements and cap the shorter
+  operand to its last element: `cubes.ty << [1, 2]` sets 1, 2, 2. The
+  **function libraries** (`rig.functions`, `lerp`, `dist`...) are
+  NumPy-strict: every list must be the same length, or length 1, or a
+  scalar, and a mismatch is a `ValueError`.
+- **Components live on the shape.** `cube.f` and `cube.e` are
+  `Components` (faces and edges have no plug to wrap); `cube.vtx` and
+  `cube.uv` are plugs (`controlPoints`, `uvpt`), as is `surface.cv`, and
+  `cube.vtx[3]` is one element plug. A transform with one shape resolves
+  to it; two shapes are an `AttributeError` naming both. A real attribute
+  always wins: `curve.f` is `curveShape.form`.
+- **Nodes join the active container.** Inside `with container("x"):`
+  every node the DSL creates is added to `x`; nested blocks flatten into
+  the outermost, prefixing their nodes with the inner block's name
+  (`inner_add1`); `preserve=True` makes a real sub-container instead.
+  Geometry, display layers and found materials never join;
+  `container=False` opts any `rc` / `rn` call out.
+- **Memoization.** A function or operator called twice with the same
+  plugs and the same literals returns the same output plug; the cache
+  forgets nodes that were deleted. All-literal math never touches the
+  scene (`functions.abs(-5)` is `5`); `with force_nodes():` builds it anyway.
+- **Maya-version dispatch.** Each operation is registered per Maya
+  release; the highest implementation not newer than the target runs.
+  The target is the live Maya, or `set_options(maya_version=2023)` to
+  build networks an older release can open.
+- **Comparisons are nodes.** `a == b` builds a node and returns its
+  output plug; `Plug.__hash__` is overridden so plugs still work as dict
+  keys and set members.
+- **Sibling fallback.** `plug.foo` looks for a child attribute first,
+  then a sibling on the same node, so `(a.tx + 5).operation` reaches the
+  math node behind the output.
+
+```python
+from rig import set_options, lerp, functions as f
+
+cmds.file(new=True, force=True)
+cubes = PlugList([rc.polyCube(name=n)[0] for n in ("a", "b", "c")])
+cubes.ty << [1, 2, 3]                                # one value per element
+cubes.tz << 7                                        # a scalar broadcasts
+print(cubes.ty >> None, cubes.tz >> None)            # [1. 2. 3.] [7. 7. 7.]
+cubes.ty << [1, 2]                                   # an operator caps: the last element repeats
+print(cubes.ty >> None)                              # [1. 2. 2.]
+
+a, b, c = cubes
+try:
+    lerp(cubes.tx, PlugList([a.ty, b.ty]), 0.5)      # a function is strict: 3 against 2
+except ValueError:
+    print("strict")                                  # strict
+
+print(str(a.tx + b.tx) == str(a.tx + b.tx))          # True   memoized: one sum node
+print(f.abs(-5), f.abs(a.tx))                        # 5 abs1.output   literals fold, plugs build
+
+set_options(maya_version=2023)
+print(a.ty + b.ty)                                   # add2.output1D   a plusMinusAverage
+set_options(maya_version=None)                       # back to the live Maya
+```
+
+---
+
+## What's inside
+
+`rig/__init__.py` re-exports the core types, the `rig.spec` names and
+the cross-type math verbs, so most scripts import from `rig` directly.
+
+```
+rig/
+├── __init__.py          Node, Plug, PlugList, Container, container, set_options / get_options,
+│                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant
+├── spec/                attribute specs: Float Int Bool Angle Time, Vector Color Euler Quat, Enum,
+│                        Matrix Mesh Message NurbsCurve NurbsSurface String; modifiers lock unlock
+│                        hide unhide skip destroy Note
+├── bridges/
+│   ├── commands.py      maya.cmds returning Node / PlugList instead of strings   (rc)
+│   └── nodes.py         one factory per Maya node type, kwargs are injections     (rn)
+│
+├── functions.py         abs clamp min max sum avg floor ceil round choice searchsorted ... on plugs
+├── trigonometry.py      sin cos tan asin acos atan atan2, radians and degrees variants
+├── matrix.py            decompose compose aim multiply determinant translation rotation ...
+├── vector.py            dot cross length triple_product rotate, the X Y Z axes
+├── quaternion.py        add multiply conjugate from_axis_angle to_axis_angle ...
+├── euler.py             reorder
+├── _dispatch.py         dist lerp slerp blend elerp normalize inverse angle to_euler to_matrix ...
+│                        the cross-type verbs, re-exported flat from rig
+├── interpolate.py       sequence smoothstep smootherstep inverse_lerp
+├── tween.py             Penner easing curves: in_quad, out_bounce, in_out_elastic ...
+├── random.py            LCG networks that live inside the DG
+│
+├── membership.py        Tag (component tags), Layer (display layers), Components
+├── shade.py             Blinn Lambert Phong PhongE SurfaceShader StandardSurface OpenPBRSurface,
+│                        Material, Default; convert / repair / tidy / materials / bindings
+│
+├── maya/                the object-model layer under the DSL: nodetypes/ (typed PyNode wrappers),
+│                        attribute.py, node_name.py, constants.py, pycmds.py, plugins/
+├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
+│                        perspective_image_planes.py, ye_olde_lerp.gif
+├── utils.py             run_tests()
+├── _defaults.toml       team-wide container option defaults
+├── _internal/           private: node.py plug.py list.py container.py members.py memoize.py
+│                        node_ops.py shorthand.py maya_version.py ...
+└── _tests/              the suite, run with rig.utils.run_tests()
+```
+
+The names most scripts start from:
+
+```python
+from rig import Node, Plug, PlugList, Container, container, Components, Tag, Layer
+from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
+from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
+from rig import functions, trigonometry, matrix, vector, quaternion, euler, interpolate, tween
+from rig.shade import Blinn, Lambert, Phong, Material, Default
+from rig.bridges import commands as rc
+from rig.bridges import nodes as rn
+```
+
+`rig.functions` shadows Python builtins (`abs`, `min`, `max`, `sum`,
+`int`, `round`...): import the module, never `from rig.functions import *`.
+Put the **parent** of `rig/` on `sys.path`, not `rig/` itself, or
+`rig.maya` and `rig.random` shadow Autodesk's `maya` and the stdlib.
+
+---
+
+## Where to go next
+
+Every subpackage has a **README** (concepts, conventions, when to reach
+for it) and a **CHEATSHEET** (every public name, with a runnable example).
+
+| Page | What it holds | |
+|---|---|---|
+| **this page** | the operator table, conventions, the map | [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/CHEATSHEET.md) — every operator and top-level name, runnable |
+| `rig.spec` | attribute specs (`Float`, `Vector`, `Enum`...) and the modifiers (`lock`, `hide`, `destroy`...) | [README](https://github.com/Eric-Vignola/rig/blob/main/spec/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/spec/CHEATSHEET.md) |
+| `rig.bridges` | `commands` (`maya.cmds` returning nodes) and `nodes` (a factory per node type) | [README](https://github.com/Eric-Vignola/rig/blob/main/bridges/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/bridges/CHEATSHEET.md) |
+| `rig.maya` | the typed node layer the DSL stands on: `PyNode`, `Attribute`, node names, constants | [README](https://github.com/Eric-Vignola/rig/blob/main/maya/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/maya/CHEATSHEET.md) |
+| `examples/` | complete builds: a rail spine, an image loop, perspective image planes | [README](https://github.com/Eric-Vignola/rig/blob/main/examples/README.md) |
+
+---
+
+## Real behaviour, verified
+
+Not bugs to work around blindly; things a rigger meets in the first hour.
+
+- **`cube.f` is not a plug.** Faces and edges have no attribute behind
+  them, so `cube.f` / `cube.e` are `Components`; `cube.vtx` is
+  `Plug("cubeShape.controlPoints")` and `cube.uv` is `uvpt`. `cube.cv` on
+  a mesh is an `AttributeError` (CVs belong to NURBS).
+- **A comparison is always truthy.** `cube.tx == 3` returns the output
+  plug of an `equal` node, and a `Plug` is a truthy object, so
+  `if cube.tx == 3:` always enters the branch and leaves a node behind.
+  Read values first: `(cube.tx >> None) == 3`. The same holds for
+  `a == b` between two results: compare `str(a) == str(b)`.
+- **`polyCube`'s six face tags are procedural.** With construction
+  history on, `top`, `bottom`, `front`, `back`, `left`, `right` are owned
+  by `polyCube1`: `cube.f[:3] << Tag("top")` is a `TypeError` naming the
+  owner, and `Tag("top", at=cube)` shadows it with an editable tag on the
+  shape. `polyCube(ch=False)` bakes them into the shape instead.
+- **One tag, one category.** A tag holds vertices, edges or faces, never
+  a mix: faces into a vertex tag is a `TypeError` with nothing written;
+  `Tag("x").set(cube.f[:2])` replaces and may flip the category. A tag
+  name needs at least two characters (Maya stores a one-character name
+  as an empty string).
+- **A missing collection is a `ValueError`, never an empty answer.**
+  `cube >> Tag("nope")` raises; a tag that exists but holds none of the
+  LHS answers with an empty array. Same for materials and layers.
+- **Materials are exclusive, and removal leaves faces green.**
+  `cube.f[:3] << Blinn("decal")` carves those faces out of `redSG`;
+  `cube.f[:3] << -Blinn("decal")` puts them in **no** engine (Maya draws
+  them green). `cube << Default()` is the way back to
+  `initialShadingGroup`; `shade.repair()` re-homes every green shape.
+- **Conversion parks, Maya's Type dropdown deletes.** `Phong(red)`
+  retypes `red` in place and keeps the name, the engine, the container
+  and the locks; a value or an incoming wire the new type cannot hold is
+  parked on the node as a hidden `__attr__` and comes back the next time
+  the material becomes a type that has it. Maya's own Attribute Editor
+  dropdown makes a brand-new node and cascade-deletes any texture or
+  animCurve whose only link was the shader; it also wipes parked state.
+- **Unit conversions stay outside containers.** `xf.rx << cube.tx`
+  inserts Maya's `unitConversion` (linear to angle) and leaves it outside
+  the active container by default (`absorb_unit_conversions=False`),
+  because the Node Editor's "Hide Unit Conversion Nodes" view would
+  otherwise draw the container as leaking.
+- **`//` is floor division**, not PyMEL's disconnect. `plug << None`
+  disconnects.
+
+```python
+cmds.file(new=True, force=True)
+cube = rc.polyCube(name="pCube1")[0]
+print(type(cube.f).__name__, cube.vtx, cube.uv)      # Components pCube1Shape.controlPoints pCube1Shape.uvpt
+print(cube >> Tag())                                 # [Tag('back'), Tag('bottom'), Tag('front'), Tag('left'), Tag('right'), Tag('top')]
+try:
+    cube.f[:3] << Tag("top")
+except TypeError as e:
+    print(str(e)[:34])                               # 'top' on pCube1Shape is PROCEDURAL
+cube.f[:3] << Tag("top", at=cube)                    # an editable shadow on the shape
+print(cube >> Tag("top"))                            # [0 1 2]
+
+cond = cube.tx == 3
+print(cond, bool(cond))                              # equal1.output True
+
+xf = rc.createNode("transform", name="xf")
+with container("c1"):
+    xf.rx << cube.tx
+print(cmds.ls(type="unitConversion"), cmds.container("c1", q=True, nodeList=True))   # ['unitConversion1'] None
+```
+
+---
 
 ## Requirements
-Autodesk Maya (for this implementation), with numpy and scipy installed for mayapy.
+
+Autodesk Maya (the suite runs on 2025; version-keyed dispatch builds the
+legacy networks on older releases), with numpy and scipy installed for
+mayapy.
 
 ## Author
+
 * **Eric Vignola** (eric.vignola@gmail.com)
 
 ## License
+
 BSD 3-Clause License:
 Copyright (c)  2026, Eric Vignola
 All rights reserved.
