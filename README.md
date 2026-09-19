@@ -5,10 +5,8 @@ attributes, connect them. `rig` turns those verbs into Python operators
 on wrapped Maya objects, so a network reads like the maths it computes
 and a build script reads like a description of the rig instead of a
 transcript of `createNode` / `setAttr` / `connectAttr` calls. It uses
-Maya's own nodes (no plug-in, nothing custom saved in the scene), picks
-the native math nodes on Maya 2024+ and the `plusMinusAverage` /
-`multiplyDivide` / `condition` networks before, vectorizes over lists,
-and memoizes so the same expression twice costs one network.
+Maya's own nodes (no plug-in, nothing custom saved in the scene), vectorizes 
+over lists, and memoizes so the same expression twice costs one network.
 
 ![](https://github.com/Eric-Vignola/rig/blob/main/examples/ye_olde_lerp.gif)
 
@@ -16,24 +14,12 @@ and memoizes so the same expression twice costs one network.
 
 ## Quick taste
 
-Every `python` block on this page runs top to bottom as one script, in
-mayapy or the Script Editor. The first block is the setup: it initializes
-`maya.standalone` when it can and is a no-op inside Maya.
-
-```python
-from maya import standalone
-try:
-    standalone.initialize()          # running from mayapy; inside Maya this raises and is skipped
-except Exception:
-    pass
-from maya import cmds
-cmds.file(new=True, force=True)
-```
 
 Three cubes, a lerp driven by a new attribute, a container around the
 network, a component tag and a material.
 
 ```python
+from maya import cmds
 from rig import Node, PlugList, container, Tag
 from rig.spec import Float, lock
 from rig.bridges import commands as rc
@@ -46,8 +32,8 @@ obj3 << Float("weight", min=0, max=1) << 0.25          # addAttr, then setAttr o
 with container("ye_olde_lerp"):                        # nodes built inside join the container
     obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
 
-print(obj3.t >> None)                                            # [2.5 0.  0. ]
-print(cmds.container("ye_olde_lerp", q=True, nodeList=True))    # ['sub1', 'mul1', 'add1']
+print(obj3.t >> None)                                        # [2.5 0.  0. ]
+print(cmds.container("ye_olde_lerp", q=True, nodeList=True)) # ['sub1', 'mul1', 'add1']
 
 obj1.f[:3] << Tag("lid")                               # a face component tag on cube1Shape
 print(obj1 >> Tag("lid"))                              # [0 1 2]
@@ -56,17 +42,14 @@ obj1 << Blinn("red", color=(1, 0, 0))                  # builds red + redSG, ass
 print(Material.of(obj1))                               # [Blinn('red')]
 ```
 
-The lerp is three nodes (`subtract`, `multiply`, `sum` on Maya 2024+;
-`plusMinusAverage` and `multiplyDivide` before) wired in the order the
-expression reads. `rc.polyCube` is `cmds.polyCube` returning `Node`s
-instead of strings; `Node("cube1")` wraps a node that already exists.
 
 ---
 
 ## The language in one table
 
-Two operators carry the language. `<<` points the way data flows in;
-`>>` points the way it flows out.
+Two operators carry the language:
+- `<<` points the way data flows in. (aka: injection)
+- `>>` points the way it flows out. (aka: introspection)
 
 | Spelling | Meaning | Returns |
 |---|---|---|
@@ -80,21 +63,7 @@ Two operators carry the language. `<<` points the way data flows in;
 | `-a`, `~a` | negate; logical NOT | the output plug |
 | `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes | the output plug, **never a bool** |
 | `a & b`, `a \| b`, `a ^ b` | logical AND / OR / XOR networks | the output plug |
-| `members << Tag("x")` | **membership**: put the left-hand side in the collection, created if missing | the LHS, so collections chain |
-| `members << -Tag("x")` | remove the LHS from that collection | the LHS |
-| `members << Tag()` | purge: out of every collection of that kind | the LHS |
-| `members >> Tag("x")` | query: which of the LHS are in it | a plain value: native ids, or a bool |
-| `members >> Tag()` | enumerate: the collections holding the LHS | a list of specs; an exclusive kind (`Layer`) answers the one collection, or `None` |
-| `node.tx << Layer("x")` | an attribute plug on the left stands for its node | |
-| `with container("name"):` | every node built inside joins a Maya container | |
 
-The membership rows read the same for every kind: `Tag` (component
-tags) and `Layer` (display layers) from `rig.membership`, and the
-materials from `rig.shade` (`Blinn`, `Lambert`, `Phong`, `PhongE`,
-`SurfaceShader`, `StandardSurface`, `OpenPBRSurface`, with `Material`
-for any surface shader and `Default` for `initialShadingGroup`).
-Materials and layers are exclusive, so `<<` moves the LHS; tags are
-additive.
 
 ---
 
