@@ -119,23 +119,30 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
             container = False,      # transform stays at scene root
         )
         container.add(plane)  # but the polyPlane node is rig-owned
-        shape = rc.listRelatives(transform, type="mesh")[0]
-
-        # ---- Material + shading group ---------------------------------------
-        # unique=True keeps today's behaviour: a second create_plane(name=...)
-        # gets its OWN material. ambientColor=1 is full-bright in the viewport.
-        m = Lambert(name, unique=True, diffuse=0, ambientColor=1)
-        shape << m
-        material = m.node
+        # container=False: an rc query inside the scope would otherwise add
+        # the shape it returns to the container.
+        shape = rc.listRelatives(transform, type="mesh", container=False)[0]
 
         # ---- Animated file texture ------------------------------------------
         texture = rn.file()
         texture.fileTextureName   << first_frame
         texture.useFrameExtension << True
         texture.frameOffset       << lock  # we drive frameExtension directly
-        material.color            << texture.outColor
-        material.ambientColor     << texture.outColor
-        material.diffuse          << 1
+
+        # ---- Material -------------------------------------------------------
+        # The texture feeds color and ambientColor (full-bright in the
+        # viewport). Injecting the spec builds the lambert, its shading
+        # engine and materialInfo, applies the kwargs and assigns the shape;
+        # unique=True keeps a second create_plane(name=...) on its OWN
+        # material. The spec stays the handle for the material's plugs.
+        material = Lambert(
+            name,
+            unique       = True,
+            diffuse      = 1,
+            color        = texture.outColor,
+            ambientColor = texture.outColor,
+        )
+        shape << material
 
         # ---- User-facing attrs on the shape ---------------------------------
         shape << Int("sequenceStart", min=0, dv=start)
@@ -179,7 +186,7 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
         plane.width  << ratio_w * target_size
         plane.height << ratio_h * target_size
 
-        return Output(transform, shape, material, texture)
+        return Output(transform, shape, material.node, texture)
 
 
 if __name__ == "__main__":

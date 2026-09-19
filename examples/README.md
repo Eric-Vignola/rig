@@ -432,17 +432,26 @@ Now, with `rig.shade`:
 
 <!-- notest -->
 ```python
-m = Lambert(name, unique=True, diffuse=0, ambientColor=1)
-shape << m
-material = m.node
+texture  = rn.file()
+material = Lambert(
+    name,
+    unique       = True,
+    diffuse      = 1,
+    color        = texture.outColor,
+    ambientColor = texture.outColor,
+)
+shape << material
+material.transparency << remap.outColor      # the spec is the handle for the material's plugs
 ```
 
 `Lambert(name, ...)` is a lazy handle — it makes no Maya call until it
 meets `<<`. Then the shader, `<name>SG`, its `materialInfo` and the
 `defaultShaderList1` link are built in one go, the kwargs are applied as
-attribute injections (`diffuse << 0`, `ambientColor << 1`), and the shape
-is moved into the engine with one `cmds.sets(forceElement=...)`. All of it
-joins the active container. `unique=True` keeps the old behaviour on a
+attribute injections (a value sets `diffuse`, a plug connects the texture
+into `color` and `ambientColor`), and the shape is moved into the engine
+with one `cmds.sets(forceElement=...)`. All of it joins the active
+container, and the spec keeps working as the material afterwards:
+`material.transparency << ...` reaches the lambert's plug. `unique=True` keeps the old behaviour on a
 rebuild: a second `create_plane(name="run")` gets its own `run1` and
 `run1SG` instead of re-using `run`. `m.node` is the material `Node` the
 rest of the script wires textures into; `m.engine` is the shading engine.

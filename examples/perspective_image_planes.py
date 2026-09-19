@@ -119,13 +119,12 @@ def create_setup(
                 container = False,
             )
 
-            # Plane node joins the container; transform reparents under camera.
+            # Plane node joins the container; transform reparents under camera
+            # (container=False: rc.parent returns the transform, and an rc
+            # result inside the scope joins the container).
             container.add(plane)
 
-            if parent:
-                rc.parent(transform, parent)
-            else:
-                rc.parent(transform, camera_xform)
+            rc.parent(transform, parent or camera_xform, container=False)
 
             # Offset the plane along -Z relative to the camera.
             transform.tz << (i + 1) * -offset
@@ -137,18 +136,21 @@ def create_setup(
             transform.r  << lock << hide
             transform.v  << lock << hide
 
-            # Shading network for the plane. unique=True keeps today's
-            # behaviour: a rebuild gets its OWN material.
-            shape = rc.listRelatives(transform, type="mesh")[0]
-            m     = Lambert(name_suffix.lower(), unique=True, diffuse=0, ambientColor=1)
-            shape << m
-            material = m.node
+            shape = rc.listRelatives(transform, type="mesh", container=False)[0]
 
-            # File texture for color.
-            texture = rn.file()
-            material.color        << texture.outColor
-            material.ambientColor << texture.outColor
-            material.diffuse      << 1
+            # File texture for color, and the material it feeds: injecting
+            # the spec builds the lambert, its shading engine and
+            # materialInfo, applies the kwargs and assigns the shape.
+            # unique=True keeps a rebuild on its OWN material.
+            texture  = rn.file()
+            material = Lambert(
+                name_suffix.lower(),
+                unique       = True,
+                diffuse      = 1,
+                color        = texture.outColor,
+                ambientColor = texture.outColor,
+            )
+            shape << material
 
             # Per-shape exposed attrs (visible via select-then-channel-box).
             shape << String("image") << default
