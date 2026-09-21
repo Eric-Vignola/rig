@@ -140,9 +140,9 @@ class _DestroyMarker(_AttrSpec):
     def __call__(
         self,
         *attr_names: str,
-        strict:  bool = False,
-        silent:  bool = False,
-        verbose: bool = False,
+        strict:      bool = False,
+        silent:      bool = False,
+        verbose:     bool = False,
     ) -> _DestroySpec:
         if not attr_names:
             raise ValueError(

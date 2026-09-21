@@ -574,7 +574,7 @@ class _ContainerStack:
         ss:         Optional[bool] = None,
         skipSelect: Optional[bool] = None,
         container:  Optional[bool] = None,
-        **kwargs: Any,
+        **kwargs:   Any,
     ) -> Any:
         """Create a Maya node and register it with the active scope.
 
