@@ -9,3 +9,6 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# Maya writes a swatch cache next to every texture it previews
+.mayaSwatches/

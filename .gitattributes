@@ -1,0 +1,20 @@
+# Linux (LF) newlines, in every text file, on every machine.
+#
+# Without this rule the line endings a commit gets depend on the machine and
+# the editor: Git for Windows ships core.autocrlf=true in its SYSTEM config,
+# which checks text out CRLF, and under core.autocrlf=false a file an editor
+# saved CRLF is committed CRLF as-is.
+#
+# Declared here, the rule travels with the repository: text is stored LF and
+# checked out LF everywhere. Every text blob is ALREADY stored LF, verified
+# byte-exactly: `git add --renormalize .` under this rule produces no index
+# change, so nothing below rewrites history.
+
+* text=auto eol=lf
+
+# The images -- the README banner and the example textures -- are real
+# binaries and must never be touched. `text=auto` already detects them by
+# their NUL bytes; naming them makes it certain rather than inferred.
+
+*.gif binary
+*.jpg binary
