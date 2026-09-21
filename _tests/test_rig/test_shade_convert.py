@@ -80,9 +80,9 @@ class TestLazyRetype(MayaTestCase):
             p = Phong(mat)
         self.assertEqual(warn.call_count, 0)
         self.assertIs(type(mat), Phong)
-        self.assertEqual(mat.type, "phong")
+        self.assertEqual(mat.type,  "phong")
         self.assertEqual(repr(mat), "Phong('red')")
-        self.assertEqual(p, mat)
+        self.assertEqual(p,         mat)
         self.assertIsNot(p, mat)
         self.assertIs(type(p), Phong)
         self.assertEqual(p.attrs, {"color": [1, 0, 0]})
@@ -169,11 +169,11 @@ class TestConversion(MayaTestCase):
         value, an animCurve on a shared attr, wires into shared attrs at
         parent and child level, and a user attribute."""
         red = Blinn("red")
-        self.cube << red
+        self.cube        << red
         red.eccentricity << 0.66 << lock
         rn.ramp(name="ramp1")
         red.specularRollOff << Node("ramp1").outAlpha
-        red.diffuse << 0.33 << lock
+        red.diffuse         << 0.33 << lock
         cmds.setKeyframe("red.reflectivity", v=0.9, t=1)
         rn.file(name="tex")
         red.incandescence << Node("tex").outColor
@@ -204,21 +204,21 @@ class TestConversion(MayaTestCase):
             [(a, round(v, 4), locked) for a, v, locked in report.lost_values],
             [("eccentricity", 0.66, True)],
         )
-        self.assertEqual(report.lost_wires, (("ramp1.outAlpha", "specularRollOff", "ramp"),))
+        self.assertEqual(report.lost_wires,     (("ramp1.outAlpha", "specularRollOff", "ramp"),))
         self.assertEqual(report.lost_animation, ())
-        self.assertEqual(report.lost_outputs, ())
-        self.assertEqual(report.opaque, ())
-        self.assertEqual(report.parked, ("eccentricity", "specularRollOff"))
-        self.assertEqual(report.dynamic, ("myNote",))
+        self.assertEqual(report.lost_outputs,   ())
+        self.assertEqual(report.opaque,         ())
+        self.assertEqual(report.parked,         ("eccentricity", "specularRollOff"))
+        self.assertEqual(report.dynamic,        ("myNote",))
         for attr in ("diffuse", "reflectivity", "incandescence", "transparency", "specularColor"):
             self.assertIn(attr, report.carried)
         self.assertNotIn("eccentricity", report.carried)
         # what moved
-        self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertEqual(cmds.nodeType("red"),          "phong")
         self.assertEqual(_sources("red.incandescence"), ["tex.outColor"])
         self.assertEqual(_sources("red.transparencyG"), ["ramp2.outAlpha"])
         self.assertEqual(_sources("red.specularColor"), ["ramp3.outColor"])
-        self.assertEqual(_sources("red.reflectivity"), ["red_reflectivity.output"])
+        self.assertEqual(_sources("red.reflectivity"),  ["red_reflectivity.output"])
         self.assertAlmostEqual(cmds.getAttr("red.diffuse"), 0.33, places=5)
         self.assertTrue(cmds.getAttr("red.diffuse", lock=True))
         self.assertEqual(cmds.getAttr("red.myNote"), "hi")
@@ -239,7 +239,7 @@ class TestConversion(MayaTestCase):
     def test_the_cascade_pin(self):
         # rig keeps a createNode-made ramp through the conversion
         red = Blinn("red")
-        self.cube << red
+        self.cube           << red
         red.specularRollOff << Node.create("ramp", name="ramp1").outAlpha
         with mock.patch.object(cmds, "warning"):
             Phong(red)
@@ -297,16 +297,16 @@ class TestConversion(MayaTestCase):
             report = shade.convert(red, "blinn")
         self.assertEqual(warn.call_count, 0)
         self.assertFalse(report)
-        self.assertEqual(str(report), "")
-        self.assertEqual(report.restored, ("eccentricity", "specularRollOff"))
+        self.assertEqual(str(report),          "")
+        self.assertEqual(report.restored,      ("eccentricity", "specularRollOff"))
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertAlmostEqual(cmds.getAttr("red.eccentricity"), 0.66, places=5)
         self.assertTrue(cmds.getAttr("red.eccentricity", lock=True))
         self.assertEqual(_sources("red.specularRollOff"), ["ramp1.outAlpha"])
-        self.assertEqual(_sources("red.reflectivity"), ["red_reflectivity.output"])
-        self.assertEqual(_sources("red.incandescence"), ["tex.outColor"])
-        self.assertEqual(_sources("red.transparencyG"), ["ramp2.outAlpha"])
-        self.assertEqual(_sources("red.specularColor"), ["ramp3.outColor"])
+        self.assertEqual(_sources("red.reflectivity"),    ["red_reflectivity.output"])
+        self.assertEqual(_sources("red.incandescence"),   ["tex.outColor"])
+        self.assertEqual(_sources("red.transparencyG"),   ["ramp2.outAlpha"])
+        self.assertEqual(_sources("red.specularColor"),   ["ramp3.outColor"])
         self.assertTrue(cmds.getAttr("red.diffuse", lock=True))
         self.assertEqual(cmds.listAttr("red", userDefined=True), ["myNote"])
         self.assertEqual(cmds.getAttr("red.myNote"), "hi")
@@ -314,8 +314,8 @@ class TestConversion(MayaTestCase):
 
     def test_park_false_drops_and_disconnects(self):
         red = Blinn("red")
-        self.cube << red
-        red.eccentricity << 0.5
+        self.cube           << red
+        red.eccentricity    << 0.5
         red.specularRollOff << rn.ramp(name="ramp1").outAlpha
         with mock.patch.object(cmds, "warning") as warn:
             red.astype("phong", park=False)
@@ -350,7 +350,7 @@ class TestConversion(MayaTestCase):
         self.cube << red
         other = Blinn("other")
         _cube("cube2") << other
-        other.color << red.color
+        other.color    << red.color
         asset = cmds.container(name="asset", addNode=["red"])
         cmds.container(asset, edit=True, publishName="tint")
         cmds.container(asset, edit=True, bindAttr=["red.color", "tint"])
@@ -399,10 +399,10 @@ class TestConversion(MayaTestCase):
             with self.assertRaises(ValueError) as caught:
                 red.astype("phong", strict=True)
         self.assertEqual(str(caught.exception), str(report))
-        self.assertEqual(warn.call_count, 0)
-        self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(_wiring("red"), wiring)
-        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(warn.call_count,       0)
+        self.assertEqual(set(cmds.ls()),        before)
+        self.assertEqual(_wiring("red"),        wiring)
+        self.assertEqual(cmds.nodeType("red"),  "blinn")
         self.assertIs(type(red), Blinn)
         # nothing lossy: strict passes
         clean = Blinn("clean")
@@ -449,9 +449,9 @@ class TestConversion(MayaTestCase):
         # a rebuild in a fresh scene declares the merged kwargs
         cmds.file(new=True, force=True)
         _cube("cube") << m
-        self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertEqual(cmds.nodeType("red"),            "phong")
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
-        self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
+        self.assertEqual(cmds.getAttr("red.color")[0],    (1.0, 0.0, 0.0))
 
     def test_cross_family_only_non_default_values_cross(self):
         chrome = Blinn("chrome")
@@ -558,8 +558,8 @@ class TestConversion(MayaTestCase):
                 Phong(red)
         finally:
             cmds.lockNode("red", lock=False)
-        self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(_wiring("red"), wiring)
+        self.assertEqual(set(cmds.ls()),       before)
+        self.assertEqual(_wiring("red"),       wiring)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(red), Blinn)
         # the synonym
@@ -591,7 +591,7 @@ class TestConversion(MayaTestCase):
             shutil.rmtree(folder, ignore_errors=True)
 
     def test_one_undo_restores_everything(self):
-        red = self._lossy_red()
+        red   = self._lossy_red()
         asset = cmds.container(name="asset", addNode=["red"])
         info  = _info("redSG")
         cmds.connectAttr("red.message", f"{info}.material")
@@ -603,11 +603,11 @@ class TestConversion(MayaTestCase):
             Phong(red)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.shade.convert")
         cmds.undo()
-        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(cmds.nodeType("red"),      "blinn")
         self.assertEqual(cmds.ls("red", uuid=True), [uuid])
-        self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(_wiring("red"), wiring)
-        self.assertEqual(_dsl1_index("red"), slot)
+        self.assertEqual(set(cmds.ls()),            before)
+        self.assertEqual(_wiring("red"),            wiring)
+        self.assertEqual(_dsl1_index("red"),        slot)
         self.assertAlmostEqual(cmds.getAttr("red.eccentricity"), 0.66, places=5)
         self.assertTrue(cmds.getAttr("red.eccentricity", lock=True))
         self.assertTrue(cmds.getAttr("red.diffuse", lock=True))
@@ -646,7 +646,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
 
     def test_abort_paths_leave_the_scene_untouched(self):
-        red = self._lossy_red()
+        red    = self._lossy_red()
         before = set(cmds.ls())
         wiring = _wiring("red")
         cmds.flushUndo()
@@ -679,8 +679,8 @@ class TestConversion(MayaTestCase):
             self.assertFalse(cmds.undoInfo(query=True, state=True))
         finally:
             cmds.undoInfo(state=True, infinity=True)
-        self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(_wiring("red"), wiring)
+        self.assertEqual(set(cmds.ls()),       before)
+        self.assertEqual(_wiring("red"),       wiring)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         # and a conversion with the queue off works
         cmds.undoInfo(state=False)
@@ -705,8 +705,8 @@ class TestConversion(MayaTestCase):
         before = set(cmds.ls())
         with mock.patch.object(cmds, "warning") as warn:
             dry = shade.convert(red, "phong", dry_run=True)
-        self.assertEqual(warn.call_count, 0)
-        self.assertEqual(set(cmds.ls()), before)
+        self.assertEqual(warn.call_count,      0)
+        self.assertEqual(set(cmds.ls()),       before)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(red), Blinn)
         with mock.patch.object(cmds, "warning"):
@@ -722,6 +722,6 @@ class TestConversion(MayaTestCase):
         # specs compare by name
         self.assertEqual(Blinn("x"), Phong("x"))
         self.assertEqual(hash(Blinn("x")), hash(Phong("x")))
-        self.assertNotEqual(Blinn("x"), Blinn("y"))
+        self.assertNotEqual(Blinn("x"),  Blinn("y"))
         self.assertNotEqual(-Blinn("x"), Blinn("x"))
-        self.assertNotEqual(Blinn("x"), "x")
+        self.assertNotEqual(Blinn("x"),  "x")

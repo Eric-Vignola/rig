@@ -372,7 +372,7 @@ def _clone(src_plug: Plug, dst_node: str, name: str, hidden: bool | None = None)
             keyable = True
     spec.kargs["hidden"]  = hidden
     spec.kargs["keyable"] = keyable
-    new_plug = Node(dst_node) << spec
+    new_plug              = Node(dst_node) << spec
     if src_plug.is_multi:
         for index in src_plug.get_logical_indices() or []:
             try:
@@ -392,42 +392,42 @@ class _Scan:
     old:            str
     src:            str
     dst:            str
-    values:         list = field(default_factory=list)   # carried non-default roots
-    wires:          set  = field(default_factory=set)    # attr names for copyAttr connections
-    outs:           set  = field(default_factory=set)    # out* names present on the target
-    dynamic:        list = field(default_factory=list)   # parent-less user-defined attrs
-    locks:          dict = field(default_factory=dict)   # root -> own-locked plug names on old
+    values:         list = field(default_factory=list)  # carried non-default roots
+    wires:          set = field(default_factory=set)    # attr names for copyAttr connections
+    outs:           set = field(default_factory=set)    # out* names present on the target
+    dynamic:        list = field(default_factory=list)  # parent-less user-defined attrs
+    locks:          dict = field(default_factory=dict)  # root -> own-locked plug names on old
     lost_values:    list = field(default_factory=list)
     lost_wires:     list = field(default_factory=list)
     lost_animation: list = field(default_factory=list)
     lost_outputs:   list = field(default_factory=list)
     default_shift:  list = field(default_factory=list)
     opaque:         list = field(default_factory=list)
-    park_roots:     list = field(default_factory=list)   # doomed roots to park, in order
-    park_wires:     dict = field(default_factory=dict)   # root -> [(src plug, leaf)]
-    parked:         list = field(default_factory=list)   # names as the warning lines print them
+    park_roots:     list = field(default_factory=list)  # doomed roots to park, in order
+    park_wires:     dict = field(default_factory=dict)  # root -> [(src plug, leaf)]
+    parked:         list = field(default_factory=list)  # names as the warning lines print them
     engines:        list = field(default_factory=list)
     infos:          list = field(default_factory=list)
     dsl1_index:     int | None = None
     container:      str | None = None
-    bindings:       list = field(default_factory=list)   # (container, leaf, published name, carried)
-    relock:         list = field(default_factory=list)   # plug names to lock on the new node
+    bindings:       list = field(default_factory=list)  # (container, leaf, published name, carried)
+    relock:         list = field(default_factory=list)  # plug names to lock on the new node
 
     def report(self) -> Conversion:
         carried = sorted(set(self.values) | {_root_of(self.old, a) for a in self.wires})
         return Conversion(
-            name=self.old,
-            source=self.src,
-            target=self.dst,
-            carried=tuple(carried),
-            dynamic=tuple(self.dynamic),
-            lost_values=tuple(self.lost_values),
-            lost_wires=tuple(self.lost_wires),
-            lost_animation=tuple(self.lost_animation),
-            lost_outputs=tuple(self.lost_outputs),
-            default_shift=tuple(self.default_shift),
-            opaque=tuple(self.opaque),
-            parked=tuple(self.parked),
+            name           = self.old,
+            source         = self.src,
+            target         = self.dst,
+            carried        = tuple(carried),
+            dynamic        = tuple(self.dynamic),
+            lost_values    = tuple(self.lost_values),
+            lost_wires     = tuple(self.lost_wires),
+            lost_animation = tuple(self.lost_animation),
+            lost_outputs   = tuple(self.lost_outputs),
+            default_shift  = tuple(self.default_shift),
+            opaque         = tuple(self.opaque),
+            parked         = tuple(self.parked),
         )
 
 
@@ -445,7 +445,7 @@ def _scan(old: str, src: str, dst: str, park: bool) -> _Scan:
 def _scan_dynamic(scan: _Scan) -> None:
     """User-defined attributes cross whole (values and wires), so the value
     and wire passes leave them alone."""
-    names = cmds.listAttr(scan.old, userDefined=True) or []
+    names        = cmds.listAttr(scan.old, userDefined=True) or []
     scan.dynamic = _parent_less(scan.old, names)
 
 
@@ -944,8 +944,8 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> list:
     try:
         try:
             with _undo_chunk(CHUNK):
-                new  = _prepare(scan, park)
-                name = _commit(scan, new, park)
+                new      = _prepare(scan, park)
+                name     = _commit(scan, new, park)
                 restored = _restore(name, scan.dst)
                 for attr, value in attrs.items():
                     Plug(f"{name}.{attr}") << value
@@ -985,6 +985,6 @@ def _retype(spec: Any, dst: str, attrs: dict) -> None:
     from rig.shade import _BY_TYPE, Material
 
     spec._attrs.update(attrs)
-    spec._attrs     = {k: v for k, v in spec._attrs.items() if _q(k, "exists", type=dst)}
-    spec.__class__  = _BY_TYPE.get(dst, Material)
-    spec._type      = dst
+    spec._attrs    = {k: v for k, v in spec._attrs.items() if _q(k, "exists", type=dst)}
+    spec.__class__ = _BY_TYPE.get(dst, Material)
+    spec._type     = dst

@@ -115,10 +115,10 @@ _PROBE_TOKEN = {
     "lattice":      "pt[0][0][0]",
 }
 
-_MISSING    = "missing"      # no tag of that name resolves on the node
-_EDITABLE   = "editable"     # cmds.componentTag edits it at its home node
-_BAKED      = "baked"        # the command refuses it; it lives in the home's own multi
-_PROCEDURAL = "procedural"   # output of a history node; nothing edits it
+_MISSING    = "missing"     # no tag of that name resolves on the node
+_EDITABLE   = "editable"    # cmds.componentTag edits it at its home node
+_BAKED      = "baked"       # the command refuses it; it lives in the home's own multi
+_PROCEDURAL = "procedural"  # output of a history node; nothing edits it
 
 
 def _exact_token(name: str) -> re.Pattern:
@@ -704,7 +704,7 @@ class Tag(_MemberSpec):
         home:    _Home,
         comps:   list[_Selection],
         present: bool,
-        exact:   bool = False,
+        exact:   bool             = False,
     ) -> None:
         if not comps:
             return

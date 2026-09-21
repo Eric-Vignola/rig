@@ -255,10 +255,10 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertEqual(tag_references("cap"), [])
 
         cmds.setAttr(expr, "cap + lid", type="string")
-        self.assertEqual(tag_references("cap"), [(cluster, 0)])
-        self.assertEqual(tag_references("lid"), [(cluster, 0)])
-        self.assertEqual(tag_references("ca"), [])
-        self.assertEqual(tag_references("caps"), [])
+        self.assertEqual(tag_references("cap"),    [(cluster, 0)])
+        self.assertEqual(tag_references("lid"),    [(cluster, 0)])
+        self.assertEqual(tag_references("ca"),     [])
+        self.assertEqual(tag_references("caps"),   [])
         self.assertEqual(tag_references("ns:cap"), [])
 
         cmds.setAttr(expr, "!cap", type="string")

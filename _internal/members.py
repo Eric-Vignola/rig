@@ -316,8 +316,8 @@ class Components:
                 )
             node_part, comp_part = node_or_string.split(".", 1)
             kind, ranges         = _parse_component_string(comp_part)
-            shape                = _resolve_shape(node_part, kind)
-            sizes                = _axis_sizes(shape._dg_node, kind)
+            shape = _resolve_shape(node_part, kind)
+            sizes = _axis_sizes(shape._dg_node, kind)
             if len(ranges) != len(sizes):
                 raise TypeError(
                     f"{comp_part!r}: '{kind}' on a {shape._dg_node.node_type} "
@@ -347,7 +347,7 @@ class Components:
         if indices is not None:
             if sizes is None:
                 sizes = _axis_sizes(shape._dg_node, kind)
-            indices = _as_ids(indices, sizes, f"Components({shape}, {kind!r})")
+            indices                 = _as_ids(indices, sizes, f"Components({shape}, {kind!r})")
             indices.flags.writeable = False
         self._shape   = shape
         self._kind    = kind
@@ -357,12 +357,12 @@ class Components:
     def _from_ids(cls, shape: Node, kind: str, ids: np.ndarray) -> "Components":
         """A selection on the same shape from already-validated ids (sorted
         and deduplicated here; no range check)."""
-        ids = np.unique(ids, axis=0) if ids.ndim > 1 else np.unique(ids)
+        ids                 = np.unique(ids, axis=0) if ids.ndim > 1 else np.unique(ids)
         ids.flags.writeable = False
-        obj = object.__new__(cls)
-        obj._shape   = shape
-        obj._kind    = kind
-        obj._indices = ids
+        obj                 = object.__new__(cls)
+        obj._shape          = shape
+        obj._kind           = kind
+        obj._indices        = ids
         return obj
 
     # -- identity -- #
@@ -404,8 +404,8 @@ class Components:
         the shape when :attr:`is_all`. Read-only."""
         if self._indices is not None:
             return self._indices
-        sizes = self._sizes
-        ids   = np.arange(sizes[0]) if len(sizes) == 1 else _grid(sizes)
+        sizes               = self._sizes
+        ids                 = np.arange(sizes[0]) if len(sizes) == 1 else _grid(sizes)
         ids.flags.writeable = False
         return ids
 
@@ -697,7 +697,7 @@ class _Group:
         if not len(ids):
             return None
         ids.flags.writeable = False
-        tokens = _render_tokens(self.kind, ids, self.flat)
+        tokens              = _render_tokens(self.kind, ids, self.flat)
         return _Selection(
             self.path, self.node_type, self.kind, tokens, ids, False, self.flat, sources
         )
@@ -713,7 +713,7 @@ class _Normaliser:
 
     def __init__(self, want_shapes: bool) -> None:
         self.want_shapes = want_shapes
-        self.groups: dict[tuple[str, str, bool], _Group] = {}
+        self.groups:   dict[tuple[str, str, bool], _Group] = {}
         self.contexts: dict[int, _NodeContext] = {}
 
     def group(self, path: str, node_type: str, kind: str, flat: bool = False) -> _Group:
@@ -825,7 +825,7 @@ class _Normaliser:
     def _ctx_group(self, ctx: _NodeContext, kind: str, flat: bool) -> _Group:
         group = ctx.groups.get((kind, flat))
         if group is None:
-            group = self.group(ctx.path, ctx.node_type, kind, flat)
+            group                    = self.group(ctx.path, ctx.node_type, kind, flat)
             ctx.groups[(kind, flat)] = group
         return group
 
@@ -924,10 +924,10 @@ class _MemberSpec:
     stands for its node.
     """
 
-    KIND:        str            = ""
+    KIND:        str = ""
     ACCEPTS:     frozenset[str] = frozenset()
-    WANT_SHAPES: bool           = False
-    EXCLUSIVE:   bool           = False
+    WANT_SHAPES: bool = False
+    EXCLUSIVE:   bool = False
 
     def __init__(self, name: Any = None, **kw: Any) -> None:
         if name is not None:

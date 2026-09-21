@@ -73,14 +73,14 @@ class TestMaterialConstruction(MayaTestCase):
             Material(Node(ISG)),
         ]
         self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(str(specs[0]), "red")
+        self.assertEqual(str(specs[0]),  "red")
         self.assertEqual(repr(specs[0]), "Blinn('red')")
-        self.assertEqual(specs[0].type, "blinn")
+        self.assertEqual(specs[0].type,  "blinn")
         self.assertEqual(specs[0].attrs, {"color": (1, 0, 0), "diffuse": 0.5})
-        self.assertEqual(specs[1].type, "phong")
+        self.assertEqual(specs[1].type,  "phong")
         self.assertTrue(specs[2].purges)
         self.assertEqual(repr(specs[4]), "Default()")
-        self.assertEqual(str(specs[4]), ISG)
+        self.assertEqual(str(specs[4]),  ISG)
         self.assertEqual(repr(specs[5]), "-Blinn('red')")
         self.assertTrue(specs[5].removes)
         self.assertEqual(str(specs[6]), ISG)
@@ -177,8 +177,8 @@ class TestMaterialCreate(MayaTestCase):
         result    = self.cube << red
         self.assertIs(result, self.cube)
         self.assertEqual(cmds.ls(selection=True), selection)
-        self.assertEqual(cmds.nodeType("red"), "blinn")
-        self.assertEqual(cmds.nodeType("redSG"), "shadingEngine")
+        self.assertEqual(cmds.nodeType("red"),    "blinn")
+        self.assertEqual(cmds.nodeType("redSG"),  "shadingEngine")
         partition = cmds.listConnections("redSG.partition", plugs=True) or []
         self.assertTrue(any(x.startswith("renderPartition.sets") for x in partition))
         self.assertEqual(len(cmds.listConnections("redSG.message", type="materialInfo")), 1)
@@ -196,8 +196,8 @@ class TestMaterialCreate(MayaTestCase):
     def test_spec_state_is_unchanged_by_use(self):
         red   = Blinn("red", color=(1, 0, 0))
         state = (red.name, red.type, red.attrs, repr(red), red.removes, red._built)
-        self.cube << red
-        self.cube << red
+        self.cube       << red
+        self.cube       << red
         self.cube.f[:2] << red
         self.assertEqual(
             (red.name, red.type, red.attrs, repr(red), red.removes, red._built), state
@@ -206,7 +206,7 @@ class TestMaterialCreate(MayaTestCase):
 
     def test_found_material_is_a_plain_assignment(self):
         self.cube << Blinn("red", color=(1, 0, 0))
-        other = _cube("other")
+        other  = _cube("other")
         before = set(cmds.ls())
         result = other << Blinn("red", color=(0, 0, 1))
         self.assertIs(result, other)
@@ -268,8 +268,8 @@ class TestMaterialCreate(MayaTestCase):
             self.cube << Blinn("red")
             before = set(cmds.ls())
             self.cube << Blinn("red")
-            self.assertEqual(set(cmds.ls()), before)
-            self.assertEqual(str(Blinn("red").node), "look:red")
+            self.assertEqual(set(cmds.ls()),           before)
+            self.assertEqual(str(Blinn("red").node),   "look:red")
             self.assertEqual(str(Blinn("red").engine), "look:redSG")
         finally:
             cmds.namespace(set=":")
@@ -430,7 +430,7 @@ class TestMaterialAssign(MayaTestCase):
         self.assertEqual(_members("redSG"), ["cube.f[3]", "cube.f[5]"])
         # a Components carrier and a string-built one work the same
         Components(self.cube, "f", [5]) << self.blue
-        Components("cube.f[3]") << self.blue
+        Components("cube.f[3]")         << self.blue
         self.assertEqual(_members("blueSG"), ["cube.f[0:5]"])
         self.assertEqual(_members("redSG"), [])
 
@@ -447,12 +447,12 @@ class TestMaterialAssign(MayaTestCase):
         before = set(cmds.ls())
         result = self.cube.f[:2] << self.red
         self.assertIs(type(result), Components)
-        self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(_members("redSG"), ["cubeShape"])
+        self.assertEqual(set(cmds.ls()),          before)
+        self.assertEqual(_members("redSG"),       ["cubeShape"])
         self.assertEqual(cmds.ls(type="groupId"), [])
 
     def test_node_lhs_assigns_its_own_shapes_never_the_subtree(self):
-        grp = Node(cmds.group(str(self.cube), name="grp"))
+        grp    = Node(cmds.group(str(self.cube), name="grp"))
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, r"no shadeable shape.*cubeShape.*recurse"):
             grp << self.red
@@ -476,8 +476,8 @@ class TestMaterialAssign(MayaTestCase):
         self.assertIs(srf << self.red, srf)
         self.assertEqual(_members("redSG"), ["srfShape"])
         self.assertEqual(_names(Material.of(srf)), ["Blinn('red')"])
-        crv = Node(cmds.circle(name="crv")[0])
-        lat = Node(cmds.lattice(str(self.cube))[1])
+        crv    = Node(cmds.circle(name="crv")[0])
+        lat    = Node(cmds.lattice(str(self.cube))[1])
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "nurbsCurve, not a shadeable"):
             crv << self.red
@@ -577,8 +577,8 @@ class TestMaterialAssign(MayaTestCase):
         self.assertIs(result, plug)
         self.assertEqual(_members("redSG"), ["cubeShape"])
         np.testing.assert_array_equal(self.cube.t >> self.red, np.arange(6))
-        self.assertEqual(_names(self.cube.rotate >> Blinn()), ["Blinn('red')"])
-        self.assertEqual(_names(Material.of(self.cube.visibility)), ["Blinn('red')"])
+        self.assertEqual(_names(self.cube.rotate >> Blinn()),             ["Blinn('red')"])
+        self.assertEqual(_names(Material.of(self.cube.visibility)),       ["Blinn('red')"])
         self.assertEqual([str(x) for x in shade.materials(self.cube.tx)], ["red"])
         # two plugs of one node are one node
         PlugList([self.cube.tx, self.cube.ty]) << self.blue
@@ -593,7 +593,7 @@ class TestMaterialAssign(MayaTestCase):
         self.assertEqual(_members("redSG"), ["cubeShape"])
         # component plugs keep their meaning; a plug of a node with nothing
         # shadeable refuses as the node would
-        joint = Node.create("joint", name="joint1")
+        joint  = Node.create("joint", name="joint1")
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "vertices"):
             self.cube.vtx[:3] << self.red
@@ -631,11 +631,11 @@ class TestMaterialRemove(MayaTestCase):
         # faces in no engine: repair re-homes exactly those
         fixed = shade.repair(self.cube)
         self.assertEqual([str(x) for x in fixed], ["cubeShape"])
-        self.assertEqual(_members(ISG), ["cube.f[0:2]"])
-        self.assertEqual(_members("redSG"), ["cube.f[3:5]"])
+        self.assertEqual(_members(ISG),           ["cube.f[0:2]"])
+        self.assertEqual(_members("redSG"),       ["cube.f[3:5]"])
 
     def test_faces_leave_a_per_face_membership(self):
-        self.cube.f[:3] << Blinn("blue")
+        self.cube.f[:3]     << Blinn("blue")
         self.cube.f[[0, 5]] << -Blinn("blue")
         self.assertEqual(_members("blueSG"), ["cube.f[1:2]"])
         self.assertEqual(_members("redSG"), ["cube.f[3:5]"])
@@ -651,7 +651,7 @@ class TestMaterialRemove(MayaTestCase):
         self.assertEqual(_members("redSG"), [])
         self.assertEqual(_engines(self.shape), [])
         self.cube.f[:3] << self.red
-        self.cube << -self.red
+        self.cube       << -self.red
         self.assertEqual(_members("redSG"), [])
         self.cube.f << self.red
         self.cube.f << -self.red
@@ -750,7 +750,7 @@ class TestMaterialRemove(MayaTestCase):
         self.assertEqual(_members("redSG"), ["cube1.f[0:1]"])
         self.assertEqual(sorted(_members(ISG)), ["cube1.f[2:5]", "cube|cubeShape"])
         inst.f[[2]] << -Default()
-        self.assertEqual(sorted(_members(ISG)), ["cube1.f[3:5]", "cube|cubeShape"])
+        self.assertEqual(sorted(_members(ISG)),          ["cube1.f[3:5]", "cube|cubeShape"])
         self.assertEqual(_names(Material.of(inst.f[2])), [])
         self.assertEqual(_names(Material.of(self.cube)), ["Default()"])
         np.testing.assert_array_equal(inst >> Default(), [3, 4, 5])
@@ -775,10 +775,10 @@ class TestMaterialQuery(MayaTestCase):
         self.assertNotIsInstance(got, Components)
         np.testing.assert_array_equal(got, np.arange(6))
         self.cube.f[:3] << Blinn("red")
-        np.testing.assert_array_equal(self.cube >> Blinn("red"), [0, 1, 2])
-        np.testing.assert_array_equal(self.cube >> Material("red"), [0, 1, 2])
-        np.testing.assert_array_equal(self.cube.f >> Blinn("red"), [0, 1, 2])
-        np.testing.assert_array_equal(self.cube.f[1:5] >> Blinn("red"), [1, 2])
+        np.testing.assert_array_equal(self.cube >> Blinn("red"),           [0, 1, 2])
+        np.testing.assert_array_equal(self.cube >> Material("red"),        [0, 1, 2])
+        np.testing.assert_array_equal(self.cube.f >> Blinn("red"),         [0, 1, 2])
+        np.testing.assert_array_equal(self.cube.f[1:5] >> Blinn("red"),    [1, 2])
         np.testing.assert_array_equal(self.cube.f[[5, 0]] >> Blinn("red"), [0])
         self.assertEqual((self.cube.f[3:] >> Blinn("red")).shape, (0,))
         np.testing.assert_array_equal(self.cube >> Default(), [3, 4, 5])
@@ -829,9 +829,9 @@ class TestMaterialQuery(MayaTestCase):
         self.assertEqual(
             _names(self.cube >> Material()), ["Default()", "Blinn('red')", "Lambert('skin')"]
         )
-        self.assertEqual(_names(self.cube >> Material(None)), _names(self.cube >> Material()))
-        self.assertEqual(_names(self.cube >> Blinn()), ["Blinn('red')"])
-        self.assertEqual(_names(self.cube.f[2] >> Material()), ["Blinn('red')"])
+        self.assertEqual(_names(self.cube >> Material(None)),   _names(self.cube >> Material()))
+        self.assertEqual(_names(self.cube >> Blinn()),          ["Blinn('red')"])
+        self.assertEqual(_names(self.cube.f[2] >> Material()),  ["Blinn('red')"])
         self.assertEqual(_names(self.cube.f[4:] >> Material()), ["Default()"])
         self.assertIs(type((self.cube >> Blinn())[0]), Blinn)
         # Default() is not a purge: it queries initialShadingGroup's faces
@@ -851,14 +851,14 @@ class TestMaterialQuery(MayaTestCase):
         self.assertEqual(_names(Material.of(self.cube)), ["Default()"])
         self.assertIsInstance(Material.of(self.cube)[0], Default)
         self.cube.f[:3] << Blinn("red")
-        self.cube.f[3] << Material("ani", type="anisotropic")
+        self.cube.f[3]  << Material("ani", type="anisotropic")
         found = Material.of(self.cube)
         self.assertEqual(_names(found), ["Default()", "Blinn('red')", "Material('ani')"])
         self.assertIs(type(found[1]), Blinn)
         self.assertIs(type(found[2]), Material)
-        self.assertEqual(_names(Material.of(self.cube.f[0])), ["Blinn('red')"])
+        self.assertEqual(_names(Material.of(self.cube.f[0])),      ["Blinn('red')"])
         self.assertEqual(_names(Material.of(self.cube.f[[0, 3]])), [])
-        self.assertEqual(_names(Material.of(self.cube.f[4:])), ["Default()"])
+        self.assertEqual(_names(Material.of(self.cube.f[4:])),     ["Default()"])
         # the bare handle is the whole object
         self.assertEqual(_names(Material.of(self.cube.f)), _names(found))
         self.assertEqual(_names(Blinn.of(self.cube)), ["Blinn('red')"])
@@ -922,7 +922,7 @@ class TestMaterialMethods(MayaTestCase):
 
     def test_delete_leaves_members_green_and_repair_fixes(self):
         other = _cube("other")
-        self.cube << Blinn("red")
+        self.cube   << Blinn("red")
         other.f[:2] << Blinn("red")
         info = cmds.listConnections("redSG.message", type="materialInfo")
         self.assertIsNone(Material("red").delete())
@@ -932,9 +932,9 @@ class TestMaterialMethods(MayaTestCase):
         self.assertEqual(_names(Material.of(self.cube)), [])
         fixed = shade.repair()
         self.assertIsInstance(fixed, PlugList)
-        self.assertEqual(sorted(str(x) for x in fixed), ["cubeShape", "otherShape"])
+        self.assertEqual(sorted(str(x) for x in fixed),  ["cubeShape", "otherShape"])
         self.assertEqual(_names(Material.of(self.cube)), ["Default()"])
-        self.assertEqual(sorted(_members(ISG)), ["cubeShape", "other.f[0:5]"])
+        self.assertEqual(sorted(_members(ISG)),          ["cubeShape", "other.f[0:5]"])
         # nothing left to repair
         self.assertEqual([str(x) for x in shade.repair()], [])
 
@@ -976,7 +976,7 @@ class TestMaterialMethods(MayaTestCase):
 
     def test_repair_judges_each_instance_path(self):
         inst = Node(cmds.instance(str(self.cube))[0])
-        inst << Blinn("x")
+        inst      << Blinn("x")
         self.cube << Material(None)
         self.assertEqual(_members(ISG), [])
         self.assertEqual([str(x) for x in shade.repair()], ["cube|cubeShape"])
@@ -984,7 +984,7 @@ class TestMaterialMethods(MayaTestCase):
         self.assertEqual(_members("xSG"), ["cube1|cubeShape"])
         # the other way round: the scene walk reaches every instance path
         self.cube << Blinn("x")
-        inst << Material(None)
+        inst      << Material(None)
         self.assertEqual(_members("xSG"), ["cube|cubeShape"])
         self.assertEqual([str(x) for x in shade.repair()], ["cube1|cubeShape"])
         self.assertEqual(_members(ISG), ["cube1|cubeShape"])
@@ -1007,8 +1007,8 @@ class TestMaterialMethods(MayaTestCase):
         cmds.rename("redSG", "customSG")
         red.rename("blue")
         self.assertEqual(cmds.ls(type="blinn"), ["blue"])
-        self.assertEqual(str(red.engine), "customSG")
-        self.assertEqual(cmds.ls("blueSG*"), ["blueSG"])
+        self.assertEqual(str(red.engine),       "customSG")
+        self.assertEqual(cmds.ls("blueSG*"),    ["blueSG"])
 
     def test_rename_follows_the_engine_convention_and_the_spec(self):
         red = Blinn("red")
@@ -1017,9 +1017,9 @@ class TestMaterialMethods(MayaTestCase):
         self.assertEqual(cmds.ls(type="blinn"), ["blue"])
         self.assertTrue(cmds.objExists("blueSG"))
         self.assertFalse(cmds.objExists("redSG"))
-        self.assertEqual(str(red), "blue")
-        self.assertEqual(str(red.node), "blue")
-        self.assertEqual(str(red.engine), "blueSG")
+        self.assertEqual(str(red),           "blue")
+        self.assertEqual(str(red.node),      "blue")
+        self.assertEqual(str(red.engine),    "blueSG")
         self.assertEqual(_members("blueSG"), ["cubeShape"])
         # an engine off the convention keeps its name
         cmds.rename("blueSG", "customSG")
@@ -1072,7 +1072,7 @@ class TestMaterialErrors(MayaTestCase):
         self.cube  = _cube("cube")
         self.shape = _shape(self.cube)
         self.cube << Blinn("red")
-        self.joint = Node.create("joint", name="joint1")
+        self.joint  = Node.create("joint", name="joint1")
         self.before = set(cmds.ls())
 
     def assert_nothing_written(self):
@@ -1148,7 +1148,7 @@ class TestMaterialErrors(MayaTestCase):
         cmds.connectAttr("red.outColor", "redX.surfaceShader")
         cmds.connectAttr("red.outColor", "redY.surfaceShader")
         cmds.delete("redSG")
-        other = _cube("other")
+        other       = _cube("other")
         self.before = set(cmds.ls())
         with self.assertRaisesRegex(ValueError, "redX"):
             other << Blinn("red")
@@ -1210,8 +1210,8 @@ class TestMaterialContainer(MayaTestCase):
         self.cube << Blinn("red")
         other = _cube("other")
         with container("look"):
-            other << Blinn("red", container=True)      # found: stays where it is
-            other << Blinn("free")                     # new, default: out
+            other       << Blinn("red", container=True)  # found: stays where it is
+            other       << Blinn("free")                 # new, default: out
             other.f[:2] << Blinn("inside", container=True)
         self.assertIsNone(self._owner("red"))
         self.assertIsNone(self._owner("redSG"))
@@ -1227,7 +1227,7 @@ class TestMaterialContainer(MayaTestCase):
         cmds.container(asset, edit=True, addNode=["bare"], force=True)
         rn.blinn(name="loose", container=False)
         with container("look"):
-            self.cube << Material("bare")
+            self.cube       << Material("bare")
             self.cube.f[:2] << Material("loose")
         self.assertEqual(self._owner("bareSG"), "asset")
         info = cmds.listConnections("bareSG.message", type="materialInfo")[0]
@@ -1265,7 +1265,7 @@ class TestMaterialPerformance(MayaTestCase):
         found = Material.of(cube)
         ids   = cube >> Default()
         cube.f[:2] << -Default()
-        cube << Material(None)
+        cube       << Material(None)
         elapsed = time.perf_counter() - start
         self.assertLess(elapsed, 1.0)
         self.assertEqual(_names(found), ["Default()"])
@@ -1331,7 +1331,7 @@ class TestShadeExamples(MayaTestCase):
         self.assertEqual(cmds.nodeType(str(first.material)), "lambert")
         self.assertNotEqual(str(first.material), str(second.material))
         for setup in (first, second):
-            shape = _shape(setup.transform)
+            shape  = _shape(setup.transform)
             engine = _engines(shape)
             self.assertEqual(len(engine), 1)
             self.assertEqual(

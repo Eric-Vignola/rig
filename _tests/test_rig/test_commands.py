@@ -110,11 +110,11 @@ class TestCommandsContainerScope(MayaTestCase):
         mesh = rc.polyCube(name="mesh")[0]
         with container("build"):
             driven = rc.createNode("transform", name="driven")
-            rc.ls("ctrl")                                        # a query
-            rc.listRelatives(mesh, s=True)                       # a query
-            rc.getAttr("ctrl.t")                                 # a value
-            rc.parent(ctrl, driven)                              # an edit: returns the child
-            rc.rename(mesh, "renamed")                           # an edit: returns the node
+            rc.ls("ctrl")                   # a query
+            rc.listRelatives(mesh, s=True)  # a query
+            rc.getAttr("ctrl.t")            # a value
+            rc.parent(ctrl, driven)         # an edit: returns the child
+            rc.rename(mesh, "renamed")      # an edit: returns the node
         self.assertEqual(self._members("build"), ["driven"])
         self.assertIsNone(cmds.container(query=True, findContainer=["driven|ctrl"]))
         self.assertIsNone(cmds.container(query=True, findContainer=["renamed"]))

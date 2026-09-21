@@ -70,7 +70,7 @@ class TestLayerConstruction(MayaTestCase):
             Layer(DEFAULT),
         ]
         self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(str(specs[0]), "x")
+        self.assertEqual(str(specs[0]),  "x")
         self.assertEqual(repr(specs[0]), "Layer('x')")
         self.assertEqual(specs[0].attrs, {})
         self.assertFalse(specs[0]._update)
@@ -83,8 +83,8 @@ class TestLayerConstruction(MayaTestCase):
             self.assertEqual(repr(purge), "Layer(None)")
         self.assertTrue(specs[4].removes)
         self.assertEqual(repr(specs[4]), "-Layer('x')")
-        self.assertEqual(str(specs[5]), DEFAULT)
-        self.assertEqual(Layer("x"), Layer("x"))
+        self.assertEqual(str(specs[5]),  DEFAULT)
+        self.assertEqual(Layer("x"),     Layer("x"))
         self.assertNotEqual(Layer("x"), -Layer("x"))
         self.assertNotEqual(Layer("x"), Layer("y"))
         self.assertEqual(len({Layer("x"), Layer("x"), Layer("y")}), 2)
@@ -153,7 +153,7 @@ class TestLayerAdd(MayaTestCase):
         result    = self.cube << Layer("x")
         self.assertIs(result, self.cube)
         self.assertEqual(set(cmds.ls()) - before, {"x"})
-        self.assertEqual(cmds.nodeType("x"), "displayLayer")
+        self.assertEqual(cmds.nodeType("x"),      "displayLayer")
         self.assertEqual(cmds.ls(selection=True), selection)
         self.assertEqual(
             cmds.editDisplayLayerGlobals(query=True, currentDisplayLayer=True), DEFAULT
@@ -176,8 +176,8 @@ class TestLayerAdd(MayaTestCase):
         self.cube << Layer("x")
         result = self.cube << Layer("y")
         self.assertIs(result, self.cube)
-        self.assertEqual(_members("x"), [])
-        self.assertEqual(_members("y"), ["|cube"])
+        self.assertEqual(_members("x"),   [])
+        self.assertEqual(_members("y"),   ["|cube"])
         self.assertEqual(_layer("|cube"), "y")
         # a chain ends in the last layer
         self.assertIs(self.cube << Layer("a") << Layer("b"), self.cube)
@@ -396,9 +396,9 @@ class TestLayerRemove(MayaTestCase):
         before = set(cmds.ls())
         result = self.other << -Layer("x")
         self.assertIs(result, self.other)
-        self.assertEqual(set(cmds.ls()), before)
+        self.assertEqual(set(cmds.ls()),   before)
         self.assertEqual(_layer("|other"), "y")
-        self.assertEqual(_members("y"), ["|other"])
+        self.assertEqual(_members("y"),    ["|other"])
         # a list: only the members of x leave
         PlugList([self.cube, self.other]) << -Layer("x")
         self.assertIsNone(_layer("|cube"))
@@ -487,9 +487,9 @@ class TestLayerQuery(MayaTestCase):
     def test_purge_enumerates_the_one_layer_or_none(self):
         found = self.cube >> Layer()
         self.assertIsInstance(found, Layer)
-        self.assertEqual(found, Layer("x"))
-        self.assertEqual(str(found), "x")
-        self.assertEqual(found.attrs, {})
+        self.assertEqual(found,           Layer("x"))
+        self.assertEqual(str(found),      "x")
+        self.assertEqual(found.attrs,     {})
         self.assertEqual(str(found.node), "x")
         self.assertIsNone(self.other >> Layer())
         self.assertEqual(_names(Layer.of(self.cube)), ["Layer('x')"])

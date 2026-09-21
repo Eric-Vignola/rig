@@ -151,8 +151,8 @@ class TestComponentSliceBroadcast(MayaTestCase):
                 np.testing.assert_array_almost_equal(got, before[i])
 
     def test_mesh_vtx_step_slice_lshift_nested_sets_each_position(self):
-        cube  = cmds.polyCube(name="pc")[0]
-        shape = Node(cmds.listRelatives(cube, shapes=True)[0])
+        cube    = cmds.polyCube(name="pc")[0]
+        shape   = Node(cmds.listRelatives(cube, shapes=True)[0])
         targets = [[1, 0, 0], [0, 2, 0], [0, 0, 3], [4, 4, 4]]
         shape.vtx[::2] << targets
         for i, target in zip(range(0, 8, 2), targets):

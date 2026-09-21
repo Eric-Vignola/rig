@@ -688,8 +688,8 @@ class TestPlugRshiftNamedClone(MayaTestCase):
     def test_incoming_connection_is_not_moved_like_rshift_node(self):
         driver = Node.create("transform", name="driver")
         self.src.blend << driver.tx
-        driver.tx << 0.5
-        named = self.src.blend >> "blendCopy"
+        driver.tx      << 0.5
+        named  = self.src.blend >> "blendCopy"
         cloned = self.src.blend >> self.dst
         for plug in (named, cloned):
             self.assertEqual(list(plug.get_inputs()), [])

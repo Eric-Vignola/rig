@@ -192,8 +192,8 @@ class TestShadingEngine(MayaTestCase):
     def test_assign_per_face_carve(self):
         self.sg_a.assign([self.shape])
         self.sg_b.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
-        self.assertEqual(_faces(self.sg_a), [(self.shape, [2, 3, 4, 5])])
-        self.assertEqual(_faces(self.sg_b), [(self.shape, [0, 1])])
+        self.assertEqual(_faces(self.sg_a),       [(self.shape, [2, 3, 4, 5])])
+        self.assertEqual(_faces(self.sg_b),       [(self.shape, [0, 1])])
         self.assertEqual(_raw_members(self.sg_b), ["cube.f[0:1]"])
 
     def test_faces_into_owner_is_noop(self):
@@ -224,8 +224,8 @@ class TestShadingEngine(MayaTestCase):
         self.sg_b.assign([f"{xform}.f[0:1]"], touched=[shape], normalise=True)
         self.assertEqual(len(cmds.ls(type="groupParts")), 2)
         self.sg_a.assign([f"{xform}.f[0:1]"], touched=[shape], normalise=True)
-        self.assertEqual(_raw_members(self.sg_a), ["histShape"])
-        self.assertEqual(cmds.ls(type="groupId"), [])
+        self.assertEqual(_raw_members(self.sg_a),    ["histShape"])
+        self.assertEqual(cmds.ls(type="groupId"),    [])
         self.assertEqual(cmds.ls(type="groupParts"), [])
         self.assertTrue(cmds.objExists("polyCube1"))
 

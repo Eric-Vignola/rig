@@ -212,7 +212,7 @@ def _classify(name: str) -> _Found:
                 f"shading engine '{name}' has no surface shader; connect one or "
                 f"name a material"
             )
-        material = shaders[0]
+        material    = shaders[0]
         shader_type = cmds.nodeType(material)
         if not _is_surface_shader(shader_type):
             raise TypeError(
@@ -729,7 +729,7 @@ class Material(_MemberSpec):
         self,
         name:      Any         = None,
         *,
-        type:      str | None  = None,
+        type:      str  | None = None,
         unique:    bool        = False,
         update:    bool        = False,
         container: bool | None = None,
@@ -774,10 +774,10 @@ class Material(_MemberSpec):
     def _retype_args(
         self,
         source:    "Material",
-        type:      str | None,
+        type:      str        | None,
         unique:    bool,
         update:    bool,
-        container: bool | None,
+        container: bool       | None,
         attrs:     dict,
     ) -> tuple:
         """``Cls(spec, ...)``: convert ``spec`` to this class's type (or the

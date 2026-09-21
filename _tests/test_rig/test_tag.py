@@ -102,7 +102,7 @@ class TestTagConstruction(MayaTestCase):
             ~Tag(None)
 
     def test_methods_refuse_removal_and_purge_copies(self):
-        sph = Node(cmds.polySphere(name="sph")[0])
+        sph    = Node(cmds.polySphere(name="sph")[0])
         before = set(cmds.ls())
         with self.assertRaises(TypeError):
             (-Tag("cap")).set(sph.vtx[:2])
@@ -162,12 +162,12 @@ class TestTagOnSphere(MayaTestCase):
             )
         )
         self.assertEqual(_contents(self.sph, "raw"), [])
-        self.sph << Tag("cap")
+        self.sph         << Tag("cap")
         self.sph.vtx[:5] << Tag("cap")
         np.testing.assert_array_equal(self.sph >> Tag("cap"), np.arange(5))
 
     def test_add_is_a_union(self):
-        self.sph.vtx[:5] << Tag("cap")
+        self.sph.vtx[:5]  << Tag("cap")
         self.sph.vtx[3:8] << Tag("cap")
         self.assertEqual(_contents(self.sph, "cap"), ["vtx[0:7]"])
         self.sph.vtx[[20, 10]] << Tag("cap")
@@ -220,7 +220,7 @@ class TestTagOnSphere(MayaTestCase):
 
     def test_remove_all_keeps_the_tag(self):
         self.sph.vtx[:8] << Tag("cap")
-        self.sph.vtx << -Tag("cap")
+        self.sph.vtx     << -Tag("cap")
         self.assertEqual(_tags(self.sph), ["cap"])
         self.assertEqual((self.sph >> Tag("cap")).shape, (0,))
         # an empty tag takes any category on its first population
@@ -231,7 +231,7 @@ class TestTagOnSphere(MayaTestCase):
         self.sph.f << -Tag("cap")
         self.assertEqual((self.sph >> Tag("cap")).shape, (0,))
         self.sph.vtx[:3] << -Tag("cap")
-        self.sph.e[:3] << -Tag("cap")
+        self.sph.e[:3]   << -Tag("cap")
         self.assertEqual(_tags(self.sph), ["cap"])
 
     def test_node_on_the_left_of_a_removal_deletes_the_tag(self):
@@ -348,7 +348,7 @@ class TestTagOnSphere(MayaTestCase):
         self.sph.vtx[[1, 2]] << Tag("verts")
         np.testing.assert_array_equal(self.sph >> Tag("verts"), [1, 2])
         # a plug of a node without geometry refuses as the node would
-        joint = Node(cmds.createNode("joint", name="joint1"))
+        joint  = Node(cmds.createNode("joint", name="joint1"))
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "not geometry"):
             joint.tx << Tag("xx")
@@ -367,9 +367,9 @@ class TestTagOnSphere(MayaTestCase):
         self.assertEqual(_names(found), ["cap"])
         self.assertIsInstance(found[0], Tag)
         self.assertEqual(_names(Tag.of(self.sph.vtx[[3, 9]])), [])
-        self.assertEqual(_names(Tag.of(self.sph.vtx[20])), [])
-        self.assertEqual(_names(Tag.of(self.sph.f[:2])), ["lid"])
-        self.assertEqual(_names(Tag.of(self.sph.e[0])), [])
+        self.assertEqual(_names(Tag.of(self.sph.vtx[20])),     [])
+        self.assertEqual(_names(Tag.of(self.sph.f[:2])),       ["lid"])
+        self.assertEqual(_names(Tag.of(self.sph.e[0])),        [])
         # re-injectable
         self.sph.vtx[9] << found[0]
         np.testing.assert_array_equal(self.sph >> Tag("cap"), [0, 1, 2, 3, 4, 5, 6, 7, 9])
@@ -420,8 +420,8 @@ class TestTagOnSphere(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
 
     def test_uvs_non_geometry_and_channel_fanout_refuse(self):
-        joint = Node(cmds.createNode("joint", name="joint1"))
-        empty = Node.create("transform", name="empty")
+        joint  = Node(cmds.createNode("joint", name="joint1"))
+        empty  = Node.create("transform", name="empty")
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "UVs cannot be tagged"):
             self.sph.map[:4] << Tag("uvs")
@@ -639,7 +639,7 @@ class TestTagOnClusteredMesh(MayaTestCase):
             self.sph >> Tag("up", at=self.orig)
 
     def test_node_lhs_refuses_a_procedural_name(self):
-        cube = Node(cmds.polyCube(name="hc", ch=True)[0])
+        cube   = Node(cmds.polyCube(name="hc", ch=True)[0])
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "PROCEDURAL"):
             cube << Tag("top")
@@ -648,7 +648,7 @@ class TestTagOnClusteredMesh(MayaTestCase):
 
     def test_delete_refuses_while_referenced_unless_forced(self):
         self.sph.vtx[:4] << Tag("cap")
-        self.expr << Tag("cap")
+        self.expr        << Tag("cap")
         before = set(cmds.ls())
         with self.assertRaisesRegex(
             RuntimeError, r"cluster1\.input\[0\]\.componentTagExpression.*force=True"
@@ -662,20 +662,20 @@ class TestTagOnClusteredMesh(MayaTestCase):
         self.assertEqual(_tags(self.sph), ["cap"])
         # an unreferenced tag still goes without force
         self.sph.vtx[:2] << Tag("free")
-        self.sph << -Tag("free")
+        self.sph         << -Tag("free")
         self.assertEqual(_tags(self.sph), ["cap"])
         Tag("cap").delete(self.sph, force=True)
         self.assertEqual(_tags(self.sph), [])
         self.sph.vtx[:4] << Tag("cap")
-        self.sph << -Tag("cap", force=True)
+        self.sph         << -Tag("cap", force=True)
         self.assertEqual(_tags(self.sph), [])
         self.sph.vtx[:4] << Tag("cap")
-        self.sph << Tag(None, force=True)
+        self.sph         << Tag(None, force=True)
         self.assertEqual(_tags(self.sph), [])
 
     def test_rename_rewrites_exact_references_with_force(self):
         self.sph.vtx[:4] << Tag("cap")
-        self.expr << "cap + lid"
+        self.expr        << "cap + lid"
         before = set(cmds.ls())
         with self.assertRaisesRegex(RuntimeError, "force=True"):
             Tag("cap").rename(self.sph, "crown")
@@ -698,10 +698,10 @@ class TestTagOnClusteredMesh(MayaTestCase):
     def test_a_reference_to_a_same_named_tag_on_another_mesh_does_not_block(self):
         other   = Node(cmds.polySphere(name="other", ch=False)[0])
         cluster = Node(cmds.cluster("other")[0])
-        other.vtx[:2] << Tag("cap")
+        other.vtx[:2]                           << Tag("cap")
         cluster.input[0].componentTagExpression << Tag("cap")
-        self.sph.vtx[:4] << Tag("cap")
-        self.sph << -Tag("cap")
+        self.sph.vtx[:4]                        << Tag("cap")
+        self.sph                                << -Tag("cap")
         self.assertEqual(_tags(self.sph), [])
         self.assertEqual(_tags(other), ["cap"])
 
@@ -766,7 +766,7 @@ class TestTagOnHistoryCube(MayaTestCase):
         self.assertEqual((self.cube >> Tag("front")).shape, (0,))
 
     def test_at_must_be_the_shape_or_upstream_of_it(self):
-        other = Node(cmds.polySphere(name="other")[0])
+        other  = Node(cmds.polySphere(name="other")[0])
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "at="):
             self.cube.f[:2] << Tag("cap", at=other)
@@ -776,7 +776,7 @@ class TestTagOnHistoryCube(MayaTestCase):
         self.assertEqual(_tags(self.cube), CUBE_TAGS)
         # at= naming the node an editable tag already lives on edits it there
         self.cube.f[:2] << Tag("cap")
-        self.cube.f[3] << Tag("cap", at=self.shape)
+        self.cube.f[3]  << Tag("cap", at=self.shape)
         np.testing.assert_array_equal(self.cube >> Tag("cap"), [0, 1, 3])
         self.assertEqual(_entries(self.cube, "cap"), [("hcShape", True, True)])
 
@@ -877,8 +877,8 @@ class TestTagOnBakedCube(MayaTestCase):
     def test_query_and_of_on_a_baked_cube(self):
         np.testing.assert_array_equal(self.cube >> Tag("top"), [1])
         self.assertEqual(_names(Tag.of(self.cube.f[1])), ["top"])
-        self.assertEqual(_names(Tag.of(self.cube)), CUBE_TAGS)
-        self.assertEqual(_entries(self.cube, "top"), [("bcShape", False, False), ("bcShape", True, True)])
+        self.assertEqual(_names(Tag.of(self.cube)),      CUBE_TAGS)
+        self.assertEqual(_entries(self.cube, "top"),     [("bcShape", False, False), ("bcShape", True, True)])
 
 
 # --------------------------------------------------------------------- #
@@ -963,13 +963,13 @@ class TestTagExports(MayaTestCase):
         import rig
         from rig import membership
 
-        self.assertIs(rig.Tag, membership.Tag)
-        self.assertIs(rig.Layer, membership.Layer)
+        self.assertIs(rig.Tag,        membership.Tag)
+        self.assertIs(rig.Layer,      membership.Layer)
         self.assertIs(rig.Components, membership.Components)
         self.assertIs(rig.membership, membership)
         for name in ("Tag", "Layer", "Components", "membership"):
             self.assertIn(name, rig.__all__)
         self.assertEqual(sorted(membership.__all__), ["Components", "Layer", "Tag"])
         self.assertIsInstance(Tag("cap"), Tag)
-        self.assertIsInstance(Node, type)
-        self.assertIsInstance(Plug, type)
+        self.assertIsInstance(Node,       type)
+        self.assertIsInstance(Plug,       type)

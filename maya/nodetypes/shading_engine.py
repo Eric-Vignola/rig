@@ -88,7 +88,7 @@ class ShadingEngine(ObjectSet):
             raise ValueError(f"Material must match one node: {material} -> {found}")
         material = found[0]
 
-        engines = []
+        engines  = []
         plugs   = cmds.listConnections(
             material, type="shadingEngine", source=False, destination=True, plugs=True
         )

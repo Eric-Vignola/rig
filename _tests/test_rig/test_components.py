@@ -77,10 +77,10 @@ class TestComponentsConstruction(MayaTestCase):
         faces    = Node(shape).f
         self.assertIsInstance(faces, Components)
         self.assertTrue(faces.is_all)
-        self.assertEqual(faces.kind, "f")
+        self.assertEqual(faces.kind,     "f")
         self.assertEqual(faces.geometry, "mesh")
-        self.assertEqual(faces.count, 6)
-        self.assertEqual(faces.names, [f"{shape}.f[*]"])
+        self.assertEqual(faces.count,    6)
+        self.assertEqual(faces.names,    [f"{shape}.f[*]"])
         np.testing.assert_array_equal(faces.indices, np.arange(6))
         self.assertEqual(str(faces.shape), "pCube1Shape")
 
@@ -88,7 +88,7 @@ class TestComponentsConstruction(MayaTestCase):
         xform, shape = _cube()
         edges        = Node(xform).e
         self.assertIsInstance(edges, Components)
-        self.assertEqual(edges.kind, "e")
+        self.assertEqual(edges.kind,  "e")
         self.assertEqual(edges.count, 12)
         self.assertEqual(edges.names, [f"{shape}.e[*]"])
 
@@ -182,8 +182,8 @@ class TestComponentsConstruction(MayaTestCase):
         np.testing.assert_array_equal(faces.indices, [0, 1, 2, 3])
         self.assertTrue(Components("pCube1.f[*]").is_all)
         self.assertEqual(Components(f"{shape}.vtx[2]").names, [f"{shape}.vtx[2]"])
-        self.assertEqual(Components("pCube1.map[1]").kind, "uv")
-        self.assertEqual(Components("pCube1.e[3:4]").names, [f"{shape}.e[3:4]"])
+        self.assertEqual(Components("pCube1.map[1]").kind,    "uv")
+        self.assertEqual(Components("pCube1.e[3:4]").names,   [f"{shape}.e[3:4]"])
 
     def test_string_constructor_rejections(self):
         _cube()
@@ -218,9 +218,9 @@ class TestComponentsConstruction(MayaTestCase):
         xform, shape = _sphere_surface()
         cvs          = Components(xform, "cv")
         self.assertTrue(cvs.is_all)
-        self.assertEqual(cvs.count, 56)
+        self.assertEqual(cvs.count,         56)
         self.assertEqual(cvs.indices.shape, (56, 2))
-        self.assertEqual(cvs.names, [f"{shape}.cv[*]"])
+        self.assertEqual(cvs.names,         [f"{shape}.cv[*]"])
 
     def test_lattice_points_are_three_dimensional(self):
         xform, _ = _cube()
@@ -248,8 +248,8 @@ class TestComponentsIndexing(MayaTestCase):
     def test_int_keys(self):
         _, shape = _cube()
         faces    = Node(shape).f
-        self.assertEqual(faces[2].names, [f"{shape}.f[2]"])
-        self.assertEqual(faces[-1].names, [f"{shape}.f[5]"])
+        self.assertEqual(faces[2].names,           [f"{shape}.f[2]"])
+        self.assertEqual(faces[-1].names,          [f"{shape}.f[5]"])
         self.assertEqual(faces[np.int64(3)].names, [f"{shape}.f[3]"])
         with self.assertRaises(IndexError):
             faces[6]
@@ -259,9 +259,9 @@ class TestComponentsIndexing(MayaTestCase):
     def test_slices_clamp_and_the_full_slice_is_the_handle(self):
         _, shape = _cube()
         faces    = Node(shape).f
-        self.assertEqual(faces[:3].names, [f"{shape}.f[0:2]"])
+        self.assertEqual(faces[:3].names,   [f"{shape}.f[0:2]"])
         self.assertEqual(faces[:100].count, 6)
-        self.assertEqual(faces[2:4].names, [f"{shape}.f[2:3]"])
+        self.assertEqual(faces[2:4].names,  [f"{shape}.f[2:3]"])
         self.assertEqual(
             faces[::2].names, [f"{shape}.f[0]", f"{shape}.f[2]", f"{shape}.f[4]"]
         )
@@ -311,7 +311,7 @@ class TestComponentsIndexing(MayaTestCase):
         _, shape = _cube()
         picked   = Node(shape).f[[5, 2, 3]]
         np.testing.assert_array_equal(picked.indices, [2, 3, 5])
-        self.assertEqual(picked[0].names, [f"{shape}.f[2]"])
+        self.assertEqual(picked[0].names,  [f"{shape}.f[2]"])
         self.assertEqual(picked[-1].names, [f"{shape}.f[5]"])
         self.assertEqual(picked[1:].names, [f"{shape}.f[3]", f"{shape}.f[5]"])
         with self.assertRaises(IndexError):
@@ -416,9 +416,9 @@ class TestComponentsOperators(MayaTestCase):
 
     def test_survives_pluglist_and_broadcasts_as_a_scalar(self):
         xform, shape = _cube()
-        node         = Node(xform)
-        faces        = Node(shape).f[:3]
-        listed       = PlugList([faces])
+        node   = Node(xform)
+        faces  = Node(shape).f[:3]
+        listed = PlugList([faces])
         self.assertIs(listed[0], faces)
         mixed = PlugList([node, faces, Node(shape).vtx[0]])
         self.assertIs(mixed[1], faces)
@@ -520,8 +520,8 @@ class TestNormalise(MayaTestCase):
 
     def test_transform_with_one_shape(self):
         xform, shape = _cube()
-        node         = Node(xform)
-        sel          = self._one(node, want_shapes=True)
+        node = Node(xform)
+        sel  = self._one(node, want_shapes=True)
         self.assertEqual((sel.kind, sel.path, sel.node_type), ("whole", shape, "mesh"))
         self.assertEqual(sel.tokens, ())
         self.assertIsNone(sel.indices)
@@ -566,8 +566,8 @@ class TestNormalise(MayaTestCase):
 
     def test_bare_vtx_handle_is_all_points(self):
         _, shape = _cube()
-        handle   = Node(shape).vtx
-        sel      = self._one(handle)
+        handle = Node(shape).vtx
+        sel    = self._one(handle)
         self.assertEqual((sel.kind, sel.path, sel.node_type), ("vtx", shape, "mesh"))
         self.assertTrue(sel.is_all)
         self.assertEqual(sel.tokens, ("vtx[*]",))
@@ -578,8 +578,8 @@ class TestNormalise(MayaTestCase):
 
     def test_vertex_element_plugs(self):
         _, shape = _cube()
-        node     = Node(shape)
-        sel      = self._one(node.vtx[3])
+        node = Node(shape)
+        sel  = self._one(node.vtx[3])
         self.assertEqual(sel.tokens, ("vtx[3]",))
         np.testing.assert_array_equal(sel.indices, [3])
         sel = self._one(node.vtx[:8])
@@ -594,8 +594,8 @@ class TestNormalise(MayaTestCase):
 
     def test_surface_component_plugs_render_two_dimensional_tokens(self):
         _, shape = _sphere_surface()
-        node     = Node(shape)
-        sel      = self._one(node.cv[1, 2])
+        node = Node(shape)
+        sel  = self._one(node.cv[1, 2])
         self.assertEqual((sel.kind, sel.node_type), ("cv", "nurbsSurface"))
         self.assertEqual(sel.tokens, ("cv[1][2]",))
         np.testing.assert_array_equal(sel.indices, [[1, 2]])
@@ -609,8 +609,8 @@ class TestNormalise(MayaTestCase):
 
     def test_plain_surface_control_points_pass_through_flat(self):
         _, shape = _sphere_surface()
-        node     = Node(shape)
-        sel      = self._one([node.controlPoints[3], node.controlPoints[4]])
+        node = Node(shape)
+        sel  = self._one([node.controlPoints[3], node.controlPoints[4]])
         self.assertEqual(sel.kind, "cv")
         self.assertTrue(sel.flat)
         self.assertEqual(sel.tokens, ("controlPoints[3:4]",))
@@ -631,8 +631,8 @@ class TestNormalise(MayaTestCase):
     def test_lattice_component_plugs(self):
         xform, _ = _cube()
         _, shape = _lattice(xform)
-        node     = Node(shape)
-        sel      = self._one(node.pt[1, 2, 3])
+        node = Node(shape)
+        sel  = self._one(node.pt[1, 2, 3])
         self.assertEqual((sel.kind, sel.node_type), ("pt", "lattice"))
         self.assertEqual(sel.tokens, ("pt[1][2][3]",))
         sel = self._one(node.pt[0, 0, :])
@@ -645,8 +645,8 @@ class TestNormalise(MayaTestCase):
 
     def test_uv_plugs(self):
         _, shape = _cube()
-        node     = Node(shape)
-        sel      = self._one(node.map[:4])
+        node = Node(shape)
+        sel  = self._one(node.map[:4])
         self.assertEqual(sel.kind, "uv")
         self.assertEqual(sel.tokens, ("map[0:3]",))
         sel = self._one(node.map)
@@ -655,8 +655,8 @@ class TestNormalise(MayaTestCase):
 
     def test_bare_faces_and_edges(self):
         xform, shape = _cube()
-        node         = Node(xform)
-        sel          = self._one(node.f)
+        node = Node(xform)
+        sel  = self._one(node.f)
         self.assertEqual((sel.kind, sel.path, sel.node_type), ("f", shape, "mesh"))
         self.assertTrue(sel.is_all)
         self.assertEqual(sel.tokens, ("f[*]",))
@@ -675,18 +675,18 @@ class TestNormalise(MayaTestCase):
 
     def test_mixed_pluglist_keeps_every_kind_in_order(self):
         xform, shape = _cube()
-        node         = Node(shape)
-        lhs          = PlugList([node.vtx[0], Node(xform).f[0], Node(xform)])
-        result       = normalise(lhs, want_shapes=True)
-        self.assertEqual([s.kind for s in result], ["vtx", "f", "whole"])
-        self.assertEqual({s.path for s in result}, {shape})
+        node   = Node(shape)
+        lhs    = PlugList([node.vtx[0], Node(xform).f[0], Node(xform)])
+        result = normalise(lhs, want_shapes=True)
+        self.assertEqual([s.kind for s in result],   ["vtx", "f", "whole"])
+        self.assertEqual({s.path for s in result},   {shape})
         self.assertEqual([s.tokens for s in result], [("vtx[0]",), ("f[0]",), ()])
 
     def test_equal_path_and_kind_merge(self):
         xform, shape = _cube()
-        node         = Node(shape)
-        faces        = Node(xform).f
-        sel          = self._one([faces[:2], faces[[4]], faces[1]])
+        node  = Node(shape)
+        faces = Node(xform).f
+        sel   = self._one([faces[:2], faces[[4]], faces[1]])
         self.assertEqual(sel.tokens, ("f[0:1]", "f[4]"))
         self.assertEqual(len(sel.source), 3)
         sel = self._one([node.vtx[0], Components(xform, "vtx", [3]), node.vtx[0]])
@@ -700,15 +700,15 @@ class TestNormalise(MayaTestCase):
 
     def test_whole_and_components_on_one_path_both_survive(self):
         _, shape = _cube()
-        node     = Node(shape)
-        result   = normalise([node, node.vtx[0]], want_shapes=True)
+        node   = Node(shape)
+        result = normalise([node, node.vtx[0]], want_shapes=True)
         self.assertEqual([s.kind for s in result], ["whole", "vtx"])
 
     def test_nested_sequences_flatten(self):
         xform, shape = _cube()
-        node         = Node(shape)
-        lhs          = [[node.vtx[0]], (Node(xform).f[0], [node.map[1]])]
-        result       = normalise(lhs, want_shapes=True)
+        node   = Node(shape)
+        lhs    = [[node.vtx[0]], (Node(xform).f[0], [node.map[1]])]
+        result = normalise(lhs, want_shapes=True)
         self.assertEqual([s.kind for s in result], ["vtx", "f", "uv"])
         lhs    = PlugList([PlugList([node.vtx[1]]), node.vtx[2]])
         result = normalise(lhs, want_shapes=True)
@@ -717,8 +717,8 @@ class TestNormalise(MayaTestCase):
     def test_multi_node_grouping(self):
         _, shape1 = _cube("pCube1")
         _, shape2 = _cube("pCube2")
-        lhs       = [Node(shape1).vtx[0], Node(shape2).vtx[0], Node(shape1).vtx[1]]
-        result    = normalise(lhs, want_shapes=True)
+        lhs    = [Node(shape1).vtx[0], Node(shape2).vtx[0], Node(shape1).vtx[1]]
+        result = normalise(lhs, want_shapes=True)
         self.assertEqual(
             [(s.path, s.tokens) for s in result],
             [(shape1, ("vtx[0:1]",)), (shape2, ("vtx[0]",))],
@@ -750,8 +750,8 @@ class TestNormalise(MayaTestCase):
 
     def test_attribute_plugs_stand_for_their_node(self):
         xform, shape = _cube()
-        node         = Node(xform)
-        sel          = self._one(node.tx, want_shapes=True)
+        node = Node(xform)
+        sel  = self._one(node.tx, want_shapes=True)
         self.assertEqual((sel.kind, sel.path, sel.node_type), ("whole", shape, "mesh"))
         self.assertEqual(sel.source, (node.tx,))
         sel = self._one(node.tx, want_shapes=False)
@@ -843,8 +843,8 @@ class TestAttributeFancyIndexing(MayaTestCase):
 
     def test_vtx_takes_a_sequence_of_ids(self):
         xform, shape = _cube()
-        node         = Node(xform)
-        picked       = node.vtx[[0, 4, 7]]
+        node   = Node(xform)
+        picked = node.vtx[[0, 4, 7]]
         self.assertIsInstance(picked, PlugList)
         self.assertEqual(
             [str(x) for x in picked],
@@ -860,9 +860,9 @@ class TestAttributeFancyIndexing(MayaTestCase):
 
     def test_round_trip_through_components(self):
         xform, shape = _cube()
-        node         = Node(xform)
-        ids          = node.f[[1, 3]] >> None
-        sel          = normalise(node.vtx[ids], want_shapes=True)[0]
+        node = Node(xform)
+        ids  = node.f[[1, 3]] >> None
+        sel  = normalise(node.vtx[ids], want_shapes=True)[0]
         self.assertEqual(sel.tokens, ("vtx[1]", "vtx[3]"))
 
     def test_rejections(self):
@@ -902,8 +902,8 @@ class TestMemberSpecContract(MayaTestCase):
         with self.assertRaises(TypeError):
             _Spec(5)
         spec = _Spec("cap", at="pCube1")
-        self.assertEqual(spec.name, "cap")
-        self.assertEqual(str(spec), "cap")
+        self.assertEqual(spec.name,  "cap")
+        self.assertEqual(str(spec),  "cap")
         self.assertEqual(repr(spec), "_Spec('cap')")
         self.assertFalse(spec.removes)
         self.assertFalse(spec.purges)
