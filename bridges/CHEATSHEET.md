@@ -53,10 +53,10 @@ from rig.bridges import nodes as rn
 `maya.cmds` function reachable as `__wrapped__`.
 
 ```python
-print("ls" in dir(rc), "createNode" in dir(rc))               # True True
+print("ls" in dir(rc),        "createNode" in dir(rc))        # True True
 print("transform" in dir(rn), "plusMinusAverage" in dir(rn))  # True True
-print(rc.ls is rc.ls, rc.ls.__wrapped__ is cmds.ls)           # True True -- built once, cached
-print(rc.ls.__qualname__, rn.transform.__qualname__)          # rig.bridges.commands.ls rig.bridges.nodes.transform
+print(rc.ls is rc.ls,         rc.ls.__wrapped__ is cmds.ls)   # True True -- built once, cached
+print(rc.ls.__qualname__,     rn.transform.__qualname__)      # rig.bridges.commands.ls rig.bridges.nodes.transform
 ```
 
 A name that is not a `maya.cmds` callable, or not a registered node type, is
@@ -82,12 +82,12 @@ the real Maya name.
 ```python
 cmds.file(new=True, force=True)
 cube = rc.createNode("transform", name="cube")
-print(repr(cube), str(cube))                     # Node("cube") cube
-print(rc.polyCube(name="box"))                   # PlugList([Node("box"), Node("polyCube1")])
+print(repr(cube), str(cube))    # Node("cube") cube
+print(rc.polyCube(name="box"))  # PlugList([Node("box"), Node("polyCube1")])
 cmds.select("cube", "box")
 sel = rc.ls(sl=True)
-print(sel, type(sel).__name__)                   # PlugList([Node("cube"), Node("box")]) PlugList
-print(rc.listRelatives("box", s=True))           # PlugList([Node("boxShape")])
+print(sel, type(sel).__name__)          # PlugList([Node("cube"), Node("box")]) PlugList
+print(rc.listRelatives("box", s=True))  # PlugList([Node("boxShape")])
 ```
 
 Empty stays empty, and `None` stays `None` — whatever the command itself does:
@@ -113,11 +113,11 @@ list of values is still a `PlugList`; a list of non-node strings is a plain
 
 ```python
 cube.tx << 5
-print(rc.getAttr("cube.tx"), rc.objExists("cube"), rc.nodeType("cube"))   # 5.0 True transform
-print(rc.getAttr("cube.t"))                      # PlugList([(5.0, 2.0, 0.0)])
-print(rc.xform("cube", q=True, ws=True, t=True)) # PlugList([5.0, 2.0, 0.0])
-print(rc.listAttr("cube", k=True)[:2])           # ['visibility', 'translateX'] -- not node names: a plain list
-print(rc.delete("box"))                          # None
+print(rc.getAttr("cube.tx"), rc.objExists("cube"), rc.nodeType("cube"))  # 5.0 True transform
+print(rc.getAttr("cube.t"))                                              # PlugList([(5.0, 2.0, 0.0)])
+print(rc.xform("cube", q=True, ws=True, t=True))                         # PlugList([5.0, 2.0, 0.0])
+print(rc.listAttr("cube", k=True)[:2])                                   # ['visibility', 'translateX'] -- not node names: a plain list
+print(rc.delete("box"))                                                  # None
 ```
 
 Trap one: a string *value* that happens to name a node is wrapped as that
@@ -126,9 +126,9 @@ node.
 ```python
 cmds.addAttr("cube", ln="label", dt="string")
 cmds.setAttr("cube.label", "persp", type="string")
-print(repr(rc.getAttr("cube.label")))            # Node("persp") -- the value names a node, so it is one
+print(repr(rc.getAttr("cube.label")))  # Node("persp") -- the value names a node, so it is one
 cmds.setAttr("cube.label", "hello", type="string")
-print(repr(rc.getAttr("cube.label")))            # 'hello'
+print(repr(rc.getAttr("cube.label")))  # 'hello'
 ```
 
 Trap two: plug strings collapse to their node (`Node("a.tx")` strips the
@@ -155,10 +155,10 @@ cmds.file(new=True, force=True)
 root = rc.createNode("transform", name="root")
 a    = rc.createNode("transform", name="a")
 b    = rc.createNode("transform", name="b", parent=root)      # a Node in a kwarg
-print(rc.parent(a, root))                                     # PlugList([Node("a")])
-print(sorted(str(x) for x in rc.listRelatives(root, c=True))) # ['a', 'b']
-print(rc.parent([a, b], world=True))                          # PlugList([Node("a"), Node("b")]) -- a list of Nodes
-print(rc.getAttr(a.tx))                                       # 0.0 -- a Plug argument
+print(rc.parent(a, root))                                      # PlugList([Node("a")])
+print(sorted(str(x) for x in rc.listRelatives(root, c=True)))  # ['a', 'b']
+print(rc.parent([a, b], world=True))                           # PlugList([Node("a"), Node("b")]) -- a list of Nodes
+print(rc.getAttr(a.tx))                                        # 0.0 -- a Plug argument
 ```
 
 ---
@@ -196,10 +196,10 @@ cmds.file(new=True, force=True)
 ctrl = rc.createNode("transform", name="ctrl")           # made OUTSIDE any scope
 mesh = rc.polyCube(name="mesh")[0]
 with container("build") as ctn:
-    driven = rc.createNode("transform", name="driven")   # created here: joins
-    found  = rc.ls("ctrl")                               # a query: ctrl stays out
-    shape  = rc.listRelatives(mesh, s=True)              # so does meshShape
-    value  = rc.getAttr("ctrl.t")                        # a value: nothing to add
+    driven = rc.createNode("transform", name="driven")  # created here: joins
+    found  = rc.ls("ctrl")                              # a query: ctrl stays out
+    shape  = rc.listRelatives(mesh, s=True)             # so does meshShape
+    value  = rc.getAttr("ctrl.t")                       # a value: nothing to add
 print(repr(ctn), cmds.container("build", q=True, nodeList=True))   # Container("build") ['driven']
 ```
 
@@ -271,10 +271,10 @@ the scope opt-out; everything else is an attribute (section 9).
 cmds.file(new=True, force=True)
 root  = rn.transform(name="root")
 child = rn.transform(n="child", p=root)                  # short forms, a Node as parent
-print(repr(root), repr(child), cmds.listRelatives("child", parent=True))   # Node("root") Node("child") ['root']
-print(str(rn.transform(name="root")))                    # root1 -- a clash at the same DAG level: Maya uniquifies, str(node) is the real name
-print(str(rn.transform(name="child")))                   # |child -- no clash with |root|child, so no rename: str(node) is the shortest unique path
-print(rn.transform.__doc__.splitlines()[0])              # Create a Maya ``transform`` node and apply attribute kwargs.
+print(repr(root), repr(child), cmds.listRelatives("child", parent=True))  # Node("root") Node("child") ['root']
+print(str(rn.transform(name="root")))                                     # root1 -- a clash at the same DAG level: Maya uniquifies, str(node) is the real name
+print(str(rn.transform(name="child")))                                    # |child -- no clash with |root|child, so no rename: str(node) is the shortest unique path
+print(rn.transform.__doc__.splitlines()[0])                               # Create a Maya ``transform`` node and apply attribute kwargs.
 ```
 
 Factories skip selection by default (the rig option `skip_selection`);
@@ -283,9 +283,9 @@ Factories skip selection by default (the rig option `skip_selection`);
 ```python
 print(cmds.ls(sl=True))                                  # []
 picked = rn.transform(name="picked", skipSelect=False)   # or ss=False
-print(cmds.ls(sl=True))                                  # ['picked']
+print(cmds.ls(sl=True))  # ['picked']
 rc.createNode("transform", name="viaCmds")
-print(cmds.ls(sl=True))                                  # ['viaCmds']
+print(cmds.ls(sl=True))  # ['viaCmds']
 ```
 
 `shared=True` is Maya's shared-node flag. A second create of the same shared
@@ -323,9 +323,9 @@ matrix plug gets a `decomposeMatrix` wired in.
 ```python
 import numpy as np
 
-m = np.eye(4)
+m        = np.eye(4)
 m[3, :3] = [9, 0, 0]
-lit = rn.transform(name="lit", matrix=m.tolist())
+lit      = rn.transform(name="lit", matrix=m.tolist())
 print(cmds.getAttr("lit.t"), cmds.listConnections("lit.t"))  # [(9.0, 0.0, 0.0)] None
 live = rn.transform(name="live", matrix=src.wm)
 print(cmds.listConnections("live.t"))                         # ['decomposeMatrix1']
@@ -357,8 +357,8 @@ Node types named after Python keywords take a trailing underscore. Maya's
 
 ```python
 gate = rn.and_(name="gate")
-print(cmds.nodeType(str(gate)), cmds.nodeType(str(rn.or_(name="either"))), cmds.nodeType(str(rn.not_(name="flip"))))   # and or not
-print("and_" in dir(rn), "and" in dir(rn), rn.and_.__name__)   # True False and
+print(cmds.nodeType(str(gate)), cmds.nodeType(str(rn.or_(name="either"))), cmds.nodeType(str(rn.not_(name="flip"))))  # and or not
+print("and_" in dir(rn), "and" in dir(rn), rn.and_.__name__)                                                          # True False and
 ```
 
 ---

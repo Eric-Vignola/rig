@@ -23,7 +23,7 @@ cmds.file(new=True, force=True)
 from rig import Node
 from rig.spec import Float, Vector, Enum, lock, hide
 
-ctrl = Node.create("transform", name="ctrl")
+ctrl   = Node.create("transform", name="ctrl")
 
 weight = ctrl << Float("weight", min=0, max=1) << 0.5 << lock
 print(repr(weight), weight >> None, cmds.getAttr("ctrl.weight", lock=True))   # Plug("ctrl.weight") 0.5 True
@@ -75,8 +75,8 @@ from rig.spec import (
     Enum,
     Note, destroy, hide, lock, skip, unhide, unlock,  # modifiers
 )
-print(rig.Float is Float, rig.lock is lock, rig.destroy is destroy)   # True True True
-print(len(rig.spec.__all__))                                          # 23
+print(rig.Float is Float, rig.lock is lock, rig.destroy is destroy)  # True True True
+print(len(rig.spec.__all__))                                         # 23
 ```
 
 ### Names that collide on purpose
@@ -109,9 +109,9 @@ in for you.
 
 ```python
 spec = Float("weight", min=0, max=1, dv=0.5)
-print(spec.kargs)   # {'min': 0, 'max': 1, 'dv': 0.5, 'keyable': True, 'longName': 'weight', 'attributeType': 'double'}
-print(spec.size, spec.overwrite, spec.compound)                      # None True None
-print(cmds.attributeQuery("weight", node="ctrl", exists=True))       # True -- from the taste above, not from this spec
+print(spec.kargs)                                               # {'min': 0, 'max': 1, 'dv': 0.5, 'keyable': True, 'longName': 'weight', 'attributeType': 'double'}
+print(spec.size, spec.overwrite, spec.compound)                 # None True None
+print(cmds.attributeQuery("weight", node="ctrl", exists=True))  # True -- from the taste above, not from this spec
 ```
 
 Nothing has been created. The same spec can be injected into as many
@@ -180,7 +180,7 @@ plug they edit it and return it. `skip` and `destroy` are sentinels.
 drv = Node.create("transform", name="drv")
 ctrl.tx << drv.tx
 ctrl.tz << drv.tz
-ctrl.t << [skip, 4.0, skip]                     # write Y; X and Z keep their drivers
+ctrl.t  << [skip, 4.0, skip]                     # write Y; X and Z keep their drivers
 print(ctrl.tx.get_inputs(), ctrl.t >> None)     # PlugList([Plug("drv.translateX")]) [0. 4. 0.]
 ctrl.t << [None, 4.0, None]                     # write Y; X and Z are DISCONNECTED
 print(ctrl.tx.get_inputs())                     # PlugList([])
@@ -195,7 +195,7 @@ static one (`translate`) are refused by Maya either way.
 ```python
 from rig.spec import destroy
 
-ctrl << Float("scratch")
+ctrl   << Float("scratch")
 drv.ty << ctrl.scratch
 try:
     ctrl << destroy("scratch", strict=True)
@@ -245,8 +245,8 @@ dst = Node.create("transform", name="dst")
 src << Float("mix", min=0, max=1) << 0.4
 src << Enum("side", en=["L", "R"]) << 1
 
-print(repr(src.mix >> dst), cmds.getAttr("dst.mix"), cmds.attributeQuery("mix", node="dst", minExists=True))   # Plug("dst.mix") 0.0 False
-print(repr(src.mix >> "mix2"), cmds.getAttr("src.mix2"))                                                       # Plug("src.mix2") 0.4
+print(repr(src.mix >> dst), cmds.getAttr("dst.mix"), cmds.attributeQuery("mix", node="dst", minExists=True))  # Plug("dst.mix") 0.0 False
+print(repr(src.mix >> "mix2"), cmds.getAttr("src.mix2"))                                                      # Plug("src.mix2") 0.4
 src.side >> dst
 print(cmds.attributeQuery("side", node="dst", listEnum=True))                                                  # ['L:R']
 try:
@@ -279,8 +279,8 @@ from rig import PlugList
 
 nodes = PlugList([a, b])
 gains = nodes << Float("gain", min=0, max=2) << [0.5, 1.5] << lock
-print(repr(gains), gains >> None)                          # PlugList([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
-print(repr(nodes >> Float("out")))                         # PlugList([Plug("a.out"), Plug("b.out")])
+print(repr(gains), gains >> None)   # PlugList([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
+print(repr(nodes >> Float("out")))  # PlugList([Plug("a.out"), Plug("b.out")])
 ```
 
 ### Leading underscores are fine

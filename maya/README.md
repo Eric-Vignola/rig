@@ -19,8 +19,8 @@ cmds.file(new=True, force=True)
 
 from rig.bridges import commands as rc
 
-cube = rc.polyCube(name="cube", ch=False)[0]     # a DSL Node
-mesh = cube.get_shape()                            # a method the DSL does not have: delegated, typed
+cube = rc.polyCube(name="cube", ch=False)[0]  # a DSL Node
+mesh = cube.get_shape()                       # a method the DSL does not have: delegated, typed
 print(repr(cube), repr(cube >> None), repr(mesh))  # Node("cube") Transform("cube") Mesh("cubeShape")
 print(mesh.get_materials(), mesh.num_vertices)     # [DGNode("standardSurface1")] 8
 ```

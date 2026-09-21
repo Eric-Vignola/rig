@@ -137,8 +137,8 @@ cmds.file(new=True, force=True)
 ctrl = rc.createNode("transform", name="ctrl")           # made OUTSIDE any scope
 with container("build"):
     driven = rn.transform(name="driven")
-    rc.ls("ctrl")                                         # a query: looks, never captures
-    rc.parent(ctrl, driven)                               # an edit: moves ctrl in the DAG, not into the scope
+    rc.ls("ctrl")            # a query: looks, never captures
+    rc.parent(ctrl, driven)  # an edit: moves ctrl in the DAG, not into the scope
 print(cmds.container("build", q=True, nodeList=True))    # ['driven']
 ```
 

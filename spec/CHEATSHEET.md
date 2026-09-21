@@ -88,8 +88,8 @@ from rig.spec import (
     Note, destroy, hide, lock, skip, unhide, unlock,  # modifiers
 )
 
-print(rig.spec.__all__ == [n for n in rig.spec.__all__ if getattr(rig, n) is getattr(rig.spec, n)])   # True
-print(rig.Float is Float, rig.lock is lock)                                                            # True True
+print(rig.spec.__all__ == [n for n in rig.spec.__all__ if getattr(rig, n) is getattr(rig.spec, n)])  # True
+print(rig.Float is Float, rig.lock is lock)                                                          # True True
 ```
 
 Three collisions to keep in mind — the capitalised name is always the
@@ -98,9 +98,9 @@ attribute spec:
 ```python
 from rig.maya.nodetypes import Mesh as MeshNode
 
-print(rig.Mesh is MeshNode)          # False -- rig.Mesh is the `mesh` data attribute; MeshNode is the shape
-print(rig.Matrix, rig.matrix)        # <class 'rig.spec.typed.Matrix'> <module 'rig.matrix' ...>
-print(rig.Color.__mro__[1].__name__) # Float -- an RGB double3, not a colour value
+print(rig.Mesh is MeshNode)           # False -- rig.Mesh is the `mesh` data attribute; MeshNode is the shape
+print(rig.Matrix, rig.matrix)         # <class 'rig.spec.typed.Matrix'> <module 'rig.matrix' ...>
+print(rig.Color.__mro__[1].__name__)  # Float -- an RGB double3, not a colour value
 ```
 
 ---
@@ -113,9 +113,9 @@ is filled in. Nothing touches Maya until `<<`.
 
 ```python
 spec = Float("weight", min=0, max=1, dv=0.5)
-print(spec.kargs)                                                # {'min': 0, 'max': 1, 'dv': 0.5, 'keyable': True, 'longName': 'weight', 'attributeType': 'double'}
-print(spec.size, spec.overwrite, spec.compound, spec.notes)      # None True None None
-print(cmds.attributeQuery("weight", node="ctrl", exists=True))   # False
+print(spec.kargs)                                               # {'min': 0, 'max': 1, 'dv': 0.5, 'keyable': True, 'longName': 'weight', 'attributeType': 'double'}
+print(spec.size, spec.overwrite, spec.compound, spec.notes)     # None True None None
+print(cmds.attributeQuery("weight", node="ctrl", exists=True))  # False
 ```
 
 Injection adds the attribute and returns the **new plug**, so a value and
@@ -123,8 +123,8 @@ then a modifier chain on. The spec itself is reusable.
 
 ```python
 plug = ctrl << spec << 0.25 << lock
-print(repr(plug), plug >> None, cmds.getAttr("ctrl.weight", lock=True))   # Plug("ctrl.weight") 0.25 True
-print(cmds.attributeQuery("weight", node="ctrl", min=True), cmds.attributeQuery("weight", node="ctrl", max=True))   # [0.0] [1.0]
+print(repr(plug), plug >> None, cmds.getAttr("ctrl.weight", lock=True))                                            # Plug("ctrl.weight") 0.25 True
+print(cmds.attributeQuery("weight", node="ctrl", min=True), cmds.attributeQuery("weight", node="ctrl", max=True))  # [0.0] [1.0]
 
 drv << spec
 print(cmds.getAttr("drv.weight"))                                          # 0.5 -- the default; nothing leaked from ctrl
@@ -155,10 +155,10 @@ ctrl << Int("count", min=0, max=10, dv=5)
 ctrl << Bool("flag", dv=True)
 ctrl << Angle("twist") << 90
 
-print(at("ctrl.blend"), ctrl.blend >> None)                         # double 0.75
-print(at("ctrl.count"), ctrl.count >> None, cmds.attributeQuery("count", node="ctrl", max=True))   # long 5 [10.0]
-print(at("ctrl.flag"),  ctrl.flag >> None)                          # bool True
-print(at("ctrl.twist"), ctrl.twist >> None)                         # doubleAngle 90.0
+print(at("ctrl.blend"), ctrl.blend >> None)                                                       # double 0.75
+print(at("ctrl.count"), ctrl.count >> None, cmds.attributeQuery("count", node="ctrl", max=True))  # long 5 [10.0]
+print(at("ctrl.flag"),  ctrl.flag >> None)                                                        # bool True
+print(at("ctrl.twist"), ctrl.twist >> None)                                                       # doubleAngle 90.0
 ```
 
 `Time` asks `addAttr` for `dataType="time"`, which Maya does not have
@@ -196,7 +196,7 @@ ctrl.xf << None
 ctrl.xf << np.eye(4) * 2                                            # an array sets
 print((ctrl.xf >> None)[0, 0])                                      # 2.0
 
-ctrl << Message("driver")
+ctrl        << Message("driver")
 ctrl.driver << drv.message
 print(at("ctrl.driver"), ctrl.driver.get_inputs())                  # message PlugList([Plug("drv.message")])
 ```
@@ -205,7 +205,7 @@ The geometry data types are wires for shapes:
 
 ```python
 cmds.polyCube(name="cube")
-ctrl << Mesh("shapeIn")
+ctrl         << Mesh("shapeIn")
 ctrl.shapeIn << Node("cubeShape").outMesh
 print(dt("ctrl.shapeIn"), ctrl.shapeIn.get_inputs())                # mesh PlugList([Plug("cubeShape.outMesh")])
 
@@ -224,8 +224,8 @@ lists the names.
 
 ```python
 ctrl << Enum("mode", en=["off", "on", "auto"]) << 2
-print(cmds.attributeQuery("mode", node="ctrl", listEnum=True), ctrl.mode >> None)   # ['off:on:auto'] 2
-print(ctrl.mode.enums, cmds.getAttr("ctrl.mode", asString=True))                    # ['off', 'on', 'auto'] auto
+print(cmds.attributeQuery("mode", node="ctrl", listEnum=True), ctrl.mode >> None)  # ['off:on:auto'] 2
+print(ctrl.mode.enums, cmds.getAttr("ctrl.mode", asString=True))                   # ['off', 'on', 'auto'] auto
 
 ctrl << Enum("side", en="L:R:")                                     # trailing colon optional
 ctrl << Enum("toggle")
@@ -258,10 +258,10 @@ ctrl << Color("tint")
 ctrl << Euler("rot")
 ctrl << Quat("q")
 
-print(at("ctrl.aim"), cmds.attributeQuery("aim", node="ctrl", listChildren=True), at("ctrl.aimX"))    # double3 ['aimX', 'aimY', 'aimZ'] double
-print(cmds.attributeQuery("tint", node="ctrl", listChildren=True))                                    # ['tintR', 'tintG', 'tintB']
-print(at("ctrl.rot"), at("ctrl.rotX"))                                                                # double3 doubleAngle
-print(at("ctrl.q"), ctrl.q.num_children)                                                              # double4 4
+print(at("ctrl.aim"), cmds.attributeQuery("aim", node="ctrl", listChildren=True), at("ctrl.aimX"))  # double3 ['aimX', 'aimY', 'aimZ'] double
+print(cmds.attributeQuery("tint", node="ctrl", listChildren=True))                                  # ['tintR', 'tintG', 'tintB']
+print(at("ctrl.rot"), at("ctrl.rotX"))                                                              # double3 doubleAngle
+print(at("ctrl.q"), ctrl.q.num_children)                                                            # double4 4
 ```
 
 A compound takes a sequence, a plug of the same width, or a per-channel
@@ -284,8 +284,8 @@ children.
 ```python
 ctrl << Vector("up", defaultValue=[0, 1, 0])
 ctrl << Color("base", defaultValue=[0.5, 0.5, 1.0], min=0, max=1)
-print(ctrl.up >> None, ctrl.base >> None)                                                                          # [0. 1. 0.] [0.5 0.5 1. ]
-print(cmds.attributeQuery("baseR", node="ctrl", min=True), cmds.attributeQuery("baseR", node="ctrl", max=True))   # [0.0] [1.0]
+print(ctrl.up >> None, ctrl.base >> None)                                                                        # [0. 1. 0.] [0.5 0.5 1. ]
+print(cmds.attributeQuery("baseR", node="ctrl", min=True), cmds.attributeQuery("baseR", node="ctrl", max=True))  # [0.0] [1.0]
 ```
 
 `dv=[...]` on a compound is the one spelling that fails — and it leaves a
@@ -325,10 +325,10 @@ ctrl << Float("quiet", k=False)
 ctrl << Float("secret", hidden=True)
 ctrl << Float("blendIn", sn="bi", nn="Blend In", softMinValue=0.0, softMaxValue=1.0)
 
-print(cmds.getAttr("ctrl.quiet", keyable=True), cmds.getAttr("ctrl.quiet", channelBox=True))     # False False
-print(cmds.attributeQuery("secret", node="ctrl", hidden=True))                                    # True
-print(cmds.attributeQuery("blendIn", node="ctrl", shortName=True), cmds.attributeQuery("blendIn", node="ctrl", niceName=True))   # bi Blend In
-print(cmds.attributeQuery("blendIn", node="ctrl", softMax=True))                                  # [1.0]
+print(cmds.getAttr("ctrl.quiet", keyable=True), cmds.getAttr("ctrl.quiet", channelBox=True))                                    # False False
+print(cmds.attributeQuery("secret", node="ctrl", hidden=True))                                                                  # True
+print(cmds.attributeQuery("blendIn", node="ctrl", shortName=True), cmds.attributeQuery("blendIn", node="ctrl", niceName=True))  # bi Blend In
+print(cmds.attributeQuery("blendIn", node="ctrl", softMax=True))                                                                # [1.0]
 ```
 
 A long name that matches a built-in **short** name is refused by Maya
@@ -350,7 +350,7 @@ Specs with no name: their kwargs are `setAttr` flags, they edit the plug
 on the left and return it.
 
 ```python
-print(lock.kargs, unlock.kargs, hide.kargs, unhide.kargs, skip.kargs)   # {'lock': True} {'lock': False} {'keyable': False, 'channelBox': False} {'keyable': True, 'channelBox': False} {}
+print(lock.kargs, unlock.kargs, hide.kargs, unhide.kargs, skip.kargs)  # {'lock': True} {'lock': False} {'keyable': False, 'channelBox': False} {'keyable': True, 'channelBox': False} {}
 print(repr(skip), repr(destroy))                                       # <skip> <destroy>
 ```
 
@@ -388,11 +388,11 @@ leaves the channel alone, and `None` disconnects it:
 ```python
 ctrl.s << [lock, skip, hide]
 print(cmds.getAttr("ctrl.sx", lock=True), cmds.getAttr("ctrl.sz", keyable=True))   # True False
-ctrl.s << [unlock, skip, unhide]
+ctrl.s  << [unlock, skip, unhide]
 
 ctrl.tx << drv.tx
 ctrl.tz << drv.tz
-ctrl.t << [skip, 4.0, skip]                     # write Y, keep the X and Z drivers
+ctrl.t  << [skip, 4.0, skip]                     # write Y, keep the X and Z drivers
 print(ctrl.tx.get_inputs(), ctrl.t >> None)     # PlugList([Plug("drv.translateX")]) [0. 4. 0.]
 ctrl.t << [None, 4.0, None]                     # write Y, DISCONNECT X and Z
 print(ctrl.tx.get_inputs(), ctrl.tz.get_inputs())   # PlugList([]) PlugList([])
@@ -408,7 +408,7 @@ connections are auto-severed (one INFO line on the `rig._internal.plug`
 logger), the node form returns the node.
 
 ```python
-ctrl << Float("foo") << 1
+ctrl     << Float("foo") << 1
 ctrl.foo << destroy
 print(cmds.attributeQuery("foo", node="ctrl", exists=True))          # False
 
@@ -425,7 +425,7 @@ Keyword flags:
 | `verbose=True` | log every severed connection by name instead of a count |
 
 ```python
-ctrl << Float("scratch")
+ctrl   << Float("scratch")
 drv.ty << ctrl.scratch
 try:
     ctrl << destroy("scratch", strict=True)
@@ -483,19 +483,19 @@ Default `True`: an existing attribute of that name is unlocked, deleted
 existing attribute stays and its plug is returned, whatever its type.
 
 ```python
-ctrl << Float("mix", min=0, max=1) << 0.75
+ctrl   << Float("mix", min=0, max=1) << 0.75
 drv.tz << ctrl.mix
-ctrl << Float("mix", min=-5, max=5)
+ctrl   << Float("mix", min=-5, max=5)
 print(ctrl.mix >> None, cmds.attributeQuery("mix", node="ctrl", min=True), drv.tz.get_inputs())   # 0.0 [-5.0] PlugList([])
 
 ctrl.mix << 0.3 << lock
-ctrl << Float("mix", dv=2.0)
+ctrl     << Float("mix", dv=2.0)
 print(ctrl.mix >> None, cmds.getAttr("ctrl.mix", lock=True))                                     # 2.0 False
 
 ctrl.mix << 0.3
 kept = ctrl << Float("mix", min=0, max=1, overwrite=False)
-print(kept >> None, cmds.attributeQuery("mix", node="ctrl", minExists=True))                    # 0.3 False
-print(repr(ctrl << String("mix", overwrite=False)), at("ctrl.mix"))                              # Plug("ctrl.mix") double -- no type check
+print(kept >> None, cmds.attributeQuery("mix", node="ctrl", minExists=True))  # 0.3 False
+print(repr(ctrl << String("mix", overwrite=False)), at("ctrl.mix"))           # Plug("ctrl.mix") double -- no type check
 ```
 
 ---
@@ -509,7 +509,7 @@ copy (the caller's spec is untouched). Nothing can connect into it;
 ```python
 out = ctrl >> Float("result")
 print(repr(out), cmds.attributeQuery("result", node="ctrl", writable=True))   # Plug("ctrl.result") False
-out << 5
+out    << 5
 drv.sx << out
 print(out >> None, drv.sx.get_inputs())         # 5.0 PlugList([Plug("ctrl.result")])
 try:
@@ -556,7 +556,7 @@ src.w[0] << 1; src.w[2] << 3
 c = src.mix >> dst
 print(repr(c), c >> None, cmds.attributeQuery("mix", node="dst", minExists=True))   # Plug("dst.mix") 0.0 False
 src.side >> dst
-src.rot >> dst
+src.rot  >> dst
 print(cmds.attributeQuery("side", node="dst", listEnum=True), at("dst.rotX"))       # ['L:R'] doubleAngle
 src.w >> dst
 print(cmds.getAttr("dst.w", multiIndices=True), cmds.getAttr("dst.w[2]"))           # [0, 2] 3.0
@@ -583,9 +583,9 @@ print(cmds.getAttr("dst.mix"))                                      # 0.0 -- rep
 Built-ins clone too, and `Color` comes back as a `Vector`:
 
 ```python
-print(repr(src.rotateOrder >> "roCopy"), cmds.attributeQuery("roCopy", node="src", listEnum=True))   # Plug("src.roCopy") ['xyz:yzx:zxy:xzy:yxz:zyx']
-print(repr(src.t >> "tCopy"), at("src.tCopy"))                                                       # Plug("src.tCopy") double3
-src << Color("tint") << [0.1, 0.2, 0.3]
+print(repr(src.rotateOrder >> "roCopy"), cmds.attributeQuery("roCopy", node="src", listEnum=True))  # Plug("src.roCopy") ['xyz:yzx:zxy:xzy:yxz:zyx']
+print(repr(src.t >> "tCopy"), at("src.tCopy"))                                                      # Plug("src.tCopy") double3
+src      << Color("tint") << [0.1, 0.2, 0.3]
 src.tint >> dst
 print(cmds.attributeQuery("tint", node="dst", listChildren=True))                                    # ['tintX', 'tintY', 'tintZ']
 ```
@@ -624,8 +624,8 @@ ctrl << Float("dvm", multi=True, size=2, dv=7.0)
 ctrl << Vector("offsets", multi=True, size=2)
 ctrl << Matrix("mats", multi=True, size=2)
 ctrl << String("names", multi=True, size=2)
-print(ctrl.dvm[:] >> None, cmds.getAttr("ctrl.offsets", multiIndices=True))   # [7. 7.] [0, 1]
-print((ctrl.mats[:] >> None).shape, cmds.getAttr("ctrl.names[0]"))            # (2, 4, 4) 0
+print(ctrl.dvm[:] >> None, cmds.getAttr("ctrl.offsets", multiIndices=True))  # [7. 7.] [0, 1]
+print((ctrl.mats[:] >> None).shape, cmds.getAttr("ctrl.names[0]"))           # (2, 4, 4) 0
 ```
 
 ---
@@ -637,19 +637,19 @@ A spec injected into a `PlugList` is applied to every element's node
 plugs, so values, modifiers and `>> None` broadcast next.
 
 ```python
-a = Node.create("transform", name="a")
-b = Node.create("transform", name="b")
+a     = Node.create("transform", name="a")
+b     = Node.create("transform", name="b")
 nodes = PlugList([a, b])
 
 gains = nodes << Float("gain", min=0, max=2) << [0.5, 1.5] << lock
-print(repr(gains), gains >> None)                                     # PlugList([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
-print([cmds.getAttr(f"{n}.gain", lock=True) for n in ("a", "b")])    # [True, True]
+print(repr(gains), gains >> None)                                  # PlugList([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
+print([cmds.getAttr(f"{n}.gain", lock=True) for n in ("a", "b")])  # [True, True]
 
 aims = nodes << Vector("aim") << [[1, 0, 0], [0, 1, 0]]
 print(aims >> None)                                                   # [[1. 0. 0.]
                                                                       #  [0. 1. 0.]]
-print(repr(nodes >> Float("out")), cmds.attributeQuery("out", node="b", writable=True))   # PlugList([Plug("a.out"), Plug("b.out")]) False
-print(repr(PlugList([a.tx, b.ty]) << Float("viaPlug")))               # PlugList([Plug("a.viaPlug"), Plug("b.viaPlug")])
+print(repr(nodes >> Float("out")), cmds.attributeQuery("out", node="b", writable=True))  # PlugList([Plug("a.out"), Plug("b.out")]) False
+print(repr(PlugList([a.tx, b.ty]) << Float("viaPlug")))                                  # PlugList([Plug("a.viaPlug"), Plug("b.viaPlug")])
 ```
 
 Modifiers pair element-wise, `destroy` returns the nodes, and a list of
@@ -660,8 +660,8 @@ nodes.tx << [lock, hide]
 print(cmds.getAttr("a.tx", lock=True), cmds.getAttr("b.tx", keyable=True))   # True False
 nodes.tx << [unlock, unhide]
 
-print(repr(nodes << [Float("fa"), Float("fb")]))                     # PlugList([Node("a"), Node("b")])
-print(cmds.attributeQuery("fa", node="a", exists=True), cmds.attributeQuery("fa", node="b", exists=True))   # True False
+print(repr(nodes << [Float("fa"), Float("fb")]))                                                           # PlugList([Node("a"), Node("b")])
+print(cmds.attributeQuery("fa", node="a", exists=True), cmds.attributeQuery("fa", node="b", exists=True))  # True False
 
 gains << unlock
 print(repr(nodes << destroy("gain")), cmds.attributeQuery("gain", node="a", exists=True))   # PlugList([Node("a"), Node("b")]) False
@@ -681,11 +681,11 @@ replaces the first.
 
 ```python
 n = ctrl << Note("Built by the spine module.")
-print(repr(n), cmds.getAttr("ctrl.notes"))                                                  # Plug("ctrl.notes") Built by the spine module.
-print(cmds.getAttr("ctrl.notes", keyable=True), cmds.attributeQuery("notes", node="ctrl", hidden=True))   # False True
+print(repr(n), cmds.getAttr("ctrl.notes"))                                                               # Plug("ctrl.notes") Built by the spine module.
+print(cmds.getAttr("ctrl.notes", keyable=True), cmds.attributeQuery("notes", node="ctrl", hidden=True))  # False True
 ctrl << Note("second")
-print(cmds.getAttr("ctrl.notes"))                                                           # second
-print(repr(a << Note()), cmds.getAttr("a.notes"))                                           # Plug("a.notes") None
+print(cmds.getAttr("ctrl.notes"))                  # second
+print(repr(a << Note()), cmds.getAttr("a.notes"))  # Plug("a.notes") None
 ```
 
 ---
@@ -700,8 +700,8 @@ what keeps Python's own probes cheap.
 parked = ctrl << Float("__parked__") << 3.5
 print(repr(parked), ctrl.__parked__ >> None)        # Plug("ctrl.__parked__") 3.5
 ctrl.__parked__ = 4.0                               # assignment is `<<` sugar, here too
-print(cmds.getAttr("ctrl.__parked__"))              # 4.0
-print(repr(ctrl.tx >> "__tx__"), ctrl.__tx__ >> None)   # Plug("ctrl.__tx__") 0.0 -- parking spelled with a clone
+print(cmds.getAttr("ctrl.__parked__"))                 # 4.0
+print(repr(ctrl.tx >> "__tx__"), ctrl.__tx__ >> None)  # Plug("ctrl.__tx__") 0.0 -- parking spelled with a clone
 try:
     ctrl._nope
 except AttributeError as e:

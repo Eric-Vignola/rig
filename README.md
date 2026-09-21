@@ -26,14 +26,14 @@ from rig.bridges import commands as rc
 from rig.shade import Blinn, Material
 
 obj1, obj2, obj3 = [rc.polyCube(name=n)[0] for n in ("cube1", "cube2", "cube3")]
-obj2.t << [10, 0, 0]                                   # setAttr
-obj3 << Float("weight", min=0, max=1) << 0.25          # addAttr, then setAttr on the new plug
+obj2.t << [10, 0, 0]                             # setAttr
+obj3   << Float("weight", min=0, max=1) << 0.25  # addAttr, then setAttr on the new plug
 
 with container("ye_olde_lerp"):                        # nodes built inside join the container
     obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
 
-print(obj3.t >> None)                                        # [2.5 0.  0. ]
-print(cmds.container("ye_olde_lerp", q=True, nodeList=True)) # ['sub1', 'mul1', 'add1']
+print(obj3.t >> None)                                         # [2.5 0.  0. ]
+print(cmds.container("ye_olde_lerp", q=True, nodeList=True))  # ['sub1', 'mul1', 'add1']
 
 obj1.f[:3] << Tag("lid")                               # a face component tag on cube1Shape
 print(obj1 >> Tag("lid"))                              # [0 1 2]
@@ -115,8 +115,8 @@ from rig import set_options, lerp, functions as f
 
 cmds.file(new=True, force=True)
 cubes = PlugList([rc.polyCube(name=n)[0] for n in ("a", "b", "c")])
-cubes.ty << [1, 2, 3]                                # one value per element
-cubes.tz << 7                                        # a scalar broadcasts
+cubes.ty << [1, 2, 3]  # one value per element
+cubes.tz << 7          # a scalar broadcasts
 print(cubes.ty >> None, cubes.tz >> None)            # [1. 2. 3.] [7. 7. 7.]
 cubes.ty << [1, 2]                                   # an operator caps: the last element repeats
 print(cubes.ty >> None)                              # [1. 2. 2.]
@@ -127,12 +127,12 @@ try:
 except ValueError:
     print("strict")                                  # strict
 
-print(str(a.tx + b.tx) == str(a.tx + b.tx))          # True   memoized: one sum node
-print(f.abs(-5), f.abs(a.tx))                        # 5 abs1.output   literals fold, plugs build
+print(str(a.tx + b.tx) == str(a.tx + b.tx))  # True   memoized: one sum node
+print(f.abs(-5), f.abs(a.tx))                # 5 abs1.output   literals fold, plugs build
 
 set_options(maya_version=2023)
-print(a.ty + b.ty)                                   # add2.output1D   a plusMinusAverage
-set_options(maya_version=None)                       # back to the live Maya
+print(a.ty + b.ty)                           # add2.output1D   a plusMinusAverage
+set_options(maya_version=None)               # back to the live Maya
 ```
 
 ---
@@ -263,8 +263,8 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
 ```python
 cmds.file(new=True, force=True)
 cube = rc.polyCube(name="pCube1")[0]
-print(type(cube.f).__name__, cube.vtx, cube.uv)      # Components pCube1Shape.controlPoints pCube1Shape.uvpt
-print(cube >> Tag())                                 # [Tag('back'), Tag('bottom'), Tag('front'), Tag('left'), Tag('right'), Tag('top')]
+print(type(cube.f).__name__, cube.vtx, cube.uv)  # Components pCube1Shape.controlPoints pCube1Shape.uvpt
+print(cube >> Tag())                             # [Tag('back'), Tag('bottom'), Tag('front'), Tag('left'), Tag('right'), Tag('top')]
 try:
     cube.f[:3] << Tag("top")
 except TypeError as e:

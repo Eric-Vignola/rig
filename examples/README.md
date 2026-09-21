@@ -34,8 +34,8 @@ for i in range(4):
 
 rail   = rail_spine_simple.create_simple_rail(controls, riders=12)
 riders = cmds.listRelatives(str(rail), type="joint")
-print(rail, len(riders), riders[0], riders[-1])            # rail1 12 rider1 rider12
-print(Node(riders[-1]).t.get())                             # [ 0. 15.  0.]
+print(rail, len(riders), riders[0], riders[-1])  # rail1 12 rider1 rider12
+print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 ```
 
 ---
@@ -112,11 +112,11 @@ from rig import Node, PlugList
 from rig.bridges import commands as rc
 from rig.examples import rail_spine_simple, rail_spine, perspective_image_planes, image_loop
 
-controls = rc.ls(selection=True)                                   # a PlugList of the selected controls
-rail  = rail_spine_simple.create_simple_rail(controls, riders=10)
-rail  = rail_spine.create_rail(controls, 20, orient_controls=controls, scale_controls=controls)
-setup = perspective_image_planes.create_setup("camera1", 5)        # .camera .planes .shapes
-loop  = image_loop.create_plane("D:/frames/run_cycle")             # .transform .shape .material .texture
+controls = rc.ls(selection=True)                                # a PlugList of the selected controls
+rail     = rail_spine_simple.create_simple_rail(controls, riders=10)
+rail     = rail_spine.create_rail(controls, 20, orient_controls=controls, scale_controls=controls)
+setup    = perspective_image_planes.create_setup("camera1", 5)  # .camera .planes .shapes
+loop     = image_loop.create_plane("D:/frames/run_cycle")       # .transform .shape .material .texture
 ```
 
 The `__main__` block at the bottom of each file is a demo: open the file
@@ -178,8 +178,8 @@ Aim and up axis are baked in at build time (`aim_axis=1`, `up_axis=0`:
 aim Y, up X); the full script makes them live enums.
 
 ```python
-print(cmds.listAttr(str(rail), userDefined=True))         # ['pivot', 'stretch', 'Scale', 'shift']
-print(rail.pivot.get(), rail.stretch.get(), rail.Scale.get(), rail.shift.get())   # 0.0 0.0 1.0 0.0
+print(cmds.listAttr(str(rail), userDefined=True))                                # ['pivot', 'stretch', 'Scale', 'shift']
+print(rail.pivot.get(), rail.stretch.get(), rail.Scale.get(), rail.shift.get())  # 0.0 0.0 1.0 0.0
 
 mid = Node(riders[6])
 print([round(v, 3) for v in mid.t.get()])                 # [0.0, 8.182, 0.0]
@@ -259,23 +259,23 @@ print(cmds.listAttr(str(rail), userDefined=True))
 # ['defaultLength', 'currentLength', 'stretchRatio', 'stretchDelta', 'aimAxis', 'upAxis',
 #  'invertAim', 'invertUp', 'pivot', 'stretch', 'Scale', 'shift', 'scaleProjection',
 #  'rotateProjection', 'translateProjection', 'uTangentStart', 'uTangentEnd']
-print(cmds.listAttr(str(controls[0]), userDefined=True))    # ['u', 'upAxis', 'invertUp']
-print(controls.u.get())                                     # [0.   0.25 0.5  0.75 1.  ]
-print(rail.defaultLength.get(), rail.stretchRatio.get())    # 20.0 1.0
+print(cmds.listAttr(str(controls[0]), userDefined=True))  # ['u', 'upAxis', 'invertUp']
+print(controls.u.get())                                   # [0.   0.25 0.5  0.75 1.  ]
+print(rail.defaultLength.get(), rail.stretchRatio.get())  # 20.0 1.0
 ```
 
 The demo at the bottom of the file then does this:
 
 ```python
-rail.stretch         << 0                                  # glide
-rail.scaleProjection << 2                                  # Clamped
-controls[1].tx << 10
-controls[1].s  << [5, 0.1, 5]                              # a fat, flat second control
+rail.stretch         << 0            # glide
+rail.scaleProjection << 2            # Clamped
+controls[1].tx       << 10
+controls[1].s        << [5, 0.1, 5]  # a fat, flat second control
 
 print(round(rail.stretchRatio.get(), 4))                   # 0.8016  -- the curve got longer
 mid = Node(riders[5])
-print([round(v, 3) for v in mid.t.get()])                  # [4.436, 2.805, 0.0]
-print([round(v, 3) for v in mid.s.get()])                  # [2.671, 0.245, 2.671]  -- elerp toward control 1
+print([round(v, 3) for v in mid.t.get()])  # [4.436, 2.805, 0.0]
+print([round(v, 3) for v in mid.s.get()])  # [2.671, 0.245, 2.671]  -- elerp toward control 1
 ```
 
 Twenty riders with orient and scale is about 1,600 nodes in `railNode1`
@@ -333,8 +333,8 @@ from rig.examples import perspective_image_planes
 images_dir = os.path.join(os.path.dirname(rig.examples.__file__), "images")
 setup      = perspective_image_planes.create_setup("camera1", 5)
 
-print(setup.camera, setup.planes[0], setup.shapes[0])       # camera2 mesh_STICKER_LAYER_0 mesh_STICKER_LAYER_0Shape
-print(setup.planes.tz.get())                                 # [-10. -20. -30. -40. -50.]
+print(setup.camera, setup.planes[0], setup.shapes[0])  # camera2 mesh_STICKER_LAYER_0 mesh_STICKER_LAYER_0Shape
+print(setup.planes.tz.get())                           # [-10. -20. -30. -40. -50.]
 print(cmds.listAttr(str(setup.shapes[0]), userDefined=True))
 # ['image', 'sequenceType', 'sequenceStart', 'sequenceEnd', 'sequenceOffset', 'alpha', 'opacity']
 
@@ -398,9 +398,9 @@ frames = []
 for t in (1, 5, 6, 7):
     cmds.currentTime(t)
     frames.append(loop.texture.frameExtension.get())
-print(frames)                                                          # [1, 5, 1, 2]  -- wraps after frame 5
+print(frames)                                               # [1, 5, 1, 2]  -- wraps after frame 5
 
-print(loop.shape >> Material(), cmds.ls(type="container"))             # [Lambert('dogs')] ['dogs_container']
+print(loop.shape >> Material(), cmds.ls(type="container"))  # [Lambert('dogs')] ['dogs_container']
 ```
 
 ---
@@ -442,7 +442,7 @@ material = Lambert(
     color        = texture.outColor,
     ambientColor = texture.outColor,
 )
-shape << material
+shape                 << material
 material.transparency << remap.outColor      # the spec is the handle for the material's plugs
 ```
 

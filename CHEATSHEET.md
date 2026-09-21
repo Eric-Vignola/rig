@@ -94,12 +94,12 @@ A `Node` wraps any Maya node. Attribute access returns a `Plug`; method
 access delegates to the typed node underneath.
 
 ```python
-a = Node.create("transform", name="a")   # createNode, registered with the active container scope
-b = Node("a")                            # wrap by name
-print(str(a), repr(a))                   # a Node("a")
-print(a == b, hash(a) == hash(b), len({a, b}))   # True True 1  -- identity is the MObject, not the string
-print(cmds.objExists(a), cmds.nodeType(a))       # True transform  -- a Node passes straight into cmds
-print(a.list_attr()[:2])                 # [Attribute("a.message"), Attribute("a.caching")]  -- a DGNode method, delegated
+a = Node.create("transform", name="a")  # createNode, registered with the active container scope
+b = Node("a")                           # wrap by name
+print(str(a), repr(a))                          # a Node("a")
+print(a == b, hash(a) == hash(b), len({a, b}))  # True True 1  -- identity is the MObject, not the string
+print(cmds.objExists(a), cmds.nodeType(a))      # True transform  -- a Node passes straight into cmds
+print(a.list_attr()[:2])                        # [Attribute("a.message"), Attribute("a.caching")]  -- a DGNode method, delegated
 ```
 
 `Node(plug)` and `Node("node.attr")` strip the attribute and give the owning
@@ -133,9 +133,9 @@ one (`writable=False`); `node << matrix` decomposes onto the transform
 ```python
 from rig.spec import Float
 
-print(repr(a << Float("blend")))                          # Plug("a.blend")
-print(repr(a >> Float("result")))                         # Plug("a.result")
-print(cmds.attributeQuery("result", node="a", writable=True))   # False
+print(repr(a << Float("blend")))                               # Plug("a.blend")
+print(repr(a >> Float("result")))                              # Plug("a.result")
+print(cmds.attributeQuery("result", node="a", writable=True))  # False
 try:
     a << 5
 except TypeError as err:
@@ -178,10 +178,10 @@ read as a method.
 from rig.spec import String
 
 a.t << [1, 2, 3]
-a << String("label") << "hero"
-print(a.t >> None, type(a.t >> None).__name__)   # [1. 2. 3.] ndarray
-print((a.matrix >> None).shape)                  # (4, 4)
-print(a.label >> None, a.tx.get())               # hero 1.0
+a   << String("label") << "hero"
+print(a.t >> None, type(a.t >> None).__name__)  # [1. 2. 3.] ndarray
+print((a.matrix >> None).shape)                 # (4, 4)
+print(a.label >> None, a.tx.get())              # hero 1.0
 ```
 
 Chaining: an attribute spec returns the new plug, so the value and the
@@ -199,8 +199,8 @@ the same node, so a result plug still reaches its node's other attributes.
 
 ```python
 total = a.tx + b.tx                          # a result plug on a sum node
-print(str(total), str(total.input))          # add1.output add1.input
-print(repr(a.matrix.ro))                     # Plug("a.rotateOrder")  -- sibling of a typed-atomic plug
+print(str(total), str(total.input))  # add1.output add1.input
+print(repr(a.matrix.ro))             # Plug("a.rotateOrder")  -- sibling of a typed-atomic plug
 total.node.input[1] << 10                    # .node is the owning Node
 print(total >> None)                         # 11.0
 ```
@@ -208,9 +208,9 @@ print(total >> None)                         # 11.0
 Plug introspection you will reach for:
 
 ```python
-print(a.tx.alias, a.tx.data_type, a.t.num_children)   # translateX doubleLinear 3
-print(a.wm.is_multi, a.wm.data_type)                  # True matrix
-print(a.tx.full_name, repr(a.tx.node))                # a.translateX Node("a")
+print(a.tx.alias, a.tx.data_type, a.t.num_children)  # translateX doubleLinear 3
+print(a.wm.is_multi, a.wm.data_type)                 # True matrix
+print(a.tx.full_name, repr(a.tx.node))               # a.translateX Node("a")
 ```
 
 ---
@@ -242,8 +242,8 @@ print(dst.t >> None)                         # [7. 7. 7.]
 A compound indexes and slices like a sequence; the slice is a `PlugList`.
 
 ```python
-print(str(dst.t[0]), str(dst.t[-1]))         # dst.translateX dst.translateZ
-print(repr(dst.t[::-1]))                     # PlugList([Plug("dst.translateZ"), Plug("dst.translateY"), Plug("dst.translateX")])
+print(str(dst.t[0]), str(dst.t[-1]))  # dst.translateX dst.translateZ
+print(repr(dst.t[::-1]))              # PlugList([Plug("dst.translateZ"), Plug("dst.translateY"), Plug("dst.translateX")])
 dst.t[:] << [1, 2, 3]
 print(dst.t >> None)                         # [1. 2. 3.]
 ```
@@ -266,17 +266,17 @@ and a bounded slice or `[i]` addresses indices that are created on write.
 from rig.spec import Float, Vector
 
 net = Node.create("network", name="net")
-net << Float("w", multi=True)
+net   << Float("w", multi=True)
 net.w << 1.0
 net.w << 2.0                                 # appended at [1]
 print(net.w.next_index, repr(net.w[:]))      # 2 PlugList([Plug("net.w[0]"), Plug("net.w[1]")])
 net.w[:4] << [10, 20, 30, 40]                # indices 0..3, the missing two created on write
 print(net.w[:] >> None)                      # [10. 20. 30. 40.]
 net.w << [100, 200]                          # the bare multi with a sequence: index by index from 0
-print(net.w[:] >> None)                      # [100. 200.  30.  40.]
-print(str(net.w.append(50.0)), net.w[[1, 4]] >> None)   # net.w[4] [200.  50.]  -- fancy indexing on a multi
+print(net.w[:] >> None)                                # [100. 200.  30.  40.]
+print(str(net.w.append(50.0)), net.w[[1, 4]] >> None)  # net.w[4] [200.  50.]  -- fancy indexing on a multi
 
-net << Vector("offsets", multi=True)
+net         << Vector("offsets", multi=True)
 net.offsets << [[1, 2, 3], [4, 5, 6]]
 print(net.offsets[:] >> None)                # [[1. 2. 3.] [4. 5. 6.]]
 ```
@@ -285,13 +285,13 @@ A blendShape aliases every `weight[i]` to its target name, and the DSL
 resolves the alias.
 
 ```python
-base = cmds.polyCube(name="base", constructionHistory=False)[0]
+base    = cmds.polyCube(name="base", constructionHistory=False)[0]
 targets = [cmds.polyCube(name=f"t{i}", constructionHistory=False)[0] for i in range(4)]
-bs = Node(cmds.blendShape(*targets, base, name="bs1")[0])
+bs      = Node(cmds.blendShape(*targets, base, name="bs1")[0])
 
 bs.weight[:4] << [0.1, 0.2, 0.3, 0.4]
-print(np.round(bs.weight[:] >> None, 2))     # [0.1 0.2 0.3 0.4]
-print(str(bs.t2), round(bs.t2 >> None, 2))   # bs1.t2 0.3  -- alias of weight[2]
+print(np.round(bs.weight[:] >> None, 2))    # [0.1 0.2 0.3 0.4]
+print(str(bs.t2), round(bs.t2 >> None, 2))  # bs1.t2 0.3  -- alias of weight[2]
 bs.t3 << 1.0
 print(bs.weight[3] >> None)                  # 1.0
 ```
@@ -307,14 +307,14 @@ compound whose children are driven reports nothing, so slice it.
 ```python
 cmds.file(new=True, force=True)
 drv, ctrl, spare = (Node.create("transform", name=n) for n in ("drv", "ctrl", "spare"))
-ctrl.tx << drv.tx
+ctrl.tx  << drv.tx
 spare.tx << ctrl.tx
 spare.ty << ctrl.tx
 
-print(repr(ctrl.tx.get_inputs()))            # PlugList([Plug("drv.translateX")])
-print(repr(ctrl.tx.get_outputs()))           # PlugList([Plug("spare.translateX"), Plug("spare.translateY")])
-print(repr(ctrl.ty.get_inputs()))            # PlugList([])
-print(len(ctrl.t.get_inputs()), len(ctrl.t[:].get_inputs()[0]))   # 0 1
+print(repr(ctrl.tx.get_inputs()))                                # PlugList([Plug("drv.translateX")])
+print(repr(ctrl.tx.get_outputs()))                               # PlugList([Plug("spare.translateX"), Plug("spare.translateY")])
+print(repr(ctrl.ty.get_inputs()))                                # PlugList([])
+print(len(ctrl.t.get_inputs()), len(ctrl.t[:].get_inputs()[0]))  # 0 1
 ```
 
 `==` on a plug builds a comparison node and returns *its output plug*, not
@@ -323,10 +323,10 @@ attribute name, so plugs still work as dict and set keys.
 
 ```python
 test = ctrl.tx == 5
-print(repr(test), cmds.nodeType(test.node))        # Plug("equal1.output") equal
-print(ctrl.tx.equals(ctrl.tx), ctrl.tx.equals(drv.tx))   # True False
-print(len({ctrl.tx, ctrl.tx}), {ctrl.tx: "x"}[Node("ctrl").tx])   # 1 x
-print(ctrl.tx in PlugList([drv.tx, ctrl.tx]))     # True  -- containment compares names, builds nothing
+print(repr(test), cmds.nodeType(test.node))                      # Plug("equal1.output") equal
+print(ctrl.tx.equals(ctrl.tx), ctrl.tx.equals(drv.tx))           # True False
+print(len({ctrl.tx, ctrl.tx}), {ctrl.tx: "x"}[Node("ctrl").tx])  # 1 x
+print(ctrl.tx in PlugList([drv.tx, ctrl.tx]))                    # True  -- containment compares names, builds nothing
 ```
 
 A `Plug` is a `str` subclass, so `cmds` accepts it directly and `in` is
@@ -335,8 +335,8 @@ attribute name, so those names resolve as attributes; cast when you want
 the string method.
 
 ```python
-print(cmds.getAttr(ctrl.tx), "translate" in ctrl.tx)   # 0.0 True
-print(str(ctrl.tx).upper())                            # CTRL.TRANSLATEX
+print(cmds.getAttr(ctrl.tx), "translate" in ctrl.tx)  # 0.0 True
+print(str(ctrl.tx).upper())                           # CTRL.TRANSLATEX
 ```
 
 ---
@@ -358,9 +358,9 @@ dst = Node.create("transform", name="dst")
 src << Float("blend", min=0, max=1) << 0.25
 src << Color("tint") << [0.1, 0.2, 0.3]
 
-print(repr(src.blend >> dst), dst.blend >> None)          # Plug("dst.blend") 0.0
-print(repr(src.blend >> "blend2"), src.blend2 >> None)    # Plug("src.blend2") 0.25
-print(repr(src.tint >> "dst.tint"), dst.tint.num_children)   # Plug("dst.tint") 3
+print(repr(src.blend >> dst),       dst.blend >> None)      # Plug("dst.blend") 0.0
+print(repr(src.blend >> "blend2"),  src.blend2 >> None)     # Plug("src.blend2") 0.25
+print(repr(src.tint >> "dst.tint"), dst.tint.num_children)  # Plug("dst.tint") 3
 try:
     src.blend >> "tint"
 except TypeError as err:
@@ -381,12 +381,12 @@ with container("box") as ctn:
     mul = Node.create("multiplyDivide", name="mul")
     mul.input1X << knob.blend
     mul.input2X << 2
-    print(repr(knob.blend >> container))                  # Plug("knob.blend")
-    print(repr(mul.outputX >> ctn))                       # Plug("mul.outputX")
+    print(repr(knob.blend >> container))  # Plug("knob.blend")
+    print(repr(mul.outputX >> ctn))       # Plug("mul.outputX")
 
-print(cmds.container("box", query=True, publishName=True))   # ['blend', 'outputX']
-print(cmds.getAttr("box.blend"), cmds.getAttr("box.outputX"))   # 0.5 1.0
-print(repr(ctn.blend))                                    # Plug("knob.blend")  -- Container resolves the alias
+print(cmds.container("box", query=True, publishName=True))     # ['blend', 'outputX']
+print(cmds.getAttr("box.blend"), cmds.getAttr("box.outputX"))  # 0.5 1.0
+print(repr(ctn.blend))                                         # Plug("knob.blend")  -- Container resolves the alias
 ```
 
 Publishing is a no-op that returns the source plug when the scope is
@@ -407,17 +407,17 @@ for name in ("c0", "c1", "c2"):
     Node.create("transform", name=name)
 
 nodes = PlugList(["c0", "c1", "c2"])
-print(repr(nodes.tx))                        # PlugList([Plug("c0.translateX"), Plug("c1.translateX"), Plug("c2.translateX")])
-print(repr(PlugList([Node("c0"), 3.14, None]).ty))   # PlugList([Plug("c0.translateY"), 3.14, None])
+print(repr(nodes.tx))                               # PlugList([Plug("c0.translateX"), Plug("c1.translateX"), Plug("c2.translateX")])
+print(repr(PlugList([Node("c0"), 3.14, None]).ty))  # PlugList([Plug("c0.translateY"), 3.14, None])
 ```
 
 `<<` broadcasts a scalar to every element and pairs a sequence element by
 element; a shorter right side is capped to its last entry.
 
 ```python
-nodes.t << 0                                 # every translate to the origin
-nodes.tx << [1, 2, 3]                        # pairwise
-nodes.ty << [10, 20]                         # asymmetric: c2.ty gets 20
+nodes.t  << 0          # every translate to the origin
+nodes.tx << [1, 2, 3]  # pairwise
+nodes.ty << [10, 20]   # asymmetric: c2.ty gets 20
 print(nodes.t >> None)                       # [[ 1. 10.  0.] [ 2. 20.  0.] [ 3. 20.  0.]]
 nodes.tz = 5                                 # assignment sugar broadcasts too
 print(nodes.tz >> None)                      # [5. 5. 5.]
@@ -427,9 +427,9 @@ Slicing keeps the type; a list, tuple or array key picks slots (fancy
 indexing); an `int` returns the element.
 
 ```python
-print(repr(nodes[1:]))                       # PlugList([Node("c1"), Node("c2")])
-print(repr(nodes.tx[[0, 2]]))                # PlugList([Plug("c0.translateX"), Plug("c2.translateX")])
-print(repr(nodes[-1]), repr(nodes["ty"][0]))   # Node("c2") Plug("c0.translateY")
+print(repr(nodes[1:]))                        # PlugList([Node("c1"), Node("c2")])
+print(repr(nodes.tx[[0, 2]]))                 # PlugList([Plug("c0.translateX"), Plug("c2.translateX")])
+print(repr(nodes[-1]), repr(nodes["ty"][0]))  # Node("c2") Plug("c0.translateY")
 ```
 
 `>> None` (or `.get()`) stacks the values into one array when the shapes
@@ -437,11 +437,11 @@ agree and falls back to a plain list otherwise. Arithmetic and comparisons
 map element by element.
 
 ```python
-print(nodes.tx >> None, (nodes.t >> None).shape, (nodes.matrix >> None).shape)   # [1. 2. 3.] (3, 3) (3, 4, 4)
-print(type(nodes >> None).__name__, type((nodes >> None)[0]).__name__)           # list Transform
-print(repr(nodes.tx + nodes.ty))             # PlugList([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
-print((nodes.tx * 2) >> None)                # [2. 4. 6.]
-print(Node("c1") in nodes, nodes.index(Node("c2")))   # True 2
+print(nodes.tx >> None, (nodes.t >> None).shape, (nodes.matrix >> None).shape)  # [1. 2. 3.] (3, 3) (3, 4, 4)
+print(type(nodes >> None).__name__, type((nodes >> None)[0]).__name__)          # list Transform
+print(repr(nodes.tx + nodes.ty))                                                # PlugList([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
+print((nodes.tx * 2) >> None)                                                   # [2. 4. 6.]
+print(Node("c1") in nodes, nodes.index(Node("c2")))                             # True 2
 ```
 
 Connection queries are N-aligned: one `PlugList` per element, so a slot is
@@ -449,8 +449,8 @@ never a `None` that `<<` would read as "disconnect".
 
 ```python
 Node("c1").tx << Node("c0").tx
-print(repr(nodes.tx.get_inputs()))           # PlugList([PlugList([]), PlugList([Plug("c0.translateX")]), PlugList([])])
-print(nodes.tx.get_inputs().get())           # [[], array([1.]), []]  -- a query result reads as values
+print(repr(nodes.tx.get_inputs()))  # PlugList([PlugList([]), PlugList([Plug("c0.translateX")]), PlugList([])])
+print(nodes.tx.get_inputs().get())  # [[], array([1.]), []]  -- a query result reads as values
 ```
 
 ---
@@ -468,12 +468,12 @@ b = Node.create("transform", name="b")
 a.tx << 6
 b.tx << 4
 
-print(repr(a.tx + b.tx), (a.tx + b.tx) >> None)   # Plug("add1.output") 10.0
-print((a.tx - b.tx) >> None, (10 - a.tx) >> None)   # 2.0 4.0
-print((a.tx * b.tx) >> None, (a.tx / b.tx) >> None)   # 24.0 1.5
-print((a.tx ** 2) >> None, (2 ** b.tx) >> None)   # 36.0 16.0
-print((a.tx // 4) >> None, (a.tx % 4) >> None)    # 1 2.0
-print((-a.tx) >> None, cmds.nodeType((-a.tx).node))   # -6.0 negate
+print(repr(a.tx + b.tx),     (a.tx + b.tx) >> None)        # Plug("add1.output") 10.0
+print((a.tx - b.tx) >> None, (10 - a.tx) >> None)          # 2.0 4.0
+print((a.tx * b.tx) >> None, (a.tx / b.tx) >> None)        # 24.0 1.5
+print((a.tx ** 2) >> None,   (2 ** b.tx) >> None)          # 36.0 16.0
+print((a.tx // 4) >> None,   (a.tx % 4) >> None)           # 1 2.0
+print((-a.tx) >> None,       cmds.nodeType((-a.tx).node))  # -6.0 negate
 ```
 
 Repeated expressions dedupe: the same operands give the same node, not a
@@ -491,9 +491,9 @@ vector is an operand too.
 ```python
 a.t << [1, 2, 3]
 b.t << [10, 20, 30]
-print(repr(a.t + b.t), (a.t + b.t) >> None)  # Plug("add2.output3D") [11. 22. 33.]
-print((a.t * 2) >> None, (a.t + b.tx) >> None)   # [2. 4. 6.] [11. 12. 13.]  -- a scalar broadcasts
-print(([100, 100, 100] - a.t) >> None)       # [99. 98. 97.]
+print(repr(a.t + b.t), (a.t + b.t) >> None)     # Plug("add2.output3D") [11. 22. 33.]
+print((a.t * 2) >> None, (a.t + b.tx) >> None)  # [2. 4. 6.] [11. 12. 13.]  -- a scalar broadcasts
+print(([100, 100, 100] - a.t) >> None)          # [99. 98. 97.]
 ```
 
 | Operator | Scalar node (2024+ / legacy) | Compound |
@@ -521,11 +521,11 @@ identity.
 ```python
 a.t << [10, 0, 0]
 b.t << [0, 5, 0]
-print(repr(a.wm * b.wim))                    # Plug("multMatrix1.matrixSum")
-print(np.round((a.wm * b.wim) >> None, 3)[3])   # [10. -5.  0.  1.]  -- a in b's space
-print(repr([1, 0, 0] * a.wm), ([1, 0, 0] * a.wm) >> None)   # Plug("multiplyPointByMatrix1.output") [11.  0.  0.]
-print(np.round((a.wm - b.wm) >> None, 3)[3])    # [10. -5.  0.  1.]  -- a.wm * inverse(b.wm)
-print(np.round((a.wm ** 0.5) >> None, 3)[3])    # [5. 0. 0. 1.]  -- halfway to identity
+print(repr(a.wm * b.wim))                                  # Plug("multMatrix1.matrixSum")
+print(np.round((a.wm * b.wim) >> None, 3)[3])              # [10. -5.  0.  1.]  -- a in b's space
+print(repr([1, 0, 0] * a.wm), ([1, 0, 0] * a.wm) >> None)  # Plug("multiplyPointByMatrix1.output") [11.  0.  0.]
+print(np.round((a.wm - b.wm) >> None, 3)[3])               # [10. -5.  0.  1.]  -- a.wm * inverse(b.wm)
+print(np.round((a.wm ** 0.5) >> None, 3)[3])               # [5. 0. 0. 1.]  -- halfway to identity
 try:
     a.wm * 0.5
 except TypeError as err:
@@ -560,7 +560,7 @@ d = Node.create("transform", name="d")
 d << a.matrix                                # t / r / s / shear all driven
 print(set(cmds.listConnections("d", source=True, type="decomposeMatrix")))   # {'decomposeMatrix2'}  -- a.matrix, not a.wm: a second node
 
-m = np.eye(4)
+m        = np.eye(4)
 m[3, :3] = [1, 2, 3]
 d << m                                       # static: decomposed here, channels set, drivers removed
 print(d.t >> None, cmds.listConnections("d.t", source=True))   # [1. 2. 3.] None
@@ -583,16 +583,16 @@ b = Node.create("transform", name="b")
 a.tx << 6
 b.tx << 4
 
-print(repr(a.tx > b.tx), (a.tx > b.tx) >> None)   # Plug("greater1.output") True
-print(repr(a.tx == 6), repr(a.tx >= 6))          # Plug("equal1.output") Plug("greater_or_equal1.outColorR")
+print(repr(a.tx > b.tx), (a.tx > b.tx) >> None)  # Plug("greater1.output") True
+print(repr(a.tx == 6),   repr(a.tx >= 6))        # Plug("equal1.output") Plug("greater_or_equal1.outColorR")
 print(repr(a.tx & b.tx), (a.tx & 0) >> None)     # Plug("logical_and1.output") False
 print(repr(a.tx | b.tx), repr(a.tx ^ b.tx))      # Plug("logical_or1.output") Plug("equal2.output")  -- xor is a network in a logical_xor1 container
-print((~a.tx) >> None, (~(a.tx * 0)) >> None)    # False True
+print((~a.tx) >> None,   (~(a.tx * 0)) >> None)  # False True
 
 a.t << [0, 1, 0]
 zero = a.t == 0                                  # three equal nodes in a condition1 container
-print(repr(zero), zero >> None)                  # Plug("output_plug1.value") [1. 0. 1.]
-print(repr(zero.input1))                         # Plug("condition1_host.input1")  -- the published interface
+print(repr(zero), zero >> None)  # Plug("output_plug1.value") [1. 0. 1.]
+print(repr(zero.input1))         # Plug("condition1_host.input1")  -- the published interface
 ```
 
 `condition(test, if_true, if_false)` is the value picker (a `condition`
@@ -604,14 +604,14 @@ from rig import condition, constant
 
 a.tx << 6                                        # the a.t write above zeroed it
 pick = condition(a.tx > b.tx, a.tx, b.tx)
-print(repr(pick), pick >> None)                  # Plug("condition2.outColorR") 6.0
-print(repr(condition(a.tx > b.tx, a.t, [0, 0, 0])))   # Plug("condition3.outColor")
-print(condition(1, "yes", "no"), condition(0, "yes", "no"))   # yes no
+print(repr(pick), pick >> None)                              # Plug("condition2.outColorR") 6.0
+print(repr(condition(a.tx > b.tx, a.t, [0, 0, 0])))          # Plug("condition3.outColor")
+print(condition(1, "yes", "no"), condition(0, "yes", "no"))  # yes no
 
 k = constant(5.0)
-print(repr(k), k >> None, constant(5.0).equals(k))   # Plug("constant1.value") 5.0 True
-print(repr(constant([1, 2, 3])), constant([1, 2, 3]) >> None)   # Plug("constant2.value") [1. 2. 3.]
-print(repr(constant(np.eye(4))))                 # Plug("constant3.outMatrix")
+print(repr(k), k >> None, constant(5.0).equals(k))             # Plug("constant1.value") 5.0 True
+print(repr(constant([1, 2, 3])), constant([1, 2, 3]) >> None)  # Plug("constant2.value") [1. 2. 3.]
+print(repr(constant(np.eye(4))))                               # Plug("constant3.outMatrix")
 ```
 
 ---
@@ -627,8 +627,8 @@ cmds.file(new=True, force=True)
 cube  = Node(cmds.polyCube(name="pCube1", constructionHistory=False)[0])
 shape = Node("pCube1Shape")
 
-print(repr(cube.vtx), len(cube.vtx[:]))      # Plug("pCube1Shape.controlPoints") 8
-print(repr(shape.vtx[[0, 7]]))               # PlugList([Plug("pCube1Shape.controlPoints[0]"), Plug("pCube1Shape.controlPoints[7]")])
+print(repr(cube.vtx), len(cube.vtx[:]))  # Plug("pCube1Shape.controlPoints") 8
+print(repr(shape.vtx[[0, 7]]))           # PlugList([Plug("pCube1Shape.controlPoints[0]"), Plug("pCube1Shape.controlPoints[7]")])
 
 cube.vtx[::2] << [0, 0, 0]                   # one point value, broadcast to the four even vertices
 print(cmds.pointPosition("pCube1.vtx[2]", local=True))   # [0.0, 0.0, 0.0]
@@ -645,10 +645,10 @@ from rig import Components
 
 print(repr(cube.f), repr(cube.e[[4, 0]]))    # Components("|pCube1|pCube1Shape.f[*]") Components("|pCube1|pCube1Shape.e[0] e[4]")
 faces = cube.f[:3]
-print(faces.indices, faces.count, faces.names)   # [0 1 2] 3 ['|pCube1|pCube1Shape.f[0:2]']
-print(faces.kind, faces.geometry, str(faces.shape), faces.is_all, cube.f.is_all)   # f mesh pCube1Shape False True
-print(cube.e[[4, 0]] >> None, cube.f >> None)    # [0 4] [0 1 2 3 4 5]
-print(cube.f[[5, 2]] == cube.f[[2, 5]], bool(cube.f[6:]))   # True False
+print(faces.indices, faces.count, faces.names)                                    # [0 1 2] 3 ['|pCube1|pCube1Shape.f[0:2]']
+print(faces.kind, faces.geometry, str(faces.shape), faces.is_all, cube.f.is_all)  # f mesh pCube1Shape False True
+print(cube.e[[4, 0]] >> None, cube.f >> None)                                     # [0 4] [0 1 2 3 4 5]
+print(cube.f[[5, 2]] == cube.f[[2, 5]], bool(cube.f[6:]))                         # True False
 ```
 
 `Components(node, kind, ids)` is the explicit carrier for every point kind
@@ -657,18 +657,18 @@ reads a Maya component string.
 
 ```python
 verts = Components(cube, "vtx", np.array([4, 0, 2, 2]))
-print(repr(verts), verts.count)              # Components("|pCube1|pCube1Shape.vtx[0] vtx[2] vtx[4]") 3
-print(repr(Components("pCube1.f[0:3]")), Components(shape, "uv").count)   # Components("|pCube1|pCube1Shape.f[0:3]") 14
-cmds.select(cube.f[[0, 1, 2, 5]].names)      # names are selectable, compact tokens
-print(cmds.ls(selection=True))               # ['pCube1.f[0:2]', 'pCube1.f[5]']
+print(repr(verts), verts.count)                                          # Components("|pCube1|pCube1Shape.vtx[0] vtx[2] vtx[4]") 3
+print(repr(Components("pCube1.f[0:3]")), Components(shape, "uv").count)  # Components("|pCube1|pCube1Shape.f[0:3]") 14
+cmds.select(cube.f[[0, 1, 2, 5]].names)                                  # names are selectable, compact tokens
+print(cmds.ls(selection=True))                                           # ['pCube1.f[0:2]', 'pCube1.f[5]']
 ```
 
 A NURBS surface `cv` and a lattice `pt` index per axis, numpy style.
 
 ```python
 surface = Node(cmds.nurbsPlane(name="plane1")[0])
-print(repr(surface.cv[1, 2]), len(surface.cv[:, 0]), len(surface.cv[:]))   # ComponentPlug("plane1Shape.cv[1][2]") 4 16
-print(Components(surface, "cv")[:2].names)   # ['|plane1|plane1Shape.cv[0][0:1]']
+print(repr(surface.cv[1, 2]), len(surface.cv[:, 0]), len(surface.cv[:]))  # ComponentPlug("plane1Shape.cv[1][2]") 4 16
+print(Components(surface, "cv")[:2].names)                                # ['|plane1|plane1Shape.cv[0][0:1]']
 ```
 
 Real attributes always win over the fallback: `curveShape.f` is `form`.
@@ -701,11 +701,11 @@ with container("arm") as arm:
     container.add(outside)                          # adopt a node made elsewhere
     loose = Node.create("multiplyDivide", name="loose", container=False)   # create, but do not add
 
-print(repr(arm), fk, repr(ik), scratch)             # Container("arm") None Container("ik") None
-print(str(fk_ctrl), str(ik_ctrl), str(tmp))         # fk_ctrl ctrl1 scratch_tmp
-print(sorted(cmds.container("arm", query=True, nodeList=True)))   # ['ctrl', 'fk_ctrl', 'ik', 'outside', 'scratch_tmp']
+print(repr(arm), fk, repr(ik), scratch)                          # Container("arm") None Container("ik") None
+print(str(fk_ctrl), str(ik_ctrl), str(tmp))                      # fk_ctrl ctrl1 scratch_tmp
+print(sorted(cmds.container("arm", query=True, nodeList=True)))  # ['ctrl', 'fk_ctrl', 'ik', 'outside', 'scratch_tmp']
 print(cmds.container(query=True, findContainer="loose"))         # None
-print(container.is_active, container.stack)         # False []
+print(container.is_active, container.stack)                      # False []
 ```
 
 Every scope prefixes the names it creates, the real sub-container `ik` is
@@ -722,7 +722,7 @@ from rig.spec import Float
 arm << Float("stretch") << 1.5
 print(repr(arm.stretch), Container("arm").stretch >> None)   # Plug("arm.stretch") 1.5
 with container("lerp1") as lerp:
-    w = container.publish_input(0.25, "weight", min=0, max=1)          # a knob with no inner home
+    w   = container.publish_input(0.25, "weight", min=0, max=1)          # a knob with no inner home
     out = container.publish_output((ctrl.tx - outside.tx) * w, "output")
 print(repr(w), repr(lerp.weight), cmds.container("lerp1", query=True, publishName=True))   # Plug("lerp1_host.weight") Plug("lerp1_host.weight") ['weight', 'output']
 ```
@@ -799,7 +799,7 @@ from rig import cleanup
 cmds.file(new=True, force=True)
 cmds.createNode("multiplyDivide", name="user_mul")     # made outside the DSL: no tag
 with container("gc") as gc:
-    keep = Node.create("transform", name="keep")
+    keep = Node.create("transform",      name="keep")
     live = Node.create("multiplyDivide", name="live")
     dead = Node.create("multiplyDivide", name="dead")
     keep.tx << live.outputX
@@ -809,8 +809,8 @@ print(cleanup(container="gc", dry_run=True))
 # {'by_owner': {'gc': ['dead', 'mul1']}, 'deleted_containers': [], 'memoize_entries_pruned': 0, 'dry_run': True}
 report = cleanup(container="gc")
 print(sorted(report["by_owner"]["gc"]), report["memoize_entries_pruned"] > 0)   # ['dead', 'mul1'] True
-print([cmds.objExists(n) for n in ("keep", "live", "dead", "user_mul", "gc")])   # [True, True, False, True, True]
-print(repr(gc.cleanup()["by_owner"]))                   # {}  -- the Container method, same call scoped to itself
+print([cmds.objExists(n) for n in ("keep", "live", "dead", "user_mul", "gc")])  # [True, True, False, True, True]
+print(repr(gc.cleanup()["by_owner"]))                                           # {}  -- the Container method, same call scoped to itself
 ```
 
 `cleanup_on_exit=True` (per block or globally) runs it as the block exits,
@@ -831,7 +831,7 @@ functions are memoized this way, which is why repeated expressions dedupe.
 from rig import memoize, prune_memoize_caches
 
 cmds.file(new=True, force=True)
-a = Node.create("transform", name="a")
+a     = Node.create("transform", name="a")
 calls = []
 
 @memoize
@@ -842,11 +842,11 @@ def double(plug):
     node.input2X << 2
     return node.outputX
 
-print(repr(double(a.tx)), repr(double(a.tx)), len(calls))   # Plug("double1.outputX") Plug("double1.outputX") 1
+print(repr(double(a.tx)), repr(double(a.tx)), len(calls))  # Plug("double1.outputX") Plug("double1.outputX") 1
 cmds.rename("a", "renamed")
-print(repr(double(Node("renamed").tx)), len(calls))         # Plug("double1.outputX") 1  -- identity, not name
+print(repr(double(Node("renamed").tx)), len(calls))        # Plug("double1.outputX") 1  -- identity, not name
 cmds.delete("double1")
-print(repr(double(Node("renamed").tx)), len(calls))         # Plug("double1.outputX") 2  -- stale entry recomputed: a new node, the freed name reused
+print(repr(double(Node("renamed").tx)), len(calls))        # Plug("double1.outputX") 2  -- stale entry recomputed: a new node, the freed name reused
 ```
 
 `@memoize(foldable="scalar")` (or `"reduce"`, or a predicate) declares that
@@ -878,9 +878,9 @@ ctrls = PlugList(["p", "q", "r"])
 def offset(plug, amount):
     return plug + amount
 
-print(repr(offset(ctrls.tx, 1)))              # PlugList([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
-print(repr(offset(ctrls.tx, [10, 20, 30])))   # PlugList([Plug("add4.output"), Plug("add5.output"), Plug("add6.output")])
-print(repr(offset(PlugList([ctrls.tx[0]]), 5)))   # Plug("add7.output")  -- one row, unwrapped
+print(repr(offset(ctrls.tx, 1)))                 # PlugList([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
+print(repr(offset(ctrls.tx, [10, 20, 30])))      # PlugList([Plug("add4.output"), Plug("add5.output"), Plug("add6.output")])
+print(repr(offset(PlugList([ctrls.tx[0]]), 5)))  # Plug("add7.output")  -- one row, unwrapped
 try:
     offset(ctrls.tx, [1, 2])
 except ValueError as err:
@@ -906,9 +906,9 @@ entry.
 ```python
 from rig import arguments, sequences
 
-print(list(sequences([1, 2, 3], 5)))                     # [[1, 5], [2, 5], [3, 5]]
-print(list(sequences([1, 2, 3, 4], ["a", "b"], "xy")))   # [[1, 'a', 'xy'], [2, 'b', 'xy'], [3, 'b', 'xy'], [4, 'b', 'xy']]
-print(list(arguments([1, 2], scale=[10, 20], name="n")))   # [([1], {'scale': 10, 'name': 'n'}), ([2], {'scale': 20, 'name': 'n'})]
+print(list(sequences([1, 2, 3], 5)))                      # [[1, 5], [2, 5], [3, 5]]
+print(list(sequences([1, 2, 3, 4], ["a", "b"], "xy")))    # [[1, 'a', 'xy'], [2, 'b', 'xy'], [3, 'b', 'xy'], [4, 'b', 'xy']]
+print(list(arguments([1, 2], scale=[10, 20], name="n")))  # [([1], {'scale': 10, 'name': 'n'}), ([2], {'scale': 20, 'name': 'n'})]
 print(list(sequences()), list(arguments()))               # [] []
 ```
 
@@ -930,7 +930,7 @@ published container.
 from rig import NodeOp
 
 cmds.file(new=True, force=True)
-a = Node.create("transform", name="a")
+a     = Node.create("transform", name="a")
 twice = NodeOp("twice", scalar_fn=lambda x: x * 2)
 
 @twice.impl(since=2024, scope="scalar")
@@ -948,9 +948,9 @@ def _twice_legacy(x):
     return node.outputX
 
 a.tx << 3
-print(twice(3), repr(twice(a.tx)), twice(a.tx) >> None)   # 6 Plug("twice1.output") 6.0
-print(repr(twice(a.t)), cmds.nodeType(twice(a.t).node))   # Plug("output_plug1.value") network  -- one assembled output
-print(len(cmds.ls(type="multiply")))                      # 4  -- twice1 plus one per channel of a.t
+print(twice(3), repr(twice(a.tx)), twice(a.tx) >> None)  # 6 Plug("twice1.output") 6.0
+print(repr(twice(a.t)), cmds.nodeType(twice(a.t).node))  # Plug("output_plug1.value") network  -- one assembled output
+print(len(cmds.ls(type="multiply")))                     # 4  -- twice1 plus one per channel of a.t
 ```
 
 `set_options(maya_version=N)` retargets the whole DSL: every `NodeOp` and
@@ -962,10 +962,10 @@ from rig import set_options
 from rig._internal.maya_version import get_maya_version, get_target_version, is_at_least
 
 set_options(maya_version=2022)
-print(get_target_version(), is_at_least(2024))            # 2022 False
-print(cmds.nodeType(twice(a.tx).node), repr(a.tx + a.ty))   # multiplyDivide Plug("add1.output1D")
+print(get_target_version(), is_at_least(2024))                        # 2022 False
+print(cmds.nodeType(twice(a.tx).node), repr(a.tx + a.ty))             # multiplyDivide Plug("add1.output1D")
 set_options(maya_version=None)
-print(get_target_version() == get_maya_version(), repr(a.tx + a.ty))   # True Plug("add2.output")
+print(get_target_version() == get_maya_version(), repr(a.tx + a.ty))  # True Plug("add2.output")
 ```
 
 `rig._internal.maya_version.set_target_version(N)` is the raw switch
@@ -1039,11 +1039,11 @@ src = Node.create("transform", name="src")
 src.t << (1, 2, 3)
 
 out = f.abs(src.tx)
-print(repr(out), kind(out))                       # Plug("abs1.output") absolute
-print(out >> None)                                # 1.0 -- the live value
-print(f.abs(-2.5))                                # 2.5 -- all-literal input folds to a float, no node
-print(str(f.abs(src.tx)) == str(out))             # True -- same call, same plug (memoised)
-print(repr(f.abs(PlugList([src.tx, src.ty]))))    # PlugList([Plug("abs1.output"), Plug("abs2.output")]) -- broadcast; abs1 reused
+print(repr(out), kind(out))                     # Plug("abs1.output") absolute
+print(out >> None)                              # 1.0 -- the live value
+print(f.abs(-2.5))                              # 2.5 -- all-literal input folds to a float, no node
+print(str(f.abs(src.tx)) == str(out))           # True -- same call, same plug (memoised)
+print(repr(f.abs(PlugList([src.tx, src.ty]))))  # PlugList([Plug("abs1.output"), Plug("abs2.output")]) -- broadcast; abs1 reused
 ```
 
 | Module | Import as | Holds |
@@ -1102,9 +1102,9 @@ is scalar.
 
 ```python
 x.tx << 3.14159
-print(repr(f.round(x.tx, 2)), kind(f.round(x.tx, 2)), f.round(x.tx, 2) >> None)   # Plug("div1.output") divide 3.14
-print(repr(f.round(x.tx)), kind(f.round(x.tx)))                                    # Plug("round3.output") round
-print(repr(f.clamp(x.tx, 0, 1)), kind(f.clamp(x.tx, 0, 1)), f.clamp(x.tx, 0, 1) >> None)   # Plug("clamp1.output") clampRange 1.0
+print(repr(f.round(x.tx, 2)), kind(f.round(x.tx, 2)), f.round(x.tx, 2) >> None)           # Plug("div1.output") divide 3.14
+print(repr(f.round(x.tx)), kind(f.round(x.tx)))                                           # Plug("round3.output") round
+print(repr(f.clamp(x.tx, 0, 1)), kind(f.clamp(x.tx, 0, 1)), f.clamp(x.tx, 0, 1) >> None)  # Plug("clamp1.output") clampRange 1.0
 ```
 
 Powers and logs all land on the 2024+ `power` node; `log` has no
@@ -1112,12 +1112,12 @@ pre-2024 fallback and raises `RuntimeError` there.
 
 ```python
 x.tx << 16.0
-print(kind(f.sqrt(x.tx)),       f.sqrt(x.tx) >> None)          # power 4.0
-print(kind(f.pow(x.tx, 0.25)),  f.pow(x.tx, 0.25) >> None)     # power 2.0
-print(kind(f.exp(x.tx)))                                       # power
-print(kind(f.log(x.tx)),        f.log(x.tx, base=2) >> None)   # log 4.0
-print(kind(f.rev(x.tx)),        f.rev(x.tx) >> None)           # reverse -15.0  (1 - x)
-print(f.sqrt(16), f.pow(2, 8), f.log(100, base=10))            # 4.0 256 2.0 -- literals fold
+print(kind(f.sqrt(x.tx)),       f.sqrt(x.tx) >> None)         # power 4.0
+print(kind(f.pow(x.tx, 0.25)),  f.pow(x.tx, 0.25) >> None)    # power 2.0
+print(kind(f.exp(x.tx)))                                      # power
+print(kind(f.log(x.tx)),        f.log(x.tx, base=2) >> None)  # log 4.0
+print(kind(f.rev(x.tx)),        f.rev(x.tx) >> None)          # reverse -15.0  (1 - x)
+print(f.sqrt(16), f.pow(2, 8), f.log(100, base=10))           # 4.0 256 2.0 -- literals fold
 ```
 
 | Function | Maya 2024+ | Older Maya |
@@ -1158,9 +1158,9 @@ for name in ("sum", "avg", "max", "min", "argmax", "argmin", "all", "any"):
 `diff` and `cumsum` return a `PlugList`, one plug per output:
 
 ```python
-print(repr(f.diff(chans)))                       # PlugList([Plug("sub8.output"), Plug("sub9.output")])
-print([d >> None for d in f.diff(chans)])        # [4.0, -2.0]
-print([c >> None for c in f.cumsum(chans)])      # [1.0, 6.0, 9.0]
+print(repr(f.diff(chans)))                   # PlugList([Plug("sub8.output"), Plug("sub9.output")])
+print([d >> None for d in f.diff(chans)])    # [4.0, -2.0]
+print([c >> None for c in f.cumsum(chans)])  # [1.0, 6.0, 9.0]
 ```
 
 `choice` wraps Maya's `choice` node; `searchsorted` is
@@ -1193,10 +1193,10 @@ it ticks one unit per frame.
 
 ```python
 fr = f.frame()
-print(repr(fr), kind(fr))          # Plug("frame1.output") animCurveTL
+print(repr(fr), kind(fr))  # Plug("frame1.output") animCurveTL
 cmds.currentTime(10)
-print(fr >> None)                  # 10.0
-print(f.inf())                     # inf -- a plain float, no node
+print(fr >> None)          # 10.0
+print(f.inf())             # inf -- a plain float, no node
 ```
 
 `pi()` is the native `pi` node on 2024+, and its output is a
@@ -1217,21 +1217,21 @@ wrappers are exactly the `==` `!=` `<` `>` `<=` `>=` operators on
 c = Node.create("transform", name="c")
 c.tx << 1.0
 c.ty << 1.0001
-print(kind(f.equal(c.tx, c.ty, eps=1e-3)), f.equal(c.tx, c.ty, eps=1e-3) >> None)   # equal True
-print(f.equal(c.tx, c.ty) >> None)                                                 # False -- default eps is 1e-6
-print(kind(f.not_equal(c.tx, c.ty)), kind(f.greater_than(c.tx, c.ty)), kind(f.less_than(c.tx, c.ty)))   # condition greaterThan lessThan
-print(kind(f.greater_or_equal(c.tx, c.ty)), kind(f.less_or_equal(c.tx, c.ty)))    # condition condition
-print(f.greater_than(c.tx, c.ty) >> None, f.less_or_equal(c.tx, c.ty) >> None)     # False 1.0
+print(kind(f.equal(c.tx, c.ty, eps=1e-3)), f.equal(c.tx, c.ty, eps=1e-3) >> None)                      # equal True
+print(f.equal(c.tx, c.ty) >> None)                                                                     # False -- default eps is 1e-6
+print(kind(f.not_equal(c.tx, c.ty)), kind(f.greater_than(c.tx, c.ty)), kind(f.less_than(c.tx, c.ty)))  # condition greaterThan lessThan
+print(kind(f.greater_or_equal(c.tx, c.ty)), kind(f.less_or_equal(c.tx, c.ty)))                         # condition condition
+print(f.greater_than(c.tx, c.ty) >> None, f.less_or_equal(c.tx, c.ty) >> None)                         # False 1.0
 ```
 
 The logical wrappers are `&` `|` `^` `~`:
 
 ```python
 c.tz << 0.0
-print(kind(f.logical_and(c.tx, c.tz)), f.logical_and(c.tx, c.tz) >> None)   # and False
-print(kind(f.logical_or(c.tx, c.tz)),  f.logical_or(c.tx, c.tz) >> None)    # or True
-print(kind(f.logical_xor(c.tx, c.tz)), f.logical_xor(c.tx, c.tz) >> None)   # equal True  (built as (a!=0)+(b!=0) == 1)
-print(kind(f.logical_not(c.tz)),       f.logical_not(c.tz) >> None)         # not True
+print(kind(f.logical_and(c.tx, c.tz)), f.logical_and(c.tx, c.tz) >> None)  # and False
+print(kind(f.logical_or(c.tx, c.tz)),  f.logical_or(c.tx, c.tz) >> None)   # or True
+print(kind(f.logical_xor(c.tx, c.tz)), f.logical_xor(c.tx, c.tz) >> None)  # equal True  (built as (a!=0)+(b!=0) == 1)
+print(kind(f.logical_not(c.tz)),       f.logical_not(c.tz) >> None)        # not True
 ```
 
 | Function | Maya 2024+ | Older Maya |
@@ -1281,23 +1281,23 @@ degrees, connects to a rotate channel with no conversion); `asin` /
 ```python
 h.tx << 1.0
 h.ty << 0.0
-print(kind(trig.asind(h.tx)), trig.asind(h.tx) >> None)              # asin 90.0
-print(kind(trig.acosd(h.tx)), trig.acosd(h.tx) >> None)              # acos 0.0
-print(kind(trig.atand(h.tx)), trig.atand(h.tx) >> None)              # atan 45.0
-print(kind(trig.atan2d(h.tx, h.ty)), trig.atan2d(h.tx, h.ty) >> None)   # atan2 90.0
-print(kind(trig.asin(h.tx)), round(trig.asin(h.tx) >> None, 6))      # multiply 1.570796
-print(kind(trig.acos(h.tx)), trig.acos(h.tx) >> None)                # multiply 0.0
-print(kind(trig.atan(h.tx)), round(trig.atan(h.tx) >> None, 6))      # multiply 0.785398
-print(kind(trig.atan2(h.tx, h.ty)), round(trig.atan2(h.tx, h.ty) >> None, 6))   # multiply 1.570796
+print(kind(trig.asind(h.tx)),        trig.asind(h.tx) >> None)                  # asin 90.0
+print(kind(trig.acosd(h.tx)),        trig.acosd(h.tx) >> None)                  # acos 0.0
+print(kind(trig.atand(h.tx)),        trig.atand(h.tx) >> None)                  # atan 45.0
+print(kind(trig.atan2d(h.tx, h.ty)), trig.atan2d(h.tx, h.ty) >> None)           # atan2 90.0
+print(kind(trig.asin(h.tx)),         round(trig.asin(h.tx) >> None, 6))         # multiply 1.570796
+print(kind(trig.acos(h.tx)),         trig.acos(h.tx) >> None)                   # multiply 0.0
+print(kind(trig.atan(h.tx)),         round(trig.atan(h.tx) >> None, 6))         # multiply 0.785398
+print(kind(trig.atan2(h.tx, h.ty)),  round(trig.atan2(h.tx, h.ty) >> None, 6))  # multiply 1.570796
 ```
 
 `degrees` and `radians` are a multiply by `180/pi` or `pi/180`;
 literals fold everywhere.
 
 ```python
-print(kind(trig.degrees(h.tx)), round(trig.degrees(h.tx) >> None, 4))   # multiply 57.2958
-print(kind(trig.radians(h.tx)), round(trig.radians(h.tx) >> None, 6))   # multiply 0.017453
-print(trig.sind(90), trig.atan2(1, 1), trig.degrees(math.pi))           # 1.0 0.7853981633974483 180.0
+print(kind(trig.degrees(h.tx)), round(trig.degrees(h.tx) >> None, 4))  # multiply 57.2958
+print(kind(trig.radians(h.tx)), round(trig.radians(h.tx) >> None, 6))  # multiply 0.017453
+print(trig.sind(90), trig.atan2(1, 1), trig.degrees(math.pi))          # 1.0 0.7853981633974483 180.0
 ```
 
 | Function | Maya 2024+ | Older Maya |
@@ -1328,10 +1328,10 @@ drv.r << (0, 90, 0)
 drv.s << (3, 1, 1)
 
 dec = m.decompose(drv.matrix)
-print(repr(dec), kind(dec))                                   # Plug("decomposeMatrix1.outputTranslate") decomposeMatrix
-print(repr(dec.outputRotate), dec.outputRotate >> None)       # Plug("decomposeMatrix1.outputRotate") [-0. 90.  0.]
-print(repr(m.to_euler(drv.matrix, rotate_order=drv.ro)))      # Plug("decomposeMatrix2.outputRotate")
-print(m.to_quaternion(drv.matrix) >> None)                    # [0.         0.70710678 0.         0.70710678]
+print(repr(dec), kind(dec))                               # Plug("decomposeMatrix1.outputTranslate") decomposeMatrix
+print(repr(dec.outputRotate), dec.outputRotate >> None)   # Plug("decomposeMatrix1.outputRotate") [-0. 90.  0.]
+print(repr(m.to_euler(drv.matrix, rotate_order=drv.ro)))  # Plug("decomposeMatrix2.outputRotate")
+print(m.to_quaternion(drv.matrix) >> None)                # [0.         0.70710678 0.         0.70710678]
 ```
 
 On 2024+ the one-channel extractors are single native nodes:
@@ -1352,19 +1352,19 @@ the translation. `axis` gives a basis vector with its scale still in;
 `row` / `column` give the raw 4-vectors.
 
 ```python
-print(m.axis(drv.matrix, "x") >> None)         # [ 0.  0. -3.] -- +X after a 90 about Y, times scale 3
-print(m.axis(drv.matrix, 2) >> None)           # [1. 0. 0.]
-print(m.row(drv.matrix, 3) >> None)            # [10.  0.  0.  1.] -- translation lives in row 3
-print(m.column(drv.matrix, 3) >> None)         # [0. 0. 0. 1.]    -- column 3 is the homogeneous column
-print(kind(m.axis(drv.matrix, 0)), kind(m.row(drv.matrix, 0)), kind(m.column(drv.matrix, 0)))   # axisFromMatrix rowFromMatrix columnFromMatrix
+print(m.axis(drv.matrix, "x") >> None)                                                         # [ 0.  0. -3.] -- +X after a 90 about Y, times scale 3
+print(m.axis(drv.matrix, 2) >> None)                                                           # [1. 0. 0.]
+print(m.row(drv.matrix, 3) >> None)                                                            # [10.  0.  0.  1.] -- translation lives in row 3
+print(m.column(drv.matrix, 3) >> None)                                                         # [0. 0. 0. 1.]    -- column 3 is the homogeneous column
+print(kind(m.axis(drv.matrix, 0)), kind(m.row(drv.matrix, 0)), kind(m.column(drv.matrix, 0)))  # axisFromMatrix rowFromMatrix columnFromMatrix
 ```
 
 `determinant` and `dist` (translation to translation) round it off:
 
 ```python
 origin = Node.create("transform", name="origin")
-print(kind(m.determinant(drv.matrix)), m.determinant(drv.matrix) >> None)              # determinant 3.0
-print(kind(m.dist(origin.matrix, drv.matrix)), m.dist(origin.matrix, drv.matrix) >> None)   # distanceBetween 10.0
+print(kind(m.determinant(drv.matrix)), m.determinant(drv.matrix) >> None)                  # determinant 3.0
+print(kind(m.dist(origin.matrix, drv.matrix)), m.dist(origin.matrix, drv.matrix) >> None)  # distanceBetween 10.0
 ```
 
 | Function | Maya 2024+ | Older Maya |
@@ -1386,8 +1386,8 @@ print(kind(m.dist(origin.matrix, drv.matrix)), m.dist(origin.matrix, drv.matrix)
 
 ```python
 built = m.compose(translate=drv.t, rotate=drv.r, scale=drv.s, rotate_order=drv.ro)
-print(repr(built), kind(built), m.rotation(built) >> None)     # Plug("composeMatrix1.outputMatrix") composeMatrix [-0. 90.  0.]
-print(kind(m.compose(rotate=to_quaternion(drv.r))))           # composeMatrix -- four channels go to inputQuat
+print(repr(built), kind(built), m.rotation(built) >> None)  # Plug("composeMatrix1.outputMatrix") composeMatrix [-0. 90.  0.]
+print(kind(m.compose(rotate=to_quaternion(drv.r))))         # composeMatrix -- four channels go to inputQuat
 ```
 
 `fourbyfour` fills rows from vectors (identity for anything omitted);
@@ -1408,12 +1408,12 @@ print(repr(orient), kind(orient), to_euler(orient) >> None)     # Plug("matrix_a
 Arithmetic:
 
 ```python
-print(kind(m.multiply(drv.matrix, drv.matrix)), m.translation(m.multiply(drv.matrix, drv.matrix)) >> None)   # multMatrix [ 10.   0. -30.]
-print(kind(m.add(drv.matrix, drv.matrix)))                              # addMatrix
-print(kind(m.add(drv.matrix, drv.matrix, weights=[0.25, 0.75])))        # wtAddMatrix
+print(kind(m.multiply(drv.matrix, drv.matrix)), m.translation(m.multiply(drv.matrix, drv.matrix)) >> None)  # multMatrix [ 10.   0. -30.]
+print(kind(m.add(drv.matrix, drv.matrix)))                                                                  # addMatrix
+print(kind(m.add(drv.matrix, drv.matrix, weights=[0.25, 0.75])))                                            # wtAddMatrix
 inv = m.inverse(drv.matrix)
-print(repr(inv), kind(inv), m.translation(inv) >> None)                 # Plug("inverseMatrix1.outputMatrix") inverseMatrix [ -0.  -0. -10.]
-print(kind(m.transpose(drv.matrix)), m.column(m.transpose(drv.matrix), 3) >> None)   # transposeMatrix [10.  0.  0.  1.]
+print(repr(inv), kind(inv), m.translation(inv) >> None)                             # Plug("inverseMatrix1.outputMatrix") inverseMatrix [ -0.  -0. -10.]
+print(kind(m.transpose(drv.matrix)), m.column(m.transpose(drv.matrix), 3) >> None)  # transposeMatrix [10.  0.  0.  1.]
 rigid = m.normalize(drv.matrix)
 print(kind(rigid), m.scale_of(rigid) >> None, m.translation(rigid) >> None)   # composeMatrix [1. 1. 1.] [10.  0.  0.] -- scale and shear dropped
 ```
@@ -1423,9 +1423,9 @@ Moving a point through a matrix, with and without its translation:
 ```python
 pnt = Node.create("transform", name="pnt")
 pnt.t << (1, 0, 0)
-print(kind(m.transform_point(pnt.t, drv.matrix)),  m.transform_point(pnt.t, drv.matrix) >> None)    # multiplyPointByMatrix  [10.  0. -3.]
-print(kind(m.transform_vector(pnt.t, drv.matrix)), m.transform_vector(pnt.t, drv.matrix) >> None)   # multiplyVectorByMatrix [ 0.  0. -3.]
-print(kind(m.multiply(pnt.t, drv.matrix)))         # multiplyPointByMatrix -- two args, one a vector: a point transform
+print(kind(m.transform_point(pnt.t, drv.matrix)),  m.transform_point(pnt.t, drv.matrix) >> None)   # multiplyPointByMatrix  [10.  0. -3.]
+print(kind(m.transform_vector(pnt.t, drv.matrix)), m.transform_vector(pnt.t, drv.matrix) >> None)  # multiplyVectorByMatrix [ 0.  0. -3.]
+print(kind(m.multiply(pnt.t, drv.matrix)))                                                         # multiplyPointByMatrix -- two args, one a vector: a point transform
 ```
 
 | Function | Maya 2024+ | Older Maya |
@@ -1490,8 +1490,8 @@ print(v.X, v.Y, v.Z)                                            # (1, 0, 0) (0, 
 
 d = v.dot(ex.t, ey.t);   print(repr(d), kind(d), d >> None)      # Plug("dot1.output") dotProduct 0.0
 c = v.cross(ex.t, ey.t); print(repr(c), kind(c), c >> None)      # Plug("cross1.output") crossProduct [0. 0. 1.]
-print(repr(v.dot(ex.t, ey.t, normalize=True)), kind(v.dot(ex.t, ey.t, normalize=True)))   # Plug("dot2.outputX") vectorProduct
-print(kind(v.triple_product(ex.t, ey.t, v.Z)), v.triple_product(ex.t, ey.t, v.Z) >> None)   # determinant 1.0
+print(repr(v.dot(ex.t, ey.t, normalize=True)), kind(v.dot(ex.t, ey.t, normalize=True)))    # Plug("dot2.outputX") vectorProduct
+print(kind(v.triple_product(ex.t, ey.t, v.Z)), v.triple_product(ex.t, ey.t, v.Z) >> None)  # determinant 1.0
 ```
 
 Length, unit and distance. A matrix given to `length` or `dist` means
@@ -1500,19 +1500,19 @@ its translation.
 ```python
 leg = Node.create("transform", name="leg")
 leg.t << (3, 4, 0)
-print(kind(v.length(leg.t)),    v.length(leg.t) >> None)               # length 5.0
-print(kind(v.normalize(leg.t)), v.normalize(leg.t) >> None)            # normalize [0.6 0.8 0. ]
-print(kind(v.dist(ex.t, leg.t)), round(v.dist(ex.t, leg.t) >> None, 4))   # distanceBetween 4.4721
-print(kind(v.length(drv.matrix)), v.length(drv.matrix) >> None)        # distanceBetween 10.0
-print(v.length([3, 4, 0]))                                             # 5.0 -- literal folds
+print(kind(v.length(leg.t)),      v.length(leg.t) >> None)                # length 5.0
+print(kind(v.normalize(leg.t)),   v.normalize(leg.t) >> None)             # normalize [0.6 0.8 0. ]
+print(kind(v.dist(ex.t, leg.t)),  round(v.dist(ex.t, leg.t) >> None, 4))  # distanceBetween 4.4721
+print(kind(v.length(drv.matrix)), v.length(drv.matrix) >> None)           # distanceBetween 10.0
+print(v.length([3, 4, 0]))                                                # 5.0 -- literal folds
 ```
 
 `angle` is radians, `angle_degrees` is the `atan2` node's own
 `doubleAngle` output; `rotate` spins a vector by an euler.
 
 ```python
-print(kind(v.angle(ex.t, ey.t)),         round(v.angle(ex.t, ey.t) >> None, 6))   # multiply 1.570796
-print(kind(v.angle_degrees(ex.t, ey.t)), v.angle_degrees(ex.t, ey.t) >> None)     # atan2 90.0
+print(kind(v.angle(ex.t, ey.t)),         round(v.angle(ex.t, ey.t) >> None, 6))  # multiply 1.570796
+print(kind(v.angle_degrees(ex.t, ey.t)), v.angle_degrees(ex.t, ey.t) >> None)    # atan2 90.0
 
 spin = Node.create("transform", name="spin")
 spin.r << (0, 0, 90)
@@ -1527,14 +1527,14 @@ p0 = Node.create("transform", name="p0")
 p1 = Node.create("transform", name="p1")
 p1.t << (10, 20, 30)
 out = v.lerp(p0.t, p1.t, 0.25)
-print(repr(out), kind(out), out >> None)                             # Plug("lerp_out1.value") network [2.5 5.  7.5]
-print(kind(v.lerp(p0.tx, p1.tx, 0.25)), v.lerp(p0.tx, p1.tx, 0.25) >> None)   # lerp 2.5 -- scalars get the native node
-print(v.slerp([0, 0, 1], [1, 0, 0], 0.5) >> None)                    # [0.70710677 0.         0.70710677] -- on the arc, not the chord
+print(repr(out), kind(out), out >> None)                                     # Plug("lerp_out1.value") network [2.5 5.  7.5]
+print(kind(v.lerp(p0.tx, p1.tx, 0.25)), v.lerp(p0.tx, p1.tx, 0.25) >> None)  # lerp 2.5 -- scalars get the native node
+print(v.slerp([0, 0, 1], [1, 0, 0], 0.5) >> None)                            # [0.70710677 0.         0.70710677] -- on the arc, not the chord
 
 p0.tx << 2.0
 p1.tx << 8.0
-print(kind(v.elerp(p0.tx, p1.tx, 0.5)), round(v.elerp(p0.tx, p1.tx, 0.5) >> None, 6))   # multiply 4.0
-print(v.lerp(0.0, 10.0, 0.5), round(v.elerp(2.0, 8.0, 0.5), 6))                         # 5.0 4.0 -- literals fold
+print(kind(v.elerp(p0.tx, p1.tx, 0.5)), round(v.elerp(p0.tx, p1.tx, 0.5) >> None, 6))  # multiply 4.0
+print(v.lerp(0.0, 10.0, 0.5), round(v.elerp(2.0, 8.0, 0.5), 6))                        # 5.0 4.0 -- literals fold
 ```
 
 `slerp` never takes the antipodal shortcut a quaternion would past 90
@@ -1563,8 +1563,8 @@ version; the module loads it for you. Quaternions are `(x, y, z, w)`,
 scalar last.
 
 ```python
-qa = to_quaternion(p0.r)                    # identity -- p0 is unrotated
-qb = to_quaternion(spin.r)                  # 90 degrees about Z
+qa = to_quaternion(p0.r)    # identity -- p0 is unrotated
+qb = to_quaternion(spin.r)  # 90 degrees about Z
 print(repr(qb), kind(qb), (qb >> None).round(4))    # Plug("eulerToQuat3.outputQuat") eulerToQuat [0.     0.     0.7071 0.7071]
 
 for name in ("add", "multiply", "subtract"):
@@ -1588,20 +1588,20 @@ The shortest-arc angle between two quaternions, and the conversions
 out:
 
 ```python
-print(kind(q.angle(qa, qb)), round(q.angle(qa, qb) >> None, 6))          # multiply 1.570796
-print(kind(q.angle_degrees(qa, qb)), q.angle_degrees(qa, qb) >> None)    # multiply 90.0
-print(repr(q.to_euler(qb, rotate_order=3)), q.to_euler(qb, rotate_order=3) >> None)   # Plug("quatToEuler2.outputRotate") [ 0.  0. 90.]
-print(kind(q.to_matrix(qb)), m.rotation(q.to_matrix(qb)) >> None)        # composeMatrix [ 0. -0. 90.]
-print(kind(q.to_vector(qb)), (q.to_vector(qb) >> None).round(4))         # network [0.     0.     0.7071]
+print(kind(q.angle(qa, qb)), round(q.angle(qa, qb) >> None, 6))                      # multiply 1.570796
+print(kind(q.angle_degrees(qa, qb)), q.angle_degrees(qa, qb) >> None)                # multiply 90.0
+print(repr(q.to_euler(qb, rotate_order=3)), q.to_euler(qb, rotate_order=3) >> None)  # Plug("quatToEuler2.outputRotate") [ 0.  0. 90.]
+print(kind(q.to_matrix(qb)), m.rotation(q.to_matrix(qb)) >> None)                    # composeMatrix [ 0. -0. 90.]
+print(kind(q.to_vector(qb)), (q.to_vector(qb) >> None).round(4))                     # network [0.     0.     0.7071]
 ```
 
 `slerp` is a `quatSlerp`; `pow` is the same node slerping from identity,
 so it is the true power of a unit quaternion and extrapolates.
 
 ```python
-print(kind(q.slerp(qa, qb, 0.5)), to_euler(q.slerp(qa, qb, 0.5)) >> None)   # quatSlerp [ 0. -0. 45.]
-print(kind(q.pow(qb, 0.5)), to_euler(q.pow(qb, 0.5)) >> None)               # quatSlerp [ 0. -0. 45.]
-print(to_euler(q.pow(qb, 2.0)) >> None)                                     # [  0.  -0. 180.]
+print(kind(q.slerp(qa, qb, 0.5)), to_euler(q.slerp(qa, qb, 0.5)) >> None)  # quatSlerp [ 0. -0. 45.]
+print(kind(q.pow(qb, 0.5)), to_euler(q.pow(qb, 0.5)) >> None)              # quatSlerp [ 0. -0. 45.]
+print(to_euler(q.pow(qb, 2.0)) >> None)                                    # [  0.  -0. 180.]
 ```
 
 Axis-angle both ways. The angle plug is a `doubleAngle`, so a literal
@@ -1614,8 +1614,8 @@ ax = q.from_axis_angle([0, 0, 1], 90)
 print(repr(ax), kind(ax), (ax >> None).round(4))   # Plug("from_axis_angle2.outputQuat") axisAngleToQuat [0.     0.     0.7071 0.7071]
 
 axis_plug, angle_plug = q.to_axis_angle(qb)     # a 2-tuple of plugs
-print(repr(axis_plug), repr(angle_plug))        # Plug("to_axis_angle2.outputAxis") Plug("to_axis_angle2.outputAngle")
-print(axis_plug >> None, angle_plug >> None)    # [0. 0. 1.] 90.0
+print(repr(axis_plug), repr(angle_plug))      # Plug("to_axis_angle2.outputAxis") Plug("to_axis_angle2.outputAngle")
+print(axis_plug >> None, angle_plug >> None)  # [0. 0. 1.] 90.0
 ```
 
 ---
@@ -1630,12 +1630,12 @@ quaternion space, so what comes back is a `quatToEuler`.
 tilt = Node.create("transform", name="tilt")
 tilt.r << (30, 45, 60)
 zyx = e.reorder(tilt.r, 0, 5)                  # XYZ -> ZYX
-print(repr(zyx), kind(zyx), (zyx >> None).round(3))   # Plug("quatToEuler6.outputRotate") quatToEuler [-24.597  47.663  58.334]
-print(e.reorder(zyx, 5, 0) >> None)                    # [30. 45. 60.] -- round trip
+print(repr(zyx), kind(zyx), (zyx >> None).round(3))                                              # Plug("quatToEuler6.outputRotate") quatToEuler [-24.597  47.663  58.334]
+print(e.reorder(zyx, 5, 0) >> None)                                                              # [30. 45. 60.] -- round trip
 
-print(kind(e.to_matrix(tilt.r, rotate_order=tilt.ro)), m.rotation(e.to_matrix(tilt.r)) >> None)   # composeMatrix [30. 45. 60.]
-print(kind(e.to_quaternion(spin.r)), (e.to_quaternion(spin.r) >> None).round(4))   # eulerToQuat [0.     0.     0.7071 0.7071]
-print(kind(e.slerp(p0.r, spin.r, 0.5)), e.slerp(p0.r, spin.r, 0.5) >> None)   # quatToEuler [ 0. -0. 45.] -- shortest arc, XYZ out
+print(kind(e.to_matrix(tilt.r, rotate_order=tilt.ro)), m.rotation(e.to_matrix(tilt.r)) >> None)  # composeMatrix [30. 45. 60.]
+print(kind(e.to_quaternion(spin.r)), (e.to_quaternion(spin.r) >> None).round(4))                 # eulerToQuat [0.     0.     0.7071 0.7071]
+print(kind(e.slerp(p0.r, spin.r, 0.5)), e.slerp(p0.r, spin.r, 0.5) >> None)                      # quatToEuler [ 0. -0. 45.] -- shortest arc, XYZ out
 ```
 
 There is no `euler.to_euler`: the module converts *from* eulers. To
@@ -1656,8 +1656,8 @@ xs = Node.create("transform", name="xs")
 xs.tx << 2.5
 knots = [0.0, 1.0, 2.0, 3.0]
 seq   = ip.sequence(xs.tx, knots, [10.0, 20.0, 30.0, 40.0])
-print(repr(seq), kind(seq), seq >> None)                                      # Plug("lerp6.output") lerp 35.0
-print(round(ip.sequence(xs.tx, knots, [10.0, 20.0, 30.0, 40.0], method=elerp) >> None, 4))   # 34.641 -- geometric mean of 30 and 40
+print(repr(seq), kind(seq), seq >> None)                                                    # Plug("lerp6.output") lerp 35.0
+print(round(ip.sequence(xs.tx, knots, [10.0, 20.0, 30.0, 40.0], method=elerp) >> None, 4))  # 34.641 -- geometric mean of 30 and 40
 
 eased = ip.sequence(xs.tx, knots, [10.0, 20.0, 30.0, 40.0],
                     method=lambda y0, y1, weight: lerp(y0, y1, tw.in_out_quad(weight)))
@@ -1677,9 +1677,9 @@ position as `weight`; `inverse_lerp` is the `t` that `lerp` would need.
 ```python
 wt = Node.create("transform", name="wt")
 wt.tx << 0.25
-print(kind(ip.smoothstep(0.0, 1.0, weight=wt.tx)),   ip.smoothstep(0.0, 1.0, weight=wt.tx) >> None)     # smoothStep 0.15625
-print(kind(ip.smootherstep(0.0, 1.0, weight=wt.tx)), ip.smootherstep(0.0, 1.0, weight=wt.tx) >> None)   # sum 0.103515625
-print(ip.smoothstep(0.0, 1.0, weight=0.25), ip.smootherstep(0.0, 1.0, weight=0.25))   # 0.15625 0.103515625 -- literals fold
+print(kind(ip.smoothstep(0.0, 1.0, weight=wt.tx)),   ip.smoothstep(0.0, 1.0, weight=wt.tx) >> None)    # smoothStep 0.15625
+print(kind(ip.smootherstep(0.0, 1.0, weight=wt.tx)), ip.smootherstep(0.0, 1.0, weight=wt.tx) >> None)  # sum 0.103515625
+print(ip.smoothstep(0.0, 1.0, weight=0.25),          ip.smootherstep(0.0, 1.0, weight=0.25))           # 0.15625 0.103515625 -- literals fold
 
 wt.tx << 2.5
 print(kind(ip.inverse_lerp(0.0, 10.0, wt.tx)), ip.inverse_lerp(0.0, 10.0, wt.tx) >> None)   # inverseLerp 0.25
@@ -1743,9 +1743,9 @@ library that builds nodes for a literal.
 
 ```python
 tt.tx << 1.2
-print(round(built["in_back"] >> None, 4), built["in_quad"] >> None)   # 2.2181 1.44
-print(tw.in_quad(f.clamp(tt.tx, 0, 1)) >> None)                       # 1.0
-print(repr(tw.in_quad(0.5)))                                          # Plug("pow17.output") -- a node, not 0.25
+print(round(built["in_back"] >> None, 4), built["in_quad"] >> None)  # 2.2181 1.44
+print(tw.in_quad(f.clamp(tt.tx, 0, 1)) >> None)                      # 1.0
+print(repr(tw.in_quad(0.5)))                                         # Plug("pow17.output") -- a node, not 0.25
 ```
 
 Every tween is built from `functions` and `trigonometry`, so the node
@@ -1765,10 +1765,10 @@ independent stream every call.
 ```python
 cmds.currentTime(1)
 rnd = r.value(seed=42)
-print(repr(rnd), kind(rnd))                       # Plug("div9.output") divide
-print(0.0 <= (rnd >> None) < 1.0)                 # True
-print(str(r.value(seed=42)) == str(rnd))          # True  -- explicit seed: one network
-print(str(r.value()) == str(r.value()))           # False -- no seed: a new stream each call
+print(repr(rnd), kind(rnd))               # Plug("div9.output") divide
+print(0.0 <= (rnd >> None) < 1.0)         # True
+print(str(r.value(seed=42)) == str(rnd))  # True  -- explicit seed: one network
+print(str(r.value()) == str(r.value()))   # False -- no seed: a new stream each call
 
 samples = []
 for frame in (2, 3, 4):
@@ -1776,7 +1776,7 @@ for frame in (2, 3, 4):
     samples.append(rnd >> None)
 print(len(set(samples)))                          # 3 -- a new value per frame
 
-trg = Node.create("transform", name="trg")
+trg    = Node.create("transform", name="trg")
 seeded = r.value(trigger=trg.tx, seed=7)
 before = seeded >> None
 trg.tx << 1.0
@@ -1794,11 +1794,11 @@ v3 = r.value3D(seed=[1, 2, 3])
 u3 = r.uniform3D([0, 0, 0], [10, 10, 10], seed=[1, 2, 3])
 i3 = r.randint3D([0, 0, 0], [10, 10, 10], seed=[1, 2, 3])
 
-print(repr(u),  kind(u),  5 <= (u >> None) < 15)                    # Plug("add34.output") sum True
-print(repr(i),  kind(i),  float(i >> None).is_integer())            # Plug("constant7.value") network True
-print(repr(v3), kind(v3), (v3 >> None).shape)                       # Plug("constant8.value") network (3,)
-print(repr(u3), kind(u3), (u3 >> None).shape)                       # Plug("add35.output3D") plusMinusAverage (3,)
-print(repr(i3), kind(i3), (i3 >> None).dtype)                       # Plug("constant9.value") network int32
+print(repr(u),  kind(u),  5 <= (u >> None) < 15)          # Plug("add34.output") sum True
+print(repr(i),  kind(i),  float(i >> None).is_integer())  # Plug("constant7.value") network True
+print(repr(v3), kind(v3), (v3 >> None).shape)             # Plug("constant8.value") network (3,)
+print(repr(u3), kind(u3), (u3 >> None).shape)             # Plug("add35.output3D") plusMinusAverage (3,)
+print(repr(i3), kind(i3), (i3 >> None).dtype)             # Plug("constant9.value") network int32
 ```
 
 The cycle is intentional and evaluates correctly, but Maya will print
@@ -1833,16 +1833,16 @@ A dash is a `TypeError`; the rejected cells raise one with a hint.
 `dist(vector, matrix)` mixes types inside one `distanceBetween`.
 
 ```python
-print(kind(dist(p0.t, p1.t)), kind(dist(p0.matrix, p1.matrix)), kind(dist(p0.t, p1.matrix)))   # distanceBetween distanceBetween distanceBetween
-print(kind(lerp(p0.tx, p1.tx)), kind(lerp(p0.t, p1.t)), kind(lerp(p0.matrix, p1.matrix)))      # lerp network wtAddMatrix
-print(kind(slerp(p0.t, p1.t)), kind(slerp(qa, qb)), kind(slerp(p0.r, spin.r)), kind(slerp(rest.matrix, drv.matrix)))   # condition quatSlerp quatToEuler composeMatrix
-print(kind(blend(rest.matrix, drv.matrix)), kind(elerp(p0.tx, p1.tx)))            # blendMatrix multiply
-print(kind(normalize(leg.t)), kind(normalize(qb)), kind(normalize(drv.matrix)))   # normalize quatNormalize composeMatrix
-print(kind(inverse(drv.matrix)), kind(inverse(qb)))                               # inverseMatrix quatInvert
-print(kind(angle(ex.t, ey.t)), kind(angle_degrees(ex.t, ey.t)), kind(angle(qa, qb)), kind(angle_degrees(qa, qb)))   # multiply atan2 multiply multiply
-print(repr(to_euler(qb)), repr(to_euler(drv.matrix)))              # Plug("quatToEuler10.outputRotate") Plug("decomposeMatrix1.outputRotate")
-print(repr(to_quaternion(spin.r)), repr(to_quaternion(drv.matrix)))   # Plug("eulerToQuat3.outputQuat") Plug("decomposeMatrix1.outputQuat")
-print(repr(to_matrix(spin.r)), repr(to_matrix(qb)))                # Plug("composeMatrix9.outputMatrix") Plug("composeMatrix5.outputMatrix")
+print(kind(dist(p0.t, p1.t)), kind(dist(p0.matrix, p1.matrix)), kind(dist(p0.t, p1.matrix)))                          # distanceBetween distanceBetween distanceBetween
+print(kind(lerp(p0.tx, p1.tx)), kind(lerp(p0.t, p1.t)), kind(lerp(p0.matrix, p1.matrix)))                             # lerp network wtAddMatrix
+print(kind(slerp(p0.t, p1.t)), kind(slerp(qa, qb)), kind(slerp(p0.r, spin.r)), kind(slerp(rest.matrix, drv.matrix)))  # condition quatSlerp quatToEuler composeMatrix
+print(kind(blend(rest.matrix, drv.matrix)), kind(elerp(p0.tx, p1.tx)))                                                # blendMatrix multiply
+print(kind(normalize(leg.t)), kind(normalize(qb)), kind(normalize(drv.matrix)))                                       # normalize quatNormalize composeMatrix
+print(kind(inverse(drv.matrix)), kind(inverse(qb)))                                                                   # inverseMatrix quatInvert
+print(kind(angle(ex.t, ey.t)), kind(angle_degrees(ex.t, ey.t)), kind(angle(qa, qb)), kind(angle_degrees(qa, qb)))     # multiply atan2 multiply multiply
+print(repr(to_euler(qb)),          repr(to_euler(drv.matrix)))                                                        # Plug("quatToEuler10.outputRotate") Plug("decomposeMatrix1.outputRotate")
+print(repr(to_quaternion(spin.r)), repr(to_quaternion(drv.matrix)))                                                   # Plug("eulerToQuat3.outputQuat") Plug("decomposeMatrix1.outputQuat")
+print(repr(to_matrix(spin.r)),     repr(to_matrix(qb)))                                                               # Plug("composeMatrix9.outputMatrix") Plug("composeMatrix5.outputMatrix")
 ```
 
 `slerp` on a matrix is orientation only; `blend` is the full
@@ -1920,12 +1920,12 @@ Tag('x')` is `sph << Tag('x')`); component plugs keep their own meaning.
 ```python
 faces  = sph.f[:3]
 result = faces << Tag("lid") << Tag("rim")      # every collection << returns the LHS
-print(result is faces)                          # True
-print(sph >> Tag("lid"))                        # [0 1 2]   a query is a plain value, like plug >> None
-print(sph.tx >> Tag())                          # [Tag('lid'), Tag('rim')]   an attribute plug stands for its node
+print(result is faces)                                          # True
+print(sph >> Tag("lid"))                                        # [0 1 2]   a query is a plain value, like plug >> None
+print(sph.tx >> Tag())                                          # [Tag('lid'), Tag('rim')]   an attribute plug stands for its node
 
-print(sph << Blinn("red") << Layer("geometry") is sph)     # True   a node on the left: its shapes wear red, it sits in 'geometry'
-print((sph >> Blinn("red")).size, sph.ty >> Layer("geometry"))   # 400 True
+print(sph << Blinn("red") << Layer("geometry") is sph)          # True   a node on the left: its shapes wear red, it sits in 'geometry'
+print((sph >> Blinn("red")).size, sph.ty >> Layer("geometry"))  # 400 True
 ```
 
 A **missing** collection is a `ValueError` on `>>`, `-Spec` and the
@@ -1965,8 +1965,8 @@ while `sph.vtx[:3]` is a `PlugList` of element plugs. Surfaces index as
 `srf.cv[u, v]`, lattices as `lat.pt[s, t, u]`.
 
 ```python
-print(sph.f, sph.f.is_all, sph.f[:3])           # Components("|sph|sphShape.f[*]") True Components("|sph|sphShape.f[0:2]")
-print(repr(sph.vtx), len(sph.vtx[:3]))          # Plug("sphShape.controlPoints") 3
+print(sph.f, sph.f.is_all, sph.f[:3])   # Components("|sph|sphShape.f[*]") True Components("|sph|sphShape.f[0:2]")
+print(repr(sph.vtx), len(sph.vtx[:3]))  # Plug("sphShape.controlPoints") 3
 ```
 
 `Components` has no `__len__` and no `__iter__` on purpose: a `PlugList`
@@ -1991,8 +1991,8 @@ lattice points, edges, or faces). Deformers read tags by name through
 cmds.file(new=True, force=True)
 sph = make(cmds.polySphere, "sph")
 
-sph.vtx[:8]  << Tag("cap")                      # created WITH vtx[0:7] at the injection node (the shape here)
-sph.vtx[3:10] << Tag("cap")                     # add is a union
+sph.vtx[:8]   << Tag("cap")  # created WITH vtx[0:7] at the injection node (the shape here)
+sph.vtx[3:10] << Tag("cap")  # add is a union
 print(sph >> Tag("cap"))                        # [0 1 2 3 4 5 6 7 8 9]
 sph << Tag("empty")                             # node on the left: the tag itself, created empty
 print(sph >> Tag("empty"))                      # []
@@ -2024,7 +2024,7 @@ sph.vtx[:2] << -Tag("cap")                      # remove these; the tag survives
 print(sph >> Tag("cap"))                        # [2 3 4 5 6 7]
 sph.vtx     << -Tag("cap")                      # empty it
 print((sph >> Tag("cap")).shape)                # (0,)
-sph         << -Tag("empty")                    # node on the left: delete the tag
+sph << -Tag("empty")                    # node on the left: delete the tag
 
 sph.vtx[:4]  << Tag("aa")
 sph.vtx[2:6] << Tag("bb")
@@ -2041,10 +2041,10 @@ The ids go back in through the handle by fancy indexing.
 ```python
 sph.vtx[:8] << Tag("cap")
 sph.f[:3]   << Tag("lid")
-print(sph.vtx[4:12] >> Tag("cap"))              # [4 5 6 7]
-print(sph.vtx[[7, 0, 9]] >> Tag("cap"))         # [0 7]
-print(sph >> Tag())                             # [Tag('cap'), Tag('lid')]   == Tag.of(sph)
-print(sph.vtx[3] >> Tag(), Tag.of(sph.f[1]), Tag.of(sph.vtx[20]))   # [Tag('cap')] [Tag('lid')] []
+print(sph.vtx[4:12] >> Tag("cap"))                                 # [4 5 6 7]
+print(sph.vtx[[7, 0, 9]] >> Tag("cap"))                            # [0 7]
+print(sph >> Tag())                                                # [Tag('cap'), Tag('lid')]   == Tag.of(sph)
+print(sph.vtx[3] >> Tag(), Tag.of(sph.f[1]), Tag.of(sph.vtx[20]))  # [Tag('cap')] [Tag('lid')] []
 sph.vtx[sph >> Tag("cap")] << Tag("copy")       # round trip through the handle
 print((sph >> Tag("copy")).size)                # 8
 
@@ -2064,7 +2064,7 @@ sph     = make(cmds.polySphere, "clustered", ch=False)
 cluster = Node(cmds.cluster(str(sph))[0])       # the injection node is now the Orig shape
 expr    = cluster.input[0].componentTagExpression
 sph.vtx[:4] << Tag("cap")
-expr << Tag("cap")                              # writes 'cap'; warns when the tag is absent on the deformer's input
+expr        << Tag("cap")                              # writes 'cap'; warns when the tag is absent on the deformer's input
 print(expr >> None)                             # cap
 expr << "cap + lid"                             # expressions stay plain strings
 try:
@@ -2087,8 +2087,8 @@ into the shape, where they edit normally.
 
 ```python
 cube = make(cmds.polyCube, "cube")              # WITH history
-print(Tag.of(cube))                             # [Tag('back'), Tag('bottom'), Tag('front'), Tag('left'), Tag('right'), Tag('top')]
-print(cube >> Tag("top"))                       # [1]
+print(Tag.of(cube))        # [Tag('back'), Tag('bottom'), Tag('front'), Tag('left'), Tag('right'), Tag('top')]
+print(cube >> Tag("top"))  # [1]
 try:
     cube.f[:3] << Tag("top")
 except TypeError as err:
@@ -2119,11 +2119,11 @@ cmds.file(new=True, force=True)
 cube  = make(cmds.polyCube, "cube", ch=False)
 other = make(cmds.polyCube, "other", ch=False)
 
-cube << Layer("geometry")                       # find-or-create; returns cube
-cube << Layer("ref", displayType=2, visibility=False)   # exclusive: cube leaves 'geometry'; kwargs are the layer's attributes on create
+cube << Layer("geometry")                              # find-or-create; returns cube
+cube << Layer("ref", displayType=2, visibility=False)  # exclusive: cube leaves 'geometry'; kwargs are the layer's attributes on create
 print(cube >> Layer("geometry"), cube >> Layer("ref"))  # False True
-print(cube >> Layer())                          # ref   the one Layer('ref'), or None
-print(Layer.of(cube), Layer.of(other))          # [Layer('ref')] []   defaultLayer is no layer
+print(cube >> Layer())                                  # ref   the one Layer('ref'), or None
+print(Layer.of(cube), Layer.of(other))                  # [Layer('ref')] []   defaultLayer is no layer
 other << Layer("ref", visibility=True)          # found: kwargs skipped
 print(Layer("ref").visibility >> None)          # False
 other << Layer("ref", visibility=True, update=True)     # update=True re-asserts them
@@ -2155,9 +2155,9 @@ other << Layer()                                # the purge is defaultLayer too
 print(Layer.of(other))                          # []
 
 bg = Layer("bg")
-print(bg.node, bg.visibility << False)          # bg bg.visibility   a Node and the Plug, for chaining
-bg.rename("background")                         # the spec follows
-print(bg, cmds.objExists("bg"))                 # background False
+print(bg.node, bg.visibility << False)  # bg bg.visibility   a Node and the Plug, for chaining
+bg.rename("background")                 # the spec follows
+print(bg, cmds.objExists("bg"))         # background False
 Layer("rig").clear()                            # members to defaultLayer, the layer survives
 Layer("background").delete()                    # members to defaultLayer, the layer is gone
 print(cmds.ls(type="displayLayer"))             # ['defaultLayer', 'geometry', 'ref', 'rig']
@@ -2181,9 +2181,9 @@ cmds.file(new=True, force=True)
 cube  = make(cmds.polyCube, "cube", ch=False)
 other = make(cmds.polyCube, "other", ch=False)
 
-red = Blinn("red", color=(1, 0, 0))             # inert: zero Maya calls
-print(cube << red)                              # cube   returns the LHS; builds red + redSG, sets color, assigns
-print(cmds.nodeType("red"), members("redSG"))   # blinn ['cubeShape']
+red   = Blinn("red", color=(1, 0, 0))             # inert: zero Maya calls
+print(cube << red)                             # cube   returns the LHS; builds red + redSG, sets color, assigns
+print(cmds.nodeType("red"), members("redSG"))  # blinn ['cubeShape']
 other << Blinn("red", color=(0, 0, 1))          # 'red' exists: a plain assignment, kwargs skipped
 print(cmds.getAttr("red.color")[0])             # (1.0, 0.0, 0.0)
 other << Blinn("red", color=(0, 0, 1), update=True)     # update=True re-asserts them
@@ -2195,8 +2195,8 @@ factories: a value sets, a plug connects, a spec (`lock`) applies. The
 spec is the find-only handle afterwards.
 
 ```python
-print(red.node, red.engine)                     # red redSG   Nodes; a ValueError until built
-print(red.color << (0, 1, 0))                   # red.color   the Plug: forwards to the node; a typo raises and creates nothing
+print(red.node, red.engine)    # red redSG   Nodes; a ValueError until built
+print(red.color << (0, 1, 0))  # red.color   the Plug: forwards to the node; a typo raises and creates nothing
 red.diffuse = 0.5                               # the same injection as sugar
 print(red.diffuse >> None)                      # 0.5
 
@@ -2216,13 +2216,13 @@ PlugList([cube, other.f[:2]]) << Lambert("both")
 print(sorted(members("bothSG")))                # ['cubeShape', 'other.f[0:1]']   one engine holds both entries
 
 spec = Lambert("plane", unique=True)
-cube << spec
+cube  << spec
 other << spec
 print(sorted(cmds.ls("plane*", type="lambert")))   # ['plane', 'plane1']
 
 with container("look"):
-    cube << Blinn("free")                       # stays out: a material is a scene asset
-    cube << Blinn("inside", container=True)     # opts in: the network joins 'look'
+    cube << Blinn("free")                    # stays out: a material is a scene asset
+    cube << Blinn("inside", container=True)  # opts in: the network joins 'look'
 print(cmds.container(query=True, findContainer=["free"]), cmds.container(query=True, findContainer=["inside"]))   # None look
 ```
 
@@ -2232,10 +2232,10 @@ that owns the whole shape carve it; faces into the engine that **already
 owns their object** is the one permitted no-op of the grammar.
 
 ```python
-cube << red
+cube       << red
 cube.f[:3] << Lambert("decal")                  # faces 0-2 leave redSG for decalSG; rig carves the whole-shape membership
 print(members("redSG"), members("decalSG"))     # ['cube.f[3:5]'] ['cube.f[0:2]']
-other << red
+other       << red
 other.f[:2] << red                              # the one no-op: red already owns the whole object
 print(sorted(members("redSG")))                 # ['cube.f[3:5]', 'otherShape']
 ```
@@ -2259,12 +2259,12 @@ Queries read face ids; `>> Material()` / `>> Blinn()` enumerate like
 `Material.of` / `Blinn.of`, typed by the live node type.
 
 ```python
-cube << Default()
+cube       << Default()
 cube.f[:3] << red
-print(cube >> red, cube.f[1:5] >> red)          # [0 1 2] [1 2]
-print(cube >> Default(), other >> red)          # [3 4 5] [0 1 2 3 4 5]   every face when object-level
-print(cube >> Material(), cube >> Blinn(), Lambert.of(cube))   # [Default(), Blinn('red')] [Blinn('red')] []
-print(cube.f[4] >> Material())                  # [Default()]
+print(cube >> red, cube.f[1:5] >> red)                        # [0 1 2] [1 2]
+print(cube >> Default(), other >> red)                        # [3 4 5] [0 1 2 3 4 5]   every face when object-level
+print(cube >> Material(), cube >> Blinn(), Lambert.of(cube))  # [Default(), Blinn('red')] [Blinn('red')] []
+print(cube.f[4] >> Material())                                # [Default()]
 cube.f[cube >> red] << Lambert("decal")         # the ids go back through the handle
 print(members("decalSG"))                       # ['cube.f[0:2]']
 ```
@@ -2280,18 +2280,18 @@ for material, faces in shade.bindings(cube):
     print(material, faces.indices)              # standardSurface1 [3 4 5] / decal [0 1 2]
 
 Material("decal").delete()                      # material + engine + materialInfo; members go green
-print(Material.of(cube.f[0]))                   # []
-print(shade.repair())                           # PlugList([Node("cubeShape")])   the shapes re-homed
-print(cube >> Default())                        # [0 1 2 3 4 5]
+print(Material.of(cube.f[0]))  # []
+print(shade.repair())          # PlugList([Node("cubeShape")])   the shapes re-homed
+print(cube >> Default())       # [0 1 2 3 4 5]
 
 cube.f[:3] << red
 cube.f[3:] << red                               # every face, as face components
-print(sorted(members("redSG")))                 # ['cube.f[0:5]', 'otherShape']
+print(sorted(members("redSG")))  # ['cube.f[0:5]', 'otherShape']
 shade.tidy()
-print(sorted(members("redSG")))                 # ['cubeShape', 'otherShape']
+print(sorted(members("redSG")))  # ['cubeShape', 'otherShape']
 
-red.rename("crimson")                           # the engine follows the <mat>SG convention, the spec follows the name
-print(red, red.engine)                          # crimson crimsonSG
+red.rename("crimson")            # the engine follows the <mat>SG convention, the spec follows the name
+print(red, red.engine)           # crimson crimsonSG
 for bad in (lambda: cube.vtx[:3] << red, lambda: cube << Lambert("crimson")):
     try:
         bad()
@@ -2319,13 +2319,13 @@ and the call returns a fresh, equal handle. `mat.astype(...)` is the verb,
 cmds.file(new=True, force=True)
 cube = make(cmds.polyCube, "cube", ch=False)
 
-mat = Blinn("red", color=(1, 0, 0))             # lazy
-p   = Phong(mat)                                # a free retype: no node yet, nothing to lose
+mat  = Blinn("red", color=(1, 0, 0))  # lazy
+p    = Phong(mat)                     # a free retype: no node yet, nothing to lose
 print(type(mat).__name__, p == mat, p is not mat)   # Phong True True
 cube << mat
-print(cmds.nodeType("red"))                     # phong
-Material(mat, type="blinn")                     # realised: a scene conversion in one undo chunk; nothing set beyond color -> no warning
-print(cmds.nodeType("red"), type(mat).__name__, mat.engine, members("redSG"))   # blinn Blinn redSG ['cubeShape']   name, engine, members kept
+print(cmds.nodeType("red"))                                                    # phong
+Material(mat, type="blinn")                                                    # realised: a scene conversion in one undo chunk; nothing set beyond color -> no warning
+print(cmds.nodeType("red"), type(mat).__name__, mat.engine, members("redSG"))  # blinn Blinn redSG ['cubeShape']   name, engine, members kept
 
 k = Phong(Blinn("k", eccentricity=0.6))         # lazy kwargs the target lacks are pruned with one warning
 print(k.attrs)                                  # {}
@@ -2336,9 +2336,9 @@ only (`Phong(mat, cosinePower=40)` writes inside the chunk; `Phong(mat,
 strict=True)` is an `AttributeError`).
 
 ```python
-print(mat.astype("phong") is mat)               # True   in place, chainable
-mat.astype(Blinn, diffuse=0.4)                  # a class works; kwargs validated against the target before any write
-print(cmds.nodeType("red"), round(cmds.getAttr("red.diffuse"), 2))   # blinn 0.4
+print(mat.astype("phong") is mat)                                   # True   in place, chainable
+mat.astype(Blinn, diffuse=0.4)                                      # a class works; kwargs validated against the target before any write
+print(cmds.nodeType("red"), round(cmds.getAttr("red.diffuse"), 2))  # blinn 0.4
 report = shade.convert(mat, "phong", dry_run=True)         # the engine: a Conversion, nothing written, no warning
 print(bool(report), repr(str(report)))          # False ''   nothing parked or lost: nothing said
 ```
@@ -2352,21 +2352,21 @@ was parked, before anything moves; `str(report)` is that text.
 
 ```python
 lossy = Blinn("lossy")
-cube << lossy
-lossy.eccentricity   << 0.66 << lock            # a blinn-only value
-lossy.specularRollOff << rn.ramp(name="ramp1").outAlpha   # a wire into a blinn-only attribute
-lossy.diffuse        << 0.33                    # shared: carried
+cube                  << lossy
+lossy.eccentricity    << 0.66 << lock                    # a blinn-only value
+lossy.specularRollOff << rn.ramp(name="ramp1").outAlpha  # a wire into a blinn-only attribute
+lossy.diffuse         << 0.33                            # shared: carried
 
 report = shade.convert(lossy, "phong", dry_run=True)
 print(str(report))
 # rig.shade: 'lossy' blinn -> phong parks:
 #    wire        ramp1.outAlpha -> specularRollOff
 #    value       eccentricity = 0.66 [locked]
-print(report.parked, "diffuse" in report.carried)   # ('eccentricity', 'specularRollOff') True
+print(report.parked, "diffuse" in report.carried)          # ('eccentricity', 'specularRollOff') True
 
-Phong(lossy)                                    # the same text once, as a warning
-print(cmds.listAttr("lossy", userDefined=True)) # ['__eccentricity__', '__specularRollOff__']   hidden, typed like the originals
-print(cmds.listConnections("ramp1.outAlpha", plugs=True))   # ['lossy.__specularRollOff__']   the ramp survives, re-homed
+Phong(lossy)                                               # the same text once, as a warning
+print(cmds.listAttr("lossy", userDefined=True))            # ['__eccentricity__', '__specularRollOff__']   hidden, typed like the originals
+print(cmds.listConnections("ramp1.outAlpha", plugs=True))  # ['lossy.__specularRollOff__']   the ramp survives, re-homed
 ```
 
 The round trip restores everything and destroys the parked attributes.
@@ -2376,8 +2376,8 @@ text and writes nothing.
 
 ```python
 back = shade.convert(lossy, "blinn")            # no warning
-print(back.restored, round(cmds.getAttr("lossy.eccentricity"), 2))   # ('eccentricity', 'specularRollOff') 0.66
-print(cmds.listConnections("lossy.specularRollOff", plugs=True), cmds.listAttr("lossy", userDefined=True))   # ['ramp1.outAlpha'] None
+print(back.restored, round(cmds.getAttr("lossy.eccentricity"), 2))                                          # ('eccentricity', 'specularRollOff') 0.66
+print(cmds.listConnections("lossy.specularRollOff", plugs=True), cmds.listAttr("lossy", userDefined=True))  # ['ramp1.outAlpha'] None
 
 try:
     lossy.astype("phong", strict=True)
@@ -2385,7 +2385,7 @@ except ValueError as err:
     print(str(err).splitlines()[0], cmds.nodeType("lossy"))   # rig.shade: 'lossy' blinn -> phong parks: blinn
 
 drop = Blinn("drop")
-cube << drop
+cube              << drop
 drop.eccentricity << 0.5
 drop.astype("phong", park=False)
 # Warning: rig.shade: 'drop' blinn -> phong loses:
@@ -2422,18 +2422,18 @@ constructor re-syncs it for free.
 ```python
 cmds.undoInfo(state=True, infinity=True)
 stale = Node("lossy")
-Phong(lossy)                                    # warns: parks again
-print(cmds.undoInfo(query=True, undoName=True)) # rig.shade.convert
+Phong(lossy)                                     # warns: parks again
+print(cmds.undoInfo(query=True, undoName=True))  # rig.shade.convert
 try:
     stale.name
 except RuntimeError as err:
     print("already deleted" in str(err))        # True
-print(Node("lossy").name, round(lossy.diffuse >> None, 2))   # lossy 0.33   fresh wrappers and the spec are fine
+print(Node("lossy").name, round(lossy.diffuse >> None, 2))  # lossy 0.33   fresh wrappers and the spec are fine
 
 cmds.undo()
-print(cmds.nodeType("lossy"), type(lossy).__name__)  # blinn Phong   the spec still says phong
-Blinn(lossy)                                    # same type as the scene: a free re-sync
-print(repr(lossy.node))                         # Node("lossy")
+print(cmds.nodeType("lossy"), type(lossy).__name__)         # blinn Phong   the spec still says phong
+Blinn(lossy)                                                # same type as the scene: a free re-sync
+print(repr(lossy.node))                                     # Node("lossy")
 ```
 
 ---
