@@ -31,10 +31,9 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 16 | [`Choice`](#16-choice) | data types that follow the selector |
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
 | 18 | [`Reference`](#18-reference) | file references and their namespaces |
-| 19 | [`SkeletonDeltaBlend` and `AnimReaderNode`](#19-skeletondeltablend-and-animreadernode) | plug-in node types |
-| 20 | [Name helpers](#20-name-helpers) | short / clean names, suffixes, component range strings |
-| 21 | [`cmds` results as typed nodes, and `Axis`](#21-cmds-results-as-typed-nodes-and-axis) | wrapping `maya.cmds` results in `PyNode`; the mirror axis |
-| 22 | [`plugins` — `load_plugin` and undo](#22-plugins--load_plugin-and-undo) | an undoable API command in six lines |
+| 19 | [Name helpers](#19-name-helpers) | short / clean names, suffixes, component range strings |
+| 20 | [`cmds` results as typed nodes, and `Axis`](#20-cmds-results-as-typed-nodes-and-axis) | wrapping `maya.cmds` results in `PyNode`; the mirror axis |
+| 21 | [`plugins` — `load_plugin` and undo](#21-plugins--load_plugin-and-undo) | an undoable API command in six lines |
 
 ---
 
@@ -548,7 +547,6 @@ Which skinclusters a joint drives:
 geo  = PyNode(cmds.polyCube(name="geo", ch=False)[0])
 skin = SkinCluster.create(geo, [root, hip])
 print(hip.find_skinclusters(), knee.find_skinclusters(), root.find_skinclusters(recursive=True))  # [SkinCluster("geo_skincluster")] [] [SkinCluster("geo_skincluster")]
-print(root.find_skel_blend())                                                                     # None -- no skeletonDeltaBlend upstream
 ```
 
 ---
@@ -1097,52 +1095,7 @@ print(cmds.objExists("hero:cube"), Reference.find_by_path(path))                
 
 ---
 
-## 19. `SkeletonDeltaBlend` and `AnimReaderNode`
-
-Two plug-in node types. `SkeletonDeltaBlend` sets `PLUGIN_NAME`, so
-`create()` loads the `SkeletonDeltaBlend` plug-in first (from
-`MAYA_PLUG_IN_PATH`); `AnimReaderNode` (`rig.maya.nodetypes.anim_reader`)
-is a plain wrapper, not a `DGNode`, for the `AnimReader` plug-in. Neither
-plug-in ships with `rig`, so these blocks are not run by the vetter.
-
-<!-- notest -->
-```python
-from rig.maya.nodetypes import SkeletonDeltaBlend
-
-cmds.file(new=True, force=True)
-root  = Joint.create(name="root_joint")
-child = Joint.create(name="child_joint", parent=root)
-ref   = root.duplicate_skeleton(suffix="ref")
-anim  = root.duplicate_skeleton(suffix="anim")
-
-blend = SkeletonDeltaBlend.create(root, ref_root=ref, anim_root=anim)
-print(blend.num_targets, blend.get_reference_root(), blend.get_output_skel_root())   # 0 root_ref root_joint
-
-pose = root.duplicate_skeleton(suffix="pose")
-pose.get_children(type="joint")[0].t.set(1, 2, 3)
-blend.add_target(pose, "lean")
-print(blend.get_targets(), blend.get_target_index("lean"))                      # ['lean'] 0
-print(list(blend.get_target_matrices("lean", world_space=True))[:1])            # [Joint("child_joint")]
-blend.set_target_weight("lean", 0.5)
-blend.empty_target_from_reference("rest")
-blend.set_target_name("rest", "idle")
-blend.remove_target("lean")
-print(blend.get_targets(), SkeletonDeltaBlend.from_output_skel(root) == blend)  # ['idle'] True
-```
-
-<!-- notest -->
-```python
-from rig.maya.nodetypes.anim_reader import AnimReaderNode
-
-reader = AnimReaderNode.create(name="clipReader")               # loads the AnimReader plug-in
-reader.set_animation_file_paths(["/clips/walk.anm"])
-reader.connect_time_node()
-print(reader.get_animation_info())
-```
-
----
-
-## 20. Name helpers
+## 19. Name helpers
 
 Pure string functions; nothing here touches the scene. Each lives beside the
 class that uses it: `dg_node` (short and clean names), `joint`
@@ -1166,7 +1119,7 @@ print(list(iter_component_tokens("pt", [[0, 0, 0], [0, 0, 1], [1, 2, 3]])))  # [
 
 ---
 
-## 21. `cmds` results as typed nodes, and `Axis`
+## 20. `cmds` results as typed nodes, and `Axis`
 
 `maya.cmds` hands back names; `PyNode` turns one into its typed node. The
 DSL's `rig.bridges.commands` does this for every command, returning `Node` /
@@ -1187,7 +1140,7 @@ print(Axis.X, Axis.Z.value)  # Axis.X 2
 
 ---
 
-## 22. `plugins` — `load_plugin` and undo
+## 21. `plugins` — `load_plugin` and undo
 
 `load_plugin` is a context manager: it loads by name from
 `MAYA_PLUG_IN_PATH`, and falls back to the copy bundled in `rig/maya/plugins`.

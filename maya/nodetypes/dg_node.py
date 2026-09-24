@@ -13,7 +13,6 @@ from rig.maya.nodetypes._base import (
     PyNode,
     set_custom_type,
 )
-from rig.maya.plugins import load_plugin
 
 
 # Maya recognises these short names in cmds and MSelectionList parsing,
@@ -110,9 +109,6 @@ class DGNode(metaclass=NodeMeta):
 
     # custom node type string
     CUSTOM_NODE_TYPE = None
-
-    # the plugin required to load this node
-    PLUGIN_NAME = None
 
     # the OpenMaya function set for this type
     FN_SET = OpenMaya.MFnDependencyNode
@@ -304,11 +300,7 @@ class DGNode(metaclass=NodeMeta):
     @classmethod
     def create(cls, *args, **kwargs) -> "DGNode":
         """Creates a new node of this type. Can NOT be overridden by subclasses."""
-        if cls.PLUGIN_NAME:
-            with load_plugin(cls.PLUGIN_NAME):
-                new_node = cls._create(*args, **kwargs)
-        else:
-            new_node = cls._create(*args, **kwargs)
+        new_node = cls._create(*args, **kwargs)
         return cls.post_create(new_node, *args, **kwargs)
 
     @classmethod

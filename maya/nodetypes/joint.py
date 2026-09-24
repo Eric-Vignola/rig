@@ -108,16 +108,6 @@ class Joint(Transform):
         it                   = self.iter_joints(**kwargs)
         return next(it, None)
 
-    def find_skel_blend(self, recursive: bool = False) -> DGNode | None:
-        """Finds the skel blend node driving this joint, or joints below this joint
-        (if recursive == True)"""
-        for node in self.iter_joints(yield_self=True) if recursive else [self]:
-            result = node.find_connected_nodes(
-                source=True, destination=False, node_type="skeletonDeltaBlend"
-            )
-            if result:
-                return result[0]
-
     def find_skinclusters(self, recursive: bool = False) -> list[DGNode]:
         """Finds the skincluster(s) driven by this joint, or joints below this joint
         (if recursive == True)"""

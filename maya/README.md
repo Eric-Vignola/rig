@@ -68,9 +68,7 @@ rig/maya/
     ├── display_layer.py   DisplayLayer           displayLayer
     ├── reference.py       Reference              reference
     ├── choice.py          Choice                 choice
-    ├── follicle.py        Follicle               follicle
-    ├── skel_delta_blend.py   SkeletonDeltaBlend  (plug-in: SkeletonDeltaBlend)
-    └── anim_reader.py     AnimReaderNode         (plug-in: AnimReader; a plain wrapper, not a DGNode)
+    └── follicle.py        Follicle               follicle
 ```
 
 The public surface:
@@ -79,7 +77,7 @@ The public surface:
 from rig.maya.nodetypes import (
     PyNode, Attribute, DGNode, DAGNode, Transform, Joint, Geometry, Mesh, NurbsCurve,
     NurbsSurface, SkinCluster, BlendShape, ObjectSet, ShadingEngine, DisplayLayer,
-    Reference, Choice, Follicle, SkeletonDeltaBlend, Axis,
+    Reference, Choice, Follicle, Axis,
 )
 from rig.maya.nodetypes.deformer import Deformer, tag_references
 from rig.maya.nodetypes.dg_node import get_clean_name, get_short_name
@@ -104,7 +102,7 @@ on the path, or this `maya` shadows the real one.
 | `DGNode` | any dependency node | name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `mdagpath`, `get_bounding_box`, `get_deformers` |
 | `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy` |
-| `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters`, `find_skel_blend` |
+| `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
 | `Geometry` | `geometryShape` | component tags: `injection_node`, `component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `local_shape_attr` / `world_shape_attr`, `get_component_mobject`, paintable attrs |
 | `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
 | `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `num_cvs`, `num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`) |
@@ -117,8 +115,6 @@ on the path, or this `maya` shadows the real one.
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `namespace`, `file_path`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `data_type` of `input[i]` / `output` follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
-| `SkeletonDeltaBlend` | `skeletonDeltaBlend` | plug-in node: targets, weights, matrices per target |
-| `AnimReaderNode` | `animReader` | plug-in node: `.anm` clips onto an RT rig (not a `DGNode`) |
 
 Each class inherits everything above it in its column, so a `Mesh` has
 every `Geometry`, `DAGNode` and `DGNode` method, and a `ShadingEngine` is an
@@ -186,9 +182,9 @@ the canonical class.
 
 ### `create()` is final, `_create()` is the hook
 
-`DGNode.create(*args, **kwargs)` loads `PLUGIN_NAME` when set, calls the
-class's `_create` (which must return a node name), stamps a custom type
-when there is one and wraps the result. Subclasses override `_create`, and
+`DGNode.create(*args, **kwargs)` calls the class's `_create` (which must
+return a node name), stamps a custom type when there is one and wraps the
+result. Subclasses override `_create`, and
 that is where the constructor signatures diverge:
 
 | Call | Builds with |
@@ -200,7 +196,6 @@ that is where the constructor signatures diverge:
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
 | `DisplayLayer.create(**createDisplayLayer_kwargs)` | `cmds.createDisplayLayer` |
 | `Reference.create(file_path, namespace)` | `cmds.file(reference=True)` |
-| `SkeletonDeltaBlend.create(out_root, ref_root=, anim_root=)` | the plug-in node plus its wiring |
 
 `ObjectSet.get_or_create(name)` and `DisplayLayer.get_or_create(name)` look
 the name up as given and in the current namespace, refuse with a

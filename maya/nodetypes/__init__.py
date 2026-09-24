@@ -16,6 +16,5 @@ from rig.maya.nodetypes.nurbs import NurbsCurve, NurbsSurface
 from rig.maya.nodetypes.object_set import ObjectSet
 from rig.maya.nodetypes.reference import Reference
 from rig.maya.nodetypes.shading_engine import ShadingEngine
-from rig.maya.nodetypes.skel_delta_blend import SkeletonDeltaBlend
 from rig.maya.nodetypes.skincluster import SkinCluster
 from rig.maya.nodetypes.transform import Transform
