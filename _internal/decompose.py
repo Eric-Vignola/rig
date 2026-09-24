@@ -49,8 +49,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya as om
-from rig.maya.attribute import Attribute
-from rig.maya.nodetypes._base import PyNode
+from rig.maya.nodetypes._base import Attribute, PyNode
 from rig._internal.types import _is_quaternion
 
 

@@ -23,8 +23,7 @@ import numbers
 from typing import Any, Union
 
 import numpy as np
-from rig.maya.attribute import Attribute
-from rig.maya.nodetypes._base import PyNode
+from rig.maya.nodetypes._base import Attribute, PyNode
 from rig.maya.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
 from rig._internal.plug import _maybe_component_plug, Plug
 
@@ -179,7 +178,7 @@ class Node:
     def _attr_data_type_fallback(self, attr: Any) -> str:
         """Forward the data-type resolution hook to the wrapped ``DGNode``.
 
-        :attr:`rig.maya.attribute.Attribute.data_type` calls this on the owning
+        :attr:`rig.maya.nodetypes.Attribute.data_type` calls this on the owning
         node to resolve a generic ("typed" / "Tdata") attribute -- e.g. a
         ``choice`` node's ``output`` -- whose concrete type depends on its
         connections. Because :meth:`__getattr__` deliberately rejects every

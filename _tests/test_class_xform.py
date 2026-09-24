@@ -2,7 +2,6 @@ import unittest
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.maya.node_name import get_suffix
 from rig.maya.nodetypes import PyNode, Transform
 from rig._tests._base import MayaTestCase
 
@@ -105,7 +104,7 @@ class TestXformNodes(MayaTestCase):
 
         dup_root.rename_skeleton("test")
         for each in dup_root.iter_joints(yield_self=True):
-            self.assertEqual(get_suffix(each), "test")
+            self.assertEqual(str(each).rsplit("_", 1)[-1], "test")
 
         with self.assertRaises(RuntimeError):
             dup_root.rename_skeleton("a %_")

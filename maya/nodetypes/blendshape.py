@@ -11,9 +11,9 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig.maya.attribute import Attribute
-from rig.maya.node_name import iter_component_ranges
+from rig.maya.nodetypes._base import Attribute
 from rig.maya.nodetypes.deformer import Deformer
+from rig.maya.nodetypes.geometry import iter_component_ranges
 from rig.maya.nodetypes.transform import Transform
 
 LOGGER = logging.getLogger(__name__)

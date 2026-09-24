@@ -16,7 +16,7 @@ Covers P0-1: ``<<`` asserts the destination's desired state.
 from unittest import mock
 
 from maya import cmds
-from rig.maya.attribute import Attribute
+from rig.maya.nodetypes import Attribute
 from rig import InjectionError, Node
 from rig._internal import plug as plugmod
 from rig._tests._base import MayaTestCase

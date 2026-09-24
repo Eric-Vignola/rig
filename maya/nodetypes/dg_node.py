@@ -6,9 +6,13 @@ from typing import Any, Sequence
 
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
-from rig.maya.attribute import Attribute
-from rig.maya.node_name import get_clean_name, get_short_name
-from rig.maya.nodetypes._base import get_custom_type, NodeMeta, PyNode, set_custom_type
+from rig.maya.nodetypes._base import (
+    Attribute,
+    get_custom_type,
+    NodeMeta,
+    PyNode,
+    set_custom_type,
+)
 from rig.maya.plugins import load_plugin
 
 
@@ -76,6 +80,16 @@ def _is_unresolved_multi_child(plug: OpenMaya.MPlug) -> bool:
             cur = cur.array()
         else:
             return False
+
+
+def get_short_name(name: Any) -> str:
+    """Returns the short name of a given node."""
+    return str(name).rsplit("|", 1)[-1]
+
+
+def get_clean_name(name: Any) -> str:
+    """Returns clean name of a given node (no namespace)"""
+    return get_short_name(name).rsplit(":", 1)[-1]
 
 
 @total_ordering

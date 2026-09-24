@@ -11,8 +11,7 @@ from typing import Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.maya import pycmds
-from rig.maya.attribute import Attribute
+from rig.maya.nodetypes._base import Attribute
 from rig.maya.nodetypes.dag_node import DAGNode, PyNode
 
 LOGGER = logging.getLogger(__name__)
@@ -299,7 +298,7 @@ class Transform(DAGNode):
             node.radius                   = self.radius.get()
 
         else:
-            locators = pycmds.listRelatives(
+            locators = cmds.listRelatives(
                 self.name, c=True, ni=True, f=False, type="locator"
             )
 
@@ -488,14 +487,14 @@ class Transform(DAGNode):
                 if node.node_type == "space_transform":
                     """creates a RTR space_transform box """
                     name = node.name
-                    obj  = pycmds.polyCube(name=name, w=100, h=100, d=100, ch=False)[0]
+                    obj  = PyNode(cmds.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
                     if parent is not None:
                         cmds.parent(obj.long_name, parent)
                 else:
                     obj = PyNode.create(node.node_type, name=node, parent=parent)
 
             else:
-                obj = pycmds.spaceLocator(name=node.name)[0]
+                obj = PyNode(cmds.spaceLocator(name=node.name)[0])
                 if parent is not None:
                     cmds.parent(obj.long_name, parent)
 

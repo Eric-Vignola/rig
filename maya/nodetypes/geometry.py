@@ -15,16 +15,15 @@ Usage::
 
 from __future__ import annotations
 
+import itertools
 import re
-from typing import Any, TYPE_CHECKING
+from typing import Any, Iterator, TYPE_CHECKING
 
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig.maya.attribute import Attribute
-from rig.maya.node_name import iter_component_ranges, iter_component_tokens
-from rig.maya.nodetypes._base import PyNode
+from rig.maya.nodetypes._base import Attribute, PyNode
 from rig.maya.nodetypes.dag_node import DAGNode
 
 if TYPE_CHECKING:
@@ -53,6 +52,52 @@ _EMPTY_COMPONENT_TYPES = {
         "v": (OpenMaya.MFnTripleIndexedComponent, OpenMaya.MFn.kLatticeComponent),
     },
 }
+
+
+def iter_component_ranges(prefix: str, ids: list[int]) -> Iterator[str]:
+    """A generator that converts a list of indices to a list of range strings.
+
+    e.g.
+    ```python
+    iter_component_ranges("vtx", [1, 2, 3, 5, 7, 8])
+    # ["vtx[1:3]", "vtx[5]", "vtx[7:8]"]
+    ```
+    """
+    gen = itertools.groupby(enumerate(ids), lambda pair: pair[1] - pair[0])
+    for _, bit in gen:
+        b     = list(bit)
+        start = b[0][1]
+        end   = b[-1][1]
+        if start == end:
+            yield f"{prefix}[{start}]"
+        else:
+            yield f"{prefix}[{start}:{end}]"
+
+
+def iter_component_tokens(prefix: str, ids: Any) -> Iterator[str]:
+    """Range strings for component ids of any dimension, sorted and unique.
+
+    (N,) ids are :func:`iter_component_ranges`; (N, 2) and (N, 3)
+    coordinates are grouped on their leading axes and ranged on the last,
+    the forms surfaces and lattices store.
+
+    e.g.
+    ```python
+    list(iter_component_tokens("cv", [[1, 0], [1, 1], [2, 5]]))
+    # ["cv[1][0:1]", "cv[2][5]"]
+    ```
+    """
+    ids = np.unique(np.asarray(ids, dtype=int), axis=0)
+    if ids.size == 0:
+        return
+    if ids.ndim == 1:
+        yield from iter_component_ranges(prefix, ids.tolist())
+        return
+    leads = ids[:, :-1]
+    for lead in np.unique(leads, axis=0):
+        head = prefix + "".join(f"[{k}]" for k in lead)
+        tail = ids[np.all(leads == lead, axis=1), -1]
+        yield from iter_component_ranges(head, tail.tolist())
 
 
 class Geometry(DAGNode):

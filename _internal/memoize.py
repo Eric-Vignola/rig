@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # API 1.0 used because API 2.0 MObjects can crash Maya after a new-scene
 # load (see rig.maya.nodetypes.dg_node._cache_api1_objects).
 from maya import cmds, OpenMaya as OpenMaya1
-from rig.maya.attribute import Attribute
+from rig.maya.nodetypes._base import Attribute
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
 from rig._internal.list import PlugList

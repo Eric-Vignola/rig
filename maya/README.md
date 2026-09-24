@@ -46,22 +46,19 @@ when you want a class as a constructor (`Mesh("cubeShape")`,
 ```
 rig/maya/
 ├── __init__.py            a docstring; re-exports nothing (import the submodule)
-├── attribute.py           Attribute -- the MPlug wrapper: get / set / connect, slicing, components
-├── node_name.py           get_short_name, get_clean_name, replace_suffix, iter_component_ranges / _tokens
-├── pycmds.py              every maya.cmds function, results wrapped as typed nodes
-├── constants.py           Axis, Renderers, ImageFormats, HardwareRenderingModes, EvaluationManagerModes
 ├── plugins/
 │   ├── __init__.py        load_plugin() context manager, bundled_plugin_path()
 │   └── undoable_api_command.py   the runUndoableAPICommand plug-in (undo for API edits)
 └── nodetypes/
-    ├── __init__.py        re-exports the classes below (not Deformer, tag_references, ColorSet)
-    ├── _base.py           PyNode factory, NodeMeta, the custom-type stamp
-    ├── dg_node.py         DGNode                 entity
+    ├── __init__.py        re-exports the classes below, Attribute and Axis (not Deformer, tag_references, ColorSet)
+    ├── _base.py           PyNode factory, NodeMeta, the custom-type stamp;
+    │                      Attribute -- the MPlug wrapper: get / set / connect, slicing, components
+    ├── dg_node.py         DGNode                 entity          get_short_name(), get_clean_name()
     ├── dag_node.py        DAGNode                dagNode
     ├── transform.py       Transform              transform
-    ├── joint.py           Joint                  joint
-    ├── geometry.py        Geometry               geometryShape   (component tags)
-    ├── mesh.py            Mesh, ColorSet         mesh
+    ├── joint.py           Joint                  joint           replace_suffix()
+    ├── geometry.py        Geometry               geometryShape   (component tags); iter_component_ranges() / _tokens()
+    ├── mesh.py            Mesh, ColorSet, Axis   mesh
     ├── nurbs.py           NurbsCurve, NurbsSurface
     ├── deformer.py        Deformer, tag_references()   geometryFilter
     ├── skincluster.py     SkinCluster
@@ -79,20 +76,21 @@ rig/maya/
 The public surface:
 
 ```python
-from rig.maya.attribute import Attribute
 from rig.maya.nodetypes import (
-    PyNode, DGNode, DAGNode, Transform, Joint, Geometry, Mesh, NurbsCurve, NurbsSurface,
-    SkinCluster, BlendShape, ObjectSet, ShadingEngine, DisplayLayer, Reference, Choice,
-    Follicle, SkeletonDeltaBlend,
+    PyNode, Attribute, DGNode, DAGNode, Transform, Joint, Geometry, Mesh, NurbsCurve,
+    NurbsSurface, SkinCluster, BlendShape, ObjectSet, ShadingEngine, DisplayLayer,
+    Reference, Choice, Follicle, SkeletonDeltaBlend, Axis,
 )
 from rig.maya.nodetypes.deformer import Deformer, tag_references
+from rig.maya.nodetypes.dg_node import get_clean_name, get_short_name
+from rig.maya.nodetypes.geometry import iter_component_ranges, iter_component_tokens
+from rig.maya.nodetypes.joint import replace_suffix
 from rig.maya.nodetypes.mesh import ColorSet
 from rig.maya.plugins import load_plugin
-from rig.maya import pycmds, node_name, constants
 ```
 
-`rig.maya` stays inert on purpose: `nodetypes` imports several of its peers
-at module scope, and an eager `__init__` would cycle. One more reason:
+`rig.maya` stays inert on purpose: `nodetypes` imports `plugins` at module
+scope, and an eager `__init__` would cycle. One more reason:
 `import maya.cmds` inside this package still means Autodesk's `maya`, but
 only while the *parent* of `rig/` is on `sys.path`. Never put `rig/` itself
 on the path, or this `maya` shadows the real one.
@@ -329,7 +327,7 @@ second, so nothing needs configuring.
   `num_weight_points` order, columns follow `get_influence_objects()`.
 - **Component ids are native**: `(N,)`, `(N, 2)` or `(N, 3)` integer
   arrays; strings are the shape-local `vtx[a:b]` / `cv[u][v0:v1]` /
-  `f[a:b]` tokens `node_name.iter_component_tokens` renders.
+  `f[a:b]` tokens `geometry.iter_component_tokens` renders.
 - **Categories are `"v"`, `"e"`, `"f"`**; `"v"` maps to the geometry's
   `POINT_COMP_TYPE` (`vtx` on meshes, `cv` on curves and surfaces).
 - **`cmds` flags pass through.** `get_children(**listRelatives_kwargs)`,
@@ -356,7 +354,8 @@ second, so nothing needs configuring.
 - You want **your own node type**: subclass `Transform` (or any class here)
   with `CUSTOM_NODE_TYPE`, and `PyNode` will hand your class back for the
   nodes it created.
-- You need `cmds.*` results as **typed nodes** without the DSL: `rig.maya.pycmds`.
+- You need `cmds.*` results as **typed nodes** without the DSL: wrap them,
+  `PyNode(cmds.polyCube(ch=False)[0])`.
 
 Stay in the DSL for setting, connecting and building math networks: that
 is what `<<`, `>>` and the operators are for, and `Node.__getattr__` already
@@ -427,8 +426,7 @@ Verified on Maya 2025; not bugs to work around blindly.
   Watch which `cgmath` your `mayapy` imports: a site-packages copy wins
   over a `PYTHONPATH` checkout.
 - **Method names are spelled as they are**: `set_xfrom_attrs_locked`
-  (sic), `BlendShape.set_targets_data` beside `set_target_data`, and
-  `constants.EvaluationManagerModes.PARALLEL == "paralell"`.
+  (sic), and `BlendShape.set_targets_data` beside `set_target_data`.
 - `Mesh.bake_deformation` hard-codes `root_joint` as the skeleton and `4`
   as the influence cap; `merge_maps` / `merge_maps_list` raise
   `NotImplementedError`.

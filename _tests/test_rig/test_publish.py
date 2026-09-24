@@ -1063,7 +1063,7 @@ class TestPublishMultiParentResolution(MayaTestCase):
         # swallow path runs and the original source is returned unchanged.
         from unittest import mock
 
-        from rig.maya.attribute import Attribute
+        from rig.maya.nodetypes import Attribute
         from rig._internal.container import _resolve_multi_parent_source
 
         a = Node.create("transform", name="a")

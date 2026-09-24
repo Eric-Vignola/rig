@@ -1,5 +1,5 @@
 """
-:class:`Plug` -- the rig DSL extension of :class:`rig.maya.attribute.Attribute`.
+:class:`Plug` -- the rig DSL extension of :class:`rig.maya.nodetypes.Attribute`.
 
 Plugs are the working unit of the DSL: they wrap an MPlug, retain all of
 ``Attribute``'s introspection, and add operator overloads that **build
@@ -55,8 +55,7 @@ from typing import Any
 import numpy as np
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
-from rig.maya.attribute import Attribute
-from rig.maya.nodetypes._base import PyNode
+from rig.maya.nodetypes._base import Attribute, PyNode
 from rig._internal.generators import sequences
 from rig._internal.introspect import _to_numpy
 from rig._internal.maya_version import is_at_least
@@ -1794,7 +1793,7 @@ def _inject_value(dst: Any, src: Any) -> None:
     # Auto-index multi roots: ``node.input1D << X`` => ``node.input1D[next] << X``.
     # Skipped when the user has already explicitly indexed (str(dst) ends in `]`).
     #
-    # Uses ``rig.maya.attribute.Attribute.get_next_available_index()`` which
+    # Uses ``rig.maya.nodetypes.Attribute.get_next_available_index()`` which
     # returns the LOWEST free logical index (gap-fill semantics). For
     # sequential fills from an empty multi this is identical to Eric's
     # "highest physical index + 1"; only sparse arrays after deletions diverge.
@@ -1949,7 +1948,7 @@ def _fanout_channel(src: Any, dst: Any) -> None:
 def _set_or_connect(src: Any, dst: Any) -> None:
     """Either ``dst.set(src)`` or ``src.connect(dst, force=True)``.
 
-    Uses :class:`rig.maya.attribute.Attribute` API methods rather than raw
+    Uses :class:`rig.maya.nodetypes.Attribute` API methods rather than raw
     ``cmds.*`` calls so that:
 
     * Connections / sets are rename-safe (handle MObjectHandle internally).

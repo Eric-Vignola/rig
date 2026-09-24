@@ -11,10 +11,10 @@ from typing import Callable, List, Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
-from rig.maya.node_name import get_short_name
 from rig.maya.nodetypes._base import PyNode
 from rig.maya.nodetypes.dag_node import DAGNode
 from rig.maya.nodetypes.deformer import Deformer
+from rig.maya.nodetypes.dg_node import get_short_name
 from rig.maya.nodetypes.joint import Joint
 from rig.maya.nodetypes.mesh import Mesh
 from rig.maya.plugins import load_plugin

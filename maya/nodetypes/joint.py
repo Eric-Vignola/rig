@@ -4,12 +4,11 @@ Joint node class
 
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Any, Iterator
 
 import numpy as np
 from maya import cmds
-from rig.maya.node_name import replace_suffix
-from rig.maya.nodetypes.dg_node import DGNode
+from rig.maya.nodetypes.dg_node import DGNode, get_short_name
 from rig.maya.nodetypes.transform import Transform
 
 
@@ -30,6 +29,25 @@ def _split_axis(axis: str) -> tuple[float, str]:
 def _world_matrix(node: str) -> np.ndarray:
     """Read a node's world matrix as a 4x4 array (row-vector convention)."""
     return np.reshape(cmds.getAttr(f"{node}.worldMatrix[0]"), (4, 4))
+
+
+def replace_suffix(name: Any, suffix: str) -> str:
+    """Replaces a node name's suffix.
+
+    Args:
+        suffix: The suffix to use. Can NOT contain `_`.
+
+    Returns:
+        New name with the suffix replaced.
+    """
+    if suffix.find("_") != -1:
+        raise ValueError("Suffix can NOT contain '_'")
+    name = get_short_name(name)
+    i    = name.rfind("_")
+    # if no suffix, append it
+    if i == -1:
+        return f"{name}_{suffix}"
+    return name[: i + 1] + suffix
 
 
 class Joint(Transform):

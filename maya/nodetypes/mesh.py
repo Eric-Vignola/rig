@@ -13,8 +13,7 @@ from typing import Generator, List
 import numpy as np
 from maya import cmds, mel
 from maya.api import OpenMaya
-from rig.maya.attribute import Attribute
-from rig.maya.constants import Axis
+from rig.maya.nodetypes._base import Attribute
 from rig.maya.nodetypes.dag_node import DAGNode, PyNode
 from rig.maya.nodetypes.geometry import Geometry
 from rig.maya.nodetypes.object_set import ObjectSet
@@ -26,6 +25,12 @@ from scipy.spatial import cKDTree
 MAP_DATATYPE         = "doubleArray"
 MAP_DEFAULT_VALUE    = 0.0
 MAP_DEFAULT_CATEGORY = "PaintableMap"  # all maps will have this category assigned
+
+
+class Axis(enum.Enum):
+    X = 0
+    Y = 1
+    Z = 2
 
 
 class Mesh(Geometry):

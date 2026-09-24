@@ -1,19 +1,17 @@
 """
 ``rig.maya`` -- the Maya object-model layer the ``rig`` DSL is built on.
 
-The typed node wrappers live in :mod:`rig.maya.nodetypes`; the supporting
-modules (:mod:`~rig.maya.attribute`, :mod:`~rig.maya.node_name`,
-:mod:`~rig.maya.constants`, :mod:`~rig.maya.plugins`,
-:mod:`~rig.maya.pycmds`) sit alongside it as peers.
+The typed node wrappers and the :class:`~rig.maya.nodetypes.Attribute` plug
+wrapper live in :mod:`rig.maya.nodetypes`; :mod:`rig.maya.plugins` sits
+alongside it as a peer.
 
 Deliberately re-exports nothing -- submodules are always imported explicitly::
 
-    from rig.maya import pycmds
-    from rig.maya.attribute import Attribute
-    from rig.maya.nodetypes import Transform
+    from rig.maya.nodetypes import Attribute, Transform
+    from rig.maya.plugins import load_plugin
 
 Keeping this module inert avoids import cycles: :mod:`rig.maya.nodetypes`
-imports several of its peers at module scope.
+imports :mod:`rig.maya.plugins` at module scope.
 
 Note that ``import maya.cmds`` inside this package still resolves to Autodesk's
 top-level ``maya``, not to this one: Python 3 imports are absolute. That holds

@@ -2,7 +2,7 @@
 
 Copy-paste recipes for the typed node layer under the `rig` DSL: every
 class in `rig.maya.nodetypes`, the `Attribute` wrapper, the name helpers,
-`pycmds`, the constants and the bundled undo plug-in. The blocks run top to
+`Axis` and the bundled undo plug-in. The blocks run top to
 bottom as one script and share a namespace — the **Setup** block comes first,
 and each section that wants a clean scene starts with `cmds.file(new=True, force=True)`.
 
@@ -32,8 +32,8 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
 | 18 | [`Reference`](#18-reference) | file references and their namespaces |
 | 19 | [`SkeletonDeltaBlend` and `AnimReaderNode`](#19-skeletondeltablend-and-animreadernode) | plug-in node types |
-| 20 | [`node_name` helpers](#20-node_name-helpers) | short / clean names, suffixes, component range strings |
-| 21 | [`pycmds` and `constants`](#21-pycmds-and-constants) | `maya.cmds` returning typed nodes; the enums |
+| 20 | [Name helpers](#20-name-helpers) | short / clean names, suffixes, component range strings |
+| 21 | [`cmds` results as typed nodes, and `Axis`](#21-cmds-results-as-typed-nodes-and-axis) | wrapping `maya.cmds` results in `PyNode`; the mirror axis |
 | 22 | [`plugins` — `load_plugin` and undo](#22-plugins--load_plugin-and-undo) | an undoable API command in six lines |
 
 ---
@@ -56,14 +56,15 @@ import numpy as np
 
 from rig import Node
 from rig.bridges import commands as rc
-from rig.maya import constants, node_name, pycmds
-from rig.maya.attribute import Attribute
 from rig.maya.nodetypes import (
-    BlendShape, Choice, DAGNode, DGNode, DisplayLayer, Follicle, Geometry, Joint,
-    Mesh, NurbsCurve, NurbsSurface, ObjectSet, PyNode, Reference, ShadingEngine,
-    SkinCluster, Transform,
+    Attribute, Axis, BlendShape, Choice, DAGNode, DGNode, DisplayLayer, Follicle,
+    Geometry, Joint, Mesh, NurbsCurve, NurbsSurface, ObjectSet, PyNode, Reference,
+    ShadingEngine, SkinCluster, Transform,
 )
 from rig.maya.nodetypes.deformer import Deformer, tag_references
+from rig.maya.nodetypes.dg_node import get_clean_name, get_short_name
+from rig.maya.nodetypes.geometry import iter_component_ranges, iter_component_tokens
+from rig.maya.nodetypes.joint import replace_suffix
 from rig.maya.nodetypes.mesh import ColorSet
 from rig.maya.plugins import bundled_plugin_path, load_plugin
 
@@ -258,7 +259,7 @@ class, so a `ShadingEngine` never equals the `ObjectSet` wrapping the same node.
 ```python
 cmds.file(new=True, force=True)
 grp  = Transform.create(name="grp")
-cube = pycmds.polyCube(name="cube", ch=False)[0]     # pycmds returns typed nodes directly
+cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])  # PyNode wraps the name as its typed node
 cube.set_parent(grp)
 shape = cube.get_children(shapes=True)[0]
 
@@ -296,7 +297,7 @@ works unchanged. `>>` connects (force), `//` disconnects.
 
 ```python
 cmds.file(new=True, force=True)
-cube = pycmds.polyCube(name="cube", ch=False)[0]
+cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
 mesh = cube.get_shape()
 
 a = cube.tx
@@ -416,7 +417,7 @@ print(type(mesh.inMesh.get_data_fn_set()).__name__)                   # MFnMeshD
 ```python
 cmds.file(new=True, force=True)
 grp  = Transform.create(name="grp")
-cube = pycmds.polyCube(name="cube", ch=False)[0]
+cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
 cube.set_parent(grp)
 grp.t.set(1, 2, 3)
 cube.t.set(1, 0, 0)
@@ -470,7 +471,7 @@ print(type(data).__name__, data.name, data.node_type, data.user_defined_attribut
 root  = Joint.create(name="root")
 child = Joint.create(name="child", parent=root)
 child.t.set(0, 5, 0)
-pycmds.spaceLocator(name="probe")[0].set_parent(child)
+PyNode(cmds.spaceLocator(name="probe")[0]).set_parent(child)
 skeleton = root.serialize_hierarchy()
 print(type(skeleton).__name__, skeleton.name, [x.node_type for x in skeleton])   # HierarchyData ['root', 'child', 'probe'] ['joint', 'joint', 'locator']
 ```
@@ -544,7 +545,7 @@ print(np.round(ctl.get_children(type="joint")[0].t.get(), 3))    # [[3. 0. 0.]]
 Which skinclusters a joint drives:
 
 ```python
-geo  = pycmds.polyCube(name="geo", ch=False)[0]
+geo  = PyNode(cmds.polyCube(name="geo", ch=False)[0])
 skin = SkinCluster.create(geo, [root, hip])
 print(hip.find_skinclusters(), knee.find_skinclusters(), root.find_skinclusters(recursive=True))  # [SkinCluster("geo_skincluster")] [] [SkinCluster("geo_skincluster")]
 print(root.find_skel_blend())                                                                     # None -- no skeletonDeltaBlend upstream
@@ -561,7 +562,7 @@ exists, the intermediate `Orig` shape from then on.
 
 ```python
 cmds.file(new=True, force=True)
-ball = pycmds.polySphere(name="ball", ch=False)[0].get_shape()
+ball = PyNode(cmds.polySphere(name="ball", ch=False)[0]).get_shape()
 print(ball.injection_node == ball, ball.component_tags)                                                                            # True []
 
 cmds.cluster("ball")
@@ -615,7 +616,7 @@ print(ball.has_component_tag("cap"), ball.has_component_tag("lid"))  # False Tru
 ball.remove_component_tag("lid")
 print(ball.component_tags)                                           # []
 
-hist = pycmds.polyCube(name="hist")[0].get_shape()              # ch=True: the tags are polyCube1's outputs
+hist = PyNode(cmds.polyCube(name="hist")[0]).get_shape()  # ch=True: the tags are polyCube1's outputs
 print(hist.component_tags, hist.get_component_tag_index("top"), hist.get_component_tag_contents("top"))   # ['back', 'bottom', 'front', 'left', 'right', 'top'] -1 ['f[1]']
 try:
     hist.set_component_tag_contents("top", [0], category="f")
@@ -639,7 +640,7 @@ print(ball.get_component_mobject().apiTypeStr, ball.get_component_mobject("f", n
 
 ```python
 cmds.file(new=True, force=True)
-cube = pycmds.polyCube(name="cube", ch=False)[0]
+cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
 mesh = cube.get_shape()
 print(repr(Mesh("cube")), Mesh("cubeShape") == mesh)                 # Mesh("cubeShape") True -- a transform name finds its mesh
 print(mesh.num_vertices, mesh.num_polygons, mesh.num_weight_points)  # 8 6 8
@@ -705,7 +706,7 @@ map_data = mesh.get_map_data("mask")                             # a cgmath MapD
 print(map_data.name, map_data.categories, map_data.indices)                                # mask ['weights'] [1, 2, 3, 4, 5, 6, 7]
 print(repr(mesh.duplicate_map("mask", "mask2")), [m.name for m in mesh.serialize_maps()])  # Attribute("cubeShape.mask2") ['mask', 'mask2']
 print(mesh.get_map_attrs(category="weights"), mesh.find_map_attr("visibility"))            # [Attribute("cubeShape.mask")] None
-mesh.mirror_map("mask", constants.Axis.X)                                                  # +X values onto their -X partners
+mesh.mirror_map("mask", Axis.X)                                                            # +X values onto their -X partners
 print(np.round(mesh.get_map_values("mask"), 2))                                            # [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
 mesh.delete_map("mask2")
 print(mesh.paintable_maps, mesh.sanitize_map_values([1, 2]))                               # ['mask'] [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -747,7 +748,7 @@ transfers land on the target but currently carry every vertex at `1.0`
 normalised — see *Real behaviour, verified* in [`README.md`](README.md).
 
 ```python
-dst = pycmds.polyCube(name="dst", ch=False)[0].get_shape()
+dst = PyNode(cmds.polyCube(name="dst", ch=False)[0]).get_shape()
 mesh.transfer_maps("mask", dst)
 print(dst.paintable_maps, np.round(dst.get_map_values("mask"), 2))   # ['mask'] [1. 1. 1. 1. 1. 1. 1. 1.] -- every vertex, not the gradient
 
@@ -770,7 +771,7 @@ Both are `Geometry`, so the tag methods above apply; `POINT_COMP_TYPE` is
 
 ```python
 cmds.file(new=True, force=True)
-crv = pycmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)], name="crv").get_shape()
+crv = PyNode(cmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)], name="crv")).get_shape()
 print(repr(crv), crv.num_cvs, crv.num_weight_points, np.array(crv.get_points())[1, :3])   # NurbsCurve("curveShape1") 5 5 [1. 0. 0.]
 spline = crv.serialize()                                          # cgmath BSplineData
 print(type(spline).__name__, spline.points.shape, spline.degree, spline.periodic)  # BSplineData (5, 3) 3 False
@@ -780,7 +781,7 @@ crv.add_component_tag("root")
 crv.set_component_tag_contents("root", [0, 1])
 print(crv.get_component_tag_contents("root"))                                      # ['cv[0:1]']
 
-ball = pycmds.sphere(name="ball")[0].get_shape()
+ball = PyNode(cmds.sphere(name="ball")[0]).get_shape()
 print(repr(ball), ball.num_cvs, ball.num_weight_points)           # NurbsSurface("ballShape") 77 56 -- periodic in V: 3 wrapped rows per column
 patch = ball.serialize()                                          # cgmath BSplinePatchData, wrapped CVs trimmed
 print(type(patch).__name__, patch.points.shape, patch.periodic_u, patch.periodic_v)            # BSplinePatchData (7, 8, 3) False True
@@ -804,7 +805,7 @@ cmds.file(new=True, force=True)
 j1 = Joint.create(name="j1")
 j2 = Joint.create(name="j2", parent=j1)
 j2.t.set(0, 1, 0)
-cube = pycmds.polyCube(name="cube", ch=False, height=2)[0]
+cube = PyNode(cmds.polyCube(name="cube", ch=False, height=2)[0])
 
 skin = SkinCluster.create(cube, [j1, j2])                          # cmds.skinCluster(toSelectedBones=True), replaces any existing one
 print(repr(skin), skin.get_influence_objects(), skin.get_mesh())           # SkinCluster("cube_skincluster") [Joint("j1"), Joint("j2")] cubeShape
@@ -848,14 +849,14 @@ print(skin.get_weights()[0])                                   # [1. 0.]
 
 skin.delete()
 skin = SkinCluster.create(cube, data)                             # influences and weights from the data
-print(skin.get_influence_objects(), skin.serialize() == data)                           # [Joint("j1"), Joint("j2")] True
-print(repr(PyNode.create("skinCluster", pycmds.polyCube(name="c2", ch=False)[0], j1)))  # SkinCluster("c2_skincluster")
+print(skin.get_influence_objects(), skin.serialize() == data)                                 # [Joint("j1"), Joint("j2")] True
+print(repr(PyNode.create("skinCluster", PyNode(cmds.polyCube(name="c2", ch=False)[0]), j1)))  # SkinCluster("c2_skincluster")
 ```
 
 Transfer to another mesh (pass the shape or a name, not a `Transform`):
 
 ```python
-other = pycmds.polyCube(name="other", ch=False, height=2)[0].get_shape()
+other = PyNode(cmds.polyCube(name="other", ch=False, height=2)[0]).get_shape()
 moved = skin.transfer_to_mesh(other)
 print(repr(moved), moved.get_influence_objects(), moved.get_weights().shape)   # SkinCluster("otherShape_skincluster") [Joint("j1"), Joint("j2")] (8, 2)
 ```
@@ -869,8 +870,8 @@ go in and out as `cgmath` `MorphData` (sparse: `indices` + `offsets`).
 
 ```python
 cmds.file(new=True, force=True)
-base  = pycmds.polyCube(name="base", ch=False)[0]
-smile = pycmds.polyCube(name="smile", ch=False)[0]
+base  = PyNode(cmds.polyCube(name="base", ch=False)[0])
+smile = PyNode(cmds.polyCube(name="smile", ch=False)[0])
 cmds.xform("smile.vtx[3]", ws=True, t=(10, 2, 3))
 
 morph = BlendShape.create(smile, base, name="morph")              # cmds.blendShape(frontOfChain=True)
@@ -912,7 +913,7 @@ print(morph.weight[:], Node("morph2").weight[:])         # [Attribute("morph2.sm
 
 ```python
 cmds.file(new=True, force=True)
-cube  = pycmds.polyCube(name="cube", ch=False)[0]
+cube  = PyNode(cmds.polyCube(name="cube", ch=False)[0])
 mesh  = cube.get_shape()
 
 group = ObjectSet.get_or_create("mySet")                          # finds it, in the current namespace too
@@ -1025,7 +1026,7 @@ A `choice` node's plugs have no fixed type; `Choice` resolves
 
 ```python
 cmds.file(new=True, force=True)
-cube = pycmds.polyCube(name="cube", ch=False)[0]
+cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
 pick = PyNode.create("choice", name="pick")
 print(type(pick).__name__, pick.output.data_type, pick.input[0].data_type)   # Choice Tdata Tdata
 
@@ -1049,7 +1050,7 @@ something to that transform.
 
 ```python
 cmds.file(new=True, force=True)
-cube  = pycmds.polyCube(name="cube", ch=False)[0]
+cube  = PyNode(cmds.polyCube(name="cube", ch=False)[0])
 probe = Transform.create(name="probe")
 probe.t.set(0.25, 0.5, 0.25)
 
@@ -1141,15 +1142,15 @@ print(reader.get_animation_info())
 
 ---
 
-## 20. `node_name` helpers
+## 20. Name helpers
 
-Pure string functions; nothing here touches the scene.
+Pure string functions; nothing here touches the scene. Each lives beside the
+class that uses it: `dg_node` (short and clean names), `joint`
+(`replace_suffix`) and `geometry` (component range strings).
 
 ```python
-print(node_name.get_short_name("|grp|ns:cube"),     node_name.get_clean_name("|grp|ns:cube"))  # ns:cube cube
-print(node_name.get_suffix("arm_L_jnt"),            node_name.strip_prefix("arm_L_jnt"))       # jnt L_jnt
-print(node_name.replace_suffix("arm_L_jnt", "ctl"), node_name.replace_suffix("arm", "ctl"))    # arm_L_ctl arm_ctl
-print(node_name.has_pattern("shot_abc00010_v1"),    node_name.has_pattern("cube"))             # True False -- default pattern [a-z]{3}\d{5}
+print(get_short_name("|grp|ns:cube"), get_clean_name("|grp|ns:cube"))    # ns:cube cube
+print(replace_suffix("arm_L_jnt", "ctl"), replace_suffix("arm", "ctl"))  # arm_L_ctl arm_ctl
 ```
 
 Component ids to the range strings Maya stores. `iter_component_ranges`
@@ -1157,32 +1158,31 @@ takes a flat, ordered list; `iter_component_tokens` sorts, dedupes and
 handles the `(N, 2)` and `(N, 3)` forms of surfaces and lattices.
 
 ```python
-print(list(node_name.iter_component_ranges("vtx", [1, 2, 3, 5, 7, 8])))                # ['vtx[1:3]', 'vtx[5]', 'vtx[7:8]']
-print(list(node_name.iter_component_tokens("f", np.array([4, 6, 5, 4]))))              # ['f[4:6]']
-print(list(node_name.iter_component_tokens("cv", [[1, 0], [1, 1], [2, 5]])))           # ['cv[1][0:1]', 'cv[2][5]']
-print(list(node_name.iter_component_tokens("pt", [[0, 0, 0], [0, 0, 1], [1, 2, 3]])))  # ['pt[0][0][0:1]', 'pt[1][2][3]']
+print(list(iter_component_ranges("vtx", [1, 2, 3, 5, 7, 8])))                # ['vtx[1:3]', 'vtx[5]', 'vtx[7:8]']
+print(list(iter_component_tokens("f", np.array([4, 6, 5, 4]))))              # ['f[4:6]']
+print(list(iter_component_tokens("cv", [[1, 0], [1, 1], [2, 5]])))           # ['cv[1][0:1]', 'cv[2][5]']
+print(list(iter_component_tokens("pt", [[0, 0, 0], [0, 0, 1], [1, 2, 3]])))  # ['pt[0][0][0:1]', 'pt[1][2][3]']
 ```
 
 ---
 
-## 21. `pycmds` and `constants`
+## 21. `cmds` results as typed nodes, and `Axis`
 
-`pycmds` wraps every `maya.cmds` function so that any node name in the
-result comes back as a typed node (the DSL's `rig.bridges.commands` is the
-same idea returning `Node` / `PlugList`).
+`maya.cmds` hands back names; `PyNode` turns one into its typed node. The
+DSL's `rig.bridges.commands` does this for every command, returning `Node` /
+`PlugList`.
 
 ```python
 cmds.file(new=True, force=True)
-made = pycmds.polyCube(name="pc", ch=False)
-print(made, [type(x).__name__ for x in made])                                                    # [Transform("pc")] ['Transform']
-print(pycmds.listRelatives("pc", shapes=True), pycmds.ls(type="mesh"), pycmds.getAttr("pc.tx"))  # [Mesh("pcShape")] [Mesh("pcShape")] 0.0
+made = PyNode(cmds.polyCube(name="pc", ch=False)[0])
+print(repr(made), type(made).__name__)                             # Transform("pc") Transform
+print([PyNode(x) for x in cmds.listRelatives("pc", shapes=True)])  # [Mesh("pcShape")]
 ```
 
+`Axis` names the mirror plane for `Mesh.mirror_map`.
+
 ```python
-print(constants.Axis.X, constants.Axis.Z.value)                                                                       # Axis.X 2
-print(constants.Renderers.ARNOLD, constants.HardwareRenderingModes.SHADED)                                            # arnold 1
-print(str(constants.ImageFormats.PNG), constants.ImageFormats.PNG.format_name, constants.ImageFormats.EXR.extension)  # png PNG exr
-print(constants.EvaluationManagerModes.PARALLEL)                                                                      # paralell -- sic, the value carries a typo
+print(Axis.X, Axis.Z.value)  # Axis.X 2
 ```
 
 ---
