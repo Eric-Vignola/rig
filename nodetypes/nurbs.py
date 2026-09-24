@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 from maya.api import OpenMaya
-from rig.maya.nodetypes.geometry import Geometry
+from rig.nodetypes.geometry import Geometry
 
 
 class NurbsCurve(Geometry):

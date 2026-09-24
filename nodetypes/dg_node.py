@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
-from rig.maya.nodetypes._base import (
+from rig.nodetypes._base import (
     Attribute,
     get_custom_type,
     NodeMeta,

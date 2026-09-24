@@ -11,13 +11,13 @@ from typing import Callable, List, Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
-from rig.maya.nodetypes._base import PyNode
-from rig.maya.nodetypes.dag_node import DAGNode
-from rig.maya.nodetypes.deformer import Deformer
-from rig.maya.nodetypes.dg_node import get_short_name
-from rig.maya.nodetypes.joint import Joint
-from rig.maya.nodetypes.mesh import Mesh
-from rig.maya.plugins import load_plugin
+from rig.nodetypes._base import PyNode
+from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.deformer import Deformer
+from rig.nodetypes.dg_node import get_short_name
+from rig.nodetypes.joint import Joint
+from rig.nodetypes.mesh import Mesh
+from rig.nodetypes.plugins import load_plugin
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)

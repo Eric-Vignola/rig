@@ -10,7 +10,7 @@ starts with one.
 Concepts and conventions live in [`README.md`](README.md). The
 subpackages have their own cheatsheets: [`spec/`](spec/CHEATSHEET.md)
 for attribute specs and modifiers, [`bridges/`](bridges/CHEATSHEET.md)
-for `maya.cmds` and the node factories, [`maya/`](maya/CHEATSHEET.md)
+for `maya.cmds` and the node factories, [`nodetypes/`](nodetypes/CHEATSHEET.md)
 for the typed node layer underneath.
 
 ---
@@ -2445,5 +2445,5 @@ print(repr(lossy.node))                                     # Node("lossy")
 | [`README.md`](README.md) | the operator table, the conventions, the map, the verified behaviour |
 | [`spec/CHEATSHEET.md`](spec/CHEATSHEET.md) | every attribute spec, kwarg and modifier |
 | [`bridges/CHEATSHEET.md`](bridges/CHEATSHEET.md) | `maya.cmds` returning nodes, and the node factories |
-| [`maya/CHEATSHEET.md`](maya/CHEATSHEET.md) | the typed node layer underneath |
+| [`nodetypes/CHEATSHEET.md`](nodetypes/CHEATSHEET.md) | the typed node layer underneath |
 | [`examples/README.md`](examples/README.md) | four complete builds |

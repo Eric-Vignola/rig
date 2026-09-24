@@ -8,8 +8,8 @@ from typing import Any, Iterator
 
 import numpy as np
 from maya import cmds
-from rig.maya.nodetypes.dg_node import DGNode, get_short_name
-from rig.maya.nodetypes.transform import Transform
+from rig.nodetypes.dg_node import DGNode, get_short_name
+from rig.nodetypes.transform import Transform
 
 
 _AXIS_VECTOR = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}

@@ -11,8 +11,8 @@ from typing import Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.maya.nodetypes._base import Attribute
-from rig.maya.nodetypes.dag_node import DAGNode, PyNode
+from rig.nodetypes._base import Attribute
+from rig.nodetypes.dag_node import DAGNode, PyNode
 
 LOGGER = logging.getLogger(__name__)
 

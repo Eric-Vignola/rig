@@ -2,7 +2,7 @@ import unittest
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.maya.nodetypes import PyNode, Transform
+from rig.nodetypes import PyNode, Transform
 from rig._tests._base import MayaTestCase
 
 
@@ -221,7 +221,7 @@ class TestXformNodes(MayaTestCase):
         self.assertNotIn("parent", specs["flat"])
 
         self.new_scene()
-        with self.assertNoLogs("rig.maya.nodetypes.transform", level="WARNING"):
+        with self.assertNoLogs("rig.nodetypes.transform", level="WARNING"):
             root, _, _ = Transform.create_hierarchy(hierarchy)
 
         self.assertEqual(cmds.attributeQuery("vec", node=root, listChildren=True), ["vecX", "vecY", "vecZ"])
@@ -255,7 +255,7 @@ class TestXformNodes(MayaTestCase):
             self.assertTrue(specs[name]["multi"])
 
         self.new_scene()
-        with self.assertNoLogs("rig.maya.nodetypes.transform", level="WARNING"):
+        with self.assertNoLogs("rig.nodetypes.transform", level="WARNING"):
             root, _, _ = Transform.create_hierarchy(hierarchy)
 
         self.assertEqual(cmds.attributeQuery("en", node=root, listEnum=True), ["a=1:b=5:c"])
@@ -272,7 +272,7 @@ class TestXformNodes(MayaTestCase):
         driver = PyNode.create("transform", name="driver")
         cmds.parentConstraint(driver.long_name, self.joint3.long_name)
 
-        with self.assertLogs("rig.maya.nodetypes.transform", level="WARNING") as logs:
+        with self.assertLogs("rig.nodetypes.transform", level="WARNING") as logs:
             hierarchy = self.root.serialize_hierarchy()
 
         self.assertEqual([x.node_type for x in hierarchy], ["joint", "joint", "joint"])
@@ -286,7 +286,7 @@ class TestXformNodes(MayaTestCase):
         hierarchy[1].node_type = "parentConstraint"
 
         self.new_scene()
-        with self.assertLogs("rig.maya.nodetypes.transform", level="WARNING") as logs:
+        with self.assertLogs("rig.nodetypes.transform", level="WARNING") as logs:
             created = Transform.create_hierarchy(hierarchy)
 
         self.assertEqual(len(created), 1)
@@ -318,7 +318,7 @@ class TestXformNodes(MayaTestCase):
             self.assertNotIn("dataType", specs[name])
 
         self.new_scene()
-        with self.assertNoLogs("rig.maya.nodetypes.transform", level="WARNING"):
+        with self.assertNoLogs("rig.nodetypes.transform", level="WARNING"):
             root, joint2, _ = Transform.create_hierarchy(hierarchy)
 
         self.assertEqual(cmds.getAttr(f"{root}.ud_string"),       "abc")
@@ -338,7 +338,7 @@ class TestXformNodes(MayaTestCase):
             specs[name]["attributeType"] = specs[name].pop("dataType")
 
         self.new_scene()
-        with self.assertNoLogs("rig.maya.nodetypes.transform", level="WARNING"):
+        with self.assertNoLogs("rig.nodetypes.transform", level="WARNING"):
             root, joint2, _ = Transform.create_hierarchy(hierarchy)
 
         self.assertEqual(cmds.getAttr(f"{root}.ud_string_array"), ["a", "b"])
@@ -356,7 +356,7 @@ class TestXformNodes(MayaTestCase):
         hierarchy[0].user_defined_attributes = {"ud_bad": bad, **specs}
 
         self.new_scene()
-        with self.assertLogs("rig.maya.nodetypes.transform", level="WARNING") as logs:
+        with self.assertLogs("rig.nodetypes.transform", level="WARNING") as logs:
             root, joint2, _ = Transform.create_hierarchy(hierarchy)
 
         self.assertEqual(len(logs.output), 1)

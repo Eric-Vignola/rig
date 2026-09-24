@@ -169,8 +169,8 @@ rig/
 ├── shade.py             Blinn Lambert Phong PhongE SurfaceShader StandardSurface OpenPBRSurface,
 │                        Material, Default; convert / repair / tidy / materials / bindings
 │
-├── maya/                the object-model layer under the DSL: nodetypes/ (typed PyNode wrappers
-│                        and the Attribute plug wrapper), plugins/
+├── nodetypes/           the object-model layer under the DSL: typed PyNode wrappers, the
+│                        Attribute plug wrapper, plugins/ (the bundled undo plug-in)
 ├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
 │                        perspective_image_planes.py, ye_olde_lerp.gif
 ├── utils.py             run_tests()
@@ -195,7 +195,7 @@ from rig.bridges import nodes as rn
 `rig.functions` shadows Python builtins (`abs`, `min`, `max`, `sum`,
 `int`, `round`...): import the module, never `from rig.functions import *`.
 Put the **parent** of `rig/` on `sys.path`, not `rig/` itself, or
-`rig.maya` and `rig.random` shadow Autodesk's `maya` and the stdlib.
+`rig.random` shadows the stdlib `random`.
 
 ---
 
@@ -209,7 +209,7 @@ for it) and a **CHEATSHEET** (every public name, with a runnable example).
 | **this page** | the operator table, conventions, the map | [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/CHEATSHEET.md) — every operator and top-level name, runnable |
 | `rig.spec` | attribute specs (`Float`, `Vector`, `Enum`...) and the modifiers (`lock`, `hide`, `destroy`...) | [README](https://github.com/Eric-Vignola/rig/blob/main/spec/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/spec/CHEATSHEET.md) |
 | `rig.bridges` | `commands` (`maya.cmds` returning nodes) and `nodes` (a factory per node type) | [README](https://github.com/Eric-Vignola/rig/blob/main/bridges/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/bridges/CHEATSHEET.md) |
-| `rig.maya` | the typed node layer the DSL stands on: `PyNode`, `Attribute`, the typed node classes | [README](https://github.com/Eric-Vignola/rig/blob/main/maya/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/maya/CHEATSHEET.md) |
+| `rig.nodetypes` | the typed node layer the DSL stands on: `PyNode`, `Attribute`, the typed node classes | [README](https://github.com/Eric-Vignola/rig/blob/main/nodetypes/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/nodetypes/CHEATSHEET.md) |
 | `examples/` | complete builds: a rail spine, an image loop, perspective image planes | [README](https://github.com/Eric-Vignola/rig/blob/main/examples/README.md) |
 
 ---

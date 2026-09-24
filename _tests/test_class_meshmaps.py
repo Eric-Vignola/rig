@@ -3,8 +3,8 @@ import os
 
 import maya.cmds as cmds
 import numpy as np
-import rig.maya.nodetypes.mesh as mesh_api
-from rig.maya.nodetypes import Axis
+import rig.nodetypes.mesh as mesh_api
+from rig.nodetypes import Axis
 from cgmath.geometry import MapData
 from rig._tests._base import MayaTestCase
 

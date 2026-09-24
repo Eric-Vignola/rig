@@ -23,8 +23,8 @@ import numbers
 from typing import Any, Union
 
 import numpy as np
-from rig.maya.nodetypes._base import Attribute, PyNode
-from rig.maya.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
+from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
 from rig._internal.plug import _maybe_component_plug, Plug
 
 
@@ -178,7 +178,7 @@ class Node:
     def _attr_data_type_fallback(self, attr: Any) -> str:
         """Forward the data-type resolution hook to the wrapped ``DGNode``.
 
-        :attr:`rig.maya.nodetypes.Attribute.data_type` calls this on the owning
+        :attr:`rig.nodetypes.Attribute.data_type` calls this on the owning
         node to resolve a generic ("typed" / "Tdata") attribute -- e.g. a
         ``choice`` node's ``output`` -- whose concrete type depends on its
         connections. Because :meth:`__getattr__` deliberately rejects every
@@ -289,9 +289,9 @@ class Node:
 
     def __rshift__(self, other: Any) -> Any:
         """``node >> None`` returns the underlying typed
-        :class:`rig.maya.nodetypes.dg_node.DGNode` instance (e.g. a
+        :class:`rig.nodetypes.dg_node.DGNode` instance (e.g. a
         ``Transform`` or ``Mesh``), kicking the caller out of the rig
-        DSL into the ``rig.maya.nodetypes`` typed-node world.
+        DSL into the ``rig.nodetypes`` typed-node world.
 
         ``node >> spec`` adds the attribute described by ``spec`` to
         this node as an OUTPUT (``writable=False``) attribute. This is

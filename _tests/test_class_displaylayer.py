@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.maya.nodetypes import DisplayLayer, PyNode
+from rig.nodetypes import DisplayLayer, PyNode
 from rig._tests._base import MayaTestCase
 
 

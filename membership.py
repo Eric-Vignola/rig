@@ -70,10 +70,10 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.maya.nodetypes._base import PyNode
-from rig.maya.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
-from rig.maya.nodetypes.display_layer import DisplayLayer
-from rig.maya.nodetypes.geometry import _TAG_NAME_RE, Geometry
+from rig.nodetypes._base import PyNode
+from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
+from rig.nodetypes.display_layer import DisplayLayer
+from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
 from rig._internal.members import (
     _check_attrs,
     _find_node,

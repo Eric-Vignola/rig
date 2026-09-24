@@ -3,7 +3,7 @@ Base deformer class
 
 Usage::
 
-    from rig.maya.nodetypes.deformer import tag_references
+    from rig.nodetypes.deformer import tag_references
 
     tag_references("top")   # [("cluster1", 0)] -- every input whose
                             # componentTagExpression names the tag
@@ -15,8 +15,8 @@ import fnmatch
 import re
 
 from maya import cmds
-from rig.maya.nodetypes._base import PyNode
-from rig.maya.nodetypes.dg_node import DGNode
+from rig.nodetypes._base import PyNode
+from rig.nodetypes.dg_node import DGNode
 
 
 # a tag-name token carrying at least one glob wildcard ('to*', '*top', 'a*b')

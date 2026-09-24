@@ -16,7 +16,7 @@ class UndoableAPICommand(OpenMaya.MPxCommand):
 
     Usage:
     ```python
-    from rig.maya.plugins import load_plugin
+    from rig.nodetypes.plugins import load_plugin
 
     # first make a command with doIt(), undoIt(), and redoIt() implemented.
     class MyCommand:

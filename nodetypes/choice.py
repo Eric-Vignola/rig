@@ -4,8 +4,8 @@ Choice node class
 
 from __future__ import annotations
 
-from rig.maya.nodetypes._base import Attribute
-from rig.maya.nodetypes.dg_node import DGNode
+from rig.nodetypes._base import Attribute
+from rig.nodetypes.dg_node import DGNode
 
 
 class Choice(DGNode):

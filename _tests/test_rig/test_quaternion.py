@@ -138,7 +138,7 @@ class TestQuaternionInterpolate(MayaTestCase):
 import math
 
 from maya.api import OpenMaya as om
-from rig.maya.nodetypes import Attribute
+from rig.nodetypes import Attribute
 
 
 def _eval(plug):

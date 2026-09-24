@@ -1,6 +1,6 @@
 from maya import cmds
 from rig import Node
-from rig.maya.nodetypes import Mesh, ObjectSet, PyNode, ShadingEngine
+from rig.nodetypes import Mesh, ObjectSet, PyNode, ShadingEngine
 from rig._tests._base import MayaTestCase
 
 

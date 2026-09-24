@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.maya.nodetypes import PyNode
+from rig.nodetypes import PyNode
 from rig._tests._base import MayaTestCase
 
 TEST_TYPES   = ["doubleLinear", "message", "matrix"]

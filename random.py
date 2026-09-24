@@ -19,8 +19,7 @@ the stdlib ``random`` is unaffected -- there is no actual conflict.
 
 WARNING: Do NOT add ``rig/`` itself to ``sys.path`` -- put its *parent*
 there. Adding ``rig/`` would let a bare ``import random`` from anywhere
-resolve to this module instead of stdlib (and ``import maya`` resolve to
-:mod:`rig.maya` instead of Autodesk's).
+resolve to this module instead of stdlib.
 
 WARNING -- Maya cycle warning
 ============================

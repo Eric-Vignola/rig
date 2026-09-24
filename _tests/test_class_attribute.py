@@ -2,7 +2,7 @@ import logging
 
 import maya.cmds as cmds
 from maya.api import OpenMaya
-from rig.maya.nodetypes import PyNode
+from rig.nodetypes import PyNode
 from rig._tests._base import MayaTestCase
 
 LOGGER = logging.getLogger(__name__)
@@ -604,7 +604,7 @@ class TestAttributeGetGeometry(MayaTestCase):
     def test_geometry_routing_tracers_contains_choice(self):
         """The public dispatch table must register the choice tracer so users
         can extend it for their own routing nodes."""
-        from rig.maya.nodetypes._base import GEOMETRY_ROUTING_TRACERS
+        from rig.nodetypes._base import GEOMETRY_ROUTING_TRACERS
 
         self.assertIn("choice", GEOMETRY_ROUTING_TRACERS)
         self.assertTrue(callable(GEOMETRY_ROUTING_TRACERS["choice"]))
@@ -716,7 +716,7 @@ class TestAttributeGetGeometry(MayaTestCase):
 
     def test_polymorphic_output_node_types_contains_choice(self):
         """The public set of polymorphic-output types must include `choice`."""
-        from rig.maya.nodetypes._base import POLYMORPHIC_OUTPUT_NODE_TYPES
+        from rig.nodetypes._base import POLYMORPHIC_OUTPUT_NODE_TYPES
 
         self.assertIn("choice", POLYMORPHIC_OUTPUT_NODE_TYPES)
 

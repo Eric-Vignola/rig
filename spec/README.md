@@ -46,7 +46,7 @@ happened until each spec reached `<<`.
 |---|---|
 | Copy-paste an example of every spec class, kwarg and modifier | [`CHEATSHEET.md`](CHEATSHEET.md) — runnable top to bottom |
 | The operator table, the conventions, the rest of the DSL | [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) |
-| The typed node layer a spec lands on (`Attribute`, `DGNode`) | [`../maya/README.md`](../maya/README.md) |
+| The typed node layer a spec lands on (`Attribute`, `DGNode`) | [`../nodetypes/README.md`](../nodetypes/README.md) |
 
 ---
 
@@ -87,12 +87,12 @@ alike. The capitalised name is always the attribute spec.
 | Name | Is | Not to be confused with |
 |---|---|---|
 | `rig.Color` | an RGB `double3` attribute spec (children `R`, `G`, `B`) | a colour value, or a vertex colour set |
-| `rig.Mesh` | a `mesh` data attribute spec | `rig.maya.nodetypes.Mesh`, the typed shape node |
+| `rig.Mesh` | a `mesh` data attribute spec | `rig.nodetypes.Mesh`, the typed shape node |
 | `rig.Matrix` | a `matrix` attribute spec | `rig.matrix`, the matrix function library |
 | `rig.Vector`, `rig.Euler`, `rig.Quat` | compound attribute specs | `rig.vector`, `rig.euler`, `rig.quaternion`, the function libraries |
 
 ```python
-from rig.maya.nodetypes import Mesh as MeshNode
+from rig.nodetypes import Mesh as MeshNode
 print(rig.Mesh is MeshNode, rig.Matrix is rig.matrix)   # False False
 ```
 

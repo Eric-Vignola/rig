@@ -13,12 +13,12 @@ from typing import Generator, List
 import numpy as np
 from maya import cmds, mel
 from maya.api import OpenMaya
-from rig.maya.nodetypes._base import Attribute
-from rig.maya.nodetypes.dag_node import DAGNode, PyNode
-from rig.maya.nodetypes.geometry import Geometry
-from rig.maya.nodetypes.object_set import ObjectSet
-from rig.maya.nodetypes.shading_engine import ShadingEngine
-from rig.maya.plugins import load_plugin
+from rig.nodetypes._base import Attribute
+from rig.nodetypes.dag_node import DAGNode, PyNode
+from rig.nodetypes.geometry import Geometry
+from rig.nodetypes.object_set import ObjectSet
+from rig.nodetypes.shading_engine import ShadingEngine
+from rig.nodetypes.plugins import load_plugin
 from scipy.spatial import cKDTree
 
 
@@ -420,7 +420,7 @@ class Mesh(Geometry):
         from cgmath.geometry import SkinData
 
         # avoid circular import
-        from rig.maya.nodetypes import SkinCluster
+        from rig.nodetypes import SkinCluster
 
         # reuse an existing skincluster, or create one directly from the data
         skin = self.get_deformers(node_type="skinCluster")

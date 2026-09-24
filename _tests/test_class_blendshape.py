@@ -1,6 +1,6 @@
 import numpy as np
 from maya import cmds
-from rig.maya.nodetypes import BlendShape, PyNode
+from rig.nodetypes import BlendShape, PyNode
 from rig._tests._base import MayaTestCase
 
 

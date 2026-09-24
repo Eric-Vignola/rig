@@ -6,7 +6,7 @@ Memoization and vectorization decorators for the rig DSL.
 scalar argument.
 scalar argument. The cache is auto-invalidated when any cached return value's
 underlying Maya nodes have been deleted (via API 1.0 ``MObjectHandle.isAlive``,
-which is the same staleness pattern used in ``rig.maya.nodetypes.dg_node``).
+which is the same staleness pattern used in ``rig.nodetypes.dg_node``).
 
 ``@vectorize`` broadcasts a function call across :class:`PlugList`
 arguments using **NumPy-style strict broadcasting**: every list / list-like
@@ -26,9 +26,9 @@ from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # API 1.0 used because API 2.0 MObjects can crash Maya after a new-scene
-# load (see rig.maya.nodetypes.dg_node._cache_api1_objects).
+# load (see rig.nodetypes.dg_node._cache_api1_objects).
 from maya import cmds, OpenMaya as OpenMaya1
-from rig.maya.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
 from rig._internal.list import PlugList

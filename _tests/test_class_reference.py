@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 
 from maya import cmds
-from rig.maya.nodetypes import PyNode, Reference
+from rig.nodetypes import PyNode, Reference
 from rig._tests._base import MayaTestCase
 
 

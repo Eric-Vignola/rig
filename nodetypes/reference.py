@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from maya import cmds
-from rig.maya.nodetypes.dg_node import DGNode, PyNode
+from rig.nodetypes.dg_node import DGNode, PyNode
 
 
 class Reference(DGNode):

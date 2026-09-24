@@ -188,8 +188,8 @@ class TestNodeRshift(MayaTestCase):
     def test_rshift_none_returns_dgnode(self):
         # `Node >> None` returns the underlying typed DGNode instance
         # (e.g. Transform), kicking the user out of the rig DSL into
-        # the rig.maya.nodetypes typed-node world.
-        from rig.maya.nodetypes.dg_node import DGNode
+        # the rig.nodetypes typed-node world.
+        from rig.nodetypes.dg_node import DGNode
 
         node   = Node.create("transform", name="cube1")
         result = node >> None
@@ -349,7 +349,7 @@ class TestNodeComponentAliasResolution(MayaTestCase):
         # plug is returned unchanged (not raised).
         from unittest import mock
 
-        from rig.maya.nodetypes import dg_node as dg_node_mod
+        from rig.nodetypes import dg_node as dg_node_mod
 
         cube  = cmds.polyCube(name="cube_canon_fallback")[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]

@@ -3,7 +3,7 @@ Base geometry node class
 
 Usage::
 
-    from rig.maya.nodetypes import PyNode
+    from rig.nodetypes import PyNode
 
     mesh = PyNode("pSphereShape1")
     mesh.injection_node                          # the node holding editable tags
@@ -23,8 +23,8 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig.maya.nodetypes._base import Attribute, PyNode
-from rig.maya.nodetypes.dag_node import DAGNode
+from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes.dag_node import DAGNode
 
 if TYPE_CHECKING:
     from cgmath.geometry import GeomSubsetData

@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 from maya import cmds
 from rig import Node, Plug, PlugList
-from rig.maya.nodetypes.dg_node import DGNode
+from rig.nodetypes.dg_node import DGNode
 from rig.spec import Float, lock
 from rig._tests._base import MayaTestCase
 

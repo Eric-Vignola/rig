@@ -15,7 +15,7 @@ The spec returns the new (or modified) ``Plug`` so chaining works:
 ``... << 5 << lock`` first sets the value, then locks.
 
 Ported from Eric Vignola's BSD-3 ``rig.attributes._Attribute``, slimmed to
-use ``rig.maya``'s ``Attribute.data_type`` instead of regex-parsing
+use ``rig.nodetypes.Attribute.data_type`` instead of regex-parsing
 ``getAddAttrCmd()`` output.
 """
 
@@ -332,7 +332,7 @@ def _clone_attribute(
     Optionally connect ``src_plug`` into the new attribute.
 
     Returns the new :class:`Plug`. Slimmed from Eric's 160-line version by
-    leaning on ``rig.maya``'s ``Attribute.data_type`` / ``attribute_type`` /
+    leaning on ``rig.nodetypes.Attribute``'s ``data_type`` / ``attribute_type`` /
     ``is_multi`` / ``num_children`` properties.
     """
     from rig._internal.node import Node

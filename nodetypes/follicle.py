@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 from maya import cmds
-from rig.maya.nodetypes.dag_node import DAGNode
-from rig.maya.nodetypes.transform import Transform
+from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.transform import Transform
 
 
 class Follicle(DAGNode):

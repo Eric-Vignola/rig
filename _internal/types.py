@@ -17,7 +17,7 @@ import numbers
 from typing import Any
 
 from maya.api import OpenMaya
-from rig.maya.nodetypes._base import _trace_choice_source, Attribute
+from rig.nodetypes._base import _trace_choice_source, Attribute
 from rig._internal.node import Node
 from rig._internal.plug import Plug
 from rig.spec._base import _AttrSpec
@@ -345,7 +345,7 @@ def _selected_choice_source(obj: Any) -> Attribute | None:
 
     An ``obj`` that is not an attribute, not a ``choice.output``, or whose
     selected input is unconnected yields ``None``. Reuses
-    :func:`rig.maya.nodetypes._base._trace_choice_source`, which reads the ``selector``
+    :func:`rig.nodetypes._base._trace_choice_source`, which reads the ``selector``
     statically at build time.
     """
     if not _is_attribute(obj):

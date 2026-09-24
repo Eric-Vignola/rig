@@ -2,8 +2,8 @@ import unittest
 
 import numpy as np
 from maya import cmds
-from rig.maya.nodetypes import PyNode
-from rig.maya.nodetypes.deformer import tag_references
+from rig.nodetypes import PyNode
+from rig.nodetypes.deformer import tag_references
 from rig._tests._base import initialize_standalone, MayaTestCase
 
 # start standalone so that cmds can be imported

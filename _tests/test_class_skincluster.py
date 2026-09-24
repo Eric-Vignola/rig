@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.maya.nodetypes import Joint, PyNode, SkinCluster
+from rig.nodetypes import Joint, PyNode, SkinCluster
 from rig._tests._base import MayaTestCase
 
 

@@ -97,7 +97,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.maya.nodetypes.shading_engine import ShadingEngine
+from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal.list import PlugList
 from rig._internal.members import (
     _check_attrs,

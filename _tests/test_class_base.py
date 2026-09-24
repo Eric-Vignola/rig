@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.maya.nodetypes import PyNode, Transform
+from rig.nodetypes import PyNode, Transform
 from rig._tests._base import MayaTestCase
 
 

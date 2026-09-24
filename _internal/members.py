@@ -63,8 +63,8 @@ from typing import Any, Iterable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.maya.nodetypes.dag_node import DAGNode
-from rig.maya.nodetypes.geometry import iter_component_tokens
+from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.geometry import iter_component_tokens
 from rig._internal.node import Node
 from rig._internal.plug import ComponentPlug, Plug
 from rig._internal.undo import _undo_chunk

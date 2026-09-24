@@ -27,7 +27,7 @@ import numbers
 from typing import Any, Sequence
 
 from maya import cmds
-from rig.maya.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute
 from rig._internal.container import container, ContainerOptions
 from rig._internal.list import PlugList
 from rig._internal.math_nodes import (

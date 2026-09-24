@@ -1372,7 +1372,7 @@ class TestPlugDataTypeTypedOutput(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_choice_output_data_type_resolves(self):
-        from rig.maya.nodetypes import Attribute
+        from rig.nodetypes import Attribute
         from rig import functions as f
 
         a = Node.create("transform", name="a")
@@ -1563,7 +1563,7 @@ class TestInjectSetPathCoverage(MayaTestCase):
         # ``_is_compound(dst_attr)`` broadcast branch inside ``_set_or_connect``
         # (the ``<<`` operator normally pre-fans-out, so this branch is only
         # reached on a direct call).
-        from rig.maya.nodetypes import Attribute
+        from rig.nodetypes import Attribute
         from rig._internal import plug as plugmod
 
         n = Node.create("transform", name="n")
@@ -1604,7 +1604,7 @@ class TestInjectSetPathCoverage(MayaTestCase):
             plugmod._set_or_connect("hello", "bogus_node.nope")
 
     def test_set_or_connect_matrix_sequence_into_attr(self):
-        from rig.maya.nodetypes import Attribute
+        from rig.nodetypes import Attribute
         from rig._internal import plug as plugmod
 
         m = Node.create("transform", name="m")

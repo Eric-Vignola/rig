@@ -37,7 +37,7 @@ import numbers
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
-from rig.maya.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
 

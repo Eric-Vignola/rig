@@ -1,7 +1,7 @@
-# `rig.maya` — cheatsheet
+# `rig.nodetypes` — cheatsheet
 
 Copy-paste recipes for the typed node layer under the `rig` DSL: every
-class in `rig.maya.nodetypes`, the `Attribute` wrapper, the name helpers,
+class in `rig.nodetypes`, the `Attribute` wrapper, the name helpers,
 `Axis` and the bundled undo plug-in. The blocks run top to
 bottom as one script and share a namespace — the **Setup** block comes first,
 and each section that wants a clean scene starts with `cmds.file(new=True, force=True)`.
@@ -55,25 +55,25 @@ import numpy as np
 
 from rig import Node
 from rig.bridges import commands as rc
-from rig.maya.nodetypes import (
+from rig.nodetypes import (
     Attribute, Axis, BlendShape, Choice, DAGNode, DGNode, DisplayLayer, Follicle,
     Geometry, Joint, Mesh, NurbsCurve, NurbsSurface, ObjectSet, PyNode, Reference,
     ShadingEngine, SkinCluster, Transform,
 )
-from rig.maya.nodetypes.deformer import Deformer, tag_references
-from rig.maya.nodetypes.dg_node import get_clean_name, get_short_name
-from rig.maya.nodetypes.geometry import iter_component_ranges, iter_component_tokens
-from rig.maya.nodetypes.joint import replace_suffix
-from rig.maya.nodetypes.mesh import ColorSet
-from rig.maya.plugins import bundled_plugin_path, load_plugin
+from rig.nodetypes.deformer import Deformer, tag_references
+from rig.nodetypes.dg_node import get_clean_name, get_short_name
+from rig.nodetypes.geometry import iter_component_ranges, iter_component_tokens
+from rig.nodetypes.joint import replace_suffix
+from rig.nodetypes.mesh import ColorSet
+from rig.nodetypes.plugins import bundled_plugin_path, load_plugin
 
 print(cmds.about(version=True))
 ```
 
-`rig.maya` itself re-exports nothing: import the submodule you need.
-`Deformer`, `tag_references` and `ColorSet` come from their own modules
-(`rig.maya.nodetypes.deformer`, `rig.maya.nodetypes.mesh`); everything else
-above comes from `rig.maya.nodetypes`.
+`rig.nodetypes` re-exports the classes, `Attribute` and `Axis`.
+`Deformer`, `tag_references`, `ColorSet` and the name helpers come from
+their own modules (`deformer`, `mesh`, `dg_node`, `geometry`, `joint`),
+and `load_plugin` from `rig.nodetypes.plugins`.
 
 ---
 
@@ -1143,7 +1143,7 @@ print(Axis.X, Axis.Z.value)  # Axis.X 2
 ## 21. `plugins` — `load_plugin` and undo
 
 `load_plugin` is a context manager: it loads by name from
-`MAYA_PLUG_IN_PATH`, and falls back to the copy bundled in `rig/maya/plugins`.
+`MAYA_PLUG_IN_PATH`, and falls back to the copy bundled in `rig/nodetypes/plugins`.
 
 ```python
 print(bundled_plugin_path("undoable_api_command").endswith("undoable_api_command.py"), bundled_plugin_path("nope"))   # True None

@@ -96,7 +96,7 @@ Three collisions to keep in mind — the capitalised name is always the
 attribute spec:
 
 ```python
-from rig.maya.nodetypes import Mesh as MeshNode
+from rig.nodetypes import Mesh as MeshNode
 
 print(rig.Mesh is MeshNode)           # False -- rig.Mesh is the `mesh` data attribute; MeshNode is the shape
 print(rig.Matrix, rig.matrix)         # <class 'rig.spec.typed.Matrix'> <module 'rig.matrix' ...>
@@ -716,4 +716,4 @@ except AttributeError as e:
 |---|---|
 | [`README.md`](README.md) | the concepts, the conventions, the verified behaviour |
 | [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) | the whole DSL: operators, `PlugList` broadcasting, containers, membership |
-| [`../maya/README.md`](../maya/README.md) | `Attribute` and `DGNode`, the layer every spec lands on |
+| [`../nodetypes/README.md`](../nodetypes/README.md) | `Attribute` and `DGNode`, the layer every spec lands on |

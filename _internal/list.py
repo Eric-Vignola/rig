@@ -35,7 +35,7 @@ import numbers
 from typing import Any, Iterable, Iterator, Optional, Union
 
 from maya import cmds
-from rig.maya.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.node import Node

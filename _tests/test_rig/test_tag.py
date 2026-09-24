@@ -10,7 +10,7 @@ from unittest import mock
 import numpy as np
 from maya import cmds
 from rig import Components, Node, Plug, PlugList, Tag
-from rig.maya.nodetypes import PyNode
+from rig.nodetypes import PyNode
 from rig.spec import String
 from rig._tests._base import MayaTestCase
 

@@ -1,4 +1,4 @@
-# `rig.maya` — the typed node layer under the DSL
+# `rig.nodetypes` — the typed node layer under the DSL
 
 The object model the `rig` DSL stands on. Every DSL `Node` wraps one typed
 node from here: a `Transform`, a `Mesh`, a `SkinCluster`, a `ShadingEngine`,
@@ -25,7 +25,7 @@ print(repr(cube), repr(cube >> None), repr(mesh))  # Node("cube") Transform("cub
 print(mesh.get_materials(), mesh.num_vertices)     # [DGNode("standardSurface1")] 8
 ```
 
-You rarely import from `rig.maya` at all: the DSL reaches through. You do
+You rarely import from `rig.nodetypes` at all: the DSL reaches through. You do
 when you want a class as a constructor (`Mesh("cubeShape")`,
 `SkinCluster.create(...)`), a classmethod (`ShadingEngine.for_material`,
 `DisplayLayer.for_node`), or a subclass of your own.
@@ -44,54 +44,46 @@ when you want a class as a constructor (`Mesh("cubeShape")`,
 ## What's inside
 
 ```
-rig/maya/
-├── __init__.py            a docstring; re-exports nothing (import the submodule)
-├── plugins/
-│   ├── __init__.py        load_plugin() context manager, bundled_plugin_path()
-│   └── undoable_api_command.py   the runUndoableAPICommand plug-in (undo for API edits)
-└── nodetypes/
-    ├── __init__.py        re-exports the classes below, Attribute and Axis (not Deformer, tag_references, ColorSet)
-    ├── _base.py           PyNode factory, NodeMeta, the custom-type stamp;
-    │                      Attribute -- the MPlug wrapper: get / set / connect, slicing, components
-    ├── dg_node.py         DGNode                 entity          get_short_name(), get_clean_name()
-    ├── dag_node.py        DAGNode                dagNode
-    ├── transform.py       Transform              transform
-    ├── joint.py           Joint                  joint           replace_suffix()
-    ├── geometry.py        Geometry               geometryShape   (component tags); iter_component_ranges() / _tokens()
-    ├── mesh.py            Mesh, ColorSet, Axis   mesh
-    ├── nurbs.py           NurbsCurve, NurbsSurface
-    ├── deformer.py        Deformer, tag_references()   geometryFilter
-    ├── skincluster.py     SkinCluster
-    ├── blendshape.py      BlendShape
-    ├── object_set.py      ObjectSet              objectSet
-    ├── shading_engine.py  ShadingEngine          shadingEngine
-    ├── display_layer.py   DisplayLayer           displayLayer
-    ├── reference.py       Reference              reference
-    ├── choice.py          Choice                 choice
-    └── follicle.py        Follicle               follicle
+rig/nodetypes/
+├── __init__.py        re-exports the classes below, Attribute and Axis (not Deformer, tag_references, ColorSet)
+├── _base.py           PyNode factory, NodeMeta, the custom-type stamp;
+│                      Attribute -- the MPlug wrapper: get / set / connect, slicing, components
+├── dg_node.py         DGNode                 entity          get_short_name(), get_clean_name()
+├── dag_node.py        DAGNode                dagNode
+├── transform.py       Transform              transform
+├── joint.py           Joint                  joint           replace_suffix()
+├── geometry.py        Geometry               geometryShape   (component tags); iter_component_ranges() / _tokens()
+├── mesh.py            Mesh, ColorSet, Axis   mesh
+├── nurbs.py           NurbsCurve, NurbsSurface
+├── deformer.py        Deformer, tag_references()   geometryFilter
+├── skincluster.py     SkinCluster
+├── blendshape.py      BlendShape
+├── object_set.py      ObjectSet              objectSet
+├── shading_engine.py  ShadingEngine          shadingEngine
+├── display_layer.py   DisplayLayer           displayLayer
+├── reference.py       Reference              reference
+├── choice.py          Choice                 choice
+├── follicle.py        Follicle               follicle
+└── plugins/
+    ├── __init__.py    load_plugin() context manager, bundled_plugin_path()
+    └── undoable_api_command.py   the runUndoableAPICommand plug-in (undo for API edits)
 ```
 
 The public surface:
 
 ```python
-from rig.maya.nodetypes import (
+from rig.nodetypes import (
     PyNode, Attribute, DGNode, DAGNode, Transform, Joint, Geometry, Mesh, NurbsCurve,
     NurbsSurface, SkinCluster, BlendShape, ObjectSet, ShadingEngine, DisplayLayer,
     Reference, Choice, Follicle, Axis,
 )
-from rig.maya.nodetypes.deformer import Deformer, tag_references
-from rig.maya.nodetypes.dg_node import get_clean_name, get_short_name
-from rig.maya.nodetypes.geometry import iter_component_ranges, iter_component_tokens
-from rig.maya.nodetypes.joint import replace_suffix
-from rig.maya.nodetypes.mesh import ColorSet
-from rig.maya.plugins import load_plugin
+from rig.nodetypes.deformer import Deformer, tag_references
+from rig.nodetypes.dg_node import get_clean_name, get_short_name
+from rig.nodetypes.geometry import iter_component_ranges, iter_component_tokens
+from rig.nodetypes.joint import replace_suffix
+from rig.nodetypes.mesh import ColorSet
+from rig.nodetypes.plugins import load_plugin
 ```
-
-`rig.maya` stays inert on purpose: `nodetypes` imports `plugins` at module
-scope, and an eager `__init__` would cycle. One more reason:
-`import maya.cmds` inside this package still means Autodesk's `maya`, but
-only while the *parent* of `rig/` is on `sys.path`. Never put `rig/` itself
-on the path, or this `maya` shadows the real one.
 
 ---
 
@@ -301,7 +293,7 @@ on the way back and creates parents first.
 not undoable by themselves. The bundled `undoable_api_command` plug-in
 registers `cmds.runUndoableAPICommand(obj)`: give it any object with
 `doIt` / `undoIt` / `redoIt` and it runs in one undo chunk. `load_plugin`
-finds the plug-in on `MAYA_PLUG_IN_PATH` first and in `rig/maya/plugins`
+finds the plug-in on `MAYA_PLUG_IN_PATH` first and in `rig/nodetypes/plugins`
 second, so nothing needs configuring.
 
 ---

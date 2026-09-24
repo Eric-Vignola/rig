@@ -219,7 +219,7 @@ class TestPlugListRshift(MayaTestCase):
         self.assertEqual(values.shape, (2, 4, 4))
 
     def test_rshift_none_node_list_returns_dgnodes(self):
-        from rig.maya.nodetypes.dg_node import DGNode
+        from rig.nodetypes.dg_node import DGNode
 
         cmds.createNode("transform", name="nodeA")
         cmds.createNode("transform", name="nodeB")

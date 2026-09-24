@@ -10,7 +10,7 @@ from unittest import mock
 from maya import cmds
 from maya.api import OpenMaya
 from rig import Components, container, Layer, Node, PlugList, Tag
-from rig.maya.nodetypes import DisplayLayer
+from rig.nodetypes import DisplayLayer
 from rig._tests._base import MayaTestCase
 
 
