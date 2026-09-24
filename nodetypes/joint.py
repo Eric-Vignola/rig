@@ -8,7 +8,7 @@ from typing import Any, Iterator
 
 import numpy as np
 from maya import cmds
-from rig.nodetypes.dg_node import DGNode, get_short_name
+from rig.nodetypes.dg_node import DGNode, get_clean_name, get_short_name
 from rig.nodetypes.transform import Transform
 
 
@@ -34,6 +34,10 @@ def _world_matrix(node: str) -> np.ndarray:
 def replace_suffix(name: Any, suffix: str) -> str:
     """Replaces a node name's suffix.
 
+    Only the node's own name, after the last ``:``, is searched for the ``_``
+    that starts the suffix, and the namespace is kept: ``VLR_RIG:SK:root``
+    with ``test`` gives ``VLR_RIG:SK:root_test``.
+
     Args:
         suffix: The suffix to use. Can NOT contain `_`.
 
@@ -42,12 +46,19 @@ def replace_suffix(name: Any, suffix: str) -> str:
     """
     if suffix.find("_") != -1:
         raise ValueError("Suffix can NOT contain '_'")
-    name = get_short_name(name)
-    i    = name.rfind("_")
+    namespace, _, name = get_short_name(name).rpartition(":")
+    i = name.rfind("_")
     # if no suffix, append it
-    if i == -1:
-        return f"{name}_{suffix}"
-    return name[: i + 1] + suffix
+    name = f"{name}_{suffix}" if i == -1 else name[: i + 1] + suffix
+    return f"{namespace}:{name}" if namespace else name
+
+
+def _add_prefix(name: Any, prefix: str) -> str:
+    """Puts ``prefix`` and a ``_`` in front of a node's own name, after its
+    namespace: ``A:B:root`` with ``L`` gives ``A:B:L_root``."""
+    namespace, _, name = get_short_name(name).rpartition(":")
+    name = f"{prefix}_{name}"
+    return f"{namespace}:{name}" if namespace else name
 
 
 class Joint(Transform):
@@ -132,23 +143,30 @@ class Joint(Transform):
         """Duplicates this joint and all its child joints. All non-joint children will
         be removed from the duplicated hierarchy.
 
+        The copy is a new skeleton: its joints are named without the original's
+        namespace, so they land in Maya's current namespace and a referenced
+        rig's namespace is left alone.
+
         Args:
-            name: Name for the duplicated joint.
-                If None, use this joint's name.
+            name: Name for the duplicated joint, used as given.
+                If None, use this joint's name without its namespace.
             parent: Parent of the duplicated joint.
                 If None, parent to world.
-            include_list: If not None, only include joints in this list.
+            include_list: If not None, only include joints in this list,
+                matched on their names without namespace.
             suffix: A new suffix to use by the duplicated joints.
+            prefix: A prefix put in front of each duplicated joint's own name,
+                joined with `_`.
 
         Returns:
             The duplicated joint.
         """
-        name = self.short_name if not name else name
+        name = self.clean_name if not name else name
         if suffix:
             name = replace_suffix(name, suffix)
 
         if prefix:
-            name = f"{prefix}_{name}"
+            name = _add_prefix(name, prefix)
 
         # duplicate this joint, set parent and rename
         dup = self.duplicate(
@@ -160,29 +178,27 @@ class Joint(Transform):
         # create a set of joint names to use as a filter
         include_set = None
         if include_list:
-            include_set = {
-                x.short_name if isinstance(x, Transform) else str(x)
-                for x in include_list
-            }
+            include_set = {get_clean_name(x) for x in include_list}
         for child in dup.get_children(allDescendents=True, type="transform"):
-            if suffix:
-                child.rename(replace_suffix(child, suffix))
-
-            if prefix:
-                child.rename(f"{prefix}_{child.short_name}")
-
-            # delete non-joint xforms and unwanted joints
+            # delete non-joint xforms and unwanted joints, matched on the name
+            # the copy was made with, before any suffix or prefix
             if child.node_type != "joint" or (
-                include_set and child.short_name not in include_set
+                include_set and child.clean_name not in include_set
             ):
                 p = child.get_parent()
                 for each in child.get_children(type="transform"):
                     each.set_parent(p)
                 child.delete()
+                continue
+
+            if suffix:
+                child.rename(replace_suffix(child, suffix))
+
+            if prefix:
+                child.rename(_add_prefix(child, prefix))
 
             # unlock joint xform attrs
-            else:
-                child.set_xfrom_attrs_locked(False)
+            child.set_xfrom_attrs_locked(False)
 
         # clean up skeleton
         dup.freeze(translate=False, rotate=clean_rotations, scale=clean_scales)
@@ -195,7 +211,9 @@ class Joint(Transform):
             suffix: The suffix to use. Can NOT contain `_`.
         """
         if not suffix.isalnum():
-            raise RuntimeError("Suffix '{suffix}' containt non-alphanumeric character")
+            raise RuntimeError(
+                f"Suffix '{suffix}' contains a non-alphanumeric character"
+            )
         self.rename(replace_suffix(self, suffix))
 
         for c in self.get_children(allDescendents=True):

@@ -3,6 +3,7 @@ import unittest
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes import PyNode, Transform
+from rig.nodetypes.joint import replace_suffix
 from rig._tests._base import MayaTestCase
 
 
@@ -108,6 +109,74 @@ class TestXformNodes(MayaTestCase):
 
         with self.assertRaises(RuntimeError):
             dup_root.rename_skeleton("a %_")
+
+    def _namespaced_chain(self):
+        """VLR_RIG:SK:root -> spine_01 -> head, in nested namespaces."""
+        cmds.namespace(add="VLR_RIG")
+        cmds.namespace(add="SK", parent="VLR_RIG")
+        root  = PyNode.create("joint", name="VLR_RIG:SK:root")
+        spine = PyNode.create("joint", name="VLR_RIG:SK:spine_01", parent=root)
+        head  = PyNode.create("joint", name="VLR_RIG:SK:head", parent=spine)
+        return root, spine, head
+
+    @staticmethod
+    def _joint_names(top):
+        return [x.short_name for x in top.iter_joints(yield_self=True)]
+
+    def test_replace_suffix_keeps_namespace(self):
+        self.assertEqual(replace_suffix("VLR_RIG:SK:root", "test"), "VLR_RIG:SK:root_test")
+        self.assertEqual(replace_suffix("VLR_RIG:SK:spine_01", "test"), "VLR_RIG:SK:spine_test")
+        self.assertEqual(replace_suffix("|grp|ns:arm_L_jnt", "ctl"), "ns:arm_L_ctl")
+        self.assertEqual(replace_suffix("arm_L_jnt", "ctl"), "arm_L_ctl")
+        self.assertEqual(replace_suffix("arm", "ctl"), "arm_ctl")
+
+    def test_rename_skeleton_keeps_namespace(self):
+        root, _, _ = self._namespaced_chain()
+        root.rename_skeleton("test")
+        self.assertEqual(
+            self._joint_names(root),
+            ["VLR_RIG:SK:root_test", "VLR_RIG:SK:spine_test", "VLR_RIG:SK:head_test"],
+        )
+
+    def test_duplicate_skeleton_namespace(self):
+        root, _, _ = self._namespaced_chain()
+        originals = self._joint_names(root)
+
+        dup = root.duplicate_skeleton()
+        self.assertEqual(self._joint_names(dup), ["root", "spine_01", "head"])
+        self.assertEqual(self._joint_names(root), originals)
+
+        dup = root.duplicate_skeleton(name="VLR_RIG:copy")
+        self.assertEqual(dup.short_name, "VLR_RIG:copy")
+
+    def test_duplicate_skeleton_namespace_prefix(self):
+        root, _, _ = self._namespaced_chain()
+        dup = root.duplicate_skeleton(prefix="L")
+        self.assertEqual(self._joint_names(dup), ["L_root", "L_spine_01", "L_head"])
+
+    def test_duplicate_skeleton_namespace_suffix(self):
+        root, _, _ = self._namespaced_chain()
+        dup = root.duplicate_skeleton(suffix="DUP")
+        self.assertEqual(self._joint_names(dup), ["root_DUP", "spine_DUP", "head_DUP"])
+
+    def test_duplicate_skeleton_namespace_include_list(self):
+        root, spine, _ = self._namespaced_chain()
+        dup = root.duplicate_skeleton(include_list=[spine])
+        self.assertEqual(self._joint_names(dup), ["root", "spine_01"])
+
+        dup = root.duplicate_skeleton(include_list=["VLR_RIG:SK:spine_01"], prefix="L")
+        self.assertEqual(self._joint_names(dup), ["L_root", "L_spine_01"])
+
+    def test_duplicate_skeleton_include_list_with_prefix_or_suffix(self):
+        root  = PyNode.create("joint", name="root_jnt")
+        spine = PyNode.create("joint", name="spine_jnt", parent=root)
+        PyNode.create("joint", name="head_jnt", parent=spine)
+
+        dup = root.duplicate_skeleton(include_list=[spine], prefix="L")
+        self.assertEqual(self._joint_names(dup), ["L_root_jnt", "L_spine_jnt"])
+
+        dup = root.duplicate_skeleton(include_list=[spine], suffix="DUP")
+        self.assertEqual(self._joint_names(dup), ["root_DUP", "spine_DUP"])
 
     def test_duplicate_geom(self):
         xform = PyNode(cmds.polyCube(ch=False)[0])
