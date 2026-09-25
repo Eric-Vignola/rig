@@ -524,25 +524,32 @@ class Attribute(str):
         if isinstance(name_or_mplug, str):
             sel = OpenMaya.MSelectionList()
             sel.add(name_or_mplug)
-            self._mplug = sel.getPlug(0)
+            mplug = sel.getPlug(0)
         elif isinstance(name_or_mplug, OpenMaya.MPlug):
-            self._mplug = name_or_mplug
+            mplug = name_or_mplug
         else:
             raise ValueError(f"{name_or_mplug} is not a string or MPlug.")
-        self._mobject          = None
-        self._fn_set           = None
-        self._node             = None
-        self.__child_name_dict = {}  # cache queried child attributes
-        self.__child_id_dict   = {}  # cache queried child attributes
-        self.__component_type = (
-            None  # cache componet type str TODO: make a proper Component class
+        # One `__dict__` store instead of one `Plug.__setattr__` call per field.
+        # A subclass property named like one of these keys would be bypassed.
+        self.__dict__.update(
+            {
+                "_mplug":                      mplug,
+                "_mobject":                    None,
+                "_fn_set":                     None,
+                "_node":                       None,
+                # caches of queried child attributes
+                "_Attribute__child_name_dict": {},
+                "_Attribute__child_id_dict":   {},
+                # cache componet type str TODO: make a proper Component class
+                "_Attribute__component_type":  None,
+                # cache for `_is_geometry_typed_attr`; None = not yet computed
+                "_geometry_attr_cache":        None,
+                # cache for `_owner_is_polymorphic`; None = not yet computed
+                "_polymorphic_owner_cache":    None,
+                # cache for `_static_type_key`; _STATIC_KEY_UNSET = not yet computed
+                "_static_key_cache":           _STATIC_KEY_UNSET,
+            }
         )
-        # cache for `_is_geometry_typed_attr`; None = not yet computed
-        self._geometry_attr_cache: bool | None = None
-        # cache for `_owner_is_polymorphic`; None = not yet computed
-        self._polymorphic_owner_cache: bool | None = None
-        # cache for `_static_type_key`; _STATIC_KEY_UNSET = not yet computed
-        self._static_key_cache: Any = _STATIC_KEY_UNSET
 
     # --- dunders
 

@@ -5,7 +5,8 @@ type check builds the same wrapper as the constructor, and the node a plug
 caches when it is first named behaves as before. ``Attribute.set`` passes the
 same ``type`` argument, and raises the same errors, when it skips the type
 query. ``Attribute.data_type`` shares a fixed-kind attr's type across nodes of
-a type, and keeps querying every type that can change."""
+a type, and keeps querying every type that can change. ``Attribute.__init__``
+leaves the same instance state without going through ``Plug.__setattr__``."""
 
 from unittest import mock
 
@@ -22,6 +23,7 @@ from rig.nodetypes._base import (
     is_valid_maya_uid,
     set_custom_type,
 )
+from rig._internal.plug import ComponentPlug
 from rig._tests._base import MayaTestCase
 
 
@@ -678,3 +680,90 @@ class TestStaticDataTypeCache(MayaTestCase):
         finally:
             cmds.unloadPlugin(plugin)
         self.assertEqual(_base._STATIC_DATA_TYPE, {})
+
+
+# The instance state ``Attribute.__init__`` leaves, in the order it is stored.
+_ATTRIBUTE_STATE_KEYS = (
+    "_mplug",
+    "_mobject",
+    "_fn_set",
+    "_node",
+    "_Attribute__child_name_dict",
+    "_Attribute__child_id_dict",
+    "_Attribute__component_type",
+    "_geometry_attr_cache",
+    "_polymorphic_owner_cache",
+    "_static_key_cache",
+)
+_COMPONENT_STATE_KEYS = ("_comp_node", "_comp_alias", "_comp_ndims", "_comp_coords")
+
+
+class TestAttributeInitState(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def _assert_fresh_state(self, attr, mplug):
+        state = vars(attr)
+        self.assertEqual(tuple(state), _ATTRIBUTE_STATE_KEYS)
+        self.assertIs(state["_mplug"], mplug)
+        for key in _ATTRIBUTE_STATE_KEYS[1:4] + _ATTRIBUTE_STATE_KEYS[6:9]:
+            self.assertIsNone(state[key])
+        self.assertIs(state["_static_key_cache"], _base._STATIC_KEY_UNSET)
+        self.assertEqual(state["_Attribute__child_name_dict"], {})
+        self.assertEqual(state["_Attribute__child_id_dict"], {})
+        self.assertIsNot(
+            state["_Attribute__child_name_dict"], state["_Attribute__child_id_dict"]
+        )
+
+    def test_attribute_init_state_keys(self):
+        md    = cmds.createNode("multiplyDivide", name="md")
+        mplug = Plug(f"{md}.input1").plug
+        for cls in (_base.Attribute, Plug):
+            with self.subTest(cls=cls.__name__):
+                self._assert_fresh_state(cls(mplug), mplug)
+                named = cls(f"{md}.input1")
+                self._assert_fresh_state(named, vars(named)["_mplug"])
+                self.assertEqual(named.plug, mplug)
+                self.assertEqual(named.full_name, "md.input1")
+                # every instance gets its own child caches
+                self.assertIsNot(
+                    vars(cls(mplug))["_Attribute__child_name_dict"],
+                    vars(cls(mplug))["_Attribute__child_name_dict"],
+                )
+        surface = cmds.sphere(name="nurbsSphere1", constructionHistory=False)[0]
+        handle  = Node(surface).cv
+        element = handle[1, 2]
+        for plug in (handle, element):
+            self.assertIsInstance(plug, ComponentPlug)
+            self.assertEqual(
+                tuple(vars(plug)), _ATTRIBUTE_STATE_KEYS + _COMPONENT_STATE_KEYS
+            )
+        self.assertIsNone(handle._comp_coords)
+        self.assertEqual(element._comp_coords, (1, 2))
+        self.assertEqual(str(element), "nurbsSphere1Shape.cv[1][2]")
+
+    def test_plug_init_makes_no_setattr_calls(self):
+        cmds.createNode("multiplyDivide", name="md")
+        names    = []
+        original = Plug.__setattr__
+
+        def counting(self, name, value):
+            names.append(name)
+            original(self, name, value)
+
+        with mock.patch.object(Plug, "__setattr__", counting):
+            plug = Plug("md.input1X")
+            Plug(plug.plug)
+        self.assertEqual(names, [])
+        # later state writes still go through ``Plug.__setattr__``
+        with mock.patch.object(Plug, "__setattr__", counting):
+            plug.node
+        self.assertIn("_node", names)
+
+    def test_bad_source_error_unchanged(self):
+        for source in (5, None, 1.5):
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError) as ctx:
+                    _base.Attribute(source)
+                self.assertEqual(
+                    str(ctx.exception), f"{source} is not a string or MPlug."
+                )
