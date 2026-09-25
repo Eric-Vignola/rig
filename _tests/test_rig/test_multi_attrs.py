@@ -16,6 +16,8 @@ Covers:
 - End-to-end chain: ``node.multi >> dst << values`` works in one line.
 """
 
+from unittest import mock
+
 from maya import cmds
 from rig import Node, Plug, PlugList
 from rig.spec import Float, Vector
@@ -520,3 +522,53 @@ class TestMatrixMultiAutoAppend(MayaTestCase):
         # populated.
         indices = cmds.getAttr("am.matrixIn", multiIndices=True) or []
         self.assertEqual(sorted(indices), [0, 1])
+
+
+class TestBareMultiRootAttributeType(MayaTestCase):
+    """The bare-multi-root check queries ``attribute_type`` for multi roots
+    only; which dsts take the per-index path, and the cast error a plug on an
+    uncastable node raises, stay as they were."""
+
+    TEST_START_NEW_SCENE = True
+
+    @staticmethod
+    def _attribute_type_queries(query):
+        return [c for c in query.call_args_list if c.kwargs.get("attributeType")]
+
+    def test_multi_root_detection_unchanged_with_lazy_attribute_type(self):
+        a   = Node.create("transform", name="a")
+        b   = Node.create("transform", name="b")
+        mm  = Node.create("multMatrix", name="mm")
+        pma = Node.create("plusMinusAverage", name="pma")
+        md  = Node.create("multiplyDivide", name="md")
+        with mock.patch.object(
+            cmds, "attributeQuery", wraps=cmds.attributeQuery
+        ) as query:
+            md.input1X << 2.0
+            md.input1 << [1, 2, 3]
+            self.assertEqual(self._attribute_type_queries(query), [])
+
+            for src_plug in (a.wm, b.wm):
+                mm.matrixIn << src_plug
+            pma.input1D << [1, 2, 3]
+            self.assertTrue(self._attribute_type_queries(query))
+
+        self.assertEqual(cmds.getAttr("md.input1X"), 1.0)
+        self.assertEqual(cmds.getAttr("md.input1")[0], (1.0, 2.0, 3.0))
+        self.assertEqual(cmds.getAttr("mm.matrixIn", multiIndices=True), [0, 1])
+        self.assertEqual(cmds.getAttr("pma.input1D", multiIndices=True), [0, 1, 2])
+        self.assertEqual(
+            [cmds.getAttr(f"pma.input1D[{i}]") for i in range(3)], [1.0, 2.0, 3.0]
+        )
+
+    def test_uncastable_owner_raises_cast_error_before_setting(self):
+        empty = cmds.createNode("mesh", name="emptyShape")
+        for attr in ("visibility", "instObjGroups"):
+            with self.subTest(attr=attr):
+                with self.assertRaises(ValueError) as ctx:
+                    Plug(f"{empty}.{attr}") << 0
+                self.assertEqual(
+                    str(ctx.exception),
+                    "object is incompatible with MFnMesh constructor",
+                )
+        self.assertTrue(cmds.getAttr(f"{empty}.visibility"))

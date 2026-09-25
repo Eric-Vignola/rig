@@ -149,7 +149,13 @@ class PyNode:
         if not cls_obj:
             raise ValueError(f"Failed casting {obj}")
 
-        inst = cls_obj(obj)
+        # a type already cast from an MObject passes the class's type check
+        # again, so a base-constructor class is built without re-running it
+        inst = None
+        if from_mobject and key in cls._CASTABLE_TYPES:
+            inst = _construct_checked_type(cls_obj, obj)
+        if inst is None:
+            inst = cls_obj(obj)
         if from_mobject:
             cls._CASTABLE_TYPES.add(key)
         return inst
@@ -205,6 +211,68 @@ def _pynode_legacy_tail(cls, obj: str) -> Any:
         return cls_obj(obj)
 
     raise ValueError(f"Failed casting {obj}")
+
+
+# (DGNode.__init__, DAGNode.__init__, their is_type functions, their name
+# properties, DGNode._cache_api1_objects), bound on first use since dg_node
+# imports this module
+_BASE_CONSTRUCTOR_PARTS = None
+
+
+def _construct_checked_type(cls_obj, obj: str) -> Any:
+    """Builds `cls_obj(obj)` without its `is_type` check, or returns None.
+
+    For a class that keeps the DGNode or DAGNode constructor, type check, name
+    property and API 1.0 cache, `is_type` only depends on the node type and the
+    custom type attr, so it passes for every node of a type that was already
+    cast. The constructor's state is set in the constructor's order. Returns
+    None when the class does not qualify or a step raises, and the caller then
+    runs the real constructor, which raises its own errors.
+    """
+    global _BASE_CONSTRUCTOR_PARTS
+    if _BASE_CONSTRUCTOR_PARTS is None:
+        from rig.nodetypes.dag_node import DAGNode
+        from rig.nodetypes.dg_node import DGNode
+
+        _BASE_CONSTRUCTOR_PARTS = (
+            DGNode.__init__,
+            DAGNode.__init__,
+            (
+                DGNode.__dict__["is_type"].__func__,
+                DAGNode.__dict__["is_type"].__func__,
+            ),
+            (DGNode.__dict__["name"], DAGNode.__dict__["name"]),
+            DGNode._cache_api1_objects,
+        )
+    dg_init, dag_init, is_type_funcs, name_props, cache_api1 = _BASE_CONSTRUCTOR_PARTS
+
+    init = cls_obj.__init__
+    if (
+        (init is not dg_init and init is not dag_init)
+        or cls_obj.__new__ is not object.__new__
+        or cls_obj.CUSTOM_NODE_TYPE
+        or getattr(cls_obj.is_type, "__func__", None) not in is_type_funcs
+        or cls_obj.name not in name_props
+        or cls_obj._cache_api1_objects is not cache_api1
+    ):
+        return None
+    try:
+        sel = OpenMaya.MSelectionList()
+        sel.add(str(obj))
+        inst = object.__new__(cls_obj)
+        if init is dag_init:
+            inst._mdagpath = sel.getDagPath(0)
+            inst._mobject  = inst._mdagpath.node()
+            inst._fn_set   = cls_obj.FN_SET(inst._mdagpath)
+            inst._cache_api1_objects(inst._fn_set.partialPathName())
+        else:
+            inst._mobject = sel.getDependNode(0)
+            inst._fn_set  = cls_obj.FN_SET(inst._mobject)
+            inst._cache_api1_objects(inst._fn_set.name())
+        inst._attr_dict = {}
+    except Exception:
+        return None
+    return inst
 
 
 def _mobject_to_str(mobject: OpenMaya.MObject) -> str:

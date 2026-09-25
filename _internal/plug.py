@@ -1665,6 +1665,18 @@ def _do_destroy(
     cmds.deleteAttr(plug_str)
 
 
+def _attribute_type_or_none(dst: Any) -> str | None:
+    """``dst.attribute_type``, or None when the query raises.
+
+    Read as the last test of :func:`_inject_value`'s bare-multi-root check,
+    so the ``cmds.attributeQuery`` runs for multi roots only.
+    """
+    try:
+        return dst.attribute_type
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+
+
 def _inject_value(dst: Any, src: Any) -> None:
     """Inject ``src`` into ``dst`` -- set / connect with compound-aware logic.
 
@@ -1744,16 +1756,26 @@ def _inject_value(dst: Any, src: Any) -> None:
     # so each index gets the scalar broadcast as a vec3). Users who want
     # the old "append one compound value" semantic call ``multi.append(
     # [x, y, z])`` or ``multi[multi.next_index] << [x, y, z]``.
+    #
+    # Outside the query, reading ``attribute_type`` only builds the owning
+    # node (and raises what a failed cast raises), so an Attribute dst builds
+    # its node here and runs ``cmds.attributeQuery`` for a multi root only.
+    lazy_attr_type = isinstance(dst, Attribute)
+    dst_attr_type  = None
     try:
-        dst_attr_type = dst.attribute_type
+        if lazy_attr_type:
+            dst.node
+        else:
+            dst_attr_type = dst.attribute_type
     except (AttributeError, RuntimeError, TypeError):
-        dst_attr_type = None
+        lazy_attr_type = False
     try:
         is_bare_multi_root = (
             dst.is_multi
             and not str(dst).endswith("]")
             and dst_data_type != "matrix"
-            and dst_attr_type != "matrix"
+            and (_attribute_type_or_none(dst) if lazy_attr_type else dst_attr_type)
+            != "matrix"
         )
     except (AttributeError, TypeError):
         is_bare_multi_root = False
