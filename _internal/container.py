@@ -38,7 +38,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import _PLAIN_NODE_NAME, Attribute
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
 
@@ -1108,6 +1108,26 @@ _HOST_CACHE: Dict[str, str] = {}
 _MULTI_REGISTRY: Dict[str, Dict[str, Tuple[str, str]]] = {}
 
 
+def _has_attr_or_alias(node: str, attr: str) -> bool:
+    """``cmds.attributeQuery(attr, node=node, exists=True)``, via the API.
+
+    A plain name that resolves to exactly one node is answered with
+    ``hasAttribute`` (long or short name) plus ``findAlias``, since
+    ``attributeQuery(exists)`` also matches aliases. Any other input takes
+    ``attributeQuery`` itself, so its exceptions are unchanged.
+    """
+    if isinstance(node, str) and _PLAIN_NODE_NAME.match(node):
+        try:
+            sel = OpenMaya.MSelectionList()
+            sel.add(node)
+            if sel.length() == 1:
+                fn = OpenMaya.MFnDependencyNode(sel.getDependNode(0))
+                return fn.hasAttribute(attr) or not fn.findAlias(attr).isNull()
+        except (RuntimeError, ValueError, TypeError):
+            pass
+    return bool(cmds.attributeQuery(attr, node=node, exists=True))
+
+
 def _is_host(node: str) -> bool:
     """True iff ``node`` carries the ``__rl_host__`` host-node marker.
 
@@ -1116,7 +1136,7 @@ def _is_host(node: str) -> bool:
     swallow broadly and report "not a host" for anything unqueryable.
     """
     try:
-        return bool(cmds.attributeQuery(_HOST_MARKER, node=node, exists=True))
+        return _has_attr_or_alias(node, _HOST_MARKER)
     except Exception:
         return False
 
@@ -2189,7 +2209,7 @@ _GC_ELIGIBLE_TYPES: frozenset = frozenset(
 def _is_rig_owned(node: str) -> bool:
     """True iff ``node`` carries the ``__rig__`` ownership tag."""
     try:
-        return bool(cmds.attributeQuery(_RIG_TAG, node=node, exists=True))
+        return _has_attr_or_alias(node, _RIG_TAG)
     except (RuntimeError, ValueError):
         return False
 

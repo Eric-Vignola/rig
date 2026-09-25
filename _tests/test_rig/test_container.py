@@ -291,3 +291,105 @@ class TestFrameMembers(MayaTestCase):
         finally:
             container_module._node_uuid = original
         self.assertEqual(frame.members, [_uuid(node), _uuid(name_b)])
+
+
+def _attribute_query(attr, node):
+    """``("ok", bool)`` or ``("err", type, message)`` of ``attributeQuery``."""
+    try:
+        return ("ok", bool(cmds.attributeQuery(attr, node=node, exists=True)))
+    except Exception as e:
+        return ("err", type(e), str(e))
+
+
+class TestTagQueries(MayaTestCase):
+    """``_is_host`` / ``_is_rig_owned`` answer with the API and give the same
+    result as ``attributeQuery(exists)``, aliases and failures included."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _build(self):
+        net = cmds.createNode("network", name="tq_net")
+        cmds.addAttr(net, longName="__rl_host__", attributeType="bool", hidden=True)
+        cmds.addAttr(net, longName="__rig__", attributeType="bool", hidden=True)
+        xf = cmds.createNode("transform", name="tq_xf")
+        cmds.addAttr(xf, longName="__rl_host__", attributeType="bool", hidden=True)
+        cmds.addAttr(xf, longName="__rig__", attributeType="bool", hidden=True)
+        cmds.createNode("transform", name="tq_plain")
+        al = cmds.createNode("transform", name="tq_alias")
+        cmds.addAttr(al, longName="foo", attributeType="double")
+        cmds.aliasAttr("__rl_host__", f"{al}.foo")
+        cmds.aliasAttr("__rig__", f"{al}.translateX")
+        g1 = cmds.createNode("transform", name="tq_g1")
+        g2 = cmds.createNode("transform", name="tq_g2")
+        cmds.createNode("transform", name="tq_dup", parent=g1)
+        cmds.createNode("transform", name="tq_dup", parent=g2)
+        cmds.addAttr("|tq_g1|tq_dup", longName="__rig__", attributeType="bool")
+        return [
+            "tq_net", "tq_xf", "tq_plain", "tq_alias", "tq_g1|tq_dup",
+            "tq_g2|tq_dup", "tq_dup", "tq_*", "nonexistent", "", "tq_net.foo",
+        ]
+
+    def test_is_host_matches_attribute_query(self):
+        from rig._internal import container as _C
+
+        for name in self._build():
+            legacy = _attribute_query(_C._HOST_MARKER, name)
+            self.assertEqual(
+                _C._is_host(name), legacy == ("ok", True), repr(name)
+            )
+        self.assertTrue(_C._is_host("tq_net"))
+        self.assertTrue(_C._is_host("tq_xf"))
+        self.assertTrue(_C._is_host("tq_alias"))
+        self.assertFalse(_C._is_host("tq_plain"))
+        self.assertFalse(_C._is_host("nonexistent"))
+
+    def test_is_rig_owned_matches_attribute_query(self):
+        from rig._internal import container as _C
+
+        for name in self._build():
+            legacy = _attribute_query(_C._RIG_TAG, name)
+            try:
+                new = ("ok", _C._is_rig_owned(name))
+            except Exception as e:
+                new = ("err", type(e), str(e))
+            if legacy[0] == "err" and legacy[1] in (RuntimeError, ValueError):
+                legacy = ("ok", False)
+            self.assertEqual(new, legacy, repr(name))
+        self.assertTrue(_C._is_rig_owned("tq_xf"))
+        self.assertTrue(_C._is_rig_owned("tq_alias"))
+        self.assertTrue(_C._is_rig_owned("tq_g1|tq_dup"))
+        self.assertFalse(_C._is_rig_owned("tq_g2|tq_dup"))
+
+    def test_tag_queries_skip_attribute_query_for_plain_names(self):
+        from unittest import mock
+
+        from rig._internal import container as _C
+
+        self._build()
+        with mock.patch.object(
+            cmds, "attributeQuery", side_effect=cmds.attributeQuery
+        ) as spy:
+            for name in ("tq_net", "tq_xf", "tq_plain", "tq_alias", "tq_g1|tq_dup"):
+                _C._is_host(name)
+                _C._is_rig_owned(name)
+        self.assertEqual(spy.call_count, 0)
+
+    def test_host_scan_after_cache_clear(self):
+        from rig._internal import container as _C
+
+        set_options(flatten_containers=False)
+        try:
+            with container("tq_ctn"):
+                container.publish_input(1.0, "knobA")
+                host = _C._get_or_create_host("tq_ctn")
+                _C._HOST_CACHE.clear()
+                self.assertEqual(_C._get_or_create_host("tq_ctn").name, host.name)
+                container.publish_input(2.0, "knobB")
+        finally:
+            set_options(flatten_containers=True)
+        hosts = [
+            m
+            for m in cmds.container("tq_ctn", query=True, nodeList=True) or []
+            if cmds.attributeQuery("__rl_host__", node=m, exists=True)
+        ]
+        self.assertEqual(hosts, [host.name])
