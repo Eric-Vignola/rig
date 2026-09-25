@@ -50,6 +50,7 @@ import itertools
 import logging
 import numbers
 import re
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -66,6 +67,33 @@ LOGGER = logging.getLogger(__name__)
 
 # An attribute name Maya keeps: what ``plug >> "name"`` clones under.
 _ATTR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# The rig._internal modules the hot ``<<`` / ``Plug.node`` paths use; see
+# :func:`_lazy`.
+_LAZY_MODULES: SimpleNamespace | None = None
+
+
+def _lazy() -> SimpleNamespace:
+    """Return the ``container`` / ``list`` / ``node`` / ``shorthand`` /
+    ``types`` modules of :mod:`rig._internal`, imported on first use.
+
+    They all import this module at load, so they cannot be imported at the
+    top. Binding them once saves a per-call ``from ... import`` in the hot
+    paths; binding the MODULES (not their functions) keeps runtime rebinding
+    and ``mock.patch.object(module, ...)`` effective at every call.
+    """
+    global _LAZY_MODULES
+    if _LAZY_MODULES is None:
+        from rig._internal import container, list, node, shorthand, types
+
+        _LAZY_MODULES = SimpleNamespace(
+            container = container,
+            list      = list,
+            node      = node,
+            shorthand = shorthand,
+            types     = types,
+        )
+    return _LAZY_MODULES
 
 
 class InjectionError(RuntimeError):
@@ -245,9 +273,9 @@ class Plug(Attribute):
                 return Plug(result.plug)
             if isinstance(result, list):
                 # Wrap in PlugList so chained DSL operations work on the slice
-                # (e.g. ``node.input[:].t << src``).  Lazy import to avoid the
+                # (e.g. ``node.input[:].t << src``).  Lazy-bound to avoid the
                 # circular dep with ``_list`` at module load.
-                from rig._internal.list import PlugList
+                PlugList = _lazy().list.PlugList
 
                 wrapped = [
                     Plug(r.plug)
@@ -283,7 +311,7 @@ class Plug(Attribute):
                     )
                 return Plug(self.plug.child(key))
             if isinstance(key, slice):
-                from rig._internal.list import PlugList
+                PlugList = _lazy().list.PlugList
 
                 indices = range(*key.indices(n))
                 return PlugList([Plug(self.plug.child(i)) for i in indices])
@@ -320,7 +348,7 @@ class Plug(Attribute):
     @property
     def node(self) -> Any:
         """Return the owning :class:`Node` (not a bare ``DGNode``)."""
-        from rig._internal.node import Node
+        Node = _lazy().node.Node
 
         if not isinstance(self._node, Node) if self._node else True:
             # Lazy-construct on first access.
@@ -422,9 +450,7 @@ class Plug(Attribute):
         Returns ``self`` so chaining works:
         ``node << Float("x") << 5 << lock``.
         """
-        from rig._internal.list import PlugList
-        from rig._internal.shorthand import shorthand
-        from rig._internal.types import _is_attribute_spec, _is_member_spec
+        lazy = _lazy()
 
         # Disconnect.
         if other is None:
@@ -433,7 +459,7 @@ class Plug(Attribute):
 
         # Retired connection-query sentinels. '<<' means "receives from", but
         # a query flows the other way, so the arrow pointed at the wrong end.
-        if other is PlugList or other is Plug:
+        if other is lazy.list.PlugList or other is Plug:
             raise TypeError(
                 "'plug << PlugList' has been replaced by 'plug.get_inputs()', "
                 "which always returns a PlugList (empty when nothing drives "
@@ -443,15 +469,15 @@ class Plug(Attribute):
 
         # Collection spec: a component plug becomes a member (the spec
         # decides what a non-component plug means); returns this plug.
-        if _is_member_spec(other):
+        if lazy.types._is_member_spec(other):
             return other.inject(self)
 
         # Attribute spec.
-        if _is_attribute_spec(other):
+        if lazy.types._is_attribute_spec(other):
             return other.apply(self)
 
         # Type-shorthand (matrix->transform, quat->euler, ...).
-        if shorthand(other, self):
+        if lazy.shorthand.shorthand(other, self):
             return self
 
         # Standard injection.
@@ -1408,13 +1434,13 @@ def _locked_channels(dst: Any, leaves: list | None = None) -> list:
     ``leaves`` is ``dst``'s channel list when the caller already built it
     (:func:`_inject_value` does); ``None`` resolves it here.
     """
-    from rig._internal.types import _get_compound, _is_compound
+    types = _lazy().types
 
     if not isinstance(dst, Attribute):
         return []
     if leaves is None:
         try:
-            leaves = _get_compound(dst) if _is_compound(dst) else [dst]
+            leaves = types._get_compound(dst) if types._is_compound(dst) else [dst]
         except Exception:
             leaves = [dst]
 
@@ -1445,20 +1471,15 @@ def _spec_slot_channels(dst: Any, src: Any) -> frozenset:
     consistent with that, so ``ctrl.t << [skip, 4.0, skip]`` is not vetoed by
     a locked ``ctrl.tx`` the caller explicitly asked to leave alone.
     """
-    from rig._internal.types import (
-        _get_compound,
-        _is_attribute_spec,
-        _is_compound,
-        _is_sequence,
-    )
+    types = _lazy().types
 
-    if isinstance(src, (Attribute, str)) or not _is_sequence(src):
+    if isinstance(src, (Attribute, str)) or not types._is_sequence(src):
         return frozenset()
-    if not any(_is_attribute_spec(x) for x in src):
+    if not any(types._is_attribute_spec(x) for x in src):
         return frozenset()
 
     try:
-        leaves = _get_compound(dst) if _is_compound(dst) else [dst]
+        leaves = types._get_compound(dst) if types._is_compound(dst) else [dst]
     except Exception:
         leaves = [dst]
 
@@ -1466,7 +1487,9 @@ def _spec_slot_channels(dst: Any, src: Any) -> frozenset:
     # before broadcasting) so the exemption lines up channel-for-channel.
     slots = list(src)[: len(leaves)]
     return frozenset(
-        str(leaf) for slot, leaf in sequences(slots, leaves) if _is_attribute_spec(slot)
+        str(leaf)
+        for slot, leaf in sequences(slots, leaves)
+        if types._is_attribute_spec(slot)
     )
 
 
@@ -1706,7 +1729,7 @@ def _inject_value(dst: Any, src: Any) -> None:
     5. Otherwise the existing compound-detection / fan-out logic handles
        the (Plug source) / (heterogeneous list with Plugs) cases.
     """
-    from rig._internal.types import _get_compound, _is_compound, _is_sequence
+    types = _lazy().types
 
     # 1. Disconnect.
     if src is None:
@@ -1722,7 +1745,7 @@ def _inject_value(dst: Any, src: Any) -> None:
     # ``dst``'s compound-ness and channels are pure queries, resolved once
     # here and reused by the lock check, the shape validation, the dispatch
     # and the fan-out below (recomputed if ``dst`` is re-indexed).
-    compound_dst = _is_compound(dst)
+    compound_dst = types._is_compound(dst)
     try:
         leaves = (
             [dst.child(i) for i in range(dst.num_children)] if compound_dst else [dst]
@@ -1799,7 +1822,7 @@ def _inject_value(dst: Any, src: Any) -> None:
         is_bare_multi_root = False
 
     if is_bare_multi_root:
-        from rig._internal.list import PlugList
+        PlugList = _lazy().list.PlugList
 
         # Multi src -> Multi dst -> per-element connect.
         # Iterate the source's existing logical indices and connect each
@@ -1832,7 +1855,7 @@ def _inject_value(dst: Any, src: Any) -> None:
             not isinstance(src, Attribute)
             and not isinstance(src, str)
             and not isinstance(src, numbers.Real)
-            and _is_sequence(src)
+            and types._is_sequence(src)
         ):
             for i, elem in enumerate(src):
                 dst[i] << elem
@@ -1856,7 +1879,7 @@ def _inject_value(dst: Any, src: Any) -> None:
                 dst_data_type = dst.data_type
             except Exception:
                 dst_data_type = None
-            compound_dst = _is_compound(dst)
+            compound_dst = types._is_compound(dst)
             leaves       = None
     except (AttributeError, TypeError):
         pass
@@ -1866,7 +1889,7 @@ def _inject_value(dst: Any, src: Any) -> None:
         not isinstance(src, Attribute)
         and not isinstance(src, str)
         and not isinstance(src, numbers.Real)
-        and _is_sequence(src)
+        and types._is_sequence(src)
     ):
         # If the sequence contains any Plug / Attribute references, skip
         # the numpy validation path entirely -- ``np.asarray`` would coerce
@@ -1940,7 +1963,7 @@ def _inject_value(dst: Any, src: Any) -> None:
         # else: heterogeneous (list-with-Plugs etc.) -- fall through to
         # existing compound-detection logic below.
 
-    compound_src = _is_compound(src) and isinstance(src, Attribute)
+    compound_src = types._is_compound(src) and isinstance(src, Attribute)
 
     # compound->compound, or attr->attr.
     if (compound_src and compound_dst) or (not compound_src and not compound_dst):
@@ -1961,13 +1984,15 @@ def _inject_value(dst: Any, src: Any) -> None:
         return
 
     # Otherwise, fan out per channel.
-    src_channels = _get_compound(src) if compound_src or _is_sequence(src) else [src]
+    src_channels = (
+        types._get_compound(src) if compound_src or types._is_sequence(src) else [src]
+    )
     if not compound_dst:
         dst_channels = [dst]
     elif leaves is not None:
         dst_channels = leaves
     else:
-        dst_channels = _get_compound(dst)
+        dst_channels = types._get_compound(dst)
 
     if len(dst_channels) < len(src_channels):
         src_channels = src_channels[: len(dst_channels)]
@@ -1984,13 +2009,13 @@ def _fanout_channel(src: Any, dst: Any) -> None:
     (``lock`` / ``hide`` / ``skip``), everything else is a set-or-connect.
     A collection spec has no per-channel meaning and raises.
     """
-    from rig._internal.types import _is_attribute_spec, _is_member_spec
+    types = _lazy().types
 
     if src is None:
         _disconnect_incoming(dst)
-    elif _is_attribute_spec(src):
+    elif types._is_attribute_spec(src):
         src.apply(dst)
-    elif _is_member_spec(src):
+    elif types._is_member_spec(src):
         raise TypeError(
             f"{src!r} is a collection spec and cannot be fanned into channel "
             f"{dst}; inject it into the node or its components"
@@ -2019,8 +2044,9 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     if src is None:
         return
 
-    # Lazy import to avoid circular dep at module load.
-    from rig._internal.container import container
+    # Lazy-bound to avoid circular dep at module load.
+    lazy      = _lazy()
+    container = lazy.container.container
 
     # Coerce dst to Attribute if it isn't already, so we can use the API.
     if not isinstance(dst, Attribute):
@@ -2063,12 +2089,10 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
         # Compound-numeric dst: broadcast the scalar across children.
         # Lock was already checked upstream (all-or-nothing); failures here
         # are connection-overwrites or genuine errors, both handled by _do_set.
-        from rig._internal.types import _get_compound, _is_compound
-
         if _dst_compound is None:
-            _dst_compound = _is_compound(dst_attr)
+            _dst_compound = lazy.types._is_compound(dst_attr)
         if _dst_compound:
-            for child in _get_compound(dst_attr):
+            for child in lazy.types._get_compound(dst_attr):
                 child_attr = (
                     child if isinstance(child, Attribute) else Attribute(str(child))
                 )
@@ -2089,9 +2113,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
         return
 
     # Sequence (list / tuple).
-    from rig._internal.types import _get_compound, _is_sequence
-
-    if _is_sequence(src):
+    if lazy.types._is_sequence(src):
         # Matrix special-case.
         try:
             dt = dst.data_type
@@ -2109,7 +2131,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
             return
 
         # Try a vector / quaternion fan-out.
-        dst_channels = _get_compound(dst)
+        dst_channels = lazy.types._get_compound(dst)
         if len(dst_channels) < len(src):
             src = src[: len(dst_channels)]
 
@@ -2123,9 +2145,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     # `node.wm` because the caller has to choose between local and world
     # space -- auto-promoting would hide which one is being used. Make
     # the choice explicit.
-    from rig._internal.node import Node as _Node
-
-    if isinstance(src, _Node):
+    if isinstance(src, lazy.node.Node):
         try:
             dt = dst_attr.data_type if dst_attr is not None else None
         except Exception:

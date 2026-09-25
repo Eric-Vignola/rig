@@ -14,6 +14,7 @@ when the input cannot reasonably answer the question.
 from __future__ import annotations
 
 import numbers
+from types import SimpleNamespace
 from typing import Any
 
 from maya.api import OpenMaya
@@ -44,6 +45,27 @@ Z = (0, 0, 1)
 # These are imported by other modules to avoid circular deps; the actual
 # class identities are populated lazily at first use.
 
+# The ``list`` / ``members`` modules the predicates below use; see
+# :func:`_lazy`.
+_LAZY_MODULES: SimpleNamespace | None = None
+
+
+def _lazy() -> SimpleNamespace:
+    """Return the ``list`` / ``members`` modules of :mod:`rig._internal`,
+    imported on first use.
+
+    Both import Node / Plug / PlugList at module top, so they must never be
+    loaded while this module is being imported. Binding the MODULES (not
+    their classes) once saves a per-call ``from ... import`` and keeps
+    runtime rebinding and ``mock.patch.object(module, ...)`` effective.
+    """
+    global _LAZY_MODULES
+    if _LAZY_MODULES is None:
+        from rig._internal import list, members
+
+        _LAZY_MODULES = SimpleNamespace(list=list, members=members)
+    return _LAZY_MODULES
+
 
 def _is_plug(obj: Any) -> bool:
     """Return ``True`` if ``obj`` is a :class:`rig.Plug` instance."""
@@ -60,9 +82,8 @@ def _is_node(obj: Any) -> bool:
 
 def _is_list(obj: Any) -> bool:
     """Return ``True`` if ``obj`` is a :class:`rig.PlugList` instance."""
-    from rig._internal.list import PlugList
 
-    return isinstance(obj, PlugList)
+    return isinstance(obj, _lazy().list.PlugList)
 
 
 def _is_attribute_spec(obj: Any) -> bool:
@@ -74,19 +95,17 @@ def _is_attribute_spec(obj: Any) -> bool:
 def _is_member_spec(obj: Any) -> bool:
     """Return ``True`` if ``obj`` is a collection spec
     (:class:`rig._internal.members._MemberSpec`: ``Tag``, a material, ...)."""
-    # Local import: members.py imports Node / Plug / PlugList at module top,
+    # Lazy-bound: members.py imports Node / Plug / PlugList at module top,
     # so it must never be loaded while this module is being imported.
-    from rig._internal.members import _MemberSpec
 
-    return isinstance(obj, _MemberSpec)
+    return isinstance(obj, _lazy().members._MemberSpec)
 
 
 def _is_components(obj: Any) -> bool:
     """Return ``True`` if ``obj`` is a :class:`rig._internal.members.Components`
     (``cube.f[:3]``, ``Components(node, "vtx", ids)``)."""
-    from rig._internal.members import Components
 
-    return isinstance(obj, Components)
+    return isinstance(obj, _lazy().members.Components)
 
 
 # ---------- Sequence / scalar tests ------------------------------------- #
