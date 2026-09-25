@@ -5,6 +5,7 @@ Node base classes, the Attribute wrapper and utils
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from functools import total_ordering
 from numbers import Number
@@ -16,6 +17,9 @@ from maya.api import OpenMaya
 
 
 CUSTOM_TYPE_ATTR = "__custom_node_type__"
+
+# a node name MSelectionList can resolve without wildcards, plugs or components
+_PLAIN_NODE_NAME = re.compile(r"^[|:\w]+$")
 
 
 def is_valid_maya_uid(uid_string: str) -> bool:
@@ -37,6 +41,10 @@ class NodeMeta(type):
     def __new__(mcs, class_name, bases, attrs):
         cls_obj   = type.__new__(mcs, class_name, bases, attrs)
 
+        # a new class can change the dispatch of any node type
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+
         node_type = attrs.get("CUSTOM_NODE_TYPE")
         if not node_type:
             node_type = attrs.get("NATIVE_NODE_TYPE")
@@ -57,6 +65,8 @@ class PyNode:
     """
 
     _NODE_CLASS_DICT = {}
+    _CLASS_BY_TYPE   = {}     # (typeName, typeId) -> class of a node without custom type
+    _CASTABLE_TYPES  = set()  # (typeName, typeId) keys an MObject was cast from
 
     def __new__(
         cls,
@@ -75,50 +85,74 @@ class PyNode:
         """
         super(PyNode, cls).__new__(cls, *args, **kwargs)
 
+        mobj     = None
+        dag_path = None
         if isinstance(obj.__class__, NodeMeta) or isinstance(obj, Attribute):
             return obj
         elif isinstance(obj, OpenMaya.MPlug):
             return Attribute(obj)
         elif isinstance(obj, OpenMaya.MObject):
-            obj = _mobject_to_str(obj)
+            mobj = obj
+            obj  = _mobject_to_str(obj)
         elif isinstance(obj, OpenMaya.MDagPath):
-            obj = obj.partialPathName()
+            dag_path = obj
+            obj      = obj.partialPathName()
         elif not isinstance(obj, str):
             t = type(obj)
             raise ValueError(f"{obj} ({t}) is not a str, MObject, MDagPath, or MPlug")
 
         # if obj is given as a unique id, convert to string
-        if is_valid_maya_uid(obj):
+        # (uuid.UUID() needs 32 hex digits, so a shorter string is never a uid)
+        if len(obj) >= 32 and is_valid_maya_uid(obj):
             str_from_uid = cmds.ls(obj, uid=True)
             if not str_from_uid:
                 raise TypeError(f"No object matches uuid: {obj}.")
 
             # node name is properly converted to a name string
-            obj = str_from_uid[0]
+            obj      = str_from_uid[0]
+            mobj     = None
+            dag_path = None
 
         # TODO need a better way to identify attribute strings
         if obj.rfind(".") != -1:
             return Attribute(obj)
 
-        cls_obj     = None
-        custom_type = get_custom_type(obj)
-        if custom_type:
-            cls_obj = cls._NODE_CLASS_DICT.get(custom_type)
+        # without a custom type attr (or an alias of that name) the class only
+        # depends on the node type, so it is looked up per (typeName, typeId);
+        # anything that doesn't resolve to exactly one node takes the legacy path
+        from_mobject = mobj is not None
+        key          = None
+        try:
+            if dag_path is not None:
+                mobj = dag_path.node()
+            elif mobj is None and _PLAIN_NODE_NAME.match(obj):
+                sel = OpenMaya.MSelectionList()
+                sel.add(obj)
+                if sel.length() == 1:
+                    mobj = sel.getDependNode(0)
+            if mobj is not None:
+                fn = OpenMaya.MFnDependencyNode(mobj)
+                if (
+                    not fn.hasAttribute(CUSTOM_TYPE_ATTR)
+                    and fn.findAlias(CUSTOM_TYPE_ATTR).isNull()
+                ):
+                    key = (fn.typeName, fn.typeId.id())
+        except (RuntimeError, ValueError, TypeError):
+            key = None
+        if key is None:
+            return _pynode_legacy_tail(cls, obj)
+
+        if key in cls._CLASS_BY_TYPE:
+            cls_obj = cls._CLASS_BY_TYPE[key]
+        else:
+            cls_obj = cls._CLASS_BY_TYPE[key] = _native_node_class(cls, obj)
         if not cls_obj:
-            # set default node type to DAG or DG
-            default_type = "dagNode" if cmds.ls(obj, dag=True) else "entity"
-            cls_obj      = cls._NODE_CLASS_DICT.get(default_type)
+            raise ValueError(f"Failed casting {obj}")
 
-            # override cls_obj with a defined node class if any
-            for t in reversed(cmds.nodeType(obj, inherited=True)):
-                if t in cls._NODE_CLASS_DICT:
-                    cls_obj = cls._NODE_CLASS_DICT.get(t)
-                    break
-
-        if cls_obj:
-            return cls_obj(obj)
-
-        raise ValueError(f"Failed casting {obj}")
+        inst = cls_obj(obj)
+        if from_mobject:
+            cls._CASTABLE_TYPES.add(key)
+        return inst
 
     @classmethod
     def create(cls, node_type, *args, **kwargs) -> Any:
@@ -144,6 +178,35 @@ class PyNode:
             raise NotImplementedError(f"Node type {node_type} not implemented")
 
 
+def _native_node_class(cls, obj: str) -> Any:
+    """Returns the class the node's type chain maps to, ignoring any custom type."""
+    # set default node type to DAG or DG
+    default_type = "dagNode" if cmds.ls(obj, dag=True) else "entity"
+    cls_obj      = cls._NODE_CLASS_DICT.get(default_type)
+
+    # override cls_obj with a defined node class if any
+    for t in reversed(cmds.nodeType(obj, inherited=True)):
+        if t in cls._NODE_CLASS_DICT:
+            cls_obj = cls._NODE_CLASS_DICT.get(t)
+            break
+    return cls_obj
+
+
+def _pynode_legacy_tail(cls, obj: str) -> Any:
+    """Casts a node name string by querying its custom type and type chain by name."""
+    cls_obj     = None
+    custom_type = get_custom_type(obj)
+    if custom_type:
+        cls_obj = cls._NODE_CLASS_DICT.get(custom_type)
+    if not cls_obj:
+        cls_obj = _native_node_class(cls, obj)
+
+    if cls_obj:
+        return cls_obj(obj)
+
+    raise ValueError(f"Failed casting {obj}")
+
+
 def _mobject_to_str(mobject: OpenMaya.MObject) -> str:
     """Converts an node MObject to a name string."""
     if mobject.isNull():
@@ -165,6 +228,21 @@ def _mobject_to_str(mobject: OpenMaya.MObject) -> str:
 
 def get_custom_type(node_name: str) -> str | None:
     """Returns the value of the custom type attr, if exists."""
+    # answer "no custom type" with the API when the name resolves to one node;
+    # attributeQuery(exists) also matches aliases, hasAttribute does not
+    if isinstance(node_name, str) and _PLAIN_NODE_NAME.match(node_name):
+        try:
+            sel = OpenMaya.MSelectionList()
+            sel.add(node_name)
+            if sel.length() == 1:
+                fn = OpenMaya.MFnDependencyNode(sel.getDependNode(0))
+                if (
+                    not fn.hasAttribute(CUSTOM_TYPE_ATTR)
+                    and fn.findAlias(CUSTOM_TYPE_ATTR).isNull()
+                ):
+                    return None
+        except (RuntimeError, ValueError, TypeError):
+            pass
     if cmds.attributeQuery(CUSTOM_TYPE_ATTR, node=node_name, exists=True):
         return cmds.getAttr(f"{node_name}.{CUSTOM_TYPE_ATTR}")
 
