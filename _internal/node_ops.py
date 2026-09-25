@@ -224,14 +224,13 @@ class NodeOp:
         kwargs: dict,
     ) -> Any:
         """Call ``fn`` with framework-managed scoping and (optionally) fan-out."""
-        is_compound_input = any(_is_compound(a) for a in args)
+        # Compound impl -> call directly (no compound probe of the args).
+        if scope == SCOPE_COMPOUND:
+            return fn(*args, **kwargs)
 
-        # Compound impl, or scalar impl with non-compound input -> call directly.
-        if (
-            scope == SCOPE_COMPOUND
-            or (scope == SCOPE_AUTO and not is_compound_input)
-            or (scope == SCOPE_SCALAR and not is_compound_input)
-        ):
+        # Scalar / auto impl with non-compound input -> call directly.
+        is_compound_input = any(_is_compound(a) for a in args)
+        if not is_compound_input:
             return fn(*args, **kwargs)
 
         # Scalar impl + compound input -> framework fan-out per channel.

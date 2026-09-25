@@ -125,3 +125,42 @@ class TestNodeOpInvalidScope(MayaTestCase):
             @op.impl(since=0, scope="invalid_scope_value")
             def _impl(x):
                 return x
+
+class TestNodeOpCompoundProbe(MayaTestCase):
+    """``_invoke`` only probes the args with ``_is_compound`` for the scopes
+    whose dispatch depends on it (scalar / auto); a compound-scope impl is
+    called directly."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_invoke_skips_compound_probe_for_compound_scope(self):
+        from rig import Node
+        from rig._internal import node_ops
+
+        real_probe = node_ops._is_compound
+        calls      = []
+
+        def counting_probe(obj):
+            calls.append(obj)
+            return real_probe(obj)
+
+        a = Node.create("transform", name="a")
+        b = Node.create("transform", name="b")
+
+        with mock.patch.object(node_ops, "_is_compound", counting_probe):
+            a.tx * b.tx
+        self.assertEqual(calls, [])
+
+        # A scalar-scope impl on a compound input still probes and fans out.
+        op       = NodeOp("dummy_fanout")
+        channels = []
+
+        @op.impl(since=0, scope=SCOPE_SCALAR)
+        def _impl(x):
+            channels.append(str(x))
+            return x
+
+        with mock.patch.object(node_ops, "_is_compound", counting_probe):
+            op(a.t)
+        self.assertGreater(len(calls), 0)
+        self.assertEqual(len(channels), 3)
