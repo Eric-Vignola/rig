@@ -373,3 +373,66 @@ class TestInjectLockDefensiveCoverage(MayaTestCase):
         n.tx << drv.tx  # establish an incoming connection
         with self.assertRaises(InjectionError):
             n.tx << "not_a_number"  # first set fails (connected), retry also fails
+
+class TestInjectCompoundFactsReused(MayaTestCase):
+    """``_inject_value`` resolves ``dst``'s compound-ness and channels once and
+    reuses them for the lock check, the dispatch and the fan-out. These pin the
+    routing that reuse must not change, and the recompute after auto-indexing
+    moves ``dst`` onto a new element."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_compound_into_scalar_fans_out(self):
+        # compound src -> static scalar dst: per-channel fan-out, truncated to
+        # the single dst channel (src.translateX -> dst.translateX).
+        src = Node.create("transform", name="src")
+        dst = Node.create("transform", name="dst")
+        dst.tx << src.t
+        self.assertEqual(_incoming("dst.translateX"), ["src.translateX"])
+        self.assertEqual(_incoming("dst.translateY"), [])
+
+    def test_compound_into_generic_slot_connects_whole(self):
+        # compound src -> generic slot: connected whole, never fanned out.
+        src = Node.create("transform", name="src")
+        ch  = Node.create("choice", name="ch")
+        ch.input[0] << src.t
+        self.assertEqual(_incoming("ch.input[0]"), ["src.translate"])
+
+    def test_locked_child_blocks_whole_compound_set(self):
+        # A locked child vetoes a compound connect and a scalar broadcast
+        # before any channel is written or any connection is broken.
+        n   = Node.create("transform", name="c1")
+        drv = Node.create("transform", name="drv")
+        n.tx << drv.tx
+        cmds.setAttr("c1.translateY", lock=True)
+        with self.assertRaises(InjectionError):
+            n.t << drv.t
+        with self.assertRaises(InjectionError):
+            n.t << 5
+        self.assertEqual(_incoming("c1.translate"), [])
+        self.assertEqual(_incoming("c1.translateX"), ["drv.translateX"])
+        self.assertEqual(cmds.getAttr("c1.translateZ"), 0.0)
+
+    def test_auto_index_compound_multi_recomputes_facts(self):
+        # ``multi << X`` moves dst onto the next free element; the element's own
+        # channels, not the multi root's, receive the connect / broadcast.
+        pma = Node.create("plusMinusAverage", name="pma")
+        src = Node.create("transform", name="src")
+        pma.input3D << src.t
+        pma.input3D << 5
+        self.assertEqual(_incoming("pma.input3D[0]"), ["src.translate"])
+        self.assertEqual(list(cmds.getAttr("pma.input3D[1]")[0]), [5.0, 5.0, 5.0])
+        self.assertEqual(cmds.getAttr("pma.input3D", multiIndices=True), [0, 1])
+
+    def test_compound_set_resolves_channels_once(self):
+        # A scalar broadcast into a compound reuses the channel list built for
+        # the lock check: no further ``_get_compound`` on dst.
+        import rig._internal.types as typesmod
+
+        n = Node.create("transform", name="c1")
+        with mock.patch.object(
+            typesmod, "_get_compound", wraps=typesmod._get_compound
+        ) as spy:
+            n.t << 5
+        self.assertEqual(spy.call_count, 0)
+        self.assertEqual(list(cmds.getAttr("c1.translate")[0]), [5.0, 5.0, 5.0])

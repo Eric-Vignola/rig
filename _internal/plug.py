@@ -1397,22 +1397,26 @@ def _disconnect_sources_respecting_lock(dst: Attribute, sources: list) -> None:
         _relock_chain(saved)
 
 
-def _locked_channels(dst: Any) -> list:
+def _locked_channels(dst: Any, leaves: list | None = None) -> list:
     """Return the locked leaf plug name(s) among ``dst``'s channels.
 
     For a compound plug this is every locked child; for a scalar it is
     ``dst`` itself if locked. Used to enforce the **all-or-nothing** rule:
     a compound set with any locked child must raise before mutating any
     channel.
+
+    ``leaves`` is ``dst``'s channel list when the caller already built it
+    (:func:`_inject_value` does); ``None`` resolves it here.
     """
     from rig._internal.types import _get_compound, _is_compound
 
     if not isinstance(dst, Attribute):
         return []
-    try:
-        leaves = _get_compound(dst) if _is_compound(dst) else [dst]
-    except Exception:
-        leaves = [dst]
+    if leaves is None:
+        try:
+            leaves = _get_compound(dst) if _is_compound(dst) else [dst]
+        except Exception:
+            leaves = [dst]
 
     locked = []
     for leaf in leaves:
@@ -1466,7 +1470,9 @@ def _spec_slot_channels(dst: Any, src: Any) -> frozenset:
     )
 
 
-def _assert_settable(dst: Any, exempt: frozenset = frozenset()) -> None:
+def _assert_settable(
+    dst: Any, exempt: frozenset = frozenset(), leaves: list | None = None
+) -> None:
     """Raise :class:`InjectionError` if ``dst`` (or any compound child) is locked.
 
     A locked attribute is the one inviolable barrier for ``<<`` value-set /
@@ -1476,9 +1482,10 @@ def _assert_settable(dst: Any, exempt: frozenset = frozenset()) -> None:
     connection rather than being disconnected by a doomed re-wire.
 
     ``exempt`` names channels that are not being set or connected at all --
-    see :func:`_spec_slot_channels`.
+    see :func:`_spec_slot_channels`. ``leaves`` is passed through to
+    :func:`_locked_channels`.
     """
-    locked = [name for name in _locked_channels(dst) if name not in exempt]
+    locked = [name for name in _locked_channels(dst, leaves) if name not in exempt]
     if locked:
         names = locked[0] if len(locked) == 1 else locked
         raise InjectionError(
@@ -1711,7 +1718,18 @@ def _inject_value(dst: Any, src: Any) -> None:
     # so compound sets are all-or-nothing and a locked connect target keeps
     # its existing connection instead of being disconnected by a doomed
     # re-wire.
-    _assert_settable(dst, exempt=_spec_slot_channels(dst, src))
+    #
+    # ``dst``'s compound-ness and channels are pure queries, resolved once
+    # here and reused by the lock check, the shape validation, the dispatch
+    # and the fan-out below (recomputed if ``dst`` is re-indexed).
+    compound_dst = _is_compound(dst)
+    try:
+        leaves = (
+            [dst.child(i) for i in range(dst.num_children)] if compound_dst else [dst]
+        )
+    except Exception:
+        leaves = None
+    _assert_settable(dst, exempt=_spec_slot_channels(dst, src), leaves=leaves)
 
     # Resolve dst data type once.
     try:
@@ -1838,6 +1856,8 @@ def _inject_value(dst: Any, src: Any) -> None:
                 dst_data_type = dst.data_type
             except Exception:
                 dst_data_type = None
+            compound_dst = _is_compound(dst)
+            leaves       = None
     except (AttributeError, TypeError):
         pass
 
@@ -1895,7 +1915,7 @@ def _inject_value(dst: Any, src: Any) -> None:
 
             # 4. Compound dst (vector / quat / euler) -- must match channel
             #    count exactly OR be a 1-element broadcast.
-            if _is_compound(dst):
+            if compound_dst:
                 n = dst.num_children
                 if flat.size == n:
                     src = flat.tolist()
@@ -1921,11 +1941,10 @@ def _inject_value(dst: Any, src: Any) -> None:
         # existing compound-detection logic below.
 
     compound_src = _is_compound(src) and isinstance(src, Attribute)
-    compound_dst = _is_compound(dst)
 
     # compound->compound, or attr->attr.
     if (compound_src and compound_dst) or (not compound_src and not compound_dst):
-        _set_or_connect(src, dst)
+        _set_or_connect(src, dst, _dst_compound=compound_dst)
         return
 
     # compound->generic-slot: when dst is a polymorphic untyped attribute
@@ -1943,7 +1962,12 @@ def _inject_value(dst: Any, src: Any) -> None:
 
     # Otherwise, fan out per channel.
     src_channels = _get_compound(src) if compound_src or _is_sequence(src) else [src]
-    dst_channels = _get_compound(dst) if compound_dst else [dst]
+    if not compound_dst:
+        dst_channels = [dst]
+    elif leaves is not None:
+        dst_channels = leaves
+    else:
+        dst_channels = _get_compound(dst)
 
     if len(dst_channels) < len(src_channels):
         src_channels = src_channels[: len(dst_channels)]
@@ -1975,7 +1999,7 @@ def _fanout_channel(src: Any, dst: Any) -> None:
         _set_or_connect(src, dst)
 
 
-def _set_or_connect(src: Any, dst: Any) -> None:
+def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> None:
     """Either ``dst.set(src)`` or ``src.connect(dst, force=True)``.
 
     Uses :class:`rig.nodetypes.Attribute` API methods rather than raw
@@ -1987,6 +2011,10 @@ def _set_or_connect(src: Any, dst: Any) -> None:
       active container scope via :meth:`container.absorb_unit_conversions`.
       Without absorption these nodes orphan to scene root and break
       Node Editor container collapse.
+
+    ``_dst_compound`` is ``_is_compound(dst)`` when the caller already
+    resolved it for this same ``dst`` Attribute (:func:`_inject_value`
+    does); ``None`` resolves it here.
     """
     if src is None:
         return
@@ -2000,6 +2028,8 @@ def _set_or_connect(src: Any, dst: Any) -> None:
             dst_attr = Attribute(str(dst))
         except Exception:
             dst_attr = None
+        # The hint describes ``dst`` itself, not a coerced copy.
+        _dst_compound = None
     else:
         dst_attr = dst
 
@@ -2035,7 +2065,9 @@ def _set_or_connect(src: Any, dst: Any) -> None:
         # are connection-overwrites or genuine errors, both handled by _do_set.
         from rig._internal.types import _get_compound, _is_compound
 
-        if _is_compound(dst_attr):
+        if _dst_compound is None:
+            _dst_compound = _is_compound(dst_attr)
+        if _dst_compound:
             for child in _get_compound(dst_attr):
                 child_attr = (
                     child if isinstance(child, Attribute) else Attribute(str(child))
