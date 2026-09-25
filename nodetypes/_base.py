@@ -276,6 +276,72 @@ def _construct_checked_type(cls_obj, obj: str) -> Any:
     return inst
 
 
+# ((DGNode.__init__, DAGNode.__init__, Geometry.__init__), their is_type
+# functions, their name properties, DGNode._cache_api1_objects), bound on first
+# use since dg_node imports this module
+_REUSABLE_WRAPPER_PARTS = None
+
+
+def _wrapper_is_canonical(dg_node: Any, mobject: OpenMaya.MObject) -> bool:
+    """Returns True if `PyNode(mobject)` would now build a wrapper equal to `dg_node`.
+
+    That holds when `dg_node` wraps the live node `mobject`, its class is the one
+    `PyNode` dispatches the node to and keeps a base constructor, type check, name
+    property and API 1.0 cache, and it has the name the cast would construct from.
+    The two wrappers then differ only in their caches. Returns False in any other
+    case or when a step raises, and the caller casts as usual, which raises its
+    own errors.
+    """
+    global _REUSABLE_WRAPPER_PARTS
+    if _REUSABLE_WRAPPER_PARTS is None:
+        from rig.nodetypes.dag_node import DAGNode
+        from rig.nodetypes.dg_node import DGNode
+        from rig.nodetypes.geometry import Geometry
+
+        _REUSABLE_WRAPPER_PARTS = (
+            (DGNode.__init__, DAGNode.__init__, Geometry.__init__),
+            (
+                DGNode.__dict__["is_type"].__func__,
+                DAGNode.__dict__["is_type"].__func__,
+            ),
+            (DGNode.__dict__["name"], DAGNode.__dict__["name"]),
+            DGNode._cache_api1_objects,
+        )
+    inits, is_type_funcs, name_props, cache_api1 = _REUSABLE_WRAPPER_PARTS
+
+    cls_obj = type(dg_node)
+    if (
+        cls_obj.__init__ not in inits
+        or cls_obj.__new__ is not object.__new__
+        or cls_obj.CUSTOM_NODE_TYPE
+        or getattr(cls_obj.is_type, "__func__", None) not in is_type_funcs
+        or cls_obj.name not in name_props
+        or cls_obj._cache_api1_objects is not cache_api1
+    ):
+        return False
+    try:
+        # the API 1.0 handle goes first, it is safe on a node a new scene freed
+        if not dg_node._objhandle1.isValid() or mobject != dg_node._mobject:
+            return False
+        name = _mobject_to_str(mobject)
+        if len(name) >= 32 and is_valid_maya_uid(name):
+            return False
+        fn = OpenMaya.MFnDependencyNode(mobject)
+        if (
+            fn.hasAttribute(CUSTOM_TYPE_ATTR)
+            or not fn.findAlias(CUSTOM_TYPE_ATTR).isNull()
+        ):
+            return False
+        key = (fn.typeName, fn.typeId.id())
+        return (
+            PyNode._CLASS_BY_TYPE.get(key) is cls_obj
+            and key in PyNode._CASTABLE_TYPES
+            and dg_node.name == name
+        )
+    except Exception:
+        return False
+
+
 def _mobject_to_str(mobject: OpenMaya.MObject) -> str:
     """Converts an node MObject to a name string."""
     if mobject.isNull():

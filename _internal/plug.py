@@ -56,7 +56,8 @@ from typing import Any
 import numpy as np
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
-from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes._base import _wrapper_is_canonical, Attribute, PyNode
+from rig.nodetypes.dg_node import DGNode
 from rig._internal.generators import sequences
 from rig._internal.introspect import _to_numpy
 from rig._internal.maya_version import is_at_least
@@ -185,6 +186,27 @@ def _maybe_translate_component(name: str) -> Any:
         return name  # API failure -- let Attribute raise
 
 
+def _share_node(parent: "Plug", results: Any) -> Any:
+    """Hand ``parent``'s node wrapper to the fresh child / element Plugs in
+    ``results`` (one Plug or a list of them) and return ``results``.
+
+    Only a wrapper ``parent`` already holds is handed on, it is never
+    resolved here, and each Plug reuses it only when :attr:`Plug.node` would
+    rebuild it unchanged. ComponentPlugs resolve their node as before.
+    """
+    if type(parent) is not Plug:
+        return results
+    held = parent.__dict__["_node"]
+    if isinstance(held, _lazy().node.Node):
+        held = held._dg_node
+    if not isinstance(held, DGNode):
+        return results
+    for result in results if isinstance(results, list) else (results,):
+        if type(result) is Plug and result.__dict__["_node"] is None:
+            result.__dict__["_node"] = held
+    return results
+
+
 class Plug(Attribute):
     """Operator-extended :class:`Attribute`.
 
@@ -217,7 +239,7 @@ class Plug(Attribute):
         try:
             result = super().__getattr__(attr_name)
             if isinstance(result, Attribute) and not isinstance(result, Plug):
-                return Plug(result.plug)
+                return _share_node(self, Plug(result.plug))
             return result
         except (AttributeError, TypeError):
             # AttributeError -> no such child.
@@ -270,7 +292,7 @@ class Plug(Attribute):
         if is_indexable_via_attribute:
             result = super().__getitem__(key)
             if isinstance(result, Attribute) and not isinstance(result, Plug):
-                return Plug(result.plug)
+                return _share_node(self, Plug(result.plug))
             if isinstance(result, list):
                 # Wrap in PlugList so chained DSL operations work on the slice
                 # (e.g. ``node.input[:].t << src``).  Lazy-bound to avoid the
@@ -289,7 +311,7 @@ class Plug(Attribute):
                 # through the parent when the slice was empty (auto-create
                 # indices to match the source length).
                 parent = self if self.is_multi and isinstance(key, slice) else None
-                return PlugList(wrapped, _parent_multi=parent)
+                return PlugList(_share_node(self, wrapped), _parent_multi=parent)
             return result
 
         # Compound non-multi (e.g. ``transform.translate``, ``.rotate``,
@@ -309,12 +331,13 @@ class Plug(Attribute):
                     raise IndexError(
                         f"{self} child index {key} out of range (num_children={n})"
                     )
-                return Plug(self.plug.child(key))
+                return _share_node(self, Plug(self.plug.child(key)))
             if isinstance(key, slice):
                 PlugList = _lazy().list.PlugList
 
-                indices = range(*key.indices(n))
-                return PlugList([Plug(self.plug.child(i)) for i in indices])
+                indices  = range(*key.indices(n))
+                children = [Plug(self.plug.child(i)) for i in indices]
+                return PlugList(_share_node(self, children))
 
         # Not multi, not component, not compound -- let Attribute raise the
         # canonical "is not an multi attr" error message.
@@ -342,7 +365,7 @@ class Plug(Attribute):
         """
         result = super().child(i)
         if isinstance(result, Attribute) and not isinstance(result, Plug):
-            return Plug(result.plug)
+            return _share_node(self, Plug(result.plug))
         return result
 
     @property
@@ -351,8 +374,15 @@ class Plug(Attribute):
         Node = _lazy().node.Node
 
         if not isinstance(self._node, Node) if self._node else True:
-            # Lazy-construct on first access.
-            base_node  = PyNode(self.plug.node())
+            # Lazy-construct on first access. Until then ``_node`` may hold
+            # the DGNode of the Node or parent Plug this plug came from,
+            # which is reused when a fresh cast would rebuild it unchanged.
+            mobject = self.plug.node()
+            held    = self._node
+            if held is not None and _wrapper_is_canonical(held, mobject):
+                base_node = held
+            else:
+                base_node = PyNode(mobject)
             self._node = Node(base_node)
         return self._node
 

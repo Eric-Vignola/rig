@@ -6,13 +6,16 @@ caches when it is first named behaves as before. ``Attribute.set`` passes the
 same ``type`` argument, and raises the same errors, when it skips the type
 query. ``Attribute.data_type`` shares a fixed-kind attr's type across nodes of
 a type, and keeps querying every type that can change. ``Attribute.__init__``
-leaves the same instance state without going through ``Plug.__setattr__``."""
+leaves the same instance state without going through ``Plug.__setattr__``. A
+plug reuses the wrapper of the Node or parent plug it came from only where a
+fresh cast would rebuild that wrapper unchanged, so it reports the same owner
+and raises the same errors."""
 
 from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig import InjectionError, Node, Plug, lock
+from rig import Container, InjectionError, Node, Plug, lock
 from rig.nodetypes import DGNode, Joint, PyNode, Transform
 from rig.nodetypes import _base
 from rig.nodetypes._base import (
@@ -23,6 +26,7 @@ from rig.nodetypes._base import (
     is_valid_maya_uid,
     set_custom_type,
 )
+from rig._internal import plug as plug_module
 from rig._internal.plug import ComponentPlug
 from rig._tests._base import MayaTestCase
 
@@ -767,3 +771,198 @@ class TestAttributeInitState(MayaTestCase):
                 self.assertEqual(
                     str(ctx.exception), f"{source} is not a string or MPlug."
                 )
+
+
+def _owner(plug):
+    """The name, owner classes and owner path a plug reports, or what it raises."""
+    try:
+        name = str(plug)
+        node = plug.node._dg_node
+        path = node._mdagpath.fullPathName() if "_mdagpath" in vars(node) else None
+    except Exception as exc:
+        return ("error", type(exc), str(exc))
+    return ("ok", name, type(plug.node), type(node), node.long_name, path)
+
+
+class TestPlugNodeReuse(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self._registered = dict(PyNode._NODE_CLASS_DICT)
+
+    def tearDown(self):
+        PyNode._NODE_CLASS_DICT.clear()
+        PyNode._NODE_CLASS_DICT.update(self._registered)
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        super().tearDown()
+
+    def _casts(self, func):
+        """The ``PyNode`` casts ``Plug.node`` makes while ``func`` runs."""
+        cast = mock.Mock(side_effect=PyNode)
+        with mock.patch.object(plug_module, "PyNode", cast):
+            func()
+        return cast.call_count
+
+    def _known_type(self, node_type):
+        """A new node of a type ``PyNode`` already cast from an MObject."""
+        PyNode(_mobject(cmds.createNode(node_type)))
+        return cmds.createNode(node_type)
+
+    def test_lookup_child_and_element_plugs_reuse_the_wrapper(self):
+        node = Node(self._known_type("transform"))
+        pma  = Node(self._known_type("plusMinusAverage"))
+        for plug, expected in (
+            (node.tx, "transform2.translateX"),
+            (node.t[0], "transform2.translateX"),
+            (node.t[-1], "transform2.translateZ"),
+            (node.t.translateY, "transform2.translateY"),
+            (node.t.ty, "transform2.translateY"),
+            (node.t[:][2], "transform2.translateZ"),
+            (node.translate.child(1), "transform2.translateY"),
+            (pma.input1D[3], "plusMinusAverage2.input1D[3]"),
+            (pma.input1D[0:2][1], "plusMinusAverage2.input1D[1]"),
+            (pma.input3D[1].input3Dx, "plusMinusAverage2.input3D[1].input3Dx"),
+        ):
+            with self.subTest(plug=expected):
+                self.assertEqual(self._casts(lambda: str(plug)), 0)
+                self.assertEqual(str(plug), expected)
+                self.assertIs(type(plug.node), Node)
+                self.assertIsNot(plug.node, node)
+                fresh = Plug(plug.plug)
+                self.assertEqual(self._casts(lambda: str(fresh)), 1)
+                self.assertEqual(_owner(plug), _owner(fresh))
+        # a parent that holds no wrapper hands none on and is not resolved
+        held = Plug(node.rotate.plug)
+        self.assertIsNone(held.child(0)._node)
+        self.assertIsNone(held.rotateY._node)
+        self.assertIsNone(held._node)
+        str(held)
+        self.assertEqual(self._casts(lambda: str(held.rotateX)), 0)
+        self.assertEqual(self._casts(lambda: str(held[2])), 0)
+
+    def test_first_plug_on_a_type_still_casts(self):
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        node = Node(cmds.createNode("multiplyDivide"))
+        plug = node.input1X
+        self.assertEqual(self._casts(lambda: str(plug)), 1)
+        self.assertEqual(self._casts(lambda: str(node.input1Y)), 0)
+
+    def test_instanced_shape_plug_not_seeded(self):
+        top = cmds.createNode("transform", name="T1")
+        PyNode(_mobject(cmds.createNode("transform", name="S", parent=top)))
+        other = cmds.createNode("transform", name="T2")
+        cmds.parent("T1|S", other, add=True, relative=True)
+        for plug in (Node("|T2|S").visibility, Node("|T2|S").t[0]):
+            with self.subTest(plug=plug.name):
+                self.assertEqual(self._casts(lambda: str(plug)), 1)
+                self.assertTrue(str(plug).startswith("T1|S."))
+                self.assertEqual(plug.node._dg_node.long_name, "|T1|S")
+        self.assertEqual(self._casts(lambda: str(Node("|T1|S").visibility)), 0)
+
+    def test_user_chosen_class_not_seeded(self):
+        plug = Node(Transform(self._known_type("joint"))).tx
+        self.assertEqual(self._casts(lambda: str(plug)), 1)
+        self.assertIs(type(plug.node._dg_node), Joint)
+
+    def test_shape_attr_via_transform_gets_shape_node(self):
+        points = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
+        curve  = cmds.curve(point=points, name="crv")
+        shape  = cmds.listRelatives(curve, shapes=True)[0]
+        PyNode(_mobject(curve))
+        PyNode(_mobject(shape))
+        plug = Node(curve).controlPoints
+        self.assertEqual(str(plug), f"{shape}.controlPoints")
+        self.assertEqual(plug.node.name, shape)
+        self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+
+    def test_child_plug_tracks_rename(self):
+        node     = Node(self._known_type("transform"))
+        children = (node.t[0], node.t.translateY, node.t[:][2])
+        cmds.rename(str(node), "y")
+        for child, attr in zip(children, ("translateX", "translateY", "translateZ")):
+            with self.subTest(attr=attr):
+                self.assertEqual(self._casts(lambda: str(child)), 0)
+                self.assertEqual(str(child), f"y.{attr}")
+
+    def test_container_plug_node_is_plain_node(self):
+        PyNode(_mobject(cmds.container(name="box0")))
+        ctn  = Container(cmds.container(name="box"))
+        plug = ctn.blackBox
+        self.assertEqual(self._casts(lambda: str(plug)), 0)
+        self.assertIs(type(plug.node), Node)
+        self.assertIsNot(plug.node, ctn)
+        self.assertEqual(plug.node.name, "box")
+
+    def test_element_plug_shares_node(self):
+        base   = cmds.polyCube(name="base")[0]
+        target = cmds.polyCube(name="target")[0]
+        bs     = cmds.blendShape(target, base, name="bs")[0]
+        PyNode(_mobject(bs))
+        for plug in (Node(bs).weight[0], Node(bs).w[0], Node(bs).weight[0:1][0]):
+            with self.subTest(plug=plug.name):
+                self.assertEqual(self._casts(lambda: str(plug)), 0)
+                self.assertEqual(plug.node.name, Plug(f"{bs}.weight[0]").node.name)
+                self.assertEqual(_owner(plug), _owner(Plug(f"{bs}.weight[0]")))
+
+    def test_changes_after_lookup_match_a_fresh_plug(self):
+        a    = cmds.createNode("transform", name="A")
+        b    = cmds.createNode("transform", name="B")
+        node = Node(cmds.parent(self._known_type("transform"), a)[0])
+        steps = (
+            lambda: cmds.rename("A|transform2", "C"),
+            lambda: cmds.parent("A|C", b),
+            lambda: cmds.createNode("transform", name="C", parent=a),
+            lambda: cmds.instance(b),
+            lambda: cmds.rename("B|C", "C2"),
+            lambda: cmds.parent("B|C2", world=True),
+        )
+        for index, step in enumerate(steps):
+            held = (node.tx, node.t[1], node.t.tz)
+            step()
+            for plug in held:
+                with self.subTest(step=index, plug=plug.name):
+                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+                    self.assertEqual(_owner(plug)[0], "ok")
+
+    def test_custom_type_set_after_lookup(self):
+        class _Probe(Transform):
+            CUSTOM_NODE_TYPE = "perfReuseProbe"
+
+        node = Node(self._known_type("transform"))
+        held = (node.tx, node.t[0])
+        set_custom_type(str(node), "perfReuseProbe")
+        for plug in held:
+            with self.subTest(plug=plug.name):
+                self.assertEqual(self._casts(lambda: str(plug)), 1)
+                self.assertIs(type(plug.node._dg_node), _Probe)
+                self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+
+    def test_deleted_node_error_unchanged(self):
+        cmds.undoInfo(state=True, infinity=True)
+        for node_type, attr, parent in (
+            ("multiplyDivide", "input1X", "input1"),
+            ("transform", "tx", "translate"),
+        ):
+            with self.subTest(node_type=node_type):
+                name  = self._known_type(node_type)
+                node  = Node(name)
+                plugs = (getattr(node, attr), getattr(node, parent)[1])
+                cmds.delete(name)
+                for plug in plugs:
+                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+                    self.assertEqual(_owner(plug)[0], "error")
+                cmds.undo()
+                for plug in plugs:
+                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+                    self.assertEqual(_owner(plug)[0], "ok")
+
+                # the cast resolves the name, so it finds a newer node of that name
+                plugs = (getattr(node, attr), getattr(node, parent)[1])
+                cmds.delete(name)
+                cmds.createNode(node_type, name=name)
+                for plug in plugs:
+                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+                    self.assertEqual(_owner(plug)[0], "ok")

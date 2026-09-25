@@ -172,7 +172,13 @@ class Node:
             component_plug = _maybe_component_plug(attr_name, result)
             if component_plug is not None:
                 return component_plug
-            return Plug(result.plug)
+            # Hand the plug this wrapper; ``Plug.node`` reuses it only when a
+            # fresh cast would rebuild it unchanged.
+            plug    = Plug(result.plug)
+            dg_node = self._dg_node
+            if isinstance(dg_node, DGNode):
+                plug.__dict__["_node"] = dg_node
+            return plug
         return result
 
     def _attr_data_type_fallback(self, attr: Any) -> str:
