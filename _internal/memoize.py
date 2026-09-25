@@ -26,8 +26,10 @@ from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # API 1.0 used because API 2.0 MObjects can crash Maya after a new-scene
-# load (see rig.nodetypes.dg_node._cache_api1_objects).
+# load (see rig.nodetypes.dg_node._cache_api1_objects). API 2.0 is only used
+# on the MObject an Attribute's own MPlug returns, never stored.
 from maya import cmds, OpenMaya as OpenMaya1
+from maya.api import OpenMaya
 from rig.nodetypes._base import Attribute
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
@@ -81,9 +83,24 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
 
     Uses the composite node identity (see :func:`_node_identity`) so the key
     survives renames AND Maya's MObjectHandle hashCode recycling on delete.
+    The identity is read from the node of the attribute's own MPlug, which
+    gives the same ``(uuid, hashCode)`` as resolving the node by name; a dead
+    or unreadable node takes the by-name path, so it raises as before.
     """
-    node_str = attr.full_name.split(".", 1)[0]  # "node.attr" -> "node"
-    return (_node_identity(node_str), attr.alias)
+    try:
+        mobject = attr.plug.node()
+        handle  = OpenMaya.MObjectHandle(mobject)
+        if handle.isValid() and handle.isAlive():
+            uuid_str = OpenMaya.MFnDependencyNode(mobject).uuid().asString()
+            identity = (uuid_str, handle.hashCode())
+        else:
+            identity = None
+    except Exception:
+        identity = None
+    if identity is None:
+        node_str = attr.full_name.split(".", 1)[0]  # "node.attr" -> "node"
+        identity = _node_identity(node_str)
+    return (identity, attr.alias)
 
 
 def _node_identity(node_name: str) -> Tuple[str, int]:

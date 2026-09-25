@@ -9,6 +9,7 @@ from unittest import mock
 from maya import cmds, OpenMaya as om1
 from rig import Node, PlugList
 from rig._internal.memoize import (
+    _attribute_key,
     _broadcast_len,
     _node_identity,
     _stable_key,
@@ -309,3 +310,100 @@ class TestMemoizeNodeKeyHardening(MayaTestCase):
             uuid_str, hash_code = _node_identity("cube1")
         self.assertEqual(uuid_str, expected_uuid)
         self.assertIsInstance(hash_code, int)
+
+
+def _name_based_key(attr):
+    """The attribute key as built from the node name (the pre-MPlug path)."""
+    return (_node_identity(attr.full_name.split(".", 1)[0]), attr.alias)
+
+
+def _outcome(fn, *args):
+    """``("ok", value)`` or ``("raise", exception type, message)`` of a call."""
+    try:
+        return ("ok", fn(*args))
+    except Exception as exc:
+        return ("raise", type(exc), str(exc))
+
+
+class TestAttributeKeyFromPlug(MayaTestCase):
+    """``_attribute_key`` reads the node identity from the attribute's MPlug;
+    the key must be identical to the one resolved from the node name."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_attribute_key_matches_name_based_identity(self):
+        # DG node, plain / element / compound child plugs.
+        md  = Node.create("multiplyDivide", name="md1")
+        pma = Node.create("plusMinusAverage", name="pma1")
+        # DAG nodes sharing a short name under different parents.
+        Node.create("transform", name="grp1")
+        Node.create("transform", name="grp2")
+        cmds.createNode("transform", name="dup", parent="grp1")
+        cmds.createNode("transform", name="dup", parent="grp2")
+        dup1 = Node("grp1|dup")
+        dup2 = Node("grp2|dup")
+        # Namespaced node.
+        cmds.namespace(add="ns")
+        cmds.createNode("transform", name="ns:thing")
+        thing = Node("ns:thing")
+        # Aliased attribute.
+        cmds.addAttr("ns:thing", longName="custom", attributeType="double")
+        cmds.aliasAttr("nick", "ns:thing.custom")
+        # Multi-dimensional component plugs.
+        surface = cmds.sphere(name="nurbsSphere1")[0]
+
+        plugs = [
+            md.input1X,
+            md.input1,
+            md.input1.input1Y,
+            pma.input1D[3],
+            dup1.translateX,
+            dup2.translateX,
+            dup1.translate.translateZ,
+            thing.translateY,
+            thing.nick,
+            Node(surface).cv,
+            Node(surface).cv[1, 2],
+        ]
+        for plug in plugs:
+            with self.subTest(plug=str(plug)):
+                self.assertEqual(_attribute_key(plug), _name_based_key(plug))
+                self.assertEqual(_stable_key(plug),    _name_based_key(plug))
+        self.assertEqual(thing.nick.alias, "nick")
+        # A live node's key never goes through the by-name resolution.
+        with mock.patch(
+            "rig._internal.memoize._node_identity", wraps=_node_identity
+        ) as by_name:
+            for plug in plugs:
+                _attribute_key(plug)
+        by_name.assert_not_called()
+        self.assertNotEqual(
+            _attribute_key(dup1.translateX), _attribute_key(dup2.translateX)
+        )
+
+    def test_attribute_key_of_deleted_node_matches_name_based_path(self):
+        node = Node.create("transform", name="cube1")
+        plug = node.translateX
+        cmds.delete("cube1")
+        self.assertEqual(
+            _outcome(_attribute_key, plug), _outcome(_name_based_key, plug)
+        )
+
+    def test_recreated_node_same_name_misses_cache(self):
+        call_count = {"n": 0}
+
+        @memoize
+        def probe(plug):
+            call_count["n"] += 1
+            return call_count["n"]
+
+        node = Node.create("transform", name="cube1")
+        self.assertEqual(probe(node.translateX), 1)
+        self.assertEqual(probe(node.translateX), 1)
+        old_key = _attribute_key(node.translateX)
+        cmds.delete("cube1")
+        cmds.flushUndo()
+        node = Node.create("transform", name="cube1")
+        self.assertNotEqual(_attribute_key(node.translateX), old_key)
+        self.assertEqual(probe(node.translateX), 2)
+        self.assertEqual(call_count["n"], 2)
