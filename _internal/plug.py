@@ -1427,6 +1427,26 @@ def _unlock_lock_chain(dst: Attribute) -> list:
     return saved
 
 
+def _lock_chain_is_unlocked(dst: Attribute) -> bool:
+    """Return ``True`` when no plug on ``dst``'s lock chain is locked.
+
+    Walks the same MPlug parent chain as :func:`_lock_chain_names`, reading
+    each plug's ``isLocked`` (which matches ``cmds.getAttr(lock=True)`` per
+    plug). The leaf alone is not enough: a locked array root blocks the
+    disconnect of its elements, which do not always report it themselves.
+    """
+    cur = dst.plug
+    while True:
+        if cur.isLocked:
+            return False
+        if cur.isChild:
+            cur = cur.parent()
+        elif cur.isElement:
+            cur = cur.array()
+        else:
+            return True
+
+
 def _disconnect_sources_respecting_lock(dst: Attribute, sources: list) -> None:
     """Remove every ``src -> dst`` connection, honoring the lock contract.
 
@@ -1441,6 +1461,17 @@ def _disconnect_sources_respecting_lock(dst: Attribute, sources: list) -> None:
     ``InjectionError`` (unlock) or a logged warning (re-lock) that never masks
     an in-flight error.
     """
+    if _lock_chain_is_unlocked(dst):
+        # nothing to unlock / relock: skip the by-name chain walk
+        try:
+            for src_attr in sources:
+                src_attr.disconnect(dst)
+        except RuntimeError as e:
+            raise InjectionError(
+                f"Cannot disconnect {str(dst)!r} from its driver: {e}"
+            ) from e
+        return
+
     saved = _unlock_lock_chain(dst)
     try:
         for src_attr in sources:

@@ -436,3 +436,90 @@ class TestInjectCompoundFactsReused(MayaTestCase):
             n.t << 5
         self.assertEqual(spy.call_count, 0)
         self.assertEqual(list(cmds.getAttr("c1.translate")[0]), [5.0, 5.0, 5.0])
+
+
+class TestDisconnectLockWalkSkipped(MayaTestCase):
+    """A disconnect whose whole lock chain is unlocked skips the by-name
+    unlock / relock walk; any locked plug on the chain still takes it.
+    """
+
+    TEST_START_NEW_SCENE = True
+
+    def _lock_queries(self):
+        real = cmds.getAttr
+        calls = []
+
+        def _spy(*args, **kwargs):
+            if kwargs.get("lock"):
+                calls.append(args)
+            return real(*args, **kwargs)
+
+        return calls, mock.patch.object(plugmod.cmds, "getAttr", side_effect=_spy)
+
+    def test_rewire_unlocked_skips_lock_walk(self):
+        n = Node.create("transform", name="c1")
+        a = Node.create("transform", name="a")
+        b = Node.create("transform", name="b")
+        n.tx << a.tx
+        calls, patch = self._lock_queries()
+        with patch, mock.patch.object(
+            plugmod, "_unlock_lock_chain", wraps=plugmod._unlock_lock_chain
+        ) as walk, mock.patch.object(
+            plugmod, "_lock_chain_is_unlocked", wraps=plugmod._lock_chain_is_unlocked
+        ) as probe:
+            n.tx << b.tx
+            self.assertEqual(_incoming("c1.translateX"), ["b.translateX"])
+            n.tx << None
+        self.assertEqual(_incoming("c1.translateX"), [])
+        self.assertEqual(calls, [])
+        self.assertEqual(walk.call_count, 0)
+        self.assertGreaterEqual(probe.call_count, 1)
+
+    def test_rewire_unlocked_disconnect_failure_message_unchanged(self):
+        n   = Node.create("transform", name="c1")
+        drv = Node.create("transform", name="drv")
+        n.tx << drv.tx
+        with mock.patch.object(
+            Attribute, "disconnect", side_effect=RuntimeError("boom")
+        ):
+            with self.assertRaises(InjectionError) as ctx:
+                n.tx << None
+        self.assertEqual(
+            str(ctx.exception),
+            "Cannot disconnect 'c1.translateX' from its driver: boom",
+        )
+
+    def test_rewire_under_locked_parent_still_relocks(self):
+        n   = Node.create("transform", name="c1")
+        drv = Node.create("transform", name="drv")
+        n.tx << drv.tx
+        cmds.setAttr("c1.translate", lock=True)
+        calls, patch = self._lock_queries()
+        with patch:
+            n.tx << None
+        self.assertEqual(_incoming("c1.translateX"), [])
+        self.assertEqual(len(calls), 2)  # translate, then translateX
+        self.assertTrue(cmds.getAttr("c1.translate", lock=True))
+        cmds.setAttr("c1.translate", lock=False)
+        self.assertFalse(cmds.getAttr("c1.translateX", lock=True))
+
+    def test_disconnect_under_locked_array_root_still_walks(self):
+        # A locked multi root blocks disconnecting its elements, and
+        # the element's own MPlug does not always report that lock.
+        pma = Node.create("plusMinusAverage", name="pma")
+        t   = Node.create("transform", name="t")
+        cmds.addAttr("t", ln="cm", at="compound", nc=1, multi=True)
+        cmds.addAttr("t", ln="cmx", at="double", p="cm")
+        drv = Node.create("transform", name="drv")
+        pma.input1D[1] << drv.tx
+        cmds.connectAttr("drv.ty", "t.cm[0].cmx")
+        cmds.setAttr("pma.input1D", lock=True)
+        cmds.setAttr("t.cm", lock=True)
+        pma.input1D[1] << None
+        t.cm[0].cmx << None
+        self.assertEqual(_incoming("pma.input1D[1]"), [])
+        self.assertEqual(_incoming("t.cm[0].cmx"), [])
+        self.assertTrue(cmds.getAttr("pma.input1D", lock=True))
+        self.assertTrue(cmds.getAttr("t.cm", lock=True))
+        cmds.setAttr("pma.input1D", lock=False)
+        self.assertFalse(cmds.getAttr("pma.input1D[1]", lock=True))
