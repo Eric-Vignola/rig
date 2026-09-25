@@ -48,6 +48,28 @@ def _yield(obj: Any, index: int) -> Any:
             f"_yield: index {index} out of range for set of length {len(obj)}"
         )
 
+    # list / tuple (sub)classes with the builtin __iter__ and __len__:
+    # index the storage directly, the element list(obj)[index] would
+    # return, instead of copying the whole sequence for every row
+    t = type(obj)
+    if (
+        isinstance(obj, list)
+        and t.__iter__ is list.__iter__
+        and t.__len__ is list.__len__
+    ):
+        if not list.__len__(obj):
+            raise IndexError("_yield: empty sequence has no element at any index")
+        return list.__getitem__(obj, index)
+    if (
+        isinstance(obj, tuple)
+        and t.__iter__ is tuple.__iter__
+        and t.__len__ is tuple.__len__
+        and type(index) is int
+        and -tuple.__len__(obj) <= index < tuple.__len__(obj)
+    ):
+        # in-range int only: other indices keep the list error messages
+        return tuple.__getitem__(obj, index)
+
     # list, tuple, sequence-like
     if _is_sequence(obj):
         seq = list(obj)
