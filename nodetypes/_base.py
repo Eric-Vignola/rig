@@ -437,6 +437,17 @@ def _trace_choice_source(plug: OpenMaya.MPlug) -> OpenMaya.MPlug | None:
     return None if src.isNull else src
 
 
+def _plug_in_array(plug: OpenMaya.MPlug) -> bool:
+    """True if `plug` is an array or an array element, or a child at any depth
+    of one."""
+    while True:
+        if plug.isArray or plug.isElement:
+            return True
+        if not plug.isChild:
+            return False
+        plug = plug.parent()
+
+
 # Dispatch table for nodes whose geometry output is computed from an upstream
 # input rather than directly fed by a connection. Maps the node's `typeName`
 # (as reported by `MFnDependencyNode.typeName`) to a callable that takes the
@@ -1028,7 +1039,7 @@ class Attribute(str):
         Args:
             args, kwargs: args supported by cmds.setAttr()
         """
-        if "type" not in kwargs:
+        if "type" not in kwargs and not self._is_fixed_kind_outside_array():
             # typed attr requires the `type` arg to be specified.
             # the only weird one-off is `fltMatrix`, which is not typed but still
             # requires the `type` arg.
@@ -1056,6 +1067,21 @@ class Attribute(str):
             cmds.setAttr(self.full_name, *args[0], **kwargs)
         else:
             cmds.setAttr(self.full_name, *args, **kwargs)
+
+    def _is_fixed_kind_outside_array(self) -> bool:
+        """True if this attr's kind never takes the cmds.setAttr() `type` arg.
+
+        A numeric, unit, enum, message or compound kind is not typed and never
+        holds a matrix, so `set()` can skip its `data_type` query. Arrays,
+        their elements and the children of either keep the query: their
+        `data_type` can raise, and `set()` must keep raising that error.
+        """
+        try:
+            return self.mobject.apiType() in _NON_MATRIX_ATTR_API_TYPES and (
+                not _plug_in_array(self._mplug)
+            )
+        except Exception:
+            return False
 
     def get(self) -> Any:
         """Returns the attribute value.

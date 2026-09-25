@@ -2,13 +2,15 @@
 per-type class cache picks the same class, raises the same errors and follows
 new class registrations like the name-based path does. A cast that skips the
 type check builds the same wrapper as the constructor, and the node a plug
-caches when it is first named behaves as before."""
+caches when it is first named behaves as before. ``Attribute.set`` passes the
+same ``type`` argument, and raises the same errors, when it skips the type
+query."""
 
 from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig import Node, Plug
+from rig import InjectionError, Node, Plug, lock
 from rig.nodetypes import DGNode, Joint, PyNode, Transform
 from rig.nodetypes import _base
 from rig.nodetypes._base import (
@@ -417,3 +419,142 @@ class TestCheckedTypeConstruction(MayaTestCase):
         ):
             with self.subTest(plug=node_name):
                 self.assertEqual(hash(plug), hash((hash(node_name), alias)))
+
+
+def _type_queries(probe):
+    """The ``cmds.getAttr(..., type=True)`` calls a spy recorded."""
+    return [call for call in probe.call_args_list if call.kwargs.get("type")]
+
+
+class TestSetTypeArgument(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def _set_kwargs(self, attr, *args):
+        """The keyword arguments ``attr.set(*args)`` hands to cmds.setAttr()."""
+        with mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as probe:
+            attr.set(*args)
+        return probe.call_args.kwargs
+
+    def test_set_on_array_element_child_keeps_legacy_error(self):
+        for node_type, attr in (
+            ("timeEditorClip", "layer[0].layerWeight"),
+            ("timeEditorTracks", "crossfade[0].crossfadeMode"),
+        ):
+            with self.subTest(node_type=node_type):
+                try:
+                    name = f"{cmds.createNode(node_type)}.{attr}"
+                except RuntimeError:
+                    self.skipTest(f"{node_type} is unavailable")
+                try:
+                    cmds.getAttr(name, type=True)
+                except RuntimeError as exc:
+                    message = str(exc)
+                else:
+                    self.skipTest(f"getAttr(type=True) resolves {name}")
+
+                plug = Plug(name)
+                with self.assertRaises(InjectionError) as ctx:
+                    plug << 0.5
+                self.assertEqual(str(ctx.exception), f"Cannot set {name!r}: {message}")
+                for action in (lambda: plug.set(0.25), lambda: plug << lock):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        action()
+                    self.assertNotIsInstance(ctx.exception, InjectionError)
+                    self.assertEqual(str(ctx.exception), message)
+
+    def test_scalar_set_makes_no_type_query(self):
+        loc = Node.create("transform", name="loc")
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="dbl", at="double")
+        cmds.addAttr(net, ln="enm", at="enum", en="a:b")
+        cmds.addAttr(net, ln="cmp", at="double3")
+        for axis in "XYZ":
+            cmds.addAttr(net, ln=f"cmp{axis}", at="double", p="cmp")
+        net = Node(net)
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            loc.tx.set(1.0)
+            loc.ry.set(45.0)
+            loc.v.set(False)
+            net.dbl.set(2.5)
+            net.enm.set(1)
+            net.cmpY.set(3.0)
+            net.cmp.set(1.0, 2.0, 3.0)
+            loc.tz << lock
+        self.assertEqual(_type_queries(probe), [])
+        self.assertEqual(cmds.getAttr("loc.tx"), 1.0)
+        self.assertEqual(cmds.getAttr("net.cmp"), [(1.0, 2.0, 3.0)])
+        self.assertEqual(cmds.getAttr("net.dbl"), 2.5)
+        self.assertTrue(cmds.getAttr("loc.tz", lock=True))
+
+    def test_matrix_set_still_passes_type(self):
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="dtm", dt="matrix")
+        cmds.addAttr(net, ln="atm", at="matrix")
+        cmds.addAttr(net, ln="flm", at="fltMatrix")
+        cmds.addAttr(net, ln="str", dt="string")
+        cmds.addAttr(net, ln="dbl", at="double")
+        net      = Node(net)
+        identity = [1.0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 3, 4, 1]
+        for attr, args, expected in (
+            (net.dtm, identity, {"type": "matrix"}),
+            (net.atm, identity, {"type": "matrix"}),
+            (net.flm, identity, {"type": "matrix"}),
+            (net.str, ["text"], {"type": "string"}),
+            (net.dbl, [1.5], {}),
+        ):
+            with self.subTest(attr=str(attr)):
+                self.assertEqual(self._set_kwargs(attr, *args), expected)
+        self.assertEqual(cmds.getAttr("net.dtm")[12:15], [2.0, 3.0, 4.0])
+
+    def test_set_under_array_element_keeps_type_query(self):
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="items", at="compound", nc=2, multi=True)
+        cmds.addAttr(net, ln="weight", at="double", p="items")
+        cmds.addAttr(net, ln="pos", at="double3", p="items")
+        for axis in "XYZ":
+            cmds.addAttr(net, ln=f"pos{axis}", at="double", p="pos")
+        cmds.addAttr(net, ln="dbls", at="double", multi=True)
+        for name in ("net.items[0].weight", "net.items[0].pos.posX", "net.dbls[2]"):
+            plug = Plug(name)
+            with self.subTest(plug=name):
+                with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+                    plug.set(0.5)
+                self.assertEqual(len(_type_queries(probe)), 1)
+                self.assertEqual(cmds.getAttr(name), 0.5)
+
+    def test_set_errors_match_the_type_query_path(self):
+        def outcome(action):
+            try:
+                action()
+            except Exception as exc:
+                return (type(exc), str(exc))
+            return None
+
+        cmds.undoInfo(state=True, infinity=True)
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="dbl", at="double")
+        cmds.addAttr(net, ln="cmp", at="double3")
+        for axis in "XYZ":
+            cmds.addAttr(net, ln=f"cmp{axis}", at="double", p="cmp")
+        loc = Node.create("transform", name="loc")
+        cmds.connectAttr("net.dbl", "loc.tx")
+        cases = [
+            (lambda: loc.tx.set(1.0), True),
+            (lambda: Plug("net.dbl").set("text"), True),
+            (lambda: Plug("net.cmp").set(1.0), True),
+            (lambda: Plug("net.cmpX").set(1.0, 2.0), True),
+            (lambda: Plug("net.dbl").set(), True),
+        ]
+        gone = Plug("net.cmpY")
+        str(gone)
+        cmds.delete(net)
+        cases.append((lambda: gone.set(1.0), True))
+        for index, (action, raises) in enumerate(cases):
+            with self.subTest(case=index):
+                fast = outcome(action)
+                with mock.patch.object(
+                    _base.Attribute, "_is_fixed_kind_outside_array", return_value=False
+                ):
+                    legacy = outcome(action)
+                self.assertEqual(fast, legacy)
+                self.assertEqual(fast is not None, raises)
