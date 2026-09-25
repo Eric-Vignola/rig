@@ -17,7 +17,12 @@ import numbers
 from typing import Any
 
 from maya.api import OpenMaya
-from rig.nodetypes._base import _trace_choice_source, Attribute
+from rig.nodetypes._base import (
+    _NON_MATRIX_ATTR_API_TYPES,
+    _SCALAR_ATTR_API_TYPES,
+    _trace_choice_source,
+    Attribute,
+)
 from rig._internal.node import Node
 from rig._internal.plug import Plug
 from rig.spec._base import _AttrSpec
@@ -125,7 +130,7 @@ def _is_compound(obj: Any) -> bool:
     non-attribute inputs.
 
     Special case: Maya's polymorphic attributes (``kGenericAttribute``,
-    used by ``choice`` / ``addDoubleLinear`` etc.) report 0 structural
+    used by ``choice`` / ``unitConversion`` etc.) report 0 structural
     children even after being typed by their first connection. They
     carry compound DATA at runtime (``data_type == "double3"`` etc.).
     Mirror Eric Vignola's third_party.rig handling -- check the runtime
@@ -141,6 +146,9 @@ def _is_compound(obj: Any) -> bool:
     try:
         if obj.plug.isCompound:
             return True
+        # a numeric / unit / enum / message kind is never a compound
+        if obj.mobject.apiType() in _SCALAR_ATTR_API_TYPES:
+            return False
         # ``num_children`` raises TypeError on non-compound plugs (incl.
         # generic / kGeneric attributes like choice.output). Guard.
         try:
@@ -195,6 +203,9 @@ def _is_matrix(obj: Any) -> bool:
     if not _is_attribute(obj):
         return False
     try:
+        # a scalar or numeric compound kind never holds a matrix
+        if obj.mobject.apiType() in _NON_MATRIX_ATTR_API_TYPES:
+            return False
         return obj.data_type == "matrix"
     except Exception:
         return False

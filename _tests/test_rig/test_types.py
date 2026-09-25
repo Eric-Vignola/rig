@@ -1,7 +1,10 @@
 """Tests for ``rig._internal.types`` predicates."""
 
+from unittest import mock
+
 from maya import cmds
-from rig import Node, PlugList
+from maya.api import OpenMaya
+from rig import Node, Plug, PlugList
 from rig._internal.types import (
     _arity_of,
     _get_compound,
@@ -138,6 +141,163 @@ class TestAttributeKindPredicates(MayaTestCase):
         shape    = Node(cmds.listRelatives(cube, shapes=True)[0])
         vtx_plug = shape.vtx[0]
         self.assertTrue(_is_control_point(vtx_plug))
+
+
+def _legacy_is_compound(obj):
+    """The runtime ``data_type`` rule ``_is_compound`` answered with before the
+    attribute-kind fast path."""
+    try:
+        if obj.plug.isCompound:
+            return True
+        try:
+            if obj.num_children > 0:
+                return True
+        except Exception:
+            pass
+        return obj.data_type in ("double3", "float3", "long3", "short3", "double4", "float4")
+    except Exception:
+        return False
+
+
+def _legacy_is_matrix(obj):
+    """The runtime ``data_type`` rule ``_is_matrix`` answered with before the
+    attribute-kind fast path."""
+    try:
+        return obj.data_type == "matrix"
+    except Exception:
+        return False
+
+
+def _all_plugs(node_name):
+    """Every top-level plug of a node, with compound children and element [0]
+    of multis, as raw MPlugs."""
+    sel = OpenMaya.MSelectionList()
+    sel.add(node_name)
+    mobj  = sel.getDependNode(0)
+    fn    = OpenMaya.MFnDependencyNode(mobj)
+    plugs = []
+    for i in range(fn.attributeCount()):
+        attr = fn.attribute(i)
+        if not OpenMaya.MFnAttribute(attr).parent.isNull():
+            continue
+        stack = [OpenMaya.MPlug(mobj, attr)]
+        while stack:
+            plug = stack.pop()
+            plugs.append(plug)
+            if plug.isArray:
+                stack.append(plug.elementByLogicalIndex(0))
+            elif plug.isCompound:
+                stack.extend(plug.child(c) for c in range(plug.numChildren()))
+    return plugs
+
+
+class TestAttributeKindFastPath(MayaTestCase):
+    """``_is_compound`` / ``_is_matrix`` answer fixed attribute kinds from the
+    API and keep the runtime ``data_type`` rule for generic and typed ones."""
+
+    TEST_START_NEW_SCENE = True
+
+    # (long name, addAttr flags, _is_compound, _is_matrix)
+    KINDS = (
+        ("dbl", {"at": "double"}, False, False),
+        ("lin", {"at": "doubleLinear"}, False, False),
+        ("ang", {"at": "doubleAngle"}, False, False),
+        ("tim", {"at": "time"}, False, False),
+        ("enm", {"at": "enum", "en": "a:b"}, False, False),
+        ("mss", {"at": "message"}, False, False),
+        ("boo", {"at": "bool"}, False, False),
+        ("lng", {"at": "long"}, False, False),
+        ("dt3", {"dt": "double3"}, True, False),
+        ("dtm", {"dt": "matrix"}, False, True),
+        ("atm", {"at": "matrix"}, False, True),
+        ("flm", {"at": "fltMatrix"}, False, True),
+        ("mdb", {"at": "double", "multi": True}, False, False),
+    )
+
+    def _kind_node(self):
+        net = cmds.createNode("network", name="kinds")
+        for long_name, flags, _, _ in self.KINDS:
+            cmds.addAttr(net, ln=long_name, **flags)
+        cmds.addAttr(net, ln="cmp", at="double3")
+        for axis in "XYZ":
+            cmds.addAttr(net, ln=f"cmp{axis}", at="double", p="cmp")
+        cmds.setAttr(f"{net}.mdb[0]", 1.0)
+        return Node(net)
+
+    def test_is_compound_is_matrix_by_attr_kind(self):
+        node     = self._kind_node()
+        expected = [(getattr(node, n), c, m) for n, _, c, m in self.KINDS]
+        expected.append((node.cmp, True, False))
+        expected.append((node.mdb[0], False, False))
+        for plug, compound, matrix in expected:
+            with self.subTest(plug=str(plug)):
+                self.assertIs(_is_compound(plug), compound)
+                self.assertIs(_is_matrix(plug), matrix)
+
+    def test_fixed_kinds_skip_the_type_query(self):
+        node  = self._kind_node()
+        plugs = [node.dbl, node.lin, node.ang, node.tim, node.enm, node.mss]
+        plugs += [node.boo, node.lng, node.mdb, node.mdb[0], node.cmp, node.cmpX]
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            for plug in plugs:
+                _is_compound(plug)
+                _is_matrix(plug)
+        self.assertEqual(probe.call_count, 0)
+
+    def test_generic_choice_output_still_uses_runtime_type(self):
+        src = Node.create("transform", name="src")
+        ch  = cmds.createNode("choice")
+        self.assertFalse(_is_compound(Node(ch).output))
+        cmds.connectAttr(str(src.translate), f"{ch}.input[0]")
+        self.assertTrue(_is_compound(Node(ch).output))
+        self.assertFalse(_is_matrix(Node(ch).output))
+
+        ch_matrix = cmds.createNode("choice")
+        cmds.connectAttr(f"{src}.worldMatrix[0]", f"{ch_matrix}.input[0]")
+        self.assertTrue(_is_matrix(Node(ch_matrix).output))
+        self.assertFalse(_is_compound(Node(ch_matrix).output))
+
+        cmds.loadPlugin("matrixNodes", quiet=True)
+        decompose = Node(cmds.createNode("decomposeMatrix"))
+        self.assertTrue(_is_matrix(decompose.inputMatrix))
+        self.assertFalse(_is_matrix(decompose.outputTranslate))
+        self.assertTrue(_is_compound(decompose.outputTranslate))
+
+    def test_fast_predicates_match_legacy_on_node_zoo(self):
+        cmds.loadPlugin("matrixNodes", quiet=True)
+        cmds.loadPlugin("quatNodes", quiet=True)
+        names = [str(self._kind_node())]
+        for node_type in (
+            "transform",
+            "joint",
+            "multiplyDivide",
+            "plusMinusAverage",
+            "condition",
+            "blendColors",
+            "remapValue",
+            "decomposeMatrix",
+            "composeMatrix",
+            "multMatrix",
+            "quatProd",
+        ):
+            names.append(cmds.createNode(node_type))
+        src = names[1]
+        for source in ("translate", "worldMatrix[0]", "rotateX"):
+            choice = cmds.createNode("choice")
+            cmds.connectAttr(f"{src}.{source}", f"{choice}.input[0]")
+            names.append(choice)
+        driver = cmds.createNode("multiplyDivide")
+        cmds.connectAttr(f"{driver}.outputX", f"{src}.rotateY")
+        names.extend(cmds.ls(type="unitConversion"))
+        checked = 0
+        for name in names:
+            for mplug in _all_plugs(name):
+                fast, legacy = Plug(mplug), Plug(mplug)
+                with self.subTest(plug=mplug.name()):
+                    self.assertIs(_is_compound(fast), _legacy_is_compound(legacy))
+                    self.assertIs(_is_matrix(fast), _legacy_is_matrix(legacy))
+                checked += 1
+        self.assertGreater(checked, 500)
 
 
 class TestGetCompound(MayaTestCase):

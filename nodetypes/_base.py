@@ -287,6 +287,37 @@ ATTR_TYPE_TO_FN = {
     OpenMaya.MFn.kUnitAttribute: OpenMaya.MFnUnitAttribute,
 }
 
+# Attribute kinds (exact `MObject.apiType()`) whose `cmds.getAttr(..., type=True)`
+# string is fixed by the kind itself. A plug of a scalar kind is never a
+# compound, and a plug of any listed kind never holds a matrix, so the type
+# predicates can answer without querying `data_type`. Generic and typed
+# attributes are left out: their runtime type follows their data or connection.
+_SCALAR_ATTR_API_TYPES = frozenset(
+    {
+        OpenMaya.MFn.kNumericAttribute,
+        OpenMaya.MFn.kDoubleLinearAttribute,
+        OpenMaya.MFn.kFloatLinearAttribute,
+        OpenMaya.MFn.kDoubleAngleAttribute,
+        OpenMaya.MFn.kFloatAngleAttribute,
+        OpenMaya.MFn.kTimeAttribute,
+        OpenMaya.MFn.kEnumAttribute,
+        OpenMaya.MFn.kMessageAttribute,
+    }
+)
+_NON_MATRIX_ATTR_API_TYPES = _SCALAR_ATTR_API_TYPES | {
+    OpenMaya.MFn.kCompoundAttribute,
+    OpenMaya.MFn.kAttribute2Double,
+    OpenMaya.MFn.kAttribute3Double,
+    OpenMaya.MFn.kAttribute4Double,
+    OpenMaya.MFn.kAttribute2Float,
+    OpenMaya.MFn.kAttribute3Float,
+    OpenMaya.MFn.kAttribute2Short,
+    OpenMaya.MFn.kAttribute3Short,
+    OpenMaya.MFn.kAttribute2Int,
+    OpenMaya.MFn.kAttribute3Int,
+    OpenMaya.MFn.kLightDataAttribute,
+}
+
 # typed array attrs cmds.setAttr() sets as (count, *items) instead of a list
 COUNTED_ARRAY_TYPES = ("stringArray", "vectorArray", "pointArray")
 
