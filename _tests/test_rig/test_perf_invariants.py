@@ -4,7 +4,8 @@ new class registrations like the name-based path does. A cast that skips the
 type check builds the same wrapper as the constructor, and the node a plug
 caches when it is first named behaves as before. ``Attribute.set`` passes the
 same ``type`` argument, and raises the same errors, when it skips the type
-query."""
+query. ``Attribute.data_type`` shares a fixed-kind attr's type across nodes of
+a type, and keeps querying every type that can change."""
 
 from unittest import mock
 
@@ -558,3 +559,122 @@ class TestSetTypeArgument(MayaTestCase):
                     legacy = outcome(action)
                 self.assertEqual(fast, legacy)
                 self.assertEqual(fast is not None, raises)
+
+
+class TestStaticDataTypeCache(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        _base._STATIC_DATA_TYPE.clear()
+
+    def _data_type(self, name):
+        """The data type of a fresh ``Plug(name)`` and the type queries it made."""
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            typ = Plug(name).data_type
+        return typ, len(_type_queries(probe))
+
+    def test_static_data_type_cache_hit(self):
+        first  = cmds.createNode("multiplyDivide")
+        second = cmds.createNode("multiplyDivide")
+        mult_a = cmds.createNode("multMatrix")
+        mult_b = cmds.createNode("multMatrix")
+        for attr in ("input1X", "input1", "operation", "message"):
+            with self.subTest(attr=attr):
+                expected = cmds.getAttr(f"{second}.{attr}", type=True)
+                self.assertEqual(self._data_type(f"{first}.{attr}"), (expected, 1))
+                self.assertEqual(self._data_type(f"{second}.{attr}"), (expected, 0))
+        self.assertEqual(self._data_type(f"{mult_a}.matrixIn"), ("compound", 1))
+        self.assertEqual(self._data_type(f"{mult_b}.matrixIn"), ("compound", 0))
+        self.assertEqual(self._data_type(f"{mult_a}.matrixSum"), ("matrix", 1))
+        self.assertEqual(self._data_type(f"{mult_b}.matrixSum"), ("matrix", 0))
+        self.assertEqual(self._data_type(f"{mult_b}.matrixIn[0]"), ("matrix", 1))
+        self.assertEqual(self._data_type(f"{mult_b}.matrixIn[0]"), ("matrix", 1))
+
+    def test_choice_output_type_never_cached(self):
+        pick = Node.create("choice", name="pick")
+        loc  = Node.create("transform", name="loc")
+        cmds.connectAttr("loc.translate", "pick.input[0]")
+        cmds.connectAttr("loc.worldMatrix[0]", "pick.input[1]")
+        self.assertIsNone(pick.output._static_type_key())
+        for selector, expected in ((0, "double3"), (1, "matrix"), (0, "double3")):
+            with self.subTest(selector=selector):
+                pick.selector.set(selector)
+                self.assertEqual(pick.output.data_type, expected)
+                typ, queries = self._data_type("pick.output")
+                self.assertEqual(typ, expected)
+                self.assertGreaterEqual(queries, 1)
+        cmds.disconnectAttr("loc.translate", "pick.input[0]")
+        cmds.connectAttr("loc.worldMatrix[0]", "pick.input[0]", force=True)
+        pick.selector.set(0)
+        self.assertEqual(pick.output.data_type, "matrix")
+        self.assertEqual(loc.worldMatrix.data_type, "matrix")
+
+    def test_dynamic_attr_readd_new_type(self):
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="foo", at="double")
+        held = Plug("net.foo")
+        self.assertIsNone(held._static_type_key())
+        self.assertEqual(held.data_type, "double")
+        cmds.deleteAttr("net.foo")
+        cmds.addAttr(net, ln="foo", dt="string")
+        self.assertEqual(self._data_type("net.foo"), ("string", 1))
+        self.assertEqual(self._data_type("net.foo"), ("string", 1))
+
+    def test_element_subtree_not_cached(self):
+        pma = cmds.createNode("plusMinusAverage", name="pma")
+        cmds.setAttr("pma.input3D[2]", 1, 2, 3)
+        for name in ("pma.input3D[2]", "pma.input3D[2].input3Dx", "pma.input1D[0]"):
+            with self.subTest(plug=name):
+                self.assertIsNone(Plug(name)._static_type_key())
+                expected = cmds.getAttr(name, type=True)
+                for _ in range(2):
+                    self.assertEqual(self._data_type(name), (expected, 1))
+        self.assertIsNotNone(Plug(f"{pma}.input3D")._static_type_key())
+        self.assertEqual(self._data_type("pma.input3D"), ("compound", 1))
+        self.assertEqual(self._data_type("pma.input3D"), ("compound", 0))
+
+    def test_deleted_plug_raises_despite_cache(self):
+        def outcome(plug):
+            try:
+                typ = plug.data_type
+            except Exception as exc:
+                return (type(exc), str(exc))
+            return typ
+
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("multiplyDivide", name="warm")
+        self.assertEqual(self._data_type("warm.input1X"), ("float", 1))
+        name  = cmds.createNode("multiplyDivide", name="gone")
+        named = Plug(f"{name}.input1X")
+        fresh = Plug(named.plug)
+        str(named)
+        cmds.delete(name)
+        for plug in (named, fresh):
+            with self.subTest(plug=plug is named):
+                cached = outcome(plug)
+                with mock.patch.object(
+                    _base.Attribute, "_static_type_key", return_value=None
+                ):
+                    legacy = outcome(plug)
+                self.assertEqual(cached, legacy)
+                self.assertIsInstance(cached, tuple)
+        self.assertEqual(outcome(named), (RuntimeError, f"{name} already deleted!"))
+
+    def test_plugin_load_and_unload_clear_the_cache(self):
+        for plugin in ("invertShape", "curveWarp", "quatNodes"):
+            if not cmds.pluginInfo(plugin, query=True, loaded=True):
+                break
+        else:
+            self.skipTest("no unloaded plug-in to load")
+        cmds.createNode("multiplyDivide", name="md")
+        try:
+            Plug("md.input1X").data_type
+            self.assertTrue(_base._STATIC_DATA_TYPE)
+            cmds.loadPlugin(plugin, quiet=True)
+            self.assertEqual(_base._STATIC_DATA_TYPE, {})
+            Plug("md.input1X").data_type
+            self.assertTrue(_base._STATIC_DATA_TYPE)
+        finally:
+            cmds.unloadPlugin(plugin)
+        self.assertEqual(_base._STATIC_DATA_TYPE, {})

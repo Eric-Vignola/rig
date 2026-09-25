@@ -44,6 +44,7 @@ class NodeMeta(type):
         # a new class can change the dispatch of any node type
         PyNode._CLASS_BY_TYPE.clear()
         PyNode._CASTABLE_TYPES.clear()
+        _STATIC_DATA_TYPE.clear()
 
         node_type = attrs.get("CUSTOM_NODE_TYPE")
         if not node_type:
@@ -386,6 +387,34 @@ _NON_MATRIX_ATTR_API_TYPES = _SCALAR_ATTR_API_TYPES | {
     OpenMaya.MFn.kLightDataAttribute,
 }
 
+# Attribute kinds whose `cmds.getAttr(..., type=True)` string is a property of
+# the node class, so `Attribute.data_type` shares it across instances in
+# `_STATIC_DATA_TYPE`, keyed by (typeName, typeId, attr long name, isArray).
+# Dynamic attrs and plugs under an array element are never cached; the cache
+# is cleared when a plug-in is loaded or unloaded (it can redefine a type).
+_STATIC_DATA_API_TYPES = _NON_MATRIX_ATTR_API_TYPES | {
+    OpenMaya.MFn.kMatrixAttribute,
+    OpenMaya.MFn.kFloatMatrixAttribute,
+}
+_STATIC_DATA_TYPE = {}
+_STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
+
+
+def _clear_static_data_type(*args) -> None:
+    """Drops every cached static data type (MSceneMessage callback)."""
+    _STATIC_DATA_TYPE.clear()
+
+
+# registered once per session: a module reload keeps the first import's ids
+if "_PLUGIN_CALLBACK_IDS" not in globals():
+    _PLUGIN_CALLBACK_IDS = [
+        OpenMaya.MSceneMessage.addStringArrayCallback(msg, _clear_static_data_type)
+        for msg in (
+            OpenMaya.MSceneMessage.kAfterPluginLoad,
+            OpenMaya.MSceneMessage.kAfterPluginUnload,
+        )
+    ]
+
 # typed array attrs cmds.setAttr() sets as (count, *items) instead of a list
 COUNTED_ARRAY_TYPES = ("stringArray", "vectorArray", "pointArray")
 
@@ -448,6 +477,16 @@ def _plug_in_array(plug: OpenMaya.MPlug) -> bool:
         plug = plug.parent()
 
 
+def _plug_under_element(plug: OpenMaya.MPlug) -> bool:
+    """True if `plug` is an array element, or a child at any depth of one."""
+    while True:
+        if plug.isElement:
+            return True
+        if not plug.isChild:
+            return False
+        plug = plug.parent()
+
+
 # Dispatch table for nodes whose geometry output is computed from an upstream
 # input rather than directly fed by a connection. Maps the node's `typeName`
 # (as reported by `MFnDependencyNode.typeName`) to a callable that takes the
@@ -502,6 +541,8 @@ class Attribute(str):
         self._geometry_attr_cache: bool | None = None
         # cache for `_owner_is_polymorphic`; None = not yet computed
         self._polymorphic_owner_cache: bool | None = None
+        # cache for `_static_type_key`; _STATIC_KEY_UNSET = not yet computed
+        self._static_key_cache: Any = _STATIC_KEY_UNSET
 
     # --- dunders
 
@@ -731,19 +772,54 @@ class Attribute(str):
     @property
     def data_type(self) -> str:
         """Returns the data type of the value hosted by this attribute."""
-        typ = cmds.getAttr(self.full_name, type=True)
+        # the name comes first so a deleted node's plug raises as before
+        full_name = self.full_name
+        key       = self._static_type_key()
+        if key is not None:
+            typ = _STATIC_DATA_TYPE.get(key)
+            if typ is not None:
+                return typ
+
+        typ = cmds.getAttr(full_name, type=True)
 
         # maintain consistent type string with cmds.addAttr()
         if typ == "TdataCompound":
-            return "compound"
+            typ = "compound"
 
         # if cmds.getAttr fails to resolve, call the node fallback hook
         # e.g. if a choice node's inputs are message attrs, its output will be resolved
         # to "typed" rather than "message"
-        if typ in ("typed", "Tdata"):
+        elif typ in ("typed", "Tdata"):
             return self.node._attr_data_type_fallback(self)
 
+        if key is not None and isinstance(typ, str):
+            _STATIC_DATA_TYPE[key] = typ
         return typ
+
+    def _static_type_key(self) -> tuple | None:
+        """The `_STATIC_DATA_TYPE` key of this attr, or None if its data type is
+        not a property of the node class. Cached per Attribute instance."""
+        key = self._static_key_cache
+        if key is _STATIC_KEY_UNSET:
+            key = None
+            try:
+                mplug = self._mplug
+                if (
+                    not mplug.isDynamic
+                    and self.mobject.apiType() in _STATIC_DATA_API_TYPES
+                    and not _plug_under_element(mplug)
+                ):
+                    fn  = OpenMaya.MFnDependencyNode(mplug.node())
+                    key = (
+                        fn.typeName,
+                        fn.typeId.id(),
+                        OpenMaya.MFnAttribute(self.mobject).name,
+                        mplug.isArray,
+                    )
+            except Exception:
+                key = None
+            self._static_key_cache = key
+        return key
 
     @property
     def is_dynamic(self) -> bool:
