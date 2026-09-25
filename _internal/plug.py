@@ -1024,6 +1024,12 @@ _MULTIDIM_COMPONENTS = {
     "lattice":      (3, frozenset({"pt"})),
 }
 
+# Every alias any multi-dimensional spec answers to. Lets
+# :func:`_maybe_component_plug` skip the node-type probe for the other names.
+_MULTIDIM_ALIASES = frozenset().union(
+    *(aliases for _, aliases in _MULTIDIM_COMPONENTS.values())
+)
+
 
 class ComponentPlug(Plug):
     """A :class:`Plug` for a *multi-dimensional* geometry component -- a
@@ -1224,6 +1230,8 @@ def _maybe_component_plug(
     :class:`Plug` wrap untouched -- 1-D components (mesh ``vtx``, curve ``cv``,
     mesh ``map``/``uv``) and flat ``controlPoints`` access are unchanged.
     """
+    if attr_name not in _MULTIDIM_ALIASES:
+        return None
     try:
         node_name = attr_obj.node.name
         node_type = cmds.nodeType(node_name)

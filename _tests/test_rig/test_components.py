@@ -2,6 +2,7 @@
 the left-hand-side normaliser."""
 
 import time
+from unittest import mock
 
 import numpy as np
 from maya import cmds
@@ -502,6 +503,28 @@ class TestNodeAliasFallback(MayaTestCase):
             _ = Node(xform).vtx
         for shape in shapes:
             self.assertIn(shape, str(ctx.exception))
+
+    def test_multidim_alias_gate_returns_component_plug_only_for_cv_pt(self):
+        plane      = cmds.nurbsPlane(name="nurbsPlane1", ch=False)[0]
+        plane_node = Node(cmds.listRelatives(plane, shapes=True, fullPath=True)[0])
+        self.assertIsInstance(plane_node.cv, ComponentPlug)
+        self.assertNotIsInstance(plane_node.controlPoints, ComponentPlug)
+        xform, shape = _cube()
+        _, lattice   = _lattice(xform)
+        self.assertIsInstance(Node(lattice).pt, ComponentPlug)
+        _, curve = _circle()
+        for plug in (Node(curve).cv, Node(shape).vtx, Node(xform).tx):
+            self.assertIsInstance(plug, Plug)
+            self.assertNotIsInstance(plug, ComponentPlug)
+
+    def test_plain_attr_access_makes_no_nodetype_call(self):
+        cmds.createNode("multiplyDivide", name="md1")
+        node = Node("md1")
+        with mock.patch.object(cmds, "nodeType", wraps=cmds.nodeType) as probe:
+            plug = node.input1X
+        self.assertIsInstance(plug, Plug)
+        self.assertEqual(str(plug), "md1.input1X")
+        self.assertEqual(probe.call_count, 0)
 
 
 # --------------------------------------------------------------------- #
