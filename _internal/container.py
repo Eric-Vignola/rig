@@ -386,6 +386,7 @@ class _StackFrame:
         "enabled",
         "depth",
         "members",
+        "_member_set",
         "subgroups",
         "_scope_key",
         "cleanup_on_exit",
@@ -405,8 +406,9 @@ class _StackFrame:
         self.preserve       = preserve
         self.enabled        = enabled
         self.depth          = depth
-        self.members:   List[str] = []   # node UUIDs
-        self.subgroups: List[dict] = []  # logical sub-group records (for tree())
+        self.members:     List[str]  = []     # node UUIDs
+        self._member_set: Set[str]   = set()  # mirror of ``members`` for O(1) dedupe
+        self.subgroups:   List[dict] = []     # logical sub-group records (for tree())
         # ``None`` = inherit ContainerOptions.cleanup_on_exit at __exit__ time;
         # explicit True/False overrides per-block.
         self.cleanup_on_exit: Optional[bool] = cleanup_on_exit
@@ -534,6 +536,7 @@ class _ContainerStack:
                 }
             )
             parent.members.extend(frame.members)
+            parent._member_set.update(frame.members)
 
         # ---- Auto-cleanup on exit ----
         # Decide whether to garbage-collect this scope's tagged orphans.
@@ -637,21 +640,26 @@ class _ContainerStack:
         if not self._stack:
             return
 
-        node_names: List[str]
-        if isinstance(node, (list, tuple)):
-            node_names = [str(n) for n in node]
-        else:
-            node_names = [str(node)]
+        items      = list(node) if isinstance(node, (list, tuple)) else [node]
+        node_names = [str(n) for n in items]
 
-        # Track UUIDs on every stack frame.
-        for name in node_names:
+        # Track UUIDs on every stack frame. A Node already holds its
+        # DGNode, so read the uuid there instead of re-resolving the name.
+        for item, name in zip(items, node_names):
             try:
-                uuid = _node_uuid(name)
+                if isinstance(item, Node):
+                    try:
+                        uuid = item._dg_node.uuid
+                    except (AttributeError, RuntimeError):
+                        uuid = _node_uuid(name)
+                else:
+                    uuid = _node_uuid(name)
             except ValueError:
                 continue
             for frame in self._stack:
-                if uuid not in frame.members:
+                if uuid not in frame._member_set:
                     frame.members.append(uuid)
+                    frame._member_set.add(uuid)
 
         # Add to the leaf real container, if one exists.
         leaf = self._leaf_real_container()

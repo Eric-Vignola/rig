@@ -196,3 +196,98 @@ class TestScopeKeyHardening(MayaTestCase):
         # Shape stays (name, depth, uid); the uid component must advance.
         self.assertEqual(first[:2], second[:2])
         self.assertLess(first[2], second[2])
+
+def _uuid(node) -> str:
+    return cmds.ls(str(node), uuid=True)[0]
+
+
+class TestFrameMembers(MayaTestCase):
+    """``_StackFrame.members`` records every added node's uuid on every frame,
+    once per frame, in add order; a flattened frame's exit then appends its
+    whole list to the parent, duplicates included. The golden lists below
+    replay that algorithm from ``cmds.ls(uuid=True)``.
+    """
+
+    TEST_START_NEW_SCENE = True
+
+    def test_frame_members_order_and_duplicates_unchanged(self):
+        golden: list = []
+
+        def record(*nodes):
+            for node in nodes:
+                uid = _uuid(node)
+                for members in golden:
+                    if uid not in members:
+                        members.append(uid)
+
+        def check(frames):
+            for frame, members in zip(frames, golden):
+                self.assertEqual(frame.members, members)
+                self.assertEqual(frame._member_set, set(members))
+
+        outside = Node(cmds.createNode("transform", name="outside"))
+        with container("outer"):
+            outer = container.stack[-1]
+            golden.append([])
+            a = Node.create("multiplyDivide", name="a")
+            record(a)
+            with container("mid"):
+                mid = container.stack[-1]
+                golden.append([])
+                b = Node.create("plusMinusAverage", name="b")
+                record(b)
+                container.add(a)
+                record(a)
+                with container("inner"):
+                    inner = container.stack[-1]
+                    golden.append([])
+                    c = Node.create("condition", name="c")
+                    container.add([outside, str(b)])
+                    record(c, outside, b)
+                    check([outer, mid, inner])
+                golden[1].extend(golden.pop())
+                check([outer, mid, inner])
+                d = Node.create("multiplyDivide", name="d")
+                record(d)
+            golden[0].extend(golden.pop())
+            check([outer, mid])
+            container.add(d)
+            record(d)
+            check([outer])
+        # The flattened exits leave duplicates on the parents.
+        self.assertGreater(len(outer.members), len(set(outer.members)))
+        self.assertEqual(outer.members, golden[0])
+
+    def test_add_mixed_node_and_string_inputs(self):
+        node_a = Node(cmds.createNode("transform", name="mixedA"))
+        name_b = cmds.createNode("transform", name="mixedB")
+        with container("mixed") as ctn:
+            frame = container.stack[-1]
+            container.add([node_a, name_b])
+            self.assertEqual(frame.members, [_uuid(node_a), _uuid(name_b)])
+        members = cmds.container(str(ctn), q=True, nodeList=True) or []
+        self.assertIn(str(node_a), members)
+        self.assertIn(name_b,      members)
+
+    def test_node_input_skips_name_lookup(self):
+        from rig._internal import container as container_module
+
+        original = container_module._node_uuid
+        calls    = []
+
+        def counting(name):
+            calls.append(name)
+            return original(name)
+
+        container_module._node_uuid = counting
+        try:
+            with container("lookups"):
+                frame = container.stack[-1]
+                node  = Node.create("multiplyDivide", name="lookupA")
+                self.assertEqual(calls, [])
+                name_b = cmds.createNode("transform", name="lookupB")
+                container.add(name_b)
+                self.assertEqual(calls, [name_b])
+        finally:
+            container_module._node_uuid = original
+        self.assertEqual(frame.members, [_uuid(node), _uuid(name_b)])
