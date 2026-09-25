@@ -122,6 +122,17 @@ def _is_attribute(obj: Any) -> bool:
     return isinstance(obj, Attribute)
 
 
+# ``data_type`` strings of the compound data a generic attribute can hold
+_COMPOUND_DATA_TYPES = (
+    "double3",
+    "float3",
+    "long3",
+    "short3",
+    "double4",
+    "float4",
+)
+
+
 def _is_compound(obj: Any) -> bool:
     """Return ``True`` if the input attribute has compound children.
 
@@ -158,14 +169,7 @@ def _is_compound(obj: Any) -> bool:
             pass
         # Generic-typed compound (e.g. choice.output after being typed
         # to double3 by a compound input connection).
-        return obj.data_type in (
-            "double3",
-            "float3",
-            "long3",
-            "short3",
-            "double4",
-            "float4",
-        )
+        return obj.data_type in _COMPOUND_DATA_TYPES
     except Exception:
         return False
 

@@ -31,13 +31,16 @@ from rig._internal.math_nodes import (
 from rig._internal.node import Node
 from rig._internal.plug import _inject_value
 from rig._internal.types import (
+    _COMPOUND_DATA_TYPES,
     _get_compound,
     _is_compound,
     _is_control_point,
-    _is_matrix,
-    _is_quaternion,
     _is_transform,
-    _is_vector,
+)
+from rig.nodetypes._base import (
+    _NON_MATRIX_ATTR_API_TYPES,
+    _SCALAR_ATTR_API_TYPES,
+    Attribute,
 )
 
 
@@ -51,41 +54,140 @@ def shorthand(src: Any, dst: Any) -> bool:
     if not ContainerOptions.use_shorthand:
         return False
 
-    if _is_matrix(src):
+    # every source test below is False for a non-attribute
+    if not isinstance(src, Attribute):
+        return False
+
+    # src / dst type facts, each queried at most once for this call
+    src_facts = _Facts(src)
+    dst_facts = _Facts(dst)
+
+    if src_facts.is_matrix:
         if _is_transform(dst):
             return _matrix_to_transform(src, dst)
-        if _is_quaternion(dst):
+        if dst_facts.is_quaternion:
             return _matrix_to_quaternion(src, dst)
         if _is_control_point(dst):
             return _matrix_to_point(src, dst)
-        if _is_vector(dst):
+        if dst_facts.is_vector:
             return _matrix_to_vector(src, dst)
 
-    if _is_quaternion(src):
+    if src_facts.is_quaternion:
         if _is_transform(dst):
             return _quaternion_to_transform(src, dst)
-        if _is_vector(dst):
+        if dst_facts.is_vector:
             return _quaternion_to_vector(src, dst)
-        if _is_matrix(dst):
+        if dst_facts.is_matrix:
             return _quaternion_to_matrix(src, dst)
 
     if _is_transform(src):
-        if _is_quaternion(dst):
+        if dst_facts.is_quaternion:
             return _transform_to_quaternion(src, dst)
-        if _is_vector(dst) or _is_control_point(dst):
+        if dst_facts.is_vector or _is_control_point(dst):
             return _transform_to_vector(src, dst)
-        if _is_matrix(dst):
+        if dst_facts.is_matrix:
             return _transform_to_matrix(src, dst)
 
-    if _is_vector(src):
+    if src_facts.is_vector:
         if _is_transform(dst):
             return _vector_to_transform(src, dst)
-        if _is_quaternion(dst):
+        if dst_facts.is_quaternion:
             return _vector_to_quaternion(src, dst)
-        if _is_matrix(dst):
+        if dst_facts.is_matrix:
             return _vector_to_matrix(src, dst)
 
     return False
+
+
+# marks a `_Facts` query that has not run yet
+_UNSET = object()
+
+
+class _Facts:
+    """The type facts ``shorthand`` tests on one operand, each queried once.
+
+    ``is_matrix``, ``is_compound``, ``is_quaternion`` and ``is_vector`` answer
+    exactly like the ``rig._internal.types`` predicates of the same names, but
+    share one ``data_type`` and one ``num_children`` query between them. Only
+    valid for the duration of one ``shorthand`` call: the type of a generic
+    plug follows its connections.
+    """
+
+    __slots__ = ("_obj", "_data_type", "_num_children", "_is_compound")
+
+    def __init__(self, obj: Any) -> None:
+        self._obj          = obj
+        self._data_type    = _UNSET
+        self._num_children = _UNSET
+        self._is_compound  = _UNSET
+
+    def _get_data_type(self) -> str | None:
+        """Returns the operand's ``data_type``, or None if the query raised."""
+        if self._data_type is _UNSET:
+            try:
+                self._data_type = self._obj.data_type
+            except Exception:
+                self._data_type = None
+        return self._data_type
+
+    def _get_num_children(self) -> int | None:
+        """Returns the operand's ``num_children``, or None if the query raised."""
+        if self._num_children is _UNSET:
+            try:
+                self._num_children = self._obj.num_children
+            except Exception:
+                self._num_children = None
+        return self._num_children
+
+    @property
+    def is_matrix(self) -> bool:
+        """True if the operand is an attribute holding a 4x4 matrix."""
+        obj = self._obj
+        if not isinstance(obj, Attribute):
+            return False
+        try:
+            # a scalar or numeric compound kind never holds a matrix
+            if obj.mobject.apiType() in _NON_MATRIX_ATTR_API_TYPES:
+                return False
+        except Exception:
+            return False
+        return self._get_data_type() == "matrix"
+
+    @property
+    def is_compound(self) -> bool:
+        """True if the operand is an attribute with compound children."""
+        if self._is_compound is _UNSET:
+            self._is_compound = self._query_is_compound()
+        return self._is_compound
+
+    @property
+    def is_quaternion(self) -> bool:
+        """True if the operand is a compound attribute with 4 children."""
+        return self.is_compound and self._get_num_children() == 4
+
+    @property
+    def is_vector(self) -> bool:
+        """True if the operand is a compound attribute with 3 children."""
+        return self.is_compound and self._get_num_children() == 3
+
+    def _query_is_compound(self) -> bool:
+        """The ``_is_compound`` rule, on the shared queries."""
+        obj = self._obj
+        if not isinstance(obj, Attribute):
+            return False
+        try:
+            if obj.plug.isCompound:
+                return True
+            # a numeric / unit / enum / message kind is never a compound
+            if obj.mobject.apiType() in _SCALAR_ATTR_API_TYPES:
+                return False
+        except Exception:
+            return False
+        num_children = self._get_num_children()
+        if num_children is not None and num_children > 0:
+            return True
+        # generic-typed compound (e.g. choice.output typed by its input)
+        return self._get_data_type() in _COMPOUND_DATA_TYPES
 
 
 # ---------- matrix -> ... ----------------------------------------------- #

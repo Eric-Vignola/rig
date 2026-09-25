@@ -1,9 +1,15 @@
 """Tests for ``rig._internal.shorthand`` -- type-aware translation on connect."""
 
+from collections import Counter
+from unittest import mock
+
 from maya import cmds
 from rig import Node, set_options
 from rig._internal.container import ContainerOptions
+from rig._internal.shorthand import _Facts, shorthand
+from rig._internal.types import _is_compound, _is_matrix, _is_quaternion, _is_vector
 from rig._tests._base import MayaTestCase
+from rig.nodetypes._base import Attribute
 
 
 def _node_type_of(plug_or_node):
@@ -173,3 +179,95 @@ class TestShorthandSameTypePassThrough(MayaTestCase):
         self.assertTrue(connections)
         for c in connections:
             self.assertNotEqual(cmds.nodeType(c), "decomposeMatrix")
+
+
+class TestShorthandFacts(MayaTestCase):
+    """``shorthand`` answers its type tests from one ``_Facts`` per operand,
+    which must agree with the ``rig._internal.types`` predicates."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _operands(self):
+        cmds.loadPlugin("matrixNodes", quiet=True)
+        cmds.loadPlugin("quatNodes", quiet=True)
+        xform     = Node.create("transform", name="xform")
+        decompose = Node(cmds.createNode("decomposeMatrix"))
+        quat_prod = Node(cmds.createNode("quatProd"))
+        vec_ch    = Node(cmds.createNode("choice", name="vec_ch"))
+        mtx_ch    = Node(cmds.createNode("choice", name="mtx_ch"))
+        open_ch   = Node(cmds.createNode("choice", name="open_ch"))
+        cmds.connectAttr(str(xform.translate), f"{vec_ch}.input[0]")
+        cmds.connectAttr(f"{xform}.worldMatrix[0]", f"{mtx_ch}.input[0]")
+
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="vec", dt="double3")
+        cmds.addAttr(net, ln="mtx", dt="matrix")
+        cmds.addAttr(net, ln="quat", at="compound", numberOfChildren=4)
+        for axis in "XYZW":
+            cmds.addAttr(net, ln=f"quat{axis}", at="double", p="quat")
+        cmds.addAttr(net, ln="dbls", at="double", multi=True)
+        cmds.setAttr(f"{net}.dbls[0]", 1.0)
+        net = Node(net)
+
+        plugs = [
+            xform.matrix,
+            xform.worldMatrix[0],
+            xform.worldMatrix,
+            xform.t,
+            xform.tx,
+            xform.r,
+            xform.ro,
+            decompose.outputQuat,
+            decompose.outputTranslate,
+            decompose.inputMatrix,
+            quat_prod.outputQuat,
+            vec_ch.output,
+            mtx_ch.output,
+            open_ch.output,
+            net.vec,
+            net.mtx,
+            net.quat,
+            net.quatW,
+            net.dbls,
+            net.dbls[0],
+        ]
+        return plugs + [1.5, 2, [1, 2, 3], (0, 0, 0, 1), "xform.t", None, xform]
+
+    def test_shorthand_facts_match_predicates(self):
+        for operand in self._operands():
+            with self.subTest(operand=repr(operand)):
+                facts = _Facts(operand)
+                self.assertIs(facts.is_matrix, _is_matrix(operand))
+                self.assertIs(facts.is_compound, _is_compound(operand))
+                self.assertIs(facts.is_quaternion, _is_quaternion(operand))
+                self.assertIs(facts.is_vector, _is_vector(operand))
+
+    def test_shorthand_facts_query_data_type_once(self):
+        data_type = Attribute.data_type
+        queries   = Counter()
+
+        def counted(attr):
+            queries[id(attr)] += 1
+            return data_type.fget(attr)
+
+        operands = [op for op in self._operands() if isinstance(op, Attribute)]
+        with mock.patch.object(Attribute, "data_type", property(counted)):
+            for operand in operands:
+                queries.clear()
+                facts = _Facts(operand)
+                for _ in range(2):
+                    facts.is_matrix
+                    facts.is_quaternion
+                    facts.is_vector
+                    facts.is_compound
+                with self.subTest(operand=str(operand)):
+                    self.assertLessEqual(queries[id(operand)], 1)
+
+    def test_shorthand_non_attribute_source_returns_false(self):
+        dst = Node.create("transform", name="dst")
+        for src in (1.5, 3, [1, 2, 3], (0, 0, 0, 1), "xform.t", None, dst):
+            with self.subTest(src=repr(src)):
+                with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+                    self.assertIs(shorthand(src, dst.t), False)
+                    self.assertIs(shorthand(src, dst.worldMatrix[0]), False)
+                self.assertEqual(probe.call_count, 0)
