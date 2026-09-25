@@ -37,6 +37,7 @@ import numbers
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
+from maya.api import OpenMaya
 from rig.nodetypes._base import Attribute
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
@@ -796,10 +797,9 @@ class _ContainerStack:
         except Exception:
             return False
         try:
-            members = cmds.container(str(leaf), query=True, nodeList=True) or []
+            return _is_direct_member(str(leaf), owning_node)
         except Exception:
             return False
-        return owning_node in members
 
     # -- Publishing API (v4.G) -- #
 
@@ -1263,11 +1263,42 @@ def _is_container_member(container_node, plug) -> bool:
         owner = plug.node.name
     except Exception:
         return False
+    return _is_direct_member(str(container_node), owner)
+
+
+def _is_direct_member(container_name: str, node_name: str) -> bool:
+    """True iff ``node_name`` is listed in ``container_name``'s ``nodeList``.
+
+    ``nodeList`` holds DIRECT members only and a node is a direct member of at
+    most one container, so ``findContainer`` answers without scanning the
+    member list (the uuid comparison absorbs name-format differences). An
+    instanced DAG node is listed under one of its paths only, and a query
+    failure is inconclusive; both fall back to the ``nodeList`` scan, where an
+    unqueryable container reports "not a member".
+    """
     try:
-        members = cmds.container(str(container_node), query=True, nodeList=True) or []
+        found = cmds.container(query=True, findContainer=[node_name])
+        if not found:
+            return False
+        if found != container_name and (
+            cmds.ls(found, uuid=True) != cmds.ls(container_name, uuid=True)
+        ):
+            return False
+        sel = OpenMaya.MSelectionList()
+        sel.add(node_name)
+        mobj = sel.getDependNode(0)
+        if not (
+            mobj.hasFn(OpenMaya.MFn.kDagNode)
+            and OpenMaya.MFnDagNode(mobj).isInstanced()
+        ):
+            return True
+    except (RuntimeError, ValueError):
+        pass
+    try:
+        members = cmds.container(container_name, query=True, nodeList=True) or []
     except (RuntimeError, ValueError):
         return False
-    return owner in members
+    return node_name in members
 
 
 def _plug_is_multi(plug) -> bool:

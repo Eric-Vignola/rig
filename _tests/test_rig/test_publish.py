@@ -1526,3 +1526,130 @@ class TestInferAttrTypeVectorLiterals(MayaTestCase):
     def test_len16_still_matrix(self):
         # The pre-existing flat-16 -> matrix case is untouched.
         self.assertEqual(self._infer([0.0] * 16), {"dt": "matrix"})
+
+
+class TestPublishMembership(MayaTestCase):
+    """Publish membership checks ask ``findContainer`` instead of scanning the
+    container's ``nodeList``, with the same answers."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        set_options(flatten_containers=False)
+
+    def tearDown(self):
+        super().tearDown()
+        set_options(flatten_containers=True)
+
+    @staticmethod
+    def _nodelist_member(ctn, name):
+        try:
+            return name in (cmds.container(ctn, query=True, nodeList=True) or [])
+        except (RuntimeError, ValueError):
+            return False
+
+    def test_membership_checks_match_nodelist_semantics(self):
+        from maya.api import OpenMaya
+        from rig._internal import container as _C
+
+        outer = cmds.createNode("container", name="m_outer", skipSelect=True)
+        inner = cmds.createNode("container", name="m_inner", skipSelect=True)
+        g1    = cmds.createNode("transform", name="m_g1", skipSelect=True)
+        g2    = cmds.createNode("transform", name="m_g2", skipSelect=True)
+        cmds.createNode("transform", name="dup", parent=g1, skipSelect=True)
+        cmds.createNode("transform", name="dup", parent=g2, skipSelect=True)
+        md    = cmds.createNode("multiplyDivide", name="m_md", skipSelect=True)
+        md2   = cmds.createNode("multiplyDivide", name="m_md2", skipSelect=True)
+        cmds.createNode("multiplyDivide", name="m_ext", skipSelect=True)
+        cube  = cmds.polyCube(name="m_cube")[0]
+        shape = cmds.listRelatives(cube, shapes=True, fullPath=True)[0]
+        cmds.instance(cube, name="m_cube_inst")
+        cmds.container(outer, edit=True, addNode=["|m_g1|dup", md, inner], force=True)
+        cmds.container(inner, edit=True, addNode=[md2, shape], force=True)
+
+        names = set()
+        it    = OpenMaya.MItDependencyNodes()
+        while not it.isDone():
+            mobj = it.thisNode()
+            it.next()
+            try:
+                if mobj.hasFn(OpenMaya.MFn.kDagNode):
+                    for path in OpenMaya.MDagPath.getAllPathsTo(mobj):
+                        names.add(Node(path).name)
+                else:
+                    names.add(Node(mobj).name)
+            except Exception:
+                continue
+        names |= {"nonexistent", "dup"}
+
+        members = 0
+        for ctn in (outer, inner, g1, md, "nonexistent"):
+            for name in sorted(names):
+                expected = self._nodelist_member(ctn, name)
+                members += expected
+                self.assertEqual(
+                    _C._is_direct_member(ctn, name), expected, f"{ctn} / {name}"
+                )
+        # |m_g1|dup, m_md, m_inner, m_md2 and one instance path of the shape
+        self.assertEqual(members, 5)
+
+        for name in ("m_g1|dup", "m_g2|dup", "m_md", "m_md2", "m_inner", "m_ext"):
+            plug = Node(name).message
+            for ctn in (outer, inner):
+                self.assertEqual(
+                    _C._is_container_member(ctn, plug),
+                    self._nodelist_member(ctn, name),
+                    f"{ctn} / {name}",
+                )
+
+    def test_publish_routes_by_direct_membership(self):
+        ext = Node.create("transform", name="p_ext")
+        ext << Float("blend", dv=0.0)
+        grp = Node.create("transform", name="p_grp")
+        Node.create("transform", name="dup")
+        with container("p_outer") as outer:
+            with container("p_inner"):
+                nested = Node.create("transform", name="p_nested")
+                nested << Float("blend", dv=0.0)
+            member = Node.create("multiplyDivide", name="p_md")
+            dup    = cmds.createNode("transform", name="dup", parent=str(grp))
+            cmds.container(str(outer), edit=True, addNode=[dup], force=True)
+            Node(dup) << Float("blend", dv=0.0)
+            member.outputX >> container
+            Node(dup).blend >> container
+            container.publish_input(ext.blend, "ext_blend")
+            container.publish_input(nested.blend, "nested_blend")
+        pairs = _bind_pairs("p_outer")
+        self.assertEqual(pairs.get("outputX"), "p_md.outputX")
+        # bound directly on the member (bindAttr lists it by short name)
+        self.assertEqual(pairs.get("blend"), "dup.blend")
+        self.assertIn("_host.", _bound_plug("p_outer", "ext_blend"))
+        self.assertIn("_host.", _bound_plug("p_outer", "nested_blend"))
+
+    def test_publish_does_not_scan_nodelist(self):
+        from unittest import mock
+
+        real  = cmds.container
+        scans = []
+
+        def _spy(*args, **kwargs):
+            if kwargs.get("nodeList"):
+                scans.append(args)
+            return real(*args, **kwargs)
+
+        with container("s_ctn"):
+            m = Node.create("multiplyDivide", name="s_md")
+            m.input1X << 5
+            m.input2X << 2
+            n = Node.create("transform", name="s_node")
+            n << Float("blend", dv=0.0)
+            with mock.patch.object(cmds, "container", side_effect=_spy):
+                container.publish_output(m.outputX, "result")
+                container.publish_input(n.blend, "blend")
+                m.outputY >> container
+        self.assertEqual(scans, [])
+        pairs = _bind_pairs("s_ctn")
+        self.assertEqual(pairs.get("result"), "s_md.outputX")
+        self.assertEqual(pairs.get("blend"), "s_node.blend")
+        self.assertEqual(pairs.get("outputY"), "s_md.outputY")
