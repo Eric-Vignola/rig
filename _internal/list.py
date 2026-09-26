@@ -39,7 +39,7 @@ from rig.nodetypes._base import _ensure_owner_alive, _same_plug, Attribute
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.node import Node
-from rig._internal.operands import _CAN_HOLD_STR, _plain_str, operator_error, REFLECTED
+from rig._internal.operands import _CAN_HOLD_STR, _text_operand, operator_error, REFLECTED
 from rig._internal.plug import Plug
 from rig._internal.types import _is_attribute_spec, _is_components, _is_member_spec
 
@@ -59,12 +59,12 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
     for row, (mine, theirs) in enumerate(rows):
         if isinstance(mine, Plug):
             if isinstance(theirs, _CAN_HOLD_STR) and not isinstance(theirs, Attribute):
-                found = _plain_str(theirs)
+                found = _text_operand(theirs)
                 if found is not None:
                     _ensure_owner_alive(mine)
                     raise operator_error(dunder, mine, theirs, found, row)
         elif isinstance(theirs, Plug) and isinstance(mine, _CAN_HOLD_STR):
-            found = _plain_str(mine)
+            found = _text_operand(mine)
             if found is not None:
                 _ensure_owner_alive(theirs)
                 raise operator_error(REFLECTED[dunder], theirs, mine, found, row)

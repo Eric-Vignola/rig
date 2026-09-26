@@ -11,6 +11,10 @@ So every Plug / PlugList operator and every public math function raises a
 ``Plug("cube.ty")`` for the plug of a name, and ``str(plug)`` or an
 f-string for text.
 
+bytes (a ``bytearray``, a numpy bytes array) are text too, and are rejected
+the same way: an operand of bytes injected its first byte (``b"cube.ty"`` set
+99.0).
+
 A config string is not an operand. The ``"<"`` of a condition op (a NodeOp
 takes its positional strs as config) and the ``side=`` / ``name=`` /
 ``dtype=`` / ``axis=`` / ``method=`` choices are config: :func:`operands`
@@ -29,29 +33,32 @@ import numpy as np
 from rig.nodetypes._base import Attribute
 
 
-# The operand types that can be, or can hold, a plain str. Numbers, None,
-# Nodes and Plugs are rejected by one isinstance call.
-_CAN_HOLD_STR = (str, list, tuple, np.ndarray)
+# The operand types that can be, or can hold, a plain str (or bytes). Numbers,
+# None, Nodes and Plugs are rejected by one isinstance call.
+_CAN_HOLD_STR = (str, bytes, bytearray, list, tuple, np.ndarray)
 
 # Longest rendering of an operand in a message before it is shortened to
 # its type name.
 _MAX_RENDERED = 60
 
 
-def _plain_str(obj: Any) -> Optional[str]:
-    """The first plain str in ``obj``, or None.
+def _first_text(obj: Any, with_bytes: bool) -> Optional[Any]:
+    """The first plain str in ``obj`` (or bytes, ``with_bytes``), or None.
 
     ``obj`` is checked itself, and so are the elements of a list, tuple or
     PlugList and the elements of a numpy array, nested to any depth. A str
     that is an Attribute (a Plug) is not plain. A numpy str array holds
-    ``np.str_`` elements, which are plain strs.
+    ``np.str_`` elements, which are plain strs; a numpy bytes array holds
+    ``np.bytes_`` elements.
     """
     if isinstance(obj, str):
         return None if isinstance(obj, Attribute) else obj
+    if isinstance(obj, (bytes, bytearray)):
+        return obj if with_bytes else None
     if isinstance(obj, (list, tuple)):
         for element in obj:
             if isinstance(element, _CAN_HOLD_STR):
-                found = _plain_str(element)
+                found = _first_text(element, with_bytes)
                 if found is not None:
                     return found
         return None
@@ -59,13 +66,26 @@ def _plain_str(obj: Any) -> Optional[str]:
         kind = obj.dtype.kind
         if kind == "U":
             return str(obj.flat[0]) if obj.size else None
+        if kind == "S" and with_bytes:
+            return bytes(obj.flat[0]) if obj.size else None
         if kind == "O":
             for element in obj.flat:
                 if isinstance(element, _CAN_HOLD_STR):
-                    found = _plain_str(element)
+                    found = _first_text(element, with_bytes)
                     if found is not None:
                         return found
     return None
+
+
+def _plain_str(obj: Any) -> Optional[str]:
+    """The first plain str in ``obj``, or None (see `_first_text`)."""
+    return _first_text(obj, False)
+
+
+def _text_operand(obj: Any) -> Optional[Any]:
+    """The first plain str or bytes in ``obj``, or None: what an operand check
+    rejects (see `_first_text`)."""
+    return _first_text(obj, True)
 
 
 def _render(obj: Any) -> str:
@@ -85,19 +105,25 @@ def _looks_like_a_plug_name(text: str) -> bool:
     return "." in text and "%" not in text and "{" not in text
 
 
-def str_operand_error(where: str, found: str, text_hint: bool = False) -> TypeError:
-    """The TypeError for the plain str ``found`` given as an operand ``where``
-    (``"t.translateX == 'cube.ty'"``, ``"rig.vector.lerp() argument 'input2'"``).
+def str_operand_error(where: str, found: Any, text_hint: bool = False) -> TypeError:
+    """The TypeError for the plain str (or bytes) ``found`` given as an operand
+    ``where`` (``"t.translateX == 'cube.ty'"``, ``"rig.vector.lerp() argument
+    'input2'"``).
 
     ``text_hint`` adds the str(plug) / f-string hint, for ``+`` whose str
     operand is usually meant as text.
     """
+    what = "a plain str"
+    text = found
+    if isinstance(found, (bytes, bytearray)):
+        what = "bytes"
+        text = bytes(found).decode("utf-8", "replace")
     message = (
-        f"{where}: {found!r} is a plain str, and a DSL operand is a Plug, a number "
+        f"{where}: {found!r} is {what}, and a DSL operand is a Plug, a number "
         f"or a sequence of them."
     )
-    if _looks_like_a_plug_name(found):
-        message += f" Write Plug({found!r}) for the plug of that name."
+    if _looks_like_a_plug_name(text):
+        message += f" Write Plug({text!r}) for the plug of that name."
     else:
         message += " Wrap a plug name with Plug('node.attr')."
     if text_hint:
@@ -168,7 +194,7 @@ def operator_error(
     """
     symbol, reflected = OPERATOR_SYMBOLS[dunder]
     plug = str(left)
-    if dunder == "__rmod__" and right is found and row is None:
+    if dunder == "__rmod__" and right is found and row is None and isinstance(found, str):
         return text_format_error(found, plug)
     if reflected:
         where = f"{_render(right)} {symbol} {plug}"
@@ -245,14 +271,14 @@ def operands(
         if skip_when is None or not skip_when(args, kwargs):
             for i, value in enumerate(args):
                 if isinstance(value, _CAN_HOLD_STR) and i not in skipped:
-                    found = _plain_str(value)
+                    found = _text_operand(value)
                     if found is not None:
                         raise str_operand_error(
                             f"{label}() argument {_argument(i)!r}", found
                         )
             for key, value in kwargs.items():
                 if isinstance(value, _CAN_HOLD_STR) and key not in config:
-                    found = _plain_str(value)
+                    found = _text_operand(value)
                     if found is not None:
                         raise str_operand_error(f"{label}() argument {key!r}", found)
         return func(*args, **kwargs)
