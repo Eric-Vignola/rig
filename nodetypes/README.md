@@ -202,7 +202,11 @@ also stands for the `(count, *items)` form of `stringArray` /
 disconnects, `connect(other, force=False)` refuses an occupied input.
 
 Because it is a `str`, `cmds.setAttr(attr, 1)` just works, and `f"{attr}"`
-is the full name.
+is the full name. Equality and hashing are not the string's, though: two
+attributes are equal, and hash alike, when they are the same Maya plug
+(node, attribute, logical indices), whatever instance path each is named
+through, and a rename or an alias keeps the hash. An attribute never equals
+a plain string; compare `str(attr)` for names.
 
 Indexing is the multi / component surface: `attr[i]` is the element at a
 logical index (created on access, Maya's own semantics), `attr[a:b]` and
