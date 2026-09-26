@@ -204,7 +204,7 @@ class Node:
             component_plug = _maybe_component_plug(attr_name, result)
             if component_plug is not None:
                 return component_plug
-            # Hand the plug this wrapper; ``Plug.node`` reuses it only when a
+            # Hand the plug this wrapper; ``Plug.node`` copies it only when a
             # fresh cast would rebuild it unchanged.
             plug    = Plug(result.plug)
             dg_node = self._dg_node

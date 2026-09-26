@@ -56,7 +56,12 @@ from typing import Any
 import numpy as np
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
-from rig.nodetypes._base import _wrapper_is_canonical, Attribute, PyNode
+from rig.nodetypes._base import (
+    _copy_wrapper,
+    _wrapper_is_canonical,
+    Attribute,
+    PyNode,
+)
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.generators import sequences
 from rig._internal.introspect import _to_numpy
@@ -191,7 +196,7 @@ def _share_node(parent: "Plug", results: Any) -> Any:
     ``results`` (one Plug or a list of them) and return ``results``.
 
     Only a wrapper ``parent`` already holds is handed on, it is never
-    resolved here, and each Plug reuses it only when :attr:`Plug.node` would
+    resolved here, and each Plug copies it only when :attr:`Plug.node` would
     rebuild it unchanged. ComponentPlugs resolve their node as before.
     """
     if type(parent) is not Plug:
@@ -375,12 +380,13 @@ class Plug(Attribute):
 
         if not isinstance(self._node, Node) if self._node else True:
             # Lazy-construct on first access. Until then ``_node`` may hold
-            # the DGNode of the Node or parent Plug this plug came from,
-            # which is reused when a fresh cast would rebuild it unchanged.
+            # the DGNode of the Node or parent Plug this plug came from; when
+            # a fresh cast would rebuild it unchanged, a copy of it with its
+            # own path, fn set and empty caches stands in for the cast.
             mobject = self.plug.node()
             held    = self._node
             if held is not None and _wrapper_is_canonical(held, mobject):
-                base_node = held
+                base_node = _copy_wrapper(held)
             else:
                 base_node = PyNode(mobject)
             self._node = Node(base_node)

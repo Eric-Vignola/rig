@@ -1065,6 +1065,50 @@ class TestPlugNodeReuse(MayaTestCase):
                     self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
                     self.assertEqual(_owner(plug)[0], "ok")
 
+    def test_plug_node_wrapper_is_its_own(self):
+        node    = Node(self._known_type("transform"))
+        wrapper = node >> None
+        cached  = wrapper.find_attr("tx")
+        wrapper.user_tag = "set on the user's wrapper"
+        for plug in (node.tx, node.t[0], node.t.translateY, node.rotate.child(0)):
+            owner = plug.node >> None
+            self.assertIs(type(owner), Transform)
+            self.assertIsNot(owner, wrapper)
+            self.assertIsNot(owner.mdagpath, wrapper.mdagpath)
+            self.assertIsNot(owner.mobject, wrapper.mobject)
+            self.assertIsNot(owner.fn_set, wrapper.fn_set)
+            fresh = Plug(plug.plug).node >> None
+            self.assertEqual(_wrapper_state(owner), _wrapper_state(fresh))
+            self.assertFalse(hasattr(owner, "user_tag"))
+            self.assertIsNot(owner.find_attr("tx"), cached)
+        # find_attr filters a lookup the user's wrapper already cached
+        self.assertIsNone(node.tx.node.find_attr("translateX", data_type="string"))
+
+        cube  = cmds.polyCube(name="gc")[0]
+        shape = cmds.listRelatives(cube, shapes=True)[0]
+        PyNode(_mobject(shape))
+        mesh  = Node(shape)
+        local = (mesh >> None).local_shape_attr
+        self.assertIsNot((mesh.outMesh.node >> None).local_shape_attr, local)
+
+    def test_plug_node_finds_a_readded_extension_attr(self):
+        node = Node(self._known_type("transform"))
+        try:
+            cmds.addExtension(nodeType="transform", longName="perfExt", at="double")
+            node.perfExt
+            cmds.deleteExtension(
+                nodeType="transform", attribute="perfExt", forceDelete=True
+            )
+            cmds.addExtension(nodeType="transform", longName="perfExt", dataType="string")
+            plug = node.tx.node.perfExt
+            self.assertEqual(str(plug), f"{node}.perfExt")
+            self.assertEqual(plug.data_type, "string")
+        finally:
+            if cmds.attributeQuery("perfExt", type="transform", exists=True):
+                cmds.deleteExtension(
+                    nodeType="transform", attribute="perfExt", forceDelete=True
+                )
+
 
 class TestCachedAttributeOwner(MayaTestCase):
     TEST_START_NEW_SCENE = True
