@@ -45,7 +45,7 @@ from rig._internal.maya_version import get_target_version
 from rig._internal.memoize import (
     _ALL_NODEOP_CACHES,
     _CacheEntry,
-    _collect_handles,
+    _entry_handles,
     _stable_key,
 )
 from rig._internal.types import _get_compound, _is_compound, _is_real
@@ -214,8 +214,7 @@ class NodeOp:
 
         # 5. Store in cache (with handles for staleness validation).
         if cache_key is not None:
-            handles: List[Any] = []
-            _collect_handles(result, handles)
+            handles = _entry_handles(result, args, kwargs)
             self._cache[cache_key] = _CacheEntry(value=result, handles=handles)
 
         return result
