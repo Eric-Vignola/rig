@@ -662,7 +662,17 @@ def _inherit_owner(parent: Any, attr: Any) -> Any:
     if owner is None:
         return attr
     attr.__dict__["_node"] = owner
-    return _named_through_owner(attr)
+    if _named_through_a_path(parent):
+        return _named_through_owner(attr)
+    return attr
+
+
+def _named_through_a_path(attr: Any) -> bool:
+    """False if the str buffer of `attr` names no DAG path (``S.visibility``), so
+    its owner had one path when it was built (see `_named_through_owner`): the
+    plugs read from it need no check. A plug named through an instanced node's
+    path (``T2|S.visibility``) has a ``|``, as have other paths, which are checked."""
+    return str.__contains__(attr, "|")
 
 
 def _named_through_owner(attr: Any) -> Any:

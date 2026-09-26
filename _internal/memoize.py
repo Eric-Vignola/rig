@@ -248,7 +248,8 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
     """An `_AttrCheck` for the attribute of `attr`'s plug if it is a dynamic or
     extension attribute of a live DG node, else None."""
     try:
-        node = _unwrapped(attr.node)
+        owner = attr.__dict__["_node"]
+        node  = _unwrapped(attr.node if owner is None else owner)
         if not isinstance(node, DGNode) or not node._objhandle1.isValid():
             return None
         mobject = attr.__dict__["_mplug"].attribute()
