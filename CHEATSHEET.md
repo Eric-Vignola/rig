@@ -26,7 +26,7 @@ for the typed node layer underneath.
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node, `equals`, dict and set keys |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, `plug >> container` |
 | 6 | [PlugList](#6-pluglist) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None` |
-| 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, what each builds |
+| 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
 | 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, per-channel fan-out, `condition(...)`, `constant(...)` |
 | 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `.indices` / `.count` / `.names`, `>> None` |
@@ -36,7 +36,7 @@ for the typed node layer underneath.
 | 14 | [`sequences` and `arguments`](#14-sequences-and-arguments) | the asymmetric generators behind every broadcast |
 | 15 | [`NodeOp` and the target Maya version](#15-nodeop-and-the-target-maya-version) | version-keyed impls, `set_options(maya_version=...)`, `set_target_version` |
 | 16 | [`InjectionError`](#16-injectionerror) | the one thing `<<` refuses |
-| 17 | [Function libraries: the map](#17-function-libraries-the-map) | the nine modules and twelve verbs, folding, memoisation, `PlugList` broadcast, the five rules |
+| 17 | [Function libraries: the map](#17-function-libraries-the-map) | the nine modules and twelve verbs, folding, memoisation, `PlugList` broadcast, the six rules |
 | 18 | [`functions` — scalar math](#18-functions--scalar-math) | `abs` `int` `trunc` `floor` `ceil` `sign` `round` `clamp` `sqrt` `pow` `exp` `log` `rev` |
 | 19 | [`functions` — lists: reduce, pick, search](#19-functions--lists-reduce-pick-search) | `sum` `avg` `max` `min` `argmax` `argmin` `all` `any` `diff` `cumsum` `choice` `searchsorted` |
 | 20 | [`functions` — time, constants, comparison and logic](#20-functions--time-constants-comparison-and-logic) | `frame` `pi` `inf`, `equal` and the comparison wrappers, `logical_and` / `or` / `xor` / `not` |
@@ -325,7 +325,8 @@ One plug read through two instance paths of a node (`Node("|T1|S").v`,
 `Node("|T2|S").v`) is one key, though each is named through its own path;
 the world space elements of two instances (`worldMatrix[0]`, `[1]`) are two
 plugs. A plain string is never a plug's key; a `PlugList` compares a
-string with the plug's name.
+string with the plug's name. A plain list does not: `plug == "a.tx"` is a
+`TypeError` (section 7), so `"a.tx" in [plug]` is one too.
 
 ```python
 test = ctrl.tx == 5
@@ -507,6 +508,26 @@ print((a.t * 2) >> None, (a.t + b.tx) >> None)  # [2. 4. 6.] [11. 12. 13.]  -- a
 print(([100, 100, 100] - a.t) >> None)          # [99. 98. 97.]
 ```
 
+A plain string is not an operand, though a `Plug` is a `str`: an operator
+or a math function given one (alone, or inside a list) raises `TypeError`
+before it builds anything. Wrap a plug name with `Plug(...)`; for text, use
+`str(plug)` or an f-string. Config strings (`side=`, `axis=`, `name=`, ...)
+are not operands.
+
+```python
+nodes = len(cmds.ls())
+for build in (lambda: a.tx == "b.ty", lambda: a.t + [1, "b.ty", 2], lambda: "%s" % a.tx):
+    try:
+        build()
+    except TypeError as err:
+        print(str(err).split(": ")[0])
+# a.translateX == 'b.ty'
+# a.translate + [1, 'b.ty', 2]
+# '%s' % a.translateX
+print(len(cmds.ls()) == nodes)                   # True  -- nothing was built
+print(cmds.nodeType((a.tx + Plug("b.tx")).node), f"{a.tx}.x")  # sum a.translateX.x  -- the add1 above, deduped
+```
+
 | Operator | Scalar node (2024+ / legacy) | Compound |
 |---|---|---|
 | `+` | `sum` / `plusMinusAverage` | `plusMinusAverage.output3D` |
@@ -607,8 +628,10 @@ print(repr(zero.input1))         # Plug("condition1_host.input1")  -- the publis
 ```
 
 `condition(test, if_true, if_false)` is the value picker (a `condition`
-node); a numeric test short-circuits in Python. `constant(values)` holds a
-literal in a `network` node (a `holdMatrix` for matrix shapes) and dedupes.
+node); a numeric test short-circuits in Python, so its branches may be any
+value, while a plug test makes them operands (no plain strings, section 7).
+`constant(values)` holds a literal in a `network` node (a `holdMatrix` for
+matrix shapes) and dedupes.
 
 ```python
 from rig import condition, constant
@@ -1071,7 +1094,7 @@ print(repr(f.abs(PlugList([src.tx, src.ty]))))  # PlugList([Plug("abs1.output"),
 | `rig.random` | `r` | LCG pseudo-random networks, scalar and 3D |
 | `rig.*` verbs | flat | `dist` `lerp` `slerp` `blend` `elerp` `normalize` `inverse` `angle` `angle_degrees` `to_euler` `to_quaternion` `to_matrix` — type-dispatched |
 
-Five rules that hold everywhere:
+Six rules that hold everywhere:
 
 | Rule | What it means |
 |---|---|
@@ -1080,6 +1103,7 @@ Five rules that hold everywhere:
 | `PlugList` broadcasts, a plain list is a value | `f.abs(PlugList([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector |
 | Maya 2024+ gets native nodes | `absolute`, `clampRange`, `sin`, `dotProduct`, `lerp`, `smoothStep` … Older Maya gets the equivalent legacy network — same value, more nodes. Each section's table says which |
 | `functions` shadows builtins | `abs`, `int`, `round`, `min`, `max`, `sum`, `pow`, `all`, `any` … Always `from rig import functions as f`, never `import *` |
+| A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`, `method=`, `rotate_order` |
 
 With the default options every composite function's container is
 flattened, so you get the raw node plugs shown here.

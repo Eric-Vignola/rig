@@ -55,7 +55,8 @@ Operator conventions:
       Layer()`` is ``None`` there).
     * ``+ - * / ** // %`` -- Pythonic math (build ``plusMinusAverage``,
       ``multiplyDivide``, ``modulo``, ...). Matrix and quaternion are
-      detected and routed to the right node type.
+      detected and routed to the right node type. A plain ``str`` operand
+      raises ``TypeError`` before anything is built: write ``Plug("a.tx")``.
     * ``& | ^`` -- logical AND/OR/XOR networks.
     * ``== != < <= > >=`` -- build ``condition`` nodes (returns the output
       Plug, NOT a bool). ``__hash__`` is overridden via ``MObjectHandle``
