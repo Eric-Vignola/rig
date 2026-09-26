@@ -121,15 +121,21 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
 
     def test_undo_off_delete_then_a_new_node(self):
         cmds.undoInfo(state=False)
-        cmds.createNode("transform", name="proxy")
         cmds.createNode("transform", name="keep")
-        code  = _hash_code("proxy")
-        held  = [Node("proxy").tx, Node("keep").tx]
-        typed = [PyNode("proxy").find_attr("tx"), PyNode("keep").find_attr("tx")]
-        seen, typed_seen = set(held), set(typed)
-        cmds.delete("proxy")
-        cmds.createNode("transform", name="fresh")
-        self.assertEqual(_hash_code("fresh"), code)  # Maya recycled the code
+        # until Maya hands the deleted node's hashCode to the new node
+        for _ in range(200):
+            cmds.createNode("transform", name="proxy")
+            code  = _hash_code("proxy")
+            held  = [Node("proxy").tx, Node("keep").tx]
+            typed = [PyNode("proxy").find_attr("tx"), PyNode("keep").find_attr("tx")]
+            seen, typed_seen = set(held), set(typed)
+            cmds.delete("proxy")
+            cmds.createNode("transform", name="fresh")
+            if _hash_code("fresh") == code:
+                break
+            cmds.delete("fresh")
+        else:
+            self.fail("Maya never recycled a hashCode in 200 create/delete cycles")
         self._assert_misses(seen, Node("fresh").tx)
         self._assert_misses(typed_seen, PyNode("fresh").find_attr("tx"))
         # the held keys are still found, the live one by a new spelling too
@@ -275,3 +281,36 @@ class TestAttributeInequality(MayaTestCase):
         wm = PyNode("|T1|S").find_attr("worldMatrix")
         self.assertTrue(wm[0] != wm[1])
         self.assertFalse(wm[1] != PyNode("|T2|S").find_attr("worldMatrix")[1])
+
+
+class TestFindAttrCacheOfInstancedElements(MayaTestCase):
+    """find_attr of a per-instance element (``worldMatrix[1]``) is cached under its
+    own name. It was cached under the array's name (partialName drops the
+    instanced index), so a later find_attr('worldMatrix') or node.worldMatrix
+    returned element 1, now also named and connected as element 1."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_element_lookup_does_not_shadow_the_array(self):
+        _instanced_locator()
+        for path in ("|T1|S", "|T2|S"):
+            with self.subTest(path=path):
+                node = PyNode(path)
+                element = node.find_attr("worldMatrix[1]")
+                self.assertTrue(element.plug.isElement)
+                self.assertEqual(element.plug.logicalIndex(), 1)
+                whole = node.find_attr("worldMatrix")
+                self.assertTrue(whole.plug.isArray)
+                self.assertIs(node.find_attr("worldMatrix[1]"), element)
+                self.assertTrue(node.find_attr("iog[1]").plug.isElement)
+                self.assertTrue(node.find_attr("instObjGroups").plug.isArray)
+        wrapper = Node(PyNode("|T1|S"))
+        wrapper._dg_node.find_attr("worldMatrix[1]")
+        self.assertTrue(wrapper.worldMatrix.plug.isArray)
+        self.assertEqual(str(wrapper.worldMatrix), "T1|S.worldMatrix")
+
+    def test_single_instance_element_lookup_then_index(self):
+        cmds.createNode("transform", name="a")
+        node = PyNode("a")
+        node.find_attr("worldMatrix[0]")
+        self.assertEqual(str(Node(node).worldMatrix[0]), "a.worldMatrix")

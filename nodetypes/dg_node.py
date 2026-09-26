@@ -499,8 +499,10 @@ class DGNode(metaclass=NodeMeta):
         if plug.node() == self._mobject:
             attr_obj.__dict__["_node"] = self
             if self._fn_set.attributeClass(attr_obj.mobject) == _NORMAL_ATTR:
-                ln                  = plug.partialName(False, False, False, False, False, True)
-                sn                  = plug.partialName(False, False, False, False, False, False)
+                # with the instanced indices: an element of a world space attr
+                # (``worldMatrix[1]``) is otherwise named like its array
+                ln                  = plug.partialName(False, False, True, False, False, True)
+                sn                  = plug.partialName(False, False, True, False, False, False)
                 self._attr_dict[ln] = attr_obj
                 self._attr_dict[sn] = attr_obj
 
