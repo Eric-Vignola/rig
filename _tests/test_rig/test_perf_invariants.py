@@ -4,8 +4,9 @@ new class registrations like the name-based path does. A cast that skips the
 type check builds the same wrapper as the constructor, and the node a plug
 caches when it is first named behaves as before. ``Attribute.set`` passes the
 same ``type`` argument, and raises the same errors, when it skips the type
-query. ``Attribute.data_type`` shares a fixed-kind attr's type across nodes of
-a type, and keeps querying every type that can change. ``Attribute.__init__``
+query. ``Attribute.data_type`` shares a fixed-kind attr's or a typed array
+root's type across nodes of a type, and keeps querying every type that can
+change. ``Attribute.__init__``
 leaves the same instance state without going through ``Plug.__setattr__``. A
 plug reuses the wrapper of the Node or parent plug it came from only where a
 fresh cast would rebuild that wrapper unchanged, so it reports the same owner
@@ -782,6 +783,218 @@ class TestStaticDataTypeCache(MayaTestCase):
         finally:
             cmds.unloadPlugin(plugin)
         self.assertEqual(_base._STATIC_DATA_TYPE, {})
+
+
+def _data_type_outcome(plug):
+    """The data type of `plug`, or the type and message it raises."""
+    try:
+        return plug.data_type
+    except Exception as exc:
+        return (type(exc), str(exc))
+
+
+def _legacy_data_type_outcome(plug):
+    """`_data_type_outcome` with the static data type cache bypassed."""
+    with mock.patch.object(_base.Attribute, "_static_type_key", return_value=None):
+        return _data_type_outcome(plug)
+
+
+class TestStaticTypedRootCache(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        _base._STATIC_DATA_TYPE.clear()
+
+    def _data_type(self, plug):
+        """The data type of `plug` and the type queries it made."""
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            typ = plug.data_type
+        return typ, len(_type_queries(probe))
+
+    def test_typed_array_root_cache_hit(self):
+        first  = Node.create("choice", name="first")
+        second = Node.create("choice", name="second")
+        self.assertEqual(self._data_type(first.input), ("compound", 1))
+        self.assertEqual(self._data_type(second.input), ("compound", 0))
+        self.assertEqual(self._data_type(Plug("second.input")), ("compound", 0))
+        one = Node.create("transform", name="one")
+        two = Node.create("transform", name="two")
+        for attr in (
+            "worldMatrix",
+            "worldInverseMatrix",
+            "parentMatrix",
+            "parentInverseMatrix",
+        ):
+            with self.subTest(attr=attr):
+                self.assertTrue(getattr(one, attr).plug.isArray)
+                self.assertEqual(self._data_type(getattr(one, attr)), ("matrix", 1))
+                self.assertEqual(self._data_type(getattr(two, attr)), ("matrix", 0))
+                # an element is still queried every time
+                element = getattr(two, attr)[0]
+                self.assertIsNone(element._static_type_key())
+                self.assertEqual(self._data_type(element), ("matrix", 1))
+                self.assertEqual(self._data_type(element), ("matrix", 1))
+
+    def test_typed_attr_outside_a_root_follows_its_data(self):
+        loc  = Node.create("transform", name="loc")
+        pick = Node.create("choice", name="pick")
+        dist = [Node.create("distanceBetween", name=f"dist{i}") for i in range(2)]
+        info = [Node.create("curveInfo", name=f"info{i}") for i in range(2)]
+        cmds.connectAttr("loc.translate", "pick.input[0]")
+        cmds.connectAttr("loc.worldMatrix[0]", "pick.input[1]")
+        cmds.connectAttr("pick.output", "dist0.inMatrix1")
+        cmds.connectAttr("pick.output", "info0.inputCurve")
+        plugs = [node.inMatrix1 for node in dist] + [node.inputCurve for node in info]
+        for plug in plugs:
+            self.assertIsNone(plug._static_type_key())
+        self.assertEqual(self._data_type(dist[1].inMatrix1), ("matrix", 1))
+        self.assertEqual(self._data_type(info[1].inputCurve), ("nurbsCurve", 1))
+        for selector, expected in ((0, "double3"), (1, "matrix"), (0, "double3")):
+            with self.subTest(selector=selector):
+                pick.selector.set(selector)
+                self.assertEqual(self._data_type(dist[0].inMatrix1), (expected, 1))
+                self.assertEqual(self._data_type(dist[1].inMatrix1), ("matrix", 1))
+        pick.selector.set(1)
+        self.assertEqual(self._data_type(info[0].inputCurve), ("matrix", 1))
+        self.assertEqual(self._data_type(info[1].inputCurve), ("nurbsCurve", 1))
+        self.assertEqual(loc.worldMatrix.data_type, "matrix")
+
+    def test_roots_that_report_their_data_are_not_shared(self):
+        cmds.polyCube(name="cube")
+        cmds.createNode("mesh", name="emptyShape")
+        cluster = cmds.cluster("cube")[0]
+        shape   = Node("cubeShape")
+        # a world space root reports its first element's data
+        self.assertIsNone(shape.worldMesh._static_type_key())
+        self.assertIsNotNone(shape.worldMatrix._static_type_key())
+        # an internal root, and a root with no declared data type
+        for name in ("cubeShape.face", "emptyShape.face", f"{cluster}.outputGeometry"):
+            with self.subTest(plug=name):
+                plug = Plug(name)
+                self.assertIsNone(plug._static_type_key())
+                expected = _legacy_data_type_outcome(plug)
+                for _ in range(2):
+                    self.assertEqual(_data_type_outcome(Plug(name)), expected)
+        # the face root's query fails, so nothing is stored for it
+        self.assertIsInstance(_data_type_outcome(Plug("emptyShape.face")), tuple)
+        self.assertIsInstance(_data_type_outcome(Plug("cubeShape.face")), tuple)
+
+    def test_choice_input_root_across_connections(self):
+        src  = Node.create("transform", name="src")
+        pick = Node.create("choice", name="pick")
+        cmds.addAttr("src", ln="label", dt="string")
+        cmds.polyCube(name="cube")
+        cmds.circle(name="crv")
+        sources = (
+            "src.message",
+            "src.translate",
+            "src.translateX",
+            "src.worldMatrix[0]",
+            "src.label",
+            "cubeShape.outMesh",
+            "crvShape.worldSpace[0]",
+        )
+        self.assertEqual(self._data_type(pick.input), ("compound", 1))
+        for index, source in enumerate(sources):
+            with self.subTest(source=source):
+                cmds.connectAttr(source, f"pick.input[{index}]")
+                pick.selector.set(index)
+                self.assertEqual(self._data_type(pick.input), ("compound", 0))
+                self.assertEqual(self._data_type(Plug("pick.input")), ("compound", 0))
+                self.assertEqual(cmds.getAttr("pick.input", type=True), "TdataCompound")
+                element = pick.input[index]
+                self.assertIsNone(element._static_type_key())
+                self.assertEqual(
+                    _data_type_outcome(element), _legacy_data_type_outcome(element)
+                )
+                self.assertEqual(
+                    _data_type_outcome(pick.output),
+                    _legacy_data_type_outcome(pick.output),
+                )
+
+    def test_held_typed_root_across_delete_rename_and_reuse(self):
+        cmds.undoInfo(state=True, infinity=True)
+        warm = Node.create("joint", name="warm")
+        self.assertEqual(warm.worldMatrix.data_type, "matrix")
+        warm_pick = Node.create("choice", name="warmPick")
+        self.assertEqual(warm_pick.input.data_type, "compound")
+        joint = Node.create("joint", name="jnt")
+        pick  = Node.create("choice", name="pick")
+        held  = [joint.worldMatrix, joint.worldInverseMatrix, pick.input]
+        fresh = [Plug(plug.plug) for plug in held]
+        for plug in held:
+            str(plug)
+
+        def rename():
+            cmds.rename("jnt", "jnt2")
+            cmds.rename("pick", "pick2")
+
+        def reuse():
+            cmds.delete("jnt2", "pick2")
+            cmds.createNode("choice", name="jnt2")
+            cmds.createNode("joint", name="pick2")
+
+        steps = (
+            ("live", lambda: None),
+            ("deleted", lambda: cmds.delete("jnt", "pick")),
+            ("undone", cmds.undo),
+            ("renamed", rename),
+            ("reused", reuse),
+        )
+        seen = {}
+        for label, step in steps:
+            step()
+            for index, plug in enumerate(held + fresh):
+                with self.subTest(step=label, plug=index):
+                    cached = _data_type_outcome(plug)
+                    self.assertEqual(cached, _legacy_data_type_outcome(plug))
+                    seen[label, index] = cached
+        self.assertEqual(
+            [seen["live", index] for index in range(3)],
+            ["matrix", "matrix", "compound"],
+        )
+        self.assertEqual(seen["deleted", 0], (RuntimeError, "jnt already deleted!"))
+        self.assertEqual(seen["deleted", 2], (RuntimeError, "pick already deleted!"))
+        self.assertEqual(
+            [seen["undone", index] for index in range(3)],
+            ["matrix", "matrix", "compound"],
+        )
+        self.assertEqual(seen["reused", 0], (RuntimeError, "jnt2 already deleted!"))
+
+    def test_dynamic_and_extension_typed_roots_not_cached(self):
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="mats", dt="matrix", multi=True)
+        cmds.addAttr(net, ln="labels", dt="string", multi=True)
+        for name in ("net.mats", "net.labels"):
+            with self.subTest(plug=name):
+                self.assertIsNone(Plug(name)._static_type_key())
+                for _ in range(2):
+                    self.assertEqual(self._data_type(Plug(name)), ("compound", 1))
+        cmds.deleteAttr("net.mats")
+        cmds.addAttr(net, ln="mats", at="double")
+        self.assertEqual(self._data_type(Plug("net.mats")), ("double", 1))
+
+        def delete_extension():
+            cmds.deleteExtension(
+                nodeType="choice", attribute="perfExt", forceDelete=True
+            )
+
+        try:
+            cmds.addExtension(
+                nodeType="choice", longName="perfExt", dt="matrix", multi=True
+            )
+            cmds.createNode("choice", name="pickA")
+            self.assertIsNone(Plug("pickA.perfExt")._static_type_key())
+            self.assertEqual(self._data_type(Plug("pickA.perfExt")), ("compound", 1))
+            cmds.delete("pickA")
+            delete_extension()
+            cmds.addExtension(nodeType="choice", longName="perfExt", at="double")
+            cmds.createNode("choice", name="pickB")
+            self.assertEqual(self._data_type(Plug("pickB.perfExt")), ("double", 1))
+        finally:
+            if cmds.attributeQuery("perfExt", type="choice", exists=True):
+                delete_extension()
 
 
 # The instance state ``Attribute.__init__`` leaves, in the order it is stored.

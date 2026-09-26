@@ -493,6 +493,7 @@ _NON_MATRIX_ATTR_API_TYPES = _SCALAR_ATTR_API_TYPES | {
 # Attribute kinds whose `cmds.getAttr(..., type=True)` string is a property of
 # the node class, so `Attribute.data_type` shares it across instances in
 # `_STATIC_DATA_TYPE`, keyed by (typeName, typeId, attr long name, isArray).
+# Typed attrs are shared only as a top-level array root (`_is_static_typed_root`).
 # Dynamic and extension attrs and plugs under an array element are never
 # cached; the cache is cleared when a plug-in is loaded or unloaded (it can
 # redefine a type).
@@ -589,6 +590,30 @@ def _plug_under_element(plug: OpenMaya.MPlug) -> bool:
         if not plug.isChild:
             return False
         plug = plug.parent()
+
+
+def _is_static_typed_root(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> bool:
+    """True if `mplug` is the top-level array root of a typed attr whose
+    `cmds.getAttr(..., type=True)` string is the same on every node of its type.
+
+    A typed attr reports the data it holds, so an attr that is not an array
+    root is never shared: a generic source (a choice output, a deformer's
+    geometry) can hand it another type. A root reports 'TdataCompound', except
+    a world space root, which reports its first element; only a matrix one
+    (worldMatrix, parentInverseMatrix...) always holds its declared type.
+    """
+    if (
+        mobject.apiType() != OpenMaya.MFn.kTypedAttribute
+        or not mplug.isArray
+        or mplug.isChild
+    ):
+        return False
+    fn = OpenMaya.MFnTypedAttribute(mobject)
+    if fn.internal:
+        return False
+    if fn.worldSpace:
+        return fn.attrType() == OpenMaya.MFnData.kMatrix
+    return fn.attrType() != OpenMaya.MFnData.kInvalid
 
 
 def _fixed_attr_kind(attr: Attribute) -> int | None:
@@ -990,19 +1015,23 @@ class Attribute(str):
         if key is _STATIC_KEY_UNSET:
             key = None
             try:
-                mplug  = self._mplug
-                fn     = OpenMaya.MFnDependencyNode(mplug.node())
-                normal = OpenMaya.MFnDependencyNode.kNormalAttr
+                mplug   = self._mplug
+                fn      = OpenMaya.MFnDependencyNode(mplug.node())
+                normal  = OpenMaya.MFnDependencyNode.kNormalAttr
+                mobject = self.mobject
                 # a dynamic or extension attr can be re-added with another type
                 if (
-                    fn.attributeClass(self.mobject) == normal
-                    and self.mobject.apiType() in _STATIC_DATA_API_TYPES
+                    fn.attributeClass(mobject) == normal
+                    and (
+                        mobject.apiType() in _STATIC_DATA_API_TYPES
+                        or _is_static_typed_root(mplug, mobject)
+                    )
                     and not _plug_under_element(mplug)
                 ):
                     key = (
                         fn.typeName,
                         fn.typeId.id(),
-                        OpenMaya.MFnAttribute(self.mobject).name,
+                        OpenMaya.MFnAttribute(mobject).name,
                         mplug.isArray,
                     )
             except Exception:
