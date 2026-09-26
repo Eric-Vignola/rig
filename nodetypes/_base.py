@@ -743,6 +743,18 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
         return None
 
 
+def _naming_dag_path(attr: Any) -> OpenMaya.MDagPath | None:
+    """The DAG path whose name `Attribute.full_name` gives `attr`'s node, or None
+    for an owner that is not named by its fn set's path (a subclass of the `Node`
+    wrapper is named through its own `name`)."""
+    node = attr.__dict__["_node"]
+    if type(node) is _NODE_WRAPPER_CLASS:
+        node = node._dg_node
+    elif _NODE_WRAPPER_CLASS is None or isinstance(node, _NODE_WRAPPER_CLASS):
+        return None
+    return node._fn_set.getPath()
+
+
 def _names_own_plug(attr: Any) -> bool:
     """True if the name `attr` gives itself resolves in cmds to its own MPlug.
 
@@ -750,6 +762,10 @@ def _names_own_plug(attr: Any) -> bool:
     the attribute still on its node (a deleted dynamic or extension attr's name
     resolves to nothing, or to a same-named new attr), and an index on every
     array along the path. Call it only once `attr` is named, so its node is valid.
+
+    A DAG node is named by its wrapper's DAG path, which must still be valid (the
+    instance it runs through can be deleted while the node lives on), and an
+    instanced element is named without its index, after that path's instance.
     """
     cls = type(attr)
     if (
@@ -761,14 +777,30 @@ def _names_own_plug(attr: Any) -> bool:
         return False
     try:
         mplug   = attr._mplug
-        fn      = OpenMaya.MFnDependencyNode(mplug.node())
+        mobject = mplug.node()
+        fn      = OpenMaya.MFnDependencyNode(mobject)
         invalid = OpenMaya.MFnDependencyNode.kInvalidAttr
         if fn.attributeClass(mplug.attribute()) == invalid:
             return False
+        # an invalid path names the node "", though the node lives on in another
+        # instance
+        path = None
+        if mobject.hasFn(OpenMaya.MFn.kDagNode):
+            path = _naming_dag_path(attr)
+            if path is None or not path.isValid():
+                return False
         plug = mplug
         while True:
             if plug.isElement:
-                if plug.logicalIndex() < 0:
+                index = plug.logicalIndex()
+                if index < 0:
+                    return False
+                # an instanced element (worldMatrix, instObjGroups...) is named
+                # without its index, which resolves to its path's instance
+                name = plug.partialName(False, False, False, False, False, False)
+                if not name.endswith("]") and (
+                    path is None or index != path.instanceNumber()
+                ):
                     return False
                 plug = plug.array()
             elif plug.isChild:

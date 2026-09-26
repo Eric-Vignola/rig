@@ -1468,6 +1468,47 @@ def _extension(delete):
     return held
 
 
+def _instance_scene():
+    """``loc`` under ``t1``, instanced under ``t2``, and an ``other`` locator."""
+    cmds.createNode("transform", name="t1")
+    cmds.createNode("transform", name="t2")
+    cmds.createNode("locator", name="loc", parent="t1")
+    cmds.parent("t1|loc", "t2", add=True, shape=True)
+    cmds.createNode("locator", name="other")
+    # a bare ".attr" name resolves on the selection
+    cmds.select(clear=True)
+
+
+def _stale_instance(remove):
+    """A plug named through ``t1|loc`` held across that instance being removed
+    (``remove``) or its transform deleted: the shape lives on under ``t2``."""
+    _instance_scene()
+    held = _named(Plug("t1|loc.localPositionX"))
+    if remove:
+        cmds.parent("t1|loc", removeObject=True, shape=True)
+    else:
+        cmds.delete("t1")
+    return held
+
+
+def _instance_plug(name):
+    """A factory of the plug ``name`` that sets up the instanced scene first."""
+
+    def plug():
+        _instance_scene()
+        return Plug(name)
+
+    return plug
+
+
+def _wired_instance_element():
+    """``instObjGroups[1]`` of the second instance, named ``t1|loc.instObjGroups``
+    (its first instance's element), with that name connected from ``other``."""
+    held = _named(Plug("t2|loc.instObjGroups[1]"))
+    cmds.connectAttr("other.instObjGroups[0]", str(held))
+    return held
+
+
 def _plug(name):
     return lambda: Plug(name)
 
@@ -1513,6 +1554,25 @@ _CONNECT_CASES = (
     ("unindexed_child", (), _plug("a.tx"), _unindexed_child, False, False),
     ("extension", (), _plug("a.tx"), lambda: _extension(False), False, True),
     ("extension_gone", (), _plug("a.tx"), lambda: _extension(True), False, False),
+    ("instance", (), _plug("a.tx"), _instance_plug("t2|loc.lpx"), False, True),
+    ("stale_instance", (), _plug("a.tx"), lambda: _stale_instance(False), False,
+     False),
+    ("stale_instance_source", (), lambda: _stale_instance(False), _plug("b.tx"),
+     False, False),
+    ("removed_instance", (), _plug("a.tx"), lambda: _stale_instance(True), False,
+     False),
+    ("removed_instance_source", (), lambda: _stale_instance(True), _plug("b.tx"),
+     False, False),
+    ("world_source", (), _plug("a.worldMatrix[0]"), _plug("b.offsetParentMatrix"),
+     False, True),
+    ("instance_world_source", (), _instance_plug("t2|loc.worldMatrix[1]"),
+     _plug("b.offsetParentMatrix"), False, False),
+    ("instance_element", (), _instance_plug("other.instObjGroups[0]"),
+     _plug("t1|loc.instObjGroups[0]"), False, True),
+    ("other_instance_element", (), _instance_plug("other.instObjGroups[0]"),
+     _plug("t2|loc.instObjGroups[1]"), False, False),
+    ("wired_instance_element", (), _instance_plug("other.instObjGroups[0]"),
+     _wired_instance_element, False, False),
 )
 
 
@@ -1576,12 +1636,18 @@ class TestConnectQuery(MayaTestCase):
     def test_connect_outcomes(self):
         cases   = {case[0]: case for case in _CONNECT_CASES}
         missing = (ValueError, "No object matches name: b.undone")
+        stale   = (ValueError, "No object matches name: .localPositionX")
         for name, expected in (
             ("plain", None),
             ("connected", None),
             ("readded_wired", None),
             ("undone", missing),
             ("undone_source", missing),
+            ("stale_instance", stale),
+            ("stale_instance_source", stale),
+            ("removed_instance", stale),
+            ("removed_instance_source", stale),
+            ("wired_instance_element", None),
         ):
             with self.subTest(case=name):
                 state, _ = self._connect(cases[name], legacy=False)
@@ -1627,6 +1693,26 @@ class TestConnectQuery(MayaTestCase):
         ):
             with self.subTest(plug=str(plug)):
                 self.assertIs(_base._names_own_plug(plug), expected)
+
+    def test_names_own_plug_on_instances(self):
+        self._scene()
+        _instance_scene()
+        for plug, expected in (
+            (Plug("t2|loc.lpx"), True),
+            (Node("t2|loc").lpx, True),
+            (Plug("a.worldMatrix[0]"), True),
+            (Plug("t1|loc.worldMatrix[0]"), True),
+            (Plug("t1|loc.instObjGroups[0]"), True),
+            (Plug("t2|loc.worldMatrix[1]"), False),
+            (Plug("t2|loc.instObjGroups[1]"), False),
+            (Plug("a.instObjGroups[3]"), False),
+        ):
+            with self.subTest(plug=plug.plug.name()):
+                self.assertIs(_base._names_own_plug(_named(plug)), expected)
+        for remove in (False, True):
+            with self.subTest(remove=remove):
+                self._scene()
+                self.assertIs(_base._names_own_plug(_stale_instance(remove)), False)
 
 
 def _requery_outcome(plug):
