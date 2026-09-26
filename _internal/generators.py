@@ -51,9 +51,11 @@ def _yield(obj: Any, index: int) -> Any:
     # list / tuple (sub)classes with the builtin __iter__ and __len__:
     # index the storage directly, the element list(obj)[index] would
     # return, instead of copying the whole sequence for every row
+    # (one whose __class__ reports str or dict takes the old path)
     t = type(obj)
     if (
-        isinstance(obj, list)
+        issubclass(t, list)
+        and not isinstance(obj, (str, dict))
         and t.__iter__ is list.__iter__
         and t.__len__ is list.__len__
     ):
@@ -61,7 +63,8 @@ def _yield(obj: Any, index: int) -> Any:
             raise IndexError("_yield: empty sequence has no element at any index")
         return list.__getitem__(obj, index)
     if (
-        isinstance(obj, tuple)
+        issubclass(t, tuple)
+        and not isinstance(obj, (str, dict))
         and t.__iter__ is tuple.__iter__
         and t.__len__ is tuple.__len__
         and type(index) is int

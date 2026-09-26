@@ -269,3 +269,32 @@ class TestYieldFastPath(MayaTestCase):
         self.assertEqual(spy.call_count, 0)
         self.assertEqual(len(rows), 5000)
         self.assertEqual(rows[-1], [4999, 7, 3])
+
+    def test_yield_class_reported_as_str_or_dict_uses_legacy_path(self):
+        from rig._internal.generators import _yield
+
+        class ListAsStr(list):
+            __class__ = property(lambda self: str)
+
+        class TupleAsStr(tuple):
+            __class__ = property(lambda self: str)
+
+        class ListAsDict(list):
+            __class__ = property(lambda self: dict)
+
+        # isinstance(obj, str) holds, so the legacy code broadcasts it whole
+        for obj in (ListAsStr([1, 2]), TupleAsStr((1, 2))):
+            self.assertIs(_yield(obj, 0), obj)
+            rows = list(sequences(obj, [1, 2]))
+            self.assertEqual([row[1] for row in rows], [1, 2])
+            self.assertTrue(all(row[0] is obj for row in rows))
+
+        # isinstance(obj, dict) holds, so the legacy code walks it as keys
+        as_dict = ListAsDict([1, 2])
+        self.assertEqual(_yield(as_dict, 1), 2)
+        self.assertEqual(_yield(as_dict, 1.0), 2)
+        with self.assertRaises(IndexError) as ctx:
+            _yield(as_dict, -1)
+        self.assertEqual(
+            str(ctx.exception), "_yield: index -1 out of range for dict of length 2"
+        )
