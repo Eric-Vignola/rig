@@ -38,7 +38,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import _PLAIN_NODE_NAME, Attribute, is_valid_maya_uid
+from rig.nodetypes._base import (
+    _PLAIN_NODE_NAME,
+    _path_instance_number,
+    Attribute,
+    is_valid_maya_uid,
+)
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
@@ -1057,6 +1062,11 @@ def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -
         value of their own; truncating a scalar/vector multi to ``[0]`` would
         be silent data loss.
 
+    A per-instance multi read through an instance path resolves to that path's
+    element, as its name does in cmds (``Node("|T2|S").worldMatrix`` is
+    ``worldMatrix[1]``, the instance under ``T2``); any other matrix multi to
+    ``[0]``.
+
     Falls back to returning ``source`` unchanged if the element lookup raises,
     so a malformed source still reaches the existing code paths.
     """
@@ -1066,7 +1076,8 @@ def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -
         return source
     try:
         if source.is_multi and source.data_type == "matrix":
-            return source[0]
+            index = _path_instance_number(source)
+            return source[0 if index is None else index]
     except (AttributeError, RuntimeError, TypeError, IndexError):
         pass
     return source

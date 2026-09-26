@@ -49,7 +49,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya as om
-from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes._base import _path_instance_number, Attribute, PyNode
 from rig._internal.types import _is_quaternion
 
 
@@ -339,13 +339,19 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
 
     # 3b. transform.worldMatrix / worldMatrix[*] -- convert to local first.
     if attr in _MATRIX_WORLD_ALIASES or ".worldMatrix[" in plug_str:
-        # Detect index (default 0).
+        # The instance whose world matrix this is: the element's own index (the
+        # name of an instance's element through its own path has none), or for
+        # the bare array the instance of the path it was read through, as cmds
+        # resolves its name; 0 otherwise.
         index = 0
-        if ".worldMatrix[" in plug_str:
-            try:
-                index = int(plug_str.rsplit("[", 1)[1].rstrip("]"))
-            except (ValueError, IndexError):
-                index = 0
+        try:
+            mplug = dst.plug
+            if mplug.isElement:
+                index = mplug.logicalIndex()
+            else:
+                index = _path_instance_number(dst) or 0
+        except (RuntimeError, TypeError, AttributeError):
+            index = 0
         try:
             wrapped         = PyNode(node_str)
             parent_inv_flat = wrapped.find_attr(f"parentInverseMatrix[{index}]").get()

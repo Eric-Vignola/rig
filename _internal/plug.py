@@ -67,6 +67,7 @@ from rig.nodetypes._base import (
     _MISSING,
     _class_attr,
     _ensure_owner_alive,
+    _path_instance_number,
     _plug_hash,
     _same_plug,
     _unwrapped,
@@ -2009,12 +2010,17 @@ def _inject_value(dst: Any, src: Any) -> None:
     # returns the LOWEST free logical index (gap-fill semantics). For
     # sequential fills from an empty multi this is identical to Eric's
     # "highest physical index + 1"; only sparse arrays after deletions diverge.
+    # An array of per-instance elements (``worldMatrix``) is not a collection:
+    # read without an index it is the element of its path's instance, as cmds
+    # resolves its name (``T2|S.worldMatrix`` is ``worldMatrix[1]``).
     try:
         if dst.is_multi and not str(dst).endswith("]"):
-            try:
-                next_index = dst.get_next_available_index()
-            except Exception:
-                next_index = 0
+            next_index = _path_instance_number(dst)
+            if next_index is None:
+                try:
+                    next_index = dst.get_next_available_index()
+                except Exception:
+                    next_index = 0
             dst = dst[next_index]
             try:
                 dst_data_type = dst.data_type
