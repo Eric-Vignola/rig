@@ -12,6 +12,9 @@ classes were ported (``TestReviewFixes``, same ids as on proto/node-merge), and
 decision D-B gives an instanced plug one identity (``TestInstancedPlugIdentity``).
 """
 
+import os
+import shutil
+import tempfile
 from unittest import mock
 
 from maya import cmds
@@ -299,6 +302,118 @@ class TestReviewFixes(MayaTestCase):
     classes, ported with the prototype's test ids."""
 
     TEST_START_NEW_SCENE = True
+
+    _FREED = (
+        r"^Transform node \(freed by a new scene, a file open or a reference unload\) "
+        r"already deleted!$"
+    )
+
+    def _held(self, names):
+        held = []
+        for name in names:
+            node     = Node(name)
+            compound = node.t
+            compound.tx  # a cached child
+            typed = PyNode(name)
+            typed.tx  # a cached typed attr
+            held.append(
+                (node, node.tx, compound, node.worldMatrix[0], node.find_attr("ty"), typed)
+            )
+        return held
+
+    def _assert_freed(self, held):
+        persp = Node("persp")
+        ops = {
+            "node.tx (cached)":  lambda n, p, t, w, a, d: n.tx,
+            "node.ty":           lambda n, p, t, w, a, d: n.ty,
+            "str(node)":         lambda n, p, t, w, a, d: str(n),
+            "repr(node)":        lambda n, p, t, w, a, d: repr(n),
+            "node == node":      lambda n, p, t, w, a, d: n == n,
+            "hash(node)":        lambda n, p, t, w, a, d: hash(n),
+            "node.tx = 1":       lambda n, p, t, w, a, d: setattr(n, "tx", 1),
+            "str(plug)":         lambda n, p, t, w, a, d: str(p),
+            "plug.get()":        lambda n, p, t, w, a, d: p.get(),
+            "plug.set(1)":       lambda n, p, t, w, a, d: p.set(1),
+            "plug << 1":         lambda n, p, t, w, a, d: p << 1,
+            "plug << None":      lambda n, p, t, w, a, d: p << None,
+            "plug >> None":      lambda n, p, t, w, a, d: p >> None,
+            "plug.alias":        lambda n, p, t, w, a, d: p.alias,
+            "plug.is_connected": lambda n, p, t, w, a, d: p.is_connected,
+            "plug.is_locked":    lambda n, p, t, w, a, d: p.is_locked,
+            "plug.get_inputs()": lambda n, p, t, w, a, d: p.get_inputs(),
+            "plug + 1":          lambda n, p, t, w, a, d: p + 1,
+            "plug == plug":      lambda n, p, t, w, a, d: p == p,
+            "plug.equals(plug)": lambda n, p, t, w, a, d: p.equals(t),
+            "compound.tx":       lambda n, p, t, w, a, d: t.tx,
+            "compound[0]":       lambda n, p, t, w, a, d: t[0],
+            "compound.child(0)": lambda n, p, t, w, a, d: t.child(0),
+            "element.get()":     lambda n, p, t, w, a, d: w.get(),
+            "attribute.get()":   lambda n, p, t, w, a, d: a.get(),
+            "attribute parent":  lambda n, p, t, w, a, d: a.get_parent(),
+            "persp.tx << plug":  lambda n, p, t, w, a, d: persp.tx << p,
+            "memo key":          lambda n, p, t, w, a, d: _attribute_key(p),
+            "str(typed)":        lambda n, p, t, w, a, d: str(d),
+            "str(typed.tx)":     lambda n, p, t, w, a, d: str(d.tx),
+            "typed.tx.get()":    lambda n, p, t, w, a, d: d.tx.get(),
+            "typed.rx":          lambda n, p, t, w, a, d: d.rx,
+        }
+        for label, op in ops.items():
+            with self.subTest(op=label):
+                for entry in held:
+                    with self.assertRaisesRegex(RuntimeError, self._FREED):
+                        op(*entry)
+        for node, plug, *_ in held:
+            self.assertFalse(node.is_valid)
+            self.assertIsInstance(hash(plug), int)
+            self.assertFalse(hasattr(plug, "__array__"))
+            self.assertFalse(hasattr(node, "__deepcopy__"))
+            self.assertIs(plug.node, node)
+            self.assertIs(Node(node)._dg_node, node._dg_node)
+            self.assertIs(type(node >> None), Transform)
+
+    def test_held_nodes_and_plugs_across_a_new_scene_raise(self):
+        # a freed node's fn sets and MPlugs point at freed memory: reading them
+        # named another node or crashed Maya; nothing reads them now
+        held = self._held([cmds.createNode("transform", name=f"held{i}") for i in range(3)])
+        cmds.file(new=True, force=True)
+        for _ in range(50):
+            cmds.createNode("multiplyDivide")  # reuse the freed memory
+        self._assert_freed(held)
+
+    def test_held_nodes_and_plugs_across_a_reference_unload_raise(self):
+        folder = tempfile.mkdtemp(prefix="rig_freed_ref_")
+        path   = os.path.join(folder, "freed_ref.ma").replace("\\", "/")
+        try:
+            for i in range(2):
+                cmds.createNode("transform", name=f"held{i}")
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            held = self._held([f"ref:held{i}" for i in range(2)])
+            cmds.file(unloadReference=cmds.referenceQuery(path, referenceNode=True))
+            self._assert_freed(held)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_deleted_node_in_the_undo_queue_keeps_its_name(self):
+        cmds.undoInfo(state=True, infinity=True)
+        node = Node(cmds.createNode("transform", name="gone"))
+        plug = node.tx
+        typed = node >> None
+        cmds.delete("gone")
+        for op in (
+            lambda: str(plug),
+            lambda: str(node.tx),
+            lambda: node.ty,
+            lambda: plug.get(),
+            lambda: str(typed),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "^gone already deleted!$"):
+                op()
+        cmds.undo()
+        self.assertEqual(str(plug), "gone.translateX")
 
     def test_instanced_world_space_elements_connect_the_element_asked_for(self):
         _instanced_locator()
