@@ -35,7 +35,7 @@ import numbers
 from typing import Any, Iterable, Iterator, Optional, Union
 
 from maya import cmds
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import _same_plug, Attribute
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.node import Node
@@ -393,13 +393,19 @@ def _lift_or_pass(obj: Any) -> Any:
 
 
 def _same_entity(item: Any, probe: Any) -> bool:
-    """Plain-list equality, except that plugs compare by name.
+    """Plain-list equality, except that two plugs compare as Maya plugs and a
+    plug and anything else (a plain str, a node) compare by name.
 
     ``list`` containment compares with ``==``, and :meth:`Plug.__eq__` returns a
     condition-node Plug -- so a plug on EITHER side must be diverted, including
-    the reflected ``3.0 == plug``. Nested :class:`PlugList` compares by identity
-    for the same reason.
+    the reflected ``3.0 == plug``. Two plugs are the same entity when they are
+    the same Maya plug (see :meth:`Plug.equals`): ``Node("|T1|S").v`` and
+    ``Node("|T2|S").v`` are, though their names differ. A str is a name, so
+    ``"a.translateX"`` finds ``a.tx`` and ``"a.tx"`` does not. Nested
+    :class:`PlugList` compares by identity for the same reason.
     """
+    if isinstance(item, Attribute) and isinstance(probe, Attribute):
+        return _same_plug(item, probe)
     if isinstance(item, (Attribute, Node)) or isinstance(probe, (Attribute, Node)):
         return str(item) == str(probe)
     if isinstance(item, PlugList) or isinstance(probe, PlugList):
