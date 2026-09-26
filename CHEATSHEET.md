@@ -318,15 +318,26 @@ print(len(ctrl.t.get_inputs()), len(ctrl.t[:].get_inputs()[0]))  # 0 1
 ```
 
 `==` on a plug builds a comparison node and returns *its output plug*, not
-a bool. Use `equals` for identity. Hashing is by MObject handle plus
-attribute name, so plugs still work as dict and set keys.
+a bool. Use `equals` for identity. Identity is the Maya plug: hashing is by
+the node's MObject handle plus the attribute and its indices, so plugs
+still work as dict and set keys, and a rename or an alias keeps the key.
+One plug read through two instance paths of a node (`Node("|T1|S").v`,
+`Node("|T2|S").v`) is one key, though each is named through its own path;
+the world space elements of two instances (`worldMatrix[0]`, `[1]`) are two
+plugs. A plain string is never a plug's key; a `PlugList` compares a
+string with the plug's name.
 
 ```python
 test = ctrl.tx == 5
 print(repr(test), cmds.nodeType(test.node))                      # Plug("equal1.output") equal
 print(ctrl.tx.equals(ctrl.tx), ctrl.tx.equals(drv.tx))           # True False
 print(len({ctrl.tx, ctrl.tx}), {ctrl.tx: "x"}[Node("ctrl").tx])  # 1 x
-print(ctrl.tx in PlugList([drv.tx, ctrl.tx]))                    # True  -- containment compares names, builds nothing
+print(ctrl.tx in PlugList([drv.tx, ctrl.tx]))                    # True  -- containment compares plugs, builds nothing
+print("ctrl.translateX" in PlugList([ctrl.tx]), "ctrl.tx" in PlugList([ctrl.tx]))  # True False  -- a string is a name
+key = hash(ctrl.tx)
+cmds.rename("ctrl", "rig_ctrl")
+print(hash(Node("rig_ctrl").tx) == key, ctrl.tx.equals(Plug("rig_ctrl.tx")))      # True True  -- a rename keeps the key
+cmds.rename("rig_ctrl", "ctrl")
 ```
 
 A `Plug` is a `str` subclass, so `cmds` accepts it directly and `in` is

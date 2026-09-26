@@ -105,7 +105,8 @@ Two operators carry the language:
   build networks an older release can open.
 - **Comparisons are nodes.** `a == b` builds a node and returns its
   output plug; `Plug.__hash__` is overridden so plugs still work as dict
-  keys and set members.
+  keys and set members, keyed by the Maya plug (a rename keeps the key,
+  and one plug read through two instance paths is one key).
 - **Sibling fallback.** `plug.foo` looks for a child attribute first,
   then a sibling on the same node, so `(a.tx + 5).operation` reaches the
   math node behind the output.
