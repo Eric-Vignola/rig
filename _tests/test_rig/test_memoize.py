@@ -514,3 +514,82 @@ class TestAttributeKeyFromPlug(MayaTestCase):
         # so the plug is named, and keyed, again
         self.assertEqual(_outcome(_attribute_key, plug)[0], "ok")
         self.assertEqual([probe(plug), probe(plug)], [1, 1])
+
+
+def _stale_entries():
+    """The memo entries (of every @memoize and NodeOp cache) whose nodes are gone."""
+    holders = memoize_module._ALL_MEMOIZED + memoize_module._ALL_NODEOP_CACHES
+    return [
+        entry
+        for holder in holders
+        for entry in (getattr(holder, "_cache", None) or {}).values()
+        if not all(h.isAlive() and h.isValid() for h in entry.handles)
+    ]
+
+
+class TestPruneOnNewScene(MayaTestCase):
+    """Round 3, decision D-A: every new scene and file open prunes the memo
+    caches, so their entries stop holding the Plugs (and, under the owner rule,
+    the nodes and attr caches) of the scene that is gone."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _build(self):
+        from rig import constant
+
+        a = Node(cmds.createNode("transform", name="a"))
+        b = Node(cmds.createNode("transform", name="b"))
+        built = (constant(42.0), a.tx + b.tx)
+        entries = [
+            entry
+            for holder in memoize_module._ALL_MEMOIZED + memoize_module._ALL_NODEOP_CACHES
+            for entry in (getattr(holder, "_cache", None) or {}).values()
+            if any(entry.value is plug for plug in built)
+        ]
+        # one entry per memoizing layer that built them (at least one each)
+        self.assertGreaterEqual(len(entries), 2)
+        return entries
+
+    def test_new_scene_prunes_the_caches(self):
+        entries = self._build()
+        cmds.file(new=True, force=True)
+        self.assertEqual(_stale_entries(), [])
+        live = [
+            entry
+            for holder in memoize_module._ALL_MEMOIZED + memoize_module._ALL_NODEOP_CACHES
+            for entry in (getattr(holder, "_cache", None) or {}).values()
+        ]
+        for entry in entries:
+            self.assertFalse(any(entry is other for other in live))
+        # the functions build again in the new scene
+        self._build()
+
+    def test_file_open_prunes_the_caches(self):
+        import os
+        import shutil
+        import tempfile
+
+        folder = tempfile.mkdtemp(prefix="rig_prune_open_")
+        path   = os.path.join(folder, "prune_open.ma").replace("\\", "/")
+        try:
+            cmds.createNode("transform", name="kept")
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            self._build()
+            cmds.file(path, open=True, force=True)
+            self.assertEqual(_stale_entries(), [])
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_a_deleted_node_is_still_pruned_on_lookup_only(self):
+        # a delete is not a new scene: its entry stays until a lookup or a
+        # prune_memoize_caches() drops it, as before
+        from rig import constant
+
+        self._build()
+        plug = constant(42.0)
+        cmds.delete(str(plug).split(".")[0])
+        stale = _stale_entries()
+        self.assertGreaterEqual(len(stale), 1)
+        self.assertTrue(all(entry.value is plug for entry in stale))

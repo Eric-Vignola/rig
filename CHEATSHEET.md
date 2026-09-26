@@ -888,7 +888,8 @@ except ValueError as err:
 ```
 
 `prune_memoize_caches()` walks every `@memoize` and `NodeOp` cache and
-drops entries whose nodes are gone; `cleanup()` calls it for you.
+drops entries whose nodes are gone; `cleanup()` calls it for you, and so does
+every new scene and file open.
 
 ```python
 cmds.delete("add1", "add2", "add3")
