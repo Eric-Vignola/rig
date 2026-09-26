@@ -500,3 +500,61 @@ class TestOperandHelpers(MayaTestCase):
         self.assertIs(V.lerp._cache, V.lerp.__wrapped__._cache)
         self.assertEqual(operands_module.REFLECTED["__radd__"], "__add__")
         self.assertEqual(operands_module.REFLECTED["__lt__"], "__gt__")
+
+
+class TestEdgeCases(_OperandCase):
+    def test_a_deleted_node_reports_the_delete_first(self):
+        held = self.t.tx
+        cmds.delete("t")  # the undo queue is off: the node is freed
+        cmds.createNode("transform", name="t")  # a new node takes the name
+        before = _scene()
+        for call in (lambda: held + S, lambda: held == S, lambda: S % held):
+            with self.assertRaisesRegex(RuntimeError, "already deleted"):
+                call()
+        self.assertEqual(_scene(), before)
+        self.assertRejects(lambda: F.abs(S))
+
+    def test_a_deleted_node_in_the_undo_queue(self):
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            held = self.t.tx
+            cmds.delete("t")
+            before = _scene()
+            for call in (lambda: held + S, lambda: S + held, lambda: "%s" % held):
+                with self.assertRaisesRegex(RuntimeError, "^t already deleted!$"):
+                    call()
+            self.assertEqual(_scene(), before)
+            cmds.undo()
+            self.assertRejects(lambda: held + S, "t.translateX + 'cube.ty': ")
+            self.assertEqual(cmds.nodeType((held + 1).node), "sum")
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_renamed_and_namespaced_nodes(self):
+        cmds.rename("u", "u2")
+        self.assertRejects(lambda: self.u.tx - S)
+        cmds.namespace(add="ns")
+        cmds.createNode("transform", name="ns:cube")
+        self.assertRejects(lambda: self.u.tx * "ns:cube.ty", "Write Plug('ns:cube.ty')")
+        self.assertEqual(cmds.nodeType((self.u.tx * Plug("ns:cube.ty")).node), "multiply")
+
+    def test_a_rejected_call_records_no_undo_step(self):
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            cmds.setAttr("w.tx", 5)
+            self.assertRejects(lambda: self.w.tx + S)
+            self.assertRejects(lambda: V.lerp(self.w.t, [1, S, 0]))
+            cmds.undo()
+            self.assertEqual(cmds.getAttr("w.tx"), 0.0)
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_an_extension_attribute_plug_is_an_operand(self):
+        cmds.addExtension(nodeType="transform", longName="extKnob", attributeType="double")
+        try:
+            result = self.t.extKnob + self.u.tx
+            self.assertEqual(cmds.nodeType(result.node), "sum")
+            self.assertRejects(lambda: self.t.extKnob + "t.extKnob")
+        finally:
+            cmds.file(new=True, force=True)
+            cmds.deleteExtension(nodeType="transform", attribute="extKnob", forceDelete=True)

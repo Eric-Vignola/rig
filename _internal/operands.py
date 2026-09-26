@@ -105,9 +105,9 @@ def str_operand_error(where: str, found: str, text_hint: bool = False) -> TypeEr
     return TypeError(message)
 
 
-def text_format_error(fmt: str, plug: Any) -> TypeError:
-    """The TypeError for ``fmt % plug``: ``%`` with a Plug on the right is a
-    modulo node, not text formatting."""
+def text_format_error(fmt: str, plug: str) -> TypeError:
+    """The TypeError for ``fmt % plug`` (``plug`` is the Plug's name): ``%``
+    with a Plug on the right is a modulo node, not text formatting."""
     message = (
         f"{_render(fmt)} % {plug}: '%' with a Plug on the right builds a modulo "
         f"node, it does not format text. For text, write str(plug) or an f-string "
@@ -161,17 +161,19 @@ def operator_error(
     """The TypeError for ``left <dunder> right``, whose ``right`` operand is,
     or holds, the plain str ``found``.
 
-    ``left`` is the object the dunder ran on; a reflected dunder renders its
+    ``left`` is the Plug the dunder ran on; a reflected dunder renders its
     ``right`` first, as it was written (``'%s' % plug``). ``row`` is the row
-    of a PlugList operator the pair came from.
+    of a PlugList operator the pair came from. Naming ``left`` raises for a
+    plug whose node was deleted, as every other operator on it does.
     """
     symbol, reflected = OPERATOR_SYMBOLS[dunder]
+    plug = str(left)
     if dunder == "__rmod__" and right is found and row is None:
-        return text_format_error(found, left)
+        return text_format_error(found, plug)
     if reflected:
-        where = f"{_render(right)} {symbol} {_render(left)}"
+        where = f"{_render(right)} {symbol} {plug}"
     else:
-        where = f"{_render(left)} {symbol} {_render(right)}"
+        where = f"{plug} {symbol} {_render(right)}"
     if row is not None:
         where = f"PlugList row {row}, {where}"
     return str_operand_error(where, found, text_hint=symbol == "+")
