@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # on a wrapper's MObject once its API 1.0 handle says the node is valid.
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import _plug_identity_name, Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
@@ -84,12 +84,18 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
 
     Uses the composite node identity (see :func:`_node_identity`) so the key
     survives renames AND Maya's MObjectHandle hashCode recycling on delete.
+    The attr part is the identity of the Maya plug (see
+    :func:`rig.nodetypes._base._plug_identity_name`): the alias with the
+    instanced indices, since the alias names every element of an instanced
+    (world space) attr without its index. ``worldMatrix[0]`` and
+    ``worldMatrix[1]`` get one key each, and a plug read through either
+    instance path of a node gets the same key.
     """
     node_str = attr.full_name.split(".", 1)[0]  # "node.attr" -> "node"
     identity = _named_dg_identity(attr, node_str)
     if identity is None:
         identity = _node_identity(node_str)
-    return (identity, attr.alias)
+    return (identity, _plug_identity_name(attr))
 
 
 def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, int]]:
