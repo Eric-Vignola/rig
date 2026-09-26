@@ -4,10 +4,14 @@ Covers both ``@memoize`` (caching with MObjectHandle staleness check)
 and ``@vectorize`` (NumPy-style strict broadcasting).
 """
 
+import os
+import subprocess
+import sys
 from unittest import mock
 
+import rig
 from maya import cmds, OpenMaya as om1
-from rig import Node, PlugList
+from rig import Node, Plug, PlugList
 from rig._internal.memoize import (
     _attribute_key,
     _broadcast_len,
@@ -317,6 +321,38 @@ def _name_based_key(attr):
     return (_node_identity(attr.full_name.split(".", 1)[0]), attr.alias)
 
 
+# Keys two used plugs after their nodes were freed (undo off), printing one
+# "key <outcome>" line each, and exits before Maya's shutdown touches them.
+_FREED_NODE_KEYS = """
+import os
+import sys
+
+import maya.standalone
+
+maya.standalone.initialize()
+from maya import cmds
+from rig import Node
+from rig._internal.memoize import _attribute_key
+
+plugs = [
+    Node.create("transform", name="keepT").tx,
+    Node.create("multiplyDivide", name="keepM").input1X,
+]
+for plug in plugs:
+    str(plug)
+cmds.undoInfo(state=False)
+cmds.delete("keepT", "keepM")
+for plug in plugs:
+    try:
+        outcome = repr(_attribute_key(plug))
+    except Exception as exc:
+        outcome = f"{type(exc).__name__}: {exc}"
+    sys.__stdout__.write(f"key {outcome}\\n")
+    sys.__stdout__.flush()
+os._exit(0)
+"""
+
+
 def _outcome(fn, *args):
     """``("ok", value)`` or ``("raise", exception type, message)`` of a call."""
     try:
@@ -370,11 +406,12 @@ class TestAttributeKeyFromPlug(MayaTestCase):
                 self.assertEqual(_attribute_key(plug), _name_based_key(plug))
                 self.assertEqual(_stable_key(plug),    _name_based_key(plug))
         self.assertEqual(thing.nick.alias, "nick")
-        # A live node's key never goes through the by-name resolution.
+        # A live DG node's key never goes through the by-name resolution; a
+        # DAG path can go stale, so a DAG node's key still does.
         with mock.patch(
             "rig._internal.memoize._node_identity", wraps=_node_identity
         ) as by_name:
-            for plug in plugs:
+            for plug in plugs[:4]:
                 _attribute_key(plug)
         by_name.assert_not_called()
         self.assertNotEqual(
@@ -407,3 +444,47 @@ class TestAttributeKeyFromPlug(MayaTestCase):
         self.assertNotEqual(_attribute_key(node.translateX), old_key)
         self.assertEqual(probe(node.translateX), 2)
         self.assertEqual(call_count["n"], 2)
+
+    def test_attribute_key_of_a_freed_node_raises(self):
+        # With undo off a deleted node is freed, and reading it through its
+        # MPlug crashes Maya, so the used plugs are keyed in a mayapy of their
+        # own. Each must raise from its cached wrapper.
+        if not self.is_standalone():
+            self.skipTest("needs mayapy")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [os.path.dirname(os.path.dirname(rig.__file__)), env.get("PYTHONPATH", "")]
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", _FREED_NODE_KEYS],
+            env            = env,
+            capture_output = True,
+            text           = True,
+            timeout        = 600,
+        )
+        lines = [line for line in result.stdout.splitlines() if line.startswith("key ")]
+        self.assertEqual(
+            lines,
+            [
+                "key RuntimeError: keepT already deleted!",
+                "key RuntimeError: keepM already deleted!",
+            ],
+        )
+
+    def test_instance_whose_first_path_was_removed_is_not_cached(self):
+        call_count = {"n": 0}
+
+        @memoize
+        def probe(plug):
+            call_count["n"] += 1
+            return call_count["n"]
+
+        cube  = cmds.polyCube(name="cube")[0]
+        shape = cmds.listRelatives(cube, shapes=True, fullPath=True)[0]
+        other = cmds.createNode("transform", name="other")
+        cmds.parent(shape, other, add=True, shape=True)
+        plug = Plug(shape + ".outMesh")
+        str(plug)
+        cmds.parent(shape, removeObject=True, shape=True)
+        self.assertEqual(_outcome(_attribute_key, plug)[:2], ("raise", TypeError))
+        self.assertEqual([probe(plug), probe(plug)], [1, 2])

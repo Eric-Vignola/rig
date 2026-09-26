@@ -27,10 +27,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # API 1.0 used because API 2.0 MObjects can crash Maya after a new-scene
 # load (see rig.nodetypes.dg_node._cache_api1_objects). API 2.0 is only used
-# on the MObject an Attribute's own MPlug returns, never stored.
+# on a wrapper's MObject once its API 1.0 handle says the node is valid.
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import Attribute
+from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
 from rig._internal.list import PlugList
@@ -83,24 +84,36 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
 
     Uses the composite node identity (see :func:`_node_identity`) so the key
     survives renames AND Maya's MObjectHandle hashCode recycling on delete.
-    The identity is read from the node of the attribute's own MPlug, which
-    gives the same ``(uuid, hashCode)`` as resolving the node by name; a dead
-    or unreadable node takes the by-name path, so it raises as before.
     """
-    try:
-        mobject = attr.plug.node()
-        handle  = OpenMaya.MObjectHandle(mobject)
-        if handle.isValid() and handle.isAlive():
-            uuid_str = OpenMaya.MFnDependencyNode(mobject).uuid().asString()
-            identity = (uuid_str, handle.hashCode())
-        else:
-            identity = None
-    except Exception:
-        identity = None
+    node_str = attr.full_name.split(".", 1)[0]  # "node.attr" -> "node"
+    identity = _named_dg_identity(attr, node_str)
     if identity is None:
-        node_str = attr.full_name.split(".", 1)[0]  # "node.attr" -> "node"
         identity = _node_identity(node_str)
     return (identity, attr.alias)
+
+
+def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, int]]:
+    """``_node_identity(node_str)`` read from the API 1.0 objects of the DG node
+    wrapper ``attr.full_name`` just took ``node_str`` from, or None.
+
+    A DG node's name names no other node, so when the live wrapper's own name
+    is ``node_str``, resolving that name finds the wrapper's node. A DAG path
+    can go stale (an instance removed), so a DAG node resolves by name.
+    """
+    node = attr._node
+    if isinstance(node, Node):
+        node = node._dg_node
+    try:
+        if (
+            isinstance(node, DGNode)
+            and node._objhandle1.isValid()
+            and not node._mobject.hasFn(OpenMaya.MFn.kDagNode)
+            and node._fn_set.name() == node_str
+        ):
+            return (node._fn_set1.uuid().asString(), node._objhandle1.hashCode())
+    except Exception:
+        pass
+    return None
 
 
 def _node_identity(node_name: str) -> Tuple[str, int]:
