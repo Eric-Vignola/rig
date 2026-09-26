@@ -476,7 +476,7 @@ def _mobject_to_str(mobject: OpenMaya.MObject) -> str:
     if mobject.isNull():
         raise ValueError("MObject is null.")
     elif mobject.apiType() in _NOT_NODE_API_TYPES:
-        raise ValueError("Invalid MObject API Type: " + mobject.apiTypeStr())
+        raise ValueError("Invalid MObject API Type: " + mobject.apiTypeStr)
     elif mobject.hasFn(OpenMaya.MFn.kDagNode):
         dag_path = OpenMaya.MDagPath.getAPathTo(mobject)
         return dag_path.partialPathName()
@@ -2108,7 +2108,10 @@ class Attribute(str):
     def _component_type(self) -> str:
         """Returns the geometry component type assigned to this attribute, or 'unknown' if this attribute doesn't interface a component."""
         if self.__component_type is None:
-            comp                  = self._get_component()
-            self.__component_type = comp.apiTypeStr if comp else "unknown"
+            comp = self._get_component()
+            # the lazy caches write `__dict__`, which skips a subclass's `__setattr__`
+            self.__dict__["_Attribute__component_type"] = (
+                comp.apiTypeStr if comp else "unknown"
+            )
 
         return self.__component_type
