@@ -1297,10 +1297,12 @@ class Attribute(str):
         A numeric, unit, enum, message or compound kind is not typed and never
         holds a matrix, so `set()` can skip its `data_type` query. Arrays,
         their elements and the children of either keep the query: their
-        `data_type` can raise, and `set()` must keep raising that error.
+        `data_type` can raise, and `set()` must keep raising that error. So
+        does a plug whose attr was deleted, which the by-name query may find
+        re-added with another kind.
         """
         try:
-            return self.mobject.apiType() in _NON_MATRIX_ATTR_API_TYPES and (
+            return _fixed_attr_kind(self) in _NON_MATRIX_ATTR_API_TYPES and (
                 not _plug_in_array(self._mplug)
             )
         except Exception:

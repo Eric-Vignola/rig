@@ -28,6 +28,7 @@ from rig.nodetypes._base import (
 )
 from rig._internal import plug as plug_module
 from rig._internal.plug import ComponentPlug
+from rig.spec import Float, Matrix, Vector
 from rig._tests._base import MayaTestCase
 
 
@@ -564,6 +565,26 @@ class TestSetTypeArgument(MayaTestCase):
             with self.subTest(attr=str(attr)):
                 self.assertEqual(self._set_kwargs(attr, *args), expected)
         self.assertEqual(cmds.getAttr("net.dtm")[12:15], [2.0, 3.0, 4.0])
+
+    def test_set_on_a_readded_matrix_attr_passes_type(self):
+        matrix = [1.0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 3, 4, 1]
+        net    = Node(cmds.createNode("network", name="net"))
+        for spec in (Float("foo"), Vector("foo")):
+            net << spec
+            plug = net.foo
+            net << Matrix("foo")
+            self.assertEqual(self._set_kwargs(plug, *matrix), {"type": "matrix"})
+            self.assertEqual(cmds.getAttr("net.foo"), matrix)
+            cmds.deleteAttr("net.foo")
+
+        for flags in ({"dt": "matrix"}, {"at": "matrix"}, {"at": "fltMatrix"}):
+            cmds.addAttr("net", ln="foo", at="double")
+            plug = net.foo
+            cmds.deleteAttr("net.foo")
+            cmds.addAttr("net", ln="foo", **flags)
+            plug.set(matrix)
+            self.assertEqual(cmds.getAttr("net.foo"), matrix)
+            cmds.deleteAttr("net.foo")
 
     def test_set_under_array_element_keeps_type_query(self):
         net = cmds.createNode("network", name="net")
