@@ -191,11 +191,17 @@ class Node:
             # and ``Plug.node`` casts it. It is named through that owner's path,
             # which cmds reads too (see ``_named_through_owner``).
             owner = result.__dict__["_node"]
-            owner = self if owner is dg_node else owner
             plug  = _maybe_component_plug(attr_name, result)
             if plug is None:
                 plug = Plug(result.plug)
-            plug.__dict__["_node"] = owner
+                if owner is dg_node:
+                    plug.__dict__["_node"] = self
+                    # ``find_attr`` named the attr through the node's path if it
+                    # has more than one; one it did not is named as the MPlug
+                    if not _base._named_through_a_path(result):
+                        return plug
+                    return _base._named_through_owner(plug)
+            plug.__dict__["_node"] = self if owner is dg_node else owner
             return _base._named_through_owner(plug)
         return result
 

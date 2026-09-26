@@ -73,6 +73,7 @@ from rig.nodetypes._base import (
     _class_attr,
     _ensure_owner_alive,
     _full_name_buffer,
+    _named_through_a_path,
     _owner_is_instanced,
     _path_instance_number,
     _plug_hash,
@@ -229,7 +230,7 @@ def _share_node(parent: "Plug", results: Any) -> Any:
     if held is None:
         return results
     many      = isinstance(results, list)
-    instanced = _owner_is_instanced(held)
+    instanced = _named_through_a_path(parent) and _owner_is_instanced(held)
     for i, result in enumerate(results if many else (results,)):
         if type(result) is Plug and result.__dict__["_node"] is None:
             result.__dict__["_node"] = held
