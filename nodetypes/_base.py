@@ -308,6 +308,11 @@ def _construct_checked_type(cls_obj, obj: str) -> Any:
     return inst
 
 
+# The canonical-wrapper check below (`_REUSABLE_WRAPPER_PARTS` to `_copy_wrapper`,
+# and NodeMeta's clearing of `_CANONICAL_KIND`) is not used by the package since
+# the round-3 owner rule (a plug's node is the node object it was read from).
+# It is kept, unchanged, for the TestCanonicalWrapperCheck test ids.
+
 # ((DGNode.__init__, DAGNode.__init__, Geometry.__init__), their is_type
 # functions, their name properties, DGNode._cache_api1_objects, DGNode's fn_set
 # property), bound on first use since dg_node imports this module
@@ -1132,8 +1137,9 @@ def _names_own_plug(attr: Any) -> bool:
         invalid = OpenMaya.MFnDependencyNode.kInvalidAttr
         if fn.attributeClass(mplug.attribute()) == invalid:
             return False
-        # an invalid path names the node "", though the node lives on in another
-        # instance
+        # the owner's path, valid once the attr was named: a stale path (its
+        # instance removed while the node lives on in another) is re-resolved by
+        # DAGNode.name; an invalid one would name the node "". Kept as a guard.
         path = None
         if mobject.hasFn(OpenMaya.MFn.kDagNode):
             path = _naming_dag_path(attr)
