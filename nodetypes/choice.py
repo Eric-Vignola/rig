@@ -5,7 +5,7 @@ Choice node class
 from __future__ import annotations
 
 from rig.nodetypes._base import Attribute
-from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.dg_node import _QUERY_KEEPING_HOOKS, DGNode
 
 
 class Choice(DGNode):
@@ -43,3 +43,7 @@ class Choice(DGNode):
                 return src_attr.data_type
 
         return super()._attr_data_type_fallback(attr)
+
+
+# the hook above only reads the scene before it calls DGNode's
+_QUERY_KEEPING_HOOKS[Choice] = Choice._attr_data_type_fallback

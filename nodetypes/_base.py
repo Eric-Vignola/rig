@@ -504,10 +504,23 @@ _STATIC_DATA_API_TYPES = _NON_MATRIX_ATTR_API_TYPES | {
 _STATIC_DATA_TYPE = {}
 _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
 
+# (attr, "typed" or "Tdata") while `Attribute.data_type` runs the fallback hook of
+# attr's node: the answer its getAttr query gave, see `_queried_data_type`
+_FALLBACK_QUERY = None
+
 
 def _clear_static_data_type(*args) -> None:
     """Drops every cached static data type (MSceneMessage callback)."""
     _STATIC_DATA_TYPE.clear()
+
+
+def _queried_data_type(attr: Any) -> str | None:
+    """The type `Attribute.data_type` just queried for `attr` before calling the
+    fallback hook that is running for it, or None outside such a call."""
+    query = _FALLBACK_QUERY
+    if query is not None and query[0] is attr:
+        return query[1]
+    return None
 
 
 # registered once per session: a module reload keeps the first import's ids
@@ -984,6 +997,7 @@ class Attribute(str):
     @property
     def data_type(self) -> str:
         """Returns the data type of the value hosted by this attribute."""
+        global _FALLBACK_QUERY
         # the name comes first so a deleted node's plug raises as before
         full_name = self.full_name
         key       = self._static_type_key()
@@ -1002,7 +1016,13 @@ class Attribute(str):
         # e.g. if a choice node's inputs are message attrs, its output will be resolved
         # to "typed" rather than "message"
         elif typ in ("typed", "Tdata"):
-            return self.node._attr_data_type_fallback(self)
+            # the hook can reuse this answer instead of querying it again
+            outer           = _FALLBACK_QUERY
+            _FALLBACK_QUERY = (self, typ)
+            try:
+                return self.node._attr_data_type_fallback(self)
+            finally:
+                _FALLBACK_QUERY = outer
 
         if key is not None and isinstance(typ, str):
             _STATIC_DATA_TYPE[key] = typ

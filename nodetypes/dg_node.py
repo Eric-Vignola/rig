@@ -7,6 +7,7 @@ from typing import Any, Sequence
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _queried_data_type,
     Attribute,
     get_custom_type,
     NodeMeta,
@@ -641,7 +642,11 @@ class DGNode(metaclass=NodeMeta):
         cmds.getAttr should always work but it's not the case in practice. This method
         gives node classes a chance to correct any undesired Maya behavior.
         """
-        typ = cmds.getAttr(attr.full_name, type=True)
+        # Attribute.data_type's own query still holds if the node's hook is one
+        # that changes neither the scene nor the attr before it gets here
+        typ = _queried_data_type(attr)
+        if typ is None or not _keeps_query(type(self)):
+            typ = cmds.getAttr(attr.full_name, type=True)
         # maintain consistent type string with cmds.addAttr()
         if typ == "TdataCompound":
             return "compound"
@@ -662,3 +667,23 @@ class DGNode(metaclass=NodeMeta):
         if result:
             for i in range(0, len(result), 2):
                 cmds.disconnectAttr(result[i], result[i + 1])
+
+
+# Node classes whose data type fallback hook only reads the scene before it calls
+# DGNode's, mapped to that hook. With DGNode's own hook nothing runs in between.
+_BASE_FALLBACK_HOOK  = DGNode._attr_data_type_fallback
+_QUERY_KEEPING_HOOKS = {}
+
+
+def _keeps_query(node_cls: type) -> bool:
+    """True if the fallback hook of `node_cls` reaches DGNode's with the scene and
+    the attr unchanged, so the type Attribute.data_type queried still holds. Any
+    other class or hook (a subclass override, a patched hook) queries again."""
+    hook = node_cls._attr_data_type_fallback
+    if hook is _BASE_FALLBACK_HOOK:
+        return True
+    # the class's own hook, whose super() call reaches DGNode's unpatched hook
+    return (
+        _QUERY_KEEPING_HOOKS.get(node_cls) is hook
+        and DGNode._attr_data_type_fallback is _BASE_FALLBACK_HOOK
+    )

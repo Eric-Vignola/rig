@@ -12,7 +12,9 @@ plug reuses the wrapper of the Node or parent plug it came from only where a
 fresh cast would rebuild that wrapper unchanged, so it reports the same owner
 and raises the same errors. ``Attribute.connect`` skips the ``isConnected``
 query only for a destination it must find unconnected, with the same result,
-errors and scene as the query path."""
+errors and scene as the query path. DGNode's data type fallback hook reuses the
+type ``Attribute.data_type`` just queried only when no code that could change it
+ran in between, and queries again otherwise."""
 
 import contextlib
 from unittest import mock
@@ -20,8 +22,9 @@ from unittest import mock
 from maya import cmds
 from maya.api import OpenMaya
 from rig import Container, InjectionError, Node, Plug, lock
-from rig.nodetypes import DGNode, Joint, PyNode, Transform
+from rig.nodetypes import Choice, DGNode, Joint, PyNode, Transform
 from rig.nodetypes import _base
+from rig.nodetypes import dg_node as dg_node_module
 from rig.nodetypes._base import (
     CUSTOM_TYPE_ATTR,
     _mobject_to_str,
@@ -1603,3 +1606,227 @@ class TestConnectQuery(MayaTestCase):
         ):
             with self.subTest(plug=str(plug)):
                 self.assertIs(_base._names_own_plug(plug), expected)
+
+
+def _requery_outcome(plug):
+    """`_data_type_outcome` with DGNode's fallback hook querying the type again."""
+    with mock.patch.object(dg_node_module, "_keeps_query", return_value=False):
+        return _data_type_outcome(plug)
+
+
+def _connecting_hook(hook):
+    """`hook` behind a step that connects src.translate into the attr first."""
+
+    def connecting(self, attr):
+        name = attr.full_name
+        if not cmds.listConnections(name, source=True, destination=False):
+            cmds.connectAttr("src.translate", name, force=True)
+        return hook(self, attr)
+
+    return connecting
+
+
+def _attr_type_queries(probe):
+    """`_type_queries` on plugs other than a ``selector``."""
+    return [
+        call for call in _type_queries(probe) if not call.args[0].endswith(".selector")
+    ]
+
+
+class TestFallbackQueryReuse(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self._registered = dict(PyNode._NODE_CLASS_DICT)
+
+    def tearDown(self):
+        # drop any class a test registered, then the dispatch it cached
+        PyNode._NODE_CLASS_DICT.clear()
+        PyNode._NODE_CLASS_DICT.update(self._registered)
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        super().tearDown()
+
+    def _data_type(self, plug):
+        """The data type outcome of `plug` and the type queries it made, leaving
+        out the ones a choice's ``selector.get()`` makes."""
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            outcome = _data_type_outcome(plug)
+        self.assertIsNone(_base._FALLBACK_QUERY)
+        return outcome, len(_attr_type_queries(probe))
+
+    def _requery(self, plug):
+        """`_data_type` with DGNode's fallback hook querying the type again."""
+        with mock.patch.object(dg_node_module, "_keeps_query", return_value=False):
+            return self._data_type(plug)
+
+    def test_unresolved_choice_queries_once(self):
+        Node.create("transform", name="src")
+        pick = Node.create("choice", name="pick")
+        cmds.connectAttr("src.translate", "pick.input[1]")
+        for selector in (0, 3, 1):
+            pick.selector.set(selector)
+            for plug in (
+                pick.output,
+                pick.input[0],
+                pick.input[4],
+                Plug("pick.input[2]"),
+                _base.Attribute("pick.output"),
+                _base.Attribute("pick.input[5]"),
+            ):
+                with self.subTest(selector=selector, plug=str(plug)):
+                    resolved = selector == 1 and plug.name == "output"
+                    requery  = self._requery(plug)
+                    if resolved:
+                        self.assertEqual(requery[0], "double3")
+                        self.assertEqual(self._data_type(plug), requery)
+                    else:
+                        self.assertEqual(requery, ("Tdata", 2))
+                        self.assertEqual(self._data_type(plug), ("Tdata", 1))
+        self.assertEqual(self._data_type(pick.input[1]), self._requery(pick.input[1]))
+        self.assertEqual(pick.input[1].data_type, "double3")
+
+    def test_generic_attr_on_plain_node_queries_once(self):
+        Node.create("transform", name="src")
+        xform = Node.create("transform", name="xform")
+        cmds.createNode("network", name="net")
+        cmds.addAttr("net", ln="generic", at="typed")
+        for plug in (
+            xform.specifiedManipLocation,
+            _base.Attribute("xform.specifiedManipLocation"),
+            Plug("net.generic"),
+            _base.Attribute("net.generic"),
+        ):
+            with self.subTest(plug=str(plug)):
+                self.assertEqual(self._requery(plug), ("Tdata", 2))
+                self.assertEqual(self._data_type(plug), ("Tdata", 1))
+        # a source's type is the answer of the first query, with no hook
+        cmds.connectAttr("src.worldMatrix[0]", "net.generic")
+        self.assertEqual(self._data_type(Plug("net.generic")), ("matrix", 1))
+        self.assertEqual(self._requery(Plug("net.generic")), ("matrix", 1))
+
+    def test_nested_choice_chain(self):
+        picks = [Node.create("choice", name=f"pick{i}") for i in range(3)]
+        for index in range(2):
+            cmds.connectAttr(f"pick{index}.output", f"pick{index + 1}.input[0]")
+        # each output queries once; only the innermost reaches DGNode's hook
+        self.assertEqual(self._data_type(picks[2].output), ("Tdata", 3))
+        self.assertEqual(self._requery(picks[2].output), ("Tdata", 4))
+        self.assertEqual(self._data_type(picks[2].input[0]), ("Tdata", 3))
+        self.assertEqual(self._requery(picks[2].input[0]), ("Tdata", 4))
+        Node.create("transform", name="src")
+        cmds.connectAttr("src.worldMatrix[0]", "pick0.input[0]")
+        self.assertEqual(
+            self._data_type(picks[2].output), self._requery(picks[2].output)
+        )
+        self.assertEqual(picks[2].output.data_type, "matrix")
+
+    def test_answer_is_only_for_the_running_call(self):
+        pick = Node.create("choice", name="pick")
+        attr = _base.Attribute("pick.output")
+        self.assertIsNone(_base._queried_data_type(attr))
+        with mock.patch.object(_base, "_FALLBACK_QUERY", (attr, "Tdata")):
+            self.assertEqual(_base._queried_data_type(attr), "Tdata")
+            self.assertIsNone(_base._queried_data_type(_base.Attribute("pick.output")))
+            self.assertIsNone(_base._queried_data_type(pick.output))
+        # the hook called outside data_type queries the type itself
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            self.assertEqual(PyNode("pick")._attr_data_type_fallback(attr), "Tdata")
+        self.assertEqual(len(_attr_type_queries(probe)), 1)
+
+    def test_hook_error_restores_state(self):
+        pick = Node.create("choice", name="pick")
+        with mock.patch.object(
+            Choice, "_attr_data_type_fallback", side_effect=RuntimeError("boom")
+        ):
+            self.assertEqual(self._data_type(pick.output), ((RuntimeError, "boom"), 1))
+        self.assertEqual(self._data_type(pick.output), ("Tdata", 1))
+
+    def test_overriding_hooks_query_again(self):
+        Node.create("transform", name="src")
+
+        class _ConnectingChoice(Choice):
+            CUSTOM_NODE_TYPE = "perfFallbackConnecting"
+
+            # changes the attr, then skips Choice's source lookup
+            _attr_data_type_fallback = _connecting_hook(
+                DGNode._attr_data_type_fallback
+            )
+
+        class _PlainChoice(Choice):
+            CUSTOM_NODE_TYPE = "perfFallbackPlain"
+
+        for name, custom in (
+            ("connecting", "perfFallbackConnecting"),
+            ("plain", "perfFallbackPlain"),
+        ):
+            cmds.createNode("choice", name=name)
+            set_custom_type(name, custom)
+        self.assertIs(type(PyNode("connecting")), _ConnectingChoice)
+        self.assertIs(type(PyNode("plain")), _PlainChoice)
+        self.assertEqual(self._data_type(Plug("connecting.input[2]")), ("double3", 2))
+        self.assertEqual(self._data_type(Plug("plain.input[2]")), ("Tdata", 2))
+
+        # a class-level patch of Choice's hook, or of DGNode's under it
+        cmds.createNode("choice", name="pick")
+        choice_hook = Choice.__dict__["_attr_data_type_fallback"]
+        base_hook   = DGNode.__dict__["_attr_data_type_fallback"]
+
+        def forwarding(self, attr):
+            return choice_hook(self, attr)
+
+        with mock.patch.object(Choice, "_attr_data_type_fallback", forwarding):
+            self.assertEqual(self._data_type(Plug("pick.input[4]")), ("Tdata", 2))
+        connecting = _connecting_hook(base_hook)
+        with mock.patch.object(DGNode, "_attr_data_type_fallback", connecting):
+            self.assertEqual(self._data_type(Plug("pick.input[5]")), ("double3", 2))
+        self.assertEqual(self._data_type(Plug("pick.input[6]")), ("Tdata", 1))
+
+    def test_held_plugs_across_delete_undo_rename_reuse(self):
+        cmds.undoInfo(state=True, infinity=True)
+        Node.create("transform", name="src")
+        pick = Node.create("choice", name="pick")
+        cmds.connectAttr("src.translate", "pick.input[1]")
+        held = [
+            pick.output,
+            pick.input[0],
+            _base.Attribute("pick.input[3]"),
+            Plug("pick.input[1]"),
+        ]
+        for plug in held:
+            str(plug)
+
+        def rename():
+            cmds.rename("pick", "pick2")
+
+        def reuse():
+            cmds.delete("pick2")
+            cmds.createNode("transform", name="pick2")
+            cmds.createNode("choice", name="pick")
+
+        steps = (
+            ("live", lambda: None),
+            ("deleted", lambda: cmds.delete("pick")),
+            ("undone", cmds.undo),
+            ("renamed", rename),
+            ("reused", reuse),
+            ("new scene", lambda: cmds.file(new=True, force=True)),
+        )
+        seen = {}
+        for label, step in steps:
+            step()
+            for index, plug in enumerate(held):
+                with self.subTest(step=label, plug=index):
+                    outcome = _data_type_outcome(plug)
+                    self.assertEqual(outcome, _requery_outcome(plug))
+                    self.assertIsNone(_base._FALLBACK_QUERY)
+                    seen[label, index] = outcome
+        live = ["Tdata", "Tdata", "Tdata", "double3"]
+        for label in ("live", "undone", "renamed"):
+            self.assertEqual([seen[label, index] for index in range(4)], live)
+        self.assertEqual(seen["deleted", 0], (RuntimeError, "pick already deleted!"))
+        self.assertEqual(seen["reused", 2], (RuntimeError, "pick2 already deleted!"))
+        self.assertEqual(seen["new scene", 3], (RuntimeError, "pick2 already deleted!"))
+        cmds.createNode("choice", name="pick")
+        self.assertEqual(self._data_type(Plug("pick.input[0]")), ("Tdata", 1))
