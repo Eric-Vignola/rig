@@ -20,8 +20,8 @@ for the typed node layer underneath.
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
-| 1 | [Node](#1-node) | create, wrap, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.wrap`, `lift` |
-| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` |
+| 1 | [Node](#1-node) | create, wrap, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.wrap`, `lift`, a deleted or freed node |
+| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5`, `plug.node`, instance paths |
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, `[:]` slicing, multi attrs, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node, `equals`, dict and set keys |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, `plug >> container` |
@@ -91,13 +91,15 @@ target one (section 15), they build the classic `plusMinusAverage` /
 ## 1. Node
 
 A `Node` wraps any Maya node. Attribute access returns a `Plug`; method
-access delegates to the typed node underneath.
+access delegates to the typed node underneath. Two wrappers of one node are
+equal and one key. That key is the node's long name, so a rename changes
+it; a `Plug`'s key survives one (section 4).
 
 ```python
 a = Node.create("transform", name="a")  # createNode, registered with the active container scope
 b = Node("a")                           # wrap by name
 print(str(a), repr(a))                          # a Node("a")
-print(a == b, hash(a) == hash(b), len({a, b}))  # True True 1  -- identity is the MObject, not the string
+print(a == b, hash(a) == hash(b), len({a, b}))  # True True 1  -- two wrappers, one node
 print(cmds.objExists(a), cmds.nodeType(a))      # True transform  -- a Node passes straight into cmds
 print(a.list_attr()[:2])                        # [Attribute("a.message"), Attribute("a.caching")]  -- a DGNode method, delegated
 ```
@@ -113,7 +115,8 @@ print(type(typed).__name__, isinstance(typed, Node))  # Transform False
 ```
 
 `Node.wrap` turns a `maya.cmds` result back into the DSL and `lift` casts a
-string, `Attribute` or `DGNode` to the right wrapper.
+string, `Attribute` or `DGNode` to the right wrapper (a typed `Attribute`
+keeps the node it was read from, as `Plug(attr)` does).
 
 ```python
 from rig import lift
@@ -140,6 +143,31 @@ try:
     a << 5
 except TypeError as err:
     print(type(err).__name__)                             # TypeError
+```
+
+A handle never falls back to a name. A `Node` or `Plug` whose node was
+deleted raises `RuntimeError("... already deleted!")`, even once another
+node has taken the name, and an undo brings it back. A new scene, a file
+open or a reference unload frees the node for good; the error then names
+the class only.
+
+```python
+held = Node.create("transform", name="held")
+tx   = held.tx
+cmds.delete("held")
+cmds.createNode("transform", name="held")      # another node takes the name
+for probe in (lambda: tx >> None, lambda: held.ty):
+    try:
+        probe()
+    except RuntimeError as err:
+        print(err)
+# held already deleted!
+# held already deleted!
+cmds.file(new=True, force=True)
+try:
+    a.tx
+except RuntimeError as err:
+    print(err)   # Transform node (freed by a new scene, a file open or a reference unload) already deleted!
 ```
 
 ---
@@ -213,6 +241,27 @@ print(a.wm.is_multi, a.wm.data_type)                 # True matrix
 print(a.tx.full_name, repr(a.tx.node))               # a.translateX Node("a")
 ```
 
+A plug is owned by the node you read it from: `plug.node` is that very
+`Node`, shared by the plug's children and elements, in the class you wrapped
+it as. A node with two instance paths names its plugs through the path you
+took, and a world space array (`worldMatrix`, `worldInverseMatrix`,
+`worldMesh`, ...) read through a path is that instance's element; `cmds`
+reads the same name. A plug built from a string has no owner to follow:
+`Plug("|T2|S.v")` is named as Maya names it, through the first path.
+
+```python
+print(a.tx.node is a, a.t[0].node is a, (a.tx.node >> None) is (a >> None))  # True True True
+Node.create("transform", name="T1")
+t2 = Node.create("transform", name="T2")
+cmds.createNode("transform", name="S", parent="T1")
+cmds.parent("T1|S", "T2", add=True, relative=True)     # S now has two paths
+t2.tx << 7
+s1, s2 = Node("|T1|S"), Node("|T2|S")
+print(s1.v, s2.v, Plug("|T2|S.v"))                     # T1|S.visibility T2|S.visibility T1|S.visibility
+print(s2.worldMatrix, s2.worldMatrix[0])               # T2|S.worldMatrix T2|S.worldMatrix[0]
+print(cmds.getAttr(s2.worldMatrix)[12], (s1.worldMatrix >> None)[3, 0])  # 7.0 0.0  -- T2's matrix, then T1's
+```
+
 ---
 
 ## 3. Plug — compounds, multis, aliases
@@ -261,6 +310,8 @@ except ValueError as err:
 Multi attributes: a bare multi `<< scalar` appends at the next free index,
 `<< sequence` writes index by index, `[:]` slices the populated elements,
 and a bounded slice or `[i]` addresses indices that are created on write.
+A world space array read through a node's path (`worldMatrix`, section 2)
+is that instance's element, so `<<` writes there instead of appending.
 
 ```python
 from rig.spec import Float, Vector
@@ -319,14 +370,22 @@ print(len(ctrl.t.get_inputs()), len(ctrl.t[:].get_inputs()[0]))  # 0 1
 
 `==` on a plug builds a comparison node and returns *its output plug*, not
 a bool. Use `equals` for identity. Identity is the Maya plug: hashing is by
-the node's MObject handle plus the attribute and its indices, so plugs
-still work as dict and set keys, and a rename or an alias keeps the key.
-One plug read through two instance paths of a node (`Node("|T1|S").v`,
-`Node("|T2|S").v`) is one key, though each is named through its own path;
-the world space elements of two instances (`worldMatrix[0]`, `[1]`) are two
-plugs. A plain string is never a plug's key; a `PlugList` compares a
-string with the plug's name. A plain list does not: `plug == "a.tx"` is a
-`TypeError` (section 7), so `"a.tx" in [plug]` is one too.
+the node (a serial number never reused for another node) plus the attribute
+and its indices, so plugs still work as dict and set keys, and a rename, an
+alias or a delete to the undo queue keeps the key. One plug read through two
+instance paths of a node (`Node("|T1|S").v`, `Node("|T2|S").v`) is one key,
+though each is named through its own path; the world space elements of two
+instances (`worldMatrix[0]`, `[1]`) are two plugs. A typed `Attribute` of
+the same plug is a different key, though `equals` says `True`. A plain
+string is never a plug's key; a `PlugList` compares a string with the
+plug's name. A plain list does not: `plug == "a.tx"` is a `TypeError`
+(section 7), so `"a.tx" in [plug]` is one too.
+
+A dict or set confirms a hash match with `==`, so looking a key up through
+a second `Plug` object of the same plug builds an `equal` node (memoized:
+once per pair); for matrix plugs it raises `InjectionError` and leaves that
+node behind. Key and look up with one object, or use a `PlugList` or
+`equals`, when that matters.
 
 ```python
 test = ctrl.tx == 5
@@ -359,7 +418,9 @@ print(str(ctrl.tx).upper())                           # CTRL.TRANSLATEX
 connection; a same-named dynamic attribute on the target is replaced).
 `plug >> "name"` clones onto the *same* node under a new name and copies
 the value; `plug >> "other.name"` onto another node; the named forms refuse
-a name the target already has. What travels and what does not is in
+a name the target already has. A plug is a `str` but never a name here:
+`plug >> other_plug` is a `TypeError` that spells the `<<` to write, since
+`>>` never connects. What travels and what does not is in
 [`spec/CHEATSHEET.md`](spec/CHEATSHEET.md), section 12.
 
 ```python
@@ -377,6 +438,10 @@ try:
     src.blend >> "tint"
 except TypeError as err:
     print(str(err)[:37])                                  # 'src' already has an attribute 'tint'
+try:
+    src.blend >> dst.blend
+except TypeError as err:
+    print(str(err).split(", or")[0])                      # '>>' does not connect plugs: write dst.blend << src.blend
 ```
 
 `plug >> container` publishes onto the active container (or an explicit
@@ -508,11 +573,11 @@ print((a.t * 2) >> None, (a.t + b.tx) >> None)  # [2. 4. 6.] [11. 12. 13.]  -- a
 print(([100, 100, 100] - a.t) >> None)          # [99. 98. 97.]
 ```
 
-A plain string is not an operand, though a `Plug` is a `str`: an operator
-or a math function given one (alone, or inside a list) raises `TypeError`
-before it builds anything. Wrap a plug name with `Plug(...)`; for text, use
-`str(plug)` or an f-string. Config strings (`side=`, `axis=`, `name=`, ...)
-are not operands.
+A plain string (or `bytes`) is not an operand, though a `Plug` is a `str`:
+an operator or a math function given one (alone, or inside a list) raises
+`TypeError` before it builds anything. Wrap a plug name with `Plug(...)`;
+for text, use `str(plug)` or an f-string. Config strings (`side=`, `axis=`,
+`name=`, ...) are not operands.
 
 ```python
 nodes = len(cmds.ls())
@@ -858,8 +923,10 @@ nodes made with `create_containers=False`.
 `@memoize` caches a function's return keyed on the identity of every
 `Plug` / `Node` / `PlugList` argument and the value of every number. The
 key survives renames; an entry is dropped when any node it returned has
-been deleted. The operators (through `NodeOp`, section 15) and the library
-functions are memoized this way, which is why repeated expressions dedupe.
+been deleted, and when a dynamic attribute a plug argument names was
+deleted or renamed since (a new attribute of that name gets a new network).
+The operators (through `NodeOp`, section 15) and the library functions are
+memoized this way, which is why repeated expressions dedupe.
 
 ```python
 from rig import memoize, prune_memoize_caches
@@ -1107,7 +1174,7 @@ Six rules that hold everywhere:
 | `PlugList` broadcasts, a plain list is a value | `f.abs(PlugList([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector |
 | Maya 2024+ gets native nodes | `absolute`, `clampRange`, `sin`, `dotProduct`, `lerp`, `smoothStep` … Older Maya gets the equivalent legacy network — same value, more nodes. Each section's table says which |
 | `functions` shadows builtins | `abs`, `int`, `round`, `min`, `max`, `sum`, `pow`, `all`, `any` … Always `from rig import functions as f`, never `import *` |
-| A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`, `method=`, `rotate_order` |
+| A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`. `method=` takes a callable and `rotate_order` a number or a plug, never a name |
 
 With the default options every composite function's container is
 flattened, so you get the raw node plugs shown here.
@@ -1662,7 +1729,8 @@ print(axis_plug >> None, angle_plug >> None)  # [0. 0. 1.] 90.0
 
 ## 27. `euler`
 
-Rotate orders are Maya's: `XYZ=0 YZX=1 ZXY=2 XZY=3 YXZ=4 ZYX=5`.
+Rotate orders are Maya's: `XYZ=0 YZX=1 ZXY=2 XZY=3 YXZ=4 ZYX=5`, given
+as the number or a plug (`tilt.ro`); a name such as `"xyz"` is not accepted.
 `reorder` needs **both** orders, positionally; it goes through
 quaternion space, so what comes back is a `quatToEuler`.
 
@@ -1687,7 +1755,8 @@ land somewhere as an euler, call `to_euler` on a quaternion or a matrix.
 
 `sequence(x, xp, yp)` samples a piecewise curve: `searchsorted` picks
 the segment, `choice` nodes pull its ends, and `method` (default
-`rig.lerp`) blends them. `xp` and `yp` are lists of scalars. Past
+`rig.lerp`, any callable; a name such as `"lerp"` is a `TypeError` before
+anything is built) blends them. `xp` and `yp` are lists of scalars. Past
 either end the end segment keeps going — clamp `x` first if you want a
 hold.
 
