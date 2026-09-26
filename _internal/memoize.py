@@ -22,6 +22,7 @@ with its raw arguments.
 from __future__ import annotations
 
 import numbers
+import sys
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -366,6 +367,9 @@ def prune_memoize_caches() -> int:
     """Walk every ``@memoize`` cache AND every NodeOp cache; drop entries
     whose handles no longer point to live MObjects. Returns the number
     of entries dropped.
+
+    Runs by itself after every new scene and file open (see
+    :func:`_prune_after_new_scene`); ``cleanup()`` calls it too.
     """
     dropped = 0
     for wrapper in _ALL_MEMOIZED:
@@ -387,6 +391,31 @@ def prune_memoize_caches() -> int:
                 del cache[key]
                 dropped += 1
     return dropped
+
+
+def _prune_after_new_scene(*args: Any) -> None:
+    """Prune every memo cache once a new scene or a file open freed the nodes
+    its entries hold (an MSceneMessage callback). Such an entry would be dropped
+    on its next lookup anyway; pruning releases the Plugs it holds -- and,
+    through them, their owner nodes and those nodes' attr caches -- right away,
+    so a long session does not retain every build's graph. Looked up through
+    ``sys.modules`` so a reloaded module prunes its own caches; a callback never
+    raises into Maya."""
+    try:
+        sys.modules[__name__].prune_memoize_caches()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# registered once per session: a module reload keeps the first import's ids
+if "_SCENE_CALLBACK_IDS" not in globals():
+    _SCENE_CALLBACK_IDS = [
+        OpenMaya.MSceneMessage.addCallback(msg, _prune_after_new_scene)
+        for msg in (
+            OpenMaya.MSceneMessage.kAfterNew,
+            OpenMaya.MSceneMessage.kAfterOpen,
+        )
+    ]
 
 
 def _clear_all_caches() -> int:
