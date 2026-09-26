@@ -52,6 +52,14 @@ def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp) -> Any:
             :func:`rig.elerp` for scale) or any ``tween`` easing
             curve for other behaviour.
     """
+    # checked before the container: calling a str (a config-looking name, which
+    # the operand check passes through) failed only once the network was built
+    if not callable(method):
+        raise TypeError(
+            f"rig.interpolate.sequence() argument 'method': {method!r} is not "
+            f"callable. Pass a verb such as rig.lerp or rig.slerp, or a tween "
+            f"easing curve."
+        )
 
     with container("sequence1"):
         # Compute segment count BEFORE publishing -- ``xp[:-1]`` (negative

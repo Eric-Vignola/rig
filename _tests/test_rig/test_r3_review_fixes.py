@@ -679,3 +679,46 @@ class TestMemoOfARebuiltAttribute(MayaTestCase):
         # an alias names the attribute anew: a new key, as before
         cmds.aliasAttr("dial", "n.knob")
         self.assertEqual(str(functions.abs(Node("n").dial)), str(functions.abs(Node("n").dial)))
+
+
+class TestTextOperandsBeyondStr(MayaTestCase):
+    """bytes, bytearray and numpy bytes arrays are rejected as DSL operands like a
+    plain str (D-C), before any node is built. They got past the check: the node
+    was built and the first byte was injected (b'cube.ty' set 99.0), or the
+    node was left behind."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_bytes_operands_raise_before_any_node(self):
+        import numpy as np
+        from rig import functions, vector
+
+        t = Node(cmds.createNode("transform", name="t"))
+        before = sorted(cmds.ls())
+        for label, call in (
+            ("== bytes", lambda: t.tx == b"cube.ty"),
+            ("* bytearray", lambda: t.tx * bytearray(b"x")),
+            ("+ numpy bytes", lambda: t.tx + np.array([b"x"])),
+            ("vector + [1, bytes, 2]", lambda: t.t + [1, b"x", 2]),
+            ("functions.abs", lambda: functions.abs(b"cube.ty")),
+            ("vector.lerp", lambda: vector.lerp(t.t, b"cube.ty")),
+        ):
+            with self.subTest(op=label):
+                with self.assertRaisesRegex(TypeError, r" is bytes, and a DSL operand is a Plug"):
+                    call()
+        self.assertEqual(sorted(cmds.ls()), before)
+        with self.assertRaisesRegex(TypeError, r"Write Plug\('cube\.ty'\) for the plug of that name"):
+            t.tx == b"cube.ty"
+
+    def test_sequence_method_must_be_callable(self):
+        from rig import interpolate
+
+        t = Node(cmds.createNode("transform", name="t"))
+        before = sorted(cmds.ls())
+        for method in ("lerp", None):
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(
+                    TypeError, r"^rig\.interpolate\.sequence\(\) argument 'method': .* is not callable"
+                ):
+                    interpolate.sequence(t.tx, [0, 1], [0, 1], method=method)
+        self.assertEqual(sorted(cmds.ls()), before)

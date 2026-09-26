@@ -86,7 +86,7 @@ from rig._internal.introspect import _to_numpy
 from rig._internal.maya_version import is_at_least
 from rig._internal.operands import (
     _CAN_HOLD_STR,
-    _plain_str,
+    _text_operand,
     operator_error as _operator_error,
 )
 from rig.spec._base import _clone_attribute
@@ -1173,7 +1173,7 @@ def _checking_operands(method: Any) -> Any:
             if isinstance(operand, Attribute):
                 _ensure_owner_alive(operand)
             elif isinstance(operand, _CAN_HOLD_STR):
-                found = _plain_str(operand)
+                found = _text_operand(operand)
                 if found is not None:
                     raise _operator_error(dunder, self, operand, found)
         return method(self, *other)
