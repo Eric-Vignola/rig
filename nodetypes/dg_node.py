@@ -478,21 +478,18 @@ class DGNode(metaclass=NodeMeta):
             )
 
         attr_obj = Attribute(plug)
-        # an attr of this node is owned by this node object; one found on
-        # another node (a transform's shape) finds its own node when asked
+        # An attr of this node is owned by this node object. One found on
+        # another node (a transform's shape) finds its own node when asked, and
+        # is not cached: that shape can be deleted or replaced under the node.
+        # Only normal attrs are cached: dynamic attrs can be renamed, and
+        # dynamic and extension attrs can be deleted and re-added.
         if plug.node() == self._mobject:
             attr_obj.__dict__["_node"] = self
-            own_fn = self._fn_set
-        else:
-            own_fn = OpenMaya.MFnDependencyNode(plug.node())
-        # cache the normal attrs of the plug's own node to boost performance:
-        # dynamic attrs can be renamed, and dynamic and extension attrs can be
-        # deleted and re-added, so caching them is not reliable
-        if own_fn.attributeClass(attr_obj.mobject) == _NORMAL_ATTR:
-            ln                  = plug.partialName(False, False, False, False, False, True)
-            sn                  = plug.partialName(False, False, False, False, False, False)
-            self._attr_dict[ln] = attr_obj
-            self._attr_dict[sn] = attr_obj
+            if self._fn_set.attributeClass(attr_obj.mobject) == _NORMAL_ATTR:
+                ln                  = plug.partialName(False, False, False, False, False, True)
+                sn                  = plug.partialName(False, False, False, False, False, False)
+                self._attr_dict[ln] = attr_obj
+                self._attr_dict[sn] = attr_obj
 
         return _filtered(attr_obj, category, data_type)
 

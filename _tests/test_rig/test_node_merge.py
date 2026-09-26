@@ -364,6 +364,21 @@ class TestReviewFixes(MayaTestCase):
         cmds.undo()
         self.assertEqual(str(held), "T2|S.visibility")
 
+    def test_shape_attr_read_through_a_transform_follows_the_shape(self):
+        xf   = cmds.polyCube(name="c", ch=False)[0]
+        node = Node(xf)
+        self.assertEqual(str(node.outMesh), "cShape.outMesh")
+        self.assertNotIn("outMesh", node._dg_node._attr_dict)
+        cmds.delete("cShape")
+        tmp = cmds.polySphere(name="tmp", ch=False)[0]
+        cmds.parent(cmds.listRelatives(tmp, shapes=True)[0], xf, shape=True, relative=True)
+        self.assertEqual(str(node.outMesh), "tmpShape.outMesh")
+        self.assertEqual(node.outMesh.node.name, "tmpShape")
+        # typed access too, and the transform's own attrs are still cached
+        self.assertEqual(str((node >> None).find_attr("outMesh")), "tmpShape.outMesh")
+        node.tx
+        self.assertIn("translateX", node._dg_node._attr_dict)
+
 
 class TestInstancedPlugIdentity(MayaTestCase):
     """Decision D-B: a plug's identity follows the Maya plug (node, attribute and
