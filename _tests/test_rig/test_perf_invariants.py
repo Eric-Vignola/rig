@@ -847,6 +847,9 @@ class TestPlugNodeReuse(MayaTestCase):
         PyNode._CASTABLE_TYPES.clear()
         node = Node(cmds.createNode("multiplyDivide"))
         plug = node.input1X
+        # the lookup casts the owner of the attr it caches, which warms the type
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
         self.assertEqual(self._casts(lambda: str(plug)), 1)
         self.assertEqual(self._casts(lambda: str(node.input1Y)), 0)
 
@@ -966,3 +969,48 @@ class TestPlugNodeReuse(MayaTestCase):
                 for plug in plugs:
                     self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
                     self.assertEqual(_owner(plug)[0], "ok")
+
+
+class TestCachedAttributeOwner(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def tearDown(self):
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        super().tearDown()
+
+    def test_cached_attr_keeps_the_node_it_was_read_from(self):
+        cmds.undoInfo(state=True, infinity=True)
+        for node_type, attr in (("multiplyDivide", "input1X"), ("transform", "tx")):
+            with self.subTest(node_type=node_type):
+                PyNode(_mobject(cmds.createNode(node_type)))
+                name = cmds.createNode(node_type, name=f"held_{node_type}")
+                node = Node(name)
+                getattr(node, attr)
+                cached = node.find_attr(attr)
+                owner  = cached._node
+                self.assertEqual(
+                    _wrapper_state(owner), _wrapper_state(PyNode(_mobject(name)))
+                )
+                self.assertIsNot(owner, node._dg_node)
+                self.assertIsNot(owner.mobject, node._dg_node.mobject)
+                self.assertIsNone(owner.find_attr(attr, data_type="string"))
+
+                cmds.delete(name)
+                cmds.createNode(node_type, name=name)
+                for func in (str, repr, lambda a: a.get(), lambda a: a.set(3.0)):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        func(cached)
+                    self.assertEqual(str(ctx.exception), f"{name} already deleted!")
+                self.assertFalse(cached.node.is_valid)
+                self.assertEqual(cmds.getAttr(f"{name}.{attr}"), 0.0)
+
+    def test_cached_attr_of_an_instance_names_the_first_path(self):
+        top = cmds.createNode("transform", name="T1")
+        PyNode(_mobject(cmds.createNode("locator", name="S", parent=top)))
+        cmds.instance(top, name="T2")
+        node = Node("|T2|S")
+        node.visibility
+        cached = node.find_attr("visibility")
+        self.assertEqual(cached._node._mdagpath.fullPathName(), "|T1|S")
+        self.assertEqual(str(cached), "T1|S.visibility")

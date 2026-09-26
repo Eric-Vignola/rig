@@ -23,7 +23,12 @@ import numbers
 from typing import Any, Union
 
 import numpy as np
-from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes._base import (
+    _copy_wrapper,
+    _wrapper_is_canonical,
+    Attribute,
+    PyNode,
+)
 from rig.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
 from rig._internal.plug import _maybe_component_plug, Plug
 
@@ -33,6 +38,31 @@ from rig._internal.plug import _maybe_component_plug, Plug
 # plug), and the point aliases (``vtx`` / ``cv`` / ``pt`` / ...) reach through
 # a transform to its single geometry shape.
 _COMPONENT_TOKENS = frozenset({"f", "e"}) | _COMPONENT_ALIASES
+
+
+def _bind_owner(attr: Attribute, dg_node: Any) -> None:
+    """Cast ``attr``'s node into ``attr._node`` the first time
+    :meth:`Node.__getattr__` returns it, as ``_maybe_component_plug`` did for
+    every name.
+
+    A fixed attr stays in the wrapper's attr cache, so ``find_attr`` later hands
+    out the same instance still bound to that node (a deleted node then raises
+    ``already deleted!``). When ``dg_node`` is the wrapper the cast would build,
+    a copy of it stands in for the cast; a dynamic attr is not cached and needs
+    none. Any other owner is cast, and a cast error other than RuntimeError /
+    AttributeError propagates as before.
+    """
+    # the API 1.0 handle goes first, it is safe on a node a new scene freed
+    if isinstance(dg_node, DGNode) and dg_node._objhandle1.isValid():
+        mplug = attr._mplug
+        if _wrapper_is_canonical(dg_node, mplug.node()):
+            if not mplug.isDynamic:
+                attr._node = _copy_wrapper(dg_node)
+            return
+    try:
+        attr.node
+    except (RuntimeError, AttributeError):
+        pass
 
 
 class Node:
@@ -165,6 +195,8 @@ class Node:
                         return getattr(shape, attr_name)
             raise
         if isinstance(result, Attribute) and not isinstance(result, Plug):
+            if result._node is None:
+                _bind_owner(result, self._dg_node)
             # Upgrade multi-dimensional geometry components (NURBS-surface
             # ``cv``, lattice ``pt``) to a ComponentPlug so ``node.cv[u][v]`` /
             # ``node.pt[s][t][u]`` resolve like the ``Plug("shape.cv[u][v]")``

@@ -323,9 +323,6 @@ def _wrapper_is_canonical(dg_node: Any, mobject: OpenMaya.MObject) -> bool:
         # the API 1.0 handle goes first, it is safe on a node a new scene freed
         if not dg_node._objhandle1.isValid() or mobject != dg_node._mobject:
             return False
-        name = _mobject_to_str(mobject)
-        if len(name) >= 32 and is_valid_maya_uid(name):
-            return False
         fn = OpenMaya.MFnDependencyNode(mobject)
         if (
             fn.hasAttribute(CUSTOM_TYPE_ATTR)
@@ -333,13 +330,49 @@ def _wrapper_is_canonical(dg_node: Any, mobject: OpenMaya.MObject) -> bool:
         ):
             return False
         key = (fn.typeName, fn.typeId.id())
-        return (
-            PyNode._CLASS_BY_TYPE.get(key) is cls_obj
-            and key in PyNode._CASTABLE_TYPES
-            and dg_node.name == name
-        )
+        if (
+            PyNode._CLASS_BY_TYPE.get(key) is not cls_obj
+            or key not in PyNode._CASTABLE_TYPES
+        ):
+            return False
+        if cls_obj.name is name_props[0] and not mobject.hasFn(OpenMaya.MFn.kDagNode):
+            # both names are the fn set name of the same DG node
+            name = fn.name()
+        else:
+            name = _mobject_to_str(mobject)
+            if dg_node.name != name:
+                return False
+        return not (len(name) >= 32 and is_valid_maya_uid(name))
     except Exception:
         return False
+
+
+def _copy_wrapper(dg_node: Any) -> Any:
+    """Returns a new wrapper of `dg_node`'s class and node in the state a fresh cast
+    leaves it: its own MObject, MDagPath and fn set, and empty caches. The API 1.0
+    validation objects are shared, as the DGNode copy constructor shares them.
+
+    Only for a wrapper `_wrapper_is_canonical` accepted, so the node is live and
+    the class keeps a base constructor.
+    """
+    dg_init, dag_init, geometry_init = _REUSABLE_WRAPPER_PARTS[0]
+
+    cls_obj = type(dg_node)
+    inst    = object.__new__(cls_obj)
+    if cls_obj.__init__ is dg_init:
+        inst._mobject = OpenMaya.MObject(dg_node._mobject)
+        inst._fn_set  = cls_obj.FN_SET(inst._mobject)
+    else:
+        inst._mdagpath = OpenMaya.MDagPath(dg_node._mdagpath)
+        inst._mobject  = inst._mdagpath.node()
+        inst._fn_set   = cls_obj.FN_SET(inst._mdagpath)
+    inst._fn_set1    = dg_node._fn_set1
+    inst._objhandle1 = dg_node._objhandle1
+    inst._attr_dict  = {}
+    if cls_obj.__init__ is geometry_init:
+        inst._Geometry__local_shape_attr = None
+        inst._Geometry__world_shape_attr = None
+    return inst
 
 
 def _mobject_to_str(mobject: OpenMaya.MObject) -> str:
