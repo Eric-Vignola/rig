@@ -340,6 +340,30 @@ class TestReviewFixes(MayaTestCase):
         single = Node(cmds.createNode("transform", name="single"))
         self.assertEqual(str(single.worldMatrix[0]), "single.worldMatrix")
 
+    def test_stale_path_read_through_mdagpath_first_and_undo(self):
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="T2")
+        cmds.createNode("locator", name="S", parent="T1")
+        cmds.parent("T1|S", "T2", add=True, shape=True, relative=True)
+        node = Node("|T2|S")
+        held = node.visibility
+        cmds.parent("T2|S", removeObject=True, shape=True)
+        self.assertTrue(node.mdagpath.isValid())
+        self.assertEqual(node.mdagpath.fullPathName(), "|T1|S")
+        self.assertEqual(str(node.visibility), "S.visibility")
+        # undoing the removal: the node names the path it was taken through again
+        cmds.undo()
+        self.assertEqual(node.long_name, "|T2|S")
+        self.assertEqual(str(node.visibility), "T2|S.visibility")
+        self.assertEqual(str(held), "T2|S.visibility")
+        self.assertEqual(node.mdagpath.fullPathName(), "|T2|S")
+        # and a second removal re-resolves it again
+        cmds.parent("T2|S", removeObject=True, shape=True)
+        self.assertEqual(str(held), "S.visibility")
+        cmds.undo()
+        self.assertEqual(str(held), "T2|S.visibility")
+
 
 class TestInstancedPlugIdentity(MayaTestCase):
     """Decision D-B: a plug's identity follows the Maya plug (node, attribute and

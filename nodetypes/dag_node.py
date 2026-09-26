@@ -85,29 +85,49 @@ class DAGNode(DGNode):
     def mdagpath(self) -> str:
         """Returns the MDagpath object."""
         self.ensure_valid()
-        if not self.__dict__["_mdagpath"].isValid():
+        d = self.__dict__
+        if "_taken_mdagpath" in d:
+            self._retake_path()
+        if not d["_mdagpath"].isValid():
             self._repath()
         return self._mdagpath
 
     @property
     def name(self) -> str:
         """Returns the shortest unique name."""
+        if "_taken_mdagpath" in self.__dict__:
+            self._retake_path()
         return self.fn_set.partialPathName() or self._repath().partialPathName()
 
     @property
     def long_name(self) -> str:
         """Returns the long name."""
+        if "_taken_mdagpath" in self.__dict__:
+            self._retake_path()
         return self.fn_set.fullPathName() or self._repath().fullPathName()
 
     def _repath(self) -> OpenMaya.MFnDagNode:
         """Re-resolves the DAG path of a live node whose path went stale (the
         instance it ran through was removed or its parent deleted) and returns
         the new fn set. The path and fn set are rebound, never edited in place,
-        since other wrappers may share them."""
-        d               = self.__dict__
+        since other wrappers may share them. The path the node was taken through
+        is kept, and taken again once it is valid again (the removal undone)."""
+        d = self.__dict__
+        d.setdefault("_taken_mdagpath", d["_mdagpath"])
         d["_mdagpath"]  = OpenMaya.MDagPath.getAPathTo(d["_mobject"])
         fn = d["_fn_set"] = self.FN_SET(d["_mdagpath"])
         return fn
+
+    def _retake_path(self) -> None:
+        """Rebinds the path the node was taken through, if it is valid again,
+        once `_repath` replaced it."""
+        d     = self.__dict__
+        taken = d["_taken_mdagpath"]
+        # the handle first: an MDagPath of a freed node must not be read
+        if d["_objhandle1"].isValid() and taken.isValid():
+            del d["_taken_mdagpath"]
+            d["_mdagpath"] = taken
+            d["_fn_set"]   = self.FN_SET(taken)
 
     @property
     def is_shape(self) -> bool:

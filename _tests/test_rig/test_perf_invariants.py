@@ -2297,8 +2297,11 @@ class TestCanonicalWrapperCheck(MayaTestCase):
         self.assertEqual(second.name, "S")
         self.assertEqual(_canonical_calls(second, mobject), (True, 0, 0))
         self.assertEqual(_canonical_calls(first, mobject), (True, 0, 0))
+        # undoing the removal makes the path the wrapper was taken through valid
+        # again, and naming the wrapper takes it again (as at d6ad8b2)
         cmds.undo()
-        self.assertEqual(_canonical_calls(second, mobject), (True, 0, 1))
+        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
+        self.assertEqual(second.long_name, "|T2|S")
         self.assertEqual(_canonical_calls(first, mobject), (True, 0, 1))
 
         plane = cmds.nurbsPlane(name="plane")[0]
