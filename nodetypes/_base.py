@@ -579,6 +579,12 @@ _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
 # attr's node: the answer its getAttr query gave, see `_queried_data_type`
 _FALLBACK_QUERY = None
 
+# the rig DSL's `Node` wrapper class, registered by `rig._internal.node` when it
+# is defined, since that module imports this one. `Attribute.full_name` reads the
+# name of the node an instance of exactly that class wraps, which is what its
+# `__getattr__` forwards `name` to; any other owner is named as before
+_NODE_WRAPPER_CLASS = None
+
 
 def _clear_static_data_type(*args) -> None:
     """Drops every cached static data type (MSceneMessage callback)."""
@@ -1042,7 +1048,14 @@ class Attribute(str):
         Note. Can't use MPlug.name() directly because it doesn't use the partial node name.
         i.e. it will error if duplicated node names exist.
         """
-        return f"{self.node.name}.{self.alias}"
+        node = self.node
+        # a rig Node only forwards `name` to the node it wraps, so read it there;
+        # anything but a str (an Attribute the Node would re-wrap) is re-read
+        if type(node) is _NODE_WRAPPER_CLASS:
+            name = node._dg_node.name
+            if type(name) is str:
+                return f"{name}.{self.alias}"
+        return f"{node.name}.{self.alias}"
 
     @property
     def alias(self) -> str:

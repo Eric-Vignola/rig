@@ -17,9 +17,13 @@ type ``Attribute.data_type`` just queried only when no code that could change it
 ran in between, and queries again otherwise. The canonical wrapper check keeps
 its class checks per class only until a node class or class attribute changes,
 and takes a DAG wrapper's name from its own path only when that is the node's
-only path."""
+only path. ``Attribute.full_name`` reads a rig Node owner's name from the node it
+wraps instead of through ``Node.__getattr__``, with the same names and errors."""
 
 import contextlib
+import os
+import shutil
+import tempfile
 from unittest import mock
 
 from maya import cmds
@@ -2105,3 +2109,258 @@ class TestCanonicalWrapperCheck(MayaTestCase):
             with self.subTest(other=type(other).__name__):
                 self.assertFalse(_base._wrapper_is_canonical(other, mobject))
                 self.assertNotIn(type(other), _base._CANONICAL_KIND)
+
+
+def _result(func):
+    """What ``func()`` returns, or the type and message it raises."""
+    try:
+        return ("ok", func())
+    except Exception as exc:
+        return (type(exc), str(exc))
+
+
+def _name_forwards(func):
+    """What ``func()`` returns or raises, and the ``name`` lookups it makes through
+    ``Node.__getattr__``."""
+    names    = []
+    original = Node.__getattr__
+
+    def forward(node, attr_name):
+        names.append(attr_name)
+        return original(node, attr_name)
+
+    with mock.patch.object(Node, "__getattr__", forward):
+        result = _result(func)
+    return result, names.count("name")
+
+
+def _name_raises():
+    """A plug whose Node wraps a DGNode whose ``name`` property raises, so the
+    lookup falls through to the node's ``name`` Maya attr instead."""
+
+    class _NameRaises(Transform):
+        NATIVE_NODE_TYPE = "perfFullNameProbe"
+
+        @property
+        def name(self):
+            raise AttributeError("no name")
+
+    cmds.createNode("transform", name="w")
+    cmds.addAttr("w", longName="name", dataType="string")
+    wrapper = object.__new__(_NameRaises)
+    wrapper.__dict__.update(PyNode(_mobject("w")).__dict__)
+    plug = Plug("w.tx")
+    plug.__dict__["_node"] = Node(wrapper)
+    return plug
+
+
+def _container_owner():
+    ctr  = cmds.container(name="ctr")
+    plug = Plug(f"{ctr}.blackBox")
+    plug.__dict__["_node"] = Container(ctr)
+    return plug
+
+
+def _new_scene(reuse):
+    held = _named(Node("b").tx)
+    cmds.file(new=True, force=True)
+    if reuse:
+        cmds.createNode("transform", name="b")
+    return held
+
+
+def _reused():
+    held = _named(Node("b").tx)
+    cmds.delete("b")
+    cmds.createNode("transform", name="b")
+    return held
+
+
+def _underworld():
+    plane = cmds.nurbsPlane(name="plane")[0]
+    cmds.curveOnSurface(plane, uv=[(0.1, 0.1), (0.5, 0.5), (0.9, 0.2)])
+    surface = cmds.listRelatives(plane, shapes=True, fullPath=True)[0]
+    curve   = [
+        name
+        for name in cmds.listRelatives(surface, allDescendents=True, fullPath=True)
+        if cmds.nodeType(name) == "nurbsCurve"
+    ]
+    return Node(curve[0]).visibility
+
+
+def _instanced():
+    cmds.createNode("transform", name="T1")
+    cmds.createNode("transform", name="T2")
+    cmds.createNode("locator", name="S", parent="T1")
+    cmds.parent("T1|S", "T2", add=True, shape=True, relative=True)
+    return Node("|T2|S").visibility
+
+
+def _no_wrapped_node():
+    """A plug whose Node never had its wrapped node set."""
+    plug = Node("b").tx
+    plug.__dict__["_node"] = Node.__new__(Node)
+    return plug
+
+
+_DELETED_B = (RuntimeError, "b already deleted!")
+
+# (case, plug factory, full_name or (error type, message), the name lookups each
+# full_name makes through Node.__getattr__, and the ones it made before)
+_FULL_NAME_CASES = (
+    ("node_attr", lambda: Node("a").tx, "a.translateX", 0, 1),
+    ("compound", lambda: Node("a").t, "a.translate", 0, 1),
+    ("child", lambda: Node("a").t.tx, "a.translateX", 0, 1),
+    ("child_index", lambda: Node("a").t[1], "a.translateY", 0, 1),
+    ("string", _plug("a.tx"), "a.translateX", 0, 1),
+    ("mplug_child", _unindexed_child, "pma.input3D[-1].input3Dx", 0, 0),
+    ("new_element", lambda: Node("pma").input1D[3], "pma.input1D[3]", 0, 1),
+    ("element_child", _plug("pma.input3D[2].input3Dx"), "pma.input3D[2].input3Dx", 0,
+     1),
+    ("array_root", lambda: Node("pma").input1D, "pma.input1D", 0, 1),
+    ("alias", _plug("b.bar"), "b.bar", 0, 1),
+    ("alias_long", lambda: Node("b").foo, "b.bar", 0, 1),
+    ("world_matrix", lambda: Node("a").worldMatrix[0], "a.worldMatrix", 0, 1),
+    ("same_short_name", lambda: Node("|g1|dup").tx, "g1|dup.translateX", 0, 1),
+    ("namespace", lambda: Node("ns:n").tx, "ns:n.translateX", 0, 1),
+    ("shape", lambda: Node("locShape").localPositionX, "locShape.localPositionX", 0,
+     1),
+    ("choice", lambda: Node("pick").input[0], "pick.input[0]", 0, 1),
+    ("joint", lambda: Node("jnt").jointOrientX, "jnt.jointOrientX", 0, 1),
+    ("underworld", _underworld, "planeShape->curveShape1.visibility", 0, 1),
+    ("instanced", _instanced, "T1|S.visibility", 0, 1),
+    ("renamed", _renamed, "renamed.translateX", 0, 1),
+    ("delete_undone", _delete_undone, "b.translateX", 0, 1),
+    ("readded", lambda: _readded("b"), "b.dd", 0, 1),
+    ("undone", lambda: _undone("b"), "b.undone", 0, 1),
+    ("extension", lambda: _extension(False), "pma.perfConnect", 0, 1),
+    ("extension_gone", lambda: _extension(True), "pma.", 0, 1),
+    ("deleted", lambda: _deleted("b"), _DELETED_B, 0, 1),
+    ("reused", _reused, _DELETED_B, 0, 1),
+    ("new_scene", lambda: _new_scene(False), _DELETED_B, 0, 1),
+    ("new_scene_reused", lambda: _new_scene(True), _DELETED_B, 0, 1),
+    ("component", _component, "planeShape.cv[1][1]", 1, 1),
+    ("attribute", lambda: _base.Attribute("b.tx"), "b.translateX", 0, 0),
+    ("container_owner", _container_owner, "ctr.blackBox", 1, 1),
+    ("name_raises", _name_raises, "w.name.translateX", 1, 2),
+    ("no_wrapped_node", _no_wrapped_node, (AttributeError, "_dg_node"), 0, 1),
+)
+
+
+class TestFullNameReadsTheWrappedNode(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self._registered = dict(PyNode._NODE_CLASS_DICT)
+
+    def tearDown(self):
+        if cmds.attributeQuery("perfConnect", type="plusMinusAverage", exists=True):
+            _delete_extension()
+        PyNode._NODE_CLASS_DICT.clear()
+        PyNode._NODE_CLASS_DICT.update(self._registered)
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        _base._CANONICAL_KIND.clear()
+        super().tearDown()
+
+    def _scene(self):
+        cmds.file(new=True, force=True)
+        cmds.undoInfo(state=True, infinity=True)
+        if cmds.attributeQuery("perfConnect", type="plusMinusAverage", exists=True):
+            _delete_extension()
+        for name in ("a", "b", "g1", "g2"):
+            cmds.createNode("transform", name=name)
+        cmds.createNode("transform", name="dup", parent="g1")
+        cmds.createNode("transform", name="dup", parent="g2")
+        cmds.createNode("locator", name="locShape", parent="a")
+        cmds.createNode("plusMinusAverage", name="pma")
+        cmds.createNode("choice", name="pick")
+        cmds.createNode("joint", name="jnt")
+        cmds.namespace(add="ns")
+        cmds.createNode("transform", name="ns:n")
+        cmds.addAttr("b", ln="foo", at="double")
+        cmds.aliasAttr("bar", "b.foo")
+        cmds.addAttr("b", ln="dd", at="double")
+
+    def _full_name(self, factory, forwarded):
+        """What ``full_name`` and ``str`` give twice on the plug ``factory`` builds
+        in a fresh scene, the class of the owner the plug then holds and the name
+        lookups made, through the ``Node.__getattr__`` forwarding if ``forwarded``."""
+        self._scene()
+        plug    = factory()
+        wrapper = mock.patch.object(_base, "_NODE_WRAPPER_CLASS", None)
+        with wrapper if forwarded else contextlib.nullcontext():
+            results, forwards = _name_forwards(
+                lambda: [
+                    _result(lambda: plug.full_name),
+                    _result(lambda: str(plug)),
+                    _result(lambda: plug.full_name),
+                    _result(lambda: str(plug)),
+                ]
+            )
+        return results, type(plug.__dict__["_node"]), forwards
+
+    def test_node_class_is_registered(self):
+        self.assertIs(_base._NODE_WRAPPER_CLASS, Node)
+
+    def test_full_name_matches_the_forwarding(self):
+        for case, factory, expected, forwards, legacy_forwards in _FULL_NAME_CASES:
+            with self.subTest(case=case):
+                fast   = self._full_name(factory, forwarded=False)
+                legacy = self._full_name(factory, forwarded=True)
+                if not isinstance(expected, tuple):
+                    expected = ("ok", expected)
+                self.assertEqual(fast[0], ("ok", [expected] * 4))
+                self.assertEqual(fast[:2], legacy[:2])
+                # a Node owner is named without the forwarding, other owners with it
+                self.assertEqual(
+                    (fast[2], legacy[2]), (4 * forwards, 4 * legacy_forwards)
+                )
+
+    def test_full_name_matches_the_previous_formula(self):
+        for case, factory, expected, _, _ in _FULL_NAME_CASES:
+            if not isinstance(expected, str):
+                continue
+            with self.subTest(case=case):
+                self._scene()
+                plug = factory()
+                if type(plug) is not ComponentPlug:
+                    self.assertEqual(plug.full_name, f"{plug.node.name}.{plug.alias}")
+                self.assertEqual(plug.full_name, expected)
+
+    def test_referenced_node(self):
+        folder = tempfile.mkdtemp(prefix="rig_full_name_ref_")
+        path   = os.path.join(folder, "rig_full_name_ref.ma")
+        try:
+            cmds.file(new=True, force=True)
+            cmds.createNode("transform", name="refT")
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            for forwarded in (False, True):
+                with self.subTest(forwarded=forwarded):
+                    cmds.file(new=True, force=True)
+                    cmds.file(path, reference=True, namespace="ref")
+                    plug    = _named(Node("ref:refT").tx)
+                    wrapper = mock.patch.object(_base, "_NODE_WRAPPER_CLASS", None)
+                    with wrapper if forwarded else contextlib.nullcontext():
+                        loaded    = _name_forwards(lambda: plug.full_name)
+                        reference = cmds.referenceQuery(path, referenceNode=True)
+                        cmds.file(unloadReference=reference)
+                        unloaded  = _name_forwards(lambda: plug.full_name)
+                    self.assertEqual(
+                        (loaded, unloaded),
+                        (
+                            (("ok", "ref:refT.translateX"), int(forwarded)),
+                            ((RuntimeError, "refT already deleted!"), int(forwarded)),
+                        ),
+                    )
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_plug_keeps_the_attribute_property(self):
+        # `_names_own_plug` and the tests that wrap `Attribute.full_name` still see
+        # the one property on Plug; ComponentPlug names itself
+        self.assertIs(Plug.full_name, _base.Attribute.full_name)
+        self.assertIsNot(ComponentPlug.full_name, _base.Attribute.full_name)

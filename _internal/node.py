@@ -23,6 +23,7 @@ import numbers
 from typing import Any, Union
 
 import numpy as np
+from rig.nodetypes import _base
 from rig.nodetypes._base import (
     _copy_wrapper,
     _wrapper_is_canonical,
@@ -390,6 +391,11 @@ class Node:
 
     def __fspath__(self) -> str:
         return str(self._dg_node)
+
+
+# ``Attribute.full_name`` reads a Node's name from the wrapped ``DGNode`` directly
+# instead of through the ``__getattr__`` forwarding.
+_base._NODE_WRAPPER_CLASS = Node
 
 
 # --------------------------------------------------------------------- #
