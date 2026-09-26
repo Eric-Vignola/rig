@@ -198,7 +198,7 @@ class Node:
                     plug.__dict__["_node"] = self
                     # ``find_attr`` named the attr through the node's path if it
                     # has more than one; one it did not is named as the MPlug
-                    if not _base._named_through_a_path(result):
+                    if not str.__contains__(result, "|"):  # _named_through_a_path
                         return plug
                     return _base._named_through_owner(plug)
             plug.__dict__["_node"] = self if owner is dg_node else owner

@@ -73,7 +73,6 @@ from rig.nodetypes._base import (
     _class_attr,
     _ensure_owner_alive,
     _full_name_buffer,
-    _named_through_a_path,
     _owner_is_instanced,
     _path_instance_number,
     _plug_hash,
@@ -229,16 +228,27 @@ def _share_node(parent: "Plug", results: Any) -> Any:
     held = parent.__dict__["_node"]
     if held is None:
         return results
-    many      = isinstance(results, list)
-    instanced = _named_through_a_path(parent) and _owner_is_instanced(held)
+    # only a parent named through a path can have an instanced owner
+    # (``_named_through_a_path``, inlined)
+    if str.__contains__(parent, "|") and _owner_is_instanced(held):
+        return _share_instanced_node(held, results)
+    for result in results if isinstance(results, list) else (results,):
+        if type(result) is Plug and result.__dict__["_node"] is None:
+            result.__dict__["_node"] = held
+    return results
+
+
+def _share_instanced_node(held: Any, results: Any) -> Any:
+    """``_share_node`` for an owner with more than one DAG path: the results are
+    also named through its path in their str buffer (copies)."""
+    many = isinstance(results, list)
     for i, result in enumerate(results if many else (results,)):
         if type(result) is Plug and result.__dict__["_node"] is None:
             result.__dict__["_node"] = held
-            if instanced:
-                result = _full_name_buffer(result)
-                if not many:
-                    return result
-                results[i] = result
+            result = _full_name_buffer(result)
+            if not many:
+                return result
+            results[i] = result
     return results
 
 
@@ -265,6 +275,9 @@ class Plug(Attribute):
         # ``Attribute.__init__``, which uses ``MSelectionList.getPlug(0)``
         # -- that raises ``TypeError`` on ``kComponent`` items (which
         # includes ``controlPoints[N]`` itself, not just the alias forms).
+        if isinstance(name_or_mplug, OpenMaya.MPlug):
+            super().__init__(name_or_mplug)
+            return
         if isinstance(name_or_mplug, Attribute):
             # the plug `name_or_mplug` stands for, read through the node object it
             # holds: ``Plug(PyNode("|T2|S").find_attr("v"))`` is T2's, as the

@@ -662,7 +662,7 @@ def _inherit_owner(parent: Any, attr: Any) -> Any:
     if owner is None:
         return attr
     attr.__dict__["_node"] = owner
-    if _named_through_a_path(parent):
+    if str.__contains__(parent, "|"):  # `_named_through_a_path`, inlined
         return _named_through_owner(attr)
     return attr
 
@@ -1071,6 +1071,25 @@ def _is_static_typed_root(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> b
     return fn.attrType() != OpenMaya.MFnData.kInvalid
 
 
+def _plug_node_fn_set(attr: Any, mplug: OpenMaya.MPlug) -> OpenMaya.MFnDependencyNode:
+    """A fn set of the node of `mplug`, `attr`'s MPlug: the one its owner holds
+    (the owner rule makes the owner the plug's node) while that node is valid,
+    else a new one, as `_fixed_attr_kind` built for every call (1.5 us)."""
+    owner = attr.__dict__.get("_node")
+    if owner is not None:
+        d      = _unwrapped(owner).__dict__
+        handle = d.get("_objhandle1")
+        fn     = d.get("_fn_set")
+        if (
+            fn is not None
+            and handle is not None
+            and handle.isValid()
+            and d.get("_mobject") == mplug.node()
+        ):
+            return fn
+    return OpenMaya.MFnDependencyNode(mplug.node())
+
+
 def _fixed_attr_kind(attr: Attribute) -> int | None:
     """Returns the kind (exact `MObject.apiType()`) of `attr`'s attribute if a type
     predicate may answer from it instead of the by-name `data_type` query, else None.
@@ -1083,7 +1102,7 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
         mplug   = attr._mplug
         mobject = attr.mobject
         # a deleted attr is no longer on the node, even once its name is reused
-        fn = OpenMaya.MFnDependencyNode(mplug.node())
+        fn = _plug_node_fn_set(attr, mplug)
         if fn.attributeClass(mobject) == OpenMaya.MFnDependencyNode.kInvalidAttr:
             return None
         elements = []

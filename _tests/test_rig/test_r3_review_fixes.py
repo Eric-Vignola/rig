@@ -722,3 +722,51 @@ class TestTextOperandsBeyondStr(MayaTestCase):
                 ):
                     interpolate.sequence(t.tx, [0, 1], [0, 1], method=method)
         self.assertEqual(sorted(cmds.ls()), before)
+
+
+class TestCheapCommonPaths(MayaTestCase):
+    """The common paths of this step's checks read what the plug already holds."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_fixed_attr_kind_reads_the_owners_fn_set(self):
+        node  = Node(cmds.createNode("transform", name="a"))
+        owned = node.tx
+        self.assertIs(_base._plug_node_fn_set(owned, owned.plug), node._dg_node._fn_set)
+        self.assertEqual(_base._fixed_attr_kind(owned), OpenMaya.MFn.kDoubleLinearAttribute)
+        loose = Plug("a.tx")
+        self.assertIsNot(_base._plug_node_fn_set(loose, loose.plug), node._dg_node._fn_set)
+        self.assertEqual(_base._fixed_attr_kind(loose), OpenMaya.MFn.kDoubleLinearAttribute)
+        # a deleted owner's fn set is not read
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.delete("a")
+        self.assertIsNot(_base._plug_node_fn_set(owned, owned.plug), node._dg_node._fn_set)
+        cmds.undo()
+
+    def test_only_a_path_named_parent_is_checked_for_instancing(self):
+        _instanced_locator()
+        cmds.createNode("transform", name="a")
+        self.assertTrue(_base._named_through_a_path(Node("|T2|S").v))
+        self.assertTrue(_base._named_through_a_path(Node("|T1|S").lp))
+        self.assertFalse(_base._named_through_a_path(Node("a").t))
+        # a node instanced after its wrapper cached an attr keeps the first path's
+        # name, which cmds resolves to that wrapper's own (first) instance
+        cmds.createNode("transform", name="G1")
+        cmds.createNode("transform", name="X", parent="G1")
+        first = Node("|G1|X")
+        first.worldMatrix
+        cmds.createNode("transform", name="G2")
+        cmds.parent("|G1|X", "G2", add=True)
+        cmds.setAttr("G2.tx", 5)
+        self.assertEqual(cmds.getAttr(first.worldMatrix)[12], 0.0)
+        self.assertEqual(cmds.getAttr(Node("|G2|X").worldMatrix)[12], 5.0)
+
+    def test_memo_checks_only_dynamic_attributes(self):
+        from rig._internal.memoize import _entry_handles
+
+        node = Node(cmds.createNode("transform", name="a"))
+        cmds.addAttr("a", longName="knob", attributeType="double")
+        self.assertEqual(_entry_handles(None, (node.tx, 1.0, [node.ty]), {}), [])
+        checks = _entry_handles(None, (node.tx, [2.0, (node.knob,)]), {"w": node.knob})
+        self.assertEqual([check.name for check in checks], ["knob", "knob"])
+        self.assertTrue(all(check.isAlive() and check.isValid() for check in checks))
