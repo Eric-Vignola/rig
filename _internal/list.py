@@ -35,12 +35,40 @@ import numbers
 from typing import Any, Iterable, Iterator, Optional, Union
 
 from maya import cmds
-from rig.nodetypes._base import _same_plug, Attribute
+from rig.nodetypes._base import _ensure_owner_alive, _same_plug, Attribute
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.node import Node
+from rig._internal.operands import _CAN_HOLD_STR, _plain_str, operator_error, REFLECTED
 from rig._internal.plug import Plug
 from rig._internal.types import _is_attribute_spec, _is_components, _is_member_spec
+
+
+def _operand_rows(dunder: str, items: list, other: Any) -> list:
+    """The broadcast rows ``sequences(items, other)`` of a PlugList operator,
+    checked before any row builds a node.
+
+    A row that pairs a Plug with a plain str, or with a sequence holding one,
+    raises TypeError: that Plug's operator would reject the row anyway (see
+    :mod:`rig._internal.operands`), but only after the rows before it had
+    built their networks. A row without a Plug is left alone
+    (``Node("a") == "a"`` is a plain name comparison). As in the Plug
+    operator, a freed plug raises its own error first.
+    """
+    rows = list(sequences(list(items), other))
+    for row, (mine, theirs) in enumerate(rows):
+        if isinstance(mine, Plug):
+            if isinstance(theirs, _CAN_HOLD_STR) and not isinstance(theirs, Attribute):
+                found = _plain_str(theirs)
+                if found is not None:
+                    _ensure_owner_alive(mine)
+                    raise operator_error(dunder, mine, theirs, found, row)
+        elif isinstance(theirs, Plug) and isinstance(mine, _CAN_HOLD_STR):
+            found = _plain_str(mine)
+            if found is not None:
+                _ensure_owner_alive(theirs)
+                raise operator_error(REFLECTED[dunder], theirs, mine, found, row)
+    return rows
 
 
 class PlugList(list):
@@ -262,64 +290,64 @@ class PlugList(list):
     # -- arithmetic broadcast -- #
 
     def __add__(self, other: Any) -> "PlugList":
-        return PlugList(s + o for s, o in sequences(list(self), other))
+        return PlugList(s + o for s, o in _operand_rows("__add__", self, other))
 
     def __radd__(self, other: Any) -> "PlugList":
-        return PlugList(o + s for s, o in sequences(list(self), other))
+        return PlugList(o + s for s, o in _operand_rows("__radd__", self, other))
 
     def __sub__(self, other: Any) -> "PlugList":
-        return PlugList(s - o for s, o in sequences(list(self), other))
+        return PlugList(s - o for s, o in _operand_rows("__sub__", self, other))
 
     def __rsub__(self, other: Any) -> "PlugList":
-        return PlugList(o - s for s, o in sequences(list(self), other))
+        return PlugList(o - s for s, o in _operand_rows("__rsub__", self, other))
 
     def __mul__(self, other: Any) -> "PlugList":
-        return PlugList(s * o for s, o in sequences(list(self), other))
+        return PlugList(s * o for s, o in _operand_rows("__mul__", self, other))
 
     def __rmul__(self, other: Any) -> "PlugList":
-        return PlugList(o * s for s, o in sequences(list(self), other))
+        return PlugList(o * s for s, o in _operand_rows("__rmul__", self, other))
 
     def __truediv__(self, other: Any) -> "PlugList":
-        return PlugList(s / o for s, o in sequences(list(self), other))
+        return PlugList(s / o for s, o in _operand_rows("__truediv__", self, other))
 
     def __rtruediv__(self, other: Any) -> "PlugList":
-        return PlugList(o / s for s, o in sequences(list(self), other))
+        return PlugList(o / s for s, o in _operand_rows("__rtruediv__", self, other))
 
     def __pow__(self, other: Any) -> "PlugList":
-        return PlugList(s**o for s, o in sequences(list(self), other))
+        return PlugList(s**o for s, o in _operand_rows("__pow__", self, other))
 
     def __rpow__(self, other: Any) -> "PlugList":
-        return PlugList(o**s for s, o in sequences(list(self), other))
+        return PlugList(o**s for s, o in _operand_rows("__rpow__", self, other))
 
     def __floordiv__(self, other: Any) -> "PlugList":
-        return PlugList(s // o for s, o in sequences(list(self), other))
+        return PlugList(s // o for s, o in _operand_rows("__floordiv__", self, other))
 
     def __rfloordiv__(self, other: Any) -> "PlugList":
-        return PlugList(o // s for s, o in sequences(list(self), other))
+        return PlugList(o // s for s, o in _operand_rows("__rfloordiv__", self, other))
 
     def __mod__(self, other: Any) -> "PlugList":
-        return PlugList(s % o for s, o in sequences(list(self), other))
+        return PlugList(s % o for s, o in _operand_rows("__mod__", self, other))
 
     def __rmod__(self, other: Any) -> "PlugList":
-        return PlugList(o % s for s, o in sequences(list(self), other))
+        return PlugList(o % s for s, o in _operand_rows("__rmod__", self, other))
 
     def __and__(self, other: Any) -> "PlugList":
-        return PlugList(s & o for s, o in sequences(list(self), other))
+        return PlugList(s & o for s, o in _operand_rows("__and__", self, other))
 
     def __rand__(self, other: Any) -> "PlugList":
-        return PlugList(o & s for s, o in sequences(list(self), other))
+        return PlugList(o & s for s, o in _operand_rows("__rand__", self, other))
 
     def __or__(self, other: Any) -> "PlugList":
-        return PlugList(s | o for s, o in sequences(list(self), other))
+        return PlugList(s | o for s, o in _operand_rows("__or__", self, other))
 
     def __ror__(self, other: Any) -> "PlugList":
-        return PlugList(o | s for s, o in sequences(list(self), other))
+        return PlugList(o | s for s, o in _operand_rows("__ror__", self, other))
 
     def __xor__(self, other: Any) -> "PlugList":
-        return PlugList(s ^ o for s, o in sequences(list(self), other))
+        return PlugList(s ^ o for s, o in _operand_rows("__xor__", self, other))
 
     def __rxor__(self, other: Any) -> "PlugList":
-        return PlugList(o ^ s for s, o in sequences(list(self), other))
+        return PlugList(o ^ s for s, o in _operand_rows("__rxor__", self, other))
 
     def __neg__(self) -> "PlugList":
         return PlugList(-x for x in self)
@@ -330,22 +358,22 @@ class PlugList(list):
     # -- comparison broadcast -- #
 
     def __eq__(self, other: Any) -> "PlugList":
-        return PlugList(s == o for s, o in sequences(list(self), other))
+        return PlugList(s == o for s, o in _operand_rows("__eq__", self, other))
 
     def __ne__(self, other: Any) -> "PlugList":
-        return PlugList(s != o for s, o in sequences(list(self), other))
+        return PlugList(s != o for s, o in _operand_rows("__ne__", self, other))
 
     def __ge__(self, other: Any) -> "PlugList":
-        return PlugList(s >= o for s, o in sequences(list(self), other))
+        return PlugList(s >= o for s, o in _operand_rows("__ge__", self, other))
 
     def __le__(self, other: Any) -> "PlugList":
-        return PlugList(s <= o for s, o in sequences(list(self), other))
+        return PlugList(s <= o for s, o in _operand_rows("__le__", self, other))
 
     def __gt__(self, other: Any) -> "PlugList":
-        return PlugList(s > o for s, o in sequences(list(self), other))
+        return PlugList(s > o for s, o in _operand_rows("__gt__", self, other))
 
     def __lt__(self, other: Any) -> "PlugList":
-        return PlugList(s < o for s, o in sequences(list(self), other))
+        return PlugList(s < o for s, o in _operand_rows("__lt__", self, other))
 
     # -- list protocol (must not route through __eq__) -- #
 

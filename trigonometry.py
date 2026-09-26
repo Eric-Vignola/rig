@@ -30,6 +30,7 @@ from rig._internal.container import container, ContainerOptions
 from rig._internal.math_nodes import _multiply_divide_op, condition, constant
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig._internal.node_ops import NodeOp, SCOPE_SCALAR
 from rig._internal.types import _get_compound
 from rig.functions import abs as _abs, inf, rev
@@ -63,6 +64,7 @@ __all__ = [
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def degrees(token: Any) -> Any:
@@ -72,6 +74,7 @@ def degrees(token: Any) -> Any:
     return _multiply_divide_op(token, (180.0 / math.pi), operation=1, name="degrees1")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def radians(token: Any) -> Any:
@@ -194,6 +197,7 @@ def _atan2d_modern(y: Any, x: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def sind(token: Any) -> Any:
@@ -203,6 +207,7 @@ def sind(token: Any) -> Any:
     return _sind_op(token)
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def cosd(token: Any) -> Any:
@@ -212,6 +217,7 @@ def cosd(token: Any) -> Any:
     return _cosd_op(token)
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def tand(token: Any) -> Any:
@@ -235,6 +241,7 @@ def tand(token: Any) -> Any:
             return container.publish_output(condition(c == 0, inf(), div), "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def sin(token: Any) -> Any:
@@ -246,6 +253,7 @@ def sin(token: Any) -> Any:
         return container.publish_output(sind(degrees(token)), "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def cos(token: Any) -> Any:
@@ -257,6 +265,7 @@ def cos(token: Any) -> Any:
         return container.publish_output(cosd(degrees(token)), "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def tan(token: Any) -> Any:
@@ -273,6 +282,7 @@ def tan(token: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def asind(token: Any) -> Any:
@@ -313,6 +323,7 @@ def _asind_legacy(token: Any) -> Any:
         return container.publish_output(results[0], "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def asin(token: Any) -> Any:
@@ -324,6 +335,7 @@ def asin(token: Any) -> Any:
         return container.publish_output(radians(asind(token)), "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def acosd(token: Any) -> Any:
@@ -356,6 +368,7 @@ def _acosd_legacy(token: Any) -> Any:
         return container.publish_output(results[0], "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def acos(token: Any) -> Any:
@@ -367,6 +380,7 @@ def acos(token: Any) -> Any:
         return container.publish_output(radians(acosd(token)), "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def atand(token: Any) -> Any:
@@ -397,6 +411,7 @@ def atand(token: Any) -> Any:
         return container.publish_output(results[0], "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def atan(token: Any) -> Any:
@@ -438,6 +453,7 @@ def _atan2_legacy(y: Any, x: Any) -> Any:
     return out
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def atan2d(y: Any, x: Any) -> Any:
@@ -461,6 +477,7 @@ def atan2d(y: Any, x: Any) -> Any:
         return container.publish_output(degrees(_atan2_legacy(y, x)), "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def atan2(y: Any, x: Any) -> Any:

@@ -35,6 +35,11 @@ Op               Meaning
 ``>``, ``>=``
 ================ ===========================================================
 
+A plain str (one that is not an Attribute) is never an operand: an operator
+given one, alone or inside a list, raises ``TypeError`` before it builds
+anything (``t.tx == "cube.ty"``, ``"%s" % t.tx``; see
+:mod:`rig._internal.operands`). Write ``Plug("cube.ty")`` for the plug.
+
 Connection queries are METHODS, not operators -- ``a.get_inputs()`` and
 ``a.get_outputs()``, each always a ``PlugList`` (empty when nothing is
 wired). Direct connections only: a compound whose children are driven
@@ -77,6 +82,11 @@ from rig.nodetypes._base import (
 from rig._internal.generators import sequences
 from rig._internal.introspect import _to_numpy
 from rig._internal.maya_version import is_at_least
+from rig._internal.operands import (
+    _CAN_HOLD_STR,
+    _plain_str,
+    operator_error as _operator_error,
+)
 from rig.spec._base import _clone_attribute
 
 
@@ -1127,9 +1137,13 @@ def _owner_alive(plug: Any) -> bool:
 
 
 def _checking_operands(method: Any) -> Any:
-    """`method`, a Plug operator, run once its plug operands are known alive: the
-    type predicates an operator starts with read the operands' MPlugs, which
-    point at freed memory once a new scene freed their node."""
+    """`method`, a Plug operator, run once its operands are checked, before it
+    builds anything. Its plug operands must be alive: the type predicates an
+    operator starts with read the operands' MPlugs, which point at freed memory
+    once a new scene freed their node. And no operand may be or hold a plain str
+    (see `rig._internal.operands`): `t.tx == "cube.ty"` raises TypeError instead
+    of building an equal node it cannot set."""
+    dunder = method.__name__
 
     @functools.wraps(method)
     def checked(self: "Plug", *other: Any) -> Any:
@@ -1137,6 +1151,10 @@ def _checking_operands(method: Any) -> Any:
         for operand in other:
             if isinstance(operand, Attribute):
                 _ensure_owner_alive(operand)
+            elif isinstance(operand, _CAN_HOLD_STR):
+                found = _plain_str(operand)
+                if found is not None:
+                    raise _operator_error(dunder, self, operand, found)
         return method(self, *other)
 
     return checked

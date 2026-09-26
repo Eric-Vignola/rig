@@ -29,6 +29,7 @@ from rig._internal.generators import sequences
 from rig._internal.math_nodes import _constant, condition
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig._internal.types import (
     _get_compound,
     _is_compound,
@@ -69,6 +70,7 @@ __all__ = [
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def triple_product(x: Any, y: Any, z: Any) -> Any:
@@ -113,6 +115,7 @@ def triple_product(x: Any, y: Any, z: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def angle(vector1: Any, vector2: Any) -> Any:
@@ -131,6 +134,7 @@ def angle(vector1: Any, vector2: Any) -> Any:
         )
 
 
+@operands
 @vectorize
 @memoize
 def angle_degrees(vector1: Any, vector2: Any) -> Any:
@@ -152,6 +156,7 @@ def angle_degrees(vector1: Any, vector2: Any) -> Any:
         )
 
 
+@operands
 @vectorize
 @memoize
 def dot(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
@@ -175,6 +180,7 @@ def dot(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
     return node.outputX
 
 
+@operands
 @vectorize
 @memoize
 def cross(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
@@ -197,6 +203,7 @@ def cross(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
     return node.output
 
 
+@operands
 @vectorize
 @memoize(
     foldable=lambda a, k: (
@@ -240,6 +247,7 @@ def length(vector_in: Any) -> Any:
     return node.distance
 
 
+@operands
 @vectorize
 @memoize
 def normalize(vector_in: Any) -> Any:
@@ -262,6 +270,7 @@ def normalize(vector_in: Any) -> Any:
         return container.publish_output(div, "output")
 
 
+@operands
 @vectorize
 @memoize
 def dist(vector1: Any, vector2: Any) -> Any:
@@ -298,6 +307,7 @@ def dist(vector1: Any, vector2: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("rotate_order",))
 @vectorize
 @memoize
 def rotate(vector_in: Any, rotate_vec: Any, rotate_order: Any = 0) -> Any:
@@ -335,6 +345,7 @@ def rotate(vector_in: Any, rotate_vec: Any, rotate_order: Any = 0) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
@@ -416,6 +427,7 @@ def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
         return container.publish_output(result, "output")
 
 
+@operands
 @vectorize
 @memoize
 def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
@@ -500,6 +512,7 @@ def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
         return container.publish_output(output, "output")
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def elerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:

@@ -30,6 +30,7 @@ from rig._internal.math_nodes import (
     constant,
 )
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig._internal.types import _get_compound
 from rig.matrix import compose
 from rig.trigonometry import atan2, atan2d
@@ -61,6 +62,7 @@ __all__ = [
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def add(quat1: Any, quat2: Any) -> Any:
@@ -68,6 +70,7 @@ def add(quat1: Any, quat2: Any) -> Any:
     return _quaternion_add(quat1, quat2)
 
 
+@operands
 @vectorize
 @memoize
 def multiply(quat1: Any, quat2: Any) -> Any:
@@ -75,6 +78,7 @@ def multiply(quat1: Any, quat2: Any) -> Any:
     return _quaternion_multiply(quat1, quat2)
 
 
+@operands
 @vectorize
 @memoize
 def subtract(quat1: Any, quat2: Any) -> Any:
@@ -87,6 +91,7 @@ def subtract(quat1: Any, quat2: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def negate(quat: Any) -> Any:
@@ -97,6 +102,7 @@ def negate(quat: Any) -> Any:
     return node.outputQuat
 
 
+@operands
 @vectorize
 @memoize
 def normalize(quat: Any) -> Any:
@@ -107,6 +113,7 @@ def normalize(quat: Any) -> Any:
     return node.outputQuat
 
 
+@operands
 @vectorize
 @memoize
 def inverse(quat: Any) -> Any:
@@ -117,6 +124,7 @@ def inverse(quat: Any) -> Any:
     return node.outputQuat
 
 
+@operands
 @vectorize
 @memoize
 def conjugate(quat: Any) -> Any:
@@ -132,6 +140,7 @@ def conjugate(quat: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def angle(quat1: Any, quat2: Any) -> Any:
@@ -147,6 +156,7 @@ def angle(quat1: Any, quat2: Any) -> Any:
         )
 
 
+@operands
 @vectorize
 @memoize
 def angle_degrees(quat1: Any, quat2: Any) -> Any:
@@ -172,6 +182,7 @@ def angle_degrees(quat1: Any, quat2: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("rotate_order",))
 @vectorize
 @memoize
 def to_euler(quat: Any, rotate_order: Optional[Any] = None) -> Any:
@@ -180,6 +191,7 @@ def to_euler(quat: Any, rotate_order: Optional[Any] = None) -> Any:
     return _quaternion_to_euler(quat, rotate_order=rotate_order)
 
 
+@operands
 @vectorize
 @memoize
 def to_matrix(quat: Any) -> Any:
@@ -189,6 +201,7 @@ def to_matrix(quat: Any) -> Any:
     return compose(rotate=quat)
 
 
+@operands
 @vectorize
 @memoize
 def to_vector(quat: Any) -> Any:
@@ -205,6 +218,7 @@ def to_vector(quat: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def slerp(quat0: Any, quat1: Any, weight: Any = 0.5) -> Any:
@@ -222,6 +236,7 @@ def slerp(quat0: Any, quat1: Any, weight: Any = 0.5) -> Any:
         return container.publish_output(node.outputQuat, "output")
 
 
+@operands
 @vectorize
 @memoize
 def pow(quat: Any, weight: Any = 0.5) -> Any:
@@ -269,6 +284,7 @@ container._load_plugin_for_quaternion = _load_plugin_for_quaternion_impl
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def from_axis_angle(axis_vec: Any, angle: Any) -> Any:
@@ -291,6 +307,7 @@ def from_axis_angle(axis_vec: Any, angle: Any) -> Any:
         return container.publish_output(node.outputQuat, "output")
 
 
+@operands
 @vectorize
 @memoize
 def to_axis_angle(quat: Any) -> tuple:

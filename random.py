@@ -70,6 +70,7 @@ from rig._internal.memoize import (
     _stable_key,
     vectorize,
 )
+from rig._internal.operands import operands
 from rig._internal.types import _get_compound, _is_compound
 from rig.functions import frame, sum as _sum
 
@@ -173,6 +174,7 @@ def _memoize_on_seed(func: Callable[..., Any]) -> Callable[..., Any]:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @_memoize_on_seed
 def value(trigger: Optional[Any] = None, seed: Optional[int] = None) -> Any:
@@ -236,6 +238,7 @@ def value(trigger: Optional[Any] = None, seed: Optional[int] = None) -> Any:
         return container.publish_output(update.valueX / _LCG_MODULUS, "output")
 
 
+@operands
 @vectorize
 @_memoize_on_seed
 def uniform(
@@ -256,6 +259,7 @@ def uniform(
         )
 
 
+@operands
 @vectorize
 @_memoize_on_seed
 def randint(
@@ -283,6 +287,7 @@ def randint(
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @_memoize_on_seed
 def value3D(trigger: Optional[Any] = None, seed: Optional[Any] = None) -> Any:
@@ -316,6 +321,7 @@ def value3D(trigger: Optional[Any] = None, seed: Optional[Any] = None) -> Any:
         )
 
 
+@operands
 @vectorize
 @_memoize_on_seed
 def uniform3D(
@@ -340,6 +346,7 @@ def uniform3D(
         )
 
 
+@operands
 @vectorize
 @_memoize_on_seed
 def randint3D(

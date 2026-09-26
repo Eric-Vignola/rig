@@ -23,6 +23,7 @@ from typing import Any
 from rig._internal.container import container, ContainerOptions
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig._internal.types import _is_scalar_value
 from rig.functions import choice, clamp, searchsorted
 from rig.vector import lerp as _v_lerp
@@ -36,6 +37,7 @@ __all__ = ["sequence", "smoothstep", "smootherstep", "inverse_lerp"]
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("method",))
 @memoize
 def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp) -> Any:
     """``sequence(x, xp, yp, method=lerp)`` -- sample a piecewise function.
@@ -77,6 +79,7 @@ def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("normalize",))
 @vectorize
 @memoize(foldable="scalar")
 def smoothstep(
@@ -120,6 +123,7 @@ def smoothstep(
         return container.publish_output(output, "output")
 
 
+@operands(config=("normalize",))
 @vectorize
 @memoize(foldable="scalar")
 def smootherstep(
@@ -154,6 +158,7 @@ def smootherstep(
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize(foldable="scalar")
 def inverse_lerp(input1: Any, input2: Any, weight: Any) -> Any:

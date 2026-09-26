@@ -24,10 +24,12 @@ from rig._internal.container import container
 from rig._internal.generators import sequences
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig._internal.node_ops import NodeOp, SCOPE_COMPOUND, SCOPE_SCALAR
 from rig._internal.types import (
     _get_compound,
     _is_compound,
+    _is_list,
     _is_matrix,
     _is_node,
     _is_plug,
@@ -145,6 +147,7 @@ def _constant(
     return node.value
 
 
+@operands(config=("name", "dtype"))
 @memoize
 def constant(values: Any, name: str = "constant1", dtype: str = "double") -> Any:
     """Memoised version of :func:`_constant`.
@@ -689,6 +692,22 @@ def _condition_legacy(input0: Any, op: str, input1: Any) -> Any:
     return node.outColorR
 
 
+def _picks_in_python(args: tuple, kwargs: dict) -> bool:
+    """True when ``condition()``'s test is a number, or a PlugList of numbers
+    (each broadcast row's test a number): it then picks its branches in Python
+    and builds no node, so a branch may be any value (``condition(1, "yes",
+    "no")`` is ``"yes"``). A plain list test builds a condition node."""
+    test = args[0] if args else kwargs.get("condition_op")
+    if isinstance(test, numbers.Real):
+        return True
+    return (
+        _is_list(test)
+        and len(test) > 0
+        and all(isinstance(x, numbers.Real) for x in test)
+    )
+
+
+@operands(skip_when=_picks_in_python)
 @vectorize
 @memoize
 def condition(condition_op: Any, if_true: Any, if_false: Any) -> Any:

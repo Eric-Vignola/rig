@@ -32,6 +32,7 @@ from rig._internal.math_nodes import (
 )
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig._internal.types import _get_compound, X, Y
 from rig.functions import rev
 
@@ -77,6 +78,7 @@ __all__ = [
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("rotate_order",))
 @vectorize
 @memoize
 def decompose(token: Any, rotate_order: Optional[Any] = None) -> Any:
@@ -86,6 +88,7 @@ def decompose(token: Any, rotate_order: Optional[Any] = None) -> Any:
     return _decompose_matrix(token, rotate_order=rotate_order)
 
 
+@operands
 @vectorize
 @memoize
 def inverse(token: Any) -> Any:
@@ -93,6 +96,7 @@ def inverse(token: Any) -> Any:
     return _matrix_inverse(token)
 
 
+@operands
 @vectorize
 @memoize
 def transpose(token: Any) -> Any:
@@ -102,6 +106,7 @@ def transpose(token: Any) -> Any:
     return node.outputMatrix
 
 
+@operands
 @vectorize
 @memoize
 def to_quaternion(token: Any) -> Any:
@@ -109,6 +114,7 @@ def to_quaternion(token: Any) -> Any:
     return decompose(token).outputQuat
 
 
+@operands(config=("rotate_order",))
 @vectorize
 @memoize
 def to_euler(token: Any, rotate_order: Optional[Any] = None) -> Any:
@@ -122,6 +128,7 @@ def to_euler(token: Any, rotate_order: Optional[Any] = None) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("rotate_order",))
 @vectorize
 @memoize
 def compose(
@@ -155,6 +162,7 @@ def compose(
         )
 
 
+@operands
 @vectorize
 @memoize
 def fourbyfour(
@@ -185,6 +193,7 @@ def fourbyfour(
         return container.publish_output(node.output, "output")
 
 
+@operands
 @vectorize
 @memoize
 def aim(
@@ -223,6 +232,7 @@ def aim(
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("local",))
 @vectorize
 @memoize
 def multiply(*tokens: Any, **kwargs: Any) -> Any:
@@ -233,6 +243,7 @@ def multiply(*tokens: Any, **kwargs: Any) -> Any:
     return _matrix_multiply(*tokens, **kwargs)
 
 
+@operands
 @vectorize
 @memoize
 def add(*tokens: Any, **kwargs: Any) -> Any:
@@ -241,6 +252,7 @@ def add(*tokens: Any, **kwargs: Any) -> Any:
     return _matrix_add(*tokens, **kwargs)
 
 
+@operands
 @vectorize
 @memoize
 def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
@@ -268,6 +280,7 @@ def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def blend(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
@@ -289,6 +302,7 @@ def blend(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
         return container.publish_output(node.outputMatrix, "output")
 
 
+@operands
 @vectorize
 @memoize
 def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
@@ -314,6 +328,7 @@ def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
         return container.publish_output(compose(rotate=rotate), "output")
 
 
+@operands
 @vectorize
 @memoize
 def pow(input1: Any, weight: Any = 0.5) -> Any:
@@ -338,6 +353,7 @@ def pow(input1: Any, weight: Any = 0.5) -> Any:
         return container.publish_output(node.outputMatrix, "output")
 
 
+@operands
 @vectorize
 @memoize
 def normalize(token: Any) -> Any:
@@ -360,6 +376,7 @@ def normalize(token: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def determinant(token: Any) -> Any:
@@ -399,6 +416,7 @@ def determinant(token: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def translation(token: Any) -> Any:
@@ -415,6 +433,7 @@ def translation(token: Any) -> Any:
     return decompose(token).outputTranslate
 
 
+@operands
 @vectorize
 @memoize
 def rotation(token: Any) -> Any:
@@ -432,6 +451,7 @@ def rotation(token: Any) -> Any:
     return decompose(token).outputRotate
 
 
+@operands
 @vectorize
 @memoize
 def scale_of(token: Any) -> Any:
@@ -454,6 +474,7 @@ def scale_of(token: Any) -> Any:
 _AXIS_INDEX = {"x": 0, "y": 1, "z": 2, "X": 0, "Y": 1, "Z": 2, 0: 0, 1: 1, 2: 2}
 
 
+@operands(config=("axis",))
 @vectorize
 @memoize
 def axis(token: Any, axis: Any = 0) -> Any:
@@ -486,6 +507,7 @@ def axis(token: Any, axis: Any = 0) -> Any:
         return container.publish_output(node.output, "output")
 
 
+@operands
 @vectorize
 @memoize
 def column(token: Any, index: Any = 0) -> Any:
@@ -507,6 +529,7 @@ def column(token: Any, index: Any = 0) -> Any:
         return container.publish_output(node.output, "output")
 
 
+@operands
 @vectorize
 @memoize
 def row(token: Any, index: Any = 0) -> Any:
@@ -540,6 +563,7 @@ def row(token: Any, index: Any = 0) -> Any:
         return container.publish_output(node.output, "output")
 
 
+@operands
 @vectorize
 @memoize
 def transform_point(point: Any, token: Any) -> Any:
@@ -565,6 +589,7 @@ def transform_point(point: Any, token: Any) -> Any:
         return container.publish_output(node.output, "output")
 
 
+@operands
 @vectorize
 @memoize
 def transform_vector(vector_in: Any, token: Any) -> Any:
@@ -596,6 +621,7 @@ def transform_vector(vector_in: Any, token: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 def dist(matrix1: Any, matrix2: Any) -> Any:
     """``dist(m1, m2)`` -- distance between the translation components
     of two matrices (re-export from :mod:`rig.functions`).

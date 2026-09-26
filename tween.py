@@ -48,6 +48,7 @@ from typing import Any
 from rig._internal.container import container
 from rig._internal.math_nodes import condition
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig.functions import pow, sqrt
 from rig.trigonometry import cosd, sind
 
@@ -114,6 +115,7 @@ __all__ = [
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_linear(t: Any) -> Any:
@@ -123,6 +125,7 @@ def in_linear(t: Any) -> Any:
         return container.publish_output(t, "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_linear(t: Any) -> Any:
@@ -137,6 +140,7 @@ def out_linear(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_quad(t: Any) -> Any:
@@ -146,6 +150,7 @@ def in_quad(t: Any) -> Any:
         return container.publish_output(pow(t, 2), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_quad(t: Any) -> Any:
@@ -155,6 +160,7 @@ def out_quad(t: Any) -> Any:
         return container.publish_output(-t * (t - 2), "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_quad(t: Any) -> Any:
@@ -166,6 +172,7 @@ def in_out_quad(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_quad(t: Any) -> Any:
@@ -180,6 +187,7 @@ def out_in_quad(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_cubic(t: Any) -> Any:
@@ -189,6 +197,7 @@ def in_cubic(t: Any) -> Any:
         return container.publish_output(pow(t, 3), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_cubic(t: Any) -> Any:
@@ -198,6 +207,7 @@ def out_cubic(t: Any) -> Any:
         return container.publish_output(pow((t - 1), 3) + 1, "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_cubic(t: Any) -> Any:
@@ -214,6 +224,7 @@ def in_out_cubic(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_cubic(t: Any) -> Any:
@@ -228,6 +239,7 @@ def out_in_cubic(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_quart(t: Any) -> Any:
@@ -237,6 +249,7 @@ def in_quart(t: Any) -> Any:
         return container.publish_output(pow(t, 4), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_quart(t: Any) -> Any:
@@ -246,6 +259,7 @@ def out_quart(t: Any) -> Any:
         return container.publish_output(-1 * (pow((t - 1), 4) - 1), "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_quart(t: Any) -> Any:
@@ -257,6 +271,7 @@ def in_out_quart(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_quart(t: Any) -> Any:
@@ -271,6 +286,7 @@ def out_in_quart(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_quint(t: Any) -> Any:
@@ -280,6 +296,7 @@ def in_quint(t: Any) -> Any:
         return container.publish_output(pow(t, 5), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_quint(t: Any) -> Any:
@@ -289,6 +306,7 @@ def out_quint(t: Any) -> Any:
         return container.publish_output(pow((t - 1), 5) + 1, "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_quint(t: Any) -> Any:
@@ -300,6 +318,7 @@ def in_out_quint(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_quint(t: Any) -> Any:
@@ -314,6 +333,7 @@ def out_in_quint(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_sine(t: Any) -> Any:
@@ -323,6 +343,7 @@ def in_sine(t: Any) -> Any:
         return container.publish_output(-1 * cosd(t * 90) + 1, "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_sine(t: Any) -> Any:
@@ -332,6 +353,7 @@ def out_sine(t: Any) -> Any:
         return container.publish_output(sind(t * 90), "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_sine(t: Any) -> Any:
@@ -341,6 +363,7 @@ def in_out_sine(t: Any) -> Any:
         return container.publish_output(-0.5 * (cosd(180 * t) - 1), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_sine(t: Any) -> Any:
@@ -355,6 +378,7 @@ def out_in_sine(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_expo(t: Any) -> Any:
@@ -364,6 +388,7 @@ def in_expo(t: Any) -> Any:
         return container.publish_output(pow(2, 10 * (t - 1)), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_expo(t: Any) -> Any:
@@ -373,6 +398,7 @@ def out_expo(t: Any) -> Any:
         return container.publish_output(-1 * pow(2, (-10 * t)) + 1, "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_expo(t: Any) -> Any:
@@ -389,6 +415,7 @@ def in_out_expo(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_expo(t: Any) -> Any:
@@ -403,6 +430,7 @@ def out_in_expo(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def in_circ(t: Any) -> Any:
@@ -412,6 +440,7 @@ def in_circ(t: Any) -> Any:
         return container.publish_output(-1 * sqrt(1 - (t * t)) + 1, "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_circ(t: Any) -> Any:
@@ -421,6 +450,7 @@ def out_circ(t: Any) -> Any:
         return container.publish_output(sqrt(1 - pow((t - 1), 2)), "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_circ(t: Any) -> Any:
@@ -432,6 +462,7 @@ def in_out_circ(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_circ(t: Any) -> Any:
@@ -450,6 +481,7 @@ _ELASTIC_PERIOD = 0.3
 _ELASTIC_S      = (_ELASTIC_PERIOD / 360) * 90
 
 
+@operands
 @vectorize
 @memoize
 def in_elastic(t: Any) -> Any:
@@ -463,6 +495,7 @@ def in_elastic(t: Any) -> Any:
         )
 
 
+@operands
 @vectorize
 @memoize
 def out_elastic(t: Any) -> Any:
@@ -475,6 +508,7 @@ def out_elastic(t: Any) -> Any:
         )
 
 
+@operands
 @vectorize
 @memoize
 def in_out_elastic(t: Any) -> Any:
@@ -486,6 +520,7 @@ def in_out_elastic(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_elastic(t: Any) -> Any:
@@ -503,6 +538,7 @@ def out_in_elastic(t: Any) -> Any:
 _BACK_S = 1.70158
 
 
+@operands
 @vectorize
 @memoize
 def in_back(t: Any) -> Any:
@@ -516,6 +552,7 @@ def in_back(t: Any) -> Any:
         return container.publish_output(t * t * ((_BACK_S + 1) * t - _BACK_S), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_back(t: Any) -> Any:
@@ -532,6 +569,7 @@ def out_back(t: Any) -> Any:
         )
 
 
+@operands
 @vectorize
 @memoize
 def in_out_back(t: Any) -> Any:
@@ -543,6 +581,7 @@ def in_out_back(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_back(t: Any) -> Any:
@@ -557,6 +596,7 @@ def out_in_back(t: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @vectorize
 @memoize
 def out_bounce(t: Any) -> Any:
@@ -577,6 +617,7 @@ def out_bounce(t: Any) -> Any:
         return container.publish_output(condition(t < (1 / 2.75), b1, b2), "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_bounce(t: Any) -> Any:
@@ -586,6 +627,7 @@ def in_bounce(t: Any) -> Any:
         return container.publish_output(1 - out_bounce(1 - t), "output")
 
 
+@operands
 @vectorize
 @memoize
 def in_out_bounce(t: Any) -> Any:
@@ -597,6 +639,7 @@ def in_out_bounce(t: Any) -> Any:
         return container.publish_output(condition(t < 0.5, lesser, greater), "output")
 
 
+@operands
 @vectorize
 @memoize
 def out_in_bounce(t: Any) -> Any:
