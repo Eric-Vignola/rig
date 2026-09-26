@@ -642,9 +642,10 @@ class DGNode(metaclass=NodeMeta):
         cmds.getAttr should always work but it's not the case in practice. This method
         gives node classes a chance to correct any undesired Maya behavior.
         """
-        # Attribute.data_type's own query still holds if the node's hook is one
-        # that changes neither the scene nor the attr before it gets here
-        typ = _queried_data_type(attr)
+        # Attribute.data_type's own query still holds if its call ran this node's
+        # class hook first, and that hook changes neither the scene nor the attr
+        # before it gets here
+        typ = _queried_data_type(attr, self)
         if typ is None or not _keeps_query(type(self)):
             typ = cmds.getAttr(attr.full_name, type=True)
         # maintain consistent type string with cmds.addAttr()
@@ -678,7 +679,8 @@ _QUERY_KEEPING_HOOKS = {}
 def _keeps_query(node_cls: type) -> bool:
     """True if the fallback hook of `node_cls` reaches DGNode's with the scene and
     the attr unchanged, so the type Attribute.data_type queried still holds. Any
-    other class or hook (a subclass override, a patched hook) queries again."""
+    other class or hook (a subclass override, a class-level patch) queries again;
+    a wrapper or instance hook is ruled out by `Attribute.data_type` itself."""
     hook = node_cls._attr_data_type_fallback
     if hook is _BASE_FALLBACK_HOOK:
         return True

@@ -575,8 +575,9 @@ _STATIC_DATA_API_TYPES = _NON_MATRIX_ATTR_API_TYPES | {
 _STATIC_DATA_TYPE = {}
 _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
 
-# (attr, "typed" or "Tdata") while `Attribute.data_type` runs the fallback hook of
-# attr's node: the answer its getAttr query gave, see `_queried_data_type`
+# (attr, "typed" or "Tdata", node) while `Attribute.data_type` runs the fallback
+# hook of attr's node: the answer its getAttr query gave, and the node whose class
+# hook that call runs first (`_hook_node`), see `_queried_data_type`
 _FALLBACK_QUERY = None
 
 # the rig DSL's `Node` wrapper class, registered by `rig._internal.node` when it
@@ -584,6 +585,8 @@ _FALLBACK_QUERY = None
 # name of the node an instance of exactly that class wraps, which is what its
 # `__getattr__` forwards `name` to; any other owner is named as before
 _NODE_WRAPPER_CLASS = None
+# that class's own fallback hook, which forwards to the wrapped node's
+_NODE_WRAPPER_HOOK  = None
 
 
 def _clear_static_data_type(*args) -> None:
@@ -591,11 +594,30 @@ def _clear_static_data_type(*args) -> None:
     _STATIC_DATA_TYPE.clear()
 
 
-def _queried_data_type(attr: Any) -> str | None:
+def _hook_node(node: Any) -> Any:
+    """The node whose class's fallback hook `node._attr_data_type_fallback` runs
+    first, or None if another hook can run first: a patch of the `Node` wrapper's
+    forwarding hook, a `Node` subclass, or a hook set on the node instance."""
+    try:
+        if type(node) is _NODE_WRAPPER_CLASS:
+            if _NODE_WRAPPER_CLASS._attr_data_type_fallback is not _NODE_WRAPPER_HOOK:
+                return None
+            node = node._dg_node
+        elif _NODE_WRAPPER_CLASS is None or isinstance(node, _NODE_WRAPPER_CLASS):
+            return None
+        if "_attr_data_type_fallback" in vars(node):
+            return None
+        return node
+    except Exception:
+        return None
+
+
+def _queried_data_type(attr: Any, node: Any) -> str | None:
     """The type `Attribute.data_type` just queried for `attr` before calling the
-    fallback hook that is running for it, or None outside such a call."""
+    fallback hook that is running for it, if that call runs the class hook of
+    `node` first, or None outside such a call."""
     query = _FALLBACK_QUERY
-    if query is not None and query[0] is attr:
+    if query is not None and query[0] is attr and query[2] is node:
         return query[1]
     return None
 
@@ -1133,11 +1155,13 @@ class Attribute(str):
         # e.g. if a choice node's inputs are message attrs, its output will be resolved
         # to "typed" rather than "message"
         elif typ in ("typed", "Tdata"):
-            # the hook can reuse this answer instead of querying it again
-            outer           = _FALLBACK_QUERY
-            _FALLBACK_QUERY = (self, typ)
+            # the hook can reuse this answer instead of querying it again, if no
+            # wrapper or instance hook can run before the node's class hook
+            outer = _FALLBACK_QUERY
             try:
-                return self.node._attr_data_type_fallback(self)
+                node            = self.node
+                _FALLBACK_QUERY = (self, typ, _hook_node(node))
+                return node._attr_data_type_fallback(self)
             finally:
                 _FALLBACK_QUERY = outer
 

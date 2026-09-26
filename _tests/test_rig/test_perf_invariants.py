@@ -1925,11 +1925,20 @@ class TestFallbackQueryReuse(MayaTestCase):
     def test_answer_is_only_for_the_running_call(self):
         pick = Node.create("choice", name="pick")
         attr = _base.Attribute("pick.output")
-        self.assertIsNone(_base._queried_data_type(attr))
-        with mock.patch.object(_base, "_FALLBACK_QUERY", (attr, "Tdata")):
-            self.assertEqual(_base._queried_data_type(attr), "Tdata")
-            self.assertIsNone(_base._queried_data_type(_base.Attribute("pick.output")))
-            self.assertIsNone(_base._queried_data_type(pick.output))
+        node = pick._dg_node
+        self.assertIsNone(_base._queried_data_type(attr, node))
+        with mock.patch.object(_base, "_FALLBACK_QUERY", (attr, "Tdata", node)):
+            self.assertEqual(_base._queried_data_type(attr, node), "Tdata")
+            self.assertIsNone(
+                _base._queried_data_type(_base.Attribute("pick.output"), node)
+            )
+            self.assertIsNone(_base._queried_data_type(pick.output, node))
+            # nor for a hook running on another node than the call's
+            other = Node.create("choice", name="other")._dg_node
+            self.assertIsNone(_base._queried_data_type(attr, other))
+            self.assertIsNone(_base._queried_data_type(attr, None))
+        with mock.patch.object(_base, "_FALLBACK_QUERY", (attr, "Tdata", None)):
+            self.assertIsNone(_base._queried_data_type(attr, node))
         # the hook called outside data_type queries the type itself
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
             self.assertEqual(PyNode("pick")._attr_data_type_fallback(attr), "Tdata")
@@ -1982,6 +1991,54 @@ class TestFallbackQueryReuse(MayaTestCase):
         with mock.patch.object(DGNode, "_attr_data_type_fallback", connecting):
             self.assertEqual(self._data_type(Plug("pick.input[5]")), ("double3", 2))
         self.assertEqual(self._data_type(Plug("pick.input[6]")), ("Tdata", 1))
+
+    def test_wrapper_and_instance_hooks_query_again(self):
+        Node.create("transform", name="src")
+        for index in range(6):
+            cmds.createNode("network", name=f"net{index}")
+            cmds.addAttr(f"net{index}", ln="generic", at="typed")
+        forward   = Node._attr_data_type_fallback
+        base_hook = DGNode._attr_data_type_fallback
+        # the hook that runs first changes the attr, then reaches DGNode's hook
+        connected = ("double3", 2)
+
+        # a class-level patch of the Node wrapper's forwarding hook
+        wrapper = mock.patch.object(
+            Node, "_attr_data_type_fallback", _connecting_hook(forward)
+        )
+        with wrapper:
+            self.assertEqual(self._data_type(Plug("net0.generic")), connected)
+
+        # a Node subclass overriding the forwarding hook
+        class _ConnectingNode(Node):
+            _attr_data_type_fallback = _connecting_hook(forward)
+
+        plug = Plug("net1.generic")
+        plug.__dict__["_node"] = _ConnectingNode("net1")
+        self.assertEqual(self._data_type(plug), connected)
+
+        # a hook set on one node instance, owned directly or through a Node
+        attr = _base.Attribute("net2.generic")
+        attr._node = PyNode("net2")
+        plug = _named(Plug("net3.generic"))
+        for owned, owner in ((attr, attr._node), (plug, plug.node._dg_node)):
+            with self.subTest(owner=type(owned).__name__):
+                hook     = _connecting_hook(base_hook)
+                instance = mock.patch.object(
+                    owner,
+                    "_attr_data_type_fallback",
+                    lambda attr, owner=owner: hook(owner, attr),
+                    create=True,
+                )
+                with instance:
+                    self.assertEqual(self._data_type(owned), connected)
+                self.assertNotIn("_attr_data_type_fallback", vars(owner))
+
+        # unpatched, both kinds of owner reuse the query again
+        attr = _base.Attribute("net4.generic")
+        attr._node = PyNode("net4")
+        self.assertEqual(self._data_type(attr), ("Tdata", 1))
+        self.assertEqual(self._data_type(Plug("net5.generic")), ("Tdata", 1))
 
     def test_held_plugs_across_delete_undo_rename_reuse(self):
         cmds.undoInfo(state=True, infinity=True)

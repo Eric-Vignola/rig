@@ -394,8 +394,10 @@ class Node:
 
 
 # ``Attribute.full_name`` reads a Node's name from the wrapped ``DGNode`` directly
-# instead of through the ``__getattr__`` forwarding.
+# instead of through the ``__getattr__`` forwarding. ``Attribute.data_type`` lets
+# the wrapped node's hook reuse its query only through this forwarding hook.
 _base._NODE_WRAPPER_CLASS = Node
+_base._NODE_WRAPPER_HOOK  = Node._attr_data_type_fallback
 
 
 # --------------------------------------------------------------------- #
