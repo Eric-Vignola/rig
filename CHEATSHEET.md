@@ -923,7 +923,11 @@ except ValueError as err:
 
 `prune_memoize_caches()` walks every `@memoize` and `NodeOp` cache and
 drops entries whose nodes are gone; `cleanup()` calls it for you, and so does
-every new scene and file open.
+every reference unload, reload and remove. A new scene or a file open clears
+every cache instead, since it frees every node they could hold: a `@memoize`
+function that returned a plain value, such as a node name, runs again in the
+new scene. A deleted node's entry is still dropped only by its next lookup or
+by a prune.
 
 ```python
 cmds.delete("add1", "add2", "add3")
