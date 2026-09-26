@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rig._internal.operands import operands
 from rig._internal.types import _is_list, math_type
 from rig.euler import (
     slerp as _euler_slerp,
@@ -109,6 +110,7 @@ def _unsupported(verb: str, math_kind: str, hint: str = "") -> None:
 # --------------------------------------------------------------------- #
 
 
+@operands
 def dist(a: Any, b: Any) -> Any:
     """``dist(a, b)`` -- Euclidean distance between two vectors or two
     matrices (translation-to-translation). Cross-type ``dist(vec, matrix)``
@@ -121,6 +123,7 @@ def dist(a: Any, b: Any) -> Any:
     _unsupported("dist", kind)
 
 
+@operands
 def lerp(a: Any, b: Any, weight: Any = 0.5) -> Any:
     """``lerp(a, b, weight=0.5)`` -- linear blend. Supports scalar, vector
     (component-wise) and matrix (raw element blend). Rejects rotations --
@@ -135,6 +138,7 @@ def lerp(a: Any, b: Any, weight: Any = 0.5) -> Any:
     _unsupported("lerp", kind)
 
 
+@operands
 def slerp(a: Any, b: Any, weight: Any = 0.5) -> Any:
     """``slerp(a, b, weight=0.5)`` -- spherical / rotation-aware blend.
     Supports vector, quaternion, euler and matrix (matrix = ORIENTATION-ONLY,
@@ -151,6 +155,7 @@ def slerp(a: Any, b: Any, weight: Any = 0.5) -> Any:
     _unsupported("slerp", kind)
 
 
+@operands
 def blend(a: Any, b: Any, weight: Any = 0.5) -> Any:
     """``blend(a, b, weight=0.5)`` -- full-transform interpolation. For a
     matrix this blends T/R/S/shear via ``blendMatrix`` (linear translate &
@@ -163,6 +168,7 @@ def blend(a: Any, b: Any, weight: Any = 0.5) -> Any:
     _unsupported("blend", kind)
 
 
+@operands
 def elerp(a: Any, b: Any, weight: Any = 0.5) -> Any:
     """``elerp(a, b, weight=0.5)`` -- exponential blend ``a^(1-w) * b^w``
     (scalar or vector). Rejects rotations -- use :func:`slerp`."""
@@ -174,6 +180,7 @@ def elerp(a: Any, b: Any, weight: Any = 0.5) -> Any:
     _unsupported("elerp", kind)
 
 
+@operands
 def angle(a: Any, b: Any) -> Any:
     """``angle(a, b)`` -- unsigned angle (radians) between two vectors or
     the shortest-arc angle between two quaternions."""
@@ -185,6 +192,7 @@ def angle(a: Any, b: Any) -> Any:
     _unsupported("angle", kind)
 
 
+@operands
 def angle_degrees(a: Any, b: Any) -> Any:
     """``angle_degrees(a, b)`` -- :func:`angle` expressed in degrees."""
     kind = _classify(a)
@@ -200,6 +208,7 @@ def angle_degrees(a: Any, b: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 def normalize(x: Any) -> Any:
     """``normalize(x)`` -- unit-length for a vector / quaternion, or
     orthonormalise (drop scale + shear) for a matrix."""
@@ -213,6 +222,7 @@ def normalize(x: Any) -> Any:
     _unsupported("normalize", kind)
 
 
+@operands
 def inverse(x: Any) -> Any:
     """``inverse(x)`` -- matrix inverse or quaternion inverse."""
     kind = _classify(x)
@@ -228,6 +238,7 @@ def inverse(x: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands(config=("rotate_order",))
 def to_euler(token: Any, rotate_order: Any = None) -> Any:
     """``to_euler(token, rotate_order=None)`` -- convert a quaternion or a
     matrix to euler angles honouring ``rotate_order``."""
@@ -239,6 +250,7 @@ def to_euler(token: Any, rotate_order: Any = None) -> Any:
     _unsupported("to_euler", kind)
 
 
+@operands(config=("rotate_order",))
 def to_quaternion(token: Any, rotate_order: Any = None) -> Any:
     """``to_quaternion(token, rotate_order=None)`` -- convert an euler
     (honouring ``rotate_order``) or a matrix to a quaternion."""
@@ -250,6 +262,7 @@ def to_quaternion(token: Any, rotate_order: Any = None) -> Any:
     _unsupported("to_quaternion", kind)
 
 
+@operands(config=("rotate_order",))
 def to_matrix(token: Any, rotate_order: Any = None) -> Any:
     """``to_matrix(token, rotate_order=None)`` -- convert an euler
     (honouring ``rotate_order``) or a quaternion to a rotation matrix.

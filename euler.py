@@ -20,6 +20,7 @@ from typing import Any, Optional
 from rig._internal.container import container
 from rig._internal.math_nodes import _euler_to_quaternion, _quaternion_to_euler
 from rig._internal.memoize import memoize, vectorize
+from rig._internal.operands import operands
 from rig.matrix import compose
 
 
@@ -31,6 +32,7 @@ __all__ = [
 ]
 
 
+@operands(config=("rotate_order",))
 @vectorize
 @memoize
 def to_matrix(token: Any, rotate_order: Optional[Any] = None) -> Any:
@@ -40,6 +42,7 @@ def to_matrix(token: Any, rotate_order: Optional[Any] = None) -> Any:
     return compose(rotate=token, rotate_order=rotate_order)
 
 
+@operands(config=("rotate_order",))
 @vectorize
 @memoize
 def to_quaternion(token: Any, rotate_order: Optional[Any] = None) -> Any:
@@ -48,6 +51,7 @@ def to_quaternion(token: Any, rotate_order: Optional[Any] = None) -> Any:
     return _euler_to_quaternion(token, rotate_order=rotate_order)
 
 
+@operands(config=("rotate_order0", "rotate_order1"))
 @vectorize
 @memoize
 def reorder(token: Any, rotate_order0: Any, rotate_order1: Any) -> Any:
@@ -63,6 +67,7 @@ def reorder(token: Any, rotate_order0: Any, rotate_order1: Any) -> Any:
     return _quaternion_to_euler(quat, rotate_order=rotate_order1)
 
 
+@operands
 @vectorize
 @memoize
 def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
