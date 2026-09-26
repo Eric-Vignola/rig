@@ -544,11 +544,32 @@ class TestSetTypeArgument(MayaTestCase):
                 with self.assertRaises(InjectionError) as ctx:
                     plug << 0.5
                 self.assertEqual(str(ctx.exception), f"Cannot set {name!r}: {message}")
-                for action in (lambda: plug.set(0.25), lambda: plug << lock):
-                    with self.assertRaises(RuntimeError) as ctx:
-                        action()
-                    self.assertNotIsInstance(ctx.exception, InjectionError)
-                    self.assertEqual(str(ctx.exception), message)
+                with self.assertRaises(RuntimeError) as ctx:
+                    plug.set(0.25)
+                self.assertNotIsInstance(ctx.exception, InjectionError)
+                self.assertEqual(str(ctx.exception), message)
+                # A modifier swallows that error, as v2.0.0a2 does: it logs it
+                # and leaves the plug unlocked, although the plug can be locked.
+                with self.assertLogs("rig.spec._base", level="DEBUG") as logs:
+                    self.assertIs(plug << lock, plug)
+                self.assertEqual(
+                    logs.output,
+                    [f"DEBUG:rig.spec._base:set modifier on {name} failed: {message}"],
+                )
+                self.assertFalse(cmds.getAttr(name, lock=True))
+                cmds.setAttr(name, lock=True)
+                self.assertTrue(cmds.getAttr(name, lock=True))
+
+    def test_lock_modifier_on_array_element_child(self):
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="items", at="compound", nc=1, multi=True)
+        cmds.addAttr(net, ln="weight", at="double", p="items")
+        plug = Plug("net.items[3].weight")
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            self.assertIs(plug << lock, plug)
+        self.assertEqual(len(_type_queries(probe)), 1)
+        self.assertTrue(cmds.getAttr("net.items[3].weight", lock=True))
+        self.assertEqual(cmds.getAttr("net.items", multiIndices=True), [3])
 
     def test_scalar_set_makes_no_type_query(self):
         loc = Node.create("transform", name="loc")
@@ -638,25 +659,32 @@ class TestSetTypeArgument(MayaTestCase):
                 return (type(exc), str(exc))
             return None
 
+        def network(name):
+            node = cmds.createNode("network", name=name)
+            cmds.addAttr(node, ln="dbl", at="double")
+            cmds.addAttr(node, ln="cmp", at="double3")
+            for axis in "XYZ":
+                cmds.addAttr(node, ln=f"cmp{axis}", at="double", p="cmp")
+            return node
+
         cmds.undoInfo(state=True, infinity=True)
-        net = cmds.createNode("network", name="net")
-        cmds.addAttr(net, ln="dbl", at="double")
-        cmds.addAttr(net, ln="cmp", at="double3")
-        for axis in "XYZ":
-            cmds.addAttr(net, ln=f"cmp{axis}", at="double", p="cmp")
+        network("net")
         loc = Node.create("transform", name="loc")
         cmds.connectAttr("net.dbl", "loc.tx")
+        # The deleted-node case gets a node of its own: deleting net would
+        # also disconnect loc.tx and leave the other cases no node to set.
+        gone = Plug(f"{network('gone')}.cmpY")
+        str(gone)
+        cmds.delete("gone")
         cases = [
-            (lambda: loc.tx.set(1.0), True),
+            (lambda: loc.tx.set(1.0), True),  # connected destination
             (lambda: Plug("net.dbl").set("text"), True),
             (lambda: Plug("net.cmp").set(1.0), True),
-            (lambda: Plug("net.cmpX").set(1.0, 2.0), True),
-            (lambda: Plug("net.dbl").set(), True),
+            (lambda: Plug("net.cmpX").set(1.0, 2.0), False),  # Maya drops the extra value
+            (lambda: Plug("net.dbl").set(), False),  # no value: Maya sets nothing
+            (lambda: gone.set(1.0), True),
         ]
-        gone = Plug("net.cmpY")
-        str(gone)
-        cmds.delete(net)
-        cases.append((lambda: gone.set(1.0), True))
+        self.assertTrue(cmds.isConnected("net.dbl", "loc.tx"))
         for index, (action, raises) in enumerate(cases):
             with self.subTest(case=index):
                 fast = outcome(action)
@@ -666,6 +694,32 @@ class TestSetTypeArgument(MayaTestCase):
                     legacy = outcome(action)
                 self.assertEqual(fast, legacy)
                 self.assertEqual(fast is not None, raises)
+        self.assertTrue(cmds.isConnected("net.dbl", "loc.tx"))
+        self.assertEqual(cmds.getAttr("net.cmp"), [(1.0, 0.0, 0.0)])
+
+    def test_set_on_a_connected_destination_keeps_the_connection(self):
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="dbl", at="double")
+        cmds.setAttr("net.dbl", 7.0)
+        loc = Node.create("transform", name="loc")
+        cmds.connectAttr("net.dbl", "loc.tx")
+        message = "setAttr: The attribute 'loc.translateX' is locked or connected and cannot be modified.\n"
+        for lookup, plug in (
+            ("loc.tx", loc.tx),
+            ("Plug('loc.tx')", Plug("loc.tx")),
+            ("Plug('loc.translateX')", Plug("loc.translateX")),
+        ):
+            with self.subTest(lookup=lookup):
+                with self.assertRaises(RuntimeError) as ctx:
+                    plug.set(1.0)
+                self.assertEqual(str(ctx.exception), message)
+                self.assertTrue(cmds.isConnected("net.dbl", "loc.tx"))
+                self.assertEqual(cmds.getAttr("loc.tx"), 7.0)
+        # ``<<`` breaks the incoming connection to assign the value
+        self.assertEqual(str(loc.tx << 4.0), "loc.translateX")
+        self.assertFalse(cmds.isConnected("net.dbl", "loc.tx"))
+        self.assertEqual(cmds.getAttr("loc.tx"), 4.0)
+        self.assertEqual(cmds.getAttr("net.dbl"), 7.0)
 
 
 class TestStaticDataTypeCache(MayaTestCase):
@@ -1286,12 +1340,53 @@ class TestPlugNodeReuse(MayaTestCase):
         PyNode(_mobject(cmds.createNode("transform", name="S", parent=top)))
         other = cmds.createNode("transform", name="T2")
         cmds.parent("T1|S", other, add=True, relative=True)
-        for plug in (Node("|T2|S").visibility, Node("|T2|S").t[0]):
-            with self.subTest(plug=plug.name):
-                self.assertEqual(self._casts(lambda: str(plug)), 1)
-                self.assertTrue(str(plug).startswith("T1|S."))
+        # ``[index]`` resolves the parent plug's owner while it builds the
+        # child (as v2.0.0a2 does), so the one fresh cast is counted over
+        # building and naming the plug, not over str() alone.
+        for attr, lookup in (
+            ("visibility", lambda: Node("|T2|S").visibility),
+            ("translateX", lambda: Node("|T2|S").t[0]),
+        ):
+            with self.subTest(plug=attr):
+                names = []
+                self.assertEqual(self._casts(lambda: names.append(str(lookup()))), 1)
+                self.assertEqual(names, [f"T1|S.{attr}"])
+                plug = lookup()
+                self.assertEqual(plug.name, attr)
+                self.assertEqual(str(plug), f"T1|S.{attr}")
                 self.assertEqual(plug.node._dg_node.long_name, "|T1|S")
         self.assertEqual(self._casts(lambda: str(Node("|T1|S").visibility)), 0)
+
+    def test_instanced_plug_names_match_v2_0_0a2(self):
+        top = cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="S", parent=top)
+        other = cmds.createNode("transform", name="T2")
+        cmds.parent("T1|S", other, add=True, relative=True)
+        for path in ("|T1|S", "|T2|S"):
+            for lookup, get, attr in (
+                ("visibility", lambda n: n.visibility, "visibility"),
+                ("v", lambda n: n.v, "visibility"),
+                ("t", lambda n: n.t, "translate"),
+                ("tx", lambda n: n.tx, "translateX"),
+                ("t[0]", lambda n: n.t[0], "translateX"),
+                ("t.translateY", lambda n: n.t.translateY, "translateY"),
+                ("t[:][2]", lambda n: n.t[:][2], "translateZ"),
+                ("translate.child(1)", lambda n: n.translate.child(1), "translateY"),
+            ):
+                with self.subTest(path=path, lookup=lookup):
+                    plug = get(Node(path))
+                    self.assertEqual(str(plug), f"T1|S.{attr}")
+                    self.assertEqual(plug.full_name, f"T1|S.{attr}")
+                    self.assertIs(type(plug.node), Node)
+                    self.assertEqual(plug.node.long_name, "|T1|S")
+        for name in ("|T2|S.visibility", "T1|S.visibility"):
+            with self.subTest(name=name):
+                self.assertEqual(str(Plug(name)), "T1|S.visibility")
+        self.assertEqual(str(Node("|T2|S")), "T2|S")
+        # the same Maya plug read through either path is one key
+        first, second = Node("|T1|S").visibility, Node("|T2|S").visibility
+        self.assertEqual(hash(first), hash(second))
+        self.assertEqual(len({first: 1, second: 2}), 1)
 
     def test_user_chosen_class_not_seeded(self):
         plug = Node(Transform(self._known_type("joint"))).tx
