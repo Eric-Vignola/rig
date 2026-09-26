@@ -479,6 +479,25 @@ class TestReviewFixes(MayaTestCase):
         cmds.undo()
         self.assertEqual(str(held), "T2|S.visibility")
 
+    def test_rshift_between_plugs_says_how_to_connect(self):
+        a = Node(cmds.createNode("transform", name="a"))
+        b = Node(cmds.createNode("transform", name="b"))
+        cmds.addAttr("b", longName="fresh", attributeType="double")
+        for target in (b.ty, b.find_attr("ty"), b.fresh, Plug("b.tz")):
+            with self.subTest(target=f"{type(target).__name__} {target}"):
+                with self.assertRaisesRegex(
+                    TypeError,
+                    rf"^'>>' does not connect plugs: write {target} << a\.translateX, "
+                    rf"or a\.translateX\.connect\({target}, force=True\)$",
+                ):
+                    a.tx >> target
+        self.assertIsNone(cmds.listConnections("b", source=True, destination=False))
+        self.assertEqual(
+            sorted(cmds.listAttr("a", userDefined=True) or []), [],
+        )
+        # a plain name is still a clone target
+        self.assertEqual(str(a.tx >> "txCopy"), "a.txCopy")
+
     def test_shape_attr_read_through_a_transform_follows_the_shape(self):
         xf   = cmds.polyCube(name="c", ch=False)[0]
         node = Node(xf)

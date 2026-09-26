@@ -628,6 +628,9 @@ class Plug(Attribute):
         ``vtx[:8] >> Tag("x")`` (a collection spec) => query membership:
         the native ids of these components that are in the collection.
 
+        ``plug >> other_plug`` => ``TypeError`` naming ``other_plug << plug``
+        (a plug is a str too, but never a clone name).
+
         Anything else => ``TypeError`` (use ``<<`` to connect).
         """
         from rig._internal.list import PlugList
@@ -716,6 +719,13 @@ class Plug(Attribute):
             if leaf_frame.container_node is None:
                 return self
             return self.__rshift__(leaf_frame.container_node)
+
+        # a plug is a str too, but not a clone name: '>>' never connects
+        if isinstance(other, Attribute):
+            raise TypeError(
+                f"'>>' does not connect plugs: write {other} << {self}, or "
+                f"{self}.connect({other}, force=True)"
+            )
 
         if isinstance(other, str):
             return self._clone_as(other)
