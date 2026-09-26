@@ -509,7 +509,7 @@ class _ContainerStack:
             # (and their entire subtrees) would orphan to the scene root
             # under ``flatten_containers=False``.
             if self._stack:
-                self._add(container_node, created=True)
+                self._add(container_node)
 
         frame = _StackFrame(
             name            = args["name"],
@@ -637,18 +637,17 @@ class _ContainerStack:
 
         # Add to the leaf real container (and record on every frame) by default.
         if container is None or container:
-            self._add(node, created=True)
+            self._add(node)
 
         return node
 
     def add(self, node: Any) -> None:
         """Add ``node`` (or list of nodes) to the leaf-level real container,
         and record its UUID in every frame on the stack."""
-        self._add(node, created=False)
+        self._add(node)
 
-    def _add(self, node: Any, created: bool) -> None:
-        """:meth:`add`. ``created`` says every :class:`Node` in ``node`` was
-        just created (kept for the callers; a held node is read either way)."""
+    def _add(self, node: Any) -> None:
+        """:meth:`add`, for a node just created or one the caller holds."""
         if not self._stack:
             return
 
