@@ -694,6 +694,16 @@ def _full_name_buffer(attr: Any) -> Any:
     return copy
 
 
+def _point_count(attr: Any) -> int:
+    """The point count of the geometry node of `attr`, a component plug (it bounds
+    a component slice). Read through the node's own class: the owner can be a
+    class the user chose (``Node(DAGNode(mesh)).vtx[0:2]``), which has none."""
+    node = _unwrapped(attr.node)
+    if not hasattr(type(node), "num_weight_points"):
+        node = PyNode(attr.plug.node())
+    return node.num_weight_points
+
+
 def _node_name(node: Any) -> str:
     """The name `Attribute.full_name` gives `node`, a plug's owner (a `Node` wrapper
     is named by the node it wraps). Anything but a str from the `name` property is
@@ -1285,7 +1295,7 @@ class Attribute(str):
                 "kCurveCVComponent",
                 "kSurfaceCVComponent",
             ):
-                count = self.node.num_weight_points
+                count = _point_count(self)
                 ids   = np.where(ids < 0, ids + count, ids)
                 if ids.size and (ids.min() < 0 or ids.max() >= count):
                     raise IndexError(f"{self} index out of range for {count} points")
@@ -1303,7 +1313,7 @@ class Attribute(str):
                 "kCurveCVComponent",
                 "kSurfaceCVComponent",
             ):
-                start, stop, step = key.indices(self.node.num_weight_points)
+                start, stop, step = key.indices(_point_count(self))
 
             # default behavior for a multi attribute
             else:
