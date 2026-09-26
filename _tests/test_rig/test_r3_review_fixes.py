@@ -568,3 +568,33 @@ class TestCmdsReadsTheHeldInstance(MayaTestCase):
             with self.subTest(plug=str(plug)):
                 self.assertEqual(str.__str__(plug), plug.plug.name())
 
+
+class TestComponentSliceOnAChosenClass(MayaTestCase):
+    """A component slice on a shape wrapped in a generic class reads the point
+    count through the node's own class. The owner rule (C2) keeps the class the
+    user chose, which has no num_weight_points: slices raised AttributeError
+    'Attribute not found: pcShape.num_weight_points'."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_slices_and_fancy_indexing(self):
+        from rig.nodetypes import DAGNode, DGNode
+
+        cmds.polyCube(name="pc", constructionHistory=False)
+        cmds.nurbsPlane(name="np", patchesU=1, patchesV=1, constructionHistory=False)
+        expected = ["pcShape.controlPoints[0]", "pcShape.controlPoints[1]"]
+        for cls in (DAGNode, DGNode):
+            with self.subTest(cls=cls.__name__):
+                node = Node(cls("pcShape"))
+                self.assertIs(type(node.vtx.node._dg_node), cls)
+                self.assertEqual([str(p) for p in node.vtx[0:2]], expected)
+                self.assertEqual([str(p) for p in node.vtx[[0, 1]]], expected)
+                self.assertEqual([str(p) for p in node.controlPoints[0:2]], expected)
+                self.assertEqual(len(node.vtx[:]), 8)
+                with self.assertRaisesRegex(IndexError, "index out of range for 8 points"):
+                    node.vtx[[8]]
+        surface = Node(DAGNode("npShape"))
+        self.assertEqual(
+            [str(p) for p in surface.controlPoints[0:2]],
+            ["npShape.controlPoints[0]", "npShape.controlPoints[1]"],
+        )
