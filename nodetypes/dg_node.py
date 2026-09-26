@@ -7,6 +7,7 @@ from typing import Any, Sequence
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _named_through_owner,
     _queried_data_type,
     Attribute,
     get_custom_type,
@@ -498,6 +499,7 @@ class DGNode(metaclass=NodeMeta):
         # dynamic and extension attrs can be deleted and re-added.
         if plug.node() == self._mobject:
             attr_obj.__dict__["_node"] = self
+            attr_obj = _named_through_owner(attr_obj)
             if self._fn_set.attributeClass(attr_obj.mobject) == _NORMAL_ATTR:
                 # with the instanced indices: an element of a world space attr
                 # (``worldMatrix[1]``) is otherwise named like its array

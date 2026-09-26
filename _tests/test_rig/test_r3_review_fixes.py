@@ -314,3 +314,257 @@ class TestFindAttrCacheOfInstancedElements(MayaTestCase):
         node = PyNode("a")
         node.find_attr("worldMatrix[0]")
         self.assertEqual(str(Node(node).worldMatrix[0]), "a.worldMatrix")
+
+
+def _surface(name="ball"):
+    """A NURBS sphere; returns its shape name."""
+    surf = cmds.sphere(name=name, constructionHistory=False)[0]
+    return cmds.listRelatives(surf, shapes=True)[0]
+
+
+class TestComponentPlugOwner(MayaTestCase):
+    """The owner rule (D-A) reaches ComponentPlugs (NURBS-surface cv, lattice pt).
+    At 29a4128 a Node-read ComponentPlug and its elements had no owner: their
+    node was cast again (first-path naming), and the freed-node guards missed
+    them (garbage names, or a Maya crash, after a new scene)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_handle_rows_elements_and_children_share_the_node(self):
+        node = Node(_surface())
+        self.assertIs(node.cv.node, node)
+        self.assertIs(node.cv[1, 2].node, node)
+        self.assertIs(node.cv[1][2].node, node)
+        self.assertTrue(all(p.node is node for p in node.cv[1]))
+        self.assertIs(node.cv[1, 2].xValue.node, node)
+        self.assertIs(node.cv[1, 2].child(0).node, node)
+        lattice = cmds.lattice(cmds.polyCube(name="box", ch=False)[0], name="ffd")[1]
+        pts = Node(cmds.listRelatives(lattice, shapes=True)[0])
+        self.assertIs(pts.pt.node, pts)
+        self.assertIs(pts.pt[1, 0, 1].node, pts)
+
+    def test_an_instanced_surface_is_named_through_the_held_path(self):
+        shape = _surface()
+        cmds.createNode("transform", name="G2")
+        cmds.parent(f"|ball|{shape}", "G2", add=True, shape=True)
+        second = Node(f"|G2|{shape}")
+        self.assertEqual(str(second.visibility), f"G2|{shape}.visibility")
+        self.assertEqual(str(second.cv), f"G2|{shape}.controlPoints")
+        self.assertEqual(str(second.cv[1, 2]), f"G2|{shape}.cv[1][2]")
+        self.assertEqual(second.cv[1, 2].node.long_name, f"|G2|{shape}")
+        first = Node(f"|ball|{shape}")
+        self.assertEqual(str(first.cv[1, 2]), f"ball|{shape}.cv[1][2]")
+        # one Maya plug all the same
+        self.assertTrue(second.cv[1, 2].equals(first.cv[1, 2]))
+        self.assertEqual(hash(second.cv[1, 2]), hash(first.cv[1, 2]))
+
+
+class TestTypedChildrenShareTheOwner(MayaTestCase):
+    """A typed Attribute's children, elements and parent are owned by the node
+    object it holds (D-A in the typed layer). They had no owner: named through
+    the first path, and not guarded once their node was freed."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_children_elements_and_parent(self):
+        _instanced_locator()
+        cmds.addAttr("|T1|S", longName="arr", attributeType="double", multi=True)
+        cmds.setAttr("|T1|S.arr[3]", 1.0)
+        node = PyNode("|T2|S")
+        lp = node.find_attr("localPosition")
+        for label, attr, name in (
+            ("child(0)", lp.child(0), "T2|S.localPositionX"),
+            ("child by name", lp.localPositionY, "T2|S.localPositionY"),
+            ("parent", node.find_attr("lpz").get_parent(), "T2|S.localPosition"),
+            ("logical element", node.find_attr("worldMatrix").element_by_logical_index(1),
+             "T2|S.worldMatrix"),
+            ("physical element", node.find_attr("arr").element_by_physical_index(0),
+             "T2|S.arr[3]"),
+            ("index", node.find_attr("instObjGroups")[1], "T2|S.instObjGroups"),
+        ):
+            with self.subTest(attr=label):
+                self.assertIs(attr.node, node)
+                self.assertEqual(str(attr), name)
+        # a node with one path, and an attr of another node, as before
+        cmds.createNode("plusMinusAverage", name="pma")
+        element = PyNode("pma").find_attr("input3D")[1]
+        self.assertEqual(str(element.input3Dx), "pma.input3D[1].input3Dx")
+        cmds.createNode("transform", name="dst")
+        cmds.connectAttr("T1.tx", "dst.tx")
+        (source,) = PyNode("dst").find_attr("tx").get_connected_attrs(dst=False)
+        self.assertIsNone(source.__dict__["_node"])
+        self.assertEqual(str(source), "T1.translateX")
+
+
+class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
+    """lift(attr), Plug(attr) and PlugList([attr]) of a typed Attribute keep the node
+    object the attr holds. They re-resolved its MPlug (or its name), so a plug of
+    an instanced node switched to the first path, and a per-instance array
+    connected the first instance's element."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_the_instance_asked_for_is_kept(self):
+        from rig import PlugList, lift
+
+        _instanced_locator()
+        typed = PyNode("|T2|S").find_attr("worldMatrix")
+        for label, make in (
+            ("lift", lift),
+            ("Plug", Plug),
+            ("PlugList", lambda attr: PlugList([attr])[0]),
+        ):
+            with self.subTest(via=label):
+                plug = make(typed)
+                self.assertIs(type(plug), Plug)
+                self.assertEqual(str(plug), "T2|S.worldMatrix")
+                self.assertTrue(plug.equals(typed))
+                self.assertIs(plug.node._dg_node, typed.node)
+                dst = cmds.createNode("multMatrix")
+                Node(dst).matrixIn[0] << plug
+                sel = OpenMaya.MSelectionList()
+                sel.add(f"{dst}.matrixIn[0]")
+                self.assertEqual(sel.getPlug(0).source().logicalIndex(), 1)
+                self.assertEqual(cmds.getAttr(f"{dst}.matrixSum")[12], 7.0)
+        visibility = PyNode("|T2|S").find_attr("v")
+        self.assertEqual(str(lift(visibility)), "T2|S.visibility")
+        self.assertEqual(lift(visibility).node.long_name, "|T2|S")
+
+    def test_a_node_of_a_plug_wraps_its_typed_node(self):
+        from rig.nodetypes import Transform
+
+        node = Node(cmds.createNode("transform", name="a"))
+        self.assertIs(Node(node.tx)._dg_node, node._dg_node)
+        self.assertIs(type(Node(node.tx) >> None), Transform)
+        self.assertIs(type(Node(PyNode("a").find_attr("tx")) >> None), Transform)
+
+
+class TestHeldAcrossAFreeRaise(MayaTestCase):
+    """Component plugs, typed children and elements, and a typed attr lifted into
+    the DSL, all held across a new scene, a file open or a reference unload and
+    never named before it, raise "... already deleted!". They read freed memory:
+    another node's name, a ValueError, or a Maya crash."""
+
+    TEST_START_NEW_SCENE = True
+
+    _FREED = r"^\w+ node \(freed by a new scene, a file open or a reference unload\) already deleted!$"
+
+    def _build(self):
+        cmds.nurbsPlane(name="np", patchesU=3, patchesV=3, constructionHistory=False)
+        cmds.createNode("plusMinusAverage", name="pma")
+        cmds.createNode("transform", name="held")
+
+    def _hold(self, prefix):
+        surface = Node(f"{prefix}npShape")
+        typed   = PyNode(f"{prefix}pma").find_attr("input3D")
+        return {
+            "cv handle":         surface.cv,
+            "cv row":            surface.cv[1][0],
+            "cv element":        surface.cv[2][1],
+            "cv element child":  surface.cv[1, 2].xValue,
+            "typed element":     typed[1],
+            "typed child":       typed[1].input3Dx,
+            "typed get_parent":  PyNode(f"{prefix}held").find_attr("tx").get_parent(),
+            "typed attr":        PyNode(f"{prefix}held").find_attr("ty"),
+        }
+
+    def _assert_freed(self, held):
+        from rig import PlugList, lift
+
+        common = {"str": str, "get": lambda p: p.get(), "Plug": Plug}
+        plug_ops = {"plus 1": lambda p: p + 1, "xValue << 5": lambda p: p.xValue << 5}
+        typed_ops = {"lift": lift, "PlugList": lambda p: PlugList([p])}
+        for name, attr in held.items():
+            ops = dict(common)
+            ops.update(plug_ops if isinstance(attr, Plug) else typed_ops)
+            if name in ("cv handle", "typed attr"):
+                ops["index"] = lambda p: p[0]
+            for label, op in ops.items():
+                with self.subTest(held=name, op=label):
+                    with self.assertRaisesRegex(RuntimeError, self._FREED):
+                        op(attr)
+
+    def test_across_a_new_scene(self):
+        self._build()
+        held = self._hold("")
+        cmds.file(new=True, force=True)
+        for _ in range(200):
+            cmds.createNode("multiplyDivide")
+        self._assert_freed(held)
+
+    def test_across_a_file_open_of_the_same_names(self):
+        folder = tempfile.mkdtemp(prefix="rig_r3_open_")
+        path   = os.path.join(folder, "held.ma").replace(os.sep, "/")
+        try:
+            self._build()
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            held = self._hold("")
+            cmds.file(path, open=True, force=True)
+            self._assert_freed(held)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_across_a_reference_unload(self):
+        folder = tempfile.mkdtemp(prefix="rig_r3_ref_")
+        path   = os.path.join(folder, "held_ref.ma").replace(os.sep, "/")
+        try:
+            self._build()
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            held = self._hold("ref:")
+            cmds.file(unloadReference=cmds.referenceQuery(path, referenceNode=True))
+            self._assert_freed(held)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+class TestCmdsReadsTheHeldInstance(MayaTestCase):
+    """maya.cmds reads a plug's str buffer, not str(): a plug read through an
+    instanced node's path now carries that path in its buffer, so cmds and rig
+    act on the same instance. The buffer was built from the MPlug, which names
+    the first path: cmds.getAttr(Node('|T2|S').worldMatrix) read T1's."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_cmds_and_rig_agree(self):
+        _instanced_locator()
+        second = Node("|T2|S")
+        for label, plug, name, tx in (
+            ("wm", second.worldMatrix, "T2|S.worldMatrix", 7.0),
+            ("wm[0]", second.worldMatrix[0], "T2|S.worldMatrix[0]", 0.0),
+            ("wm[1]", second.worldMatrix[1], "T2|S.worldMatrix", 7.0),
+            ("typed wm", PyNode("|T2|S").find_attr("worldMatrix"), "T2|S.worldMatrix", 7.0),
+            ("typed wm[1]", PyNode("|T2|S").find_attr("worldMatrix")[1], "T2|S.worldMatrix", 7.0),
+        ):
+            with self.subTest(plug=label):
+                self.assertEqual(str.__str__(plug), name)
+                self.assertEqual(cmds.getAttr(plug)[12], tx)
+                self.assertEqual(f"{plug}", name)
+                self.assertEqual("-".join([plug, "x"]), f"{name}-x")
+        for label, plug in (
+            ("v", second.v),
+            ("lp child", second.lp[0]),
+            ("lpx", second.localPositionX),
+            ("iog[1].og", second.instObjGroups[1].objectGroups),
+        ):
+            with self.subTest(plug=label):
+                self.assertEqual(str.__str__(plug), str(plug))
+                self.assertTrue(str(plug).startswith("T2|S."))
+        mm = cmds.createNode("multMatrix")
+        cmds.connectAttr(second.worldMatrix, f"{mm}.matrixIn[0]")
+        self.assertEqual(
+            cmds.listConnections(f"{mm}.matrixIn[0]", plugs=True), ["T2|S.worldMatrix"]
+        )
+
+    def test_a_node_with_one_path_keeps_the_mplug_name(self):
+        cmds.createNode("transform", name="A")
+        cmds.createNode("transform", name="ctrl", parent="A")
+        for plug in (Node("ctrl").tx, Node("A|ctrl").t[0], PyNode("ctrl").find_attr("ty")):
+            with self.subTest(plug=str(plug)):
+                self.assertEqual(str.__str__(plug), plug.plug.name())
+

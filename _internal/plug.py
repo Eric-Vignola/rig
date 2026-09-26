@@ -72,6 +72,8 @@ from rig.nodetypes._base import (
     _MISSING,
     _class_attr,
     _ensure_owner_alive,
+    _full_name_buffer,
+    _owner_is_instanced,
     _path_instance_number,
     _plug_hash,
     _same_plug,
@@ -214,20 +216,28 @@ def _maybe_translate_component(name: str) -> Any:
 
 def _share_node(parent: "Plug", results: Any) -> Any:
     """Hand ``parent``'s owner to the fresh child / element Plugs in ``results``
-    (one Plug or a list of them) and return ``results``.
+    (one Plug or a list of them, changed in place) and return ``results``.
 
     A child or element is on its parent's node, so it is owned by the node
-    object its parent holds, as is. An owner ``parent`` does not hold yet is
-    never resolved here. ComponentPlugs resolve their node as before.
+    object its parent holds, as is (a ComponentPlug element's too), and named
+    through that owner's path (see ``_named_through_owner``, which may hand back
+    a copy). An owner ``parent`` does not hold yet is never resolved here.
     """
-    if type(parent) is not Plug:
+    if not isinstance(parent, Plug):
         return results
     held = parent.__dict__["_node"]
     if held is None:
         return results
-    for result in results if isinstance(results, list) else (results,):
+    many      = isinstance(results, list)
+    instanced = _owner_is_instanced(held)
+    for i, result in enumerate(results if many else (results,)):
         if type(result) is Plug and result.__dict__["_node"] is None:
             result.__dict__["_node"] = held
+            if instanced:
+                result = _full_name_buffer(result)
+                if not many:
+                    return result
+                results[i] = result
     return results
 
 
@@ -254,6 +264,15 @@ class Plug(Attribute):
         # ``Attribute.__init__``, which uses ``MSelectionList.getPlug(0)``
         # -- that raises ``TypeError`` on ``kComponent`` items (which
         # includes ``controlPoints[N]`` itself, not just the alias forms).
+        if isinstance(name_or_mplug, Attribute):
+            # the plug `name_or_mplug` stands for, read through the node object it
+            # holds: ``Plug(PyNode("|T2|S").find_attr("v"))`` is T2's, as the
+            # str buffer ``str.__new__`` took from its name is
+            _ensure_owner_alive(name_or_mplug)
+            source = name_or_mplug.__dict__
+            super().__init__(source["_mplug"])
+            self.__dict__["_node"] = source["_node"]
+            return
         if isinstance(name_or_mplug, str):
             name_or_mplug = _maybe_translate_component(name_or_mplug)
         super().__init__(name_or_mplug)
@@ -1341,9 +1360,12 @@ class ComponentPlug(Plug):
         node_name = self.node.name
         name      = f"{node_name}.{self._comp_alias}" + "".join(f"[{c}]" for c in coords)
         mplug     = _maybe_translate_component(name)
-        return ComponentPlug(
+        element   = ComponentPlug(
             mplug, node_name, self._comp_alias, self._comp_ndims, coords
         )
+        # owned by the node object the handle holds (``self.node`` bound it)
+        element.__dict__["_node"] = self.__dict__["_node"]
+        return element
 
     def _axis_sizes(self) -> tuple:
         """Per-axis count of DISTINCT control points.
