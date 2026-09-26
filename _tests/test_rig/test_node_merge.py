@@ -819,3 +819,41 @@ class TestInstancedPlugIdentity(MayaTestCase):
         self.assertEqual(
             str(decompose(Node("|G2|Y").matrix)), str(pairs["decompose(matrix)"][0])
         )
+
+    def test_unindexed_world_space_array_is_its_paths_element(self):
+        # a static world matrix and a container publish pick the element of the
+        # path the array was read through, as a connection and cmds do
+        import numpy as np
+
+        cmds.createNode("transform", name="G1")
+        cmds.createNode("transform", name="G2")
+        cmds.setAttr("G2.tx", 10)
+        cmds.createNode("transform", name="X", parent="G1")
+        cmds.parent("|G1|X", "G2", add=True)
+        world = np.eye(4)
+        world[3, 0] = 15.0
+        for label, get, tx in (
+            ("G2 wm", lambda x: x.worldMatrix, 5.0),
+            ("G2 wm[1]", lambda x: x.worldMatrix[1], 5.0),
+            ("G2 wm[0]", lambda x: x.worldMatrix[0], 15.0),
+            ("G1 wm", lambda x: Node("|G1|X").worldMatrix, 15.0),
+        ):
+            with self.subTest(plug=label):
+                cmds.setAttr("|G1|X.tx", 0)
+                get(Node("|G2|X")) << world
+                self.assertAlmostEqual(cmds.getAttr("|G1|X.tx"), tx)
+        _instanced_locator()
+        with container("box"):
+            published = container.publish_input(Node("|T2|S").worldMatrix, "wmIn")
+            first     = container.publish_input(Node("|T1|S").worldMatrix, "wmFirst")
+        sources = [
+            cmds.listConnections(str(p), source=True, destination=False, plugs=True)
+            for p in (published, first)
+        ]
+        self.assertEqual(sources, [["T2|S.worldMatrix"], ["T1|S.worldMatrix"]])
+        self.assertEqual(_source_index(str(published)), 1)
+        # a node with one instance, as before
+        single = Node(cmds.createNode("transform", name="single"))
+        with container("box2"):
+            one = container.publish_input(single.worldMatrix, "wmSingle")
+        self.assertEqual(_source_index(str(one)), 0)
