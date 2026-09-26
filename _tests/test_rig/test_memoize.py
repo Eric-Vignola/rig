@@ -496,6 +496,8 @@ class TestAttributeKeyFromPlug(MayaTestCase):
             self.assertEqual(api2.mock_calls, [])
 
     def test_instance_whose_first_path_was_removed_is_not_cached(self):
+        # Historical id: the plug's node re-resolves its stale path (round 3),
+        # so the plug is keyed and cached; the body pins [1, 1].
         call_count = {"n": 0}
 
         @memoize
