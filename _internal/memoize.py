@@ -3,10 +3,11 @@ Memoization and vectorization decorators for the rig DSL.
 
 ``@memoize`` caches function returns keyed by a stable handle of every
 ``Plug``/``Node``/``PlugList`` argument plus the literal value of every
-scalar argument.
 scalar argument. The cache is auto-invalidated when any cached return value's
 underlying Maya nodes have been deleted (via API 1.0 ``MObjectHandle.isAlive``,
-which is the same staleness pattern used in ``rig.nodetypes.dg_node``).
+which is the same staleness pattern used in ``rig.nodetypes.dg_node``). Every
+new scene and file open clears the caches, and a reference unload, reload or
+remove prunes them (the scene callbacks at the end of this module).
 
 ``@vectorize`` broadcasts a function call across :class:`PlugList`
 arguments using **NumPy-style strict broadcasting**: every list / list-like
@@ -31,6 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # on a wrapper's MObject once its API 1.0 handle says the node is valid.
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
+from rig._internal import callbacks as _callbacks
 from rig.nodetypes._base import _plug_identity_name, Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
@@ -356,11 +358,17 @@ def memoize(
 # The wrappers already self-prune on lookup, but ``cleanup()`` calls
 # this proactively after deleting nodes so the in-memory cache doesn't
 # grow unbounded across long sessions that build/teardown many networks.
+# The scene callbacks at the end of this module clear every cache before
+# a new scene or a file open and prune them after a reference unload.
+#
+# An in-place ``importlib.reload`` keeps both lists: the wrappers and
+# NodeOps made before it (and ``node_ops`` / ``random``, which imported
+# the lists) are still in use.
 # --------------------------------------------------------------------- #
 
 
-_ALL_MEMOIZED:      List[Callable[..., Any]] = []
-_ALL_NODEOP_CACHES: List[Any] = []
+_ALL_MEMOIZED:      List[Callable[..., Any]] = globals().get("_ALL_MEMOIZED", [])
+_ALL_NODEOP_CACHES: List[Any]                = globals().get("_ALL_NODEOP_CACHES", [])
 
 
 def prune_memoize_caches() -> int:
@@ -368,8 +376,10 @@ def prune_memoize_caches() -> int:
     whose handles no longer point to live MObjects. Returns the number
     of entries dropped.
 
-    Runs by itself after every new scene and file open (see
-    :func:`_prune_after_new_scene`); ``cleanup()`` calls it too.
+    Runs by itself after a reference unload or remove, which frees the
+    reference's nodes only (see :func:`_prune_after_scene_change`); a new
+    scene or a file open clears every cache instead
+    (:func:`_clear_before_new_scene`). ``cleanup()`` calls it too.
     """
     dropped = 0
     for wrapper in _ALL_MEMOIZED:
@@ -391,31 +401,6 @@ def prune_memoize_caches() -> int:
                 del cache[key]
                 dropped += 1
     return dropped
-
-
-def _prune_after_new_scene(*args: Any) -> None:
-    """Prune every memo cache once a new scene or a file open freed the nodes
-    its entries hold (an MSceneMessage callback). Such an entry would be dropped
-    on its next lookup anyway; pruning releases the Plugs it holds -- and,
-    through them, their owner nodes and those nodes' attr caches -- right away,
-    so a long session does not retain every build's graph. Looked up through
-    ``sys.modules`` so a reloaded module prunes its own caches; a callback never
-    raises into Maya."""
-    try:
-        sys.modules[__name__].prune_memoize_caches()
-    except Exception:  # noqa: BLE001
-        pass
-
-
-# registered once per session: a module reload keeps the first import's ids
-if "_SCENE_CALLBACK_IDS" not in globals():
-    _SCENE_CALLBACK_IDS = [
-        OpenMaya.MSceneMessage.addCallback(msg, _prune_after_new_scene)
-        for msg in (
-            OpenMaya.MSceneMessage.kAfterNew,
-            OpenMaya.MSceneMessage.kAfterOpen,
-        )
-    ]
 
 
 def _clear_all_caches() -> int:
@@ -451,6 +436,10 @@ class _CacheEntry:
     def __init__(self, value: Any, handles: List[OpenMaya1.MObjectHandle]) -> None:
         self.value   = value
         self.handles = handles
+        # an entry is only made once the callbacks that clear it are there
+        # (pending if rig was imported before Maya was initialised)
+        if not _SCENE_CALLBACKS_READY:
+            _ensure_scene_callbacks()
 
 
 def _broadcast_len(obj: Any) -> int:
@@ -592,3 +581,89 @@ def vectorize(
             return results
 
     return wrapper
+
+
+# --------------------------------------------------------------------- #
+#  Scene callbacks (round 3, decision D-A)
+# --------------------------------------------------------------------- #
+#
+# A memo entry holds the Plugs its call returned -- and, under the owner
+# rule, their nodes and those nodes' attr caches. Once a scene's nodes are
+# freed such an entry can never be valid again: the callbacks below drop it
+# right away instead of leaving it to its next lookup, so a long session
+# does not keep every build's graph.
+#
+#  * kBeforeNew / kBeforeOpen -> clear every cache. Every node of the
+#    scene is about to be freed, and Maya sends these messages only once the
+#    new scene or the open goes ahead (not for "Unsaved changes", a missing
+#    file, or a kBefore*Check callback that aborts). Clearing also drops the
+#    entries that have no handles to prune by (a user @memoize function that
+#    returns a node name, a result whose node could not be resolved), or
+#    whose only handles are default nodes that outlive a new scene (time1,
+#    lambert1, ...).
+#  * kAfterUnloadReference / kAfterRemoveReference -> prune. Only the
+#    reference's nodes are freed (a reload or a replace unloads first), so
+#    only the entries holding one of them are dropped; every other entry
+#    keeps deduping.
+#  * kAfterNew / kAfterOpen -> prune, for whatever another tool's kBefore*
+#    callback cached in the old scene after the clear.
+#
+# Registered once per Maya session through rig._internal.callbacks: a
+# re-import replaces the callbacks (and clears the purged copy's caches),
+# and an import before Maya is initialised registers on the first entry.
+# --------------------------------------------------------------------- #
+
+
+def _clear_before_new_scene(*args: Any) -> None:
+    """kBeforeNew / kBeforeOpen: clear every memo cache (see above). A callback
+    never raises into Maya."""
+    try:
+        _clear_all_caches()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _prune_after_scene_change(*args: Any) -> None:
+    """kAfterUnloadReference / kAfterRemoveReference / kAfterNew / kAfterOpen:
+    drop the entries whose nodes were freed (see above). A callback never raises
+    into Maya."""
+    try:
+        prune_memoize_caches()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _scene_callback_specs() -> List[Tuple[Callable[..., Any], Any, Callable[..., Any]]]:
+    msg = OpenMaya.MSceneMessage
+    return [
+        (msg.addCallback, msg.kBeforeNew,            _clear_before_new_scene),
+        (msg.addCallback, msg.kBeforeOpen,           _clear_before_new_scene),
+        (msg.addCallback, msg.kAfterNew,             _prune_after_scene_change),
+        (msg.addCallback, msg.kAfterOpen,            _prune_after_scene_change),
+        (msg.addCallback, msg.kAfterUnloadReference, _prune_after_scene_change),
+        (msg.addCallback, msg.kAfterRemoveReference, _prune_after_scene_change),
+    ]
+
+
+def _register_scene_callbacks() -> bool:
+    """Register this module's scene callbacks in place of an earlier import's.
+    False, with nothing registered, while Maya is not initialised."""
+    global _SCENE_CALLBACKS_READY
+    _SCENE_CALLBACKS_READY = _callbacks.register(
+        __name__, _THIS_MODULE, _scene_callback_specs(), release=_clear_all_caches
+    )
+    return _SCENE_CALLBACKS_READY
+
+
+def _ensure_scene_callbacks() -> bool:
+    """Make the registration an import before Maya was initialised left pending."""
+    global _SCENE_CALLBACKS_READY
+    _SCENE_CALLBACKS_READY = _callbacks.ensure(
+        __name__, _THIS_MODULE, _scene_callback_specs(), release=_clear_all_caches
+    )
+    return _SCENE_CALLBACKS_READY
+
+
+_THIS_MODULE           = sys.modules.get(__name__)
+_SCENE_CALLBACKS_READY = False
+_register_scene_callbacks()
