@@ -638,7 +638,8 @@ def _ensure_owner_alive(attr: Any) -> None:
     Only the owner's API 1.0 handle is read, which is safe on a freed node. A node
     deleted to the undo queue is still alive and passes. An attr whose owner is
     not known yet (built from a name or an MPlug, never asked for its node) is not
-    checked: its node is only reachable through the MPlug.
+    checked: its node is only reachable through the MPlug. The children, elements
+    and parent of an attr share its owner (see `_inherit_owner`).
     """
     node = attr.__dict__.get("_node")
     if node is not None:
@@ -646,6 +647,51 @@ def _ensure_owner_alive(attr: Any) -> None:
         handle = node.__dict__.get("_objhandle1")
         if handle is not None and not handle.isAlive():
             node.ensure_valid()
+
+
+def _inherit_owner(parent: Any, attr: Any) -> Any:
+    """`attr`, a fresh child, element or parent plug of `parent` (on its node),
+    owned by the node object `parent` holds, if any, and named through that
+    owner's path (see `_named_through_owner`, which may hand back a copy)."""
+    owner = parent.__dict__["_node"]
+    if owner is None:
+        return attr
+    attr.__dict__["_node"] = owner
+    return _named_through_owner(attr)
+
+
+def _named_through_owner(attr: Any) -> Any:
+    """`attr` (its owner bound), or a copy of it whose str buffer is its full name
+    when its owner is a DAG node with more than one path (instanced, or under an
+    instanced parent). maya.cmds reads that buffer, not ``str()``: one made from
+    the MPlug names the node's first path, so ``cmds.getAttr(plug)`` would read
+    another instance than ``plug.get()`` (``T2|S.worldMatrix`` is element 1)."""
+    owner = attr.__dict__["_node"]
+    if owner is None or not _owner_is_instanced(owner):
+        return attr
+    return _full_name_buffer(attr)
+
+
+def _owner_is_instanced(owner: Any) -> bool:
+    """True if `owner`, a plug's node object, is a live DAG node with more than
+    one path. A deleted or freed node's path is not read (naming it raises)."""
+    node = _unwrapped(owner)
+    fn   = node.__dict__.get("_fn_set")
+    if not isinstance(fn, OpenMaya.MFnDagNode):
+        return False
+    handle = node.__dict__.get("_objhandle1")
+    return handle is not None and handle.isValid() and fn.isInstanced(True)
+
+
+def _full_name_buffer(attr: Any) -> Any:
+    """`attr`, or a copy of it (sharing its state) whose str buffer is its full
+    name, if the two differ. For a fresh attr only: the copy stands in for it."""
+    name = attr.full_name
+    if name == str.__str__(attr):
+        return attr
+    copy = str.__new__(type(attr), name)
+    copy.__dict__.update(attr.__dict__)
+    return copy
 
 
 def _node_name(node: Any) -> str:
@@ -1338,7 +1384,7 @@ class Attribute(str):
                 child_plug = self.plug.child(i)
                 name = child_plug.partialName(False, False, False, False, False, True)
                 name = name.rsplit(".", 1)[-1]
-                attr = Attribute(child_plug)
+                attr = _inherit_owner(self, Attribute(child_plug))
                 self.__child_name_dict[name] = attr
                 self.__child_id_dict[i]      = attr
         if attr_name in self.__child_name_dict:
@@ -2031,14 +2077,15 @@ class Attribute(str):
             return None
         plug = self.plug.parent()
         if plug and not plug.attribute().isNull():
-            return Attribute(plug)
+            return _inherit_owner(self, Attribute(plug))
 
     def child(self, i: int) -> Attribute:
         """Returns the child attribute at the given index."""
         attr = self.__child_id_dict.get(i)
         if not attr:
             _ensure_owner_alive(self)
-            self.__child_id_dict[i] = attr = Attribute(self.plug.child(i))
+            attr = _inherit_owner(self, Attribute(self.plug.child(i)))
+            self.__child_id_dict[i] = attr
         return attr
 
     # --- typed attr methods
@@ -2135,13 +2182,13 @@ class Attribute(str):
         """Returns the element attribute at the given physical index."""
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
-        return Attribute(self.plug.elementByPhysicalIndex(i))
+        return _inherit_owner(self, Attribute(self.plug.elementByPhysicalIndex(i)))
 
     def element_by_logical_index(self, i: int) -> Attribute:
         """Returns the element attribute at the given logical index."""
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
-        return Attribute(self.plug.elementByLogicalIndex(i))
+        return _inherit_owner(self, Attribute(self.plug.elementByLogicalIndex(i)))
 
     def delete_logical_index(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""

@@ -54,8 +54,12 @@ class Node:
         elif isinstance(node_or_name, Attribute):
             # ``Node(plug)`` strips the attribute and returns the owning
             # node -- symmetric with the original DSL's ``node._`` idiom.
-            # ``Attribute.node`` returns a PyNode (DGNode subclass).
-            object.__setattr__(self, "_dg_node", node_or_name.node)
+            # ``Attribute.node`` returns a PyNode (DGNode subclass), and
+            # ``Plug.node`` the Node the plug was read from: wrap its typed node.
+            owner = node_or_name.node
+            if isinstance(owner, Node):
+                owner = owner._dg_node
+            object.__setattr__(self, "_dg_node", owner)
         else:
             # If a string carries an attribute suffix (``"pCube.tx"``,
             # ``"pCube.translate"``, ``"pCubeShape.vtx[0]"``), strip it so
@@ -181,17 +185,18 @@ class Node:
             # ``cv``, lattice ``pt``) to a ComponentPlug so ``node.cv[u][v]`` /
             # ``node.pt[s][t][u]`` resolve like the ``Plug("shape.cv[u][v]")``
             # string path; everything else falls back to a plain Plug.
-            component_plug = _maybe_component_plug(attr_name, result)
-            if component_plug is not None:
-                return component_plug
             # The plug is owned by the node object it was read from: this
             # wrapper, for an attr of the wrapped node (``find_attr`` binds
             # those); an attr of another node keeps its own owner, or none,
-            # and ``Plug.node`` casts it.
-            plug  = Plug(result.plug)
+            # and ``Plug.node`` casts it. It is named through that owner's path,
+            # which cmds reads too (see ``_named_through_owner``).
             owner = result.__dict__["_node"]
-            plug.__dict__["_node"] = self if owner is dg_node else owner
-            return plug
+            owner = self if owner is dg_node else owner
+            plug  = _maybe_component_plug(attr_name, result)
+            if plug is None:
+                plug = Plug(result.plug)
+            plug.__dict__["_node"] = owner
+            return _base._named_through_owner(plug)
         return result
 
     def _attr_data_type_fallback(self, attr: Any) -> str:
@@ -431,7 +436,8 @@ def lift(obj: Any) -> Union[Plug, Node]:
     if isinstance(obj, (Plug, Node)):
         return obj
     if isinstance(obj, Attribute):
-        return Plug(obj.plug)
+        # read through the node object the attr holds, as ``Plug(attr)`` is
+        return Plug(obj)
     if isinstance(obj, DGNode):
         return Node(obj)
     if isinstance(obj, str):
