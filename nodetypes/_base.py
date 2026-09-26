@@ -615,6 +615,102 @@ def _fn_set_name(node: Any) -> str:
     return fn.partialPathName() if isinstance(fn, OpenMaya.MFnDagNode) else fn.name()
 
 
+def _unwrapped(node: Any) -> Any:
+    """`node`, or the node a `Node` wrapper (or a `Container`) wraps. Reads the
+    wrapper's slot directly: its `__getattr__` forwards to the wrapped node."""
+    try:
+        return object.__getattribute__(node, "_dg_node")
+    except AttributeError:
+        return node
+
+
+def _node_name(node: Any) -> str:
+    """The name `Attribute.full_name` gives `node`, a plug's owner (a `Node` wrapper
+    is named by the node it wraps). Anything but a str from the `name` property is
+    the node's Maya attr of that name (a class whose `name` property raises), so the
+    node is named by its fn set instead. Raises if the node is deleted."""
+    if type(node) is _NODE_WRAPPER_CLASS:
+        node = node._dg_node
+    name = node.name
+    if type(name) is not str:
+        name = _fn_set_name(node)
+    return name
+
+
+def _instanced_element_alias(mplug: OpenMaya.MPlug, node: Any, alias: str) -> str:
+    """The attr part of `Attribute.full_name` for `mplug`, an element whose alias
+    (`alias`) has no index: an element of an instanced (world space) attr, or an
+    aliased element. cmds resolves an instanced element named without its index
+    to the element of the instance the node name's path runs through, so another
+    instance's element is named with its index (`MPlug.partialName` with the
+    instanced indices), which cmds honours. `node` is the owner, already named."""
+    fn = _unwrapped(node).__dict__.get("_fn_set")
+    if not isinstance(fn, OpenMaya.MFnDagNode) or not fn.isInstanced(True):
+        return alias
+    path = fn.getPath()
+    if path.isValid() and mplug.logicalIndex() == path.instanceNumber():
+        return alias
+    return mplug.partialName(False, False, True, True, False, True)
+
+
+def _is_instanced_array(mplug: OpenMaya.MPlug) -> bool:
+    """True if `mplug` is an array whose elements are per instance (worldMatrix,
+    instObjGroups...): Maya names such an element without its index."""
+    try:
+        element = mplug.elementByLogicalIndex(0)
+        return not element.partialName(False, False, False, False, False, False).endswith("]")
+    except RuntimeError:
+        return False
+
+
+def _plug_identity_name(attr: Any) -> str:
+    """The attr part of the identity of `attr`'s Maya plug: its alias with every
+    index, the instanced ones too (``worldMatrix[1]``), whatever the path the
+    node is named through. An array of per-instance elements read without an
+    index is the element of its path's instance, which is what cmds resolves the
+    name to (``T2|S.worldMatrix`` is ``worldMatrix[1]``), so it is that element.
+    Reads the owner's name (which raises if the node is deleted)."""
+    mplug = attr.__dict__["_mplug"]
+    name  = mplug.partialName(False, False, True, True, False, True)
+    if mplug.isArray:
+        node = _unwrapped(attr.node)
+        if isinstance(
+            node.__dict__.get("_fn_set"), OpenMaya.MFnDagNode
+        ) and _is_instanced_array(mplug):
+            # named first: a stale path is re-resolved, a deleted node raises
+            _node_name(node)
+            path = node.__dict__["_fn_set"].getPath()
+            name = f"{name}[{path.instanceNumber()}]"
+    return name
+
+
+def _identity_node_name(node: Any) -> str:
+    """The name of `node`, a plug's owner, through the path a cast of its MObject
+    takes (the first one), so every instance path of a node gives the same name.
+    A node that is not instanced is named as `Attribute.full_name` names it."""
+    name = _node_name(node)
+    d    = _unwrapped(node).__dict__
+    fn   = d.get("_fn_set")
+    if isinstance(fn, OpenMaya.MFnDagNode) and fn.isInstanced(True):
+        return OpenMaya.MDagPath.getAPathTo(d["_mobject"]).partialPathName()
+    return name
+
+
+def _same_plug(attr: Any, other: Any) -> bool:
+    """True if Attributes `attr` and `other` are the same Maya plug: the same node,
+    attribute and logical indices, whatever the instance paths they are named
+    through (``Node("|T1|S").v`` and ``Node("|T2|S").v``). World space elements of
+    different instances are different plugs. Both are named first, so a deleted
+    node raises as the names did."""
+    if attr is other:
+        return True
+    attr.full_name
+    other.full_name
+    return attr.__dict__["_mplug"].node() == other.__dict__["_mplug"].node() and (
+        _plug_identity_name(attr) == _plug_identity_name(other)
+    )
+
+
 def _clear_static_data_type(*args) -> None:
     """Drops every cached static data type (MSceneMessage callback)."""
     _STATIC_DATA_TYPE.clear()
@@ -1131,6 +1227,11 @@ class Attribute(str):
 
         Note. Can't use MPlug.name() directly because it doesn't use the partial node name.
         i.e. it will error if duplicated node names exist.
+
+        An element of an instanced (world space) attr, such as ``worldMatrix[1]``,
+        is named without its index when it is the element of the instance the
+        node's path runs through (``T2|S.worldMatrix``), and with it otherwise
+        (``T2|S.worldMatrix[0]``), so cmds resolves the name to this element.
         """
         node = self.node
         # a rig Node only forwards `name` to the node it wraps, so read it there
@@ -1141,7 +1242,12 @@ class Attribute(str):
         # `name` property raises), so the node is named by its fn set instead
         if type(name) is not str:
             name = _fn_set_name(node)
-        return f"{name}.{self.alias}"
+        # `alias`, read once the name proved the node is alive
+        mplug = self.__dict__["_mplug"]
+        alias = mplug.partialName(False, False, False, True, False, True)
+        if mplug.isElement and alias[-1:] != "]":
+            alias = _instanced_element_alias(mplug, node, alias)
+        return f"{name}.{alias}"
 
     @property
     def alias(self) -> str:

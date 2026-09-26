@@ -5,6 +5,11 @@ hierarchy. Each class names the step of the merge it belongs to:
   ``rename_attr`` with a Plug.
 * S1: the owner rule (a plug's node is the node object it was read from),
   foreign plugs, stale DAG paths, held plugs across delete / reuse / undo.
+
+The merge itself was not landed (round 3, decision D-A: the owner rule only, on
+the two classes). The fixes of the prototype's review that apply to the two
+classes were ported (``TestReviewFixes``, same ids as on proto/node-merge), and
+decision D-B gives an instanced plug one identity (``TestInstancedPlugIdentity``).
 """
 
 from unittest import mock
@@ -14,6 +19,7 @@ from maya.api import OpenMaya
 from rig import Container, Node, Plug, container
 from rig.nodetypes import PyNode, Transform
 from rig._internal.members import Components
+from rig._internal.memoize import _attribute_key
 from rig._tests._base import MayaTestCase
 
 
@@ -21,6 +27,24 @@ def _mobject(name):
     sel = OpenMaya.MSelectionList()
     sel.add(name)
     return sel.getDependNode(0)
+
+
+def _source_index(dst):
+    """The logical index of the element connected into the plug named `dst`."""
+    sel = OpenMaya.MSelectionList()
+    sel.add(dst)
+    return sel.getPlug(0).source().logicalIndex()
+
+
+def _instanced_locator():
+    """Locator shape ``S`` instanced under ``T1`` (instance 0, tx 0) and ``T2``
+    (instance 1, tx 7)."""
+    cmds.loadPlugin("matrixNodes", quiet=True)
+    cmds.createNode("transform", name="T1")
+    cmds.createNode("locator", name="S", parent="T1")
+    cmds.createNode("transform", name="T2")
+    cmds.parent("|T1|S", "T2", add=True, shape=True)
+    cmds.setAttr("T2.tx", 7)
 
 
 class TestPlugQuickWins(MayaTestCase):
@@ -268,3 +292,160 @@ class TestOwnerRule(MayaTestCase):
             with self.subTest(plug=type(plug).__name__):
                 self.assertEqual(str(plug), "w.translateX")
                 self.assertEqual(plug.full_name, "w.translateX")
+
+
+class TestReviewFixes(MayaTestCase):
+    """The fixes the review of the merge prototype found that apply to the two
+    classes, ported with the prototype's test ids."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_instanced_world_space_elements_connect_the_element_asked_for(self):
+        _instanced_locator()
+        for path, index, name in (
+            ("|T2|S", 0, "T2|S.worldMatrix[0]"),
+            ("|T2|S", 1, "T2|S.worldMatrix"),
+            ("|T1|S", 0, "T1|S.worldMatrix"),
+            ("|T1|S", 1, "T1|S.worldMatrix[1]"),
+        ):
+            with self.subTest(path=path, index=index):
+                plug = Node(path).worldMatrix[index]
+                self.assertEqual(str(plug), name)
+                self.assertEqual(plug.get()[3][0], 7.0 if index else 0.0)
+                dst = cmds.createNode("multMatrix")
+                Node(dst).matrixIn[0] << plug
+                self.assertEqual(_source_index(dst + ".matrixIn[0]"), index)
+                self.assertEqual(cmds.getAttr(dst + ".matrixSum")[12], 7.0 if index else 0.0)
+        # without an index: the element of the path's own instance, as in cmds
+        dst = cmds.createNode("multMatrix")
+        Node(dst).matrixIn[0] << Node("|T2|S").worldMatrix
+        self.assertEqual(_source_index(dst + ".matrixIn[0]"), 1)
+        # one memo key per element, whatever the path it is read through
+        second, first = Node("|T2|S"), Node("|T1|S")
+        self.assertNotEqual(
+            _attribute_key(second.worldMatrix[0]), _attribute_key(second.worldMatrix[1])
+        )
+        self.assertEqual(
+            _attribute_key(first.worldMatrix[1]), _attribute_key(second.worldMatrix[1])
+        )
+        # so a memoized function reads the element asked for
+        from rig.matrix import decompose
+
+        tx = [
+            cmds.getAttr(str(decompose(second.worldMatrix[index])).split(".")[0] + ".outputTranslateX")
+            for index in (0, 1)
+        ]
+        self.assertEqual(tx, [0.0, 7.0])
+        # a node with one instance is named as before
+        single = Node(cmds.createNode("transform", name="single"))
+        self.assertEqual(str(single.worldMatrix[0]), "single.worldMatrix")
+
+
+class TestInstancedPlugIdentity(MayaTestCase):
+    """Decision D-B: a plug's identity follows the Maya plug (node, attribute and
+    logical indices), whatever the instance path it is named through."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_one_plug_through_two_paths_is_one_key(self):
+        _instanced_locator()
+        first, second = Node("|T1|S"), Node("|T2|S")
+        for label, get in (
+            ("v", lambda n: n.v),
+            ("lp[0]", lambda n: n.localPosition[0]),
+            ("lpx", lambda n: n.localPositionX),
+        ):
+            with self.subTest(plug=label):
+                a, b = get(first), get(second)
+                # each is still named through the path it was read from
+                self.assertTrue(str(a).startswith("T1|S."))
+                self.assertTrue(str(b).startswith("T2|S."))
+                self.assertEqual(hash(a), hash(b))
+                self.assertEqual(len({a: 1, b: 2}), 1)
+                self.assertEqual(len({a, b}), 1)
+                self.assertIn(b, [a])
+                self.assertTrue(a.equals(b))
+                self.assertTrue(bool(a == b))
+                self.assertFalse(bool(a != b))
+                self.assertEqual(_attribute_key(a), _attribute_key(b))
+        # a plug of another attribute or another node is still another key
+        self.assertEqual(len({first.v: 1, second.lodVisibility: 2, Node("T1").v: 3}), 3)
+        self.assertFalse(bool(first.v == Node("T1").v))
+
+    def test_world_space_elements_of_different_instances_are_distinct(self):
+        _instanced_locator()
+        first, second = Node("|T1|S"), Node("|T2|S")
+        pairs = {
+            # the same element read through either path: one key
+            "wm[1] via T1 and T2": (first.worldMatrix[1], second.worldMatrix[1], True),
+            "wm[0] via T1 and T2": (first.worldMatrix[0], second.worldMatrix[0], True),
+            # an unindexed world space array is its path's element, as in cmds
+            "T2 wm and wm[1]": (second.worldMatrix, first.worldMatrix[1], True),
+            "T1 wm and wm[0]": (first.worldMatrix, second.worldMatrix[0], True),
+            "Plug('T2|S.worldMatrix') and wm[1]": (
+                Plug("T2|S.worldMatrix"), second.worldMatrix[1], True,
+            ),
+            # elements of different instances are different plugs
+            "wm[0] and wm[1]": (second.worldMatrix[0], second.worldMatrix[1], False),
+            "T1 wm and T2 wm": (first.worldMatrix, second.worldMatrix, False),
+            "wim[0] and wim[1]": (
+                first.worldInverseMatrix[0], first.worldInverseMatrix[1], False,
+            ),
+            # instObjGroups is per instance too, and its children name the index
+            "iog[1] via T1 and T2": (first.instObjGroups[1], second.instObjGroups[1], True),
+            "iog[0] and iog[1]": (second.instObjGroups[0], second.instObjGroups[1], False),
+            "iog[1].og via T1 and T2": (
+                first.instObjGroups[1].objectGroups,
+                second.instObjGroups[1].objectGroups,
+                True,
+            ),
+        }
+        for label, (a, b, same) in pairs.items():
+            with self.subTest(pair=label):
+                self.assertEqual(a.equals(b), same)
+                self.assertEqual(hash(a) == hash(b), same)
+                self.assertEqual(_attribute_key(a) == _attribute_key(b), same)
+        # distinct elements are distinct set members (their hashes differ, so no
+        # `==`, which cannot compare two matrices, is needed)
+        self.assertEqual(len({first.worldMatrix, second.worldMatrix}), 2)
+        # a memoized function builds one node per element
+        from rig.matrix import decompose
+
+        via_first  = decompose(first.worldMatrix)
+        via_second = decompose(second.worldMatrix)
+        self.assertNotEqual(str(via_first), str(via_second))
+        self.assertEqual(str(decompose(second.worldMatrix[0])), str(via_first))
+        self.assertEqual(str(decompose(first.worldMatrix[1])), str(via_second))
+        tx = [cmds.getAttr(str(d).split(".")[0] + ".outputTranslateX") for d in (via_first, via_second)]
+        self.assertEqual(tx, [0.0, 7.0])
+
+    def test_single_instance_world_matrix_spellings_stay_one_key(self):
+        # v2.0.0a2 names both 'a.worldMatrix', and cmds resolves that to [0]
+        node = Node(cmds.createNode("transform", name="a"))
+        whole, element = node.worldMatrix, node.worldMatrix[0]
+        self.assertEqual(str(whole), str(element))
+        self.assertEqual(hash(whole), hash(element))
+        self.assertTrue(whole.equals(element))
+        self.assertEqual(_attribute_key(whole), _attribute_key(element))
+
+    def test_component_element_and_its_storage_are_one_key(self):
+        plane = cmds.nurbsPlane(name="np", degree=3, patchesU=1, patchesV=1, ch=False)[0]
+        shape = cmds.listRelatives(plane, shapes=True)[0]
+        element = Node(shape).cv[1, 2]
+        storage = Plug(f"{shape}.controlPoints[6]")
+        self.assertEqual(str(element), f"{shape}.cv[1][2]")
+        self.assertEqual(len({element: 1, storage: 2}), 1)
+        self.assertIn(storage, [element])
+        self.assertNotIn(Node(shape).cv[1, 3], [element])
+
+    def test_plug_hash_follows_the_plug_through_a_stale_path(self):
+        _instanced_locator()
+        cmds.undoInfo(state=True, infinity=True)
+        second = Node("|T2|S")
+        held   = second.v
+        key    = hash(Node("|T1|S").v)
+        self.assertEqual(hash(held), key)
+        cmds.parent("T2|S", removeObject=True, shape=True)
+        # the held node re-resolves to the surviving path, the plug is unchanged
+        self.assertEqual(str(held), "S.visibility")
+        self.assertEqual(hash(held), hash(Node("S").v))

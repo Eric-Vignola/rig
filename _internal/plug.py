@@ -40,8 +40,12 @@ Connection queries are METHODS, not operators -- ``a.get_inputs()`` and
 wired). Direct connections only: a compound whose children are driven
 reports nothing, so slice it (``a[:].get_inputs()``) to query per-child.
 
-``Plug`` overrides ``__hash__`` to use the underlying node's MObjectHandle
-hashCode so that comparison-as-condition does not break dict / set usage.
+``Plug`` overrides ``__hash__`` (the node's name and the attr alias) and the
+truth value of an ``==`` / ``!=`` result (whether both operands are the same
+Maya plug) so that comparison-as-condition does not break dict / set usage.
+A plug's identity follows the Maya plug: ``Node("|T1|S").v`` and
+``Node("|T2|S").v``, one plug read through two instance paths, are one key
+(their names still differ, each is named through the path it was read from).
 """
 
 from __future__ import annotations
@@ -59,6 +63,9 @@ from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _MISSING,
     _class_attr,
+    _identity_node_name,
+    _plug_identity_name,
+    _same_plug,
     Attribute,
     PyNode,
 )
@@ -416,18 +423,20 @@ class Plug(Attribute):
     # -- hashing / equality -- #
 
     def __hash__(self) -> int:
-        """Hash by the underlying node's MObjectHandle hashCode + attr name.
+        """Hash by the owning node's name + attr alias, so the Plug remains a
+        valid dict / set key even though ``__eq__`` is overloaded to build a
+        condition-node network.
 
-        This is stable across renames (handles survive name changes) so the
-        Plug remains a valid dict / set key even though ``__eq__`` is
-        overloaded to build a condition-node network.
-
-        Uses :attr:`Attribute.node` (canonical API) to obtain the owning
-        :class:`DGNode` and reads its cached ``_objhandle1`` API-1.0
-        handle directly -- no fresh MSelectionList round-trip per hash.
+        The hash follows the Maya plug (see ``_same_plug``): the node is named
+        through the path a cast of its MObject takes, so a plug read through
+        either instance path of a node (``Node("|T1|S").v``, ``Node("|T2|S").v``)
+        hashes the same, and the alias carries the index of a per-instance
+        element (``worldMatrix[1]``), so the elements of different instances,
+        different plugs, hash apart (``==`` on two matrices raises).
         """
         try:
-            node_hash = self.node._objhandle1.hashCode()
+            node_hash = hash(_identity_node_name(self.node))
+            return hash((node_hash, _plug_identity_name(self)))
         except Exception:
             try:
                 node_hash = hash(self.node.name)
@@ -436,18 +445,17 @@ class Plug(Attribute):
         return hash((node_hash, self.alias))
 
     def equals(self, other: Any) -> bool:
-        """True equality (string-identity) -- use this when ``==`` would
-        accidentally build a condition-node network."""
+        """True equality (plug identity) -- use this when ``==`` would
+        accidentally build a condition-node network.
+
+        Two Plugs are equal when they are the same Maya plug (node, attribute
+        and logical indices): a plug read through either instance path of a
+        node, and a resolved ComponentPlug element (displayed ``cv[u][v]``) and
+        the ``controlPoints[k]`` Plug of its storage, keeping ``equals``
+        consistent with ``__hash__``. Anything else compares by name.
+        """
         if isinstance(other, Plug):
-            # A resolved ComponentPlug element displays as ``cv[u][v]`` but its
-            # underlying MPlug is the flat ``controlPoints[k]`` storage. When
-            # either side is such an element, compare by that storage so a
-            # component element and the controlPoints-named Plug to the SAME
-            # storage are equal (keeping ``equals`` consistent with ``__hash__``,
-            # which is storage-based). Plain plugs keep the display compare.
-            if _is_component_element(self) or _is_component_element(other):
-                return self.plug.name() == other.plug.name()
-            return self.full_name == other.full_name
+            return _same_plug(self, other)
         return self.full_name == str(other)
 
     # -- multi-attribute helpers (v4.F.b) -- #
@@ -1014,8 +1022,11 @@ class Plug(Attribute):
         from rig._internal.node import Node
 
         result = _condition_op(self, "==", other)
-        if isinstance(result, Plug) and isinstance(other, (Attribute, Node)):
-            result._identity = str(self) == str(other)
+        if isinstance(result, Plug):
+            if isinstance(other, Attribute):
+                result._identity = _same_plug(self, other)
+            elif isinstance(other, Node):
+                result._identity = str(self) == str(other)
         return result
 
     def __ne__(self, other: Any) -> "Plug":
@@ -1023,15 +1034,20 @@ class Plug(Attribute):
         from rig._internal.node import Node
 
         result = _condition_op(self, "!=", other)
-        if isinstance(result, Plug) and isinstance(other, (Attribute, Node)):
-            result._identity = str(self) != str(other)
+        if isinstance(result, Plug):
+            if isinstance(other, Attribute):
+                result._identity = not _same_plug(self, other)
+            elif isinstance(other, Node):
+                result._identity = str(self) != str(other)
         return result
 
     # ``list`` / ``set`` / ``dict`` containment calls ``PyObject_IsTrue()`` on
     # the ``__eq__`` result, so this is the only hook that can answer them.
     # Ordinary plugs stay truthy; only a comparison RESULT reports whether its
-    # two operands denote the same plug. The class default keeps ``bool(plug)``
-    # off ``__getattr__`` (a child / sibling / container lookup).
+    # two operands denote the same Maya plug (the same node, attribute and
+    # logical indices, whatever the instance path each is named through; see
+    # ``_same_plug``). The class default keeps ``bool(plug)`` off
+    # ``__getattr__`` (a child / sibling / container lookup).
     _identity = True
 
     def __bool__(self) -> bool:
@@ -1275,18 +1291,6 @@ class ComponentPlug(Plug):
         u        = fn.numCVsInU - (fn.degreeInU if fn.formInU == periodic else 0)
         v        = fn.numCVsInV - (fn.degreeInV if fn.formInV == periodic else 0)
         return (u, v)
-
-
-def _is_component_element(obj: Any) -> bool:
-    """True if ``obj`` is a *resolved* :class:`ComponentPlug` element.
-
-    A resolved element carries per-axis coords and displays as ``cv[u][v]``
-    while wrapping the flat ``controlPoints[k]`` MPlug; identity comparisons
-    against it must use that underlying storage, not the display name. A bare
-    handle (no coords) displays as ``controlPoints`` already, so it needs no
-    special-casing.
-    """
-    return isinstance(obj, ComponentPlug) and obj._comp_coords is not None
 
 
 def _maybe_component_plug(
