@@ -1338,6 +1338,8 @@ class TestPlugNodeReuse(MayaTestCase):
         self.assertEqual(self._casts(lambda: str(held[2])), 0)
 
     def test_first_plug_on_a_type_still_casts(self):
+        # Historical id: under the owner rule (round 3, D-A) the first plug on
+        # a type casts nothing; the body pins 0 casts.
         PyNode._CLASS_BY_TYPE.clear()
         PyNode._CASTABLE_TYPES.clear()
         node = Node(cmds.createNode("multiplyDivide"))
@@ -1370,6 +1372,9 @@ class TestPlugNodeReuse(MayaTestCase):
         self.assertEqual(self._casts(lambda: str(Node("|T1|S").visibility)), 0)
 
     def test_instanced_plug_names_match_v2_0_0a2(self):
+        # Historical id: the |T2|S subTests are named through T2 under the owner
+        # rule (round 3, D-A), no longer as on v2.0.0a2; the |T1|S ones and the
+        # Plug-from-string ones still match v2.0.0a2.
         top = cmds.createNode("transform", name="T1")
         cmds.createNode("transform", name="S", parent=top)
         other = cmds.createNode("transform", name="T2")
@@ -1429,6 +1434,8 @@ class TestPlugNodeReuse(MayaTestCase):
                 self.assertEqual(str(child), f"y.{attr}")
 
     def test_container_plug_node_is_plain_node(self):
+        # Historical id: under the owner rule (round 3, D-A) the plug's node is
+        # the Container it was read from, not a plain Node.
         PyNode(_mobject(cmds.container(name="box0")))
         ctn  = Container(cmds.container(name="box"))
         plug = ctn.blackBox
@@ -1482,6 +1489,9 @@ class TestPlugNodeReuse(MayaTestCase):
                 self.assertNotEqual(_owner(plug), _owner(Plug(plug.plug)))
 
     def test_deleted_node_error_unchanged(self):
+        # Historical id: the error changed under the owner rule (round 3, D-A):
+        # a held plug of a deleted node raises '<name> already deleted!', also
+        # once a new node takes the name, instead of retargeting to it.
         cmds.undoInfo(state=True, infinity=True)
         for node_type, attr, parent in (
             ("multiplyDivide", "input1X", "input1"),
@@ -1512,6 +1522,8 @@ class TestPlugNodeReuse(MayaTestCase):
                     self.assertEqual(_owner(Plug(plug.plug))[0], "ok")
 
     def test_plug_node_wrapper_is_its_own(self):
+        # Historical id: under the owner rule (round 3, D-A) the plug's node is
+        # the user's own wrapper (the body pins assertIs(owner, wrapper)).
         node    = Node(self._known_type("transform"))
         wrapper = node >> None
         cached  = wrapper.find_attr("tx")
@@ -1586,6 +1598,8 @@ class TestCachedAttributeOwner(MayaTestCase):
                 self.assertEqual(cmds.getAttr(f"{name}.{attr}"), 0.0)
 
     def test_cached_attr_of_an_instance_names_the_first_path(self):
+        # Historical id: under the owner rule (round 3, D-A) the cached attr is
+        # named through the path the node was read from (T2), not the first.
         top = cmds.createNode("transform", name="T1")
         PyNode(_mobject(cmds.createNode("locator", name="S", parent=top)))
         cmds.instance(top, name="T2")
