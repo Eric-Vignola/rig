@@ -85,17 +85,29 @@ class DAGNode(DGNode):
     def mdagpath(self) -> str:
         """Returns the MDagpath object."""
         self.ensure_valid()
+        if not self.__dict__["_mdagpath"].isValid():
+            self._repath()
         return self._mdagpath
 
     @property
     def name(self) -> str:
         """Returns the shortest unique name."""
-        return self.fn_set.partialPathName()
+        return self.fn_set.partialPathName() or self._repath().partialPathName()
 
     @property
     def long_name(self) -> str:
         """Returns the long name."""
-        return self.fn_set.fullPathName()
+        return self.fn_set.fullPathName() or self._repath().fullPathName()
+
+    def _repath(self) -> OpenMaya.MFnDagNode:
+        """Re-resolves the DAG path of a live node whose path went stale (the
+        instance it ran through was removed or its parent deleted) and returns
+        the new fn set. The path and fn set are rebound, never edited in place,
+        since other wrappers may share them."""
+        d               = self.__dict__
+        d["_mdagpath"]  = OpenMaya.MDagPath.getAPathTo(d["_mobject"])
+        fn = d["_fn_set"] = self.FN_SET(d["_mdagpath"])
+        return fn
 
     @property
     def is_shape(self) -> bool:

@@ -604,6 +604,17 @@ _NODE_WRAPPER_CLASS = None
 _NODE_WRAPPER_HOOK  = None
 
 
+def _fn_set_name(node: Any) -> str:
+    """The fn set name of `node`, or of the node a `Node` wrapper wraps: the partial
+    path name of a DAG fn set, else the node name."""
+    try:
+        node = object.__getattribute__(node, "_dg_node")
+    except AttributeError:
+        pass
+    fn = node.__dict__["_fn_set"]
+    return fn.partialPathName() if isinstance(fn, OpenMaya.MFnDagNode) else fn.name()
+
+
 def _clear_static_data_type(*args) -> None:
     """Drops every cached static data type (MSceneMessage callback)."""
     _STATIC_DATA_TYPE.clear()
@@ -1122,13 +1133,15 @@ class Attribute(str):
         i.e. it will error if duplicated node names exist.
         """
         node = self.node
-        # a rig Node only forwards `name` to the node it wraps, so read it there;
-        # anything but a str (an Attribute the Node would re-wrap) is re-read
+        # a rig Node only forwards `name` to the node it wraps, so read it there
         if type(node) is _NODE_WRAPPER_CLASS:
-            name = node._dg_node.name
-            if type(name) is str:
-                return f"{name}.{self.alias}"
-        return f"{node.name}.{self.alias}"
+            node = node._dg_node
+        name = node.name
+        # anything but a str is the node's Maya attr of that name (a class whose
+        # `name` property raises), so the node is named by its fn set instead
+        if type(name) is not str:
+            name = _fn_set_name(node)
+        return f"{name}.{self.alias}"
 
     @property
     def alias(self) -> str:

@@ -510,5 +510,7 @@ class TestAttributeKeyFromPlug(MayaTestCase):
         plug = Plug(shape + ".outMesh")
         str(plug)
         cmds.parent(shape, removeObject=True, shape=True)
-        self.assertEqual(_outcome(_attribute_key, plug)[:2], ("raise", TypeError))
-        self.assertEqual([probe(plug), probe(plug)], [1, 2])
+        # the plug's node re-resolves its stale path to the surviving instance,
+        # so the plug is named, and keyed, again
+        self.assertEqual(_outcome(_attribute_key, plug)[0], "ok")
+        self.assertEqual([probe(plug), probe(plug)], [1, 1])
