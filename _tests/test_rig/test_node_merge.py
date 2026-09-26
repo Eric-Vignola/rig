@@ -397,6 +397,24 @@ class TestReviewFixes(MayaTestCase):
             cmds.file(new=True, force=True)
             shutil.rmtree(folder, ignore_errors=True)
 
+    def test_held_nodes_and_plugs_across_a_file_open_raise(self):
+        # the opened file brings nodes of the same names: a held node is freed,
+        # it neither names nor retargets to them
+        folder = tempfile.mkdtemp(prefix="rig_freed_open_")
+        path   = os.path.join(folder, "freed_open.ma").replace("\\", "/")
+        try:
+            names = [cmds.createNode("transform", name=f"held{i}") for i in range(2)]
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            held = self._held(names)
+            cmds.file(path, open=True, force=True)
+            self.assertTrue(all(cmds.objExists(name) for name in names))
+            self._assert_freed(held)
+            self.assertEqual(str(Node("held0").tx), "held0.translateX")
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
     def test_deleted_node_in_the_undo_queue_keeps_its_name(self):
         cmds.undoInfo(state=True, infinity=True)
         node = Node(cmds.createNode("transform", name="gone"))
