@@ -628,6 +628,45 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
         return None
 
 
+def _names_own_plug(attr: Any) -> bool:
+    """True if the name `attr` gives itself resolves in cmds to its own MPlug.
+
+    That needs the base naming (a component plug is named after its component),
+    the attribute still on its node (a deleted dynamic or extension attr's name
+    resolves to nothing, or to a same-named new attr), and an index on every
+    array along the path. Call it only once `attr` is named, so its node is valid.
+    """
+    cls = type(attr)
+    if (
+        not isinstance(attr, Attribute)
+        or cls.__str__ is not Attribute.__str__
+        or cls.full_name is not Attribute.full_name
+        or cls.alias is not Attribute.alias
+    ):
+        return False
+    try:
+        mplug   = attr._mplug
+        fn      = OpenMaya.MFnDependencyNode(mplug.node())
+        invalid = OpenMaya.MFnDependencyNode.kInvalidAttr
+        if fn.attributeClass(mplug.attribute()) == invalid:
+            return False
+        plug = mplug
+        while True:
+            if plug.isElement:
+                if plug.logicalIndex() < 0:
+                    return False
+                plug = plug.array()
+            elif plug.isChild:
+                plug = plug.parent()
+                # a child of an array root, not of one of its elements
+                if plug.isArray:
+                    return False
+            else:
+                return True
+    except Exception:
+        return False
+
+
 # Dispatch table for nodes whose geometry output is computed from an upstream
 # input rather than directly fed by a connection. Maps the node's `typeName`
 # (as reported by `MFnDependencyNode.typeName`) to a callable that takes the
@@ -1049,9 +1088,17 @@ class Attribute(str):
             other: The attribute to connect to this attr.
             force: If True, break existing connection if found.
         """
-        other = str(other)
-        if not cmds.isConnected(self.full_name, other):
-            cmds.connectAttr(self.full_name, other, force=force)
+        dst = str(other)
+        src = self.full_name
+        # cmds.isConnected is True only for a direct src -> dst connection, so it
+        # is False for a dst plug that is not a destination; a name that may not
+        # resolve to its plug keeps the query, and so its errors
+        if (
+            _names_own_plug(other)
+            and not other._mplug.isDestination
+            and _names_own_plug(self)
+        ) or not cmds.isConnected(src, dst):
+            cmds.connectAttr(src, dst, force=force)
 
     def disconnect(self, other: str | Attribute) -> None:
         """Disconnects this attr from other.

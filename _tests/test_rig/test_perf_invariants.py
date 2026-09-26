@@ -9,8 +9,11 @@ a type, and keeps querying every type that can change. ``Attribute.__init__``
 leaves the same instance state without going through ``Plug.__setattr__``. A
 plug reuses the wrapper of the Node or parent plug it came from only where a
 fresh cast would rebuild that wrapper unchanged, so it reports the same owner
-and raises the same errors."""
+and raises the same errors. ``Attribute.connect`` skips the ``isConnected``
+query only for a destination it must find unconnected, with the same result,
+errors and scene as the query path."""
 
+import contextlib
 from unittest import mock
 
 from maya import cmds
@@ -1153,3 +1156,237 @@ class TestCachedAttributeOwner(MayaTestCase):
         cached = node.find_attr("visibility")
         self.assertEqual(cached._node._mdagpath.fullPathName(), "|T1|S")
         self.assertEqual(str(cached), "T1|S.visibility")
+
+
+def _named(plug):
+    """``plug`` once it has been named, as a plug in use would be."""
+    str(plug)
+    return plug
+
+
+def _readded(node, source=None):
+    """A plug held on ``node.dd`` across the attr being deleted and re-added,
+    connected from ``source`` afterwards if given."""
+    held = _named(Plug(f"{node}.dd"))
+    cmds.deleteAttr(f"{node}.dd")
+    cmds.addAttr(node, ln="dd", at="double")
+    if source:
+        cmds.connectAttr(source, f"{node}.dd")
+    return held
+
+
+def _undone(node):
+    """A plug on a dynamic attr whose creation was undone."""
+    cmds.addAttr(node, ln="undone", at="double")
+    held = _named(Plug(f"{node}.undone"))
+    cmds.undo()
+    return held
+
+
+def _deleted(node):
+    """A plug on ``node.tx`` named before the node was deleted."""
+    held = _named(Node(node).tx)
+    cmds.delete(node)
+    return held
+
+
+def _renamed():
+    held = _named(Node("b").tx)
+    cmds.rename("b", "renamed")
+    return held
+
+
+def _delete_undone():
+    held = _named(Node("b").tx)
+    cmds.delete("b")
+    cmds.undo()
+    return held
+
+
+def _component():
+    """A NURBS surface CV, named after its component, not its MPlug."""
+    cmds.nurbsPlane(name="plane")
+    return Node("planeShape").cv[1][1]
+
+
+def _unindexed_child():
+    """An Attribute on ``pma.input3D.input3Dx`` without an element index."""
+    mobject = _mobject("pma")
+    fn      = OpenMaya.MFnDependencyNode(mobject)
+    return _base.Attribute(OpenMaya.MPlug(mobject, fn.attribute("input3Dx")))
+
+
+def _delete_extension():
+    cmds.deleteExtension(
+        nodeType="plusMinusAverage", attribute="perfConnect", forceDelete=True
+    )
+
+
+def _extension(delete):
+    """A plug on the ``perfConnect`` extension attr, deleted if ``delete``."""
+    cmds.addExtension(nodeType="plusMinusAverage", longName="perfConnect", at="double")
+    held = _named(Node("pma").perfConnect)
+    if delete:
+        _delete_extension()
+    return held
+
+
+def _plug(name):
+    return lambda: Plug(name)
+
+
+# (case, connections made first, source, destination, force, skips the query):
+# the source and destination factories run in that order once the scene is set up.
+_CONNECT_CASES = (
+    ("plain", (), lambda: Node("a").tx, lambda: Node("b").tx, False, True),
+    ("attribute", (), _plug("a.tx"), lambda: _base.Attribute("b.tx"), False, True),
+    ("connected", [("a.tx", "b.tx")], _plug("a.tx"), _plug("b.tx"), False, False),
+    ("connected_forced", [("a.tx", "b.tx")], _plug("a.tx"), _plug("b.tx"), True, False),
+    ("occupied", [("a.ty", "b.tx")], _plug("a.tx"), _plug("b.tx"), False, False),
+    ("occupied_forced", [("a.ty", "b.tx")], _plug("a.tx"), _plug("b.tx"), True, False),
+    ("parent_connected", [("a.t", "b.t")], _plug("a.tx"), _plug("b.tx"), False, True),
+    ("child_connected", [("a.tx", "b.tx")], _plug("a.t"), _plug("b.t"), False, True),
+    ("reverse", [("b.tx", "a.tx")], _plug("a.tx"), _plug("b.tx"), False, True),
+    ("unit_conversion", (), _plug("a.tx"), _plug("b.rx"), False, True),
+    ("unit_again", [("a.tx", "b.rx")], _plug("a.tx"), _plug("b.rx"), True, False),
+    ("new_element", (), _plug("a.tx"), lambda: Node("pma").input1D[5], False, True),
+    ("new_child", (), _plug("a.tx"), _plug("pma.input3D[2].input3Dx"), False, True),
+    ("element", [("a.tx", "pma.input1D[0]")], _plug("a.tx"), _plug("pma.input1D[0]"),
+     False, False),
+    ("array_root", (), _plug("a.tx"), _plug("pma.input1D"), False, True),
+    ("alias", (), _plug("a.tx"), _plug("b.bar"), False, True),
+    ("alias_wired", [("a.tx", "b.foo")], _plug("a.tx"), _plug("b.bar"), False, False),
+    ("alias_source", (), _plug("b.bar"), _plug("a.tx"), False, True),
+    ("type_mismatch", (), _plug("a.worldMatrix[0]"), _plug("b.tx"), False, True),
+    ("locked", (), _plug("a.tx"), _plug("b.ty"), False, True),
+    ("same_plug", (), _plug("a.tx"), _plug("a.tx"), False, True),
+    ("string", (), _plug("a.tx"), lambda: "b.tx", False, False),
+    ("string_missing", (), _plug("a.tx"), lambda: "b.nope", False, False),
+    ("readded", (), _plug("a.tx"), lambda: _readded("b"), False, False),
+    ("readded_wired", (), _plug("a.tx"), lambda: _readded("b", "a.tx"), False, False),
+    ("readded_source", (), lambda: _readded("b"), _plug("a.tx"), False, False),
+    ("undone", (), _plug("a.tx"), lambda: _undone("b"), False, False),
+    ("undone_source", (), lambda: _undone("b"), _plug("a.tx"), False, False),
+    ("deleted", (), _plug("a.tx"), lambda: _deleted("b"), False, False),
+    ("deleted_source", (), lambda: _deleted("b"), _plug("a.tx"), False, False),
+    ("renamed", (), _plug("a.tx"), _renamed, False, True),
+    ("delete_undone", (), _plug("a.tx"), _delete_undone, False, True),
+    ("component", (), _plug("a.t"), _component, False, False),
+    ("component_source", (), _component, _plug("a.t"), False, False),
+    ("unindexed_child", (), _plug("a.tx"), _unindexed_child, False, False),
+    ("extension", (), _plug("a.tx"), lambda: _extension(False), False, True),
+    ("extension_gone", (), _plug("a.tx"), lambda: _extension(True), False, False),
+)
+
+
+class TestConnectQuery(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def tearDown(self):
+        if cmds.attributeQuery("perfConnect", type="plusMinusAverage", exists=True):
+            _delete_extension()
+        super().tearDown()
+
+    def _scene(self):
+        cmds.file(new=True, force=True)
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("transform", name="a")
+        cmds.createNode("transform", name="b")
+        cmds.createNode("plusMinusAverage", name="pma")
+        cmds.addAttr("b", ln="foo", at="double")
+        cmds.aliasAttr("bar", "b.foo")
+        cmds.addAttr("b", ln="dd", at="double")
+        cmds.setAttr("b.ty", lock=True)
+
+    def _connect(self, case, legacy):
+        """What ``source.connect(destination)`` returns or raises, the scene it
+        leaves and the isConnected queries it makes, from a fresh scene."""
+        _, connections, source, destination, force, _ = case
+        self._scene()
+        for pair in connections:
+            cmds.connectAttr(*pair)
+        source      = source()
+        destination = destination()
+        query       = mock.patch.object(_base, "_names_own_plug", return_value=False)
+        with mock.patch.object(cmds, "isConnected", wraps=cmds.isConnected) as probe:
+            with query if legacy else contextlib.nullcontext():
+                try:
+                    outcome = source.connect(destination, force=force)
+                except Exception as exc:
+                    outcome = (type(exc), str(exc))
+        wired = cmds.listConnections(
+            cmds.ls(), connections=True, plugs=True, source=False
+        ) or []
+        state = (
+            outcome,
+            sorted(cmds.ls()),
+            sorted(zip(wired[::2], wired[1::2])),
+            cmds.getAttr("pma.input1D", multiIndices=True),
+            cmds.getAttr("pma.input3D", multiIndices=True),
+        )
+        if cmds.attributeQuery("perfConnect", type="plusMinusAverage", exists=True):
+            _delete_extension()
+        return state, probe.call_count
+
+    def test_connect_matches_the_query_path(self):
+        for case in _CONNECT_CASES:
+            with self.subTest(case=case[0]):
+                fast, fast_queries     = self._connect(case, legacy=False)
+                legacy, legacy_queries = self._connect(case, legacy=True)
+                self.assertEqual(fast, legacy)
+                self.assertEqual(fast_queries, 0 if case[5] else legacy_queries)
+
+    def test_connect_outcomes(self):
+        cases   = {case[0]: case for case in _CONNECT_CASES}
+        missing = (ValueError, "No object matches name: b.undone")
+        for name, expected in (
+            ("plain", None),
+            ("connected", None),
+            ("readded_wired", None),
+            ("undone", missing),
+            ("undone_source", missing),
+        ):
+            with self.subTest(case=name):
+                state, _ = self._connect(cases[name], legacy=False)
+                self.assertEqual(state[0], expected)
+        state, _ = self._connect(cases["plain"], legacy=False)
+        self.assertIn(("a.translateX", "b.translateX"), state[2])
+
+    def test_connect_names_each_plug_once(self):
+        self._scene()
+        names    = []
+        original = _base.Attribute.full_name
+
+        def full_name(attr):
+            names.append(original.fget(attr))
+            return names[-1]
+
+        source      = Node("a").tx
+        destination = Node("b").tx
+        with mock.patch.object(_base.Attribute, "full_name", property(full_name)):
+            with mock.patch.object(cmds, "connectAttr") as connect:
+                source.connect(destination)
+                self.assertEqual(names, ["b.translateX", "a.translateX"])
+                connect.assert_called_once_with(
+                    "a.translateX", "b.translateX", force=False
+                )
+                del names[:]
+                source.connect("b.ty", force=True)
+                self.assertEqual(names, ["a.translateX"])
+
+    def test_names_own_plug(self):
+        self._scene()
+        for plug, expected in (
+            (Node("a").tx, True),
+            (_base.Attribute("pma.input3D[2].input3Dx"), True),
+            (Plug("b.bar"), True),
+            (Node("pma").input1D, True),
+            ("a.tx", False),
+            (_component(), False),
+            (_unindexed_child(), False),
+            (_readded("b"), False),
+            (_undone("a"), False),
+            (_extension(True), False),
+        ):
+            with self.subTest(plug=str(plug)):
+                self.assertIs(_base._names_own_plug(plug), expected)
