@@ -208,12 +208,9 @@ def _collect_handles(obj: Any, out: List[OpenMaya1.MObjectHandle]) -> None:
             _collect_handles(elt, out)
 
 
-_NORMAL_ATTR = OpenMaya.MFnDependencyNode.kNormalAttr
-
-
 class _AttrCheck:
-    """Stands with the node handles of a cache entry for a dynamic or extension
-    attribute that a plug argument of the call reads (see `_entry_handles`).
+    """Stands with the node handles of a cache entry for a dynamic attribute
+    that a plug argument of the call reads (see `_entry_handles`).
 
     The key names the attribute (`_attribute_key`), and a name outlives the
     attribute: deleted and added again, or renamed while a new attribute takes
@@ -245,48 +242,48 @@ class _AttrCheck:
 
 
 def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
-    """An `_AttrCheck` for the attribute of `attr`'s plug if it is a dynamic or
-    extension attribute of a live DG node, else None."""
+    """An `_AttrCheck` for the attribute of `attr`'s plug if it is a dynamic
+    attribute of a live DG node, else None. (An extension attribute, deleted and
+    added again for its whole node type, is not checked.)"""
     try:
+        mplug = attr.__dict__["_mplug"]
+        if not mplug.isDynamic:
+            return None
         owner = attr.__dict__["_node"]
         node  = _unwrapped(attr.node if owner is None else owner)
         if not isinstance(node, DGNode) or not node._objhandle1.isValid():
             return None
-        mobject = attr.__dict__["_mplug"].attribute()
-        if node._fn_set.attributeClass(mobject) == _NORMAL_ATTR:
-            return None
-        name  = OpenMaya.MFnAttribute(mobject).name
+        mobject = mplug.attribute()
+        name    = OpenMaya.MFnAttribute(mobject).name
         attr1 = node._fn_set1.attribute(name)
         return _AttrCheck(node._objhandle1, node._fn_set1, name, OpenMaya1.MObjectHandle(attr1))
     except Exception:
         return None
 
 
-def _collect_attr_checks(obj: Any, out: List[Any]) -> None:
-    """Append an `_AttrCheck` for each dynamic or extension attribute a plug in
-    `obj` (a call argument, or a sequence of them) reads."""
-    if isinstance(obj, Attribute):
-        check = _attr_check(obj)
-        if check is not None:
-            out.append(check)
-    elif obj is None or isinstance(obj, (str, bytes, numbers.Real)):
-        return
-    elif _is_list(obj) or _is_sequence(obj):
-        for elt in obj:
-            _collect_attr_checks(elt, out)
+def _collect_attr_checks(values: Any, out: List[Any]) -> None:
+    """Append an `_AttrCheck` for each dynamic attribute a plug in `values` (the
+    call arguments; a list, tuple or PlugList among them is walked) reads."""
+    for value in values:
+        if isinstance(value, Attribute):
+            check = _attr_check(value)
+            if check is not None:
+                out.append(check)
+        elif isinstance(value, (list, tuple)):
+            _collect_attr_checks(value, out)
 
 
 def _entry_handles(result: Any, args: tuple, kwargs: dict) -> List[Any]:
     """The staleness checks of a cache entry for a call on `args` / `kwargs` that
     returned `result`: the API 1.0 handles of the nodes in `result` (see
-    `_collect_handles`), then an `_AttrCheck` per dynamic or extension attribute a
-    plug argument reads. An entry is used only while every one is alive and
+    `_collect_handles`), then an `_AttrCheck` per dynamic attribute a plug
+    argument reads. An entry is used only while every one is alive and
     valid."""
     handles: List[Any] = []
     _collect_handles(result, handles)
     _collect_attr_checks(args, handles)
     if kwargs:
-        _collect_attr_checks(tuple(kwargs.values()), handles)
+        _collect_attr_checks(kwargs.values(), handles)
     return handles
 
 
