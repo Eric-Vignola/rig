@@ -590,6 +590,43 @@ def _plug_under_element(plug: OpenMaya.MPlug) -> bool:
         plug = plug.parent()
 
 
+def _fixed_attr_kind(attr: Attribute) -> int | None:
+    """Returns the kind (exact `MObject.apiType()`) of `attr`'s attribute if a type
+    predicate may answer from it instead of the by-name `data_type` query, else None.
+
+    The by-name query follows a dynamic or extension attr that was deleted and
+    re-added under the same name, which a held plug does not, and it creates an
+    array element that does not exist yet, so neither case uses the kind.
+    """
+    try:
+        mplug   = attr._mplug
+        mobject = attr.mobject
+        # a deleted attr is no longer on the node, even once its name is reused
+        fn = OpenMaya.MFnDependencyNode(mplug.node())
+        if fn.attributeClass(mobject) == OpenMaya.MFnDependencyNode.kInvalidAttr:
+            return None
+        elements = []
+        plug     = mplug
+        while True:
+            if plug.isElement:
+                if plug.logicalIndex() < 0:
+                    return None
+                elements.append(plug)
+                plug = plug.array()
+            elif plug.isChild:
+                plug = plug.parent()
+            else:
+                break
+        # outermost first, so no array under a missing element is listed
+        for element in reversed(elements):
+            indices = element.array().getExistingArrayAttributeIndices()
+            if element.logicalIndex() not in indices:
+                return None
+        return mobject.apiType()
+    except Exception:
+        return None
+
+
 # Dispatch table for nodes whose geometry output is computed from an upstream
 # input rather than directly fed by a connection. Maps the node's `typeName`
 # (as reported by `MFnDependencyNode.typeName`) to a callable that takes the

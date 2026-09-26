@@ -38,6 +38,7 @@ from rig._internal.types import (
     _is_transform,
 )
 from rig.nodetypes._base import (
+    _fixed_attr_kind,
     _NON_MATRIX_ATTR_API_TYPES,
     _SCALAR_ATTR_API_TYPES,
     Attribute,
@@ -147,7 +148,7 @@ class _Facts:
             return False
         try:
             # a scalar or numeric compound kind never holds a matrix
-            if obj.mobject.apiType() in _NON_MATRIX_ATTR_API_TYPES:
+            if _fixed_attr_kind(obj) in _NON_MATRIX_ATTR_API_TYPES:
                 return False
         except Exception:
             return False
@@ -179,7 +180,7 @@ class _Facts:
             if obj.plug.isCompound:
                 return True
             # a numeric / unit / enum / message kind is never a compound
-            if obj.mobject.apiType() in _SCALAR_ATTR_API_TYPES:
+            if _fixed_attr_kind(obj) in _SCALAR_ATTR_API_TYPES:
                 return False
         except Exception:
             return False

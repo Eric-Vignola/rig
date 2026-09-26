@@ -299,6 +299,50 @@ class TestAttributeKindFastPath(MayaTestCase):
                 checked += 1
         self.assertGreater(checked, 500)
 
+    def test_missing_element_is_created_by_the_type_check(self):
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="md", at="double", multi=True)
+        cmds.addAttr(net, ln="mm", dt="matrix", multi=True)
+        cmds.addAttr(net, ln="mc", at="compound", multi=True, numberOfChildren=1)
+        cmds.addAttr(net, ln="mcx", at="double", p="mc")
+        identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        cmds.setAttr(f"{net}.mm[3]", identity, type="matrix")
+        node = Node(net)
+        with self.assertRaises(TypeError):
+            node.mm[3] * node.md[7]
+        self.assertEqual(cmds.getAttr(f"{net}.md", multiIndices=True), [7])
+        self.assertEqual(list(node.md.get_logical_indices()), [7])
+        self.assertFalse(_is_compound(node.md[4]))
+        self.assertFalse(_is_matrix(node.md[5]))
+        self.assertFalse(_is_compound(node.mc[2].mcx))
+        self.assertEqual(cmds.getAttr(f"{net}.md", multiIndices=True), [4, 5, 7])
+        self.assertEqual(cmds.getAttr(f"{net}.mc", multiIndices=True), [2])
+
+    def test_readded_attr_answers_with_its_new_kind(self):
+        net = cmds.createNode("network", name="st")
+        for flags, compound, matrix in (
+            ({"dt": "matrix"}, False, True),
+            ({"dt": "double3"}, True, False),
+        ):
+            cmds.addAttr(net, ln="foo", at="double")
+            plug = Node(net).foo
+            cmds.deleteAttr(f"{net}.foo")
+            cmds.addAttr(net, ln="foo", **flags)
+            self.assertIs(_is_compound(plug), compound)
+            self.assertIs(_is_matrix(plug), matrix)
+            self.assertIs(_is_compound(plug), _legacy_is_compound(plug))
+            self.assertIs(_is_matrix(plug), _legacy_is_matrix(plug))
+            cmds.deleteAttr(f"{net}.foo")
+
+        cmds.addAttr(net, ln="foo", at="double")
+        plug = Node(net).foo
+        cmds.deleteAttr(f"{net}.foo")
+        cmds.addAttr(net, ln="foo", dt="matrix")
+        with self.assertRaises(TypeError) as ctx:
+            plug * 2.0
+        self.assertTrue(str(ctx.exception).startswith("matrix * scalar is undefined"))
+        self.assertEqual(cmds.ls(type="multiply") + cmds.ls(type="multiplyDivide"), [])
+
 
 class TestGetCompound(MayaTestCase):
     TEST_START_NEW_SCENE = True
