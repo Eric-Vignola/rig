@@ -618,10 +618,31 @@ def _fn_set_name(node: Any) -> str:
 def _unwrapped(node: Any) -> Any:
     """`node`, or the node a `Node` wrapper (or a `Container`) wraps. Reads the
     wrapper's slot directly: its `__getattr__` forwards to the wrapped node."""
+    wrapper = _NODE_WRAPPER_CLASS
+    if wrapper is not None:
+        return node._dg_node if isinstance(node, wrapper) else node
     try:
         return object.__getattribute__(node, "_dg_node")
     except AttributeError:
         return node
+
+
+def _ensure_owner_alive(attr: Any) -> None:
+    """Raise ``"... already deleted!"`` if the node that owns `attr` was freed (a
+    new scene, a file open, a reference unload): `attr`'s MPlug then points at
+    freed memory, and an MPlug call can read another node or crash Maya.
+
+    Only the owner's API 1.0 handle is read, which is safe on a freed node. A node
+    deleted to the undo queue is still alive and passes. An attr whose owner is
+    not known yet (built from a name or an MPlug, never asked for its node) is not
+    checked: its node is only reachable through the MPlug.
+    """
+    node = attr.__dict__.get("_node")
+    if node is not None:
+        node   = _unwrapped(node)
+        handle = node.__dict__.get("_objhandle1")
+        if handle is not None and not handle.isAlive():
+            node.ensure_valid()
 
 
 def _node_name(node: Any) -> str:
@@ -1054,6 +1075,7 @@ class Attribute(str):
         attrs = mesh.vtx[[0, 4, 7]]
         ```
         """
+        _ensure_owner_alive(self)
 
         if isinstance(key, (int, np.integer)):
             return self.element_by_logical_index(int(key))
@@ -1171,6 +1193,7 @@ class Attribute(str):
         ```
         """
         if not self.__child_name_dict:
+            _ensure_owner_alive(self)
             for i in range(self.num_children):
                 child_plug = self.plug.child(i)
                 name = child_plug.partialName(False, False, False, False, False, True)
@@ -1252,7 +1275,8 @@ class Attribute(str):
     @property
     def alias(self) -> str:
         """Returns the attribute alias, or the attribute name if no alias applied."""
-        return self.plug.partialName(False, False, False, True, False, True)
+        _ensure_owner_alive(self)
+        return self._mplug.partialName(False, False, False, True, False, True)
 
     @alias.setter
     def alias(self, alias: str) -> None:
@@ -1340,11 +1364,13 @@ class Attribute(str):
     @property
     def is_dynamic(self) -> bool:
         """Attribute dynamic state."""
+        _ensure_owner_alive(self)
         return self.plug.isDynamic
 
     @property
     def is_locked(self) -> bool:
         """Attribute locked state."""
+        _ensure_owner_alive(self)
         return self.plug.isLocked
 
     @is_locked.setter
@@ -1355,6 +1381,7 @@ class Attribute(str):
     @property
     def is_keyable(self) -> bool:
         """Attribute keyable state."""
+        _ensure_owner_alive(self)
         return self.plug.isKeyable
 
     @is_keyable.setter
@@ -1365,6 +1392,7 @@ class Attribute(str):
     @property
     def is_channel_box(self) -> bool:
         """Attribute channel box state."""
+        _ensure_owner_alive(self)
         return self.plug.isChannelBox
 
     @is_channel_box.setter
@@ -1400,12 +1428,14 @@ class Attribute(str):
     @property
     def is_connected(self) -> bool:
         """Attribute connected state. Both input and output connections counts."""
+        _ensure_owner_alive(self)
         return self.plug.isConnected
 
     @property
     def is_free_to_change(self) -> bool:
         """Attribute free_to_change state. True if this attr and all its parents are
         free to change."""
+        _ensure_owner_alive(self)
         return self.plug.isFreeToChange(True, False) == OpenMaya.MPlug.kFreeToChange
 
     def connect(self, other: str | Attribute, force: bool = False) -> None:
@@ -1451,6 +1481,7 @@ class Attribute(str):
         Returns:
             The connected attrs.
         """
+        _ensure_owner_alive(self)
         for each in self.plug.connectedTo(src, dst):
             yield Attribute(each)
             if first_only:
@@ -1621,6 +1652,7 @@ class Attribute(str):
     def get_data_fn_set(self) -> OpenMaya.MFnData | None:
         """Returns the proper data function set for this attr, or None if
         this attribute holds no data, or plug.asMObject() causes internal failure."""
+        _ensure_owner_alive(self)
         data_mobject = self.plug.asMDataHandle().data()
         api_type     = data_mobject.apiType()
         if api_type != OpenMaya.MFn.kInvalid:
@@ -1639,6 +1671,7 @@ class Attribute(str):
         Args:
             args, kwargs: args supported by cmds.setAttr()
         """
+        _ensure_owner_alive(self)
         if "type" not in kwargs and not self._is_fixed_kind_outside_array():
             # typed attr requires the `type` arg to be specified.
             # the only weird one-off is `fltMatrix`, which is not typed but still
@@ -1717,6 +1750,7 @@ class Attribute(str):
         source node's data block -- if the source node is deleted or its inputs
         change, the fn set becomes invalid.
         """
+        _ensure_owner_alive(self)
         # Geometry data attrs need special handling: cmds.getAttr would emit
         # `# Error: The data is not a numeric or string value...` and return
         # None. Skip it entirely for known geometry types.
@@ -1843,10 +1877,12 @@ class Attribute(str):
     @property
     def num_children(self):
         """Returns this number of children of this compound attr."""
+        _ensure_owner_alive(self)
         return self.plug.numChildren()
 
     def get_parent(self) -> Attribute | None:
         """Returns the parent attribute, if any."""
+        _ensure_owner_alive(self)
         if not self.plug.isChild:
             return None
         plug = self.plug.parent()
@@ -1857,6 +1893,7 @@ class Attribute(str):
         """Returns the child attribute at the given index."""
         attr = self.__child_id_dict.get(i)
         if not attr:
+            _ensure_owner_alive(self)
             self.__child_id_dict[i] = attr = Attribute(self.plug.child(i))
         return attr
 
@@ -1922,6 +1959,7 @@ class Attribute(str):
     @property
     def is_multi(self) -> bool:
         """Checks if this attr is a multi/array attribute."""
+        _ensure_owner_alive(self)
         return self.plug.isArray
 
     @property
@@ -1933,6 +1971,7 @@ class Attribute(str):
 
     def logical_index(self) -> int:
         """Returns the logical index if this attr is a child of a multi attr."""
+        _ensure_owner_alive(self)
         return self.plug.logicalIndex()
 
     def get_logical_indices(self) -> OpenMaya.MIntArray:

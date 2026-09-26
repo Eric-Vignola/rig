@@ -50,6 +50,7 @@ A plug's identity follows the Maya plug: ``Node("|T1|S").v`` and
 
 from __future__ import annotations
 
+import functools
 import itertools
 import logging
 import numbers
@@ -63,9 +64,11 @@ from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _MISSING,
     _class_attr,
+    _ensure_owner_alive,
     _identity_node_name,
     _plug_identity_name,
     _same_plug,
+    _unwrapped,
     Attribute,
     PyNode,
 )
@@ -244,6 +247,12 @@ class Plug(Attribute):
         super().__init__(name_or_mplug)
 
     def __getattr__(self, attr_name: str) -> "Plug":
+        # A plug of a node a new scene freed points at freed memory: a Python
+        # probe (``hasattr(plug, "__array__")``) finds nothing, anything else
+        # raises the node's "already deleted!".
+        if attr_name[:1] == "_" and not _owner_alive(self):
+            raise AttributeError(attr_name)
+        _ensure_owner_alive(self)
         # 1) Try child-attribute lookup first (compound children).
         try:
             result = super().__getattr__(attr_name)
@@ -297,6 +306,7 @@ class Plug(Attribute):
         # __getitem__ (which already supports both numeric indexing and
         # the kMeshVertComponent / kCurveCVComponent / kSurfaceCVComponent
         # special-case slice bounds). Re-wrap returns as Plug / PlugList.
+        _ensure_owner_alive(self)
         is_indexable_via_attribute = self.is_multi or self._component_type != "unknown"
         if is_indexable_via_attribute:
             result = super().__getitem__(key)
@@ -372,6 +382,7 @@ class Plug(Attribute):
         construct a compound output plug and write per-channel results
         back into it.
         """
+        _ensure_owner_alive(self)
         result = super().child(i)
         if isinstance(result, Attribute) and not isinstance(result, Plug):
             return _share_node(self, Plug(result.plug))
@@ -433,7 +444,15 @@ class Plug(Attribute):
         hashes the same, and the alias carries the index of a per-instance
         element (``worldMatrix[1]``), so the elements of different instances,
         different plugs, hash apart (``==`` on two matrices raises).
+
+        The plug of a node a new scene freed hashes by its str buffer (the name
+        it was built with): its MPlug points at freed memory.
         """
+        owner = self.__dict__.get("_node")
+        if owner is not None:
+            handle = _unwrapped(owner).__dict__.get("_objhandle1")
+            if handle is not None and not handle.isAlive():
+                return hash((handle.hashCode(), str.__str__(self)))
         try:
             node_hash = hash(_identity_node_name(self.node))
             return hash((node_hash, _plug_identity_name(self)))
@@ -502,6 +521,10 @@ class Plug(Attribute):
         ``node << Float("x") << 5 << lock``.
         """
         lazy = _lazy()
+        # a freed node's MPlug points at freed memory
+        _ensure_owner_alive(self)
+        if isinstance(other, Attribute):
+            _ensure_owner_alive(other)
 
         # Disconnect.
         if other is None:
@@ -611,6 +634,8 @@ class Plug(Attribute):
         from rig._internal.node import Node
         from rig._internal.types import _is_member_spec
 
+        # a freed node's MPlug points at freed memory
+        _ensure_owner_alive(self)
         if other is None:
             return self.get()
 
@@ -1094,6 +1119,42 @@ for _str_method in (n for n in vars(str) if not n.startswith("_")):
 del _str_method
 
 
+def _owner_alive(plug: Any) -> bool:
+    """False if the node that owns `plug` was freed (see `_ensure_owner_alive`)."""
+    owner = plug.__dict__.get("_node")
+    if owner is None:
+        return True
+    handle = _unwrapped(owner).__dict__.get("_objhandle1")
+    return handle is None or handle.isAlive()
+
+
+def _checking_operands(method: Any) -> Any:
+    """`method`, a Plug operator, run once its plug operands are known alive: the
+    type predicates an operator starts with read the operands' MPlugs, which
+    point at freed memory once a new scene freed their node."""
+
+    @functools.wraps(method)
+    def checked(self: "Plug", *other: Any) -> Any:
+        _ensure_owner_alive(self)
+        for operand in other:
+            if isinstance(operand, Attribute):
+                _ensure_owner_alive(operand)
+        return method(self, *other)
+
+    return checked
+
+
+for _operator in (
+    "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
+    "__truediv__", "__rtruediv__", "__pow__", "__rpow__", "__floordiv__",
+    "__rfloordiv__", "__mod__", "__rmod__", "__and__", "__rand__", "__or__",
+    "__ror__", "__xor__", "__rxor__", "__neg__", "__invert__",
+    "__eq__", "__ne__", "__ge__", "__le__", "__gt__", "__lt__",
+):
+    setattr(Plug, _operator, _checking_operands(Plug.__dict__[_operator]))
+del _operator
+
+
 # --------------------------------------------------------------------- #
 #  Multi-dimensional geometry components (node.cv[u][v], node.pt[s][t][u])
 # --------------------------------------------------------------------- #
@@ -1370,6 +1431,8 @@ def _query_connections(plug: Any, source: bool) -> Any:
     """
     from rig._internal.list import PlugList
 
+    # a freed node's MPlug points at freed memory
+    _ensure_owner_alive(plug)
     return PlugList([Plug(mp) for mp in plug.plug.connectedTo(source, not source)])
 
 

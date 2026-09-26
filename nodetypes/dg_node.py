@@ -220,9 +220,22 @@ class DGNode(metaclass=NodeMeta):
         return self._objhandle1.isValid()
 
     def ensure_valid(self) -> None:
-        """Raise erros if an object is deleted."""
-        if not self._objhandle1.isValid():
-            name = self._fn_set1.name()
+        """Raise erros if an object is deleted.
+
+        A node deleted to the undo queue is still alive, and is named. A node a
+        new scene, a file open or a reference unload freed is not: its fn sets
+        point at freed memory, so it is named by its class only (reading its
+        name would read another node's, or crash Maya).
+        """
+        handle = self._objhandle1
+        if not handle.isValid():
+            if handle.isAlive():
+                name = self._fn_set1.name()
+            else:
+                name = (
+                    f"{type(self).__name__} node (freed by a new scene, a file "
+                    f"open or a reference unload)"
+                )
             raise RuntimeError(f"{name} already deleted!")
 
     @property

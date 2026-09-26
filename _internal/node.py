@@ -143,8 +143,13 @@ class Node:
             # Python probes private and dunder names constantly
             # (``__deepcopy__``, ``_ipython_canary_method_should_not_exist_``),
             # so only a Maya attribute that really exists on the node gets
-            # through; ``_dg_node`` itself is the slot this lookup runs on.
-            if attr_name == "_dg_node" or not self._dg_node.has_attr(attr_name):
+            # through; ``_dg_node`` itself is the slot this lookup runs on. A
+            # node a new scene freed has none (its fn set points at freed memory).
+            if (
+                attr_name == "_dg_node"
+                or not self._dg_node._objhandle1.isAlive()
+                or not self._dg_node.has_attr(attr_name)
+            ):
                 raise AttributeError(attr_name)
         try:
             result = getattr(self._dg_node, attr_name)
@@ -166,6 +171,12 @@ class Node:
                         return getattr(shape, attr_name)
             raise
         if isinstance(result, Attribute) and not isinstance(result, Plug):
+            # A cached attr of a node a new scene freed holds an MPlug that
+            # points at freed memory: building a Plug of it names that MPlug (a
+            # miss already raised through the node's fn set).
+            dg_node = self._dg_node
+            if not dg_node._objhandle1.isAlive():
+                dg_node.ensure_valid()
             # Upgrade multi-dimensional geometry components (NURBS-surface
             # ``cv``, lattice ``pt``) to a ComponentPlug so ``node.cv[u][v]`` /
             # ``node.pt[s][t][u]`` resolve like the ``Plug("shape.cv[u][v]")``
@@ -179,7 +190,7 @@ class Node:
             # and ``Plug.node`` casts it.
             plug  = Plug(result.plug)
             owner = result.__dict__["_node"]
-            plug.__dict__["_node"] = self if owner is self._dg_node else owner
+            plug.__dict__["_node"] = self if owner is dg_node else owner
             return plug
         return result
 
