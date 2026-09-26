@@ -4,6 +4,7 @@ Node base classes, the Attribute wrapper and utils
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
 import sys
@@ -732,20 +733,82 @@ def _same_plug(attr: Any, other: Any) -> bool:
     )
 
 
-def _plug_hash(attr: Any) -> int:
-    """The hash of the Maya plug `attr` is (see `_same_plug`), for
-    `Attribute.__hash__` and `Plug.__hash__`.
+# `_node_serial`: a number per Maya node for as long as the node lives, keyed by
+# its API 1.0 MObjectHandle hashCode: the (handle, serial) of every live node
+# that has the code. Freed nodes' entries are dropped when their code is seen
+# again, and all of them once the table outgrows `_SERIALS_PRUNE_AT`.
+_NODE_SERIALS     = {}
+_NEXT_SERIAL      = itertools.count(1).__next__
+_SERIALS_PRUNE_AT = [4096]
 
-    It is the node's API 1.0 `MObjectHandle.hashCode()` and the attribute's long
-    name with every logical index, the instanced ones too (``worldMatrix[1]``), so
-    it is the same through every instance path of the node and it does not change
+
+def _prune_node_serials() -> None:
+    """Drop the serials of freed nodes (no node can take them again)."""
+    for code in list(_NODE_SERIALS):
+        live = [entry for entry in _NODE_SERIALS[code] if entry[0].isAlive()]
+        if live:
+            _NODE_SERIALS[code] = live
+        else:
+            del _NODE_SERIALS[code]
+    _SERIALS_PRUNE_AT[0] = max(4096, 2 * len(_NODE_SERIALS))
+
+
+def _node_serial(node: Any) -> int:
+    """A number that stands for the Maya node of `node` (a live DGNode) while that
+    node lives, and never for another node: the node part of `_plug_hash`.
+
+    Maya hands a freed node's `MObjectHandle.hashCode()` to a node made later,
+    and a file opened again or a reference reloaded brings its nodes back with
+    the UUIDs they had, so neither tells a freed node from the next one; a plug
+    of a freed node kept as a dict key would then share a hash with a live plug,
+    and the lookup would compare them. A serial is never reused. A node deleted
+    to the undo queue lives on, and keeps its serial when the delete is undone.
+    Two wrappers of one node share it; it is cached on the wrapper.
+    """
+    d      = node.__dict__
+    serial = d.get("_node_serial")
+    if serial is not None:
+        return serial
+    handle  = d["_objhandle1"]
+    code    = handle.hashCode()
+    entries = _NODE_SERIALS.get(code)
+    if entries is None:
+        if len(_NODE_SERIALS) >= _SERIALS_PRUNE_AT[0]:
+            _prune_node_serials()
+        entries = _NODE_SERIALS[code] = []
+    else:
+        mobject = handle.objectRef()
+        live    = []
+        for other, number in entries:
+            # a freed node's handle is not alive: it is dropped, never compared
+            if other.isAlive():
+                live.append((other, number))
+                if serial is None and other.objectRef() == mobject:
+                    serial = number
+        entries[:] = live
+    if serial is None:
+        serial = _NEXT_SERIAL()
+        entries.append((handle, serial))
+    d["_node_serial"] = serial
+    return serial
+
+
+def _plug_hash(attr: Any) -> int:
+    """The hash of the Maya plug `attr` is (see `_same_plug`), for `Plug.__hash__`
+    (a typed `Attribute` salts it, see `Attribute.__hash__`).
+
+    It is the node's serial (see `_node_serial`) and the attribute's long name
+    with every logical index, the instanced ones too (``worldMatrix[1]``), so it
+    is the same through every instance path of the node and it does not change
     when the node is renamed, the attribute aliased, or the node deleted to the
-    undo queue: a plug stays findable in a dict or set across all of them. It is
-    cached on the attr, so it survives a new scene freeing the node too. An array
-    of per-instance elements read without an index (``T2|S.worldMatrix``) is the
-    element of its path's instance, which a removed instance can change, so that
-    hash follows the path and is not cached. The plug of a freed node that was
-    never hashed hashes by its str buffer (its MPlug points at freed memory).
+    undo queue: a plug stays findable in a dict or set across all of them. A node
+    made later, even one that takes a freed node's hashCode or UUID, hashes
+    apart. It is cached on the attr, so it survives a new scene freeing the node
+    too. An array of per-instance elements read without an index
+    (``T2|S.worldMatrix``) is the element of its path's instance, which a
+    removed instance can change, so that hash follows the path and is not
+    cached. The plug of a freed node that was never hashed hashes by its str
+    buffer (its MPlug points at freed memory).
     """
     d      = attr.__dict__
     cached = d.get("_plug_hash")
@@ -757,10 +820,10 @@ def _plug_hash(attr: Any) -> int:
     if handle is None:
         # not a DGNode: named as the node's name property names it
         return hash((hash(str(node)), _plug_identity_name(attr)))
-    code = handle.hashCode()
     if not handle.isAlive():
-        return hash((code, str.__str__(attr)))
-    name = d["_mplug"].partialName(False, False, True, False, False, True)
+        return hash((handle.hashCode(), str.__str__(attr)))
+    serial = _node_serial(node)
+    name   = d["_mplug"].partialName(False, False, True, False, False, True)
     # a deleted node's path is not read, and its hash is not kept
     cache = handle.isValid()
     if cache:
@@ -768,7 +831,7 @@ def _plug_hash(attr: Any) -> int:
         if index is not None:
             name  = f"{name}[{index}]"
             cache = False
-    value = hash((code, name))
+    value = hash((serial, name))
     if cache:
         d["_plug_hash"] = value
     return value
@@ -1119,14 +1182,21 @@ class Attribute(str):
 
     def __hash__(self) -> int:
         # the Maya plug's identity, not the name: one key through every instance
-        # path, kept across a rename (see `_plug_hash`)
-        return _plug_hash(self)
+        # path, kept across a rename (see `_plug_hash`). Salted, so a typed attr
+        # and a DSL Plug of one plug are two keys: a dict or set lookup that
+        # found them alike would compare them with `Plug.__eq__`, which builds
+        # an equal node (and raises for matrices)
+        return hash(("Attribute", _plug_hash(self)))
 
     def __eq__(self, other: Any) -> bool:
         """True if `other` is an Attribute of the same Maya plug (node, attribute
         and logical indices), whatever the instance path each is named through.
         A str is never equal: compare `str(attr)` for names."""
         return isinstance(other, Attribute) and _same_plug(self, other)
+
+    def __ne__(self, other: Any) -> bool:
+        # not `str.__ne__`, which compares the names the two were built with
+        return not self.__eq__(other)
 
     def __gt__(self, other: Any) -> bool:
         return self.full_name > str(other)
