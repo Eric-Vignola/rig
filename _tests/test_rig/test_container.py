@@ -292,6 +292,17 @@ class TestFrameMembers(MayaTestCase):
             container_module._node_uuid = original
         self.assertEqual(frame.members, [_uuid(node), _uuid(name_b)])
 
+    def test_node_whose_name_parses_as_a_uuid_raises_as_before(self):
+        node = Node(cmds.createNode("multiplyDivide", name="md"))
+        cmds.rename(str(node), "abcdefabcdefabcdefabcdefabcdefab")
+        with container("ctn") as ctn:
+            frame = container.stack[-1]
+            with self.assertRaises(TypeError) as ctx:
+                container.add(node)
+            self.assertTrue(str(ctx.exception).startswith("Invalid object name: "))
+            self.assertEqual(frame.members, [])
+        self.assertIsNone(cmds.container(str(ctn), q=True, nodeList=True))
+
 
 def _attribute_query(attr, node):
     """``("ok", bool)`` or ``("err", type, message)`` of ``attributeQuery``."""

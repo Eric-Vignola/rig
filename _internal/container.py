@@ -38,7 +38,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import _PLAIN_NODE_NAME, Attribute
+from rig.nodetypes._base import _PLAIN_NODE_NAME, _wrapper_is_canonical, Attribute
+from rig.nodetypes.dg_node import DGNode
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
 
@@ -503,7 +504,7 @@ class _ContainerStack:
             # (and their entire subtrees) would orphan to the scene root
             # under ``flatten_containers=False``.
             if self._stack:
-                self.add(container_node)
+                self._add(container_node, created=True)
 
         frame = _StackFrame(
             name            = args["name"],
@@ -631,28 +632,34 @@ class _ContainerStack:
 
         # Add to the leaf real container (and record on every frame) by default.
         if container is None or container:
-            self.add(node)
+            self._add(node, created=True)
 
         return node
 
     def add(self, node: Any) -> None:
         """Add ``node`` (or list of nodes) to the leaf-level real container,
         and record its UUID in every frame on the stack."""
+        self._add(node, created=False)
+
+    def _add(self, node: Any, created: bool) -> None:
+        """:meth:`add`. ``created`` says every :class:`Node` in ``node`` was
+        just cast from its name, so a new cast of that name gives its uuid."""
         if not self._stack:
             return
 
         items      = list(node) if isinstance(node, (list, tuple)) else [node]
         node_names = [str(n) for n in items]
 
-        # Track UUIDs on every stack frame. A Node already holds its
-        # DGNode, so read the uuid there instead of re-resolving the name.
+        # Track UUIDs on every stack frame. A Node holding the wrapper a cast
+        # of its name would build gives the same uuid, so read it there
+        # instead of re-resolving the name.
         for item, name in zip(items, node_names):
+            dg_node = item._dg_node if isinstance(item, Node) else None
             try:
-                if isinstance(item, Node):
-                    try:
-                        uuid = item._dg_node.uuid
-                    except (AttributeError, RuntimeError):
-                        uuid = _node_uuid(name)
+                if isinstance(dg_node, DGNode) and (
+                    created or _wrapper_is_canonical(dg_node, dg_node._mobject)
+                ):
+                    uuid = dg_node.uuid
                 else:
                     uuid = _node_uuid(name)
             except ValueError:
