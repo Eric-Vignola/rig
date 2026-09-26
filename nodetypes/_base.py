@@ -722,11 +722,11 @@ def _same_plug(attr: Any, other: Any) -> bool:
     attribute and logical indices, whatever the instance paths they are named
     through (``Node("|T1|S").v`` and ``Node("|T2|S").v``). World space elements of
     different instances are different plugs. Both are named first, so a deleted
-    node raises as the names did."""
-    if attr is other:
-        return True
+    or freed node raises as the names did."""
     attr.full_name
     other.full_name
+    if attr is other:
+        return True
     return attr.__dict__["_mplug"].node() == other.__dict__["_mplug"].node() and (
         _plug_identity_name(attr) == _plug_identity_name(other)
     )

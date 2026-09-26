@@ -344,6 +344,7 @@ class TestReviewFixes(MayaTestCase):
             "plug + 1":          lambda n, p, t, w, a, d: p + 1,
             "plug == plug":      lambda n, p, t, w, a, d: p == p,
             "plug.equals(plug)": lambda n, p, t, w, a, d: p.equals(t),
+            "plug.equals(self)": lambda n, p, t, w, a, d: p.equals(p),
             "compound.tx":       lambda n, p, t, w, a, d: t.tx,
             "compound[0]":       lambda n, p, t, w, a, d: t[0],
             "compound.child(0)": lambda n, p, t, w, a, d: t.child(0),
