@@ -218,6 +218,73 @@ class TestMemoize(MayaTestCase):
         self.assertEqual(call_count["n"], 1)
 
 
+class TestMemoizeKeyCollisions(MayaTestCase):
+    """Calls whose cache keys merely share a hash must not share an entry.
+
+    CPython reserves -1 as an error code, so ``hash(-1) == hash(-2) == -2``
+    (and the same for -1.0 / -2.0). The caches used to key on
+    ``hash(key_tuple)``, so any two calls differing only by -1 vs -2 got the
+    first call's result: ``n.tx * -2`` returned the ``n.tx * -1`` node.
+    """
+
+    TEST_START_NEW_SCENE = True
+
+    def test_hashes_do_collide(self):
+        # The premise: if this ever stops holding, the tests below still pin
+        # the behaviour, they just no longer exercise a real hash collision.
+        key = (("id", 1), "tx")
+        self.assertEqual(hash(-1.0), hash(-2.0))
+        self.assertEqual(hash((key, -1.0)), hash((key, -2.0)))
+
+    def test_memoize_colliding_scalars(self):
+        call_count = {"n": 0}
+
+        @memoize
+        def identity(a):
+            call_count["n"] += 1
+            return a
+
+        self.assertEqual(identity(-1), -1)
+        self.assertEqual(identity(-2), -2)
+        self.assertEqual(call_count["n"], 2)
+        self.assertEqual(len(identity._cache), 2)
+        # Both entries still dedupe.
+        self.assertEqual(identity(-1), -1)
+        self.assertEqual(identity(-2.0), -2)
+        self.assertEqual(call_count["n"], 2)
+
+    def _assert_distinct_ops(self, make, expected):
+        node          = Node.create("transform", name="n")
+        first, second = make(node)
+        node.tx << 3
+        self.assertNotEqual(str(first), str(second))
+        self.assertAlmostEqual(cmds.getAttr(str(first)), expected[0])
+        self.assertAlmostEqual(cmds.getAttr(str(second)), expected[1])
+
+    def test_multiply_by_minus_one_then_minus_two(self):
+        self._assert_distinct_ops(lambda n: (n.tx * -1, n.tx * -2), (-3.0, -6.0))
+
+    def test_multiply_by_minus_two_then_minus_one(self):
+        self._assert_distinct_ops(lambda n: (n.tx * -2, n.tx * -1), (-6.0, -3.0))
+
+    def test_add_minus_one_then_minus_two(self):
+        self._assert_distinct_ops(lambda n: (n.tx + -1, n.tx + -2), (2.0, 1.0))
+
+    def test_identical_ops_still_dedupe(self):
+        node = Node.create("transform", name="n")
+        self.assertEqual(str(node.tx * -2), str(node.tx * -2))
+        self.assertEqual(str(node.tx + -1), str(node.tx + -1))
+
+    def test_random_seed_minus_one_then_minus_two(self):
+        from rig import random as rrandom
+
+        first  = rrandom.value(seed=-1)
+        second = rrandom.value(seed=-2)
+        self.assertNotEqual(str(first), str(second))
+        # An explicit seed still dedupes.
+        self.assertEqual(str(rrandom.value(seed=-1)), str(first))
+
+
 class TestMemoizeNodeKeyHardening(MayaTestCase):
     """Node/attribute cache keys must survive Maya hashCode recycling.
 

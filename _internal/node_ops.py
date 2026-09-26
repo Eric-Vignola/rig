@@ -93,7 +93,7 @@ class NodeOp:
         # (args, kwargs, container scope), value is _CacheEntry with
         # MObjectHandle-based liveness validation. Registered globally so
         # ``prune_memoize_caches()`` can sweep stale entries scene-wide.
-        self._cache: Dict[int, Any] = {}
+        self._cache: Dict[Tuple[Any, ...], Any] = {}
         _ALL_NODEOP_CACHES.append(self)
 
     # -- registration -- #
@@ -152,7 +152,7 @@ class NodeOp:
         except Exception:
             scope_key = ()
 
-        cache_key: Optional[int]
+        cache_key: Optional[Tuple[Any, ...]]
         try:
             # Include the target Maya version in the key so that runtime
             # changes (e.g. via ``set_options(maya_version=N)``) correctly
@@ -164,7 +164,10 @@ class NodeOp:
                 scope_key,
                 get_target_version(),
             )
-            cache_key = hash(key_tuple)
+            # The tuple itself is the key (see @memoize): a bare hash would let
+            # calls that merely share one (hash(-1.0) == hash(-2.0)) collide.
+            hash(key_tuple)
+            cache_key = key_tuple
         except TypeError:
             # Un-hashable arg -- bypass cache (matches @memoize behaviour).
             cache_key = None

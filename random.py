@@ -59,7 +59,7 @@ from __future__ import annotations
 
 from functools import wraps
 from random import randint as _python_randint
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from rig._internal.container import container
 from rig._internal.math_nodes import condition, constant
@@ -109,13 +109,13 @@ class _SeedCacheHolder:
     __slots__ = ("_cache",)
 
     def __init__(self) -> None:
-        self._cache: Dict[int, _CacheEntry] = {}
+        self._cache: Dict[Tuple[Any, ...], _CacheEntry] = {}
 
 
 def _memoize_on_seed(func: Callable[..., Any]) -> Callable[..., Any]:
     """Cache the wrapped function's return value when ``seed`` is given.
 
-    Cache key = ``hash((args, sorted_kwargs, scope))`` -- same shape as
+    Cache key = ``(args, sorted_kwargs, scope)`` -- same shape as
     :func:`@memoize`. When ``seed`` is ``None`` the function runs every
     time without consulting the cache.
     """
@@ -143,7 +143,10 @@ def _memoize_on_seed(func: Callable[..., Any]) -> Callable[..., Any]:
                 tuple(sorted((k, _stable_key(v)) for k, v in kwargs.items())),
                 scope_key,
             )
-            key = hash(key_tuple)
+            # The tuple itself is the key (see @memoize): a bare hash would let
+            # seeds that merely share one (hash(-1) == hash(-2)) collide.
+            hash(key_tuple)
+            key = key_tuple
         except TypeError:
             # Un-hashable arg -- bypass cache.
             return func(*args, **kwargs)

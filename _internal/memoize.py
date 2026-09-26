@@ -269,7 +269,7 @@ def memoize(
 
         return deco
 
-    cache: Dict[int, "_CacheEntry"] = {}
+    cache: Dict[Tuple[Any, ...], "_CacheEntry"] = {}
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -300,7 +300,11 @@ def memoize(
                 tuple(sorted((k, _stable_key(v)) for k, v in kwargs.items())),
                 scope_key,
             )
-            key = hash(key_tuple)
+            # Key on the tuple itself, not on hash(key_tuple): calls whose keys
+            # merely share a hash (hash(-1.0) == hash(-2.0)) must not share an
+            # entry. hash() still raises TypeError for an un-hashable arg.
+            hash(key_tuple)
+            key = key_tuple
         except TypeError:
             # Un-hashable arg -- bypass cache.
             return func(*args, **kwargs)
