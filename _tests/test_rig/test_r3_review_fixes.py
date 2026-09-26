@@ -5,14 +5,38 @@ docstring of each test says what it pinned before the fix.
 """
 
 import gc
+import os
+import shutil
+import tempfile
 from unittest import mock
 
-from maya import cmds
+from maya import cmds, OpenMaya as om1
 from maya.api import OpenMaya
 from rig import Node, Plug
-from rig.nodetypes import _base
+from rig.nodetypes import PyNode, _base
+from rig.nodetypes._base import Attribute
 from rig._internal.node_ops import NodeOp
 from rig._tests._base import MayaTestCase
+
+
+def _hash_code(name):
+    """The API 1.0 MObjectHandle hashCode of the node `name`."""
+    sel = om1.MSelectionList()
+    sel.add(name)
+    mobject = om1.MObject()
+    sel.getDependNode(0, mobject)
+    return om1.MObjectHandle(mobject).hashCode()
+
+
+def _instanced_locator():
+    """Locator shape ``S`` instanced under ``T1`` (instance 0, tx 0) and ``T2``
+    (instance 1, tx 7)."""
+    cmds.loadPlugin("matrixNodes", quiet=True)
+    cmds.createNode("transform", name="T1")
+    cmds.createNode("locator", name="S", parent="T1")
+    cmds.createNode("transform", name="T2")
+    cmds.parent("|T1|S", "T2", add=True, shape=True)
+    cmds.setAttr("T2.tx", 7)
 
 
 class TestSmallFixes(MayaTestCase):
@@ -72,3 +96,182 @@ class TestSmallFixes(MayaTestCase):
 
         with self.assertRaisesRegex(RuntimeError, r"raised NotImplementedError\. Last: legacy cannot$"):
             op(1.0)
+
+
+class TestPlugKeysOfFreedNodes(MayaTestCase):
+    """A plug of a freed node kept as a dict or set key never shares a hash with a
+    plug of a node made later. At 29a4128 the node part of the hash was the API
+    1.0 hashCode, which Maya hands to the next node it makes, so the lookup
+    compared the two plugs and the freed one raised "... already deleted!"."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self._undo = cmds.undoInfo(query=True, state=True)
+
+    def tearDown(self):
+        cmds.undoInfo(state=self._undo)
+        super().tearDown()
+
+    def _assert_misses(self, keys, probe):
+        self.assertNotIn(probe, keys)
+        self.assertIsNone(dict.fromkeys(keys).get(probe, None))
+        set(keys).discard(probe)
+
+    def test_undo_off_delete_then_a_new_node(self):
+        cmds.undoInfo(state=False)
+        cmds.createNode("transform", name="proxy")
+        cmds.createNode("transform", name="keep")
+        code  = _hash_code("proxy")
+        held  = [Node("proxy").tx, Node("keep").tx]
+        typed = [PyNode("proxy").find_attr("tx"), PyNode("keep").find_attr("tx")]
+        seen, typed_seen = set(held), set(typed)
+        cmds.delete("proxy")
+        cmds.createNode("transform", name="fresh")
+        self.assertEqual(_hash_code("fresh"), code)  # Maya recycled the code
+        self._assert_misses(seen, Node("fresh").tx)
+        self._assert_misses(typed_seen, PyNode("fresh").find_attr("tx"))
+        # the held keys are still found, the live one by a new spelling too
+        self.assertIn(held[0], seen)
+        self.assertIn(Node("keep").tx, seen)
+        self.assertIn(PyNode("keep").find_attr("tx"), typed_seen)
+
+    def test_flushed_undo_then_a_new_node(self):
+        cmds.undoInfo(state=True)
+        cmds.createNode("transform", name="proxy")
+        seen = {Node("proxy").tx}
+        cmds.delete("proxy")
+        cmds.flushUndo()
+        cmds.createNode("transform", name="fresh")
+        self._assert_misses(seen, Node("fresh").tx)
+
+    def test_registry_held_across_a_new_scene(self):
+        names = [cmds.createNode("transform", name=f"a{i}") for i in range(100)]
+        codes = {_hash_code(name) for name in names}
+        table = {Node(name).tx: name for name in names}
+        typed = {PyNode(name).find_attr("ty"): name for name in names}
+        cmds.file(new=True, force=True)
+        recycled = 0
+        for i in range(200):
+            name = cmds.createNode("transform", name=f"c{i}")
+            recycled += _hash_code(name) in codes
+            self.assertNotIn(Node(name).tx, table)
+            self.assertNotIn(PyNode(name).find_attr("ty"), typed)
+        self.assertGreater(recycled, 0)
+        self.assertEqual(len(table), 100)
+
+    def test_registry_held_across_a_reopen_and_a_reference_reload(self):
+        # a file opened again, or a reference reloaded, brings its nodes back with
+        # the UUIDs they had, and often at the hashCode they had
+        folder = tempfile.mkdtemp(prefix="rig_r3_keys_")
+        path   = os.path.join(folder, "keys.ma").replace(os.sep, "/")
+        try:
+            names = [cmds.createNode("transform", name=f"n{i}") for i in range(50)]
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            table = {Node(name).tx: name for name in names}
+            cmds.file(path, open=True, force=True)
+            for name in names:
+                self.assertNotIn(Node(name).tx, table)
+                self.assertNotIn(PyNode(name).find_attr("tx"), table)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            table = {Node(f"ref:{name}").tx: name for name in names}
+            ref = cmds.referenceQuery(path, referenceNode=True)
+            cmds.file(unloadReference=ref)
+            cmds.file(loadReference=ref)
+            for name in names:
+                self.assertNotIn(Node(f"ref:{name}").tx, table)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_a_node_keeps_its_key_across_a_delete_and_its_undo(self):
+        cmds.undoInfo(state=True, infinity=True)
+        held = Node(cmds.createNode("transform", name="a")).tx
+        seen = {held}
+        cmds.delete("a")
+        cmds.createNode("transform", name="a")
+        self.assertNotIn(Node("a").tx, seen)
+        cmds.undo()
+        cmds.undo()
+        self.assertIn(Node("a").tx, seen)
+        # two wrappers of one node share the serial
+        self.assertEqual(
+            _base._node_serial(PyNode("a")), _base._node_serial(Node("a")._dg_node)
+        )
+
+    def test_the_serial_table_drops_freed_nodes(self):
+        for i in range(20):
+            hash(Node(cmds.createNode("transform", name=f"p{i}")).tx)
+        cmds.file(new=True, force=True)
+        _base._prune_node_serials()
+        for entries in _base._NODE_SERIALS.values():
+            self.assertTrue(all(handle.isAlive() for handle, _ in entries))
+
+
+class TestTypedAttributeAndPlugKeys(MayaTestCase):
+    """A typed Attribute and a DSL Plug of one Maya plug are two keys again (as on
+    d6ad8b2). At 29a4128 they hashed alike, so a dict or set lookup mixing them
+    ran Plug.__eq__, which built an equal node, and raised for matrix plugs."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_mixed_lookups_miss_and_build_nothing(self):
+        cmds.createNode("transform", name="a")
+        cmds.createNode("transform", name="b")
+        cmds.connectAttr("a.tx", "b.tx")
+        before = sorted(cmds.ls())
+        typed_tx = PyNode("a").find_attr("tx")
+        typed_wm = PyNode("a").find_attr("worldMatrix")[0]
+        self.assertIsNone({typed_tx: 1}.get(Node("a").tx))
+        self.assertIsNone({Node("a").tx: 1}.get(typed_tx))
+        self.assertNotIn(Node("a").worldMatrix[0], {typed_wm})
+        self.assertNotIn(typed_wm, {Node("a").worldMatrix[0]})
+        self.assertNotIn(Node("a").tx, set(PyNode("a").list_attr(keyable=True)))
+        dst = set(typed_tx.get_connected_attrs(src=False, dst=True))
+        self.assertNotIn(Node("b").tx, dst)
+        self.assertEqual(sorted(cmds.ls()), before)
+        # one plug all the same, and a typed probe finds the typed key
+        self.assertTrue(Node("a").tx.equals(typed_tx))
+        self.assertIn(PyNode("b").find_attr("tx"), dst)
+
+    def test_each_layer_is_one_key_through_two_instance_paths(self):
+        _instanced_locator()
+        plugs = [Node("|T1|S").v, Node("|T2|S").v]
+        typed = [PyNode("|T1|S").find_attr("v"), PyNode("|T2|S").find_attr("v")]
+        self.assertEqual(len(set(plugs)), 1)
+        self.assertEqual(len(set(typed)), 1)
+        self.assertEqual(len(set(plugs) | set(typed)), 2)
+
+
+class TestAttributeInequality(MayaTestCase):
+    """Attribute != is the negation of ==. It was str.__ne__, which compares the
+    names the two were built with ('a.tx' and 'a.translateX')."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_ne_negates_eq(self):
+        cmds.createNode("transform", name="a")
+        by_name, found = Attribute("a.tx"), PyNode("a").find_attr("tx")
+        self.assertTrue(by_name == found)
+        self.assertFalse(by_name != found)
+        other = PyNode("a").find_attr("ty")
+        self.assertFalse(found == other)
+        self.assertTrue(found != other)
+        # a str is never equal, so it is always unequal
+        self.assertFalse(found == "a.translateX")
+        self.assertTrue(found != "a.translateX")
+        cmds.rename("a", "m")
+        renamed = PyNode("m").find_attr("translateX")
+        self.assertTrue(found == renamed)
+        self.assertFalse(found != renamed)
+
+    def test_ne_through_instance_paths(self):
+        _instanced_locator()
+        a, b = PyNode("|T1|S").find_attr("v"), PyNode("|T2|S").find_attr("v")
+        self.assertFalse(a != b)
+        wm = PyNode("|T1|S").find_attr("worldMatrix")
+        self.assertTrue(wm[0] != wm[1])
+        self.assertFalse(wm[1] != PyNode("|T2|S").find_attr("worldMatrix")[1])

@@ -449,14 +449,16 @@ class Plug(Attribute):
         """Hash by the Maya plug, so the Plug remains a valid dict / set key even
         though ``__eq__`` is overloaded to build a condition-node network.
 
-        The hash is the node's MObject handle plus the attribute's long name
-        with its logical indices (see ``_plug_hash``): a plug read through either
-        instance path of a node (``Node("|T1|S").v``, ``Node("|T2|S").v``) hashes
-        the same, a rename, an alias or a delete to the undo queue does not
-        change it, and the elements of different instances (``worldMatrix[0]``,
-        ``worldMatrix[1]``), different plugs, hash apart (``==`` on two matrices
-        raises). A plug never hashes as its name: a plain str is not a key for
-        it.
+        The hash is a serial of the node (never reused, see ``_node_serial``)
+        plus the attribute's long name with its logical indices (see
+        ``_plug_hash``): a plug read through either instance path of a node
+        (``Node("|T1|S").v``, ``Node("|T2|S").v``) hashes the same, a rename, an
+        alias or a delete to the undo queue does not change it, and the elements
+        of different instances (``worldMatrix[0]``, ``worldMatrix[1]``), different
+        plugs, hash apart (``==`` on two matrices raises), as do the plugs of a
+        freed node and of a node made after it. A plug never hashes as its name:
+        a plain str is not a key for it, and neither is a typed Attribute (its
+        hash is salted).
         """
         return _plug_hash(self)
 

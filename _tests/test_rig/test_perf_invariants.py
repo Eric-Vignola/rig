@@ -496,18 +496,18 @@ class TestCheckedTypeConstruction(MayaTestCase):
             )
 
     def test_plug_hash_value_unchanged(self):
-        # Round 3, decision D-B: a plug hashes by its Maya plug, the node's
-        # API 1.0 MObjectHandle hashCode plus the attribute's long name (it was
-        # the node's name plus the alias), so a rename keeps the key. The value
-        # is still pinned: every spelling of one plug hashes the same.
-        from maya import OpenMaya as om1
+        # Historical id: the value is no longer v2.0.0a2's. Round 3, decision
+        # D-B: a plug hashes by its Maya plug, so a rename keeps the key (it was
+        # the node's name plus the alias). Step S2 used the node's API 1.0
+        # MObjectHandle hashCode, which Maya hands to a node made after a freed
+        # one, so a plug of the freed node and one of the new node shared a key
+        # (the review of 29a4128); the node part is now a serial that is never
+        # reused (see `_node_serial`). The value is still pinned: every spelling
+        # of one plug hashes the same.
+        from rig.nodetypes._base import _node_serial
 
         def hash_code(node_name):
-            sel = om1.MSelectionList()
-            sel.add(node_name)
-            mobject = om1.MObject()
-            sel.getDependNode(0, mobject)
-            return om1.MObjectHandle(mobject).hashCode()
+            return _node_serial(PyNode(node_name))
 
         md  = cmds.createNode("multiplyDivide", name="md1")
         grp = cmds.createNode("transform", name="grp")
