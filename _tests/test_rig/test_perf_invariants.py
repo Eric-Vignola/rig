@@ -456,8 +456,8 @@ class TestCheckedTypeConstruction(MayaTestCase):
         cmds.createNode("transform", name="S", parent=top)
         other = cmds.createNode("transform", name="T2")
         cmds.parent("T1|S", other, add=True, relative=True)
-        self.assertEqual(str(Node("|T2|S").visibility), "T1|S.visibility")
-        self.assertEqual(Node("|T2|S").visibility.node._dg_node.long_name, "|T1|S")
+        self.assertEqual(str(Node("|T2|S").visibility), "T2|S.visibility")
+        self.assertEqual(Node("|T2|S").visibility.node._dg_node.long_name, "|T2|S")
 
     def test_named_plug_keeps_its_node_after_delete(self):
         cmds.undoInfo(state=True, infinity=True)
@@ -1311,7 +1311,7 @@ class TestPlugNodeReuse(MayaTestCase):
                 self.assertEqual(self._casts(lambda: str(plug)), 0)
                 self.assertEqual(str(plug), expected)
                 self.assertIs(type(plug.node), Node)
-                self.assertIsNot(plug.node, node)
+                self.assertIs(plug.node, pma if expected.startswith("plus") else node)
                 fresh = Plug(plug.plug)
                 self.assertEqual(self._casts(lambda: str(fresh)), 1)
                 self.assertEqual(_owner(plug), _owner(fresh))
@@ -1329,10 +1329,10 @@ class TestPlugNodeReuse(MayaTestCase):
         PyNode._CASTABLE_TYPES.clear()
         node = Node(cmds.createNode("multiplyDivide"))
         plug = node.input1X
-        # the lookup casts the owner of the attr it caches, which warms the type
+        # the plug holds the node it was read from, so naming it casts nothing
         PyNode._CLASS_BY_TYPE.clear()
         PyNode._CASTABLE_TYPES.clear()
-        self.assertEqual(self._casts(lambda: str(plug)), 1)
+        self.assertEqual(self._casts(lambda: str(plug)), 0)
         self.assertEqual(self._casts(lambda: str(node.input1Y)), 0)
 
     def test_instanced_shape_plug_not_seeded(self):
@@ -1340,21 +1340,20 @@ class TestPlugNodeReuse(MayaTestCase):
         PyNode(_mobject(cmds.createNode("transform", name="S", parent=top)))
         other = cmds.createNode("transform", name="T2")
         cmds.parent("T1|S", other, add=True, relative=True)
-        # ``[index]`` resolves the parent plug's owner while it builds the
-        # child (as v2.0.0a2 does), so the one fresh cast is counted over
-        # building and naming the plug, not over str() alone.
+        # Owner rule (C3): a plug holds the node it was read from, so building
+        # and naming it casts nothing, and it is named through that path.
         for attr, lookup in (
             ("visibility", lambda: Node("|T2|S").visibility),
             ("translateX", lambda: Node("|T2|S").t[0]),
         ):
             with self.subTest(plug=attr):
                 names = []
-                self.assertEqual(self._casts(lambda: names.append(str(lookup()))), 1)
-                self.assertEqual(names, [f"T1|S.{attr}"])
+                self.assertEqual(self._casts(lambda: names.append(str(lookup()))), 0)
+                self.assertEqual(names, [f"T2|S.{attr}"])
                 plug = lookup()
                 self.assertEqual(plug.name, attr)
-                self.assertEqual(str(plug), f"T1|S.{attr}")
-                self.assertEqual(plug.node._dg_node.long_name, "|T1|S")
+                self.assertEqual(str(plug), f"T2|S.{attr}")
+                self.assertEqual(plug.node._dg_node.long_name, "|T2|S")
         self.assertEqual(self._casts(lambda: str(Node("|T1|S").visibility)), 0)
 
     def test_instanced_plug_names_match_v2_0_0a2(self):
@@ -1374,11 +1373,14 @@ class TestPlugNodeReuse(MayaTestCase):
                 ("translate.child(1)", lambda n: n.translate.child(1), "translateY"),
             ):
                 with self.subTest(path=path, lookup=lookup):
+                    # Owner rule (C3): a plug is named through the path of the
+                    # node it was read from ('|T1|S' as in v2.0.0a2, '|T2|S'
+                    # through the second instance)
                     plug = get(Node(path))
-                    self.assertEqual(str(plug), f"T1|S.{attr}")
-                    self.assertEqual(plug.full_name, f"T1|S.{attr}")
+                    self.assertEqual(str(plug), f"{path[1:]}.{attr}")
+                    self.assertEqual(plug.full_name, f"{path[1:]}.{attr}")
                     self.assertIs(type(plug.node), Node)
-                    self.assertEqual(plug.node.long_name, "|T1|S")
+                    self.assertEqual(plug.node.long_name, path)
         for name in ("|T2|S.visibility", "T1|S.visibility"):
             with self.subTest(name=name):
                 self.assertEqual(str(Plug(name)), "T1|S.visibility")
@@ -1390,8 +1392,8 @@ class TestPlugNodeReuse(MayaTestCase):
 
     def test_user_chosen_class_not_seeded(self):
         plug = Node(Transform(self._known_type("joint"))).tx
-        self.assertEqual(self._casts(lambda: str(plug)), 1)
-        self.assertIs(type(plug.node._dg_node), Joint)
+        self.assertEqual(self._casts(lambda: str(plug)), 0)
+        self.assertIs(type(plug.node._dg_node), Transform)
 
     def test_shape_attr_via_transform_gets_shape_node(self):
         points = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
@@ -1418,8 +1420,7 @@ class TestPlugNodeReuse(MayaTestCase):
         ctn  = Container(cmds.container(name="box"))
         plug = ctn.blackBox
         self.assertEqual(self._casts(lambda: str(plug)), 0)
-        self.assertIs(type(plug.node), Node)
-        self.assertIsNot(plug.node, ctn)
+        self.assertIs(plug.node, ctn)
         self.assertEqual(plug.node.name, "box")
 
     def test_element_plug_shares_node(self):
@@ -1462,9 +1463,10 @@ class TestPlugNodeReuse(MayaTestCase):
         set_custom_type(str(node), "perfReuseProbe")
         for plug in held:
             with self.subTest(plug=plug.name):
-                self.assertEqual(self._casts(lambda: str(plug)), 1)
-                self.assertIs(type(plug.node._dg_node), _Probe)
-                self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+                self.assertEqual(self._casts(lambda: str(plug)), 0)
+                self.assertIs(type(plug.node._dg_node), Transform)
+                # a fresh cast sees the custom type
+                self.assertNotEqual(_owner(plug), _owner(Plug(plug.plug)))
 
     def test_deleted_node_error_unchanged(self):
         cmds.undoInfo(state=True, infinity=True)
@@ -1476,39 +1478,40 @@ class TestPlugNodeReuse(MayaTestCase):
                 name  = self._known_type(node_type)
                 node  = Node(name)
                 plugs = (getattr(node, attr), getattr(node, parent)[1])
+                deleted = ("error", RuntimeError, f"{name} already deleted!")
                 cmds.delete(name)
+                # a held plug's owner is the deleted node, not a new cast
                 for plug in plugs:
-                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
-                    self.assertEqual(_owner(plug)[0], "error")
+                    self.assertEqual(_owner(plug), deleted)
+                    self.assertEqual(_owner(Plug(plug.plug))[0], "error")
                 cmds.undo()
                 for plug in plugs:
                     self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
                     self.assertEqual(_owner(plug)[0], "ok")
 
-                # the cast resolves the name, so it finds a newer node of that name
+                # the cast resolves the name, so it finds a newer node of that
+                # name; a held plug does not retarget to it
                 plugs = (getattr(node, attr), getattr(node, parent)[1])
                 cmds.delete(name)
                 cmds.createNode(node_type, name=name)
                 for plug in plugs:
-                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
-                    self.assertEqual(_owner(plug)[0], "ok")
+                    self.assertEqual(_owner(plug), deleted)
+                    self.assertEqual(_owner(Plug(plug.plug))[0], "ok")
 
     def test_plug_node_wrapper_is_its_own(self):
         node    = Node(self._known_type("transform"))
         wrapper = node >> None
         cached  = wrapper.find_attr("tx")
-        wrapper.user_tag = "set on the user's wrapper"
+        vars(wrapper)["user_tag"] = "set on the user's wrapper"
         for plug in (node.tx, node.t[0], node.t.translateY, node.rotate.child(0)):
             owner = plug.node >> None
             self.assertIs(type(owner), Transform)
-            self.assertIsNot(owner, wrapper)
-            self.assertIsNot(owner.mdagpath, wrapper.mdagpath)
-            self.assertIsNot(owner.mobject, wrapper.mobject)
-            self.assertIsNot(owner.fn_set, wrapper.fn_set)
-            fresh = Plug(plug.plug).node >> None
-            self.assertEqual(_wrapper_state(owner), _wrapper_state(fresh))
-            self.assertFalse(hasattr(owner, "user_tag"))
-            self.assertIsNot(owner.find_attr("tx"), cached)
+            self.assertIs(owner, wrapper)
+            self.assertIs(owner.mdagpath, wrapper.mdagpath)
+            self.assertIs(owner.mobject, wrapper.mobject)
+            self.assertIs(owner.fn_set, wrapper.fn_set)
+            self.assertTrue(hasattr(owner, "user_tag"))
+            self.assertIs(owner.find_attr("tx"), cached)
         # find_attr filters a lookup the user's wrapper already cached
         self.assertIsNone(node.tx.node.find_attr("translateX", data_type="string"))
 
@@ -1517,7 +1520,7 @@ class TestPlugNodeReuse(MayaTestCase):
         PyNode(_mobject(shape))
         mesh  = Node(shape)
         local = (mesh >> None).local_shape_attr
-        self.assertIsNot((mesh.outMesh.node >> None).local_shape_attr, local)
+        self.assertIs((mesh.outMesh.node >> None).local_shape_attr, local)
 
     def test_plug_node_finds_a_readded_extension_attr(self):
         node = Node(self._known_type("transform"))
@@ -1556,11 +1559,8 @@ class TestCachedAttributeOwner(MayaTestCase):
                 getattr(node, attr)
                 cached = node.find_attr(attr)
                 owner  = cached._node
-                self.assertEqual(
-                    _wrapper_state(owner), _wrapper_state(PyNode(_mobject(name)))
-                )
-                self.assertIsNot(owner, node._dg_node)
-                self.assertIsNot(owner.mobject, node._dg_node.mobject)
+                # the node it was read from, whose attr cache holds it
+                self.assertIs(owner, node._dg_node)
                 self.assertIsNone(owner.find_attr(attr, data_type="string"))
 
                 cmds.delete(name)
@@ -1579,8 +1579,9 @@ class TestCachedAttributeOwner(MayaTestCase):
         node = Node("|T2|S")
         node.visibility
         cached = node.find_attr("visibility")
-        self.assertEqual(cached._node._mdagpath.fullPathName(), "|T1|S")
-        self.assertEqual(str(cached), "T1|S.visibility")
+        # named through the path the node was read from
+        self.assertEqual(cached._node._mdagpath.fullPathName(), "|T2|S")
+        self.assertEqual(str(cached), "T2|S.visibility")
 
 
 def _named(plug):
@@ -1744,13 +1745,13 @@ _CONNECT_CASES = (
     ("extension_gone", (), _plug("a.tx"), lambda: _extension(True), False, False),
     ("instance", (), _plug("a.tx"), _instance_plug("t2|loc.lpx"), False, True),
     ("stale_instance", (), _plug("a.tx"), lambda: _stale_instance(False), False,
-     False),
+     True),
     ("stale_instance_source", (), lambda: _stale_instance(False), _plug("b.tx"),
-     False, False),
+     False, True),
     ("removed_instance", (), _plug("a.tx"), lambda: _stale_instance(True), False,
-     False),
+     True),
     ("removed_instance_source", (), lambda: _stale_instance(True), _plug("b.tx"),
-     False, False),
+     False, True),
     ("world_source", (), _plug("a.worldMatrix[0]"), _plug("b.offsetParentMatrix"),
      False, True),
     ("instance_world_source", (), _instance_plug("t2|loc.worldMatrix[1]"),
@@ -1824,17 +1825,17 @@ class TestConnectQuery(MayaTestCase):
     def test_connect_outcomes(self):
         cases   = {case[0]: case for case in _CONNECT_CASES}
         missing = (ValueError, "No object matches name: b.undone")
-        stale   = (ValueError, "No object matches name: .localPositionX")
+        # a held path that went stale re-resolves to the surviving instance
         for name, expected in (
             ("plain", None),
             ("connected", None),
             ("readded_wired", None),
             ("undone", missing),
             ("undone_source", missing),
-            ("stale_instance", stale),
-            ("stale_instance_source", stale),
-            ("removed_instance", stale),
-            ("removed_instance_source", stale),
+            ("stale_instance", None),
+            ("stale_instance_source", None),
+            ("removed_instance", None),
+            ("removed_instance_source", None),
             ("wired_instance_element", None),
         ):
             with self.subTest(case=name):
@@ -2290,13 +2291,14 @@ class TestCanonicalWrapperCheck(MayaTestCase):
         self.assertEqual(_canonical_calls(first, mobject), (True, 0, 1))
         self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
 
-        # the path of the removed instance is invalid, the other is the only one
+        # the path of the removed instance is invalid, the other is the only one:
+        # naming the wrapper re-resolves its path to it, so it names that path
         cmds.parent("T2|S", removeObject=True, shape=True)
-        self.assertEqual(second.name, "")
-        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
+        self.assertEqual(second.name, "S")
+        self.assertEqual(_canonical_calls(second, mobject), (True, 0, 0))
         self.assertEqual(_canonical_calls(first, mobject), (True, 0, 0))
         cmds.undo()
-        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
+        self.assertEqual(_canonical_calls(second, mobject), (True, 0, 1))
         self.assertEqual(_canonical_calls(first, mobject), (True, 0, 1))
 
         plane = cmds.nurbsPlane(name="plane")[0]
@@ -2567,7 +2569,7 @@ _FULL_NAME_CASES = (
     ("choice", lambda: Node("pick").input[0], "pick.input[0]", 0, 1),
     ("joint", lambda: Node("jnt").jointOrientX, "jnt.jointOrientX", 0, 1),
     ("underworld", _underworld, "planeShape->curveShape1.visibility", 0, 1),
-    ("instanced", _instanced, "T1|S.visibility", 0, 1),
+    ("instanced", _instanced, "T2|S.visibility", 0, 1),
     ("renamed", _renamed, "renamed.translateX", 0, 1),
     ("delete_undone", _delete_undone, "b.translateX", 0, 1),
     ("readded", lambda: _readded("b"), "b.dd", 0, 1),
@@ -2579,7 +2581,7 @@ _FULL_NAME_CASES = (
     ("component", _component, "planeShape.cv[1][1]", 1, 1),
     ("attribute", lambda: _base.Attribute("b.tx"), "b.translateX", 0, 0),
     ("container_owner", _container_owner, "ctr.blackBox", 1, 1),
-    ("name_raises", _name_raises, "w.name.translateX", 1, 2),
+    ("name_raises", _name_raises, "w.translateX", 0, 1),
     ("no_wrapped_node", _no_wrapped_node, (AttributeError, "_dg_node"), 0, 1),
 )
 
@@ -2670,7 +2672,9 @@ class TestFullNameReadsTheWrappedNode(MayaTestCase):
             with self.subTest(case=case):
                 self._scene()
                 plug = factory()
-                if type(plug) is not ComponentPlug:
+                # a node whose name property raises is named by its fn set, not
+                # by its Maya attr of that name
+                if type(plug) is not ComponentPlug and case != "name_raises":
                     self.assertEqual(plug.full_name, f"{plug.node.name}.{plug.alias}")
                 self.assertEqual(plug.full_name, expected)
 

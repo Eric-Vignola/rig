@@ -3,14 +3,24 @@ hierarchy. Each class names the step of the merge it belongs to:
 
 * S0: Plug property setters, ``bool(plug)``, ``find_attr`` filters and caching,
   ``rename_attr`` with a Plug.
+* S1: the owner rule (a plug's node is the node object it was read from),
+  foreign plugs, stale DAG paths, held plugs across delete / reuse / undo.
 """
 
 from unittest import mock
 
 from maya import cmds
-from rig import Node, Plug
-from rig.nodetypes import PyNode
+from maya.api import OpenMaya
+from rig import Container, Node, Plug, container
+from rig.nodetypes import PyNode, Transform
+from rig._internal.members import Components
 from rig._tests._base import MayaTestCase
+
+
+def _mobject(name):
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return sel.getDependNode(0)
 
 
 class TestPlugQuickWins(MayaTestCase):
@@ -98,3 +108,163 @@ class TestPlugQuickWins(MayaTestCase):
         self.assertEqual(sorted(cmds.ls()), before)
         self.assertTrue(cmds.attributeQuery("bar", node=net, exists=True))
         self.assertEqual(str(result), "net.bar")
+
+
+class TestOwnerRule(MayaTestCase):
+    """S1: a plug's node is the node object it was read from."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self._registered = dict(PyNode._NODE_CLASS_DICT)
+
+    def tearDown(self):
+        PyNode._NODE_CLASS_DICT.clear()
+        PyNode._NODE_CLASS_DICT.update(self._registered)
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        super().tearDown()
+
+    def test_plugs_children_and_elements_share_the_node(self):
+        node = Node(cmds.createNode("transform", name="a"))
+        pma  = Node(cmds.createNode("plusMinusAverage", name="pma"))
+        for plug in (
+            node.tx,
+            node.t[0],
+            node.t.tx,
+            node.t[:][1],
+            node.translate.child(2),
+        ):
+            with self.subTest(plug=str(plug)):
+                self.assertIs(plug.node, node)
+        for plug in (pma.input1D[3], pma.input3D[1], pma.input3D[1].input3Dx):
+            with self.subTest(plug=str(plug)):
+                self.assertIs(plug.node, pma)
+        self.assertIs(node.find_attr("tx").node, node._dg_node)
+        self.assertIs(node.find_attr("tx"), node.find_attr("translateX"))
+
+    def test_foreign_plug_gets_its_own_node(self):
+        points = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
+        curve  = cmds.curve(point=points, name="crv")
+        shape  = cmds.listRelatives(curve, shapes=True)[0]
+        plug   = Node(curve).controlPoints
+        self.assertEqual(plug.node.name, shape)
+        self.assertTrue(plug.node.mobject == _mobject(shape))
+        self.assertEqual(str(plug), f"{shape}.controlPoints")
+        # the transform's own attrs are still its own
+        self.assertEqual(Node(curve).tx.node.name, curve)
+
+    def test_stale_path_names_the_surviving_instance(self):
+        cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="T2")
+        cmds.createNode("locator", name="S", parent="T1")
+        cmds.parent("T1|S", "T2", add=True, shape=True, relative=True)
+        node = Node("|T2|S")
+        held = node.visibility
+        self.assertEqual(str(held), "T2|S.visibility")
+        cmds.parent("T2|S", removeObject=True, shape=True)
+        self.assertEqual(node.name, "S")
+        self.assertEqual(node.long_name, "|T1|S")
+        self.assertTrue(node.mdagpath.isValid())
+        self.assertEqual(str(held), "S.visibility")
+        self.assertEqual(str(node.localPositionX), "S.localPositionX")
+
+    def test_held_plug_across_delete_reuse_and_undo(self):
+        cmds.undoInfo(state=True, infinity=True)
+        node = Node(cmds.createNode("transform", name="held"))
+        plug = node.tx
+        cmds.delete("held")
+        for func in (str, lambda p: p.get()):
+            with self.assertRaises(RuntimeError) as ctx:
+                func(plug)
+            self.assertEqual(str(ctx.exception), "held already deleted!")
+        cmds.createNode("transform", name="held")
+        with self.assertRaises(RuntimeError) as ctx:
+            str(plug)
+        self.assertEqual(str(ctx.exception), "held already deleted!")
+        # a plug built from the name finds the new node
+        self.assertEqual(str(Plug("held.tx")), "held.translateX")
+        cmds.undo()
+        cmds.undo()
+        self.assertEqual(str(plug), "held.translateX")
+        plug << 3.0
+        self.assertEqual(cmds.getAttr("held.tx"), 3.0)
+
+    def test_owner_soundness_sweep(self):
+        md         = cmds.createNode("multiplyDivide", name="md")
+        xform      = cmds.createNode("transform", name="xf")
+        jnt        = cmds.createNode("joint", name="jnt")
+        cube       = cmds.polyCube(name="cube")[0]
+        mesh       = cmds.listRelatives(cube, shapes=True)[0]
+        surf       = cmds.sphere(name="ball", constructionHistory=False)[0]
+        surf_shape = cmds.listRelatives(surf, shapes=True)[0]
+        lattice    = cmds.lattice(cube, name="lat")[1]
+        lat_shape  = cmds.listRelatives(lattice, shapes=True)[0]
+        target     = cmds.polyCube(name="target")[0]
+        base       = cmds.polyCube(name="base")[0]
+        bs         = cmds.blendShape(target, base, name="bs")[0]
+        pma        = cmds.createNode("plusMinusAverage", name="pma")
+        cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="T2")
+        cmds.createNode("locator", name="S", parent="T1")
+        cmds.parent("T1|S", "T2", add=True, shape=True, relative=True)
+        cmds.namespace(add="ns")
+        cmds.createNode("transform", name="ns:n")
+        with container("box") as box:
+            inner = Node.create("transform", name="inner")
+            container.publish_input(inner.tx, "slide")
+        self.assertIsInstance(box, Container)
+
+        plugs = {
+            "dg": lambda: Node(md).input1X,
+            "dg_child": lambda: Node(md).input1[1],
+            "transform": lambda: Node(xform).tx,
+            "transform_child": lambda: Node(xform).t.ty,
+            "world_matrix": lambda: Node(xform).worldMatrix[0],
+            "joint": lambda: Node(jnt).jointOrientX,
+            "mesh": lambda: Node(mesh).outMesh,
+            "mesh_vtx": lambda: Node(mesh).vtx[3],
+            "vtx_via_transform": lambda: Node(cube).vtx[3],
+            "surface_cv": lambda: Node(surf_shape).cv[1, 2],
+            "surface_cv_handle": lambda: Node(surf_shape).cv,
+            "surface_cv_via_transform": lambda: Node(surf).cv[1, 2],
+            "lattice_pt": lambda: Node(lat_shape).pt[0, 1, 0],
+            "blendshape_alias": lambda: getattr(Node(bs), target),
+            "blendshape_weight": lambda: Node(bs).weight[0],
+            "container_genuine": lambda: box.blackBox,
+            "container_published": lambda: box.slide,
+            "instanced": lambda: Node("|T2|S").visibility,
+            "namespaced": lambda: Node("ns:n").tx,
+            "element": lambda: Node(pma).input3D[1],
+            "element_child": lambda: Node(pma).input3D[1].input3Dx,
+            "string": lambda: Plug("xf.tx"),
+        }
+        for label, factory in plugs.items():
+            with self.subTest(pattern=label):
+                plug = factory()
+                self.assertTrue(plug.node.mobject == plug.plug.node(), str(plug))
+                self.assertIsInstance(plug.node, Node)
+        for kind in ("f", "e"):
+            with self.subTest(pattern=kind):
+                components = getattr(Node(cube), kind)
+                self.assertIsInstance(components, Components)
+                self.assertTrue(components.shape.mobject == _mobject(mesh))
+
+    def test_name_property_that_raises_names_by_fn_set(self):
+        class _NameRaises(Transform):
+            NATIVE_NODE_TYPE = "mergeNameRaisesProbe"
+
+            @property
+            def name(self):
+                raise AttributeError("no name")
+
+        cmds.createNode("transform", name="w")
+        cmds.addAttr("w", longName="name", dataType="string")
+        wrapper = object.__new__(_NameRaises)
+        vars(wrapper).update(vars(PyNode(_mobject("w"))))
+        vars(wrapper)["_attr_dict"] = {}
+        for plug in (Node(wrapper).tx, wrapper.find_attr("tx"), Node(wrapper).t[0]):
+            with self.subTest(plug=type(plug).__name__):
+                self.assertEqual(str(plug), "w.translateX")
+                self.assertEqual(plug.full_name, "w.translateX")

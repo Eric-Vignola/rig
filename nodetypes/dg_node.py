@@ -378,7 +378,9 @@ class DGNode(metaclass=NodeMeta):
             quiet: If True, don't raise errors on failure.
 
         Returns:
-            The attribute instance or None if no match was found.
+            The attribute instance or None if no match was found. An attr of this
+            node is owned by this node object (its ``node`` is ``self``); the
+            normal attrs are cached, so the same instance is returned again.
         """
         # pass through
         if isinstance(attr, Attribute):
@@ -476,15 +478,16 @@ class DGNode(metaclass=NodeMeta):
             )
 
         attr_obj = Attribute(plug)
+        # an attr of this node is owned by this node object; one found on
+        # another node (a transform's shape) finds its own node when asked
+        if plug.node() == self._mobject:
+            attr_obj.__dict__["_node"] = self
+            own_fn = self._fn_set
+        else:
+            own_fn = OpenMaya.MFnDependencyNode(plug.node())
         # cache the normal attrs of the plug's own node to boost performance:
         # dynamic attrs can be renamed, and dynamic and extension attrs can be
         # deleted and re-added, so caching them is not reliable
-        mobject = plug.node()
-        own_fn  = (
-            self._fn_set
-            if mobject == self._mobject
-            else OpenMaya.MFnDependencyNode(mobject)
-        )
         if own_fn.attributeClass(attr_obj.mobject) == _NORMAL_ATTR:
             ln                  = plug.partialName(False, False, False, False, False, True)
             sn                  = plug.partialName(False, False, False, False, False, False)

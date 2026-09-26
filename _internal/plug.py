@@ -59,12 +59,9 @@ from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _MISSING,
     _class_attr,
-    _copy_wrapper,
-    _wrapper_is_canonical,
     Attribute,
     PyNode,
 )
-from rig.nodetypes.dg_node import DGNode
 from rig._internal.generators import sequences
 from rig._internal.introspect import _to_numpy
 from rig._internal.maya_version import is_at_least
@@ -194,19 +191,17 @@ def _maybe_translate_component(name: str) -> Any:
 
 
 def _share_node(parent: "Plug", results: Any) -> Any:
-    """Hand ``parent``'s node wrapper to the fresh child / element Plugs in
-    ``results`` (one Plug or a list of them) and return ``results``.
+    """Hand ``parent``'s owner to the fresh child / element Plugs in ``results``
+    (one Plug or a list of them) and return ``results``.
 
-    Only a wrapper ``parent`` already holds is handed on, it is never
-    resolved here, and each Plug copies it only when :attr:`Plug.node` would
-    rebuild it unchanged. ComponentPlugs resolve their node as before.
+    A child or element is on its parent's node, so it is owned by the node
+    object its parent holds, as is. An owner ``parent`` does not hold yet is
+    never resolved here. ComponentPlugs resolve their node as before.
     """
     if type(parent) is not Plug:
         return results
     held = parent.__dict__["_node"]
-    if isinstance(held, _lazy().node.Node):
-        held = held._dg_node
-    if not isinstance(held, DGNode):
+    if held is None:
         return results
     for result in results if isinstance(results, list) else (results,):
         if type(result) is Plug and result.__dict__["_node"] is None:
@@ -377,22 +372,21 @@ class Plug(Attribute):
 
     @property
     def node(self) -> Any:
-        """Return the owning :class:`Node` (not a bare ``DGNode``)."""
-        Node = _lazy().node.Node
+        """Return the owning :class:`Node` (not a bare ``DGNode``).
 
-        if not isinstance(self._node, Node) if self._node else True:
-            # Lazy-construct on first access. Until then ``_node`` may hold
-            # the DGNode of the Node or parent Plug this plug came from; when
-            # a fresh cast would rebuild it unchanged, a copy of it with its
-            # own path, fn set and empty caches stands in for the cast.
-            mobject = self.plug.node()
-            held    = self._node
-            if held is not None and _wrapper_is_canonical(held, mobject):
-                base_node = _copy_wrapper(held)
-            else:
-                base_node = PyNode(mobject)
-            self._node = Node(base_node)
-        return self._node
+        That is the node object the plug was read from (``node.tx.node is
+        node``; children and elements share it). A plug built from a string or
+        an MPlug casts its node on first access.
+        """
+        held = self.__dict__["_node"]
+        Node = _lazy().node.Node
+        if isinstance(held, Node):
+            return held
+        # a typed node the plug was read from (a shape's attr found through its
+        # transform), or none: cast the plug's node
+        node       = Node(PyNode(self._mplug.node()) if held is None else held)
+        self._node = node
+        return node
 
     # -- assignment via attribute syntax -- #
 
