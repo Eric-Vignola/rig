@@ -33,7 +33,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig.nodetypes._base import _plug_identity_name, Attribute
+from rig.nodetypes._base import _plug_identity_name, _unwrapped, Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
@@ -208,6 +208,87 @@ def _collect_handles(obj: Any, out: List[OpenMaya1.MObjectHandle]) -> None:
             _collect_handles(elt, out)
 
 
+_NORMAL_ATTR = OpenMaya.MFnDependencyNode.kNormalAttr
+
+
+class _AttrCheck:
+    """Stands with the node handles of a cache entry for a dynamic or extension
+    attribute that a plug argument of the call reads (see `_entry_handles`).
+
+    The key names the attribute (`_attribute_key`), and a name outlives the
+    attribute: deleted and added again, or renamed while a new attribute takes
+    its name, the name keys a network built on the old attribute (disconnected,
+    or reading the renamed one). The check is alive while the node and that
+    attribute are, and valid while the name still finds that attribute on the
+    node, so such an entry is rebuilt. Only API 1.0 objects are read, and the
+    node's fn set only once its handle says the node is valid.
+    """
+
+    __slots__ = ("node", "fn", "name", "attr")
+
+    def __init__(self, node: Any, fn: Any, name: str, attr: Any) -> None:
+        self.node = node  # the node's API 1.0 MObjectHandle
+        self.fn   = fn    # its API 1.0 MFnDependencyNode
+        self.name = name  # the attribute's long name
+        self.attr = attr  # the attribute's API 1.0 MObjectHandle
+
+    def isAlive(self) -> bool:  # noqa: N802 -- the MObjectHandle protocol
+        return self.node.isAlive() and self.attr.isAlive()
+
+    def isValid(self) -> bool:  # noqa: N802
+        if not (self.node.isValid() and self.attr.isAlive()):
+            return False
+        try:
+            return self.fn.attribute(self.name) == self.attr.objectRef()
+        except RuntimeError:
+            return False
+
+
+def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
+    """An `_AttrCheck` for the attribute of `attr`'s plug if it is a dynamic or
+    extension attribute of a live DG node, else None."""
+    try:
+        node = _unwrapped(attr.node)
+        if not isinstance(node, DGNode) or not node._objhandle1.isValid():
+            return None
+        mobject = attr.__dict__["_mplug"].attribute()
+        if node._fn_set.attributeClass(mobject) == _NORMAL_ATTR:
+            return None
+        name  = OpenMaya.MFnAttribute(mobject).name
+        attr1 = node._fn_set1.attribute(name)
+        return _AttrCheck(node._objhandle1, node._fn_set1, name, OpenMaya1.MObjectHandle(attr1))
+    except Exception:
+        return None
+
+
+def _collect_attr_checks(obj: Any, out: List[Any]) -> None:
+    """Append an `_AttrCheck` for each dynamic or extension attribute a plug in
+    `obj` (a call argument, or a sequence of them) reads."""
+    if isinstance(obj, Attribute):
+        check = _attr_check(obj)
+        if check is not None:
+            out.append(check)
+    elif obj is None or isinstance(obj, (str, bytes, numbers.Real)):
+        return
+    elif _is_list(obj) or _is_sequence(obj):
+        for elt in obj:
+            _collect_attr_checks(elt, out)
+
+
+def _entry_handles(result: Any, args: tuple, kwargs: dict) -> List[Any]:
+    """The staleness checks of a cache entry for a call on `args` / `kwargs` that
+    returned `result`: the API 1.0 handles of the nodes in `result` (see
+    `_collect_handles`), then an `_AttrCheck` per dynamic or extension attribute a
+    plug argument reads. An entry is used only while every one is alive and
+    valid."""
+    handles: List[Any] = []
+    _collect_handles(result, handles)
+    _collect_attr_checks(args, handles)
+    if kwargs:
+        _collect_attr_checks(tuple(kwargs.values()), handles)
+    return handles
+
+
 def _fold_eligible(foldable: Any, args: tuple, kwargs: dict) -> bool:
     """Return ``True`` when a ``@memoize(foldable=...)`` call's inputs are all
     literal numbers -- so the wrapped function will constant-fold to a plain
@@ -328,10 +409,9 @@ def memoize(
 
         result = func(*args, **kwargs)
 
-        # Collect MObjectHandles for the result so we can validate later.
-        handles: List[OpenMaya1.MObjectHandle] = []
-        _collect_handles(result, handles)
-        cache[key] = _CacheEntry(value=result, handles=handles)
+        # Collect MObjectHandles for the result (and checks of the dynamic
+        # attributes the arguments read) so we can validate later.
+        cache[key] = _CacheEntry(value=result, handles=_entry_handles(result, args, kwargs))
         return result
 
     wrapper._cache    = cache

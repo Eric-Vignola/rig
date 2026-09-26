@@ -598,3 +598,84 @@ class TestComponentSliceOnAChosenClass(MayaTestCase):
             [str(p) for p in surface.controlPoints[0:2]],
             ["npShape.controlPoints[0]", "npShape.controlPoints[1]"],
         )
+
+
+class TestMemoOfARebuiltAttribute(MayaTestCase):
+    """A memoized network is rebuilt when the dynamic attribute it reads was
+    deleted and added again, or renamed while a new attribute took its name.
+    The key names the attribute, so such a call handed back the old network:
+    disconnected, or reading the renamed attribute (the same on v2.0.0a2)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self._undo = cmds.undoInfo(query=True, state=True)
+        cmds.createNode("transform", name="n")
+
+    def tearDown(self):
+        cmds.undoInfo(state=self._undo)
+        super().tearDown()
+
+    def _calls(self):
+        from rig import functions, random as rrandom
+
+        return {
+            "@memoize abs": lambda plug: functions.abs(plug),
+            "NodeOp +": lambda plug: plug + 1,
+            "random.value": lambda plug: rrandom.value(plug, seed=3),
+        }
+
+    def _readd(self, name, undo):
+        cmds.undoInfo(state=undo)
+        cmds.addAttr("n", longName=name, attributeType="double")
+        firsts = {
+            label: call(getattr(Node("n"), name)) for label, call in self._calls().items()
+        }
+        cmds.deleteAttr(f"n.{name}")
+        cmds.addAttr("n", longName=name, attributeType="double")
+        return firsts
+
+    def test_deleted_and_added_again(self):
+        for undo in (True, False):
+            name = "foo" if undo else "fooOff"
+            firsts = self._readd(name, undo)
+            for label, call in self._calls().items():
+                with self.subTest(call=label, undo=undo):
+                    again = call(getattr(Node("n"), name))
+                    self.assertNotEqual(str(again), str(firsts[label]))
+                    # the new network reads the new attribute, and is shared
+                    self.assertEqual(str(call(getattr(Node("n"), name))), str(again))
+        from rig import functions
+
+        cmds.setAttr("n.foo", -3)
+        self.assertEqual(cmds.getAttr(str(functions.abs(Node("n").foo))), 3.0)
+
+    def test_renamed_while_a_new_attribute_takes_the_name(self):
+        from rig import functions
+
+        cmds.undoInfo(state=True)
+        cmds.addAttr("n", longName="bar", attributeType="double")
+        first = functions.abs(Node("n").bar)
+        plus  = Node("n").bar + 1
+        cmds.renameAttr("n.bar", "baz")
+        cmds.addAttr("n", longName="bar", attributeType="double")
+        again = functions.abs(Node("n").bar)
+        self.assertNotEqual(str(again), str(first))
+        self.assertNotEqual(str(Node("n").bar + 1), str(plus))
+        cmds.setAttr("n.bar", -5)
+        cmds.setAttr("n.baz", -1)
+        self.assertEqual(cmds.getAttr(str(again)), 5.0)
+        self.assertEqual(cmds.getAttr(str(first)), 1.0)
+
+    def test_unchanged_attributes_keep_their_network(self):
+        from rig import functions
+
+        cmds.addAttr("n", longName="knob", attributeType="double")
+        for plug in (Node("n").knob, Node("n").tx):
+            with self.subTest(plug=str(plug)):
+                self.assertEqual(str(functions.abs(plug)), str(functions.abs(plug)))
+                self.assertEqual(str(plug + 1), str(plug + 1))
+        # an alias names the attribute anew: a new key, as before
+        cmds.aliasAttr("dial", "n.knob")
+        self.assertEqual(str(functions.abs(Node("n").dial)), str(functions.abs(Node("n").dial)))

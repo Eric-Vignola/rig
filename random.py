@@ -66,7 +66,7 @@ from rig._internal.math_nodes import condition, constant
 from rig._internal.memoize import (
     _ALL_NODEOP_CACHES,
     _CacheEntry,
-    _collect_handles,
+    _entry_handles,
     _stable_key,
     vectorize,
 )
@@ -160,9 +160,7 @@ def _memoize_on_seed(func: Callable[..., Any]) -> Callable[..., Any]:
 
         result  = func(*args, **kwargs)
 
-        handles = []
-        _collect_handles(result, handles)
-        cache[key] = _CacheEntry(value=result, handles=handles)
+        cache[key] = _CacheEntry(value=result, handles=_entry_handles(result, args, kwargs))
         return result
 
     wrapper._cache = cache
