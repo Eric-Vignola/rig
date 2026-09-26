@@ -684,37 +684,35 @@ def _is_instanced_array(mplug: OpenMaya.MPlug) -> bool:
         return False
 
 
+def _path_instance_number(attr: Any, node: Any = None) -> int | None:
+    """The instance number of the DAG path `attr`'s node is named through, if
+    `attr` is an array of per-instance elements read without an index
+    (``worldMatrix``, ``instObjGroups``): cmds resolves such a name to the element
+    of that path's instance (``T2|S.worldMatrix`` is ``worldMatrix[1]``), so that
+    element is the plug it stands for. None for any other attr. `node` is
+    `attr`'s owner, unwrapped, when the caller has it. Reads the owner's name
+    first, so a stale path is re-resolved and a deleted node raises."""
+    mplug = attr.__dict__["_mplug"]
+    if not mplug.isArray:
+        return None
+    if node is None:
+        node = _unwrapped(attr.node)
+    fn = node.__dict__.get("_fn_set")
+    if not isinstance(fn, OpenMaya.MFnDagNode) or not _is_instanced_array(mplug):
+        return None
+    _node_name(node)
+    return fn.getPath().instanceNumber()
+
+
 def _plug_identity_name(attr: Any) -> str:
     """The attr part of the identity of `attr`'s Maya plug: its alias with every
     index, the instanced ones too (``worldMatrix[1]``), whatever the path the
     node is named through. An array of per-instance elements read without an
-    index is the element of its path's instance, which is what cmds resolves the
-    name to (``T2|S.worldMatrix`` is ``worldMatrix[1]``), so it is that element.
+    index is the element of its path's instance (see `_path_instance_number`).
     Reads the owner's name (which raises if the node is deleted)."""
-    mplug = attr.__dict__["_mplug"]
-    name  = mplug.partialName(False, False, True, True, False, True)
-    if mplug.isArray:
-        node = _unwrapped(attr.node)
-        if isinstance(
-            node.__dict__.get("_fn_set"), OpenMaya.MFnDagNode
-        ) and _is_instanced_array(mplug):
-            # named first: a stale path is re-resolved, a deleted node raises
-            _node_name(node)
-            path = node.__dict__["_fn_set"].getPath()
-            name = f"{name}[{path.instanceNumber()}]"
-    return name
-
-
-def _identity_node_name(node: Any) -> str:
-    """The name of `node`, a plug's owner, through the path a cast of its MObject
-    takes (the first one), so every instance path of a node gives the same name.
-    A node that is not instanced is named as `Attribute.full_name` names it."""
-    name = _node_name(node)
-    d    = _unwrapped(node).__dict__
-    fn   = d.get("_fn_set")
-    if isinstance(fn, OpenMaya.MFnDagNode) and fn.isInstanced(True):
-        return OpenMaya.MDagPath.getAPathTo(d["_mobject"]).partialPathName()
-    return name
+    name  = attr.__dict__["_mplug"].partialName(False, False, True, True, False, True)
+    index = _path_instance_number(attr)
+    return name if index is None else f"{name}[{index}]"
 
 
 def _same_plug(attr: Any, other: Any) -> bool:
@@ -730,6 +728,48 @@ def _same_plug(attr: Any, other: Any) -> bool:
     return attr.__dict__["_mplug"].node() == other.__dict__["_mplug"].node() and (
         _plug_identity_name(attr) == _plug_identity_name(other)
     )
+
+
+def _plug_hash(attr: Any) -> int:
+    """The hash of the Maya plug `attr` is (see `_same_plug`), for
+    `Attribute.__hash__` and `Plug.__hash__`.
+
+    It is the node's API 1.0 `MObjectHandle.hashCode()` and the attribute's long
+    name with every logical index, the instanced ones too (``worldMatrix[1]``), so
+    it is the same through every instance path of the node and it does not change
+    when the node is renamed, the attribute aliased, or the node deleted to the
+    undo queue: a plug stays findable in a dict or set across all of them. It is
+    cached on the attr, so it survives a new scene freeing the node too. An array
+    of per-instance elements read without an index (``T2|S.worldMatrix``) is the
+    element of its path's instance, which a removed instance can change, so that
+    hash follows the path and is not cached. The plug of a freed node that was
+    never hashed hashes by its str buffer (its MPlug points at freed memory).
+    """
+    d      = attr.__dict__
+    cached = d.get("_plug_hash")
+    if cached is not None:
+        return cached
+    owner  = d["_node"]
+    node   = _unwrapped(attr.node if owner is None else owner)
+    handle = node.__dict__.get("_objhandle1")
+    if handle is None:
+        # not a DGNode: named as the node's name property names it
+        return hash((hash(str(node)), _plug_identity_name(attr)))
+    code = handle.hashCode()
+    if not handle.isAlive():
+        return hash((code, str.__str__(attr)))
+    name = d["_mplug"].partialName(False, False, True, False, False, True)
+    # a deleted node's path is not read, and its hash is not kept
+    cache = handle.isValid()
+    if cache:
+        index = _path_instance_number(attr, node)
+        if index is not None:
+            name  = f"{name}[{index}]"
+            cache = False
+    value = hash((code, name))
+    if cache:
+        d["_plug_hash"] = value
+    return value
 
 
 def _clear_static_data_type(*args) -> None:
@@ -1053,10 +1093,15 @@ class Attribute(str):
         return self.full_name
 
     def __hash__(self) -> int:
-        return hash(self.full_name)
+        # the Maya plug's identity, not the name: one key through every instance
+        # path, kept across a rename (see `_plug_hash`)
+        return _plug_hash(self)
 
     def __eq__(self, other: Any) -> bool:
-        return isinstance(other, type(self)) and self.full_name == other.full_name
+        """True if `other` is an Attribute of the same Maya plug (node, attribute
+        and logical indices), whatever the instance path each is named through.
+        A str is never equal: compare `str(attr)` for names."""
+        return isinstance(other, Attribute) and _same_plug(self, other)
 
     def __gt__(self, other: Any) -> bool:
         return self.full_name > str(other)

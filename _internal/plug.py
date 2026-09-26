@@ -40,12 +40,14 @@ Connection queries are METHODS, not operators -- ``a.get_inputs()`` and
 wired). Direct connections only: a compound whose children are driven
 reports nothing, so slice it (``a[:].get_inputs()``) to query per-child.
 
-``Plug`` overrides ``__hash__`` (the node's name and the attr alias) and the
-truth value of an ``==`` / ``!=`` result (whether both operands are the same
-Maya plug) so that comparison-as-condition does not break dict / set usage.
-A plug's identity follows the Maya plug: ``Node("|T1|S").v`` and
-``Node("|T2|S").v``, one plug read through two instance paths, are one key
-(their names still differ, each is named through the path it was read from).
+``Plug`` overrides ``__hash__`` (the node's MObject handle and the attribute
+with its logical indices) and the truth value of an ``==`` / ``!=`` result
+(whether both operands are the same Maya plug) so that comparison-as-condition
+does not break dict / set usage. A plug's identity follows the Maya plug:
+``Node("|T1|S").v`` and ``Node("|T2|S").v``, one plug read through two instance
+paths, are one key (their names still differ, each is named through the path
+it was read from), and a rename or an alias keeps the key. A plain str is not a
+plug's key: ``{plug: 1}["a.tx"]`` misses; a ``PlugList`` compares a str by name.
 """
 
 from __future__ import annotations
@@ -65,8 +67,7 @@ from rig.nodetypes._base import (
     _MISSING,
     _class_attr,
     _ensure_owner_alive,
-    _identity_node_name,
-    _plug_identity_name,
+    _plug_hash,
     _same_plug,
     _unwrapped,
     Attribute,
@@ -434,46 +435,32 @@ class Plug(Attribute):
     # -- hashing / equality -- #
 
     def __hash__(self) -> int:
-        """Hash by the owning node's name + attr alias, so the Plug remains a
-        valid dict / set key even though ``__eq__`` is overloaded to build a
-        condition-node network.
+        """Hash by the Maya plug, so the Plug remains a valid dict / set key even
+        though ``__eq__`` is overloaded to build a condition-node network.
 
-        The hash follows the Maya plug (see ``_same_plug``): the node is named
-        through the path a cast of its MObject takes, so a plug read through
-        either instance path of a node (``Node("|T1|S").v``, ``Node("|T2|S").v``)
-        hashes the same, and the alias carries the index of a per-instance
-        element (``worldMatrix[1]``), so the elements of different instances,
-        different plugs, hash apart (``==`` on two matrices raises).
-
-        The plug of a node a new scene freed hashes by its str buffer (the name
-        it was built with): its MPlug points at freed memory.
+        The hash is the node's MObject handle plus the attribute's long name
+        with its logical indices (see ``_plug_hash``): a plug read through either
+        instance path of a node (``Node("|T1|S").v``, ``Node("|T2|S").v``) hashes
+        the same, a rename, an alias or a delete to the undo queue does not
+        change it, and the elements of different instances (``worldMatrix[0]``,
+        ``worldMatrix[1]``), different plugs, hash apart (``==`` on two matrices
+        raises). A plug never hashes as its name: a plain str is not a key for
+        it.
         """
-        owner = self.__dict__.get("_node")
-        if owner is not None:
-            handle = _unwrapped(owner).__dict__.get("_objhandle1")
-            if handle is not None and not handle.isAlive():
-                return hash((handle.hashCode(), str.__str__(self)))
-        try:
-            node_hash = hash(_identity_node_name(self.node))
-            return hash((node_hash, _plug_identity_name(self)))
-        except Exception:
-            try:
-                node_hash = hash(self.node.name)
-            except Exception:
-                node_hash = hash(str(self).split(".")[0])
-        return hash((node_hash, self.alias))
+        return _plug_hash(self)
 
     def equals(self, other: Any) -> bool:
         """True equality (plug identity) -- use this when ``==`` would
         accidentally build a condition-node network.
 
-        Two Plugs are equal when they are the same Maya plug (node, attribute
-        and logical indices): a plug read through either instance path of a
-        node, and a resolved ComponentPlug element (displayed ``cv[u][v]``) and
-        the ``controlPoints[k]`` Plug of its storage, keeping ``equals``
-        consistent with ``__hash__``. Anything else compares by name.
+        Two plugs (a ``Plug`` or a typed ``Attribute``) are equal when they are
+        the same Maya plug (node, attribute and logical indices): a plug read
+        through either instance path of a node, a plug held across a rename, and
+        a resolved ComponentPlug element (displayed ``cv[u][v]``) and the
+        ``controlPoints[k]`` Plug of its storage, keeping ``equals`` consistent
+        with ``__hash__``. Anything else (a plain str) compares by name.
         """
-        if isinstance(other, Plug):
+        if isinstance(other, Attribute):
             return _same_plug(self, other)
         return self.full_name == str(other)
 

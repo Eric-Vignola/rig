@@ -21,6 +21,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig import Container, Node, Plug, container
 from rig.nodetypes import PyNode, Transform
+from rig._internal.list import PlugList
 from rig._internal.members import Components
 from rig._internal.memoize import _attribute_key
 from rig._tests._base import MayaTestCase
@@ -641,3 +642,180 @@ class TestInstancedPlugIdentity(MayaTestCase):
         # the held node re-resolves to the surviving path, the plug is unchanged
         self.assertEqual(str(held), "S.visibility")
         self.assertEqual(hash(held), hash(Node("S").v))
+
+    # -- round 3 step S2: the rest of the plug world follows D-B -- #
+
+    def test_typed_attributes_through_two_paths_are_one_key(self):
+        _instanced_locator()
+        first, second = PyNode("|T1|S"), PyNode("|T2|S")
+        a, b = first.find_attr("v"), second.find_attr("v")
+        self.assertEqual((str(a), str(b)), ("T1|S.visibility", "T2|S.visibility"))
+        self.assertEqual(hash(a), hash(b))
+        self.assertTrue(a == b)
+        self.assertFalse(a != b)
+        self.assertEqual(len({a: 1, b: 2}), 1)
+        self.assertEqual(len({a, b}), 1)
+        self.assertIn(b, [a])
+        self.assertEqual([a].index(b), 0)
+        # through a rig Node, and against the Plug of the same plug
+        self.assertTrue(Node("|T1|S").find_attr("v") == Node("|T2|S").find_attr("v"))
+        plug = Node("|T2|S").v
+        self.assertEqual(hash(plug), hash(a))
+        self.assertTrue(plug.equals(a))
+        # another attribute, another node, another instance's element: another key
+        self.assertFalse(a == second.find_attr("lodVisibility"))
+        self.assertFalse(a == PyNode("T1").find_attr("v"))
+        wm0, wm1 = first.find_attr("worldMatrix")[0], second.find_attr("worldMatrix")[1]
+        self.assertEqual(len({wm0, wm1}), 2)
+        self.assertFalse(wm0 == wm1)
+        self.assertTrue(wm1 == first.find_attr("worldMatrix")[1])
+        # a typed attr is not equal to its name
+        self.assertFalse(a == "T1|S.visibility")
+
+    def test_every_spelling_of_a_plug_is_one_key(self):
+        # equals() and hash agree for every way of reaching one plug
+        _instanced_locator()
+        pma = cmds.createNode("plusMinusAverage", name="pma")
+        spellings = [
+            (Node("|T1|S").lpx, Node("|T2|S").localPosition[0], Plug("T2|S.localPositionX"),
+             Node("|T1|S").lp.localPositionX, PyNode("|T2|S").find_attr("lpx")),
+            (Node(pma).input3D[1].input3Dx, Plug(f"{pma}.input3D[1].input3Dx"),
+             Node(pma).input3D[1][0], PyNode(pma).find_attr("input3D")[1].child(0)),
+            (Node("|T2|S").worldMatrix, Node("|T1|S").worldMatrix[1],
+             Plug("T2|S.worldMatrix"), PyNode("|T1|S").find_attr("worldMatrix")[1]),
+        ]
+        for group in spellings:
+            with self.subTest(plug=str(group[0])):
+                for other in group[1:]:
+                    self.assertTrue(group[0].equals(other), str(other))
+                    self.assertEqual(hash(group[0]), hash(other), str(other))
+        # distinct plugs of the groups hash apart
+        firsts = [group[0] for group in spellings] + [Node(pma).input3D[2].input3Dx]
+        self.assertEqual(len({hash(plug) for plug in firsts}), len(firsts))
+
+    def test_pluglist_membership_follows_the_maya_plug(self):
+        _instanced_locator()
+        plane  = cmds.nurbsPlane(name="np", degree=3, patchesU=1, patchesV=1, ch=False)[0]
+        shape  = cmds.listRelatives(plane, shapes=True)[0]
+        first, second = Node("|T1|S"), Node("|T2|S")
+        before = sorted(cmds.ls())
+        pl = PlugList([second.v, second.lodVisibility])
+        self.assertIn(first.v, pl)
+        self.assertEqual(pl.index(first.v), 0)
+        self.assertEqual(PlugList([second.v, first.v, first.lodv]).count(first.v), 2)
+        pl.remove(first.v)
+        self.assertEqual([str(p) for p in pl], ["T2|S.lodVisibility"])
+        self.assertNotIn(Node("T1").v, PlugList([first.v]))
+        # world space elements of different instances are different plugs
+        self.assertNotIn(first.worldMatrix, PlugList([second.worldMatrix]))
+        self.assertIn(first.worldMatrix[1], PlugList([second.worldMatrix]))
+        # a component element and the Plug of its storage are one plug too
+        self.assertIn(Plug(f"{shape}.controlPoints[6]"), PlugList([Node(shape).cv[1, 2]]))
+        self.assertNotIn(Plug(f"{shape}.controlPoints[7]"), PlugList([Node(shape).cv[1, 2]]))
+        # a str is a name: it finds the plug named so, through that path only
+        self.assertIn("T2|S.visibility", PlugList([second.v]))
+        self.assertNotIn("T1|S.visibility", PlugList([second.v]))
+        self.assertNotIn("T2|S.v", PlugList([second.v]))
+        # none of it built a node
+        self.assertEqual(sorted(cmds.ls()), before)
+
+    def test_plug_key_survives_rename_alias_and_delete(self):
+        cmds.undoInfo(state=True, infinity=True)
+        node  = Node(cmds.createNode("transform", name="a"))
+        held  = node.tx
+        typed = PyNode("a").find_attr("tx")
+        table, members, typed_set = {held: "x"}, {held}, {typed}
+        key, typed_key = hash(held), hash(typed)
+        cmds.rename("a", "b")
+        self.assertEqual(str(held), "b.translateX")
+        self.assertEqual((hash(held), hash(typed)), (key, typed_key))
+        self.assertEqual(table[held], "x")
+        self.assertEqual(table[Node("b").tx], "x")
+        self.assertIn(PyNode("b").find_attr("translateX"), typed_set)
+        members.add(held)
+        members.add(Node("b").tx)
+        self.assertEqual(len(members), 1)
+        # an alias names the plug anew; it is still the same key
+        cmds.addAttr("b", longName="knob", attributeType="double")
+        knob     = Node("b").knob
+        knob_key = hash(knob)
+        cmds.aliasAttr("dial", "b.knob")
+        self.assertEqual(str(knob), "b.dial")
+        self.assertEqual(hash(knob), knob_key)
+        self.assertEqual(hash(Node("b").dial), knob_key)
+        # deleted to the undo queue: the held key is still found, and hashing
+        # does not raise, while naming it does
+        cmds.delete("b")
+        self.assertEqual(hash(held), key)
+        self.assertEqual(table[held], "x")
+        members.discard(held)
+        self.assertEqual(len(members), 0)
+        with self.assertRaisesRegex(RuntimeError, "^b already deleted!$"):
+            str(held)
+        # a new node of the same name is another plug, another key
+        cmds.createNode("transform", name="b")
+        fresh = Plug("b.tx")
+        self.assertNotEqual(hash(fresh), key)
+        self.assertNotIn(fresh, table)
+        cmds.undo()
+        cmds.undo()
+        self.assertEqual(table[Node("b").tx], "x")
+
+    def test_plug_key_survives_a_new_scene(self):
+        node   = Node(cmds.createNode("transform", name="a"))
+        held   = node.tx
+        typed  = PyNode("a").find_attr("ty")
+        keys   = (hash(held), hash(typed))
+        table  = {held: 1, typed: 2}
+        unseen = node.tz  # never hashed before the free
+        cmds.file(new=True, force=True)
+        self.assertEqual((hash(held), hash(typed)), keys)
+        self.assertEqual((table[held], table[typed]), (1, 2))
+        self.assertIsInstance(hash(unseen), int)
+        del table[held]
+        self.assertEqual(list(table.values()), [2])
+
+    def test_a_plain_str_is_a_name_not_a_plug_key(self):
+        node  = Node(cmds.createNode("transform", name="a"))
+        typed = PyNode("a").find_attr("tx")
+        before = sorted(cmds.ls())
+        for key in (node.tx, typed):
+            with self.subTest(key=type(key).__name__):
+                self.assertNotEqual(hash(key), hash("a.translateX"))
+                self.assertIsNone({key: 1}.get("a.translateX"))
+                self.assertNotIn("a.translateX", {key})
+        self.assertTrue(node.tx.equals("a.translateX"))
+        self.assertFalse(node.tx.equals("a.tx"))
+        self.assertEqual(sorted(cmds.ls()), before)
+
+    def test_memoized_networks_are_shared_through_two_paths(self):
+        from rig import functions, random as rrandom
+        from rig.matrix import decompose
+
+        _instanced_locator()
+        cmds.createNode("transform", name="G1")
+        cmds.createNode("transform", name="G2")
+        cmds.createNode("transform", name="X", parent="G1")
+        cmds.parent("|G1|X", "G2", add=True)
+        x1, x2 = Node("|G1|X"), Node("|G2|X")
+        s1, s2 = Node("|T1|S"), Node("|T2|S")
+        pairs = {
+            "decompose(matrix)": (decompose(x1.matrix), decompose(x2.matrix)),
+            "abs(lpx)": (functions.abs(s1.lpx), functions.abs(s2.lpx)),
+            "lpx + 1": (s1.lpx + 1, s2.lpx + 1),
+            "random.value(seed)": (
+                rrandom.value(s1.lpx, seed=3), rrandom.value(s2.lpx, seed=3),
+            ),
+        }
+        for label, (a, b) in pairs.items():
+            with self.subTest(call=label):
+                self.assertEqual(str(a), str(b))
+        # a world space matrix is per instance: one network each
+        self.assertNotEqual(
+            str(decompose(x1.worldMatrix)), str(decompose(x2.worldMatrix))
+        )
+        # the shared network survives a rename of the instanced node
+        cmds.rename("|G1|X", "Y")
+        self.assertEqual(
+            str(decompose(Node("|G2|Y").matrix)), str(pairs["decompose(matrix)"][0])
+        )

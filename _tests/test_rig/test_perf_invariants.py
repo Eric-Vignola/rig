@@ -496,6 +496,19 @@ class TestCheckedTypeConstruction(MayaTestCase):
             )
 
     def test_plug_hash_value_unchanged(self):
+        # Round 3, decision D-B: a plug hashes by its Maya plug, the node's
+        # API 1.0 MObjectHandle hashCode plus the attribute's long name (it was
+        # the node's name plus the alias), so a rename keeps the key. The value
+        # is still pinned: every spelling of one plug hashes the same.
+        from maya import OpenMaya as om1
+
+        def hash_code(node_name):
+            sel = om1.MSelectionList()
+            sel.add(node_name)
+            mobject = om1.MObject()
+            sel.getDependNode(0, mobject)
+            return om1.MObjectHandle(mobject).hashCode()
+
         md  = cmds.createNode("multiplyDivide", name="md1")
         grp = cmds.createNode("transform", name="grp")
         cmds.createNode("transform", name="dup")
@@ -506,7 +519,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
             (Plug(Node("grp|dup").ty.plug), "grp|dup", "translateY"),
         ):
             with self.subTest(plug=node_name):
-                self.assertEqual(hash(plug), hash((hash(node_name), alias)))
+                self.assertEqual(hash(plug), hash((hash_code(node_name), alias)))
 
 
 def _type_queries(probe):
