@@ -120,7 +120,8 @@ class PyNode:
 
         # without a custom type attr (or an alias of that name) the class only
         # depends on the node type, so it is looked up per (typeName, typeId);
-        # anything that doesn't resolve to exactly one node takes the legacy path
+        # anything that doesn't resolve to exactly one node takes the legacy path,
+        # and so does a deleted or undone node, whose name may now be another's
         from_mobject = mobj is not None
         key          = None
         try:
@@ -131,6 +132,9 @@ class PyNode:
                 sel.add(obj)
                 if sel.length() == 1:
                     mobj = sel.getDependNode(0)
+            handed_in = from_mobject or dag_path is not None
+            if handed_in and not OpenMaya.MObjectHandle(mobj).isValid():
+                mobj = None
             if mobj is not None:
                 fn = OpenMaya.MFnDependencyNode(mobj)
                 if (

@@ -223,6 +223,58 @@ class TestPyNodeDispatch(MayaTestCase):
                     str(ctx.exception), f"No object matches uuid: {unknown}."
                 )
 
+    def test_deleted_node_mobject_casts_by_name(self):
+        cmds.undoInfo(state=True, infinity=True)
+        PyNode(_mobject(cmds.createNode("multiplyDivide")))
+        held = _mobject(cmds.createNode("multiplyDivide", name="foo"))
+        cmds.delete("foo")
+        self.assertEqual(
+            _outcome(PyNode, held),
+            ("error", TypeError, "No object matches name: foo"),
+        )
+        cmds.createNode("transform", name="foo")
+        self.assertEqual(_outcome(PyNode, held), ("ok", Transform, "foo"))
+
+        # a deleted node's type never caches the class of the node that took
+        # its name
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        held = _mobject(cmds.createNode("multiplyDivide", name="bar"))
+        cmds.delete("bar")
+        cmds.createNode("transform", name="bar")
+        self.assertEqual(_outcome(PyNode, held), ("ok", Transform, "bar"))
+        fresh = cmds.createNode("multiplyDivide", name="fresh")
+        self.assertEqual(_outcome(PyNode, fresh), ("ok", DGNode, "fresh"))
+        self.assertEqual(_outcome(PyNode, _mobject(fresh)), ("ok", DGNode, "fresh"))
+
+    def test_undone_node_dag_path_casts_by_name(self):
+        cmds.undoInfo(state=True, infinity=True)
+        PyNode(cmds.createNode("transform"))
+        cmds.undoInfo(openChunk=True)
+        cmds.createNode("transform", name="undoneT")
+        cmds.undoInfo(closeChunk=True)
+        sel = OpenMaya.MSelectionList()
+        sel.add("undoneT")
+        path = sel.getDagPath(0)
+        held = sel.getDependNode(0)
+        cmds.undo()
+        for obj in (path, held):
+            self.assertEqual(
+                _outcome(PyNode, obj),
+                ("error", TypeError, "No object matches name: undoneT"),
+            )
+
+    def test_deleted_joint_mobject_casts_the_node_that_took_its_name(self):
+        cmds.undoInfo(state=True, infinity=True)
+        PyNode(_mobject(cmds.createNode("joint")))
+        jnt  = cmds.createNode("joint", name="foo")
+        held = _mobject(jnt)
+        plug = OpenMaya.MFnDependencyNode(held).findPlug("translateX", False)
+        cmds.delete(jnt)
+        cmds.createNode("transform", name="foo")
+        self.assertEqual(_outcome(PyNode, held), ("ok", Transform, "foo"))
+        self.assertEqual(str(Plug(plug)), "foo.translateX")
+
 
 def _wrapper_state(node):
     """Everything a node wrapper holds, in the order its constructor set it."""
