@@ -57,6 +57,8 @@ import numpy as np
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _MISSING,
+    _class_attr,
     _copy_wrapper,
     _wrapper_is_canonical,
     Attribute,
@@ -398,10 +400,21 @@ class Plug(Attribute):
         """``plug.x = 5`` is sugar for ``plug.x << 5``.
 
         Internal state (names starting with ``_``) bypasses to normal
-        ``__setattr__``.
+        ``__setattr__``, and so does a class attribute that can be set: a
+        property with a setter (``plug.alias = ...``, ``plug.is_locked = ...``)
+        or another descriptor with ``__set__``. A property without one (such as
+        the ``str`` method names routed to plugs, ``plug.center``) stays sugar.
         """
         if name.startswith("_"):
-            super().__setattr__(name, value)
+            object.__setattr__(self, name, value)
+            return
+        found = _class_attr(type(self), name)
+        if isinstance(found, property):
+            settable = found.fset is not None
+        else:
+            settable = found is not _MISSING and hasattr(type(found), "__set__")
+        if settable:
+            object.__setattr__(self, name, value)
             return
         # Sugar for inject.
         self.__getattr__(name).__lshift__(value)
@@ -1023,7 +1036,10 @@ class Plug(Attribute):
     # ``list`` / ``set`` / ``dict`` containment calls ``PyObject_IsTrue()`` on
     # the ``__eq__`` result, so this is the only hook that can answer them.
     # Ordinary plugs stay truthy; only a comparison RESULT reports whether its
-    # two operands denote the same plug.
+    # two operands denote the same plug. The class default keeps ``bool(plug)``
+    # off ``__getattr__`` (a child / sibling / container lookup).
+    _identity = True
+
     def __bool__(self) -> bool:
         return getattr(self, "_identity", True)
 

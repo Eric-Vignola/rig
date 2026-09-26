@@ -33,6 +33,21 @@ def is_valid_maya_uid(uid_string: str) -> bool:
         return False
 
 
+# `_class_attr`'s answer for a name no class in the MRO defines
+_MISSING = object()
+
+
+def _class_attr(cls: type, name: str) -> Any:
+    """The class attribute `name` as the first class of `cls`'s MRO that defines it
+    holds it (unbound: a property, function, descriptor or value), or `_MISSING`.
+    Used by the `=` sugar to tell a Python member from a Maya attribute."""
+    for base in cls.__mro__:
+        found = base.__dict__.get(name, _MISSING)
+        if found is not _MISSING:
+            return found
+    return _MISSING
+
+
 class NodeMeta(type):
     """
     A metaclass that register node classes to the cached dict in PyNode.
@@ -1070,26 +1085,29 @@ class Attribute(str):
     @property
     def fn_set(self) -> OpenMaya.MFnBase:
         """Returns the attribute function set."""
+        # the lazy caches write `__dict__`, which skips a subclass's `__setattr__`
         if not self._fn_set:
-            mobject      = self.mobject
-            api_type     = mobject.apiType()
-            data_fn      = ATTR_TYPE_TO_FN.get(api_type, OpenMaya.MFnAttribute)
-            self._fn_set = data_fn(mobject)
+            mobject  = self.mobject
+            api_type = mobject.apiType()
+            data_fn  = ATTR_TYPE_TO_FN.get(api_type, OpenMaya.MFnAttribute)
+            self.__dict__["_fn_set"] = data_fn(mobject)
         return self._fn_set
 
     @property
     def mobject(self) -> OpenMaya.MObject:
         """Returns the mobject."""
         if not self._mobject:
-            self._mobject = self._mplug.attribute()
+            self.__dict__["_mobject"] = self._mplug.attribute()
         return self._mobject
 
     @property
     def node(self) -> Any:
         """Returns the node object of this attr."""
-        if not self._node:
-            self._node = PyNode(self.plug.node())
-        return self._node
+        d    = self.__dict__
+        node = d["_node"]
+        if node is None:
+            node = d["_node"] = PyNode(d["_mplug"].node())
+        return node
 
     @property
     def name(self) -> str:
@@ -1197,7 +1215,7 @@ class Attribute(str):
                     )
             except Exception:
                 key = None
-            self._static_key_cache = key
+            self.__dict__["_static_key_cache"] = key
         return key
 
     @property
@@ -1618,7 +1636,7 @@ class Attribute(str):
             result = typ in GEOMETRY_DATA_TYPES
 
         if not self._owner_is_polymorphic:
-            self._geometry_attr_cache = result
+            self.__dict__["_geometry_attr_cache"] = result
         return result
 
     @property
@@ -1631,11 +1649,11 @@ class Attribute(str):
         if self._polymorphic_owner_cache is None:
             try:
                 type_name = OpenMaya.MFnDependencyNode(self.plug.node()).typeName
-                self._polymorphic_owner_cache = (
+                self.__dict__["_polymorphic_owner_cache"] = (
                     type_name in POLYMORPHIC_OUTPUT_NODE_TYPES
                 )
             except RuntimeError:
-                self._polymorphic_owner_cache = False
+                self.__dict__["_polymorphic_owner_cache"] = False
         return self._polymorphic_owner_cache
 
     def _get_geometry_value(self) -> Any:

@@ -82,6 +82,21 @@ def _is_unresolved_multi_child(plug: OpenMaya.MPlug) -> bool:
             return False
 
 
+_NORMAL_ATTR = OpenMaya.MFnDependencyNode.kNormalAttr
+
+
+def _filtered(
+    attr_obj: Attribute, category: str | None, data_type: str | None
+) -> Attribute | None:
+    """`attr_obj` if it is in `category` and holds `data_type` (each when given),
+    else None: `DGNode.find_attr`'s filters."""
+    if (not category or attr_obj.has_category(category)) and (
+        not data_type or attr_obj.data_type == data_type
+    ):
+        return attr_obj
+    return None
+
+
 def get_short_name(name: Any) -> str:
     """Returns the short name of a given node."""
     return str(name).rsplit("|", 1)[-1]
@@ -373,10 +388,12 @@ class DGNode(metaclass=NodeMeta):
                 raise AttributeError(f"{attr} doesn't belong to {self}.")
             return attr
 
-        # return cached attr
+        # return cached attr, filtered like a new lookup
         attr_obj = self._attr_dict.get(attr)
-        if attr_obj:
-            return attr_obj
+        if attr_obj is not None:
+            if not category and not data_type:
+                return attr_obj
+            return _filtered(attr_obj, category, data_type)
 
         # find mplug
         try:
@@ -459,19 +476,22 @@ class DGNode(metaclass=NodeMeta):
             )
 
         attr_obj = Attribute(plug)
-        # cache non-dynamic attrs to boost performance
-        # dynamics attrs can be renamed so caching them is not reliable
-        if not attr_obj.is_dynamic:
+        # cache the normal attrs of the plug's own node to boost performance:
+        # dynamic attrs can be renamed, and dynamic and extension attrs can be
+        # deleted and re-added, so caching them is not reliable
+        mobject = plug.node()
+        own_fn  = (
+            self._fn_set
+            if mobject == self._mobject
+            else OpenMaya.MFnDependencyNode(mobject)
+        )
+        if own_fn.attributeClass(attr_obj.mobject) == _NORMAL_ATTR:
             ln                  = plug.partialName(False, False, False, False, False, True)
             sn                  = plug.partialName(False, False, False, False, False, False)
             self._attr_dict[ln] = attr_obj
             self._attr_dict[sn] = attr_obj
 
-        # filter by category and type
-        if (not category or attr_obj.has_category(category)) and (
-            not data_type or attr_obj.data_type == data_type
-        ):
-            return attr_obj
+        return _filtered(attr_obj, category, data_type)
 
     def _canonicalize_component_alias_plug(
         self, attr: Attribute | str | int, plug: "OpenMaya.MPlug"
@@ -587,7 +607,8 @@ class DGNode(metaclass=NodeMeta):
         elif self.has_attr(new_name):
             raise RuntimeError(f"Attribute already exists: {self.name}.{new_name}")
 
-        if old_name != new_name:
+        # an attr is renamed whatever its name (a Plug's `!=` builds a node)
+        if isinstance(old_name, Attribute) or old_name != new_name:
             if isinstance(old_name, Attribute):
                 if old_name.node != self:
                     raise RuntimeError(
