@@ -1298,27 +1298,28 @@ def _is_direct_member(container_name: str, node_name: str) -> bool:
 
     ``nodeList`` holds DIRECT members only and a node is a direct member of at
     most one container, so ``findContainer`` answers without scanning the
-    member list (the uuid comparison absorbs name-format differences). An
-    instanced DAG node is listed under one of its paths only, and a query
-    failure is inconclusive; both fall back to the ``nodeList`` scan, where an
-    unqueryable container reports "not a member".
+    member list, for a ``node_name`` in the format ``nodeList`` lists it in
+    (the node's partial path name). Any other name, an underworld node (listed
+    by its name under its shape), an instanced DAG node (listed under one of
+    its paths only) and a query failure are inconclusive; they fall back to the
+    ``nodeList`` scan, where an unqueryable container reports "not a member".
     """
     try:
-        found = cmds.container(query=True, findContainer=[node_name])
-        if not found:
-            return False
-        if found != container_name and (
-            cmds.ls(found, uuid=True) != cmds.ls(container_name, uuid=True)
-        ):
-            return False
-        sel = OpenMaya.MSelectionList()
-        sel.add(node_name)
-        mobj = sel.getDependNode(0)
-        if not (
-            mobj.hasFn(OpenMaya.MFn.kDagNode)
-            and OpenMaya.MFnDagNode(mobj).isInstanced()
-        ):
-            return True
+        if "->" not in node_name:
+            sel = OpenMaya.MSelectionList()
+            sel.add(node_name)
+            mobj = sel.getDependNode(0)
+            if mobj.hasFn(OpenMaya.MFn.kDagNode):
+                instanced = OpenMaya.MFnDagNode(mobj).isInstanced()
+                listed    = sel.getDagPath(0).partialPathName()
+            else:
+                instanced = False
+                listed    = OpenMaya.MFnDependencyNode(mobj).name()
+            if sel.length() == 1 and not instanced and listed == node_name:
+                found = cmds.container(query=True, findContainer=[node_name])
+                if not found:
+                    return False
+                return found == container_name or _same_node(found, container_name)
     except (RuntimeError, ValueError):
         pass
     try:
@@ -1326,6 +1327,23 @@ def _is_direct_member(container_name: str, node_name: str) -> bool:
     except (RuntimeError, ValueError):
         return False
     return node_name in members
+
+
+def _same_node(name_a: str, name_b: str) -> bool:
+    """True iff the two names resolve to the same node. Raises ValueError if
+    either does not resolve to exactly one node.
+
+    Nodes of several references of one file share their UUIDs, so only the
+    nodes themselves tell such copies apart.
+    """
+    nodes = []
+    for name in (name_a, name_b):
+        sel = OpenMaya.MSelectionList()
+        sel.add(name)
+        if sel.length() != 1:
+            raise ValueError(f"{name!r} does not name exactly one node")
+        nodes.append(sel.getDependNode(0))
+    return nodes[0] == nodes[1]
 
 
 def _plug_is_multi(plug) -> bool:

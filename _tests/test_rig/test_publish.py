@@ -1653,3 +1653,88 @@ class TestPublishMembership(MayaTestCase):
         self.assertEqual(pairs.get("result"), "s_md.outputX")
         self.assertEqual(pairs.get("blend"), "s_node.blend")
         self.assertEqual(pairs.get("outputY"), "s_md.outputY")
+
+    def test_underworld_member_publishes_through_the_host(self):
+        from rig._internal import container as _C
+
+        plane = cmds.nurbsPlane(name="planeP", ch=False)[0]
+        with container("ctnP") as ctn:
+            curve = cmds.curveOnSurface(plane, uv=[(0.1, 0.1), (0.5, 0.5)], d=1)
+            cmds.container(str(ctn), edit=True, addNode=[curve], force=True)
+            node = Node(cmds.ls(curve, long=True)[0])
+            self.assertEqual(node.name, "planePShape->curve1")
+            for name in (node.name, "|planeP|planePShape->|curve1"):
+                self.assertEqual(
+                    _C._is_direct_member(str(ctn), name),
+                    self._nodelist_member(str(ctn), name),
+                )
+            self.assertFalse(_C._is_container_member(str(ctn), node.translateX))
+            result = node.translateX >> container
+        self.assertEqual(str(result), "ctnP_host.translateX")
+        self.assertEqual(_bind_pairs("ctnP").get("translateX"), "ctnP_host.translateX")
+
+    def test_other_reference_of_the_same_file_is_not_a_member(self):
+        import os
+        import tempfile
+
+        from rig._internal import container as _C
+
+        folder = tempfile.mkdtemp()
+        path   = os.path.join(folder, "asset.ma")
+        try:
+            ctn = cmds.createNode("container", name="assetCtn", skipSelect=True)
+            md  = cmds.createNode("multiplyDivide", name="assetMd", skipSelect=True)
+            cmds.container(ctn, edit=True, addNode=[md], force=True)
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="charA")
+            cmds.file(path, reference=True, namespace="charB")
+            uuids = [cmds.ls(f"{ns}:assetCtn", uuid=True) for ns in ("charA", "charB")]
+            self.assertEqual(uuids[0], uuids[1])
+            for ctn, name in (
+                ("charA:assetCtn", "charB:assetMd"),
+                ("charB:assetCtn", "charA:assetMd"),
+                ("charA:assetCtn", "charA:assetMd"),
+            ):
+                expected = self._nodelist_member(ctn, name)
+                self.assertEqual(_C._is_direct_member(ctn, name), expected)
+                self.assertEqual(
+                    _C._is_container_member(ctn, Node(name).outputX), expected
+                )
+            self.assertTrue(_C._is_direct_member("charA:assetCtn", "charA:assetMd"))
+            self.assertFalse(_C._is_direct_member("charA:assetCtn", "charB:assetMd"))
+        finally:
+            cmds.file(new=True, force=True)
+            for name in os.listdir(folder):
+                os.remove(os.path.join(folder, name))
+            os.rmdir(folder)
+
+    def test_membership_of_names_in_other_formats_matches_nodelist(self):
+        from rig._internal import container as _C
+
+        outer = cmds.createNode("container", name="f_ctn", skipSelect=True)
+        grp   = cmds.createNode("transform", name="f_grp", skipSelect=True)
+        cmds.createNode("transform", name="f_kid", parent=grp, skipSelect=True)
+        cmds.namespace(add="fns")
+        cmds.createNode("transform", name="fns:f_ns", skipSelect=True)
+        cmds.container(outer, edit=True, addNode=["f_grp", "fns:f_ns"], force=True)
+        names = ("f_grp", "|f_grp", "f_kid", "|f_grp|f_kid", "fns:f_ns", "|fns:f_ns")
+        for name in names:
+            self.assertEqual(
+                _C._is_direct_member(outer, name),
+                self._nodelist_member(outer, name),
+                name,
+            )
+        cmds.namespace(set="fns")
+        cmds.namespace(relativeNames=True)
+        try:
+            for name in names[:4] + ("f_ns", ":f_grp", ":f_grp|:f_kid"):
+                self.assertEqual(
+                    _C._is_direct_member(":f_ctn", name),
+                    self._nodelist_member(":f_ctn", name),
+                    name,
+                )
+        finally:
+            cmds.namespace(relativeNames=False)
+            cmds.namespace(set=":")
