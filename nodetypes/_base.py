@@ -14,7 +14,7 @@ from numbers import Number
 from typing import Any, Iterator
 
 import numpy as np
-from maya import cmds
+from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
 
@@ -642,24 +642,140 @@ def _ensure_owner_alive(attr: Any) -> None:
 
     Only the owner's API 1.0 handle is read, which is safe on a freed node. A node
     deleted to the undo queue is still alive and passes. An attr whose owner is
-    not known yet (built from a name or an MPlug, never asked for its node) is not
-    checked: its node is only reachable through the MPlug. The children, elements
-    and parent of an attr share its owner (see `_inherit_owner`).
+    not known yet (built from a name or an MPlug, never asked for its node) reads
+    the handle of its node it took when it was built instead (`_handle1`, see
+    `_node_handle`). The children, elements and parent of an attr share its owner,
+    or that handle (see `_inherit_owner`).
     """
-    node = attr.__dict__.get("_node")
+    d    = attr.__dict__
+    node = d.get("_node")
     if node is not None:
         node   = _unwrapped(node)
         handle = node.__dict__.get("_objhandle1")
         if handle is not None and not handle.isAlive():
             node.ensure_valid()
+    else:
+        handle = d.get("_handle1")
+        if handle is not None and not handle.isAlive():
+            _raise_deleted(attr, handle)
+
+
+def _ensure_node_castable(attr: Any) -> None:
+    """Raise ``"... already deleted!"`` before `attr`, which has no owner yet, casts
+    its node from its MPlug, if the handle of its node it took when it was built is
+    no longer valid: the node was freed (the MPlug points at freed memory) or
+    deleted to the undo queue (the cast would name it, and reach the new node that
+    took its name). An undo brings a deleted node back, and it casts again."""
+    handle = attr.__dict__.get("_handle1")
+    if handle is not None and not handle.isValid():
+        _raise_deleted(attr, handle)
+
+
+def _raise_deleted(attr: Any, handle: Any) -> None:
+    """Raise the ``"... already deleted!"`` of `attr`, a plug with no owner whose
+    node (`handle`, its API 1.0 handle) was deleted or freed. A deleted node is
+    named as `DGNode.ensure_valid` names it. A freed one cannot be read, so it is
+    named by the node part of the name the plug was built with (its str buffer)."""
+    if handle.isAlive():
+        name = OpenMaya1.MFnDependencyNode(handle.objectRef()).name()
+    else:
+        node = str.__str__(attr).split(".", 1)[0]
+        name = f"{node} node (freed by a new scene, a file open or a reference unload)"
+    raise RuntimeError(f"{name} already deleted!")
+
+
+def _node_handle(name: str) -> Any:
+    """An API 1.0 MObjectHandle of the node the plug, component or node name `name`
+    resolves to, or None if it resolves to none (`_ensure_owner_alive` then does not
+    check the plug, as before). The one a plug with no owner keeps (`_handle1`):
+    the owner handles are API 1.0 too, the kind that is safe to read once a new
+    scene, a file open or a reference unload freed the node."""
+    try:
+        sel = OpenMaya1.MSelectionList()
+        sel.add(name)
+        mobject = OpenMaya1.MObject()
+        sel.getDependNode(0, mobject)
+        return OpenMaya1.MObjectHandle(mobject)
+    except Exception:
+        return None
+
+
+def _mplug_handle(mplug: OpenMaya.MPlug) -> Any:
+    """`_node_handle` of the node of `mplug`, a live API 2.0 plug, found by its
+    unique name (an MPlug's own name can name another node of the same short
+    name), or None."""
+    try:
+        name = OpenMaya.MFnDependencyNode(mplug.node()).uniqueName()
+    except Exception:
+        return None
+    return _node_handle(name)
+
+
+def _attr_state(mplug: OpenMaya.MPlug, handle: Any) -> dict:
+    """The `__dict__` of a fresh Attribute of `mplug` with no owner, checked
+    through `handle` (the API 1.0 handle of its node, or None). One `__dict__`
+    store instead of one `Plug.__setattr__` call per field; a subclass property
+    named like one of these keys would be bypassed."""
+    return {
+        "_mplug":                      mplug,
+        "_mobject":                    None,
+        "_fn_set":                     None,
+        "_node":                       None,
+        # caches of queried child attributes
+        "_Attribute__child_name_dict": {},
+        "_Attribute__child_id_dict":   {},
+        # cache componet type str TODO: make a proper Component class
+        "_Attribute__component_type":  None,
+        # cache for `_is_geometry_typed_attr`; None = not yet computed
+        "_geometry_attr_cache":        None,
+        # cache for `_owner_is_polymorphic`; None = not yet computed
+        "_polymorphic_owner_cache":    None,
+        # cache for `_static_type_key`; _STATIC_KEY_UNSET = not yet computed
+        "_static_key_cache":           _STATIC_KEY_UNSET,
+        # the API 1.0 handle of the node, for a plug with no owner
+        "_handle1":                    handle,
+    }
+
+
+def _new_attr(cls: type, mplug: OpenMaya.MPlug, handle: Any = None) -> Any:
+    """`cls(mplug)` without the handle of its node `Attribute.__init__` takes of an
+    MPlug (a name lookup): for a plug of a node the caller holds, whose owner, or
+    the handle `handle` of that node, the caller hands it (see `_inherit_owner`).
+    `cls` is `Attribute` or `Plug`, whose `__init__` does nothing else for an
+    MPlug."""
+    attr = str.__new__(cls, mplug)
+    attr.__dict__.update(_attr_state(mplug, handle))
+    return attr
+
+
+def _connected_attrs(
+    attr: Any, src: bool = True, dst: bool = True, first_only: bool = False
+) -> Any:
+    """`attr.get_connected_attrs(src, dst, first_only)` for a caller that reads
+    the result at once and keeps none of it (a type query): the attrs take no
+    handle of their nodes, a name lookup each that only a held plug needs (see
+    `_ensure_owner_alive`)."""
+    _ensure_owner_alive(attr)
+    found = []
+    for each in attr.plug.connectedTo(src, dst):
+        found.append(_new_attr(Attribute, each))
+        if first_only:
+            break
+    if first_only:
+        return found[0] if found else None
+    return found
 
 
 def _inherit_owner(parent: Any, attr: Any) -> Any:
     """`attr`, a fresh child, element or parent plug of `parent` (on its node),
     owned by the node object `parent` holds, if any, and named through that
-    owner's path (see `_named_through_owner`, which may hand back a copy)."""
-    owner = parent.__dict__["_node"]
+    owner's path (see `_named_through_owner`, which may hand back a copy). With
+    no owner, it takes the handle of that node `parent` took (see
+    `_ensure_owner_alive`)."""
+    d     = parent.__dict__
+    owner = d["_node"]
     if owner is None:
+        attr.__dict__["_handle1"] = d["_handle1"]
         return attr
     attr.__dict__["_node"] = owner
     if str.__contains__(parent, "|"):  # `_named_through_a_path`, inlined
@@ -838,9 +954,15 @@ def _node_serial(node: Any) -> int:
     """
     d      = node.__dict__
     serial = d.get("_node_serial")
-    if serial is not None:
-        return serial
-    handle  = d["_objhandle1"]
+    if serial is None:
+        serial = d["_node_serial"] = _handle_serial(d["_objhandle1"])
+    return serial
+
+
+def _handle_serial(handle: Any) -> int:
+    """`_node_serial` of the live node of `handle`, its API 1.0 MObjectHandle (a
+    plug with no owner hashes through the handle of its node it took)."""
+    serial  = None
     code    = handle.hashCode()
     entries = _NODE_SERIALS.get(code)
     if entries is None:
@@ -860,7 +982,6 @@ def _node_serial(node: Any) -> int:
     if serial is None:
         serial = _NEXT_SERIAL()
         entries.append((handle, serial))
-    d["_node_serial"] = serial
     return serial
 
 
@@ -879,13 +1000,22 @@ def _plug_hash(attr: Any) -> int:
     (``T2|S.worldMatrix``) is the element of its path's instance, which a
     removed instance can change, so that hash follows the path and is not
     cached. The plug of a freed node that was never hashed hashes by its str
-    buffer (its MPlug points at freed memory).
+    buffer (its MPlug points at freed memory). A plug with no owner hashes so
+    through the handle of its node it took (see `_ensure_owner_alive`) while
+    that node is deleted or freed, as it cannot cast the node.
     """
     d      = attr.__dict__
     cached = d.get("_plug_hash")
     if cached is not None:
         return cached
-    owner  = d["_node"]
+    owner = d["_node"]
+    if owner is None:
+        handle = d["_handle1"]
+        if handle is not None and not handle.isValid():
+            if not handle.isAlive():
+                return hash((handle.hashCode(), str.__str__(attr)))
+            name = d["_mplug"].partialName(False, False, True, False, False, True)
+            return hash((_handle_serial(handle), name))
     node   = _unwrapped(attr.node if owner is None else owner)
     handle = node.__dict__.get("_objhandle1")
     if handle is None:
@@ -1232,36 +1362,22 @@ class Attribute(str):
     """
 
     def __init__(self, name_or_mplug: str | OpenMaya.MPlug) -> None:
-        """Initialize an instance from an attribute full name or a MPlug."""
+        """Initialize an instance from an attribute full name or a MPlug.
+
+        It has no owner yet, so it takes an API 1.0 handle of its node, which
+        tells it once that node is deleted or freed (see `_ensure_owner_alive`).
+        """
         if isinstance(name_or_mplug, str):
             sel = OpenMaya.MSelectionList()
             sel.add(name_or_mplug)
-            mplug = sel.getPlug(0)
+            mplug  = sel.getPlug(0)
+            handle = _node_handle(str.__str__(name_or_mplug))
         elif isinstance(name_or_mplug, OpenMaya.MPlug):
-            mplug = name_or_mplug
+            mplug  = name_or_mplug
+            handle = _mplug_handle(mplug)
         else:
             raise ValueError(f"{name_or_mplug} is not a string or MPlug.")
-        # One `__dict__` store instead of one `Plug.__setattr__` call per field.
-        # A subclass property named like one of these keys would be bypassed.
-        self.__dict__.update(
-            {
-                "_mplug":                      mplug,
-                "_mobject":                    None,
-                "_fn_set":                     None,
-                "_node":                       None,
-                # caches of queried child attributes
-                "_Attribute__child_name_dict": {},
-                "_Attribute__child_id_dict":   {},
-                # cache componet type str TODO: make a proper Component class
-                "_Attribute__component_type":  None,
-                # cache for `_is_geometry_typed_attr`; None = not yet computed
-                "_geometry_attr_cache":        None,
-                # cache for `_owner_is_polymorphic`; None = not yet computed
-                "_polymorphic_owner_cache":    None,
-                # cache for `_static_type_key`; _STATIC_KEY_UNSET = not yet computed
-                "_static_key_cache":           _STATIC_KEY_UNSET,
-            }
-        )
+        self.__dict__.update(_attr_state(mplug, handle))
 
     # --- dunders
 
@@ -1429,7 +1545,7 @@ class Attribute(str):
                 child_plug = self.plug.child(i)
                 name = child_plug.partialName(False, False, False, False, False, True)
                 name = name.rsplit(".", 1)[-1]
-                attr = _inherit_owner(self, Attribute(child_plug))
+                attr = _inherit_owner(self, _new_attr(Attribute, child_plug))
                 self.__child_name_dict[name] = attr
                 self.__child_id_dict[i]      = attr
         if attr_name in self.__child_name_dict:
@@ -1467,6 +1583,7 @@ class Attribute(str):
         d    = self.__dict__
         node = d["_node"]
         if node is None:
+            _ensure_node_castable(self)
             node = d["_node"] = PyNode(d["_mplug"].node())
         return node
 
@@ -2122,14 +2239,14 @@ class Attribute(str):
             return None
         plug = self.plug.parent()
         if plug and not plug.attribute().isNull():
-            return _inherit_owner(self, Attribute(plug))
+            return _inherit_owner(self, _new_attr(Attribute, plug))
 
     def child(self, i: int) -> Attribute:
         """Returns the child attribute at the given index."""
         attr = self.__child_id_dict.get(i)
         if not attr:
             _ensure_owner_alive(self)
-            attr = _inherit_owner(self, Attribute(self.plug.child(i)))
+            attr = _inherit_owner(self, _new_attr(Attribute, self.plug.child(i)))
             self.__child_id_dict[i] = attr
         return attr
 
@@ -2227,13 +2344,15 @@ class Attribute(str):
         """Returns the element attribute at the given physical index."""
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
-        return _inherit_owner(self, Attribute(self.plug.elementByPhysicalIndex(i)))
+        element = self.plug.elementByPhysicalIndex(i)
+        return _inherit_owner(self, _new_attr(Attribute, element))
 
     def element_by_logical_index(self, i: int) -> Attribute:
         """Returns the element attribute at the given logical index."""
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
-        return _inherit_owner(self, Attribute(self.plug.elementByLogicalIndex(i)))
+        element = self.plug.elementByLogicalIndex(i)
+        return _inherit_owner(self, _new_attr(Attribute, element))
 
     def delete_logical_index(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""

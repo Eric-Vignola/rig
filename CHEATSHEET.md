@@ -147,27 +147,35 @@ except TypeError as err:
 
 A handle never falls back to a name. A `Node` or `Plug` whose node was
 deleted raises `RuntimeError("... already deleted!")`, even once another
-node has taken the name, and an undo brings it back. A new scene, a file
-open or a reference unload frees the node for good; the error then names
-the class only.
+node has taken the name, and an undo brings it back. A plug built from a
+string or an MPlug, never asked for its node, keeps a handle of that node
+and raises the same. A new scene, a file open or a reference unload frees
+the node for good; the error then names the class only, or, for such a
+plug, the node by the name the plug was built with.
 
 ```python
 held = Node.create("transform", name="held")
 tx   = held.tx
+ty   = Plug("held.ty")                         # built from a string, never asked for its node
 cmds.delete("held")
 cmds.createNode("transform", name="held")      # another node takes the name
-for probe in (lambda: tx >> None, lambda: held.ty):
+for probe in (lambda: tx >> None, lambda: held.ty, lambda: ty >> None):
     try:
         probe()
     except RuntimeError as err:
         print(err)
 # held already deleted!
 # held already deleted!
+# held already deleted!
+tz = Plug("held.tz")                           # the new node's
 cmds.file(new=True, force=True)
-try:
-    a.tx
-except RuntimeError as err:
-    print(err)   # Transform node (freed by a new scene, a file open or a reference unload) already deleted!
+for probe in (lambda: a.tx, lambda: tz >> None):
+    try:
+        probe()
+    except RuntimeError as err:
+        print(err)
+# Transform node (freed by a new scene, a file open or a reference unload) already deleted!
+# held node (freed by a new scene, a file open or a reference unload) already deleted!
 ```
 
 ---

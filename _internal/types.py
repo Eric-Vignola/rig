@@ -20,6 +20,7 @@ from typing import Any
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _fixed_attr_kind,
+    _new_attr,
     _NON_MATRIX_ATTR_API_TYPES,
     _SCALAR_ATTR_API_TYPES,
     _trace_choice_source,
@@ -386,7 +387,8 @@ def _selected_choice_source(obj: Any) -> Attribute | None:
     if not _is_attribute(obj):
         return None
     src_plug = _trace_choice_source(obj.plug)
-    return Attribute(src_plug) if src_plug is not None else None
+    # read at once by the type predicates, never held: no handle of its node
+    return _new_attr(Attribute, src_plug) if src_plug is not None else None
 
 
 def _arity_of(obj: Any) -> int | None:

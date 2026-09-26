@@ -476,8 +476,13 @@ class TestCheckedTypeConstruction(MayaTestCase):
                 self.assertEqual(str(ctx.exception), f"{name} already deleted!")
                 self.assertIs(named.node, owner)
                 self.assertFalse(owner.is_valid)
-                with self.assertRaises((TypeError, ValueError)):
+                # re-pinned (round 3b): a plug built from an MPlug, never asked
+                # for its node, checks the handle of its node it took and raises
+                # the deleted node's "already deleted!" (it raised a TypeError or
+                # a ValueError casting the deleted node)
+                with self.assertRaises(RuntimeError) as ctx:
                     str(fresh)
+                self.assertEqual(str(ctx.exception), f"{name} already deleted!")
 
                 cmds.undo()
                 self.assertTrue(str(named).startswith(f"{name}."))
@@ -1193,6 +1198,9 @@ _ATTRIBUTE_STATE_KEYS = (
     "_geometry_attr_cache",
     "_polymorphic_owner_cache",
     "_static_key_cache",
+    # re-pinned (round 3b): an attr with no owner keeps an API 1.0 handle of
+    # its node, so it raises "already deleted!" once the node is deleted or freed
+    "_handle1",
 )
 _COMPONENT_STATE_KEYS = ("_comp_node", "_comp_alias", "_comp_ndims", "_comp_coords")
 

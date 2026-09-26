@@ -28,7 +28,7 @@ from typing import Any, Union
 
 import numpy as np
 from rig.nodetypes import _base
-from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes._base import _new_attr, Attribute, PyNode
 from rig.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
 from rig._internal.plug import _maybe_component_plug, Plug
 
@@ -192,19 +192,21 @@ class Node:
             # The plug is owned by the node object it was read from: this
             # wrapper, for an attr of the wrapped node (``find_attr`` binds
             # those); an attr of another node keeps its own owner, or none,
-            # and ``Plug.node`` casts it. It is named through that owner's path,
-            # which cmds reads too (see ``_named_through_owner``).
+            # and ``Plug.node`` casts it (the handle of that node the attr
+            # took checks it until then). It is named through that owner's
+            # path, which cmds reads too (see ``_named_through_owner``).
             owner = result.__dict__["_node"]
             plug  = _maybe_component_plug(attr_name, result)
             if plug is None:
-                plug = Plug(result.plug)
                 if owner is dg_node:
+                    plug = _new_attr(Plug, result.plug)
                     plug.__dict__["_node"] = self
                     # ``find_attr`` named the attr through the node's path if it
                     # has more than one; one it did not is named as the MPlug
                     if not str.__contains__(result, "|"):  # _named_through_a_path
                         return plug
                     return _base._named_through_owner(plug)
+                plug = _new_attr(Plug, result.plug, result.__dict__["_handle1"])
             plug.__dict__["_node"] = self if owner is dg_node else owner
             return _base._named_through_owner(plug)
         return result
