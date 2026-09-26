@@ -61,6 +61,20 @@ def _outcome(func, *args):
     return ("ok", type(node), node.name)
 
 
+def _holds_freed_node(plug):
+    """True if the node wrapper ``plug`` holds wraps a node that was freed (by a new
+    scene or a reference unload), not just deleted to the undo queue. Only the
+    wrapper's handle is read: naming a freed node reads freed memory."""
+    owner = plug.__dict__["_node"]
+    if isinstance(owner, Node):
+        try:
+            owner = object.__getattribute__(owner, "_dg_node")
+        except AttributeError:
+            return False
+    handle = getattr(owner, "__dict__", {}).get("_objhandle1")
+    return handle is not None and not handle.isAlive()
+
+
 class TestPyNodeDispatch(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
@@ -1818,13 +1832,14 @@ class TestFallbackQueryReuse(MayaTestCase):
             ("undone", cmds.undo),
             ("renamed", rename),
             ("reused", reuse),
-            ("new scene", lambda: cmds.file(new=True, force=True)),
         )
         seen = {}
         for label, step in steps:
             step()
             for index, plug in enumerate(held):
                 with self.subTest(step=label, plug=index):
+                    # a freed node (new scene) is named from freed memory
+                    self.assertFalse(_holds_freed_node(plug))
                     outcome = _data_type_outcome(plug)
                     self.assertEqual(outcome, _requery_outcome(plug))
                     self.assertIsNone(_base._FALLBACK_QUERY)
@@ -1834,7 +1849,7 @@ class TestFallbackQueryReuse(MayaTestCase):
             self.assertEqual([seen[label, index] for index in range(4)], live)
         self.assertEqual(seen["deleted", 0], (RuntimeError, "pick already deleted!"))
         self.assertEqual(seen["reused", 2], (RuntimeError, "pick2 already deleted!"))
-        self.assertEqual(seen["new scene", 3], (RuntimeError, "pick2 already deleted!"))
+        cmds.file(new=True, force=True)
         cmds.createNode("choice", name="pick")
         self.assertEqual(self._data_type(Plug("pick.input[0]")), ("Tdata", 1))
 
@@ -2161,14 +2176,6 @@ def _container_owner():
     return plug
 
 
-def _new_scene(reuse):
-    held = _named(Node("b").tx)
-    cmds.file(new=True, force=True)
-    if reuse:
-        cmds.createNode("transform", name="b")
-    return held
-
-
 def _reused():
     held = _named(Node("b").tx)
     cmds.delete("b")
@@ -2206,7 +2213,8 @@ def _no_wrapped_node():
 _DELETED_B = (RuntimeError, "b already deleted!")
 
 # (case, plug factory, full_name or (error type, message), the name lookups each
-# full_name makes through Node.__getattr__, and the ones it made before)
+# full_name makes through Node.__getattr__, and the ones it made before). No case
+# holds a freed node: its "already deleted" message would be read from freed memory
 _FULL_NAME_CASES = (
     ("node_attr", lambda: Node("a").tx, "a.translateX", 0, 1),
     ("compound", lambda: Node("a").t, "a.translate", 0, 1),
@@ -2237,8 +2245,6 @@ _FULL_NAME_CASES = (
     ("extension_gone", lambda: _extension(True), "pma.", 0, 1),
     ("deleted", lambda: _deleted("b"), _DELETED_B, 0, 1),
     ("reused", _reused, _DELETED_B, 0, 1),
-    ("new_scene", lambda: _new_scene(False), _DELETED_B, 0, 1),
-    ("new_scene_reused", lambda: _new_scene(True), _DELETED_B, 0, 1),
     ("component", _component, "planeShape.cv[1][1]", 1, 1),
     ("attribute", lambda: _base.Attribute("b.tx"), "b.translateX", 0, 0),
     ("container_owner", _container_owner, "ctr.blackBox", 1, 1),
@@ -2318,6 +2324,14 @@ class TestFullNameReadsTheWrappedNode(MayaTestCase):
                     (fast[2], legacy[2]), (4 * forwards, 4 * legacy_forwards)
                 )
 
+    def test_cases_hold_no_freed_node(self):
+        # a freed node's message is arbitrary and naming it can crash Maya, so a
+        # case may delete its node, to the undo queue, but not free it
+        for case, factory, *_ in _FULL_NAME_CASES:
+            with self.subTest(case=case):
+                self._scene()
+                self.assertFalse(_holds_freed_node(factory()))
+
     def test_full_name_matches_the_previous_formula(self):
         for case, factory, expected, _, _ in _FULL_NAME_CASES:
             if not isinstance(expected, str):
@@ -2344,17 +2358,15 @@ class TestFullNameReadsTheWrappedNode(MayaTestCase):
                     plug    = _named(Node("ref:refT").tx)
                     wrapper = mock.patch.object(_base, "_NODE_WRAPPER_CLASS", None)
                     with wrapper if forwarded else contextlib.nullcontext():
-                        loaded    = _name_forwards(lambda: plug.full_name)
-                        reference = cmds.referenceQuery(path, referenceNode=True)
-                        cmds.file(unloadReference=reference)
-                        unloaded  = _name_forwards(lambda: plug.full_name)
+                        loaded = _name_forwards(lambda: plug.full_name)
                     self.assertEqual(
-                        (loaded, unloaded),
-                        (
-                            (("ok", "ref:refT.translateX"), int(forwarded)),
-                            ((RuntimeError, "refT already deleted!"), int(forwarded)),
-                        ),
+                        loaded, (("ok", "ref:refT.translateX"), int(forwarded))
                     )
+                    # unloading frees the node, whose name is then read from freed
+                    # memory, so the plug is not named again
+                    reference = cmds.referenceQuery(path, referenceNode=True)
+                    cmds.file(unloadReference=reference)
+                    self.assertTrue(_holds_freed_node(plug))
         finally:
             cmds.file(new=True, force=True)
             shutil.rmtree(folder, ignore_errors=True)
