@@ -228,6 +228,10 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   `if cube.tx == 3:` always enters the branch and leaves a node behind.
   Read values first: `(cube.tx >> None) == 3`. The same holds for
   `a == b` between two results: compare `str(a) == str(b)`.
+- **A string is not an operand.** A `Plug` is a `str`, but
+  `cube.tx == "ball.ty"`, `cube.wm + "[0]"`, `"%s" % cube.tx` and
+  `f.abs("ball.ty")` raise a `TypeError` before they build anything. Write
+  `Plug("ball.ty")` for the plug, `str(plug)` or an f-string for text.
 - **`polyCube`'s six face tags are procedural.** With construction
   history on, `top`, `bottom`, `front`, `back`, `left`, `right` are owned
   by `polyCube1`: `cube.f[:3] << Tag("top")` is a `TypeError` naming the
