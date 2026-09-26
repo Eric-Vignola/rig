@@ -10,7 +10,11 @@ container scope (so ``with container():`` works transparently).
 The wrapper does NOT subclass ``DGNode`` -- that would require subclassing
 every typed subclass (Mesh, Joint, Transform, ...). Instead, ``__getattr__``
 delegates to the underlying ``DGNode`` and re-wraps any returned
-``Attribute`` as a ``Plug``.
+``Attribute`` as a ``Plug``. That Plug is owned by this wrapper
+(``node.tx.node is node``) and, on a node with more than one DAG path, named
+through the wrapper's path (``Node("|T2|S").v`` is ``T2|S.visibility``).
+A wrapper never falls back to its node's name: after a delete, a new scene,
+a file open or a reference unload it raises ``already deleted!``.
 
 Container nodes are a :class:`Container` subclass of ``Node`` (defined in
 :mod:`rig._internal.container`) -- they get all of ``Node``'s attribute

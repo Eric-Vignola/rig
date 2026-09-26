@@ -14,6 +14,8 @@ Two user-facing classes carry the language:
     *child* attribute first; if not found, falls back to a *sibling* on
     the same node -- so ``decompose(node.matrix).outputRotate`` works
     even if the decomposeMatrix was returned via its ``.outputTranslate``.
+    ``plug.node`` is the Node the plug was read from (``node.tx.node is
+    node``), and an instanced node names its plugs through that Node's path.
 
   * :class:`Container` -- a subclass of :class:`Node` for Maya container
     nodes. Adds the (DORMANT in v1) publish API on top of Node.
@@ -59,8 +61,9 @@ Operator conventions:
       raises ``TypeError`` before anything is built: write ``Plug("a.tx")``.
     * ``& | ^`` -- logical AND/OR/XOR networks.
     * ``== != < <= > >=`` -- build ``condition`` nodes (returns the output
-      Plug, NOT a bool). ``__hash__`` is overridden via ``MObjectHandle``
-      so dict / set membership still works.
+      Plug, NOT a bool). ``__hash__`` is overridden to key the Maya plug
+      (its node, attribute and logical indices, kept across a rename) so
+      dict / set membership still works.
 
 Examples::
 

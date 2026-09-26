@@ -125,11 +125,12 @@ node in `_dg_node` and delegates through `__getattr__`. Three things follow.
 |---|---|---|
 | `node >> None` | the typed node (`Transform`, `Mesh`, ...) | the only `>>` on a `Node` that reads |
 | `node.get_shape()`, `node.serialize()`, ... | whatever the typed method returns | typed results, not `Node`s |
-| `node.tx` | a `Plug` | the typed node's `Attribute`, re-wrapped for the operators |
-| `typed.tx` | an `Attribute` | `get()` / `set()` / `connect()`, no network building |
+| `node.tx` | a `Plug` | the typed node's `Attribute`, re-wrapped for the operators; `node.tx.node is node` |
+| `typed.tx` | an `Attribute` | `get()` / `set()` / `connect()`, no network building; `typed.tx.node is typed` |
 
 Going the other way is `Node(typed)`, or `Node("name")`; `Node` and typed
-node compare equal by the node they hold.
+node compare equal by the node they hold. `Node(plug)` wraps the typed node
+the plug was read from, in the class it was read as.
 
 ### `PyNode` is a factory
 
@@ -164,7 +165,20 @@ arguments only and forwards the same way).
 A typed node holds an `MObject` (a DAG node also an `MDagPath`). `name` is
 read back from the handle each time, so a wrapper survives renames and
 reparenting; `is_valid` says whether the node still exists and any method
-after deletion raises `RuntimeError("... already deleted!")`.
+after deletion raises `RuntimeError("... already deleted!")`. A handle never
+falls back to its name: a new node that takes the name is not picked up, and
+an undo of the delete brings the old one back. A new scene, a file open or a
+reference unload frees the node for good; its wrappers and attributes then
+raise `RuntimeError("Transform node (freed by a new scene, a file open or a
+reference unload) already deleted!")`, naming the class only, since the
+freed handle can no longer be read.
+
+A DAG node keeps the path it was taken through, and the attributes it finds
+are named through that path: with `S` instanced under `T1` and `T2`,
+`PyNode("|T2|S").find_attr("v")` is `T2|S.visibility`, while
+`Attribute("|T2|S.v")`, built from a string, is named as Maya names it,
+`T1|S.visibility`. When that instance is removed, the node answers through
+another path until an undo brings its own back.
 
 Equality is class plus name, hashing is the long name. Two consequences:
 `Transform("x") == PyNode("x")` because `PyNode("x")` *is* a `Transform`,
@@ -206,7 +220,13 @@ is the full name. Equality and hashing are not the string's, though: two
 attributes are equal, and hash alike, when they are the same Maya plug
 (node, attribute, logical indices), whatever instance path each is named
 through, and a rename or an alias keeps the hash. An attribute never equals
-a plain string; compare `str(attr)` for names.
+a plain string; compare `str(attr)` for names. A DSL `Plug` of the same plug
+hashes apart, so the two layers never share a dict or set key;
+`plug.equals(attr)` compares across them.
+
+An attribute a node finds (`typed.tx`, `typed.find_attr("tx")`) is owned by
+that node object: its `node` is `typed`, and its children, elements and
+parent share it.
 
 Indexing is the multi / component surface: `attr[i]` is the element at a
 logical index (created on access, Maya's own semantics), `attr[a:b]` and

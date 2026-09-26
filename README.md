@@ -97,8 +97,9 @@ Two operators carry the language:
   `container=False` opts any `rc` / `rn` call out.
 - **Memoization.** A function or operator called twice with the same
   plugs and the same literals returns the same output plug; the cache
-  forgets nodes that were deleted. All-literal math never touches the
-  scene (`functions.abs(-5)` is `5`); `with force_nodes():` builds it anyway.
+  forgets nodes that were deleted, and a new scene or a file open clears
+  it. All-literal math never touches the scene (`functions.abs(-5)` is
+  `5`); `with force_nodes():` builds it anyway.
 - **Maya-version dispatch.** Each operation is registered per Maya
   release; the highest implementation not newer than the target runs.
   The target is the live Maya, or `set_options(maya_version=2023)` to
@@ -107,6 +108,12 @@ Two operators carry the language:
   output plug; `Plug.__hash__` is overridden so plugs still work as dict
   keys and set members, keyed by the Maya plug (a rename keeps the key,
   and one plug read through two instance paths is one key).
+- **A plug belongs to the node you read it from.** `node.tx.node is
+  node`. An instanced node names its plugs through the path you took
+  (`Node("|T2|S").v` is `T2|S.visibility`, and its `worldMatrix` is T2's
+  element). A handle never falls back to a name: once its node is deleted,
+  or freed by a new scene, a file open or a reference unload, it raises
+  `already deleted!` instead of reaching a new node of the same name.
 - **Sibling fallback.** `plug.foo` looks for a child attribute first,
   then a sibling on the same node, so `(a.tx + 5).operation` reaches the
   math node behind the output.
@@ -227,7 +234,7 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   plug of an `equal` node, and a `Plug` is a truthy object, so
   `if cube.tx == 3:` always enters the branch and leaves a node behind.
   Read values first: `(cube.tx >> None) == 3`. The same holds for
-  `a == b` between two results: compare `str(a) == str(b)`.
+  `a == b` between two results: test `a.equals(b)`, the same Maya plug.
 - **A string is not an operand.** A `Plug` is a `str`, but
   `cube.tx == "ball.ty"`, `cube.wm + "[0]"`, `"%s" % cube.tx` and
   `f.abs("ball.ty")` raise a `TypeError` before they build anything. Write

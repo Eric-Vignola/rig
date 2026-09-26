@@ -5,9 +5,11 @@ Memoization and vectorization decorators for the rig DSL.
 ``Plug``/``Node``/``PlugList`` argument plus the literal value of every
 scalar argument. The cache is auto-invalidated when any cached return value's
 underlying Maya nodes have been deleted (via API 1.0 ``MObjectHandle.isAlive``,
-which is the same staleness pattern used in ``rig.nodetypes.dg_node``). Every
-new scene and file open clears the caches, and a reference unload, reload or
-remove prunes them (the scene callbacks at the end of this module).
+which is the same staleness pattern used in ``rig.nodetypes.dg_node``), or
+when a dynamic attribute a plug argument reads was deleted or renamed since
+(see ``_AttrCheck``). Every new scene and file open clears the caches, and a
+reference unload, reload or remove prunes them (the scene callbacks at the end
+of this module).
 
 ``@vectorize`` broadcasts a function call across :class:`PlugList`
 arguments using **NumPy-style strict broadcasting**: every list / list-like

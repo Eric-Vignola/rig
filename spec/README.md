@@ -237,7 +237,9 @@ shape, enum names and multi-ness travel; **min, max, default, value and
 connections do not**. A multi's populated indices are mirrored, values
 included. `plug >> "name"` and `plug >> "other.name"` are the same clone
 under a chosen name plus the current value, and they refuse a name the
-target already has.
+target already has. A plug on the right is not a name, though it is a
+`str`: `plug >> other_plug` is a `TypeError` that spells the
+`other_plug << plug` to write.
 
 ```python
 src = Node.create("transform", name="src")

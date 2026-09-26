@@ -13,7 +13,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | mayapy / Maya bootstrap, the imports |
-| 1 | [From the DSL to the typed layer](#1-from-the-dsl-to-the-typed-layer) | `node >> None`, method delegation, `Plug` vs `Attribute` |
+| 1 | [From the DSL to the typed layer](#1-from-the-dsl-to-the-typed-layer) | `node >> None`, method delegation, `Plug` vs `Attribute`, `.node`, keys |
 | 2 | [`PyNode` — resolution and registration](#2-pynode--resolution-and-registration) | what a name resolves to, `create`, `find_all`, a custom node type |
 | 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
@@ -96,12 +96,15 @@ print(Node("cubeShape").get_material_bindings())  # standardSurface1 -- one mate
 
 Attribute access is where the two layers differ: the DSL returns a `Plug`
 (operators build networks), the typed node returns an `Attribute`
-(`get` / `set` / `connect`).
+(`get` / `set` / `connect`). On either layer an attribute's `node` is the
+object it was read from. The two spellings of one plug are `equals`, but two
+dict and set keys.
 
 ```python
 print(repr(cube.t),     repr(xf.t))            # Plug("cube.translate") Attribute("cube.translate")
 print(cube.tx >> None,  xf.tx.get())           # 0.0 0.0
 print(Node(xf) == cube, xf == PyNode("cube"))  # True True
+print(cube.tx.node is cube, xf.tx.node is xf, cube.tx.equals(xf.tx), {cube.tx: 1}.get(xf.tx))  # True True True None
 ```
 
 ---
@@ -619,7 +622,7 @@ print(hist.component_tags, hist.get_component_tag_index("top"), hist.get_compone
 try:
     hist.set_component_tag_contents("top", [0], category="f")
 except RuntimeError as e:
-    print(str(e)[:64])                                           # Component tag 'top' on histShape is procedural (owned by polyCu
+    print(str(e)[:64])                                           # Component tag 'top' on histShape is procedural (owned by polyCub
 hist.add_component_tag("lid")   # a new name is editable next to them
 print(hist.component_tags[:2])  # ['lid', 'back']
 ```

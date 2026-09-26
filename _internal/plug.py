@@ -45,10 +45,19 @@ Connection queries are METHODS, not operators -- ``a.get_inputs()`` and
 wired). Direct connections only: a compound whose children are driven
 reports nothing, so slice it (``a[:].get_inputs()``) to query per-child.
 
-``Plug`` overrides ``__hash__`` (the node's MObject handle and the attribute
-with its logical indices) and the truth value of an ``==`` / ``!=`` result
-(whether both operands are the same Maya plug) so that comparison-as-condition
-does not break dict / set usage. A plug's identity follows the Maya plug:
+``plug.node`` is the node object the plug was read from (``node.tx.node is
+node``; children and elements share it), and a plug read through a node with
+more than one DAG path is named through that node's path. A plug built from a
+string or an MPlug casts its node on first access, and is named as Maya names
+it (``Plug("|T2|S.v")`` is ``T1|S.visibility``).
+
+``Plug`` overrides ``__hash__`` (a serial of the node, never reused for another
+node, and the attribute with its logical indices) and the truth value of an
+``==`` / ``!=`` result (whether both operands are the same Maya plug) so that
+comparison-as-condition does not break dict / set usage. A dict or set still
+confirms a hash match with ``==``: a lookup through a second Plug object of the
+same plug builds an equal node (and raises for matrices), so key and look up
+with one object where that matters. A plug's identity follows the Maya plug:
 ``Node("|T1|S").v`` and ``Node("|T2|S").v``, one plug read through two instance
 paths, are one key (their names still differ, each is named through the path
 it was read from), and a rename or an alias keeps the key. A plain str is not a
