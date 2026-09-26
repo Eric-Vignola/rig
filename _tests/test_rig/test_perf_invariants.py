@@ -823,6 +823,54 @@ def _legacy_data_type_outcome(plug):
         return _data_type_outcome(plug)
 
 
+# A plug-in locator (DAG) node with world space matrix array roots: `wsMatIn` can
+# be connected into, `wsMatOut` cannot.
+_WS_MATRIX_PLUGIN = '''
+import maya.api.OpenMaya as om
+import maya.api.OpenMayaUI as omui
+
+
+def maya_useNewAPI():
+    pass
+
+
+class PerfWsMatrixLoc(omui.MPxLocatorNode):
+    kName = "perfWsMatrixLoc"
+    kId   = om.MTypeId(0x0007F2A1)
+
+    @staticmethod
+    def creator():
+        return PerfWsMatrixLoc()
+
+    @staticmethod
+    def initialize():
+        for long, short, writable in (
+            ("wsMatIn", "wmi", True),
+            ("wsMatOut", "wmo", False),
+        ):
+            fn            = om.MFnTypedAttribute()
+            attr          = fn.create(long, short, om.MFnData.kMatrix)
+            fn.array      = True
+            fn.worldSpace = True
+            fn.writable   = writable
+            PerfWsMatrixLoc.addAttribute(attr)
+
+
+def initializePlugin(obj):
+    om.MFnPlugin(obj).registerNode(
+        PerfWsMatrixLoc.kName,
+        PerfWsMatrixLoc.kId,
+        PerfWsMatrixLoc.creator,
+        PerfWsMatrixLoc.initialize,
+        om.MPxNode.kLocatorNode,
+    )
+
+
+def uninitializePlugin(obj):
+    om.MFnPlugin(obj).deregisterNode(PerfWsMatrixLoc.kId)
+'''
+
+
 class TestStaticTypedRootCache(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
@@ -1019,6 +1067,51 @@ class TestStaticTypedRootCache(MayaTestCase):
         finally:
             if cmds.attributeQuery("perfExt", type="choice", exists=True):
                 delete_extension()
+
+    def test_connectable_world_space_matrix_root_not_shared(self):
+        # a world space root reports its first element, which a generic source
+        # connected into it can hand another type
+        folder = tempfile.mkdtemp(prefix="rig_ws_matrix_")
+        path   = os.path.join(folder, "perfWsMatrixLoc.py")
+        with open(path, "w") as fh:
+            fh.write(_WS_MATRIX_PLUGIN)
+        try:
+            cmds.loadPlugin(path, quiet=True)
+            for wired_first in (False, True):
+                with self.subTest(wired_first=wired_first):
+                    cmds.file(new=True, force=True)
+                    _base._STATIC_DATA_TYPE.clear()
+                    for name in ("locA", "locB"):
+                        cmds.createNode("perfWsMatrixLoc", name=name)
+                    cmds.createNode("transform", name="src")
+                    cmds.createNode("choice", name="pick")
+                    cmds.connectAttr("src.translate", "pick.input[0]")
+                    cmds.connectAttr("pick.output", "locB.wsMatIn[0]")
+                    names = ["locB", "locA"] if wired_first else ["locA", "locB"]
+                    plugs = [Node(name).wsMatIn for name in names + names]
+                    self.assertEqual(
+                        [_data_type_outcome(plug) for plug in plugs],
+                        [_legacy_data_type_outcome(plug) for plug in plugs],
+                    )
+                    for plug in plugs:
+                        self.assertIsNone(plug._static_type_key())
+                    self.assertEqual(Node("locA").wsMatIn.data_type, "matrix")
+                    self.assertEqual(Node("locB").wsMatIn.data_type, "double3")
+                    self.assertEqual(
+                        cmds.getAttr("locB.wsMatIn", type=True), "double3"
+                    )
+                    # a root nothing can connect into is still shared
+                    self.assertIsNotNone(Node("locA").wsMatOut._static_type_key())
+                    for name, queries in (("locA", 1), ("locB", 0)):
+                        self.assertEqual(
+                            self._data_type(Node(name).wsMatOut), ("matrix", queries)
+                        )
+        finally:
+            cmds.file(new=True, force=True)
+            cmds.flushUndo()
+            if cmds.pluginInfo("perfWsMatrixLoc", query=True, loaded=True):
+                cmds.unloadPlugin("perfWsMatrixLoc")
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 # The instance state ``Attribute.__init__`` leaves, in the order it is stored.

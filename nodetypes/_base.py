@@ -689,8 +689,9 @@ def _is_static_typed_root(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> b
     A typed attr reports the data it holds, so an attr that is not an array
     root is never shared: a generic source (a choice output, a deformer's
     geometry) can hand it another type. A root reports 'TdataCompound', except
-    a world space root, which reports its first element; only a matrix one
-    (worldMatrix, parentInverseMatrix...) always holds its declared type.
+    a world space root, which reports its first element; only a matrix one that
+    nothing can connect into (worldMatrix, parentInverseMatrix...) always holds
+    its declared type.
     """
     if (
         mobject.apiType() != OpenMaya.MFn.kTypedAttribute
@@ -702,7 +703,7 @@ def _is_static_typed_root(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> b
     if fn.internal:
         return False
     if fn.worldSpace:
-        return fn.attrType() == OpenMaya.MFnData.kMatrix
+        return fn.attrType() == OpenMaya.MFnData.kMatrix and not fn.writable
     return fn.attrType() != OpenMaya.MFnData.kInvalid
 
 
