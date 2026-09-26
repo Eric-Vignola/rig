@@ -30,13 +30,15 @@ from maya import cmds
 LOGGER = logging.getLogger(__name__)
 
 
-def _plug_of(node_string: str, long_name: str) -> Any:
+def _plug_of(node_string: str, long_name: str, node: Any = None) -> Any:
     """The :class:`Plug` for ``node_string.long_name``, built from the
     strings rather than through ``Node.__getattr__`` so that attributes
-    with a leading underscore (``__parked__``) resolve too."""
-    from rig._internal.plug import Plug  # deferred: plug.py imports rig.spec
+    with a leading underscore (``__parked__``) resolve too. ``node``, the node
+    object ``node_string`` names, hands it the handle it checks its node with
+    (see ``_ensure_owner_alive``), which it would otherwise look up by name."""
+    from rig._internal.plug import _named_plug  # deferred: plug.py imports rig.spec
 
-    return Plug(f"{node_string}.{long_name}")
+    return _named_plug(f"{node_string}.{long_name}", node)
 
 
 class _AttrSpec:
@@ -176,7 +178,7 @@ class _AttrSpec:
                     )
             else:
                 # Don't overwrite -- return existing.
-                return _plug_of(node_string, long_name)
+                return _plug_of(node_string, long_name, wrap_node)
 
         # ---- Compound (Vector / Quat / Color / Euler) ---- #
         if self.compound:
@@ -201,7 +203,7 @@ class _AttrSpec:
             self._presize_multi(node_string, long_name, default_value, wrap_node)
 
         # ---- Note string set ---- #
-        new_plug = _plug_of(node_string, long_name)
+        new_plug = _plug_of(node_string, long_name, wrap_node)
         if self.notes is not None:
             new_plug << self.notes
 

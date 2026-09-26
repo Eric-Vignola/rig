@@ -171,7 +171,11 @@ an undo of the delete brings the old one back. A new scene, a file open or a
 reference unload frees the node for good; its wrappers and attributes then
 raise `RuntimeError("Transform node (freed by a new scene, a file open or a
 reference unload) already deleted!")`, naming the class only, since the
-freed handle can no longer be read.
+freed handle can no longer be read. An attribute built from a string or an
+MPlug (`Attribute("held.ty")`, `PyNode("held.ty")`) that never cast its node
+keeps a handle of that node: deleted, it raises `"held already deleted!"`,
+and freed, `"held node (freed by a new scene, a file open or a reference
+unload) already deleted!"`, named by the name it was built with.
 
 A DAG node keeps the path it was taken through, and the attributes it finds
 are named through that path: with `S` instanced under `T1` and `T2`,

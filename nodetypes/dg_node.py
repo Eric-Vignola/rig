@@ -8,6 +8,7 @@ from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _full_name_buffer,
+    _new_attr,
     _queried_data_type,
     Attribute,
     get_custom_type,
@@ -491,13 +492,16 @@ class DGNode(metaclass=NodeMeta):
                 f"index the parent multi element first)"
             )
 
-        attr_obj = Attribute(plug)
         # An attr of this node is owned by this node object. One found on
-        # another node (a transform's shape) finds its own node when asked, and
-        # is not cached: that shape can be deleted or replaced under the node.
+        # another node (a transform's shape) finds its own node when asked (it
+        # takes a handle of that node, see `_ensure_owner_alive`), and is not
+        # cached: that shape can be deleted or replaced under the node.
         # Only normal attrs are cached: dynamic attrs can be renamed, and
         # dynamic and extension attrs can be deleted and re-added.
-        if plug.node() == self._mobject:
+        if plug.node() != self._mobject:
+            attr_obj = Attribute(plug)
+        else:
+            attr_obj = _new_attr(Attribute, plug)
             attr_obj.__dict__["_node"] = self
             # named through this node's path in the str buffer cmds reads, if
             # the node has more than one (see `_named_through_owner`); the fn
@@ -561,7 +565,8 @@ class DGNode(metaclass=NodeMeta):
                 sel       = OpenMaya.MSelectionList()
                 attr_name = alias_list[i + 1]
                 sel.add(f"{self.name}.{attr_name}")
-                return Attribute(sel.getPlug(0))
+                # a plug of this node: checked through this node's handle
+                return _new_attr(Attribute, sel.getPlug(0), self._objhandle1)
         if not quiet:
             raise RuntimeError(f"Alias not found: {self}.{alias}")
 

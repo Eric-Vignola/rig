@@ -113,7 +113,8 @@ Two operators carry the language:
   (`Node("|T2|S").v` is `T2|S.visibility`, and its `worldMatrix` is T2's
   element). A handle never falls back to a name: once its node is deleted,
   or freed by a new scene, a file open or a reference unload, it raises
-  `already deleted!` instead of reaching a new node of the same name.
+  `already deleted!` instead of reaching a new node of the same name. So
+  does a plug built from a string (`Plug("a.tx")`) or an MPlug.
 - **Sibling fallback.** `plug.foo` looks for a child attribute first,
   then a sibling on the same node, so `(a.tx + 5).operation` reaches the
   math node behind the output.
