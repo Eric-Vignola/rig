@@ -14,7 +14,10 @@ and raises the same errors. ``Attribute.connect`` skips the ``isConnected``
 query only for a destination it must find unconnected, with the same result,
 errors and scene as the query path. DGNode's data type fallback hook reuses the
 type ``Attribute.data_type`` just queried only when no code that could change it
-ran in between, and queries again otherwise."""
+ran in between, and queries again otherwise. The canonical wrapper check keeps
+its class checks per class only until a node class or class attribute changes,
+and takes a DAG wrapper's name from its own path only when that is the node's
+only path."""
 
 import contextlib
 from unittest import mock
@@ -1830,3 +1833,275 @@ class TestFallbackQueryReuse(MayaTestCase):
         self.assertEqual(seen["new scene", 3], (RuntimeError, "pick2 already deleted!"))
         cmds.createNode("choice", name="pick")
         self.assertEqual(self._data_type(Plug("pick.input[0]")), ("Tdata", 1))
+
+
+def _canonical_calls(wrapper, mobject):
+    """``_wrapper_is_canonical``'s answer, and the fn sets and cast names it builds."""
+    fn_sets = mock.Mock(side_effect=OpenMaya.MFnDependencyNode)
+    names   = mock.Mock(side_effect=_mobject_to_str)
+    with mock.patch.object(_base.OpenMaya, "MFnDependencyNode", fn_sets):
+        with mock.patch.object(_base, "_mobject_to_str", names):
+            result = _base._wrapper_is_canonical(wrapper, mobject)
+    return result, fn_sets.call_count, names.call_count
+
+
+def _dag_path(name):
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return sel.getDagPath(0)
+
+
+class TestCanonicalWrapperCheck(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self._registered = dict(PyNode._NODE_CLASS_DICT)
+
+    def tearDown(self):
+        PyNode._NODE_CLASS_DICT.clear()
+        PyNode._NODE_CLASS_DICT.update(self._registered)
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        _base._CANONICAL_KIND.clear()
+        super().tearDown()
+
+    def _wrapper(self, name):
+        """A wrapper cast from the MObject of ``name``, and that MObject."""
+        mobject = _mobject(name)
+        return PyNode(mobject), mobject
+
+    def test_wrappers_use_their_own_fn_set_and_path(self):
+        top    = cmds.createNode("transform", name="top")
+        points = [(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)]
+        curve  = cmds.curve(point=points, name="crv")
+        for name in (
+            cmds.createNode("multiplyDivide"),
+            cmds.createNode("choice"),
+            cmds.createNode("transform", name="leaf", parent=top),
+            cmds.createNode("joint"),
+            cmds.createNode("locator", parent=top),
+            cmds.listRelatives(curve, shapes=True, fullPath=True)[0],
+        ):
+            wrapper, mobject = self._wrapper(name)
+            with self.subTest(node=wrapper.name, cls=type(wrapper).__name__):
+                fresh = _mobject(name)
+                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+                self.assertEqual(_canonical_calls(wrapper, fresh), (True, 0, 0))
+                self.assertFalse(_base._wrapper_is_canonical(wrapper, _mobject(top)))
+                self.assertFalse(
+                    _base._wrapper_is_canonical(wrapper, OpenMaya.MObject())
+                )
+
+    def test_dag_hierarchy_edits_keep_the_cast_name(self):
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("transform", name="P")
+        cmds.createNode("transform", name="Q")
+        wrapper, mobject = self._wrapper(
+            cmds.createNode("transform", name="T", parent="P")
+        )
+        def same_short_name():
+            cmds.createNode("transform", name="T", parent="Q")
+
+        for label, step, expected in (
+            ("rename parent", lambda: cmds.rename("P", "P2"), "T"),
+            ("reparent", lambda: cmds.parent("P2|T", "Q"), "T"),
+            ("to world", lambda: cmds.parent("Q|T", world=True), "T"),
+            ("same short name", same_short_name, "|T"),
+            ("rename", lambda: cmds.rename("|T", "T3"), "T3"),
+            ("reparent under the other T", lambda: cmds.parent("T3", "Q|T"), "T3"),
+        ):
+            step()
+            with self.subTest(step=label):
+                self.assertEqual(wrapper.name, expected)
+                self.assertEqual(_mobject_to_str(mobject), expected)
+                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+
+        cmds.rename("T3", "abcdefabcdefabcdefabcdefabcdefab")
+        self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
+        cmds.undo()
+        cmds.delete("P2")
+        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+        cmds.delete("Q")
+        self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
+        cmds.undo()
+        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+        self.assertEqual(wrapper.name, "T3")
+
+    def test_instanced_and_underworld_nodes_compare_the_cast_name(self):
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="T2")
+        PyNode(_mobject(cmds.createNode("locator", name="S", parent="T1")))
+        cmds.parent("T1|S", "T2", add=True, shape=True, relative=True)
+        first   = PyNode(_dag_path("|T1|S"))
+        second  = PyNode(_dag_path("|T2|S"))
+        mobject = _mobject("|T1|S")
+        self.assertEqual(_canonical_calls(first, mobject), (True, 0, 1))
+        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
+
+        # the path of the removed instance is invalid, the other is the only one
+        cmds.parent("T2|S", removeObject=True, shape=True)
+        self.assertEqual(second.name, "")
+        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
+        self.assertEqual(_canonical_calls(first, mobject), (True, 0, 0))
+        cmds.undo()
+        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
+        self.assertEqual(_canonical_calls(first, mobject), (True, 0, 1))
+
+        plane = cmds.nurbsPlane(name="plane")[0]
+        cmds.curveOnSurface(plane, uv=[(0.1, 0.1), (0.5, 0.5), (0.9, 0.2)])
+        surface    = cmds.listRelatives(plane, shapes=True, fullPath=True)[0]
+        underworld = [
+            name
+            for name in cmds.listRelatives(surface, allDescendents=True, fullPath=True)
+            if cmds.nodeType(name) == "nurbsCurve"
+        ]
+        self.assertEqual(len(underworld), 1)
+        wrapper, mobject = self._wrapper(underworld[0])
+        result, _, names = _canonical_calls(wrapper, mobject)
+        self.assertEqual(names, 1)
+        self.assertEqual(result, wrapper.name == _mobject_to_str(mobject))
+
+    def test_deleted_and_freed_nodes(self):
+        cmds.undoInfo(state=True, infinity=True)
+        for node_type in ("multiplyDivide", "transform"):
+            with self.subTest(node_type=node_type):
+                name             = cmds.createNode(node_type)
+                wrapper, mobject = self._wrapper(name)
+                cmds.delete(name)
+                self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
+                cmds.undo()
+                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+                cmds.delete(name)
+                cmds.createNode(node_type, name=name)
+                self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
+                self.assertFalse(_base._wrapper_is_canonical(wrapper, _mobject(name)))
+        wrappers = [PyNode(_mobject(cmds.createNode(t))) for t in ("choice", "joint")]
+        cmds.file(new=True, force=True)
+        for wrapper in wrappers:
+            self.assertFalse(_base._wrapper_is_canonical(wrapper, wrapper._mobject))
+
+    def test_custom_type_attr_or_alias_added_later(self):
+        for node_type, attr in (("multiplyDivide", "input1X"), ("transform", "tx")):
+            with self.subTest(node_type=node_type):
+                custom           = cmds.createNode(node_type)
+                wrapper, mobject = self._wrapper(custom)
+                cmds.addAttr(custom, longName=CUSTOM_TYPE_ATTR, dataType="string")
+                self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
+                aliased          = cmds.createNode(node_type)
+                wrapper, mobject = self._wrapper(aliased)
+                cmds.aliasAttr(CUSTOM_TYPE_ATTR, f"{aliased}.{attr}")
+                self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
+                cmds.aliasAttr(f"{aliased}.{CUSTOM_TYPE_ATTR}", remove=True)
+                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+
+    def test_class_checks_run_once_per_class(self):
+        wrappers = [
+            self._wrapper(cmds.createNode(node_type))
+            for node_type in (
+                "multiplyDivide",
+                "plusMinusAverage",
+                "transform",
+                "transform",
+            )
+        ]
+        _base._CANONICAL_KIND.clear()
+        checks = mock.Mock(side_effect=_base._canonical_kind)
+        with mock.patch.object(_base, "_canonical_kind", checks):
+            for _ in range(3):
+                for wrapper, mobject in wrappers:
+                    self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
+        self.assertEqual(checks.call_count, 2)
+        self.assertEqual(
+            _base._CANONICAL_KIND,
+            {DGNode: _base._NAMED_DG, Transform: _base._NAMED_DAG_PATH},
+        )
+
+    def test_class_attribute_changes_are_seen(self):
+        class _Probe(Transform):
+            NATIVE_NODE_TYPE = "transform"
+
+        wrapper, mobject = self._wrapper(cmds.createNode("transform"))
+        self.assertIs(type(wrapper), _Probe)
+        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
+
+        _Probe.CUSTOM_NODE_TYPE = "perfCanonicalProbe"
+        self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
+        del _Probe.CUSTOM_NODE_TYPE
+        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
+
+        passing = classmethod(lambda cls, *args, **kwargs: True)
+        with mock.patch.object(_Probe, "is_type", passing):
+            self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
+        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
+        with mock.patch.object(DGNode, "_cache_api1_objects", lambda self, name: None):
+            self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
+        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
+
+        # a fn_set of its own makes the check compare the cast's name
+        same_fn_set = property(lambda self: self._fn_set)
+        with mock.patch.object(_Probe, "fn_set", same_fn_set):
+            self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 1))
+            self.assertEqual(_base._CANONICAL_KIND[_Probe], _base._NAMED_DAG)
+        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+        with mock.patch.object(_Probe, "name", DGNode.__dict__["name"]):
+            self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 1))
+            self.assertEqual(_base._CANONICAL_KIND[_Probe], _base._NAMED_DG)
+        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
+
+        # so does a new class, which may change the dispatch
+        self.assertIn(_Probe, _base._CANONICAL_KIND)
+
+        class _Other(DGNode):
+            NATIVE_NODE_TYPE = "perfCanonicalOther"
+
+        self.assertEqual(_base._CANONICAL_KIND, {})
+
+    def test_class_with_a_plain_base_is_checked_every_time(self):
+        class _Plain:
+            pass
+
+        class _Mixed(_Plain, Transform):
+            NATIVE_NODE_TYPE = "transform"
+
+        wrapper, mobject = self._wrapper(cmds.createNode("transform"))
+        self.assertIs(type(wrapper), _Mixed)
+        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
+        self.assertNotIn(_Mixed, _base._CANONICAL_KIND)
+        _Plain.is_type = classmethod(lambda cls, *args, **kwargs: True)
+        try:
+            self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
+        finally:
+            del _Plain.is_type
+        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
+
+    def test_fn_set_override_compares_the_cast_name(self):
+        class _OwnFnSet(Transform):
+            NATIVE_NODE_TYPE = "transform"
+
+            @property
+            def fn_set(self):
+                self.ensure_valid()
+                path = OpenMaya.MDagPath.getAPathTo(self._mobject)
+                return OpenMaya.MFnDagNode(path)
+
+        cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="T2")
+        PyNode(_mobject(cmds.createNode("transform", name="S", parent="T1")))
+        cmds.parent("T1|S", "T2", add=True, relative=True)
+        # the name comes from the first path, the fn set from the second
+        wrapper = PyNode(_dag_path("|T2|S"))
+        self.assertIs(type(wrapper), _OwnFnSet)
+        self.assertEqual(wrapper.name, "T1|S")
+        self.assertEqual(_canonical_calls(wrapper, _mobject("|T1|S")), (True, 0, 1))
+        self.assertEqual(_base._CANONICAL_KIND[_OwnFnSet], _base._NAMED_DAG)
+
+    def test_other_objects_are_not_canonical(self):
+        name    = cmds.createNode("multiplyDivide")
+        mobject = _mobject(name)
+        PyNode(mobject)
+        for other in (None, name, 3, Node(name), Plug(f"{name}.input1X")):
+            with self.subTest(other=type(other).__name__):
+                self.assertFalse(_base._wrapper_is_canonical(other, mobject))
+                self.assertNotIn(type(other), _base._CANONICAL_KIND)
