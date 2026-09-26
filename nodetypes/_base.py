@@ -493,8 +493,9 @@ _NON_MATRIX_ATTR_API_TYPES = _SCALAR_ATTR_API_TYPES | {
 # Attribute kinds whose `cmds.getAttr(..., type=True)` string is a property of
 # the node class, so `Attribute.data_type` shares it across instances in
 # `_STATIC_DATA_TYPE`, keyed by (typeName, typeId, attr long name, isArray).
-# Dynamic attrs and plugs under an array element are never cached; the cache
-# is cleared when a plug-in is loaded or unloaded (it can redefine a type).
+# Dynamic and extension attrs and plugs under an array element are never
+# cached; the cache is cleared when a plug-in is loaded or unloaded (it can
+# redefine a type).
 _STATIC_DATA_API_TYPES = _NON_MATRIX_ATTR_API_TYPES | {
     OpenMaya.MFn.kMatrixAttribute,
     OpenMaya.MFn.kFloatMatrixAttribute,
@@ -950,13 +951,15 @@ class Attribute(str):
         if key is _STATIC_KEY_UNSET:
             key = None
             try:
-                mplug = self._mplug
+                mplug  = self._mplug
+                fn     = OpenMaya.MFnDependencyNode(mplug.node())
+                normal = OpenMaya.MFnDependencyNode.kNormalAttr
+                # a dynamic or extension attr can be re-added with another type
                 if (
-                    not mplug.isDynamic
+                    fn.attributeClass(self.mobject) == normal
                     and self.mobject.apiType() in _STATIC_DATA_API_TYPES
                     and not _plug_under_element(mplug)
                 ):
-                    fn  = OpenMaya.MFnDependencyNode(mplug.node())
                     key = (
                         fn.typeName,
                         fn.typeId.id(),

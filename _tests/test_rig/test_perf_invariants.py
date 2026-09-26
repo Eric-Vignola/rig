@@ -700,6 +700,28 @@ class TestStaticDataTypeCache(MayaTestCase):
         self.assertEqual(self._data_type("net.foo"), ("string", 1))
         self.assertEqual(self._data_type("net.foo"), ("string", 1))
 
+    def test_extension_attr_readd_new_type(self):
+        def delete_extension():
+            cmds.deleteExtension(
+                nodeType="network", attribute="perfExt", forceDelete=True
+            )
+
+        try:
+            cmds.addExtension(nodeType="network", longName="perfExt", at="double")
+            cmds.createNode("network", name="netA")
+            self.assertIsNone(Plug("netA.perfExt")._static_type_key())
+            self.assertEqual(Plug("netA.perfExt").data_type, "double")
+            delete_extension()
+            cmds.addExtension(nodeType="network", longName="perfExt", at="enum", en="a:b")
+            cmds.createNode("network", name="netB")
+            self.assertEqual(self._data_type("netB.perfExt"), ("enum", 1))
+            self.assertEqual(self._data_type("netA.perfExt"), ("enum", 1))
+        finally:
+            if cmds.attributeQuery("perfExt", type="network", exists=True):
+                delete_extension()
+        md = cmds.createNode("multiplyDivide")
+        self.assertIsNotNone(Plug(f"{md}.input1X")._static_type_key())
+
     def test_element_subtree_not_cached(self):
         pma = cmds.createNode("plusMinusAverage", name="pma")
         cmds.setAttr("pma.input3D[2]", 1, 2, 3)
