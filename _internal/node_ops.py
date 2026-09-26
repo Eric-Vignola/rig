@@ -195,7 +195,10 @@ class NodeOp:
                 result = self._invoke(fn, scope, args, kwargs)
                 break
             except NotImplementedError as e:
-                last_error = e
+                # without its traceback: that references this frame, which holds
+                # `last_error`, a cycle that keeps every frame's locals (plugs,
+                # nodes, argument lists) alive until the cycle collector runs
+                last_error = e.with_traceback(None)
                 continue
         else:
             # No impl returned (loop exhausted without break).
