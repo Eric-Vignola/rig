@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 import uuid
 from functools import total_ordering
 from numbers import Number
@@ -14,6 +15,7 @@ from typing import Any, Iterator
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal import callbacks as _callbacks
 
 
 CUSTOM_TYPE_ATTR = "__custom_node_type__"
@@ -805,15 +807,38 @@ def _queried_data_type(attr: Any, node: Any) -> str | None:
     return None
 
 
-# registered once per session: a module reload keeps the first import's ids
-if "_PLUGIN_CALLBACK_IDS" not in globals():
-    _PLUGIN_CALLBACK_IDS = [
-        OpenMaya.MSceneMessage.addStringArrayCallback(msg, _clear_static_data_type)
-        for msg in (
-            OpenMaya.MSceneMessage.kAfterPluginLoad,
-            OpenMaya.MSceneMessage.kAfterPluginUnload,
-        )
+def _plugin_callback_specs() -> list:
+    msg = OpenMaya.MSceneMessage
+    return [
+        (msg.addStringArrayCallback, msg.kAfterPluginLoad,   _clear_static_data_type),
+        (msg.addStringArrayCallback, msg.kAfterPluginUnload, _clear_static_data_type),
     ]
+
+
+def _register_plugin_callbacks() -> bool:
+    """Register the plug-in callbacks in place of an earlier import's, once per
+    Maya session (see `rig._internal.callbacks`). False, with nothing registered,
+    while Maya is not initialised: `_STATIC_DATA_TYPE` is then filled only once
+    `_ensure_plugin_callbacks` has registered them."""
+    global _PLUGIN_CALLBACKS_READY
+    _PLUGIN_CALLBACKS_READY = _callbacks.register(
+        __name__, _THIS_MODULE, _plugin_callback_specs()
+    )
+    return _PLUGIN_CALLBACKS_READY
+
+
+def _ensure_plugin_callbacks() -> bool:
+    """Make the registration an import before Maya was initialised left pending."""
+    global _PLUGIN_CALLBACKS_READY
+    _PLUGIN_CALLBACKS_READY = _callbacks.ensure(
+        __name__, _THIS_MODULE, _plugin_callback_specs()
+    )
+    return _PLUGIN_CALLBACKS_READY
+
+
+_THIS_MODULE            = sys.modules.get(__name__)
+_PLUGIN_CALLBACKS_READY = False
+_register_plugin_callbacks()
 
 # typed array attrs cmds.setAttr() sets as (count, *items) instead of a list
 COUNTED_ARRAY_TYPES = ("stringArray", "vectorArray", "pointArray")
@@ -1371,7 +1396,11 @@ class Attribute(str):
             finally:
                 _FALLBACK_QUERY = outer
 
-        if key is not None and isinstance(typ, str):
+        if (
+            key is not None
+            and isinstance(typ, str)
+            and (_PLUGIN_CALLBACKS_READY or _ensure_plugin_callbacks())
+        ):
             _STATIC_DATA_TYPE[key] = typ
         return typ
 
