@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+import inspect
 import re
 from functools import total_ordering
 from types import FunctionType
@@ -102,6 +104,48 @@ _EXTENSION_ATTR = OpenMaya.MFnDependencyNode.kExtensionAttr
 _PLUG_CLASS     = None  # rig._internal.plug.Plug
 _COMPONENT_PLUG = None  # rig._internal.plug._maybe_component_plug
 
+# The container scope's typed-create hook (D13; the D31 pattern keeps nodetypes
+# free of ``rig._internal`` imports). ``rig._internal.container`` sets it when it
+# loads, to ``_typed_create(cls, run, args, kwargs, name_index=None)``, which
+# calls ``run(cls, args, kwargs)``. Until then (mid-import only) a typed create
+# runs plain.
+_TYPED_CREATE_HOOK = None
+
+
+def _create_template(cls, args, kwargs):
+    """`DGNode.create`'s body: ``cls._create``, then ``cls.post_create``, given
+    the call's ``args`` tuple and ``kwargs`` dict."""
+    new_node = cls._create(*args, **kwargs)
+    return cls.post_create(new_node, *args, **kwargs)
+
+
+def _typed_creator(fn):
+    """Decorate the body ``fn(cls, ...)`` of a typed creator classmethod that
+    does not go through `DGNode.create` (put it under ``@classmethod``).
+
+    Inside ``with container()`` the call joins the scope as `DGNode.create`
+    does: ``container=`` is consumed, an explicit ``name`` (by keyword, or at
+    its position in ``fn``'s signature) takes the flattened scope's prefix, and
+    every node the call made is registered. ``skipSelect`` is never added (the
+    body takes no such flag). A class that makes nodes before calling
+    ``super().create()`` has them tracked only through this decorator."""
+    params     = list(inspect.signature(fn).parameters)[1:]  # after cls
+    name_index = params.index("name") if "name" in params else None
+
+    def run(cls, args, kwargs):
+        return fn(cls, *args, **kwargs)
+
+    @functools.wraps(fn)
+    def creator(cls, *args, **kwargs):
+        hook = _TYPED_CREATE_HOOK
+        if hook is None:
+            kwargs.pop("container", None)
+            return fn(cls, *args, **kwargs)
+        return hook(cls, run, args, kwargs, name_index)
+
+    return creator
+
+
 # NURBS-surface ``cv`` / lattice ``pt``: the names a ComponentPlug may answer
 _MULTIDIM = frozenset({"cv", "pt"})
 
@@ -177,6 +221,11 @@ class DGNode(Node):
 
     # the OpenMaya function set for this type
     FN_SET = OpenMaya.MFnDependencyNode
+
+    # a typed create inside `with container()` joins the scope (D13); a scene
+    # registry, found again by name, sets False and stays out unless
+    # ``create(container=True)``
+    _CONTAINER_AWARE = True
 
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
         """Initialize an instance from a node name or a MObject.
@@ -527,16 +576,41 @@ class DGNode(Node):
     def _create(cls, *args, **kwargs) -> str:
         """[Internal] Creates a new node of this type. Can be overridden by subclasses.
         This class can only use Maya APIs and must return a node name string.
+
+        Only ``name`` / ``n`` and ``skipSelect`` / ``ss`` reach ``cmds.createNode``.
         """
         name = kwargs.get("name", kwargs.get("n"))
         name = name or (cls.CUSTOM_NODE_TYPE or cls.NATIVE_NODE_TYPE)
-        return cmds.createNode(cls.NATIVE_NODE_TYPE, name=name)
+        skip = kwargs.get("skipSelect", kwargs.get("ss"))
+        if skip is None:
+            return cmds.createNode(cls.NATIVE_NODE_TYPE, name=name)
+        return cmds.createNode(cls.NATIVE_NODE_TYPE, name=name, skipSelect=skip)
 
     @classmethod
     def create(cls, *args, **kwargs) -> "DGNode":
-        """Creates a new node of this type. Can NOT be overridden by subclasses."""
-        new_node = cls._create(*args, **kwargs)
-        return cls.post_create(new_node, *args, **kwargs)
+        """Creates a new node of this type: ``_create``, then ``post_create``.
+
+        A subclass that overrides ``create`` calls ``super().create()`` (as
+        ``Mesh`` does), so the rules below hold for every class.
+
+        Inside ``with container()`` the new node joins the scope with
+        ``Node.create``'s rules: an explicit ``name=`` / ``n=`` takes the
+        flattened scope's prefix, ``skipSelect`` defaults to
+        ``ContainerOptions.skip_selection`` (for the ``_create``s that forward
+        it to ``cmds.createNode``: DGNode's and DAGNode's), the returned node is
+        tagged for ``cleanup()`` when its type is a GC-eligible utility type,
+        and every node the call made is registered. ``container=False`` opts
+        out; a scene registry (``_CONTAINER_AWARE = False``: display layers,
+        sets and shading engines, references) stays out unless
+        ``container=True`` (then registered, never prefixed). Only the
+        outermost typed create does this. Outside a scope nothing changes
+        (``container=`` is always consumed, never passed on).
+        """
+        hook = _TYPED_CREATE_HOOK
+        if hook is None:
+            kwargs.pop("container", None)
+            return _create_template(cls, args, kwargs)
+        return hook(cls, _create_template, args, kwargs)
 
     @classmethod
     def post_create(cls, new_node_name: str, *args, **kwargs) -> "DGNode":

@@ -31,47 +31,15 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from maya import cmds as _mc
-from maya.api import OpenMaya as _om
+
+# the node-added tracking the typed creators share (it lives with the scope)
+from rig._internal.container import _call_tracking_creation
 from rig._internal.node import Node
 from rig.nodetypes._base import _ensure_node_valid, Attribute
 
 
 # Per-command wrapper cache. Built lazily by ``__getattr__``.
 _WRAPPER_CACHE: dict = {}
-
-
-def _call_tracking_creation(fn: Callable, args: tuple, kwargs: dict) -> tuple:
-    """Call ``fn`` and return ``(result, created)``: the full names of the
-    nodes Maya created during the call.
-
-    A node-added callback is the only exact way to tell what a command
-    made from what it merely returned: a query returns nodes it looked up,
-    ``parent`` and ``rename`` return nodes that already existed, and
-    ``polyCube`` makes a shape it never returns. A node the command created
-    and deleted again within the call is dropped (its handle is no longer
-    valid).
-    """
-    handles = []
-
-    def on_added(obj, _client_data):
-        handles.append(_om.MObjectHandle(obj))
-
-    callback_id = _om.MDGMessage.addNodeAddedCallback(on_added, "dependNode")
-    try:
-        result = fn(*args, **kwargs)
-    finally:
-        _om.MMessage.removeCallback(callback_id)
-
-    created = []
-    for handle in handles:
-        if not handle.isValid():
-            continue
-        obj = handle.object()
-        if obj.hasFn(_om.MFn.kDagNode):
-            created.append(_om.MFnDagNode(obj).fullPathName())
-        else:
-            created.append(_om.MFnDependencyNode(obj).name())
-    return result, created
 
 
 # Commands that should NOT have their args auto-coerced (they take callback
