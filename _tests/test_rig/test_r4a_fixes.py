@@ -18,6 +18,10 @@ Maya plug fold to ``True`` / ``False`` and build no node, unless constant
 folding is off (``force_nodes()``); different plugs build the condition node.
 A dict / set lookup through a second object of a plug builds nothing (round-3
 F10), and a plain list scan still compares every different plug it passes.
+
+Round 4a, step M6: ``PlugList`` is now ``List`` (``PlugList is List``, both
+exported, repr ``List([...])``), and ``in`` / ``index`` / ``count`` /
+``remove`` read a plain str probe as the Maya plug it names (decision S3 Q4).
 """
 
 import itertools
@@ -1057,3 +1061,279 @@ class TestListName(_SceneCase):
         self.assertIs(alias.__origin__, List)
         self.assertEqual(alias.__args__, (str,))
         self.assertIs(PlugList[int].__origin__, List)
+
+
+class TestListStrProbe(_SceneCase):
+    """``"a.tx" in List([...])`` reads the str as the Maya plug it names and
+    compares identity (decision S3 Q4); ``index`` / ``count`` / ``remove``
+    agree; nothing is built."""
+
+    def _assert_finds(self, probe, element, others=()):
+        """`probe` finds `element` in a List of `others` + [element], by
+        every method, and builds nothing."""
+        from rig import List
+
+        before = _scene()
+        items = List(list(others) + [element])
+        at = len(items) - 1
+        self.assertIs(probe in items, True)
+        self.assertIs(probe not in items, False)
+        self.assertEqual(items.index(probe), at)
+        self.assertEqual(items.count(probe), 1)
+        items.remove(probe)
+        self.assertEqual(len(items), at)
+        self.assertIs(probe in items, False)
+        self.assertEqual(_new(before), [])
+
+    def _assert_misses(self, probe, items):
+        before = _scene()
+        self.assertIs(probe in items, False)
+        self.assertEqual(items.count(probe), 0)
+        with self.assertRaisesRegex(ValueError, r" is not in List$"):
+            items.index(probe)
+        with self.assertRaisesRegex(ValueError, r" is not in List$"):
+            items.remove(probe)
+        self.assertEqual(_new(before), [])
+
+    def test_names_of_one_plug(self):
+        cmds.createNode("transform", name="a")
+        cmds.addAttr("a", ln="knob", at="double")
+        cmds.aliasAttr("slide", "a.tz")
+        cmds.namespace(add="ns")
+        cmds.createNode("transform", name="ns:a")
+        a, u = Node("a"), self.u
+        for label, probe, element in (
+            ("the short name", "a.tx", a.tx),
+            ("the long name", "a.translateX", a.tx),
+            ("a long-name element for a short-name probe", "a.tx", a.translateX),
+            ("the full path", "|a.tx", a.tx),
+            ("an alias", "a.slide", a.tz),
+            ("the attr of an alias", "a.translateZ", a.slide),
+            ("a compound", "a.t", a.translate),
+            ("a compound child", "a.translate.translateX", a.tx),
+            ("a namespaced node (E4)", "ns:a.tx", Node("ns:a").tx),
+            ("a dynamic attr (E7)", "a.knob", a.knob),
+            ("a matrix element", "a.worldMatrix[0]", a.worldMatrix[0]),
+            ("an unindexed world-space array", "a.worldMatrix", a.worldMatrix[0]),
+            ("a typed attr element", "a.tx", PyNode("a").find_attr("translateX")),
+            ("a name-built element", "a.translateX", Plug("a.tx")),
+        ):
+            with self.subTest(label):
+                self._assert_finds(probe, element, others=[u.tx, u.ty])
+
+    def test_through_another_instance_path(self):
+        # E3: one Maya plug, whatever path names it
+        from rig import List
+
+        n1, n2 = _instanced()
+        for label, probe, element in (
+            ("|T1|S.v for |T2|S", "|T1|S.v", n2.v),
+            ("T2|S.visibility for |T1|S", "T2|S.visibility", n1.v),
+            ("the name of the shape", "S.v", n2.v),
+            ("the world matrix of the instance", "T2|S.worldMatrix", n2.worldMatrix),
+            ("its element by index", "S.worldMatrix[1]", n2.worldMatrix),
+        ):
+            with self.subTest(label):
+                self._assert_finds(probe, element, others=[self.u.v])
+        # world space elements of two instances are two plugs
+        self._assert_misses("T1|S.worldMatrix", List([n2.worldMatrix]))
+        self._assert_misses("S.worldMatrix[0]", List([n1.worldMatrix[1]]))
+
+    def test_components(self):
+        # E6: a component name is the plug of its storage
+        from rig import List
+
+        plane = cmds.nurbsPlane(name="np", degree=3, patchesU=1, patchesV=1, ch=False)[0]
+        shape = cmds.listRelatives(plane, shapes=True)[0]
+        cmds.polyCube(name="box", ch=False)
+        for label, probe, element in (
+            ("a surface cv for its storage", "np.cv[1][2]", Plug(f"{shape}.controlPoints[6]")),
+            ("a surface cv for the ComponentPlug", "np.cv[1][2]", Node(shape).cv[1, 2]),
+            ("the storage for the ComponentPlug", f"{shape}.controlPoints[6]", Node(shape).cv[1, 2]),
+            ("a mesh vertex", "box.vtx[3]", Node("box").vtx[3]),
+            ("a mesh pnts element", "boxShape.pnts[3]", Node("box").vtx[3]),
+            ("a one-vertex range", "box.vtx[3:3]", Node("box").vtx[3]),
+            ("a uv", "box.map[1]", Node("box").map[1]),
+        ):
+            with self.subTest(label):
+                self._assert_finds(probe, element, others=[self.u.tx])
+        for label, probe, element in (
+            ("another cv", "np.cv[1][3]", Node(shape).cv[1, 2]),
+            ("a range of cvs", "np.cv[0:1][2]", Node(shape).cv[1, 2]),
+            ("a range of vertices", "box.vtx[3:4]", Node("box").vtx[3]),
+            ("every vertex", "box.vtx[*]", Node("box").vtx[3]),
+        ):
+            with self.subTest(label):
+                self._assert_misses(probe, List([element]))
+
+    def test_a_container_published_plug(self):
+        # E5: the published name on the container is the plug it publishes
+        set_options(flatten_containers=False)
+        with container("outer"):
+            n = Node.create("transform", name="holder")
+            n << Float("weight", dv=0.5)
+            container.publish_input(n.weight, "weight")
+        self._assert_finds("outer.weight", n.weight)
+        self._assert_finds("holder.weight", Node("outer").weight)
+
+    def test_strs_that_name_no_single_plug(self):
+        from rig import List
+
+        cmds.createNode("transform", name="a")
+        for parent in ("P1", "P2"):
+            cmds.createNode("transform", name=parent)
+            cmds.createNode("transform", name="X", parent=parent)
+        a = Node("a")
+        items = List([a.tx, self.t.tx, Node("|P1|X").tx])
+        cmds.select("a")
+        for label, probe in (
+            ("no such node", "nope.tx"),
+            ("no such attr", "a.nope"),
+            ("a node", "a"),
+            ("a node with a trailing dot", "a."),
+            ("the empty str", ""),
+            ("a name read against the selection", ".tx"),
+            ("a pattern", "a*.tx"),
+            ("a one-character pattern", "?.tx"),
+            ("a name two nodes have", "X.tx"),
+            ("two names", "a.tx t.tx"),
+            ("another attr", "a.ty"),
+        ):
+            with self.subTest(label):
+                self._assert_misses(probe, items)
+        self._assert_finds("P1|X.tx", Node("|P1|X").tx)
+
+    def test_nodes_and_other_elements_keep_their_rule(self):
+        from rig import List
+
+        cmds.createNode("transform", name="a")
+        nodes = List([Node("a"), self.t])
+        before = _scene()
+        self.assertIn("a", nodes)
+        self.assertEqual(nodes.index("t"), 1)
+        self.assertEqual(nodes.count("a"), 1)
+        self.assertNotIn("a.tx", nodes)
+        self.assertNotIn("|a", nodes)
+        mixed = List([Node("a"), Node("a").tx])
+        self.assertEqual(mixed.index("a"), 0)
+        self.assertEqual(mixed.index("a.tx"), 1)
+        values = List([1, 2.5])
+        list.append(values, "a.tx")  # a str element (List() lifts a str)
+        self.assertIn("a.tx", values)
+        self.assertEqual(values.index("a.tx"), 2)
+        self.assertNotIn("a.translateX", values)
+        self.assertNotIn("x", List([1, 2]))
+        self.assertEqual(_new(before), [])
+
+    def test_the_str_is_resolved_once_and_only_for_a_plug_element(self):
+        from unittest import mock
+
+        from rig import List
+        from rig._internal import list as list_module
+
+        cmds.createNode("transform", name="a")
+        a, u = Node("a"), self.u
+        with mock.patch.object(
+            list_module, "_plug_named", wraps=list_module._plug_named
+        ) as resolve:
+            for label, call, calls in (
+                ("in", lambda: "a.tx" in List([u.tx, u.ty, u.tz, a.tx]), 1),
+                ("a miss", lambda: "a.nope" in List([u.tx, u.ty, a.tx]), 1),
+                ("index", lambda: List([u.tx, a.tx, a.tx]).index("a.tx", 2), 1),
+                ("count", lambda: List([a.tx, a.tx, u.tx]).count("a.translateX"), 1),
+                ("remove", lambda: List([u.tx, a.tx]).remove("a.tx"), 1),
+                ("a node list", lambda: "a" in List([a, u]), 0),
+                ("a node found first", lambda: "a" in List([a, u.tx]), 0),
+                ("numbers", lambda: "a.tx" in List([1, 2]), 0),
+                ("an empty list", lambda: "a.tx" in List(), 0),
+                ("a Plug probe", lambda: Plug("a.tx") in List([u.tx, a.tx]), 0),
+                ("index outside the plugs", lambda: List([a, u.tx]).index("a", 0, 1), 0),
+            ):
+                with self.subTest(label):
+                    resolve.reset_mock()
+                    call()
+                    self.assertEqual(resolve.call_count, calls)
+
+    def test_a_renamed_node(self):
+        from rig import List
+
+        cmds.createNode("transform", name="a")
+        items = List([Node("a").tx])
+        cmds.rename("a", "b")
+        self._assert_finds("b.tx", items[0])
+        self._assert_misses("a.tx", items)
+
+    def test_a_deleted_element(self):
+        # E1: a plug of a node deleted to the undo queue raises, as its name
+        # does; the undo brings it back; a new node of its name is another plug
+        from rig import List
+
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            cmds.createNode("transform", name="gone")
+            items = List([Node("gone").tx])
+            live = List([self.t.tx])
+            cmds.delete("gone")
+            before = _scene()
+            for label, call in (
+                ("in", lambda: "gone.tx" in items),
+                ("index", lambda: items.index("t.tx")),
+                ("count", lambda: items.count("gone.tx")),
+                ("remove", lambda: items.remove("gone.tx")),
+            ):
+                with self.subTest(label):
+                    with self.assertRaisesRegex(RuntimeError, r"^gone already deleted!$"):
+                        call()
+            # a str that names the plug of the deleted node names no plug
+            self._assert_misses("gone.tx", live)
+            self.assertEqual(_new(before), [])
+            cmds.undo()
+            self._assert_finds("gone.tx", items[0])
+            cmds.delete("gone")
+            cmds.createNode("transform", name="gone")
+            with self.assertRaisesRegex(RuntimeError, r"^gone already deleted!$"):
+                "gone.tx" in items
+            self._assert_misses("gone.tx", List([self.u.tx]))
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_a_deleted_dynamic_attr(self):
+        # E7: the attribute of the held element is freed
+        from rig import List
+
+        cmds.addAttr("t", ln="knob", at="double")
+        items = List([self.t.knob])
+        cmds.deleteAttr("t.knob")
+        cmds.flushUndo()
+        cmds.addAttr("t", ln="knob", at="long")
+        with self.assertRaisesRegex(RuntimeError, r"^t\.knob already deleted!$"):
+            "t.knob" in items
+        self._assert_finds("t.knob", self.t.knob)
+
+    def test_a_freed_element(self):
+        # E2: a new scene or a file open frees the node of the held element
+        from rig import List
+
+        folder = tempfile.mkdtemp(prefix="rig_r4a_list_")
+        path = os.path.join(folder, "held.ma").replace("\\", "/")
+        try:
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            for label, free in (
+                ("a new scene", lambda: cmds.file(new=True, force=True)),
+                ("a file open that reuses the names", lambda: cmds.file(path, open=True, force=True)),
+            ):
+                with self.subTest(label):
+                    cmds.file(path, open=True, force=True)
+                    items = List([Node("t").tx, Node("u").tx])
+                    free()
+                    before = _scene()
+                    for probe in ("t.tx", "nope.tx", "u.translateX"):
+                        with self.assertRaisesRegex(RuntimeError, _FREED):
+                            probe in items
+                        with self.assertRaisesRegex(RuntimeError, _FREED):
+                            items.index(probe)
+                    self.assertEqual(_new(before), [])
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)

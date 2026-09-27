@@ -74,7 +74,8 @@ A plug's identity follows the Maya plug: ``Node("|T1|S").v`` and
 ``Node("|T2|S").v``, one plug read through two instance paths, are one key
 (their names still differ, each is named through the path it was read from),
 and a rename or an alias keeps the key. A plain str is not a plug's key:
-``{plug: 1}["a.tx"]`` misses; a ``PlugList`` compares a str by name.
+``{plug: 1}["a.tx"]`` misses; a ``List`` reads a plain str as the Maya
+plug it names (``"a.tx" in List([a.translateX])``).
 """
 
 from __future__ import annotations
