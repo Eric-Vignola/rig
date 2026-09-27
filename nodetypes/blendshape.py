@@ -74,7 +74,7 @@ class BlendShape(Deformer):
         .inputTarget[0].inputTargetGroup[x].inputTargetItem[6000].inputPointsTarget
         .inputTarget[0].inputTargetGroup[x].inputTargetItem[6000].inputComponentsTarget
         """
-        group_attr = self.inputTarget[0].inputTargetGroup
+        group_attr = self.find_attr("inputTarget")[0].inputTargetGroup
         group_attr = group_attr[index]
         item_attr  = group_attr.inputTargetItem[6000]
         return (
@@ -88,7 +88,7 @@ class BlendShape(Deformer):
     @property
     def num_targets(self) -> int:
         """Returns the number of targets"""
-        return self.weight.num_elements
+        return self.find_attr("weight").num_elements
 
     def get_targets(self) -> list[str]:
         """Returns a list of targets in this node."""
@@ -96,7 +96,7 @@ class BlendShape(Deformer):
 
     def get_target_indices(self) -> list[int]:
         """Returns a list of target index in this node."""
-        return self.weight.get_logical_indices()
+        return self.find_attr("weight").get_logical_indices()
 
     def get_target_index(self, target_name: str, failfast: bool = False) -> int:
         """Returns the logical index of a target, or -1 if not found.
@@ -144,7 +144,7 @@ class BlendShape(Deformer):
             target_id = self.get_target_index(target, failfast=True)
         else:
             target_id = target
-        return self.weight[target_id]
+        return self.find_attr("weight")[target_id]
 
     def get_target_weight(self, target: str | int) -> float:
         """Returns the weight of a target.
@@ -180,7 +180,7 @@ class BlendShape(Deformer):
         if not self.fn_set.findAlias(target_name).isNull():
             raise RuntimeError(f"Target {self.name}.{target_name} already exists.")
 
-        weight_attr            = self.weight
+        weight_attr            = self.find_attr("weight")
         index                  = weight_attr.get_next_available_index()
         weight_attr            = weight_attr[index]
         weight_attr.alias      = target_name
@@ -372,7 +372,7 @@ class BlendShape(Deformer):
 
         names       = [match_name] if isinstance(match_name, str) else match_name
         regex       = re.compile(r"|".join([rf"^{x}$" for x in names])) if names else None
-        weight_attr = self.weight
+        weight_attr = self.find_attr("weight")
         org_mesh    = self.get_original_geometries()
 
         # if there is an original mesh, use it to compute target data

@@ -186,7 +186,7 @@ class TestXformNodes(MayaTestCase):
 
         parent = PyNode.create("transform")
         xform.set_parent(parent)
-        xform.t.set(1, 2, 3)
+        xform.find_attr("t").set(1, 2, 3)
         self.root.set_parent(xform)
 
         dup = xform.duplicate_geometry()
@@ -199,7 +199,7 @@ class TestXformNodes(MayaTestCase):
         self.assertFalse(dup in s.get_members())
         self.assertFalse(c in s.get_members())
 
-        self.assertEqual(dup.t.get()[0],         (0, 0, 0))
+        self.assertEqual(dup.find_attr("t").get()[0],         (0, 0, 0))
         self.assertEqual(dup.get_scale_pivot(),  OpenMaya.MPoint())
         self.assertEqual(dup.get_rotate_pivot(), OpenMaya.MPoint())
 

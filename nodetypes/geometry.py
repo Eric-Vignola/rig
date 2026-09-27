@@ -238,7 +238,8 @@ class Geometry(DAGNode):
         """
         injection = self.injection_node
         if isinstance(tag, int):
-            i = tag if tag in injection.componentTags.get_logical_indices() else -1
+            tags = injection.find_attr("componentTags").get_logical_indices()
+            i    = tag if tag in tags else -1
         else:
             i = self.get_component_tag_index(tag)
             if i == -1 and self.has_component_tag(tag):
@@ -253,7 +254,7 @@ class Geometry(DAGNode):
         if i == -1:
             cmds.warning(f"Component tag not found: {tag}")
             return None
-        return injection.componentTags[i]
+        return injection.find_attr("componentTags")[i]
 
     # --- component tags editing
 
@@ -283,8 +284,8 @@ class Geometry(DAGNode):
 
         # add to first empty component tag name index.
         injection = self.injection_node
-        i         = injection.componentTags.get_next_available_index()
-        name_attr = injection.componentTags[i].componentTagName
+        i         = injection.find_attr("componentTags").get_next_available_index()
+        name_attr = injection.find_attr("componentTags")[i].componentTagName
         name_attr.set(key, type="string")
         return i
 
@@ -405,8 +406,8 @@ class Geometry(DAGNode):
         """
         injection = self.injection_node
         tags      = []
-        for i in injection.componentTags.get_logical_indices():
-            name = injection.componentTags[i].componentTagName.get()
+        for i in injection.find_attr("componentTags").get_logical_indices():
+            name = injection.find_attr("componentTags")[i].componentTagName.get()
             if name:
                 tags.append(name)
 
@@ -428,7 +429,8 @@ class Geometry(DAGNode):
             tag: Component tag key or index.
         """
         if isinstance(tag, int):
-            return tag in self.injection_node.componentTags.get_logical_indices()
+            tags = self.injection_node.find_attr("componentTags")
+            return tag in tags.get_logical_indices()
         else:
             data_fn = self.local_shape_attr.get_data_fn_set()
             return data_fn.hasComponentTag(tag)
@@ -437,8 +439,8 @@ class Geometry(DAGNode):
         """Returns the logical index of a component tag in the injection node's
         componentTags multi, or -1 if not found (or not editable there)."""
         injection = self.injection_node
-        for i in injection.componentTags.get_logical_indices():
-            name_attr = injection.componentTags[i].componentTagName
+        for i in injection.find_attr("componentTags").get_logical_indices():
+            name_attr = injection.find_attr("componentTags")[i].componentTagName
             if name_attr.get() == key:
                 return i
         return -1
@@ -446,9 +448,9 @@ class Geometry(DAGNode):
     def get_component_tag_name(self, i: int) -> str | None:
         """Returns the name of a component tag, or None if not found."""
         injection = self.injection_node
-        if i not in injection.componentTags.get_logical_indices():
+        if i not in injection.find_attr("componentTags").get_logical_indices():
             return None
-        name_attr = injection.componentTags[i].componentTagName
+        name_attr = injection.find_attr("componentTags")[i].componentTagName
         return name_attr.get() or None
 
     def component_tag_expression_subset_state(self, expr: str) -> int:
