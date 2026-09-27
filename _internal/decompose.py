@@ -49,7 +49,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya as om
-from rig.nodetypes._base import _path_instance_number, Attribute, PyNode
+from rig.nodetypes._base import _connected_attrs, _path_instance_number, Attribute, PyNode
 from rig._internal.types import _is_quaternion
 
 
@@ -184,7 +184,8 @@ def _disconnect_compound(plug_str: str) -> None:
 
     Used before setAttr on transform channels so an incoming live driver
     doesn't immediately overwrite the value (or block the setAttr outright).
-    Uses :meth:`Attribute.get_connected_attrs` + :meth:`Attribute.disconnect`
+    Uses ``_connected_attrs`` (``Attribute.get_connected_attrs`` for sources
+    read at once) + :meth:`Attribute.disconnect`
     + :meth:`Attribute.num_children`/:meth:`Attribute.child` for compound
     enumeration (no string-parsing, no ``cmds.attributeQuery``).
     """
@@ -204,7 +205,8 @@ def _disconnect_compound(plug_str: str) -> None:
 
     for t_attr in targets:
         try:
-            srcs = t_attr.get_connected_attrs(src=True, dst=False) or []
+            # read at once, never held: no handle of their nodes
+            srcs = _connected_attrs(t_attr, src=True, dst=False) or []
         except RuntimeError:
             srcs = []
         for src in srcs:

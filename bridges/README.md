@@ -107,7 +107,9 @@ node, so `rc.listConnections(x, plugs=True)` loses the attribute — use
 Maya commands take node names; the DSL holds `Node` objects. Before the call,
 every positional and keyword argument is converted: a `Node` becomes its name,
 a list or tuple that contains any `Node` becomes a list of names. A `Plug` is
-already a `str` subclass and passes through as is. So `rc.parent(child, root)`,
+already a `str` subclass and passes through as is, once its node is checked: a
+plug whose node was deleted or freed raises `already deleted!` instead of
+letting cmds read a node that took its name. So `rc.parent(child, root)`,
 `rc.parent([a, b], root)`, `rc.createNode("transform", parent=root)` and
 `rc.getAttr(node.tx)` all work with DSL objects in hand.
 

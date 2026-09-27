@@ -11,7 +11,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import _connected_attrs, Attribute
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.geometry import iter_component_ranges
 from rig.nodetypes.transform import Transform
@@ -264,7 +264,8 @@ class BlendShape(Deformer):
         target_mesh = geom_attr.list_connections(
             source=True, destination=False, plugs=False
         )
-        target_mesh = geom_attr.get_connected_attrs(src=True, dst=False)
+        # read at once, never held: no handle of their nodes
+        target_mesh = _connected_attrs(geom_attr, src=True, dst=False)
         if target_mesh:
             kwargs           = {"include_uvs": False, "world_space": False}
             target_mesh      = target_mesh[0].node
