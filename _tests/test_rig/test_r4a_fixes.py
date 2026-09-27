@@ -8,9 +8,16 @@
 * Operand shapes (F14): a set, frozenset or dict operand raises TypeError before
   anything is built, and an iterator operand (generator, map, zip, iter, an
   itertools object) is read into a list first, so it memoizes like the list.
+* A memo entry that returned a typed attribute (``PyNode("a").find_attr("tx")``)
+  keeps its node's handle, like a Plug's, so a delete, a new scene or a
+  reference unload drops it (decision S4 Q5).
+* Every Plug operator is checked by one frame (``_checking_operands``).
 """
 
 import itertools
+import os
+import shutil
+import tempfile
 
 from maya import cmds
 
@@ -29,7 +36,12 @@ from rig import (
     vector as V,
 )
 from rig import _dispatch as D
+from rig._internal import memoize as memoize_module
 from rig._internal import operands as operands_module
+from rig._internal.memoize import memoize
+from rig._internal.plug import Plug
+from rig.nodetypes import PyNode
+from rig.nodetypes._base import Attribute
 from rig._tests._base import MayaTestCase
 
 
@@ -463,6 +475,196 @@ class TestOperandShapes(_SceneCase):
         plug = t.tx
         self.assertIs(operands_module._prepared_operand(plug, "x"), plug)
         self.assertEqual(operands_module._prepared_operand(iter((1, 2)), "x"), [1, 2])
+
+
+class _TypedAttrMemo:
+    """A user @memoize function returning ``PyNode(name).find_attr("tx")``,
+    taken out of the memo registry after the test."""
+
+    def __init__(self, case, name):
+        self.calls = 0
+        count = len(memoize_module._ALL_MEMOIZED)
+
+        @memoize
+        def typed_tx(i):
+            self.calls += 1
+            return PyNode(name).find_attr("tx")
+
+        self.function = typed_tx
+        added = memoize_module._ALL_MEMOIZED[count:]
+        case.addCleanup(
+            lambda: [memoize_module._ALL_MEMOIZED.remove(w) for w in added
+                     if w in memoize_module._ALL_MEMOIZED]
+        )
+
+    def __call__(self, i=0):
+        return self.function(i)
+
+    def holds(self, value):
+        return any(entry.value is value for entry in self.function._cache.values())
+
+
+class TestMemoHandleOfTypedAttr(MayaTestCase):
+    """A memo entry that returned a typed Attribute keeps its node's handle."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_the_handle_is_collected(self):
+        cmds.createNode("transform", name="a")
+        cmds.createNode("transform", name="b")
+        typed = PyNode("a").find_attr("tx")
+        self.assertIs(type(typed), Attribute)
+        for label, value, count in (
+            ("typed attr", typed, 1),
+            ("plug", Plug("a.tx"), 1),
+            ("typed attrs in a list", [typed, PyNode("b").find_attr("ty")], 2),
+            ("typed attr in a PlugList", PlugList([typed]), 1),
+            ("typed shape attr", PyNode(cmds.createNode("locator", name="aShape", parent="a")).find_attr("localPositionX"), 1),
+        ):
+            with self.subTest(label):
+                out = []
+                memoize_module._collect_handles(value, out)
+                self.assertEqual(len(out), count)
+                self.assertTrue(all(h.isAlive() and h.isValid() for h in out))
+        out = []
+        memoize_module._collect_handles(typed, out)
+        cmds.delete("a")  # the undo queue is off: freed
+        self.assertFalse(out[0].isAlive())
+        # a freed typed attr adds nothing and does not raise
+        out = []
+        memoize_module._collect_handles(typed, out)
+        memoize_module._collect_handles([typed, "text", 1.0, None], out)
+        self.assertEqual(out, [])
+
+    def test_a_delete_recomputes(self):
+        cmds.createNode("transform", name="a")
+        memo = _TypedAttrMemo(self, "a")
+        first = memo()
+        self.assertIs(memo(), first)
+        self.assertEqual(memo.calls, 1)
+        cmds.delete("a")  # freed
+        with self.assertRaisesRegex(TypeError, "No object matches name: a"):
+            memo()
+        self.assertEqual(memo.calls, 2)
+        self.assertFalse(memo.holds(first))
+        # same-name reuse: the new node's attr, never the freed one
+        cmds.createNode("transform", name="a")
+        again = memo()
+        self.assertEqual(memo.calls, 3)
+        self.assertIsNot(again, first)
+        self.assertEqual(str(again), "a.translateX")
+        cmds.setAttr("a.tx", 4.0)
+        self.assertEqual(again.get(), 4.0)
+
+    def test_a_rename_keeps_the_entry(self):
+        cmds.createNode("transform", name="a")
+        memo = _TypedAttrMemo(self, "a")
+        first = memo()
+        cmds.rename("a", "renamed")
+        self.assertIs(memo(), first)
+        self.assertEqual(memo.calls, 1)
+        self.assertEqual(str(first), "renamed.translateX")
+
+    def test_an_undone_delete(self):
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            cmds.createNode("transform", name="a")
+            memo = _TypedAttrMemo(self, "a")
+            first = memo()
+            cmds.delete("a")
+            cmds.undo()
+            # the node is back: the entry is valid again, and its attr is live
+            self.assertIs(memo(), first)
+            self.assertEqual(memo.calls, 1)
+            cmds.setAttr("a.tx", 2.0)
+            self.assertEqual(first.get(), 2.0)
+            # deleted to the undo queue: the entry is stale, recomputed
+            cmds.delete("a")
+            with self.assertRaisesRegex(TypeError, "No object matches name: a"):
+                memo()
+            self.assertEqual(memo.calls, 2)
+            cmds.undo()
+            again = memo()
+            self.assertEqual(memo.calls, 3)
+            self.assertEqual(again.get(), 2.0)
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_a_new_scene_and_a_file_open(self):
+        folder = tempfile.mkdtemp(prefix="rig_r4a_memo_")
+        path = os.path.join(folder, "typed_attr.ma").replace("\\", "/")
+        try:
+            cmds.createNode("transform", name="a")
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            memo = _TypedAttrMemo(self, "a")
+            first = memo()
+            cmds.file(new=True, force=True)
+            self.assertFalse(memo.holds(first))
+            with self.assertRaisesRegex(TypeError, "No object matches name: a"):
+                memo()
+            cmds.file(path, open=True, force=True)
+            opened = memo()
+            self.assertEqual(memo.calls, 3)
+            self.assertEqual(opened.get(), 0.0)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_a_reference_unload_prunes_the_entry(self):
+        folder = tempfile.mkdtemp(prefix="rig_r4a_unload_")
+        path = os.path.join(folder, "typed_ref.ma").replace("\\", "/")
+        try:
+            cmds.file(new=True, force=True)
+            cmds.createNode("transform", name="refT")
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            memo = _TypedAttrMemo(self, "ref:refT")
+            first = memo()
+            self.assertTrue(memo.holds(first))
+            cmds.file(unloadReference="refRN")
+            # pruned by the unload callback: the stale typed attr is never returned
+            self.assertFalse(memo.holds(first))
+            with self.assertRaisesRegex(TypeError, "No object matches name: ref:refT"):
+                memo()
+            self.assertEqual(memo.calls, 2)
+            cmds.file(loadReference="refRN")
+            again = memo()
+            self.assertEqual(str(again), "ref:refT.translateX")
+            self.assertEqual(again.get(), 0.0)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+# the Plug operators wrapped at the end of rig._internal.plug
+_WRAPPED_OPERATORS = (
+    "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
+    "__truediv__", "__rtruediv__", "__pow__", "__rpow__", "__floordiv__",
+    "__rfloordiv__", "__mod__", "__rmod__", "__and__", "__rand__", "__or__",
+    "__ror__", "__xor__", "__rxor__", "__neg__", "__invert__",
+    "__eq__", "__ne__", "__ge__", "__le__", "__gt__", "__lt__",
+)
+
+
+class TestOneOperandCheckFrame(MayaTestCase):
+    """Every Plug operator is wrapped by `_checking_operands` once, and nothing
+    else wraps it: one check frame per operator call."""
+
+    def test_every_operator_has_one_check_frame(self):
+        self.assertEqual(len(_WRAPPED_OPERATORS), 28)
+        code = None
+        for name in _WRAPPED_OPERATORS:
+            with self.subTest(name):
+                operator = Plug.__dict__[name]
+                self.assertTrue(hasattr(operator, "__wrapped__"))
+                self.assertFalse(hasattr(operator.__wrapped__, "__wrapped__"))
+                self.assertEqual(operator.__name__, name)
+                self.assertEqual(operator.__code__.co_qualname, "_checking_operands.<locals>.checked")
+                code = code or operator.__code__
+                self.assertIs(operator.__code__, code)
 
 
 class _Nothing:

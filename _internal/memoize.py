@@ -174,19 +174,21 @@ def _collect_handles(obj: Any, out: List[OpenMaya1.MObjectHandle]) -> None:
     """Walk ``obj`` and append API 1.0 MObjectHandles for any plug/node found.
 
     Used when caching a return value so we can later check ``isAlive()`` to
-    invalidate dead entries.
+    invalidate dead entries. A plug is any Attribute, a Plug or a typed
+    attribute (``PyNode("a").find_attr("tx")``); its handle is its node's, found
+    by the node part of its full name. A plug whose node was freed or deleted
+    adds nothing.
     """
     if (
         obj is None
         or isinstance(obj, (str, bytes, numbers.Real))
-        and not _is_plug(obj)
+        and not isinstance(obj, Attribute)
         and not _is_node(obj)
     ):
         return
-    if _is_plug(obj):
-        full_name = obj.full_name
-        node_str  = full_name.split(".", 1)[0]
+    if isinstance(obj, Attribute):
         try:
+            node_str = obj.full_name.split(".", 1)[0]
             sel = OpenMaya1.MSelectionList()
             sel.add(node_str)
             mobject1 = OpenMaya1.MObject()
