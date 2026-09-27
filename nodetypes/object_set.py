@@ -24,6 +24,11 @@ class ObjectSet(DGNode):
     # the OpenMaya function set for this type
     FN_SET = OpenMaya.MFnSet
 
+    # a scene registry, found again by name (``get_or_create``; a ShadingEngine
+    # by ``for_material``): a create inside ``with container()`` stays out of
+    # the scope (no prefix, not registered) unless ``container=True``
+    _CONTAINER_AWARE = False
+
     def get_members(
         self, as_components: bool = False
     ) -> list[DAGNode] | list[tuple[DAGNode, OpenMaya.MObject]]:
