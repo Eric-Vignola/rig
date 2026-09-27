@@ -465,3 +465,79 @@ class TestTheCommandsBridgeChecksItsPlugs(_HeldAcrossAFree):
         cube = cmds.polyCube(name="pc", constructionHistory=False)[0]
         rc.select([Node(cube).vtx[1], Node("other")])
         self.assertEqual(cmds.ls(selection=True), ["pc.vtx[1]", "other"])
+
+
+class TestAPlugKeepsItsHashAcrossADelete(MayaTestCase):
+    """A per-instance array read without an index (``worldMatrix``,
+    ``instObjGroups``) hashed without the index of its instance while its node
+    was deleted to the undo queue, and with it once the undo brought the node
+    back, so a dict or set key made in between was lost. Owner or not, it now
+    hashes the same across the delete and the undo."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_a_key_made_while_deleted_is_found_after_the_undo(self):
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.polyCube(name="held", constructionHistory=False)
+        makers = {
+            "owned worldMatrix":           lambda: Node("held").worldMatrix,
+            "owned shape instObjGroups":   lambda: Node("heldShape").instObjGroups,
+            "Plug(MPlug) worldMatrix":     lambda: Plug(Node("held").worldMatrix.plug),
+            "Plug(MPlug) instObjGroups":   lambda: Plug(_mplug("heldShape.instObjGroups")),
+            "typed worldMatrix":           lambda: PyNode("held").find_attr("worldMatrix"),
+            "Plug(str) worldMatrix":       lambda: Plug("held.worldMatrix"),
+            "owned ty":                    lambda: Node("held").ty,
+            "Plug(MPlug) ty":              lambda: Plug(_mplug("held.ty")),
+        }
+        for label, make in makers.items():
+            with self.subTest(plug=label):
+                plug = make()
+                live = hash(plug)
+                cmds.delete("held")
+                keys = {plug}
+                deleted = hash(plug)
+                cmds.undo()
+                self.assertEqual(hash(plug), deleted)
+                self.assertEqual(hash(plug), live)
+                self.assertIn(plug, keys)
+
+
+class TestTheDeletedMessagesShareOneText(MayaTestCase):
+    """A node object, a plug with an owner and a plug with none raise the
+    round-3 texts, built by one helper (`_deleted_error`) so they cannot drift:
+    ``"<name> already deleted!"`` for a deleted node, and ``"<class> node (freed
+    by a new scene, a file open or a reference unload) already deleted!"`` for a
+    freed one, a plug with no owner naming its node by the name it was built
+    with (the class it would be cast to was never known)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_the_texts(self):
+        freed = "(freed by a new scene, a file open or a reference unload) already deleted!"
+        self.assertEqual(str(_base._deleted_error("held")), "held already deleted!")
+        self.assertEqual(
+            str(_base._deleted_error("Transform", freed=True)), f"Transform node {freed}"
+        )
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("transform", name="held")
+        node, owned, unowned = PyNode("held"), Node("held").tx, Plug("held.ty")
+        cmds.delete("held")
+        for label, op in (
+            ("node", node.ensure_valid), ("owned", lambda: str(owned)),
+            ("unowned", lambda: str(unowned)),
+        ):
+            with self.subTest(target=label, free="delete"):
+                with self.assertRaises(RuntimeError) as ctx:
+                    op()
+                self.assertEqual(str(ctx.exception), "held already deleted!")
+        cmds.undo()
+        cmds.file(new=True, force=True)
+        for label, op, name in (
+            ("node", node.ensure_valid, "Transform"),
+            ("owned", lambda: str(owned), "Transform"),
+            ("unowned", lambda: str(unowned), "held"),
+        ):
+            with self.subTest(target=label, free="new scene"):
+                with self.assertRaises(RuntimeError) as ctx:
+                    op()
+                self.assertEqual(str(ctx.exception), f"{name} node {freed}")
