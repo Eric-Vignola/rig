@@ -198,15 +198,17 @@ class Node:
             owner = result.__dict__["_node"]
             plug  = _maybe_component_plug(attr_name, result)
             if plug is None:
+                # with the handle of its attribute, for a dynamic attr
+                attr1 = result.__dict__.get("_attr1")
                 if owner is dg_node:
-                    plug = _new_attr(Plug, result.plug)
+                    plug = _new_attr(Plug, result.plug, None, attr1)
                     plug.__dict__["_node"] = self
                     # ``find_attr`` named the attr through the node's path if it
                     # has more than one; one it did not is named as the MPlug
                     if not str.__contains__(result, "|"):  # _named_through_a_path
                         return plug
                     return _base._named_through_owner(plug)
-                plug = _new_attr(Plug, result.plug, result.__dict__["_handle1"])
+                plug = _new_attr(Plug, result.plug, result.__dict__["_handle1"], attr1)
             plug.__dict__["_node"] = self if owner is dg_node else owner
             return _base._named_through_owner(plug)
         return result

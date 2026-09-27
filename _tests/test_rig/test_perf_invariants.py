@@ -1208,6 +1208,9 @@ _ATTRIBUTE_STATE_KEYS = (
     # re-pinned (round 3b): an attr with no owner keeps an API 1.0 handle of
     # its node, so it raises "already deleted!" once the node is deleted or freed
     "_handle1",
+    # re-pinned (round 3b review): a dynamic attr keeps an API 1.0 handle of its
+    # attribute, which a delete frees once it leaves the undo queue (None here)
+    "_attr1",
 )
 _COMPONENT_STATE_KEYS = ("_comp_node", "_comp_alias", "_comp_ndims", "_comp_coords")
 
@@ -1916,6 +1919,11 @@ class TestConnectQuery(MayaTestCase):
 
     def test_names_own_plug(self):
         self._scene()
+        # re-pinned (round 3b review): the extension plug is made first. Its
+        # addExtension flushes the undo queue, which freed the attributes of the
+        # re-added and undone plugs made before it, and a plug of a freed
+        # dynamic attribute now raises "already deleted!" when it is named
+        extension = _extension(True)
         for plug, expected in (
             (Node("a").tx, True),
             (_base.Attribute("pma.input3D[2].input3Dx"), True),
@@ -1926,7 +1934,7 @@ class TestConnectQuery(MayaTestCase):
             (_unindexed_child(), False),
             (_readded("b"), False),
             (_undone("a"), False),
-            (_extension(True), False),
+            (extension, False),
         ):
             with self.subTest(plug=str(plug)):
                 self.assertIs(_base._names_own_plug(plug), expected)

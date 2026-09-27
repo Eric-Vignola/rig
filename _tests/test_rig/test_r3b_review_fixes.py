@@ -541,3 +541,153 @@ class TestTheDeletedMessagesShareOneText(MayaTestCase):
                 with self.assertRaises(RuntimeError) as ctx:
                     op()
                 self.assertEqual(str(ctx.exception), f"{name} node {freed}")
+
+
+def _dynamic_plugs():
+    """Plugs of held's dynamic attrs, keyed by label, each with its expected
+    "already deleted!" name and the attr to delete."""
+    node = Node("held")
+    node << rig.Float("added")
+    cmds.aliasAttr("hoist", "held.dynf")
+    cmds.createNode("transform", name="src")
+    cmds.addAttr("src", longName="out", attributeType="double")
+    cmds.connectAttr("src.out", "held.tx")
+    return {
+        "owned":              (node.dyne, "held.dyne", "held.dyne"),
+        "Plug(str)":          (Plug("held.dyne"), "held.dyne", "held.dyne"),
+        "Attribute(str)":     (Attribute("held.dyne"), "held.dyne", "held.dyne"),
+        "Plug(MPlug)":        (Plug(_mplug("held.dyne")), "held.dyne", "held.dyne"),
+        "typed owned":        (PyNode("held").find_attr("dyne"), "held.dyne", "held.dyne"),
+        "owned child":        (node.dynv.dynvX, "held.dynvX", "held.dynv"),
+        "owned element":      (node.dynm[3], "held.dynm[3]", "held.dynm"),
+        "Plug child":         (Plug("held.dynv").dynvX, "held.dynvX", "held.dynv"),
+        "Plug element slice": (Plug("held.dynm")[0:1][0], "held.dynm[0]", "held.dynm"),
+        "typed element":      (Attribute("held.dynm")[3], "held.dynm[3]", "held.dynm"),
+        "typed parent":       (Attribute("held.dynvX").get_parent(), "held.dynv", "held.dynv"),
+        "Plug(plug)":         (Plug(Attribute("held.dyne")), "held.dyne", "held.dyne"),
+        "spec apply":         (node << rig.Float("added"), "held.added", "held.added"),
+        "find_alias":         (PyNode("held").find_alias("hoist"), "held.hoist", "held.dynf"),
+        "get_inputs()[0]":    (node.tx.get_inputs()[0], "src.out", "src.out"),
+    }
+
+
+_DYNAMIC_OPS = {
+    "str":       str,
+    "get":       lambda p: p.get(),
+    "name":      lambda p: p.name,
+    "mobject":   lambda p: p.mobject,
+    "is_locked": lambda p: p.is_locked,
+    "set":       lambda p: p.set(1),
+    "data_type": lambda p: p.data_type,
+    "lift":      lambda p: rig.lift(p) + 1,
+}
+
+
+class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
+    """A dynamic attr's attribute is freed once a delete of it leaves the undo
+    queue (a flush, ten more commands at mayapy's default queue length, or at
+    once with undo off), while its node lives on. A plug of it held across that
+    crashed Maya or read garbage (``"held."``), owner or not; it keeps a handle
+    of its attribute now and raises ``"<plug> already deleted!"``."""
+
+    TEST_START_NEW_SCENE = True
+
+    def tearDown(self):
+        cmds.undoInfo(state=True, infinity=True)
+        super().tearDown()
+
+    def _assert_freed(self, free, readd=False):
+        cmds.undoInfo(state=True, infinity=True)
+        _build()
+        held = _dynamic_plugs()
+        for label, (plug, name, attr) in held.items():
+            with self.subTest(free=free, plug=label):
+                handle = vars(plug)["_attr1"]
+                self.assertIsInstance(handle, om1.MObjectHandle)
+                self.assertTrue(handle.isAlive())
+        deleted = sorted({attr for _plug, _name, attr in held.values()})
+        if free == "undo off":
+            cmds.undoInfo(state=False)
+        if free == "destroy":
+            for attr in deleted:
+                node, name = attr.split(".")
+                Node(node) << rig.destroy(name)
+        else:
+            for attr in deleted:
+                cmds.deleteAttr(attr)
+        if free == "flush" or free == "destroy":
+            cmds.flushUndo()
+        elif free == "queue":
+            cmds.undoInfo(state=True, infinity=False, length=10)
+            for _ in range(12):
+                cmds.createNode("transform")
+        for i in range(300):
+            cmds.addAttr("held", longName=f"fill{i}", attributeType="double")
+        if readd:
+            for attr in deleted:
+                node, name = attr.split(".")
+                if name not in ("dynvX",):
+                    cmds.addAttr(node, longName=name, attributeType="double")
+        for label, (plug, name, _attr) in held.items():
+            with self.subTest(free=free, plug=label, handle="freed"):
+                self.assertFalse(vars(plug)["_attr1"].isAlive())
+            for op_name, op in _DYNAMIC_OPS.items():
+                with self.subTest(free=free, plug=label, op=op_name):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        op(plug)
+                    self.assertEqual(str(ctx.exception), f"{name} already deleted!")
+            with self.subTest(free=free, plug=label, op="hash"):
+                self.assertIsInstance(hash(plug), int)
+            if isinstance(plug, Plug):
+                with self.subTest(free=free, plug=label, op="hasattr"):
+                    self.assertFalse(hasattr(plug, "__array__"))
+
+    def test_across_a_delete_and_a_flush(self):
+        self._assert_freed("flush")
+
+    def test_across_a_delete_and_a_full_undo_queue(self):
+        self._assert_freed("queue")
+
+    def test_across_a_delete_with_undo_off(self):
+        self._assert_freed("undo off")
+
+    def test_across_a_destroy_and_a_flush(self):
+        self._assert_freed("destroy")
+
+    def test_across_a_delete_a_flush_and_a_re_add(self):
+        self._assert_freed("flush", readd=True)
+
+    def test_a_delete_to_the_undo_queue_is_undone(self):
+        # the attribute lives on in the undo queue: the plug reads it again
+        # once an undo brings it back
+        cmds.undoInfo(state=True, infinity=True)
+        _build()
+        cmds.setAttr("held.dynf", 3.0)
+        plugs = (Node("held").dynf, Plug("held.dynf"), Plug(_mplug("held.dynf")))
+        cmds.deleteAttr("held.dynf")
+        for plug in plugs:
+            self.assertTrue(vars(plug)["_attr1"].isAlive())
+        cmds.undo()
+        for plug in plugs:
+            self.assertEqual(plug.get(), 3.0)
+            self.assertEqual(str(plug), "held.dynf")
+
+    def test_a_static_attr_takes_no_attribute_handle(self):
+        _build()
+        for plug in (
+            Node("held").tx, Plug("held.tx"), Plug(_mplug("held.t")).child(0),
+            PyNode("held").find_attr("worldMatrix")[0], PyNode("held").find_attr("ty"),
+        ):
+            with self.subTest(plug=str(plug)):
+                self.assertIsNone(vars(plug)["_attr1"])
+
+    def test_the_attribute_handle_changes_no_name_value_or_hash(self):
+        _build()
+        cmds.setAttr("held.dynf", 3.0)
+        owned, built = Node("held").dynf, Plug("held.dynf")
+        self.assertIsNotNone(vars(owned)["_attr1"])
+        self.assertIs(vars(owned)["_attr1"], vars(built)["_attr1"])  # one lookup
+        for plug in (owned, built):
+            self.assertEqual(str(plug), "held.dynf")
+            self.assertEqual(plug.get(), 3.0)
+        self.assertEqual(hash(owned), hash(built))

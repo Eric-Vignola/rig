@@ -7,6 +7,7 @@ from typing import Any, Sequence
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _attr_handle,
     _attr_mobject,
     _deleted_error,
     _full_name_buffer,
@@ -513,6 +514,10 @@ class DGNode(metaclass=NodeMeta):
                 sn                  = plug.partialName(False, False, True, False, False, False)
                 self._attr_dict[ln] = attr_obj
                 self._attr_dict[sn] = attr_obj
+            else:
+                # a dynamic attr keeps a handle of its attribute, which a delete
+                # frees once it leaves the undo queue (see `_ensure_owner_alive`)
+                attr_obj.__dict__["_attr1"] = _attr_handle(plug, fn1=self._fn_set1)
 
         return _filtered(attr_obj, category, data_type)
 
@@ -562,8 +567,12 @@ class DGNode(metaclass=NodeMeta):
                 sel       = OpenMaya.MSelectionList()
                 attr_name = alias_list[i + 1]
                 sel.add(f"{self.name}.{attr_name}")
-                # a plug of this node: checked through this node's handle
-                return _new_attr(Attribute, sel.getPlug(0), self._objhandle1)
+                # a plug of this node: checked through this node's handle, and
+                # its attribute's, if dynamic
+                plug = sel.getPlug(0)
+                return _new_attr(
+                    Attribute, plug, self._objhandle1, _attr_handle(plug, fn1=self._fn_set1)
+                )
         if not quiet:
             raise RuntimeError(f"Alias not found: {self}.{alias}")
 
