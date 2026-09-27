@@ -19,6 +19,12 @@ Each class names the round-4a step it belongs to:
   (variant K), ``<<`` / ``>>``, the component fallbacks, the Plug ``_`` rule,
   ``find_attr(Plug)``; and the edge cases of the round-4a checklist (deleted,
   freed, instanced, namespaced nodes, components, dynamic attrs, identity).
+* M4: the class swap (K S4b ``ca9e345`` / ``4d3a02e`` and the merge-only parts
+  of ``82547f5`` / ``9244e90``): ``Node`` is the root class and the DSL factory
+  (``Node(x) is x``, typed repr, ``isinstance(PyNode(x), Node)``), the wrapper is
+  gone, ``Container`` is a ``DGNode`` subclass (symmetric equality, owner,
+  lookup order, the publish guard), ``Node.wrap`` on the metaclass; round 3's
+  one-key plug hash is kept.
 """
 
 import ast
@@ -937,9 +943,10 @@ def _public_self_stores():
 
 
 class TestMergeReviewFixes(MayaTestCase):
-    """M3: K's merge-only review fixes (``82547f5``) that typed nodes speaking the
-    DSL need: Plugs handed to the typed API, instance monkeypatching, public
-    stores in the node classes, owner propagation of the typed accessors."""
+    """M3 / M4: K's merge-only review fixes (``82547f5``): Plugs handed to the
+    typed API, instance monkeypatching, public stores in the node classes, owner
+    propagation of the typed accessors (M3); ``Container.create`` is the
+    container-aware factory and a node's Maya attr ``wrap`` is reachable (M4)."""
 
     TEST_START_NEW_SCENE = True
 
@@ -990,26 +997,60 @@ class TestMergeReviewFixes(MayaTestCase):
         self.assertEqual(_public_self_stores(), [])
 
     def test_owner_propagation_of_typed_accessors(self):
-        # the typed half: the accessors of a typed node's plugs and attrs keep
-        # the typed node as their owner (the Plug-element half is M4B's, D29)
+        # the accessors of a node's plugs and attrs keep the node as their owner,
+        # through PyNode and (M4) through the Node factory, which is the same
+        # typed node; the class of a Plug's element_by_* result is M4B's (D29)
         attribute_cls = _base_module().Attribute
-        node   = PyNode(cmds.createNode("transform", name="n"))
-        parent = node.tx.get_parent()
-        self.assertIs(type(parent), attribute_cls)
-        self.assertIs(parent.node, node)
-        child = node.find_attr("t").child(0)
-        self.assertIs(type(child), attribute_cls)
-        self.assertIs(child.node, node)
-        pma = PyNode(cmds.createNode("plusMinusAverage", name="pma"))
-        pma.input1D[0] << 1
-        element = pma.input1D[0]
-        self.assertIs(type(element), Plug)
-        self.assertIs(element.node, pma)
-        element = pma.find_attr("input1D").element_by_physical_index(0)
-        self.assertIs(type(element), attribute_cls)
-        self.assertIs(element.node, pma)
-        # plugs are not cached (D30)
-        self.assertIsNot(node.tx, node.tx)
+        for factory in (PyNode, Node):
+            with self.subTest(factory=factory.__name__):
+                cmds.file(new=True, force=True)
+                node   = factory(cmds.createNode("transform", name="n"))
+                parent = node.tx.get_parent()
+                self.assertIs(type(parent), attribute_cls)
+                self.assertIs(parent.node, node)
+                child = node.find_attr("t").child(0)
+                self.assertIs(type(child), attribute_cls)
+                self.assertIs(child.node, node)
+                pma = factory(cmds.createNode("plusMinusAverage", name="pma"))
+                pma.input1D[0] << 1
+                element = pma.input1D[0]
+                self.assertIs(type(element), Plug)
+                self.assertIs(element.node, pma)
+                element = pma.input1D.element_by_physical_index(0)
+                self.assertIsInstance(element, attribute_cls)
+                self.assertIs(element.node, pma)
+                element = pma.find_attr("input1D").element_by_physical_index(0)
+                self.assertIs(type(element), attribute_cls)
+                self.assertIs(element.node, pma)
+                # plugs are not cached (D30)
+                self.assertIsNot(node.tx, node.tx)
+
+    def test_container_create_is_the_container_aware_factory(self):
+        # M4 (82547f5): DGNode's typed create would build an "entity" node of
+        # the unregistered Container class; Container.create is Node.create
+        from rig._internal.container import Container
+
+        self.assertIs(Container.__dict__["create"].__func__, Node.create.__func__)
+        with container("box") as box:
+            made = type(box).create("transform", name="viaCtn")
+        self.assertIs(type(made), Transform)
+        self.assertIn(made.name, cmds.container(str(box), query=True, nodeList=True))
+
+    def test_maya_attr_wrap_is_not_shadowed(self):
+        # M4 (82547f5): Node.wrap lives on the metaclass, so a node's Maya attr
+        # `wrap` (3D textures) is reachable, and the helper is on every class
+        brownian = Node(cmds.shadingNode("brownian", asTexture=True, name="brown"))
+        self.assertIs(type(brownian.wrap), Plug)
+        self.assertEqual(str(brownian.wrap), "brown.wrap")
+        self.assertIs(brownian.wrap.node, brownian)
+        brownian.wrap << 0
+        self.assertEqual(cmds.getAttr("brown.wrap"), 0)
+        brownian.wrap = 1
+        self.assertEqual(cmds.getAttr("brown.wrap"), 1)
+        self.assertEqual(Node.wrap("brown").name, "brown")
+        self.assertEqual(Transform.wrap(["persp"])[0].name, "persp")
+        self.assertEqual(type(brownian).wrap("brown").name, "brown")
+        self.assertIsNone(Node.wrap(None))
 
 
 class TestTypedDslEdges(MayaTestCase):
@@ -1292,3 +1333,320 @@ class TestTypedDslEdges(MayaTestCase):
         self.assertTrue(dg.tx.equals(node.tx))
         # a Plug of a typed Attribute is owned by its typed node
         self.assertIs(Plug(dg.find_attr("tx")).node, dg)
+
+
+class TestOneNodeHierarchy(MayaTestCase):
+    """M4: ``Node`` is the root of the node classes and the DSL factory (K S4b
+    ``ca9e345`` / ``4d3a02e``, the merge-only parts of ``82547f5`` / ``9244e90``,
+    re-implemented on round 3); the wrapper class is gone (C8)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_factory_input_table(self):
+        # D10: a node is returned as is, an attr / plug gives its owner, a name,
+        # dotted name, MPlug, MObject, MDagPath or uuid the typed node
+        from rig.nodetypes import DAGNode, Mesh
+
+        cube  = cmds.polyCube(name="cube", ch=False)[0]
+        shape = cmds.listRelatives(cube, shapes=True)[0]
+        node  = PyNode(cube)
+        sel   = OpenMaya.MSelectionList()
+        sel.add(cube)
+        uuid  = cmds.ls(cube, uuid=True)[0]
+        self.assertTrue(issubclass(DGNode, Node))
+        self.assertIsInstance(node, Node)
+        self.assertIs(Node(node), node)
+        self.assertIs(Node(node.tx), node)
+        self.assertIs(Node(node.t[1]), node)
+        self.assertIs(Node(node.find_attr("tx")), node)
+        for label, value, cls in (
+            ("name", cube, Transform),
+            ("long name", f"|{cube}", Transform),
+            ("dotted", f"{cube}.tx", Transform),
+            ("dotted compound", f"{cube}.translate", Transform),
+            ("dotted component", f"{shape}.vtx[0]", Mesh),
+            ("mplug", node.tx.plug, Transform),
+            ("shape mplug", PyNode(shape).find_attr("outMesh").plug, Mesh),
+            ("mobject", _mobject(cube), Transform),
+            ("mdagpath", sel.getDagPath(0), Transform),
+            ("uuid", uuid, Transform),
+            ("plug of a name", Plug(f"{cube}.tx"), Transform),
+        ):
+            with self.subTest(case=label):
+                result = Node(value)
+                self.assertIs(type(result), cls)
+                self.assertIsInstance(result, DAGNode)
+                self.assertIsInstance(result, Node)
+        for bad in (3, None, 1.5):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(ValueError, "is not a str, MObject, MDagPath"):
+                    Node(bad)
+        self.assertIs(type(Node(cube)), type(PyNode(cube)))
+        # a node class constructs as usual; PyNode keeps a dotted name an Attribute
+        self.assertIs(type(Transform(cube)), Transform)
+        self.assertIs(type(PyNode(f"{cube}.tx")), _base_module().Attribute)
+
+    def test_the_class_call_has_one_branch_point(self):
+        # NodeMeta.__call__ runs for every node class call and dispatches the
+        # root only; PyNode's cast constructs without it (round 4b builds on both)
+        from rig.nodetypes._base import NodeMeta
+
+        cmds.createNode("transform", name="a")
+        calls    = []
+        original = NodeMeta.__call__
+
+        def counting(cls, *args, **kwargs):
+            calls.append(cls.__name__)
+            return original(cls, *args, **kwargs)
+
+        with mock.patch.object(NodeMeta, "__call__", counting):
+            PyNode("a")
+            PyNode(_mobject("a"))
+            self.assertEqual(calls, [])
+            Node("a")
+            self.assertEqual(calls, ["Node"])
+            Transform("a")
+            self.assertEqual(calls, ["Node", "Transform"])
+
+    def test_plugs_of_typed_nodes_are_owned_by_them(self):
+        cmds.createNode("transform", name="a")
+        node = Node("a")
+        for plug in (node.tx, node.t[0], node.t.ty, node.translate.child(2), node.wm[0]):
+            with self.subTest(plug=str(plug)):
+                self.assertIs(type(plug), Plug)
+                self.assertIs(plug.node, node)
+        self.assertIs(node.find_attr("tx").node, node)
+        self.assertIs(node >> None, node)
+        self.assertEqual(repr(node), 'Transform("a")')
+        self.assertEqual(repr(Node("persp").tx), 'Plug("persp.translateX")')
+
+    def test_plug_state_matches_a_plug_of_its_mplug(self):
+        # (K's _bound parity, on round 3's constructors): a node's plug holds the
+        # state keys a Plug built from its MPlug holds, in the same order
+        cmds.createNode("transform", name="a")
+        mplug = PyNode("a").find_attr("tx").plug
+        self.assertEqual(list(vars(Node("a").tx)), list(vars(Plug(mplug))))
+        self.assertEqual(str(Node("a").tx), str(Plug(mplug)))
+        self.assertEqual(list(vars(Node("a").t[0])), list(vars(Plug(mplug))))
+        self.assertEqual(str(Node("a").t[0]), str(Plug(mplug)))
+
+    def test_plug_hash_is_rename_stable(self):
+        # round 3's one-key hash (a node serial and the attr with its indices),
+        # not the prototype's (handle hash code, alias)
+        base = _base_module()
+        cmds.createNode("transform", name="a")
+        plug   = Node("a").tx
+        before = hash(plug)
+        self.assertEqual(before, hash((base._node_serial(plug.node), "translateX")))
+        self.assertNotEqual(before, hash((plug.node._objhandle1.hashCode(), "translateX")))
+        cmds.rename("a", "b")
+        self.assertEqual(str(plug), "b.translateX")
+        self.assertEqual(hash(plug), before)
+        self.assertEqual(hash(Node("b").tx), before)
+        self.assertEqual(hash(Plug("b.tx")), before)
+
+    def test_create_joins_the_container(self):
+        with container("box") as box:
+            node = Node.create("multiplyDivide", name="md")
+        self.assertIs(type(node), DGNode)
+        self.assertIn("md", cmds.container(str(box), query=True, nodeList=True))
+
+    def test_container_equality_owner_and_lookup(self):
+        from rig._internal.container import Container
+
+        with container("box") as box:
+            inner = Node.create("transform", name="inner")
+            container.publish_input(inner.tx, "slide")
+        plain = PyNode(str(box))
+        self.assertIsInstance(box, Container)
+        self.assertIsInstance(box, DGNode)
+        self.assertIsInstance(box, Node)
+        self.assertNotIsInstance(plain, Container)
+        self.assertIs(Node(box), box)
+        # symmetric equality, equal hashes
+        self.assertTrue(box == plain)
+        self.assertTrue(plain == box)
+        self.assertFalse(box != plain)
+        self.assertEqual(hash(box), hash(plain))
+        self.assertEqual(len({box, plain}), 1)
+        self.assertFalse(box == PyNode("inner"))
+        self.assertEqual(repr(box), 'Container("box")')
+        # a genuine attr is owned by the container, a published one by its node
+        self.assertIs(box.blackBox.node, box)
+        self.assertEqual(str(box.slide), "inner.translateX")
+        # class members win over published names
+        self.assertEqual(box.name, "box")
+        box.slide = 2.0
+        self.assertEqual(cmds.getAttr("inner.tx"), 2.0)
+        # the "_" rule: only a Maya attr of the live container
+        self.assertFalse(hasattr(box, "_nope"))
+        self.assertFalse(hasattr(box, "__array__"))
+        cmds.addAttr(str(box), longName="__tag__", attributeType="double")
+        self.assertEqual(str(box.__tag__), "box.__tag__")
+        self.assertIs(box >> None, box)
+
+    def test_publish_refuses_a_container_member_name(self):
+        with container("box") as box:
+            inner = Node.create("transform", name="inner")
+            for name in ("name", "cleanup", "uuid", "rename"):
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(ValueError, "is a Container attribute"):
+                        container.publish_input(inner.tx, name)
+                    with self.assertRaisesRegex(ValueError, "is a Container attribute"):
+                        container.publish_output(inner.worldMatrix[0], name)
+                    # the external-source form too
+                    with self.assertRaisesRegex(ValueError, "is a Container attribute"):
+                        container.publish_input(1.0, name)
+            # a plain name still publishes
+            container.publish_input(inner.ty, "lift")
+        self.assertEqual(
+            cmds.container(str(box), query=True, publishName=True) or [], ["lift"]
+        )
+
+    def test_node_level_class_attribute_refuses_sugar(self):
+        # a Maya attr named like a node method (a curve shape's `create`) is
+        # reached through find_attr (`wrap` is a Maya attr now: TestMergeReviewFixes)
+        curve = Node(cmds.listRelatives(cmds.curve(p=[(0, 0, 0), (1, 0, 0)], d=1), shapes=True)[0])
+        self.assertTrue(cmds.attributeQuery("create", node=str(curve), exists=True))
+        with self.assertRaises(AttributeError) as ctx:
+            curve.create = 1
+        self.assertIn("find_attr('create')", str(ctx.exception))
+        self.assertIs(type(curve.find_attr("create")), _base_module().Attribute)
+
+    def test_lift(self):
+        from rig import lift
+
+        cmds.createNode("transform", name="a")
+        node = Node("a")
+        self.assertIs(lift(node), node)
+        attr = node.find_attr("tx")
+        plug = lift(attr)
+        self.assertIs(type(plug), Plug)
+        self.assertIs(plug.node, node)
+        self.assertIs(lift(plug), plug)
+        self.assertIs(type(lift("a")), Transform)
+        self.assertIs(type(lift("a.tx")), Plug)
+        with self.assertRaises(TypeError):
+            lift(42)
+
+    def test_membership_with_a_typed_node_on_the_left(self):
+        # a node on the left of a member spec is a Node, whatever the object
+        # (at M3 a PyNode on the left raised "... is not a Node")
+        from rig import Layer, Tag
+
+        cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
+        self.assertIs(cube << Tag("t1"), cube)
+        self.assertIs(cube << Layer("L"), cube)
+        self.assertTrue(cube >> Layer("L"))
+        faces = cube.f[0:2]
+        self.assertIs(faces << Tag("t2"), faces)
+
+    def test_a_typed_node_on_the_right_of_a_plug(self):
+        # typed nodes are clone targets of plug >> node and bare nodes for <<
+        from rig.spec import Float
+
+        src = PyNode(cmds.createNode("transform", name="src"))
+        dst = PyNode(cmds.createNode("transform", name="dst"))
+        knob = src << Float("knob", dv=0.25)
+        clone = knob >> dst
+        self.assertIs(type(clone), Plug)
+        self.assertEqual(str(clone), "dst.knob")
+        # the clone is a plug of dst (owned by a cast of it; binding the spec's
+        # result to the node object is M10's)
+        self.assertEqual(clone.node, dst)
+        with self.assertRaisesRegex(TypeError, "^Cannot inject bare Node 'src' into matrix Plug"):
+            dst.offsetParentMatrix << src
+        with self.assertRaisesRegex(TypeError, r"^Cannot inject Node into a bare Node"):
+            dst << src
+
+    def test_wrap_on_the_node_classes(self):
+        cmds.createNode("transform", name="a")
+        self.assertEqual(repr(Node.wrap("a")), 'Transform("a")')
+        self.assertEqual(
+            repr(Transform.wrap(["a", "persp"])),
+            'PlugList([Transform("a"), Transform("persp")])',
+        )
+        self.assertEqual(Node.wrap("not_a_node_xyz"), "not_a_node_xyz")
+        self.assertEqual(Node.wrap(5.0), 5.0)
+        self.assertIsNone(Node.wrap(None))
+
+    def test_same_plug_keys_after_the_swap(self):
+        # P1 / P2 pins: one Maya plug is one key through two objects (0 nodes),
+        # world space elements of two instances are two keys, a plug read
+        # through the second instance path is named through it
+        def dep():
+            return set(cmds.ls(dep=True))
+
+        t = Node(cmds.createNode("transform", name="t"))
+        before = dep()
+        self.assertEqual({t.tx: 1}[t.tx], 1)
+        self.assertIn(t.tx, {t.tx, t.ty})
+        self.assertEqual(dep() - before, set())
+        cmds.file(new=True, force=True)
+        top = cmds.createNode("transform", name="T1")
+        cmds.createNode("locator", name="S", parent=top)
+        cmds.createNode("transform", name="T2")
+        cmds.parent("T1|S", "T2", addObject=True, shape=True)
+        n1, n2 = Node("|T1|S"), Node("|T2|S")
+        wm0, wm1 = n1.worldMatrix[0], n1.worldMatrix[1]
+        self.assertNotEqual(hash(wm0), hash(wm1))
+        before = dep()
+        self.assertIsNone({wm0: "hit"}.get(wm1))
+        v1, v2 = n1.v, n2.v
+        self.assertEqual(str(v1), "T1|S.visibility")
+        self.assertEqual(str(v2), "T2|S.visibility")
+        self.assertEqual(hash(v1), hash(v2))
+        self.assertEqual({v1: "hit"}.get(v2), "hit")
+        self.assertEqual(dep() - before, set())
+
+    def test_held_typed_node_across_a_new_scene(self):
+        # E2: the factory and >> None hand a freed node back as is, and read
+        # nothing from it; its plugs raise the freed error
+        node = Node(cmds.createNode("transform", name="held"))
+        plug = node.tx
+        cmds.file(new=True, force=True)
+        for _ in range(50):
+            cmds.createNode("multiplyDivide")  # reuse the freed memory
+        self.assertIs(Node(node), node)
+        self.assertIs(Node(plug), node)
+        self.assertIs(node >> None, node)
+        self.assertFalse(node.is_valid)
+        self.assertFalse(hasattr(node, "__array__"))
+        self.assertIsInstance(hash(plug), int)
+        for label, op in (
+            ("node.tx", lambda: node.tx),
+            ("str(node)", lambda: str(node)),
+            ("repr(node)", lambda: repr(node)),
+            ("plug.get()", lambda: plug.get()),
+            ("lift(plug.node)", lambda: str(Node(plug.node).ty)),
+        ):
+            with self.subTest(op=label):
+                with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
+                    op()
+
+    def test_container_held_across_a_new_scene(self):
+        # E5: a Container held across a new scene raises the freed error on a
+        # published name, a genuine attr and its name, and hands itself back
+        with container("box") as box:
+            inner = Node.create("transform", name="inner")
+            container.publish_input(inner.tx, "slide")
+        cmds.file(new=True, force=True)
+        for _ in range(50):
+            cmds.createNode("multiplyDivide")  # reuse the freed memory
+        self.assertIs(Node(box), box)
+        self.assertIs(box >> None, box)
+        self.assertFalse(box.is_valid)
+        self.assertFalse(hasattr(box, "__array__"))
+        self.assertFalse(hasattr(box, "_nope"))
+        for label, op in (
+            ("published", lambda: box.slide),
+            ("genuine", lambda: box.blackBox),
+            ("sugar", lambda: setattr(box, "slide", 1.0)),
+            ("name", lambda: box.name),
+            ("repr", lambda: repr(box)),
+        ):
+            with self.subTest(op=label):
+                with self.assertRaisesRegex(
+                    RuntimeError, r"^Container node \(freed by a new scene.*already deleted!$"
+                ):
+                    op()
