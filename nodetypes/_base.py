@@ -647,15 +647,14 @@ def _ensure_owner_alive(attr: Any) -> None:
     `_node_handle`). The children, elements and parent of an attr share its owner,
     or that handle (see `_inherit_owner`).
     """
-    d    = attr.__dict__
-    node = d.get("_node")
+    node = attr.__dict__.get("_node")
     if node is not None:
         node   = _unwrapped(node)
         handle = node.__dict__.get("_objhandle1")
         if handle is not None and not handle.isAlive():
             node.ensure_valid()
     else:
-        handle = d.get("_handle1")
+        handle = attr.__dict__.get("_handle1")
         if handle is not None and not handle.isAlive():
             _raise_deleted(attr, handle)
 
@@ -742,9 +741,24 @@ def _new_attr(cls: type, mplug: OpenMaya.MPlug, handle: Any = None) -> Any:
     MPlug (a name lookup): for a plug of a node the caller holds, whose owner, or
     the handle `handle` of that node, the caller hands it (see `_inherit_owner`).
     `cls` is `Attribute` or `Plug`, whose `__init__` does nothing else for an
-    MPlug."""
+    MPlug. It builds `_attr_state`'s state inline: it is the owned plugs' hot
+    path (about 26k per rail_spine build)."""
     attr = str.__new__(cls, mplug)
-    attr.__dict__.update(_attr_state(mplug, handle))
+    attr.__dict__.update(
+        {
+            "_mplug":                      mplug,
+            "_mobject":                    None,
+            "_fn_set":                     None,
+            "_node":                       None,
+            "_Attribute__child_name_dict": {},
+            "_Attribute__child_id_dict":   {},
+            "_Attribute__component_type":  None,
+            "_geometry_attr_cache":        None,
+            "_polymorphic_owner_cache":    None,
+            "_static_key_cache":           _STATIC_KEY_UNSET,
+            "_handle1":                    handle,
+        }
+    )
     return attr
 
 
@@ -772,10 +786,9 @@ def _inherit_owner(parent: Any, attr: Any) -> Any:
     owner's path (see `_named_through_owner`, which may hand back a copy). With
     no owner, it takes the handle of that node `parent` took (see
     `_ensure_owner_alive`)."""
-    d     = parent.__dict__
-    owner = d["_node"]
+    owner = parent.__dict__["_node"]
     if owner is None:
-        attr.__dict__["_handle1"] = d["_handle1"]
+        attr.__dict__["_handle1"] = parent.__dict__["_handle1"]
         return attr
     attr.__dict__["_node"] = owner
     if str.__contains__(parent, "|"):  # `_named_through_a_path`, inlined
@@ -1009,14 +1022,16 @@ def _plug_hash(attr: Any) -> int:
     if cached is not None:
         return cached
     owner = d["_node"]
-    if owner is None:
+    if owner is not None:
+        node = _unwrapped(owner)
+    else:
         handle = d["_handle1"]
         if handle is not None and not handle.isValid():
             if not handle.isAlive():
                 return hash((handle.hashCode(), str.__str__(attr)))
             name = d["_mplug"].partialName(False, False, True, False, False, True)
             return hash((_handle_serial(handle), name))
-    node   = _unwrapped(attr.node if owner is None else owner)
+        node = _unwrapped(attr.node)
     handle = node.__dict__.get("_objhandle1")
     if handle is None:
         # not a DGNode: named as the node's name property names it
