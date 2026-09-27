@@ -829,15 +829,18 @@ def _prune_attr_handles() -> None:
     _ATTR_PRUNE_AT[0] = max(4096, 2 * len(_ATTR_HANDLES))
 
 
-def _attr_handle(mplug: OpenMaya.MPlug, node_handle: Any = None, fn1: Any = None) -> Any:
+def _attr_handle(
+    mplug: OpenMaya.MPlug, node_handle: Any = None, fn1: Any = None, name: Any = None
+) -> Any:
     """The API 1.0 MObjectHandle of the attribute of `mplug`, a live plug, if it is
     a dynamic attribute, else None: the one a plug keeps as `_attr1` (see
     `_ensure_owner_alive`). A dynamic attribute is freed once a delete of it
     leaves the undo queue, while its node lives on; a static one lives as long as
     its node type. The attribute is found by name on its node, through `fn1`, the
     node's API 1.0 fn set, or `node_handle`, its API 1.0 handle, once per
-    attribute (about 5 us), and in `_ATTR_HANDLES` after that (about 1.5 us).
-    None if the name finds another attribute (the plug's was deleted)."""
+    attribute (about 7 us; `name`, a name of it the caller has, saves reading
+    it), and in `_ATTR_HANDLES` after that (about 1.5 us). None if the name
+    finds another attribute (the plug's was deleted)."""
     if not mplug.isDynamic:
         return None
     try:
@@ -855,7 +858,19 @@ def _attr_handle(mplug: OpenMaya.MPlug, node_handle: Any = None, fn1: Any = None
             if node_handle is None or not node_handle.isAlive():
                 return None
             fn1 = OpenMaya1.MFnDependencyNode(node_handle.objectRef())
-        handle = OpenMaya1.MObjectHandle(fn1.attribute(OpenMaya.MFnAttribute(mobject).name))
+        handle = None
+        if name is not None:
+            try:
+                handle = OpenMaya1.MObjectHandle(fn1.attribute(name))
+            except Exception:
+                handle = None
+            # an alias, or a name another attribute has: read the plug's own name
+            if handle is not None and handle.hashCode() != code:
+                handle = None
+        if handle is None:
+            handle = OpenMaya1.MObjectHandle(
+                fn1.attribute(OpenMaya.MFnAttribute(mobject).name)
+            )
     except Exception:
         return None
     if handle.hashCode() != code:

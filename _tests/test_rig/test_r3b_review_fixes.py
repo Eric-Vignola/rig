@@ -681,6 +681,29 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
             with self.subTest(plug=str(plug)):
                 self.assertIsNone(vars(plug)["_attr1"])
 
+    def test_the_attribute_handle_is_its_attributes(self):
+        # found by a long name, a short name, an alias, a path, or handed from a
+        # spec's add_attr, the handle is of the plug's own attribute
+        _build()
+        cmds.addAttr("held", longName="weight", shortName="wgt", attributeType="double")
+        cmds.aliasAttr("hoist", "held.dynf")
+        node, typed = Node("held"), PyNode("held")
+        for label, plug, long_name in (
+            ("long name", typed.find_attr("weight"), "weight"),
+            ("short name", typed.find_attr("wgt"), "weight"),
+            ("alias", typed.find_attr("hoist"), "dynf"),
+            ("path", typed.find_attr("dynm[3]"), "dynm"),
+            ("child", typed.find_attr("dynvY"), "dynvY"),
+            ("spec", node << rig.Float("fresh"), "fresh"),
+            ("spec, existing", node << rig.Float("fresh"), "fresh"),
+            ("Plug(str)", Plug("held.wgt"), "weight"),
+        ):
+            with self.subTest(plug=label):
+                handle = vars(plug)["_attr1"]
+                code   = OpenMaya.MObjectHandle(plug.plug.attribute()).hashCode()
+                self.assertEqual(handle.hashCode(), code)
+                self.assertEqual(om1.MFnAttribute(handle.objectRef()).name(), long_name)
+
     def test_the_attribute_handle_changes_no_name_value_or_hash(self):
         _build()
         cmds.setAttr("held.dynf", 3.0)
