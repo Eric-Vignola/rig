@@ -113,7 +113,6 @@ class NodeMeta(type):
         PyNode._CLASS_BY_TYPE.clear()
         PyNode._CASTABLE_TYPES.clear()
         _STATIC_DATA_TYPE.clear()
-        _CANONICAL_KIND.clear()
 
         node_type = attrs.get("CUSTOM_NODE_TYPE")
         if not node_type:
@@ -122,15 +121,6 @@ class NodeMeta(type):
             PyNode._NODE_CLASS_DICT[node_type] = cls_obj
 
         return cls_obj
-
-    def __setattr__(cls, name, value):
-        type.__setattr__(cls, name, value)
-        # a class attribute can change which wrappers of it are canonical
-        _CANONICAL_KIND.clear()
-
-    def __delattr__(cls, name):
-        type.__delattr__(cls, name)
-        _CANONICAL_KIND.clear()
 
 
 class PyNode:
@@ -394,170 +384,6 @@ def _construct_checked_type(cls_obj, obj: str) -> Any:
         d["_attr_dict"] = {}
     except Exception:
         return None
-    return inst
-
-
-# The canonical-wrapper check below (`_REUSABLE_WRAPPER_PARTS` to `_copy_wrapper`,
-# and NodeMeta's clearing of `_CANONICAL_KIND`) is not used by the package since
-# the round-3 owner rule (a plug's node is the node object it was read from).
-# It is kept, unchanged, for the TestCanonicalWrapperCheck test ids.
-
-# ((DGNode.__init__, DAGNode.__init__, Geometry.__init__), their is_type
-# functions, their name properties, DGNode._cache_api1_objects, DGNode's fn_set
-# property), bound on first use since dg_node imports this module
-_REUSABLE_WRAPPER_PARTS = None
-
-# class -> how `_wrapper_is_canonical` names that class's wrappers: 0 when the
-# class does not keep a base constructor, type check, name property and API 1.0
-# cache, otherwise one of the kinds below. Only a class whose whole MRO is node
-# classes is kept, since NodeMeta clears it when a class is created or a node
-# class attribute is set or deleted
-_CANONICAL_KIND = {}
-_NAMED_DG       = 1  # DGNode's name property
-_NAMED_DAG      = 2  # DAGNode's name property
-_NAMED_DAG_PATH = 3  # DAGNode's name property, constructor and DGNode's fn_set
-
-
-def _canonical_kind(cls_obj: type) -> int:
-    """Returns the `_CANONICAL_KIND` kind of `cls_obj` and memoizes it when NodeMeta
-    can clear it. An error of the class checks propagates and memoizes nothing.
-    """
-    global _REUSABLE_WRAPPER_PARTS
-    if _REUSABLE_WRAPPER_PARTS is None:
-        from rig.nodetypes.dag_node import DAGNode
-        from rig.nodetypes.dg_node import DGNode
-        from rig.nodetypes.geometry import Geometry
-
-        _REUSABLE_WRAPPER_PARTS = (
-            (DGNode.__init__, DAGNode.__init__, Geometry.__init__),
-            (
-                DGNode.__dict__["is_type"].__func__,
-                DAGNode.__dict__["is_type"].__func__,
-            ),
-            (DGNode.__dict__["name"], DAGNode.__dict__["name"]),
-            DGNode._cache_api1_objects,
-            DGNode.__dict__["fn_set"],
-        )
-    inits, is_type_funcs, name_props, cache_api1, fn_set_prop = _REUSABLE_WRAPPER_PARTS
-
-    if (
-        cls_obj.__init__ not in inits
-        or cls_obj.__new__ is not object.__new__
-        or cls_obj.CUSTOM_NODE_TYPE
-        or getattr(cls_obj.is_type, "__func__", None) not in is_type_funcs
-        or cls_obj.name not in name_props
-        or cls_obj._cache_api1_objects is not cache_api1
-    ):
-        kind = 0
-    elif cls_obj.name is name_props[0]:
-        kind = _NAMED_DG
-    elif (
-        cls_obj.__init__ is not inits[0]
-        and getattr(cls_obj, "fn_set", None) is fn_set_prop
-    ):
-        kind = _NAMED_DAG_PATH
-    else:
-        kind = _NAMED_DAG
-    if all(isinstance(base, NodeMeta) for base in cls_obj.__mro__[:-1]):
-        _CANONICAL_KIND[cls_obj] = kind
-    return kind
-
-
-def _is_only_path(fn: OpenMaya.MFnDagNode, mobject: OpenMaya.MObject) -> bool:
-    """Returns True if `fn` is attached to a valid path to the DAG node `mobject`
-    and that node has no other path, so `_mobject_to_str(mobject)` names that
-    path. False when unsure or when a step raises.
-    """
-    try:
-        if (
-            mobject.isNull()
-            or mobject.apiType() in _NOT_NODE_API_TYPES
-            or not mobject.hasFn(OpenMaya.MFn.kDagNode)
-            or fn.isInstanced(True)
-        ):
-            return False
-        path = fn.getPath()
-        return path.isValid() and path.pathCount() == 1 and path.node() == mobject
-    except Exception:
-        return False
-
-
-def _wrapper_is_canonical(dg_node: Any, mobject: OpenMaya.MObject) -> bool:
-    """Returns True if `PyNode(mobject)` would now build a wrapper equal to `dg_node`.
-
-    That holds when `dg_node` wraps the live node `mobject`, its class is the one
-    `PyNode` dispatches the node to and keeps a base constructor, type check, name
-    property and API 1.0 cache, and it has the name the cast would construct from.
-    The two wrappers then differ only in their caches. Returns False in any other
-    case or when a step raises, and the caller casts as usual, which raises its
-    own errors.
-    """
-    cls_obj = type(dg_node)
-    kind    = _CANONICAL_KIND.get(cls_obj)
-    if kind is None:
-        kind = _canonical_kind(cls_obj)
-    if not kind:
-        return False
-    try:
-        # the API 1.0 handle goes first, it is safe on a node a new scene freed
-        # NW6: API 1.0 handle read (a dead helper M8 deletes)
-        if not dg_node._objhandle1.isValid() or mobject != dg_node._mobject:
-            return False
-        # the wrapper's own fn set is attached to this node
-        fn = dg_node._fn_set
-        if (
-            fn.hasAttribute(CUSTOM_TYPE_ATTR)
-            or not fn.findAlias(CUSTOM_TYPE_ATTR).isNull()
-        ):
-            return False
-        key = (fn.typeName, fn.typeId.id())
-        if (
-            PyNode._CLASS_BY_TYPE.get(key) is not cls_obj
-            or key not in PyNode._CASTABLE_TYPES
-        ):
-            return False
-        if kind == _NAMED_DG and not mobject.hasFn(OpenMaya.MFn.kDagNode):
-            # both names are the fn set name of the same DG node
-            name = fn.name()
-        elif kind == _NAMED_DAG_PATH and _is_only_path(fn, mobject):
-            # the name is the fn set's partial path name of the node's only path
-            name = dg_node.name
-        else:
-            name = _mobject_to_str(mobject)
-            if dg_node.name != name:
-                return False
-        return not (len(name) >= 32 and is_valid_maya_uid(name))
-    except Exception:
-        return False
-
-
-def _copy_wrapper(dg_node: Any) -> Any:
-    """Returns a new wrapper of `dg_node`'s class and node in the state a fresh cast
-    leaves it: its own MObject, MDagPath and fn set, and empty caches. The API 1.0
-    validation objects are shared, as the DGNode copy constructor shares them.
-
-    Only for a wrapper `_wrapper_is_canonical` accepted, so the node is live and
-    the class keeps a base constructor.
-    """
-    dg_init, dag_init, geometry_init = _REUSABLE_WRAPPER_PARTS[0]
-
-    cls_obj = type(dg_node)
-    inst    = object.__new__(cls_obj)
-    d       = inst.__dict__
-    if cls_obj.__init__ is dg_init:
-        d["_mobject"] = OpenMaya.MObject(dg_node._mobject)
-        d["_fn_set"]  = cls_obj.FN_SET(d["_mobject"])
-    else:
-        d["_mdagpath"] = OpenMaya.MDagPath(dg_node._mdagpath)
-        d["_mobject"]  = d["_mdagpath"].node()
-        d["_fn_set"]   = cls_obj.FN_SET(d["_mdagpath"])
-    # NW6: API 1.0 handle store (a dead helper M8 deletes)
-    d["_fn_set1"]    = dg_node._fn_set1
-    d["_objhandle1"] = dg_node._objhandle1  # NW6: API 1.0 handle store
-    d["_attr_dict"]  = {}
-    if cls_obj.__init__ is geometry_init:
-        d["_Geometry__local_shape_attr"] = None
-        d["_Geometry__world_shape_attr"] = None
     return inst
 
 
@@ -1262,7 +1088,7 @@ def _node_serial(node: Any) -> int:
     of a freed node kept as a dict key would then share a hash with a live plug,
     and the lookup would compare them. A serial is never reused. A node deleted
     to the undo queue lives on, and keeps its serial when the delete is undone.
-    Two wrappers of one node share it; it is cached on the wrapper.
+    Two node objects of one node share it; it is cached on the node object.
     """
     d      = node.__dict__
     serial = d.get("_node_serial")
