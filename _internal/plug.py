@@ -102,8 +102,12 @@ from rig._internal.introspect import _to_numpy
 from rig._internal.maya_version import is_at_least
 from rig._internal.operands import (
     _CAN_HOLD_STR,
+    _prepared_operand,
+    _RESHAPED,
+    _SCALARS,
     _text_operand,
     operator_error as _operator_error,
+    operator_where as _operator_where,
 )
 from rig.spec._base import _clone_attribute
 
@@ -1251,7 +1255,10 @@ def _checking_operands(method: Any) -> Any:
     operator starts with read the operands' MPlugs, which point at freed memory
     once a new scene freed their node. And no operand may be or hold a plain str
     (see `rig._internal.operands`): `t.tx == "cube.ty"` raises TypeError instead
-    of building an equal node it cannot set."""
+    of building an equal node it cannot set. A set, frozenset or dict operand
+    raises TypeError too, and an iterator operand is read into a list, checked
+    and passed to `method` as that list (a Plug operator takes one operand at
+    most). This is the one frame that checks a Plug operator's operands."""
     dunder = method.__name__
 
     @functools.wraps(method)
@@ -1264,6 +1271,12 @@ def _checking_operands(method: Any) -> Any:
                 found = _text_operand(operand)
                 if found is not None:
                     raise _operator_error(dunder, self, operand, found)
+            elif not isinstance(operand, _SCALARS) and isinstance(operand, _RESHAPED):
+                listed = _prepared_operand(operand, _operator_where(dunder, str(self), operand))
+                found  = _text_operand(listed)
+                if found is not None:
+                    raise _operator_error(dunder, self, listed, found)
+                return method(self, listed)
         return method(self, *other)
 
     return checked

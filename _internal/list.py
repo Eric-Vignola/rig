@@ -39,7 +39,17 @@ from rig.nodetypes._base import _ensure_owner_alive, _same_plug, Attribute
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.node import Node
-from rig._internal.operands import _CAN_HOLD_STR, _text_operand, operator_error, REFLECTED
+from rig._internal.operands import (
+    _CAN_HOLD_STR,
+    _prepared_operand,
+    _render,
+    _RESHAPED,
+    _SCALARS,
+    _text_operand,
+    operator_error,
+    operator_where,
+    REFLECTED,
+)
 from rig._internal.plug import Plug
 from rig._internal.types import _is_attribute_spec, _is_components, _is_member_spec
 
@@ -53,8 +63,16 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
     :mod:`rig._internal.operands`), but only after the rows before it had
     built their networks. A row without a Plug is left alone
     (``Node("a") == "a"`` is a plain name comparison). As in the Plug
-    operator, a freed plug raises its own error first.
+    operator, a freed plug raises its own error first, a set, frozenset or dict
+    ``other`` raises TypeError, and an iterator ``other`` is read into a list
+    first (see :mod:`rig._internal.operands`).
     """
+    if (
+        not isinstance(other, _CAN_HOLD_STR)
+        and not isinstance(other, _SCALARS)
+        and isinstance(other, _RESHAPED)
+    ):
+        other = _prepared_operand(other, operator_where(dunder, _render(items), other))
     rows = list(sequences(list(items), other))
     for row, (mine, theirs) in enumerate(rows):
         if isinstance(mine, Plug):
