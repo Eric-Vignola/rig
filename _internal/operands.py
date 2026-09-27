@@ -23,16 +23,24 @@ with read its operands' MPlugs, which then point at freed memory.
 A config string is not an operand. The ``"<"`` of a condition op (a NodeOp
 takes its positional strs as config) and the ``side=`` / ``name=`` /
 ``dtype=`` / ``axis=`` / ``method=`` choices are config: :func:`operands`
-lists them per function and passes them through. So is ``rotate_order``,
-for now: it takes 0-5 or a plug, a rotate-order name like ``"xyz"`` never
-worked, and it keeps failing as before, in the node it builds.
+lists them per function and passes them through.
+
+A rotate order (``rotate_order``, and ``rotate_order0`` / ``rotate_order1`` of
+``rig.euler.reorder``) is config too, and takes an int 0-5, a plug, or one of
+the six names of Maya's ``rotateOrder`` enum: ``"xyz"`` (0), ``"yzx"`` (1),
+``"zxy"`` (2), ``"xzy"`` (3), ``"yxz"`` (4), ``"zyx"`` (5). :func:`operands`
+replaces a name by its int before the function runs, so ``rotate_order="zxy"``
+and ``rotate_order=2`` build (and memoize) one network, and any other str
+(``"XYZ"``, ``""``, ``"xy"``) raises TypeError before any node or container is
+created. A list or tuple of rotate orders (a broadcast call) is mapped element
+by element.
 """
 
 from __future__ import annotations
 
 import functools
 import inspect
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, Tuple
 
 import numpy as np
 from rig.nodetypes._base import _ensure_owner_alive, Attribute
@@ -45,6 +53,11 @@ _CAN_HOLD_STR = (str, bytes, bytearray, list, tuple, np.ndarray)
 # Longest rendering of an operand in a message before it is shortened to
 # its type name.
 _MAX_RENDERED = 60
+
+# The rotate-order names, as Maya's ``rotateOrder`` enum numbers them, and the
+# config parameters that take a rotate order (see the module docstring).
+_ROTATE_ORDERS = {"xyz": 0, "yzx": 1, "zxy": 2, "xzy": 3, "yxz": 4, "zyx": 5}
+_ROTATE_ORDER_PARAMS = frozenset({"rotate_order", "rotate_order0", "rotate_order1"})
 
 
 def _first_text(obj: Any, with_bytes: bool) -> Optional[Any]:
@@ -235,6 +248,69 @@ def operator_error(
     return str_operand_error(where, found, text_hint=symbol == "+")
 
 
+def _rotate_order(label: str, name: str, value: Any) -> Any:
+    """``value`` given to the rotate-order parameter ``name`` of the function
+    ``label``, a rotate-order name replaced by its int. Any other plain str
+    raises TypeError; an int, a plug (an Attribute), None or anything else is
+    returned as it is. A list or tuple is mapped element by element, one level
+    (a broadcast call), and returned as it is when it holds no name."""
+    if isinstance(value, str):
+        if isinstance(value, Attribute):
+            return value
+        order = _ROTATE_ORDERS.get(value)
+        if order is None:
+            raise TypeError(
+                f"{label}() argument {name!r}: {value!r} is not a rotate order; use "
+                f"'xyz', 'yzx', 'zxy', 'xzy', 'yxz' or 'zyx' (0-5), an int 0-5 or a plug"
+            )
+        return order
+    if isinstance(value, (list, tuple)) and any(
+        isinstance(element, str) and not isinstance(element, Attribute)
+        for element in value
+    ):
+        mapped = [
+            _rotate_order(label, f"{name}[{j}]", element)
+            if isinstance(element, str)
+            else element
+            for j, element in enumerate(value)
+        ]
+        if type(value) is list:
+            return mapped
+        try:
+            return type(value)(mapped)
+        except Exception:  # noqa: BLE001 -- a list subclass that takes no items
+            return mapped
+    return value
+
+
+def _rotate_order_arguments(
+    label:     str,
+    args:      tuple,
+    kwargs:    dict,
+    positions: Tuple[Tuple[int, str], ...],
+    keywords:  Tuple[str, ...],
+) -> Tuple[tuple, dict]:
+    """``args`` / ``kwargs`` of a call of ``label``, the rotate-order names of
+    the parameters at ``positions`` (``(index, name)`` pairs) and ``keywords``
+    replaced by their ints (see `_rotate_order`). A tuple is rebuilt, and a
+    value replaced, only where a name was mapped."""
+    for i, name in positions:
+        if i < len(args):
+            value = args[i]
+            if isinstance(value, (str, list, tuple)):
+                mapped = _rotate_order(label, name, value)
+                if mapped is not value:
+                    args = (*args[:i], mapped, *args[i + 1:])
+    if kwargs:
+        for key in keywords:
+            value = kwargs.get(key)
+            if isinstance(value, (str, list, tuple)):
+                mapped = _rotate_order(label, key, value)
+                if mapped is not value:
+                    kwargs[key] = mapped
+    return args, kwargs
+
+
 def _public_name(func: Callable[..., Any]) -> str:
     """``rig.vector.lerp`` for ``func``: its module, where a private module
     (``rig._dispatch``, ``rig._internal.math_nodes``) re-exports from ``rig``."""
@@ -255,7 +331,10 @@ def operands(
     any node or container (see the module docstring).
 
     ``config`` names the parameters that take config values (a str there is
-    a choice, not an operand, and is passed through unchecked). ``skip_when``
+    a choice, not an operand, and is passed through unchecked). A rotate-order
+    parameter among them (``rotate_order``, ``rotate_order0``,
+    ``rotate_order1``) takes a rotate-order name, replaced by its int before
+    the function runs; another str there raises TypeError. ``skip_when``
     is a ``predicate(args, kwargs)`` that is True for a call that builds no
     node and returns its arguments as they are (``condition(1, "yes", "no")``
     picks ``"yes"`` in Python); such a call is not checked. Put ``@operands``
@@ -290,6 +369,11 @@ def operands(
     skipped    = frozenset(i for i, name in enumerate(names) if name in config)
     count      = len(names)
     label      = _public_name(func)
+    # the rotate-order parameters, whose names are mapped to their ints
+    rotate_keywords  = tuple(sorted(config & _ROTATE_ORDER_PARAMS))
+    rotate_positions = tuple(
+        (i, name) for i, name in enumerate(names) if name in rotate_keywords
+    )
 
     def _argument(i: int) -> str:
         if i < count:
@@ -322,6 +406,11 @@ def operands(
                             )
                     elif isinstance(value, Attribute):
                         _ensure_owner_alive(value)
+        if rotate_keywords:
+            # after the operand checks, so a freed plug raises first
+            args, kwargs = _rotate_order_arguments(
+                label, args, kwargs, rotate_positions, rotate_keywords
+            )
         return func(*args, **kwargs)
 
     wrapper._operand_config = config

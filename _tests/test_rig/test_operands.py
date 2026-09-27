@@ -7,7 +7,8 @@ operator and every public math function now raises ``TypeError`` for a plain
 str operand (a str that is not an Attribute, alone or inside a list, tuple or
 numpy array) before it creates any node or container. Config strings (the
 ``"<"`` of a condition op, ``side=``, ``name=``, ``dtype=``, ``axis=``,
-``method=``, ``rotate_order``) are not operands and are not checked.
+``method=``) are not operands and are not checked; a ``rotate_order`` is
+config too, and takes one of the six rotate-order names (round 4a).
 """
 
 import inspect
@@ -455,12 +456,23 @@ class TestConfigStrings(_OperandCase):
         self.assertRejects(lambda: condition(PlugList([1, test]), "yes", "no"))
 
     def test_rotate_order_is_not_checked_as_an_operand(self):
-        # A rotate-order name never worked (d6ad8b2 and v2.0.0a2 build the node,
-        # then fail to set the enum); rotate_order is exempt pending a decision.
-        with self.assertRaises(InjectionError):
-            M.decompose(self.t.worldMatrix[0], rotate_order="xyz")
-        with self.assertRaises(InjectionError):
-            E.reorder(self.t.r, "xyz", "zxy")
+        # Re-pinned in round 4a (decision S3 Q1): a rotate order is config, and
+        # a rotate-order name is mapped to its int before the function runs, so
+        # "xyz" and 0 are one memoized network, and any other str raises
+        # TypeError before anything is built. (It used to build the node, then
+        # fail to set the enum with an InjectionError.)
+        wm = self.t.worldMatrix[0]
+        before = _scene()
+        by_name = M.decompose(wm, rotate_order="xyz")
+        self.assertIs(M.decompose(wm, rotate_order=0), by_name)
+        self.assertEqual([cmds.nodeType(n) for n in _scene() - before], ["decomposeMatrix"])
+        zxy = M.decompose(wm, rotate_order="zxy")
+        self.assertEqual(cmds.getAttr(f"{zxy.node}.inputRotateOrder"), 2)
+        self.assertEqual(cmds.nodeType(E.reorder(self.t.r, "xyz", "zxy").node), "quatToEuler")
+        before = _scene()
+        with self.assertRaisesRegex(TypeError, "'abc' is not a rotate order"):
+            M.decompose(wm, rotate_order="abc")
+        self.assertEqual(_scene(), before)
         self.assertEqual(M.decompose._operand_config, frozenset({"rotate_order"}))
 
     def test_string_attributes_still_take_strings(self):
