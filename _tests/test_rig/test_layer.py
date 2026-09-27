@@ -557,7 +557,9 @@ class TestLayerMethods(MayaTestCase):
         node = bg.node
         self.assertIsInstance(node, Node)
         self.assertEqual(str(node), "bg")
-        self.assertIsInstance(node._dg_node, DisplayLayer)
+        # re-pinned (round 4a M8, the _dg_node shim is gone): the node is the
+        # typed DisplayLayer itself
+        self.assertIsInstance(node, DisplayLayer)
         plug = bg.visibility << False
         self.assertEqual(str(plug), "bg.visibility")
         self.assertFalse(cmds.getAttr("bg.visibility"))

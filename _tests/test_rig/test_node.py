@@ -1,4 +1,6 @@
-"""Tests for ``rig._node`` -- the Node wrapper + lift()."""
+"""Tests for ``rig._node`` -- the DSL Node + lift()."""
+
+from unittest import mock
 
 from maya import cmds
 from rig import lift, Node, Plug
@@ -87,10 +89,16 @@ class TestNodeAssignmentSugar(MayaTestCase):
 
     def test_setattr_underscore_bypass(self):
         # Internal state (_*) should bypass the inject sugar.
+        # re-pinned (round 4a M8, the _dg_node shim it read is gone): a "_" name
+        # is stored on the node object, with no Maya attr and no Maya write
         node = Node.create("transform", name="cube1")
-        # Verify by reading back internal state directly.
-        node._dg_node  # accessing existing _dg_node should not raise
-        self.assertIsNotNone(node._dg_node)
+        with mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
+            node._private = 1
+        self.assertEqual(vars(node)["_private"], 1)
+        self.assertEqual(node._private, 1)
+        self.assertEqual(set_attr.call_count, 0)
+        self.assertFalse(cmds.attributeQuery("_private", node="cube1", exists=True))
+        self.assertIsNone(cmds.listAttr("cube1", userDefined=True))
 
 
 class TestNodeInjectSpec(MayaTestCase):

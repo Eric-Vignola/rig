@@ -203,10 +203,8 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
         cmds.undo()
         cmds.undo()
         self.assertIn(Node("a").tx, seen)
-        # two wrappers of one node share the serial
-        self.assertEqual(
-            _base._node_serial(PyNode("a")), _base._node_serial(Node("a")._dg_node)
-        )
+        # two node objects of one node share the serial
+        self.assertEqual(_base._node_serial(PyNode("a")), _base._node_serial(Node("a")))
 
     def test_the_serial_table_drops_freed_nodes(self):
         for i in range(20):
@@ -304,10 +302,10 @@ class TestFindAttrCacheOfInstancedElements(MayaTestCase):
                 self.assertIs(node.find_attr("worldMatrix[1]"), element)
                 self.assertTrue(node.find_attr("iog[1]").plug.isElement)
                 self.assertTrue(node.find_attr("instObjGroups").plug.isArray)
-        wrapper = Node(PyNode("|T1|S"))
-        wrapper._dg_node.find_attr("worldMatrix[1]")
-        self.assertTrue(wrapper.worldMatrix.plug.isArray)
-        self.assertEqual(str(wrapper.worldMatrix), "T1|S.worldMatrix")
+        node = Node(PyNode("|T1|S"))
+        node.find_attr("worldMatrix[1]")
+        self.assertTrue(node.worldMatrix.plug.isArray)
+        self.assertEqual(str(node.worldMatrix), "T1|S.worldMatrix")
 
     def test_single_instance_element_lookup_then_index(self):
         cmds.createNode("transform", name="a")
@@ -419,7 +417,7 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
                 self.assertIs(type(plug), Plug)
                 self.assertEqual(str(plug), "T2|S.worldMatrix")
                 self.assertTrue(plug.equals(typed))
-                self.assertIs(plug.node._dg_node, typed.node)
+                self.assertIs(plug.node, typed.node)
                 dst = cmds.createNode("multMatrix")
                 Node(dst).matrixIn[0] << plug
                 sel = OpenMaya.MSelectionList()
@@ -430,11 +428,11 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
         self.assertEqual(str(lift(visibility)), "T2|S.visibility")
         self.assertEqual(lift(visibility).node.long_name, "|T2|S")
 
-    def test_a_node_of_a_plug_wraps_its_typed_node(self):
+    def test_a_node_of_a_plug_is_its_owner(self):
         from rig.nodetypes import Transform
 
         node = Node(cmds.createNode("transform", name="a"))
-        self.assertIs(Node(node.tx)._dg_node, node._dg_node)
+        self.assertIs(Node(node.tx), node)
         self.assertIs(type(Node(node.tx) >> None), Transform)
         self.assertIs(type(Node(PyNode("a").find_attr("tx")) >> None), Transform)
 
@@ -586,7 +584,7 @@ class TestComponentSliceOnAChosenClass(MayaTestCase):
         for cls in (DAGNode, DGNode):
             with self.subTest(cls=cls.__name__):
                 node = Node(cls("pcShape"))
-                self.assertIs(type(node.vtx.node._dg_node), cls)
+                self.assertIs(type(node.vtx.node), cls)
                 self.assertEqual([str(p) for p in node.vtx[0:2]], expected)
                 self.assertEqual([str(p) for p in node.vtx[[0, 1]]], expected)
                 self.assertEqual([str(p) for p in node.controlPoints[0:2]], expected)
@@ -732,15 +730,15 @@ class TestCheapCommonPaths(MayaTestCase):
     def test_fixed_attr_kind_reads_the_owners_fn_set(self):
         node  = Node(cmds.createNode("transform", name="a"))
         owned = node.tx
-        self.assertIs(_base._plug_node_fn_set(owned, owned.plug), node._dg_node._fn_set)
+        self.assertIs(_base._plug_node_fn_set(owned, owned.plug), node._fn_set)
         self.assertEqual(_base._fixed_attr_kind(owned), OpenMaya.MFn.kDoubleLinearAttribute)
         loose = Plug("a.tx")
-        self.assertIsNot(_base._plug_node_fn_set(loose, loose.plug), node._dg_node._fn_set)
+        self.assertIsNot(_base._plug_node_fn_set(loose, loose.plug), node._fn_set)
         self.assertEqual(_base._fixed_attr_kind(loose), OpenMaya.MFn.kDoubleLinearAttribute)
         # a deleted owner's fn set is not read
         cmds.undoInfo(state=True, infinity=True)
         cmds.delete("a")
-        self.assertIsNot(_base._plug_node_fn_set(owned, owned.plug), node._dg_node._fn_set)
+        self.assertIsNot(_base._plug_node_fn_set(owned, owned.plug), node._fn_set)
         cmds.undo()
 
     def test_only_a_path_named_parent_is_checked_for_instancing(self):
@@ -749,8 +747,9 @@ class TestCheapCommonPaths(MayaTestCase):
         self.assertTrue(_base._named_through_a_path(Node("|T2|S").v))
         self.assertTrue(_base._named_through_a_path(Node("|T1|S").lp))
         self.assertFalse(_base._named_through_a_path(Node("a").t))
-        # a node instanced after its wrapper cached an attr keeps the first path's
-        # name, which cmds resolves to that wrapper's own (first) instance
+        # a node instanced after its node object cached an attr keeps the first
+        # path's name, which cmds resolves to that node object's own (first)
+        # instance
         cmds.createNode("transform", name="G1")
         cmds.createNode("transform", name="X", parent="G1")
         first = Node("|G1|X")
