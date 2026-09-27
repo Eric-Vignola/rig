@@ -293,16 +293,17 @@ def _construct_checked_type(cls_obj, obj: str) -> Any:
         sel = OpenMaya.MSelectionList()
         sel.add(str(obj))
         inst = object.__new__(cls_obj)
+        d    = inst.__dict__
         if init is dag_init:
-            inst._mdagpath = sel.getDagPath(0)
-            inst._mobject  = inst._mdagpath.node()
-            inst._fn_set   = cls_obj.FN_SET(inst._mdagpath)
-            inst._cache_api1_objects(inst._fn_set.partialPathName())
+            d["_mdagpath"] = sel.getDagPath(0)
+            d["_mobject"]  = d["_mdagpath"].node()
+            d["_fn_set"]   = cls_obj.FN_SET(d["_mdagpath"])
+            inst._cache_api1_objects(d["_fn_set"].partialPathName())
         else:
-            inst._mobject = sel.getDependNode(0)
-            inst._fn_set  = cls_obj.FN_SET(inst._mobject)
-            inst._cache_api1_objects(inst._fn_set.name())
-        inst._attr_dict = {}
+            d["_mobject"] = sel.getDependNode(0)
+            d["_fn_set"]  = cls_obj.FN_SET(d["_mobject"])
+            inst._cache_api1_objects(d["_fn_set"].name())
+        d["_attr_dict"] = {}
     except Exception:
         return None
     return inst
@@ -453,19 +454,20 @@ def _copy_wrapper(dg_node: Any) -> Any:
 
     cls_obj = type(dg_node)
     inst    = object.__new__(cls_obj)
+    d       = inst.__dict__
     if cls_obj.__init__ is dg_init:
-        inst._mobject = OpenMaya.MObject(dg_node._mobject)
-        inst._fn_set  = cls_obj.FN_SET(inst._mobject)
+        d["_mobject"] = OpenMaya.MObject(dg_node._mobject)
+        d["_fn_set"]  = cls_obj.FN_SET(d["_mobject"])
     else:
-        inst._mdagpath = OpenMaya.MDagPath(dg_node._mdagpath)
-        inst._mobject  = inst._mdagpath.node()
-        inst._fn_set   = cls_obj.FN_SET(inst._mdagpath)
-    inst._fn_set1    = dg_node._fn_set1
-    inst._objhandle1 = dg_node._objhandle1
-    inst._attr_dict  = {}
+        d["_mdagpath"] = OpenMaya.MDagPath(dg_node._mdagpath)
+        d["_mobject"]  = d["_mdagpath"].node()
+        d["_fn_set"]   = cls_obj.FN_SET(d["_mdagpath"])
+    d["_fn_set1"]    = dg_node._fn_set1
+    d["_objhandle1"] = dg_node._objhandle1
+    d["_attr_dict"]  = {}
     if cls_obj.__init__ is geometry_init:
-        inst._Geometry__local_shape_attr = None
-        inst._Geometry__world_shape_attr = None
+        d["_Geometry__local_shape_attr"] = None
+        d["_Geometry__world_shape_attr"] = None
     return inst
 
 

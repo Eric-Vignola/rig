@@ -26,32 +26,38 @@ class DAGNode(DGNode):
     FN_SET           = OpenMaya.MFnDagNode
 
     def __init__(self, node: str | OpenMaya.MObject | OpenMaya.MDagPath) -> None:
-        """Initialize an instance from a node name or a MObject."""
-        if isinstance(node, DAGNode):
-            self._mobject    = node._mobject
-            self._mdagpath   = node._mdagpath
-            self._fn_set     = node._fn_set
-            self._fn_set1    = node._fn_set1
-            self._objhandle1 = node._objhandle1
+        """Initialize an instance from a node name or a MObject.
+
+        A node of this class (or a subclass) shares its internals; any other node
+        object is taken by its name. The state is written to ``__dict__``, in this
+        order, so no ``__setattr__`` runs.
+        """
+        d = self.__dict__
+        if isinstance(node, type(self)):
+            d["_mobject"]    = node._mobject
+            d["_mdagpath"]   = node._mdagpath
+            d["_fn_set"]     = node._fn_set
+            d["_fn_set1"]    = node._fn_set1
+            d["_objhandle1"] = node._objhandle1
         else:
             if isinstance(node, OpenMaya.MObject):
-                self._mobject  = node
-                self._mdagpath = OpenMaya.MDagPath.getAPathTo(node)
+                d["_mobject"]  = node
+                d["_mdagpath"] = OpenMaya.MDagPath.getAPathTo(node)
             elif isinstance(node, OpenMaya.MDagPath):
-                self._mdagpath = node
-                self._mobject  = self._mdagpath.node()
+                d["_mdagpath"] = node
+                d["_mobject"]  = node.node()
             else:
                 sel = OpenMaya.MSelectionList()
                 try:
                     sel.add(str(node))
                 except Exception:
                     raise ValueError(f"Invalid node name: {node}")
-                self._mdagpath = sel.getDagPath(0)
-                self._mobject  = self._mdagpath.node()
-            self._fn_set = self.FN_SET(self._mdagpath)
-            self._cache_api1_objects(self._fn_set.partialPathName())
+                d["_mdagpath"] = sel.getDagPath(0)
+                d["_mobject"]  = d["_mdagpath"].node()
+            d["_fn_set"] = self.FN_SET(d["_mdagpath"])
+            self._cache_api1_objects(d["_fn_set"].partialPathName())
         self.is_type(self.name, exact_type=False, failfast=True)
-        self._attr_dict = {}  # cache queried attributes
+        d["_attr_dict"] = {}  # cache queried attributes
 
     # --- creation
 

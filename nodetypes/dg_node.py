@@ -136,26 +136,32 @@ class DGNode(metaclass=NodeMeta):
     FN_SET = OpenMaya.MFnDependencyNode
 
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
-        """Initialize an instance from a node name or a MObject."""
-        if isinstance(node, DGNode):
-            self._mobject    = node._mobject
-            self._fn_set     = node._fn_set
-            self._fn_set1    = node._fn_set1
-            self._objhandle1 = node._objhandle1
+        """Initialize an instance from a node name or a MObject.
+
+        A node of this class (or a subclass) shares its internals; any other node
+        object is taken by its name. The state is written to ``__dict__``, in this
+        order, so no ``__setattr__`` runs.
+        """
+        d = self.__dict__
+        if isinstance(node, type(self)):
+            d["_mobject"]    = node._mobject
+            d["_fn_set"]     = node._fn_set
+            d["_fn_set1"]    = node._fn_set1
+            d["_objhandle1"] = node._objhandle1
         else:
             if isinstance(node, OpenMaya.MObject):
-                self._mobject = node
+                d["_mobject"] = node
             else:
                 sel = OpenMaya.MSelectionList()
                 try:
                     sel.add(str(node))
                 except Exception:
                     raise ValueError(f"Invalid node name: {node}")
-                self._mobject = sel.getDependNode(0)
-            self._fn_set = self.FN_SET(self._mobject)
-            self._cache_api1_objects(self._fn_set.name())
+                d["_mobject"] = sel.getDependNode(0)
+            d["_fn_set"] = self.FN_SET(d["_mobject"])
+            self._cache_api1_objects(d["_fn_set"].name())
         self.is_type(self.name, exact_type=False, failfast=True)
-        self._attr_dict = {}  # cache queried attributes
+        d["_attr_dict"] = {}  # cache queried attributes
 
     def _cache_api1_objects(self, name):
         # cache a API 1.0 MFnDependencyNode for validation purpose
@@ -165,8 +171,9 @@ class DGNode(metaclass=NodeMeta):
         sel.add(name)
         mobject1 = OpenMaya1.MObject()
         sel.getDependNode(0, mobject1)
-        self._fn_set1    = OpenMaya1.MFnDependencyNode(mobject1)
-        self._objhandle1 = OpenMaya1.MObjectHandle(mobject1)
+        d                = self.__dict__
+        d["_fn_set1"]    = OpenMaya1.MFnDependencyNode(mobject1)
+        d["_objhandle1"] = OpenMaya1.MObjectHandle(mobject1)
 
     # --- dunders
 
@@ -188,11 +195,29 @@ class DGNode(metaclass=NodeMeta):
     def __getattr__(self, attr_name):
         """Implemented to return attribute by name.
 
+        Only runs once normal lookup failed, so Python members always win. A
+        ``_`` name (Python probes dunders constantly: ``__deepcopy__``,
+        ``__array__``, ``__apiobject__``) resolves only to a Maya attr that
+        really exists on a live node; the API 1.0 handle is read first, it is
+        safe on a node a new scene freed, and a half-built instance (``copy``)
+        raises ``AttributeError``.
+
         Example:
         ```
         node.my_attr.set(value)
         ```
         """
+        if attr_name[:1] == "_":
+            d      = self.__dict__
+            fn     = d.get("_fn_set")
+            handle = d.get("_objhandle1")
+            if (
+                fn is None
+                or handle is None
+                or not handle.isValid()
+                or not fn.hasAttribute(attr_name)
+            ):
+                raise AttributeError(attr_name)
         return self.find_attr(attr_name, quiet=False)
 
     # --- properties & utils
