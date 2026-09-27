@@ -686,17 +686,26 @@ def _ensure_node_valid(attr: Any) -> None:
         node.ensure_valid()
 
 
+def _deleted_error(name: str, freed: bool = False) -> RuntimeError:
+    """The ``"... already deleted!"`` RuntimeError of the node `name`, deleted to
+    the undo queue, or, `freed`, freed by a new scene, a file open or a reference
+    unload: a freed node cannot be read, so `name` is then its class name (a node
+    object, see `DGNode.ensure_valid`) or the name a plug with no owner was built
+    with (see `_raise_deleted`). Every guard raises through it."""
+    if freed:
+        name = f"{name} node (freed by a new scene, a file open or a reference unload)"
+    return RuntimeError(f"{name} already deleted!")
+
+
 def _raise_deleted(attr: Any, handle: Any) -> None:
     """Raise the ``"... already deleted!"`` of `attr`, a plug with no owner whose
     node (`handle`, its API 1.0 handle) was deleted or freed. A deleted node is
-    named as `DGNode.ensure_valid` names it. A freed one cannot be read, so it is
-    named by the node part of the name the plug was built with (its str buffer)."""
+    named as `DGNode.ensure_valid` names it. A freed one cannot be read, and the
+    class it would be cast to was never known, so it is named by the node part of
+    the name the plug was built with (its str buffer)."""
     if handle.isAlive():
-        name = OpenMaya1.MFnDependencyNode(handle.objectRef()).name()
-    else:
-        node = str.__str__(attr).split(".", 1)[0]
-        name = f"{node} node (freed by a new scene, a file open or a reference unload)"
-    raise RuntimeError(f"{name} already deleted!")
+        raise _deleted_error(OpenMaya1.MFnDependencyNode(handle.objectRef()).name())
+    raise _deleted_error(str.__str__(attr).split(".", 1)[0], freed=True)
 
 
 def _node_handle(name: str) -> Any:
@@ -760,9 +769,7 @@ def _mplug_handle(mplug: OpenMaya.MPlug) -> Any:
     except Exception:
         return None
     if not handle2.isValid():
-        raise RuntimeError(
-            f"{OpenMaya.MFnDependencyNode(mobject).name()} already deleted!"
-        )
+        raise _deleted_error(OpenMaya.MFnDependencyNode(mobject).name())
     entries = _NODE_HANDLES.get(code)
     if entries is not None:
         for known, handle in entries:
@@ -992,6 +999,19 @@ def _path_instance_number(attr: Any, node: Any = None) -> int | None:
     return fn.getPath().instanceNumber()
 
 
+def _deleted_instance_index(mplug: OpenMaya.MPlug) -> str:
+    """The index `_plug_hash` gives `mplug`, a plug of a node deleted to the undo
+    queue, whose path cannot be read: ``"[0]"`` for an array of per-instance
+    elements read without an index (``worldMatrix``), the element of the first
+    instance, as `_path_instance_number` reads it once an undo brings back a node
+    of one path, so a dict or set key made while the node is deleted is found
+    after the undo; ``""`` for any other plug. (An instanced node's plug read
+    through another instance hashes apart while its node is deleted.)"""
+    if mplug.isArray and _is_instanced_array(mplug):
+        return "[0]"
+    return ""
+
+
 def _plug_identity_name(attr: Any) -> str:
     """The attr part of the identity of `attr`'s Maya plug: its alias with every
     index, the instanced ones too (``worldMatrix[1]``), whatever the path the
@@ -1114,8 +1134,9 @@ def _plug_hash(attr: Any) -> int:
         if handle is not None and not handle.isValid():
             if not handle.isAlive():
                 return hash((handle.hashCode(), str.__str__(attr)))
-            name = d["_mplug"].partialName(False, False, True, False, False, True)
-            return hash((_handle_serial(handle), name))
+            mplug = d["_mplug"]
+            name  = mplug.partialName(False, False, True, False, False, True)
+            return hash((_handle_serial(handle), name + _deleted_instance_index(mplug)))
         node = _unwrapped(attr.node)
     handle = node.__dict__.get("_objhandle1")
     if handle is None:
@@ -1132,6 +1153,8 @@ def _plug_hash(attr: Any) -> int:
         if index is not None:
             name  = f"{name}[{index}]"
             cache = False
+    else:
+        name += _deleted_instance_index(d["_mplug"])
     value = hash((serial, name))
     if cache:
         d["_plug_hash"] = value

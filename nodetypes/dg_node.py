@@ -8,6 +8,7 @@ from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _attr_mobject,
+    _deleted_error,
     _full_name_buffer,
     _new_attr,
     _queried_data_type,
@@ -233,13 +234,8 @@ class DGNode(metaclass=NodeMeta):
         handle = self._objhandle1
         if not handle.isValid():
             if handle.isAlive():
-                name = self._fn_set1.name()
-            else:
-                name = (
-                    f"{type(self).__name__} node (freed by a new scene, a file "
-                    f"open or a reference unload)"
-                )
-            raise RuntimeError(f"{name} already deleted!")
+                raise _deleted_error(self._fn_set1.name())
+            raise _deleted_error(type(self).__name__, freed=True)
 
     @property
     def name(self) -> str:
