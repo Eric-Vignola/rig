@@ -807,7 +807,7 @@ class Plug(Attribute):
                 f"write plug >> 'name' for the same node or plug >> 'node.name'"
             )
         dst_node = Node(node_name)
-        if dst_node._dg_node.has_attr(attr_name):
+        if dst_node.has_attr(attr_name):
             raise TypeError(
                 f"'{node_name}' already has an attribute '{attr_name}': '>>' clones, "
                 f"it never overwrites. Pick another name, or destroy it first "

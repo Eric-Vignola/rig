@@ -275,12 +275,12 @@ def _resolve_at(at: Any, path: str) -> str | None:
     if at is None:
         return None
     node = at if isinstance(at, Node) else Node(at)
-    if node._dg_node.node_type not in _GEOMETRY_TYPES:
+    if node.node_type not in _GEOMETRY_TYPES:
         shape = _single_geometry_shape(node)
         if shape is None:
             raise TypeError(f"at={at!r}: '{node}' is not a geometry node")
         node = shape
-    full    = node._dg_node.long_name
+    full    = node.long_name
     allowed = {path} | set(cmds.ls(cmds.listHistory(path) or [], long=True))
     if full not in allowed:
         raise TypeError(

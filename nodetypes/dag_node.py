@@ -116,8 +116,9 @@ class DAGNode(DGNode):
         """Re-resolves the DAG path of a live node whose path went stale (the
         instance it ran through was removed or its parent deleted) and returns
         the new fn set. The path and fn set are rebound, never edited in place,
-        since other wrappers may share them. The path the node was taken through
-        is kept, and taken again once it is valid again (the removal undone)."""
+        since other node objects may share them. The path the node was taken
+        through is kept, and taken again once it is valid again (the removal
+        undone)."""
         d = self.__dict__
         d.setdefault("_taken_mdagpath", d["_mdagpath"])
         d["_mdagpath"]  = OpenMaya.MDagPath.getAPathTo(d["_mobject"])

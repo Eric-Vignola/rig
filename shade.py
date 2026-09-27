@@ -533,7 +533,7 @@ def _skipped_siblings(selections: list[_Selection]) -> set[str]:
         # node is the transform that was expanded, exactly like a Node source.
         if isinstance(source, Plug):
             source = Node(source.node)
-        if isinstance(source, Node) and source._dg_node.long_name != selection.path:
+        if isinstance(source, Node) and source.long_name != selection.path:
             return source
         return None
 

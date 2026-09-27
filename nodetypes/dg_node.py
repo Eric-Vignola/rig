@@ -156,7 +156,7 @@ _COMPONENT_TOKENS = frozenset({"f", "e"}) | _COMPONENT_ALIASES
 
 # The instance state the node constructors, caches and the plug hash store,
 # which the ``=`` sugar stores directly (never a Maya attr of that name)
-_WRAPPER_STATE = frozenset(
+_NODE_STATE = frozenset(
     {
         "_mobject",
         "_mdagpath",
@@ -388,7 +388,7 @@ class DGNode(Node):
         d = self.__dict__
         # the node state, and a Python attribute already stored on this instance
         # (``vars(node)["tag"] = ...``, a method mock.patch.object patched)
-        if name in _WRAPPER_STATE or name in d:
+        if name in _NODE_STATE or name in d:
             d[name] = value
             return
         found = _class_attr(type(self), name)
@@ -441,12 +441,6 @@ class DGNode(Node):
 
     def __fspath__(self) -> str:
         return self.name
-
-    @property
-    def _dg_node(self) -> "DGNode":
-        """The node itself (the former DSL wrapper's attribute, kept while the
-        code that reads it is migrated)."""
-        return self
 
     # --- properties & utils
 
@@ -1036,7 +1030,7 @@ def _keeps_query(node_cls: type) -> bool:
     """True if the fallback hook of `node_cls` reaches DGNode's with the scene and
     the attr unchanged, so the type Attribute.data_type queried still holds. Any
     other class or hook (a subclass override, a class-level patch) queries again;
-    a wrapper or instance hook is ruled out by `Attribute.data_type` itself."""
+    an instance hook is ruled out by `Attribute.data_type` itself."""
     hook = node_cls._attr_data_type_fallback
     if hook is _BASE_FALLBACK_HOOK:
         return True
