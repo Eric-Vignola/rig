@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes import dg_node as _dg_node_module
+from rig.nodetypes import _base as _nodetypes_base, dg_node as _dg_node_module
 from rig.nodetypes._base import (
     _PLAIN_NODE_NAME,
     _path_instance_number,
@@ -1177,7 +1177,21 @@ def _typed_create(
     return result
 
 
+def _pynode_create(node_type: str, kwargs: dict) -> Any:
+    """D13b (``_base._PYNODE_CREATE_HOOK``): ``PyNode.create`` of a type with no
+    registered class and no positional args. ``container=`` is consumed.
+    Inside ``with container()``, outside any typed create and unless
+    ``container=False``, the node is made by :meth:`_ContainerStack.createNode`
+    (so both branches of ``PyNode.create`` join the scope); otherwise None, and
+    ``PyNode.create`` runs ``cmds.createNode`` as before."""
+    joins = kwargs.pop("container", None)
+    if (joins is not None and not joins) or _TYPED_DEPTH or not container._stack:
+        return None
+    return container.createNode(node_type, **kwargs)
+
+
 _dg_node_module._TYPED_CREATE_HOOK = _typed_create
+_nodetypes_base._PYNODE_CREATE_HOOK = _pynode_create
 
 
 def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -> Any:

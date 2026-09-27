@@ -171,11 +171,23 @@ class PyNode:
 
     @classmethod
     def create(cls, node_type, *args, **kwargs) -> Any:
-        """Thin wrapper around cmds.createNode()."""
+        """Thin wrapper around cmds.createNode().
+
+        A registered type goes to its class's typed ``create``. Any other type,
+        given no positional args, joins an open ``with container()`` scope as
+        ``Node.create`` does (``container.createNode``: D13b), outside a typed
+        create and unless ``container=False``; ``container=`` is consumed.
+        Outside a scope it is ``cmds.createNode`` as before.
+        """
         node_cls = cls._NODE_CLASS_DICT.get(node_type)
         if node_cls:
             return node_cls.create(*args, **kwargs)
         else:
+            hook = _PYNODE_CREATE_HOOK
+            if hook is not None and not args:
+                node = hook(node_type, kwargs)
+                if node is not None:
+                    return node
             result = cmds.createNode(node_type, *args, **kwargs)
             if isinstance(result, (list, tuple)):
                 return [cls(x) for x in result]
@@ -192,6 +204,11 @@ class PyNode:
         else:
             raise NotImplementedError(f"Node type {node_type} not implemented")
 
+
+# D13b: ``rig._internal.container`` sets this when it loads, to
+# ``_pynode_create(node_type, kwargs)``, the scope door of `PyNode.create`'s
+# unregistered-type branch (None when it does not act)
+_PYNODE_CREATE_HOOK = None
 
 # the class the `Node` factory hands `_cast`: bound once, so a test that
 # patches the module global `PyNode` (to count `Attribute.node`'s casts)
