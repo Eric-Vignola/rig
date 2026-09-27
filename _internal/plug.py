@@ -253,6 +253,7 @@ def _named_plug(
     same attribute the caller has (the one a spec's ``add_attr`` found), whose
     attribute handle it takes (see ``_attr_handle``)."""
     held   = None if node is None else _unwrapped(node).__dict__
+    # NW6: API 1.0 handle read (the handle is kept, see `_attr_state`)
     handle = None if held is None else held.get("_objhandle1")
     if handle is None:
         return Plug(name)
@@ -268,7 +269,7 @@ def _named_plug(
         or not attr1.isAlive()
         or known.__dict__["_mplug"].attribute() != mplug.attribute()
     ):
-        attr1 = _attr_handle(mplug, handle, held.get("_fn_set1"), attr_name)
+        attr1 = _attr_handle(mplug, handle, held.get("_fn_set1"), attr_name)  # NW6: API 1.0 handle read
     plug.__dict__.update(_attr_state(mplug, handle, attr1))
     return plug
 
@@ -1283,7 +1284,7 @@ def _owner_alive(plug: Any) -> bool:
     if owner is None:
         handle = d.get("_handle1")
     else:
-        handle = _unwrapped(owner).__dict__.get("_objhandle1")
+        handle = _unwrapped(owner).__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
     if handle is not None and not handle.isAlive():
         return False
     handle = d.get("_attr1")

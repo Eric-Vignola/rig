@@ -412,6 +412,7 @@ def _wrapper_is_canonical(dg_node: Any, mobject: OpenMaya.MObject) -> bool:
         return False
     try:
         # the API 1.0 handle goes first, it is safe on a node a new scene freed
+        # NW6: API 1.0 handle read (a dead helper M8 deletes)
         if not dg_node._objhandle1.isValid() or mobject != dg_node._mobject:
             return False
         # the wrapper's own fn set is attached to this node
@@ -462,8 +463,9 @@ def _copy_wrapper(dg_node: Any) -> Any:
         d["_mdagpath"] = OpenMaya.MDagPath(dg_node._mdagpath)
         d["_mobject"]  = d["_mdagpath"].node()
         d["_fn_set"]   = cls_obj.FN_SET(d["_mdagpath"])
+    # NW6: API 1.0 handle store (a dead helper M8 deletes)
     d["_fn_set1"]    = dg_node._fn_set1
-    d["_objhandle1"] = dg_node._objhandle1
+    d["_objhandle1"] = dg_node._objhandle1  # NW6: API 1.0 handle store
     d["_attr_dict"]  = {}
     if cls_obj.__init__ is geometry_init:
         d["_Geometry__local_shape_attr"] = None
@@ -637,6 +639,31 @@ def _unwrapped(node: Any) -> Any:
         return node
 
 
+# The API 1.0 handle of a node (`_objhandle1`, an `OpenMaya1.MObjectHandle`) is
+# the one object that is safe to read once a new scene, a file open or a
+# reference unload freed the node: its API 2.0 objects then point at freed
+# memory. The cold readers ask these two helpers; the hot paths read the handle
+# inline, and every such site (and every `_fn_set1` reader) is marked
+# "NW6: API 1.0 handle" and listed in
+# `test_node_model.TestApi1HandleReaders`, so that moving the handles off API
+# 1.0 (round 5, NW6) has one complete list of sites to edit.
+
+
+def _handle_valid(d: dict) -> bool:
+    """True if the node whose `__dict__` is `d` is valid: alive and not deleted
+    to the undo queue. False for a half-built node (no handle yet)."""
+    handle = d.get("_objhandle1")
+    return handle is not None and handle.isValid()
+
+
+def _handle_alive(d: dict) -> bool:
+    """True if the node whose `__dict__` is `d` is alive: not freed by a new
+    scene, a file open or a reference unload (a node deleted to the undo queue
+    is alive). False for a half-built node (no handle yet)."""
+    handle = d.get("_objhandle1")
+    return handle is not None and handle.isAlive()
+
+
 def _ensure_owner_alive(attr: Any) -> None:
     """Raise ``"... already deleted!"`` if the node that owns `attr` was freed (a
     new scene, a file open, a reference unload): `attr`'s MPlug then points at
@@ -660,7 +687,7 @@ def _ensure_owner_alive(attr: Any) -> None:
     if node is not None:
         # `_unwrapped`, inlined for a `Node` wrapper (the DSL plugs' owner)
         node   = node._dg_node if type(node) is _NODE_WRAPPER_CLASS else _unwrapped(node)
-        handle = node.__dict__.get("_objhandle1")
+        handle = node.__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
         if handle is not None and not handle.isAlive():
             node.ensure_valid()
     else:
@@ -699,9 +726,8 @@ def _ensure_node_valid(attr: Any) -> None:
     if node is None:
         _ensure_node_castable(attr)
         return
-    node   = _unwrapped(node)
-    handle = node.__dict__.get("_objhandle1")
-    if handle is not None and not handle.isValid():
+    node = _unwrapped(node)
+    if not _handle_valid(node.__dict__):
         node.ensure_valid()
     handle = attr.__dict__.get("_attr1")
     if handle is not None and not handle.isAlive():
@@ -1021,12 +1047,11 @@ def _named_through_owner(attr: Any) -> Any:
 def _owner_is_instanced(owner: Any) -> bool:
     """True if `owner`, a plug's node object, is a live DAG node with more than
     one path. A deleted or freed node's path is not read (naming it raises)."""
-    node = _unwrapped(owner)
-    fn   = node.__dict__.get("_fn_set")
+    d  = _unwrapped(owner).__dict__
+    fn = d.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode):
         return False
-    handle = node.__dict__.get("_objhandle1")
-    return handle is not None and handle.isValid() and fn.isInstanced(True)
+    return _handle_valid(d) and fn.isInstanced(True)
 
 
 def _full_name_buffer(attr: Any) -> Any:
@@ -1183,6 +1208,7 @@ def _node_serial(node: Any) -> int:
     d      = node.__dict__
     serial = d.get("_node_serial")
     if serial is None:
+        # NW6: API 1.0 handle read (hot)
         serial = d["_node_serial"] = _handle_serial(d["_objhandle1"])
     return serial
 
@@ -1252,7 +1278,7 @@ def _plug_hash(attr: Any) -> int:
             name  = mplug.partialName(False, False, True, False, False, True)
             return hash((_handle_serial(handle), name + _deleted_instance_index(mplug)))
         node = _unwrapped(attr.node)
-    handle = node.__dict__.get("_objhandle1")
+    handle = node.__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
     if handle is None:
         # not a DGNode: named as the node's name property names it
         return hash((hash(str(node)), _plug_identity_name(attr)))
@@ -1447,7 +1473,7 @@ def _plug_node_fn_set(attr: Any, mplug: OpenMaya.MPlug) -> OpenMaya.MFnDependenc
     owner = attr.__dict__.get("_node")
     if owner is not None:
         d      = _unwrapped(owner).__dict__
-        handle = d.get("_objhandle1")
+        handle = d.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
         fn     = d.get("_fn_set")
         if (
             fn is not None

@@ -11,7 +11,8 @@ Each class names the round-4a step it belongs to:
 * M2: typed constructors (``__dict__`` writes in the usual key order, copy only
   within the class, ``Mesh(transform_node)``) and the ``_`` probe guard on
   typed nodes, also on a node a new scene, a file open or a reference unload
-  freed (K S3 ``ff99c29``).
+  freed (K S3 ``ff99c29``); the API 1.0 handle helpers and the complete list
+  of the package's ``_objhandle1`` / ``_fn_set1`` readers (for round 5, NW6).
 """
 
 import ast
@@ -488,3 +489,140 @@ class TestPrivateProbeOnAFreedNode(MayaTestCase):
         finally:
             cmds.file(new=True, force=True)
             shutil.rmtree(folder, ignore_errors=True)
+
+
+# The API 1.0 node handle and fn set, which round 5 (NW6) moves off API 1.0
+_API1_NAMES = frozenset({"_objhandle1", "_fn_set1"})
+_NW6_MARKER = "NW6: API 1.0 handle"
+
+# Every (module, function) of the package that reads or stores `_objhandle1` /
+# `_fn_set1`. The cold readers ask `_handle_valid` / `_handle_alive`; each site
+# below reads the objects inline, on a hot path or because it keeps them, and
+# marks the line "NW6: API 1.0 handle". A new reader is added here (and marked).
+_API1_SITES = frozenset(
+    {
+        # the two helpers
+        ("rig.nodetypes._base", "_handle_valid"),
+        ("rig.nodetypes._base", "_handle_alive"),
+        # the constructors, which store them (a copy constructor reads them)
+        ("rig.nodetypes.dg_node", "DGNode.__init__"),
+        ("rig.nodetypes.dg_node", "DGNode._cache_api1_objects"),
+        ("rig.nodetypes.dag_node", "DAGNode.__init__"),
+        # hot: `DGNode.ensure_valid` (and its name of a deleted node), the owner
+        # checks of a plug, the plug hash and node serial, the fn set of a
+        # plug's node, the memo identity of a DG node, the wrapper's cache hit
+        ("rig.nodetypes.dg_node", "DGNode.ensure_valid"),
+        ("rig.nodetypes._base", "_ensure_owner_alive"),
+        ("rig.nodetypes._base", "_node_serial"),
+        ("rig.nodetypes._base", "_plug_hash"),
+        ("rig.nodetypes._base", "_plug_node_fn_set"),
+        ("rig._internal.plug", "_owner_alive"),
+        ("rig._internal.memoize", "_named_dg_identity"),
+        ("rig._internal.node", "Node.__getattr__"),
+        # they keep the handle or the fn set: the attribute handles of
+        # `find_attr` / `find_alias`, a plug of a held node, a memo attr check
+        ("rig.nodetypes.dg_node", "DGNode.find_attr"),
+        ("rig.nodetypes.dg_node", "DGNode.find_alias"),
+        ("rig._internal.plug", "_named_plug"),
+        ("rig._internal.memoize", "_attr_check"),
+        # the dead canonical-wrapper helpers (round 4a M8 deletes them)
+        ("rig.nodetypes._base", "_wrapper_is_canonical"),
+        ("rig.nodetypes._base", "_copy_wrapper"),
+    }
+)
+
+
+def _api1_accesses():
+    """Every access to `_objhandle1` / `_fn_set1` in the rig package outside
+    ``_tests``: an attribute (``node._objhandle1``) or a str constant (a
+    subscript, ``d.get(...)``, ``in``), as ``(module, function, path, line,
+    marked)``; ``marked`` is True if the line, or the line above it, has the
+    "NW6: API 1.0 handle" marker."""
+    import rig
+
+    root   = os.path.dirname(rig.__file__)
+    parent = os.path.dirname(root)
+    found  = []
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in ("_tests", "__pycache__"))
+        for name in sorted(f for f in files if f.endswith(".py")):
+            path   = os.path.join(base, name)
+            module = os.path.relpath(path, parent)[:-3].replace(os.sep, ".")
+            if module.endswith(".__init__"):
+                module = module[: -len(".__init__")]
+            with open(path, encoding="utf-8") as handle:
+                source = handle.read()
+            lines = source.splitlines()
+
+            def visit(node, scope):
+                for child in ast.iter_child_nodes(node):
+                    if isinstance(
+                        child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                    ):
+                        visit(child, scope + [child.name])
+                        continue
+                    if (isinstance(child, ast.Attribute) and child.attr in _API1_NAMES) or (
+                        isinstance(child, ast.Constant) and child.value in _API1_NAMES
+                    ):
+                        near   = lines[child.lineno - 1] + lines[child.lineno - 2]
+                        marked = _NW6_MARKER in near
+                        found.append(
+                            (module, ".".join(scope) or "<module>", path, child.lineno, marked)
+                        )
+                    visit(child, scope)
+
+            visit(ast.parse(source), [])
+    return found
+
+
+class TestApi1HandleReaders(MayaTestCase):
+    """M2: the API 1.0 handle helpers (`_handle_valid` / `_handle_alive`) and the
+    complete list of the package's `_objhandle1` / `_fn_set1` readers, so that
+    round 5 (NW6, the handles off API 1.0) has one list of sites to edit."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_readers_are_known(self):
+        sites = {(module, func) for module, func, _, _, _ in _api1_accesses()}
+        self.assertEqual(sites, _API1_SITES)
+
+    def test_inline_readers_are_marked(self):
+        helpers  = {("rig.nodetypes._base", "_handle_valid"), ("rig.nodetypes._base", "_handle_alive")}
+        unmarked = [
+            f"{os.path.basename(path)}:{line} {func}"
+            for module, func, path, line, marked in _api1_accesses()
+            if not marked and (module, func) not in helpers
+        ]
+        self.assertEqual(unmarked, [])
+
+    def test_the_helpers(self):
+        from rig.nodetypes._base import _handle_alive, _handle_valid
+
+        cmds.undoInfo(state=True, infinity=True)
+        live    = PyNode(cmds.createNode("transform", name="live"))
+        deleted = PyNode(cmds.createNode("multiplyDivide", name="deleted"))
+        freed   = PyNode(cmds.createNode("transform", name="freed"))
+        half    = object.__new__(Transform)
+        cmds.delete("deleted")
+        cases = {
+            "live": (live, True, True),
+            "deleted": (deleted, False, True),
+            "half_built": (half, False, False),
+        }
+        for label, (node, valid, alive) in cases.items():
+            with self.subTest(case=label):
+                self.assertIs(_handle_valid(vars(node)), valid)
+                self.assertIs(_handle_alive(vars(node)), alive)
+                self.assertIs(node.is_valid, valid)
+        self.assertIs(_handle_valid({}), False)
+        self.assertIs(_handle_alive({}), False)
+        cmds.undo()
+        self.assertTrue(deleted.is_valid)
+        cmds.file(new=True, force=True)
+        # a freed node: only its API 1.0 handle is read
+        probe = mock.Mock()
+        vars(freed)["_fn_set"] = probe
+        self.assertIs(_handle_valid(vars(freed)), False)
+        self.assertIs(_handle_alive(vars(freed)), False)
+        self.assertIs(freed.is_valid, False)
+        self.assertEqual(probe.mock_calls, [])

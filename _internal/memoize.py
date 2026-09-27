@@ -35,7 +35,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig.nodetypes._base import _plug_identity_name, _unwrapped, Attribute
+from rig.nodetypes._base import _handle_valid, _plug_identity_name, _unwrapped, Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
@@ -117,10 +117,11 @@ def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, in
     try:
         if (
             isinstance(node, DGNode)
-            and node._objhandle1.isValid()
+            and node._objhandle1.isValid()  # NW6: API 1.0 handle read (hot)
             and not node._mobject.hasFn(OpenMaya.MFn.kDagNode)
             and node._fn_set.name() == node_str
         ):
+            # NW6: API 1.0 handle read (hot)
             return (node._fn_set1.uuid().asString(), node._objhandle1.hashCode())
     except Exception:
         pass
@@ -255,11 +256,12 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
             return None
         owner = attr.__dict__["_node"]
         node  = _unwrapped(attr.node if owner is None else owner)
-        if not isinstance(node, DGNode) or not node._objhandle1.isValid():
+        if not isinstance(node, DGNode) or not _handle_valid(node.__dict__):
             return None
         mobject = mplug.attribute()
         name    = OpenMaya.MFnAttribute(mobject).name
-        attr1 = node._fn_set1.attribute(name)
+        attr1 = node._fn_set1.attribute(name)  # NW6: API 1.0 handle read
+        # NW6: API 1.0 handle read (the check keeps the handle and the fn set)
         return _AttrCheck(node._objhandle1, node._fn_set1, name, OpenMaya1.MObjectHandle(attr1))
     except Exception:
         return None
