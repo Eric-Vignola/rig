@@ -29,8 +29,9 @@ Op               Meaning
 ``a ^ b``        logical XOR network
 ``-a``           negate
 ``~a``           logical NOT network
-``a == b``       condition node (returns its output, NOT a bool!)
-``a != b``       condition node
+``a == b``       condition node (returns its output, NOT a bool!), except
+                 that one Maya plug compared with itself folds to ``True``
+``a != b``       condition node (one plug with itself: ``False``)
 ``<``, ``<=``,   condition nodes
 ``>``, ``>=``
 ================ ===========================================================
@@ -57,14 +58,20 @@ deleted!`` as a plug with an owner does.
 ``Plug`` overrides ``__hash__`` (a serial of the node, never reused for another
 node, and the attribute with its logical indices) and the truth value of an
 ``==`` / ``!=`` result (whether both operands are the same Maya plug) so that
-comparison-as-condition does not break dict / set usage. A dict or set still
-confirms a hash match with ``==``: a lookup through a second Plug object of the
-same plug builds an equal node (and raises for matrices), so key and look up
-with one object where that matters. A plug's identity follows the Maya plug:
-``Node("|T1|S").v`` and ``Node("|T2|S").v``, one plug read through two instance
-paths, are one key (their names still differ, each is named through the path
-it was read from), and a rename or an alias keeps the key. A plain str is not a
-plug's key: ``{plug: 1}["a.tx"]`` misses; a ``PlugList`` compares a str by name.
+comparison-as-condition does not break dict / set usage. A dict or set confirms
+a hash match with ``==``, and ``==`` / ``!=`` of two objects of one Maya plug
+fold to ``True`` / ``False`` with no node (as literal math folds; under
+``set_options(constant_folding=False)`` / ``force_nodes()`` they build the
+node, whose truth value is the same), so a lookup through a second Plug object
+of the same plug builds nothing, matrices included. A plain ``list`` /
+``tuple`` scan (``plug in [a, b, plug]``, ``.index``) still compares every
+DIFFERENT plug it passes with the DSL ``==``: an equal node each (and
+``InjectionError`` for matrices); a ``PlugList`` compares without building.
+A plug's identity follows the Maya plug: ``Node("|T1|S").v`` and
+``Node("|T2|S").v``, one plug read through two instance paths, are one key
+(their names still differ, each is named through the path it was read from),
+and a rename or an alias keeps the key. A plain str is not a plug's key:
+``{plug: 1}["a.tx"]`` misses; a ``PlugList`` compares a str by name.
 """
 
 from __future__ import annotations
@@ -1153,32 +1160,64 @@ class Plug(Attribute):
 
     # -- comparison operators (build condition nodes) -- #
     #
-    # NOTE: __eq__ on a Plug returns a *condition-node Plug*, NOT a bool.
-    # This is intentional -- see the module docstring. ``__hash__`` is
+    # NOTE: __eq__ on a Plug returns a *condition-node Plug*, NOT a bool,
+    # unless both operands are the same Maya plug: then it folds to ``True``
+    # (``__ne__``: ``False``) and builds nothing, as literal math folds
+    # (``constant_folding``). See the module docstring. ``__hash__`` is
     # overridden above so dict/set membership still works.
 
-    def __eq__(self, other: Any) -> "Plug":
+    def __eq__(self, other: Any) -> "Plug | bool":
+        """``self == other``: the output of an ``equal`` (``condition``) node
+        comparing the two, whose truth value says whether they are the same
+        Maya plug (see ``_identity``).
+
+        When ``other`` is the same Maya plug as ``self`` (the same plug read
+        twice, ``node.tx == node.tx``, or through two instance paths, an alias,
+        a typed Attribute, or a ComponentPlug element and the
+        ``controlPoints[k]`` plug of its storage; see ``_same_plug``), the
+        comparison folds to ``True`` and builds no node, so a dict or set
+        lookup through a second object of a plug builds nothing. Under
+        ``set_options(constant_folding=False)`` / ``with force_nodes():`` it
+        builds the node as for two plugs (its truth value is then True). A
+        deleted or freed plug raises as it did before the fold.
+        """
         from rig._internal.math_nodes import _condition_op
         from rig._internal.node import Node
 
+        if isinstance(other, Attribute):
+            # names both first: a deleted node raises as the names do
+            same = _same_plug(self, other)
+            if same and _lazy().container.ContainerOptions.constant_folding:
+                return True
+            result = _condition_op(self, "==", other)
+            if isinstance(result, Plug):
+                result._identity = same
+            return result
         result = _condition_op(self, "==", other)
-        if isinstance(result, Plug):
-            if isinstance(other, Attribute):
-                result._identity = _same_plug(self, other)
-            elif isinstance(other, Node):
-                result._identity = str(self) == str(other)
+        if isinstance(result, Plug) and isinstance(other, Node):
+            result._identity = str(self) == str(other)
         return result
 
-    def __ne__(self, other: Any) -> "Plug":
+    def __ne__(self, other: Any) -> "Plug | bool":
+        """``self != other``: the output of a ``condition`` node comparing the
+        two, whose truth value says whether they are different Maya plugs (see
+        ``_identity``). Two objects of one Maya plug fold to ``False`` and build
+        no node, by the rules ``__eq__`` folds to ``True`` with."""
         from rig._internal.math_nodes import _condition_op
         from rig._internal.node import Node
 
+        if isinstance(other, Attribute):
+            # names both first: a deleted node raises as the names do
+            same = _same_plug(self, other)
+            if same and _lazy().container.ContainerOptions.constant_folding:
+                return False
+            result = _condition_op(self, "!=", other)
+            if isinstance(result, Plug):
+                result._identity = not same
+            return result
         result = _condition_op(self, "!=", other)
-        if isinstance(result, Plug):
-            if isinstance(other, Attribute):
-                result._identity = not _same_plug(self, other)
-            elif isinstance(other, Node):
-                result._identity = str(self) != str(other)
+        if isinstance(result, Plug) and isinstance(other, Node):
+            result._identity = str(self) != str(other)
         return result
 
     # ``list`` / ``set`` / ``dict`` containment calls ``PyObject_IsTrue()`` on
@@ -1186,7 +1225,9 @@ class Plug(Attribute):
     # Ordinary plugs stay truthy; only a comparison RESULT reports whether its
     # two operands denote the same Maya plug (the same node, attribute and
     # logical indices, whatever the instance path each is named through; see
-    # ``_same_plug``). The class default keeps ``bool(plug)`` off
+    # ``_same_plug``). With constant folding on, a comparison of one plug with
+    # itself returns the bool and no result exists, so a result built with it
+    # on is always False (``!=``: True). The class default keeps ``bool(plug)`` off
     # ``__getattr__`` (a child / sibling / container lookup).
     _identity = True
 

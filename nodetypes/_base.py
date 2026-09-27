@@ -1641,8 +1641,9 @@ class Attribute(str):
         # the Maya plug's identity, not the name: one key through every instance
         # path, kept across a rename (see `_plug_hash`). Salted, so a typed attr
         # and a DSL Plug of one plug are two keys: a dict or set lookup that
-        # found them alike would compare them with `Plug.__eq__`, which builds
-        # an equal node (and raises for matrices)
+        # found them alike would compare them with `Plug.__eq__`, which folds
+        # one plug to True but, under `force_nodes()` / `constant_folding=False`,
+        # builds an equal node (and raises for matrices)
         return hash(("Attribute", _plug_hash(self)))
 
     def __eq__(self, other: Any) -> bool:
