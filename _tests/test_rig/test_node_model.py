@@ -26,7 +26,8 @@ Each class names the round-4a step it belongs to:
   lookup order, the publish guard), ``Node.wrap`` on the metaclass; round 3's
   one-key plug hash is kept.
 * M4B: a Plug's elements are Plugs built once (D29, ``_CHILD_CLASS``) in the
-  state round 3 gave them.
+  state round 3 gave them, and ``_cast`` is the one cast core (D12) the
+  ``Node`` factory calls without PyNode's class call.
 """
 
 import ast
@@ -1674,7 +1675,8 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
     state round 3 gave them (``_new_attr`` + ``_inherit_owner``: owner, handles,
     naming through the owner's path), for Plug and typed Attribute parents, owned
     or not, on DG, DAG, instanced (E3), dynamic (E7) and component (E6) attrs,
-    deleted to the undo queue and undone (E1), freed (E2)."""
+    deleted to the undo queue and undone (E1), freed (E2); and D12, the one cast
+    core (``_cast``) the ``Node`` factory calls without PyNode's class call."""
 
     TEST_START_NEW_SCENE = True
 
@@ -1935,3 +1937,85 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
                 ):
                     op()
                 self.assertEqual(in_base.call_count + in_plug.call_count, count)
+
+    def test_node_factory_makes_one_cast_frame(self):
+        # D12: Node(x) runs the cast core once, without PyNode's class call;
+        # PyNode(x) is that class call and the core
+        base = _base_module()
+        cmds.createNode("transform", name="a")
+        cast = base._cast.__code__
+        new  = PyNode.__new__.__code__
+
+        def frames(func):
+            seen = []
+
+            def profile(frame, event, arg):
+                if event == "call" and frame.f_code in (cast, new):
+                    seen.append("_cast" if frame.f_code is cast else "PyNode.__new__")
+
+            previous = sys.getprofile()
+            sys.setprofile(profile)
+            try:
+                func()
+            finally:
+                sys.setprofile(previous)
+            return seen
+
+        for label, value in (("name", "a"), ("mobject", _mobject("a")), ("dotted", "a.tx")):
+            with self.subTest(value=label):
+                self.assertEqual(frames(lambda: Node(value)), ["_cast"])
+                self.assertEqual(frames(lambda: PyNode(value)), ["PyNode.__new__", "_cast"])
+        node = Node("a")
+        self.assertEqual(frames(lambda: Node(node)), [])
+        self.assertEqual(frames(lambda: Node(node.tx)), [])
+        self.assertEqual(frames(lambda: PyNode(node)), ["PyNode.__new__", "_cast"])
+
+    def test_one_cast_core_gives_one_result(self):
+        # PyNode(x) and the factory's cast are one function: same classes, same
+        # errors; PyNode keeps its signature
+        base = _base_module()
+        cube = cmds.polyCube(name="cube", ch=False)[0]
+        for value in (cube, "cubeShape", _mobject(cube), cmds.ls(cube, uuid=True)[0]):
+            with self.subTest(value=str(value)):
+                self.assertIs(type(base._cast(PyNode, value)), type(PyNode(value)))
+                self.assertIs(type(Node(value)), type(PyNode(value)))
+        self.assertIs(type(base._cast(PyNode, "cube.tx")), base.Attribute)
+        for bad in (3, None):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(ValueError, "is not a str, MObject"):
+                    PyNode(bad)
+                with self.assertRaisesRegex(ValueError, "is not a str, MObject"):
+                    Node(bad)
+        gone    = cmds.createNode("transform", name="gone")
+        missing = cmds.ls(gone, uuid=True)[0]
+        cmds.delete(gone)
+        cmds.flushUndo()
+        errors = []
+        for cast in (Node, PyNode, lambda value: base._cast(PyNode, value)):
+            try:
+                cast(missing)
+            except Exception as exc:
+                errors.append((type(exc), str(exc)))
+        self.assertEqual(len(errors), 3)
+        self.assertEqual(errors[0], errors[1])
+        self.assertEqual(errors[0], errors[2])
+        for args, kwargs in ((("x",), {}), ((), {"k": 1})):
+            with self.subTest(extra=(args, kwargs)):
+                with self.assertRaisesRegex(TypeError, r"takes exactly one argument"):
+                    PyNode(cube, *args, **kwargs)
+        self.assertIs(type(PyNode(obj=cube)), Transform)
+        with self.assertRaises(TypeError):
+            PyNode()
+
+    def test_a_patched_pynode_global_leaves_the_factory_alone(self):
+        # a test counts Attribute.node's lazy casts by patching the module
+        # global PyNode: the factory neither calls it nor breaks
+        base = _base_module()
+        cmds.createNode("transform", name="a")
+        counting = mock.Mock(side_effect=PyNode)
+        with mock.patch.object(base, "PyNode", counting):
+            node = Node("a")
+            self.assertIs(type(node), Transform)
+            self.assertEqual(counting.call_count, 0)
+            self.assertEqual(str(Plug("a.tx")), "a.translateX")
+            self.assertEqual(counting.call_count, 1)

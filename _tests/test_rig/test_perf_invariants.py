@@ -1310,8 +1310,8 @@ class TestPlugNodeReuse(MayaTestCase):
         super().tearDown()
 
     def _casts(self, func):
-        """The ``PyNode`` casts ``Attribute.node`` (and the ``Node`` factory) make
-        while ``func`` runs."""
+        """The ``PyNode`` casts ``Attribute.node`` makes while ``func`` runs (the
+        ``Node`` factory calls the cast core ``_cast`` itself, round 4a M4B)."""
         # re-pinned (round 4a M4, C8): Plug.node is gone, the lazy cast is
         # Attribute.node's, through the nodetypes._base global
         cast = mock.Mock(side_effect=PyNode)
