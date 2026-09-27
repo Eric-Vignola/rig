@@ -25,6 +25,8 @@ Each class names the round-4a step it belongs to:
   gone, ``Container`` is a ``DGNode`` subclass (symmetric equality, owner,
   lookup order, the publish guard), ``Node.wrap`` on the metaclass; round 3's
   one-key plug hash is kept.
+* M4B: a Plug's elements are Plugs built once (D29, ``_CHILD_CLASS``) in the
+  state round 3 gave them.
 """
 
 import ast
@@ -999,7 +1001,7 @@ class TestMergeReviewFixes(MayaTestCase):
     def test_owner_propagation_of_typed_accessors(self):
         # the accessors of a node's plugs and attrs keep the node as their owner,
         # through PyNode and (M4) through the Node factory, which is the same
-        # typed node; the class of a Plug's element_by_* result is M4B's (D29)
+        # typed node; a Plug's element_by_* result is a Plug (M4B, D29)
         attribute_cls = _base_module().Attribute
         for factory in (PyNode, Node):
             with self.subTest(factory=factory.__name__):
@@ -1017,7 +1019,8 @@ class TestMergeReviewFixes(MayaTestCase):
                 self.assertIs(type(element), Plug)
                 self.assertIs(element.node, pma)
                 element = pma.input1D.element_by_physical_index(0)
-                self.assertIsInstance(element, attribute_cls)
+                # M4B (D29): a Plug's element is a Plug
+                self.assertIs(type(element), Plug)
                 self.assertIs(element.node, pma)
                 element = pma.find_attr("input1D").element_by_physical_index(0)
                 self.assertIs(type(element), attribute_cls)
@@ -1650,3 +1653,285 @@ class TestOneNodeHierarchy(MayaTestCase):
                     RuntimeError, r"^Container node \(freed by a new scene.*already deleted!$"
                 ):
                     op()
+
+
+def _oracle(parent, mplug, cls):
+    """What round 3 built for a child / element / parent plug `mplug` of `parent`:
+    a fresh `cls` of it handed `parent`'s owner, handles and path naming."""
+    base = _base_module()
+    return base._inherit_owner(parent, base._new_attr(cls, mplug))
+
+
+def _name_or_error(attr):
+    try:
+        return str(attr)
+    except Exception as exc:
+        return (type(exc).__name__, str(exc))
+
+
+class TestOwnerPropagatingConstruction(MayaTestCase):
+    """M4B (D29): a Plug's elements are Plugs built once (``_CHILD_CLASS``), in the
+    state round 3 gave them (``_new_attr`` + ``_inherit_owner``: owner, handles,
+    naming through the owner's path), for Plug and typed Attribute parents, owned
+    or not, on DG, DAG, instanced (E3), dynamic (E7) and component (E6) attrs,
+    deleted to the undo queue and undone (E1), freed (E2)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _scene(self):
+        cmds.createNode("transform", name="t")
+        pma = cmds.createNode("plusMinusAverage", name="pma")
+        for i in range(3):
+            cmds.setAttr(f"{pma}.input1D[{i}]", i)
+        top = cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="S", parent=top)
+        cmds.createNode("transform", name="T2")
+        cmds.parent("T1|S", "T2", add=True, relative=True)
+        cmds.createNode("transform", name="dyn")
+        cmds.addAttr("dyn", longName="dc", attributeType="compound", numberOfChildren=2, multi=True)
+        cmds.addAttr("dyn", longName="dcx", attributeType="double", parent="dc")
+        cmds.addAttr("dyn", longName="dcy", attributeType="double", parent="dc")
+        cmds.addAttr("dyn", longName="dv", attributeType="double3")
+        for axis in "xyz":
+            cmds.addAttr("dyn", longName=f"dv{axis}", attributeType="double", parent="dv")
+        cmds.addAttr("dyn", longName="arr", attributeType="double", multi=True)
+        cmds.setAttr("dyn.arr[2]", 1)
+        cmds.setAttr("dyn.dc[0].dcx", 1)
+        cmds.polyCube(name="cube", ch=False)
+        cmds.nurbsPlane(name="surf", ch=False, u=3, v=3)
+
+    # parent label -> (parent factory, kind): a "multi" parent is read by index,
+    # a "compound" parent by child index and name
+    _PARENTS = {
+        "owned multi":            (lambda: Node("pma").input1D, "multi"),
+        "owned multi compound":   (lambda: Node("pma").input3D, "multi"),
+        "owned compound":         (lambda: Node("t").t, "compound"),
+        "owned element":          (lambda: Node("pma").input3D[1], "compound"),
+        "owned world matrix":     (lambda: Node("t").worldMatrix, "multi"),
+        "instanced T2 compound":  (lambda: Node("|T2|S").t, "compound"),
+        "instanced T2 matrix":    (lambda: Node("|T2|S").worldMatrix, "multi"),
+        "instanced T1 matrix":    (lambda: Node("|T1|S").worldMatrix, "multi"),
+        "dynamic multi":          (lambda: Node("dyn").arr, "multi"),
+        "dynamic compound multi": (lambda: Node("dyn").dc, "multi"),
+        "dynamic element":        (lambda: Node("dyn").dc[0], "compound"),
+        "dynamic compound":       (lambda: Node("dyn").dv, "compound"),
+        "mesh vtx":               (lambda: Node("cube").vtx, "multi"),
+        "unowned multi":          (lambda: Plug("pma.input1D"), "multi"),
+        "unowned compound":       (lambda: Plug("t.t"), "compound"),
+        "unowned instanced":      (lambda: Plug("|T2|S.t"), "compound"),
+        "unowned dynamic":        (lambda: Plug("dyn.dv"), "compound"),
+        "unowned dynamic multi":  (lambda: Plug("dyn.arr"), "multi"),
+        "plug of a typed attr":   (lambda: Plug(PyNode("|T2|S").find_attr("t")), "compound"),
+        "typed multi":            (lambda: PyNode("pma").find_attr("input1D"), "multi"),
+        "typed compound":         (lambda: PyNode("t").find_attr("t"), "compound"),
+        "typed instanced":        (lambda: PyNode("|T2|S").find_attr("t"), "compound"),
+        "typed instanced matrix": (lambda: PyNode("|T2|S").find_attr("worldMatrix"), "multi"),
+        "typed dynamic":          (lambda: PyNode("dyn").find_attr("dv"), "compound"),
+        "typed dynamic multi":    (lambda: PyNode("dyn").find_attr("arr"), "multi"),
+        "named typed multi":      (lambda: _base_module().Attribute("pma.input1D"), "multi"),
+    }
+
+    def _cases(self, parent, kind):
+        """{label: (op, [(mplug, class)])}: every element / child / parent
+        accessor of `parent`, with the MPlugs and classes round 3 built."""
+        Attribute = _base_module().Attribute
+        cls       = Plug if isinstance(parent, Plug) else Attribute
+        mplug     = parent.plug
+        if kind == "multi":
+            cases = {
+                "[1]": (lambda: parent[1], [(mplug.elementByLogicalIndex(1), cls)]),
+                "[0:2]": (
+                    lambda: parent[0:2],
+                    [(mplug.elementByLogicalIndex(i), cls) for i in (0, 1)],
+                ),
+                "[[2, 0]]": (
+                    lambda: parent[[2, 0]],
+                    [(mplug.elementByLogicalIndex(i), cls) for i in (2, 0)],
+                ),
+                "element_by_logical_index(2)": (
+                    lambda: parent.element_by_logical_index(2),
+                    [(mplug.elementByLogicalIndex(2), cls)],
+                ),
+            }
+            try:
+                physical = mplug.elementByPhysicalIndex(0)
+            except RuntimeError:
+                physical = None  # no element yet, or component storage (controlPoints)
+            if physical is not None:
+                cases["element_by_physical_index(0)"] = (
+                    lambda: parent.element_by_physical_index(0),
+                    [(physical, cls)],
+                )
+            return cases
+        count = mplug.numChildren()
+        name  = OpenMaya.MFnAttribute(mplug.child(1).attribute()).name
+        cases = {
+            "child(1)": (lambda: parent.child(1), [(mplug.child(1), cls)]),
+            f".{name}": (lambda: getattr(parent, name), [(mplug.child(1), cls)]),
+            # the parent of a child is an Attribute, as round 3 built it
+            "child(0).get_parent()": (lambda: parent.child(0).get_parent(), [(mplug, Attribute)]),
+        }
+        if cls is Plug:
+            # only a Plug indexes a compound's children
+            cases["[1]"]   = (lambda: parent[1], [(mplug.child(1), cls)])
+            cases["[-1]"]  = (lambda: parent[-1], [(mplug.child(count - 1), cls)])
+            cases["[0:2]"] = (lambda: parent[0:2], [(mplug.child(i), cls) for i in (0, 1)])
+        return cases
+
+    def _assert_built_as_round_3(self, parent, built, expected):
+        from rig._internal.list import PlugList
+
+        items = built if isinstance(built, list) else [built]
+        if isinstance(built, list):
+            self.assertIs(type(built), PlugList if isinstance(parent, Plug) else list)
+        self.assertEqual(len(items), len(expected))
+        for item, (mplug, cls) in zip(items, expected):
+            oracle = _oracle(parent, mplug, cls)
+            # the state first: naming an unowned plug casts its owner
+            self.assertIs(type(item), type(oracle))
+            self.assertEqual(list(vars(item)), list(vars(oracle)))
+            self.assertEqual(str.__str__(item), str.__str__(oracle))
+            for key, value in vars(oracle).items():
+                if key in ("_node", "_handle1", "_attr1"):
+                    self.assertIs(vars(item)[key], value, key)
+                elif key == "_mplug":
+                    self.assertEqual(vars(item)[key], mplug)
+                else:
+                    self.assertEqual(vars(item)[key], value, key)
+            self.assertEqual(_name_or_error(item), _name_or_error(oracle))
+            if vars(parent)["_node"] is not None:
+                self.assertIs(item.node, parent.node)
+
+    def _sweep(self, parents):
+        for label, (make, kind) in parents.items():
+            for op_label in self._cases(make(), kind):
+                with self.subTest(parent=label, op=op_label):
+                    parent = make()
+                    op, expected = self._cases(parent, kind)[op_label]
+                    self._assert_built_as_round_3(parent, op(), expected)
+
+    def test_elements_children_and_parents_are_built_as_round_3(self):
+        self._scene()
+        self._sweep(self._PARENTS)
+
+    def test_on_a_node_deleted_to_the_undo_queue_and_undone(self):
+        # E1: the plugs of a deleted node still build (its MPlugs are valid in
+        # the undo queue) as round 3 built them, and again after the undo
+        self._scene()
+        cmds.undoInfo(state=True, infinity=True)
+        held = {
+            label: (make(), kind)
+            for label, (make, kind) in self._PARENTS.items()
+            if not label.startswith(("instanced", "mesh", "typed instanced", "plug of"))
+        }
+        cmds.undoInfo(openChunk=True)
+        cmds.delete("pma", "t", "dyn")
+        cmds.undoInfo(closeChunk=True)
+        parents = {label: (lambda p=p: p, kind) for label, (p, kind) in held.items()}
+        self._sweep(parents)
+        cmds.undo()
+        self._sweep(parents)
+
+    def test_held_across_a_new_scene_raise(self):
+        # E2: every accessor of a parent a new scene freed raises the freed
+        # error (its MPlug points at freed memory) before it builds anything
+        self._scene()
+        held = {label: make() for label, (make, _) in self._PARENTS.items()}
+        cmds.file(new=True, force=True)
+        for _ in range(50):
+            cmds.createNode("multiplyDivide")  # reuse the freed memory
+        ops = {
+            "[1]":                          lambda p: p[1],
+            "[0:2]":                        lambda p: p[0:2],
+            "child(0)":                     lambda p: p.child(0),
+            "element_by_logical_index(0)":  lambda p: p.element_by_logical_index(0),
+            "element_by_physical_index(0)": lambda p: p.element_by_physical_index(0),
+            "get_parent()":                 lambda p: p.get_parent(),
+        }
+        for label, parent in held.items():
+            for op_label, op in ops.items():
+                with self.subTest(parent=label, op=op_label):
+                    with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
+                        op(parent)
+
+    def test_the_child_class(self):
+        from rig._internal.plug import ComponentPlug
+
+        Attribute = _base_module().Attribute
+        self.assertIs(Attribute._CHILD_CLASS, Attribute)
+        self.assertIs(Plug._CHILD_CLASS, Plug)
+        self.assertIs(ComponentPlug._CHILD_CLASS, Plug)
+        self._scene()
+        # a component handle's element by index is the flat storage, a Plug;
+        # its element by coordinates stays the ComponentPlug element
+        handle = Node("surf").cv
+        flat   = handle.element_by_logical_index(3)
+        self.assertIs(type(handle), ComponentPlug)
+        self.assertIs(type(flat), Plug)
+        self.assertIs(flat.node, handle.node)
+        self.assertEqual(str(flat), "surfShape.controlPoints[3]")
+        self.assertIs(type(handle[1, 2]), ComponentPlug)
+        self.assertIs(handle[1, 2].node, handle.node)
+        # a Plug's element by index is a Plug, a typed attr's an Attribute
+        self.assertIs(type(Node("pma").input1D.element_by_physical_index(0)), Plug)
+        self.assertIs(type(PyNode("pma").find_attr("input1D").element_by_physical_index(0)), Attribute)
+
+    def test_plugs_are_never_cached(self):
+        # D30: every lookup builds a new Plug; the child caches hold Attributes
+        self._scene()
+        Attribute = _base_module().Attribute
+        multi = Node("pma").input1D
+        comp  = Node("t").t
+        self.assertIsNot(multi[1], multi[1])
+        self.assertIsNot(comp[1], comp[1])
+        self.assertIsNot(comp.child(1), comp.child(1))
+        self.assertIsNot(comp.translateY, comp.translateY)
+        for cache in ("_Attribute__child_id_dict", "_Attribute__child_name_dict"):
+            with self.subTest(cache=cache):
+                self.assertTrue(vars(comp)[cache])
+                self.assertTrue(all(type(v) is Attribute for v in vars(comp)[cache].values()))
+        self.assertEqual(vars(multi)["_Attribute__child_id_dict"], {})
+
+    def test_a_slice_keeps_its_parent_multi(self):
+        # the list results are PlugLists; a multi's slice is tagged with it
+        self._scene()
+        multi = Node("pma").input1D
+        self.assertIs(multi[0:2]._parent_multi, multi)
+        self.assertIsNone(multi[[0, 1]]._parent_multi)
+        self.assertIsNone(Node("t").t[0:2]._parent_multi)
+        self.assertEqual(list(multi[5:5]), [])
+        self.assertIs(multi[5:5]._parent_multi, multi)
+
+    def test_an_element_is_built_once(self):
+        # D29: one construction per element (round 3 built an Attribute, then
+        # a Plug of it)
+        import rig._internal.plug as plug_module
+
+        base = _base_module()
+        self._scene()
+        multi    = Node("pma").input1D
+        unowned  = Plug("pma.input1D")
+        typed    = PyNode("pma").find_attr("input1D")
+        compound = Node("t").t
+        compound.translateY
+        compound.child(1)
+        for label, op, count in (
+            ("pma.input1D[3]", lambda: multi[3], 1),
+            ("pma.input1D[0:3]", lambda: multi[0:3], 3),
+            ("pma.input1D[[0, 2]]", lambda: multi[[0, 2]], 2),
+            ("unowned[3]", lambda: unowned[3], 1),
+            ("typed[3]", lambda: typed[3], 1),
+            ("element_by_logical_index", lambda: multi.element_by_logical_index(3), 1),
+            ("t[0]", lambda: compound[0], 1),
+            ("t[:]", lambda: compound[:], 3),
+            ("t.child(1) (cached child)", lambda: compound.child(1), 1),
+            ("t.translateY (cached child)", lambda: compound.translateY, 1),
+        ):
+            with self.subTest(op=label):
+                in_base = mock.Mock(wraps=base._new_attr)
+                in_plug = mock.Mock(wraps=plug_module._new_attr)
+                with mock.patch.object(base, "_new_attr", in_base), mock.patch.object(
+                    plug_module, "_new_attr", in_plug
+                ):
+                    op()
+                self.assertEqual(in_base.call_count + in_plug.call_count, count)
