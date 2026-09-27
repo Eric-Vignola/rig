@@ -281,7 +281,7 @@ class PlugList(list):
         Per-element values follow each element's ``>> None`` semantic:
 
         - :class:`Plug` => :meth:`Plug.get` (numpy-shaped value).
-        - :class:`Node` => underlying typed ``DGNode``.
+        - a node => the node itself (``node >> None``).
         - Plain numbers / ``None`` / strings => passthrough.
 
         The per-element results are then stacked into one homogeneous

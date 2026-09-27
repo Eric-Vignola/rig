@@ -31,16 +31,15 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # API 1.0 used because API 2.0 MObjects can crash Maya after a new-scene
 # load (see rig.nodetypes.dg_node._cache_api1_objects). API 2.0 is only used
-# on a wrapper's MObject once its API 1.0 handle says the node is valid.
+# on a node object's MObject once its API 1.0 handle says the node is valid.
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig.nodetypes._base import _handle_valid, _plug_identity_name, _unwrapped, Attribute
+from rig.nodetypes._base import _handle_valid, _plug_identity_name, Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
 from rig._internal.list import PlugList
-from rig._internal.node import Node
 from rig._internal.types import (
     _is_list,
     _is_node,
@@ -74,8 +73,7 @@ def _stable_key(obj: Any) -> Any:
     if _is_plug(obj):
         return _attribute_key(obj)
     if _is_node(obj):
-        node = obj
-        return ("node", _node_identity(node._dg_node.name))
+        return ("node", _node_identity(obj.name))
     if _is_list(obj):
         return tuple(_stable_key(x) for x in obj)
     if _is_sequence(obj):
@@ -105,15 +103,14 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
 
 def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, int]]:
     """``_node_identity(node_str)`` read from the API 1.0 objects of the DG node
-    wrapper ``attr.full_name`` just took ``node_str`` from, or None.
+    object (``attr``'s owner) ``attr.full_name`` just took ``node_str`` from, or
+    None.
 
-    A DG node's name names no other node, so when the live wrapper's own name
-    is ``node_str``, resolving that name finds the wrapper's node. A DAG path
-    can go stale (an instance removed), so a DAG node resolves by name.
+    A DG node's name names no other node, so when the live node object's own
+    name is ``node_str``, resolving that name finds its node. A DAG path can go
+    stale (an instance removed), so a DAG node resolves by name.
     """
     node = attr._node
-    if isinstance(node, Node):
-        node = node._dg_node
     try:
         if (
             isinstance(node, DGNode)
@@ -255,7 +252,7 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
         if not mplug.isDynamic:
             return None
         owner = attr.__dict__["_node"]
-        node  = _unwrapped(attr.node if owner is None else owner)
+        node  = attr.node if owner is None else owner
         if not isinstance(node, DGNode) or not _handle_valid(node.__dict__):
             return None
         mobject = mplug.attribute()

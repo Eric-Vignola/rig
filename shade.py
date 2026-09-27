@@ -59,7 +59,7 @@ is cloned onto the same node as a hidden ``__attr__`` of the same type and
 given back the next time the material becomes a type that has it. One
 ``cmds.warning`` names what was parked (``park=False`` drops the values and
 disconnects the wires instead, sources kept; ``strict=True`` refuses
-anything lossy). Live ``Node`` / ``Plug`` wrappers of the old node die
+anything lossy). Live ``Node`` / ``Plug`` objects of the old node die
 (``already deleted!``); the spec is the surviving handle.
 
 Exclusive membership means faces into the engine that already owns their
