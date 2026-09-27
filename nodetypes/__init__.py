@@ -2,7 +2,7 @@
 Move all node types into the same namespace
 """
 
-from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes._base import Attribute, Node, PyNode
 from rig.nodetypes.blendshape import BlendShape
 from rig.nodetypes.choice import Choice
 from rig.nodetypes.dag_node import DAGNode

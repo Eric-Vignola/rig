@@ -4,7 +4,10 @@
 
 Two user-facing classes carry the language:
 
-  * :class:`Node` -- wraps any Maya node (any DG / DAG / typed subclass).
+  * :class:`Node` -- the node factory and the root of every node class:
+    ``Node("pCube1")`` returns the typed node (``Transform``, ``Mesh``,
+    ...), which carries both the typed API and the DSL; ``Node(x) is x``
+    for a node object, and ``isinstance(x, Node)`` holds for every node.
     Attribute access (``node.translate``) returns a :class:`Plug`.
     Assignment (``node.tx = 5``) is sugar for ``node.tx << 5``.
     Spec injection (``node << Float("blend")``) adds an attribute.
@@ -14,11 +17,11 @@ Two user-facing classes carry the language:
     *child* attribute first; if not found, falls back to a *sibling* on
     the same node -- so ``decompose(node.matrix).outputRotate`` works
     even if the decomposeMatrix was returned via its ``.outputTranslate``.
-    ``plug.node`` is the Node the plug was read from (``node.tx.node is
-    node``), and an instanced node names its plugs through that Node's path.
+    ``plug.node`` is the node the plug was read from (``node.tx.node is
+    node``), and an instanced node names its plugs through that node's path.
 
-  * :class:`Container` -- a subclass of :class:`Node` for Maya container
-    nodes. Adds the (DORMANT in v1) publish API on top of Node.
+  * :class:`Container` -- a node class (a ``DGNode`` subclass) for Maya
+    container nodes. Adds the (DORMANT in v1) publish API.
 
   * :class:`PlugList` -- vectorised broadcast list (NumPy-style strict).
 
