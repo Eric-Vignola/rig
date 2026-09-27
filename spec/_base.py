@@ -30,15 +30,16 @@ from maya import cmds
 LOGGER = logging.getLogger(__name__)
 
 
-def _plug_of(node_string: str, long_name: str, node: Any = None) -> Any:
+def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = None) -> Any:
     """The :class:`Plug` for ``node_string.long_name``, built from the
     strings rather than through ``Node.__getattr__`` so that attributes
     with a leading underscore (``__parked__``) resolve too. ``node``, the node
     object ``node_string`` names, hands it the handle it checks its node with
-    (see ``_ensure_owner_alive``), which it would otherwise look up by name."""
+    (see ``_ensure_owner_alive``), which it would otherwise look up by name, and
+    ``added``, the attr ``add_attr`` returned for it, the handle of its attribute."""
     from rig._internal.plug import _named_plug  # deferred: plug.py imports rig.spec
 
-    return _named_plug(f"{node_string}.{long_name}", node)
+    return _named_plug(f"{node_string}.{long_name}", node, long_name, added)
 
 
 class _AttrSpec:
@@ -181,6 +182,7 @@ class _AttrSpec:
                 return _plug_of(node_string, long_name, wrap_node)
 
         # ---- Compound (Vector / Quat / Color / Euler) ---- #
+        added = None
         if self.compound:
             self._add_compound(node_string, kargs, multi, default_value, wrap_node)
         else:
@@ -196,14 +198,14 @@ class _AttrSpec:
                 kargs["multi"] = True
             # Use DGNode.add_attr (rename-safe wrapper that uses self.name).
             kargs.pop("longName", None)
-            wrap_node.add_attr(long_name, **kargs)
+            added = wrap_node.add_attr(long_name, **kargs)
 
         # ---- Multi pre-sizing ---- #
         if multi and self.size is not None:
             self._presize_multi(node_string, long_name, default_value, wrap_node)
 
         # ---- Note string set ---- #
-        new_plug = _plug_of(node_string, long_name, wrap_node)
+        new_plug = _plug_of(node_string, long_name, wrap_node, added)
         if self.notes is not None:
             new_plug << self.notes
 

@@ -230,12 +230,17 @@ def _maybe_translate_component(name: str) -> Any:
         return name  # API failure -- let Attribute raise
 
 
-def _named_plug(name: str, node: Any = None) -> "Plug":
+def _named_plug(
+    name: str, node: Any = None, attr_name: Any = None, known: Any = None
+) -> "Plug":
     """``Plug(name)``, for a plug of ``node``, a node object the caller holds (a
     ``Node`` or a ``DGNode``): checked through that node's API 1.0 handle (see
     ``_ensure_owner_alive``) instead of one ``Attribute.__init__`` looks up by
     name. The name resolves as ``Plug.__init__`` resolves it (a component name
-    to its ``controlPoints`` / ``uvpt`` element). Without a node, ``Plug(name)``."""
+    to its ``controlPoints`` / ``uvpt`` element). Without a node, ``Plug(name)``.
+    ``attr_name`` is the name of its attribute, and ``known`` an Attribute of the
+    same attribute the caller has (the one a spec's ``add_attr`` found), whose
+    attribute handle it takes (see ``_attr_handle``)."""
     held   = None if node is None else _unwrapped(node).__dict__
     handle = None if held is None else held.get("_objhandle1")
     if handle is None:
@@ -245,8 +250,14 @@ def _named_plug(name: str, node: Any = None) -> "Plug":
         sel = OpenMaya.MSelectionList()
         sel.add(mplug)
         mplug = sel.getPlug(0)
-    plug = str.__new__(Plug, name)
-    attr1 = _attr_handle(mplug, handle, held.get("_fn_set1"))
+    plug  = str.__new__(Plug, name)
+    attr1 = None if known is None else known.__dict__.get("_attr1")
+    if (
+        attr1 is None
+        or not attr1.isAlive()
+        or known.__dict__["_mplug"].attribute() != mplug.attribute()
+    ):
+        attr1 = _attr_handle(mplug, handle, held.get("_fn_set1"), attr_name)
     plug.__dict__.update(_attr_state(mplug, handle, attr1))
     return plug
 

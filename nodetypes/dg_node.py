@@ -517,7 +517,8 @@ class DGNode(metaclass=NodeMeta):
             else:
                 # a dynamic attr keeps a handle of its attribute, which a delete
                 # frees once it leaves the undo queue (see `_ensure_owner_alive`)
-                attr_obj.__dict__["_attr1"] = _attr_handle(plug, fn1=self._fn_set1)
+                name = attr if type(attr) is str and "." not in attr else None
+                attr_obj.__dict__["_attr1"] = _attr_handle(plug, fn1=self._fn_set1, name=name)
 
         return _filtered(attr_obj, category, data_type)
 
