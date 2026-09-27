@@ -39,13 +39,15 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
+from rig.nodetypes import dg_node as _dg_node_module
 from rig.nodetypes._base import (
     _PLAIN_NODE_NAME,
     _path_instance_number,
     Attribute,
     is_valid_maya_uid,
 )
-from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.dg_node import _create_template, DGNode
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
 
@@ -624,18 +626,7 @@ class _ContainerStack:
         # shapes / lights / objectSets are deliberately excluded so they're
         # never tagged and never eligible for cleanup().
         if node_type in _GC_ELIGIBLE_TYPES:
-            try:
-                cmds.addAttr(
-                    node_name,
-                    longName      = _RIG_TAG,
-                    attributeType = "bool",
-                    hidden        = True,
-                )
-                cmds.setAttr(f"{node_name}.{_RIG_TAG}", True, lock=True)
-            except RuntimeError:
-                # Some node types reject addAttr; without the tag the node
-                # just won't be GC-eligible. That's a safe failure mode.
-                pass
+            _gc_tag(node_name)
 
         # Add to the leaf real container (and record on every frame) by default.
         if container is None or container:
@@ -1035,6 +1026,158 @@ class _ContainerStack:
 
 # Module-level singleton -- the public ``container`` name.
 container = _ContainerStack()
+
+
+# --------------------------------------------------------------------- #
+#  Typed creators (D13): ``Transform.create()`` & co. inside a scope
+# --------------------------------------------------------------------- #
+
+
+def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict) -> tuple:
+    """Call ``fn`` and return ``(result, created)``: the full names of the
+    nodes Maya created during the call.
+
+    A node-added callback is the only exact way to tell what a command
+    made from what it merely returned: a query returns nodes it looked up,
+    ``parent`` and ``rename`` return nodes that already existed, and
+    ``polyCube`` makes a shape it never returns. A node the command created
+    and deleted again within the call is dropped (its handle is no longer
+    valid). Used by the ``rc.*`` bridges and by the typed creators.
+    """
+    handles = []
+
+    def on_added(obj, _client_data):
+        handles.append(OpenMaya.MObjectHandle(obj))
+
+    callback_id = OpenMaya.MDGMessage.addNodeAddedCallback(on_added, "dependNode")
+    try:
+        result = fn(*args, **kwargs)
+    finally:
+        OpenMaya.MMessage.removeCallback(callback_id)
+
+    created = []
+    for handle in handles:
+        if not handle.isValid():
+            continue
+        obj = handle.object()
+        if obj.hasFn(OpenMaya.MFn.kDagNode):
+            created.append(OpenMaya.MFnDagNode(obj).fullPathName())
+        else:
+            created.append(OpenMaya.MFnDependencyNode(obj).name())
+    return result, created
+
+
+def _gc_tag(node_name: str) -> None:
+    """Give ``node_name`` the hidden, locked ``__rig__`` bool that makes it a
+    :func:`cleanup` candidate. The caller checks the type against
+    ``_GC_ELIGIBLE_TYPES``. Some node types reject addAttr; without the tag
+    the node just won't be GC-eligible, a safe failure mode."""
+    try:
+        cmds.addAttr(
+            node_name,
+            longName      = _RIG_TAG,
+            attributeType = "bool",
+            hidden        = True,
+        )
+        cmds.setAttr(f"{node_name}.{_RIG_TAG}", True, lock=True)
+    except RuntimeError:
+        pass
+
+
+# The typed creates running now, acting or not: only the outermost one joins
+# the scope (a create inside another, e.g. SkinCluster's or create_hierarchy's,
+# runs plain and is tracked by the outer one).
+_TYPED_DEPTH = 0
+
+# The ``_create``s that forward ``skipSelect`` to ``cmds.createNode``; the
+# others (the mesh command, skinCluster, blendShape, displayLayer, the shading
+# engine's sets, the reference's file) take no such flag.
+_SELECT_FORWARDING = (DGNode._create.__func__, DAGNode._create.__func__)
+
+
+def _typed_create(
+    cls: type, run: Any, args: tuple, kwargs: dict, name_index: Optional[int] = None
+) -> Any:
+    """The typed-create hook (``dg_node._TYPED_CREATE_HOOK``): run
+    ``run(cls, args, kwargs)``, the body of `DGNode.create` or of an
+    ``@_typed_creator``, joined to the active scope with ``Node.create``'s rules.
+
+    ``container=`` is consumed: None means ``cls._CONTAINER_AWARE``, True
+    joins, False runs plain. The call runs plain (``run`` alone) when no scope
+    is open, when a typed create is already running (the depth counts every
+    typed create, acting or not), or when it does not join. Otherwise:
+
+    * on a ``_CONTAINER_AWARE`` class, an explicit ``name=`` / ``n=`` (or the
+      positional name at ``name_index``) takes the flattened scope's prefix, as
+      in :meth:`_ContainerStack.createNode`; a registry (joined with
+      ``container=True``) is found again by name, so it is never prefixed;
+    * ``skipSelect=True`` is added when ``ContainerOptions.skip_selection`` is
+      on, neither ``ss`` nor ``skipSelect`` was given, and ``run`` is
+      `DGNode.create`'s template on a class whose ``_create`` forwards it;
+    * ``run`` runs inside :func:`_call_tracking_creation`;
+    * the returned node is tagged for :func:`cleanup` when
+      ``cls.NATIVE_NODE_TYPE`` is GC-eligible and the class has no
+      ``CUSTOM_NODE_TYPE`` (a user's metadata node is never collected);
+    * every node the call made (else the returned node) is registered with
+      :meth:`_ContainerStack.add`.
+
+    Every other keyword reaches ``run`` untouched.
+    """
+    global _TYPED_DEPTH
+    joins = kwargs.pop("container", None)
+    if (
+        not container._stack
+        or _TYPED_DEPTH
+        or not (cls._CONTAINER_AWARE if joins is None else joins)
+    ):
+        _TYPED_DEPTH += 1
+        try:
+            return run(cls, args, kwargs)
+        finally:
+            _TYPED_DEPTH -= 1
+
+    if cls._CONTAINER_AWARE:
+        prefix = container._compute_flatten_prefix()
+        if prefix:
+            for key in ("name", "n"):
+                name = kwargs.get(key)
+                if name:
+                    kwargs[key] = f"{prefix}_{name}"
+            if name_index is not None and len(args) > name_index and args[name_index]:
+                args = (
+                    *args[:name_index],
+                    f"{prefix}_{args[name_index]}",
+                    *args[name_index + 1 :],
+                )
+    if (
+        ContainerOptions.skip_selection
+        and "ss" not in kwargs
+        and "skipSelect" not in kwargs
+        and run is _create_template
+        and getattr(cls._create, "__func__", None) in _SELECT_FORWARDING
+    ):
+        kwargs["skipSelect"] = True
+
+    _TYPED_DEPTH += 1
+    try:
+        result, created = _call_tracking_creation(run, (cls, args, kwargs), {})
+    finally:
+        _TYPED_DEPTH -= 1
+
+    if (
+        cls.NATIVE_NODE_TYPE in _GC_ELIGIBLE_TYPES
+        and not cls.CUSTOM_NODE_TYPE
+        and isinstance(result, DGNode)
+    ):
+        _gc_tag(result.name)
+    if created:
+        container.add(created)
+    elif result is not None:
+        container.add(result)
+    return result
+
+
+_dg_node_module._TYPED_CREATE_HOOK = _typed_create
 
 
 def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -> Any:
