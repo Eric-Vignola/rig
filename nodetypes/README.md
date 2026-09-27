@@ -185,7 +185,8 @@ The attribute of a dynamic attr can be freed while its node lives on, once
 a delete of the attr leaves the undo queue (a flush, or ten more commands
 at mayapy's default queue length): an attribute of a dynamic attr keeps a
 handle of its attribute too, and then raises `"held.dyne already
-deleted!"`, named by the name it was built with.
+deleted!"`, named by the name it was built with. So does an extension attr
+found through its node, which `deleteExtension` frees at once.
 
 A DAG node keeps the path it was taken through, and the attributes it finds
 are named through that path: with `S` instanced under `T1` and `T2`,

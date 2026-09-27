@@ -88,6 +88,7 @@ def _is_unresolved_multi_child(plug: OpenMaya.MPlug) -> bool:
 
 
 _NORMAL_ATTR = OpenMaya.MFnDependencyNode.kNormalAttr
+_EXTENSION_ATTR = OpenMaya.MFnDependencyNode.kExtensionAttr
 
 
 def _filtered(
@@ -507,7 +508,8 @@ class DGNode(metaclass=NodeMeta):
             fn = self._fn_set
             if isinstance(fn, OpenMaya.MFnDagNode) and fn.isInstanced(True):
                 attr_obj = _full_name_buffer(attr_obj)
-            if self._fn_set.attributeClass(_attr_mobject(attr_obj)) == _NORMAL_ATTR:
+            attr_class = self._fn_set.attributeClass(_attr_mobject(attr_obj))
+            if attr_class == _NORMAL_ATTR:
                 # with the instanced indices: an element of a world space attr
                 # (``worldMatrix[1]``) is otherwise named like its array
                 ln                  = plug.partialName(False, False, True, False, False, True)
@@ -516,9 +518,13 @@ class DGNode(metaclass=NodeMeta):
                 self._attr_dict[sn] = attr_obj
             else:
                 # a dynamic attr keeps a handle of its attribute, which a delete
-                # frees once it leaves the undo queue (see `_ensure_owner_alive`)
+                # frees once it leaves the undo queue, and so does an extension
+                # attr, which deleteExtension frees (see `_ensure_owner_alive`)
                 name = attr if type(attr) is str and "." not in attr else None
-                attr_obj.__dict__["_attr1"] = _attr_handle(plug, fn1=self._fn_set1, name=name)
+                attr_obj.__dict__["_attr1"] = _attr_handle(
+                    plug, fn1=self._fn_set1, name=name,
+                    extension=attr_class == _EXTENSION_ATTR,
+                )
 
         return _filtered(attr_obj, category, data_type)
 

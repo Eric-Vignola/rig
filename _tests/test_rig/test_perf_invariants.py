@@ -1922,7 +1922,10 @@ class TestConnectQuery(MayaTestCase):
         # re-pinned (round 3b review): the extension plug is made first. Its
         # addExtension flushes the undo queue, which freed the attributes of the
         # re-added and undone plugs made before it, and a plug of a freed
-        # dynamic attribute now raises "already deleted!" when it is named
+        # attribute now raises "already deleted!" when it is named: the
+        # subtests are labelled by the str buffer, and a plug is named inside
+        # its subtest, since the deleted extension attr's attribute is freed too
+        # (naming it read freed memory)
         extension = _extension(True)
         for plug, expected in (
             (Node("a").tx, True),
@@ -1936,7 +1939,12 @@ class TestConnectQuery(MayaTestCase):
             (_undone("a"), False),
             (extension, False),
         ):
-            with self.subTest(plug=str(plug)):
+            with self.subTest(plug=str.__str__(plug)):
+                try:
+                    str(plug)  # named, as a plug in use would be
+                except RuntimeError as exc:
+                    self.assertFalse(expected)
+                    self.assertTrue(str(exc).endswith("already deleted!"))
                 self.assertIs(_base._names_own_plug(plug), expected)
 
     def test_names_own_plug_on_instances(self):
@@ -2634,7 +2642,10 @@ _FULL_NAME_CASES = (
     ("readded", lambda: _readded("b"), "b.dd", 0, 1),
     ("undone", lambda: _undone("b"), "b.undone", 0, 1),
     ("extension", lambda: _extension(False), "pma.perfConnect", 0, 1),
-    ("extension_gone", lambda: _extension(True), "pma.", 0, 1),
+    # re-pinned (round 3b review): deleteExtension frees the attribute, which the
+    # name was read from ("pma."); the plug keeps a handle of it and raises
+    ("extension_gone", lambda: _extension(True),
+     (RuntimeError, "pma.perfConnect already deleted!"), 0, 1),
     ("deleted", lambda: _deleted("b"), _DELETED_B, 0, 1),
     ("reused", _reused, _DELETED_B, 0, 1),
     ("component", _component, "planeShape.cv[1][1]", 1, 1),
