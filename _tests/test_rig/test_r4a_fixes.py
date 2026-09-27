@@ -1115,11 +1115,22 @@ class TestListStrProbe(_SceneCase):
             ("a dynamic attr (E7)", "a.knob", a.knob),
             ("a matrix element", "a.worldMatrix[0]", a.worldMatrix[0]),
             ("an unindexed world-space array", "a.worldMatrix", a.worldMatrix[0]),
-            ("a typed attr element", "a.tx", PyNode("a").find_attr("translateX")),
             ("a name-built element", "a.translateX", Plug("a.tx")),
         ):
             with self.subTest(label):
                 self._assert_finds(probe, element, others=[u.tx, u.ty])
+        # a typed Attribute element (List() would lift it to a Plug)
+        from rig import List
+
+        items = List([u.tx])
+        list.append(items, PyNode("a").find_attr("translateX"))
+        self.assertIs(type(items[1]), Attribute)
+        before = _scene()
+        self.assertIn("a.tx", items)
+        self.assertEqual(items.index("a.translateX"), 1)
+        self.assertEqual(items.count("a.tx"), 1)
+        self.assertNotIn("a.ty", items)
+        self.assertEqual(_new(before), [])
 
     def test_through_another_instance_path(self):
         # E3: one Maya plug, whatever path names it
