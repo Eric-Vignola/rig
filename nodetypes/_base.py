@@ -830,18 +830,23 @@ def _prune_attr_handles() -> None:
 
 
 def _attr_handle(
-    mplug: OpenMaya.MPlug, node_handle: Any = None, fn1: Any = None, name: Any = None
+    mplug:       OpenMaya.MPlug,
+    node_handle: Any  = None,
+    fn1:         Any  = None,
+    name:        Any  = None,
+    extension:   bool = False,
 ) -> Any:
     """The API 1.0 MObjectHandle of the attribute of `mplug`, a live plug, if it is
-    a dynamic attribute, else None: the one a plug keeps as `_attr1` (see
-    `_ensure_owner_alive`). A dynamic attribute is freed once a delete of it
-    leaves the undo queue, while its node lives on; a static one lives as long as
-    its node type. The attribute is found by name on its node, through `fn1`, the
+    a dynamic attribute, or an `extension` one (the caller knows its class:
+    `MPlug.isDynamic` is False for it), else None: the one a plug keeps as
+    `_attr1` (see `_ensure_owner_alive`). A dynamic attribute is freed once a
+    delete of it leaves the undo queue, while its node lives on, and an extension
+    one by `deleteExtension`; a static one lives as long as its node type. The attribute is found by name on its node, through `fn1`, the
     node's API 1.0 fn set, or `node_handle`, its API 1.0 handle, once per
     attribute (about 7 us; `name`, a name of it the caller has, saves reading
     it), and in `_ATTR_HANDLES` after that (about 1.5 us). None if the name
     finds another attribute (the plug's was deleted)."""
-    if not mplug.isDynamic:
+    if not (extension or mplug.isDynamic):
         return None
     try:
         mobject = mplug.attribute()
@@ -1528,6 +1533,10 @@ def _names_own_plug(attr: Any) -> bool:
         or cls.full_name is not Attribute.full_name
         or cls.alias is not Attribute.alias
     ):
+        return False
+    # a freed attribute (see `_ensure_owner_alive`) is not read
+    handle = attr.__dict__.get("_attr1")
+    if handle is not None and not handle.isAlive():
         return False
     try:
         mplug   = attr._mplug

@@ -704,6 +704,31 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
                 self.assertEqual(handle.hashCode(), code)
                 self.assertEqual(om1.MFnAttribute(handle.objectRef()).name(), long_name)
 
+    def test_an_extension_attr_found_through_its_node(self):
+        # deleteExtension frees the attribute at once; a plug found through its
+        # node (which reads the attr's class) keeps a handle of it and raises
+        def delete():
+            cmds.deleteExtension(nodeType="network", attribute="rigFixExt", forceDelete=True)
+
+        try:
+            cmds.addExtension(nodeType="network", longName="rigFixExt", attributeType="double")
+            cmds.createNode("network", name="net")
+            held = (Node("net").rigFixExt, PyNode("net").find_attr("rigFixExt"))
+            for plug in held:
+                self.assertTrue(vars(plug)["_attr1"].isAlive())
+            delete()
+            for i in range(300):
+                cmds.addAttr("net", longName=f"fill{i}", attributeType="double")
+            for plug in held:
+                for op_name, op in _DYNAMIC_OPS.items():
+                    with self.subTest(plug=type(plug).__name__, op=op_name):
+                        with self.assertRaises(RuntimeError) as ctx:
+                            op(plug)
+                        self.assertEqual(str(ctx.exception), "net.rigFixExt already deleted!")
+        finally:
+            if cmds.attributeQuery("rigFixExt", type="network", exists=True):
+                delete()
+
     def test_the_attribute_handle_changes_no_name_value_or_hash(self):
         _build()
         cmds.setAttr("held.dynf", 3.0)
