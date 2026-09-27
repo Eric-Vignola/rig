@@ -126,7 +126,8 @@ def _node_is_transform(node: Any) -> bool:
 
     A node object is asked directly, never cast again from its name: a deleted
     or freed node raises its ``already deleted!`` error, as naming it does. A
-    name is cast first, and gives False when no node of that name can be cast.
+    name is cast first, as before: False when the cast or the query raises a
+    RuntimeError or ValueError (a name no node has raises the cast's TypeError).
     Uses :meth:`DGNode.has_base_type` (canonical API) instead of raw
     MSelectionList / MFn introspection.
     """
