@@ -670,6 +670,22 @@ def _ensure_node_castable(attr: Any) -> None:
         _raise_deleted(attr, handle)
 
 
+def _ensure_node_valid(attr: Any) -> None:
+    """Raise ``"... already deleted!"`` if the node of `attr` was deleted or freed,
+    without naming it: through its owner (`DGNode.ensure_valid`), or, with none,
+    the handle of its node it took (see `_ensure_node_castable`). For a caller
+    that hands `attr`'s str buffer to cmds, which would name the node that took
+    the name (see `rig.bridges.commands`)."""
+    node = attr.__dict__.get("_node")
+    if node is None:
+        _ensure_node_castable(attr)
+        return
+    node   = _unwrapped(node)
+    handle = node.__dict__.get("_objhandle1")
+    if handle is not None and not handle.isValid():
+        node.ensure_valid()
+
+
 def _raise_deleted(attr: Any, handle: Any) -> None:
     """Raise the ``"... already deleted!"`` of `attr`, a plug with no owner whose
     node (`handle`, its API 1.0 handle) was deleted or freed. A deleted node is
@@ -688,26 +704,85 @@ def _node_handle(name: str) -> Any:
     resolves to, or None if it resolves to none (`_ensure_owner_alive` then does not
     check the plug, as before). The one a plug with no owner keeps (`_handle1`):
     the owner handles are API 1.0 too, the kind that is safe to read once a new
-    scene, a file open or a reference unload freed the node."""
+    scene, a file open or a reference unload freed the node. One selection list
+    and one MObject are reused (a handle keeps a copy of the MObject)."""
     try:
-        sel = OpenMaya1.MSelectionList()
-        sel.add(name)
-        mobject = OpenMaya1.MObject()
-        sel.getDependNode(0, mobject)
-        return OpenMaya1.MObjectHandle(mobject)
+        _NODE_HANDLE_SEL.clear()
+        _NODE_HANDLE_SEL.add(name)
+        _NODE_HANDLE_SEL.getDependNode(0, _NODE_HANDLE_OBJ)
+        return OpenMaya1.MObjectHandle(_NODE_HANDLE_OBJ)
     except Exception:
         return None
+
+
+# `_node_handle`'s selection list and MObject, reused by every call
+_NODE_HANDLE_SEL = OpenMaya1.MSelectionList()
+_NODE_HANDLE_OBJ = OpenMaya1.MObject()
+
+
+# `_mplug_handle`: the API 1.0 handle it looked up for a node, keyed by the node's
+# MObjectHandle hashCode (the same in both APIs), as (the node's API 2.0 MObject,
+# that handle) for every node that has the code. An entry is the node's own while
+# its handle is alive (a freed node's code and memory go to later nodes, so its
+# MObject is then never compared); freed nodes' entries are dropped when their
+# code is seen again, and all of them once the table outgrows `_HANDLES_PRUNE_AT`.
+_NODE_HANDLES     = {}
+_HANDLES_PRUNE_AT = [4096]
+
+
+def _prune_node_handles() -> None:
+    """Drop the handles of freed nodes from `_NODE_HANDLES`."""
+    for code in list(_NODE_HANDLES):
+        live = [entry for entry in _NODE_HANDLES[code] if entry[1].isAlive()]
+        if live:
+            _NODE_HANDLES[code] = live
+        else:
+            del _NODE_HANDLES[code]
+    _HANDLES_PRUNE_AT[0] = max(4096, 2 * len(_NODE_HANDLES))
 
 
 def _mplug_handle(mplug: OpenMaya.MPlug) -> Any:
     """`_node_handle` of the node of `mplug`, a live API 2.0 plug, found by its
     unique name (an MPlug's own name can name another node of the same short
-    name), or None."""
+    name), or None. The handle is looked up once per node (a name parse, about
+    7 us) and found in `_NODE_HANDLES` after that (about 1 us).
+
+    A node deleted to the undo queue has no name to look it up by, and a plug of
+    it can take no handle, so it raises the round-3 ``"<node> already deleted!"``
+    here (it read the node that later took the name, or another one once the
+    deleted node was freed)."""
     try:
-        name = OpenMaya.MFnDependencyNode(mplug.node()).uniqueName()
+        if mplug.isNull:
+            return None
+        mobject = mplug.node()
+        handle2 = OpenMaya.MObjectHandle(mobject)
+        code    = handle2.hashCode()
     except Exception:
         return None
-    return _node_handle(name)
+    if not handle2.isValid():
+        raise RuntimeError(
+            f"{OpenMaya.MFnDependencyNode(mobject).name()} already deleted!"
+        )
+    entries = _NODE_HANDLES.get(code)
+    if entries is not None:
+        for known, handle in entries:
+            if handle.isAlive() and known == mobject:
+                return handle
+    try:
+        name = OpenMaya.MFnDependencyNode(mobject).uniqueName()
+    except Exception:
+        return None
+    handle = _node_handle(name)
+    if handle is None or handle.hashCode() != code:
+        return None  # the name resolves to another node: take none
+    if entries is None:
+        if len(_NODE_HANDLES) >= _HANDLES_PRUNE_AT[0]:
+            _prune_node_handles()
+        entries = _NODE_HANDLES[code] = []
+    else:
+        entries[:] = [entry for entry in entries if entry[1].isAlive()]
+    entries.append((mobject, handle))
+    return handle
 
 
 def _attr_state(mplug: OpenMaya.MPlug, handle: Any) -> dict:
@@ -776,9 +851,9 @@ def _connected_attrs(
     attr: Any, src: bool = True, dst: bool = True, first_only: bool = False
 ) -> Any:
     """`attr.get_connected_attrs(src, dst, first_only)` for a caller that reads
-    the result at once and keeps none of it (a type query): the attrs take no
-    handle of their nodes, a name lookup each that only a held plug needs (see
-    `_ensure_owner_alive`)."""
+    the result at once and keeps none of it (a type query, a disconnect): the
+    attrs take no handle of their nodes, a lookup each (see `_mplug_handle`)
+    that only a held plug needs (see `_ensure_owner_alive`)."""
     _ensure_owner_alive(attr)
     found = []
     for each in attr.plug.connectedTo(src, dst):
@@ -1401,18 +1476,18 @@ class Attribute(str):
 
         It has no owner yet, so it takes an API 1.0 handle of its node, which
         tells it once that node is deleted or freed (see `_ensure_owner_alive`).
+        An MPlug of a node already deleted to the undo queue raises its
+        ``"... already deleted!"`` (see `_mplug_handle`).
         """
         if isinstance(name_or_mplug, str):
             sel = OpenMaya.MSelectionList()
             sel.add(name_or_mplug)
-            mplug  = sel.getPlug(0)
-            handle = _node_handle(str.__str__(name_or_mplug))
+            mplug = sel.getPlug(0)
         elif isinstance(name_or_mplug, OpenMaya.MPlug):
-            mplug  = name_or_mplug
-            handle = _mplug_handle(mplug)
+            mplug = name_or_mplug
         else:
             raise ValueError(f"{name_or_mplug} is not a string or MPlug.")
-        self.__dict__.update(_attr_state(mplug, handle))
+        self.__dict__.update(_attr_state(mplug, _mplug_handle(mplug)))
 
     # --- dunders
 

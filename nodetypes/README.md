@@ -178,6 +178,9 @@ and freed, `"held node (freed by a new scene, a file open or a reference
 unload) already deleted!"`, named by the name it was built with.
 Every attribute read checks the handle first, `name`, `mobject` and
 `fn_set` included: the attribute of a dynamic attr is freed with its node.
+An attribute built from the MPlug of a node already deleted raises
+`"held already deleted!"` when it is built: that node has no name to take
+a handle by.
 
 A DAG node keeps the path it was taken through, and the attributes it finds
 are named through that path: with `S` instanced under `T1` and `T2`,

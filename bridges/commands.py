@@ -33,6 +33,7 @@ from typing import Any, Callable
 from maya import cmds as _mc
 from maya.api import OpenMaya as _om
 from rig._internal.node import Node
+from rig.nodetypes._base import _ensure_node_valid, Attribute
 
 
 # Per-command wrapper cache. Built lazily by ``__getattr__``.
@@ -95,16 +96,36 @@ def _coerce(value: Any) -> Any:
 
     Maya commands take string node names; the DSL holds Node objects. This
     bridge converts on the way IN to a cmds call. Plug objects are already
-    str-subclasses so they pass through cmds directly without conversion.
+    str-subclasses so they pass through cmds directly without conversion, once
+    their node is checked (see `_checked_plug`).
     """
     if isinstance(value, Node):
         return str(value)
+    if isinstance(value, Attribute):
+        return _checked_plug(value)
     if isinstance(value, (list, tuple)) and value:
         # Only convert if the list contains Nodes -- otherwise pass through
         # unchanged to avoid mutating arbitrary list inputs.
         if any(isinstance(x, Node) for x in value):
-            return [str(x) if isinstance(x, Node) else x for x in value]
+            return [
+                str(x) if isinstance(x, Node)
+                else _checked_plug(x) if isinstance(x, Attribute)
+                else x
+                for x in value
+            ]
+        for x in value:
+            if isinstance(x, Attribute):
+                _checked_plug(x)
     return value
+
+
+def _checked_plug(plug: Attribute) -> Attribute:
+    """`plug`, once its node is checked: a plug whose node was deleted or freed
+    raises its ``"... already deleted!"`` (see `_ensure_node_valid`) instead of
+    cmds reading its str buffer, which then names the node that took the name.
+    cmds reads that buffer, as before (a component plug's names the component)."""
+    _ensure_node_valid(plug)
+    return plug
 
 
 def _wrap_result(result: Any) -> Any:

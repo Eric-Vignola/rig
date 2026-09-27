@@ -302,7 +302,14 @@ class TestPyNodeDispatch(MayaTestCase):
         cmds.delete(jnt)
         cmds.createNode("transform", name="foo")
         self.assertEqual(_outcome(PyNode, held), ("ok", Transform, "foo"))
-        self.assertEqual(str(Plug(plug)), "foo.translateX")
+        # re-pinned (round 3b review): a plug built from an MPlug of a node
+        # deleted to the undo queue can take no handle of it (a deleted node is
+        # not found by name), so it raises the deleted node's "already
+        # deleted!" when it is built; it read the node that took the name
+        # ("foo.translateX"), or another one once the deleted node was freed
+        with self.assertRaises(RuntimeError) as ctx:
+            Plug(plug)
+        self.assertEqual(str(ctx.exception), "foo already deleted!")
 
 
 def _wrapper_state(node):
@@ -1514,7 +1521,10 @@ class TestPlugNodeReuse(MayaTestCase):
                 # a held plug's owner is the deleted node, not a new cast
                 for plug in plugs:
                     self.assertEqual(_owner(plug), deleted)
-                    self.assertEqual(_owner(Plug(plug.plug))[0], "error")
+                    # re-pinned (round 3b review): a plug built from the MPlug
+                    # of a deleted node raises when it is built (it can take no
+                    # handle of the node), no longer when it is named
+                    self.assertEqual(_outcome(Plug, plug.plug), deleted)
                 cmds.undo()
                 for plug in plugs:
                     self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
@@ -1527,7 +1537,10 @@ class TestPlugNodeReuse(MayaTestCase):
                 cmds.createNode(node_type, name=name)
                 for plug in plugs:
                     self.assertEqual(_owner(plug), deleted)
-                    self.assertEqual(_owner(Plug(plug.plug))[0], "ok")
+                    # re-pinned (round 3b review): it named the node that took
+                    # the name ("ok"); a plug built from the MPlug of a deleted
+                    # node now raises when it is built, as a held plug does
+                    self.assertEqual(_outcome(Plug, plug.plug), deleted)
 
     def test_plug_node_wrapper_is_its_own(self):
         # Historical id: under the owner rule (round 3, D-A) the plug's node is
