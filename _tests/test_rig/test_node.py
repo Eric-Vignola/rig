@@ -186,16 +186,18 @@ class TestNodeRshift(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_rshift_none_returns_dgnode(self):
-        # `Node >> None` returns the underlying typed DGNode instance
-        # (e.g. Transform), kicking the user out of the rig DSL into
-        # the rig.nodetypes typed-node world.
+        # `Node >> None` returns the typed DGNode instance (e.g. Transform):
+        # since the class swap (round 4a, C8) the node already is that typed
+        # node, a Node too, so `>> None` returns the node itself.
         from rig.nodetypes.dg_node import DGNode
+        from rig.nodetypes.transform import Transform
 
         node   = Node.create("transform", name="cube1")
         result = node >> None
+        self.assertIs(result, node)
         self.assertIsInstance(result, DGNode)
-        # Should NOT be a Node wrapper -- should be the typed DGNode subclass.
-        self.assertNotIsInstance(result, Node)
+        self.assertIsInstance(result, Transform)
+        self.assertIsInstance(result, Node)
         self.assertEqual(str(result), "cube1")
 
     def test_rshift_other_raises(self):

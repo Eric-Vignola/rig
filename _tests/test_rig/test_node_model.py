@@ -742,9 +742,14 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
             dg.tx = 1
         self.assertTrue(str(ctx.exception).endswith("a already deleted!"))
 
-    def test_setattr_through_the_wrapper(self):
+    def test_setattr_through_node(self):
+        # renamed at round 4a M4 (was test_setattr_through_the_wrapper, an M3
+        # id): the Node factory returns the typed node, so this is the typed
+        # node's sugar reached through Node(...), and a Container's (a DGNode
+        # subclass since M4) published names
         cmds.createNode("transform", name="a")
         node = Node("a")
+        self.assertIs(type(node), Transform)
         node.tx = 2
         self.assertEqual(cmds.getAttr("a.tx"), 2.0)
         node.namespace = "ns"
@@ -754,6 +759,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         with container("box") as box:
             inner = Node.create("transform", name="inner")
             container.publish_input(inner.tx, "blend")
+        self.assertIsInstance(box, DGNode)
         box.blend = 1.5
         self.assertEqual(cmds.getAttr("inner.tx"), 1.5)
 
@@ -1271,12 +1277,15 @@ class TestTypedDslEdges(MayaTestCase):
         self.assertIs(node.tx.node, node)
         self.assertIs(node.t[0].node, node)
         self.assertIs(node.t.ty.node, node)
-        self.assertIs(type(node.tx.node), Node)
+        # re-pinned (round 4a M4, C8): Node("a") is the typed node, no wrapper
+        self.assertIs(type(node.tx.node), Transform)
         self.assertIs(type(dg.tx.node), Transform)
-        # the typed class is kept, and the wrapper still wraps
-        self.assertIs(node >> None, node._dg_node)
+        self.assertIsInstance(node, Node)
+        self.assertIs(Node(dg), dg)
+        # the typed class is kept, and ">> None" is the node itself
+        self.assertIs(node >> None, node)
         self.assertIs(dg._dg_node, dg)
-        self.assertEqual(repr(node), 'Node("a")')
+        self.assertEqual(repr(node), 'Transform("a")')
         # one key for one Maya plug, whatever the object it was read from
         self.assertEqual(hash(dg.tx), hash(node.tx))
         self.assertEqual(hash(dg.tx), hash(Plug("a.tx")))

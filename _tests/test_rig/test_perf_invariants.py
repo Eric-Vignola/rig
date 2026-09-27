@@ -17,19 +17,21 @@ type ``Attribute.data_type`` just queried only when no code that could change it
 ran in between, and queries again otherwise. The canonical wrapper check keeps
 its class checks per class only until a node class or class attribute changes,
 and takes a DAG wrapper's name from its own path only when that is the node's
-only path. ``Attribute.full_name`` reads a rig Node owner's name from the node it
-wraps instead of through ``Node.__getattr__``, with the same names and errors."""
+only path. ``Attribute.full_name`` reads a plug owner's name property once
+(the owner is the node itself since the round-4a class swap), with the same
+names and errors."""
 
 import contextlib
 import os
 import shutil
+import sys
 import tempfile
 from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
 from rig import Container, InjectionError, Node, Plug, lock
-from rig.nodetypes import Choice, DGNode, Joint, PyNode, Transform
+from rig.nodetypes import Choice, DAGNode, DGNode, Joint, PyNode, Transform
 from rig.nodetypes import _base
 from rig.nodetypes import dg_node as dg_node_module
 from rig.nodetypes._base import (
@@ -40,7 +42,6 @@ from rig.nodetypes._base import (
     is_valid_maya_uid,
     set_custom_type,
 )
-from rig._internal import plug as plug_module
 from rig._internal.plug import ComponentPlug
 from rig.spec import Float, Matrix, Vector
 from rig._tests._base import MayaTestCase
@@ -62,15 +63,12 @@ def _outcome(func, *args):
 
 
 def _holds_freed_node(plug):
-    """True if the node wrapper ``plug`` holds wraps a node that was freed (by a new
+    """True if the node object ``plug`` holds is a node that was freed (by a new
     scene or a reference unload), not just deleted to the undo queue. Only the
-    wrapper's handle is read: naming a freed node reads freed memory."""
-    owner = plug.__dict__["_node"]
-    if isinstance(owner, Node):
-        try:
-            owner = object.__getattribute__(owner, "_dg_node")
-        except AttributeError:
-            return False
+    node's API 1.0 handle is read: naming a freed node reads freed memory."""
+    # re-pinned (round 4a M4, C8): the owner is the node object itself (no
+    # wrapper to unwrap), so its handle is read from its __dict__ directly
+    owner  = plug.__dict__["_node"]
     handle = getattr(owner, "__dict__", {}).get("_objhandle1")
     return handle is not None and not handle.isAlive()
 
@@ -1312,9 +1310,12 @@ class TestPlugNodeReuse(MayaTestCase):
         super().tearDown()
 
     def _casts(self, func):
-        """The ``PyNode`` casts ``Plug.node`` makes while ``func`` runs."""
+        """The ``PyNode`` casts ``Attribute.node`` (and the ``Node`` factory) make
+        while ``func`` runs."""
+        # re-pinned (round 4a M4, C8): Plug.node is gone, the lazy cast is
+        # Attribute.node's, through the nodetypes._base global
         cast = mock.Mock(side_effect=PyNode)
-        with mock.patch.object(plug_module, "PyNode", cast):
+        with mock.patch.object(_base, "PyNode", cast):
             func()
         return cast.call_count
 
@@ -1341,7 +1342,8 @@ class TestPlugNodeReuse(MayaTestCase):
             with self.subTest(plug=expected):
                 self.assertEqual(self._casts(lambda: str(plug)), 0)
                 self.assertEqual(str(plug), expected)
-                self.assertIs(type(plug.node), Node)
+                # re-pinned (round 4a M4, C8): the owner is the typed node
+                self.assertIsInstance(plug.node, Node)
                 self.assertIs(plug.node, pma if expected.startswith("plus") else node)
                 fresh = Plug(plug.plug)
                 self.assertEqual(self._casts(lambda: str(fresh)), 1)
@@ -1375,9 +1377,12 @@ class TestPlugNodeReuse(MayaTestCase):
         cmds.parent("T1|S", other, add=True, relative=True)
         # Owner rule (C3): a plug holds the node it was read from, so building
         # and naming it casts nothing, and it is named through that path.
+        # re-pinned (round 4a M4, C8): the Node factory casts through the same
+        # PyNode global, so the node is built outside the counted call
+        held_t2 = Node("|T2|S")
         for attr, lookup in (
-            ("visibility", lambda: Node("|T2|S").visibility),
-            ("translateX", lambda: Node("|T2|S").t[0]),
+            ("visibility", lambda: held_t2.visibility),
+            ("translateX", lambda: held_t2.t[0]),
         ):
             with self.subTest(plug=attr):
                 names = []
@@ -1387,7 +1392,8 @@ class TestPlugNodeReuse(MayaTestCase):
                 self.assertEqual(plug.name, attr)
                 self.assertEqual(str(plug), f"T2|S.{attr}")
                 self.assertEqual(plug.node._dg_node.long_name, "|T2|S")
-        self.assertEqual(self._casts(lambda: str(Node("|T1|S").visibility)), 0)
+        held_t1 = Node("|T1|S")
+        self.assertEqual(self._casts(lambda: str(held_t1.visibility)), 0)
 
     def test_instanced_plug_names_match_v2_0_0a2(self):
         # Historical id: the |T2|S subTests are named through T2 under the owner
@@ -1415,7 +1421,9 @@ class TestPlugNodeReuse(MayaTestCase):
                     plug = get(Node(path))
                     self.assertEqual(str(plug), f"{path[1:]}.{attr}")
                     self.assertEqual(plug.full_name, f"{path[1:]}.{attr}")
-                    self.assertIs(type(plug.node), Node)
+                    # re-pinned (round 4a M4, C8): the owner is the typed node
+                    self.assertIsInstance(plug.node, Node)
+                    self.assertIs(type(plug.node), Transform)
                     self.assertEqual(plug.node.long_name, path)
         for name in ("|T2|S.visibility", "T1|S.visibility"):
             with self.subTest(name=name):
@@ -2157,21 +2165,22 @@ class TestFallbackQueryReuse(MayaTestCase):
         for index in range(6):
             cmds.createNode("network", name=f"net{index}")
             cmds.addAttr(f"net{index}", ln="generic", at="typed")
-        forward   = Node._attr_data_type_fallback
         base_hook = DGNode._attr_data_type_fallback
         # the hook that runs first changes the attr, then reaches DGNode's hook
         connected = ("double3", 2)
 
-        # a class-level patch of the Node wrapper's forwarding hook
-        wrapper = mock.patch.object(
-            Node, "_attr_data_type_fallback", _connecting_hook(forward)
+        # re-pinned (round 4a M4, C8): the Node wrapper and its forwarding hook
+        # are gone, so its two blocks patch and subclass the node class itself.
+        # A class-level patch of DGNode's hook
+        patched = mock.patch.object(
+            DGNode, "_attr_data_type_fallback", _connecting_hook(base_hook)
         )
-        with wrapper:
+        with patched:
             self.assertEqual(self._data_type(Plug("net0.generic")), connected)
 
-        # a Node subclass overriding the forwarding hook
-        class _ConnectingNode(Node):
-            _attr_data_type_fallback = _connecting_hook(forward)
+        # a DGNode subclass overriding the hook
+        class _ConnectingNode(DGNode):
+            _attr_data_type_fallback = _connecting_hook(base_hook)
 
         plug = Plug("net1.generic")
         plug.__dict__["_node"] = _ConnectingNode("net1")
@@ -2520,7 +2529,9 @@ class TestCanonicalWrapperCheck(MayaTestCase):
         name    = cmds.createNode("multiplyDivide")
         mobject = _mobject(name)
         PyNode(mobject)
-        for other in (None, name, 3, Node(name), Plug(f"{name}.input1X")):
+        # re-pinned (round 4a M4, C8): Node(name) is the canonical typed node
+        # now (the cast itself), so it left the tuple
+        for other in (None, name, 3, Plug(f"{name}.input1X")):
             with self.subTest(other=type(other).__name__):
                 self.assertFalse(_base._wrapper_is_canonical(other, mobject))
                 self.assertNotIn(type(other), _base._CANONICAL_KIND)
@@ -2535,18 +2546,30 @@ def _result(func):
 
 
 def _name_forwards(func):
-    """What ``func()`` returns or raises, and the ``name`` lookups it makes through
-    ``Node.__getattr__``."""
-    names    = []
-    original = Node.__getattr__
+    """What ``func()`` returns or raises, and the reads of the ``DGNode`` /
+    ``DAGNode`` ``name`` property it makes."""
+    # re-pinned (round 4a M4, C8): there is no Node.__getattr__ forwarding to
+    # count any more; a plug's owner is the node, whose name property is read.
+    # The constructor parts the casts compare the property with are bound first,
+    # so they never capture the counting ones
+    _base._construct_checked_type(DGNode, "")
+    _base._canonical_kind(DGNode)
+    reads   = []
+    patches = []
+    for cls in (DGNode, DAGNode):
+        prop = cls.__dict__["name"]
 
-    def forward(node, attr_name):
-        names.append(attr_name)
-        return original(node, attr_name)
+        def counting(node, prop=prop):
+            # a constructor's type check names the node it builds (the owner's
+            # cast), which is not a read of the plug's name
+            if sys._getframe(1).f_code.co_name != "__init__":
+                reads.append(node)
+            return prop.fget(node)
 
-    with mock.patch.object(Node, "__getattr__", forward):
+        patches.append(mock.patch.object(cls, "name", property(counting)))
+    with patches[0], patches[1]:
         result = _result(func)
-    return result, names.count("name")
+    return result, len(reads)
 
 
 def _name_raises():
@@ -2604,56 +2627,77 @@ def _instanced():
 
 
 def _no_wrapped_node():
-    """A plug whose Node never had its wrapped node set."""
+    """A plug whose node object was never constructed."""
+    # re-pinned (round 4a M4, C8): no wrapper; a half-built DGNode instead
     plug = Node("b").tx
-    plug.__dict__["_node"] = Node.__new__(Node)
+    plug.__dict__["_node"] = DGNode.__new__(DGNode)
     return plug
 
 
 _DELETED_B = (RuntimeError, "b already deleted!")
 
-# (case, plug factory, full_name or (error type, message), the name lookups each
-# full_name makes through Node.__getattr__, and the ones it made before). No case
-# holds a freed node: its "already deleted" message would be read from freed memory
+# (case, plug factory, full_name or (error type, message), the reads of the
+# DGNode / DAGNode name property each full_name makes, and whether the fn-set
+# oracle (`_fn_set_full_name`) names the plug too). No case holds a freed node:
+# its "already deleted" message would be read from freed memory.
+# Re-pinned (round 4a M4, C8): the rows counted the name lookups the Node
+# wrapper forwarded (0 on the fast path, 1 through the forwarding); with the
+# wrapper gone every owner is the node itself and full_name reads its name
+# property once. A component is named after its component (not the oracle's
+# MPlug name); a node whose name property raises is named by its fn set.
 _FULL_NAME_CASES = (
-    ("node_attr", lambda: Node("a").tx, "a.translateX", 0, 1),
-    ("compound", lambda: Node("a").t, "a.translate", 0, 1),
-    ("child", lambda: Node("a").t.tx, "a.translateX", 0, 1),
-    ("child_index", lambda: Node("a").t[1], "a.translateY", 0, 1),
-    ("string", _plug("a.tx"), "a.translateX", 0, 1),
-    ("mplug_child", _unindexed_child, "pma.input3D[-1].input3Dx", 0, 0),
-    ("new_element", lambda: Node("pma").input1D[3], "pma.input1D[3]", 0, 1),
-    ("element_child", _plug("pma.input3D[2].input3Dx"), "pma.input3D[2].input3Dx", 0,
-     1),
-    ("array_root", lambda: Node("pma").input1D, "pma.input1D", 0, 1),
-    ("alias", _plug("b.bar"), "b.bar", 0, 1),
-    ("alias_long", lambda: Node("b").foo, "b.bar", 0, 1),
-    ("world_matrix", lambda: Node("a").worldMatrix[0], "a.worldMatrix", 0, 1),
-    ("same_short_name", lambda: Node("|g1|dup").tx, "g1|dup.translateX", 0, 1),
-    ("namespace", lambda: Node("ns:n").tx, "ns:n.translateX", 0, 1),
-    ("shape", lambda: Node("locShape").localPositionX, "locShape.localPositionX", 0,
-     1),
-    ("choice", lambda: Node("pick").input[0], "pick.input[0]", 0, 1),
-    ("joint", lambda: Node("jnt").jointOrientX, "jnt.jointOrientX", 0, 1),
-    ("underworld", _underworld, "planeShape->curveShape1.visibility", 0, 1),
-    ("instanced", _instanced, "T2|S.visibility", 0, 1),
-    ("renamed", _renamed, "renamed.translateX", 0, 1),
-    ("delete_undone", _delete_undone, "b.translateX", 0, 1),
-    ("readded", lambda: _readded("b"), "b.dd", 0, 1),
-    ("undone", lambda: _undone("b"), "b.undone", 0, 1),
-    ("extension", lambda: _extension(False), "pma.perfConnect", 0, 1),
+    ("node_attr", lambda: Node("a").tx, "a.translateX", 1, True),
+    ("compound", lambda: Node("a").t, "a.translate", 1, True),
+    ("child", lambda: Node("a").t.tx, "a.translateX", 1, True),
+    ("child_index", lambda: Node("a").t[1], "a.translateY", 1, True),
+    ("string", _plug("a.tx"), "a.translateX", 1, True),
+    ("mplug_child", _unindexed_child, "pma.input3D[-1].input3Dx", 1, True),
+    ("new_element", lambda: Node("pma").input1D[3], "pma.input1D[3]", 1, True),
+    ("element_child", _plug("pma.input3D[2].input3Dx"), "pma.input3D[2].input3Dx", 1,
+     True),
+    ("array_root", lambda: Node("pma").input1D, "pma.input1D", 1, True),
+    ("alias", _plug("b.bar"), "b.bar", 1, True),
+    ("alias_long", lambda: Node("b").foo, "b.bar", 1, True),
+    ("world_matrix", lambda: Node("a").worldMatrix[0], "a.worldMatrix", 1, True),
+    ("same_short_name", lambda: Node("|g1|dup").tx, "g1|dup.translateX", 1, True),
+    ("namespace", lambda: Node("ns:n").tx, "ns:n.translateX", 1, True),
+    ("shape", lambda: Node("locShape").localPositionX, "locShape.localPositionX", 1,
+     True),
+    ("choice", lambda: Node("pick").input[0], "pick.input[0]", 1, True),
+    ("joint", lambda: Node("jnt").jointOrientX, "jnt.jointOrientX", 1, True),
+    ("underworld", _underworld, "planeShape->curveShape1.visibility", 1, True),
+    ("instanced", _instanced, "T2|S.visibility", 1, True),
+    ("renamed", _renamed, "renamed.translateX", 1, True),
+    ("delete_undone", _delete_undone, "b.translateX", 1, True),
+    ("readded", lambda: _readded("b"), "b.dd", 1, True),
+    ("undone", lambda: _undone("b"), "b.undone", 1, True),
+    ("extension", lambda: _extension(False), "pma.perfConnect", 1, True),
     # re-pinned (round 3b review): deleteExtension frees the attribute, which the
     # name was read from ("pma."); the plug keeps a handle of it and raises
     ("extension_gone", lambda: _extension(True),
-     (RuntimeError, "pma.perfConnect already deleted!"), 0, 1),
-    ("deleted", lambda: _deleted("b"), _DELETED_B, 0, 1),
-    ("reused", _reused, _DELETED_B, 0, 1),
-    ("component", _component, "planeShape.cv[1][1]", 1, 1),
-    ("attribute", lambda: _base.Attribute("b.tx"), "b.translateX", 0, 0),
-    ("container_owner", _container_owner, "ctr.blackBox", 1, 1),
-    ("name_raises", _name_raises, "w.translateX", 0, 1),
-    ("no_wrapped_node", _no_wrapped_node, (AttributeError, "_dg_node"), 0, 1),
+     (RuntimeError, "pma.perfConnect already deleted!"), 1, False),
+    ("deleted", lambda: _deleted("b"), _DELETED_B, 1, False),
+    ("reused", _reused, _DELETED_B, 1, False),
+    ("component", _component, "planeShape.cv[1][1]", 1, False),
+    ("attribute", lambda: _base.Attribute("b.tx"), "b.translateX", 1, True),
+    ("container_owner", _container_owner, "ctr.blackBox", 1, True),
+    ("name_raises", _name_raises, "w.translateX", 0, True),
+    # the half-built node's name property raises AttributeError, which Python
+    # retries through DGNode.__getattr__ ("name"), and full_name's through
+    # Plug.__getattr__, whose container query names the node once more
+    ("no_wrapped_node", _no_wrapped_node, (AttributeError, "name"), 2, False),
 )
+
+
+def _fn_set_full_name(plug):
+    """The name of ``plug`` read without ``full_name``, ``name`` or ``alias``: its
+    owner's fn set name (the cast of its MPlug's node when it holds none) and the
+    MPlug's partial name."""
+    owner = plug.__dict__["_node"] or PyNode(plug.__dict__["_mplug"].node())
+    fn    = owner.__dict__["_fn_set"]
+    name  = fn.partialPathName() if isinstance(fn, OpenMaya.MFnDagNode) else fn.name()
+    attr  = plug.__dict__["_mplug"].partialName(False, False, False, True, False, True)
+    return f"{name}.{attr}"
 
 
 class TestFullNameReadsTheWrappedNode(MayaTestCase):
@@ -2692,40 +2736,46 @@ class TestFullNameReadsTheWrappedNode(MayaTestCase):
         cmds.aliasAttr("bar", "b.foo")
         cmds.addAttr("b", ln="dd", at="double")
 
-    def _full_name(self, factory, forwarded):
+    def _full_name(self, factory):
         """What ``full_name`` and ``str`` give twice on the plug ``factory`` builds
         in a fresh scene, the class of the owner the plug then holds and the name
-        lookups made, through the ``Node.__getattr__`` forwarding if ``forwarded``."""
+        property reads made."""
         self._scene()
-        plug    = factory()
-        wrapper = mock.patch.object(_base, "_NODE_WRAPPER_CLASS", None)
-        with wrapper if forwarded else contextlib.nullcontext():
-            results, forwards = _name_forwards(
-                lambda: [
-                    _result(lambda: plug.full_name),
-                    _result(lambda: str(plug)),
-                    _result(lambda: plug.full_name),
-                    _result(lambda: str(plug)),
-                ]
-            )
-        return results, type(plug.__dict__["_node"]), forwards
+        plug = factory()
+        results, reads = _name_forwards(
+            lambda: [
+                _result(lambda: plug.full_name),
+                _result(lambda: str(plug)),
+                _result(lambda: plug.full_name),
+                _result(lambda: str(plug)),
+            ]
+        )
+        return results, type(plug.__dict__["_node"]), reads
 
     def test_node_class_is_registered(self):
-        self.assertIs(_base._NODE_WRAPPER_CLASS, Node)
+        # re-pinned (round 4a M4, C8): no wrapper class is registered any more;
+        # the DSL Node is the root of the node classes and its factory returns
+        # the typed node PyNode casts
+        self.assertTrue(issubclass(DGNode, Node))
+        self.assertFalse(hasattr(_base, "_NODE_WRAPPER_CLASS"))
+        cmds.createNode("transform", name="t")
+        self.assertIs(type(Node("t")), type(PyNode("t")))
 
     def test_full_name_matches_the_forwarding(self):
-        for case, factory, expected, forwards, legacy_forwards in _FULL_NAME_CASES:
+        # re-pinned (round 4a M4, C8): there is no forwarding to compare with;
+        # full_name reads the owner's name property once, and the oracle naming
+        # the plug from the owner's fn set and the MPlug agrees with it
+        for case, factory, expected, reads, oracle in _FULL_NAME_CASES:
             with self.subTest(case=case):
-                fast   = self._full_name(factory, forwarded=False)
-                legacy = self._full_name(factory, forwarded=True)
+                results, owner_cls, count = self._full_name(factory)
                 if not isinstance(expected, tuple):
                     expected = ("ok", expected)
-                self.assertEqual(fast[0], ("ok", [expected] * 4))
-                self.assertEqual(fast[:2], legacy[:2])
-                # a Node owner is named without the forwarding, other owners with it
-                self.assertEqual(
-                    (fast[2], legacy[2]), (4 * forwards, 4 * legacy_forwards)
-                )
+                self.assertEqual(results, ("ok", [expected] * 4))
+                self.assertTrue(issubclass(owner_cls, Node))
+                self.assertEqual(count, 4 * reads)
+                if oracle:
+                    self._scene()
+                    self.assertEqual(_fn_set_full_name(factory()), expected[1])
 
     def test_cases_hold_no_freed_node(self):
         # a freed node's message is arbitrary and naming it can crash Maya, so a
@@ -2756,16 +2806,19 @@ class TestFullNameReadsTheWrappedNode(MayaTestCase):
             cmds.createNode("transform", name="refT")
             cmds.file(rename=path)
             cmds.file(save=True, type="mayaAscii", force=True)
-            for forwarded in (False, True):
-                with self.subTest(forwarded=forwarded):
+            # re-pinned (round 4a M4, C8): the forwarded variant is gone; the
+            # fn-set oracle names the plug without reading the name property
+            for oracle in (False, True):
+                with self.subTest(oracle=oracle):
                     cmds.file(new=True, force=True)
                     cmds.file(path, reference=True, namespace="ref")
-                    plug    = _named(Node("ref:refT").tx)
-                    wrapper = mock.patch.object(_base, "_NODE_WRAPPER_CLASS", None)
-                    with wrapper if forwarded else contextlib.nullcontext():
+                    plug = _named(Node("ref:refT").tx)
+                    if oracle:
+                        loaded = _name_forwards(lambda: _fn_set_full_name(plug))
+                    else:
                         loaded = _name_forwards(lambda: plug.full_name)
                     self.assertEqual(
-                        loaded, (("ok", "ref:refT.translateX"), int(forwarded))
+                        loaded, (("ok", "ref:refT.translateX"), int(not oracle))
                     )
                     # unloading frees the node, whose name is then read from freed
                     # memory, so the plug is not named again
