@@ -12,6 +12,12 @@
   keeps its node's handle, like a Plug's, so a delete, a new scene or a
   reference unload drops it (decision S4 Q5).
 * Every Plug operator is checked by one frame (``_checking_operands``).
+
+Round 4a, step X1 (decision X1): ``p == q`` / ``p != q`` of two objects of one
+Maya plug fold to ``True`` / ``False`` and build no node, unless constant
+folding is off (``force_nodes()``); different plugs build the condition node.
+A dict / set lookup through a second object of a plug builds nothing (round-3
+F10), and a plain list scan still compares every different plug it passes.
 """
 
 import itertools
@@ -42,6 +48,7 @@ from rig._internal.memoize import memoize
 from rig._internal.plug import Plug
 from rig.nodetypes import PyNode
 from rig.nodetypes._base import Attribute
+from rig.spec import Float
 from rig._tests._base import MayaTestCase
 
 
@@ -673,3 +680,291 @@ class _Nothing:
 
     def __exit__(self, *exc):
         return False
+
+
+# --------------------------------------------------------------------- #
+#  Step X1: same-plug == / != fold (decision X1; resolves round-3 F10)
+# --------------------------------------------------------------------- #
+
+
+def _new(before):
+    """The nodes made since `before` (a `_scene()`), sorted."""
+    return sorted(_scene() - before)
+
+
+def _instanced():
+    """`|T1|S` and `|T2|S`: one locator shape under two transforms."""
+    cmds.createNode("transform", name="T1")
+    cmds.createNode("locator", name="S", parent="T1")
+    cmds.createNode("transform", name="T2")
+    cmds.parent("|T1|S", "T2", addObject=True, shape=True)
+    return Node("|T1|S"), Node("|T2|S")
+
+
+class _FoldingOff:
+    """`set_options(constant_folding=False)` for a `with` block."""
+
+    def __enter__(self):
+        set_options(constant_folding=False)
+        return self
+
+    def __exit__(self, *exc):
+        set_options(constant_folding=True)
+        return False
+
+
+class TestSamePlugFold(_SceneCase):
+    """``p == q`` / ``p != q`` of two objects of one Maya plug are ``True`` /
+    ``False`` and build nothing (unless constant folding is off); different
+    plugs build the condition node as before."""
+
+    def _assert_folds(self, p, q):
+        self.assertIsNot(p, q)
+        before = _scene()
+        self.assertIs(p == q, True)
+        self.assertIs(p != q, False)
+        self.assertIs(q == p, True)
+        self.assertIs(q != p, False)
+        self.assertEqual(_new(before), [])
+
+    def test_two_objects_of_one_plug(self):
+        t = self.t
+        cmds.createNode("multiplyDivide", name="md")
+        cmds.addAttr("t", ln="knob", at="double")
+        cmds.namespace(add="ns")
+        cmds.createNode("transform", name="ns:a")
+        cases = {
+            "DG": lambda: (Node("md").input1X, Node("md").input1X),
+            "DAG": lambda: (t.tx, t.tx),
+            "compound, short and long name": lambda: (t.t, t.translate),
+            "a name-built plug": lambda: (Plug("t.tx"), t.translateX),
+            "a matrix element": lambda: (t.worldMatrix[0], t.worldMatrix[0]),
+            "an unindexed matrix and its element": lambda: (t.worldMatrix, t.worldMatrix[0]),
+            "a dynamic attr": lambda: (t.knob, Node("t").knob),
+            "a namespaced node": lambda: (Node("ns:a").tx, Plug("ns:a.translateX")),
+            "a typed attr on the right": lambda: (t.tx, PyNode("t").find_attr("tx")),
+            "a typed attr on the left": lambda: (PyNode("t").find_attr("tx"), t.tx),
+        }
+        for label, pair in cases.items():
+            with self.subTest(label):
+                self._assert_folds(*pair())
+
+    def test_through_two_instance_paths(self):
+        n1, n2 = _instanced()
+        self.assertNotEqual(str(n1.v), str(n2.v))
+        self._assert_folds(n1.v, n2.v)
+        self._assert_folds(n1.worldMatrix[1], n2.worldMatrix)
+        # worldMatrix[0] and [1] are two plugs: the node is built (and a matrix
+        # cannot feed an equal node), as for any two plugs
+        before = _scene()
+        with self.assertRaises(InjectionError):
+            n1.worldMatrix[0] == n1.worldMatrix[1]
+        self.assertIsNone({n1.worldMatrix[0]: 1}.get(n2.worldMatrix))
+        with self.assertRaises(InjectionError):
+            n1.worldMatrix == n2.worldMatrix
+        self.assertEqual([cmds.nodeType(x) for x in _new(before)], ["equal", "equal"])
+
+    def test_a_component_element_and_its_storage(self):
+        cmds.nurbsPlane(name="plane", u=3, v=3, ch=False)
+        surface = Node("planeShape")
+        element = surface.cv[1, 2]
+        index   = element.__dict__["_mplug"].logicalIndex()
+        self._assert_folds(element, surface.controlPoints[index])
+        self._assert_folds(surface.cv[1, 2], surface.cv[1, 2])
+        self._assert_folds(surface.cv, surface.cv)
+        lattice = cmds.lattice(cmds.polyCube(name="box")[0], divisions=(2, 3, 2))[1]
+        shape   = Node(cmds.listRelatives(lattice, shapes=True)[0])
+        element = shape.pt[1, 2, 0]
+        index   = element.__dict__["_mplug"].logicalIndex()
+        self._assert_folds(shape.controlPoints[index], element)
+        self._assert_folds(Node("boxShape").vtx[3], Node("boxShape").pnts[3])
+        before = _scene()
+        self.assertFalse(surface.cv[1, 2] == surface.cv[2, 1])
+        self.assertNotEqual(_new(before), [])
+
+    def test_a_container_published_plug(self):
+        set_options(flatten_containers=False)
+        with container("outer") as box:
+            n = Node.create("transform", name="holder")
+            n << Float("weight", dv=0.5)
+            published = container.publish_input(n.weight, "weight")
+            m = Node.create("multiplyDivide", name="mul")
+            m.input1X << n.weight
+            result = container.publish_output(m.outputX, "result")
+        for label, pair in {
+            "the input and the container's": (published, box.weight),
+            "the container's through two nodes": (box.weight, Node("outer").weight),
+            "a name-built plug of the container's": (Plug("outer.weight"), n.weight),
+            "the output and its source": (result, Node("mul").outputX),
+            "the output and the container's": (Node("outer").result, box.result),
+        }.items():
+            with self.subTest(label):
+                self._assert_folds(*pair)
+
+    def test_a_renamed_node(self):
+        held = self.t.tx
+        cmds.rename("t", "t_renamed")
+        self._assert_folds(held, Node("t_renamed").tx)
+
+    def test_different_plugs_build_the_node(self):
+        t, u = self.t, self.u
+        for label, (p, q) in {
+            "two nodes": (t.tx, u.tx),
+            "two attrs": (t.tx, t.ty),
+            "a typed attr": (t.tz, PyNode("u").find_attr("tz")),
+        }.items():
+            with self.subTest(label):
+                before = _scene()
+                eq = p == q
+                self.assertIsInstance(eq, Plug)
+                self.assertIs(bool(eq), False)
+                ne = p != q
+                self.assertIsInstance(ne, Plug)
+                self.assertIs(bool(ne), True)
+                self.assertEqual(
+                    sorted(cmds.nodeType(x) for x in _new(before)), ["condition", "equal"]
+                )
+                self.assertEqual(cmds.nodeType(eq.node), "equal")
+                self.assertEqual(
+                    cmds.listConnections(str(eq.node.input1), plugs=True), [str(p)]
+                )
+
+    def test_force_nodes_and_constant_folding_off_build_the_node(self):
+        for label, scope in {
+            "force_nodes": force_nodes,
+            "constant_folding=False": _FoldingOff,
+        }.items():
+            with self.subTest(label):
+                cmds.file(new=True, force=True)
+                cmds.createNode("transform", name="t")
+                t = Node("t")
+                self.assertIs(t.tx == t.tx, True)  # folded: nothing memoized
+                before = _scene()
+                with scope():
+                    eq = t.tx == t.tx
+                    ne = t.tx != t.tx
+                    typed = PyNode("t").find_attr("tx") == t.tx  # reflected: Plug.__eq__
+                self.assertIsInstance(eq, Plug)
+                self.assertIs(bool(eq), True)
+                self.assertIsInstance(ne, Plug)
+                self.assertIs(bool(ne), False)
+                self.assertIs(typed, eq)  # the same inputs: one memoized node
+                self.assertEqual(
+                    sorted(cmds.nodeType(x) for x in _new(before)), ["condition", "equal"]
+                )
+                self.assertEqual(
+                    cmds.listConnections(str(eq.node.input1), plugs=True), ["t.translateX"]
+                )
+                # folding on again: a bool; the memoized node is not looked up
+                before = _scene()
+                self.assertIs(t.tx == t.tx, True)
+                self.assertIs(t.tx != t.tx, False)
+                self.assertEqual(_new(before), [])
+
+    def test_dict_set_and_list_lookups_build_nothing(self):
+        # round-3 F10: a lookup through a second Plug object of one plug
+        t = self.t
+        before = _scene()
+        self.assertEqual({t.tx: 1}[t.tx], 1)
+        self.assertIs(t.tx in {t.tx, t.ty}, True)
+        self.assertEqual(len({t.tx, t.tx}), 1)
+        self.assertEqual({t.worldMatrix[0]: 1}[t.worldMatrix[0]], 1)  # no InjectionError
+        self.assertIs(t.worldMatrix[0] in {t.worldMatrix[0]}, True)
+        self.assertIs(t.tx in [t.tx], True)
+        self.assertEqual([t.tx].index(t.tx), 0)
+        self.assertEqual(_new(before), [])
+
+    def test_a_plain_list_scan_still_compares_different_plugs(self):
+        # the residual: each DIFFERENT plug a list scan passes is compared with
+        # the DSL ==, which builds an equal node; a PlugList builds nothing
+        t, u = self.t, self.u
+        before = _scene()
+        self.assertIs(t.tx in [u.tx, u.ty, t.tx], True)
+        self.assertEqual([cmds.nodeType(x) for x in _new(before)], ["equal", "equal"])
+        before = _scene()
+        self.assertEqual([u.tx, u.ty, t.tx].index(t.tx), 2)
+        self.assertEqual(_new(before), [])  # the same two comparisons, memoized
+        before = _scene()
+        self.assertIs(t.tx in PlugList([u.tx, u.ty, t.tx]), True)
+        self.assertEqual(PlugList([u.tx, u.ty, t.tx]).index(t.tx), 2)
+        self.assertIs(
+            t.worldMatrix[0] in PlugList([u.worldMatrix[0], t.worldMatrix[0]]), True
+        )
+        self.assertEqual(_new(before), [])
+        with self.assertRaises(InjectionError):
+            t.worldMatrix[0] in [u.worldMatrix[0], t.worldMatrix[0]]
+
+    def test_a_condition_of_one_plug_picks_in_python(self):
+        t, u = self.t, self.u
+        a, b = u.tx, u.ty
+        before = _scene()
+        self.assertIs(condition(t.tx == t.tx, a, b), a)
+        self.assertIs(condition(t.tx != t.tx, a, b), b)
+        self.assertEqual(_new(before), [])
+        self.assertEqual(cmds.nodeType(condition(t.tx == u.tx, a, b).node), "condition")
+
+    def test_the_result_type_depends_on_the_data(self):
+        # CR-17, written into decision X1: one plug gives a bool, two a Plug
+        t, u = self.t, self.u
+        same, other = t.tx == t.tx, t.tx == u.tx
+        self.assertIs(same, True)
+        self.assertEqual(cmds.nodeType(other.node), "equal")
+        with self.assertRaises(AttributeError):
+            same.node
+        # `>>` connects neither (a plug is connected with `destination << source`)
+        with self.assertRaisesRegex(TypeError, r"unsupported operand type\(s\) for >>: 'bool'"):
+            same >> u.v
+        with self.assertRaisesRegex(TypeError, r"'>>' does not connect plugs"):
+            other >> u.v
+        # `<<` takes both: the bool is set, the Plug connected
+        u.v << same
+        self.assertIs(cmds.getAttr("u.v"), True)
+        self.assertEqual(cmds.listConnections("u.v", source=True, destination=False) or [], [])
+        u.v << other
+        self.assertEqual(cmds.listConnections("u.v", plugs=True), [str(other)])
+
+    def test_a_node_deleted_to_the_undo_queue(self):
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            cmds.createNode("transform", name="gone")
+            p, q = Node("gone").tx, Node("gone").tx
+            keyed = {p: 1}
+            cmds.delete("gone")
+            before = _scene()
+            for label, call in (("==", lambda: p == q), ("!=", lambda: p != q)):
+                with self.subTest(label):
+                    with self.assertRaisesRegex(RuntimeError, r"^gone already deleted!$"):
+                        call()
+            self.assertEqual(_new(before), [])
+            cmds.undo()
+            self._assert_folds(p, q)
+            before = _scene()
+            self.assertEqual(keyed[q], 1)
+            self.assertEqual(_new(before), [])
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_a_deleted_dynamic_attr(self):
+        cmds.addAttr("t", ln="knob", at="double")
+        p, q = self.t.knob, self.t.knob
+        self._assert_folds(p, q)
+        cmds.deleteAttr("t.knob")
+        cmds.flushUndo()
+        cmds.addAttr("t", ln="knob", at="long")
+        before = _scene()
+        with self.assertRaisesRegex(RuntimeError, r"^t\.knob already deleted!$"):
+            p == q
+        with self.assertRaisesRegex(RuntimeError, r"^t\.knob already deleted!$"):
+            p != self.t.knob
+        self.assertEqual(_new(before), [])
+        self._assert_folds(self.t.knob, self.t.knob)
+
+    def test_a_freed_node(self):
+        p, q = self.t.tx, self.t.tx
+        cmds.file(new=True, force=True)
+        before = _scene()
+        for label, call in (("==", lambda: p == q), ("!=", lambda: p != q)):
+            with self.subTest(label):
+                with self.assertRaisesRegex(RuntimeError, _FREED):
+                    call()
+        self.assertEqual(_new(before), [])
