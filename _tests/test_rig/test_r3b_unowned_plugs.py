@@ -110,7 +110,8 @@ def _guard_handle(attr):
     owner = vars(attr)["_node"]
     if owner is None:
         return vars(attr)["_handle1"]
-    return _base._unwrapped(owner)._objhandle1
+    # re-pinned (round 4a M4, C8): the owner is the node object itself
+    return owner._objhandle1
 
 
 # the paths above whose plug has an owner: the parent cast its node when it was
@@ -143,7 +144,8 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
         self.assertEqual(str(plug), "held.translateY")
         self.assertEqual(plug.get(), 3.0)
         self.assertEqual(hash(plug), hash(Node("held").ty))
-        self.assertEqual(repr(plug.node), 'Node("held")')
+        # re-pinned (round 4a M4, C8): the cast is the typed node, typed repr
+        self.assertEqual(repr(plug.node), 'Transform("held")')
         component = Plug("pcShape.vtx[1]")
         self.assertEqual(str.__str__(component), "pcShape.vtx[1]")
         self.assertEqual(str(component), "pcShape.controlPoints[1]")
