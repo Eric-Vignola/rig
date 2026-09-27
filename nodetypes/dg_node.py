@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import re
 from functools import total_ordering
+from types import FunctionType
 from typing import Any, Sequence
 
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _MISSING,
     _attr_handle,
     _attr_mobject,
+    _class_attr,
     _deleted_error,
+    _ensure_owner_alive,
     _full_name_buffer,
     _handle_valid,
+    _named_through_owner,
     _new_attr,
     _queried_data_type,
     Attribute,
@@ -90,6 +95,38 @@ def _is_unresolved_multi_child(plug: OpenMaya.MPlug) -> bool:
 
 _NORMAL_ATTR = OpenMaya.MFnDependencyNode.kNormalAttr
 _EXTENSION_ATTR = OpenMaya.MFnDependencyNode.kExtensionAttr
+
+# The rig DSL layer: ``rig._internal.plug`` sets these when it loads, since it
+# imports this module (it always loads with ``import rig``). Until then
+# ``DGNode.__getattr__`` returns Attributes, a state that only exists mid-import.
+_PLUG_CLASS     = None  # rig._internal.plug.Plug
+_COMPONENT_PLUG = None  # rig._internal.plug._maybe_component_plug
+
+# NURBS-surface ``cv`` / lattice ``pt``: the names a ComponentPlug may answer
+_MULTIDIM = frozenset({"cv", "pt"})
+
+# Names that ``DGNode.__getattr__`` resolves as geometry components AFTER the
+# real attribute lookup fails: faces / edges become a ``Components`` (they have
+# no plug), and the point aliases reach through a transform to its one shape.
+_COMPONENT_TOKENS = frozenset({"f", "e"}) | _COMPONENT_ALIASES
+
+# The instance state the node constructors, caches and the plug hash store,
+# which the ``=`` sugar stores directly (never a Maya attr of that name)
+_WRAPPER_STATE = frozenset(
+    {
+        "_mobject",
+        "_mdagpath",
+        "_fn_set",
+        "_fn_set1",  # NW6: API 1.0 handle store (a name, for the sugar)
+        "_objhandle1",  # NW6: API 1.0 handle store (a name, for the sugar)
+        "_attr_dict",
+        "_Geometry__local_shape_attr",
+        "_Geometry__world_shape_attr",
+        # round 3: the node's plug hash serial and a DAG node's taken path
+        "_node_serial",
+        "_taken_mdagpath",
+    }
+)
 
 
 def _filtered(
@@ -194,26 +231,169 @@ class DGNode(metaclass=NodeMeta):
         return self.name > str(other)
 
     def __getattr__(self, attr_name):
-        """Implemented to return attribute by name.
+        """Returns the Maya attribute ``attr_name`` as a DSL :class:`Plug` owned
+        by this node (``node.tx.node is node``).
 
         Only runs once normal lookup failed, so Python members always win. A
         ``_`` name (Python probes dunders constantly: ``__deepcopy__``,
         ``__array__``, ``__apiobject__``) resolves only to a Maya attr that
         really exists on a live node; the API 1.0 handle is read first, it is
         safe on a node a new scene freed, and a half-built instance (``copy``)
-        raises ``AttributeError``.
+        raises ``AttributeError``. A node a new scene, a file open or a
+        reference unload freed raises ``already deleted!``, a cached attr too.
+
+        The plug is built as the one a DSL ``Node`` gives: the handle of its
+        attribute for a dynamic attr, and, on a node with more than one DAG
+        path, named through this node's path (``PyNode("|T2|S").v`` is
+        ``T2|S.visibility``). An attr of another node (a shape's, read through
+        its transform) keeps that node as its owner, or none.
+
+        Real attributes always win (``curveShape.f`` is ``form``). Only once the
+        lookup has raised do ``f`` / ``e`` become a ``Components`` on a mesh
+        shape or a transform with exactly one mesh shape, and do the point
+        aliases (``vtx`` / ``cv`` / ``pt`` / ``map`` / ``uv``) resolve through a
+        transform with exactly one geometry shape. A NURBS-surface ``cv`` or a
+        lattice ``pt`` is a ``ComponentPlug`` (``node.cv[u, v]``).
+
+        The typed API reads Maya attrs with :meth:`find_attr`, which returns
+        :class:`Attribute` instances.
 
         Example:
         ```
-        node.my_attr.set(value)
+        node.my_attr << value
         ```
         """
+        d = self.__dict__
         if attr_name[:1] == "_":
-            d  = self.__dict__
             fn = d.get("_fn_set")
             if fn is None or not _handle_valid(d) or not fn.hasAttribute(attr_name):
                 raise AttributeError(attr_name)
-        return self.find_attr(attr_name, quiet=False)
+        cache = d.get("_attr_dict")
+        if cache is None:  # half-built (a failed __init__, object.__new__)
+            raise AttributeError(attr_name)
+        attr = cache.get(attr_name)
+        if attr is None:
+            try:
+                attr = self.find_attr(attr_name)
+            except AttributeError:
+                if attr_name in _COMPONENT_TOKENS:
+                    from rig._internal.node import _component_fallback
+
+                    found = _component_fallback(self, attr_name)
+                    if found is not None:
+                        return found
+                raise
+        elif not d["_objhandle1"].isAlive():  # NW6: API 1.0 handle read (hot)
+            # a node a new scene freed: its cached MPlug points at freed memory
+            # (a miss raised through the fn set). `_attr_dict` is set last by
+            # every constructor, so the handle is there.
+            self.ensure_valid()
+        plug_cls = _PLUG_CLASS
+        if plug_cls is None:
+            return attr
+        attr_d = attr.__dict__
+        owner  = attr_d["_node"]
+        # with the handle of its attribute, for a dynamic attr
+        attr1  = attr_d.get("_attr1")
+        if attr_name in _MULTIDIM:
+            # NURBS-surface ``cv`` / lattice ``pt``: ``node.cv[u, v]`` resolves
+            # like the ``Plug("shape.cv[u][v]")`` string path
+            plug = _COMPONENT_PLUG(attr_name, attr)
+            if plug is not None:
+                plug.__dict__["_node"] = owner
+                return _named_through_owner(plug)
+        if owner is self:
+            plug = _new_attr(plug_cls, attr_d["_mplug"], None, attr1)
+            plug.__dict__["_node"] = self
+            # ``find_attr`` named the attr through this node's path if it has
+            # more than one; one it did not is named as the MPlug
+            if not str.__contains__(attr, "|"):  # _named_through_a_path
+                return plug
+            return _named_through_owner(plug)
+        # an attr of another node: its owner, or none and the handle of that
+        # node the attr took, which checks it until ``Plug.node`` casts it
+        plug = _new_attr(plug_cls, attr_d["_mplug"], attr_d["_handle1"], attr1)
+        plug.__dict__["_node"] = owner
+        return _named_through_owner(plug)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """``node.tx = 5`` is sugar for ``node.tx << 5``.
+
+        The node's own state (``_mobject``, ``_attr_dict`` ...) and a Python
+        attribute already stored on this instance (``vars(node)["tag"] = 1``)
+        are stored. A class attribute of that name wins: a property's setter
+        runs (``node.namespace = "ns"``), a read-only property raises, and a
+        method or constant raises too (``node.find_attr("rename") << value``
+        reaches a Maya attr of such a name), unless a callable replaces a
+        method on this instance (``node.get_parent = f``,
+        ``mock.patch.object(node, ...)``). A ``_`` name is Python state unless
+        the live node has a Maya attr of that name (``node.__parked__ = 4.0``).
+        Any other name must be a Maya attr: a typo raises "Attribute not found"
+        instead of adding a Python attribute, and a deleted node raises
+        ``already deleted!``.
+        """
+        d = self.__dict__
+        # the node state, and a Python attribute already stored on this instance
+        # (``vars(node)["tag"] = ...``, a method mock.patch.object patched)
+        if name in _WRAPPER_STATE or name in d:
+            d[name] = value
+            return
+        found = _class_attr(type(self), name)
+        if found is not _MISSING:
+            if name[:1] == "_" or hasattr(type(found), "__set__"):
+                # a property setter runs, a read-only one raises, a private
+                # class default is shadowed on the instance
+                object.__setattr__(self, name, value)
+                return
+            # a callable shadows a method on this instance (monkeypatching,
+            # ``mock.patch.object(node, "get_parent")``)
+            if callable(value) and isinstance(
+                found, (FunctionType, classmethod, staticmethod)
+            ):
+                d[name] = value
+                return
+            raise AttributeError(
+                f"{type(self).__name__}.{name} is a method or class attribute, "
+                f"not a plug; use node.find_attr({name!r}) << value for a Maya "
+                f"attr of that name"
+            )
+        if name[:1] == "_":
+            fn = d.get("_fn_set")
+            if fn is None or not _handle_valid(d) or not fn.hasAttribute(name):
+                # private Python state (on a deleted or freed node too)
+                d[name] = value
+                return
+        type(self).__getattr__(self, name) << value
+
+    # --- DSL operators
+
+    def __lshift__(self, other: Any) -> Any:
+        """``node << X`` -- inject: a collection spec makes the node a member, an
+        attribute spec adds an attribute, a matrix source on a transform drives
+        its channels. See :func:`rig._internal.node._node_lshift`."""
+        from rig._internal.node import _node_lshift
+
+        return _node_lshift(self, other)
+
+    def __rshift__(self, other: Any) -> Any:
+        """``node >> None`` returns the node itself (a no-op: the node already is
+        the typed node); ``node >> spec`` declares an output attribute and
+        ``node >> Tag(...)`` queries membership. See
+        :func:`rig._internal.node._node_rshift`."""
+        if other is None:
+            return self
+        from rig._internal.node import _node_rshift
+
+        return _node_rshift(self, other)
+
+    def __fspath__(self) -> str:
+        return self.name
+
+    @property
+    def _dg_node(self) -> "DGNode":
+        """The node itself (the DSL wrapper's attribute, kept while the code that
+        reads it is migrated)."""
+        return self
 
     # --- properties & utils
 
@@ -417,12 +597,26 @@ class DGNode(metaclass=NodeMeta):
             node is owned by this node object (its ``node`` is ``self``); the
             normal attrs are cached, so the same instance is returned again.
         """
-        # pass through
+        # pass through; a DSL Plug (``mesh.skinMask``) gives the Attribute of its
+        # MPlug, with its owner and handles, since the typed API reads
+        # Attributes (a Plug's `get()` is numpy-shaped, its `==` / `<` build
+        # nodes). Its MPlug is read once its node is known alive.
         if isinstance(attr, Attribute):
+            _ensure_owner_alive(attr)
             if attr.plug.node() != self.mobject:
                 if quiet:
                     return None
                 raise AttributeError(f"{attr} doesn't belong to {self}.")
+            if type(attr) is not Attribute:
+                attr_d = attr.__dict__
+                typed  = _new_attr(
+                    Attribute, attr_d["_mplug"], attr_d["_handle1"], attr_d.get("_attr1")
+                )
+                typed.__dict__["_node"] = attr_d["_node"]
+                # named through its owner's path, as the plug was
+                if str.__contains__(attr, "|"):  # _named_through_a_path
+                    typed = _named_through_owner(typed)
+                return typed
             return attr
 
         # return cached attr, filtered like a new lookup

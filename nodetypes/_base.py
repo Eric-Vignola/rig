@@ -2569,7 +2569,8 @@ class Attribute(str):
         spase_ids    = []
         spase_values = []
 
-        values = self.get()
+        # the getAttr list, also for a DSL Plug (whose `get()` is numpy-shaped)
+        values = Attribute.get(self)
         if not values:
             return spase_ids, spase_values
 

@@ -17,9 +17,12 @@ class TestChoice(MayaTestCase):
         self.xform  = PyNode(cmds.createNode("transform"))
         self.choice = PyNode(cmds.createNode("choice"))
         if connect:
-            self.xform.tx      >> self.choice.input[0]
-            self.xform.message >> self.choice.input[1]
-            self.xform.matrix  >> self.choice.input[2]
+            # typed Attributes connect with ``>>`` (a typed node's dotted
+            # access gives a DSL Plug, whose ``>>`` clones)
+            inputs = self.choice.find_attr("input")
+            self.xform.find_attr("tx")      >> inputs[0]
+            self.xform.find_attr("message") >> inputs[1]
+            self.xform.find_attr("matrix")  >> inputs[2]
 
     def test_type_resolving_connected(self):
         self._setup_scene(connect=True)
