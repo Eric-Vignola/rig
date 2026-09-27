@@ -1,25 +1,22 @@
 """Invariants the performance work must keep: ``PyNode`` dispatch through the
 per-type class cache picks the same class, raises the same errors and follows
 new class registrations like the name-based path does. A cast that skips the
-type check builds the same wrapper as the constructor, and the node a plug
+type check builds the same node object as the constructor, and the node a plug
 caches when it is first named behaves as before. ``Attribute.set`` passes the
 same ``type`` argument, and raises the same errors, when it skips the type
 query. ``Attribute.data_type`` shares a fixed-kind attr's or a typed array
 root's type across nodes of a type, and keeps querying every type that can
 change. ``Attribute.__init__``
 leaves the same instance state without going through ``Plug.__setattr__``. A
-plug reuses the wrapper of the Node or parent plug it came from only where a
-fresh cast would rebuild that wrapper unchanged, so it reports the same owner
-and raises the same errors. ``Attribute.connect`` skips the ``isConnected``
+plug holds the node object it was read from (the owner rule), and its
+children and elements share it, so naming it casts nothing and it raises the
+same errors as a fresh plug. ``Attribute.connect`` skips the ``isConnected``
 query only for a destination it must find unconnected, with the same result,
 errors and scene as the query path. DGNode's data type fallback hook reuses the
 type ``Attribute.data_type`` just queried only when no code that could change it
-ran in between, and queries again otherwise. The canonical wrapper check keeps
-its class checks per class only until a node class or class attribute changes,
-and takes a DAG wrapper's name from its own path only when that is the node's
-only path. ``Attribute.full_name`` reads a plug owner's name property once
-(the owner is the node itself since the round-4a class swap), with the same
-names and errors."""
+ran in between, and queries again otherwise. ``Attribute.full_name`` reads a
+plug owner's name property once (the owner is the node itself since the
+round-4a class swap), with the same names and errors."""
 
 import contextlib
 import os
@@ -310,8 +307,8 @@ class TestPyNodeDispatch(MayaTestCase):
         self.assertEqual(str(ctx.exception), "foo already deleted!")
 
 
-def _wrapper_state(node):
-    """Everything a node wrapper holds, in the order its constructor set it."""
+def _node_state(node):
+    """Everything a node object holds, in the order its constructor set it."""
     state = {
         "class": type(node),
         "keys":  list(vars(node)),
@@ -370,8 +367,8 @@ class TestCheckedTypeConstruction(MayaTestCase):
                 first = PyNode(mobj)
                 again = PyNode(mobj)
                 built = type(first)(_mobject_to_str(mobj))
-                self.assertEqual(_wrapper_state(again), _wrapper_state(built))
-                self.assertEqual(_wrapper_state(again), _wrapper_state(first))
+                self.assertEqual(_node_state(again), _node_state(built))
+                self.assertEqual(_node_state(again), _node_state(first))
                 self.assertTrue(again._mobject == built._mobject)
 
     def test_checked_type_cast_skips_type_queries(self):
@@ -462,7 +459,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
         other = cmds.createNode("transform", name="T2")
         cmds.parent("T1|S", other, add=True, relative=True)
         self.assertEqual(str(Node("|T2|S").visibility), "T2|S.visibility")
-        self.assertEqual(Node("|T2|S").visibility.node._dg_node.long_name, "|T2|S")
+        self.assertEqual(Node("|T2|S").visibility.node.long_name, "|T2|S")
 
     def test_named_plug_keeps_its_node_after_delete(self):
         cmds.undoInfo(state=True, infinity=True)
@@ -505,10 +502,10 @@ class TestCheckedTypeConstruction(MayaTestCase):
                 str(ctx.exception), "object is incompatible with MFnMesh constructor"
             )
 
-    def test_plug_hash_value_unchanged(self):
-        # Historical id: the value is no longer v2.0.0a2's. Round 3, decision
-        # D-B: a plug hashes by its Maya plug, so a rename keeps the key (it was
-        # the node's name plus the alias). Step S2 used the node's API 1.0
+    def test_plug_hash_is_one_key(self):
+        # Round 3, decision D-B: a plug hashes by its Maya plug (no longer
+        # v2.0.0a2's value), so a rename keeps the key (it was the node's name
+        # plus the alias). Step S2 used the node's API 1.0
         # MObjectHandle hashCode, which Maya hands to a node made after a freed
         # one, so a plug of the freed node and one of the new node shared a key
         # (the review of 29a4128); the node part is now a serial that is never
@@ -1288,7 +1285,7 @@ def _owner(plug):
     """The name, owner classes and owner path a plug reports, or what it raises."""
     try:
         name = str(plug)
-        node = plug.node._dg_node
+        node = plug.node
         path = node._mdagpath.fullPathName() if "_mdagpath" in vars(node) else None
     except Exception as exc:
         return ("error", type(exc), str(exc))
@@ -1324,7 +1321,7 @@ class TestPlugNodeReuse(MayaTestCase):
         PyNode(_mobject(cmds.createNode(node_type)))
         return cmds.createNode(node_type)
 
-    def test_lookup_child_and_element_plugs_reuse_the_wrapper(self):
+    def test_lookup_child_and_element_plugs_share_the_node(self):
         node = Node(self._known_type("transform"))
         pma  = Node(self._known_type("plusMinusAverage"))
         for plug, expected in (
@@ -1348,7 +1345,7 @@ class TestPlugNodeReuse(MayaTestCase):
                 fresh = Plug(plug.plug)
                 self.assertEqual(self._casts(lambda: str(fresh)), 1)
                 self.assertEqual(_owner(plug), _owner(fresh))
-        # a parent that holds no wrapper hands none on and is not resolved
+        # a parent that holds no node hands none on and is not resolved
         held = Plug(node.rotate.plug)
         self.assertIsNone(held.child(0)._node)
         self.assertIsNone(held.rotateY._node)
@@ -1357,9 +1354,8 @@ class TestPlugNodeReuse(MayaTestCase):
         self.assertEqual(self._casts(lambda: str(held.rotateX)), 0)
         self.assertEqual(self._casts(lambda: str(held[2])), 0)
 
-    def test_first_plug_on_a_type_still_casts(self):
-        # Historical id: under the owner rule (round 3, D-A) the first plug on
-        # a type casts nothing; the body pins 0 casts.
+    def test_first_plug_on_a_type_makes_no_cast(self):
+        # the owner rule (round 3, D-A): the first plug on a type casts nothing
         PyNode._CLASS_BY_TYPE.clear()
         PyNode._CASTABLE_TYPES.clear()
         node = Node(cmds.createNode("multiplyDivide"))
@@ -1391,14 +1387,14 @@ class TestPlugNodeReuse(MayaTestCase):
                 plug = lookup()
                 self.assertEqual(plug.name, attr)
                 self.assertEqual(str(plug), f"T2|S.{attr}")
-                self.assertEqual(plug.node._dg_node.long_name, "|T2|S")
+                self.assertEqual(plug.node.long_name, "|T2|S")
         held_t1 = Node("|T1|S")
         self.assertEqual(self._casts(lambda: str(held_t1.visibility)), 0)
 
-    def test_instanced_plug_names_match_v2_0_0a2(self):
-        # Historical id: the |T2|S subTests are named through T2 under the owner
-        # rule (round 3, D-A), no longer as on v2.0.0a2; the |T1|S ones and the
-        # Plug-from-string ones still match v2.0.0a2.
+    def test_instanced_plug_names_follow_the_path_read_through(self):
+        # the |T2|S subTests are named through T2 under the owner rule (round 3,
+        # D-A), no longer as on v2.0.0a2; the |T1|S ones and the Plug-from-string
+        # ones still match v2.0.0a2.
         top = cmds.createNode("transform", name="T1")
         cmds.createNode("transform", name="S", parent=top)
         other = cmds.createNode("transform", name="T2")
@@ -1437,7 +1433,7 @@ class TestPlugNodeReuse(MayaTestCase):
     def test_user_chosen_class_not_seeded(self):
         plug = Node(Transform(self._known_type("joint"))).tx
         self.assertEqual(self._casts(lambda: str(plug)), 0)
-        self.assertIs(type(plug.node._dg_node), Transform)
+        self.assertIs(type(plug.node), Transform)
 
     def test_shape_attr_via_transform_gets_shape_node(self):
         points = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
@@ -1459,9 +1455,9 @@ class TestPlugNodeReuse(MayaTestCase):
                 self.assertEqual(self._casts(lambda: str(child)), 0)
                 self.assertEqual(str(child), f"y.{attr}")
 
-    def test_container_plug_node_is_plain_node(self):
-        # Historical id: under the owner rule (round 3, D-A) the plug's node is
-        # the Container it was read from, not a plain Node.
+    def test_container_plug_node_is_the_container(self):
+        # the owner rule (round 3, D-A): the plug's node is the Container it was
+        # read from
         PyNode(_mobject(cmds.container(name="box0")))
         ctn  = Container(cmds.container(name="box"))
         plug = ctn.blackBox
@@ -1510,14 +1506,14 @@ class TestPlugNodeReuse(MayaTestCase):
         for plug in held:
             with self.subTest(plug=plug.name):
                 self.assertEqual(self._casts(lambda: str(plug)), 0)
-                self.assertIs(type(plug.node._dg_node), Transform)
+                self.assertIs(type(plug.node), Transform)
                 # a fresh cast sees the custom type
                 self.assertNotEqual(_owner(plug), _owner(Plug(plug.plug)))
 
-    def test_deleted_node_error_unchanged(self):
-        # Historical id: the error changed under the owner rule (round 3, D-A):
-        # a held plug of a deleted node raises '<name> already deleted!', also
-        # once a new node takes the name, instead of retargeting to it.
+    def test_held_plug_of_a_deleted_reused_name_raises(self):
+        # the owner rule (round 3, D-A): a held plug of a deleted node raises
+        # '<name> already deleted!', also once a new node takes the name,
+        # instead of retargeting to it (v2.0.0a2 named the new node).
         cmds.undoInfo(state=True, infinity=True)
         for node_type, attr, parent in (
             ("multiplyDivide", "input1X", "input1"),
@@ -1553,23 +1549,23 @@ class TestPlugNodeReuse(MayaTestCase):
                     # node now raises when it is built, as a held plug does
                     self.assertEqual(_outcome(Plug, plug.plug), deleted)
 
-    def test_plug_node_wrapper_is_its_own(self):
-        # Historical id: under the owner rule (round 3, D-A) the plug's node is
-        # the user's own wrapper (the body pins assertIs(owner, wrapper)).
-        node    = Node(self._known_type("transform"))
-        wrapper = node >> None
-        cached  = wrapper.find_attr("tx")
-        vars(wrapper)["user_tag"] = "set on the user's wrapper"
+    def test_plug_node_is_the_node_it_was_read_from(self):
+        # the owner rule (round 3, D-A): the plug's node is the user's own node
+        # object, with its caches and Python attributes
+        node   = Node(self._known_type("transform"))
+        held   = node >> None
+        cached = held.find_attr("tx")
+        vars(held)["user_tag"] = "set on the user's node"
         for plug in (node.tx, node.t[0], node.t.translateY, node.rotate.child(0)):
             owner = plug.node >> None
             self.assertIs(type(owner), Transform)
-            self.assertIs(owner, wrapper)
-            self.assertIs(owner.mdagpath, wrapper.mdagpath)
-            self.assertIs(owner.mobject, wrapper.mobject)
-            self.assertIs(owner.fn_set, wrapper.fn_set)
+            self.assertIs(owner, held)
+            self.assertIs(owner.mdagpath, held.mdagpath)
+            self.assertIs(owner.mobject, held.mobject)
+            self.assertIs(owner.fn_set, held.fn_set)
             self.assertTrue(hasattr(owner, "user_tag"))
             self.assertIs(owner.find_attr("tx"), cached)
-        # find_attr filters a lookup the user's wrapper already cached
+        # find_attr filters a lookup the user's node already cached
         self.assertIsNone(node.tx.node.find_attr("translateX", data_type="string"))
 
         cube  = cmds.polyCube(name="gc")[0]
@@ -1617,7 +1613,7 @@ class TestCachedAttributeOwner(MayaTestCase):
                 cached = node.find_attr(attr)
                 owner  = cached._node
                 # the node it was read from, whose attr cache holds it
-                self.assertIs(owner, node._dg_node)
+                self.assertIs(owner, node)
                 self.assertIsNone(owner.find_attr(attr, data_type="string"))
 
                 cmds.delete(name)
@@ -1629,9 +1625,9 @@ class TestCachedAttributeOwner(MayaTestCase):
                 self.assertFalse(cached.node.is_valid)
                 self.assertEqual(cmds.getAttr(f"{name}.{attr}"), 0.0)
 
-    def test_cached_attr_of_an_instance_names_the_first_path(self):
-        # Historical id: under the owner rule (round 3, D-A) the cached attr is
-        # named through the path the node was read from (T2), not the first.
+    def test_cached_attr_of_an_instance_names_the_path_read_through(self):
+        # the owner rule (round 3, D-A): the cached attr is named through the
+        # path the node was read from (T2), not the first
         top = cmds.createNode("transform", name="T1")
         PyNode(_mobject(cmds.createNode("locator", name="S", parent=top)))
         cmds.instance(top, name="T2")
@@ -2093,7 +2089,7 @@ class TestFallbackQueryReuse(MayaTestCase):
     def test_answer_is_only_for_the_running_call(self):
         pick = Node.create("choice", name="pick")
         attr = _base.Attribute("pick.output")
-        node = pick._dg_node
+        node = pick
         self.assertIsNone(_base._queried_data_type(attr, node))
         with mock.patch.object(_base, "_FALLBACK_QUERY", (attr, "Tdata", node)):
             self.assertEqual(_base._queried_data_type(attr, node), "Tdata")
@@ -2102,7 +2098,7 @@ class TestFallbackQueryReuse(MayaTestCase):
             )
             self.assertIsNone(_base._queried_data_type(pick.output, node))
             # nor for a hook running on another node than the call's
-            other = Node.create("choice", name="other")._dg_node
+            other = Node.create("choice", name="other")
             self.assertIsNone(_base._queried_data_type(attr, other))
             self.assertIsNone(_base._queried_data_type(attr, None))
         with mock.patch.object(_base, "_FALLBACK_QUERY", (attr, "Tdata", None)):
@@ -2160,7 +2156,7 @@ class TestFallbackQueryReuse(MayaTestCase):
             self.assertEqual(self._data_type(Plug("pick.input[5]")), ("double3", 2))
         self.assertEqual(self._data_type(Plug("pick.input[6]")), ("Tdata", 1))
 
-    def test_wrapper_and_instance_hooks_query_again(self):
+    def test_subclass_and_instance_hooks_query_again(self):
         Node.create("transform", name="src")
         for index in range(6):
             cmds.createNode("network", name=f"net{index}")
@@ -2190,7 +2186,7 @@ class TestFallbackQueryReuse(MayaTestCase):
         attr = _base.Attribute("net2.generic")
         attr._node = PyNode("net2")
         plug = _named(Plug("net3.generic"))
-        for owned, owner in ((attr, attr._node), (plug, plug.node._dg_node)):
+        for owned, owner in ((attr, attr._node), (plug, plug.node)):
             with self.subTest(owner=type(owned).__name__):
                 hook     = _connecting_hook(base_hook)
                 instance = mock.patch.object(
@@ -2259,284 +2255,6 @@ class TestFallbackQueryReuse(MayaTestCase):
         self.assertEqual(self._data_type(Plug("pick.input[0]")), ("Tdata", 1))
 
 
-def _canonical_calls(wrapper, mobject):
-    """``_wrapper_is_canonical``'s answer, and the fn sets and cast names it builds."""
-    fn_sets = mock.Mock(side_effect=OpenMaya.MFnDependencyNode)
-    names   = mock.Mock(side_effect=_mobject_to_str)
-    with mock.patch.object(_base.OpenMaya, "MFnDependencyNode", fn_sets):
-        with mock.patch.object(_base, "_mobject_to_str", names):
-            result = _base._wrapper_is_canonical(wrapper, mobject)
-    return result, fn_sets.call_count, names.call_count
-
-
-def _dag_path(name):
-    sel = OpenMaya.MSelectionList()
-    sel.add(name)
-    return sel.getDagPath(0)
-
-
-class TestCanonicalWrapperCheck(MayaTestCase):
-    TEST_START_NEW_SCENE = True
-
-    def setUp(self):
-        super().setUp()
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
-
-    def tearDown(self):
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
-        _base._CANONICAL_KIND.clear()
-        super().tearDown()
-
-    def _wrapper(self, name):
-        """A wrapper cast from the MObject of ``name``, and that MObject."""
-        mobject = _mobject(name)
-        return PyNode(mobject), mobject
-
-    def test_wrappers_use_their_own_fn_set_and_path(self):
-        top    = cmds.createNode("transform", name="top")
-        points = [(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)]
-        curve  = cmds.curve(point=points, name="crv")
-        for name in (
-            cmds.createNode("multiplyDivide"),
-            cmds.createNode("choice"),
-            cmds.createNode("transform", name="leaf", parent=top),
-            cmds.createNode("joint"),
-            cmds.createNode("locator", parent=top),
-            cmds.listRelatives(curve, shapes=True, fullPath=True)[0],
-        ):
-            wrapper, mobject = self._wrapper(name)
-            with self.subTest(node=wrapper.name, cls=type(wrapper).__name__):
-                fresh = _mobject(name)
-                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-                self.assertEqual(_canonical_calls(wrapper, fresh), (True, 0, 0))
-                self.assertFalse(_base._wrapper_is_canonical(wrapper, _mobject(top)))
-                self.assertFalse(
-                    _base._wrapper_is_canonical(wrapper, OpenMaya.MObject())
-                )
-
-    def test_dag_hierarchy_edits_keep_the_cast_name(self):
-        cmds.undoInfo(state=True, infinity=True)
-        cmds.createNode("transform", name="P")
-        cmds.createNode("transform", name="Q")
-        wrapper, mobject = self._wrapper(
-            cmds.createNode("transform", name="T", parent="P")
-        )
-        def same_short_name():
-            cmds.createNode("transform", name="T", parent="Q")
-
-        for label, step, expected in (
-            ("rename parent", lambda: cmds.rename("P", "P2"), "T"),
-            ("reparent", lambda: cmds.parent("P2|T", "Q"), "T"),
-            ("to world", lambda: cmds.parent("Q|T", world=True), "T"),
-            ("same short name", same_short_name, "|T"),
-            ("rename", lambda: cmds.rename("|T", "T3"), "T3"),
-            ("reparent under the other T", lambda: cmds.parent("T3", "Q|T"), "T3"),
-        ):
-            step()
-            with self.subTest(step=label):
-                self.assertEqual(wrapper.name, expected)
-                self.assertEqual(_mobject_to_str(mobject), expected)
-                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-
-        cmds.rename("T3", "abcdefabcdefabcdefabcdefabcdefab")
-        self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
-        cmds.undo()
-        cmds.delete("P2")
-        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-        cmds.delete("Q")
-        self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
-        cmds.undo()
-        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-        self.assertEqual(wrapper.name, "T3")
-
-    def test_instanced_and_underworld_nodes_compare_the_cast_name(self):
-        cmds.undoInfo(state=True, infinity=True)
-        cmds.createNode("transform", name="T1")
-        cmds.createNode("transform", name="T2")
-        PyNode(_mobject(cmds.createNode("locator", name="S", parent="T1")))
-        cmds.parent("T1|S", "T2", add=True, shape=True, relative=True)
-        first   = PyNode(_dag_path("|T1|S"))
-        second  = PyNode(_dag_path("|T2|S"))
-        mobject = _mobject("|T1|S")
-        self.assertEqual(_canonical_calls(first, mobject), (True, 0, 1))
-        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
-
-        # the path of the removed instance is invalid, the other is the only one:
-        # naming the wrapper re-resolves its path to it, so it names that path
-        cmds.parent("T2|S", removeObject=True, shape=True)
-        self.assertEqual(second.name, "S")
-        self.assertEqual(_canonical_calls(second, mobject), (True, 0, 0))
-        self.assertEqual(_canonical_calls(first, mobject), (True, 0, 0))
-        # undoing the removal makes the path the wrapper was taken through valid
-        # again, and naming the wrapper takes it again (as at d6ad8b2)
-        cmds.undo()
-        self.assertEqual(_canonical_calls(second, mobject), (False, 0, 1))
-        self.assertEqual(second.long_name, "|T2|S")
-        self.assertEqual(_canonical_calls(first, mobject), (True, 0, 1))
-
-        plane = cmds.nurbsPlane(name="plane")[0]
-        cmds.curveOnSurface(plane, uv=[(0.1, 0.1), (0.5, 0.5), (0.9, 0.2)])
-        surface    = cmds.listRelatives(plane, shapes=True, fullPath=True)[0]
-        underworld = [
-            name
-            for name in cmds.listRelatives(surface, allDescendents=True, fullPath=True)
-            if cmds.nodeType(name) == "nurbsCurve"
-        ]
-        self.assertEqual(len(underworld), 1)
-        wrapper, mobject = self._wrapper(underworld[0])
-        result, _, names = _canonical_calls(wrapper, mobject)
-        self.assertEqual(names, 1)
-        self.assertEqual(result, wrapper.name == _mobject_to_str(mobject))
-
-    def test_deleted_and_freed_nodes(self):
-        cmds.undoInfo(state=True, infinity=True)
-        for node_type in ("multiplyDivide", "transform"):
-            with self.subTest(node_type=node_type):
-                name             = cmds.createNode(node_type)
-                wrapper, mobject = self._wrapper(name)
-                cmds.delete(name)
-                self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
-                cmds.undo()
-                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-                cmds.delete(name)
-                cmds.createNode(node_type, name=name)
-                self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
-                self.assertFalse(_base._wrapper_is_canonical(wrapper, _mobject(name)))
-        wrappers = [PyNode(_mobject(cmds.createNode(t))) for t in ("choice", "joint")]
-        cmds.file(new=True, force=True)
-        for wrapper in wrappers:
-            self.assertFalse(_base._wrapper_is_canonical(wrapper, wrapper._mobject))
-
-    def test_custom_type_attr_or_alias_added_later(self):
-        for node_type, attr in (("multiplyDivide", "input1X"), ("transform", "tx")):
-            with self.subTest(node_type=node_type):
-                custom           = cmds.createNode(node_type)
-                wrapper, mobject = self._wrapper(custom)
-                cmds.addAttr(custom, longName=CUSTOM_TYPE_ATTR, dataType="string")
-                self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
-                aliased          = cmds.createNode(node_type)
-                wrapper, mobject = self._wrapper(aliased)
-                cmds.aliasAttr(CUSTOM_TYPE_ATTR, f"{aliased}.{attr}")
-                self.assertEqual(_canonical_calls(wrapper, mobject), (False, 0, 0))
-                cmds.aliasAttr(f"{aliased}.{CUSTOM_TYPE_ATTR}", remove=True)
-                self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-
-    def test_class_checks_run_once_per_class(self):
-        wrappers = [
-            self._wrapper(cmds.createNode(node_type))
-            for node_type in (
-                "multiplyDivide",
-                "plusMinusAverage",
-                "transform",
-                "transform",
-            )
-        ]
-        _base._CANONICAL_KIND.clear()
-        checks = mock.Mock(side_effect=_base._canonical_kind)
-        with mock.patch.object(_base, "_canonical_kind", checks):
-            for _ in range(3):
-                for wrapper, mobject in wrappers:
-                    self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
-        self.assertEqual(checks.call_count, 2)
-        self.assertEqual(
-            _base._CANONICAL_KIND,
-            {DGNode: _base._NAMED_DG, Transform: _base._NAMED_DAG_PATH},
-        )
-
-    def test_class_attribute_changes_are_seen(self):
-        class _Probe(Transform):
-            NATIVE_NODE_TYPE = "transform"
-
-        wrapper, mobject = self._wrapper(cmds.createNode("transform"))
-        self.assertIs(type(wrapper), _Probe)
-        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
-
-        _Probe.CUSTOM_NODE_TYPE = "perfCanonicalProbe"
-        self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
-        del _Probe.CUSTOM_NODE_TYPE
-        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
-
-        passing = classmethod(lambda cls, *args, **kwargs: True)
-        with mock.patch.object(_Probe, "is_type", passing):
-            self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
-        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
-        with mock.patch.object(DGNode, "_cache_api1_objects", lambda self, name: None):
-            self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
-        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
-
-        # a fn_set of its own makes the check compare the cast's name
-        same_fn_set = property(lambda self: self._fn_set)
-        with mock.patch.object(_Probe, "fn_set", same_fn_set):
-            self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 1))
-            self.assertEqual(_base._CANONICAL_KIND[_Probe], _base._NAMED_DAG)
-        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-        with mock.patch.object(_Probe, "name", DGNode.__dict__["name"]):
-            self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 1))
-            self.assertEqual(_base._CANONICAL_KIND[_Probe], _base._NAMED_DG)
-        self.assertEqual(_canonical_calls(wrapper, mobject), (True, 0, 0))
-
-        # so does a new class, which may change the dispatch
-        self.assertIn(_Probe, _base._CANONICAL_KIND)
-
-        class _Other(DGNode):
-            NATIVE_NODE_TYPE = "perfCanonicalOther"
-
-        self.assertEqual(_base._CANONICAL_KIND, {})
-
-    def test_class_with_a_plain_base_is_checked_every_time(self):
-        class _Plain:
-            pass
-
-        class _Mixed(_Plain, Transform):
-            NATIVE_NODE_TYPE = "transform"
-
-        wrapper, mobject = self._wrapper(cmds.createNode("transform"))
-        self.assertIs(type(wrapper), _Mixed)
-        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
-        self.assertNotIn(_Mixed, _base._CANONICAL_KIND)
-        _Plain.is_type = classmethod(lambda cls, *args, **kwargs: True)
-        try:
-            self.assertFalse(_base._wrapper_is_canonical(wrapper, mobject))
-        finally:
-            del _Plain.is_type
-        self.assertTrue(_base._wrapper_is_canonical(wrapper, mobject))
-
-    def test_fn_set_override_compares_the_cast_name(self):
-        class _OwnFnSet(Transform):
-            NATIVE_NODE_TYPE = "transform"
-
-            @property
-            def fn_set(self):
-                self.ensure_valid()
-                path = OpenMaya.MDagPath.getAPathTo(self._mobject)
-                return OpenMaya.MFnDagNode(path)
-
-        cmds.createNode("transform", name="T1")
-        cmds.createNode("transform", name="T2")
-        PyNode(_mobject(cmds.createNode("transform", name="S", parent="T1")))
-        cmds.parent("T1|S", "T2", add=True, relative=True)
-        # the name comes from the first path, the fn set from the second
-        wrapper = PyNode(_dag_path("|T2|S"))
-        self.assertIs(type(wrapper), _OwnFnSet)
-        self.assertEqual(wrapper.name, "T1|S")
-        self.assertEqual(_canonical_calls(wrapper, _mobject("|T1|S")), (True, 0, 1))
-        self.assertEqual(_base._CANONICAL_KIND[_OwnFnSet], _base._NAMED_DAG)
-
-    def test_other_objects_are_not_canonical(self):
-        name    = cmds.createNode("multiplyDivide")
-        mobject = _mobject(name)
-        PyNode(mobject)
-        # re-pinned (round 4a M4, C8): Node(name) is the canonical typed node
-        # now (the cast itself), so it left the tuple
-        for other in (None, name, 3, Plug(f"{name}.input1X")):
-            with self.subTest(other=type(other).__name__):
-                self.assertFalse(_base._wrapper_is_canonical(other, mobject))
-                self.assertNotIn(type(other), _base._CANONICAL_KIND)
-
-
 def _result(func):
     """What ``func()`` returns, or the type and message it raises."""
     try:
@@ -2553,7 +2271,6 @@ def _name_forwards(func):
     # The constructor parts the casts compare the property with are bound first,
     # so they never capture the counting ones
     _base._construct_checked_type(DGNode, "")
-    _base._canonical_kind(DGNode)
     reads   = []
     patches = []
     for cls in (DGNode, DAGNode):
@@ -2573,8 +2290,8 @@ def _name_forwards(func):
 
 
 def _name_raises():
-    """A plug whose Node wraps a DGNode whose ``name`` property raises, so the
-    lookup falls through to the node's ``name`` Maya attr instead."""
+    """A plug owned by a node whose ``name`` property raises, so the lookup
+    falls through to the node's ``name`` Maya attr instead."""
 
     class _NameRaises(Transform):
         NATIVE_NODE_TYPE = "perfFullNameProbe"
@@ -2585,10 +2302,10 @@ def _name_raises():
 
     cmds.createNode("transform", name="w")
     cmds.addAttr("w", longName="name", dataType="string")
-    wrapper = object.__new__(_NameRaises)
-    wrapper.__dict__.update(PyNode(_mobject("w")).__dict__)
+    node = object.__new__(_NameRaises)
+    node.__dict__.update(PyNode(_mobject("w")).__dict__)
     plug = Plug("w.tx")
-    plug.__dict__["_node"] = Node(wrapper)
+    plug.__dict__["_node"] = Node(node)
     return plug
 
 
@@ -2626,7 +2343,7 @@ def _instanced():
     return Node("|T2|S").visibility
 
 
-def _no_wrapped_node():
+def _half_built_node():
     """A plug whose node object was never constructed."""
     # re-pinned (round 4a M4, C8): no wrapper; a half-built DGNode instead
     plug = Node("b").tx
@@ -2685,7 +2402,7 @@ _FULL_NAME_CASES = (
     # the half-built node's name property raises AttributeError, which Python
     # retries through DGNode.__getattr__ ("name"), and full_name's through
     # Plug.__getattr__, whose container query names the node once more
-    ("no_wrapped_node", _no_wrapped_node, (AttributeError, "name"), 2, False),
+    ("half_built_node", _half_built_node, (AttributeError, "name"), 2, False),
 )
 
 
@@ -2700,7 +2417,7 @@ def _fn_set_full_name(plug):
     return f"{name}.{attr}"
 
 
-class TestFullNameReadsTheWrappedNode(MayaTestCase):
+class TestFullNameReadsTheOwner(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def setUp(self):
@@ -2714,7 +2431,6 @@ class TestFullNameReadsTheWrappedNode(MayaTestCase):
         PyNode._NODE_CLASS_DICT.update(self._registered)
         PyNode._CLASS_BY_TYPE.clear()
         PyNode._CASTABLE_TYPES.clear()
-        _base._CANONICAL_KIND.clear()
         super().tearDown()
 
     def _scene(self):
@@ -2752,17 +2468,7 @@ class TestFullNameReadsTheWrappedNode(MayaTestCase):
         )
         return results, type(plug.__dict__["_node"]), reads
 
-    def test_node_class_is_registered(self):
-        # re-pinned (round 4a M4, C8): no wrapper class is registered any more;
-        # the DSL Node is the root of the node classes and its factory returns
-        # the typed node PyNode casts
-        self.assertTrue(issubclass(DGNode, Node))
-        self.assertFalse(hasattr(_base, "_NODE_WRAPPER_CLASS"))
-        cmds.createNode("transform", name="t")
-        self.assertIs(type(Node("t")), type(PyNode("t")))
-
-    def test_full_name_matches_the_forwarding(self):
-        # re-pinned (round 4a M4, C8): there is no forwarding to compare with;
+    def test_full_name_matches_the_owner_formula(self):
         # full_name reads the owner's name property once, and the oracle naming
         # the plug from the owner's fn set and the MPlug agrees with it
         for case, factory, expected, reads, oracle in _FULL_NAME_CASES:
