@@ -54,7 +54,57 @@ def _class_attr(cls: type, name: str) -> Any:
 class NodeMeta(type):
     """
     A metaclass that register node classes to the cached dict in PyNode.
+
+    Calling the root :class:`Node` itself is the DSL node factory
+    (``Node("pCube1")`` returns the typed node); calling any other node class
+    constructs it as usual. That is the one branch point of a node class call.
     """
+
+    def __call__(cls, *args, **kwargs):
+        if cls is Node:
+            return _node_factory(*args, **kwargs)
+        return type.__call__(cls, *args, **kwargs)
+
+    def wrap(cls, value: Any) -> Any:
+        """Wrap a ``maya.cmds`` result (str / list-of-str) as a node /
+        :class:`PlugList`.
+
+        A metaclass method, so ``Node.wrap`` (and ``Transform.wrap``) works but a
+        node never has it: a Maya attr ``wrap`` (3D textures) stays reachable as
+        ``node.wrap``. Every string goes through the :class:`Node` factory,
+        whichever class it is called on.
+
+        Use this when calling ``maya.cmds`` directly (instead of going through
+        :mod:`rig.bridges.commands`) and you want the result back in DSL form::
+
+            from maya import cmds
+            from rig import Node
+
+            n   = Node.wrap(cmds.createNode("transform"))     # -> Transform
+            sel = Node.wrap(cmds.ls(sl=True))                  # -> PlugList of nodes
+            x   = Node.wrap(5.0)                                # -> 5.0 (passthrough)
+            none = Node.wrap(None)                              # -> None
+
+        Strings that aren't valid node names are passed through unchanged
+        (so ``Node.wrap(cmds.getAttr("foo.attr", asString=True))`` won't try
+        to coerce a value-string into a node).
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return Node(value)
+            except Exception:
+                return value
+        if isinstance(value, (list, tuple)):
+            from rig._internal.list import PlugList
+
+            wrapped = [Node.wrap(v) for v in value]
+            try:
+                return PlugList(wrapped)
+            except Exception:
+                return wrapped
+        return value
 
     def __new__(mcs, class_name, bases, attrs):
         cls_obj   = type.__new__(mcs, class_name, bases, attrs)
@@ -112,7 +162,9 @@ class PyNode:
         Returns:
             An object instance.
         """
-        super(PyNode, cls).__new__(cls, *args, **kwargs)
+        # zero-argument super(): a test that patches the module global `PyNode`
+        # (to count casts) must not break the cast it wraps
+        super().__new__(cls, *args, **kwargs)
 
         mobj     = None
         dag_path = None
@@ -188,7 +240,9 @@ class PyNode:
         if from_mobject and key in cls._CASTABLE_TYPES:
             inst = _construct_checked_type(cls_obj, obj)
         if inst is None:
-            inst = cls_obj(obj)
+            # a node class is constructed without NodeMeta.__call__'s frame,
+            # which only dispatches the root Node to its factory
+            inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
         if from_mobject:
             cls._CASTABLE_TYPES.add(key)
         return inst
@@ -241,7 +295,8 @@ def _pynode_legacy_tail(cls, obj: str) -> Any:
         cls_obj = _native_node_class(cls, obj)
 
     if cls_obj:
-        return cls_obj(obj)
+        # as in `PyNode.__new__`: no NodeMeta.__call__ frame
+        return type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
 
     raise ValueError(f"Failed casting {obj}")
 
@@ -607,36 +662,12 @@ _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
 # hook that call runs first (`_hook_node`), see `_queried_data_type`
 _FALLBACK_QUERY = None
 
-# the rig DSL's `Node` wrapper class, registered by `rig._internal.node` when it
-# is defined, since that module imports this one. `Attribute.full_name` reads the
-# name of the node an instance of exactly that class wraps, which is what its
-# `__getattr__` forwards `name` to; any other owner is named as before
-_NODE_WRAPPER_CLASS = None
-# that class's own fallback hook, which forwards to the wrapped node's
-_NODE_WRAPPER_HOOK  = None
-
 
 def _fn_set_name(node: Any) -> str:
-    """The fn set name of `node`, or of the node a `Node` wrapper wraps: the partial
-    path name of a DAG fn set, else the node name."""
-    try:
-        node = object.__getattribute__(node, "_dg_node")
-    except AttributeError:
-        pass
+    """The fn set name of `node`: the partial path name of a DAG fn set, else the
+    node name. Reads the fn set directly, never `node.name`."""
     fn = node.__dict__["_fn_set"]
     return fn.partialPathName() if isinstance(fn, OpenMaya.MFnDagNode) else fn.name()
-
-
-def _unwrapped(node: Any) -> Any:
-    """`node`, or the node a `Node` wrapper (or a `Container`) wraps. Reads the
-    wrapper's slot directly: its `__getattr__` forwards to the wrapped node."""
-    wrapper = _NODE_WRAPPER_CLASS
-    if wrapper is not None:
-        return node._dg_node if isinstance(node, wrapper) else node
-    try:
-        return object.__getattribute__(node, "_dg_node")
-    except AttributeError:
-        return node
 
 
 # The API 1.0 handle of a node (`_objhandle1`, an `OpenMaya1.MObjectHandle`) is
@@ -685,8 +716,6 @@ def _ensure_owner_alive(attr: Any) -> None:
     d    = attr.__dict__
     node = d.get("_node")
     if node is not None:
-        # `_unwrapped`, inlined for a `Node` wrapper (the DSL plugs' owner)
-        node   = node._dg_node if type(node) is _NODE_WRAPPER_CLASS else _unwrapped(node)
         handle = node.__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
         if handle is not None and not handle.isAlive():
             node.ensure_valid()
@@ -726,7 +755,6 @@ def _ensure_node_valid(attr: Any) -> None:
     if node is None:
         _ensure_node_castable(attr)
         return
-    node = _unwrapped(node)
     if not _handle_valid(node.__dict__):
         node.ensure_valid()
     handle = attr.__dict__.get("_attr1")
@@ -1047,7 +1075,7 @@ def _named_through_owner(attr: Any) -> Any:
 def _owner_is_instanced(owner: Any) -> bool:
     """True if `owner`, a plug's node object, is a live DAG node with more than
     one path. A deleted or freed node's path is not read (naming it raises)."""
-    d  = _unwrapped(owner).__dict__
+    d  = owner.__dict__
     fn = d.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode):
         return False
@@ -1068,20 +1096,18 @@ def _full_name_buffer(attr: Any) -> Any:
 def _point_count(attr: Any) -> int:
     """The point count of the geometry node of `attr`, a component plug (it bounds
     a component slice). Read through the node's own class: the owner can be a
-    class the user chose (``Node(DAGNode(mesh)).vtx[0:2]``), which has none."""
-    node = _unwrapped(attr.node)
+    class the user chose (``DAGNode(mesh).vtx[0:2]``), which has none."""
+    node = attr.node
     if not hasattr(type(node), "num_weight_points"):
         node = PyNode(attr.plug.node())
     return node.num_weight_points
 
 
 def _node_name(node: Any) -> str:
-    """The name `Attribute.full_name` gives `node`, a plug's owner (a `Node` wrapper
-    is named by the node it wraps). Anything but a str from the `name` property is
-    the node's Maya attr of that name (a class whose `name` property raises), so the
-    node is named by its fn set instead. Raises if the node is deleted."""
-    if type(node) is _NODE_WRAPPER_CLASS:
-        node = node._dg_node
+    """The name `Attribute.full_name` gives `node`, a plug's owner. Anything but a
+    str from the `name` property is the node's Maya attr of that name (a class
+    whose `name` property raises), so the node is named by its fn set instead.
+    Raises if the node is deleted."""
     name = node.name
     if type(name) is not str:
         name = _fn_set_name(node)
@@ -1095,7 +1121,7 @@ def _instanced_element_alias(mplug: OpenMaya.MPlug, node: Any, alias: str) -> st
     to the element of the instance the node name's path runs through, so another
     instance's element is named with its index (`MPlug.partialName` with the
     instanced indices), which cmds honours. `node` is the owner, already named."""
-    fn = _unwrapped(node).__dict__.get("_fn_set")
+    fn = node.__dict__.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode) or not fn.isInstanced(True):
         return alias
     path = fn.getPath()
@@ -1120,13 +1146,13 @@ def _path_instance_number(attr: Any, node: Any = None) -> int | None:
     (``worldMatrix``, ``instObjGroups``): cmds resolves such a name to the element
     of that path's instance (``T2|S.worldMatrix`` is ``worldMatrix[1]``), so that
     element is the plug it stands for. None for any other attr. `node` is
-    `attr`'s owner, unwrapped, when the caller has it. Reads the owner's name
+    `attr`'s owner, when the caller has it. Reads the owner's name
     first, so a stale path is re-resolved and a deleted node raises."""
     mplug = attr.__dict__["_mplug"]
     if not mplug.isArray:
         return None
     if node is None:
-        node = _unwrapped(attr.node)
+        node = attr.node
     fn = node.__dict__.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode) or not _is_instanced_array(mplug):
         return None
@@ -1266,10 +1292,8 @@ def _plug_hash(attr: Any) -> int:
     if handle is not None and not handle.isAlive():
         # its attribute was freed (see `_ensure_owner_alive`): not read
         return hash((handle.hashCode(), str.__str__(attr)))
-    owner = d["_node"]
-    if owner is not None:
-        node = _unwrapped(owner)
-    else:
+    node = d["_node"]
+    if node is None:
         handle = d["_handle1"]
         if handle is not None and not handle.isValid():
             if not handle.isAlive():
@@ -1277,7 +1301,7 @@ def _plug_hash(attr: Any) -> int:
             mplug = d["_mplug"]
             name  = mplug.partialName(False, False, True, False, False, True)
             return hash((_handle_serial(handle), name + _deleted_instance_index(mplug)))
-        node = _unwrapped(attr.node)
+        node = attr.node
     handle = node.__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
     if handle is None:
         # not a DGNode: named as the node's name property names it
@@ -1308,18 +1332,10 @@ def _clear_static_data_type(*args) -> None:
 
 def _hook_node(node: Any) -> Any:
     """The node whose class's fallback hook `node._attr_data_type_fallback` runs
-    first, or None if another hook can run first: a patch of the `Node` wrapper's
-    forwarding hook, a `Node` subclass, or a hook set on the node instance."""
+    first, or None if another hook can run first: a hook set on the node instance.
+    (A class override or a class-level patch is ruled out by `_keeps_query`.)"""
     try:
-        if type(node) is _NODE_WRAPPER_CLASS:
-            if _NODE_WRAPPER_CLASS._attr_data_type_fallback is not _NODE_WRAPPER_HOOK:
-                return None
-            node = node._dg_node
-        elif _NODE_WRAPPER_CLASS is None or isinstance(node, _NODE_WRAPPER_CLASS):
-            return None
-        if "_attr_data_type_fallback" in vars(node):
-            return None
-        return node
+        return None if "_attr_data_type_fallback" in vars(node) else node
     except Exception:
         return None
 
@@ -1472,7 +1488,7 @@ def _plug_node_fn_set(attr: Any, mplug: OpenMaya.MPlug) -> OpenMaya.MFnDependenc
     freed memory, which the new fn set would read."""
     owner = attr.__dict__.get("_node")
     if owner is not None:
-        d      = _unwrapped(owner).__dict__
+        d      = owner.__dict__
         handle = d.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
         fn     = d.get("_fn_set")
         if (
@@ -1531,15 +1547,9 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
 
 
 def _naming_dag_path(attr: Any) -> OpenMaya.MDagPath | None:
-    """The DAG path whose name `Attribute.full_name` gives `attr`'s node, or None
-    for an owner that is not named by its fn set's path (a subclass of the `Node`
-    wrapper is named through its own `name`)."""
-    node = attr.__dict__["_node"]
-    if type(node) is _NODE_WRAPPER_CLASS:
-        node = node._dg_node
-    elif _NODE_WRAPPER_CLASS is None or isinstance(node, _NODE_WRAPPER_CLASS):
-        return None
-    return node._fn_set.getPath()
+    """The DAG path whose name `Attribute.full_name` gives `attr`'s node: its
+    owner's fn set path."""
+    return attr.__dict__["_node"]._fn_set.getPath()
 
 
 def _names_own_plug(attr: Any) -> bool:
@@ -1550,7 +1560,7 @@ def _names_own_plug(attr: Any) -> bool:
     resolves to nothing, or to a same-named new attr), and an index on every
     array along the path. Call it only once `attr` is named, so its node is valid.
 
-    A DAG node is named by its wrapper's DAG path, which must still be valid (the
+    A DAG node is named by its owner's DAG path, which must still be valid (the
     instance it runs through can be deleted while the node lives on), and an
     instanced element is named without its index, after that path's instance.
     """
@@ -1862,12 +1872,17 @@ class Attribute(str):
 
     @property
     def node(self) -> Any:
-        """Returns the node object of this attr."""
+        """Returns the node object of this attr: the node object it was read from
+        (``node.tx.node is node``; children and elements share it). An attr built
+        from a name or an MPlug casts its node on first use (``PyNode`` of its
+        MPlug's node), and raises ``already deleted!`` if that node was deleted
+        or freed since it was built (see `_ensure_node_castable`)."""
         d    = self.__dict__
         node = d["_node"]
         if node is None:
             _ensure_node_castable(self)
-            node = d["_node"] = PyNode(d["_mplug"].node())
+            # through `__setattr__`, as a Plug's other post-init state writes
+            node = self._node = PyNode(d["_mplug"].node())
         return node
 
     @property
@@ -1890,10 +1905,9 @@ class Attribute(str):
         node's path runs through (``T2|S.worldMatrix``), and with it otherwise
         (``T2|S.worldMatrix[0]``), so cmds resolves the name to this element.
         """
-        node = self.node
-        # a rig Node only forwards `name` to the node it wraps, so read it there
-        if type(node) is _NODE_WRAPPER_CLASS:
-            node = node._dg_node
+        node = self.__dict__["_node"]
+        if node is None:
+            node = self.node
         name = node.name
         # anything but a str is the node's Maya attr of that name (a class whose
         # `name` property raises), so the node is named by its fn set instead
@@ -1956,7 +1970,8 @@ class Attribute(str):
         # to "typed" rather than "message"
         elif typ in ("typed", "Tdata"):
             # the hook can reuse this answer instead of querying it again, if no
-            # wrapper or instance hook can run before the node's class hook
+            # hook set on the node instance runs before its class hook (a class
+            # override or patch is ruled out by the hook, see `_keeps_query`)
             outer = _FALLBACK_QUERY
             try:
                 node            = self.node
@@ -2689,3 +2704,57 @@ class Attribute(str):
             )
 
         return self.__component_type
+
+
+class Node(metaclass=NodeMeta):
+    """The root of every node class, and the DSL node factory.
+
+    ``Node(x)`` returns the typed node (``Transform``, ``Mesh``, ...) of ``x``: a
+    node name, uuid, MObject or MDagPath (cast by :class:`PyNode`), a node object
+    (returned as is: ``Node(x) is x``), an attribute or plug (its node), a dotted
+    ``"node.attr"`` string or an MPlug (its node). Anything else raises
+    ``ValueError``. ``isinstance(x, Node)`` is True for every node object.
+    :class:`DGNode` and its subclasses carry the typed API and the DSL: attribute
+    access returns :class:`Plug` instances owned by the node (``node.tx.node is
+    node``), ``<<`` / ``>>`` inject and introspect, ``node.tx = 5`` is
+    ``node.tx << 5``.
+
+    ``Node.create(type, ...)`` is the container-aware factory. On a node class
+    other than ``Node`` and ``Container``, and so on any node (``node.create``),
+    ``create`` is that class's typed creator (``Transform.create(...)``).
+    ``Node.wrap`` lives on the metaclass, so a node's Maya attr ``wrap`` stays
+    reachable. ``PyNode`` stays the typed-layer cast (a dotted string gives an
+    :class:`Attribute`).
+    """
+
+    @classmethod
+    def create(cls, node_type: str, **kwargs: Any) -> Any:
+        """Create a new node and register it with the active container scope.
+
+        Returns the typed node.
+        """
+        # container.createNode puts the new node in the active scope AND gives
+        # it the right name prefix when nested in a flattened block.
+        from rig._internal.container import container
+
+        return container.createNode(node_type, **kwargs)
+
+
+def _node_factory(obj: Any) -> Any:
+    """``Node(obj)``: the node object of ``obj`` (see :class:`Node`)."""
+    if isinstance(obj, Node):
+        return obj
+    if isinstance(obj, Attribute):
+        # ``Node(plug)`` strips the attribute: the node object the plug holds
+        return obj.node
+    if isinstance(obj, str):
+        # "pCube.tx", "pCube.translate", "pCubeShape.vtx[0]": the node, split on
+        # the FIRST "." so paths and namespaces are kept (Maya node names have
+        # no ".")
+        if "." in obj:
+            obj = obj.split(".", 1)[0]
+    elif isinstance(obj, OpenMaya.MPlug):
+        obj = obj.node()
+    result = PyNode(obj)
+    # defensive: an exotic input PyNode resolves to an attribute gives its node
+    return result.node if isinstance(result, Attribute) else result

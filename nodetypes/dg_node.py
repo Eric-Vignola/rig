@@ -21,7 +21,7 @@ from rig.nodetypes._base import (
     _queried_data_type,
     Attribute,
     get_custom_type,
-    NodeMeta,
+    Node,
     PyNode,
     set_custom_type,
 )
@@ -152,7 +152,7 @@ def get_clean_name(name: Any) -> str:
 
 
 @total_ordering
-class DGNode(metaclass=NodeMeta):
+class DGNode(Node):
     """Base class for DG nodes.
 
     This is a pymel-style class that maintains API handles to objects (no need to worry
@@ -162,7 +162,12 @@ class DGNode(metaclass=NodeMeta):
     It can also be extended to implement custom object types.
 
     Instances of this class can be used as dict keys and passed into functions that
-    expect string names."""
+    expect string names.
+
+    A subclass of the root :class:`rig.nodetypes._base.Node` (its metaclass,
+    NodeMeta, is inherited): ``Node("x")`` returns an instance of the class the
+    node's type maps to, which carries this typed API and the DSL
+    (``node.tx`` is a :class:`Plug`, ``<<`` / ``>>``, the ``=`` sugar)."""
 
     # the maya native node type string
     NATIVE_NODE_TYPE = "entity"
@@ -242,10 +247,9 @@ class DGNode(metaclass=NodeMeta):
         raises ``AttributeError``. A node a new scene, a file open or a
         reference unload freed raises ``already deleted!``, a cached attr too.
 
-        The plug is built as the one a DSL ``Node`` gives: the handle of its
-        attribute for a dynamic attr, and, on a node with more than one DAG
-        path, named through this node's path (``PyNode("|T2|S").v`` is
-        ``T2|S.visibility``). An attr of another node (a shape's, read through
+        The plug takes the handle of its attribute for a dynamic attr, and, on
+        a node with more than one DAG path, is named through this node's path
+        (``Node("|T2|S").v`` is ``T2|S.visibility``). An attr of another node (a shape's, read through
         its transform) keeps that node as its owner, or none.
 
         Real attributes always win (``curveShape.f`` is ``form``). Only once the
@@ -391,8 +395,8 @@ class DGNode(metaclass=NodeMeta):
 
     @property
     def _dg_node(self) -> "DGNode":
-        """The node itself (the DSL wrapper's attribute, kept while the code that
-        reads it is migrated)."""
+        """The node itself (the former DSL wrapper's attribute, kept while the
+        code that reads it is migrated)."""
         return self
 
     # --- properties & utils
