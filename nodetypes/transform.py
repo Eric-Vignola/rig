@@ -87,7 +87,7 @@ class Transform(DAGNode):
         for each in dup.get_children(children=True) or []:
             if each.has_base_type("transform"):
                 cmds.delete(each)
-            elif each.intermediateObject.get():
+            elif each.find_attr("intermediateObject").get():
                 cmds.delete(each)
             else:
                 nodes.append(each)
@@ -225,9 +225,9 @@ class Transform(DAGNode):
             as_transform_matrix: If True return MTransformationMatrix.
         """
         if world_space:
-            attr = self.worldMatrix[0]
+            attr = self.find_attr("worldMatrix")[0]
         else:
-            attr = self.matrix
+            attr = self.find_attr("matrix")
         mat = OpenMaya.MFnMatrixData(attr.plug.asMObject()).matrix()
         if as_transform_matrix:
             return OpenMaya.MTransformationMatrix(mat)
@@ -294,8 +294,8 @@ class Transform(DAGNode):
         if node.node_type == "joint":
             node.joint_orient             = np.array(cmds.getAttr(f"{node}.jo")[0])
             node.segment_scale_compensate = bool(cmds.getAttr(f"{node}.ssc"))
-            node.rotate_axis              = np.array(self.ra.get()[0])
-            node.radius                   = self.radius.get()
+            node.rotate_axis              = np.array(self.find_attr("ra").get()[0])
+            node.radius                   = self.find_attr("radius").get()
 
         else:
             locators = cmds.listRelatives(
@@ -306,12 +306,12 @@ class Transform(DAGNode):
             if locators:
                 node.node_type = "locator"
 
-        node.scale        = np.array(self.s.get()[0])
-        node.rotate       = np.array(self.r.get()[0])
-        node.translate    = np.array(self.t.get()[0])
-        node.rotate_order = self.ro.get()
-        node.rotate_axis  = np.array(self.ra.get()[0])
-        node.visibility   = self.v.get()
+        node.scale        = np.array(self.find_attr("s").get()[0])
+        node.rotate       = np.array(self.find_attr("r").get()[0])
+        node.translate    = np.array(self.find_attr("t").get()[0])
+        node.rotate_order = self.find_attr("ro").get()
+        node.rotate_axis  = np.array(self.find_attr("ra").get()[0])
+        node.visibility   = self.find_attr("v").get()
 
         # capture user defined attrs
         attrs = self.list_attr(ud=True)

@@ -58,12 +58,12 @@ class Follicle(DAGNode):
         # create the follicle node and make connections
         follicle  = cls(cmds.createNode("follicle", name=name + "Shape"))
         fTranform = follicle.get_parent()
-        follicle.outTranslate >> fTranform.translate
-        follicle.outRotate    >> fTranform.rotate
-        mesh.worldMatrix      >> follicle.inputWorldMatrix
-        mesh.outMesh          >> follicle.inputMesh
+        follicle.find_attr("outTranslate") >> fTranform.find_attr("translate")
+        follicle.find_attr("outRotate") >> fTranform.find_attr("rotate")
+        mesh.find_attr("worldMatrix") >> follicle.find_attr("inputWorldMatrix")
+        mesh.find_attr("outMesh") >> follicle.find_attr("inputMesh")
         if uv_set:
-            follicle.mapSetName.set(uv_set)
+            follicle.find_attr("mapSetName").set(uv_set)
 
         # move follicle to the desired location
         uv = mesh.get_uv_at_point(t, uv_set=uv_set)
@@ -79,16 +79,16 @@ class Follicle(DAGNode):
 
         if fudge:
             if is_at_origin(fTranform):
-                follicle.parameterU.set(uv[0] + fudge_factor)
+                follicle.find_attr("parameterU").set(uv[0] + fudge_factor)
             if is_at_origin(fTranform):
                 follicle.set_uv_values(uv)
-                follicle.parameterU.set(uv[0] - fudge_factor)
+                follicle.find_attr("parameterU").set(uv[0] - fudge_factor)
             if is_at_origin(fTranform):
                 follicle.set_uv_values(uv)
-                follicle.parameterV.set(uv[1] + fudge_factor)
+                follicle.find_attr("parameterV").set(uv[1] + fudge_factor)
             if is_at_origin(fTranform):
                 follicle.set_uv_values(uv)
-                follicle.parameterV.set(uv[1] - fudge_factor)
+                follicle.find_attr("parameterV").set(uv[1] - fudge_factor)
             if is_at_origin(fTranform):
                 raise Exception(
                     f"Can't attach follicle {follicle.name} to meaningful uv at {uv}"
@@ -118,5 +118,5 @@ class Follicle(DAGNode):
 
     def set_uv_values(self, uv: list[float]) -> None:
         """Sets the uv values of this follicle."""
-        self.parameterU.set(uv[0])
-        self.parameterV.set(uv[1])
+        self.find_attr("parameterU").set(uv[0])
+        self.find_attr("parameterV").set(uv[1])

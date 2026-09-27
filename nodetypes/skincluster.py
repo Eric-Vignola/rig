@@ -162,7 +162,9 @@ class SkinCluster(Deformer):
             driver = search_func(inf.name)
             if not Joint.exists(driver):
                 raise RuntimeError(f"Driver joint not found: {driver}.")
-            Joint(driver).worldInverseMatrix[0] >> self.bindPreMatrix[i]
+            Joint(driver).find_attr("worldInverseMatrix")[0] >> self.find_attr(
+                "bindPreMatrix"
+            )[i]
 
     def get_influence_objects(self) -> list[DAGNode]:
         """Returns a list of influence objects."""

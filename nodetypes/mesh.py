@@ -529,7 +529,7 @@ class Mesh(Geometry):
         if world_space:
             mesh_data.matrix = np.eye(4)
         else:
-            mesh_data.matrix = np.array(self.get_parent().wm.get()).reshape(4, 4)
+            mesh_data.matrix = np.array(self.get_parent().find_attr("wm").get()).reshape(4, 4)
 
         if include_uvs:
             uv_list = UVList([self.serialize_uv(x) for x in self.uv_sets])

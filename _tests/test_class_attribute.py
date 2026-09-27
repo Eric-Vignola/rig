@@ -193,8 +193,8 @@ class TestAttributeClass(MayaTestCase):
             self.assertTrue(self.assert_list_equal(attr.get(), val))
 
     def test_connections(self):
-        attr1 = self.node.tx
-        attr2 = self.node.ty
+        attr1 = self.node.find_attr("tx")
+        attr2 = self.node.find_attr("ty")
         for attr in (attr1, attr2):
             self.assertFalse(attr.is_connected)
             self.assertTrue(attr.is_free_to_change)
@@ -214,7 +214,7 @@ class TestAttributeClass(MayaTestCase):
             self.assertTrue(attr.is_free_to_change)
 
         attr1 >> attr2
-        attr3 = self.node.tz
+        attr3 = self.node.find_attr("tz")
         with self.assertRaises(RuntimeError):
             attr3.connect(attr2)
         attr3.connect(attr2, force=True)
@@ -234,21 +234,21 @@ class TestAttributeClass(MayaTestCase):
             "tz": 3,
         }
         xform.set_attrs(**data)
-        self.assertEqual(xform.t.get()[0], (1, 2, 3))
+        self.assertEqual(xform.find_attr("t").get()[0], (1, 2, 3))
 
         # gracefully skp missing attrs
         data = {"translate": [10, 20, 30], "jointOrient": [100, 200, 300]}
         xform.set_attrs(skip_missing=True, **data)
-        self.assertEqual(xform.t.get()[0], (10, 20, 30))
+        self.assertEqual(xform.find_attr("t").get()[0], (10, 20, 30))
 
     def test_slicing(self):
         camera = PyNode("persp")
         pma    = PyNode.create("plusMinusAverage")
-        camera.t >> pma.input3D[0]
-        camera.t >> pma.input3D[1]
-        camera.t >> pma.input3D[2]
-        camera.t >> pma.input3D[3]
-        self.assertEqual(len(pma.input3D[:]), 4)
+        camera.find_attr("t") >> pma.find_attr("input3D")[0]
+        camera.find_attr("t") >> pma.find_attr("input3D")[1]
+        camera.find_attr("t") >> pma.find_attr("input3D")[2]
+        camera.find_attr("t") >> pma.find_attr("input3D")[3]
+        self.assertEqual(len(pma.find_attr("input3D")[:]), 4)
 
     # TODO: create a Component class and move tests there
     def test_component_types(self):
@@ -359,11 +359,11 @@ class TestAttributeGetGeometry(MayaTestCase):
     def test_get_returns_list_for_vector_attr(self):
         loc = cmds.spaceLocator(name="loc_vec")[0]
         cmds.setAttr(f"{loc}.translate", 1.0, 2.0, 3.0, type="double3")
-        self.assertEqual(PyNode(loc).translate.get(), [(1.0, 2.0, 3.0)])
+        self.assertEqual(PyNode(loc).find_attr("translate").get(), [(1.0, 2.0, 3.0)])
 
     def test_get_returns_list_for_matrix_attr(self):
         cube_xform, _, _, _ = self._make_skinned_cube()
-        val = PyNode(cube_xform).worldMatrix[0].get()
+        val = PyNode(cube_xform).find_attr("worldMatrix")[0].get()
         self.assertEqual(len(val), 16)
         self.assertEqual(val[0],   1.0)  # identity diagonal
         self.assertEqual(val[5],   1.0)
@@ -478,7 +478,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         """Second get() on the same Attribute instance must not re-call
         cmds.getAttr(type=True) for the geometry-attr detection."""
         _, _, _, skin = self._make_skinned_cube()
-        attr = PyNode(skin).outputGeometry[0]
+        attr = PyNode(skin).find_attr("outputGeometry")[0]
 
         # warm the cache
         attr.get()
@@ -638,7 +638,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         the 16-float matrix list, NOT None and NOT a node wrapper."""
         choice, _, _, _ = self._make_polymorphic_choice_node()
         cmds.setAttr(f"{choice}.selector", 2)
-        result = PyNode(choice).output.get()
+        result = PyNode(choice).find_attr("output").get()
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 16)
 
@@ -653,14 +653,14 @@ class TestAttributeGetGeometry(MayaTestCase):
         choice_node = PyNode(choice)
 
         # First call: geometry -- sets the (potentially poisonous) cache state
-        choice_node.selector.set(0)
-        first = choice_node.output.get()
+        choice_node.find_attr("selector").set(0)
+        first = choice_node.find_attr("output").get()
         self.assertEqual(first, PyNode(crv_shape).serialize())
 
         # Second call on same Attribute instance: matrix -- must NOT inherit the
         # geometry-True cache. Should return the matrix value.
-        choice_node.selector.set(2)
-        second = choice_node.output.get()
+        choice_node.find_attr("selector").set(2)
+        second = choice_node.find_attr("output").get()
         self.assertIsInstance(second, list)
         self.assertEqual(len(second), 16)
 
@@ -670,13 +670,13 @@ class TestAttributeGetGeometry(MayaTestCase):
         choice, _, mesh_shape, _ = self._make_polymorphic_choice_node()
         choice_node = PyNode(choice)
 
-        choice_node.selector.set(2)
-        first = choice_node.output.get()
+        choice_node.find_attr("selector").set(2)
+        first = choice_node.find_attr("output").get()
         self.assertIsInstance(first, list)
         self.assertEqual(len(first), 16)
 
-        choice_node.selector.set(1)
-        second = choice_node.output.get()
+        choice_node.find_attr("selector").set(1)
+        second = choice_node.find_attr("output").get()
         self.assertEqual(second, PyNode(mesh_shape).serialize())
 
     def test_get_choice_does_not_cache_geometry_check(self):
@@ -959,7 +959,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{loc}.translate"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        self.assertEqual(PyNode(choice).output.get(), [(1.0, 2.0, 3.0)])
+        self.assertEqual(PyNode(choice).find_attr("output").get(), [(1.0, 2.0, 3.0)])
 
     def test_chr_get_returns_matrix_list_for_matrix_input(self):
         """choice with a matrix input returns a 16-float list (NOT None)."""
@@ -967,7 +967,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{loc}.matrix"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        result = PyNode(choice).output.get()
+        result = PyNode(choice).find_attr("output").get()
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 16)
 

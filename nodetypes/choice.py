@@ -22,7 +22,7 @@ class Choice(DGNode):
         """
         # for the output, use get the selected input and use its connected data type
         if attr.name == "output":
-            sel_id = self.selector.get()
+            sel_id = self.find_attr("selector").get()
             # quiet=True: an unresolvable selection must degrade to the base
             # "Tdata" answer, not raise. ``data_type`` is a property, so an
             # AttributeError escaping here sends Python into Plug.__getattr__,

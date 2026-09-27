@@ -114,8 +114,8 @@ class TestBaseNodes(MayaTestCase):
 
     def test_connections(self):
         joint = PyNode.create("joint")
-        self.parent.tx >> self.child.ty
-        self.child.ty  >> joint.tz
+        self.parent.find_attr("tx") >> self.child.find_attr("ty")
+        self.child.find_attr("ty") >> joint.find_attr("tz")
 
         self.assertEqual(
             joint.find_connected_nodes(depth=0, source=True, destination=False),
