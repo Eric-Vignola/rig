@@ -20,6 +20,15 @@ scene, a file open or a reference unload freed its node (see
 ``_ensure_owner_alive``): the type predicates an operator or a function starts
 with read its operands' MPlugs, which then point at freed memory.
 
+An operand sequence is ordered. A set, a frozenset or a dict operand raises
+TypeError before anything is built (``t.tx + {1, 2}``, ``functions.sum({a.tx,
+b.tx})``, ``t.t + {"x": 1}``): pass a list, ``sorted(...)`` for a set. An
+iterator operand (a generator, ``map``, ``zip``, ``iter(...)``, an itertools
+object) is read into a list first, and then checked and used as that list:
+``rig.functions.sum(x.tx for x in ctrls)`` is
+``rig.functions.sum([x.tx for x in ctrls])``, one memo entry. Other iterables
+(a dict view, a ``range``) are passed as they are.
+
 A config string is not an operand. The ``"<"`` of a condition op (a NodeOp
 takes its positional strs as config) and the ``side=`` / ``name=`` /
 ``dtype=`` / ``axis=`` / ``method=`` choices are config: :func:`operands`
@@ -38,6 +47,7 @@ by element.
 
 from __future__ import annotations
 
+import collections.abc
 import functools
 import inspect
 from typing import Any, Callable, Iterable, Optional, Tuple
@@ -53,6 +63,15 @@ _CAN_HOLD_STR = (str, bytes, bytearray, list, tuple, np.ndarray)
 # Longest rendering of an operand in a message before it is shortened to
 # its type name.
 _MAX_RENDERED = 60
+
+# The operand types that are never reshaped (see `_prepared_operand`): numbers
+# and None, passed by one isinstance call.
+_SCALARS = (int, float, np.generic, type(None))
+
+# The unordered collections an operand cannot be, and the operand types
+# `_prepared_operand` refuses or reads into a list.
+_UNORDERED = (set, frozenset, dict)
+_RESHAPED  = (set, frozenset, dict, collections.abc.Iterator)
 
 # The rotate-order names, as Maya's ``rotateOrder`` enum numbers them, and the
 # config parameters that take a rotate order (see the module docstring).
@@ -129,6 +148,33 @@ def _live_text_operand(obj: Any) -> Optional[Any]:
             if found is not None:
                 return found
     return None
+
+
+def _prepared_operand(value: Any, where: str) -> Any:
+    """``value``, one of the `_RESHAPED` operand types, given as an operand
+    ``where`` (``"rig.functions.sum() argument 'tokens'"``,
+    ``"t.translateX + {1, 2}"``), as a DSL operand: a set, a frozenset or a
+    dict raises TypeError, an iterator is read into a list (see the module
+    docstring). Anything else is returned as it is."""
+    if isinstance(value, _UNORDERED):
+        raise unordered_operand_error(where, value)
+    if isinstance(value, collections.abc.Iterator):
+        return list(value)
+    return value
+
+
+def unordered_operand_error(where: str, value: Any) -> TypeError:
+    """The TypeError for the set, frozenset or dict ``value`` given as an operand
+    ``where``."""
+    if isinstance(value, dict):
+        what, hint = "a dict is a mapping, not a sequence", "list(d.values()) for its values"
+    else:
+        kind = "frozenset" if isinstance(value, frozenset) else "set"
+        what, hint = f"a {kind} is unordered", f"sorted(...) for a {kind}"
+    return TypeError(
+        f"{where}: {what}, and a DSL operand is a Plug, a number or a sequence of "
+        f"them; pass a list ({hint})"
+    )
 
 
 def _render(obj: Any) -> str:
@@ -224,28 +270,36 @@ REFLECTED = {
 }
 
 
+def operator_where(dunder: str, left: str, right: Any, row: Optional[int] = None) -> str:
+    """``left <dunder> right`` as it was written, for a message: ``left`` is the
+    name (or rendering) of the operand the dunder ran on, and a reflected dunder
+    renders its ``right`` first (``'%s' % plug``). ``row`` is the row of a
+    PlugList operator the pair came from."""
+    symbol, reflected = OPERATOR_SYMBOLS[dunder]
+    if reflected:
+        where = f"{_render(right)} {symbol} {left}"
+    else:
+        where = f"{left} {symbol} {_render(right)}"
+    if row is not None:
+        where = f"PlugList row {row}, {where}"
+    return where
+
+
 def operator_error(
     dunder: str, left: Any, right: Any, found: str, row: Optional[int] = None
 ) -> TypeError:
     """The TypeError for ``left <dunder> right``, whose ``right`` operand is,
     or holds, the plain str ``found``.
 
-    ``left`` is the Plug the dunder ran on; a reflected dunder renders its
-    ``right`` first, as it was written (``'%s' % plug``). ``row`` is the row
-    of a PlugList operator the pair came from. Naming ``left`` raises for a
-    plug whose node was deleted, as every other operator on it does.
+    ``left`` is the Plug the dunder ran on (see `operator_where`). Naming
+    ``left`` raises for a plug whose node was deleted, as every other operator
+    on it does.
     """
-    symbol, reflected = OPERATOR_SYMBOLS[dunder]
     plug = str(left)
     if dunder == "__rmod__" and right is found and row is None and isinstance(found, str):
         return text_format_error(found, plug)
-    if reflected:
-        where = f"{_render(right)} {symbol} {plug}"
-    else:
-        where = f"{plug} {symbol} {_render(right)}"
-    if row is not None:
-        where = f"PlugList row {row}, {where}"
-    return str_operand_error(where, found, text_hint=symbol == "+")
+    where = operator_where(dunder, plug, right, row)
+    return str_operand_error(where, found, text_hint=OPERATOR_SYMBOLS[dunder][0] == "+")
 
 
 def _rotate_order(label: str, name: str, value: Any) -> Any:
@@ -330,6 +384,10 @@ def operands(
     argument raises TypeError before the function runs, so before it builds
     any node or container (see the module docstring).
 
+    Every other argument is an operand: a set, frozenset or dict there raises
+    TypeError, and an iterator is read into a list first (see the module
+    docstring).
+
     ``config`` names the parameters that take config values (a str there is
     a choice, not an operand, and is passed through unchecked). A rotate-order
     parameter among them (``rotate_order``, ``rotate_order0``,
@@ -337,7 +395,8 @@ def operands(
     the function runs; another str there raises TypeError. ``skip_when``
     is a ``predicate(args, kwargs)`` that is True for a call that builds no
     node and returns its arguments as they are (``condition(1, "yes", "no")``
-    picks ``"yes"`` in Python); such a call is not checked. Put ``@operands``
+    picks ``"yes"`` in Python); it reads the arguments once iterators are read
+    into lists (and sets / dicts refused), and such a call is not checked. Put ``@operands``
     above ``@vectorize``, so every row of a broadcast is checked before the
     first row builds.
 
@@ -380,32 +439,74 @@ def operands(
             return names[i]
         return f"{var_args}[{i - count}]"
 
+    def _prepared_arguments(args: tuple, kwargs: dict) -> Tuple[tuple, dict]:
+        """``args`` / ``kwargs`` with every operand prepared (see
+        `_prepared_operand`), for a `skip_when` predicate to read."""
+        for i, value in enumerate(args):
+            if (
+                not isinstance(value, _CAN_HOLD_STR)
+                and not isinstance(value, _SCALARS)
+                and i not in skipped
+                and isinstance(value, _RESHAPED)
+            ):
+                value = _prepared_operand(value, f"{label}() argument {_argument(i)!r}")
+                args  = (*args[:i], value, *args[i + 1:])
+        for key, value in kwargs.items():
+            if (
+                not isinstance(value, _CAN_HOLD_STR)
+                and not isinstance(value, _SCALARS)
+                and key not in config
+                and isinstance(value, _RESHAPED)
+            ):
+                kwargs[key] = _prepared_operand(value, f"{label}() argument {key!r}")
+        return args, kwargs
+
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        # a plug operand whose node was freed raises its "already deleted!", as
-        # it does in a Plug operator (see `_live_text_operand`); so does a plug
-        # given to a config parameter (a rotate order)
-        if skip_when is None or not skip_when(args, kwargs):
-            for i, value in enumerate(args):
-                if isinstance(value, _CAN_HOLD_STR):
-                    if i not in skipped:
-                        found = _live_text_operand(value)
-                        if found is not None:
-                            raise str_operand_error(
-                                f"{label}() argument {_argument(i)!r}", found
-                            )
-                    elif isinstance(value, Attribute):
-                        _ensure_owner_alive(value)
-            for key, value in kwargs.items():
-                if isinstance(value, _CAN_HOLD_STR):
-                    if key not in config:
-                        found = _live_text_operand(value)
-                        if found is not None:
-                            raise str_operand_error(
-                                f"{label}() argument {key!r}", found
-                            )
-                    elif isinstance(value, Attribute):
-                        _ensure_owner_alive(value)
+        if skip_when is not None:
+            args, kwargs = _prepared_arguments(args, kwargs)
+            if skip_when(args, kwargs):
+                if rotate_keywords:
+                    args, kwargs = _rotate_order_arguments(
+                        label, args, kwargs, rotate_positions, rotate_keywords
+                    )
+                return func(*args, **kwargs)
+        # A set / frozenset / dict operand raises and an iterator is read into
+        # a list (see `_prepared_operand`), then checked as that list. A plug
+        # operand whose node was freed raises its "already deleted!", as it
+        # does in a Plug operator (see `_live_text_operand`); so does a plug
+        # given to a config parameter (a rotate order).
+        for i, value in enumerate(args):
+            if not isinstance(value, _CAN_HOLD_STR):
+                if (
+                    isinstance(value, _SCALARS)
+                    or i in skipped
+                    or not isinstance(value, _RESHAPED)
+                ):
+                    continue
+                value = _prepared_operand(value, f"{label}() argument {_argument(i)!r}")
+                args  = (*args[:i], value, *args[i + 1:])
+            if i not in skipped:
+                found = _live_text_operand(value)
+                if found is not None:
+                    raise str_operand_error(f"{label}() argument {_argument(i)!r}", found)
+            elif isinstance(value, Attribute):
+                _ensure_owner_alive(value)
+        for key, value in kwargs.items():
+            if not isinstance(value, _CAN_HOLD_STR):
+                if (
+                    isinstance(value, _SCALARS)
+                    or key in config
+                    or not isinstance(value, _RESHAPED)
+                ):
+                    continue
+                kwargs[key] = value = _prepared_operand(value, f"{label}() argument {key!r}")
+            if key not in config:
+                found = _live_text_operand(value)
+                if found is not None:
+                    raise str_operand_error(f"{label}() argument {key!r}", found)
+            elif isinstance(value, Attribute):
+                _ensure_owner_alive(value)
         if rotate_keywords:
             # after the operand checks, so a freed plug raises first
             args, kwargs = _rotate_order_arguments(
