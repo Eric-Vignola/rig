@@ -7,6 +7,7 @@ from typing import Any, Sequence
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _attr_mobject,
     _full_name_buffer,
     _new_attr,
     _queried_data_type,
@@ -509,7 +510,7 @@ class DGNode(metaclass=NodeMeta):
             fn = self._fn_set
             if isinstance(fn, OpenMaya.MFnDagNode) and fn.isInstanced(True):
                 attr_obj = _full_name_buffer(attr_obj)
-            if self._fn_set.attributeClass(attr_obj.mobject) == _NORMAL_ATTR:
+            if self._fn_set.attributeClass(_attr_mobject(attr_obj)) == _NORMAL_ATTR:
                 # with the instanced indices: an element of a world space attr
                 # (``worldMatrix[1]``) is otherwise named like its array
                 ln                  = plug.partialName(False, False, True, False, False, True)

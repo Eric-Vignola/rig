@@ -151,7 +151,9 @@ node has taken the name, and an undo brings it back. A plug built from a
 string or an MPlug, never asked for its node, keeps a handle of that node
 and raises the same. A new scene, a file open or a reference unload frees
 the node for good; the error then names the class only, or, for such a
-plug, the node by the name the plug was built with.
+plug, the node by the name the plug was built with. Every read of a freed
+plug raises it, `name` and `mobject` too, and so does a DSL function given
+one (`rig.normalize(plug)`), before it builds anything.
 
 ```python
 held = Node.create("transform", name="held")

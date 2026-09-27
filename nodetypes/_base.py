@@ -762,6 +762,16 @@ def _new_attr(cls: type, mplug: OpenMaya.MPlug, handle: Any = None) -> Any:
     return attr
 
 
+def _attr_mobject(attr: Any) -> OpenMaya.MObject:
+    """`attr.mobject` (cached on `attr`) without its owner check, for a caller that
+    made one: the attribute of a dynamic attr is freed with its node."""
+    d       = attr.__dict__
+    mobject = d["_mobject"]
+    if not mobject:
+        mobject = d["_mobject"] = d["_mplug"].attribute()
+    return mobject
+
+
 def _connected_attrs(
     attr: Any, src: bool = True, dst: bool = True, first_only: bool = False
 ) -> Any:
@@ -1216,10 +1226,12 @@ def _is_static_typed_root(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> b
     return fn.attrType() != OpenMaya.MFnData.kInvalid
 
 
-def _plug_node_fn_set(attr: Any, mplug: OpenMaya.MPlug) -> OpenMaya.MFnDependencyNode:
+def _plug_node_fn_set(attr: Any, mplug: OpenMaya.MPlug) -> OpenMaya.MFnDependencyNode | None:
     """A fn set of the node of `mplug`, `attr`'s MPlug: the one its owner holds
     (the owner rule makes the owner the plug's node) while that node is valid,
-    else a new one, as `_fixed_attr_kind` built for every call (1.5 us)."""
+    else a new one, as `_fixed_attr_kind` built for every call (1.5 us). None
+    once that node was freed (see `_ensure_owner_alive`): `mplug` then points at
+    freed memory, which the new fn set would read."""
     owner = attr.__dict__.get("_node")
     if owner is not None:
         d      = _unwrapped(owner).__dict__
@@ -1232,6 +1244,10 @@ def _plug_node_fn_set(attr: Any, mplug: OpenMaya.MPlug) -> OpenMaya.MFnDependenc
             and d.get("_mobject") == mplug.node()
         ):
             return fn
+    else:
+        handle = attr.__dict__.get("_handle1")
+    if handle is not None and not handle.isAlive():
+        return None
     return OpenMaya.MFnDependencyNode(mplug.node())
 
 
@@ -1241,13 +1257,17 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
 
     The by-name query follows a dynamic or extension attr that was deleted and
     re-added under the same name, which a held plug does not, and it creates an
-    array element that does not exist yet, so neither case uses the kind.
+    array element that does not exist yet, so neither case uses the kind. Nor
+    does a plug whose node was freed: its MPlug points at freed memory, and the
+    query raises the node's ``"already deleted!"``.
     """
     try:
-        mplug   = attr._mplug
-        mobject = attr.mobject
+        mplug = attr._mplug
+        fn    = _plug_node_fn_set(attr, mplug)
+        if fn is None:
+            return None
+        mobject = _attr_mobject(attr)
         # a deleted attr is no longer on the node, even once its name is reused
-        fn = _plug_node_fn_set(attr, mplug)
         if fn.attributeClass(mobject) == OpenMaya.MFnDependencyNode.kInvalidAttr:
             return None
         elements = []
@@ -1576,10 +1596,13 @@ class Attribute(str):
 
     @property
     def fn_set(self) -> OpenMaya.MFnBase:
-        """Returns the attribute function set."""
+        """Returns the attribute function set. Raises ``"... already deleted!"``
+        once the node was freed: the attribute of a dynamic attr is freed with it
+        (see `_ensure_owner_alive`)."""
+        _ensure_owner_alive(self)
         # the lazy caches write `__dict__`, which skips a subclass's `__setattr__`
         if not self._fn_set:
-            mobject  = self.mobject
+            mobject  = _attr_mobject(self)
             api_type = mobject.apiType()
             data_fn  = ATTR_TYPE_TO_FN.get(api_type, OpenMaya.MFnAttribute)
             self.__dict__["_fn_set"] = data_fn(mobject)
@@ -1587,10 +1610,11 @@ class Attribute(str):
 
     @property
     def mobject(self) -> OpenMaya.MObject:
-        """Returns the mobject."""
-        if not self._mobject:
-            self.__dict__["_mobject"] = self._mplug.attribute()
-        return self._mobject
+        """Returns the mobject. Raises ``"... already deleted!"`` once the node
+        was freed: the attribute of a dynamic attr is freed with it, a cached
+        one too (see `_ensure_owner_alive`)."""
+        _ensure_owner_alive(self)
+        return _attr_mobject(self)
 
     @property
     def node(self) -> Any:
@@ -1604,8 +1628,11 @@ class Attribute(str):
 
     @property
     def name(self) -> str:
-        """Returns the attribute name (without node name)."""
-        return self.plug.partialName(False, False, False, False, False, True)
+        """Returns the attribute name (without node name). Raises ``"... already
+        deleted!"`` once the node was freed (see `_ensure_owner_alive`): the name
+        of a dynamic attr is read from its attribute, which is freed with it."""
+        _ensure_owner_alive(self)
+        return self._mplug.partialName(False, False, False, False, False, True)
 
     @property
     def full_name(self) -> str:
@@ -1707,7 +1734,8 @@ class Attribute(str):
                 mplug   = self._mplug
                 fn      = OpenMaya.MFnDependencyNode(mplug.node())
                 normal  = OpenMaya.MFnDependencyNode.kNormalAttr
-                mobject = self.mobject
+                # `data_type`, the caller, named the attr first
+                mobject = _attr_mobject(self)
                 # a dynamic or extension attr can be re-added with another type
                 if (
                     fn.attributeClass(mobject) == normal
@@ -2269,7 +2297,7 @@ class Attribute(str):
 
     @property
     def is_typed(self):
-        """Checks if this attribute is typed."""
+        """Checks if this attribute is typed (raises as `mobject` does)."""
         return self.mobject.hasFn(OpenMaya.MFn.kTypedAttribute)
 
     def filter_array_values(

@@ -15,6 +15,11 @@ bytes (a ``bytearray``, a numpy bytes array) are text too, and are rejected
 the same way: an operand of bytes injected its first byte (``b"cube.ty"`` set
 99.0).
 
+The same checks raise a plug operand's ``"... already deleted!"`` when a new
+scene, a file open or a reference unload freed its node (see
+``_ensure_owner_alive``): the type predicates an operator or a function starts
+with read its operands' MPlugs, which then point at freed memory.
+
 A config string is not an operand. The ``"<"`` of a condition op (a NodeOp
 takes its positional strs as config) and the ``side=`` / ``name=`` /
 ``dtype=`` / ``axis=`` / ``method=`` choices are config: :func:`operands`
@@ -30,7 +35,7 @@ import inspect
 from typing import Any, Callable, Iterable, Optional
 
 import numpy as np
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import _ensure_owner_alive, Attribute
 
 
 # The operand types that can be, or can hold, a plain str (or bytes). Numbers,
@@ -86,6 +91,31 @@ def _text_operand(obj: Any) -> Optional[Any]:
     """The first plain str or bytes in ``obj``, or None: what an operand check
     rejects (see `_first_text`)."""
     return _first_text(obj, True)
+
+
+def _live_text_operand(obj: Any) -> Optional[Any]:
+    """`_text_operand(obj)`, raising the node's ``"... already deleted!"`` first
+    for a plug in ``obj`` (``obj`` itself, or one in a list, tuple, PlugList or
+    object array, nested to any depth, before the first plain str) whose node
+    was freed (see `_ensure_owner_alive`): the type predicates a function
+    starts with read its operands' MPlugs, which then point at freed memory."""
+    if isinstance(obj, str):
+        if isinstance(obj, Attribute):
+            _ensure_owner_alive(obj)
+            return None
+        return obj
+    if isinstance(obj, (list, tuple)):
+        elements = obj
+    elif isinstance(obj, np.ndarray) and obj.dtype.kind == "O":
+        elements = obj.flat
+    else:
+        return _first_text(obj, True)
+    for element in elements:
+        if isinstance(element, _CAN_HOLD_STR):
+            found = _live_text_operand(element)
+            if found is not None:
+                return found
+    return None
 
 
 def _render(obj: Any) -> str:
@@ -268,19 +298,30 @@ def operands(
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        # a plug operand whose node was freed raises its "already deleted!", as
+        # it does in a Plug operator (see `_live_text_operand`); so does a plug
+        # given to a config parameter (a rotate order)
         if skip_when is None or not skip_when(args, kwargs):
             for i, value in enumerate(args):
-                if isinstance(value, _CAN_HOLD_STR) and i not in skipped:
-                    found = _text_operand(value)
-                    if found is not None:
-                        raise str_operand_error(
-                            f"{label}() argument {_argument(i)!r}", found
-                        )
+                if isinstance(value, _CAN_HOLD_STR):
+                    if i not in skipped:
+                        found = _live_text_operand(value)
+                        if found is not None:
+                            raise str_operand_error(
+                                f"{label}() argument {_argument(i)!r}", found
+                            )
+                    elif isinstance(value, Attribute):
+                        _ensure_owner_alive(value)
             for key, value in kwargs.items():
-                if isinstance(value, _CAN_HOLD_STR) and key not in config:
-                    found = _text_operand(value)
-                    if found is not None:
-                        raise str_operand_error(f"{label}() argument {key!r}", found)
+                if isinstance(value, _CAN_HOLD_STR):
+                    if key not in config:
+                        found = _live_text_operand(value)
+                        if found is not None:
+                            raise str_operand_error(
+                                f"{label}() argument {key!r}", found
+                            )
+                    elif isinstance(value, Attribute):
+                        _ensure_owner_alive(value)
         return func(*args, **kwargs)
 
     wrapper._operand_config = config
