@@ -2,15 +2,16 @@
 Container scope and flattening.
 
 The :data:`container` singleton is a context manager that tracks an active
-stack of :class:`Container` (Maya container-node wrappers). The first
+stack of :class:`Container` (Maya container nodes). The first
 ``with container("name")`` block in a stack creates a real Maya container
 node; nested blocks default to *flatten* (no inner container, nodes go into
 the outermost), with naming-prefix breadcrumbs on created nodes.
 
-:class:`Container` is a subclass of :class:`rig.Node`. It inherits
-all the attribute access (``ctn.foo`` returns a :class:`Plug`), spec injection
-(``ctn << Float("blend")`` adds an attribute to the container itself), and
-operator behaviour.
+:class:`Container` is a node class (a subclass of
+:class:`rig.nodetypes.DGNode`, so a :class:`rig.Node`). It inherits all the
+attribute access (``ctn.foo`` returns a :class:`Plug` owned by the container),
+spec injection (``ctn << Float("blend")`` adds an attribute to the container
+itself), and operator behaviour.
 
 Behaviour overview
 ==================
@@ -588,8 +589,9 @@ class _ContainerStack:
     ) -> Any:
         """Create a Maya node and register it with the active scope.
 
-        Returns a :class:`Node`. If ``name`` is given and we're inside a
-        flattened sub-scope, prefixes ``name`` with the flattened scope name.
+        Returns the typed node (``Node(name)``). If ``name`` is given and we're
+        inside a flattened sub-scope, prefixes ``name`` with the flattened scope
+        name.
         """
         # Apply name prefix if we're inside a flattened sub-scope.
         if name is not None and self._stack:
@@ -654,14 +656,14 @@ class _ContainerStack:
         items      = list(node) if isinstance(node, (list, tuple)) else [node]
         node_names = [str(n) for n in items]
 
-        # Track UUIDs on every stack frame. A Node holding a live node gives
-        # that node's uuid, so read it there instead of re-resolving the name
-        # (a name that parses as a uuid still resolves, and raises, as before).
+        # Track UUIDs on every stack frame. A live node object gives its uuid,
+        # so read it there instead of re-resolving the name (a name that parses
+        # as a uuid still resolves, and raises, as before).
         for item, name in zip(items, node_names):
-            dg_node = item._dg_node if isinstance(item, Node) else None
+            dg_node = item if isinstance(item, DGNode) else None
             try:
                 if (
-                    isinstance(dg_node, DGNode)
+                    dg_node is not None
                     and dg_node.is_valid
                     and not (len(name) >= 32 and is_valid_maya_uid(name))
                 ):
@@ -910,6 +912,7 @@ class _ContainerStack:
         if leaf_frame.container_node is None:
             return source
         target = leaf_frame.container_node
+        _refuse_container_member_name(name)
         # Auto-resolve a bare multi-parent plug (e.g. ``worldMatrix``) to its
         # ``[0]`` element so it publishes as a SINGLE attr that can connect
         # onward. No-op for scalars / sequences / single plugs / explicit
@@ -1004,6 +1007,7 @@ class _ContainerStack:
         if leaf_frame.container_node is None:
             return source
         target = leaf_frame.container_node
+        _refuse_container_member_name(name)
         # Auto-resolve a bare multi-parent plug (e.g. ``worldMatrix``) to its
         # ``[0]`` element so it publishes as a SINGLE attr. No-op for
         # sequences / PlugLists / single plugs / explicit ``multi=True`` (the
@@ -1478,6 +1482,18 @@ def _destroy_published_name(container_node, name: str) -> bool:
 # --------------------------------------------------------------------- #
 
 
+def _refuse_container_member_name(name: str) -> None:
+    """Raise ``ValueError`` if ``name`` is a Python member of :class:`Container`
+    (``name``, ``uuid``, ``cleanup``, ...): ``ctn.<name>`` gives the member, so
+    an attribute published under that name could never be read back."""
+    if hasattr(Container, name):
+        raise ValueError(
+            f"{name!r} is a Container attribute "
+            f"({type(getattr(Container, name)).__name__}); "
+            f"choose another published name."
+        )
+
+
 def _publish_to_container(
     plug,
     container_node,
@@ -1516,12 +1532,15 @@ def _publish_to_container(
     AttributeError
         if ``<container_node>.<name>`` already exists.
     ValueError
-        if ``direction`` is not ``'input'`` or ``'output'``, or if ``name`` is empty.
+        if ``direction`` is not ``'input'`` or ``'output'``, if ``name`` is empty,
+        or if ``name`` is a :class:`Container` attribute (``name``, ``cleanup``,
+        ...), which ``ctn.<name>`` would give instead of the published plug.
     """
     if direction not in ("input", "output"):
         raise ValueError(f"direction must be 'input' or 'output', got {direction!r}")
     if not name:
         raise ValueError("name is required")
+    _refuse_container_member_name(name)
 
     from rig._internal.node import Node
 
@@ -2014,47 +2033,61 @@ def _create_external_output(
 
 
 # --------------------------------------------------------------------- #
-#  Container -- Maya container node wrapper, subclass of Node
+#  Container -- Maya container node class, subclass of DGNode
 # --------------------------------------------------------------------- #
 
 
-class Container(Node):
-    """Wraps a Maya ``container`` node.
+class Container(DGNode):
+    """A Maya ``container`` node.
 
-    Subclass of :class:`rig.Node` -- inherits attribute access
-    (``ctn.<plug_name>`` returns a :class:`Plug`), spec injection
+    Subclass of :class:`rig.nodetypes.DGNode` (so a :class:`rig.Node`) --
+    inherits attribute access (``ctn.<plug_name>`` returns a :class:`Plug`
+    owned by the container: ``ctn.<plug_name>.node is ctn``), spec injection
     (``ctn << Float("blend")`` adds an attribute on the container itself),
-    operator semantics, hashing, ``__str__`` / ``__fspath__``.
+    operator semantics, hashing, ``__str__`` / ``__fspath__``. Not registered
+    for the ``container`` node type: a cast of a container (``Node("ctn")``)
+    gives a plain node, which compares equal to the Container, both ways, with
+    the same hash.
 
     Instances are produced by ``with container("name") as ctn:``.
     """
 
-    __slots__ = ()
-
     def __repr__(self) -> str:
-        return f'Container("{self._dg_node}")'
+        return f'Container("{self.name}")'
+
+    def __eq__(self, other: Any) -> bool:
+        # symmetric with a plain node of the same container (DGNode's own test
+        # is ``isinstance(other, type(self))``, which a plain node fails)
+        return isinstance(other, DGNode) and self.name == other.name
+
+    __hash__ = DGNode.__hash__
+
+    # the root Node's container-aware factory: DGNode's typed ``create`` would
+    # build a node of this unregistered class's inherited type ("entity")
+    create = classmethod(Node.create.__func__)
 
     # -- attribute lookup -- #
 
     def __getattr__(self, attr_name: str) -> Any:
         """Resolve ``ctn.<name>`` to the REAL bound plug for natively
-        published names, falling back to :meth:`Node.__getattr__`.
+        published names, falling back to :meth:`DGNode.__getattr__`.
 
         Native ``bindAttr`` makes ``container.<name>`` an alias whose
-        ``MFnDependencyNode.findPlug`` lookup (which ``Node.__getattr__``
+        ``MFnDependencyNode.findPlug`` lookup (which ``DGNode.__getattr__``
         relies on) RAISES. So published / registered names must be resolved
         via the bindAttr table + multi registry FIRST, returning the real
         inner / host Plug. Genuine container attrs (``ctn << Float("blend")``
         adds a real attr ON the container) are not in those tables and fall
-        through to the inherited ``Node.__getattr__`` (``findPlug`` works on
-        them). ``_``-prefixed names short-circuit (mirrors the base guard).
+        through to the inherited ``DGNode.__getattr__`` (``findPlug`` works on
+        them), whose ``_`` rule applies: a ``_`` name resolves only to a Maya
+        attr of the live container. Python members (``name``, ``cleanup``, ...)
+        win over published names, which the publish guard refuses.
         """
-        if attr_name.startswith("_"):
-            raise AttributeError(attr_name)
-        resolved = _resolve_published(self, attr_name)
-        if resolved is not None:
-            return resolved
-        return super().__getattr__(attr_name)
+        if attr_name[:1] != "_":
+            resolved = _resolve_published(self, attr_name)
+            if resolved is not None:
+                return resolved
+        return DGNode.__getattr__(self, attr_name)
 
     # -- garbage collection -- #
 
