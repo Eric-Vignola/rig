@@ -646,17 +646,28 @@ def _ensure_owner_alive(attr: Any) -> None:
     the handle of its node it took when it was built instead (`_handle1`, see
     `_node_handle`). The children, elements and parent of an attr share its owner,
     or that handle (see `_inherit_owner`).
+
+    The attribute of a dynamic attr is also freed on its own, once a delete of
+    the attr leaves the undo queue (a flush, or ten more commands at mayapy's
+    default queue length), while its node lives on. Such an attr reads the API
+    1.0 handle of its attribute it took too (`_attr1`, see `_attr_handle`), and
+    raises ``"<plug> already deleted!"``, named by its str buffer.
     """
-    node = attr.__dict__.get("_node")
+    d    = attr.__dict__
+    node = d.get("_node")
     if node is not None:
-        node   = _unwrapped(node)
+        # `_unwrapped`, inlined for a `Node` wrapper (the DSL plugs' owner)
+        node   = node._dg_node if type(node) is _NODE_WRAPPER_CLASS else _unwrapped(node)
         handle = node.__dict__.get("_objhandle1")
         if handle is not None and not handle.isAlive():
             node.ensure_valid()
     else:
-        handle = attr.__dict__.get("_handle1")
+        handle = d.get("_handle1")
         if handle is not None and not handle.isAlive():
             _raise_deleted(attr, handle)
+    handle = d.get("_attr1")
+    if handle is not None and not handle.isAlive():
+        raise _deleted_error(str.__str__(attr))
 
 
 def _ensure_node_castable(attr: Any) -> None:
@@ -664,10 +675,16 @@ def _ensure_node_castable(attr: Any) -> None:
     its node from its MPlug, if the handle of its node it took when it was built is
     no longer valid: the node was freed (the MPlug points at freed memory) or
     deleted to the undo queue (the cast would name it, and reach the new node that
-    took its name). An undo brings a deleted node back, and it casts again."""
-    handle = attr.__dict__.get("_handle1")
+    took its name). An undo brings a deleted node back, and it casts again. The
+    MPlug of a freed dynamic attribute cannot be read either, its node included
+    (see `_ensure_owner_alive`)."""
+    d      = attr.__dict__
+    handle = d.get("_handle1")
     if handle is not None and not handle.isValid():
         _raise_deleted(attr, handle)
+    handle = d.get("_attr1")
+    if handle is not None and not handle.isAlive():
+        raise _deleted_error(str.__str__(attr))
 
 
 def _ensure_node_valid(attr: Any) -> None:
@@ -684,6 +701,9 @@ def _ensure_node_valid(attr: Any) -> None:
     handle = node.__dict__.get("_objhandle1")
     if handle is not None and not handle.isValid():
         node.ensure_valid()
+    handle = attr.__dict__.get("_attr1")
+    if handle is not None and not handle.isAlive():
+        raise _deleted_error(str.__str__(attr))
 
 
 def _deleted_error(name: str, freed: bool = False) -> RuntimeError:
@@ -792,11 +812,70 @@ def _mplug_handle(mplug: OpenMaya.MPlug) -> Any:
     return handle
 
 
-def _attr_state(mplug: OpenMaya.MPlug, handle: Any) -> dict:
+# `_attr_handle`: the API 1.0 handle it looked up for a dynamic attribute, keyed
+# by the attribute's MObjectHandle hashCode, as `_NODE_HANDLES` keeps the nodes'.
+_ATTR_HANDLES   = {}
+_ATTR_PRUNE_AT  = [4096]
+
+
+def _prune_attr_handles() -> None:
+    """Drop the handles of freed attributes from `_ATTR_HANDLES`."""
+    for code in list(_ATTR_HANDLES):
+        live = [entry for entry in _ATTR_HANDLES[code] if entry[1].isAlive()]
+        if live:
+            _ATTR_HANDLES[code] = live
+        else:
+            del _ATTR_HANDLES[code]
+    _ATTR_PRUNE_AT[0] = max(4096, 2 * len(_ATTR_HANDLES))
+
+
+def _attr_handle(mplug: OpenMaya.MPlug, node_handle: Any = None, fn1: Any = None) -> Any:
+    """The API 1.0 MObjectHandle of the attribute of `mplug`, a live plug, if it is
+    a dynamic attribute, else None: the one a plug keeps as `_attr1` (see
+    `_ensure_owner_alive`). A dynamic attribute is freed once a delete of it
+    leaves the undo queue, while its node lives on; a static one lives as long as
+    its node type. The attribute is found by name on its node, through `fn1`, the
+    node's API 1.0 fn set, or `node_handle`, its API 1.0 handle, once per
+    attribute (about 5 us), and in `_ATTR_HANDLES` after that (about 1.5 us).
+    None if the name finds another attribute (the plug's was deleted)."""
+    if not mplug.isDynamic:
+        return None
+    try:
+        mobject = mplug.attribute()
+        code    = OpenMaya.MObjectHandle(mobject).hashCode()
+    except Exception:
+        return None
+    entries = _ATTR_HANDLES.get(code)
+    if entries is not None:
+        for known, handle in entries:
+            if handle.isAlive() and known == mobject:
+                return handle
+    try:
+        if fn1 is None:
+            if node_handle is None or not node_handle.isAlive():
+                return None
+            fn1 = OpenMaya1.MFnDependencyNode(node_handle.objectRef())
+        handle = OpenMaya1.MObjectHandle(fn1.attribute(OpenMaya.MFnAttribute(mobject).name))
+    except Exception:
+        return None
+    if handle.hashCode() != code:
+        return None
+    if entries is None:
+        if len(_ATTR_HANDLES) >= _ATTR_PRUNE_AT[0]:
+            _prune_attr_handles()
+        entries = _ATTR_HANDLES[code] = []
+    else:
+        entries[:] = [entry for entry in entries if entry[1].isAlive()]
+    entries.append((mobject, handle))
+    return handle
+
+
+def _attr_state(mplug: OpenMaya.MPlug, handle: Any, attr_handle: Any = None) -> dict:
     """The `__dict__` of a fresh Attribute of `mplug` with no owner, checked
-    through `handle` (the API 1.0 handle of its node, or None). One `__dict__`
-    store instead of one `Plug.__setattr__` call per field; a subclass property
-    named like one of these keys would be bypassed."""
+    through `handle` (the API 1.0 handle of its node, or None) and `attr_handle`
+    (the API 1.0 handle of its attribute, for a dynamic attr, see `_attr_handle`).
+    One `__dict__` store instead of one `Plug.__setattr__` call per field; a
+    subclass property named like one of these keys would be bypassed."""
     return {
         "_mplug":                      mplug,
         "_mobject":                    None,
@@ -815,13 +894,18 @@ def _attr_state(mplug: OpenMaya.MPlug, handle: Any) -> dict:
         "_static_key_cache":           _STATIC_KEY_UNSET,
         # the API 1.0 handle of the node, for a plug with no owner
         "_handle1":                    handle,
+        # the API 1.0 handle of the attribute, for a dynamic attr
+        "_attr1":                      attr_handle,
     }
 
 
-def _new_attr(cls: type, mplug: OpenMaya.MPlug, handle: Any = None) -> Any:
+def _new_attr(
+    cls: type, mplug: OpenMaya.MPlug, handle: Any = None, attr_handle: Any = None
+) -> Any:
     """`cls(mplug)` without the handle of its node `Attribute.__init__` takes of an
     MPlug (a name lookup): for a plug of a node the caller holds, whose owner, or
-    the handle `handle` of that node, the caller hands it (see `_inherit_owner`).
+    the handle `handle` of that node, the caller hands it (see `_inherit_owner`),
+    with the handle of its attribute (`attr_handle`, see `_attr_handle`).
     `cls` is `Attribute` or `Plug`, whose `__init__` does nothing else for an
     MPlug. It builds `_attr_state`'s state inline: it is the owned plugs' hot
     path (about 26k per rail_spine build)."""
@@ -839,6 +923,7 @@ def _new_attr(cls: type, mplug: OpenMaya.MPlug, handle: Any = None) -> Any:
             "_polymorphic_owner_cache":    None,
             "_static_key_cache":           _STATIC_KEY_UNSET,
             "_handle1":                    handle,
+            "_attr1":                      attr_handle,
         }
     )
     return attr
@@ -878,11 +963,14 @@ def _inherit_owner(parent: Any, attr: Any) -> Any:
     owner's path (see `_named_through_owner`, which may hand back a copy). With
     no owner, it takes the handle of that node `parent` took (see
     `_ensure_owner_alive`)."""
+    d     = attr.__dict__
     owner = parent.__dict__["_node"]
+    # a child, an element or the parent of a dynamic attr is freed with it
+    d["_attr1"] = parent.__dict__.get("_attr1")
     if owner is None:
-        attr.__dict__["_handle1"] = parent.__dict__["_handle1"]
+        d["_handle1"] = parent.__dict__["_handle1"]
         return attr
-    attr.__dict__["_node"] = owner
+    d["_node"] = owner
     if str.__contains__(parent, "|"):  # `_named_through_a_path`, inlined
         return _named_through_owner(attr)
     return attr
@@ -1126,6 +1214,10 @@ def _plug_hash(attr: Any) -> int:
     cached = d.get("_plug_hash")
     if cached is not None:
         return cached
+    handle = d.get("_attr1")
+    if handle is not None and not handle.isAlive():
+        # its attribute was freed (see `_ensure_owner_alive`): not read
+        return hash((handle.hashCode(), str.__str__(attr)))
     owner = d["_node"]
     if owner is not None:
         node = _unwrapped(owner)
@@ -1510,7 +1602,8 @@ class Attribute(str):
             mplug = name_or_mplug
         else:
             raise ValueError(f"{name_or_mplug} is not a string or MPlug.")
-        self.__dict__.update(_attr_state(mplug, _mplug_handle(mplug)))
+        handle = _mplug_handle(mplug)
+        self.__dict__.update(_attr_state(mplug, handle, _attr_handle(mplug, handle)))
 
     # --- dunders
 
@@ -1753,8 +1846,13 @@ class Attribute(str):
         # `name` property raises), so the node is named by its fn set instead
         if type(name) is not str:
             name = _fn_set_name(node)
-        # `alias`, read once the name proved the node is alive
-        mplug = self.__dict__["_mplug"]
+        # `alias`, read once the name proved the node is alive, and the attribute
+        # of a dynamic attr (see `_ensure_owner_alive`)
+        d      = self.__dict__
+        mplug  = d["_mplug"]
+        handle = d.get("_attr1")
+        if handle is not None and not handle.isAlive():
+            raise _deleted_error(str.__str__(self))
         alias = mplug.partialName(False, False, False, True, False, True)
         if mplug.isElement and alias[-1:] != "]":
             alias = _instanced_element_alias(mplug, node, alias)

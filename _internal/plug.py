@@ -82,6 +82,7 @@ from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _MISSING,
+    _attr_handle,
     _attr_state,
     _class_attr,
     _ensure_node_castable,
@@ -235,7 +236,8 @@ def _named_plug(name: str, node: Any = None) -> "Plug":
     ``_ensure_owner_alive``) instead of one ``Attribute.__init__`` looks up by
     name. The name resolves as ``Plug.__init__`` resolves it (a component name
     to its ``controlPoints`` / ``uvpt`` element). Without a node, ``Plug(name)``."""
-    handle = None if node is None else _unwrapped(node).__dict__.get("_objhandle1")
+    held   = None if node is None else _unwrapped(node).__dict__
+    handle = None if held is None else held.get("_objhandle1")
     if handle is None:
         return Plug(name)
     mplug = _maybe_translate_component(name)
@@ -244,7 +246,8 @@ def _named_plug(name: str, node: Any = None) -> "Plug":
         sel.add(mplug)
         mplug = sel.getPlug(0)
     plug = str.__new__(Plug, name)
-    plug.__dict__.update(_attr_state(mplug, handle))
+    attr1 = _attr_handle(mplug, handle, held.get("_fn_set1"))
+    plug.__dict__.update(_attr_state(mplug, handle, attr1))
     return plug
 
 
@@ -260,7 +263,13 @@ def _share_node(parent: "Plug", results: Any) -> Any:
     """
     if not isinstance(parent, Plug):
         return results
-    held = parent.__dict__["_node"]
+    held  = parent.__dict__["_node"]
+    attr1 = parent.__dict__.get("_attr1")
+    if attr1 is not None:
+        # a child or an element of a dynamic attr is freed with it
+        for result in results if isinstance(results, list) else (results,):
+            if type(result) is Plug and result.__dict__["_node"] is None:
+                result.__dict__["_attr1"] = attr1
     if held is None:
         # no owner: the results take the handle of the node ``parent`` took
         # (see ``_ensure_owner_alive``)
@@ -326,7 +335,9 @@ class Plug(Attribute):
             # takes the handle of its node `name_or_mplug` took
             _ensure_owner_alive(name_or_mplug)
             source = name_or_mplug.__dict__
-            state  = _attr_state(source["_mplug"], source["_handle1"])
+            state  = _attr_state(
+                source["_mplug"], source["_handle1"], source.get("_attr1")
+            )
             state["_node"] = source["_node"]
             self.__dict__.update(state)
             return
@@ -1209,13 +1220,17 @@ del _str_method
 
 
 def _owner_alive(plug: Any) -> bool:
-    """False if the node that owns `plug` was freed (see `_ensure_owner_alive`)."""
+    """False if the node that owns `plug` was freed, or the attribute of a dynamic
+    attr (see `_ensure_owner_alive`)."""
     d     = plug.__dict__
     owner = d.get("_node")
     if owner is None:
         handle = d.get("_handle1")
     else:
         handle = _unwrapped(owner).__dict__.get("_objhandle1")
+    if handle is not None and not handle.isAlive():
+        return False
+    handle = d.get("_attr1")
     return handle is None or handle.isAlive()
 
 

@@ -181,6 +181,11 @@ Every attribute read checks the handle first, `name`, `mobject` and
 An attribute built from the MPlug of a node already deleted raises
 `"held already deleted!"` when it is built: that node has no name to take
 a handle by.
+The attribute of a dynamic attr can be freed while its node lives on, once
+a delete of the attr leaves the undo queue (a flush, or ten more commands
+at mayapy's default queue length): an attribute of a dynamic attr keeps a
+handle of its attribute too, and then raises `"held.dyne already
+deleted!"`, named by the name it was built with.
 
 A DAG node keeps the path it was taken through, and the attributes it finds
 are named through that path: with `S` instanced under `T1` and `T2`,
