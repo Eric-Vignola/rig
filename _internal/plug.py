@@ -46,14 +46,14 @@ Connection queries are METHODS, not operators -- ``a.get_inputs()`` and
 wired). Direct connections only: a compound whose children are driven
 reports nothing, so slice it (``a[:].get_inputs()``) to query per-child.
 
-A typed node's attribute lookup gives Plugs too (``PyNode("a").tx``); its
-typed API (``find_attr`` ...) reads :class:`Attribute` instances.
-``plug.node`` is the node object the plug was read from (``node.tx.node is
-node``, a ``Node`` or a typed node; children and elements share it), and a
-plug read through a node with more than one DAG path is named through that
-node's path. A plug built from a
-string or an MPlug casts its node on first access, and is named as Maya names
-it (``Plug("|T2|S.v")`` is ``T1|S.visibility``). Until then it checks the API
+A node's attribute lookup gives Plugs (``Node("a").tx``, a typed node's
+too: every node class is a :class:`Node`); its typed API (``find_attr`` ...)
+reads :class:`Attribute` instances. ``plug.node`` is the node object the plug
+was read from (``node.tx.node is node``; children and elements share it), and
+a plug read through a node with more than one DAG path is named through that
+node's path. A plug built from a string or an MPlug casts its node on first
+access (``Attribute.node``: ``PyNode`` of its MPlug's node), and is named as
+Maya names it (``Plug("|T2|S.v")`` is ``T1|S.visibility``). Until then it checks the API
 1.0 handle of its node it took when it was built (its children and elements
 share it), so once that node is deleted or freed it raises ``already
 deleted!`` as a plug with an owner does.
@@ -95,7 +95,6 @@ from rig.nodetypes._base import (
     _attr_handle,
     _attr_state,
     _class_attr,
-    _ensure_node_castable,
     _ensure_owner_alive,
     _full_name_buffer,
     _new_attr,
@@ -103,9 +102,7 @@ from rig.nodetypes._base import (
     _path_instance_number,
     _plug_hash,
     _same_plug,
-    _unwrapped,
     Attribute,
-    PyNode,
 )
 from rig._internal.generators import sequences
 from rig._internal.introspect import _to_numpy
@@ -247,15 +244,15 @@ def _maybe_translate_component(name: str) -> Any:
 def _named_plug(
     name: str, node: Any = None, attr_name: Any = None, known: Any = None
 ) -> "Plug":
-    """``Plug(name)``, for a plug of ``node``, a node object the caller holds (a
-    ``Node`` or a ``DGNode``): checked through that node's API 1.0 handle (see
+    """``Plug(name)``, for a plug of ``node``, a node object the caller holds:
+    checked through that node's API 1.0 handle (see
     ``_ensure_owner_alive``) instead of one ``Attribute.__init__`` looks up by
     name. The name resolves as ``Plug.__init__`` resolves it (a component name
     to its ``controlPoints`` / ``uvpt`` element). Without a node, ``Plug(name)``.
     ``attr_name`` is the name of its attribute, and ``known`` an Attribute of the
     same attribute the caller has (the one a spec's ``add_attr`` found), whose
     attribute handle it takes (see ``_attr_handle``)."""
-    held   = None if node is None else _unwrapped(node).__dict__
+    held   = None if node is None else node.__dict__
     # NW6: API 1.0 handle read (the handle is kept, see `_attr_state`)
     handle = None if held is None else held.get("_objhandle1")
     if handle is None:
@@ -525,23 +522,6 @@ class Plug(Attribute):
         if isinstance(result, Attribute) and not isinstance(result, Plug):
             return _share_node(self, _new_attr(Plug, result.plug))
         return result
-
-    @property
-    def node(self) -> Any:
-        """Return the node object the plug was read from: a :class:`Node`
-        (``Node("a").tx.node is`` that Node) or a typed node
-        (``PyNode("a").tx.node is`` that typed node); children and elements
-        share it. A plug built from a string or an MPlug casts its node to a
-        :class:`Node` on first access, and raises ``already deleted!`` if that
-        node was deleted or freed since (see ``_ensure_node_castable``).
-        """
-        held = self.__dict__["_node"]
-        if held is not None:
-            return held
-        _ensure_node_castable(self)
-        node       = _lazy().node.Node(PyNode(self._mplug.node()))
-        self._node = node
-        return node
 
     # -- assignment via attribute syntax -- #
 
@@ -1296,7 +1276,7 @@ def _owner_alive(plug: Any) -> bool:
     if owner is None:
         handle = d.get("_handle1")
     else:
-        handle = _unwrapped(owner).__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
+        handle = owner.__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
     if handle is not None and not handle.isAlive():
         return False
     handle = d.get("_attr1")

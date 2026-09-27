@@ -53,7 +53,7 @@ parked state survives rig-driven round trips and scene saves but not the
 artist's dropdown; ``duplicate`` copies parked attributes (harmless, a
 duplicate converted later restores them too); keyable / channelBox flags of
 built-in attributes are not preserved; an expression string driving a lost
-attribute is not rewritten. Live ``Node`` / ``Plug`` wrappers of the old
+attribute is not rewritten. Live ``Node`` / ``Plug`` objects of the old
 node are poisoned (``already deleted!``) and nothing is rebound: the spec
 re-resolves by name and is the surviving handle.
 """

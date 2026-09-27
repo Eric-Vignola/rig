@@ -343,7 +343,7 @@ def _clone_attribute(
     from rig._internal.plug import Plug
     from rig._internal.types import _is_attribute, _is_compound
 
-    # Resolve dst_node to a Node wrapper.
+    # Resolve dst_node to its node object.
     if not isinstance(dst_node, Node):
         dst_node = Node(dst_node)
 
