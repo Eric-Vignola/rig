@@ -546,6 +546,8 @@ _API1_SITES = frozenset(
         ("rig.nodetypes.dg_node", "DGNode.find_alias"),
         ("rig._internal.plug", "_named_plug"),
         ("rig._internal.memoize", "_attr_check"),
+        # the attribute handle of an owned spec plug (round 4a M10)
+        ("rig.spec._base", "_plug_of"),
         # the dead canonical-wrapper helpers (round 4a M8 deletes them)
         ("rig.nodetypes._base", "_wrapper_is_canonical"),
         ("rig.nodetypes._base", "_copy_wrapper"),
