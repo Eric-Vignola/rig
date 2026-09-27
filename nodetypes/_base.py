@@ -1648,6 +1648,12 @@ class Attribute(str):
 
     """
 
+    # the class of the elements `element_by_*` builds (D29): a Plug's elements
+    # are Plugs, built once. The child caches (`child`, child by name) hold
+    # Attributes, which a Plug's lookups turn into new Plugs (plugs are never
+    # cached, D30), and `get_parent` returns an Attribute
+    _CHILD_CLASS = None  # set to Attribute below the class
+
     def __init__(self, name_or_mplug: str | OpenMaya.MPlug) -> None:
         """Initialize an instance from an attribute full name or a MPlug.
 
@@ -2649,18 +2655,23 @@ class Attribute(str):
                 return index
 
     def element_by_physical_index(self, i: int) -> Attribute:
-        """Returns the element attribute at the given physical index."""
+        """Returns the element attribute at the given physical index: an
+        instance of `_CHILD_CLASS` (a Plug's element is a Plug), owned by the
+        node object this attr holds (see `_inherit_owner`)."""
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
         element = self.plug.elementByPhysicalIndex(i)
-        return _inherit_owner(self, _new_attr(Attribute, element))
+        return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element))
 
     def element_by_logical_index(self, i: int) -> Attribute:
-        """Returns the element attribute at the given logical index."""
+        """Returns the element attribute at the given logical index: an
+        instance of `_CHILD_CLASS` (a Plug's element is a Plug, which
+        ``plug[i]`` returns as built), owned by the node object this attr holds
+        (see `_inherit_owner`)."""
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
         element = self.plug.elementByLogicalIndex(i)
-        return _inherit_owner(self, _new_attr(Attribute, element))
+        return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element))
 
     def delete_logical_index(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""
@@ -2704,6 +2715,9 @@ class Attribute(str):
             )
 
         return self.__component_type
+
+
+Attribute._CHILD_CLASS = Attribute
 
 
 class Node(metaclass=NodeMeta):

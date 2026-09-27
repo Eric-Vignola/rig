@@ -96,9 +96,8 @@ from rig.nodetypes._base import (
     _attr_state,
     _class_attr,
     _ensure_owner_alive,
-    _full_name_buffer,
+    _inherit_owner,
     _new_attr,
-    _owner_is_instanced,
     _path_instance_number,
     _plug_hash,
     _same_plug,
@@ -274,57 +273,6 @@ def _named_plug(
     return plug
 
 
-def _share_node(parent: "Plug", results: Any) -> Any:
-    """Hand ``parent``'s owner to the fresh child / element Plugs in ``results``
-    (one Plug or a list of them, changed in place) and return ``results``.
-
-    A child or element is on its parent's node, so it is owned by the node
-    object its parent holds, as is (a ComponentPlug element's too), and named
-    through that owner's path (see ``_named_through_owner``, which may hand back
-    a copy). An owner ``parent`` does not hold yet is never resolved here: the
-    results take the handle of that node ``parent`` took instead.
-    """
-    if not isinstance(parent, Plug):
-        return results
-    held  = parent.__dict__["_node"]
-    attr1 = parent.__dict__.get("_attr1")
-    if attr1 is not None:
-        # a child or an element of a dynamic attr is freed with it
-        for result in results if isinstance(results, list) else (results,):
-            if type(result) is Plug and result.__dict__["_node"] is None:
-                result.__dict__["_attr1"] = attr1
-    if held is None:
-        # no owner: the results take the handle of the node ``parent`` took
-        # (see ``_ensure_owner_alive``)
-        handle = parent.__dict__["_handle1"]
-        for result in results if isinstance(results, list) else (results,):
-            if type(result) is Plug and result.__dict__["_node"] is None:
-                result.__dict__["_handle1"] = handle
-        return results
-    # only a parent named through a path can have an instanced owner
-    # (``_named_through_a_path``, inlined)
-    if str.__contains__(parent, "|") and _owner_is_instanced(held):
-        return _share_instanced_node(held, results)
-    for result in results if isinstance(results, list) else (results,):
-        if type(result) is Plug and result.__dict__["_node"] is None:
-            result.__dict__["_node"] = held
-    return results
-
-
-def _share_instanced_node(held: Any, results: Any) -> Any:
-    """``_share_node`` for an owner with more than one DAG path: the results are
-    also named through its path in their str buffer (copies)."""
-    many = isinstance(results, list)
-    for i, result in enumerate(results if many else (results,)):
-        if type(result) is Plug and result.__dict__["_node"] is None:
-            result.__dict__["_node"] = held
-            result = _full_name_buffer(result)
-            if not many:
-                return result
-            results[i] = result
-    return results
-
-
 class Plug(Attribute):
     """Operator-extended :class:`Attribute`.
 
@@ -337,8 +285,12 @@ class Plug(Attribute):
 
     Lookups via ``.<child>`` and ``[<index>]`` return ``Plug`` instances
     (not bare ``Attribute``s) so the DSL propagates through compound and
-    multi attributes.
+    multi attributes. They are owned as the plug is (the node object it holds,
+    or the handle of its node it took).
     """
+
+    # elements (``element_by_*``, so ``plug[i]``) are Plugs, built once (D29)
+    _CHILD_CLASS = None  # set to Plug below the class
 
     # -- construction / lookup -- #
 
@@ -378,22 +330,20 @@ class Plug(Attribute):
             if "_mplug" not in self.__dict__ or not _owner_alive(self):
                 raise AttributeError(attr_name)
             try:
-                result = super().__getattr__(attr_name)
-                if isinstance(result, Attribute) and not isinstance(result, Plug):
-                    return _share_node(self, _new_attr(Plug, result.plug))
-                return result
+                child = super().__getattr__(attr_name)
+                return _inherit_owner(self, _new_attr(Plug, child.plug))
             except (AttributeError, TypeError):
                 pass
             node = self.node
             return type(node).__getattr__(node, attr_name)
         # a freed node's MPlug points at freed memory: "already deleted!"
         _ensure_owner_alive(self)
-        # 1) Try child-attribute lookup first (compound children).
+        # 1) Try child-attribute lookup first (compound children): the cached
+        #    child Attribute names the MPlug, the Plug is a new one each time
+        #    (plugs are never cached), owned as its parent is (`_inherit_owner`)
         try:
-            result = super().__getattr__(attr_name)
-            if isinstance(result, Attribute) and not isinstance(result, Plug):
-                return _share_node(self, _new_attr(Plug, result.plug))
-            return result
+            child = super().__getattr__(attr_name)
+            return _inherit_owner(self, _new_attr(Plug, child.plug))
         except (AttributeError, TypeError):
             # AttributeError -> no such child.
             # TypeError -> MPlug.numChildren() raised because the plug isn't
@@ -440,32 +390,26 @@ class Plug(Attribute):
         # Multi attrs and geometry components are handled by Attribute's
         # __getitem__ (which already supports both numeric indexing and
         # the kMeshVertComponent / kCurveCVComponent / kSurfaceCVComponent
-        # special-case slice bounds). Re-wrap returns as Plug / PlugList.
+        # special-case slice bounds); its elements are already Plugs
+        # (``_CHILD_CLASS``) owned as this plug is, built once (D29). Lists
+        # become PlugLists.
         _ensure_owner_alive(self)
         is_indexable_via_attribute = self.is_multi or self._component_type != "unknown"
         if is_indexable_via_attribute:
             result = super().__getitem__(key)
-            if isinstance(result, Attribute) and not isinstance(result, Plug):
-                return _share_node(self, _new_attr(Plug, result.plug))
             if isinstance(result, list):
                 # Wrap in PlugList so chained DSL operations work on the slice
                 # (e.g. ``node.input[:].t << src``).  Lazy-bound to avoid the
                 # circular dep with ``_list`` at module load.
                 PlugList = _lazy().list.PlugList
 
-                wrapped = [
-                    _new_attr(Plug, r.plug)
-                    if isinstance(r, Attribute) and not isinstance(r, Plug)
-                    else r
-                    for r in result
-                ]
                 # Tag the returned PlugList with a back-reference to this
                 # multi attr -- enables the ``empty_multi[:] << values``
                 # idiom by letting :meth:`PlugList.__lshift__` route writes
                 # through the parent when the slice was empty (auto-create
                 # indices to match the source length).
                 parent = self if self.is_multi and isinstance(key, slice) else None
-                return PlugList(_share_node(self, wrapped), _parent_multi=parent)
+                return PlugList(result, _parent_multi=parent)
             return result
 
         # Compound non-multi (e.g. ``transform.translate``, ``.rotate``,
@@ -485,13 +429,16 @@ class Plug(Attribute):
                     raise IndexError(
                         f"{self} child index {key} out of range (num_children={n})"
                     )
-                return _share_node(self, _new_attr(Plug, self.plug.child(key)))
+                return _inherit_owner(self, _new_attr(Plug, self.plug.child(key)))
             if isinstance(key, slice):
                 PlugList = _lazy().list.PlugList
 
+                mplug    = self.plug
                 indices  = range(*key.indices(n))
-                children = [_new_attr(Plug, self.plug.child(i)) for i in indices]
-                return PlugList(_share_node(self, children))
+                children = [
+                    _inherit_owner(self, _new_attr(Plug, mplug.child(i))) for i in indices
+                ]
+                return PlugList(children)
 
         # Not multi, not component, not compound -- let Attribute raise the
         # canonical "is not an multi attr" error message.
@@ -518,10 +465,9 @@ class Plug(Attribute):
         back into it.
         """
         _ensure_owner_alive(self)
-        result = super().child(i)
-        if isinstance(result, Attribute) and not isinstance(result, Plug):
-            return _share_node(self, _new_attr(Plug, result.plug))
-        return result
+        # the cached child Attribute names the MPlug; the Plug is a new one
+        # each time (plugs are never cached), owned as this plug is
+        return _inherit_owner(self, _new_attr(Plug, super().child(i).plug))
 
     # -- assignment via attribute syntax -- #
 
@@ -1267,6 +1213,8 @@ for _str_method in (n for n in vars(str) if not n.startswith("_")):
     setattr(Plug, _str_method, _attr_over_str_method(_str_method))
 del _str_method
 
+Plug._CHILD_CLASS = Plug
+
 
 def _owner_alive(plug: Any) -> bool:
     """False if the node that owns `plug` was freed, or the attribute of a dynamic
@@ -1382,6 +1330,10 @@ class ComponentPlug(Plug):
     :meth:`_axis_sizes` (NURBS spans/degree with periodic wrap; lattice
     divisions). No flatten arithmetic is hand-rolled here.
     """
+
+    # an element by index (``element_by_*`` of the handle: the flat
+    # ``controlPoints[k]``) is a Plug, as a Plug's is (D29)
+    _CHILD_CLASS = Plug
 
     def __new__(
         cls,
