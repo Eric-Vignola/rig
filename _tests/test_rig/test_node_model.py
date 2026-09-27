@@ -5,7 +5,9 @@ Each class names the round-4a step it belongs to:
 
 * M1: the typed internals (``rig/nodetypes``) read Maya attributes through
   ``find_attr`` (an AST lint and a runtime tripwire), so they keep getting
-  Attributes once typed nodes speak the DSL (``node.<attr>`` gives a Plug).
+  Attributes once typed nodes speak the DSL (``node.<attr>`` gives a Plug);
+  the package sites outside ``rig/nodetypes`` that read a typed node's attr
+  by name are pinned where they are fine with a Plug.
 """
 
 import ast
@@ -14,7 +16,9 @@ import sys
 from unittest import mock
 
 from maya import cmds
+from rig import Node
 from rig.nodetypes import DGNode, PyNode
+from rig._internal.math_nodes import _decompose_matrix
 from rig._tests._base import MayaTestCase
 
 
@@ -216,3 +220,57 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             with self.subTest(case=label):
                 cmds.file(new=True, force=True)
                 self.assertEqual(_nodetypes_lookups(func), [])
+
+
+class TestPackageTypedDottedSites(MayaTestCase):
+    """M1: the package code outside ``rig/nodetypes`` that reads a Maya attr of a
+    typed node by name (the one-off probe of round 4a, M1). The one site is
+    ``shorthand._matrix_to_point``: ``_safe_attr(transform_node, "ro")`` on the
+    typed parent ``get_parent()`` returns, handed to ``_decompose_matrix`` as
+    ``rotate_order=``. It uses the attr as an operand only, so a Plug (typed
+    dotted access from M3 on) builds the same network as today's Attribute."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _curve_and_locator(self):
+        cmds.curve(d=1, p=[(0, 0, 0), (1, 0, 0), (2, 0, 0)], name="crv")
+        cmds.rename(cmds.listRelatives("crv", shapes=True)[0], "crvShape")
+        cmds.setAttr("crv.rotateOrder", 3)
+        cmds.spaceLocator(name="loc")
+
+    def test_matrix_to_point_connects_the_parent_rotate_order(self):
+        self._curve_and_locator()
+        Node("crvShape").cv[1] << Node("loc").worldMatrix[0]
+        decomposes = cmds.ls(type="decomposeMatrix")
+        self.assertEqual(len(decomposes), 1)
+        decompose = decomposes[0]
+        self.assertEqual(
+            cmds.listConnections(f"{decompose}.inputRotateOrder", s=True, d=False, plugs=True),
+            ["crv.rotateOrder"],
+        )
+        self.assertEqual(
+            cmds.listConnections("crvShape.controlPoints[1]", s=True, d=False, plugs=True),
+            [f"{decompose}.outputTranslate"],
+        )
+        # the same matrix into another point of the curve: one decompose
+        Node("crvShape").cv[2] << Node("loc").worldMatrix[0]
+        self.assertEqual(cmds.ls(type="decomposeMatrix"), [decompose])
+        self.assertEqual(
+            cmds.listConnections("crvShape.controlPoints[2]", s=True, d=False, plugs=True),
+            [f"{decompose}.outputTranslate"],
+        )
+
+    def test_rotate_order_attribute_and_plug_share_one_decompose(self):
+        # what `_matrix_to_point` hands `_decompose_matrix` today (the typed
+        # Attribute) and from M3 on (a Plug of the same plug) is one memo entry
+        self._curve_and_locator()
+        wm      = Node("loc").worldMatrix[0]
+        typed   = PyNode("crv").find_attr("ro")
+        plug    = Node("crv").ro
+        self.assertEqual(type(typed).__name__, "Attribute")
+        self.assertEqual(type(plug).__name__, "Plug")
+        first   = _decompose_matrix(wm, rotate_order=typed)
+        second  = _decompose_matrix(wm, rotate_order=plug)
+        self.assertIs(second, first)
+        self.assertEqual(str(first), "decomposeMatrix1.outputTranslate")
+        self.assertEqual(cmds.ls(type="decomposeMatrix"), ["decomposeMatrix1"])
