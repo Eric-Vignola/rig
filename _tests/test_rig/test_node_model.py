@@ -8,18 +8,32 @@ Each class names the round-4a step it belongs to:
   Attributes once typed nodes speak the DSL (``node.<attr>`` gives a Plug);
   the package sites outside ``rig/nodetypes`` that read a typed node's attr
   by name are pinned where they are fine with a Plug.
+* M2: typed constructors (``__dict__`` writes in the usual key order, copy only
+  within the class, ``Mesh(transform_node)``) and the ``_`` probe guard on
+  typed nodes, also on a node a new scene, a file open or a reference unload
+  freed (K S3 ``ff99c29``).
 """
 
 import ast
+import copy
 import os
+import shutil
 import sys
+import tempfile
 from unittest import mock
 
 from maya import cmds
+from maya.api import OpenMaya
 from rig import Node
-from rig.nodetypes import DGNode, PyNode
+from rig.nodetypes import DGNode, PyNode, Transform
 from rig._internal.math_nodes import _decompose_matrix
 from rig._tests._base import MayaTestCase
+
+
+def _mobject(name):
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return sel.getDependNode(0)
 
 
 def _all_subclasses(cls):
@@ -274,3 +288,203 @@ class TestPackageTypedDottedSites(MayaTestCase):
         self.assertIs(second, first)
         self.assertEqual(str(first), "decomposeMatrix1.outputTranslate")
         self.assertEqual(cmds.ls(type="decomposeMatrix"), ["decomposeMatrix1"])
+
+
+_DG_KEYS  = ["_mobject", "_fn_set", "_fn_set1", "_objhandle1", "_attr_dict"]
+_DAG_KEYS = ["_mdagpath", "_mobject", "_fn_set", "_fn_set1", "_objhandle1", "_attr_dict"]
+_GEO_KEYS = ["_Geometry__local_shape_attr", "_Geometry__world_shape_attr"]
+
+
+def _base_module():
+    from rig.nodetypes import _base
+
+    _base._canonical_kind(DGNode)  # binds the constructor parts _copy_wrapper reads
+    return _base
+
+
+class TestTypedLayerPrep(MayaTestCase):
+    """M2 (K S3 ``ff99c29``): typed constructors write ``__dict__`` in their usual
+    key order, copy only a node of their own class, and ``_`` probes on typed
+    nodes are cheap. The key orders are the ones the constructors had at M1."""
+
+    TEST_START_NEW_SCENE = True
+
+    def tearDown(self):
+        PyNode._CLASS_BY_TYPE.clear()
+        PyNode._CASTABLE_TYPES.clear()
+        super().tearDown()
+
+    def test_copy_shares_the_internals(self):
+        cmds.createNode("transform", name="a")
+        dg  = PyNode("a")
+        dup = copy.copy(dg)
+        self.assertIs(type(dup), type(dg))
+        self.assertIsNot(dup, dg)
+        for key in _DAG_KEYS:
+            self.assertIs(vars(dup)[key], vars(dg)[key])
+        self.assertEqual(dup.name, "a")
+
+    def test_dunder_probe_on_a_freed_node(self):
+        cmds.createNode("transform", name="a")
+        dg = PyNode("a")
+        self.assertFalse(hasattr(dg, "__array__"))
+        cmds.file(new=True, force=True)
+        # a freed node's API 2.0 objects must not be used: only the handle is read
+        probe = mock.Mock()
+        vars(dg)["_fn_set"] = probe
+        self.assertFalse(hasattr(dg, "__array__"))
+        self.assertFalse(hasattr(dg, "_x"))
+        self.assertEqual(probe.mock_calls, [])
+
+    def test_private_probe_on_a_deleted_node(self):
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("multiplyDivide", name="md")
+        dg = PyNode("md")
+        cmds.delete("md")
+        self.assertFalse(hasattr(dg, "_x"))
+        self.assertFalse(hasattr(dg, "__deepcopy__"))
+        cmds.undo()
+        # a Maya attr of a "_" name on the live node still resolves
+        cmds.addAttr("md", longName="__parked__", attributeType="double")
+        self.assertEqual(str(dg.__parked__), "md.__parked__")
+
+    def test_mesh_of_a_transform_node_is_its_shape(self):
+        from rig.nodetypes import Mesh
+
+        cube  = cmds.polyCube(name="cube", ch=False)[0]
+        shape = cmds.listRelatives(cube, shapes=True)[0]
+        mesh  = Mesh(PyNode(cube))
+        self.assertIs(type(mesh), Mesh)
+        self.assertEqual(mesh.name, shape)
+        self.assertTrue(mesh.mobject == _mobject(shape))
+        # a node of the class itself (or a subclass) still shares its internals
+        again = Mesh(mesh)
+        self.assertIs(vars(again)["_fn_set"], vars(mesh)["_fn_set"])
+        source = PyNode(cube)
+        self.assertIs(vars(Transform(source))["_fn_set"], vars(source)["_fn_set"])
+
+    def test_constructor_key_order(self):
+        from rig.nodetypes import DAGNode, Mesh
+
+        md    = cmds.createNode("multiplyDivide", name="md")
+        xform = cmds.createNode("transform", name="xf")
+        cube  = cmds.polyCube(name="cube", ch=False)[0]
+        shape = cmds.listRelatives(cube, shapes=True)[0]
+        PyNode(_mobject(md))
+        PyNode(_mobject(xform))
+        PyNode(_mobject(shape))
+        from_path = OpenMaya.MSelectionList()
+        from_path.add(xform)
+        cases = {
+            "dg": (DGNode(md), _DG_KEYS),
+            "dg_copy": (DGNode(DGNode(md)), _DG_KEYS),
+            "dg_mobject": (DGNode(_mobject(md)), _DG_KEYS),
+            "dag": (DAGNode(xform), _DAG_KEYS),
+            "dag_path": (DAGNode(from_path.getDagPath(0)), _DAG_KEYS),
+            "dag_mobject": (DAGNode(_mobject(xform)), [_DAG_KEYS[1], _DAG_KEYS[0]] + _DAG_KEYS[2:]),
+            "dag_copy": (
+                DAGNode(DAGNode(xform)),
+                [_DAG_KEYS[1], _DAG_KEYS[0]] + _DAG_KEYS[2:],
+            ),
+            "geometry": (Mesh(shape), _DAG_KEYS + _GEO_KEYS),
+            "checked_dg": (PyNode(_mobject(md)), _DG_KEYS),
+            "checked_dag": (PyNode(_mobject(xform)), _DAG_KEYS),
+            "copy_dg": (_base_module()._copy_wrapper(PyNode(_mobject(md))), _DG_KEYS),
+            "copy_dag": (_base_module()._copy_wrapper(PyNode(_mobject(xform))), _DAG_KEYS),
+            "copy_geometry": (
+                _base_module()._copy_wrapper(PyNode(_mobject(shape))),
+                _DAG_KEYS + _GEO_KEYS,
+            ),
+        }
+        for label, (node, keys) in cases.items():
+            with self.subTest(case=label):
+                self.assertEqual(list(vars(node)), keys)
+
+
+# `_` names a typed node is probed with: a missing name, two dunders Python and
+# numpy probe (`copy.deepcopy`, `numpy.asarray`) and a Maya attr of a `_` name
+_PROBES = ("_x", "__array__", "__deepcopy__", "__parked__")
+
+
+class TestPrivateProbeOnAFreedNode(MayaTestCase):
+    """M2, E2: the ``_`` probe guard of ``DGNode.__getattr__`` on typed nodes a new
+    scene, a file open (bringing nodes of the same names) or a reference unload
+    freed. Only the API 1.0 handle is read: ``hasattr`` answers False, a Maya
+    attr of a ``_`` name no longer resolves, ``copy.copy`` works and shares the
+    handle, and the freed node's API 2.0 fn set is never called."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _build(self):
+        md = cmds.createNode("multiplyDivide", name="md")
+        cmds.addAttr(md, longName="__parked__", attributeType="double")
+        cmds.createNode("transform", name="xf")
+        cmds.polyCube(name="cube", ch=False)
+        return ["md", "xf", "cubeShape"]
+
+    def _hold(self, names):
+        held = [PyNode(name) for name in names]
+        self.assertEqual([type(n).__name__ for n in held], ["DGNode", "Transform", "Mesh"])
+        self.assertTrue(hasattr(held[0], "__parked__"))
+        self.assertEqual(str(held[0].__parked__), f"{names[0]}.__parked__")
+        for node in held:
+            self.assertFalse(hasattr(node, "_x"))
+            self.assertFalse(hasattr(node, "__array__"))
+        return held
+
+    def _assert_freed(self, held):
+        for node in held:
+            with self.subTest(node=type(node).__name__):
+                probe = mock.Mock()
+                vars(node)["_fn_set"] = probe
+                for name in _PROBES:
+                    self.assertFalse(hasattr(node, name), name)
+                    with self.assertRaisesRegex(AttributeError, f"^{name}$"):
+                        getattr(node, name)
+                dup = copy.copy(node)
+                self.assertIs(type(dup), type(node))
+                self.assertIs(vars(dup)["_objhandle1"], vars(node)["_objhandle1"])
+                self.assertFalse(dup.is_valid)
+                with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
+                    node.ensure_valid()
+                self.assertEqual(probe.mock_calls, [])
+
+    def test_new_scene(self):
+        held = self._hold(self._build())
+        cmds.file(new=True, force=True)
+        for _ in range(50):
+            cmds.createNode("multiplyDivide")  # reuse the freed memory
+        self._assert_freed(held)
+
+    def test_file_open_reusing_the_names(self):
+        folder = tempfile.mkdtemp(prefix="rig_m2_probe_open_")
+        path   = os.path.join(folder, "probe_open.ma").replace("\\", "/")
+        try:
+            names = self._build()
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            held = self._hold(names)
+            cmds.file(path, open=True, force=True)
+            self.assertTrue(all(cmds.objExists(name) for name in names))
+            self._assert_freed(held)
+            # the node of the same name the file brought is its own
+            self.assertEqual(str(PyNode("md").__parked__), "md.__parked__")
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_reference_unload(self):
+        folder = tempfile.mkdtemp(prefix="rig_m2_probe_ref_")
+        path   = os.path.join(folder, "probe_ref.ma").replace("\\", "/")
+        try:
+            self._build()
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            held = self._hold(["ref:md", "ref:xf", "ref:cubeShape"])
+            cmds.file(unloadReference=cmds.referenceQuery(path, referenceNode=True))
+            self._assert_freed(held)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)

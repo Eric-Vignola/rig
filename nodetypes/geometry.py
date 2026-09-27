@@ -119,8 +119,11 @@ class Geometry(DAGNode):
     def __init__(self, node: str | OpenMaya.MObject | OpenMaya.MDagPath) -> None:
         """Initialize an instance from a node name or a MObject.
 
-        Supports initializing from transform nodes.
+        Supports initializing from transform nodes, by name or as node objects
+        (a node object of another class is taken by its name).
         """
+        if isinstance(node, DAGNode) and not isinstance(node, type(self)):
+            node = str(node)
         if isinstance(node, str) and cmds.nodeType(node) == "transform":
             shapes = cmds.listRelatives(
                 node,
@@ -136,8 +139,9 @@ class Geometry(DAGNode):
             node = shapes[0]
 
         super().__init__(node)
-        self.__local_shape_attr = None
-        self.__world_shape_attr = None
+        d                                = self.__dict__
+        d["_Geometry__local_shape_attr"] = None
+        d["_Geometry__world_shape_attr"] = None
 
     # --- attr helpers
 
