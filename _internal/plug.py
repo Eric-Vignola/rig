@@ -260,12 +260,11 @@ def _share_node(parent: "Plug", results: Any) -> Any:
     """
     if not isinstance(parent, Plug):
         return results
-    d    = parent.__dict__
-    held = d["_node"]
+    held = parent.__dict__["_node"]
     if held is None:
         # no owner: the results take the handle of the node ``parent`` took
         # (see ``_ensure_owner_alive``)
-        handle = d["_handle1"]
+        handle = parent.__dict__["_handle1"]
         for result in results if isinstance(results, list) else (results,):
             if type(result) is Plug and result.__dict__["_node"] is None:
                 result.__dict__["_handle1"] = handle
