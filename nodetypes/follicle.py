@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 from maya import cmds
 from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.dg_node import _typed_creator
 from rig.nodetypes.transform import Transform
 
 
@@ -20,6 +21,7 @@ class Follicle(DAGNode):
     NATIVE_NODE_TYPE = "follicle"
 
     @classmethod
+    @_typed_creator
     def create_on_mesh(
         cls,
         mesh:         Transform | str,
@@ -40,6 +42,10 @@ class Follicle(DAGNode):
             name: Optional name for the follicle node.
             uv_set: A uv set to attach the follicle to.
             fudge: TODO
+
+        Inside ``with container()`` the follicle shape and its transform join the
+        scope (``container=False`` opts out) and an explicit ``name`` takes the
+        flattened scope's prefix, as ``DGNode.create`` does.
         """
         name  = name or "follicle"
         xform = Transform(mesh)

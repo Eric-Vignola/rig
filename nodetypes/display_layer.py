@@ -43,6 +43,10 @@ class DisplayLayer(DGNode):
     # the layer a node is in when it is in no layer; Maya refuses to delete it
     DEFAULT = "defaultLayer"
 
+    # a scene registry, found again by name: a create inside ``with container()``
+    # stays out of the scope (no prefix, not registered) unless ``container=True``
+    _CONTAINER_AWARE = False
+
     # --- creation
 
     @classmethod

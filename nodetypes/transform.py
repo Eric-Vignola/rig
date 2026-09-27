@@ -13,6 +13,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import Attribute
 from rig.nodetypes.dag_node import DAGNode, PyNode
+from rig.nodetypes.dg_node import _typed_creator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -420,6 +421,7 @@ class Transform(DAGNode):
         return HierarchyData(tree)
 
     @classmethod
+    @_typed_creator
     def create_hierarchy(
         cls,
         hierarchy:  HierarchyData,
@@ -433,6 +435,10 @@ class Transform(DAGNode):
 
         Returns:
             A Skeleton object with updated node names (in case of duplication)
+
+        Inside ``with container()`` every node the call made joins the scope
+        (``container=False`` opts out); the nodes keep the hierarchy's names
+        (the creates inside this one are nested, so they add no prefix).
         """
         from cgmath.hierarchy import SUPPORTED_NODE_TYPES, HierarchyData
 

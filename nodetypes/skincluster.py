@@ -211,8 +211,9 @@ class SkinCluster(Deformer):
         if cur == infs:
             return
 
-        # a hacky way to avoid empty influence error
-        tmp_joint = Joint.create()
+        # a hacky way to avoid empty influence error; deleted below, so it never
+        # joins an open container scope
+        tmp_joint = Joint.create(container=False)
         try:
             self.add_influence_objects(tmp_joint)
             self.remove_influence_objects(cur)
