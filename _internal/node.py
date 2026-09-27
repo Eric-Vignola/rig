@@ -28,7 +28,7 @@ from typing import Any, Union
 
 import numpy as np
 from rig.nodetypes import _base
-from rig.nodetypes._base import _new_attr, Attribute, PyNode
+from rig.nodetypes._base import _handle_alive, _new_attr, Attribute, PyNode
 from rig.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
 from rig._internal.plug import _maybe_component_plug, Plug
 
@@ -155,7 +155,7 @@ class Node:
             # node a new scene freed has none (its fn set points at freed memory).
             if (
                 attr_name == "_dg_node"
-                or not self._dg_node._objhandle1.isAlive()
+                or not _handle_alive(self._dg_node.__dict__)
                 or not self._dg_node.has_attr(attr_name)
             ):
                 raise AttributeError(attr_name)
@@ -183,7 +183,7 @@ class Node:
             # points at freed memory: building a Plug of it names that MPlug (a
             # miss already raised through the node's fn set).
             dg_node = self._dg_node
-            if not dg_node._objhandle1.isAlive():
+            if not dg_node._objhandle1.isAlive():  # NW6: API 1.0 handle read (hot)
                 dg_node.ensure_valid()
             # Upgrade multi-dimensional geometry components (NURBS-surface
             # ``cv``, lattice ``pt``) to a ComponentPlug so ``node.cv[u][v]`` /

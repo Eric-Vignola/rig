@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from maya import cmds, mel
 from maya.api import OpenMaya
-from rig.nodetypes._base import get_custom_type, PyNode
+from rig.nodetypes._base import _handle_valid, get_custom_type, PyNode
 from rig.nodetypes.dg_node import DGNode
 
 
@@ -37,8 +37,8 @@ class DAGNode(DGNode):
             d["_mobject"]    = node._mobject
             d["_mdagpath"]   = node._mdagpath
             d["_fn_set"]     = node._fn_set
-            d["_fn_set1"]    = node._fn_set1
-            d["_objhandle1"] = node._objhandle1
+            d["_fn_set1"]    = node._fn_set1  # NW6: API 1.0 handle store
+            d["_objhandle1"] = node._objhandle1  # NW6: API 1.0 handle store
         else:
             if isinstance(node, OpenMaya.MObject):
                 d["_mobject"]  = node
@@ -130,7 +130,7 @@ class DAGNode(DGNode):
         d     = self.__dict__
         taken = d["_taken_mdagpath"]
         # the handle first: an MDagPath of a freed node must not be read
-        if d["_objhandle1"].isValid() and taken.isValid():
+        if _handle_valid(d) and taken.isValid():
             del d["_taken_mdagpath"]
             d["_mdagpath"] = taken
             d["_fn_set"]   = self.FN_SET(taken)

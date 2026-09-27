@@ -11,6 +11,7 @@ from rig.nodetypes._base import (
     _attr_mobject,
     _deleted_error,
     _full_name_buffer,
+    _handle_valid,
     _new_attr,
     _queried_data_type,
     Attribute,
@@ -146,8 +147,8 @@ class DGNode(metaclass=NodeMeta):
         if isinstance(node, type(self)):
             d["_mobject"]    = node._mobject
             d["_fn_set"]     = node._fn_set
-            d["_fn_set1"]    = node._fn_set1
-            d["_objhandle1"] = node._objhandle1
+            d["_fn_set1"]    = node._fn_set1  # NW6: API 1.0 handle store
+            d["_objhandle1"] = node._objhandle1  # NW6: API 1.0 handle store
         else:
             if isinstance(node, OpenMaya.MObject):
                 d["_mobject"] = node
@@ -172,8 +173,8 @@ class DGNode(metaclass=NodeMeta):
         mobject1 = OpenMaya1.MObject()
         sel.getDependNode(0, mobject1)
         d                = self.__dict__
-        d["_fn_set1"]    = OpenMaya1.MFnDependencyNode(mobject1)
-        d["_objhandle1"] = OpenMaya1.MObjectHandle(mobject1)
+        d["_fn_set1"]    = OpenMaya1.MFnDependencyNode(mobject1)  # NW6: API 1.0 handle store
+        d["_objhandle1"] = OpenMaya1.MObjectHandle(mobject1)  # NW6: API 1.0 handle store
 
     # --- dunders
 
@@ -208,15 +209,9 @@ class DGNode(metaclass=NodeMeta):
         ```
         """
         if attr_name[:1] == "_":
-            d      = self.__dict__
-            fn     = d.get("_fn_set")
-            handle = d.get("_objhandle1")
-            if (
-                fn is None
-                or handle is None
-                or not handle.isValid()
-                or not fn.hasAttribute(attr_name)
-            ):
+            d  = self.__dict__
+            fn = d.get("_fn_set")
+            if fn is None or not _handle_valid(d) or not fn.hasAttribute(attr_name):
                 raise AttributeError(attr_name)
         return self.find_attr(attr_name, quiet=False)
 
@@ -247,8 +242,9 @@ class DGNode(metaclass=NodeMeta):
 
     @property
     def is_valid(self) -> bool:
-        """Check if this node is valid (not deleted)."""
-        return self._objhandle1.isValid()
+        """Check if this node is valid (not deleted, not freed by a new scene, a
+        file open or a reference unload). False for a half-built node."""
+        return _handle_valid(self.__dict__)
 
     def ensure_valid(self) -> None:
         """Raise erros if an object is deleted.
@@ -258,10 +254,10 @@ class DGNode(metaclass=NodeMeta):
         point at freed memory, so it is named by its class only (reading its
         name would read another node's, or crash Maya).
         """
-        handle = self._objhandle1
+        handle = self._objhandle1  # NW6: API 1.0 handle read (hot)
         if not handle.isValid():
             if handle.isAlive():
-                raise _deleted_error(self._fn_set1.name())
+                raise _deleted_error(self._fn_set1.name())  # NW6: API 1.0 handle read
             raise _deleted_error(type(self).__name__, freed=True)
 
     @property
@@ -547,6 +543,7 @@ class DGNode(metaclass=NodeMeta):
                 # attr, which deleteExtension frees (see `_ensure_owner_alive`)
                 name = attr if type(attr) is str and "." not in attr else None
                 attr_obj.__dict__["_attr1"] = _attr_handle(
+                    # NW6: API 1.0 handle read
                     plug, fn1=self._fn_set1, name=name,
                     extension=attr_class == _EXTENSION_ATTR,
                 )
@@ -603,6 +600,7 @@ class DGNode(metaclass=NodeMeta):
                 # its attribute's, if dynamic
                 plug = sel.getPlug(0)
                 return _new_attr(
+                    # NW6: API 1.0 handle read
                     Attribute, plug, self._objhandle1, _attr_handle(plug, fn1=self._fn_set1)
                 )
         if not quiet:
