@@ -12,7 +12,10 @@ Direction:
     * ``Plug    << spec``  ->  ``cmds.setAttr(plug, ...)`` (modifier-only specs)
 
 The spec returns the new (or modified) ``Plug`` so chaining works:
-``... << 5 << lock`` first sets the value, then locks.
+``... << 5 << lock`` first sets the value, then locks. A new attribute's
+``Plug`` is owned by the node object the spec went to
+(``(node << Float("x")).node is node``; ``plug << Float("x")`` adds ``x`` to
+``plug.node``).
 
 Ported from Eric Vignola's BSD-3 ``rig.attributes._Attribute``, slimmed to
 use ``rig.nodetypes.Attribute.data_type`` instead of regex-parsing
@@ -25,20 +28,64 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from maya import cmds
+# rig.nodetypes imports neither rig.spec nor rig._internal.plug
+from rig.nodetypes._base import Attribute, Node, _attr_handle, _attr_state, _handle_valid
 
 
 LOGGER = logging.getLogger(__name__)
 
 
 def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = None) -> Any:
-    """The :class:`Plug` for ``node_string.long_name``, built from the
-    strings rather than through ``Node.__getattr__`` so that attributes
-    with a leading underscore (``__parked__``) resolve too. ``node``, the node
-    object ``node_string`` names, hands it the handle it checks its node with
-    (see ``_ensure_owner_alive``), which it would otherwise look up by name, and
-    ``added``, the attr ``add_attr`` returned for it, the handle of its attribute."""
-    from rig._internal.plug import _named_plug  # deferred: plug.py imports rig.spec
+    """The :class:`Plug` of the attribute ``long_name`` of ``node``, the node
+    object the spec was applied to, **owned by** it:
+    ``(node << Float("x")).node is node``, as ``node.x.node`` is. Its MPlug is
+    found by name on the node's fn set (``findPlug``), not through
+    ``Node.__getattr__``, so a Python member's name (``rename``) and a leading
+    underscore (``__parked__``) resolve too. A compound spec gives its parent
+    plug, a multi spec its array root.
 
+    Its str buffer, which maya.cmds reads, is ``node_string.long_name``, where
+    ``node_string`` is the node's name (``str(node)``): the shortest unique path
+    of a DAG node, through the path the node object holds, so a node whose short
+    name is not unique (``|A|X``) is named ``A|X.x``, and an instanced one
+    through its own path (``Node("|T2|S") << Float("k")`` is ``T2|S.k``, whose
+    ``full_name`` is ``T2|S.k`` too).
+
+    ``added``, the attr ``add_attr`` returned for it, hands it the handle of its
+    attribute (``_attr1``, which a delete of a dynamic attr frees once it leaves
+    the undo queue, see ``_ensure_owner_alive``) when it is alive and names the
+    same attribute; otherwise that handle is looked up once (``_attr_handle``).
+
+    A node that is not a live node object, or a name ``findPlug`` does not
+    resolve (an alias, ``smile`` for ``weight[0]``, or a component name,
+    ``vtx[1]``), takes the string path (``_named_plug``): a plug with no owner,
+    checked through the node's API 1.0 handle, whose name resolves as
+    ``Plug(name)`` resolves it."""
+    from rig._internal.plug import Plug, _named_plug  # deferred: plug.py imports rig.spec
+
+    if node is not None:
+        d  = node.__dict__
+        fn = d.get("_fn_set")
+        if fn is not None and _handle_valid(d):
+            try:
+                mplug = fn.findPlug(long_name, False)
+            except RuntimeError:
+                mplug = None
+            if mplug is not None:
+                known = None if added is None else added.__dict__
+                attr1 = None if known is None else known.get("_attr1")
+                if (
+                    attr1 is None
+                    or not attr1.isAlive()
+                    or known["_mplug"].attribute() != mplug.attribute()
+                ):
+                    # NW6: API 1.0 handle read (the node's API 1.0 fn set)
+                    attr1 = _attr_handle(mplug, fn1=d.get("_fn_set1"), name=long_name)
+                plug  = str.__new__(Plug, f"{node_string}.{long_name}")
+                state = _attr_state(mplug, None, attr1)
+                state["_node"] = node
+                plug.__dict__.update(state)
+                return plug
     return _named_plug(f"{node_string}.{long_name}", node, long_name, added)
 
 
@@ -98,7 +145,13 @@ class _AttrSpec:
         """Apply this spec to ``target`` (a :class:`Node` or :class:`Plug`).
 
         Returns the resulting :class:`Plug` (the new attribute, or the
-        modified one for modifier-only specs).
+        modified one for modifier-only specs). A named spec's plug is owned by
+        the node object the spec went to (see ``_plug_of``): ``target`` itself
+        for a node (``(node << Float("x")).node is node``), and, for a
+        :class:`Plug` (or an :class:`Attribute`), the node object it holds
+        (``plug.node``, never a cast of its node's name): ``plug << Float("x")``
+        adds ``x`` to ``plug.node`` and returns a plug owned by it. Anything
+        else is read as a name (``Node(str(target))``).
         """
         # Modifier-only spec (no longName) -- ``cmds.setAttr`` edit on whatever
         # the target currently points at.
@@ -106,21 +159,17 @@ class _AttrSpec:
         if long_name is None:
             return self._apply_modifier(target)
 
-        # Need a clean node string regardless of whether target is Node or Plug.
-        from rig._internal.node import Node
-        from rig._internal.plug import Plug
-
-        if isinstance(target, Plug):
-            node_string = str(target.node)
-            wrap_node   = Node(node_string)
+        if isinstance(target, Attribute):
+            # its owner (a plug built from a name casts its node once)
+            wrap_node = target.node
         elif isinstance(target, Node):
-            node_string = str(target)
-            wrap_node   = target
+            wrap_node = target
         else:
-            node_string = str(target)
-            wrap_node   = Node(node_string)
+            wrap_node = Node(str(target))
 
-        return self._apply_addattr(node_string, wrap_node)
+        # the node's name (a DAG node's shortest unique path, through the path
+        # it holds) names the new plug for cmds
+        return self._apply_addattr(str(wrap_node), wrap_node)
 
     # -- internals -- #
 
@@ -154,7 +203,8 @@ class _AttrSpec:
         return target
 
     def _apply_addattr(self, node_string: str, wrap_node: Any) -> Any:
-        """Add the attribute to ``node_string`` and return its :class:`Plug`."""
+        """Add the attribute to ``wrap_node`` (named ``node_string``) and return
+        its :class:`Plug`, owned by ``wrap_node`` (see ``_plug_of``)."""
         kargs         = dict(self.kargs)
         long_name     = kargs["longName"]
         multi         = self._pop_alias(kargs, ("multi", "m"), default=False)

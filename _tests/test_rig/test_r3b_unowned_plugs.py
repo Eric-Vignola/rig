@@ -115,8 +115,11 @@ def _guard_handle(attr):
 
 
 # the paths above whose plug has an owner: the parent cast its node when it was
-# named (see `_unowned`); every other one has none
-_OWNED_AFTER_NAMING = {"Plug compound [1]", "Plug compound [1:2][0]", "Plug element [0:1][0]"}
+# named (see `_unowned`), and (re-pinned, round 4a M10, spec S5) a spec's plug,
+# owned by the node object it was applied to; every other one has none
+_OWNED_AFTER_NAMING = {
+    "Plug compound [1]", "Plug compound [1:2][0]", "Plug element [0:1][0]", "spec apply",
+}
 
 
 class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
@@ -189,6 +192,10 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
                 self.assertEqual(attr.plug, mplug)
 
     def test_a_spec_hands_the_handle_of_its_node(self):
+        # re-pinned (round 4a M10, spec S5): a spec's plug is owned by the node
+        # object it was applied to (for a Plug target, the one the plug holds),
+        # so it is checked through that node's handle and takes none of its own
+        # (it took the node's API 1.0 handle as `_handle1`)
         _build()
         node = Node("held")
         for target in (node, node.tx):
@@ -196,10 +203,12 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
                 plug = target << Float("fresh", overwrite=True)
                 self.assertIsInstance(plug, Plug)
                 self.assertEqual(str(plug), "held.fresh")
-                self.assertEqual(
-                    vars(plug)["_handle1"].hashCode(), node._dg_node._objhandle1.hashCode()
-                )
-        self.assertIs(vars(node << Float("kept"))["_handle1"], node._dg_node._objhandle1)
+                self.assertIs(vars(plug)["_node"], node)
+                self.assertIsNone(vars(plug)["_handle1"])
+                self.assertEqual(_guard_handle(plug).hashCode(), _hash_code("held"))
+        kept = node << Float("kept")
+        self.assertIs(vars(kept)["_node"], node)
+        self.assertIsNone(vars(kept)["_handle1"])
         typed = PyNode("held")
         self.assertIs(vars(typed.find_alias("hoist"))["_handle1"], typed._objhandle1)
 
