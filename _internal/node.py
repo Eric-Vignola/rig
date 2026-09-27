@@ -9,12 +9,17 @@ container scope (so ``with container():`` works transparently).
 
 The wrapper does NOT subclass ``DGNode`` -- that would require subclassing
 every typed subclass (Mesh, Joint, Transform, ...). Instead, ``__getattr__``
-delegates to the underlying ``DGNode`` and re-wraps any returned
-``Attribute`` as a ``Plug``. That Plug is owned by this wrapper
-(``node.tx.node is node``) and, on a node with more than one DAG path, named
-through the wrapper's path (``Node("|T2|S").v`` is ``T2|S.visibility``).
-A wrapper never falls back to its node's name: after a delete, a new scene,
-a file open or a reference unload it raises ``already deleted!``.
+delegates to the underlying ``DGNode``, whose own lookup returns Maya
+attributes as :class:`Plug` instances (typed nodes speak the DSL too). A Plug
+of the wrapped node is owned by this wrapper (``node.tx.node is node``) and,
+on a node with more than one DAG path, named through the wrapper's path
+(``Node("|T2|S").v`` is ``T2|S.visibility``). A wrapper never falls back to
+its node's name: after a delete, a new scene, a file open or a reference
+unload it raises ``already deleted!``.
+
+``node << X`` and ``node >> X`` run the same module functions for a wrapper
+and a typed node (:func:`_node_lshift` / :func:`_node_rshift`), and so does the
+geometry-component fallback (:func:`_component_fallback`).
 
 Container nodes are a :class:`Container` subclass of ``Node`` (defined in
 :mod:`rig._internal.container`) -- they get all of ``Node``'s attribute
@@ -28,16 +33,9 @@ from typing import Any, Union
 
 import numpy as np
 from rig.nodetypes import _base
-from rig.nodetypes._base import _handle_alive, _new_attr, Attribute, PyNode
-from rig.nodetypes.dg_node import _COMPONENT_ALIASES, DGNode
-from rig._internal.plug import _maybe_component_plug, Plug
-
-
-# Names that ``__getattr__`` resolves as geometry components AFTER the real
-# attribute lookup fails: faces / edges become a ``Components`` (they have no
-# plug), and the point aliases (``vtx`` / ``cv`` / ``pt`` / ...) reach through
-# a transform to its single geometry shape.
-_COMPONENT_TOKENS = frozenset({"f", "e"}) | _COMPONENT_ALIASES
+from rig.nodetypes._base import _MISSING, _class_attr, _handle_alive, Attribute, PyNode
+from rig.nodetypes.dg_node import _COMPONENT_TOKENS, DGNode  # noqa: F401 (re-export)
+from rig._internal.plug import Plug
 
 
 class Node:
@@ -136,16 +134,15 @@ class Node:
     # -- attribute lookup -- #
 
     def __getattr__(self, attr_name: str) -> Any:
-        """Delegate to the underlying ``DGNode``; re-wrap ``Attribute`` returns
-        as :class:`Plug`.
+        """Delegate to the underlying ``DGNode``, which returns Maya attributes
+        as :class:`Plug` instances and resolves the geometry-component
+        fallbacks (see :meth:`DGNode.__getattr__`): ``f`` / ``e`` on a mesh
+        shape or a transform with one mesh shape, the point aliases through a
+        transform with one geometry shape (``Node("pCube1").vtx``).
 
-        Real attributes always win (``curveShape.f`` is ``form``,
-        ``meshShape.face`` is a live plug). Only once the lookup has raised
-        do ``f`` / ``e`` become a :class:`Components` on a mesh shape or a
-        transform with exactly one mesh shape, and do the point aliases
-        (``vtx`` / ``cv`` / ``pt`` / ``map`` / ``uv``) resolve through a
-        transform with exactly one geometry shape (``Node("pCube1").vtx``).
-        Two shapes raise an ``AttributeError`` naming them.
+        A plug of the wrapped node is owned by this wrapper (``node.tx.node is
+        node``); it is named through the wrapped node's path, which is this
+        wrapper's. An attr of another node keeps its own owner, or none.
         """
         if attr_name.startswith("_"):
             # Python probes private and dunder names constantly
@@ -159,58 +156,11 @@ class Node:
                 or not self._dg_node.has_attr(attr_name)
             ):
                 raise AttributeError(attr_name)
-        try:
-            result = getattr(self._dg_node, attr_name)
-        except AttributeError:
-            if attr_name in _COMPONENT_TOKENS:
-                # Lazy: members.py imports Node at module top.
-                from rig._internal.members import (
-                    _maybe_components,
-                    _single_geometry_shape,
-                )
-
-                if attr_name in ("f", "e"):
-                    components = _maybe_components(self, attr_name)
-                    if components is not None:
-                        return components
-                else:
-                    shape = _single_geometry_shape(self)
-                    if shape is not None:
-                        return getattr(shape, attr_name)
-            raise
-        if isinstance(result, Attribute) and not isinstance(result, Plug):
-            # A cached attr of a node a new scene freed holds an MPlug that
-            # points at freed memory: building a Plug of it names that MPlug (a
-            # miss already raised through the node's fn set).
-            dg_node = self._dg_node
-            if not dg_node._objhandle1.isAlive():  # NW6: API 1.0 handle read (hot)
-                dg_node.ensure_valid()
-            # Upgrade multi-dimensional geometry components (NURBS-surface
-            # ``cv``, lattice ``pt``) to a ComponentPlug so ``node.cv[u][v]`` /
-            # ``node.pt[s][t][u]`` resolve like the ``Plug("shape.cv[u][v]")``
-            # string path; everything else falls back to a plain Plug.
-            # The plug is owned by the node object it was read from: this
-            # wrapper, for an attr of the wrapped node (``find_attr`` binds
-            # those); an attr of another node keeps its own owner, or none,
-            # and ``Plug.node`` casts it (the handle of that node the attr
-            # took checks it until then). It is named through that owner's
-            # path, which cmds reads too (see ``_named_through_owner``).
-            owner = result.__dict__["_node"]
-            plug  = _maybe_component_plug(attr_name, result)
-            if plug is None:
-                # with the handle of its attribute, for a dynamic attr
-                attr1 = result.__dict__.get("_attr1")
-                if owner is dg_node:
-                    plug = _new_attr(Plug, result.plug, None, attr1)
-                    plug.__dict__["_node"] = self
-                    # ``find_attr`` named the attr through the node's path if it
-                    # has more than one; one it did not is named as the MPlug
-                    if not str.__contains__(result, "|"):  # _named_through_a_path
-                        return plug
-                    return _base._named_through_owner(plug)
-                plug = _new_attr(Plug, result.plug, result.__dict__["_handle1"], attr1)
-            plug.__dict__["_node"] = self if owner is dg_node else owner
-            return _base._named_through_owner(plug)
+        dg_node = self._dg_node
+        result  = getattr(dg_node, attr_name)
+        if isinstance(result, Plug) and result.__dict__.get("_node") is dg_node:
+            # the plug is owned by the node object it was read from: this wrapper
+            result.__dict__["_node"] = self
         return result
 
     def _attr_data_type_fallback(self, attr: Any) -> str:
@@ -231,97 +181,31 @@ class Node:
         """``node.tx = 5`` is sugar for ``node.tx << 5``.
 
         Internal state (``_``-prefix) bypasses to normal ``__setattr__``
-        unless the node really has an attribute of that name.
+        unless the node really has an attribute of that name. A name the
+        wrapped node's class defines is set on the wrapped node (a property
+        setter runs, a method or read-only property raises), as
+        :meth:`DGNode.__setattr__` does. Any other name is a plug this
+        wrapper's lookup finds (a ``Container``'s published names too).
         """
         if name.startswith("_") and (
             name == "_dg_node" or not self._dg_node.has_attr(name)
         ):
             object.__setattr__(self, name, value)
             return
-        plug = self.__getattr__(name)
-        plug << value
+        dg_node = self._dg_node
+        if _class_attr(type(dg_node), name) is not _MISSING:
+            setattr(dg_node, name, value)
+            return
+        self.__getattr__(name) << value
 
     # -- inject (for `node << Float("foo")`, `node << matrix`, etc.) -- #
 
     def __lshift__(self, other: Any) -> Any:
-        """``node << X`` -- dispatches by RHS type:
-
-        - Collection spec (``Tag``, a material, ...) -- makes this node a
-          member (``node << Tag("x")`` on a per-node kind means the
-          collection itself) and returns the node.
-        - ``_AttrSpec`` (``Float``, ``Vector``, ``lock``, ...) -- adds an
-          attribute on this node.
-        - **Matrix-shaped source on a transform** -- applies the matrix to
-          the transform's t/r/s/shear channels:
-            * Plug-typed matrix source => inserts a live ``decomposeMatrix``
-              shorthand (via ``_shorthand._matrix_to_transform``).
-            * Static numpy / nested list (3x3, 4x4, 9-flat, 16-flat) =>
-              decomposes in Python via Maya's API and ``setAttr``s the
-              channels (via ``_decompose._try_matrix_source_routing``).
-              For 3x3 inputs the existing translation is preserved.
-        - Anything else => ``TypeError`` (use ``node.<attr> << value`` to
-          target a specific channel).
-        """
-        from rig._internal.types import (
-            _is_attribute_spec,
-            _is_matrix,
-            _is_member_spec,
-        )
-
-        # 0. Collection-spec injection -- membership; returns the node.
-        if _is_member_spec(other):
-            return other.inject(self)
-
-        # 1. Attribute-spec injection -- add an attribute on this node.
-        if _is_attribute_spec(other):
-            return other.apply(self)
-
-        # 2. Live Plug-typed matrix source on a transform -> decomposeMatrix
-        #    shorthand. _matrix_to_transform handles the bare-node case
-        #    (attr=="") by wiring all four channels.
-        if _is_matrix(other):
-            from rig._internal.decompose import _node_is_transform
-            from rig._internal.shorthand import _matrix_to_transform
-
-            if _node_is_transform(str(self)) and _matrix_to_transform(other, self):
-                return self
-
-        # 3. Static numpy / nested-list matrix source on a transform
-        #    -> Tier C decomposition via _try_matrix_source_routing on
-        #    self.matrix (which honours rotateOrder and preserves
-        #    translation for 3x3 inputs).
-        if (
-            other is not None
-            and not isinstance(other, (str, bytes))
-            and not isinstance(other, numbers.Real)
-        ):
-            try:
-                arr = np.asarray(other)
-            except (ValueError, TypeError):
-                arr = None
-            if arr is not None and arr.dtype != object:
-                shape = arr.shape
-                size  = arr.size
-                is_matrix_shape = (
-                    shape == (3, 3)
-                    or shape == (4, 4)
-                    or (arr.ndim == 1 and size in (9, 16))
-                )
-                if is_matrix_shape:
-                    from rig._internal.decompose import (
-                        _node_is_transform,
-                        _try_matrix_source_routing,
-                    )
-
-                    if _node_is_transform(str(self)) and _try_matrix_source_routing(
-                        self.matrix, arr
-                    ):
-                        return self
-
-        raise TypeError(
-            f"Cannot inject {type(other).__name__} into a bare Node; "
-            f"use node.<attr> << {other!r} or wrap in an _AttrSpec."
-        )
+        """``node << X`` -- see :func:`_node_lshift`: a collection spec makes
+        the node a member, an attribute spec adds an attribute, a matrix
+        source on a transform drives its channels; anything else raises
+        ``TypeError`` (use ``node.<attr> << value`` to target a channel)."""
+        return _node_lshift(self, other)
 
     # -- introspect + output-attr declaration -- #
 
@@ -347,25 +231,12 @@ class Node:
         an output attribute and asking a question.
 
         Anything else raises :class:`TypeError` (use :class:`Plug`'s
-        ``>>`` for value introspection or attr-spec cloning).
+        ``>>`` for value introspection or attr-spec cloning). See
+        :func:`_node_rshift`.
         """
-        # Lazy imports to avoid circulars.
-        from rig._internal.types import _is_attribute_spec, _is_member_spec
-
         if other is None:
             return self._dg_node
-        if _is_member_spec(other):
-            return other.query(self)
-        if _is_attribute_spec(other):
-            # Stamp writable=False onto a fresh copy of the spec so the
-            # caller's instance is untouched (specs may be reused).
-            return _apply_spec_as_output(other, self)
-        raise TypeError(
-            "'>>' on a Node supports `>> None` (returns the typed "
-            "DGNode), `>> spec` (declares an output-only attr, "
-            "writable=False), or use Plug's `>> None` to read a value "
-            "/ `Plug >> Node` to clone an attribute spec."
-        )
+        return _node_rshift(self, other)
 
     # -- equality / hashing / str -- #
 
@@ -402,6 +273,130 @@ _base._NODE_WRAPPER_HOOK  = Node._attr_data_type_fallback
 # --------------------------------------------------------------------- #
 #  Module-level helpers
 # --------------------------------------------------------------------- #
+
+
+def _node_lshift(node: Any, other: Any) -> Any:
+    """``node << other`` for a :class:`Node` or a typed ``DGNode``: dispatches by
+    RHS type:
+
+    - Collection spec (``Tag``, a material, ...) -- makes this node a
+      member (``node << Tag("x")`` on a per-node kind means the
+      collection itself) and returns the node.
+    - ``_AttrSpec`` (``Float``, ``Vector``, ``lock``, ...) -- adds an
+      attribute on this node.
+    - **Matrix-shaped source on a transform** -- applies the matrix to
+      the transform's t/r/s/shear channels:
+        * Plug-typed matrix source => inserts a live ``decomposeMatrix``
+          shorthand (via ``_shorthand._matrix_to_transform``).
+        * Static numpy / nested list (3x3, 4x4, 9-flat, 16-flat) =>
+          decomposes in Python via Maya's API and ``setAttr``s the
+          channels (via ``_decompose._try_matrix_source_routing``).
+          For 3x3 inputs the existing translation is preserved.
+    - Anything else => ``TypeError`` (use ``node.<attr> << value`` to
+      target a specific channel).
+    """
+    from rig._internal.types import (
+        _is_attribute_spec,
+        _is_matrix,
+        _is_member_spec,
+    )
+
+    # 0. Collection-spec injection -- membership; returns the node.
+    if _is_member_spec(other):
+        return other.inject(node)
+
+    # 1. Attribute-spec injection -- add an attribute on this node.
+    if _is_attribute_spec(other):
+        return other.apply(node)
+
+    # 2. Live Plug-typed matrix source on a transform -> decomposeMatrix
+    #    shorthand. _matrix_to_transform handles the bare-node case
+    #    (attr=="") by wiring all four channels.
+    if _is_matrix(other):
+        from rig._internal.decompose import _node_is_transform
+        from rig._internal.shorthand import _matrix_to_transform
+
+        if _node_is_transform(str(node)) and _matrix_to_transform(other, node):
+            return node
+
+    # 3. Static numpy / nested-list matrix source on a transform
+    #    -> Tier C decomposition via _try_matrix_source_routing on
+    #    node.matrix (which honours rotateOrder and preserves
+    #    translation for 3x3 inputs).
+    if (
+        other is not None
+        and not isinstance(other, (str, bytes))
+        and not isinstance(other, numbers.Real)
+    ):
+        try:
+            arr = np.asarray(other)
+        except (ValueError, TypeError):
+            arr = None
+        if arr is not None and arr.dtype != object:
+            shape = arr.shape
+            size  = arr.size
+            is_matrix_shape = (
+                shape == (3, 3)
+                or shape == (4, 4)
+                or (arr.ndim == 1 and size in (9, 16))
+            )
+            if is_matrix_shape:
+                from rig._internal.decompose import (
+                    _node_is_transform,
+                    _try_matrix_source_routing,
+                )
+
+                if _node_is_transform(str(node)) and _try_matrix_source_routing(
+                    node.matrix, arr
+                ):
+                    return node
+
+    raise TypeError(
+        f"Cannot inject {type(other).__name__} into a bare Node; "
+        f"use node.<attr> << {other!r} or wrap in an _AttrSpec."
+    )
+
+
+def _node_rshift(node: Any, other: Any) -> Any:
+    """``node >> other`` for a :class:`Node` or a typed ``DGNode``, once the
+    caller handled ``>> None``: ``>> spec`` declares an output-only attribute
+    (``writable=False``), ``>> Tag("x")`` queries membership. Anything else
+    raises :class:`TypeError`."""
+    # Lazy imports to avoid circulars.
+    from rig._internal.types import _is_attribute_spec, _is_member_spec
+
+    if _is_member_spec(other):
+        return other.query(node)
+    if _is_attribute_spec(other):
+        # Stamp writable=False onto a fresh copy of the spec so the
+        # caller's instance is untouched (specs may be reused).
+        return _apply_spec_as_output(other, node)
+    raise TypeError(
+        "'>>' on a Node supports `>> None` (returns the typed "
+        "DGNode), `>> spec` (declares an output-only attr, "
+        "writable=False), or use Plug's `>> None` to read a value "
+        "/ `Plug >> Node` to clone an attribute spec."
+    )
+
+
+def _component_fallback(node: Any, attr_name: str) -> Any:
+    """What ``node.<attr_name>`` gives once the attribute lookup raised, for a
+    component token (see ``DGNode.__getattr__``): ``f`` / ``e`` a
+    :class:`Components` on a mesh shape or a transform with exactly one mesh
+    shape, a point alias (``vtx`` / ``cv`` / ``pt`` / ``map`` / ``uv``) that
+    alias on a transform's one geometry shape. None when there is no such
+    shape (the caller re-raises its own error); two shapes raise an
+    ``AttributeError`` naming them. ``node`` is a typed node, or a
+    :class:`Node` (the members helpers read its ``_dg_node``)."""
+    # Lazy: members.py imports Node at module top.
+    from rig._internal.members import _maybe_components, _single_geometry_shape
+
+    if attr_name in ("f", "e"):
+        return _maybe_components(node, attr_name)
+    shape = _single_geometry_shape(node)
+    if shape is not None:
+        return getattr(shape, attr_name)
+    return None
 
 
 def _apply_spec_as_output(spec: Any, target: "Node") -> Any:
