@@ -725,10 +725,11 @@ class TestInstancedPlugIdentity(MayaTestCase):
         # a component element and the Plug of its storage are one plug too
         self.assertIn(Plug(f"{shape}.controlPoints[6]"), PlugList([Node(shape).cv[1, 2]]))
         self.assertNotIn(Plug(f"{shape}.controlPoints[7]"), PlugList([Node(shape).cv[1, 2]]))
-        # a str is a name: it finds the plug named so, through that path only
+        # a str is read as the Maya plug it names (decision S3 Q4): through
+        # either instance path, by its short name too (identity, not the name)
         self.assertIn("T2|S.visibility", PlugList([second.v]))
-        self.assertNotIn("T1|S.visibility", PlugList([second.v]))
-        self.assertNotIn("T2|S.v", PlugList([second.v]))
+        self.assertIn("T1|S.visibility", PlugList([second.v]))
+        self.assertIn("T2|S.v", PlugList([second.v]))
         # none of it built a node
         self.assertEqual(sorted(cmds.ls()), before)
 

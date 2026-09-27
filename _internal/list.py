@@ -29,14 +29,23 @@ are terminal for attribute broadcast and arithmetic -- neither recurses into
 them -- but :meth:`List.get` DOES, so a query result reads as values.
 Both methods iterate elements directly rather than routing through
 :func:`sequences`, so an empty ``List`` yields an empty result.
+
+``in``, ``index``, ``count`` and ``remove`` never build a node: two plugs
+match when they are one Maya plug (``Node("|T1|S").v`` and
+``Node("|T2|S").v``), a node matches a str by its name, and a plain str given
+for a plug is read as the Maya plug it names, so ``"a.tx"``,
+``"a.translateX"`` and an alias all find ``a.tx`` (see
+:meth:`List.__contains__`).
 """
 
 from __future__ import annotations
 
+import functools
 import numbers
-from typing import Any, Iterable, Iterator, Optional, Union
+from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
 from maya import cmds
+from maya.api import OpenMaya
 from rig.nodetypes._base import _ensure_owner_alive, _same_plug, Attribute
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
@@ -402,7 +411,27 @@ class List(list):
     # -- list protocol (must not route through __eq__) -- #
 
     def __contains__(self, other: Any) -> bool:
-        return any(_same_entity(x, other) for x in self)
+        """True if an element is `other`; builds no node (``list``'s own test
+        is ``==``, which builds a condition network for a plug).
+
+        Two plugs match when they are one Maya plug (see ``_same_plug``): the
+        same node, attribute and logical indices, through any instance path.
+        A plain str (not a Plug) given for a plug is read as the Maya plug it
+        names (decision S3 Q4): ``"a.tx"``, ``"a.translateX"``, an alias,
+        another instance path (``"|T1|S.v"`` finds ``Node("|T2|S").v``), a
+        namespaced name and a component name (``"np.cv[1][2]"`` finds its
+        ``controlPoints`` element) all find it. A str that names no single plug
+        matches no plug element: no such node or attribute, a node's name, a
+        pattern or a range, a name more than one object has, a node deleted to
+        the undo queue (see ``_plug_named``). The str is resolved once per call,
+        when the first plug element is reached. A node element matches a str
+        by its name, and any other element as ``list`` does. A plug element of a
+        deleted or freed node raises ``already deleted!``, as its name does.
+
+        ``index``, ``count`` and ``remove`` match elements the same way.
+        """
+        match = _matcher(other)
+        return any(match(x) for x in self)
 
     def index(self, value: Any, start: int = 0, stop: Optional[int] = None) -> int:
         items  = list(self)
@@ -413,13 +442,15 @@ class List(list):
             start = max(length + start, 0)
         if stop < 0:
             stop = max(length + stop, 0)
+        match = _matcher(value)
         for i in range(start, min(stop, length)):
-            if _same_entity(items[i], value):
+            if match(items[i]):
                 return i
         raise ValueError(f"{value!r} is not in List")
 
     def count(self, value: Any) -> int:
-        return sum(1 for x in self if _same_entity(x, value))
+        match = _matcher(value)
+        return sum(1 for x in self if match(x))
 
     def remove(self, value: Any) -> None:
         list.__delitem__(self, self.index(value))
@@ -449,17 +480,85 @@ def _lift_or_pass(obj: Any) -> Any:
     return obj
 
 
+def _matcher(probe: Any) -> Callable[[Any], bool]:
+    """The test `List.__contains__`, `index` and `count` run on each element for
+    `probe`: `_NamedPlug` for a plain str (not an Attribute), else
+    `_same_entity`."""
+    if isinstance(probe, str) and not isinstance(probe, Attribute):
+        return _NamedPlug(probe)
+    return functools.partial(_same_entity, probe=probe)
+
+
+def _plug_named(text: str) -> Optional[Plug]:
+    """The Plug of the one Maya plug `text` names, read as ``Plug(text)`` reads
+    it (a component name is its ``controlPoints`` / ``uvpt`` element), or None
+    when `text` names no single plug: no such node or attribute, a node's name,
+    a pattern or a range (``"t*.tx"``, ``"box.vtx[0:3]"``), a name more than one
+    object has (``"X.tx"`` for ``|P1|X`` and ``|P2|X``), a name read against the
+    selection (``".tx"``), a node deleted to the undo queue, or anything else
+    Maya refuses. Builds no node."""
+    if not text or text[0] == "." or "*" in text or "?" in text:
+        return None
+    try:
+        selection = OpenMaya.MSelectionList()
+        selection.add(text)
+        if selection.length() != 1:
+            return None
+        try:
+            component = selection.getComponent(0)[1]
+        except (RuntimeError, TypeError):
+            component = None  # a plug, or a DG node
+        if (
+            component is not None
+            and not component.isNull()
+            and OpenMaya.MFnComponent(component).elementCount != 1
+        ):
+            return None
+        return Plug(text)
+    except Exception:
+        return None
+
+
+class _NamedPlug:
+    """The element test of a plain str probe (see `List.__contains__`): a plug
+    element matches when it is the Maya plug the str names (`_same_plug`),
+    which is resolved once, when the first plug element is reached; a str
+    that names none matches no plug element. Any other element is compared
+    by `_same_entity` (a node by its name)."""
+
+    __slots__ = ("text", "plug", "pending")
+
+    def __init__(self, text: str) -> None:
+        self.text    = text
+        self.plug    = None
+        self.pending = True
+
+    def __call__(self, item: Any) -> bool:
+        if not isinstance(item, Attribute):
+            return _same_entity(item, self.text)
+        if self.pending:
+            self.pending = False
+            self.plug    = _plug_named(self.text)
+        if self.plug is None:
+            # a deleted or freed element raises, as its name does (and as
+            # `_same_plug` names both)
+            item.full_name
+            return False
+        return _same_plug(item, self.plug)
+
+
 def _same_entity(item: Any, probe: Any) -> bool:
     """Plain-list equality, except that two plugs compare as Maya plugs and a
-    plug and anything else (a plain str, a node) compare by name.
+    plug and anything else (a node, a str element) compare by name.
 
     ``list`` containment compares with ``==``, and :meth:`Plug.__eq__` returns a
     condition-node Plug -- so a plug on EITHER side must be diverted, including
     the reflected ``3.0 == plug``. Two plugs are the same entity when they are
     the same Maya plug (see :meth:`Plug.equals`): ``Node("|T1|S").v`` and
-    ``Node("|T2|S").v`` are, though their names differ. A str is a name, so
-    ``"a.translateX"`` finds ``a.tx`` and ``"a.tx"`` does not. Nested
-    :class:`List` compares by identity for the same reason.
+    ``Node("|T2|S").v`` are, though their names differ. A node and a str
+    compare by name. (A plain str probe of a plug element never reaches here:
+    `_NamedPlug` reads it as the plug it names.) Nested :class:`List` compares
+    by identity for the same reason.
     """
     if isinstance(item, Attribute) and isinstance(probe, Attribute):
         return _same_plug(item, probe)
