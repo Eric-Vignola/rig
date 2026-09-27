@@ -1,13 +1,15 @@
 """
-:class:`PlugList` -- vectorised broadcast for the rig DSL.
+:class:`List` -- vectorised broadcast for the rig DSL.
 
-A ``PlugList`` is a regular ``list`` whose attribute access propagates to
-each element. Numeric / non-Plug elements pass through unchanged.
+A ``List`` is a regular ``list`` whose attribute access propagates to
+each element. Numeric / non-Plug elements pass through unchanged. It was
+called ``PlugList``; ``PlugList`` is the same class under its former name
+(``PlugList is List``).
 
 Examples::
 
-    nodes = PlugList(["pCube1", "pCube2", "pCube3"])
-    nodes.t                    # [Plug("pCube1.t"), Plug("pCube2.t"), Plug("pCube3.t")]
+    nodes = List(["pCube1", "pCube2", "pCube3"])
+    nodes.t                    # List([Plug("pCube1.translate"), ...])
     nodes.t << src             # broadcast src to all .t
     nodes.t << [a, b, c]       # asymmetric: a->pCube1.t, etc.
     a, b, c = nodes.tx + nodes.ty  # element-wise addition
@@ -18,15 +20,15 @@ caps to its last element).
 Connection queries are methods, N-aligned -- one result slot per element,
 so index correspondence with the source list holds::
 
-    nodes.tx.get_inputs()      # [PlugList([Plug]), PlugList([]), ...]
-    nodes.tx.get_outputs()     # [PlugList([Plug, Plug]), PlugList([]), ...]
+    nodes.tx.get_inputs()      # List([List([Plug(...)]), List([]), ...])
+    nodes.tx.get_outputs()     # List([List([Plug(...), Plug(...)]), List([]), ...])
 
-Every slot is a ``PlugList``, empty where nothing is wired, so a slot can
+Every slot is a ``List``, empty where nothing is wired, so a slot can
 never be a ``None`` that ``<<`` would read as "disconnect". Nested results
 are terminal for attribute broadcast and arithmetic -- neither recurses into
-them -- but :meth:`PlugList.get` DOES, so a query result reads as values.
+them -- but :meth:`List.get` DOES, so a query result reads as values.
 Both methods iterate elements directly rather than routing through
-:func:`sequences`, so an empty ``PlugList`` yields an empty result.
+:func:`sequences`, so an empty ``List`` yields an empty result.
 """
 
 from __future__ import annotations
@@ -55,7 +57,7 @@ from rig._internal.types import _is_attribute_spec, _is_components, _is_member_s
 
 
 def _operand_rows(dunder: str, items: list, other: Any) -> list:
-    """The broadcast rows ``sequences(items, other)`` of a PlugList operator,
+    """The broadcast rows ``sequences(items, other)`` of a List operator,
     checked before any row builds a node.
 
     A row that pairs a Plug with a plain str, or with a sequence holding one,
@@ -89,8 +91,11 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
     return rows
 
 
-class PlugList(list):
-    """List-of-Plug-or-Node that propagates attribute access and arithmetic."""
+class List(list):
+    """List-of-Plug-or-Node that propagates attribute access and arithmetic.
+
+    Formerly ``PlugList``, which stays the same class (``PlugList is List``).
+    """
 
     # -- construction -- #
 
@@ -100,12 +105,12 @@ class PlugList(list):
         _parent_multi: Optional[Any]           = None,
     ) -> None:
         super().__init__()
-        # Back-reference to the parent multi attribute when this PlugList
+        # Back-reference to the parent multi attribute when this List
         # was produced by ``multi[:]`` slicing. Used by ``__lshift__`` to
         # route writes through the parent when the slice was empty (so
         # callers can do ``empty_multi[:] << values`` and have the indices
         # auto-created to match the source length). Set to ``None`` for
-        # PlugLists not produced by slicing a multi.
+        # Lists not produced by slicing a multi.
         self._parent_multi = _parent_multi
         if items:
             for x in items:
@@ -122,14 +127,14 @@ class PlugList(list):
                     self.append(_lift_or_pass(x))
 
     def __repr__(self) -> str:
-        return f"PlugList({list.__repr__(self)})"
+        return f"List({list.__repr__(self)})"
 
     # -- attribute access broadcasts -- #
 
-    def __getattr__(self, name: str) -> "PlugList":
+    def __getattr__(self, name: str) -> "List":
         if name.startswith("_"):
             raise AttributeError(name)
-        return PlugList(
+        return List(
             getattr(x, name) if isinstance(x, (Plug, Node)) else x for x in self
         )
 
@@ -142,28 +147,28 @@ class PlugList(list):
 
     def __getitem__(self, key: Any) -> Any:
         # Slice / int / list of int -- preserve normal list behaviour but
-        # wrap in PlugList where appropriate.
+        # wrap in List where appropriate.
         if isinstance(key, slice):
-            return PlugList(super().__getitem__(key))
+            return List(super().__getitem__(key))
         if isinstance(key, str):
-            return PlugList(
+            return List(
                 getattr(x, key) if isinstance(x, (Plug, Node)) else x for x in self
             )
         if isinstance(key, (list, tuple)):
             # ``list.__getitem__`` explicitly: a zero-argument ``super()``
             # inside a generator expression loses its ``__class__`` cell and
             # raises ``TypeError: super(type, obj)`` instead of indexing.
-            return PlugList([list.__getitem__(self, k) for k in key])
+            return List([list.__getitem__(self, k) for k in key])
         return super().__getitem__(key)
 
     # -- inject broadcast -- #
 
     def __lshift__(self, other: Any) -> Any:
-        # Retired connection-query sentinel.
-        if other is PlugList:
+        # Retired connection-query sentinel (the class itself on the right).
+        if other is List:
             raise TypeError(
-                "'<list> << PlugList' has been replaced by "
-                "'<list>.get_inputs()'. Use '<list> << PlugList([...])' -- an "
+                "'<list> << List' (formerly PlugList) has been replaced by "
+                "'<list>.get_inputs()'. Use '<list> << List([...])' -- an "
                 "INSTANCE -- to connect."
             )
 
@@ -183,9 +188,9 @@ class PlugList(list):
                         f"element [{i}] ({x!r}) is not a Plug or a Node and cannot "
                         f"take an attribute spec"
                     )
-            return PlugList(other.apply(x) for x in self)
+            return List(other.apply(x) for x in self)
 
-        # v4.F.b: empty PlugList from ``multi[:]`` slicing on an
+        # v4.F.b: empty List from ``multi[:]`` slicing on an
         # unpopulated multi + a sequence source -> route the write
         # through the parent multi so we can auto-create indices to
         # match the source length. Without this fallback,
@@ -196,14 +201,14 @@ class PlugList(list):
         if not self and parent is not None:
             from rig._internal.types import _is_sequence
 
-            if isinstance(other, PlugList) or (
+            if isinstance(other, List) or (
                 _is_sequence(other) and not isinstance(other, str)
             ):
                 parent << other
                 return self
 
         # Asymmetric broadcast. A Components element dispatches too, so
-        # ``PlugList([cube.f[:2], cube.f[2:]]) << [Tag("a"), Tag("b")]``
+        # ``List([cube.f[:2], cube.f[2:]]) << [Tag("a"), Tag("b")]``
         # pairs each selection with its own spec.
         for s, o in sequences(list(self), other):
             if isinstance(s, (Plug, Node)) or _is_components(s):
@@ -215,16 +220,16 @@ class PlugList(list):
     def __rshift__(self, other: Any) -> Any:
         """Broadcast ``__rshift__`` across each element.
 
-        - ``pluglist >> None`` => :meth:`get` (numpy-aware stacked value).
-        - ``pluglist >> Tag("x")`` (a collection spec) => query membership of
+        - ``items >> None`` => :meth:`get` (numpy-aware stacked value).
+        - ``items >> Tag("x")`` (a collection spec) => query membership of
           the whole list at once; the spec answers with a plain value.
-        - ``pluglist >> Node`` => clone each plug's spec onto the target,
-          returning a :class:`PlugList` of new :class:`Plug` instances.
+        - ``items >> Node`` => clone each plug's spec onto the target,
+          returning a :class:`List` of new :class:`Plug` instances.
         - Other RHS types delegate to each element's :meth:`Plug.__rshift__`,
           which raises :class:`TypeError` for unsupported pairings.
 
         Asymmetric broadcast follows the same :func:`sequences` rules as the
-        other PlugList operators (when ``other`` is itself iterable).
+        other List operators (when ``other`` is itself iterable).
         """
         # `>> None` short-circuit -- return numpy-aware stacked values.
         if other is None:
@@ -233,10 +238,11 @@ class PlugList(list):
         if _is_member_spec(other):
             return other.query(self)
 
-        # Retired connection-query sentinel.
-        if other is PlugList:
+        # Retired connection-query sentinel (the class itself on the right).
+        if other is List:
             raise TypeError(
-                "'<list> >> PlugList' has been replaced by '<list>.get_outputs()'."
+                "'<list> >> List' (formerly PlugList) has been replaced by "
+                "'<list>.get_outputs()'."
             )
 
         results = []
@@ -245,12 +251,12 @@ class PlugList(list):
                 results.append(x >> y)
             else:
                 results.append(x)
-        return PlugList(results)
+        return List(results)
 
     # -- connection queries -- #
 
-    def _query_each(self, method: str) -> "PlugList":
-        out = PlugList()
+    def _query_each(self, method: str) -> "List":
+        out = List()
         for x in self:
             if not isinstance(x, Plug):
                 raise TypeError(
@@ -261,16 +267,16 @@ class PlugList(list):
             out.append(getattr(x, method)())
         return out
 
-    def get_inputs(self) -> "PlugList":
-        """N-aligned incoming connections -- one ``PlugList`` per element.
+    def get_inputs(self) -> "List":
+        """N-aligned incoming connections -- one ``List`` per element.
 
         Defined explicitly because methods do not broadcast through
         :meth:`__getattr__`; only attribute access does.
         """
         return self._query_each("get_inputs")
 
-    def get_outputs(self) -> "PlugList":
-        """N-aligned outgoing connections -- one ``PlugList`` per element."""
+    def get_outputs(self) -> "List":
+        """N-aligned outgoing connections -- one ``List`` per element."""
         return self._query_each("get_outputs")
 
     # -- value snapshot -- #
@@ -295,103 +301,103 @@ class PlugList(list):
             target.t << source.t           # live cmds.connectAttr
             target.t << source.t.get()     # one-shot value snapshot
         """
-        # PlugList is included so NESTED results (``get_outputs()`` and
+        # List is included so NESTED results (``get_outputs()`` and
         # friends) actually resolve to values. Without it a nested slot is
         # neither Plug nor Node, so it passes through unconverted -- and
         # because Plug subclasses str, a rectangular nesting would then stack
         # into an array of plug NAME STRINGS rather than raising.
         per_element = [
-            x >> None if isinstance(x, (Plug, Node, PlugList)) else x for x in self
+            x >> None if isinstance(x, (Plug, Node, List)) else x for x in self
         ]
         return _stack_values(per_element)
 
     # -- arithmetic broadcast -- #
 
-    def __add__(self, other: Any) -> "PlugList":
-        return PlugList(s + o for s, o in _operand_rows("__add__", self, other))
+    def __add__(self, other: Any) -> "List":
+        return List(s + o for s, o in _operand_rows("__add__", self, other))
 
-    def __radd__(self, other: Any) -> "PlugList":
-        return PlugList(o + s for s, o in _operand_rows("__radd__", self, other))
+    def __radd__(self, other: Any) -> "List":
+        return List(o + s for s, o in _operand_rows("__radd__", self, other))
 
-    def __sub__(self, other: Any) -> "PlugList":
-        return PlugList(s - o for s, o in _operand_rows("__sub__", self, other))
+    def __sub__(self, other: Any) -> "List":
+        return List(s - o for s, o in _operand_rows("__sub__", self, other))
 
-    def __rsub__(self, other: Any) -> "PlugList":
-        return PlugList(o - s for s, o in _operand_rows("__rsub__", self, other))
+    def __rsub__(self, other: Any) -> "List":
+        return List(o - s for s, o in _operand_rows("__rsub__", self, other))
 
-    def __mul__(self, other: Any) -> "PlugList":
-        return PlugList(s * o for s, o in _operand_rows("__mul__", self, other))
+    def __mul__(self, other: Any) -> "List":
+        return List(s * o for s, o in _operand_rows("__mul__", self, other))
 
-    def __rmul__(self, other: Any) -> "PlugList":
-        return PlugList(o * s for s, o in _operand_rows("__rmul__", self, other))
+    def __rmul__(self, other: Any) -> "List":
+        return List(o * s for s, o in _operand_rows("__rmul__", self, other))
 
-    def __truediv__(self, other: Any) -> "PlugList":
-        return PlugList(s / o for s, o in _operand_rows("__truediv__", self, other))
+    def __truediv__(self, other: Any) -> "List":
+        return List(s / o for s, o in _operand_rows("__truediv__", self, other))
 
-    def __rtruediv__(self, other: Any) -> "PlugList":
-        return PlugList(o / s for s, o in _operand_rows("__rtruediv__", self, other))
+    def __rtruediv__(self, other: Any) -> "List":
+        return List(o / s for s, o in _operand_rows("__rtruediv__", self, other))
 
-    def __pow__(self, other: Any) -> "PlugList":
-        return PlugList(s**o for s, o in _operand_rows("__pow__", self, other))
+    def __pow__(self, other: Any) -> "List":
+        return List(s**o for s, o in _operand_rows("__pow__", self, other))
 
-    def __rpow__(self, other: Any) -> "PlugList":
-        return PlugList(o**s for s, o in _operand_rows("__rpow__", self, other))
+    def __rpow__(self, other: Any) -> "List":
+        return List(o**s for s, o in _operand_rows("__rpow__", self, other))
 
-    def __floordiv__(self, other: Any) -> "PlugList":
-        return PlugList(s // o for s, o in _operand_rows("__floordiv__", self, other))
+    def __floordiv__(self, other: Any) -> "List":
+        return List(s // o for s, o in _operand_rows("__floordiv__", self, other))
 
-    def __rfloordiv__(self, other: Any) -> "PlugList":
-        return PlugList(o // s for s, o in _operand_rows("__rfloordiv__", self, other))
+    def __rfloordiv__(self, other: Any) -> "List":
+        return List(o // s for s, o in _operand_rows("__rfloordiv__", self, other))
 
-    def __mod__(self, other: Any) -> "PlugList":
-        return PlugList(s % o for s, o in _operand_rows("__mod__", self, other))
+    def __mod__(self, other: Any) -> "List":
+        return List(s % o for s, o in _operand_rows("__mod__", self, other))
 
-    def __rmod__(self, other: Any) -> "PlugList":
-        return PlugList(o % s for s, o in _operand_rows("__rmod__", self, other))
+    def __rmod__(self, other: Any) -> "List":
+        return List(o % s for s, o in _operand_rows("__rmod__", self, other))
 
-    def __and__(self, other: Any) -> "PlugList":
-        return PlugList(s & o for s, o in _operand_rows("__and__", self, other))
+    def __and__(self, other: Any) -> "List":
+        return List(s & o for s, o in _operand_rows("__and__", self, other))
 
-    def __rand__(self, other: Any) -> "PlugList":
-        return PlugList(o & s for s, o in _operand_rows("__rand__", self, other))
+    def __rand__(self, other: Any) -> "List":
+        return List(o & s for s, o in _operand_rows("__rand__", self, other))
 
-    def __or__(self, other: Any) -> "PlugList":
-        return PlugList(s | o for s, o in _operand_rows("__or__", self, other))
+    def __or__(self, other: Any) -> "List":
+        return List(s | o for s, o in _operand_rows("__or__", self, other))
 
-    def __ror__(self, other: Any) -> "PlugList":
-        return PlugList(o | s for s, o in _operand_rows("__ror__", self, other))
+    def __ror__(self, other: Any) -> "List":
+        return List(o | s for s, o in _operand_rows("__ror__", self, other))
 
-    def __xor__(self, other: Any) -> "PlugList":
-        return PlugList(s ^ o for s, o in _operand_rows("__xor__", self, other))
+    def __xor__(self, other: Any) -> "List":
+        return List(s ^ o for s, o in _operand_rows("__xor__", self, other))
 
-    def __rxor__(self, other: Any) -> "PlugList":
-        return PlugList(o ^ s for s, o in _operand_rows("__rxor__", self, other))
+    def __rxor__(self, other: Any) -> "List":
+        return List(o ^ s for s, o in _operand_rows("__rxor__", self, other))
 
-    def __neg__(self) -> "PlugList":
-        return PlugList(-x for x in self)
+    def __neg__(self) -> "List":
+        return List(-x for x in self)
 
-    def __invert__(self) -> "PlugList":
-        return PlugList(~x for x in self)
+    def __invert__(self) -> "List":
+        return List(~x for x in self)
 
     # -- comparison broadcast -- #
 
-    def __eq__(self, other: Any) -> "PlugList":
-        return PlugList(s == o for s, o in _operand_rows("__eq__", self, other))
+    def __eq__(self, other: Any) -> "List":
+        return List(s == o for s, o in _operand_rows("__eq__", self, other))
 
-    def __ne__(self, other: Any) -> "PlugList":
-        return PlugList(s != o for s, o in _operand_rows("__ne__", self, other))
+    def __ne__(self, other: Any) -> "List":
+        return List(s != o for s, o in _operand_rows("__ne__", self, other))
 
-    def __ge__(self, other: Any) -> "PlugList":
-        return PlugList(s >= o for s, o in _operand_rows("__ge__", self, other))
+    def __ge__(self, other: Any) -> "List":
+        return List(s >= o for s, o in _operand_rows("__ge__", self, other))
 
-    def __le__(self, other: Any) -> "PlugList":
-        return PlugList(s <= o for s, o in _operand_rows("__le__", self, other))
+    def __le__(self, other: Any) -> "List":
+        return List(s <= o for s, o in _operand_rows("__le__", self, other))
 
-    def __gt__(self, other: Any) -> "PlugList":
-        return PlugList(s > o for s, o in _operand_rows("__gt__", self, other))
+    def __gt__(self, other: Any) -> "List":
+        return List(s > o for s, o in _operand_rows("__gt__", self, other))
 
-    def __lt__(self, other: Any) -> "PlugList":
-        return PlugList(s < o for s, o in _operand_rows("__lt__", self, other))
+    def __lt__(self, other: Any) -> "List":
+        return List(s < o for s, o in _operand_rows("__lt__", self, other))
 
     # -- list protocol (must not route through __eq__) -- #
 
@@ -410,7 +416,7 @@ class PlugList(list):
         for i in range(start, min(stop, length)):
             if _same_entity(items[i], value):
                 return i
-        raise ValueError(f"{value!r} is not in PlugList")
+        raise ValueError(f"{value!r} is not in List")
 
     def count(self, value: Any) -> int:
         return sum(1 for x in self if _same_entity(x, value))
@@ -418,13 +424,18 @@ class PlugList(list):
     def remove(self, value: Any) -> None:
         list.__delitem__(self, self.index(value))
 
-    # -- hashable (so PlugList works in sets / dict keys) -- #
+    # -- hashable (so List works in sets / dict keys) -- #
 
     def __hash__(self) -> int:
         try:
             return hash(tuple(hash(x) for x in self))
         except TypeError:
             return id(self)
+
+
+# The former name: the same class, so `isinstance(x, PlugList)`, `PlugList(...)`
+# and `x << PlugList` (the retired sentinel) are what they were.
+PlugList = List
 
 
 def _lift_or_pass(obj: Any) -> Any:
@@ -448,13 +459,13 @@ def _same_entity(item: Any, probe: Any) -> bool:
     the same Maya plug (see :meth:`Plug.equals`): ``Node("|T1|S").v`` and
     ``Node("|T2|S").v`` are, though their names differ. A str is a name, so
     ``"a.translateX"`` finds ``a.tx`` and ``"a.tx"`` does not. Nested
-    :class:`PlugList` compares by identity for the same reason.
+    :class:`List` compares by identity for the same reason.
     """
     if isinstance(item, Attribute) and isinstance(probe, Attribute):
         return _same_plug(item, probe)
     if isinstance(item, (Attribute, Node)) or isinstance(probe, (Attribute, Node)):
         return str(item) == str(probe)
-    if isinstance(item, PlugList) or isinstance(probe, PlugList):
+    if isinstance(item, List) or isinstance(probe, List):
         return item is probe
     try:
         return bool(item == probe)

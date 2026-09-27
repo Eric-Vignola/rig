@@ -23,7 +23,9 @@ Two user-facing classes carry the language:
   * :class:`Container` -- a node class (a ``DGNode`` subclass) for Maya
     container nodes. Adds the (DORMANT in v1) publish API.
 
-  * :class:`PlugList` -- vectorised broadcast list (NumPy-style strict).
+  * :class:`List` -- vectorised broadcast list (NumPy-style strict).
+    ``PlugList`` is its former name, kept as the same class
+    (``PlugList is List``).
 
 Operator conventions:
     * ``<<`` (right-to-left) -- inject: setAttr / connectAttr / disconnect /
@@ -141,7 +143,7 @@ from rig._internal.container import (
     set_options,
 )
 from rig._internal.generators import arguments, sequences
-from rig._internal.list import PlugList
+from rig._internal.list import List, PlugList
 from rig._internal.math_nodes import condition, constant
 from rig._internal.memoize import memoize, prune_memoize_caches, vectorize
 from rig._internal.node import lift, Node
@@ -185,6 +187,7 @@ __all__ = [
     # Core types
     "Node",
     "Plug",
+    "List",
     "PlugList",
     "Container",
     "InjectionError",
