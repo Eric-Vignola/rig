@@ -210,12 +210,11 @@ def _resolve_shape(obj: Any, kind: str) -> Node:
     ``obj`` itself when it is such a shape, its single own non-intermediate
     shape of the right type when it is a transform, a ``TypeError`` otherwise."""
     node = obj if isinstance(obj, Node) else Node(obj)
-    dg   = node._dg_node
-    if not isinstance(dg, DAGNode):
+    if not isinstance(node, DAGNode):
         raise TypeError(
             f"'{node}' is not a DAG node; components live on geometry shapes"
         )
-    node_type = dg.node_type
+    node_type = node.node_type
     wanted    = _KIND_GEOMETRY[kind]
     if node_type in wanted:
         return node
@@ -224,7 +223,7 @@ def _resolve_shape(obj: Any, kind: str) -> Node:
             f"'{kind}' components live on {_join(wanted)} shapes; "
             f"'{node}' is a {node_type}"
         )
-    shapes = _own_shapes(dg, wanted)
+    shapes = _own_shapes(node, wanted)
     if len(shapes) == 1:
         return Node(shapes[0])
     if not shapes:
@@ -317,10 +316,10 @@ class Components:
             node_part, comp_part = node_or_string.split(".", 1)
             kind, ranges         = _parse_component_string(comp_part)
             shape = _resolve_shape(node_part, kind)
-            sizes = _axis_sizes(shape._dg_node, kind)
+            sizes = _axis_sizes(shape, kind)
             if len(ranges) != len(sizes):
                 raise TypeError(
-                    f"{comp_part!r}: '{kind}' on a {shape._dg_node.node_type} "
+                    f"{comp_part!r}: '{kind}' on a {shape.node_type} "
                     f"takes {len(sizes)} indices, got {len(ranges)}"
                 )
             if any(r is not None for r in ranges):
@@ -346,7 +345,7 @@ class Components:
             shape = _resolve_shape(node_or_string, kind)
         if indices is not None:
             if sizes is None:
-                sizes = _axis_sizes(shape._dg_node, kind)
+                sizes = _axis_sizes(shape, kind)
             indices                 = _as_ids(indices, sizes, f"Components({shape}, {kind!r})")
             indices.flags.writeable = False
         self._shape   = shape
@@ -380,7 +379,7 @@ class Components:
     @property
     def geometry(self) -> str:
         """The shape's node type (``'mesh'``, ``'nurbsSurface'``, ...)."""
-        return self._shape._dg_node.node_type
+        return self._shape.node_type
 
     @property
     def is_all(self) -> bool:
@@ -389,11 +388,11 @@ class Components:
 
     @property
     def _path(self) -> str:
-        return self._shape._dg_node.long_name
+        return self._shape.long_name
 
     @property
     def _sizes(self) -> tuple[int, ...]:
-        return _axis_sizes(self._shape._dg_node, self._kind)
+        return _axis_sizes(self._shape, self._kind)
 
     # -- contents -- #
 
@@ -543,15 +542,14 @@ def _maybe_components(node: Node, kind: str) -> Components | None:
     one own non-intermediate mesh shape; ``None`` when ``node`` has no mesh to
     take ``kind`` from (the caller re-raises its own ``AttributeError``);
     ``AttributeError`` naming the shapes when there are several."""
-    dg = node._dg_node
-    if not isinstance(dg, DAGNode):
+    if not isinstance(node, DAGNode):
         return None
-    node_type = dg.node_type
+    node_type = node.node_type
     if node_type == "mesh":
         return Components(node, kind)
     if node_type in _GEOMETRY_TYPES:
         return None
-    shapes = _own_shapes(dg, ("mesh",))
+    shapes = _own_shapes(node, ("mesh",))
     if not shapes:
         return None
     if len(shapes) > 1:
@@ -567,10 +565,9 @@ def _single_geometry_shape(node: Node) -> Node | None:
     (so its point aliases resolve through the transform), ``None`` when there
     is none or ``node`` is not a transform, ``AttributeError`` naming the
     shapes when there are several."""
-    dg = node._dg_node
-    if not isinstance(dg, DAGNode) or dg.node_type in _GEOMETRY_TYPES:
+    if not isinstance(node, DAGNode) or node.node_type in _GEOMETRY_TYPES:
         return None
-    shapes = _own_shapes(dg, _GEOMETRY_TYPES)
+    shapes = _own_shapes(node, _GEOMETRY_TYPES)
     if not shapes:
         return None
     if len(shapes) > 1:
@@ -747,18 +744,17 @@ class _Normaliser:
         """The whole node; ``source`` is what the left-hand side actually
         held (the attribute plug that stands for the node)."""
         source = node if source is None else source
-        dg     = node._dg_node
-        if not isinstance(dg, DAGNode):
-            self.group(dg.name, dg.node_type, "whole").sources.append(source)
+        if not isinstance(node, DAGNode):
+            self.group(node.name, node.node_type, "whole").sources.append(source)
             return
-        node_type = dg.node_type
+        node_type = node.node_type
         if node_type not in _GEOMETRY_TYPES and self.want_shapes:
-            shapes = _own_shapes(dg, _GEOMETRY_TYPES)
+            shapes = _own_shapes(node, _GEOMETRY_TYPES)
             if shapes:
                 for path in shapes:
                     self.group(path, cmds.nodeType(path), "whole").sources.append(source)
                 return
-        self.group(dg.long_name, node_type, "whole").sources.append(source)
+        self.group(node.long_name, node_type, "whole").sources.append(source)
 
     def add_components(self, components: Components) -> None:
         group = self.group(components._path, components.geometry, components._kind)

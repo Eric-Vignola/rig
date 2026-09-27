@@ -76,7 +76,7 @@ def _node_lshift(node: Any, other: Any) -> Any:
         from rig._internal.decompose import _node_is_transform
         from rig._internal.shorthand import _matrix_to_transform
 
-        if _node_is_transform(str(node)) and _matrix_to_transform(other, node):
+        if _node_is_transform(node) and _matrix_to_transform(other, node):
             return node
 
     # 3. Static numpy / nested-list matrix source on a transform
@@ -106,7 +106,7 @@ def _node_lshift(node: Any, other: Any) -> Any:
                     _try_matrix_source_routing,
                 )
 
-                if _node_is_transform(str(node)) and _try_matrix_source_routing(
+                if _node_is_transform(node) and _try_matrix_source_routing(
                     node.matrix, arr
                 ):
                     return node

@@ -27,6 +27,7 @@ import numbers
 from typing import Any, List, Optional
 
 import numpy as np
+from rig.nodetypes._base import Node
 
 
 def _to_numpy(raw: Any, data_type: Optional[str] = None) -> Any:
@@ -94,9 +95,10 @@ def _stack_values(values: List[Any]) -> Any:
     if not values:
         return values
 
-    # Quick reject for obviously non-stackable contents.
+    # Quick reject for obviously non-stackable contents: a node (of any node
+    # class) is never stacked, and numpy never probes it
     has_non_numeric = any(
-        v is None or isinstance(v, str) or hasattr(v, "_dg_node") for v in values
+        v is None or isinstance(v, (str, Node)) for v in values
     )
     if has_non_numeric:
         return values

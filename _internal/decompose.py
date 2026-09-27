@@ -121,14 +121,24 @@ def _decompose_matrix_complete(m4x4: np.ndarray, rotate_order: int = 0) -> dict:
 
 
 def _node_is_transform(node: Any) -> bool:
-    """Return True if ``node`` (Node, DGNode, or string) wraps a kTransform.
+    """Return True if ``node`` (a node object, or a node name) is a transform
+    (``kTransform`` or a type derived from it).
 
+    A node object is asked directly, never cast again from its name: a deleted
+    or freed node raises its ``already deleted!`` error, as naming it does. A
+    name is cast first, and gives False when no node of that name can be cast.
     Uses :meth:`DGNode.has_base_type` (canonical API) instead of raw
     MSelectionList / MFn introspection.
     """
+    if hasattr(node, "has_base_type"):
+        node.ensure_valid()
+    else:
+        try:
+            node = PyNode(str(node))
+        except (RuntimeError, ValueError):
+            return False
     try:
-        wrapped = node if hasattr(node, "has_base_type") else PyNode(str(node))
-        return wrapped.has_base_type("transform")
+        return node.has_base_type("transform")
     except (RuntimeError, ValueError):
         return False
 
@@ -301,7 +311,7 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
         return False
     node_str = str(node)
 
-    is_transform = _node_is_transform(node_str)
+    is_transform = _node_is_transform(node)
     try:
         dst_data_type = dst.data_type
     except Exception:

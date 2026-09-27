@@ -91,7 +91,7 @@ class ObjectSet(DGNode):
             if cmds.ls(candidate, type=cls.NATIVE_NODE_TYPE):
                 # PyNode picks the most derived registered class, so a
                 # shadingEngine comes back as a ShadingEngine, equal to any
-                # other wrapper of it.
+                # other node object of it.
                 return PyNode(candidate)
             node_type = cmds.nodeType(cmds.ls(candidate, long=True)[0])
             raise TypeError(
