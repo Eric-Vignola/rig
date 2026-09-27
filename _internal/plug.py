@@ -372,11 +372,24 @@ class Plug(Attribute):
         super().__init__(name_or_mplug)
 
     def __getattr__(self, attr_name: str) -> "Plug":
-        # A plug of a node a new scene freed points at freed memory: a Python
-        # probe (``hasattr(plug, "__array__")``) finds nothing, anything else
-        # raises the node's "already deleted!".
-        if attr_name[:1] == "_" and not _owner_alive(self):
-            raise AttributeError(attr_name)
+        if attr_name[:1] == "_":
+            # Python probes private and dunder names constantly: a half-built
+            # plug (``copy``) has none, nor has a plug of a node a new scene
+            # freed (its MPlug points at freed memory), and otherwise only a
+            # compound child or a Maya attr of the node resolves -- never the
+            # node's Python state, and never through the container query.
+            if "_mplug" not in self.__dict__ or not _owner_alive(self):
+                raise AttributeError(attr_name)
+            try:
+                result = super().__getattr__(attr_name)
+                if isinstance(result, Attribute) and not isinstance(result, Plug):
+                    return _share_node(self, _new_attr(Plug, result.plug))
+                return result
+            except (AttributeError, TypeError):
+                pass
+            node = self.node
+            return type(node).__getattr__(node, attr_name)
+        # a freed node's MPlug points at freed memory: "already deleted!"
         _ensure_owner_alive(self)
         # 1) Try child-attribute lookup first (compound children).
         try:
