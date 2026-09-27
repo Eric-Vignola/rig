@@ -30,6 +30,7 @@ from rig._internal.math_nodes import (
 )
 from rig._internal.node import Node
 from rig._internal.plug import _inject_value
+from rig.nodetypes.dg_node import DGNode
 from rig._internal.types import (
     _COMPOUND_DATA_TYPES,
     _get_compound,
@@ -378,7 +379,7 @@ def _attr_path(plug: Any) -> str:
     """Return the attribute path part of ``plug`` (everything after the node).
 
     For ``"pCube1.translate"`` returns ``"translate"``. For a bare
-    :class:`Node` returns ``""`` so callers can route the source matrix
+    :class:`Node` or typed node returns ``""`` so callers can route the source matrix
     to the node's standard transform channels (``t``/``r``/``s``)
     directly.
 
@@ -389,8 +390,9 @@ def _attr_path(plug: Any) -> str:
     # ``plug.name`` returned the NODE name (e.g. ``"b_xform"``), causing
     # the downstream ``if attr in (\"matrix\", \"m\"):`` check to evaluate
     # False and the matrix-to-transform router to bail. The bare-Node case
-    # means \"use the node's t/r/s channels directly.\"
-    if isinstance(plug, Node):
+    # means \"use the node's t/r/s channels directly.\" A typed node speaks
+    # the DSL too (``PyNode("b") << matrix``).
+    if isinstance(plug, (Node, DGNode)):
         return ""
 
     # Prefer the canonical Attribute.name (rename-safe).

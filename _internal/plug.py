@@ -46,9 +46,12 @@ Connection queries are METHODS, not operators -- ``a.get_inputs()`` and
 wired). Direct connections only: a compound whose children are driven
 reports nothing, so slice it (``a[:].get_inputs()``) to query per-child.
 
+A typed node's attribute lookup gives Plugs too (``PyNode("a").tx``); its
+typed API (``find_attr`` ...) reads :class:`Attribute` instances.
 ``plug.node`` is the node object the plug was read from (``node.tx.node is
-node``; children and elements share it), and a plug read through a node with
-more than one DAG path is named through that node's path. A plug built from a
+node``, a ``Node`` or a typed node; children and elements share it), and a
+plug read through a node with more than one DAG path is named through that
+node's path. A plug built from a
 string or an MPlug casts its node on first access, and is named as Maya names
 it (``Plug("|T2|S.v")`` is ``T1|S.visibility``). Until then it checks the API
 1.0 handle of its node it took when it was built (its children and elements
@@ -512,22 +515,18 @@ class Plug(Attribute):
 
     @property
     def node(self) -> Any:
-        """Return the owning :class:`Node` (not a bare ``DGNode``).
-
-        That is the node object the plug was read from (``node.tx.node is
-        node``; children and elements share it). A plug built from a string or
-        an MPlug casts its node on first access, and raises ``already deleted!``
-        if that node was deleted or freed since (see ``_ensure_node_castable``).
+        """Return the node object the plug was read from: a :class:`Node`
+        (``Node("a").tx.node is`` that Node) or a typed node
+        (``PyNode("a").tx.node is`` that typed node); children and elements
+        share it. A plug built from a string or an MPlug casts its node to a
+        :class:`Node` on first access, and raises ``already deleted!`` if that
+        node was deleted or freed since (see ``_ensure_node_castable``).
         """
         held = self.__dict__["_node"]
-        Node = _lazy().node.Node
-        if isinstance(held, Node):
+        if held is not None:
             return held
-        # a typed node the plug was read from (a shape's attr found through its
-        # transform), or none: cast the plug's node
-        if held is None:
-            _ensure_node_castable(self)
-        node       = Node(PyNode(self._mplug.node()) if held is None else held)
+        _ensure_node_castable(self)
+        node       = _lazy().node.Node(PyNode(self._mplug.node()))
         self._node = node
         return node
 
@@ -2528,3 +2527,11 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
             )
 
     raise TypeError(f"Don't know how to inject {type(src).__name__} into Plug({dst})")
+
+
+# The typed nodes' attribute lookup (``DGNode.__getattr__``) returns Plugs and
+# upgrades multi-dimensional components once this module has loaded (D31).
+from rig.nodetypes import dg_node as _dg_node_module  # noqa: E402
+
+_dg_node_module._PLUG_CLASS     = Plug
+_dg_node_module._COMPONENT_PLUG = _maybe_component_plug
