@@ -31,7 +31,7 @@ from rig import (
     container,
     dist,
     functions as rf,
-    PlugList,
+    List,
     trigonometry as trig,
 )
 from rig.bridges import commands as rc, nodes as rn
@@ -72,7 +72,7 @@ def create_setup(
 
     Returns:
         A namedtuple ``(camera, planes, shapes)`` containing the camera
-        transform Node, a PlugList of plane transforms, and a PlugList of
+        transform Node, a List of plane transforms, and a List of
         plane shapes (with per-shape ``image`` / ``sequenceType`` /
         ``sequenceStart`` / ``sequenceEnd`` / ``sequenceOffset`` /
         ``alpha`` / ``opacity`` attrs).
@@ -89,8 +89,8 @@ def create_setup(
     # Camera + camera shape.
     camera_xform, camera_shape = rc.camera(name=camera, container=False)
     output.camera = camera_xform
-    output.planes = PlugList()
-    output.shapes = PlugList()
+    output.planes = List()
+    output.shapes = List()
 
     camera_shape.filmFit                << 3      # overscan
     camera_shape.overscan               << 1.1    # always-visible box
@@ -100,8 +100,8 @@ def create_setup(
     camera_shape.displayGateMaskOpacity << 1      # opaque
 
     # Accumulators driving the camera's aspect ratio.
-    horizontal_list = PlugList()
-    vertical_list   = PlugList()
+    horizontal_list = List()
+    vertical_list   = List()
 
     with container("{}_container".format(name.lower())):
         # Add the camera shape into the container scope.

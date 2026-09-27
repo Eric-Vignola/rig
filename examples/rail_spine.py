@@ -34,10 +34,10 @@ from rig import (
     elerp,
     functions as rf,
     interpolate,
+    List,
     matrix,
     Node,
     normalize,
-    PlugList,
     set_options,
     slerp,
 )
@@ -122,13 +122,13 @@ def create_rail(
                 )
             ctrl_strs = [str(y) for y in controls]
             controls  = [x for x in position_controls if str(x) in ctrl_strs]
-        return PlugList(controls)
+        return List(controls)
 
     with container("railNode1"):
         if control_up is None:
             control_up = up_axis
 
-        position_controls = PlugList(position_controls)
+        position_controls = List(position_controls)
         orient_controls   = _order_controls(orient_controls, position_controls)
         scale_controls    = _order_controls(scale_controls, position_controls)
 
@@ -181,7 +181,7 @@ def create_rail(
             shift = {3: 1, 5: 2, 7: 3}[degree]
             cvs   = list(rail_shape.cv[:])
             cvs   = cvs[shift:] + cvs[:shift]
-            cvs   = PlugList(cvs)
+            cvs   = List(cvs)
             cvs << position_controls.wm * rail.wim
 
         # If periodic, append the first control to the end so the
@@ -242,7 +242,7 @@ def create_rail(
 
             # Orient driver setup.
             if orient_controls is not None:
-                orient_controls = PlugList(orient_controls)
+                orient_controls = List(orient_controls)
                 orient_controls << Enum("upAxis", en="X:Y:Z:", dv=up_axis)
                 orient_controls << Enum("invertUp")
 
@@ -259,7 +259,7 @@ def create_rail(
                 )
 
                 if len(orient_controls) > 1:
-                    orient_weights = PlugList(
+                    orient_weights = List(
                         [cumsum[position_controls.index(x)] for x in orient_controls]
                     )
 
@@ -268,10 +268,10 @@ def create_rail(
                             orient_weights.append(constant(1))
                             orient_vectors.append(orient_vectors[0])
                         else:
-                            orient_weights = PlugList(
+                            orient_weights = List(
                                 [0 - (1 - orient_weights[-1])] + list(orient_weights)
                             )
-                            orient_vectors = PlugList(
+                            orient_vectors = List(
                                 [orient_vectors[-1]] + list(orient_vectors)
                             )
                             orient_weights.append(1 - (0 - orient_weights[1]))
@@ -286,11 +286,11 @@ def create_rail(
 
             # Scale driver setup.
             if scale_controls is not None:
-                scale_controls = PlugList(scale_controls)
+                scale_controls = List(scale_controls)
                 scale_vectors  = matrix.decompose(scale_controls.wm).outputScale
 
                 if len(scale_controls) > 1:
-                    scale_weights = PlugList(
+                    scale_weights = List(
                         [cumsum[position_controls.index(x)] for x in scale_controls]
                     )
 
@@ -299,10 +299,10 @@ def create_rail(
                             scale_weights.append(constant(1))
                             scale_vectors.append(scale_vectors[0])
                         else:
-                            scale_weights = PlugList(
+                            scale_weights = List(
                                 [0 - (1 - scale_weights[-1])] + list(scale_weights)
                             )
-                            scale_vectors = PlugList(
+                            scale_vectors = List(
                                 [scale_vectors[-1]] + list(scale_vectors)
                             )
                             scale_weights.append(1 - (0 - scale_weights[1]))
@@ -466,7 +466,7 @@ if __name__ == "__main__":
     set_options(create_containers=True)
 
     # 5 control locators stacked along Y.
-    position_controls = PlugList()
+    position_controls = List()
     for i in range(5):
         loc_xform = mc.spaceLocator()[0]
         position_controls.append(Node(loc_xform))

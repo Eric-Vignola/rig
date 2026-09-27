@@ -36,7 +36,7 @@ DSL features showcased here
 ---------------------------
 
   * ``with container("..."):``                -- scoped utility graph
-  * ``PlugList(controls).wm * rail.wim``      -- broadcast matrix mul
+  * ``List(controls).wm * rail.wim``          -- broadcast matrix mul
   * ``rail_shape.cv[:] << matrices``          -- matrix -> CV shorthand
   * ``rn.curveInfo / motionPath / composeMatrix`` -- node-type bridges
   * ``Float("pivot", min=0, max=1)``          -- spec-object injection
@@ -62,10 +62,10 @@ from rig import (
     container,
     functions as rf,
     lerp,
+    List,
     matrix,
     Node,
     normalize,
-    PlugList,
     slerp,
 )
 from rig.bridges import commands as rc, nodes as rn
@@ -105,7 +105,7 @@ def create_simple_rail(
     Node
         The rail transform.
     """
-    position_controls = PlugList(position_controls)
+    position_controls = List(position_controls)
 
     with container("simpleRail1"):
         # ---- 1. Build the curve from the current control positions. ----
@@ -122,7 +122,7 @@ def create_simple_rail(
         rail.s << hide
 
         # ---- 2. Drive every CV from the controls' world matrices. ----
-        # ``controls.wm`` is a PlugList of worldMatrix plugs. Multiplying
+        # ``controls.wm`` is a List of worldMatrix plugs. Multiplying
         # by ``rail.wim`` demotes them into rail-local space. Injecting a
         # matrix into a CV (vector destination) auto-extracts translation
         # via the matrix-shorthand -- no manual decomposeMatrix nodes.
@@ -253,7 +253,7 @@ def create_simple_rail(
 
 if __name__ == "__main__":
     # ---- Demo: 4 locators stacked along Y, 12 evenly-spaced riders. ----
-    controls = PlugList()
+    controls = List()
     for i in range(4):
         loc = mc.spaceLocator()[0]
         controls.append(Node(loc))
