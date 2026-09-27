@@ -162,90 +162,12 @@ class PyNode:
         Returns:
             An object instance.
         """
-        # zero-argument super(): a test that patches the module global `PyNode`
-        # (to count casts) must not break the cast it wraps
-        super().__new__(cls, *args, **kwargs)
-
-        mobj     = None
-        dag_path = None
-        if isinstance(obj.__class__, NodeMeta) or isinstance(obj, Attribute):
-            return obj
-        elif isinstance(obj, OpenMaya.MPlug):
-            return Attribute(obj)
-        elif isinstance(obj, OpenMaya.MObject):
-            mobj = obj
-            obj  = _mobject_to_str(obj)
-        elif isinstance(obj, OpenMaya.MDagPath):
-            dag_path = obj
-            obj      = obj.partialPathName()
-        elif not isinstance(obj, str):
-            t = type(obj)
-            raise ValueError(f"{obj} ({t}) is not a str, MObject, MDagPath, or MPlug")
-
-        # if obj is given as a unique id, convert to string
-        # (uuid.UUID() needs 32 hex digits, so a shorter string is never a uid)
-        if len(obj) >= 32 and is_valid_maya_uid(obj):
-            str_from_uid = cmds.ls(obj, uid=True)
-            if not str_from_uid:
-                raise TypeError(f"No object matches uuid: {obj}.")
-
-            # node name is properly converted to a name string
-            obj      = str_from_uid[0]
-            mobj     = None
-            dag_path = None
-
-        # TODO need a better way to identify attribute strings
-        if obj.rfind(".") != -1:
-            return Attribute(obj)
-
-        # without a custom type attr (or an alias of that name) the class only
-        # depends on the node type, so it is looked up per (typeName, typeId);
-        # anything that doesn't resolve to exactly one node takes the legacy path,
-        # and so does a deleted or undone node, whose name may now be another's
-        from_mobject = mobj is not None
-        key          = None
-        try:
-            if dag_path is not None:
-                mobj = dag_path.node()
-            elif mobj is None and _PLAIN_NODE_NAME.match(obj):
-                sel = OpenMaya.MSelectionList()
-                sel.add(obj)
-                if sel.length() == 1:
-                    mobj = sel.getDependNode(0)
-            handed_in = from_mobject or dag_path is not None
-            if handed_in and not OpenMaya.MObjectHandle(mobj).isValid():
-                mobj = None
-            if mobj is not None:
-                fn = OpenMaya.MFnDependencyNode(mobj)
-                if (
-                    not fn.hasAttribute(CUSTOM_TYPE_ATTR)
-                    and fn.findAlias(CUSTOM_TYPE_ATTR).isNull()
-                ):
-                    key = (fn.typeName, fn.typeId.id())
-        except (RuntimeError, ValueError, TypeError):
-            key = None
-        if key is None:
-            return _pynode_legacy_tail(cls, obj)
-
-        if key in cls._CLASS_BY_TYPE:
-            cls_obj = cls._CLASS_BY_TYPE[key]
-        else:
-            cls_obj = cls._CLASS_BY_TYPE[key] = _native_node_class(cls, obj)
-        if not cls_obj:
-            raise ValueError(f"Failed casting {obj}")
-
-        # a type already cast from an MObject passes the class's type check
-        # again, so a base-constructor class is built without re-running it
-        inst = None
-        if from_mobject and key in cls._CASTABLE_TYPES:
-            inst = _construct_checked_type(cls_obj, obj)
-        if inst is None:
-            # a node class is constructed without NodeMeta.__call__'s frame,
-            # which only dispatches the root Node to its factory
-            inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
-        if from_mobject:
-            cls._CASTABLE_TYPES.add(key)
-        return inst
+        if args or kwargs:
+            # what `object.__new__` raised for them, before `_cast` (D12)
+            raise TypeError(
+                "object.__new__() takes exactly one argument (the type to instantiate)"
+            )
+        return _cast(cls, obj)
 
     @classmethod
     def create(cls, node_type, *args, **kwargs) -> Any:
@@ -269,6 +191,100 @@ class PyNode:
             return node_cls.find_all(exact_type=exact_type)
         else:
             raise NotImplementedError(f"Node type {node_type} not implemented")
+
+
+# the class the `Node` factory hands `_cast`: bound once, so a test that
+# patches the module global `PyNode` (to count `Attribute.node`'s casts)
+# neither counts nor breaks the factory's
+_PYNODE_CLASS = PyNode
+
+
+def _cast(cls, obj: Any) -> Any:
+    """The typed cast (``PyNode(obj)``; see `PyNode.__new__`): the one cast core
+    (D12). `cls` is the `PyNode` class, whose registries it reads. The `Node`
+    factory calls it directly, without PyNode's class call. A node object or an
+    Attribute is returned as is, an MPlug or a dotted name gives an Attribute,
+    and a node name, uuid, MObject or MDagPath gives the typed node."""
+    mobj     = None
+    dag_path = None
+    if isinstance(obj.__class__, NodeMeta) or isinstance(obj, Attribute):
+        return obj
+    elif isinstance(obj, OpenMaya.MPlug):
+        return Attribute(obj)
+    elif isinstance(obj, OpenMaya.MObject):
+        mobj = obj
+        obj  = _mobject_to_str(obj)
+    elif isinstance(obj, OpenMaya.MDagPath):
+        dag_path = obj
+        obj      = obj.partialPathName()
+    elif not isinstance(obj, str):
+        t = type(obj)
+        raise ValueError(f"{obj} ({t}) is not a str, MObject, MDagPath, or MPlug")
+
+    # if obj is given as a unique id, convert to string
+    # (uuid.UUID() needs 32 hex digits, so a shorter string is never a uid)
+    if len(obj) >= 32 and is_valid_maya_uid(obj):
+        str_from_uid = cmds.ls(obj, uid=True)
+        if not str_from_uid:
+            raise TypeError(f"No object matches uuid: {obj}.")
+
+        # node name is properly converted to a name string
+        obj      = str_from_uid[0]
+        mobj     = None
+        dag_path = None
+
+    # TODO need a better way to identify attribute strings
+    if obj.rfind(".") != -1:
+        return Attribute(obj)
+
+    # without a custom type attr (or an alias of that name) the class only
+    # depends on the node type, so it is looked up per (typeName, typeId);
+    # anything that doesn't resolve to exactly one node takes the legacy path,
+    # and so does a deleted or undone node, whose name may now be another's
+    from_mobject = mobj is not None
+    key          = None
+    try:
+        if dag_path is not None:
+            mobj = dag_path.node()
+        elif mobj is None and _PLAIN_NODE_NAME.match(obj):
+            sel = OpenMaya.MSelectionList()
+            sel.add(obj)
+            if sel.length() == 1:
+                mobj = sel.getDependNode(0)
+        handed_in = from_mobject or dag_path is not None
+        if handed_in and not OpenMaya.MObjectHandle(mobj).isValid():
+            mobj = None
+        if mobj is not None:
+            fn = OpenMaya.MFnDependencyNode(mobj)
+            if (
+                not fn.hasAttribute(CUSTOM_TYPE_ATTR)
+                and fn.findAlias(CUSTOM_TYPE_ATTR).isNull()
+            ):
+                key = (fn.typeName, fn.typeId.id())
+    except (RuntimeError, ValueError, TypeError):
+        key = None
+    if key is None:
+        return _pynode_legacy_tail(cls, obj)
+
+    if key in cls._CLASS_BY_TYPE:
+        cls_obj = cls._CLASS_BY_TYPE[key]
+    else:
+        cls_obj = cls._CLASS_BY_TYPE[key] = _native_node_class(cls, obj)
+    if not cls_obj:
+        raise ValueError(f"Failed casting {obj}")
+
+    # a type already cast from an MObject passes the class's type check
+    # again, so a base-constructor class is built without re-running it
+    inst = None
+    if from_mobject and key in cls._CASTABLE_TYPES:
+        inst = _construct_checked_type(cls_obj, obj)
+    if inst is None:
+        # a node class is constructed without NodeMeta.__call__'s frame,
+        # which only dispatches the root Node to its factory
+        inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
+    if from_mobject:
+        cls._CASTABLE_TYPES.add(key)
+    return inst
 
 
 def _native_node_class(cls, obj: str) -> Any:
@@ -2769,6 +2785,7 @@ def _node_factory(obj: Any) -> Any:
             obj = obj.split(".", 1)[0]
     elif isinstance(obj, OpenMaya.MPlug):
         obj = obj.node()
-    result = PyNode(obj)
-    # defensive: an exotic input PyNode resolves to an attribute gives its node
+    # the cast core itself, without PyNode's class call (D12)
+    result = _cast(_PYNODE_CLASS, obj)
+    # defensive: an exotic input the cast resolves to an attribute gives its node
     return result.node if isinstance(result, Attribute) else result
