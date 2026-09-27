@@ -1557,9 +1557,10 @@ class TestOneNodeHierarchy(MayaTestCase):
         clone = knob >> dst
         self.assertIs(type(clone), Plug)
         self.assertEqual(str(clone), "dst.knob")
-        # the clone is a plug of dst (owned by a cast of it; binding the spec's
-        # result to the node object is M10's)
-        self.assertEqual(clone.node, dst)
+        # tightened (round 4a M10, spec S5): the clone is owned by dst itself,
+        # and the spec's plug by src
+        self.assertIs(clone.node, dst)
+        self.assertIs(knob.node, src)
         with self.assertRaisesRegex(TypeError, "^Cannot inject bare Node 'src' into matrix Plug"):
             dst.offsetParentMatrix << src
         with self.assertRaisesRegex(TypeError, r"^Cannot inject Node into a bare Node"):

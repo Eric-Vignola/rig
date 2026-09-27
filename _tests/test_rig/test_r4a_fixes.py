@@ -22,6 +22,11 @@ F10), and a plain list scan still compares every different plug it passes.
 Round 4a, step M6: ``PlugList`` is now ``List`` (``PlugList is List``, both
 exported, repr ``List([...])``), and ``in`` / ``index`` / ``count`` /
 ``remove`` read a plain str probe as the Maya plug it names (decision S3 Q4).
+
+Round 4a, step M10 (spec S5): a named spec's plug is owned by the node object
+it was applied to, ``(node << Float("x")).node is node``, and by the node object
+a Plug target holds (``plug << Float("x")``), named for cmds through the path
+that node holds.
 """
 
 import itertools
@@ -1348,3 +1353,392 @@ class TestListStrProbe(_SceneCase):
         finally:
             cmds.file(new=True, force=True)
             shutil.rmtree(folder, ignore_errors=True)
+
+
+def _owned_spec_scene():
+    """``held`` (a transform with the locator shape ``heldShape``) and ``other``
+    (a transform), as node objects."""
+    cmds.createNode("transform", name="held")
+    cmds.createNode("locator", name="heldShape", parent="held")
+    cmds.createNode("transform", name="other")
+    return Node("held"), Node("other")
+
+
+def _same_plug(a, b):
+    """`nodetypes._base._same_plug`: one Maya plug (the one-key identity)."""
+    from rig.nodetypes._base import _same_plug as same
+
+    return same(a, b)
+
+
+class TestOwnerBoundSpecApply(MayaTestCase):
+    """M10 (spec S5): a named spec's plug is owned by the node object it was
+    applied to (``(node << Float("x")).node is node``, as ``node.x.node`` is),
+    and, for a Plug target, by the node object the plug holds. Its str buffer
+    names the node as ``str(node)`` does (through the path it holds)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _assert_owned(self, plug, node, name):
+        """`plug` is a Plug of `node`'s attr `name`, owned by the node object, in
+        the state the node's own attribute access (``node.<name>``) builds."""
+        self.assertIs(type(plug), Plug)
+        self.assertIs(plug.node, node)
+        self.assertIs(vars(plug)["_node"], node)
+        self.assertIsNone(vars(plug)["_handle1"])
+        self.assertEqual(str.__str__(plug), f"{node}.{name}")
+        same = getattr(node, name)
+        self.assertEqual(str(plug), str(same))
+        self.assertTrue(_same_plug(plug, same))
+        self.assertEqual(hash(plug), hash(same))
+        self.assertEqual(tuple(vars(plug)), tuple(vars(same)))
+        self.assertIs(vars(plug)["_attr1"], vars(same)["_attr1"])
+
+    def test_every_spec_kind_is_owned(self):
+        from rig.spec import Enum, Int, Matrix, Message, String, Vector
+
+        node, _ = _owned_spec_scene()
+        for label, spec, name in (
+            ("Float", Float("k"), "k"),
+            ("Float dv", Float("kd", dv=2.5, min=0, max=10), "kd"),
+            ("Int", Int("ik", dv=3), "ik"),
+            ("Enum", Enum("ek", en="a:b:c"), "ek"),
+            ("String", String("sk"), "sk"),
+            ("Message", Message("mk"), "mk"),
+            ("Matrix", Matrix("xk"), "xk"),
+            ("Vector", Vector("vk"), "vk"),
+            ("multi", Float("arr", multi=True, size=3), "arr"),
+            ("a Python member's name", Float("rename"), "rename"),
+        ):
+            with self.subTest(label):
+                plug = node << spec
+                if name == "rename":
+                    # a method wins over the Maya attr in `node.rename`
+                    self.assertIs(plug.node, node)
+                    self.assertEqual(plug, node.find_attr("rename"))
+                else:
+                    self._assert_owned(plug, node, name)
+                # a dynamic attr: the handle of its attribute
+                self.assertTrue(vars(plug)["_attr1"].isAlive())
+        self.assertEqual(node.kd.get(), 2.5)
+        # a compound spec gives its parent plug, whose children are owned too
+        vector = node.vk
+        self.assertEqual(str(vector), "held.vk")
+        for child in (vector.vkX, vector[1], vector.child(2)):
+            self.assertIs(child.node, node)
+        # a multi spec gives its array root, pre-sized
+        array = node.arr
+        self.assertEqual(list(array.get_logical_indices()), [0, 1, 2])
+        self.assertIs(array[2].node, node)
+
+    def test_an_existing_attr(self):
+        node, _ = _owned_spec_scene()
+        first = node << Float("k")
+        first << 5.0
+        # overwrite=True (the default): deleted and re-added, the value reset
+        again = node << Float("k", overwrite=True)
+        self._assert_owned(again, node, "k")
+        self.assertEqual(again.get(), 0.0)
+        again << 7.0
+        # overwrite=False: the existing attr, its value kept
+        kept = node << Float("k", overwrite=False)
+        self._assert_owned(kept, node, "k")
+        self.assertEqual(kept.get(), 7.0)
+        # a static attr, not overwritten: named as the spec names it, with no
+        # handle of its attribute
+        static = node << Float("tx", overwrite=False)
+        self.assertIs(static.node, node)
+        self.assertEqual(str.__str__(static), "held.tx")
+        self.assertEqual(str(static), "held.translateX")
+        self.assertIsNone(vars(static)["_attr1"])
+        self.assertTrue(_same_plug(static, node.tx))
+        # a real attr named like a component alias: the attr the name names, as
+        # its str buffer does (``node.pnts`` is the canonical controlPoints)
+        cmds.polyCube(name="box", constructionHistory=False)
+        shape = Node("boxShape")
+        pnts = shape << Float("pnts", overwrite=False)
+        self.assertIs(pnts.node, shape)
+        self.assertEqual(str.__str__(pnts), "boxShape.pnts")
+        self.assertEqual(str(pnts), "boxShape.pnts")
+
+    def test_output_note_and_chain(self):
+        from rig import lock
+        from rig.spec import Note
+
+        node, _ = _owned_spec_scene()
+        out = node >> Float("outk")
+        self._assert_owned(out, node, "outk")
+        self.assertFalse(cmds.addAttr("held.outk", query=True, writable=True))
+        notes = node << Note("hello")
+        self.assertIs(notes.node, node)
+        self.assertEqual(cmds.getAttr("held.notes"), "hello")
+        chained = node << Float("ck") << 3.0 << lock
+        self.assertIs(chained.node, node)
+        self.assertEqual(cmds.getAttr("held.ck"), 3.0)
+        self.assertTrue(cmds.getAttr("held.ck", lock=True))
+
+    def test_a_plug_target(self):
+        node, other = _owned_spec_scene()
+        # a plug of a node object: owned by that node object
+        self._assert_owned(node.tx << Float("pk"), node, "pk")
+        # a plug built from a name casts its node once, which owns the new plug
+        named = Plug("held.tx")
+        added = named << Float("pk2")
+        self.assertIs(added.node, named.node)
+        self.assertIs(vars(added)["_node"], named.node)
+        self.assertEqual(str.__str__(added), "held.pk2")
+        # an attr of the shape read through its transform: the shape's
+        shape_attr = node.localPositionX
+        on_shape = shape_attr << Float("lk")
+        self.assertIs(on_shape.node, shape_attr.node)
+        self.assertEqual(str(on_shape), "heldShape.lk")
+        # a typed Attribute target (spec.apply): its owner too
+        typed = node.find_attr("ty")
+        self.assertIs(Float("tk").apply(typed).node, node)
+        # the clone of plug >> node is owned by the node
+        clone = node.pk >> other
+        self.assertIs(clone.node, other)
+        self.assertEqual(str(clone), "other.pk")
+
+    def test_a_list_target(self):
+        from rig import List
+
+        node, other = _owned_spec_scene()
+        added = List([node, other.tx]) << Float("lst")
+        self.assertEqual([str(p) for p in added], ["held.lst", "other.lst"])
+        self.assertIs(added[0].node, node)
+        self.assertIs(added[1].node, other)
+
+    def test_a_leading_underscore(self):
+        node, _ = _owned_spec_scene()
+        parked = node << Float("__parked__")
+        self._assert_owned(parked, node, "__parked__")
+        node.__parked__ << 4.0
+        self.assertEqual(cmds.getAttr("held.__parked__"), 4.0)
+        self.assertEqual(parked.get(), 4.0)
+        self.assertIs(node.__parked__.node, node)
+
+    def test_the_string_path(self):
+        # a name findPlug does not resolve (an alias of an element, a component
+        # name) and a node that is not a live node object take the string path:
+        # a plug with no owner, checked through the node's handle, resolved as
+        # Plug(name) resolves it
+        from rig.spec import _base as spec_base
+
+        cmds.createNode("plusMinusAverage", name="pma")
+        cmds.setAttr("pma.input1D[0]", 1)
+        cmds.aliasAttr("smile", "pma.input1D[0]")
+        cmds.polyCube(name="box", constructionHistory=False)
+        pma, shape = Node("pma"), Node("boxShape")
+        for label, node, name, same in (
+            ("an alias", pma, "smile", lambda: pma.input1D[0]),
+            ("a component", shape, "vtx[1]", lambda: Plug("boxShape.vtx[1]")),
+        ):
+            with self.subTest(label):
+                found = spec_base._plug_of(str(node), name, node)
+                self.assertIs(type(found), Plug)
+                self.assertIsNone(vars(found)["_node"])
+                self.assertEqual(
+                    vars(found)["_handle1"].hashCode(), vars(node)["_objhandle1"].hashCode()
+                )
+                self.assertTrue(_same_plug(found, same()))
+        cmds.createNode("transform", name="held")
+        cmds.addAttr("held", longName="k", attributeType="double")
+        for node in (None, object.__new__(type(Node("held")))):
+            with self.subTest(node=type(node).__name__):
+                named = spec_base._plug_of("held", "k", node)
+                self.assertIs(type(named), Plug)
+                self.assertIsNone(vars(named)["_node"])
+                self.assertEqual(str(named), "held.k")
+
+    def test_a_node_whose_short_name_is_not_unique(self):
+        # the str buffer cmds reads names the node's shortest unique path, not
+        # the MPlug's name (``X.k``, which names both X)
+        cmds.createNode("transform", name="A")
+        cmds.createNode("transform", name="X", parent="A")
+        cmds.createNode("transform", name="B")
+        cmds.createNode("transform", name="X", parent="B")
+        ax = Node("|A|X")
+        plug = ax << Float("k")
+        self.assertIs(plug.node, ax)
+        self.assertEqual(str.__str__(plug), "A|X.k")
+        self.assertEqual(str(plug), "A|X.k")
+        self.assertEqual(cmds.getAttr(plug), 0.0)
+        plug << 3.0
+        self.assertEqual(cmds.getAttr("|A|X.k"), 3.0)
+        self.assertFalse(cmds.attributeQuery("k", node="|B|X", exists=True))
+
+    def test_a_namespace_and_a_container(self):
+        cmds.namespace(add="ns")
+        spaced = Node(cmds.createNode("transform", name="ns:held"))
+        self._assert_owned(spaced << Float("nk"), spaced, "nk")
+        with container("box") as box:
+            inside = Node.create("transform", name="inside")
+            self._assert_owned(inside << Float("ck"), inside, "ck")
+        self.assertIs((box << Float("bk")).node, box)
+        self.assertEqual(str(box.bk), "box.bk")
+
+    def test_an_instanced_target(self):
+        # E3: named through the path the node object holds
+        from rig.spec import Vector
+
+        s1, s2 = _instanced()
+        plug = s2 << Float("k")
+        self._assert_owned(plug, s2, "k")
+        self.assertEqual(str.__str__(plug), "T2|S.k")
+        self.assertEqual(str(plug), "T2|S.k")
+        self.assertEqual(cmds.getAttr(plug), 0.0)
+        self.assertEqual(str(s1 << Float("k1")), "T1|S.k1")
+        on_plug = s2.v << Float("pk")
+        self.assertIs(on_plug.node, s2)
+        self.assertEqual(str(on_plug), "T2|S.pk")
+        vector = s2 << Vector("iv")
+        self.assertEqual(str(vector), "T2|S.iv")
+        self.assertEqual(str(vector.ivX), "T2|S.ivX")
+        # a removed instance (a stale path): the node's live path names it
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            cmds.parent("|T2|S", removeObject=True, shape=True)
+            again = s2 << Float("k2")
+            self.assertIs(again.node, s2)
+            self.assertEqual(str.__str__(again), f"{s2}.k2")
+            self.assertEqual(cmds.getAttr(again), 0.0)
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_a_deleted_dynamic_attr(self):
+        # E7: the held spec plug raises once the delete leaves the undo queue
+        node, _ = _owned_spec_scene()
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            plug = node << Float("gone")
+            cmds.deleteAttr("held.gone")
+            cmds.flushUndo()
+            for label, op in (
+                ("str", str),
+                ("get", lambda p: p.get()),
+                ("<<", lambda p: p << 1.0),
+                ("+", lambda p: p + 1),
+            ):
+                with self.subTest(label):
+                    with self.assertRaisesRegex(RuntimeError, r"^held\.gone already deleted!$"):
+                        op(plug)
+            # re-added (another type): a new plug, the held one still raises
+            readded = node << Float("gone", at="long")
+            self._assert_owned(readded, node, "gone")
+            with self.assertRaisesRegex(RuntimeError, r"^held\.gone already deleted!$"):
+                plug.get()
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_an_undone_add_and_a_deleted_node(self):
+        # E1
+        node, _ = _owned_spec_scene()
+        cmds.undoInfo(state=True, infinity=True)
+        try:
+            plug = node << Float("undone")
+            cmds.undo()
+            self.assertFalse(cmds.objExists("held.undone"))
+            with self.assertRaisesRegex(ValueError, r"held\.undone"):
+                plug.get()
+            cmds.redo()
+            self.assertIs(plug.node, node)
+            self.assertEqual(plug.get(), 0.0)
+            plug << 2.0
+            self.assertEqual(cmds.getAttr("held.undone"), 2.0)
+            # the node deleted to the undo queue, then undone
+            kept = node << Float("kept")
+            cmds.delete("held")
+            with self.assertRaisesRegex(RuntimeError, r"^held already deleted!$"):
+                kept.get()
+            with self.assertRaisesRegex(RuntimeError, r"^held already deleted!$"):
+                node << Float("more")
+            # a node that took the name is never reached
+            cmds.createNode("transform", name="held")
+            with self.assertRaisesRegex(RuntimeError, r"^held already deleted!$"):
+                str(kept)
+            cmds.undo()
+            cmds.undo()
+            self.assertEqual(kept.get(), 0.0)
+            self._assert_owned(node << Float("more"), node, "more")
+            # a rename: the plug follows its node
+            cmds.rename("held", "renamed")
+            self.assertEqual(str(kept), "renamed.kept")
+            kept << 5.0
+            self.assertEqual(cmds.getAttr("renamed.kept"), 5.0)
+        finally:
+            cmds.undoInfo(state=False)
+
+    def test_a_freed_node(self):
+        # E2: a new scene, a file open that reuses the names, a reference unload
+        folder = tempfile.mkdtemp(prefix="rig_r4a_spec_")
+        path = os.path.join(folder, "held.ma").replace("\\", "/")
+        try:
+            _owned_spec_scene()
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            for label, free in (
+                ("a new scene", lambda: cmds.file(new=True, force=True)),
+                ("a file open that reuses the names", lambda: cmds.file(path, open=True, force=True)),
+            ):
+                with self.subTest(label):
+                    cmds.file(path, open=True, force=True)
+                    node = Node("held")
+                    plug = node << Float("k")
+                    free()
+                    if not cmds.objExists("held"):
+                        cmds.createNode("transform", name="held")  # same-name reuse
+                    before = _scene()
+                    with self.assertRaisesRegex(RuntimeError, _FREED):
+                        node << Float("k2")
+                    for op in (str, lambda p: p.get(), lambda p: p << 1.0):
+                        with self.assertRaisesRegex(RuntimeError, _FREED):
+                            op(plug)
+                    self.assertIs(plug.node, node)
+                    self.assertFalse(cmds.attributeQuery("k2", node="held", exists=True))
+                    self.assertEqual(_new(before), [])
+            # a reference unload
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            node = Node("ref:held")
+            plug = node << Float("k")
+            self.assertEqual(str(plug), "ref:held.k")
+            cmds.file(unloadReference=cmds.referenceQuery(path, referenceNode=True))
+            with self.assertRaisesRegex(RuntimeError, _FREED):
+                node << Float("k2")
+            with self.assertRaisesRegex(RuntimeError, _FREED):
+                plug.get()
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_a_memoized_spec_plug(self):
+        # E9: a memo entry that returned a spec's plug keeps its node's handle
+        _owned_spec_scene()
+        calls = []
+        count = len(memoize_module._ALL_MEMOIZED)
+
+        @memoize
+        def spec_plug(i):
+            calls.append(i)
+            return Node("held") << Float("memo", overwrite=False)
+
+        added = memoize_module._ALL_MEMOIZED[count:]
+        self.addCleanup(
+            lambda: [memoize_module._ALL_MEMOIZED.remove(w) for w in added
+                     if w in memoize_module._ALL_MEMOIZED]
+        )
+        first = spec_plug(0)
+        handles = []
+        memoize_module._collect_handles(first, handles)
+        self.assertEqual(len(handles), 1)
+        self.assertEqual(handles[0].hashCode(), vars(first.node)["_objhandle1"].hashCode())
+        self.assertIs(spec_plug(0), first)
+        self.assertEqual(len(calls), 1)
+        # a new scene frees the node: the entry is dropped, never returned
+        cmds.file(new=True, force=True)
+        cmds.createNode("transform", name="held")
+        again = spec_plug(0)
+        self.assertEqual(len(calls), 2)
+        self.assertIsNot(again, first)
+        self.assertEqual(again.get(), 0.0)
