@@ -1568,7 +1568,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         self.assertEqual(repr(Node.wrap("a")), 'Transform("a")')
         self.assertEqual(
             repr(Transform.wrap(["a", "persp"])),
-            'PlugList([Transform("a"), Transform("persp")])',
+            'List([Transform("a"), Transform("persp")])',
         )
         self.assertEqual(Node.wrap("not_a_node_xyz"), "not_a_node_xyz")
         self.assertEqual(Node.wrap(5.0), 5.0)

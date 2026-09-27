@@ -42,7 +42,7 @@ anything (``t.tx == "cube.ty"``, ``"%s" % t.tx``; see
 :mod:`rig._internal.operands`). Write ``Plug("cube.ty")`` for the plug.
 
 Connection queries are METHODS, not operators -- ``a.get_inputs()`` and
-``a.get_outputs()``, each always a ``PlugList`` (empty when nothing is
+``a.get_outputs()``, each always a ``List`` (empty when nothing is
 wired). Direct connections only: a compound whose children are driven
 reports nothing, so slice it (``a[:].get_inputs()``) to query per-child.
 
@@ -69,7 +69,7 @@ node, whose truth value is the same), so a lookup through a second Plug object
 of the same plug builds nothing, matrices included. A plain ``list`` /
 ``tuple`` scan (``plug in [a, b, plug]``, ``.index``) still compares every
 DIFFERENT plug it passes with the DSL ``==``: an equal node each (and
-``InjectionError`` for matrices); a ``PlugList`` compares without building.
+``InjectionError`` for matrices); a ``List`` compares without building.
 A plug's identity follows the Maya plug: ``Node("|T1|S").v`` and
 ``Node("|T2|S").v``, one plug read through two instance paths, are one key
 (their names still differ, each is named through the path it was read from),
@@ -582,14 +582,15 @@ class Plug(Attribute):
             _disconnect_incoming(self)
             return self
 
-        # Retired connection-query sentinels. '<<' means "receives from", but
-        # a query flows the other way, so the arrow pointed at the wrong end.
-        if other is lazy.list.PlugList or other is Plug:
+        # Retired connection-query sentinels (the List class, formerly
+        # PlugList, or Plug itself on the right). '<<' means "receives from",
+        # but a query flows the other way, so the arrow pointed at the wrong end.
+        if other is lazy.list.List or other is Plug:
             raise TypeError(
-                "'plug << PlugList' has been replaced by 'plug.get_inputs()', "
-                "which always returns a PlugList (empty when nothing drives "
-                "the plug). Use 'plug << PlugList([...])' -- an INSTANCE -- to "
-                "connect."
+                "'plug << List' (formerly PlugList) has been replaced by "
+                "'plug.get_inputs()', which always returns a List (empty when "
+                "nothing drives the plug). Use 'plug << List([...])' -- an "
+                "INSTANCE -- to connect."
             )
 
         # Collection spec: a component plug becomes a member (the spec
@@ -628,9 +629,9 @@ class Plug(Attribute):
         return _to_numpy(super().get(), data_type=dt)
 
     def get_inputs(self) -> Any:
-        """Return the plug driving this one, as a ``PlugList`` of 0 or 1.
+        """Return the plug driving this one, as a ``List`` of 0 or 1.
 
-        Always a ``PlugList`` -- never a bare ``Plug``, never ``None``. A
+        Always a ``List`` -- never a bare ``Plug``, never ``None``. A
         bare-``Plug`` result would answer ``len()`` / ``[0]`` / ``in`` as a
         string, and a ``None`` result fed back into ``<<`` would silently
         disconnect the destination instead of rewiring it.
@@ -642,7 +643,7 @@ class Plug(Attribute):
         return _query_connections(self, source=True)
 
     def get_outputs(self) -> Any:
-        """Return every plug this one drives, as a ``PlugList`` of 0..N.
+        """Return every plug this one drives, as a ``List`` of 0..N.
 
         Same guarantees and same direct-connections-only rule as
         :meth:`get_inputs`.
@@ -684,7 +685,7 @@ class Plug(Attribute):
 
         Anything else => ``TypeError`` (use ``<<`` to connect).
         """
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
         from rig._internal.node import Node
         from rig._internal.types import _is_member_spec
 
@@ -696,12 +697,13 @@ class Plug(Attribute):
         if _is_member_spec(other):
             return other.query(self)
 
-        # Retired connection-query sentinels.
-        if other is PlugList or other is Plug:
+        # Retired connection-query sentinels (the List class, formerly
+        # PlugList, or Plug itself on the right).
+        if other is List or other is Plug:
             raise TypeError(
-                "'plug >> PlugList' has been replaced by "
-                "'plug.get_outputs()', which always returns a PlugList "
-                "(empty when the plug drives nothing)."
+                "'plug >> List' (formerly PlugList) has been replaced by "
+                "'plug.get_outputs()', which always returns a List (empty "
+                "when the plug drives nothing)."
             )
 
         if isinstance(other, Node):

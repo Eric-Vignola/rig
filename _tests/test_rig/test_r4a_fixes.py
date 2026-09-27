@@ -359,7 +359,7 @@ class TestOperandShapes(_SceneCase):
             ],
             "PlugList operator": [
                 ("+ set", lambda: PlugList([t.tx, u.tx]) + {1, 2}, "+ {1, 2}: a set is unordered"),
-                ("reflected + set", lambda: {1, 2} + PlugList([t.tx]), "{1, 2} + PlugList(["),
+                ("reflected + set", lambda: {1, 2} + PlugList([t.tx]), "{1, 2} + List(["),
                 ("== dict", lambda: PlugList([t.tx]) == {"a": 1}, "== {'a': 1}: a dict is a mapping"),
                 ("* frozenset", lambda: PlugList([t.tx]) * frozenset([2]), "a frozenset is unordered"),
             ],
@@ -968,3 +968,92 @@ class TestSamePlugFold(_SceneCase):
                 with self.assertRaisesRegex(RuntimeError, _FREED):
                     call()
         self.assertEqual(_new(before), [])
+
+
+# --------------------------------------------------------------------- #
+#  Step M6: List, with PlugList as its former name (the same class)
+# --------------------------------------------------------------------- #
+
+
+class TestListName(_SceneCase):
+    """``PlugList`` is now ``List``; ``PlugList`` stays as the same class."""
+
+    def test_pluglist_is_list(self):
+        import rig
+        from rig import List as exported, PlugList as former
+        from rig._internal import list as list_module
+
+        self.assertIs(former, exported)
+        self.assertIs(list_module.PlugList, list_module.List)
+        self.assertIs(exported, list_module.List)
+        self.assertIs(rig.List, rig.PlugList)
+        self.assertEqual(exported.__name__, "List")
+        # what the package builds is a List under either name
+        for built in (self.t.t[:], self.t.tx.get_inputs(), PlugList([self.t.tx]) + 1):
+            self.assertIs(type(built), exported)
+            self.assertIsInstance(built, former)
+
+    def test_both_names_are_exported(self):
+        import rig
+
+        self.assertIn("List", rig.__all__)
+        self.assertIn("PlugList", rig.__all__)
+        namespace = {}
+        exec("from rig import *", namespace)
+        self.assertIs(namespace["List"], namespace["PlugList"])
+
+    def test_repr(self):
+        from rig import List
+
+        cmds.createNode("transform", name="a")
+        cmds.createNode("transform", name="b")
+        self.assertEqual(
+            repr(List([Node("a"), Node("b")])), 'List([Transform("a"), Transform("b")])'
+        )
+        self.assertEqual(repr(List([Plug("a.translateX")])), 'List([Plug("a.translateX")])')
+        self.assertEqual(repr(PlugList(["a.tx", 1.5])), 'List([Plug("a.translateX"), 1.5])')
+        self.assertEqual(repr(List()), "List([])")
+        self.assertEqual(repr(Node("a").tx.get_inputs()), "List([])")
+
+    def test_the_retired_sentinels_name_list(self):
+        from rig import List
+
+        plug, items = self.t.tx, List([self.t.tx])
+        before = _scene()
+        for label, call, arrow in (
+            ("plug << List", lambda: plug << List, "<<"),
+            ("plug >> List", lambda: plug >> List, ">>"),
+            ("plug << PlugList", lambda: plug << PlugList, "<<"),
+            ("plug << Plug", lambda: plug << Plug, "<<"),
+            ("plug >> Plug", lambda: plug >> Plug, ">>"),
+            ("list << List", lambda: items << List, "<<"),
+            ("list >> List", lambda: items >> List, ">>"),
+            ("list >> PlugList", lambda: items >> PlugList, ">>"),
+        ):
+            with self.subTest(label):
+                with self.assertRaisesRegex(
+                    TypeError, r"^'<?\w+>? %s List' \(formerly PlugList\) has been replaced" % arrow
+                ):
+                    call()
+        self.assertEqual(_new(before), [])
+        # an INSTANCE still connects
+        self.u.tz << List([self.t.ty])
+        self.assertEqual(cmds.listConnections("u.tz", plugs=True), ["t.translateY"])
+
+    def test_a_missing_value_names_list(self):
+        from rig import List
+
+        with self.assertRaisesRegex(ValueError, r"^Plug\(\"u\.translateX\"\) is not in List$"):
+            List([self.t.tx]).index(self.u.tx)
+        with self.assertRaisesRegex(ValueError, r"^7 is not in List$"):
+            List([1, 2]).remove(7)
+
+    def test_the_generic_alias(self):
+        import types
+        from rig import List
+
+        alias = List[str]
+        self.assertIsInstance(alias, types.GenericAlias)
+        self.assertIs(alias.__origin__, List)
+        self.assertEqual(alias.__args__, (str,))
+        self.assertIs(PlugList[int].__origin__, List)

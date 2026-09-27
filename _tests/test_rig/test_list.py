@@ -35,9 +35,10 @@ class TestPlugListConstruction(MayaTestCase):
         self.assertEqual(pl[2], 42)
 
     def test_repr(self):
+        # the class is List (PlugList is its former name, the same class)
         pl = PlugList([1, 2, 3])
         r  = repr(pl)
-        self.assertIn("PlugList", r)
+        self.assertEqual(r, "List([1, 2, 3])")
 
 
 class TestPlugListAttributeAccess(MayaTestCase):
