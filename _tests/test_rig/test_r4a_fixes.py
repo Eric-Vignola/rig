@@ -3,6 +3,8 @@
 * A rotate order takes one of the six rotate-order names (decision S3 Q1):
   ``"xyz"`` .. ``"zyx"`` map to 0-5 before the function runs, and any other
   str raises TypeError before any node or container is created.
+* ``functions.searchsorted`` checks ``side=`` before it creates its container
+  (decision S3 Q5).
 """
 
 from maya import cmds
@@ -11,6 +13,7 @@ from rig import (
     container,
     euler as E,
     force_nodes,
+    functions as F,
     matrix as M,
     Node,
     PlugList,
@@ -191,6 +194,55 @@ class TestRotateOrderNames(_SceneCase):
         with self.assertRaisesRegex(RuntimeError, _FREED):
             M.decompose(Node("t").worldMatrix[0], rotate_order=held_order)
         self.assertEqual(_scene(), before)
+
+
+class TestSearchsortedSide(_SceneCase):
+    """``side=`` is checked before the searchsorted container is created."""
+
+    def test_both_sides_and_both_return_kinds(self):
+        # the values v2.0.0a2 and round 3 give (tokens 0, 1, 2)
+        expected = {
+            -1:  (0, 0, 0, 0),
+            0.5: (0, 0, 1, 1),
+            1:   (1, 1, 1, 1),
+            1.5: (1, 1, 2, 2),
+            3:   (2, 2, 2, 2),
+        }
+        outs = [
+            F.searchsorted([0, 1, 2], self.t.tx, return_index=index, side=side)
+            for side in ("left", "right")
+            for index in (True, False)
+        ]
+        for query, values in expected.items():
+            with self.subTest(query=query):
+                cmds.setAttr("t.tx", query)
+                self.assertEqual(tuple(cmds.getAttr(str(out)) for out in outs), values)
+
+    def test_a_bad_side_raises_before_the_container(self):
+        scopes = {
+            "top": lambda: _Nothing(),
+            "container": lambda: container("box"),
+            "force_nodes": force_nodes,
+        }
+        for flatten in (True, False):
+            set_options(flatten_containers=flatten)
+            for scope_name, scope in scopes.items():
+                with scope():
+                    for side in ("middle", "", "LEFT", None, self.u.tx):
+                        for index in (True, False):
+                            with self.subTest(flatten=flatten, scope=scope_name, side=side, index=index):
+                                before = cmds.ls()
+                                size = len(F.searchsorted._cache)
+                                with self.assertRaises(ValueError) as ctx:
+                                    F.searchsorted([0, 1, 2], self.t.tx, return_index=index, side=side)
+                                self.assertEqual(
+                                    str(ctx.exception), f"side must be 'left' or 'right'; got {side!r}"
+                                )
+                                self.assertEqual(cmds.ls(), before)
+                                self.assertEqual(len(F.searchsorted._cache), size)
+                if cmds.objExists("box"):
+                    self.assertEqual(cmds.container("box", query=True, nodeList=True) or [], [])
+        self.assertFalse(cmds.ls("searchsorted*"))
 
 
 class _Nothing:

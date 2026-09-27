@@ -514,7 +514,14 @@ def searchsorted(
 
     Returns the insertion index (``return_index=True``) or the matching
     token (``return_index=False``) for ``query`` in a sorted list.
+
+    Raises:
+        ValueError: if ``side`` is not ``"left"`` or ``"right"``, before any
+            node or container is created.
     """
+    # a plug is not a side (and `==` on it would build a node)
+    if isinstance(side, Attribute) or side not in ("left", "right"):
+        raise ValueError(f"side must be 'left' or 'right'; got {side!r}")
     with container("searchsorted1"):
         n      = len(tokens)
         tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
@@ -529,7 +536,7 @@ def searchsorted(
                 for t in tokens[1:]:
                     result = condition(t <= query, i, result)
                     i += 1
-        elif side == "right":
+        else:
             if not return_index:
                 result = tokens[n - 1]
                 for t in list(tokens[: n - 1])[::-1]:
@@ -540,8 +547,6 @@ def searchsorted(
                 for t in list(tokens[: n - 1])[::-1]:
                     result = condition(t >= query, i, result)
                     i -= 1
-        else:
-            raise ValueError(f"side must be 'left' or 'right'; got {side!r}")
         return container.publish_output(result, "output")
 
 
