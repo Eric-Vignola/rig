@@ -1276,7 +1276,7 @@ class TestListStrProbe(_SceneCase):
                 self._assert_misses(probe, items)
         self._assert_finds("P1|X.tx", Node("|P1|X").tx)
 
-    def test_nodes_and_other_elements_keep_their_rule(self):
+    def test_node_elements_match_what_names_them_and_others_keep_their_rule(self):
         cmds.createNode("transform", name="a")
         nodes = List([Node("a"), self.t])
         before = _scene()
@@ -1284,7 +1284,9 @@ class TestListStrProbe(_SceneCase):
         self.assertEqual(nodes.index("t"), 1)
         self.assertEqual(nodes.count("a"), 1)
         self.assertNotIn("a.tx", nodes)
-        self.assertNotIn("|a", nodes)
+        # a str that names the node finds it (as Node(text) == element)
+        self.assertIn("|a", nodes)
+        self.assertNotIn("|nosuch", nodes)
         mixed = List([Node("a"), Node("a").tx])
         self.assertEqual(mixed.index("a"), 0)
         self.assertEqual(mixed.index("a.tx"), 1)
