@@ -1321,7 +1321,7 @@ class _MeshSetPointsCommand:
         self._old_points = None
 
         with load_plugin("undoable_api_command"):
-            cmds.runUndoableAPICommand(self)
+            cmds.rigUndoableAPICommand(self)
 
     def doIt(self) -> None:
         self._old_points = self._fn_set.getPoints(self._space)
@@ -1343,7 +1343,7 @@ class _MeshAddUVSetCommand:
         self._uv_set = uv_set
 
         with load_plugin("undoable_api_command"):
-            cmds.runUndoableAPICommand(self)
+            cmds.rigUndoableAPICommand(self)
 
     def doIt(self) -> None:
         self._fn_set.createUVSet(self._uv_set)
@@ -1374,7 +1374,7 @@ class _MeshSetUVDataCommand:
         self._old_counts = None
 
         with load_plugin("undoable_api_command"):
-            cmds.runUndoableAPICommand(self)
+            cmds.rigUndoableAPICommand(self)
 
     def doIt(self) -> None:
         self._old_u_vals, self._old_v_vals = self._fn_set.getUVs(self._uv_set)

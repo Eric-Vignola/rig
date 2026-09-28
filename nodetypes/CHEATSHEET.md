@@ -1172,17 +1172,20 @@ except RuntimeError as e:
     print(str(e)[:44])                                            # Plug-in, "noSuchPlugin", was not found on MA
 ```
 
-The bundled plug-in registers `runUndoableAPICommand`: hand it any object
-with `doIt` / `undoIt` / `redoIt` and it runs inside one undo chunk. This
-is how `Mesh.set_points`, `Mesh.create` and `SkinCluster.set_weights` get
-their undo.
+The bundled plug-in registers `rigUndoableAPICommand` (a name of rig's
+own): hand it any object with `doIt` / `undoIt` / `redoIt` and it runs
+inside one undo chunk. `cmds` calls made in `doIt` join that step; the ones
+made in `undoIt` / `redoIt` are not recorded. The object is handed over for
+that one call: nothing keeps it once its step leaves the queue. This is how
+`Mesh.set_points`, `Mesh.add_uv_set`, `Mesh.set_uv_data` and
+`SkinCluster.set_weights` get their undo.
 
 ```python
 class MoveX:
     def __init__(self, node, value):
         self.node, self.value, self.old = node, value, None
         with load_plugin("undoable_api_command"):
-            cmds.runUndoableAPICommand(self)
+            cmds.rigUndoableAPICommand(self)
 
     def doIt(self):
         self.old = cmds.getAttr(f"{self.node}.tx")
@@ -1200,6 +1203,9 @@ MoveX(loc, 5.0)
 print(cmds.getAttr("loc.tx"))  # 5.0
 cmds.undo()
 print(cmds.getAttr("loc.tx"))  # 0.0
+cmds.redo()
+print(cmds.getAttr("loc.tx"))  # 5.0
+cmds.undo()
 cmds.redo()
 print(cmds.getAttr("loc.tx"))  # 5.0
 ```
