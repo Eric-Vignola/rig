@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 
 from maya import cmds
-from rig.nodetypes.dg_node import DGNode, PyNode
+from rig.nodetypes._base import _cast
+from rig.nodetypes.dg_node import DGNode
 
 
 class Reference(DGNode):
@@ -73,7 +74,7 @@ class Reference(DGNode):
 
     def get_nodes(self) -> list[DGNode]:
         """Returns all the nodes in this reference."""
-        return [PyNode(x) for x in cmds.referenceQuery(self.name, nodes=True) or []]
+        return [_cast(x) for x in cmds.referenceQuery(self.name, nodes=True) or []]
 
     def delete(self) -> None:
         """Deletes this reference."""

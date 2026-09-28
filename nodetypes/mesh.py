@@ -14,7 +14,8 @@ import numpy as np
 from maya import cmds, mel
 from maya.api import OpenMaya
 from rig.nodetypes._base import Attribute
-from rig.nodetypes.dag_node import DAGNode, PyNode
+from rig.nodetypes._base import _cast
+from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.geometry import Geometry
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
@@ -263,7 +264,7 @@ class Mesh(Geometry):
             )
             if not mat:
                 continue
-            mat = PyNode(mat[0])
+            mat = _cast(mat[0])
             if not as_pairs:
                 nodes.append(mat)
             else:

@@ -8,7 +8,7 @@ from typing import Any
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import PyNode
+from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 
@@ -42,14 +42,14 @@ class ObjectSet(DGNode):
         for each in cmds.sets(self.name, query=True) or []:
             if each.find(".") == -1:
                 if as_components:
-                    result.append((PyNode(each), None))
+                    result.append((_cast(each), None))
                 else:
-                    result.append(PyNode(each))
+                    result.append(_cast(each))
             elif as_components:
                 sel = OpenMaya.MSelectionList()
                 sel.add(each)
                 mdagpath, mobject = sel.getComponent(0)
-                result.append((PyNode(mdagpath), mobject))
+                result.append((_cast(mdagpath), mobject))
 
         return result
 
@@ -89,10 +89,10 @@ class ObjectSet(DGNode):
             if not cmds.objExists(candidate):
                 continue
             if cmds.ls(candidate, type=cls.NATIVE_NODE_TYPE):
-                # PyNode picks the most derived registered class, so a
+                # the cast picks the most derived registered class, so a
                 # shadingEngine comes back as a ShadingEngine, equal to any
                 # other node object of it.
-                return PyNode(candidate)
+                return _cast(candidate)
             node_type = cmds.nodeType(cmds.ls(candidate, long=True)[0])
             raise TypeError(
                 f"'{candidate}' exists and is a {node_type}, not a {cls.NATIVE_NODE_TYPE}"

@@ -28,7 +28,7 @@ from typing import Iterator, Sequence
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import PyNode
+from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.object_set import ObjectSet
@@ -129,7 +129,7 @@ class ShadingEngine(ObjectSet):
         material = cmds.listConnections(
             f"{self.name}.surfaceShader", source=True, destination=False
         )
-        return PyNode(material[0]) if material else None
+        return _cast(material[0]) if material else None
 
     def set_material(self, material: str | DGNode) -> None:
         """Feeds this engine from a material, replacing the previous one.
@@ -179,7 +179,7 @@ class ShadingEngine(ObjectSet):
             if ids is not None and dagpath.hasFn(OpenMaya.MFn.kMesh):
                 if len(ids) == OpenMaya.MFnMesh(dagpath).numPolygons:
                     ids = None
-            result.append((PyNode(dagpath), ids))
+            result.append((_cast(dagpath), ids))
         return result
 
     def assign(

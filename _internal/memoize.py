@@ -173,7 +173,7 @@ def _collect_handles(obj: Any, out: list[OpenMaya1.MObjectHandle]) -> None:
 
     Used when caching a return value so we can later check ``isAlive()`` to
     invalidate dead entries. A plug is any Attribute, a Plug or a typed
-    attribute (``PyNode("a").find_attr("tx")``); its handle is its node's, found
+    attribute (``Node("a").find_attr("tx")``); its handle is its node's, found
     by the node part of its full name. A plug whose node was freed or deleted
     adds nothing.
     """

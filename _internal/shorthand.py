@@ -390,8 +390,8 @@ def _attr_path(plug: Any) -> str:
     # ``plug.name`` returned the NODE name (e.g. ``"b_xform"``), causing
     # the downstream ``if attr in (\"matrix\", \"m\"):`` check to evaluate
     # False and the matrix-to-transform router to bail. The bare-Node case
-    # means \"use the node's t/r/s channels directly.\" A typed node speaks
-    # the DSL too (``PyNode("b") << matrix``).
+    # means \"use the node's t/r/s channels directly.\" Every node object speaks
+    # the DSL (``Node("b") << matrix``).
     if isinstance(plug, (Node, DGNode)):
         return ""
 

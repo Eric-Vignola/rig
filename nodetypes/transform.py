@@ -11,8 +11,8 @@ from typing import Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import Attribute
-from rig.nodetypes.dag_node import DAGNode, PyNode
+from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, Attribute
+from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _typed_creator
 
 LOGGER = logging.getLogger(__name__)
@@ -44,6 +44,18 @@ LEGACY_DATA_TYPES = (
     "vectorArray",
     "pointArray",
 )
+
+
+def _create_nested(node_type: str, **kwargs) -> DAGNode:
+    """A node of ``node_type`` made by `Transform.create_hierarchy`, a typed
+    create, so the create is nested: a registered type runs its class's typed
+    create, any other type is ``cmds.createNode``, cast. It takes neither
+    ``Node.create``'s scope rules (the outer create registers every node the
+    call made, under the hierarchy's own names) nor its ``skipSelect`` default."""
+    node_cls = _NODE_CLASS_DICT.get(node_type)
+    if node_cls is not None:
+        return node_cls.create(**kwargs)
+    return _cast(cmds.createNode(node_type, **kwargs))
 
 
 class Transform(DAGNode):
@@ -471,7 +483,7 @@ class Transform(DAGNode):
 
             # if the parent is not in the hierarchy, add it to compute matrices
             else:
-                obj = PyNode(parent).serialize()
+                obj = _cast(parent).serialize()
                 hierarchy.list.insert(0, obj)
                 for node in hierarchy.get_roots()[1:]:
                     node.set_parent(obj, world_space=world_space)
@@ -493,18 +505,18 @@ class Transform(DAGNode):
                 if node.node_type == "space_transform":
                     """creates a RTR space_transform box """
                     name = node.name
-                    obj  = PyNode(cmds.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
+                    obj  = _cast(cmds.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
                     if parent is not None:
                         cmds.parent(obj.long_name, parent)
                 else:
-                    obj = PyNode.create(node.node_type, name=node, parent=parent)
+                    obj = _create_nested(node.node_type, name=node, parent=parent)
 
             else:
-                obj = PyNode(cmds.spaceLocator(name=node.name)[0])
+                obj = _cast(cmds.spaceLocator(name=node.name)[0])
                 if parent is not None:
                     cmds.parent(obj.long_name, parent)
 
-            # rename the node's string name wiht the PyNode object
+            # rename the node's string name with the node object
             # in case of scene duplicate during parenting.
             node.name = obj
 

@@ -693,7 +693,7 @@ class _ContainerStack:
         Implementation uses raw ``cmds.listConnections`` with a Maya-side
         ``type=`` filter for the per-connection hot path. (Going through
         :meth:`Attribute.find_connected_nodes` cost ~5x more per call due
-        to PyNode wrapping for every connection result + Python-side
+        to the typed cast of every connection result + Python-side
         type filtering + repeated default-excludes set construction.)
 
         Args:
@@ -1177,21 +1177,44 @@ def _typed_create(
     return result
 
 
-def _pynode_create(node_type: str, kwargs: dict) -> Any:
-    """D13b (``_base._PYNODE_CREATE_HOOK``): ``PyNode.create`` of a type with no
-    registered class and no positional args. ``container=`` is consumed.
-    Inside ``with container()``, outside any typed create and unless
-    ``container=False``, the node is made by :meth:`_ContainerStack.createNode`
-    (so both branches of ``PyNode.create`` join the scope); otherwise None, and
-    ``PyNode.create`` runs ``cmds.createNode`` as before."""
-    joins = kwargs.pop("container", None)
-    if (joins is not None and not joins) or _TYPED_DEPTH or not container._stack:
-        return None
-    return container.createNode(node_type, **kwargs)
+# `DGNode.create`, the typed create `Node.create` may add ``skipSelect`` to
+_DG_CREATE = DGNode.create.__func__
+
+
+def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
+    """``Node.create(node_type, *args, **kwargs)`` (``_base._NODE_CREATE_HOOK``;
+    `kwargs` is the call's own dict).
+
+    A type a node class is registered for runs that class's ``create(*args,
+    **kwargs)``: the typed create, which joins an open scope by
+    :func:`_typed_create`'s rules (the registries opt out). ``skipSelect=True``
+    is added first when ``ContainerOptions.skip_selection`` is on, neither
+    ``ss`` nor ``skipSelect`` was given, and the class's create is
+    `DGNode.create` with a ``_create`` that forwards the flag, as
+    :meth:`_ContainerStack.createNode` defaults it. Any other type is
+    :meth:`_ContainerStack.createNode`, which takes no positional argument."""
+    node_cls = _nodetypes_base._NODE_CLASS_DICT.get(node_type)
+    if node_cls is None:
+        if args:
+            raise TypeError(
+                f"Node.create({node_type!r}, ...) takes keyword arguments only: no "
+                f"node class is registered for {node_type!r}, so it is made by "
+                f"createNode (got {len(args)} positional argument(s) after the type)"
+            )
+        return container.createNode(node_type, **kwargs)
+    if (
+        ContainerOptions.skip_selection
+        and "ss" not in kwargs
+        and "skipSelect" not in kwargs
+        and getattr(node_cls.create, "__func__", None) is _DG_CREATE
+        and getattr(node_cls._create, "__func__", None) in _SELECT_FORWARDING
+    ):
+        kwargs["skipSelect"] = True
+    return node_cls.create(*args, **kwargs)
 
 
 _dg_node_module._TYPED_CREATE_HOOK = _typed_create
-_nodetypes_base._PYNODE_CREATE_HOOK = _pynode_create
+_nodetypes_base._NODE_CREATE_HOOK = _node_create
 
 
 def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -> Any:

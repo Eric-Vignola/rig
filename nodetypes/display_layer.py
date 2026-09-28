@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Any
 
 from maya import cmds
-from rig.nodetypes._base import PyNode
+from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 
@@ -107,7 +107,7 @@ class DisplayLayer(DGNode):
         objs = cmds.editDisplayLayerMembers(
             self.name, query=True, fullNames=True, noRecurse=no_recurse
         )
-        return [PyNode(x) for x in objs or []]
+        return [_cast(x) for x in objs or []]
 
     def add_members(self, objects: Any, no_recurse: bool = True) -> None:
         """Adds a list of nodes to this set.

@@ -11,7 +11,7 @@ from typing import Callable, List, Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
-from rig.nodetypes._base import PyNode
+from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.dg_node import get_short_name
@@ -168,7 +168,7 @@ class SkinCluster(Deformer):
 
     def get_influence_objects(self) -> list[DAGNode]:
         """Returns a list of influence objects."""
-        return [PyNode(x) for x in self.fn_set.influenceObjects()]
+        return [_cast(x) for x in self.fn_set.influenceObjects()]
 
     def add_influence_objects(self, infs: INF_TYPE) -> None:
         """Adds influence objects to this skincluster.
