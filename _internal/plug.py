@@ -123,6 +123,10 @@ from rig.spec._base import _clone_attribute
 
 LOGGER = logging.getLogger(__name__)
 
+# The right-hand sides of ``<<`` that are never reshaped (see `_prepared_operand`):
+# numbers, None, plugs and the plain sequences, passed by one isinstance call.
+_NOT_RESHAPED = _SCALARS + (Attribute, list, tuple, np.ndarray, str)
+
 # An attribute name Maya keeps: what ``plug >> "name"`` clones under.
 _ATTR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -611,8 +615,10 @@ class Plug(Attribute):
             return other.apply(self)
 
         # The operand shapes (F14): a set, frozenset or dict raises TypeError
-        # (unordered), an iterator is read into a list.
-        if not isinstance(other, _SCALARS) and isinstance(other, _RESHAPED):
+        # (unordered), an iterator is read into a list. The common right-hand
+        # sides are passed by one isinstance on concrete types, before the
+        # Iterator ABC check.
+        if not isinstance(other, _NOT_RESHAPED) and isinstance(other, _RESHAPED):
             other = _prepared_operand(other, f"{self} << {_render_operand(other)}")
 
         # Type-shorthand (matrix->transform, quat->euler, ...).
