@@ -1,4 +1,4 @@
-"""Container-aware typed creators (round 4a M5: D13, D13b).
+"""Container-aware typed creators (round 4a M5: D13; R2: Node.create).
 
 Inside ``with container()`` a typed create (``Transform.create()``,
 ``Mesh.create(...)``, ``Follicle.create_on_mesh(...)``, ...) joins the scope with
@@ -7,9 +7,9 @@ scope's name prefix on an explicit name, ``skipSelect``, the GC tag under the
 eligibility rule, and every node the call made is registered. Only the
 outermost typed create acts. ``container=False`` opts out; the scene
 registries (display layers, sets and shading engines, references) stay out
-unless ``container=True`` (then registered, never prefixed). ``PyNode.create``
-of an unregistered type goes through ``container.createNode`` inside a scope
-(D13b). Outside a scope nothing changes.
+unless ``container=True`` (then registered, never prefixed). Outside a scope
+nothing changes. ``Node.create`` (R2: PyNode is gone) runs the typed create of a
+registered type and ``container.createNode`` for any other type.
 """
 
 import inspect
@@ -30,7 +30,6 @@ from rig.nodetypes import (
     Joint,
     Mesh,
     ObjectSet,
-    PyNode,
     ShadingEngine,
     SkinCluster,
     Transform,
@@ -88,17 +87,17 @@ class TestTypedCreateInContainer(MayaTestCase):
     def setUp(self):
         super().setUp()
         self._options    = {k: getattr(ContainerOptions, k) for k in _OPTIONS}
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
+        self._registered = dict(_base._NODE_CLASS_DICT)
         cmds.select(clear=True)
 
     def tearDown(self):
         for key, value in self._options.items():
             setattr(ContainerOptions, key, value)
         # drop any class a test registered, then the dispatch it cached
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         cmds.namespace(set=":")
         self.assertEqual(container_module._TYPED_DEPTH, 0)
         self.assertFalse(container.is_active)
@@ -125,7 +124,9 @@ class TestTypedCreateInContainer(MayaTestCase):
 
     def test_hooks_are_installed(self):
         self.assertIs(dg_node_module._TYPED_CREATE_HOOK, container_module._typed_create)
-        self.assertIs(_base._PYNODE_CREATE_HOOK, container_module._pynode_create)
+        self.assertIs(_base._NODE_CREATE_HOOK, container_module._node_create)
+        self.assertFalse(hasattr(container_module, "_pynode_create"))
+        self.assertFalse(hasattr(_base, "_PYNODE_CREATE_HOOK"))
         self.assertTrue(DGNode._CONTAINER_AWARE)
         self.assertTrue(Transform._CONTAINER_AWARE)
         self.assertTrue(SkinCluster._CONTAINER_AWARE)
@@ -226,7 +227,7 @@ class TestTypedCreateInContainer(MayaTestCase):
                                 cmds.file(path, open=True, force=True)
                             typed = Transform.create(name="x")
                             dsl   = Node.create("transform", name="y")
-                            plain = PyNode.create("multiplyDivide", name="m")
+                            plain = Node.create("multiplyDivide", name="m")
                     self.assertEqual(
                         [str(typed), str(dsl), str(plain)], ["inner_x", "inner_y", "inner_m"]
                     )
@@ -265,8 +266,8 @@ class TestTypedCreateInContainer(MayaTestCase):
             Transform.create(name="t")
             Joint.create(name="j")
             md_cls.create(name="md")
-            PyNode.create("transform", name="p")
-            PyNode.create("multiplyDivide", name="m")
+            Node.create("transform", name="p")
+            Node.create("multiplyDivide", name="m")
             self.assertEqual(cmds.ls(selection=True), ["picked"])
             # the caller's flag wins
             Transform.create(name="chosen", skipSelect=False)
@@ -356,9 +357,9 @@ class TestTypedCreateInContainer(MayaTestCase):
         self.assertEqual(_members(outer), ["inner_m", "inner_mShape"])
 
     def test_create_hierarchy_keeps_its_names_and_registers_every_node(self):
-        root  = PyNode.create("joint", name="root_joint")
-        child = PyNode.create("joint", name="child_joint", parent=root)
-        PyNode.create("joint", name="child_joint", parent=child)
+        root  = Node.create("joint", name="root_joint")
+        child = Node.create("joint", name="child_joint", parent=root)
+        Node.create("joint", name="child_joint", parent=child)
         hierarchy = root.serialize_hierarchy()
         expected  = sorted(cmds.ls(type="joint", long=True))
 
@@ -458,13 +459,16 @@ class TestTypedCreateInContainer(MayaTestCase):
             with container("inner"):
                 loose = Transform.create(name="loose", container=False)
                 fol   = Follicle.create_on_mesh(plane, ref, name="fol", container=False)
-                md    = PyNode.create("multiplyDivide", name="md", container=False)
+                md    = Node.create("multiplyDivide", name="md", container=False)
                 kept  = Transform.create(name="kept", container=True)
                 frames = _frame_uuids()
         self.assertEqual(str(loose), "loose")
         self.assertEqual(str(fol), "folShape")
-        self.assertEqual(str(md), "md")
-        self.assertFalse(_tagged(md))
+        # re-pinned (R2): PyNode.create's plain path (D13b) is gone; Node.create
+        # of a type with no class is container.createNode, which keeps the
+        # flattened prefix and the GC tag and only leaves the node unregistered
+        self.assertEqual(str(md), "inner_md")
+        self.assertTrue(_tagged(md))
         for node in (loose, fol, fol.get_parent(), md):
             self.assertIsNone(_owner(node))
             for frame in frames:
@@ -473,7 +477,7 @@ class TestTypedCreateInContainer(MayaTestCase):
         self.assertEqual(_members(outer), ["inner_kept"])
         # consumed outside a scope too
         self.assertEqual(str(Transform.create(name="free", container=False)), "free")
-        self.assertEqual(str(PyNode.create("multiplyDivide", name="fmd", container=False)), "fmd")
+        self.assertEqual(str(Node.create("multiplyDivide", name="fmd", container=False)), "fmd")
 
     # -- 8 cleanup_on_exit -- #
 
@@ -494,41 +498,54 @@ class TestTypedCreateInContainer(MayaTestCase):
         self.assertEqual(str(inner), "inner_keep")
         self.assertTrue(cmds.objExists("inner_keep"))
 
-    # -- 9 PyNode.create -- #
+    # -- 9 Node.create (R2: the former PyNode.create) -- #
 
-    def test_pynode_create_joins_through_both_branches(self):
+    def test_node_create_joins_through_both_branches(self):
         with container("outer") as outer:
             with container("inner"):
-                typed = PyNode.create("transform", name="t")
-                plain = PyNode.create("multiplyDivide", name="md")
+                typed = Node.create("transform", name="t")
+                plain = Node.create("multiplyDivide", name="md")
                 self.assertEqual(cmds.ls(selection=True), [])
         self.assertIs(type(typed), Transform)
         self.assertEqual(str(typed), "inner_t")
         self.assertEqual(str(plain), "inner_md")
-        self.assertIs(type(plain), type(PyNode(cmds.createNode("multiplyDivide"))))
+        self.assertIs(type(plain), type(Node(cmds.createNode("multiplyDivide"))))
         self.assertTrue(_tagged(plain))
         self.assertEqual(_members(outer), ["inner_md", "inner_t"])
-        # outside a scope: cmds.createNode, as before
-        free = PyNode.create("multiplyDivide", name="free")
+        # outside a scope: container.createNode, as Node.create always did (the
+        # GC tag, no selection; PyNode.create's plain cmds.createNode is gone)
+        cmds.select(clear=True)
+        free = Node.create("multiplyDivide", name="free")
         self.assertEqual(str(free), "free")
-        self.assertFalse(_tagged(free))
+        self.assertTrue(_tagged(free))
+        self.assertEqual(cmds.ls(selection=True), [])
 
-    def test_pynode_create_inside_a_typed_create_is_nested(self):
+    def test_node_create_inside_a_typed_create(self):
         class _Rig(Transform):
             @classmethod
             @_typed_creator
             def build(cls, name=None):
-                PyNode.create("multiplyDivide", name="deep")
+                Node.create("multiplyDivide", name="deep")
+                Node.create("transform", name="deep_t")
                 return cls.create(name=name)
 
         with container("outer") as outer:
             with container("inner"):
+                # the container's hyperLayout exists before the typed create (a
+                # first add inside a tracked create registers the hyperLayout
+                # it makes as a member, as at R1)
+                Node.create("transform", name="first")
                 top = _Rig.build(name="top")
         self.assertEqual(str(top), "inner_top")
-        # the inner creates are nested: no prefix, tracked by the outer one
-        self.assertTrue(cmds.objExists("deep"))
-        self.assertFalse(_tagged("deep"))
-        self.assertEqual(_members(outer), ["deep", "inner_top"])
+        # a registered type is a typed create, so it is nested: no prefix,
+        # tracked by the outer one
+        self.assertTrue(cmds.objExists("deep_t"))
+        # a type with no class is container.createNode, which joins the scope
+        # itself (prefix, GC tag), as Node.create always did (R2: the nested
+        # plain path of PyNode.create, D13b, is gone)
+        self.assertFalse(cmds.objExists("deep"))
+        self.assertTrue(_tagged("inner_deep"))
+        self.assertEqual(_members(outer), ["deep_t", "inner_deep", "inner_first", "inner_top"])
 
     # -- 10 neutral scopes -- #
 

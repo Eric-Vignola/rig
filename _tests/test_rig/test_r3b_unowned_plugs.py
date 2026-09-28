@@ -19,7 +19,7 @@ from unittest import mock
 from maya import cmds, OpenMaya as om1
 from maya.api import OpenMaya
 from rig import lift, List, Node, Plug
-from rig.nodetypes import PyNode, _base
+from rig.nodetypes import _base
 from rig.nodetypes._base import Attribute
 from rig._internal import plug as plug_module
 from rig._internal.plug import ComponentPlug
@@ -78,8 +78,8 @@ def _unowned(prefix):
         "Plug(component str)":        (Plug(f"{prefix}pcShape.vtx[1]"), f"{prefix}pcShape"),
         "Attribute(str)":             (Attribute(f"{held}.ty"), held),
         "Attribute(MPlug)":           (Attribute(_mplug(f"{held}.ty")), held),
-        "PyNode(str)":                (PyNode(f"{held}.ty"), held),
-        "PyNode(MPlug)":              (PyNode(_mplug(f"{held}.ty")), held),
+        "cast core(str)":             (_base._cast(f"{held}.ty"), held),
+        "cast core(MPlug)":           (_base._cast(_mplug(f"{held}.ty")), held),
         "lift(str)":                  (lift(f"{held}.ty"), held),
         "List(str)[0]":               (List([f"{held}.ty"])[0], held),
         "Plug child by name":         (Plug(f"{held}.t").translateY, held),
@@ -96,7 +96,7 @@ def _unowned(prefix):
         "typed element physical 0":   (Attribute(f"{pma}.input1D").element_by_physical_index(0), pma),
         "typed get_parent":           (Attribute(f"{held}.tx").get_parent(), held),
         "spec apply":                 (Node(held) << Float("added"), held),
-        "find_alias":                 (PyNode(held).find_alias("hoist"), held),
+        "find_alias":                 (Node(held).find_alias("hoist"), held),
         "attr of the shape":          (Node(f"{prefix}pc").worldMesh, f"{prefix}pcShape"),
         "get_inputs()[0]":            (Plug(f"{held}.tx").get_inputs()[0], f"{prefix}src"),
         "get_connected_attrs()[0]":   (Attribute(f"{held}.tx").get_connected_attrs(src=True, dst=False)[0], f"{prefix}src"),
@@ -159,7 +159,7 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
         # node finds and a spec applied to a node never make it
         _build()
         node  = Node("held")
-        typed = PyNode("held")
+        typed = Node("held")
         cmds.sphere(name="sphere", constructionHistory=False)
         surface = Node("sphereShape")
         with mock.patch.object(_base, "_node_handle", wraps=_base._node_handle) as spy:
@@ -209,7 +209,7 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
         kept = node << Float("kept")
         self.assertIs(vars(kept)["_node"], node)
         self.assertIsNone(vars(kept)["_handle1"])
-        typed = PyNode("held")
+        typed = Node("held")
         self.assertIs(vars(typed.find_alias("hoist"))["_handle1"], typed._objhandle1)
 
     def test_a_name_that_resolves_to_no_node_takes_no_handle(self):
@@ -363,7 +363,7 @@ class TestUnownedPlugsOfADeletedNodeRaise(MayaTestCase):
                     "Plug(str)":        Plug(f"{name}.{attr}"),
                     "Plug(MPlug)":      Plug(_mplug(f"{name}.{attr}")),
                     "Attribute(str)":   Attribute(f"{name}.{attr}"),
-                    "PyNode(MPlug)":    PyNode(_mplug(f"{name}.{attr}")),
+                    "cast core(MPlug)": _base._cast(_mplug(f"{name}.{attr}")),
                 }
                 hashes = {label: hash(plug) for label, plug in plugs.items()}
                 for plug in plugs.values():

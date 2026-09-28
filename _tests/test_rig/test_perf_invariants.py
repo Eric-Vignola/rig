@@ -1,5 +1,5 @@
-"""Invariants the performance work must keep: ``PyNode`` dispatch through the
-per-type class cache picks the same class, raises the same errors and follows
+"""Invariants the performance work must keep: the typed cast's dispatch through
+the per-type class cache picks the same class, raises the same errors and follows
 new class registrations like the name-based path does. A cast that skips the
 type check builds the same node object as the constructor, and the node a plug
 caches when it is first named behaves as before. ``Attribute.set`` passes the
@@ -28,13 +28,14 @@ from unittest import mock
 from maya import cmds
 from maya.api import OpenMaya
 from rig import Container, InjectionError, Node, Plug, lock
-from rig.nodetypes import Choice, DAGNode, DGNode, Joint, PyNode, Transform
+from rig.nodetypes import Choice, DAGNode, DGNode, Joint, Transform
 from rig.nodetypes import _base
 from rig.nodetypes import dg_node as dg_node_module
 from rig.nodetypes._base import (
     CUSTOM_TYPE_ATTR,
+    _cast,
+    _cast_by_name,
     _mobject_to_str,
-    _pynode_legacy_tail,
     get_custom_type,
     is_valid_maya_uid,
     set_custom_type,
@@ -70,19 +71,19 @@ def _holds_freed_node(plug):
     return handle is not None and not handle.isAlive()
 
 
-class TestPyNodeDispatch(MayaTestCase):
+class TestCastDispatch(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def setUp(self):
         super().setUp()
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
+        self._registered = dict(_base._NODE_CLASS_DICT)
 
     def tearDown(self):
         # drop any class a test registered, then the dispatch it cached
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def _sweep_scene(self):
@@ -141,51 +142,49 @@ class TestPyNodeDispatch(MayaTestCase):
         cmds.addAttr(jnt, longName="foo", dataType="string")
         cmds.setAttr(f"{jnt}.foo", "transform", type="string")
         cmds.aliasAttr(CUSTOM_TYPE_ATTR, f"{jnt}.foo")
-        self.assertIs(type(PyNode(jnt)), Transform)
+        self.assertIs(type(Node(jnt)), Transform)
         self.assertEqual(get_custom_type(jnt), "transform")
 
-        expected = type(_pynode_legacy_tail(PyNode, jnt))
+        expected = type(_cast_by_name(jnt))
         self.assertIs(expected, Transform)
         for obj in (jnt, _mobject(jnt), OpenMaya.MDagPath.getAPathTo(_mobject(jnt))):
-            with mock.patch.object(
-                _base, "_pynode_legacy_tail", wraps=_pynode_legacy_tail
-            ) as legacy:
-                self.assertIs(type(PyNode(obj)), expected)
+            with mock.patch.object(_base, "_cast_by_name", wraps=_cast_by_name) as legacy:
+                self.assertIs(type(Node(obj)), expected)
             self.assertEqual(legacy.call_count, 1)
 
         plain = cmds.createNode("joint", name="plain")
-        self.assertIs(type(PyNode(plain)), Joint)
+        self.assertIs(type(Node(plain)), Joint)
         self.assertIsNone(get_custom_type(plain))
 
     def test_new_node_class_invalidates_dispatch_cache(self):
         node = cmds.createNode("multiplyDivide", name="md1")
-        self.assertIs(type(PyNode(node)), DGNode)
-        self.assertIs(type(PyNode(_mobject(node))), DGNode)
-        self.assertTrue(PyNode._CLASS_BY_TYPE)
+        self.assertIs(type(Node(node)), DGNode)
+        self.assertIs(type(Node(_mobject(node))), DGNode)
+        self.assertTrue(_base._CLASS_BY_TYPE)
 
         class _MultiplyDivide(DGNode):
             NATIVE_NODE_TYPE = "multiplyDivide"
 
-        self.assertFalse(PyNode._CLASS_BY_TYPE)
-        self.assertFalse(PyNode._CASTABLE_TYPES)
-        self.assertIs(type(PyNode(node)), _MultiplyDivide)
-        self.assertIs(type(PyNode(_mobject(node))), _MultiplyDivide)
+        self.assertFalse(_base._CLASS_BY_TYPE)
+        self.assertFalse(_base._CASTABLE_TYPES)
+        self.assertIs(type(Node(node)), _MultiplyDivide)
+        self.assertIs(type(Node(_mobject(node))), _MultiplyDivide)
 
     def test_set_custom_type_after_wrap_redispatches(self):
         class _CustomTransform(Transform):
             CUSTOM_NODE_TYPE = "perfInvariantsCustom"
 
         xform = cmds.createNode("transform", name="xform")
-        self.assertIs(type(PyNode(xform)), Transform)
-        self.assertIs(type(PyNode(_mobject(xform))), Transform)
+        self.assertIs(type(Node(xform)), Transform)
+        self.assertIs(type(Node(_mobject(xform))), Transform)
 
         set_custom_type(xform, "perfInvariantsCustom")
-        self.assertIs(type(PyNode(xform)), _CustomTransform)
-        self.assertIs(type(PyNode(_mobject(xform))), _CustomTransform)
-        self.assertIs(type(PyNode(cmds.ls(xform, uuid=True)[0])), _CustomTransform)
+        self.assertIs(type(Node(xform)), _CustomTransform)
+        self.assertIs(type(Node(_mobject(xform))), _CustomTransform)
+        self.assertIs(type(Node(cmds.ls(xform, uuid=True)[0])), _CustomTransform)
 
         other = cmds.createNode("transform", name="other")
-        self.assertIs(type(PyNode(other)), Transform)
+        self.assertIs(type(Node(other)), Transform)
 
     def test_dispatch_equivalence_sweep(self):
         names = self._sweep_scene()
@@ -202,38 +201,39 @@ class TestPyNodeDispatch(MayaTestCase):
 
         for label in ("cold", "warm"):
             if label == "cold":
-                PyNode._CLASS_BY_TYPE.clear()
+                _base._CLASS_BY_TYPE.clear()
             for obj, legacy_name in inputs:
                 with self.subTest(cache=label, obj=legacy_name, kind=type(obj).__name__):
                     self.assertEqual(
-                        _outcome(PyNode, obj),
-                        _outcome(_pynode_legacy_tail, PyNode, legacy_name),
+                        _outcome(_cast, obj),
+                        _outcome(_cast_by_name, legacy_name),
                     )
 
     def test_warm_dispatch_makes_no_name_queries(self):
         node = cmds.createNode("multiplyDivide", name="md1")
-        PyNode(node)
+        Node(node)
         probes = [
             mock.patch.object(cmds, name, wraps=getattr(cmds, name))
             for name in ("ls", "nodeType", "attributeQuery")
         ]
         mocks = [probe.start() for probe in probes]
         try:
-            self.assertIs(type(PyNode(node)), DGNode)
-            self.assertIs(type(PyNode(_mobject(node))), DGNode)
+            self.assertIs(type(Node(node)), DGNode)
+            self.assertIs(type(Node(_mobject(node))), DGNode)
         finally:
             for probe in probes:
                 probe.stop()
         self.assertEqual([m.call_count for m in mocks], [0, 0, 0])
 
-    def test_pynode_error_messages_unchanged(self):
+    def test_cast_error_messages_unchanged(self):
         cmds.createNode("transform", name="dup")
         cmds.createNode("transform", name="dup", parent=cmds.createNode("transform"))
         for name in ("nope", "dup", "", "|", "du*"):
             with self.subTest(name=name):
-                expected = _outcome(_pynode_legacy_tail, PyNode, name)
+                expected = _outcome(_cast_by_name, name)
                 self.assertEqual(expected[0], "error")
-                self.assertEqual(_outcome(PyNode, name), expected)
+                self.assertEqual(_outcome(_cast, name), expected)
+                self.assertEqual(_outcome(Node, name), expected)
 
         for unknown in (
             "DEADBEEF-0000-4000-8000-000000000000",
@@ -242,38 +242,38 @@ class TestPyNodeDispatch(MayaTestCase):
             with self.subTest(uid=unknown):
                 self.assertTrue(is_valid_maya_uid(unknown))
                 with self.assertRaises(TypeError) as ctx:
-                    PyNode(unknown)
+                    Node(unknown)
                 self.assertEqual(
                     str(ctx.exception), f"No object matches uuid: {unknown}."
                 )
 
     def test_deleted_node_mobject_casts_by_name(self):
         cmds.undoInfo(state=True, infinity=True)
-        PyNode(_mobject(cmds.createNode("multiplyDivide")))
+        Node(_mobject(cmds.createNode("multiplyDivide")))
         held = _mobject(cmds.createNode("multiplyDivide", name="foo"))
         cmds.delete("foo")
         self.assertEqual(
-            _outcome(PyNode, held),
+            _outcome(_cast, held),
             ("error", TypeError, "No object matches name: foo"),
         )
         cmds.createNode("transform", name="foo")
-        self.assertEqual(_outcome(PyNode, held), ("ok", Transform, "foo"))
+        self.assertEqual(_outcome(_cast, held), ("ok", Transform, "foo"))
 
         # a deleted node's type never caches the class of the node that took
         # its name
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         held = _mobject(cmds.createNode("multiplyDivide", name="bar"))
         cmds.delete("bar")
         cmds.createNode("transform", name="bar")
-        self.assertEqual(_outcome(PyNode, held), ("ok", Transform, "bar"))
+        self.assertEqual(_outcome(_cast, held), ("ok", Transform, "bar"))
         fresh = cmds.createNode("multiplyDivide", name="fresh")
-        self.assertEqual(_outcome(PyNode, fresh), ("ok", DGNode, "fresh"))
-        self.assertEqual(_outcome(PyNode, _mobject(fresh)), ("ok", DGNode, "fresh"))
+        self.assertEqual(_outcome(_cast, fresh), ("ok", DGNode, "fresh"))
+        self.assertEqual(_outcome(_cast, _mobject(fresh)), ("ok", DGNode, "fresh"))
 
     def test_undone_node_dag_path_casts_by_name(self):
         cmds.undoInfo(state=True, infinity=True)
-        PyNode(cmds.createNode("transform"))
+        Node(cmds.createNode("transform"))
         cmds.undoInfo(openChunk=True)
         cmds.createNode("transform", name="undoneT")
         cmds.undoInfo(closeChunk=True)
@@ -284,19 +284,19 @@ class TestPyNodeDispatch(MayaTestCase):
         cmds.undo()
         for obj in (path, held):
             self.assertEqual(
-                _outcome(PyNode, obj),
+                _outcome(_cast, obj),
                 ("error", TypeError, "No object matches name: undoneT"),
             )
 
     def test_deleted_joint_mobject_casts_the_node_that_took_its_name(self):
         cmds.undoInfo(state=True, infinity=True)
-        PyNode(_mobject(cmds.createNode("joint")))
+        Node(_mobject(cmds.createNode("joint")))
         jnt  = cmds.createNode("joint", name="foo")
         held = _mobject(jnt)
         plug = OpenMaya.MFnDependencyNode(held).findPlug("translateX", False)
         cmds.delete(jnt)
         cmds.createNode("transform", name="foo")
-        self.assertEqual(_outcome(PyNode, held), ("ok", Transform, "foo"))
+        self.assertEqual(_outcome(_cast, held), ("ok", Transform, "foo"))
         # re-pinned (round 3b review): a plug built from an MPlug of a node
         # deleted to the undo queue can take no handle of it (a deleted node is
         # not found by name), so it raises the deleted node's "already
@@ -327,13 +327,13 @@ class TestCheckedTypeConstruction(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
+        self._registered = dict(_base._NODE_CLASS_DICT)
 
     def tearDown(self):
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def test_checked_type_cast_matches_constructor(self):
@@ -364,8 +364,8 @@ class TestCheckedTypeConstruction(MayaTestCase):
         for name in cmds.ls(names, long=True):
             with self.subTest(node=name):
                 mobj  = _mobject(name)
-                first = PyNode(mobj)
-                again = PyNode(mobj)
+                first = Node(mobj)
+                again = Node(mobj)
                 built = type(first)(_mobject_to_str(mobj))
                 self.assertEqual(_node_state(again), _node_state(built))
                 self.assertEqual(_node_state(again), _node_state(first))
@@ -376,14 +376,14 @@ class TestCheckedTypeConstruction(MayaTestCase):
             with self.subTest(node_type=node_type):
                 first = cmds.createNode(node_type)
                 other = cmds.createNode(node_type)
-                PyNode(_mobject(first))
+                Node(_mobject(first))
                 probes = [
                     mock.patch.object(cmds, name, wraps=getattr(cmds, name))
                     for name in ("nodeType", "objectType", "attributeQuery")
                 ]
                 mocks = [probe.start() for probe in probes]
                 try:
-                    self.assertIs(type(PyNode(_mobject(other))), cls)
+                    self.assertIs(type(Node(_mobject(other))), cls)
                 finally:
                     for probe in probes:
                         probe.stop()
@@ -391,13 +391,13 @@ class TestCheckedTypeConstruction(MayaTestCase):
 
     def test_first_cast_of_a_type_runs_the_constructor(self):
         xform = cmds.createNode("transform")
-        PyNode(_mobject(xform))
-        PyNode._CASTABLE_TYPES.clear()
+        Node(_mobject(xform))
+        _base._CASTABLE_TYPES.clear()
         with mock.patch.object(cmds, "nodeType", wraps=cmds.nodeType) as node_type:
-            self.assertIs(type(PyNode(_mobject(xform))), Transform)
+            self.assertIs(type(Node(_mobject(xform))), Transform)
         self.assertGreater(node_type.call_count, 0)
         with mock.patch.object(cmds, "nodeType", wraps=cmds.nodeType) as node_type:
-            self.assertIs(type(PyNode(_mobject(xform))), Transform)
+            self.assertIs(type(Node(_mobject(xform))), Transform)
         self.assertEqual(node_type.call_count, 0)
 
     def test_class_with_its_own_constructor_or_type_check_runs_them(self):
@@ -425,7 +425,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
             with self.subTest(node_type=node_type):
                 nodes = [cmds.createNode(node_type) for _ in range(2)]
                 for name in nodes + nodes:
-                    self.assertIs(type(PyNode(_mobject(name))), cls)
+                    self.assertIs(type(Node(_mobject(name))), cls)
                 self.assertEqual(getattr(cls, counter), 4)
 
     def test_plug_name_tracks_rename_reparent_namespace_instance(self):
@@ -465,7 +465,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
         cmds.undoInfo(state=True, infinity=True)
         for node_type, attr in (("multiplyDivide", "input1X"), ("transform", "tx")):
             with self.subTest(node_type=node_type):
-                PyNode(_mobject(cmds.createNode(node_type)))
+                Node(_mobject(cmds.createNode(node_type)))
                 name  = cmds.createNode(node_type, name=f"gone_{node_type}")
                 named = Plug(f"{name}.{attr}")
                 fresh = Plug(named.plug)
@@ -514,7 +514,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
         from rig.nodetypes._base import _node_serial
 
         def hash_code(node_name):
-            return _node_serial(PyNode(node_name))
+            return _node_serial(Node(node_name))
 
         md  = cmds.createNode("multiplyDivide", name="md1")
         grp = cmds.createNode("transform", name="grp")
@@ -1297,28 +1297,29 @@ class TestPlugNodeReuse(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
+        self._registered = dict(_base._NODE_CLASS_DICT)
 
     def tearDown(self):
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def _casts(self, func):
-        """The ``PyNode`` casts ``Attribute.node`` makes while ``func`` runs (the
-        ``Node`` factory calls the cast core ``_cast`` itself, round 4a M4B)."""
+        """The typed casts made while ``func`` runs: calls of the module global
+        ``_base._cast``, the one cast core, which ``Attribute.node``'s lazy cast
+        and the ``Node`` factory both call (R2)."""
         # re-pinned (round 4a M4, C8): Plug.node is gone, the lazy cast is
         # Attribute.node's, through the nodetypes._base global
-        cast = mock.Mock(side_effect=PyNode)
-        with mock.patch.object(_base, "PyNode", cast):
+        cast = mock.Mock(side_effect=_cast)
+        with mock.patch.object(_base, "_cast", cast):
             func()
         return cast.call_count
 
     def _known_type(self, node_type):
-        """A new node of a type ``PyNode`` already cast from an MObject."""
-        PyNode(_mobject(cmds.createNode(node_type)))
+        """A new node of a type the cast already cast from an MObject."""
+        Node(_mobject(cmds.createNode(node_type)))
         return cmds.createNode(node_type)
 
     def test_lookup_child_and_element_plugs_share_the_node(self):
@@ -1356,25 +1357,25 @@ class TestPlugNodeReuse(MayaTestCase):
 
     def test_first_plug_on_a_type_makes_no_cast(self):
         # the owner rule (round 3, D-A): the first plug on a type casts nothing
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         node = Node(cmds.createNode("multiplyDivide"))
         plug = node.input1X
         # the plug holds the node it was read from, so naming it casts nothing
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         self.assertEqual(self._casts(lambda: str(plug)), 0)
         self.assertEqual(self._casts(lambda: str(node.input1Y)), 0)
 
     def test_instanced_shape_plug_not_seeded(self):
         top = cmds.createNode("transform", name="T1")
-        PyNode(_mobject(cmds.createNode("transform", name="S", parent=top)))
+        Node(_mobject(cmds.createNode("transform", name="S", parent=top)))
         other = cmds.createNode("transform", name="T2")
         cmds.parent("T1|S", other, add=True, relative=True)
         # Owner rule (C3): a plug holds the node it was read from, so building
         # and naming it casts nothing, and it is named through that path.
         # re-pinned (round 4a M4, C8): the Node factory casts through the same
-        # PyNode global, so the node is built outside the counted call
+        # _cast global (R2), so the node is built outside the counted call
         held_t2 = Node("|T2|S")
         for attr, lookup in (
             ("visibility", lambda: held_t2.visibility),
@@ -1439,8 +1440,8 @@ class TestPlugNodeReuse(MayaTestCase):
         points = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
         curve  = cmds.curve(point=points, name="crv")
         shape  = cmds.listRelatives(curve, shapes=True)[0]
-        PyNode(_mobject(curve))
-        PyNode(_mobject(shape))
+        Node(_mobject(curve))
+        Node(_mobject(shape))
         plug = Node(curve).controlPoints
         self.assertEqual(str(plug), f"{shape}.controlPoints")
         self.assertEqual(plug.node.name, shape)
@@ -1458,7 +1459,7 @@ class TestPlugNodeReuse(MayaTestCase):
     def test_container_plug_node_is_the_container(self):
         # the owner rule (round 3, D-A): the plug's node is the Container it was
         # read from
-        PyNode(_mobject(cmds.container(name="box0")))
+        Node(_mobject(cmds.container(name="box0")))
         ctn  = Container(cmds.container(name="box"))
         plug = ctn.blackBox
         self.assertEqual(self._casts(lambda: str(plug)), 0)
@@ -1469,7 +1470,7 @@ class TestPlugNodeReuse(MayaTestCase):
         base   = cmds.polyCube(name="base")[0]
         target = cmds.polyCube(name="target")[0]
         bs     = cmds.blendShape(target, base, name="bs")[0]
-        PyNode(_mobject(bs))
+        Node(_mobject(bs))
         for plug in (Node(bs).weight[0], Node(bs).w[0], Node(bs).weight[0:1][0]):
             with self.subTest(plug=plug.name):
                 self.assertEqual(self._casts(lambda: str(plug)), 0)
@@ -1570,7 +1571,7 @@ class TestPlugNodeReuse(MayaTestCase):
 
         cube  = cmds.polyCube(name="gc")[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
-        PyNode(_mobject(shape))
+        Node(_mobject(shape))
         mesh  = Node(shape)
         local = (mesh >> None).local_shape_attr
         self.assertIs((mesh.outMesh.node >> None).local_shape_attr, local)
@@ -1598,15 +1599,15 @@ class TestCachedAttributeOwner(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def tearDown(self):
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def test_cached_attr_keeps_the_node_it_was_read_from(self):
         cmds.undoInfo(state=True, infinity=True)
         for node_type, attr in (("multiplyDivide", "input1X"), ("transform", "tx")):
             with self.subTest(node_type=node_type):
-                PyNode(_mobject(cmds.createNode(node_type)))
+                Node(_mobject(cmds.createNode(node_type)))
                 name = cmds.createNode(node_type, name=f"held_{node_type}")
                 node = Node(name)
                 getattr(node, attr)
@@ -1629,7 +1630,7 @@ class TestCachedAttributeOwner(MayaTestCase):
         # the owner rule (round 3, D-A): the cached attr is named through the
         # path the node was read from (T2), not the first
         top = cmds.createNode("transform", name="T1")
-        PyNode(_mobject(cmds.createNode("locator", name="S", parent=top)))
+        Node(_mobject(cmds.createNode("locator", name="S", parent=top)))
         cmds.instance(top, name="T2")
         node = Node("|T2|S")
         node.visibility
@@ -2002,14 +2003,14 @@ class TestFallbackQueryReuse(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
+        self._registered = dict(_base._NODE_CLASS_DICT)
 
     def tearDown(self):
         # drop any class a test registered, then the dispatch it cached
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def _data_type(self, plug):
@@ -2105,7 +2106,7 @@ class TestFallbackQueryReuse(MayaTestCase):
             self.assertIsNone(_base._queried_data_type(attr, node))
         # the hook called outside data_type queries the type itself
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
-            self.assertEqual(PyNode("pick")._attr_data_type_fallback(attr), "Tdata")
+            self.assertEqual(Node("pick")._attr_data_type_fallback(attr), "Tdata")
         self.assertEqual(len(_attr_type_queries(probe)), 1)
 
     def test_hook_error_restores_state(self):
@@ -2136,8 +2137,8 @@ class TestFallbackQueryReuse(MayaTestCase):
         ):
             cmds.createNode("choice", name=name)
             set_custom_type(name, custom)
-        self.assertIs(type(PyNode("connecting")), _ConnectingChoice)
-        self.assertIs(type(PyNode("plain")), _PlainChoice)
+        self.assertIs(type(Node("connecting")), _ConnectingChoice)
+        self.assertIs(type(Node("plain")), _PlainChoice)
         self.assertEqual(self._data_type(Plug("connecting.input[2]")), ("double3", 2))
         self.assertEqual(self._data_type(Plug("plain.input[2]")), ("Tdata", 2))
 
@@ -2184,7 +2185,7 @@ class TestFallbackQueryReuse(MayaTestCase):
 
         # a hook set on one node instance, owned directly or through a Node
         attr = _base.Attribute("net2.generic")
-        attr._node = PyNode("net2")
+        attr._node = Node("net2")
         plug = _named(Plug("net3.generic"))
         for owned, owner in ((attr, attr._node), (plug, plug.node)):
             with self.subTest(owner=type(owned).__name__):
@@ -2201,7 +2202,7 @@ class TestFallbackQueryReuse(MayaTestCase):
 
         # unpatched, both kinds of owner reuse the query again
         attr = _base.Attribute("net4.generic")
-        attr._node = PyNode("net4")
+        attr._node = Node("net4")
         self.assertEqual(self._data_type(attr), ("Tdata", 1))
         self.assertEqual(self._data_type(Plug("net5.generic")), ("Tdata", 1))
 
@@ -2303,7 +2304,7 @@ def _name_raises():
     cmds.createNode("transform", name="w")
     cmds.addAttr("w", longName="name", dataType="string")
     node = object.__new__(_NameRaises)
-    node.__dict__.update(PyNode(_mobject("w")).__dict__)
+    node.__dict__.update(Node(_mobject("w")).__dict__)
     plug = Plug("w.tx")
     plug.__dict__["_node"] = Node(node)
     return plug
@@ -2410,7 +2411,7 @@ def _fn_set_full_name(plug):
     """The name of ``plug`` read without ``full_name``, ``name`` or ``alias``: its
     owner's fn set name (the cast of its MPlug's node when it holds none) and the
     MPlug's partial name."""
-    owner = plug.__dict__["_node"] or PyNode(plug.__dict__["_mplug"].node())
+    owner = plug.__dict__["_node"] or Node(plug.__dict__["_mplug"].node())
     fn    = owner.__dict__["_fn_set"]
     name  = fn.partialPathName() if isinstance(fn, OpenMaya.MFnDagNode) else fn.name()
     attr  = plug.__dict__["_mplug"].partialName(False, False, False, True, False, True)
@@ -2422,15 +2423,15 @@ class TestFullNameReadsTheOwner(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
+        self._registered = dict(_base._NODE_CLASS_DICT)
 
     def tearDown(self):
         if cmds.attributeQuery("perfConnect", type="plusMinusAverage", exists=True):
             _delete_extension()
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def _scene(self):

@@ -2,7 +2,7 @@ import logging
 
 import maya.cmds as cmds
 from maya.api import OpenMaya
-from rig.nodetypes import PyNode
+from rig.nodetypes import Node
 from rig._tests._base import MayaTestCase
 
 LOGGER = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ class TestAttributeClass(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        self.node = PyNode.create("transform", name="test_xform")
+        self.node = Node.create("transform", name="test_xform")
 
     def test_creation_and_properties(self):
         for typ, data in TYPE_DICT.items():
@@ -227,7 +227,7 @@ class TestAttributeClass(MayaTestCase):
             self.assertFalse(attr.is_connected)
 
     def test_set_attrs(self):
-        xform = PyNode(cmds.polyCube(ch=False)[0])
+        xform = Node(cmds.polyCube(ch=False)[0])
         data = {
             "tx": 1,
             "ty": 2,
@@ -242,8 +242,8 @@ class TestAttributeClass(MayaTestCase):
         self.assertEqual(xform.find_attr("t").get()[0], (10, 20, 30))
 
     def test_slicing(self):
-        camera = PyNode("persp")
-        pma    = PyNode.create("plusMinusAverage")
+        camera = Node("persp")
+        pma    = Node.create("plusMinusAverage")
         camera.find_attr("t") >> pma.find_attr("input3D")[0]
         camera.find_attr("t") >> pma.find_attr("input3D")[1]
         camera.find_attr("t") >> pma.find_attr("input3D")[2]
@@ -253,11 +253,11 @@ class TestAttributeClass(MayaTestCase):
     # TODO: create a Component class and move tests there
     def test_component_types(self):
         obj = cmds.polyCube()[0]
-        obj = PyNode(obj)
+        obj = Node(obj)
         self.assertEqual(obj.t._component_type, "unknown")
         self.assertEqual(obj.tx._component_type, "unknown")
 
-        obj = PyNode(cmds.listHistory(obj)[0])
+        obj = Node(cmds.listHistory(obj)[0])
         self.assertEqual(obj.pnts._component_type,    "kMeshVertComponent")
         self.assertEqual(obj.pnts[0]._component_type, "kMeshVertComponent")
         self.assertEqual(len(obj.pnts[:]),            8)  # 8
@@ -285,7 +285,7 @@ class TestAttributeClass(MayaTestCase):
         lattice = cmds.lattice(nurbs)[1]
 
         for i, obj in enumerate([curve, nurbs, lattice]):
-            obj = PyNode(cmds.listHistory(obj)[0])
+            obj = Node(cmds.listHistory(obj)[0])
             self.assertEqual(obj.cp._component_type,    att_type[i])
             self.assertEqual(obj.cp[0]._component_type, att_type[i])
             self.assertEqual(len(obj.cp[:]),            counts[i])
@@ -344,7 +344,7 @@ class TestAttributeGetGeometry(MayaTestCase):
     def test_get_returns_number_for_free_numeric_attr(self):
         loc = cmds.spaceLocator(name="loc_free")[0]
         cmds.setAttr(f"{loc}.translateX", 1.5)
-        self.assertEqual(PyNode(loc).translateX.get(), 1.5)
+        self.assertEqual(Node(loc).translateX.get(), 1.5)
 
     def test_get_returns_computed_number_for_connected_numeric_attr(self):
         loc = cmds.spaceLocator(name="loc_conn")[0]
@@ -354,16 +354,16 @@ class TestAttributeGetGeometry(MayaTestCase):
         cmds.connectAttr(f"{md}.outputX", f"{loc}.translateX", force=True)
 
         # connected attr should still return the computed number, not a node
-        self.assertEqual(PyNode(loc).translateX.get(), 7.0)
+        self.assertEqual(Node(loc).translateX.get(), 7.0)
 
     def test_get_returns_list_for_vector_attr(self):
         loc = cmds.spaceLocator(name="loc_vec")[0]
         cmds.setAttr(f"{loc}.translate", 1.0, 2.0, 3.0, type="double3")
-        self.assertEqual(PyNode(loc).find_attr("translate").get(), [(1.0, 2.0, 3.0)])
+        self.assertEqual(Node(loc).find_attr("translate").get(), [(1.0, 2.0, 3.0)])
 
     def test_get_returns_list_for_matrix_attr(self):
         cube_xform, _, _, _ = self._make_skinned_cube()
-        val = PyNode(cube_xform).find_attr("worldMatrix")[0].get()
+        val = Node(cube_xform).find_attr("worldMatrix")[0].get()
         self.assertEqual(len(val), 16)
         self.assertEqual(val[0],   1.0)  # identity diagonal
         self.assertEqual(val[5],   1.0)
@@ -374,43 +374,43 @@ class TestAttributeGetGeometry(MayaTestCase):
 
     def test_get_returns_mesh_for_mesh_outMesh(self):
         _, cube_shape, _, _ = self._make_skinned_cube()
-        result = PyNode(cube_shape).outMesh.get()
-        # Should resolve to the owning shape (returned as PyNode().serialize()),
+        result = Node(cube_shape).outMesh.get()
+        # Should resolve to the owning shape (returned as Node(shape).serialize()),
         # NOT MFnMesh wrapping data.
         self.assertNotIsInstance(result, OpenMaya.MFnMesh)
-        self.assertEqual(result, PyNode(cube_shape).serialize())
+        self.assertEqual(result, Node(cube_shape).serialize())
 
     def test_get_returns_mesh_for_mesh_inMesh(self):
         _, cube_shape, _, _ = self._make_skinned_cube()
-        result = PyNode(cube_shape).inMesh.get()
+        result = Node(cube_shape).inMesh.get()
         self.assertNotIsInstance(result, OpenMaya.MFnMesh)
-        self.assertEqual(result, PyNode(cube_shape).serialize())
+        self.assertEqual(result, Node(cube_shape).serialize())
 
     def test_get_returns_mesh_for_mesh_worldMesh(self):
         _, cube_shape, _, _ = self._make_skinned_cube()
-        result = PyNode(cube_shape).worldMesh[0].get()
+        result = Node(cube_shape).worldMesh[0].get()
         self.assertNotIsInstance(result, OpenMaya.MFnMesh)
-        self.assertEqual(result, PyNode(cube_shape).serialize())
+        self.assertEqual(result, Node(cube_shape).serialize())
 
     def test_get_returns_nurbscurve_for_curve_local(self):
         _, crv_shape, _, _ = self._make_skinned_curve()
-        result = PyNode(crv_shape).local.get()
+        result = Node(crv_shape).local.get()
         self.assertNotIsInstance(result, OpenMaya.MFnNurbsCurve)
-        self.assertEqual(result, PyNode(crv_shape).serialize())
+        self.assertEqual(result, Node(crv_shape).serialize())
 
     # -- 3. Output plug with downstream consumer returns the consumer node
 
     def test_get_follows_skincluster_output_to_mesh(self):
         _, cube_shape, _, skin = self._make_skinned_cube()
-        result = PyNode(skin).outputGeometry[0].get()
+        result = Node(skin).outputGeometry[0].get()
         self.assertNotIsInstance(result, OpenMaya.MFnMesh)
-        self.assertEqual(result, PyNode(cube_shape).serialize())
+        self.assertEqual(result, Node(cube_shape).serialize())
 
     def test_get_follows_skincluster_output_to_nurbscurve(self):
         _, crv_shape, _, skin = self._make_skinned_curve()
-        result = PyNode(skin).outputGeometry[0].get()
+        result = Node(skin).outputGeometry[0].get()
         self.assertNotIsInstance(result, OpenMaya.MFnNurbsCurve)
-        self.assertEqual(result, PyNode(crv_shape).serialize())
+        self.assertEqual(result, Node(crv_shape).serialize())
 
     # -- 4. Disconnected output returns the wrapping fn set with valid data
 
@@ -418,7 +418,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         _, cube_shape, _, skin = self._make_skinned_cube()
         cmds.disconnectAttr(f"{skin}.outputGeometry[0]", f"{cube_shape}.inMesh")
 
-        result = PyNode(skin).outputGeometry[0].get()
+        result = Node(skin).outputGeometry[0].get()
         self.assertIsInstance(result, OpenMaya.MFnMesh)
         self.assertEqual(result.numVertices, 8)
         self.assertEqual(result.numPolygons, 6)
@@ -433,7 +433,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         _, crv_shape, _, skin = self._make_skinned_curve()
         cmds.disconnectAttr(f"{skin}.outputGeometry[0]", f"{crv_shape}.create")
 
-        result = PyNode(skin).outputGeometry[0].get()
+        result = Node(skin).outputGeometry[0].get()
         self.assertIsInstance(result, OpenMaya.MFnNurbsCurve)
         self.assertEqual(result.numCVs, 4)
 
@@ -441,7 +441,7 @@ class TestAttributeGetGeometry(MayaTestCase):
 
     def test_get_returns_none_for_bare_skincluster_output(self):
         bare   = cmds.createNode("skinCluster", name="skinCluster_bare")
-        result = PyNode(bare).outputGeometry[0].get()
+        result = Node(bare).outputGeometry[0].get()
         self.assertIsNone(result)
 
     # -- behavioral guarantees
@@ -452,7 +452,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         '# Error: The data is not a numeric or string value' emission.
         """
         _, _, _, skin = self._make_skinned_cube()
-        attr = PyNode(skin).outputGeometry[0]
+        attr = Node(skin).outputGeometry[0]
 
         original_getAttr = cmds.getAttr
         calls            = []
@@ -478,7 +478,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         """Second get() on the same Attribute instance must not re-call
         cmds.getAttr(type=True) for the geometry-attr detection."""
         _, _, _, skin = self._make_skinned_cube()
-        attr = PyNode(skin).find_attr("outputGeometry")[0]
+        attr = Node(skin).find_attr("outputGeometry")[0]
 
         # warm the cache
         attr.get()
@@ -505,7 +505,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         """Message attrs preserve cmds.getAttr semantics -- they raise."""
         node = cmds.createNode("transform", name="msg_node")
         with self.assertRaises(RuntimeError):
-            PyNode(node).message.get()
+            Node(node).message.get()
 
     # -- 6. Geometry-routing nodes (e.g. choice) -- step 2.5 of the dispatch
 
@@ -531,30 +531,30 @@ class TestAttributeGetGeometry(MayaTestCase):
         """choice.output with selector=0 -> NurbsCurve of the connected curve shape."""
         choice, crv_shape, _ = self._make_choice_node()
         cmds.setAttr(f"{choice}.selector", 0)
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         self.assertNotIsInstance(result, OpenMaya.MFnNurbsCurve)
-        self.assertEqual(result, PyNode(crv_shape).serialize())
+        self.assertEqual(result, Node(crv_shape).serialize())
 
     def test_get_choice_with_selector_1_returns_mesh(self):
         """choice.output with selector=1 -> Mesh of the connected mesh shape."""
         choice, _, mesh_shape = self._make_choice_node()
         cmds.setAttr(f"{choice}.selector", 1)
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         self.assertNotIsInstance(result, OpenMaya.MFnMesh)
-        self.assertEqual(result, PyNode(mesh_shape).serialize())
+        self.assertEqual(result, Node(mesh_shape).serialize())
 
     def test_get_choice_changes_with_selector(self):
         """Flipping the selector swaps the returned node type."""
         choice, crv_shape, mesh_shape = self._make_choice_node()
-        choice_node = PyNode(choice)
+        choice_node = Node(choice)
 
         choice_node.selector.set(0)
         first = choice_node.output.get()
-        self.assertEqual(first, PyNode(crv_shape).serialize())
+        self.assertEqual(first, Node(crv_shape).serialize())
 
         choice_node.selector.set(1)
         second = choice_node.output.get()
-        self.assertEqual(second, PyNode(mesh_shape).serialize())
+        self.assertEqual(second, Node(mesh_shape).serialize())
 
     def test_get_choice_destination_takes_priority_over_routing(self):
         """When choice.output is connected downstream, step 2 (downstream
@@ -578,9 +578,9 @@ class TestAttributeGetGeometry(MayaTestCase):
         )
         cmds.connectAttr(f"{choice}.output", f"{consumer_shape}.inMesh")
 
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         # Result data must equal the consumer's serialized form.
-        self.assertEqual(result, PyNode(consumer_shape).serialize())
+        self.assertEqual(result, Node(consumer_shape).serialize())
         # Identity check via the shape name in the repr -- the dispatch must
         # have returned the consumer node, not the upstream source.
         self.assertIn(consumer_shape, repr(result))
@@ -594,7 +594,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         # selector defaults to 0; input[0] is not connected
         # Should not raise; returns None or MFn -- both are acceptable for this
         # degenerate scene.
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         self.assertTrue(
             result is None
             or isinstance(result, (OpenMaya.MFnMesh, OpenMaya.MFnNurbsCurve)),
@@ -638,7 +638,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         the 16-float matrix list, NOT None and NOT a node wrapper."""
         choice, _, _, _ = self._make_polymorphic_choice_node()
         cmds.setAttr(f"{choice}.selector", 2)
-        result = PyNode(choice).find_attr("output").get()
+        result = Node(choice).find_attr("output").get()
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 16)
 
@@ -650,12 +650,12 @@ class TestAttributeGetGeometry(MayaTestCase):
         the correct value type each time.
         """
         choice, crv_shape, _, _ = self._make_polymorphic_choice_node()
-        choice_node = PyNode(choice)
+        choice_node = Node(choice)
 
         # First call: geometry -- sets the (potentially poisonous) cache state
         choice_node.find_attr("selector").set(0)
         first = choice_node.find_attr("output").get()
-        self.assertEqual(first, PyNode(crv_shape).serialize())
+        self.assertEqual(first, Node(crv_shape).serialize())
 
         # Second call on same Attribute instance: matrix -- must NOT inherit the
         # geometry-True cache. Should return the matrix value.
@@ -668,7 +668,7 @@ class TestAttributeGetGeometry(MayaTestCase):
         """Symmetric regression: starting with a matrix selector then flipping
         to geometry must also work (cache must not lock in 'False')."""
         choice, _, mesh_shape, _ = self._make_polymorphic_choice_node()
-        choice_node = PyNode(choice)
+        choice_node = Node(choice)
 
         choice_node.find_attr("selector").set(2)
         first = choice_node.find_attr("output").get()
@@ -677,14 +677,14 @@ class TestAttributeGetGeometry(MayaTestCase):
 
         choice_node.find_attr("selector").set(1)
         second = choice_node.find_attr("output").get()
-        self.assertEqual(second, PyNode(mesh_shape).serialize())
+        self.assertEqual(second, Node(mesh_shape).serialize())
 
     def test_get_choice_does_not_cache_geometry_check(self):
         """For polymorphic-output nodes (choice), `cmds.getAttr type=True` must
         be re-called on every get() -- the cache short-circuit only applies to
         non-polymorphic owners."""
         choice, _, _, _ = self._make_polymorphic_choice_node()
-        attr = PyNode(choice).output
+        attr = Node(choice).output
 
         # First get() to warm any internal state
         cmds.setAttr(f"{choice}.selector", 0)
@@ -911,7 +911,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{loc}.translateX"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         self.assertIsInstance(result, float)
         self.assertEqual(result, 2.5)
 
@@ -924,7 +924,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{src}.num"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         self.assertIsInstance(result, float)
         self.assertEqual(result, 42.0)
 
@@ -937,7 +937,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{src}.flag"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         self.assertEqual(result, 1.0)
 
     def test_chr_get_returns_string_for_string_input(self):
@@ -948,7 +948,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{src}.label"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        self.assertEqual(PyNode(choice).output.get(), "hello")
+        self.assertEqual(Node(choice).output.get(), "hello")
 
     def test_chr_get_returns_compound_for_vector_input(self):
         """choice with a compound (translate) input returns the cmds.getAttr
@@ -959,7 +959,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{loc}.translate"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        self.assertEqual(PyNode(choice).find_attr("output").get(), [(1.0, 2.0, 3.0)])
+        self.assertEqual(Node(choice).find_attr("output").get(), [(1.0, 2.0, 3.0)])
 
     def test_chr_get_returns_matrix_list_for_matrix_input(self):
         """choice with a matrix input returns a 16-float list (NOT None)."""
@@ -967,21 +967,21 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{loc}.matrix"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        result = PyNode(choice).find_attr("output").get()
+        result = Node(choice).find_attr("output").get()
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 16)
 
     def test_chr_get_returns_None_for_empty_choice(self):
         """choice with NO inputs returns None from get()."""
         choice = self._make_choice_with_inputs()
-        self.assertIsNone(PyNode(choice).output.get())
+        self.assertIsNone(Node(choice).output.get())
 
     def test_chr_get_returns_None_for_unconnected_selector_slot(self):
         """Selector pointing at empty slot returns None from get()."""
         loc    = cmds.spaceLocator(name="loc_sparse2")[0]
         choice = self._make_choice_with_inputs({5: f"{loc}.translateX"})
         cmds.setAttr(f"{choice}.selector", 2)
-        self.assertIsNone(PyNode(choice).output.get())
+        self.assertIsNone(Node(choice).output.get())
 
     # ============================================================
     # SECTION C -- Geometry routing dispatch (the user-reported case)
@@ -994,7 +994,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         crv_shape = self._make_curve_shape("curve_chr")
         choice    = self._make_choice_with_inputs({0: f"{crv_shape}.worldSpace[0]"})
         cmds.setAttr(f"{choice}.selector", 0)
-        self.assertEqual(PyNode(choice).output.get(), PyNode(crv_shape).serialize())
+        self.assertEqual(Node(choice).output.get(), Node(crv_shape).serialize())
 
     def test_chr_get_returns_serialized_mesh_for_mesh_input(self):
         """selector points at a mesh input -> result equals the source mesh
@@ -1003,7 +1003,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         mesh_shape = self._make_mesh_shape("mesh_chr")
         choice     = self._make_choice_with_inputs({0: f"{mesh_shape}.outMesh"})
         cmds.setAttr(f"{choice}.selector", 0)
-        self.assertEqual(PyNode(choice).output.get(), PyNode(mesh_shape).serialize())
+        self.assertEqual(Node(choice).output.get(), Node(mesh_shape).serialize())
 
     def test_chr_get_returns_serialized_surface_for_nurbs_surface_input(self):
         """selector points at a NURBS surface input -> result equals the source
@@ -1013,7 +1013,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         surf_shape = cmds.listRelatives(sphere, shapes=True)[0]
         choice     = self._make_choice_with_inputs({0: f"{surf_shape}.worldSpace[0]"})
         cmds.setAttr(f"{choice}.selector", 0)
-        self.assertEqual(PyNode(choice).output.get(), PyNode(surf_shape).serialize())
+        self.assertEqual(Node(choice).output.get(), Node(surf_shape).serialize())
 
     # ============================================================
     # SECTION D -- Cache invariants
@@ -1025,7 +1025,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         """
         loc    = cmds.spaceLocator(name="loc_cache_a")[0]
         choice = self._make_choice_with_inputs({0: f"{loc}.translateX"})
-        attr   = PyNode(choice).output
+        attr   = Node(choice).output
         self.assertIsNone(attr._polymorphic_owner_cache)
 
     def test_chr_polymorphic_owner_cache_set_after_first_check(self):
@@ -1034,14 +1034,14 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         """
         loc    = cmds.spaceLocator(name="loc_cache_b")[0]
         choice = self._make_choice_with_inputs({0: f"{loc}.translateX"})
-        attr   = PyNode(choice).output
+        attr   = Node(choice).output
         _      = attr._owner_is_polymorphic
         self.assertEqual(attr._polymorphic_owner_cache, True)
 
     def test_chr_polymorphic_owner_cache_False_for_non_polymorphic(self):
         """Non-polymorphic owners (e.g. a plain mesh) cache False."""
         mesh_shape = self._make_mesh_shape("mesh_cache")
-        attr       = PyNode(mesh_shape).outMesh
+        attr       = Node(mesh_shape).outMesh
         _          = attr._owner_is_polymorphic
         self.assertEqual(attr._polymorphic_owner_cache, False)
 
@@ -1051,7 +1051,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         """
         crv_shape = self._make_curve_shape("crv_cache")
         choice    = self._make_choice_with_inputs({0: f"{crv_shape}.worldSpace[0]"})
-        attr      = PyNode(choice).output
+        attr      = Node(choice).output
         for _ in range(3):
             cmds.setAttr(f"{choice}.selector", 0)
             attr.get()
@@ -1065,7 +1065,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         joint  = cmds.joint(name="j_cache")
         cmds.select([joint, cube_x])
         skin = cmds.skinCluster(joint, cube_x, name="skin_cache")[0]
-        attr = PyNode(skin).outputGeometry[0]
+        attr = Node(skin).outputGeometry[0]
         attr.get()
         self.assertEqual(attr._geometry_attr_cache, True)
 
@@ -1074,7 +1074,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         after the first get().
         """
         loc  = cmds.spaceLocator(name="loc_numcache")[0]
-        attr = PyNode(loc).translateX
+        attr = Node(loc).translateX
         attr.get()
         self.assertEqual(attr._geometry_attr_cache, False)
 
@@ -1087,7 +1087,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs(
             {0: f"{crv_shape}.worldSpace[0]", 1: f"{loc}.matrix"}
         )
-        attr = PyNode(choice).output
+        attr = Node(choice).output
         for sel in (0, 1, 0, 1, 0):
             cmds.setAttr(f"{choice}.selector", sel)
             attr.get()
@@ -1112,7 +1112,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         )
         cmds.connectAttr(f"{choice}.output", f"{consumer_shape}.inMesh")
 
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         # The dispatch must have returned the CONSUMER (identity check via
         # the shape name in the repr). Data equality alone can't distinguish
         # since both have identical mesh data.
@@ -1128,8 +1128,8 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice     = self._make_choice_with_inputs({0: f"{mesh_shape}.outMesh"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        result = PyNode(choice).output.get()
-        self.assertEqual(result, PyNode(mesh_shape).serialize())
+        result = Node(choice).output.get()
+        self.assertEqual(result, Node(mesh_shape).serialize())
 
     def test_chr_routing_returns_None_when_upstream_is_not_shape(self):
         """When the selected input's source is NOT a shape (e.g. another
@@ -1149,7 +1149,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         choice = self._make_choice_with_inputs({0: f"{skin}.outputGeometry[0]"})
         cmds.setAttr(f"{choice}.selector", 0)
 
-        result = PyNode(choice).output.get()
+        result = Node(choice).output.get()
         # Source of input[0] is skinCluster (not a shape) -> routing returns
         # nothing -> step 3 fires and wraps data in MFnMesh.
         self.assertIsInstance(result, OpenMaya.MFnMesh)
@@ -1166,7 +1166,7 @@ class TestPolymorphicChoiceCharacterization(MayaTestCase):
         cmds.setAttr(f"{ch1}.selector", 0)
         cmds.setAttr(f"{ch2}.selector", 0)
 
-        result = PyNode(ch2).output.get()
+        result = Node(ch2).output.get()
         # ch2.input[0].source().node() is ch1 (not a shape) -> routing falls
         # through; ch2.output.asMObject() returns valid kMeshData -> MFnMesh.
         self.assertIsInstance(result, OpenMaya.MFnMesh)

@@ -1,6 +1,6 @@
 import numpy as np
 from maya import cmds
-from rig.nodetypes import BlendShape, PyNode
+from rig.nodetypes import BlendShape, Node
 from rig._tests._base import MayaTestCase
 
 
@@ -15,10 +15,10 @@ class TestBlendShape(MayaTestCase):
         super().setUp()
 
         # make 2 cubes and a blend shape
-        self.base        = PyNode(cmds.polyCube(name="base", ch=False)[0])
+        self.base        = Node(cmds.polyCube(name="base", ch=False)[0])
         self.target_name = "target"
-        self.target      = PyNode(cmds.polyCube(name="target", ch=False)[0])
-        self.bls         = PyNode.create("blendShape", self.target, self.base)
+        self.target      = Node(cmds.polyCube(name="target", ch=False)[0])
+        self.bls         = Node.create("blendShape", self.target, self.base)
 
         # move a vert
         cmds.xform(f"{self.target}.vtx[3]", ws=True, t=(10, 2, 3))
@@ -70,7 +70,7 @@ class TestBlendShape(MayaTestCase):
         self.assertEqual(len(self.bls.serialize(match_name="new_.*")), 1)
 
         # make sure we can serialize without an originalGeometry plug.
-        new_bls = PyNode.create("blendShape", self.target, self.base)
+        new_bls = Node.create("blendShape", self.target, self.base)
         new_bls.originalGeometry[0].break_connections()
         self.assertEqual(len(new_bls.serialize()), 1)
 

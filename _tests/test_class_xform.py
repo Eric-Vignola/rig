@@ -2,7 +2,7 @@ import unittest
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes import PyNode, Transform
+from rig.nodetypes import Node, Transform
 from rig.nodetypes.joint import replace_suffix
 from rig._tests._base import MayaTestCase
 
@@ -18,10 +18,10 @@ class TestXformNodes(MayaTestCase):
         super().setUp()
 
         # make a joint chain
-        self.root   = PyNode.create("joint", name="root_joint")
+        self.root   = Node.create("joint", name="root_joint")
         self.c_name = "child_joint"
-        self.joint2 = PyNode.create("joint", name=self.c_name, parent=self.root)
-        self.joint3 = PyNode.create("joint", name=self.c_name, parent=self.joint2)
+        self.joint2 = Node.create("joint", name=self.c_name, parent=self.root)
+        self.joint3 = Node.create("joint", name=self.c_name, parent=self.joint2)
 
     def test_attr(self):
         self.root.set_xfrom_attrs_locked(True)
@@ -75,9 +75,9 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(self.root.find_joint("jo"), self.joint2)
 
         # shape search
-        cube1 = PyNode(cmds.polyCube(name="cube1", ch=False)[0])
+        cube1 = Node(cmds.polyCube(name="cube1", ch=False)[0])
         cube1.set_parent(self.joint2)
-        cube2 = PyNode(cmds.polyCube(name="cube2", ch=False)[0])
+        cube2 = Node(cmds.polyCube(name="cube2", ch=False)[0])
         cube2.set_parent(self.joint3)
 
         result = self.root.iter_shapes("mesh", match_name="cube")
@@ -93,7 +93,7 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(result, cube1)
 
     def test_duplicate(self):
-        p        = PyNode.create("transform")
+        p        = Node.create("transform")
         dup_root = self.root.duplicate_skeleton(parent=p)
         self.assertEqual(dup_root.get_parent(), p)
         self.assertEqual(len(list(dup_root.iter_joints())), 2)
@@ -114,9 +114,9 @@ class TestXformNodes(MayaTestCase):
         """VLR_RIG:SK:root -> spine_01 -> head, in nested namespaces."""
         cmds.namespace(add="VLR_RIG")
         cmds.namespace(add="SK", parent="VLR_RIG")
-        root  = PyNode.create("joint", name="VLR_RIG:SK:root")
-        spine = PyNode.create("joint", name="VLR_RIG:SK:spine_01", parent=root)
-        head  = PyNode.create("joint", name="VLR_RIG:SK:head", parent=spine)
+        root  = Node.create("joint", name="VLR_RIG:SK:root")
+        spine = Node.create("joint", name="VLR_RIG:SK:spine_01", parent=root)
+        head  = Node.create("joint", name="VLR_RIG:SK:head", parent=spine)
         return root, spine, head
 
     @staticmethod
@@ -168,9 +168,9 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(self._joint_names(dup), ["L_root", "L_spine_01"])
 
     def test_duplicate_skeleton_include_list_with_prefix_or_suffix(self):
-        root  = PyNode.create("joint", name="root_jnt")
-        spine = PyNode.create("joint", name="spine_jnt", parent=root)
-        PyNode.create("joint", name="head_jnt", parent=spine)
+        root  = Node.create("joint", name="root_jnt")
+        spine = Node.create("joint", name="spine_jnt", parent=root)
+        Node.create("joint", name="head_jnt", parent=spine)
 
         dup = root.duplicate_skeleton(include_list=[spine], prefix="L")
         self.assertEqual(self._joint_names(dup), ["L_root_jnt", "L_spine_jnt"])
@@ -179,12 +179,12 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(self._joint_names(dup), ["root_DUP", "spine_DUP"])
 
     def test_duplicate_geom(self):
-        xform = PyNode(cmds.polyCube(ch=False)[0])
-        s     = PyNode.create("objectSet")
+        xform = Node(cmds.polyCube(ch=False)[0])
+        s     = Node.create("objectSet")
         s.add_members([xform] + xform.get_children())
         self.assertEqual(set(s.get_members()), set([xform] + xform.get_children()))
 
-        parent = PyNode.create("transform")
+        parent = Node.create("transform")
         xform.set_parent(parent)
         xform.find_attr("t").set(1, 2, 3)
         self.root.set_parent(xform)
@@ -222,8 +222,8 @@ class TestXformNodes(MayaTestCase):
     def test_hierarchy_duplicate_short_names(self):
         # the fixture nests two joints of the same short name,
         # add the same name again in another branch.
-        other = PyNode.create("joint", name="other_joint", parent=self.root)
-        PyNode.create("joint", name=self.c_name, parent=other)
+        other = Node.create("joint", name="other_joint", parent=self.root)
+        Node.create("joint", name=self.c_name, parent=other)
 
         expected  = self._dag_paths()
         hierarchy = self.root.serialize_hierarchy()
@@ -236,9 +236,9 @@ class TestXformNodes(MayaTestCase):
         # locators and space transforms are created by their own commands
         for node_type in ("locator", "space_transform"):
             self.new_scene()
-            root  = PyNode.create("transform", name="root")
-            child = PyNode.create("transform", name="child", parent=root)
-            PyNode.create("transform", name="child", parent=child)
+            root  = Node.create("transform", name="root")
+            child = Node.create("transform", name="child", parent=root)
+            Node.create("transform", name="child", parent=child)
 
             expected  = self._dag_paths()
             hierarchy = root.serialize_hierarchy()
@@ -252,7 +252,7 @@ class TestXformNodes(MayaTestCase):
     def test_hierarchy_locator_round_trip(self):
         # a transform holding a locator shape serializes as a "locator"
         # and comes back with a locator shape
-        loc = PyNode(cmds.spaceLocator(name="probe_loc")[0])
+        loc = Node(cmds.spaceLocator(name="probe_loc")[0])
         loc.set_parent(self.joint2)
         loc.t.set(1, 2, 3)
 
@@ -338,7 +338,7 @@ class TestXformNodes(MayaTestCase):
 
     def test_hierarchy_serialize_skips_unsupported_nodes(self):
         # a constraint is a transform by inheritance only, it is not serialized
-        driver = PyNode.create("transform", name="driver")
+        driver = Node.create("transform", name="driver")
         cmds.parentConstraint(driver.long_name, self.joint3.long_name)
 
         with self.assertLogs("rig.nodetypes.transform", level="WARNING") as logs:
@@ -370,7 +370,7 @@ class TestXformNodes(MayaTestCase):
         before = self._dag_paths()
         for parent in ("not_a_node", self.c_name):
             with self.assertRaises(ValueError):
-                PyNode.create("joint", name="orphan", parent=parent)
+                Node.create("joint", name="orphan", parent=parent)
             self.assertEqual(self._dag_paths(), before)
 
     def test_hierarchy_user_attrs_round_trip(self):
@@ -435,7 +435,7 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(cmds.getAttr(f"{joint2}.t")[0], (1, 2, 3))
 
     def test_shapes(self):
-        xform = PyNode(cmds.polyCube(name="test", ch=False)[0])
+        xform = Node(cmds.polyCube(name="test", ch=False)[0])
         self.root.set_parent(xform)
         shape = xform.get_children(type="mesh")[0]
         self.assertEqual(xform.get_shape(), shape)

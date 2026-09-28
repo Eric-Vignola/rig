@@ -1,6 +1,6 @@
 from maya import cmds
 from rig import Node
-from rig.nodetypes import Mesh, ObjectSet, PyNode, ShadingEngine
+from rig.nodetypes import Mesh, ObjectSet, ShadingEngine
 from rig._tests._base import MayaTestCase
 
 
@@ -66,7 +66,7 @@ class TestShadingEngine(MayaTestCase):
 
         # a created engine accepts members
         sg.set_material(self.mat_a)
-        self.assertEqual(sg.get_material(), PyNode(self.mat_a))
+        self.assertEqual(sg.get_material(), Node(self.mat_a))
         sg.assign([self.shape])
         self.assertEqual(_faces(sg), [(self.shape, None)])
 
@@ -77,20 +77,20 @@ class TestShadingEngine(MayaTestCase):
             cmds.sets(self.shape, edit=True, forceElement=bare)
 
     def test_registration(self):
-        default = PyNode(ShadingEngine.DEFAULT)
+        default = Node(ShadingEngine.DEFAULT)
         self.assertIs(type(default), ShadingEngine)
         self.assertIs(type(Node(ShadingEngine.DEFAULT) >> None), ShadingEngine)
-        self.assertIs(type(PyNode.create("shadingEngine", name="viaFactorySG")), ShadingEngine)
+        self.assertIs(type(Node.create("shadingEngine", name="viaFactorySG")), ShadingEngine)
 
-        # registration makes ObjectSet(sg) and PyNode(sg) different objects
+        # registration makes ObjectSet(sg) and Node(sg) different objects
         name = self.sg_a.name
-        self.assertEqual(ShadingEngine(name), PyNode(name))
+        self.assertEqual(ShadingEngine(name), Node(name))
         self.assertNotEqual(ShadingEngine(name), ObjectSet(name))
-        self.assertNotEqual(PyNode(name), ObjectSet(name))
+        self.assertNotEqual(Node(name), ObjectSet(name))
 
         # a fresh cube sits in the default engine
         self.assertEqual(Mesh(self.shape).get_shading_engines(), [default])
-        self.assertEqual(Mesh(self.shape).get_shading_engines()[0], PyNode(ShadingEngine.DEFAULT))
+        self.assertEqual(Mesh(self.shape).get_shading_engines()[0], Node(ShadingEngine.DEFAULT))
 
     # --- for_material
 
@@ -102,13 +102,13 @@ class TestShadingEngine(MayaTestCase):
         sg = ShadingEngine.for_material(mat)
         self.assertIs(type(sg), ShadingEngine)
         self.assertEqual(sg.name, "lonelySG")
-        self.assertEqual(sg.get_material(), PyNode(mat))
+        self.assertEqual(sg.get_material(), Node(mat))
         shaders = cmds.listConnections("defaultShaderList1.shaders", source=True, destination=False)
         self.assertEqual(shaders.count(mat), 1)
 
         # one engine -> that engine, and the link is not doubled
         self.assertEqual(ShadingEngine.for_material(mat), sg)
-        self.assertEqual(ShadingEngine.for_material(PyNode(mat), create=False), sg)
+        self.assertEqual(ShadingEngine.for_material(Node(mat), create=False), sg)
         shaders = cmds.listConnections("defaultShaderList1.shaders", source=True, destination=False)
         self.assertEqual(shaders.count(mat), 1)
 
@@ -118,7 +118,7 @@ class TestShadingEngine(MayaTestCase):
         self.assertIsNone(ShadingEngine.for_material("lambert1", create=False))
         self.assertEqual(
             ShadingEngine.for_material("standardSurface1", create=False),
-            PyNode(ShadingEngine.DEFAULT),
+            Node(ShadingEngine.DEFAULT),
         )
         with self.assertRaises(ValueError):
             ShadingEngine.for_material("noSuchMaterial")
@@ -137,7 +137,7 @@ class TestShadingEngine(MayaTestCase):
     def test_face_members_childless(self):
         self.sg_a.assign([self.shape])
         self.assertEqual(_faces(self.sg_a), [(self.shape, None)])
-        self.assertEqual(_faces(PyNode(ShadingEngine.DEFAULT)), [])
+        self.assertEqual(_faces(Node(ShadingEngine.DEFAULT)), [])
 
         self.sg_b.assign([f"{self.xform}.f[0:2]"])
         self.assertEqual(_faces(self.sg_b), [(self.shape, [0, 1, 2])])
@@ -170,19 +170,19 @@ class TestShadingEngine(MayaTestCase):
         inst_shape = f"|{inst}|cubeShape"
         self.sg_a.assign([inst])
         self.assertEqual(_faces(self.sg_a), [(inst_shape, None)])
-        self.assertEqual(_faces(PyNode(ShadingEngine.DEFAULT)), [(self.shape, None)])
+        self.assertEqual(_faces(Node(ShadingEngine.DEFAULT)), [(self.shape, None)])
 
         self.sg_b.assign([f"{inst}.f[0:1]"])
         self.assertEqual(_faces(self.sg_b), [(inst_shape, [0, 1])])
         self.assertEqual(_faces(self.sg_a), [(inst_shape, [2, 3, 4, 5])])
-        self.assertEqual(_faces(PyNode(ShadingEngine.DEFAULT)), [(self.shape, None)])
+        self.assertEqual(_faces(Node(ShadingEngine.DEFAULT)), [(self.shape, None)])
 
     # --- assign
 
     def test_assign_object_level(self):
         self.sg_a.assign([self.shape])
         self.assertEqual(_raw_members(self.sg_a), ["cubeShape"])
-        self.assertEqual(_raw_members(PyNode(ShadingEngine.DEFAULT)), [])
+        self.assertEqual(_raw_members(Node(ShadingEngine.DEFAULT)), [])
         self.sg_a.assign([self.shape])
         self.assertEqual(_raw_members(self.sg_a), ["cubeShape"])
         self.sg_b.assign([self.xform])
@@ -248,7 +248,7 @@ class TestShadingEngine(MayaTestCase):
         self.assertEqual(_raw_members(self.sg_a), [f"{inst}.f[0:5]"])
         self.assertEqual(_raw_members(self.sg_b), [])
         self.assertEqual(_faces(self.sg_a), [(inst_shape, None)])
-        self.assertEqual(_faces(PyNode(ShadingEngine.DEFAULT)), [(self.shape, None)])
+        self.assertEqual(_faces(Node(ShadingEngine.DEFAULT)), [(self.shape, None)])
 
     def test_assign_touched_must_be_unique(self):
         with self.assertRaises(ValueError):
@@ -293,6 +293,6 @@ class TestShadingEngine(MayaTestCase):
         self.assertEqual(mesh.get_shading_engines(), [])
 
         self.sg_a.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
-        self.assertEqual(mesh.get_materials(), [PyNode(self.mat_a)])
+        self.assertEqual(mesh.get_materials(), [Node(self.mat_a)])
         self.assertEqual(mesh.get_shading_engines(), [self.sg_a])
         self.assertIs(type(mesh.get_shading_engines()[0]), ShadingEngine)

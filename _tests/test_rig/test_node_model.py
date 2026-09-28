@@ -15,21 +15,23 @@ Each class names the round-4a step it belongs to:
   of the package's ``_objhandle1`` / ``_fn_set1`` readers (for round 5, NW6).
 * M3: typed nodes speak the DSL while the ``Node`` wrapper is still there (K
   S4a ``f7511a2`` and the merge-only fixes of ``82547f5``, on round 3's owner
-  rule): ``PyNode(x).attr`` is a Plug owned by the typed node, the ``=`` sugar
+  rule): a typed node's ``.attr`` is a Plug owned by it, the ``=`` sugar
   (variant K), ``<<`` / ``>>``, the component fallbacks, the Plug ``_`` rule,
   ``find_attr(Plug)``; and the edge cases of the round-4a checklist (deleted,
   freed, instanced, namespaced nodes, components, dynamic attrs, identity).
 * M4: the class swap (K S4b ``ca9e345`` / ``4d3a02e`` and the merge-only parts
   of ``82547f5`` / ``9244e90``): ``Node`` is the root class and the DSL factory
-  (``Node(x) is x``, typed repr, ``isinstance(PyNode(x), Node)``), the wrapper is
+  (``Node(x) is x``, typed repr, every typed node is a ``Node``), the wrapper is
   gone, ``Container`` is a ``DGNode`` subclass (symmetric equality, owner,
   lookup order, the publish guard), ``Node.wrap`` on the metaclass; round 3's
   one-key plug hash is kept.
 * M4B: a Plug's elements are Plugs built once (D29, ``_CHILD_CLASS``) in the
   state round 3 gave them, and ``_cast`` is the one cast core (D12) the
-  ``Node`` factory calls without PyNode's class call.
+  ``Node`` factory calls.
 * M8: the dead canonical-wrapper helpers and the ``_dg_node`` shim are gone
   (``TestNoWrapperLeft``).
+* R2: PyNode is gone; ``Node`` is the only node factory (its full input table,
+  ``Node.create`` and ``Node.find_all``: ``test_r4a_fixes.TestNodeOnly``).
 
 The round-3 classes of the former ``test_node_merge.py`` follow the round-4a
 ones (moved in M8): ``TestPlugQuickWins`` (S0: Plug property setters,
@@ -54,7 +56,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig import Container, container, List, Node, Plug
-from rig.nodetypes import DGNode, PyNode, Transform
+from rig.nodetypes import DGNode, Transform, _base
 from rig._internal.math_nodes import _decompose_matrix
 from rig._internal.members import Components
 from rig._internal.memoize import _attribute_key
@@ -185,22 +187,22 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
         from rig.nodetypes import BlendShape, Choice, Follicle, SkinCluster
 
         def transforms():
-            joint = PyNode(cmds.createNode("joint", name="jnt"))
-            loc   = PyNode(cmds.spaceLocator(name="loc")[0])
+            joint = Node(cmds.createNode("joint", name="jnt"))
+            loc   = Node(cmds.spaceLocator(name="loc")[0])
             for node in (joint, loc):
                 node.serialize()
                 node.get_matrix(world_space=True)
                 node.get_matrix(world_space=False)
-            cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
+            cube = Node(cmds.polyCube(name="cube", ch=False)[0])
             cube.duplicate_geometry()
             shape = cube.get_children(type="mesh")[0]
             shape.serialize(world_space=False)
 
         def blendshapes():
-            base   = PyNode(cmds.polyCube(name="base", ch=False)[0])
-            target = PyNode(cmds.polyCube(name="target", ch=False)[0])
+            base   = Node(cmds.polyCube(name="base", ch=False)[0])
+            target = Node(cmds.polyCube(name="target", ch=False)[0])
             cmds.xform(f"{target}.vtx[3]", ws=True, t=(10, 2, 3))
-            bls = PyNode.create("blendShape", target, base)
+            bls = Node.create("blendShape", target, base)
             self.assertIsInstance(bls, BlendShape)
             index = bls.add_empty_target("extra")
             bls.set_target_name(index, "renamed")
@@ -218,19 +220,19 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             follicle.set_uv_values([0.25, 0.75])
 
         def skinclusters():
-            j1   = PyNode.create("joint", name="j1")
-            j2   = PyNode.create("joint", name="j2", parent=j1)
-            cube = PyNode(cmds.polyCube(name="skinned", ch=False)[0])
-            skin = PyNode.create("skinCluster", cube, (j1, j2))
+            j1   = Node.create("joint", name="j1")
+            j2   = Node.create("joint", name="j2", parent=j1)
+            cube = Node(cmds.polyCube(name="skinned", ch=False)[0])
+            skin = Node.create("skinCluster", cube, (j1, j2))
             self.assertIsInstance(skin, SkinCluster)
             cmds.select(clear=True)
-            PyNode.create("joint", name="drv_j1")
-            PyNode.create("joint", name="drv_j2")
+            Node.create("joint", name="drv_j1")
+            Node.create("joint", name="drv_j2")
             skin.connect_bind_pre_matrices(lambda name: "drv_" + name)
 
         def choices():
             cmds.createNode("transform", name="src")
-            pick = PyNode(cmds.createNode("choice", name="pick"))
+            pick = Node(cmds.createNode("choice", name="pick"))
             self.assertIsInstance(pick, Choice)
             cmds.connectAttr("src.translate", "pick.input[0]")
             self.assertEqual(pick.find_attr("output").data_type, "double3")
@@ -241,7 +243,7 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             self.assertEqual(pick.find_attr("output").data_type, "message")
 
         def component_tags():
-            ball = PyNode(cmds.polySphere(name="ball", ch=False)[0])
+            ball = Node(cmds.polySphere(name="ball", ch=False)[0])
             mesh = ball.get_children(type="mesh")[0]
             mesh.add_component_tag("t1")
             mesh.set_component_tag_contents("t1", [2, 3], category="v")
@@ -310,7 +312,7 @@ class TestPackageTypedDottedSites(MayaTestCase):
         # Attribute) and from M3 on (a Plug of the same plug) is one memo entry
         self._curve_and_locator()
         wm      = Node("loc").worldMatrix[0]
-        typed   = PyNode("crv").find_attr("ro")
+        typed   = Node("crv").find_attr("ro")
         plug    = Node("crv").ro
         self.assertEqual(type(typed).__name__, "Attribute")
         self.assertEqual(type(plug).__name__, "Plug")
@@ -340,13 +342,13 @@ class TestTypedLayerPrep(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def tearDown(self):
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def test_copy_shares_the_internals(self):
         cmds.createNode("transform", name="a")
-        dg  = PyNode("a")
+        dg  = Node("a")
         dup = copy.copy(dg)
         self.assertIs(type(dup), type(dg))
         self.assertIsNot(dup, dg)
@@ -356,7 +358,7 @@ class TestTypedLayerPrep(MayaTestCase):
 
     def test_dunder_probe_on_a_freed_node(self):
         cmds.createNode("transform", name="a")
-        dg = PyNode("a")
+        dg = Node("a")
         self.assertFalse(hasattr(dg, "__array__"))
         cmds.file(new=True, force=True)
         # a freed node's API 2.0 objects must not be used: only the handle is read
@@ -369,7 +371,7 @@ class TestTypedLayerPrep(MayaTestCase):
     def test_private_probe_on_a_deleted_node(self):
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("multiplyDivide", name="md")
-        dg = PyNode("md")
+        dg = Node("md")
         cmds.delete("md")
         self.assertFalse(hasattr(dg, "_x"))
         self.assertFalse(hasattr(dg, "__deepcopy__"))
@@ -383,14 +385,14 @@ class TestTypedLayerPrep(MayaTestCase):
 
         cube  = cmds.polyCube(name="cube", ch=False)[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
-        mesh  = Mesh(PyNode(cube))
+        mesh  = Mesh(Node(cube))
         self.assertIs(type(mesh), Mesh)
         self.assertEqual(mesh.name, shape)
         self.assertTrue(mesh.mobject == _mobject(shape))
         # a node of the class itself (or a subclass) still shares its internals
         again = Mesh(mesh)
         self.assertIs(vars(again)["_fn_set"], vars(mesh)["_fn_set"])
-        source = PyNode(cube)
+        source = Node(cube)
         self.assertIs(vars(Transform(source))["_fn_set"], vars(source)["_fn_set"])
 
     def test_constructor_key_order(self):
@@ -400,9 +402,9 @@ class TestTypedLayerPrep(MayaTestCase):
         xform = cmds.createNode("transform", name="xf")
         cube  = cmds.polyCube(name="cube", ch=False)[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
-        PyNode(_mobject(md))
-        PyNode(_mobject(xform))
-        PyNode(_mobject(shape))
+        Node(_mobject(md))
+        Node(_mobject(xform))
+        Node(_mobject(shape))
         from_path = OpenMaya.MSelectionList()
         from_path.add(xform)
         cases = {
@@ -417,8 +419,8 @@ class TestTypedLayerPrep(MayaTestCase):
                 [_DAG_KEYS[1], _DAG_KEYS[0]] + _DAG_KEYS[2:],
             ),
             "geometry": (Mesh(shape), _DAG_KEYS + _GEO_KEYS),
-            "checked_dg": (PyNode(_mobject(md)), _DG_KEYS),
-            "checked_dag": (PyNode(_mobject(xform)), _DAG_KEYS),
+            "checked_dg": (Node(_mobject(md)), _DG_KEYS),
+            "checked_dag": (Node(_mobject(xform)), _DAG_KEYS),
         }
         for label, (node, keys) in cases.items():
             with self.subTest(case=label):
@@ -447,7 +449,7 @@ class TestPrivateProbeOnAFreedNode(MayaTestCase):
         return ["md", "xf", "cubeShape"]
 
     def _hold(self, names):
-        held = [PyNode(name) for name in names]
+        held = [Node(name) for name in names]
         self.assertEqual([type(n).__name__ for n in held], ["DGNode", "Transform", "Mesh"])
         self.assertTrue(hasattr(held[0], "__parked__"))
         self.assertEqual(str(held[0].__parked__), f"{names[0]}.__parked__")
@@ -492,7 +494,7 @@ class TestPrivateProbeOnAFreedNode(MayaTestCase):
             self.assertTrue(all(cmds.objExists(name) for name in names))
             self._assert_freed(held)
             # the node of the same name the file brought is its own
-            self.assertEqual(str(PyNode("md").__parked__), "md.__parked__")
+            self.assertEqual(str(Node("md").__parked__), "md.__parked__")
         finally:
             cmds.file(new=True, force=True)
             shutil.rmtree(folder, ignore_errors=True)
@@ -624,9 +626,9 @@ class TestApi1HandleReaders(MayaTestCase):
         from rig.nodetypes._base import _handle_alive, _handle_valid
 
         cmds.undoInfo(state=True, infinity=True)
-        live    = PyNode(cmds.createNode("transform", name="live"))
-        deleted = PyNode(cmds.createNode("multiplyDivide", name="deleted"))
-        freed   = PyNode(cmds.createNode("transform", name="freed"))
+        live    = Node(cmds.createNode("transform", name="live"))
+        deleted = Node(cmds.createNode("multiplyDivide", name="deleted"))
+        freed   = Node(cmds.createNode("transform", name="freed"))
         half    = object.__new__(Transform)
         cmds.delete("deleted")
         cases = {
@@ -667,7 +669,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
 
     def test_attribute_access_gives_plugs(self):
         cmds.createNode("transform", name="a")
-        dg = PyNode("a")
+        dg = Node("a")
         for plug in (dg.tx, dg.t, dg.t[0], dg.t.ty, dg.worldMatrix[0]):
             with self.subTest(plug=str(plug)):
                 self.assertIsInstance(plug, Plug)
@@ -682,7 +684,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         # C7: what a typed node's attr does now that it is a Plug
         cmds.createNode("transform", name="a")
         cmds.createNode("transform", name="b")
-        a, b = PyNode("a"), PyNode("b")
+        a, b = Node("a"), Node("b")
         with self.assertRaisesRegex(TypeError, r"^'>>' does not connect plugs: write b\.translateY"):
             a.tx >> b.ty
         self.assertIsNone(cmds.listConnections("b.ty", source=True))
@@ -711,7 +713,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("transform", name="a")
         cmds.addAttr("a", longName="__parked__", attributeType="double")
-        dg     = PyNode("a")
+        dg     = Node("a")
         before = list(vars(dg))
 
         dg.tx = 5
@@ -728,7 +730,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         with self.assertRaises(AttributeError) as ctx:
             dg.rename = 1
         self.assertIn("find_attr('rename')", str(ctx.exception))
-        curve = PyNode(
+        curve = Node(
             cmds.listRelatives(cmds.curve(point=[(0, 0, 0), (1, 0, 0)], degree=1), shapes=True)[0]
         )
         with self.assertRaises(AttributeError) as ctx:
@@ -780,7 +782,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         from rig.spec import Float
 
         cmds.createNode("transform", name="a")
-        dg = PyNode("a")
+        dg = Node("a")
         self.assertIs(dg >> None, dg)
         plug = dg << Float("knob", dv=0.5)
         self.assertEqual(str(plug), "a.knob")
@@ -798,14 +800,14 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
     def test_matrix_sources_drive_a_typed_transform(self):
         cmds.createNode("transform", name="a")
         cmds.createNode("transform", name="b")
-        b = PyNode("b")
-        self.assertIs(b << PyNode("a").matrix, b)
+        b = Node("b")
+        self.assertIs(b << Node("a").matrix, b)
         for channel in ("t", "r", "s"):
             with self.subTest(channel=channel):
                 sources = cmds.listConnections(f"b.{channel}", source=True, destination=False)
                 self.assertEqual([cmds.nodeType(s) for s in sources], ["decomposeMatrix"])
         cmds.createNode("transform", name="c")
-        c        = PyNode("c")
+        c        = Node("c")
         m        = np.eye(4)
         m[3, :3] = [7.0, 8.0, 9.0]
         self.assertIs(c << m, c)
@@ -815,25 +817,25 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         cube  = cmds.polyCube(name="cube", ch=False)[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
         surf  = cmds.sphere(name="ball", constructionHistory=False)[0]
-        self.assertEqual(str(PyNode(cube).vtx[3]), f"{shape}.controlPoints[3]")
-        faces = PyNode(cube).f
+        self.assertEqual(str(Node(cube).vtx[3]), f"{shape}.controlPoints[3]")
+        faces = Node(cube).f
         self.assertIsInstance(faces, Components)
         self.assertTrue(faces.shape.mobject == _mobject(shape))
-        self.assertIsInstance(PyNode(shape).e, Components)
+        self.assertIsInstance(Node(shape).e, Components)
         from rig._internal.plug import ComponentPlug
 
-        cv = PyNode(surf).cv
+        cv = Node(surf).cv
         self.assertIsInstance(cv, ComponentPlug)
         self.assertEqual(str(cv[1, 2]), "ballShape.cv[1][2]")
         with self.assertRaises(AttributeError):
-            PyNode(shape).cv
+            Node(shape).cv
         # a curve shape's `f` is its Maya attr `form`, not a component
         crv = cmds.listRelatives(cmds.curve(point=[(0, 0, 0), (1, 0, 0)], degree=1), shapes=True)[0]
-        self.assertEqual(str(PyNode(crv).f), f"{crv}.form")
+        self.assertEqual(str(Node(crv).f), f"{crv}.form")
 
     def test_plug_private_names(self):
         cmds.createNode("transform", name="a")
-        plug = PyNode("a").tx
+        plug = Node("a").tx
         with self.assertRaises(AttributeError):
             plug._attr_dict
         with self.assertRaises(AttributeError):
@@ -849,13 +851,13 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         cmds.addAttr("a", longName="_pair", attributeType="double2")
         cmds.addAttr("a", longName="_first", attributeType="double", parent="_pair")
         cmds.addAttr("a", longName="_second", attributeType="double", parent="_pair")
-        self.assertEqual(str(PyNode("a")._pair._second), "a._second")
+        self.assertEqual(str(Node("a")._pair._second), "a._second")
         # a half-built plug has none
         self.assertFalse(hasattr(Plug.__new__(Plug, "a.tx"), "_x"))
 
     def test_plug_private_names_on_a_freed_node(self):
         cmds.createNode("transform", name="a")
-        plug = PyNode("a").tx
+        plug = Node("a").tx
         cmds.file(new=True, force=True)
         with mock.patch.object(cmds, "container", wraps=cmds.container) as probe:
             for name in ("__array__", "_x", "__parked__"):
@@ -866,7 +868,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         attribute_cls = _base_module().Attribute
         cmds.createNode("transform", name="a")
         cmds.createNode("transform", name="b")
-        dg = PyNode("a")
+        dg = Node("a")
         for plug in (dg.tx, Node("a").tx, Plug("a.tx"), dg.t[0]):
             with self.subTest(plug=type(plug.node).__name__):
                 attr = dg.find_attr(plug)
@@ -876,32 +878,32 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
                 self.assertEqual(attr.get(), 0.0)
         # another node's plug is refused, quietly too
         with self.assertRaisesRegex(AttributeError, "doesn't belong to a"):
-            dg.find_attr(PyNode("b").tx)
-        self.assertIsNone(dg.find_attr(PyNode("b").tx, quiet=True))
+            dg.find_attr(Node("b").tx)
+        self.assertIsNone(dg.find_attr(Node("b").tx, quiet=True))
         # a typed Attribute is handed back as is
         typed = dg.find_attr("ty")
         self.assertIs(dg.find_attr(typed), typed)
 
     def test_find_attr_of_a_freed_plug_raises(self):
         cmds.createNode("transform", name="a")
-        plug = PyNode("a").tx
+        plug = Node("a").tx
         cmds.file(new=True, force=True)
         cmds.createNode("transform", name="a")
         with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
-            PyNode("a").find_attr(plug)
+            Node("a").find_attr(plug)
 
     def test_str_operand_and_same_plug_compare_build_nothing(self):
         # X1 and the one operand check reach typed plugs too
         cmds.createNode("transform", name="cube")
         before = _scene_nodes()
         with self.assertRaises(TypeError):
-            PyNode("cube").tx == "cube.ty"
+            Node("cube").tx == "cube.ty"
         self.assertEqual(_scene_nodes(), before)
-        self.assertIs(PyNode("cube").tx == PyNode("cube").tx, True)
-        self.assertIs(PyNode("cube").tx != Node("cube").tx, False)
-        self.assertEqual({PyNode("cube").tx: 1}[PyNode("cube").tx], 1)
-        self.assertEqual({Node("cube").tx: 2}[PyNode("cube").tx], 2)
-        self.assertIn(PyNode("cube").tx, {PyNode("cube").tx, PyNode("cube").ty})
+        self.assertIs(Node("cube").tx == Node("cube").tx, True)
+        self.assertIs(Node("cube").tx != Node("cube").tx, False)
+        self.assertEqual({Node("cube").tx: 1}[Node("cube").tx], 1)
+        self.assertEqual({Node("cube").tx: 2}[Node("cube").tx], 2)
+        self.assertIn(Node("cube").tx, {Node("cube").tx, Node("cube").ty})
         self.assertEqual(_scene_nodes(), before)
 
 
@@ -959,7 +961,7 @@ class TestMergeReviewFixes(MayaTestCase):
 
     def test_typed_map_api_takes_the_plug_of_a_map(self):
         attribute_cls = _base_module().Attribute
-        cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
+        cube = Node(cmds.polyCube(name="cube", ch=False)[0])
         mesh = cube.get_children(type="mesh")[0]
         mesh.add_map("skinMask", values=[0, 0.5, 1, 0, 0, 0.25, 0, 0])
         plug = mesh.skinMask
@@ -978,7 +980,7 @@ class TestMergeReviewFixes(MayaTestCase):
         self.assertEqual(mesh.get_map_values("skinMask"), [0.5] * 8)
 
     def test_instance_monkeypatching_of_node_methods(self):
-        node = PyNode(cmds.createNode("transform", name="a"))
+        node = Node(cmds.createNode("transform", name="a"))
         with mock.patch.object(node, "get_parent", return_value="P"):
             self.assertEqual(node.get_parent(), "P")
         self.assertIsNone(node.get_parent())
@@ -1005,10 +1007,10 @@ class TestMergeReviewFixes(MayaTestCase):
 
     def test_owner_propagation_of_typed_accessors(self):
         # the accessors of a node's plugs and attrs keep the node as their owner,
-        # through PyNode and (M4) through the Node factory, which is the same
-        # typed node; a Plug's element_by_* result is a Plug (M4B, D29)
+        # through the cast core and (M4) through the Node factory, which give the
+        # same typed node; a Plug's element_by_* result is a Plug (M4B, D29)
         attribute_cls = _base_module().Attribute
-        for factory in (PyNode, Node):
+        for factory in (_base._cast, Node):
             with self.subTest(factory=factory.__name__):
                 cmds.file(new=True, force=True)
                 node   = factory(cmds.createNode("transform", name="n"))
@@ -1076,7 +1078,7 @@ class TestTypedDslEdges(MayaTestCase):
     def test_deleted_undone_renamed_and_reused(self):
         # E1
         cmds.undoInfo(state=True, infinity=True)
-        dg   = PyNode(cmds.createNode("transform", name="gone"))
+        dg   = Node(cmds.createNode("transform", name="gone"))
         plug = dg.tx
         cmds.delete("gone")
         for label, op in (
@@ -1105,13 +1107,13 @@ class TestTypedDslEdges(MayaTestCase):
         for op in (lambda: str(plug), lambda: str(dg.tx), lambda: dg.tz):
             with self.assertRaisesRegex(RuntimeError, "^back already deleted!$"):
                 op()
-        self.assertEqual(str(PyNode("back").input1X), "back.input1X")
-        self.assertIsNot(PyNode("back").input1X.node, dg)
+        self.assertEqual(str(Node("back").input1X), "back.input1X")
+        self.assertIsNot(Node("back").input1X.node, dg)
 
     def _held(self, names):
         held = []
         for name in names:
-            node     = PyNode(name)
+            node     = Node(name)
             compound = node.t
             compound.tx  # a cached child
             held.append((node, node.tx, compound, node.worldMatrix[0], node.find_attr("ty")))
@@ -1173,7 +1175,7 @@ class TestTypedDslEdges(MayaTestCase):
             self.assertTrue(all(cmds.objExists(name) for name in names))
             self._assert_freed(held)
             # the node of the same name the file brought is its own
-            self.assertEqual(str(PyNode("held0").tx), "held0.translateX")
+            self.assertEqual(str(Node("held0").tx), "held0.translateX")
         finally:
             cmds.file(new=True, force=True)
             shutil.rmtree(folder, ignore_errors=True)
@@ -1203,9 +1205,9 @@ class TestTypedDslEdges(MayaTestCase):
         cmds.createNode("transform", name="T2")
         cmds.parent("|T1|S", "T2", add=True, shape=True)
         cmds.setAttr("T2.tx", 7)
-        second = PyNode("|T2|S")
+        second = Node("|T2|S")
         self.assertEqual(str(second.v), "T2|S.visibility")
-        self.assertEqual(str(PyNode("|T1|S").v), "T1|S.visibility")
+        self.assertEqual(str(Node("|T1|S").v), "T1|S.visibility")
         self.assertIs(second.v.node, second)
         for path, index, name in (
             ("|T2|S", 0, "T2|S.worldMatrix[0]"),
@@ -1214,14 +1216,14 @@ class TestTypedDslEdges(MayaTestCase):
             ("|T1|S", 1, "T1|S.worldMatrix[1]"),
         ):
             with self.subTest(path=path, index=index):
-                plug = PyNode(path).worldMatrix[index]
+                plug = Node(path).worldMatrix[index]
                 self.assertEqual(str(plug), name)
                 self.assertEqual(plug.get()[3][0], 7.0 if index else 0.0)
                 dst = cmds.createNode("multMatrix")
-                PyNode(dst).matrixIn[0] << plug
+                Node(dst).matrixIn[0] << plug
                 self.assertEqual(_source_index(dst + ".matrixIn[0]"), index)
         # one plug read through two paths is one key, and compares the same
-        first = PyNode("|T1|S").v
+        first = Node("|T1|S").v
         self.assertEqual({first: 1}.get(second.v), 1)
         self.assertIs(first == second.v, True)
         # a removed instance: the plug is named through the path left, and the
@@ -1236,7 +1238,7 @@ class TestTypedDslEdges(MayaTestCase):
         # E4
         cmds.namespace(add="ns")
         cmds.createNode("transform", name="ns:n")
-        dg = PyNode("ns:n")
+        dg = Node("ns:n")
         self.assertEqual(str(dg.tx), "ns:n.translateX")
         self.assertIs(dg.tx.node, dg)
         dg.tx = 3
@@ -1247,7 +1249,7 @@ class TestTypedDslEdges(MayaTestCase):
         finally:
             cmds.namespace(set=":")
         self.assertEqual(made, "ns:m")
-        other = PyNode(made)
+        other = Node(made)
         other.namespace = "other"
         self.assertEqual(str(other.ty), "other:m.translateY")
         self.assertEqual(str(dg.ty), "ns:n.translateY")
@@ -1258,17 +1260,17 @@ class TestTypedDslEdges(MayaTestCase):
 
         cube  = cmds.polyCube(name="cube", ch=False)[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
-        mesh  = PyNode(shape)
+        mesh  = Node(shape)
         self.assertIs(mesh.vtx.node, mesh)
         self.assertEqual(str(mesh.vtx[2]), f"{shape}.controlPoints[2]")
         self.assertEqual(
             [str(p) for p in mesh.vtx[0:2]],
             [f"{shape}.controlPoints[0]", f"{shape}.controlPoints[1]"],
         )
-        self.assertEqual((PyNode(cube).e >> None).tolist(), list(range(12)))
-        self.assertEqual(PyNode(cube).f[1:3].count, 2)
+        self.assertEqual((Node(cube).e >> None).tolist(), list(range(12)))
+        self.assertEqual(Node(cube).f[1:3].count, 2)
         surf  = cmds.sphere(name="ball", ch=False)[0]
-        shell = PyNode(cmds.listRelatives(surf, shapes=True)[0])
+        shell = Node(cmds.listRelatives(surf, shapes=True)[0])
         cv    = shell.cv
         self.assertIsInstance(cv, ComponentPlug)
         self.assertIs(cv.node, shell)
@@ -1276,11 +1278,11 @@ class TestTypedDslEdges(MayaTestCase):
         self.assertIs(element.node, shell)
         self.assertTrue(element.equals(Plug(f"{shell}.cv[1][2]")))
         lattice = cmds.lattice(cmds.polySphere(name="lsph", ch=False)[0], divisions=(2, 3, 2))[1]
-        pt = PyNode(cmds.listRelatives(lattice, shapes=True)[0]).pt
+        pt = Node(cmds.listRelatives(lattice, shapes=True)[0]).pt
         self.assertIsInstance(pt, ComponentPlug)
         self.assertEqual(str(pt[1, 2, 0]), f"{pt.node}.pt[1][2][0]")
         # a 1-D curve cv is a plain Plug
-        crv = PyNode(
+        crv = Node(
             cmds.listRelatives(
                 cmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0)], degree=1), shapes=True
             )[0]
@@ -1294,7 +1296,7 @@ class TestTypedDslEdges(MayaTestCase):
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("transform", name="a")
         cmds.addAttr("a", longName="userDyn", attributeType="double")
-        dg   = PyNode("a")
+        dg   = Node("a")
         plug = dg.userDyn
         self.assertIsNotNone(plug.__dict__["_attr1"])
         cmds.deleteAttr("a.userDyn")
@@ -1318,7 +1320,7 @@ class TestTypedDslEdges(MayaTestCase):
     def test_identity(self):
         # E8
         cmds.createNode("transform", name="a")
-        dg   = PyNode("a")
+        dg   = Node("a")
         node = Node("a")
         self.assertIs(dg.tx.node, dg)
         self.assertIs(dg.t[0].node, dg)
@@ -1358,7 +1360,7 @@ class TestOneNodeHierarchy(MayaTestCase):
 
         cube  = cmds.polyCube(name="cube", ch=False)[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
-        node  = PyNode(cube)
+        node  = Node(cube)
         sel   = OpenMaya.MSelectionList()
         sel.add(cube)
         uuid  = cmds.ls(cube, uuid=True)[0]
@@ -1375,7 +1377,7 @@ class TestOneNodeHierarchy(MayaTestCase):
             ("dotted compound", f"{cube}.translate", Transform),
             ("dotted component", f"{shape}.vtx[0]", Mesh),
             ("mplug", node.tx.plug, Transform),
-            ("shape mplug", PyNode(shape).find_attr("outMesh").plug, Mesh),
+            ("shape mplug", Node(shape).find_attr("outMesh").plug, Mesh),
             ("mobject", _mobject(cube), Transform),
             ("mdagpath", sel.getDagPath(0), Transform),
             ("uuid", uuid, Transform),
@@ -1390,14 +1392,16 @@ class TestOneNodeHierarchy(MayaTestCase):
             with self.subTest(bad=bad):
                 with self.assertRaisesRegex(ValueError, "is not a str, MObject, MDagPath"):
                     Node(bad)
-        self.assertIs(type(Node(cube)), type(PyNode(cube)))
-        # a node class constructs as usual; PyNode keeps a dotted name an Attribute
+        self.assertIs(type(Node(cube)), type(_base._cast(cube)))
+        # a node class constructs as usual; the attribute of a dotted name is
+        # Attribute(...) (R2), and the private cast core keeps its attribute branch
         self.assertIs(type(Transform(cube)), Transform)
-        self.assertIs(type(PyNode(f"{cube}.tx")), _base_module().Attribute)
+        self.assertIs(type(_base.Attribute(f"{cube}.tx")), _base.Attribute)
+        self.assertIs(type(_base._cast(f"{cube}.tx")), _base.Attribute)
 
     def test_the_class_call_has_one_branch_point(self):
         # NodeMeta.__call__ runs for every node class call and dispatches the
-        # root only; PyNode's cast constructs without it (round 4b builds on both)
+        # root only; the cast core constructs without it (round 4b builds on both)
         from rig.nodetypes._base import NodeMeta
 
         cmds.createNode("transform", name="a")
@@ -1409,8 +1413,8 @@ class TestOneNodeHierarchy(MayaTestCase):
             return original(cls, *args, **kwargs)
 
         with mock.patch.object(NodeMeta, "__call__", counting):
-            PyNode("a")
-            PyNode(_mobject("a"))
+            _base._cast("a")
+            _base._cast(_mobject("a"))
             self.assertEqual(calls, [])
             Node("a")
             self.assertEqual(calls, ["Node"])
@@ -1433,7 +1437,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         # (K's _bound parity, on round 3's constructors): a node's plug holds the
         # state keys a Plug built from its MPlug holds, in the same order
         cmds.createNode("transform", name="a")
-        mplug = PyNode("a").find_attr("tx").plug
+        mplug = Node("a").find_attr("tx").plug
         self.assertEqual(list(vars(Node("a").tx)), list(vars(Plug(mplug))))
         self.assertEqual(str(Node("a").tx), str(Plug(mplug)))
         self.assertEqual(list(vars(Node("a").t[0])), list(vars(Plug(mplug))))
@@ -1466,7 +1470,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         with container("box") as box:
             inner = Node.create("transform", name="inner")
             container.publish_input(inner.tx, "slide")
-        plain = PyNode(str(box))
+        plain = Node(str(box))
         self.assertIsInstance(box, Container)
         self.assertIsInstance(box, DGNode)
         self.assertIsInstance(box, Node)
@@ -1478,7 +1482,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         self.assertFalse(box != plain)
         self.assertEqual(hash(box), hash(plain))
         self.assertEqual(len({box, plain}), 1)
-        self.assertFalse(box == PyNode("inner"))
+        self.assertFalse(box == Node("inner"))
         self.assertEqual(repr(box), 'Container("box")')
         # a genuine attr is owned by the container, a published one by its node
         self.assertIs(box.blackBox.node, box)
@@ -1540,10 +1544,10 @@ class TestOneNodeHierarchy(MayaTestCase):
 
     def test_membership_with_a_typed_node_on_the_left(self):
         # a node on the left of a member spec is a Node, whatever the object
-        # (at M3 a PyNode on the left raised "... is not a Node")
+        # (at M3 a typed node on the left raised "... is not a Node")
         from rig import Layer, Tag
 
-        cube = PyNode(cmds.polyCube(name="cube", ch=False)[0])
+        cube = Node(cmds.polyCube(name="cube", ch=False)[0])
         self.assertIs(cube << Tag("t1"), cube)
         self.assertIs(cube << Layer("L"), cube)
         self.assertTrue(cube >> Layer("L"))
@@ -1554,8 +1558,8 @@ class TestOneNodeHierarchy(MayaTestCase):
         # typed nodes are clone targets of plug >> node and bare nodes for <<
         from rig.spec import Float
 
-        src = PyNode(cmds.createNode("transform", name="src"))
-        dst = PyNode(cmds.createNode("transform", name="dst"))
+        src = Node(cmds.createNode("transform", name="src"))
+        dst = Node(cmds.createNode("transform", name="dst"))
         knob = src << Float("knob", dv=0.25)
         clone = knob >> dst
         self.assertIs(type(clone), Plug)
@@ -1682,7 +1686,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
     naming through the owner's path), for Plug and typed Attribute parents, owned
     or not, on DG, DAG, instanced (E3), dynamic (E7) and component (E6) attrs,
     deleted to the undo queue and undone (E1), freed (E2); and D12, the one cast
-    core (``_cast``) the ``Node`` factory calls without PyNode's class call."""
+    core (``_cast``) the ``Node`` factory calls."""
 
     TEST_START_NEW_SCENE = True
 
@@ -1729,13 +1733,13 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         "unowned instanced":      (lambda: Plug("|T2|S.t"), "compound"),
         "unowned dynamic":        (lambda: Plug("dyn.dv"), "compound"),
         "unowned dynamic multi":  (lambda: Plug("dyn.arr"), "multi"),
-        "plug of a typed attr":   (lambda: Plug(PyNode("|T2|S").find_attr("t")), "compound"),
-        "typed multi":            (lambda: PyNode("pma").find_attr("input1D"), "multi"),
-        "typed compound":         (lambda: PyNode("t").find_attr("t"), "compound"),
-        "typed instanced":        (lambda: PyNode("|T2|S").find_attr("t"), "compound"),
-        "typed instanced matrix": (lambda: PyNode("|T2|S").find_attr("worldMatrix"), "multi"),
-        "typed dynamic":          (lambda: PyNode("dyn").find_attr("dv"), "compound"),
-        "typed dynamic multi":    (lambda: PyNode("dyn").find_attr("arr"), "multi"),
+        "plug of a typed attr":   (lambda: Plug(Node("|T2|S").find_attr("t")), "compound"),
+        "typed multi":            (lambda: Node("pma").find_attr("input1D"), "multi"),
+        "typed compound":         (lambda: Node("t").find_attr("t"), "compound"),
+        "typed instanced":        (lambda: Node("|T2|S").find_attr("t"), "compound"),
+        "typed instanced matrix": (lambda: Node("|T2|S").find_attr("worldMatrix"), "multi"),
+        "typed dynamic":          (lambda: Node("dyn").find_attr("dv"), "compound"),
+        "typed dynamic multi":    (lambda: Node("dyn").find_attr("arr"), "multi"),
         "named typed multi":      (lambda: _base_module().Attribute("pma.input1D"), "multi"),
     }
 
@@ -1882,7 +1886,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         self.assertIs(handle[1, 2].node, handle.node)
         # a Plug's element by index is a Plug, a typed attr's an Attribute
         self.assertIs(type(Node("pma").input1D.element_by_physical_index(0)), Plug)
-        self.assertIs(type(PyNode("pma").find_attr("input1D").element_by_physical_index(0)), Attribute)
+        self.assertIs(type(Node("pma").find_attr("input1D").element_by_physical_index(0)), Attribute)
 
     def test_plugs_are_never_cached(self):
         # D30: every lookup builds a new Plug; the child caches hold Attributes
@@ -1919,7 +1923,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         self._scene()
         multi    = Node("pma").input1D
         unowned  = Plug("pma.input1D")
-        typed    = PyNode("pma").find_attr("input1D")
+        typed    = Node("pma").find_attr("input1D")
         compound = Node("t").t
         compound.translateY
         compound.child(1)
@@ -1945,19 +1949,17 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
                 self.assertEqual(in_base.call_count + in_plug.call_count, count)
 
     def test_node_factory_makes_one_cast_frame(self):
-        # D12: Node(x) runs the cast core once, without PyNode's class call;
-        # PyNode(x) is that class call and the core
+        # D12: Node(x) runs the cast core once (R2: there is no other cast door)
         base = _base_module()
         cmds.createNode("transform", name="a")
         cast = base._cast.__code__
-        new  = PyNode.__new__.__code__
 
         def frames(func):
             seen = []
 
             def profile(frame, event, arg):
-                if event == "call" and frame.f_code in (cast, new):
-                    seen.append("_cast" if frame.f_code is cast else "PyNode.__new__")
+                if event == "call" and frame.f_code is cast:
+                    seen.append("_cast")
 
             previous = sys.getprofile()
             sys.setprofile(profile)
@@ -1970,61 +1972,64 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         for label, value in (("name", "a"), ("mobject", _mobject("a")), ("dotted", "a.tx")):
             with self.subTest(value=label):
                 self.assertEqual(frames(lambda: Node(value)), ["_cast"])
-                self.assertEqual(frames(lambda: PyNode(value)), ["PyNode.__new__", "_cast"])
         node = Node("a")
         self.assertEqual(frames(lambda: Node(node)), [])
         self.assertEqual(frames(lambda: Node(node.tx)), [])
-        self.assertEqual(frames(lambda: PyNode(node)), ["PyNode.__new__", "_cast"])
+        self.assertEqual(frames(lambda: base._cast(node)), ["_cast"])
 
     def test_one_cast_core_gives_one_result(self):
-        # PyNode(x) and the factory's cast are one function: same classes, same
-        # errors; PyNode keeps its signature
+        # Node(x) and the private cast core are one function for a node: same
+        # classes, same errors (R2: Node is the only public door); the core keeps
+        # its attribute branch, Node gives the node of a dotted name
         base = _base_module()
         cube = cmds.polyCube(name="cube", ch=False)[0]
         for value in (cube, "cubeShape", _mobject(cube), cmds.ls(cube, uuid=True)[0]):
             with self.subTest(value=str(value)):
-                self.assertIs(type(base._cast(PyNode, value)), type(PyNode(value)))
-                self.assertIs(type(Node(value)), type(PyNode(value)))
-        self.assertIs(type(base._cast(PyNode, "cube.tx")), base.Attribute)
+                self.assertIs(type(base._cast(value)), type(Node(value)))
+        self.assertIs(type(base._cast("cube.tx")), base.Attribute)
+        self.assertIs(type(Node("cube.tx")), Transform)
         for bad in (3, None):
             with self.subTest(bad=bad):
                 with self.assertRaisesRegex(ValueError, "is not a str, MObject"):
-                    PyNode(bad)
-                with self.assertRaisesRegex(ValueError, "is not a str, MObject"):
                     Node(bad)
+                with self.assertRaisesRegex(ValueError, "is not a str, MObject"):
+                    base._cast(bad)
         gone    = cmds.createNode("transform", name="gone")
         missing = cmds.ls(gone, uuid=True)[0]
         cmds.delete(gone)
         cmds.flushUndo()
         errors = []
-        for cast in (Node, PyNode, lambda value: base._cast(PyNode, value)):
+        for cast in (Node, base._cast):
             try:
                 cast(missing)
             except Exception as exc:
                 errors.append((type(exc), str(exc)))
-        self.assertEqual(len(errors), 3)
+        self.assertEqual(len(errors), 2)
         self.assertEqual(errors[0], errors[1])
-        self.assertEqual(errors[0], errors[2])
         for args, kwargs in ((("x",), {}), ((), {"k": 1})):
             with self.subTest(extra=(args, kwargs)):
-                with self.assertRaisesRegex(TypeError, r"takes exactly one argument"):
-                    PyNode(cube, *args, **kwargs)
-        self.assertIs(type(PyNode(obj=cube)), Transform)
+                with self.assertRaises(TypeError):
+                    Node(cube, *args, **kwargs)
+        self.assertIs(type(Node(obj=cube)), Transform)
         with self.assertRaises(TypeError):
-            PyNode()
+            Node()
 
-    def test_a_patched_pynode_global_leaves_the_factory_alone(self):
-        # a test counts Attribute.node's lazy casts by patching the module
-        # global PyNode: the factory neither calls it nor breaks
+    def test_every_cast_goes_through_the_cast_core(self):
+        # R2: the Node factory and Attribute.node's lazy cast both call the module
+        # global _cast, so a test that counts casts patches that one function; a
+        # node object or a plug held by its node casts nothing
         base = _base_module()
         cmds.createNode("transform", name="a")
-        counting = mock.Mock(side_effect=PyNode)
-        with mock.patch.object(base, "PyNode", counting):
+        counting = mock.Mock(side_effect=base._cast)
+        with mock.patch.object(base, "_cast", counting):
             node = Node("a")
             self.assertIs(type(node), Transform)
-            self.assertEqual(counting.call_count, 0)
-            self.assertEqual(str(Plug("a.tx")), "a.translateX")
             self.assertEqual(counting.call_count, 1)
+            self.assertIs(Node(node), node)
+            self.assertIs(Node(node.tx), node)
+            self.assertEqual(counting.call_count, 1)
+            self.assertEqual(str(Plug("a.tx")), "a.translateX")
+            self.assertEqual(counting.call_count, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -2091,7 +2096,7 @@ class TestPlugQuickWins(MayaTestCase):
 
     def test_find_attr_filters_a_cache_hit(self):
         cmds.createNode("transform", name="a")
-        dg     = PyNode("a")
+        dg     = Node("a")
         cached = dg.find_attr("tx")
         self.assertIsNone(dg.find_attr("tx", data_type="string"))
         self.assertIsNone(dg.find_attr("translateX", category="noSuchCategory"))
@@ -2100,7 +2105,7 @@ class TestPlugQuickWins(MayaTestCase):
 
     def test_readded_extension_attr_through_the_same_node(self):
         cmds.createNode("transform", name="a")
-        dg = PyNode("a")
+        dg = Node("a")
         try:
             cmds.addExtension(nodeType="transform", longName="mergeExt", at="double")
             self.assertEqual(dg.find_attr("mergeExt").data_type, "double")
@@ -2124,7 +2129,7 @@ class TestPlugQuickWins(MayaTestCase):
     def test_rename_attr_with_a_plug_creates_no_node(self):
         net = cmds.createNode("network", name="net")
         cmds.addAttr(net, ln="foo", at="double")
-        dg     = PyNode(net)
+        dg     = Node(net)
         before = sorted(cmds.ls())
         result = dg.rename_attr(Node(net).foo, "bar")
         self.assertEqual(sorted(cmds.ls()), before)
@@ -2139,13 +2144,13 @@ class TestOwnerRule(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        self._registered = dict(PyNode._NODE_CLASS_DICT)
+        self._registered = dict(_base._NODE_CLASS_DICT)
 
     def tearDown(self):
-        PyNode._NODE_CLASS_DICT.clear()
-        PyNode._NODE_CLASS_DICT.update(self._registered)
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
         super().tearDown()
 
     def test_plugs_children_and_elements_share_the_node(self):
@@ -2284,7 +2289,7 @@ class TestOwnerRule(MayaTestCase):
         cmds.createNode("transform", name="w")
         cmds.addAttr("w", longName="name", dataType="string")
         node = object.__new__(_NameRaises)
-        vars(node).update(vars(PyNode(_mobject("w"))))
+        vars(node).update(vars(Node(_mobject("w"))))
         vars(node)["_attr_dict"] = {}
         for plug in (Node(node).tx, node.find_attr("tx"), Node(node).t[0]):
             with self.subTest(plug=type(plug).__name__):
@@ -2309,7 +2314,7 @@ class TestReviewFixes(MayaTestCase):
             node     = Node(name)
             compound = node.t
             compound.tx  # a cached child
-            typed = PyNode(name)
+            typed = Node(name)
             typed.tx  # a cached typed attr
             held.append(
                 (node, node.tx, compound, node.worldMatrix[0], node.find_attr("ty"), typed)
@@ -2641,7 +2646,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
 
     def test_typed_attributes_through_two_paths_are_one_key(self):
         _instanced_locator()
-        first, second = PyNode("|T1|S"), PyNode("|T2|S")
+        first, second = Node("|T1|S"), Node("|T2|S")
         a, b = first.find_attr("v"), second.find_attr("v")
         self.assertEqual((str(a), str(b)), ("T1|S.visibility", "T2|S.visibility"))
         self.assertEqual(hash(a), hash(b))
@@ -2662,7 +2667,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
         self.assertTrue(plug.equals(a))
         # another attribute, another node, another instance's element: another key
         self.assertFalse(a == second.find_attr("lodVisibility"))
-        self.assertFalse(a == PyNode("T1").find_attr("v"))
+        self.assertFalse(a == Node("T1").find_attr("v"))
         wm0, wm1 = first.find_attr("worldMatrix")[0], second.find_attr("worldMatrix")[1]
         self.assertEqual(len({wm0, wm1}), 2)
         self.assertFalse(wm0 == wm1)
@@ -2681,11 +2686,11 @@ class TestInstancedPlugIdentity(MayaTestCase):
         pma = cmds.createNode("plusMinusAverage", name="pma")
         spellings = [
             (Node("|T1|S").lpx, Node("|T2|S").localPosition[0], Plug("T2|S.localPositionX"),
-             Node("|T1|S").lp.localPositionX, PyNode("|T2|S").find_attr("lpx")),
+             Node("|T1|S").lp.localPositionX, Node("|T2|S").find_attr("lpx")),
             (Node(pma).input3D[1].input3Dx, Plug(f"{pma}.input3D[1].input3Dx"),
-             Node(pma).input3D[1][0], PyNode(pma).find_attr("input3D")[1].child(0)),
+             Node(pma).input3D[1][0], Node(pma).find_attr("input3D")[1].child(0)),
             (Node("|T2|S").worldMatrix, Node("|T1|S").worldMatrix[1],
-             Plug("T2|S.worldMatrix"), PyNode("|T1|S").find_attr("worldMatrix")[1]),
+             Plug("T2|S.worldMatrix"), Node("|T1|S").find_attr("worldMatrix")[1]),
         ]
         for group in spellings:
             with self.subTest(plug=str(group[0])):
@@ -2731,7 +2736,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
         cmds.undoInfo(state=True, infinity=True)
         node  = Node(cmds.createNode("transform", name="a"))
         held  = node.tx
-        typed = PyNode("a").find_attr("tx")
+        typed = Node("a").find_attr("tx")
         table, members, typed_set = {held: "x"}, {held}, {typed}
         key, typed_key = hash(held), hash(typed)
         cmds.rename("a", "b")
@@ -2739,7 +2744,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
         self.assertEqual((hash(held), hash(typed)), (key, typed_key))
         self.assertEqual(table[held], "x")
         self.assertEqual(table[Node("b").tx], "x")
-        self.assertIn(PyNode("b").find_attr("translateX"), typed_set)
+        self.assertIn(Node("b").find_attr("translateX"), typed_set)
         members.add(held)
         members.add(Node("b").tx)
         self.assertEqual(len(members), 1)
@@ -2772,7 +2777,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
     def test_plug_key_survives_a_new_scene(self):
         node   = Node(cmds.createNode("transform", name="a"))
         held   = node.tx
-        typed  = PyNode("a").find_attr("ty")
+        typed  = Node("a").find_attr("ty")
         keys   = (hash(held), hash(typed))
         table  = {held: 1, typed: 2}
         unseen = node.tz  # never hashed before the free
@@ -2785,7 +2790,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
 
     def test_a_plain_str_is_a_name_not_a_plug_key(self):
         node  = Node(cmds.createNode("transform", name="a"))
-        typed = PyNode("a").find_attr("tx")
+        typed = Node("a").find_attr("tx")
         before = sorted(cmds.ls())
         for key in (node.tx, typed):
             with self.subTest(key=type(key).__name__):
@@ -2997,8 +3002,8 @@ class TestNoWrapperLeft(MayaTestCase):
         xf    = Node(cmds.createNode("transform", name="xf"))
         md    = Node(cmds.createNode("multiplyDivide", name="md"))
         jnt   = Node(cmds.createNode("joint", name="jnt"))
-        casts = mock.Mock(side_effect=decompose.PyNode)
-        with mock.patch.object(decompose, "PyNode", casts):
+        casts = mock.Mock(side_effect=decompose._cast)
+        with mock.patch.object(decompose, "_cast", casts):
             self.assertTrue(decompose._node_is_transform(xf))
             self.assertTrue(decompose._node_is_transform(jnt))
             self.assertFalse(decompose._node_is_transform(md))

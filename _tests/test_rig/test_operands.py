@@ -41,7 +41,6 @@ from rig import _dispatch as D
 from rig._internal import operands as operands_module
 from rig._internal.math_nodes import _condition_op, _constant
 from rig._internal.operands import _plain_str, operands
-from rig.nodetypes import PyNode
 from rig._tests._base import MayaTestCase
 
 
@@ -189,7 +188,7 @@ class TestPlugOperators(_OperandCase):
 
     def test_plugs_and_typed_attributes_are_operands(self):
         self.assertEqual(cmds.nodeType((self.t.tx == Plug(S)).node), "equal")
-        self.assertEqual(cmds.nodeType((self.t.tx + PyNode("cube").find_attr("ty")).node), "sum")
+        self.assertEqual(cmds.nodeType((self.t.tx + Node("cube").find_attr("ty")).node), "sum")
         self.assertEqual(cmds.nodeType((self.t.t + [1, self.u.tx, 2]).node), "plusMinusAverage")
         self.assertEqual(cmds.nodeType((List([self.t.tx]) + [Plug(S)])[0].node), "sum")
 
@@ -486,7 +485,7 @@ class TestOperandHelpers(MayaTestCase):
         cmds.file(new=True, force=True)
         cmds.createNode("transform", name="a")
         self.assertIsNone(_plain_str(Plug("a.tx")))
-        self.assertIsNone(_plain_str(PyNode("a").find_attr("tx")))
+        self.assertIsNone(_plain_str(Node("a").find_attr("tx")))
         self.assertIsNone(_plain_str([1, Plug("a.tx"), (2, 3.0), None, Node("a")]))
         self.assertIsNone(_plain_str(np.eye(4)))
         self.assertIsNone(_plain_str(np.array([], dtype=str)))

@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.nodetypes import PyNode
+from rig.nodetypes import Node
 from rig._tests._base import MayaTestCase
 
 TEST_TYPES   = ["doubleLinear", "message", "matrix"]
@@ -14,8 +14,8 @@ class TestChoice(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def _setup_scene(self, connect: bool = False):
-        self.xform  = PyNode(cmds.createNode("transform"))
-        self.choice = PyNode(cmds.createNode("choice"))
+        self.xform  = Node(cmds.createNode("transform"))
+        self.choice = Node(cmds.createNode("choice"))
         if connect:
             # typed Attributes connect with ``>>`` (a typed node's dotted
             # access gives a DSL Plug, whose ``>>`` clones)

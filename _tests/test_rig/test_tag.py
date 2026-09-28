@@ -10,7 +10,6 @@ from unittest import mock
 import numpy as np
 from maya import cmds
 from rig import Components, List, Node, Plug, Tag
-from rig.nodetypes import PyNode
 from rig.spec import String
 from rig._tests._base import MayaTestCase
 
@@ -21,7 +20,7 @@ def _shape(node):
 
 
 def _geo(node):
-    return PyNode(_shape(node))
+    return Node(_shape(node))
 
 
 def _tags(node):
@@ -630,10 +629,10 @@ class TestTagOnClusteredMesh(MayaTestCase):
     def test_at_upstream_of_a_topology_change_verifies_against_the_holder(self):
         cmds.polySmooth("sph")                       # 382 Orig points, 1562 on the shape
         self.sph.vtx << Tag("up", at=self.orig)      # every point of the ORIG, not the LHS
-        self.assertEqual(PyNode(self.orig).get_component_tag_indices("up").size, 382)
+        self.assertEqual(Node(self.orig).get_component_tag_indices("up").size, 382)
         self.sph.vtx[:5] << Tag("up2", at=self.orig)
         np.testing.assert_array_equal(
-            PyNode(self.orig).get_component_tag_indices("up2"), np.arange(5)
+            Node(self.orig).get_component_tag_indices("up2"), np.arange(5)
         )
         with self.assertRaisesRegex(TypeError, "at= places a tag"):
             self.sph >> Tag("up", at=self.orig)

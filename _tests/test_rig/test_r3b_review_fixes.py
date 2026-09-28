@@ -23,7 +23,7 @@ from maya.api import OpenMaya
 import rig
 from rig import List, Node, Plug
 from rig.bridges import commands as rc
-from rig.nodetypes import PyNode, _base
+from rig.nodetypes import _base
 from rig.nodetypes._base import Attribute
 from rig._internal.operands import operands
 from rig._tests._base import MayaTestCase
@@ -117,7 +117,7 @@ def _attr_plugs(prefix):
     return {
         "owned":          node.dyne,
         "owned, cached":  cached,
-        "typed owned":    PyNode(f"{prefix}held").find_attr("dyna"),
+        "typed owned":    Node(f"{prefix}held").find_attr("dyna"),
         "Plug(str)":      Plug(f"{prefix}held.dyne"),
         "Attribute(str)": Attribute(f"{prefix}held.dynf"),
         "Plug(MPlug)":    Plug(_mplug(f"{prefix}held.dynf")),
@@ -295,9 +295,9 @@ class TestNodeHandlesAreLookedUpOncePerNode(MayaTestCase):
         first = Plug("held.tx")
         with mock.patch.object(_base, "_node_handle", wraps=_base._node_handle) as spy:
             plugs = [
-                Plug("held.ty"), Attribute("held.tz"), PyNode("held.rx"),
+                Plug("held.ty"), Attribute("held.tz"), _base._cast("held.rx"),
                 Plug(_mplug("held.ry")), Attribute(_mplug("held.rz")),
-                PyNode(_mplug("held.sx")), List(["held.sy"])[0],
+                _base._cast(_mplug("held.sx")), List(["held.sy"])[0],
             ]
         self.assertEqual(spy.call_count, 0)
         for plug in plugs:
@@ -385,7 +385,7 @@ class TestAPlugOfADeletedNodesMPlugRaises(MayaTestCase):
                 for label, build in (
                     ("Plug(MPlug)", lambda: Plug(mplug)),
                     ("Attribute(MPlug)", lambda: Attribute(mplug)),
-                    ("PyNode(MPlug)", lambda: PyNode(mplug)),
+                    ("cast core(MPlug)", lambda: _base._cast(mplug)),
                     ("Plug(MPlug) of a known node", lambda: Plug(known)),
                 ):
                     with self.subTest(retaken=retaken, plug=label):
@@ -484,7 +484,7 @@ class TestAPlugKeepsItsHashAcrossADelete(MayaTestCase):
             "owned shape instObjGroups":   lambda: Node("heldShape").instObjGroups,
             "Plug(MPlug) worldMatrix":     lambda: Plug(Node("held").worldMatrix.plug),
             "Plug(MPlug) instObjGroups":   lambda: Plug(_mplug("heldShape.instObjGroups")),
-            "typed worldMatrix":           lambda: PyNode("held").find_attr("worldMatrix"),
+            "typed worldMatrix":           lambda: Node("held").find_attr("worldMatrix"),
             "Plug(str) worldMatrix":       lambda: Plug("held.worldMatrix"),
             "owned ty":                    lambda: Node("held").ty,
             "Plug(MPlug) ty":              lambda: Plug(_mplug("held.ty")),
@@ -520,7 +520,7 @@ class TestTheDeletedMessagesShareOneText(MayaTestCase):
         )
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("transform", name="held")
-        node, owned, unowned = PyNode("held"), Node("held").tx, Plug("held.ty")
+        node, owned, unowned = Node("held"), Node("held").tx, Plug("held.ty")
         cmds.delete("held")
         for label, op in (
             ("node", node.ensure_valid), ("owned", lambda: str(owned)),
@@ -557,7 +557,7 @@ def _dynamic_plugs():
         "Plug(str)":          (Plug("held.dyne"), "held.dyne", "held.dyne"),
         "Attribute(str)":     (Attribute("held.dyne"), "held.dyne", "held.dyne"),
         "Plug(MPlug)":        (Plug(_mplug("held.dyne")), "held.dyne", "held.dyne"),
-        "typed owned":        (PyNode("held").find_attr("dyne"), "held.dyne", "held.dyne"),
+        "typed owned":        (Node("held").find_attr("dyne"), "held.dyne", "held.dyne"),
         "owned child":        (node.dynv.dynvX, "held.dynvX", "held.dynv"),
         "owned element":      (node.dynm[3], "held.dynm[3]", "held.dynm"),
         "Plug child":         (Plug("held.dynv").dynvX, "held.dynvX", "held.dynv"),
@@ -566,7 +566,7 @@ def _dynamic_plugs():
         "typed parent":       (Attribute("held.dynvX").get_parent(), "held.dynv", "held.dynv"),
         "Plug(plug)":         (Plug(Attribute("held.dyne")), "held.dyne", "held.dyne"),
         "spec apply":         (node << rig.Float("added"), "held.added", "held.added"),
-        "find_alias":         (PyNode("held").find_alias("hoist"), "held.hoist", "held.dynf"),
+        "find_alias":         (Node("held").find_alias("hoist"), "held.hoist", "held.dynf"),
         "get_inputs()[0]":    (node.tx.get_inputs()[0], "src.out", "src.out"),
     }
 
@@ -676,7 +676,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         _build()
         for plug in (
             Node("held").tx, Plug("held.tx"), Plug(_mplug("held.t")).child(0),
-            PyNode("held").find_attr("worldMatrix")[0], PyNode("held").find_attr("ty"),
+            Node("held").find_attr("worldMatrix")[0], Node("held").find_attr("ty"),
         ):
             with self.subTest(plug=str(plug)):
                 self.assertIsNone(vars(plug)["_attr1"])
@@ -687,7 +687,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         _build()
         cmds.addAttr("held", longName="weight", shortName="wgt", attributeType="double")
         cmds.aliasAttr("hoist", "held.dynf")
-        node, typed = Node("held"), PyNode("held")
+        node, typed = Node("held"), Node("held")
         for label, plug, long_name in (
             ("long name", typed.find_attr("weight"), "weight"),
             ("short name", typed.find_attr("wgt"), "weight"),
@@ -713,7 +713,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         try:
             cmds.addExtension(nodeType="network", longName="rigFixExt", attributeType="double")
             cmds.createNode("network", name="net")
-            held = (Node("net").rigFixExt, PyNode("net").find_attr("rigFixExt"))
+            held = (Node("net").rigFixExt, Node("net").find_attr("rigFixExt"))
             for plug in held:
                 self.assertTrue(vars(plug)["_attr1"].isAlive())
             delete()
