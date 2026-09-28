@@ -16,6 +16,7 @@ import inspect
 import os
 import shutil
 import tempfile
+from unittest import mock
 
 from maya import cmds
 from rig import container, Layer, Node, set_options
@@ -355,6 +356,38 @@ class TestTypedCreateInContainer(MayaTestCase):
                 mesh = Mesh.create(data, name="m")
         self.assertEqual(str(mesh), "inner_mShape")
         self.assertEqual(_members(outer), ["inner_m", "inner_mShape"])
+
+    def test_the_one_node_a_create_made_is_registered_as_its_object(self):
+        # R2: a typed create that made exactly the node it returns (Transform,
+        # Joint, a DG class; Node.create of a registered type) registers the node
+        # object, whose uuid is read directly, not its name cast again; a create
+        # that made more nodes registers each by name, as before
+        data    = self._mesh_data()
+        md_cls  = self._md_class()
+        by_name = mock.Mock(wraps=container_module._node_uuid)
+        with mock.patch.object(container_module, "_node_uuid", by_name):
+            with container("outer") as outer:
+                with container("inner"):
+                    made = [
+                        Transform.create(name="t"),
+                        Node.create("joint", name="j"),
+                        md_cls.create(name="md"),
+                        Node.create("transform", name="n"),
+                    ]
+                    single = by_name.call_count
+                    mesh   = Mesh.create(data, name="m")
+                    frames = _frame_uuids()
+        self.assertEqual(single, 0)
+        self.assertEqual(by_name.call_count, 2)
+        self.assertEqual([str(x) for x in made], ["inner_t", "inner_j", "inner_md", "inner_n"])
+        self.assertEqual(
+            _members(outer),
+            ["inner_j", "inner_m", "inner_mShape", "inner_md", "inner_n", "inner_t"],
+        )
+        for node in made + [mesh, mesh.get_parent()]:
+            for frame in frames:
+                self.assertIn(_uuid(node), frame)
+        self.assertTrue(_tagged(made[2]))
 
     def test_create_hierarchy_keeps_its_names_and_registers_every_node(self):
         root  = Node.create("joint", name="root_joint")
