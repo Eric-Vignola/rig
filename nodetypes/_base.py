@@ -2559,23 +2559,33 @@ class Node(metaclass=NodeMeta):
           ``CUSTOM_NODE_TYPE``: ``transform``, ``joint``, ``choice``, ``mesh``,
           ``nurbsCurve``, ``skinCluster``, ``blendShape``, ``displayLayer``,
           ``objectSet``, ``shadingEngine``, ``reference``, a user class, ...)
-          runs that class's typed create with the arguments:
-          ``Node.create("joint", name="j")`` is ``Joint.create(name="j")``,
-          ``Node.create("skinCluster", mesh, joints)`` is
-          ``SkinCluster.create(mesh, joints)``. Inside ``with container()`` it
-          joins the scope by the typed-create rules (D13); the scene registries
-          (display layers, sets and shading engines, references) stay out of it
-          unless ``container=True``.
+          runs that class's typed create with the arguments, as
+          ``Joint.create(name="j")`` runs for ``Node.create("joint", name="j")``
+          and ``SkinCluster.create(mesh, joints)`` for
+          ``Node.create("skinCluster", mesh, joints)``. Inside
+          ``with container()`` it joins the scope by the typed-create rules
+          (D13); the scene registries (display layers, sets and shading
+          engines, references) stay out of it unless ``container=True``.
+          ``parent=`` puts a DAG node in its parent's space. A type whose class
+          makes just its node (``transform``, ``joint``, ``choice`` ...) takes
+          keyword arguments only; one built from inputs (``skinCluster``,
+          ``blendShape``, ``mesh``, ``reference``) raises TypeError without
+          them, before anything is made. A display layer is empty unless
+          objects are given.
         * Any other type is made by the container scope's ``createNode``
           (``Node.create("multiplyDivide", name="md")``): the node joins the
           active scope, an explicit ``name=`` takes the flattened scope's
-          prefix, a GC-eligible utility type is tagged for ``cleanup()``, and
-          ``container=False`` leaves the node out of the scope. No positional
-          argument may follow the type.
+          prefix (after any namespace), a GC-eligible utility type is tagged
+          for ``cleanup()``, and ``container=False`` leaves the node out of the
+          scope. No positional argument may follow the type.
 
         Either way ``skipSelect`` defaults to ``ContainerOptions.skip_selection``
         (for a typed create, when its ``_create`` forwards the flag to
-        ``cmds.createNode``), so the new node is not selected unless asked.
+        ``cmds.createNode``), so the new node is not selected unless asked; a
+        direct typed create outside a scope (``Joint.create()``) keeps Maya's
+        default and selects its node. ``container=False`` has one meaning on
+        both: the node is not registered with the scope (the prefix, the tag
+        and ``skipSelect`` still apply).
         """
         hook = _NODE_CREATE_HOOK
         if hook is None:

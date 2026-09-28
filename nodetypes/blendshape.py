@@ -28,6 +28,10 @@ class BlendShape(Deformer):
     # the maya native node type string
     NATIVE_NODE_TYPE = "blendShape"
 
+    # built from its shapes (``Node.create("blendShape")`` with none raises,
+    # naming them: ``cmds.blendShape`` alone would deform the selection)
+    _CREATE_TAKES_INPUTS = "*targets, base"
+
     @classmethod
     def _create(cls, *args, **kwargs) -> str:
         """[Internal] Creates a blendshape node and returns the mesh name.

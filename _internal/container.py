@@ -51,6 +51,7 @@ from rig.nodetypes.dg_node import _create_template, DGNode
 from rig.nodetypes.transform import Transform
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
+from rig._internal.undo import _undo_chunk
 
 
 # Sentinel for "argument not passed" so ``None`` can mean "revert to default".
@@ -596,11 +597,12 @@ class _ContainerStack:
         inside a flattened sub-scope, prefixes ``name`` with the flattened scope
         name.
         """
-        # Apply name prefix if we're inside a flattened sub-scope.
+        # Apply name prefix if we're inside a flattened sub-scope, on the leaf
+        # of a namespaced name (``ns:x`` is ``ns:inner_x``).
         if name is not None and self._stack:
             flatten_prefix = self._compute_flatten_prefix()
             if flatten_prefix:
-                name = f"{flatten_prefix}_{name}"
+                name = _flattened_name(flatten_prefix, name)
 
         # Default skipSelect from options.
         if ss is None and skipSelect is None:
@@ -1163,57 +1165,60 @@ def _typed_create(
 ) -> Any:
     """The typed-create hook (``dg_node._TYPED_CREATE_HOOK``): run
     ``run(cls, args, kwargs)``, the body of `DGNode.create` or of an
-    ``@_typed_creator``, joined to the active scope with ``Node.create``'s rules.
+    ``@_typed_creator``, joined to the active scope with
+    :meth:`_ContainerStack.createNode`'s rules.
 
-    ``container=`` is consumed: None means ``cls._CONTAINER_AWARE``, True
-    joins, False runs plain. The call runs plain (``run`` alone) when no scope
-    is open, when a typed create is already running (the depth counts every
-    typed create, acting or not), or when it does not join. Otherwise:
+    ``container=`` is consumed, and says whether the new nodes are registered
+    with the scope, as it does for ``createNode``: None means
+    ``cls._CONTAINER_AWARE``, True registers, False does not. The call runs
+    plain (``run`` alone) when no scope is open, when a typed create is already
+    running (the depth counts every typed create, acting or not), or on a scene
+    registry (``_CONTAINER_AWARE = False``) that is not registered. Otherwise,
+    in one undo chunk (one ``cmds.undo()`` reverts the create, the tag and the
+    registration):
 
     * on a ``_CONTAINER_AWARE`` class, an explicit ``name=`` / ``n=`` (or the
-      positional name at ``name_index``) takes the flattened scope's prefix, as
-      in :meth:`_ContainerStack.createNode`; a registry (joined with
-      ``container=True``) is found again by name, so it is never prefixed;
+      positional name at ``name_index``) takes the flattened scope's prefix on
+      its leaf, after any namespace (:func:`_flattened_name`), as in
+      ``createNode``; a registry (registered with ``container=True``) is found
+      again by name, so it is never prefixed;
     * ``skipSelect=True`` is added when ``ContainerOptions.skip_selection`` is
       on, neither ``ss`` nor ``skipSelect`` was given, and ``run`` is
       `DGNode.create`'s template on a class whose ``_create`` forwards it;
-    * ``run`` runs inside :func:`_call_tracking_creation`, unless it makes only
-      the node it returns (:func:`_makes_only_its_node`: ``Transform.create()``,
-      ``Joint.create()``, a DG class's create);
     * the returned node is tagged for :func:`cleanup` when
       ``cls.NATIVE_NODE_TYPE`` is GC-eligible and the class has no
       ``CUSTOM_NODE_TYPE`` (a user's metadata node is never collected);
-    * every node the call made for itself (see :func:`_call_tracking_creation`:
-      not a deformer's Orig shape under the user's mesh, nor a shared bind
-      pose), else the returned node, is registered with
-      :meth:`_ContainerStack.add`.
+    * when registered, ``run`` runs inside :func:`_call_tracking_creation`,
+      unless it makes only the node it returns (:func:`_makes_only_its_node`:
+      ``Transform.create()``, ``Joint.create()``, a DG class's create), and
+      every node the call made for itself (not a deformer's Orig shape under
+      the user's mesh, nor a shared bind pose), else the returned node, is
+      registered with :meth:`_ContainerStack.add`.
 
     Every other keyword reaches ``run`` untouched.
     """
     global _TYPED_DEPTH
-    joins = kwargs.pop("container", None)
-    if (
-        not container._stack
-        or _TYPED_DEPTH
-        or not (cls._CONTAINER_AWARE if joins is None else joins)
-    ):
+    joins     = kwargs.pop("container", None)
+    aware     = cls._CONTAINER_AWARE
+    registers = aware if joins is None else bool(joins)
+    if not container._stack or _TYPED_DEPTH or not (aware or registers):
         _TYPED_DEPTH += 1
         try:
             return run(cls, args, kwargs)
         finally:
             _TYPED_DEPTH -= 1
 
-    if cls._CONTAINER_AWARE:
+    if aware:
         prefix = container._compute_flatten_prefix()
         if prefix:
             for key in ("name", "n"):
                 name = kwargs.get(key)
                 if name:
-                    kwargs[key] = f"{prefix}_{name}"
+                    kwargs[key] = _flattened_name(prefix, name)
             if name_index is not None and len(args) > name_index and args[name_index]:
                 args = (
                     *args[:name_index],
-                    f"{prefix}_{args[name_index]}",
+                    _flattened_name(prefix, args[name_index]),
                     *args[name_index + 1 :],
                 )
     if (
@@ -1225,26 +1230,36 @@ def _typed_create(
     ):
         kwargs["skipSelect"] = True
 
-    _TYPED_DEPTH += 1
-    try:
-        if _makes_only_its_node(cls, run):
-            result, created = run(cls, args, kwargs), None
-        else:
-            result, created = _call_tracking_creation(run, (cls, args, kwargs), {})
-    finally:
-        _TYPED_DEPTH -= 1
+    with _undo_chunk("rig.create"):
+        _TYPED_DEPTH += 1
+        try:
+            if not registers or _makes_only_its_node(cls, run):
+                result, created = run(cls, args, kwargs), None
+            else:
+                result, created = _call_tracking_creation(run, (cls, args, kwargs), {})
+        finally:
+            _TYPED_DEPTH -= 1
 
-    if (
-        cls.NATIVE_NODE_TYPE in _GC_ELIGIBLE_TYPES
-        and not cls.CUSTOM_NODE_TYPE
-        and isinstance(result, DGNode)
-    ):
-        _gc_tag(result.name)
-    if created and not _made_only(result, created):
-        container.add(created)
-    elif result is not None:
-        container.add(result)
+        if (
+            cls.NATIVE_NODE_TYPE in _GC_ELIGIBLE_TYPES
+            and not cls.CUSTOM_NODE_TYPE
+            and isinstance(result, DGNode)
+        ):
+            _gc_tag(result.name)
+        if registers:
+            if created and not _made_only(result, created):
+                container.add(created)
+            elif result is not None:
+                container.add(result)
     return result
+
+
+def _flattened_name(prefix: str, name: Any) -> str:
+    """``name`` with the flattened scope's ``prefix`` on its leaf: ``x`` is
+    ``inner_x``, ``ns:x`` is ``ns:inner_x`` and ``:x`` is ``:inner_x`` (a prefix
+    in front of the namespace would name, and make, another namespace)."""
+    namespace, colon, leaf = str(name).rpartition(":")
+    return f"{namespace}{colon}{prefix}_{leaf}"
 
 
 def _made_only(result: Any, created: list) -> bool:
@@ -1264,6 +1279,20 @@ def _made_only(result: Any, created: list) -> bool:
 _DG_CREATE = DGNode.create.__func__
 
 
+def _makes_just_its_node(node_cls: type) -> bool:
+    """True for a class whose typed create makes just the node of its type by
+    ``cmds.createNode``: `DGNode.create` with DGNode's or DAGNode's ``_create``
+    and DGNode's ``post_create``, no custom type (``transform``, ``joint``,
+    ``choice``, ``nurbsCurve`` ...). Its only positional argument would be a DAG
+    parent, which ``Node.create`` takes as ``parent=``."""
+    return (
+        not node_cls.CUSTOM_NODE_TYPE
+        and getattr(node_cls.create, "__func__", None) is _DG_CREATE
+        and getattr(node_cls._create, "__func__", None) in _SELECT_FORWARDING
+        and getattr(node_cls.post_create, "__func__", None) is _DG_POST_CREATE
+    )
+
+
 def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     """``Node.create(node_type, *args, **kwargs)`` (``_base._NODE_CREATE_HOOK``;
     `kwargs` is the call's own dict).
@@ -1275,7 +1304,13 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     ``ss`` nor ``skipSelect`` was given, and the class's create is
     `DGNode.create` with a ``_create`` that forwards the flag, as
     :meth:`_ContainerStack.createNode` defaults it. Any other type is
-    :meth:`_ContainerStack.createNode`, which takes no positional argument."""
+    :meth:`_ContainerStack.createNode`. Both refuse a positional argument
+    where the node takes none: after an unregistered type, or a type whose
+    class makes just its node (:func:`_makes_just_its_node`; ``parent=`` places
+    it). A class that builds its node from inputs (``_CREATE_TAKES_INPUTS``:
+    a skinCluster, a blendShape, a mesh, a reference) refuses a call with none,
+    before anything is made (``cmds.blendShape`` alone deforms the
+    selection)."""
     node_cls = _nodetypes_base._NODE_CLASS_DICT.get(node_type)
     if node_cls is None:
         if args:
@@ -1285,6 +1320,19 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
                 f"createNode (got {len(args)} positional argument(s) after the type)"
             )
         return container.createNode(node_type, **kwargs)
+    if args and _makes_just_its_node(node_cls):
+        raise TypeError(
+            f"Node.create({node_type!r}, ...) takes keyword arguments only: "
+            f"{node_cls.__name__}'s create makes just the node (got {len(args)} "
+            f"positional argument(s) after the type; a parent is parent=...)"
+        )
+    inputs = node_cls._CREATE_TAKES_INPUTS
+    if inputs and not args:
+        raise TypeError(
+            f"Node.create({node_type!r}, ...) needs the inputs a {node_cls.__name__} "
+            f"is built from, after the type: Node.create({node_type!r}, {inputs}, "
+            f"...), as {node_cls.__name__}.create takes them"
+        )
     if (
         ContainerOptions.skip_selection
         and "ss" not in kwargs

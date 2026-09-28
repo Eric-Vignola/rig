@@ -449,8 +449,9 @@ class Transform(DAGNode):
             A Skeleton object with updated node names (in case of duplication)
 
         Inside ``with container()`` every node the call made joins the scope
-        (``container=False`` opts out); the nodes keep the hierarchy's names
-        (the creates inside this one are nested, so they add no prefix).
+        (``container=False`` leaves them unregistered); the nodes keep the
+        hierarchy's names (the creates inside this one are nested, so they add
+        no prefix).
         """
         from cgmath.hierarchy import SUPPORTED_NODE_TYPES, HierarchyData
 

@@ -2076,7 +2076,7 @@ class TestNodeOnly(_SceneCase):
                 kept = Node.create("objectSet", name="K", container=True)
                 loose = Node.create("transform", name="loose", container=False)
         self.assertEqual([str(x) for x in (t, j, m, s, layer, kept, loose)],
-                         ["inner_t", "inner_j", "inner_m", "S", "L", "K", "loose"])
+                         ["inner_t", "inner_j", "inner_m", "S", "L", "K", "inner_loose"])
         members = sorted(cmds.container(str(box), query=True, nodeList=True) or [])
         self.assertEqual(members, ["K", "inner_j", "inner_m", "inner_t"])
         self.assertEqual(cmds.ls(selection=True), [])

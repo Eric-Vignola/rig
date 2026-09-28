@@ -44,8 +44,8 @@ class Follicle(DAGNode):
             fudge: TODO
 
         Inside ``with container()`` the follicle shape and its transform join the
-        scope (``container=False`` opts out) and an explicit ``name`` takes the
-        flattened scope's prefix, as ``DGNode.create`` does.
+        scope (``container=False`` leaves them unregistered) and an explicit
+        ``name`` takes the flattened scope's prefix, as ``DGNode.create`` does.
         """
         name  = name or "follicle"
         xform = Transform(mesh)

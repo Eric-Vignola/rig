@@ -124,10 +124,11 @@ def _typed_creator(fn):
     does not go through `DGNode.create` (put it under ``@classmethod``).
 
     Inside ``with container()`` the call joins the scope as `DGNode.create`
-    does: ``container=`` is consumed, an explicit ``name`` (by keyword, or at
-    its position in ``fn``'s signature) takes the flattened scope's prefix, and
-    every node the call made is registered. ``skipSelect`` is never added (the
-    body takes no such flag). A class that makes nodes before calling
+    does: ``container=`` is consumed (False: nothing is registered), an
+    explicit ``name`` (by keyword, or at its position in ``fn``'s signature)
+    takes the flattened scope's prefix, and every node the call made for
+    itself is registered. ``skipSelect`` is never added (the body takes no
+    such flag). A class that makes nodes before calling
     ``super().create()`` has them tracked only through this decorator."""
     params     = list(inspect.signature(fn).parameters)[1:]  # after cls
     name_index = params.index("name") if "name" in params else None
@@ -226,6 +227,13 @@ class DGNode(Node):
     # registry, found again by name, sets False and stays out unless
     # ``create(container=True)``
     _CONTAINER_AWARE = True
+
+    # The inputs, named, of a class whose typed create builds the node from
+    # positional inputs (a skinCluster's geometry and influences, a blendShape's
+    # shapes, a mesh's data, a reference's file): ``Node.create`` of its type
+    # with none raises TypeError naming them, before anything is made (a bare
+    # ``cmds.blendShape`` deforms the selection). None elsewhere.
+    _CREATE_TAKES_INPUTS = None
 
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
         """Initialize an instance from a node name or a MObject.
@@ -588,16 +596,19 @@ class DGNode(Node):
         ``Mesh`` does), so the rules below hold for every class.
 
         Inside ``with container()`` the new node joins the scope with
-        ``Node.create``'s rules: an explicit ``name=`` / ``n=`` takes the
-        flattened scope's prefix, ``skipSelect`` defaults to
+        ``container.createNode``'s rules, in one undo step: an explicit
+        ``name=`` / ``n=`` takes the flattened scope's prefix (after any
+        namespace: ``ns:x`` is ``ns:inner_x``), ``skipSelect`` defaults to
         ``ContainerOptions.skip_selection`` (for the ``_create``s that forward
         it to ``cmds.createNode``: DGNode's and DAGNode's), the returned node is
         tagged for ``cleanup()`` when its type is a GC-eligible utility type,
         and every node the call made for itself is registered (a deformer's
-        Orig shape under the user's mesh and a shared bind pose are not). ``container=False`` opts
-        out; a scene registry (``_CONTAINER_AWARE = False``: display layers,
-        sets and shading engines, references) stays out unless
-        ``container=True`` (then registered, never prefixed). Only the
+        Orig shape under the user's mesh and a shared bind pose are not).
+        ``container=False`` leaves the nodes unregistered, as it does for
+        ``createNode`` (the prefix, ``skipSelect`` and the tag still apply). A
+        scene registry (``_CONTAINER_AWARE = False``: display layers, sets and
+        shading engines, references) stays out (no prefix, not registered)
+        unless ``container=True`` (then registered, never prefixed). Only the
         outermost typed create does this. Outside a scope nothing changes
         (``container=`` is always consumed, never passed on).
         """

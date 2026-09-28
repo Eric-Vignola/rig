@@ -515,11 +515,11 @@ class TestTypedCreateInContainer(MayaTestCase):
                 md    = Node.create("multiplyDivide", name="md", container=False)
                 kept  = Transform.create(name="kept", container=True)
                 frames = _frame_uuids()
-        self.assertEqual(str(loose), "loose")
-        self.assertEqual(str(fol), "folShape")
-        # re-pinned (R2): PyNode.create's plain path (D13b) is gone; Node.create
-        # of a type with no class is container.createNode, which keeps the
-        # flattened prefix and the GC tag and only leaves the node unregistered
+        # container=False means what it means for container.createNode, on
+        # every creator: the nodes are not registered; the flattened prefix
+        # (and an eligible type's GC tag) still apply
+        self.assertEqual(str(loose), "inner_loose")
+        self.assertEqual(str(fol), "inner_folShape")
         self.assertEqual(str(md), "inner_md")
         self.assertTrue(_tagged(md))
         for node in (loose, fol, fol.get_parent(), md):
@@ -690,10 +690,11 @@ class TestTypedCreateInContainer(MayaTestCase):
         with container("outer"):
             with container("inner"):
                 empty  = DisplayLayer.create(name="empty_layer", empty=True)
-                filled = DisplayLayer.create(name="filled_layer")
+                filled = DisplayLayer.create(name="filled_layer", empty=False)
                 skin   = SkinCluster.create(cube, [j1, j2], name="sk", maximumInfluences=1)
         self.assertIsNone(cmds.editDisplayLayerMembers(str(empty), query=True))
-        # createDisplayLayer took the selection: no flag was added to its call
+        # createDisplayLayer took the selection (empty=False): no flag was
+        # added to its call
         self.assertIn(cube, cmds.editDisplayLayerMembers(str(filled), query=True))
         self.assertEqual(str(skin), "inner_sk")
         self.assertEqual(cmds.skinCluster(str(skin), query=True, maximumInfluences=True), 1)
