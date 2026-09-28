@@ -29,7 +29,7 @@ from typing import Any, Sequence
 from maya import cmds
 from rig.nodetypes._base import Attribute
 from rig._internal.container import container, ContainerOptions
-from rig._internal.list import PlugList
+from rig._internal.list import List
 from rig._internal.math_nodes import (
     _constant,
     _multiply_divide_op,
@@ -564,7 +564,7 @@ def all(tokens: Sequence[Any]) -> Any:
         tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
         # Slice with [:] so iteration works whether tokens is a list
         # (passthrough mode) or a published multi-attr Plug (active mode).
-        # Plug[:] returns PlugList; list[:] returns a copy; both iterable.
+        # Plug[:] returns List; list[:] returns a copy; both iterable.
         total = sum([(1 - (x == 0)) for x in tokens[:]])
         return container.publish_output(condition(total == n, True, False), "output")
 
@@ -632,12 +632,12 @@ def argmax(tokens: Sequence[Any]) -> Any:
 @memoize
 def diff(tokens: Sequence[Any]) -> Any:
     """``diff(tokens)`` -- pairwise differences (``b - a``). Returns a
-    :class:`PlugList`."""
+    :class:`List`."""
 
     with container("diff1"):
         n       = len(tokens) - 1
         tokens  = container.publish_input(list(tokens), "input", at="double", multi=True)
-        results = PlugList()
+        results = List()
         for a, b in zip(tokens[:n], tokens[1 : n + 1]):
             results.append(b - a)
         return results
@@ -647,11 +647,11 @@ def diff(tokens: Sequence[Any]) -> Any:
 @memoize
 def cumsum(tokens: Sequence[Any]) -> Any:
     """``cumsum(tokens)`` -- running cumulative sums. Returns a
-    :class:`PlugList`."""
+    :class:`List`."""
 
     with container("cumsum1"):
         tokens  = container.publish_input(list(tokens), "input", at="double", multi=True)
-        results = PlugList([0 + tokens[0]])
+        results = List([0 + tokens[0]])
         for obj in tokens[1:]:
             results.append(obj + results[-1])
         return results

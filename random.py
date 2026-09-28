@@ -52,7 +52,7 @@ The seed-keyed caches are registered with
 on the next sweep.
 
 Vectorisation via :func:`vectorize` is preserved so
-``value([trigger1, trigger2, ...])`` still produces a PlugList.
+``value([trigger1, trigger2, ...])`` still produces a List.
 """
 
 from __future__ import annotations

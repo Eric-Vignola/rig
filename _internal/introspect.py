@@ -15,7 +15,7 @@ into 16 floats, multis as nested lists). This module standardises:
   * ``None`` => ``None``
   * Anything else (mesh data, message attrs) => unchanged
 
-For :class:`PlugList`, :func:`_stack_values` stacks the per-element
+For :class:`List`, :func:`_stack_values` stacks the per-element
 results into one homogeneous numpy array when shapes line up. If the
 elements are heterogeneous (e.g. mixed scalars + nodes), it falls back
 to a plain Python list rather than raising.

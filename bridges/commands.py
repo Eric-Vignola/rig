@@ -1,11 +1,11 @@
 """Dynamic wrappers around ``maya.cmds`` that return :class:`Node` /
-:class:`PlugList` instead of bare strings.
+:class:`List` instead of bare strings.
 
 Usage::
 
     from rig.bridges import commands as rc
 
-    nodes = rc.ls(sl=True)              # -> PlugList[Node, Node, ...]
+    nodes = rc.ls(sl=True)              # -> List[Node, Node, ...]
     new   = rc.createNode("transform")  # -> Node
     rc.parent(child, parent)            # auto-coerces Node -> str
     rc.delete(some_node, container=False)  # opt out of container add
@@ -97,7 +97,7 @@ def _checked_plug(plug: Attribute) -> Attribute:
 
 
 def _wrap_result(result: Any) -> Any:
-    """Wrap a cmds output: str -> :class:`Node`, list[str] -> :class:`PlugList`,
+    """Wrap a cmds output: str -> :class:`Node`, list[str] -> :class:`List`,
     else passthrough (for booleans, numerics, dicts, None, etc.).
 
     Strings that don't resolve to valid nodes are passed through unchanged
@@ -113,7 +113,7 @@ def _wrap_result(result: Any) -> Any:
         except Exception:
             return result
     if isinstance(result, (list, tuple)):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         wrapped = []
         for r in result:
@@ -125,7 +125,7 @@ def _wrap_result(result: Any) -> Any:
             else:
                 wrapped.append(r)
         try:
-            return PlugList(wrapped)
+            return List(wrapped)
         except Exception:
             return wrapped
     return result

@@ -56,7 +56,7 @@ def _lazy() -> SimpleNamespace:
     """Return the ``list`` / ``members`` modules of :mod:`rig._internal`,
     imported on first use.
 
-    Both import Node / Plug / PlugList at module top, so they must never be
+    Both import Node / Plug / List at module top, so they must never be
     loaded while this module is being imported. Binding the MODULES (not
     their classes) once saves a per-call ``from ... import`` and keeps
     runtime rebinding and ``mock.patch.object(module, ...)`` effective.
@@ -83,9 +83,9 @@ def _is_node(obj: Any) -> bool:
 
 
 def _is_list(obj: Any) -> bool:
-    """Return ``True`` if ``obj`` is a :class:`rig.PlugList` instance."""
+    """Return ``True`` if ``obj`` is a :class:`rig.List` instance."""
 
-    return isinstance(obj, _lazy().list.PlugList)
+    return isinstance(obj, _lazy().list.List)
 
 
 def _is_attribute_spec(obj: Any) -> bool:
@@ -97,7 +97,7 @@ def _is_attribute_spec(obj: Any) -> bool:
 def _is_member_spec(obj: Any) -> bool:
     """Return ``True`` if ``obj`` is a collection spec
     (:class:`rig._internal.members._MemberSpec`: ``Tag``, a material, ...)."""
-    # Lazy-bound: members.py imports Node / Plug / PlugList at module top,
+    # Lazy-bound: members.py imports Node / Plug / List at module top,
     # so it must never be loaded while this module is being imported.
 
     return isinstance(obj, _lazy().members._MemberSpec)

@@ -87,7 +87,7 @@ __all__ = [
 def _classify(obj: Any) -> str:
     """Resolve the math type of ``obj`` for dispatch.
 
-    A :class:`~rig.PlugList` is a *vectorised* argument: classify it
+    A :class:`~rig.List` is a *vectorised* argument: classify it
     by its first element (the per-type impl, being ``@vectorize``, broadcasts
     the whole list). Everything else goes straight to :func:`math_type`,
     which also handles plain Python literals (``[1, 2, 3]`` => ``"vector"``).

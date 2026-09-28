@@ -2,7 +2,7 @@
 Memoization and vectorization decorators for the rig DSL.
 
 ``@memoize`` caches function returns keyed by a stable handle of every
-``Plug``/``Node``/``PlugList`` argument plus the literal value of every
+``Plug``/``Node``/``List`` argument plus the literal value of every
 scalar argument. The cache is auto-invalidated when any cached return value's
 underlying Maya nodes have been deleted (via API 1.0 ``MObjectHandle.isAlive``,
 which is the same staleness pattern used in ``rig.nodetypes.dg_node``), or
@@ -11,13 +11,13 @@ when a dynamic attribute a plug argument reads was deleted or renamed since
 reference unload, reload or remove prunes them (the scene callbacks at the end
 of this module).
 
-``@vectorize`` broadcasts a function call across :class:`PlugList`
+``@vectorize`` broadcasts a function call across :class:`List`
 arguments using **NumPy-style strict broadcasting**: every list / list-like
 argument must be the same length, OR be length 1, OR be scalar. Mismatched
 lengths raise :class:`ValueError` rather than silently capping (which is
 the behaviour of the original Eric Vignola ``rig`` library).
 
-A call is broadcast only when at least one argument is a :class:`PlugList`.
+A call is broadcast only when at least one argument is a :class:`List`.
 With only plain Python lists / scalars, the function is called directly
 with its raw arguments.
 """
@@ -27,7 +27,7 @@ from __future__ import annotations
 import numbers
 import sys
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 # API 1.0 used because API 2.0 MObjects can crash Maya after a new-scene
 # load (see rig.nodetypes.dg_node._cache_api1_objects). API 2.0 is only used
@@ -39,7 +39,7 @@ from rig.nodetypes._base import _handle_valid, _plug_identity_name, Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
-from rig._internal.list import PlugList
+from rig._internal.list import List
 from rig._internal.types import (
     _is_list,
     _is_node,
@@ -57,7 +57,7 @@ def _stable_key(obj: Any) -> Any:
     - ``None`` => ``None``.
     - Plug-like => ``((uuid, hashCode), attr_long_name)`` -- survives rename + delete.
     - Node-like (Node) => ``("node", (uuid, hashCode))`` -- survives rename + delete.
-    - PlugList => tuple of element keys.
+    - List => tuple of element keys.
     - Other sequences => tuple of element keys.
     - Anything else => ``id(obj)`` (best-effort; usually un-cacheable).
     """
@@ -168,7 +168,7 @@ def _node_identity(node_name: str) -> Tuple[str, int]:
         ) from exc
 
 
-def _collect_handles(obj: Any, out: List[OpenMaya1.MObjectHandle]) -> None:
+def _collect_handles(obj: Any, out: list[OpenMaya1.MObjectHandle]) -> None:
     """Walk ``obj`` and append API 1.0 MObjectHandles for any plug/node found.
 
     Used when caching a return value so we can later check ``isAlive()`` to
@@ -264,9 +264,9 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
         return None
 
 
-def _collect_attr_checks(values: Any, out: List[Any]) -> None:
+def _collect_attr_checks(values: Any, out: list[Any]) -> None:
     """Append an `_AttrCheck` for each dynamic attribute a plug in `values` (the
-    call arguments; a list, tuple or PlugList among them is walked) reads."""
+    call arguments; a list, tuple or List among them is walked) reads."""
     for value in values:
         if isinstance(value, Attribute):
             check = _attr_check(value)
@@ -276,13 +276,13 @@ def _collect_attr_checks(values: Any, out: List[Any]) -> None:
             _collect_attr_checks(value, out)
 
 
-def _entry_handles(result: Any, args: tuple, kwargs: dict) -> List[Any]:
+def _entry_handles(result: Any, args: tuple, kwargs: dict) -> list[Any]:
     """The staleness checks of a cache entry for a call on `args` / `kwargs` that
     returned `result`: the API 1.0 handles of the nodes in `result` (see
     `_collect_handles`), then an `_AttrCheck` per dynamic attribute a plug
     argument reads. An entry is used only while every one is alive and
     valid."""
-    handles: List[Any] = []
+    handles: list[Any] = []
     _collect_handles(result, handles)
     _collect_attr_checks(args, handles)
     if kwargs:
@@ -448,8 +448,8 @@ def memoize(
 # --------------------------------------------------------------------- #
 
 
-_ALL_MEMOIZED:      List[Callable[..., Any]] = globals().get("_ALL_MEMOIZED", [])
-_ALL_NODEOP_CACHES: List[Any]                = globals().get("_ALL_NODEOP_CACHES", [])
+_ALL_MEMOIZED:      list[Callable[..., Any]] = globals().get("_ALL_MEMOIZED", [])
+_ALL_NODEOP_CACHES: list[Any]                = globals().get("_ALL_NODEOP_CACHES", [])
 
 
 def prune_memoize_caches() -> int:
@@ -514,7 +514,7 @@ class _CacheEntry:
 
     __slots__ = ("value", "handles")
 
-    def __init__(self, value: Any, handles: List[OpenMaya1.MObjectHandle]) -> None:
+    def __init__(self, value: Any, handles: list[OpenMaya1.MObjectHandle]) -> None:
         self.value   = value
         self.handles = handles
         # an entry is only made once the callbacks that clear it are there
@@ -553,9 +553,9 @@ def vectorize(
     *,
     favor_index: Optional[int]                = None,
 ) -> Callable[..., Any]:
-    """Broadcast ``func`` across :class:`PlugList` arguments -- NumPy-style strict.
+    """Broadcast ``func`` across :class:`List` arguments -- NumPy-style strict.
 
-    Triggers when any positional or keyword argument is a ``PlugList``.
+    Triggers when any positional or keyword argument is a ``List``.
     Once triggered, every list / sequence argument must satisfy
     NumPy's broadcasting rule: have the same length as the longest, OR
     be length 1, OR be scalar. Mismatched non-1 lengths raise
@@ -566,7 +566,7 @@ def vectorize(
     permissive behaviour was a frequent source of subtle bugs from typos --
     we trade it for explicit error messages on a clean-slate rebuild.
 
-    Returns a single value if there is one row, a :class:`PlugList`
+    Returns a single value if there is one row, a :class:`List`
     otherwise.
 
     Args:
@@ -584,10 +584,10 @@ def vectorize(
         @vectorize
         def f(a, b, c): ...
 
-        f(PlugList([a, b, c, d, e]), 5, [x, y, z, w, q])    # OK -- both length 5
-        f(PlugList([a, b, c, d, e]), 5, [x])                 # OK -- [x] broadcasts
-        f(PlugList([a, b, c, d, e]), 5, x)                   # OK -- x is scalar
-        f(PlugList([a, b, c, d, e]), 5, [x, y, z])           # ValueError: lengths {3, 5}
+        f(List([a, b, c, d, e]), 5, [x, y, z, w, q])    # OK -- both length 5
+        f(List([a, b, c, d, e]), 5, [x])                 # OK -- [x] broadcasts
+        f(List([a, b, c, d, e]), 5, x)                   # OK -- x is scalar
+        f(List([a, b, c, d, e]), 5, [x, y, z])           # ValueError: lengths {3, 5}
     """
     # Support both @vectorize and @vectorize(favor_index=N) syntaxes.
     if func is None:
@@ -605,7 +605,7 @@ def vectorize(
         valid_args   = any(_is_list(x) for x in args)
         valid_kwargs = any(_is_list(v) for v in kwargs.values())
 
-        # No PlugList among the args -- call func directly with raw arguments.
+        # No List among the args -- call func directly with raw arguments.
         if not (valid_args or valid_kwargs):
             return func(*args, **kwargs)
 
@@ -640,7 +640,7 @@ def vectorize(
         )
 
         # ---- Iterate (arguments() handles the per-row index walking) ---- #
-        results: List[Any] = []
+        results: list[Any] = []
         count = 0
         for row_args, row_kwargs in arguments(*args, **kwargs):
             res = func(*row_args, **row_kwargs)
@@ -657,7 +657,7 @@ def vectorize(
 
         # Lazy import to avoid circular dep
         try:
-            return PlugList(results)
+            return List(results)
         except Exception:
             return results
 
@@ -714,7 +714,7 @@ def _prune_after_scene_change(*args: Any) -> None:
         pass
 
 
-def _scene_callback_specs() -> List[Tuple[Callable[..., Any], Any, Callable[..., Any]]]:
+def _scene_callback_specs() -> list[Tuple[Callable[..., Any], Any, Callable[..., Any]]]:
     msg = OpenMaya.MSceneMessage
     return [
         (msg.addCallback, msg.kBeforeNew,            _clear_before_new_scene),

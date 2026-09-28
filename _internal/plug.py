@@ -392,31 +392,31 @@ class Plug(Attribute):
         # __getitem__ (which already supports both numeric indexing and
         # the kMeshVertComponent / kCurveCVComponent / kSurfaceCVComponent
         # special-case slice bounds); its elements are already Plugs
-        # (``_CHILD_CLASS``) owned as this plug is, built once (D29). Lists
-        # become PlugLists.
+        # (``_CHILD_CLASS``) owned as this plug is, built once (D29). A list
+        # result becomes a List.
         _ensure_owner_alive(self)
         is_indexable_via_attribute = self.is_multi or self._component_type != "unknown"
         if is_indexable_via_attribute:
             result = super().__getitem__(key)
             if isinstance(result, list):
-                # Wrap in PlugList so chained DSL operations work on the slice
+                # Wrap in List so chained DSL operations work on the slice
                 # (e.g. ``node.input[:].t << src``).  Lazy-bound to avoid the
                 # circular dep with ``_list`` at module load.
-                PlugList = _lazy().list.PlugList
+                List = _lazy().list.List
 
-                # Tag the returned PlugList with a back-reference to this
+                # Tag the returned List with a back-reference to this
                 # multi attr -- enables the ``empty_multi[:] << values``
-                # idiom by letting :meth:`PlugList.__lshift__` route writes
+                # idiom by letting :meth:`List.__lshift__` route writes
                 # through the parent when the slice was empty (auto-create
                 # indices to match the source length).
                 parent = self if self.is_multi and isinstance(key, slice) else None
-                return PlugList(result, _parent_multi=parent)
+                return List(result, _parent_multi=parent)
             return result
 
         # Compound non-multi (e.g. ``transform.translate``, ``.rotate``,
         # ``.scale``, ``inputQuat``) -- slice into children using the
         # canonical :meth:`MPlug.child` API. NumPy-style: ``int`` returns
-        # a single Plug, ``slice`` returns a PlugList of children.
+        # a single Plug, ``slice`` returns a List of children.
         try:
             n = self.num_children
         except (RuntimeError, TypeError):
@@ -432,14 +432,14 @@ class Plug(Attribute):
                     )
                 return _inherit_owner(self, _new_attr(Plug, self.plug.child(key)))
             if isinstance(key, slice):
-                PlugList = _lazy().list.PlugList
+                List = _lazy().list.List
 
                 mplug    = self.plug
                 indices  = range(*key.indices(n))
                 children = [
                     _inherit_owner(self, _new_attr(Plug, mplug.child(i))) for i in indices
                 ]
-                return PlugList(children)
+                return List(children)
 
         # Not multi, not component, not compound -- let Attribute raise the
         # canonical "is not an multi attr" error message.
@@ -583,9 +583,9 @@ class Plug(Attribute):
             _disconnect_incoming(self)
             return self
 
-        # Retired connection-query sentinels (the List class, formerly
-        # PlugList, or Plug itself on the right). '<<' means "receives from",
-        # but a query flows the other way, so the arrow pointed at the wrong end.
+        # Retired connection-query sentinels (the List class or Plug itself
+        # on the right). '<<' means "receives from", but a query flows the
+        # other way, so the arrow pointed at the wrong end.
         if other is lazy.list.List or other is Plug:
             raise TypeError(
                 "'plug << List' (formerly PlugList) has been replaced by "
@@ -698,8 +698,8 @@ class Plug(Attribute):
         if _is_member_spec(other):
             return other.query(self)
 
-        # Retired connection-query sentinels (the List class, formerly
-        # PlugList, or Plug itself on the right).
+        # Retired connection-query sentinels (the List class or Plug itself
+        # on the right).
         if other is List or other is Plug:
             raise TypeError(
                 "'plug >> List' (formerly PlugList) has been replaced by "
@@ -1316,10 +1316,10 @@ class ComponentPlug(Plug):
       **element** :class:`ComponentPlug`;
     * any key containing a slice -- or a bare/partial int, which pads the
       remaining axes with ``:`` (numpy ``arr[i] == arr[i, :, ...]``) -- returns
-      a :class:`PlugList` of element plugs in row-major order: ``cv[0]`` /
+      a :class:`List` of element plugs in row-major order: ``cv[0]`` /
       ``cv[0, :]`` row, ``cv[:, 1]`` column, ``cv[:]`` full grid, ``cv[1:3, 2]``
       range, ``pt[:, :, 0]`` plane, and so on. Chained ``cv[i][j]`` therefore
-      still works (``cv[i]`` is the row :class:`PlugList`; ``[j]`` picks it).
+      still works (``cv[i]`` is the row :class:`List`; ``[j]`` picks it).
 
     Element plugs *display* (``str`` / ``repr`` / :attr:`full_name`) in the
     component form ``cv[u][v]`` / ``pt[s][t][u]`` -- both valid Maya component
@@ -1442,9 +1442,9 @@ class ComponentPlug(Plug):
         elements = [self._element(c) for c in itertools.product(*per_axis)]
         if not has_slice:
             return elements[0]  # fully specified single coordinate -> element
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
-        return PlugList(elements)
+        return List(elements)
 
     def _element(self, coords: tuple) -> "ComponentPlug":
         """Build the resolved element plug for ``coords`` (one index per axis).
@@ -1588,18 +1588,18 @@ def _disconnect_incoming(dst: Any) -> None:
 
 
 def _query_connections(plug: Any, source: bool) -> Any:
-    """Return plugs connected to ``plug`` as a ``PlugList`` of ``Plug``.
+    """Return plugs connected to ``plug`` as a ``List`` of ``Plug``.
 
     ``source=True`` returns the incoming driver (0 or 1 element);
     ``source=False`` returns every outgoing destination. Direct
     connections only -- a compound whose children are driven reports
     nothing; slice it with ``[:]`` to query per-child.
     """
-    from rig._internal.list import PlugList
+    from rig._internal.list import List
 
     # a freed node's MPlug points at freed memory
     _ensure_owner_alive(plug)
-    return PlugList([Plug(mp) for mp in plug.plug.connectedTo(source, not source)])
+    return List([Plug(mp) for mp in plug.plug.connectedTo(source, not source)])
 
 
 def _lock_chain_names(dst: Attribute) -> list:
@@ -2089,7 +2089,7 @@ def _inject_value(dst: Any, src: Any) -> None:
     # indices 0..len(src)-1. Auto-creates missing indices via single-int
     # Attribute indexing (Maya's create-on-write semantic).
     #
-    # Handles both PlugList sources (per-element connectAttr) and
+    # Handles both List sources (per-element connectAttr) and
     # numpy / list / tuple of values (per-element setAttr). Skipped when
     # ``src`` is a scalar / Attribute -- the existing auto-index path
     # below preserves Eric Vignola's ``multi << scalar`` auto-append idiom
@@ -2133,7 +2133,7 @@ def _inject_value(dst: Any, src: Any) -> None:
         is_bare_multi_root = False
 
     if is_bare_multi_root:
-        PlugList = _lazy().list.PlugList
+        List = _lazy().list.List
 
         # Multi src -> Multi dst -> per-element connect.
         # Iterate the source's existing logical indices and connect each
@@ -2157,7 +2157,7 @@ def _inject_value(dst: Any, src: Any) -> None:
                     dst[idx] << src[idx]
                 return
 
-        if isinstance(src, PlugList):
+        if isinstance(src, List):
             for i, elem in enumerate(src):
                 dst[i] << elem
             return

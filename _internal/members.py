@@ -5,9 +5,9 @@ grammar.
 :class:`Components` is the opaque carrier for geometry components. It is the
 type of ``cube.f`` / ``cube.e`` (faces and edges have no plug to wrap), the
 explicit index carrier ``Components(node, "vtx", ids)`` for every point kind
-(a numpy array in, no ``PlugList`` built) and the reading of a Maya component
+(a numpy array in, no ``List`` built) and the reading of a Maya component
 string, ``Components("pCube1.f[0:3]")``. It is NOT a ``str`` subclass and has
-NO ``__len__`` / ``__iter__``: ``PlugList`` passes it through untouched and
+NO ``__len__`` / ``__iter__``: ``List`` passes it through untouched and
 the broadcast engine treats it as a scalar. A selection is a set -- indices
 are stored sorted and unique -- and ``indices`` / ``count`` resolve live from
 the shape while the selection is the whole kind (``is_all``).
@@ -16,7 +16,7 @@ the shape while the selection is the whole kind (``is_all``).
 ``Node``, a component ``Plug`` (``vtx[i]``), a ``ComponentPlug`` (``cv[u, v]``),
 a bare ``controlPoints`` / ``uvpt`` handle, an attribute ``Plug`` (which
 stands for its node: ``cube.tx`` is ``cube``), a :class:`Components`, or any
-nesting of those in a ``PlugList`` / list / tuple -- into one
+nesting of those in a ``List`` / list / tuple -- into one
 :class:`_Selection` per ``(path, kind)`` carrying the compact shape-scoped
 tokens ``maya.cmds`` accepts. Nothing is ever dropped: a number, ``None`` or
 a raw string on the left is a ``TypeError`` naming the element.
@@ -31,7 +31,7 @@ and ``>> Spec()`` enumerates the collections holding the left-hand side.
 
 Usage::
 
-    from rig import Node, PlugList
+    from rig import Node, List
     from rig._internal.members import Components, normalise
 
     cube = Node("pCube1")                      # transform with ONE mesh shape
@@ -41,7 +41,7 @@ Usage::
     Components(cube, "vtx", [0, 1, 2])         # explicit carrier, zero plugs built
     Components("pCube1.f[0:3]")                # from a Maya component string
 
-    normalise(PlugList([cube.vtx[:8], cube.f[:3]]), want_shapes=True)
+    normalise(List([cube.vtx[:8], cube.f[:3]]), want_shapes=True)
     # [_Selection(kind='vtx', tokens=('vtx[0:7]',), ...),
     #  _Selection(kind='f',   tokens=('f[0:2]',),   ...)]
 
@@ -289,7 +289,7 @@ class Components:
     ``c >> None`` reads the native ids (or coordinates) as an ndarray; ``<<``
     and ``>>`` with a collection spec are the membership verbs (a later
     step). There is deliberately no ``__len__`` / ``__iter__`` and no
-    arithmetic: :class:`PlugList` keeps a ``Components`` element opaque and
+    arithmetic: :class:`List` keeps a ``Components`` element opaque and
     broadcasts it as a scalar.
     """
 
@@ -297,7 +297,7 @@ class Components:
 
     # ``__getitem__`` alone would let Python's legacy protocol iterate a
     # selection one component at a time; ``None`` opts out, so ``iter(c)``
-    # and ``PlugList(c)`` refuse instead of silently expanding it.
+    # and ``List(c)`` refuse instead of silently expanding it.
     __iter__ = None
 
     def __init__(
@@ -846,7 +846,7 @@ def normalise(lhs: Any, *, want_shapes: bool) -> list[_Selection]:
       stands for its node, exactly as the ``Node`` would (``cube.tx`` is
       ``cube``), with the plug as the selection's source. Component plugs
       are grouped by node MObject and never rendered to strings.
-    - ``Components``: its own selection. ``PlugList`` / list / tuple:
+    - ``Components``: its own selection. ``List`` / list / tuple:
       flattened recursively. ``str``: ``TypeError`` pointing at
       ``Components(...)``. A number / ``None``: ``TypeError`` naming the
       element.

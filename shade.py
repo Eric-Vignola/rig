@@ -21,7 +21,7 @@ materials bind faces or whole objects.
 
 Usage::
 
-    from rig import Node, PlugList, shade
+    from rig import Node, List, shade
     from rig.shade import Blinn, Lambert, Material, Default
 
     cube = Node("pCube1")
@@ -38,10 +38,10 @@ Usage::
     cube >> Material() ; cube >> Blinn()     # the operator spelling of Material.of / Blinn.of
     cube.tx << Blinn("red")                  # an attribute plug stands for its node
     cube << Default()                        # initialShadingGroup again
-    PlugList([cube, sph]) << Blinn("m")      # one material, one engine, one cmds.sets
+    List([cube, sph]) << Blinn("m")      # one material, one engine, one cmds.sets
 
     Material("red").delete()                 # red, redSG and its materialInfo; members go green
-    shade.repair()                           # PlugList of the shapes re-homed to initialShadingGroup
+    shade.repair()                           # List of the shapes re-homed to initialShadingGroup
     shade.tidy()                             # all-faces memberships collapsed to object level
 
     Phong(red)                               # the type switch: a free retype while red is lazy, a scene
@@ -98,7 +98,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes.shading_engine import ShadingEngine
-from rig._internal.list import PlugList
+from rig._internal.list import List
 from rig._internal.members import (
     _check_attrs,
     _find_node,
@@ -1400,7 +1400,7 @@ def _scene_targets(targets: Any) -> list[_Target]:
     return _targets(selections)
 
 
-def materials(target: Any) -> PlugList:
+def materials(target: Any) -> List:
     """The materials of ``target`` (a node, faces, or a list of them) as
     material ``Node``s, in connection order, each once."""
     found: list[Node] = []
@@ -1412,7 +1412,7 @@ def materials(target: Any) -> PlugList:
             node = Node(shader)
             if node not in found:
                 found.append(node)
-    return PlugList(found)
+    return List(found)
 
 
 def bindings(target: Any) -> list[tuple[Node, Components]]:
@@ -1440,7 +1440,7 @@ def bindings(target: Any) -> list[tuple[Node, Components]]:
     return result
 
 
-def repair(targets: Any = None) -> PlugList:
+def repair(targets: Any = None) -> List:
     """Re-home to ``initialShadingGroup`` every shape (or face) of
     ``targets`` -- every DAG path of the scene by default -- that no shading
     engine holds, as a deleted network or ``Material(None)`` leaves them.
@@ -1472,7 +1472,7 @@ def repair(targets: Any = None) -> PlugList:
                     forceElement=ShadingEngine.DEFAULT,
                 )
                 fixed.append(Node(item.path))
-    return PlugList(fixed)
+    return List(fixed)
 
 
 def tidy(targets: Any = None) -> None:
