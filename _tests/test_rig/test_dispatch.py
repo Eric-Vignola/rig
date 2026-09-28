@@ -5,7 +5,7 @@ The eleven top-level verbs (``dist`` / ``lerp`` / ``slerp`` / ``elerp`` /
 ``to_quaternion`` / ``to_matrix``) classify their first operand via
 ``math_type`` and route to the per-type private impl. These tests pin the
 routing table (which type -> which node), the rejected ``(verb, type)`` pairs
-(``TypeError``), ``PlugList`` vectorisation, and the ``matrix.aim`` ->
+(``TypeError``), ``List`` vectorisation, and the ``matrix.aim`` ->
 conversion composition that replaced the old ``vector.to_*`` constructors.
 """
 
@@ -17,11 +17,11 @@ from rig import (
     elerp,
     inverse,
     lerp,
+    List,
     matrix,
     Node,
     normalize,
     Plug,
-    PlugList,
     set_options,
     slerp,
     to_euler,
@@ -245,7 +245,7 @@ class TestDispatchAimConversions(MayaTestCase):
 
 
 # --------------------------------------------------------------------- #
-#  PlugList vectorisation -- a list operand classifies by element 0 and the
+#  List vectorisation -- a list operand classifies by element 0 and the
 #  @vectorize-d impl broadcasts the whole list.
 # --------------------------------------------------------------------- #
 
@@ -256,8 +256,8 @@ class TestDispatchVectorize(MayaTestCase):
     def test_lerp_pluglist_broadcasts(self):
         a      = Node.create("transform", name="a")
         b      = Node.create("transform", name="b")
-        result = lerp(PlugList([a.t, b.t]), PlugList([b.t, a.t]), weight=0.5)
-        self.assertIsInstance(result, PlugList)
+        result = lerp(List([a.t, b.t]), List([b.t, a.t]), weight=0.5)
+        self.assertIsInstance(result, List)
         self.assertEqual(len(result), 2)
         for plug in result:
             self.assertIsInstance(plug, Plug)
@@ -358,10 +358,10 @@ class TestDispatchRaises(MayaTestCase):
                 verb(unk)
 
     def test_empty_pluglist_classifies_unknown(self):
-        # An empty PlugList has no element-0 to peek, so ``_classify`` yields
+        # An empty List has no element-0 to peek, so ``_classify`` yields
         # ``"unknown"`` and the verb rejects it.
         with self.assertRaises(TypeError):
-            lerp(PlugList([]), PlugList([]), 0.5)
+            lerp(List([]), List([]), 0.5)
 
 
 # --------------------------------------------------------------------- #

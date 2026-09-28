@@ -21,7 +21,7 @@ import numpy as np
 from maya import cmds, OpenMaya as om1
 from maya.api import OpenMaya
 import rig
-from rig import Node, Plug, PlugList
+from rig import List, Node, Plug
 from rig.bridges import commands as rc
 from rig.nodetypes import PyNode, _base
 from rig.nodetypes._base import Attribute
@@ -251,7 +251,7 @@ class TestDSLFunctionsCheckTheirFreedOperands(_HeldAcrossAFree):
         self._assert_raise(self._held_across("unload", _operand_plugs))
 
     def test_every_operand_container_is_walked(self):
-        # the check walks lists, tuples, PlugLists and object arrays, nested, as
+        # the check walks lists, tuples, Lists and object arrays, nested, as
         # the plain str check does; the function never runs
         ran = []
 
@@ -265,7 +265,7 @@ class TestDSLFunctionsCheckTheirFreedOperands(_HeldAcrossAFree):
             ("list", ([1.0, held],), {}),
             ("tuple", ((held, 1.0),), {}),
             ("nested", ([[1.0, (held,)]],), {}),
-            ("PlugList", (PlugList([held]),), {}),
+            ("List", (List([held]),), {}),
             ("object array", (np.array([1.0, held], dtype=object),), {}),
             ("keyword", (1.0,), {"b": [held]}),
             ("config", (1.0,), {"mode": held}),
@@ -297,7 +297,7 @@ class TestNodeHandlesAreLookedUpOncePerNode(MayaTestCase):
             plugs = [
                 Plug("held.ty"), Attribute("held.tz"), PyNode("held.rx"),
                 Plug(_mplug("held.ry")), Attribute(_mplug("held.rz")),
-                PyNode(_mplug("held.sx")), PlugList(["held.sy"])[0],
+                PyNode(_mplug("held.sx")), List(["held.sy"])[0],
             ]
         self.assertEqual(spy.call_count, 0)
         for plug in plugs:

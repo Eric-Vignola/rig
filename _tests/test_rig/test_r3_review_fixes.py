@@ -395,7 +395,7 @@ class TestTypedChildrenShareTheOwner(MayaTestCase):
 
 
 class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
-    """lift(attr), Plug(attr) and PlugList([attr]) of a typed Attribute keep the node
+    """lift(attr), Plug(attr) and List([attr]) of a typed Attribute keep the node
     object the attr holds. They re-resolved its MPlug (or its name), so a plug of
     an instanced node switched to the first path, and a per-instance array
     connected the first instance's element."""
@@ -403,14 +403,14 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_the_instance_asked_for_is_kept(self):
-        from rig import PlugList, lift
+        from rig import lift, List
 
         _instanced_locator()
         typed = PyNode("|T2|S").find_attr("worldMatrix")
         for label, make in (
             ("lift", lift),
             ("Plug", Plug),
-            ("PlugList", lambda attr: PlugList([attr])[0]),
+            ("List", lambda attr: List([attr])[0]),
         ):
             with self.subTest(via=label):
                 plug = make(typed)
@@ -467,11 +467,11 @@ class TestHeldAcrossAFreeRaise(MayaTestCase):
         }
 
     def _assert_freed(self, held):
-        from rig import PlugList, lift
+        from rig import lift, List
 
         common = {"str": str, "get": lambda p: p.get(), "Plug": Plug}
         plug_ops = {"plus 1": lambda p: p + 1, "xValue << 5": lambda p: p.xValue << 5}
-        typed_ops = {"lift": lift, "PlugList": lambda p: PlugList([p])}
+        typed_ops = {"lift": lift, "List": lambda p: List([p])}
         for name, attr in held.items():
             ops = dict(common)
             ops.update(plug_ops if isinstance(attr, Plug) else typed_ops)

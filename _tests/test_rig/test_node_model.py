@@ -1787,11 +1787,11 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         return cases
 
     def _assert_built_as_round_3(self, parent, built, expected):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         items = built if isinstance(built, list) else [built]
         if isinstance(built, list):
-            self.assertIs(type(built), PlugList if isinstance(parent, Plug) else list)
+            self.assertIs(type(built), List if isinstance(parent, Plug) else list)
         self.assertEqual(len(items), len(expected))
         for item, (mplug, cls) in zip(items, expected):
             oracle = _oracle(parent, mplug, cls)
@@ -1901,7 +1901,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         self.assertEqual(vars(multi)["_Attribute__child_id_dict"], {})
 
     def test_a_slice_keeps_its_parent_multi(self):
-        # the list results are PlugLists; a multi's slice is tagged with it
+        # the list results are Lists; a multi's slice is tagged with it
         self._scene()
         multi = Node("pma").input1D
         self.assertIs(multi[0:2]._parent_multi, multi)
@@ -2700,7 +2700,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
         firsts = [group[0] for group in spellings] + [Node(pma).input3D[2].input3Dx]
         self.assertEqual(len({hash(plug) for plug in firsts}), len(firsts))
 
-    def test_pluglist_membership_follows_the_maya_plug(self):
+    def test_list_membership_follows_the_maya_plug(self):
         _instanced_locator()
         plane  = cmds.nurbsPlane(name="np", degree=3, patchesU=1, patchesV=1, ch=False)[0]
         shape  = cmds.listRelatives(plane, shapes=True)[0]

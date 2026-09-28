@@ -5,7 +5,7 @@ Covers:
 - ``_inject_value`` bare-multi + sequence dispatch (per-index write,
   auto-creates indices). Backwards compat: ``multi << scalar`` still
   auto-appends.
-- ``PlugList`` empty-slice + parent-multi fallback
+- ``List`` empty-slice + parent-multi fallback
   (``empty_multi[:] << values`` works).
 - ``Plug.next_index`` property and ``Plug.append(value)`` helper
   for explicit auto-append (replaces the implicit ``multi << scalar``
@@ -19,7 +19,7 @@ Covers:
 from unittest import mock
 
 from maya import cmds
-from rig import Node, Plug, PlugList
+from rig import List, Node, Plug
 from rig.spec import Float, Vector
 from rig._tests._base import MayaTestCase
 
@@ -56,7 +56,7 @@ class TestInjectMultiSequence(MayaTestCase):
                 self.assertAlmostEqual(a, e)
 
     def test_compound_multi_from_pluglist_of_compounds(self):
-        # PlugList of compound source plugs -> per-index connect.
+        # List of compound source plugs -> per-index connect.
         sources = [Node.create("transform", name=f"src{i}") for i in range(3)]
         for i, s in enumerate(sources):
             s.t << [(i + 1), (i + 1) * 2, (i + 1) * 3]
@@ -64,7 +64,7 @@ class TestInjectMultiSequence(MayaTestCase):
         n = Node.create("network", name="net")
         n << Vector("inputs", multi=True)
 
-        n.inputs << PlugList([s.t for s in sources])
+        n.inputs << List([s.t for s in sources])
 
         for i, expected in enumerate([[1, 2, 3], [2, 4, 6], [3, 6, 9]]):
             actual = cmds.getAttr(f"net.inputs[{i}]")[0]
@@ -103,18 +103,18 @@ class TestInjectMultiScalarBackwardsCompat(MayaTestCase):
 
 
 # --------------------------------------------------------------------- #
-#  PlugList empty-slice fallback via _parent_multi
+#  List empty-slice fallback via _parent_multi
 # --------------------------------------------------------------------- #
 class TestPlugListEmptySliceFallback(MayaTestCase):
     """v3.O: ``empty_multi[:] << values`` routes through the parent
-    multi (via PlugList._parent_multi back-reference set by
+    multi (via List._parent_multi back-reference set by
     Plug.__getitem__'s slice tagging) and auto-creates indices to
     match the source length.
 
     The back-reference mechanism is set up at v3.O via
-    ``Plug.__getitem__`` (which tags PlugList instances returned from
+    ``Plug.__getitem__`` (which tags List instances returned from
     multi slicing with ``_parent_multi=self``). Without the v3.O
-    tagging, the v2-base PlugList.__lshift__ fallback wouldn't know
+    tagging, the v2-base List.__lshift__ fallback wouldn't know
     where to route empty-slice writes.
     """
 
@@ -139,7 +139,7 @@ class TestPlugListEmptySliceFallback(MayaTestCase):
 
         n = Node.create("network", name="net")
         n      << Float("w", multi=True)
-        n.w[:] << PlugList([s.tx for s in sources])
+        n.w[:] << List([s.tx for s in sources])
 
         # Verify per-element connections.
         for i in range(3):
@@ -155,8 +155,8 @@ class TestPlugListEmptySliceFallback(MayaTestCase):
         n = Node.create("network", name="net")
         n << Float("w", multi=True)
         empty_pl = n.w[:]
-        # Should be a PlugList tagged with the parent multi.
-        self.assertIsInstance(empty_pl, PlugList)
+        # Should be a List tagged with the parent multi.
+        self.assertIsInstance(empty_pl, List)
         self.assertEqual(len(empty_pl), 0)
         # Plugs are compared by full_name (each access yields a fresh
         # Plug instance, so use string equality not assertIs).
@@ -169,7 +169,7 @@ class TestPlugListEmptySliceFallback(MayaTestCase):
         # parent-multi back-reference (slice goes through the compound
         # branch in Plug.__getitem__).
         pl = n.translate[:]
-        self.assertIsInstance(pl, PlugList)
+        self.assertIsInstance(pl, List)
         self.assertEqual(len(pl), 3)
         self.assertIsNone(getattr(pl, "_parent_multi", None))
 
@@ -323,7 +323,7 @@ class TestChainCloneAndSet(MayaTestCase):
             self.assertAlmostEqual(cmds.getAttr(f"dst.w[{i}]"), expected)
 
     def test_clone_then_set_via_get_snapshot(self):
-        # v3.O: PlugList.get() on a multi slice returns numpy/list of
+        # v3.O: List.get() on a multi slice returns numpy/list of
         # values; the bare-multi sequence path then writes element-wise.
         src = Node.create("network", name="src")
         src   << Float("w", multi=True)

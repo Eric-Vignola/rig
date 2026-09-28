@@ -165,7 +165,7 @@ class TestYieldFastPath(MayaTestCase):
     def test_yield_fast_path_equivalence(self):
         from maya import cmds
 
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         class Sub(list):
             pass
@@ -181,8 +181,8 @@ class TestYieldFastPath(MayaTestCase):
             (10, 20, 30),
             Sub([10, 20, 30]),
             TupleSub((10, 20, 30)),
-            PlugList([a, b, 3.5]),
-            PlugList([f"{a}.tx", f"{b}.ty"]),
+            List([a, b, 3.5]),
+            List([f"{a}.tx", f"{b}.ty"]),
             (),
             TupleSub(),
         ):
@@ -192,10 +192,10 @@ class TestYieldFastPath(MayaTestCase):
         from maya import cmds
 
         from rig._internal.generators import _yield
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         a  = cmds.createNode("transform", name="yield_c")
-        pl = PlugList([f"{a}.tx", f"{a}.ty"])
+        pl = List([f"{a}.tx", f"{a}.ty"])
         self.assertIs(_yield(pl, 0), list.__getitem__(pl, 0))
         self.assertIs(_yield(pl, 1), list(pl)[1])
 

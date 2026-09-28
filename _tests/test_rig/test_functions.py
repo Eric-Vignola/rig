@@ -7,7 +7,7 @@ upstream -- these tests guarantee the network shape only.
 """
 
 from maya import cmds
-from rig import functions as f, Node, Plug, PlugList
+from rig import functions as f, List, Node, Plug
 from rig._tests._base import MayaTestCase
 
 
@@ -341,7 +341,7 @@ class TestDiff(MayaTestCase):
         b      = Node.create("transform", name="b")
         c      = Node.create("transform", name="c")
         result = f.diff([a.tx, b.tx, c.tx])
-        self.assertIsInstance(result, PlugList)
+        self.assertIsInstance(result, List)
         # n inputs => n-1 differences.
         self.assertEqual(len(result), 2)
 
@@ -354,7 +354,7 @@ class TestCumsum(MayaTestCase):
         b      = Node.create("transform", name="b")
         c      = Node.create("transform", name="c")
         result = f.cumsum([a.tx, b.tx, c.tx])
-        self.assertIsInstance(result, PlugList)
+        self.assertIsInstance(result, List)
         # n inputs => n running sums.
         self.assertEqual(len(result), 3)
 
@@ -967,7 +967,7 @@ class TestFunctionsAll(MayaTestCase):
             "container",
             "memoize",
             "vectorize",
-            "PlugList",
+            "List",
             "Attribute",
             "cmds",
             "math",

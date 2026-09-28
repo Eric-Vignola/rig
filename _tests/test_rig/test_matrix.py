@@ -1029,10 +1029,10 @@ class TestSpineExampleRegression(MayaTestCase):
         cmds.loadPlugin("matrixNodes", quiet=True)
 
     def test_rail_spine_simple_builds(self):
-        from rig import PlugList
+        from rig import List
         from rig.examples.rail_spine_simple import create_simple_rail
 
-        controls = PlugList()
+        controls = List()
         for i in range(4):
             loc = cmds.spaceLocator()[0]
             controls.append(Node(loc))

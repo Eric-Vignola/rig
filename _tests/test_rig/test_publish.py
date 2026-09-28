@@ -3,7 +3,7 @@
 ``flatten_containers`` global option."""
 
 from maya import cmds
-from rig import container, get_options, Node, PlugList, set_options
+from rig import container, get_options, List, Node, set_options
 from rig._internal.maya_version import get_maya_version
 from rig.spec import Float
 from rig._tests._base import MayaTestCase
@@ -770,14 +770,14 @@ class TestPublishMultiCompound(MayaTestCase):
                 )
 
     def test_publish_input_compound_multi_pluglist_source(self):
-        # PlugList-of-vec3-plugs source -> per-index live connection.
+        # List-of-vec3-plugs source -> per-index live connection.
         sources = [Node.create("transform", name=f"src{i}") for i in range(3)]
         for i, s in enumerate(sources):
             s.t << [(i + 1), (i + 1) * 2, (i + 1) * 3]
 
         with container("outer"):
             container.publish_input(
-                PlugList([s.t for s in sources]),
+                List([s.t for s in sources]),
                 "input_vectors",
                 at    = "double3",
                 multi = True,
@@ -828,14 +828,14 @@ class TestPublishMultiCompound(MayaTestCase):
                 )
 
     def test_publish_output_multi_from_pluglist_scalar(self):
-        # publish_output of a PlugList of single-Plug results -> scalar multi.
+        # publish_output of a List of single-Plug results -> scalar multi.
         with container("outer"):
             mults = [Node.create("multiplyDivide", name=f"mul{i}") for i in range(3)]
             for i, m in enumerate(mults):
                 m.input1X << float(i + 1)
                 m.input2X << 2.0  # so outputX = 2 * (i+1)
             container.publish_output(
-                PlugList([m.outputX for m in mults]),
+                List([m.outputX for m in mults]),
                 "results",
                 at    = "double",
                 multi = True,
@@ -846,13 +846,13 @@ class TestPublishMultiCompound(MayaTestCase):
                 self.assertAlmostEqual(cmds.getAttr(f"{real}[{i}]"), expected)
 
     def test_publish_output_compound_multi_from_pluglist(self):
-        # publish_output of a PlugList of vec3 Plugs -> compound multi.
+        # publish_output of a List of vec3 Plugs -> compound multi.
         with container("outer"):
             adds = [Node.create("plusMinusAverage", name=f"add{i}") for i in range(2)]
             for i, a in enumerate(adds):
                 a.input3D[0] << [i + 1, i + 2, i + 3]
             container.publish_output(
-                PlugList([a.output3D for a in adds]),
+                List([a.output3D for a in adds]),
                 "vec_out",
                 at    = "double3",
                 multi = True,
@@ -894,20 +894,20 @@ class TestPublishMultiCompound(MayaTestCase):
 
         with container("vec_avg"):
             in1 = container.publish_input(
-                PlugList([a.t]),
+                List([a.t]),
                 "input1",
                 at    = "double3",
                 multi = True,
             )
             in2 = container.publish_input(
-                PlugList([b.t]),
+                List([b.t]),
                 "input2",
                 at    = "double3",
                 multi = True,
             )
             results = [rf.avg([in1[0], in2[0]])]
             container.publish_output(
-                PlugList(results),
+                List(results),
                 "output",
                 at    = "double3",
                 multi = True,
@@ -1335,7 +1335,7 @@ class TestNativePublishCapabilities(MayaTestCase):
                 mm.input1X << float(i + 1)
                 mm.input2X << 2.0
             container.publish_output(
-                PlugList([mm.outputX for mm in mults]),
+                List([mm.outputX for mm in mults]),
                 "results",
                 at    = "double",
                 multi = True,
@@ -1491,7 +1491,7 @@ class TestInferAttrTypeVectorLiterals(MayaTestCase):
     literal as a ``double3`` / ``double4`` compound. Without this it fell
     through to scalar ``{"at": "double"}``, breaking ``publish_input`` (and
     thus ``slerp`` / ``lerp``) on raw ``[x, y, z]`` inputs. Mirrors the
-    PlugList-of-3/4 and 2D-array compound heuristics for flat literals."""
+    List-of-3/4 and 2D-array compound heuristics for flat literals."""
 
     TEST_START_NEW_SCENE = True
 

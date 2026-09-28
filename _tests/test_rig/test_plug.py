@@ -1,7 +1,7 @@
 """Tests for ``rig._internal.plug`` -- the operator-extended Attribute."""
 
 from maya import cmds
-from rig import InjectionError, lock, Node, Plug, PlugList, skip, unlock
+from rig import InjectionError, List, lock, Node, Plug, skip, unlock
 from rig._tests._base import MayaTestCase
 
 
@@ -117,12 +117,12 @@ class TestPlugSliceReturnsPlugList(MayaTestCase):
         target = cmds.polyCube(name="tgt")[0]
         bs     = cmds.blendShape(cube, target, name="bs1")[0]
 
-        from rig import PlugList
+        from rig import List
 
         bs_node = Node(bs)
         sliced  = bs_node.weight[:]
-        # Must be PlugList (not plain list) so chained ops work.
-        self.assertIsInstance(sliced, PlugList)
+        # Must be List (not plain list) so chained ops work.
+        self.assertIsInstance(sliced, List)
 
 
 class TestPlugCompoundSlicing(MayaTestCase):
@@ -130,9 +130,9 @@ class TestPlugCompoundSlicing(MayaTestCase):
     inputQuat, etc.) support numpy-style indexing and slicing.
 
     ``node.translate[0]``    -> Plug for translateX
-    ``node.translate[:]``    -> PlugList([tx, ty, tz])
-    ``node.translate[0:2]``  -> PlugList([tx, ty])
-    ``node.translate[::-1]`` -> PlugList([tz, ty, tx])
+    ``node.translate[:]``    -> List([tx, ty, tz])
+    ``node.translate[0:2]``  -> List([tx, ty])
+    ``node.translate[::-1]`` -> List([tz, ty, tx])
 
     Pre-v3.O the underlying ``Attribute.__getitem__`` raised
     ``RuntimeError: not an multi attr`` on compounds. v3.O adds a
@@ -154,11 +154,11 @@ class TestPlugCompoundSlicing(MayaTestCase):
         self.assertEqual(str(tz), "cube1.translateZ")
 
     def test_compound_full_slice(self):
-        from rig import PlugList
+        from rig import List
 
         node     = Node.create("transform", name="cube1")
         children = node.translate[:]
-        self.assertIsInstance(children, PlugList)
+        self.assertIsInstance(children, List)
         self.assertEqual(len(children), 3)
         self.assertEqual(
             [str(p) for p in children],
@@ -166,11 +166,11 @@ class TestPlugCompoundSlicing(MayaTestCase):
         )
 
     def test_compound_partial_slice(self):
-        from rig import PlugList
+        from rig import List
 
         node      = Node.create("transform", name="cube1")
         first_two = node.translate[0:2]
-        self.assertIsInstance(first_two, PlugList)
+        self.assertIsInstance(first_two, List)
         self.assertEqual(len(first_two),    2)
         self.assertEqual(str(first_two[0]), "cube1.translateX")
         self.assertEqual(str(first_two[1]), "cube1.translateY")
@@ -1752,7 +1752,7 @@ class TestScalarPowUnchanged(MayaTestCase):
 
 class TestPlugGetInputsOutputs(MayaTestCase):
     """Connection queries as methods, replacing the retired
-    ``plug << PlugList`` / ``plug >> PlugList`` sentinels."""
+    ``plug << List`` / ``plug >> List`` sentinels."""
 
     TEST_START_NEW_SCENE = True
 
@@ -1767,19 +1767,19 @@ class TestPlugGetInputsOutputs(MayaTestCase):
 
     def test_get_inputs_returns_the_driver(self):
         got = Node("ctrl").tx.get_inputs()
-        self.assertIsInstance(got, PlugList)
+        self.assertIsInstance(got, List)
         self.assertEqual([str(x) for x in got], ["drv.translateX"])
 
     def test_get_outputs_returns_every_destination(self):
         got = Node("ctrl").tx.get_outputs()
-        self.assertIsInstance(got, PlugList)
+        self.assertIsInstance(got, List)
         self.assertEqual(
             sorted(str(x) for x in got), ["spare.translateX", "spare.translateY"]
         )
 
     def test_unwired_yields_empty_pluglist_never_none(self):
         for got in (Node("ctrl").ty.get_inputs(), Node("ctrl").ty.get_outputs()):
-            self.assertIsInstance(got, PlugList)
+            self.assertIsInstance(got, List)
             self.assertEqual(len(got), 0)
             self.assertFalse(got)
 
@@ -1791,7 +1791,7 @@ class TestPlugGetInputsOutputs(MayaTestCase):
 
     def test_empty_result_cannot_silently_disconnect(self):
         # A bare ``None`` return would be read by ``<<`` as "disconnect" and
-        # tear the existing wire down. An empty PlugList raises instead.
+        # tear the existing wire down. An empty List raises instead.
         cmds.connectAttr("drv.translateY", "spare.translateZ")
         with self.assertRaises(ValueError):
             Node("spare").tz << Node("ctrl").ty.get_inputs()
@@ -1803,8 +1803,8 @@ class TestPlugGetInputsOutputs(MayaTestCase):
     def test_retired_sentinels_raise(self):
         p = Node("ctrl").tx
         for expr in (
-            lambda: p << PlugList,
-            lambda: p >> PlugList,
+            lambda: p << List,
+            lambda: p >> List,
             lambda: p << Plug,
             lambda: p >> Plug,
         ):
@@ -1812,7 +1812,7 @@ class TestPlugGetInputsOutputs(MayaTestCase):
                 expr()
 
     def test_pluglist_instance_still_connects(self):
-        Node("spare").tz << PlugList([Node("drv").ty])
+        Node("spare").tz << List([Node("drv").ty])
         self.assertEqual(
             cmds.listConnections("spare.translateZ", s=True, d=False, p=True),
             ["drv.translateY"],

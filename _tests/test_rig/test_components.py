@@ -6,7 +6,7 @@ from unittest import mock
 
 import numpy as np
 from maya import cmds
-from rig import Node, Plug, PlugList
+from rig import List, Node, Plug
 from rig._internal.generators import sequences
 from rig._internal.members import (
     _MemberSpec,
@@ -329,7 +329,7 @@ class TestComponentsIndexing(MayaTestCase):
 
 
 # --------------------------------------------------------------------- #
-#  Components operators, equality, display, PlugList behaviour
+#  Components operators, equality, display, List behaviour
 # --------------------------------------------------------------------- #
 
 
@@ -419,18 +419,18 @@ class TestComponentsOperators(MayaTestCase):
         xform, shape = _cube()
         node   = Node(xform)
         faces  = Node(shape).f[:3]
-        listed = PlugList([faces])
+        listed = List([faces])
         self.assertIs(listed[0], faces)
-        mixed = PlugList([node, faces, Node(shape).vtx[0]])
+        mixed = List([node, faces, Node(shape).vtx[0]])
         self.assertIs(mixed[1], faces)
         self.assertIn(faces, mixed)
-        broadcast = PlugList([node, faces]).tx
-        self.assertIsInstance(broadcast, PlugList)
+        broadcast = List([node, faces]).tx
+        self.assertIsInstance(broadcast, List)
         self.assertEqual(str(broadcast[0]), "pCube1.translateX")
         self.assertIs(broadcast[1], faces)
         self.assertEqual([str(x) for x in listed.translateX], [repr(faces)])
         with self.assertRaises(TypeError):
-            PlugList(faces)
+            List(faces)
         pairs = list(sequences([1, 2], faces))
         self.assertEqual(len(pairs), 2)
         self.assertTrue(all(rhs is faces for _, rhs in pairs))
@@ -699,7 +699,7 @@ class TestNormalise(MayaTestCase):
     def test_mixed_pluglist_keeps_every_kind_in_order(self):
         xform, shape = _cube()
         node   = Node(shape)
-        lhs    = PlugList([node.vtx[0], Node(xform).f[0], Node(xform)])
+        lhs    = List([node.vtx[0], Node(xform).f[0], Node(xform)])
         result = normalise(lhs, want_shapes=True)
         self.assertEqual([s.kind for s in result],   ["vtx", "f", "whole"])
         self.assertEqual({s.path for s in result},   {shape})
@@ -733,7 +733,7 @@ class TestNormalise(MayaTestCase):
         lhs    = [[node.vtx[0]], (Node(xform).f[0], [node.map[1]])]
         result = normalise(lhs, want_shapes=True)
         self.assertEqual([s.kind for s in result], ["vtx", "f", "uv"])
-        lhs    = PlugList([PlugList([node.vtx[1]]), node.vtx[2]])
+        lhs    = List([List([node.vtx[1]]), node.vtx[2]])
         result = normalise(lhs, want_shapes=True)
         self.assertEqual(result[0].tokens, ("vtx[1:2]",))
 
@@ -751,7 +751,7 @@ class TestNormalise(MayaTestCase):
         xform, shape = _cube()
         node         = Node(xform)
         with self.assertRaises(TypeError) as ctx:
-            normalise(PlugList([node, 5, None]), want_shapes=True)
+            normalise(List([node, 5, None]), want_shapes=True)
         self.assertIn("element [1]", str(ctx.exception))
         self.assertIn("5", str(ctx.exception))
         with self.assertRaises(TypeError) as ctx:
@@ -796,7 +796,7 @@ class TestNormalise(MayaTestCase):
     def test_empty_left_hand_side_raises(self):
         xform, _ = _cube()
         faces    = Node(xform).f
-        for lhs in (PlugList([]), [], (), faces[6:], [faces[6:]], faces[[]]):
+        for lhs in (List([]), [], (), faces[6:], [faces[6:]], faces[[]]):
             with self.assertRaises(ValueError) as ctx:
                 normalise(lhs, want_shapes=True)
             self.assertEqual(str(ctx.exception), "nothing to inject")
@@ -868,7 +868,7 @@ class TestAttributeFancyIndexing(MayaTestCase):
         xform, shape = _cube()
         node   = Node(xform)
         picked = node.vtx[[0, 4, 7]]
-        self.assertIsInstance(picked, PlugList)
+        self.assertIsInstance(picked, List)
         self.assertEqual(
             [str(x) for x in picked],
             [f"pCube1Shape.controlPoints[{i}]" for i in (0, 4, 7)],
