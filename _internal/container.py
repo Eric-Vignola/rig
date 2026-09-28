@@ -1170,11 +1170,25 @@ def _typed_create(
         and isinstance(result, DGNode)
     ):
         _gc_tag(result.name)
-    if created:
+    if created and not _made_only(result, created):
         container.add(created)
     elif result is not None:
         container.add(result)
     return result
+
+
+def _made_only(result: Any, created: list) -> bool:
+    """True when the one node a typed create made (`created`, full names) is the
+    node object it returns: registering the object reads its uuid directly,
+    where registering the name casts it again (``Node.create("transform")``
+    and ``Transform.create()`` inside a scope, the common case)."""
+    if len(created) != 1 or not isinstance(result, DGNode):
+        return False
+    try:
+        name = result.long_name if isinstance(result, DAGNode) else result.name
+    except (RuntimeError, ValueError):
+        return False
+    return name == created[0]
 
 
 # `DGNode.create`, the typed create `Node.create` may add ``skipSelect`` to
