@@ -49,7 +49,7 @@ from rig.nodetypes._base import (
     _check_enum_names,
     _ensure_owner_alive,
     _enum_value,
-    _holds_text as _holds_text_deep,
+    _holds_text,
     _is_enum_attr,
     _is_text,
     _plug_identity_name,
@@ -107,12 +107,6 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
                 _ensure_owner_alive(theirs)
                 raise operator_error(REFLECTED[dunder], theirs, mine, found, row)
     return rows
-
-
-def _holds_text(other: Any) -> bool:
-    """True if the right side of a List ``<<`` is a plain str, or a sequence
-    holding one at any depth (a numeric ndarray is answered by its dtype)."""
-    return _holds_text_deep(other)
 
 
 def _enum_rows(rows: Iterable) -> list:
