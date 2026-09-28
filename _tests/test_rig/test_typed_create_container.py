@@ -358,14 +358,25 @@ class TestTypedCreateInContainer(MayaTestCase):
         self.assertEqual(_members(outer), ["inner_m", "inner_mShape"])
 
     def test_the_one_node_a_create_made_is_registered_as_its_object(self):
-        # R2: a typed create that made exactly the node it returns (Transform,
-        # Joint, a DG class; Node.create of a registered type) registers the node
-        # object, whose uuid is read directly, not its name cast again; a create
-        # that made more nodes registers each by name, as before
+        # R2: a typed create that makes only the node it returns (DGNode.create's
+        # template with DGNode's _create on a DG class or DAGNode's on a transform
+        # class, and DGNode's post_create: Transform, Joint, a DG class; so
+        # Node.create of those types) runs untracked and registers the node
+        # object, whose uuid is read directly; any other create is tracked and
+        # registers every node it made, by name (the one it returns as its object)
+        class _WithHelper(Transform):
+            @classmethod
+            def post_create(cls, new_node_name, *args, **kwargs):
+                cmds.createNode("multiplyDivide", name="helper", skipSelect=True)
+                return super().post_create(new_node_name, *args, **kwargs)
+
         data    = self._mesh_data()
         md_cls  = self._md_class()
         by_name = mock.Mock(wraps=container_module._node_uuid)
-        with mock.patch.object(container_module, "_node_uuid", by_name):
+        tracked = mock.Mock(wraps=container_module._call_tracking_creation)
+        with mock.patch.object(container_module, "_node_uuid", by_name), mock.patch.object(
+            container_module, "_call_tracking_creation", tracked
+        ):
             with container("outer") as outer:
                 with container("inner"):
                     made = [
@@ -374,20 +385,27 @@ class TestTypedCreateInContainer(MayaTestCase):
                         md_cls.create(name="md"),
                         Node.create("transform", name="n"),
                     ]
-                    single = by_name.call_count
+                    counts = (by_name.call_count, tracked.call_count)
                     mesh   = Mesh.create(data, name="m")
+                    counts_mesh = (by_name.call_count, tracked.call_count)
+                    helped = _WithHelper.create(name="w")
                     frames = _frame_uuids()
-        self.assertEqual(single, 0)
-        self.assertEqual(by_name.call_count, 2)
+        self.assertEqual(counts, (0, 0))
+        self.assertEqual(counts_mesh, (2, 1))
+        self.assertEqual(tracked.call_count, 2)
         self.assertEqual([str(x) for x in made], ["inner_t", "inner_j", "inner_md", "inner_n"])
+        self.assertEqual(str(helped), "inner_w")
         self.assertEqual(
             _members(outer),
-            ["inner_j", "inner_m", "inner_mShape", "inner_md", "inner_n", "inner_t"],
+            ["helper", "inner_j", "inner_m", "inner_mShape", "inner_md", "inner_n", "inner_t",
+             "inner_w"],
         )
-        for node in made + [mesh, mesh.get_parent()]:
+        for node in made + [mesh, mesh.get_parent(), helped, "helper"]:
             for frame in frames:
                 self.assertIn(_uuid(node), frame)
         self.assertTrue(_tagged(made[2]))
+        self.assertFalse(_tagged(made[0]))
+        self.assertEqual(cmds.ls(selection=True), [])
 
     def test_create_hierarchy_keeps_its_names_and_registers_every_node(self):
         root  = Node.create("joint", name="root_joint")

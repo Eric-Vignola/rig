@@ -48,6 +48,7 @@ from rig.nodetypes._base import (
 )
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _create_template, DGNode
+from rig.nodetypes.transform import Transform
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
 
@@ -1094,6 +1095,24 @@ _TYPED_DEPTH = 0
 # engine's sets, the reference's file) take no such flag.
 _SELECT_FORWARDING = (DGNode._create.__func__, DAGNode._create.__func__)
 
+_DG_POST_CREATE = DGNode.post_create.__func__
+
+
+def _makes_only_its_node(cls: type, run: Any) -> bool:
+    """True for a typed create that makes exactly the node it returns, so it runs
+    without the node-added tracking (about 30 us a create): `DGNode.create`'s
+    template with DGNode's ``_create`` on a DG class, or DAGNode's on a transform
+    class (a shape type's ``createNode`` also makes its transform), and DGNode's
+    ``post_create`` (an override may make more nodes)."""
+    if run is not _create_template:
+        return False
+    if getattr(cls.post_create, "__func__", None) is not _DG_POST_CREATE:
+        return False
+    make = getattr(cls._create, "__func__", None)
+    if make is _SELECT_FORWARDING[0]:
+        return not issubclass(cls, DAGNode)
+    return make is _SELECT_FORWARDING[1] and issubclass(cls, Transform)
+
 
 def _typed_create(
     cls: type, run: Any, args: tuple, kwargs: dict, name_index: Optional[int] = None
@@ -1114,7 +1133,9 @@ def _typed_create(
     * ``skipSelect=True`` is added when ``ContainerOptions.skip_selection`` is
       on, neither ``ss`` nor ``skipSelect`` was given, and ``run`` is
       `DGNode.create`'s template on a class whose ``_create`` forwards it;
-    * ``run`` runs inside :func:`_call_tracking_creation`;
+    * ``run`` runs inside :func:`_call_tracking_creation`, unless it makes only
+      the node it returns (:func:`_makes_only_its_node`: ``Transform.create()``,
+      ``Joint.create()``, a DG class's create);
     * the returned node is tagged for :func:`cleanup` when
       ``cls.NATIVE_NODE_TYPE`` is GC-eligible and the class has no
       ``CUSTOM_NODE_TYPE`` (a user's metadata node is never collected);
@@ -1160,7 +1181,10 @@ def _typed_create(
 
     _TYPED_DEPTH += 1
     try:
-        result, created = _call_tracking_creation(run, (cls, args, kwargs), {})
+        if _makes_only_its_node(cls, run):
+            result, created = run(cls, args, kwargs), None
+        else:
+            result, created = _call_tracking_creation(run, (cls, args, kwargs), {})
     finally:
         _TYPED_DEPTH -= 1
 
@@ -1178,10 +1202,9 @@ def _typed_create(
 
 
 def _made_only(result: Any, created: list) -> bool:
-    """True when the one node a typed create made (`created`, full names) is the
-    node object it returns: registering the object reads its uuid directly,
-    where registering the name casts it again (``Node.create("transform")``
-    and ``Transform.create()`` inside a scope, the common case)."""
+    """True when the one node a tracked typed create made (`created`, full
+    names) is the node object it returns: registering the object reads its uuid
+    directly, where registering the name casts it again."""
     if len(created) != 1 or not isinstance(result, DGNode):
         return False
     try:
