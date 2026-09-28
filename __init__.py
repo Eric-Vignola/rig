@@ -71,6 +71,17 @@ Operator conventions:
       overridden to key the Maya plug (its node, attribute and logical
       indices, kept across a rename) so dict / set membership still works.
 
+Undo:
+    * rig's edits are undoable. ``Mesh.create`` and each membership edit
+      (``cube << Tag("x")``, ...) are one undo step, named after the
+      operation in the Edit menu (``rig.Mesh.create``, ``rig.tag``); each of
+      rig's API edits (``Mesh.set_points``, ``SkinCluster.set_weights``, ...)
+      is one undo step.
+    * :func:`undo_chunk` makes several statements one named step:
+      ``with rig.undo_chunk("build arm"):``, or ``@rig.undo_chunk`` on a
+      function (the step is named after its ``__qualname__``), or
+      ``@rig.undo_chunk("build arm")``.
+
 Examples::
 
     from rig import Node, container, set_options, get_options
@@ -150,6 +161,7 @@ from rig._internal.memoize import memoize, prune_memoize_caches, vectorize
 from rig._internal.node import lift, Node
 from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
+from rig._internal.undo import undo_chunk
 from rig.membership import Components, Layer, Tag
 
 # v4.T: Re-export the spec submodule's public API for top-level
@@ -203,6 +215,8 @@ __all__ = [
     "force_nodes",
     # Lifting
     "lift",
+    # Undo
+    "undo_chunk",
     # Helpers
     "condition",
     "constant",
