@@ -48,6 +48,20 @@ class Mesh(Geometry):
     # built from its mesh data (``Node.create("mesh")`` with none raises, naming it)
     _CREATE_TAKES_INPUTS = "mesh_data"
 
+    @property
+    def fn_set(self) -> OpenMaya.MFnMesh:
+        """A new ``MFnMesh`` of this mesh, on every access (about 3 us).
+
+        An MFnMesh kept across an edit of the mesh made some other way (a
+        ``cmds.polyUVSet`` / ``polyColorSet`` create, a UV or colour set made
+        or deleted through another MFnMesh, a colour edit that adds a node to
+        its history, or the undo / redo of one) can point at freed geometry and
+        crash Maya when it is used again (round U,
+        runs/rU/U3/clearuvs_probe.py, stale_probe.py; runs/rU2/S3/probe). Keep
+        one for a single call at most.
+        """
+        return OpenMaya.MFnMesh(self.mdagpath)
+
     # --- creation
 
     @classmethod
@@ -209,11 +223,12 @@ class Mesh(Geometry):
 
         # Loop over each face and check if all vertices are above the plane.
         face_indices = []
-        for face_idx in range(self.num_polygons):
+        fn = self.fn_set
+        for face_idx in range(fn.numPolygons):
             if all(
                 (
                     is_vert_above_plane[i]
-                    for i in self.fn_set.getPolygonVertices(face_idx)
+                    for i in fn.getPolygonVertices(face_idx)
                 )
             ):
                 face_indices.append(face_idx)
@@ -525,14 +540,15 @@ class Mesh(Geometry):
         """
         from cgmath.geometry import MeshData, UVList
 
+        fn     = self.fn_set
         points = self.get_points(world_space=world_space)
-        vert_counts, vert_ids = self.fn_set.getVertices()
+        vert_counts, vert_ids = fn.getVertices()
 
         space      = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        normals    = self.fn_set.getNormals(space)
+        normals    = fn.getNormals(space)
         normal_ids = []
-        for face_id in range(self.fn_set.numPolygons):
-            normal_ids.extend(self.fn_set.getFaceNormalIds(face_id))
+        for face_id in range(fn.numPolygons):
+            normal_ids.extend(fn.getFaceNormalIds(face_id))
 
         mesh_data = MeshData(
             indices        = np.asarray(vert_ids),
@@ -544,7 +560,7 @@ class Mesh(Geometry):
         )
 
         # extract hole data from faces with interior boundaries
-        holes = self.fn_set.getHoles()
+        holes = fn.getHoles()
         if holes:
             hole_faces, hole_verts = zip(*holes)
             mesh_data.hole_faces  = np.asarray(hole_faces)
