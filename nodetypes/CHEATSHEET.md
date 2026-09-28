@@ -1180,11 +1180,12 @@ own): hand it any object with `doIt` / `undoIt` / `redoIt` and it runs
 inside one undo chunk. `cmds` calls made in `doIt` join that step; the ones
 made in `undoIt` / `redoIt` are not recorded. The object is handed over for
 that one call: nothing keeps it once its step leaves the queue. This is how
-`Mesh.set_points`, `Mesh.add_uv_set`, `Mesh.set_uv_data` and
-`SkinCluster.set_weights` get their undo, through
-`cmds.rigUndoableAPICommand.run(obj)`: the same call without the chunk, one
-unnamed step (their `doIt` calls no `cmds`; a `cmds` call there would be a
-step of its own).
+`Mesh.set_points`, the UV set edits (`add_uv_set`, `rename_uv_set`,
+`delete_uv_set`, `set_uv_data`), the colour set edits (`add_color_set`,
+`ColorSet.data`, `ColorSet.delete`) and `SkinCluster.set_weights` get their
+undo, through `cmds.rigUndoableAPICommand.run(obj)`: the same call without
+the chunk, one unnamed step (their `doIt`, `undoIt` and `redoIt` call no
+`cmds`; a `cmds` call in `doIt` would be a step of its own).
 
 ```python
 class MoveX:

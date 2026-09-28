@@ -74,11 +74,11 @@ Operator conventions:
       indices, kept across a rename) so dict / set membership still works.
 
 Undo:
-    * rig's edits are undoable. ``Mesh.create`` and each membership edit
-      (``cube << Tag("x")``, ...) are one undo step, named after the
-      operation in the Edit menu (``rig.Mesh.create``, ``rig.tag``); each of
-      rig's API edits (``Mesh.set_points``, ``SkinCluster.set_weights``, ...)
-      is one undo step.
+    * rig's edits are undoable. ``Mesh.create``, ``SkinCluster.create`` and
+      each membership edit (``cube << Tag("x")``, ...) are one undo step,
+      named after the operation in the Edit menu (``rig.Mesh.create``,
+      ``rig.tag``); each of rig's API edits (``Mesh.set_points``, the UV and
+      colour set edits, ``SkinCluster.set_weights``, ...) is one undo step.
     * :func:`undo_chunk` makes several statements one named step:
       ``with rig.undo_chunk("build arm"):``, or ``@rig.undo_chunk`` on a
       function (the step is named after its ``__qualname__``), or

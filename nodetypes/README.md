@@ -366,6 +366,10 @@ on the way back and creates parents first.
 not undoable by themselves. The bundled `undoable_api_command` plug-in
 registers `cmds.rigUndoableAPICommand(obj)` (a name of rig's own): give it
 any object with `doIt` / `undoIt` / `redoIt` and it runs in one undo chunk.
+rig's mesh edits (points, UV sets and their UVs, colour sets and their
+colours) and skin weights go through it, API only: a UV or colour set is made,
+renamed and deleted through `MFnMesh` too, never `polyUVSet` / `polyColorSet`,
+whose undo beside API data edits and later vertex edits restores broken sets.
 `Mesh.create` needs no command: the shape rides a recorded `createNode`
 transform. `load_plugin` loads the plug-in by full path from
 `rig/nodetypes/plugins`, once per session, so nothing needs configuring.
