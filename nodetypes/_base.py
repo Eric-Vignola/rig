@@ -2597,15 +2597,23 @@ class Node(metaclass=NodeMeta):
 
     @classmethod
     def find_all(cls, node_type: str, exact_type: bool = True) -> list[Any]:
-        """The nodes of ``node_type`` in the scene, as typed nodes: the
-        ``find_all`` of the class registered for the type
-        (``Node.find_all("joint")`` is ``Joint.find_all()``; ``exact_type=False``
-        also lists the types derived from it). A type no node class is
-        registered for raises NotImplementedError."""
+        """The nodes of ``node_type`` in the scene, as a list of typed nodes:
+        the ``find_all`` of the class registered for the type
+        (``Node.find_all("joint")`` is ``Joint.find_all()``), else the cast of
+        every node ``cmds.ls`` lists for it (``Node.find_all("multiplyDivide")``).
+        ``exact_type=False`` also lists the types derived from it. A name that is
+        no Maya node type raises ValueError."""
         node_cls = _NODE_CLASS_DICT.get(node_type)
         if node_cls:
             return node_cls.find_all(exact_type=exact_type)
-        raise NotImplementedError(f"Node type {node_type} not implemented")
+        try:
+            known = cmds.nodeType(node_type, isTypeName=True)
+        except RuntimeError:
+            known = False
+        if not known:
+            raise ValueError(f"{node_type!r} is not a Maya node type")
+        found = cmds.ls(**{"exactType" if exact_type else "type": node_type})
+        return [_cast(name) for name in found or ()]
 
 
 def _node_factory(obj: Any) -> Any:
