@@ -43,6 +43,9 @@ class Mesh(Geometry):
     FN_SET           = OpenMaya.MFnMesh
     POINT_COMP_TYPE  = "vtx"
 
+    # built from its mesh data (``Node.create("mesh")`` with none raises, naming it)
+    _CREATE_TAKES_INPUTS = "mesh_data"
+
     # --- creation
 
     @classmethod
@@ -64,6 +67,7 @@ class Mesh(Geometry):
         mesh_data: MeshData,
         uv_data:   UVData   | UVList | list[UVData] | None = None,
         name:      str      | None                         = None,
+        container: bool     | None                         = None,
     ) -> "Mesh":
         """Creates a mesh object from a mesh data object.
 
@@ -71,10 +75,13 @@ class Mesh(Geometry):
             mesh_data: A MeshData object.
             uv_data: One or more UVData objects.
             name: The name of the mesh to create
+            container: Inside ``with container()``, whether the transform and
+                the shape are registered with the scope (None: yes), as for
+                every typed create (see `DGNode.create`).
         """
         from cgmath.geometry import MeshData, UVData, UVList
 
-        mesh = super().create(mesh_data, name=name)
+        mesh = super().create(mesh_data, name=name, container=container)
         if uv_data:
             if isinstance(uv_data, UVData):
                 uv_data = [uv_data]

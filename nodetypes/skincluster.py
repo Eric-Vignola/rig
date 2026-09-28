@@ -69,6 +69,10 @@ class SkinCluster(Deformer):
     NATIVE_NODE_TYPE = "skinCluster"
     FN_SET           = OpenMayaAnim.MFnSkinCluster
 
+    # built from its geometry and influences (``Node.create("skinCluster")``
+    # with neither raises, naming them)
+    _CREATE_TAKES_INPUTS = "geom, influences"
+
     # --- creation
 
     @classmethod

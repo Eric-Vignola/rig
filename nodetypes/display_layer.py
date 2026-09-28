@@ -51,11 +51,18 @@ class DisplayLayer(DGNode):
 
     @classmethod
     def _create(cls, *args, **kwargs) -> str:
-        """[Internal] Creates an empty display layer and returns the layer name.
+        """[Internal] Creates a display layer and returns the layer name.
+
+        The layer is empty unless objects are given (``args``) or the caller
+        passes ``empty`` / ``noRecurse``: ``cmds.createDisplayLayer`` alone would
+        move the selection (with its hierarchy) out of its layers into the new
+        one. ``empty=False`` takes the selection, as the command does.
 
         Args:
-            args, kwargs: kwargs supported by cmds.createDisplayLayer()
+            args, kwargs: args and kwargs supported by cmds.createDisplayLayer()
         """
+        if not args and not any(key in kwargs for key in ("empty", "e", "noRecurse", "nr")):
+            kwargs["empty"] = True
         return cmds.createDisplayLayer(*args, **kwargs)
 
     @classmethod

@@ -20,6 +20,10 @@ class Reference(DGNode):
     # the maya native node type string
     NATIVE_NODE_TYPE = "reference"
 
+    # built from its file (``Node.create("reference")`` with none raises, naming
+    # it)
+    _CREATE_TAKES_INPUTS = "file_path, namespace"
+
     # a create references a whole file: inside ``with container()`` it stays out
     # of the scope (tracking would pour every referenced node into it) unless
     # ``container=True``

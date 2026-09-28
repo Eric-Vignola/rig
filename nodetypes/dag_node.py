@@ -65,9 +65,14 @@ class DAGNode(DGNode):
     def _create(cls, parent: str | DAGNode | None = None, *args, **kwargs) -> str:
         """[Internal] Creates a node of this type.
         This class can only use Maya APIs and must return a node name string.
+
+        A ``parent`` gets the node from ``cmds.createNode(parent=...)``: in the
+        parent's space at identity (as ``Node.create``'s ``createNode`` has
+        always put it), named among the parent's children, so a world node of
+        the same name does not rename it.
         """
-        # resolve the parent to its long name before creating anything,
-        # the new node is created in world and may shadow the parent's short name.
+        # resolve the parent to its long name before creating anything: a
+        # missing or ambiguous parent raises with nothing made
         if parent:
             if isinstance(parent, DAGNode):
                 parent = parent.long_name
@@ -76,14 +81,12 @@ class DAGNode(DGNode):
                 if len(found) != 1:
                     raise ValueError(f"Parent must match one node: {parent} -> {found}")
                 parent = found[0]
+            kwargs["parent"] = parent
 
         node = cmds.createNode(cls.NATIVE_NODE_TYPE, **kwargs)
         sel  = OpenMaya.MSelectionList()
         sel.add(node)
-        mdagpath = sel.getDagPath(0)
-        if parent:
-            cmds.parent(mdagpath.fullPathName(), parent)
-        return mdagpath.partialPathName()
+        return sel.getDagPath(0).partialPathName()
 
     # --- properties and utils
 
