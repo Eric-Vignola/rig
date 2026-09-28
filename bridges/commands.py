@@ -132,11 +132,17 @@ def _wrap_result(result: Any) -> Any:
 
 
 def _make_wrapper(name: str) -> Callable:
-    """Build a wrapper function for ``maya.cmds.<name>``."""
-    fn          = getattr(_mc, name)
+    """Build a wrapper function for ``maya.cmds.<name>``. Each call runs the
+    function maya.cmds has NOW: a plug-in unloaded and loaded again gets a new
+    one, and calling the old one crashes Maya."""
+    original    = getattr(_mc, name)
     coerce_args = name not in _NO_COERCE
 
     def wrapper(*args, **kwargs):
+        fn = getattr(_mc, name, None)
+        if fn is None:
+            raise RuntimeError(f"maya.cmds has no command {name!r} (its plug-in is unloaded)")
+
         # Opt-out of auto-container-add via ``container=False`` kwarg.
         # (Pop BEFORE the cmds call so it doesn't reach Maya.)
         add_to_container = kwargs.pop("container", True)
@@ -165,8 +171,8 @@ def _make_wrapper(name: str) -> Callable:
 
     wrapper.__name__     = name
     wrapper.__qualname__ = f"rig.bridges.commands.{name}"
-    wrapper.__doc__      = fn.__doc__
-    wrapper.__wrapped__  = fn  # functools convention; help/inspect see original
+    wrapper.__doc__      = original.__doc__
+    wrapper.__wrapped__  = original  # functools convention; help/inspect see original
     return wrapper
 
 

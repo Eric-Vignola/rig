@@ -92,6 +92,54 @@ class TestCommandsWrappers(MayaTestCase):
         self.assertIsInstance(result, bool)
         self.assertTrue(result)
 
+    def test_a_plugin_command_across_a_reload_of_its_plugin(self):
+        # the cached wrapper called the maya.cmds function of the first load, and Maya
+        # crashed (runs\rU2\review_crash_reload\p6_rc.py): each call takes today's
+        import os
+        import shutil
+        import tempfile
+
+        folder = tempfile.mkdtemp(prefix="rig_rc_")
+        path   = os.path.join(folder, "rig_test_rc_reload.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_SCRATCH_PLUGIN)
+        try:
+            cmds.loadPlugin(path, quiet=True)
+            held = rc.rigTestRcReload
+            self.assertEqual(held(), 1)
+            cmds.unloadPlugin("rig_test_rc_reload")
+            with self.assertRaises(RuntimeError):
+                rc.rigTestRcReload()
+            cmds.loadPlugin(path, quiet=True)
+            self.assertEqual(rc.rigTestRcReload(), 1)
+            self.assertEqual(held(), 1)
+        finally:
+            if cmds.pluginInfo("rig_test_rc_reload", query=True, loaded=True):
+                cmds.unloadPlugin("rig_test_rc_reload")
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+# a plug-in with one plain command returning 1 (test_a_plugin_command_across_a_reload_of_its_plugin)
+_SCRATCH_PLUGIN = '''from maya.api import OpenMaya
+
+
+def maya_useNewAPI():
+    pass
+
+
+class _Command(OpenMaya.MPxCommand):
+    def doIt(self, args):
+        self.setResult(1)
+
+
+def initializePlugin(obj):
+    OpenMaya.MFnPlugin(obj).registerCommand("rigTestRcReload", _Command)
+
+
+def uninitializePlugin(obj):
+    OpenMaya.MFnPlugin(obj).deregisterCommand("rigTestRcReload")
+'''
+
 
 class TestCommandsContainerScope(MayaTestCase):
     """Only the nodes a call CREATES join the active container: a query,
