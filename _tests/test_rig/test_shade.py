@@ -1,7 +1,7 @@
 """Tests for ``rig.shade`` -- materials through the membership grammar.
 
 Every error test asserts a zero ``cmds.ls()`` delta: a refused spelling
-writes nothing. PlugLists are never compared with ``assertEqual``.
+writes nothing. Lists are never compared with ``assertEqual``.
 """
 
 import os
@@ -12,7 +12,7 @@ from unittest import mock
 
 import numpy as np
 from maya import cmds
-from rig import Components, container, Node, PlugList, shade, Tag
+from rig import Components, container, List, Node, shade, Tag
 from rig.bridges import nodes as rn
 from rig.shade import (
     Blinn,
@@ -257,7 +257,7 @@ class TestMaterialCreate(MayaTestCase):
         self.assertEqual(str(spec.engine), "plane1SG")
         self.assertEqual(cmds.getAttr("plane1.diffuse"), 0)
         # one list application is one network
-        PlugList([self.cube, other]) << Lambert("both", unique=True)
+        List([self.cube, other]) << Lambert("both", unique=True)
         self.assertEqual(cmds.ls("both*", type="lambert"), ["both"])
         self.assertEqual(sorted(_members("bothSG")), ["cubeShape", "otherShape"])
 
@@ -525,7 +525,7 @@ class TestMaterialAssign(MayaTestCase):
         with self.assertRaisesRegex(TypeError, "nurbsCurve, not a shadeable"):
             lone << self.red
         with self.assertRaisesRegex(TypeError, "nurbsCurve, not a shadeable"):
-            PlugList([self.cube, lone]) << self.red
+            List([self.cube, lone]) << self.red
         with self.assertRaises(TypeError):
             Material.of(lone)
         self.assertEqual(set(cmds.ls()), before)
@@ -533,7 +533,7 @@ class TestMaterialAssign(MayaTestCase):
 
     def test_pluglist_lhs_is_one_material_one_engine_one_call(self):
         other = _cube("other")
-        lhs   = PlugList([self.cube, other.f[:2]])
+        lhs   = List([self.cube, other.f[:2]])
         with mock.patch.object(cmds, "sets", wraps=cmds.sets) as sets:
             result = lhs << self.red
         self.assertIs(result, lhs)
@@ -542,17 +542,17 @@ class TestMaterialAssign(MayaTestCase):
         self.assertEqual(sorted(_members("redSG")), ["cubeShape", "other.f[0:1]"])
         self.assertEqual(cmds.ls(type="blinn"), ["red"])
         # the same node twice and its faces: the whole object wins
-        PlugList([self.cube, self.cube.f[:2]]) << self.blue
+        List([self.cube, self.cube.f[:2]]) << self.blue
         self.assertEqual(_members("blueSG"), ["cubeShape"])
         # a mixed list fails as a whole, nothing written
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "vertices"):
-            PlugList([other, self.cube.vtx[0]]) << Blinn("nope")
+            List([other, self.cube.vtx[0]]) << Blinn("nope")
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_members("redSG"), ["other.f[0:1]"])
 
     def test_pluglist_broadcast_pairs_each_selection_with_its_spec(self):
-        lhs    = PlugList([self.cube.f[:2], self.cube.f[2:4]])
+        lhs    = List([self.cube.f[:2], self.cube.f[2:4]])
         result = lhs << [self.red, self.blue]
         self.assertIs(result, lhs)
         self.assertEqual(_members("redSG"), ["cube.f[0:1]"])
@@ -581,7 +581,7 @@ class TestMaterialAssign(MayaTestCase):
         self.assertEqual(_names(Material.of(self.cube.visibility)),       ["Blinn('red')"])
         self.assertEqual([str(x) for x in shade.materials(self.cube.tx)], ["red"])
         # two plugs of one node are one node
-        PlugList([self.cube.tx, self.cube.ty]) << self.blue
+        List([self.cube.tx, self.cube.ty]) << self.blue
         self.assertEqual(_members("blueSG"), ["cubeShape"])
         self.assertEqual(_members("redSG"), [])
         self.cube.sx << -self.blue
@@ -600,7 +600,7 @@ class TestMaterialAssign(MayaTestCase):
         with self.assertRaisesRegex(TypeError, "no shadeable shape"):
             joint.tx << self.red
         with self.assertRaisesRegex(TypeError, "vertices"):
-            PlugList([self.cube.tx, self.cube.vtx[0]]) << self.blue
+            List([self.cube.tx, self.cube.vtx[0]]) << self.blue
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_members("redSG"), ["cubeShape"])
 
@@ -802,9 +802,9 @@ class TestMaterialQuery(MayaTestCase):
         with self.assertRaisesRegex(TypeError, r"exists as a blinn.*Material\('red'\)"):
             self.cube >> Lambert("red")
         with self.assertRaisesRegex(TypeError, "one node at a time"):
-            PlugList([self.cube, other]) >> Blinn("red")
+            List([self.cube, other]) >> Blinn("red")
         with self.assertRaisesRegex(TypeError, "Split them"):
-            PlugList([self.cube, self.cube.f[:2]]) >> Blinn("red")
+            List([self.cube, self.cube.f[:2]]) >> Blinn("red")
         with self.assertRaises(TypeError):
             self.cube >> -Blinn("red")
         with self.assertRaisesRegex(TypeError, "vertices"):
@@ -813,7 +813,7 @@ class TestMaterialQuery(MayaTestCase):
             Node("lambert1") >> Blinn("red")
         self.assertEqual(set(cmds.ls()), before)
         # the same node twice is one node
-        np.testing.assert_array_equal(PlugList([self.cube, self.cube]) >> Blinn("red"), [0, 1, 2])
+        np.testing.assert_array_equal(List([self.cube, self.cube]) >> Blinn("red"), [0, 1, 2])
 
     def test_rshift_purge_enumerates_like_of(self):
         self.cube.f[:3] << Blinn("red")
@@ -844,7 +844,7 @@ class TestMaterialQuery(MayaTestCase):
         with self.assertRaisesRegex(TypeError, "vertices"):
             self.cube.vtx[0] >> Material()
         with self.assertRaisesRegex(TypeError, "one node at a time"):
-            PlugList([self.cube, other]) >> Material()
+            List([self.cube, other]) >> Material()
         self.assertEqual(set(cmds.ls()), before)
 
     def test_of_types_by_the_live_node_type(self):
@@ -871,7 +871,7 @@ class TestMaterialQuery(MayaTestCase):
         np.testing.assert_array_equal(self.cube >> Blinn("red"), [0, 1, 2, 5])
         before = set(cmds.ls())
         with self.assertRaises(TypeError):
-            Material.of(PlugList([self.cube, _cube("other")]))
+            Material.of(List([self.cube, _cube("other")]))
         with self.assertRaises(TypeError):
             Material.of(self.cube.vtx[0])
         self.assertEqual(set(cmds.ls()) - {"other", "otherShape"}, before)
@@ -883,7 +883,7 @@ class TestMaterialQuery(MayaTestCase):
             [str(x) for x in shade.materials(self.cube)],
             ["standardSurface1", "red", "blue"],
         )
-        self.assertIsInstance(shade.materials(self.cube), PlugList)
+        self.assertIsInstance(shade.materials(self.cube), List)
         self.assertEqual([str(x) for x in shade.materials(self.cube.f[:2])], ["red"])
         self.assertEqual([str(x) for x in shade.materials(self.cube.f[[0, 3]])], ["red", "blue"])
         found = shade.bindings(self.cube)
@@ -931,7 +931,7 @@ class TestMaterialMethods(MayaTestCase):
         self.assertEqual(_engines(self.shape), [])
         self.assertEqual(_names(Material.of(self.cube)), [])
         fixed = shade.repair()
-        self.assertIsInstance(fixed, PlugList)
+        self.assertIsInstance(fixed, List)
         self.assertEqual(sorted(str(x) for x in fixed),  ["cubeShape", "otherShape"])
         self.assertEqual(_names(Material.of(self.cube)), ["Default()"])
         self.assertEqual(sorted(_members(ISG)),          ["cubeShape", "other.f[0:5]"])
@@ -1104,13 +1104,13 @@ class TestMaterialErrors(MayaTestCase):
         with self.assertRaisesRegex(TypeError, "not geometry"):
             Node("lambert1").color << Blinn("x")
         with self.assertRaisesRegex(TypeError, r"element \[1\]"):
-            PlugList([self.cube, 5, None]) << Blinn("x")
+            List([self.cube, 5, None]) << Blinn("x")
         with self.assertRaisesRegex(TypeError, "cannot be fanned"):
             self.cube.t << [Blinn("x"), 1, 2]
         with self.assertRaisesRegex(ValueError, "nothing to inject"):
             self.cube.f[6:] << Blinn("x")
         with self.assertRaises(ValueError):
-            PlugList([]) << Blinn("x")
+            List([]) << Blinn("x")
         with self.assertRaisesRegex(TypeError, r"Components\("):
             Blinn("x").inject([self.cube, f"{self.shape}.f[1]"])
         self.assert_nothing_written()
@@ -1287,7 +1287,7 @@ class TestMaterialUndo(MayaTestCase):
         cube   = _cube("cube")
         other  = _cube("other")
         before = set(cmds.ls())
-        PlugList([cube.f[:3], other]) << Blinn("red", color=(1, 0, 0))
+        List([cube.f[:3], other]) << Blinn("red", color=(1, 0, 0))
         self.assertEqual(sorted(_members("redSG")), ["cube.f[0:2]", "otherShape"])
         cmds.undo()
         self.assertEqual(set(cmds.ls()), before)

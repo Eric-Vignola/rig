@@ -2,14 +2,14 @@
 grammar.
 
 Every error test asserts a zero ``cmds.ls()`` delta: a refused spelling
-writes nothing. PlugLists are never compared with ``assertEqual``.
+writes nothing. Lists are never compared with ``assertEqual``.
 """
 
 from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig import Components, container, Layer, Node, PlugList, Tag
+from rig import Components, container, Layer, List, Node, Tag
 from rig.nodetypes import DisplayLayer
 from rig._tests._base import MayaTestCase
 
@@ -256,13 +256,13 @@ class TestLayerAdd(MayaTestCase):
         with self.assertRaises(TypeError):
             Layer.of(Node("time1"))
         with self.assertRaisesRegex(TypeError, "layers hold DAG objects"):
-            PlugList([self.cube, Node("lambert1")]) << Layer("x")
+            List([self.cube, Node("lambert1")]) << Layer("x")
         self.assertEqual(set(cmds.ls()), before)
         self.assertIsNone(_layer("|cube"))
 
     def test_pluglist_lhs_is_one_call(self):
         other = _cube("other")
-        lhs   = PlugList([self.cube, other])
+        lhs   = List([self.cube, other])
         with mock.patch.object(
             cmds, "editDisplayLayerMembers", wraps=cmds.editDisplayLayerMembers
         ) as edit:
@@ -274,17 +274,17 @@ class TestLayerAdd(MayaTestCase):
         # a mixed list fails as a whole, nothing written
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "layers hold objects"):
-            PlugList([other, self.cube.f[0]]) << Layer("y")
+            List([other, self.cube.f[0]]) << Layer("y")
         with self.assertRaisesRegex(TypeError, r"element \[1\]"):
-            PlugList([self.cube, 5, None]) << Layer("y")
+            List([self.cube, 5, None]) << Layer("y")
         with self.assertRaises(ValueError):
-            PlugList([]) << Layer("y")
+            List([]) << Layer("y")
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_layer("|cube"), "x")
 
     def test_pluglist_broadcast_pairs_each_node_with_its_spec(self):
         other = _cube("other")
-        lhs   = PlugList([self.cube, other])
+        lhs   = List([self.cube, other])
         self.assertIs(lhs << [Layer("a"), Layer("b")], lhs)
         self.assertEqual(_layer("|cube"), "a")
         self.assertEqual(_layer("|other"), "b")
@@ -300,7 +300,7 @@ class TestLayerAdd(MayaTestCase):
         self.assertTrue(self.cube.t >> Layer("x"))
         self.assertEqual(repr(self.cube.rotate >> Layer()), "Layer('x')")
         self.assertEqual(_names(Layer.of(self.cube.visibility)), ["Layer('x')"])
-        PlugList([self.cube.tx, self.cube.ty]) << Layer("y")
+        List([self.cube.tx, self.cube.ty]) << Layer("y")
         self.assertEqual(_layer("|cube"), "y")
         self.cube.sx << -Layer("y")
         self.assertIsNone(_layer("|cube"))
@@ -400,12 +400,12 @@ class TestLayerRemove(MayaTestCase):
         self.assertEqual(_layer("|other"), "y")
         self.assertEqual(_members("y"),    ["|other"])
         # a list: only the members of x leave
-        PlugList([self.cube, self.other]) << -Layer("x")
+        List([self.cube, self.other]) << -Layer("x")
         self.assertIsNone(_layer("|cube"))
         self.assertEqual(_layer("|other"), "y")
 
     def test_purge_lands_in_default_layer(self):
-        lhs    = PlugList([self.cube, self.other])
+        lhs    = List([self.cube, self.other])
         result = lhs << Layer()
         self.assertIs(result, lhs)
         self.assertIsNone(_layer("|cube"))
@@ -482,7 +482,7 @@ class TestLayerQuery(MayaTestCase):
         # the shape is not in the layer its transform is in
         self.assertIs(Node(_shape(self.cube)) >> Layer("x"), False)
         # the same node twice is one node
-        self.assertIs(PlugList([self.cube, self.cube]) >> Layer("x"), True)
+        self.assertIs(List([self.cube, self.cube]) >> Layer("x"), True)
 
     def test_purge_enumerates_the_one_layer_or_none(self):
         found = self.cube >> Layer()
@@ -504,11 +504,11 @@ class TestLayerQuery(MayaTestCase):
         with self.assertRaises(TypeError):
             self.cube >> -Layer("x")
         with self.assertRaisesRegex(TypeError, "one node at a time"):
-            PlugList([self.cube, self.other]) >> Layer("x")
+            List([self.cube, self.other]) >> Layer("x")
         with self.assertRaisesRegex(TypeError, "one node at a time"):
-            PlugList([self.cube, self.other]) >> Layer()
+            List([self.cube, self.other]) >> Layer()
         with self.assertRaises(TypeError):
-            Layer.of(PlugList([self.cube, self.other]))
+            Layer.of(List([self.cube, self.other]))
         for lhs in (self.cube.f, self.cube.f[0], self.cube.vtx, self.cube.vtx[:2],
                     self.cube.e[0], Components(self.cube, "vtx", [0])):
             with self.assertRaisesRegex(TypeError, "layers hold objects"):
@@ -577,7 +577,7 @@ class TestLayerMethods(MayaTestCase):
         self.assertEqual((bg.name, bg.attrs, repr(bg), bg.removes), ("bg", {}, "Layer('bg')", False))
 
     def test_delete_sends_members_to_default_layer(self):
-        PlugList([self.cube, self.other]) << Layer("x")
+        List([self.cube, self.other]) << Layer("x")
         self.assertIsNone(Layer("x").delete())
         self.assertFalse(cmds.objExists("x"))
         self.assertIsNone(_layer("|cube"))
@@ -609,7 +609,7 @@ class TestLayerMethods(MayaTestCase):
         self.assertEqual(str(bg), "back")
 
     def test_clear_keeps_the_layer(self):
-        PlugList([self.cube, self.other]) << Layer("x", visibility=False)
+        List([self.cube, self.other]) << Layer("x", visibility=False)
         self.assertIsNone(Layer("x").clear())
         self.assertTrue(cmds.objExists("x"))
         self.assertEqual(_members("x"), [])
@@ -634,7 +634,7 @@ class TestLayerUndo(MayaTestCase):
         cube   = _cube("cube")
         other  = _cube("other")
         before = set(cmds.ls())
-        PlugList([cube, other]) << Layer("x", displayType=2)
+        List([cube, other]) << Layer("x", displayType=2)
         self.assertEqual(sorted(_members("x")), ["|cube", "|other"])
         cmds.undo()
         self.assertEqual(set(cmds.ls()), before)

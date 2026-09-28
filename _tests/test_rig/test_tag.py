@@ -2,14 +2,14 @@
 grammar, and the ``<<`` / ``>>`` dispatch that carries them.
 
 Every error test asserts a zero ``cmds.ls()`` delta: a refused spelling
-writes nothing. PlugLists are never compared with ``assertEqual``.
+writes nothing. Lists are never compared with ``assertEqual``.
 """
 
 from unittest import mock
 
 import numpy as np
 from maya import cmds
-from rig import Components, Node, Plug, PlugList, Tag
+from rig import Components, List, Node, Plug, Tag
 from rig.nodetypes import PyNode
 from rig.spec import String
 from rig._tests._base import MayaTestCase
@@ -323,11 +323,11 @@ class TestTagOnSphere(MayaTestCase):
         np.testing.assert_array_equal(self.sph >> Tag("cap"), [0, 1, 2, 3, 4, 5, 6, 7, 9])
         # the same node twice is one node
         np.testing.assert_array_equal(
-            PlugList([self.sph, self.sph]) >> Tag("cap"), [0, 1, 2, 3, 4, 5, 6, 7, 9]
+            List([self.sph, self.sph]) >> Tag("cap"), [0, 1, 2, 3, 4, 5, 6, 7, 9]
         )
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "one node at a time"):
-            PlugList([self.sph, Node(cmds.polySphere(name="other")[0])]) >> Tag()
+            List([self.sph, Node(cmds.polySphere(name="other")[0])]) >> Tag()
         self.assertEqual(set(cmds.ls()) - {"other", "otherShape", "polySphere2"}, before)
 
     def test_an_attribute_plug_stands_for_its_node(self):
@@ -444,9 +444,9 @@ class TestTagOnSphere(MayaTestCase):
     def test_mixed_categories_and_node_plus_components_write_nothing(self):
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "one category"):
-            PlugList([self.sph.vtx[0], self.sph.f[0]]) << Tag("mix")
+            List([self.sph.vtx[0], self.sph.f[0]]) << Tag("mix")
         with self.assertRaisesRegex(TypeError, "Split them"):
-            PlugList([self.sph, self.sph.vtx[0]]) << Tag("mix")
+            List([self.sph, self.sph.vtx[0]]) << Tag("mix")
         with self.assertRaises(TypeError):
             [self.sph.vtx[0], self.sph.f[0]] >> Tag("mix")
         self.assertEqual(set(cmds.ls()), before)
@@ -455,13 +455,13 @@ class TestTagOnSphere(MayaTestCase):
     def test_foreign_elements_refuse_naming_the_element(self):
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, r"element \[1\]"):
-            PlugList([self.sph, 5, None]) << Tag("xx")
+            List([self.sph, 5, None]) << Tag("xx")
         # a raw component string reaches the normaliser only outside a
-        # PlugList (whose constructor lifts it to a Plug)
+        # List (whose constructor lifts it to a Plug)
         with self.assertRaisesRegex(TypeError, r"Components\("):
             Tag("xx").inject([self.sph.vtx[0], f"{self.shape}.vtx[1]"])
         with self.assertRaises(ValueError):
-            PlugList([]) << Tag("xx")
+            List([]) << Tag("xx")
         with self.assertRaises(ValueError):
             self.sph.f[400:] << Tag("xx")
         self.assertEqual(set(cmds.ls()), before)
@@ -497,36 +497,36 @@ class TestTagOnSphere(MayaTestCase):
         np.testing.assert_array_equal(self.sph >> Tag("cc"), [0, 1, 2])
 
     def test_pluglist_broadcast_pairs_each_selection_with_its_spec(self):
-        lhs    = PlugList([self.sph.f[:2], self.sph.f[2:4]])
+        lhs    = List([self.sph.f[:2], self.sph.f[2:4]])
         result = lhs << [Tag("aa"), Tag("bb")]
         self.assertIs(result, lhs)
         np.testing.assert_array_equal(self.sph >> Tag("aa"), [0, 1])
         np.testing.assert_array_equal(self.sph >> Tag("bb"), [2, 3])
         answers = lhs >> [Tag("aa"), Tag("bb")]
-        self.assertIsInstance(answers, PlugList)
+        self.assertIsInstance(answers, List)
         np.testing.assert_array_equal(answers[0], [0, 1])
         np.testing.assert_array_equal(answers[1], [2, 3])
         # one spec for the whole list: one union
-        PlugList([self.sph.f[:2], self.sph.f[4:6]]) << Tag("cc")
+        List([self.sph.f[:2], self.sph.f[4:6]]) << Tag("cc")
         np.testing.assert_array_equal(self.sph >> Tag("cc"), [0, 1, 4, 5])
 
     def test_multi_node_pluglist_one_command_per_node_one_category_per_node(self):
         cube = Node(cmds.polySphere(name="other")[0])
-        lhs  = PlugList([self.sph.vtx[:2], cube.f[:2], self.sph.vtx[5]])
+        lhs  = List([self.sph.vtx[:2], cube.f[:2], self.sph.vtx[5]])
         lhs << Tag("mixed")
         np.testing.assert_array_equal(self.sph >> Tag("mixed"), [0, 1, 5])
         np.testing.assert_array_equal(cube >> Tag("mixed"), [0, 1])
         self.assertEqual(_geo(self.sph).get_component_tag_category("mixed"), "v")
         self.assertEqual(_geo(cube).get_component_tag_category("mixed"), "f")
         with self.assertRaisesRegex(TypeError, "one node at a time"):
-            PlugList([self.sph, cube]) >> Tag("mixed")
+            List([self.sph, cube]) >> Tag("mixed")
         with self.assertRaises(TypeError):
-            Tag.of(PlugList([self.sph, cube]))
+            Tag.of(List([self.sph, cube]))
 
     def test_one_undo_reverts_a_whole_lshift(self):
         cmds.undoInfo(state=True, infinity=True)
         cube = Node(cmds.polySphere(name="other")[0])
-        PlugList([self.sph.vtx[:3], cube.vtx[:3]]) << Tag("both")
+        List([self.sph.vtx[:3], cube.vtx[:3]]) << Tag("both")
         np.testing.assert_array_equal(self.sph >> Tag("both"), [0, 1, 2])
         np.testing.assert_array_equal(cube >> Tag("both"), [0, 1, 2])
         cmds.undo()
@@ -858,7 +858,7 @@ class TestTagOnBakedCube(MayaTestCase):
 
     def test_baked_edits_undo_as_one_step(self):
         cmds.undoInfo(state=True, infinity=True)
-        PlugList([self.cube.f[:3], self.cube.f[[5]]]) << Tag("top")
+        List([self.cube.f[:3], self.cube.f[[5]]]) << Tag("top")
         np.testing.assert_array_equal(self.cube >> Tag("top"), [0, 1, 2, 5])
         cmds.undo()
         np.testing.assert_array_equal(self.cube >> Tag("top"), [1])

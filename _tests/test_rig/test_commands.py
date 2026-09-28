@@ -2,7 +2,7 @@
 ``Node.wrap()`` (explicit converter)."""
 
 from maya import cmds
-from rig import Node, PlugList
+from rig import List, Node
 from rig.bridges import commands as rc
 from rig._tests._base import MayaTestCase
 
@@ -22,7 +22,7 @@ class TestCommandsWrappers(MayaTestCase):
         rc.createNode("transform", name="b")
         cmds.select("a", "b")
         result = rc.ls(sl=True)
-        self.assertIsInstance(result, PlugList)
+        self.assertIsInstance(result, List)
         self.assertEqual(len(result), 2)
         for item in result:
             self.assertIsInstance(item, Node)
@@ -158,7 +158,7 @@ class TestNodeWrap(MayaTestCase):
         cmds.createNode("transform", name="a")
         cmds.createNode("transform", name="b")
         result = Node.wrap(["a", "b"])
-        self.assertIsInstance(result, PlugList)
+        self.assertIsInstance(result, List)
         self.assertEqual(len(result), 2)
         for item in result:
             self.assertIsInstance(item, Node)

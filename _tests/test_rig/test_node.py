@@ -430,7 +430,7 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
 
     NURBS-surface ``cv`` (2-D) and lattice ``pt`` (3-D) support numpy-style
     per-axis indexing: ``cv[u, v]`` is an element; a bare/partial index or any
-    slice yields a ``PlugList`` (row / column / grid / range); the resulting
+    slice yields a ``List`` (row / column / grid / range); the resulting
     plugs *display* as ``cv[u][v]`` / ``pt[s][t][u]`` while resolving to the
     real flat ``controlPoints[k]`` storage. 1-D components (curve ``cv``, mesh
     ``vtx``/``pnts``, mesh ``uv``/``map``) are unchanged: a single index is the
@@ -516,19 +516,19 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
     # -- numpy shape semantics (plane: open 4x4) -- #
 
     def test_all_int_tuple_returns_single_plug(self):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         shape = self._plane("np_single")
         elem  = Node(shape).cv[0, 0]
         self.assertIsInstance(elem, Plug)
-        self.assertNotIsInstance(elem, PlugList)
+        self.assertNotIsInstance(elem, List)
 
     def test_bare_single_index_returns_row(self):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         shape = self._plane("np_row")
         row   = Node(shape).cv[0]
-        self.assertIsInstance(row, PlugList)
+        self.assertIsInstance(row, List)
         self.assertEqual(
             [str(p) for p in row], [f"{shape}.cv[0][{v}]" for v in range(4)]
         )
@@ -539,11 +539,11 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
         self.assertEqual([str(p) for p in node.cv[0, :]], [str(p) for p in node.cv[0]])
 
     def test_column_slice_returns_column(self):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         shape = self._plane("np_col")
         col   = Node(shape).cv[:, 1]
-        self.assertIsInstance(col, PlugList)
+        self.assertIsInstance(col, List)
         self.assertEqual(
             [str(p) for p in col], [f"{shape}.cv[{u}][1]" for u in range(4)]
         )
@@ -588,12 +588,12 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
     # -- lattice 3-D shapes -- #
 
     def test_lattice_single_element(self):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         shape = self._lattice("lat_elem", (3, 4, 5))
         elem  = Node(shape).pt[1, 2, 0]
         self.assertIsInstance(elem, Plug)
-        self.assertNotIsInstance(elem, PlugList)
+        self.assertNotIsInstance(elem, List)
 
     def test_lattice_line(self):
         shape = self._lattice("lat_line", (3, 4, 5))
@@ -670,10 +670,10 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
             self.assertAlmostEqual(x, y, places=4)  # path equivalence
         self.assertNotAlmostEqual(pa[0], base[0], places=4)  # live
 
-    # -- writes through a slice PlugList (broadcast / per-element / connect) -- #
+    # -- writes through a slice List (broadcast / per-element / connect) -- #
 
     def test_column_asymmetric_per_element_set(self):
-        # cv[:, 0] is a PlugList of 4 elements; a 4-item list assigns one tuple
+        # cv[:, 0] is a List of 4 elements; a 4-item list assigns one tuple
         # per element (not a broadcast of the last value).
         shape = self._plane("np_col_asym")
         Node(shape).cv[:, 0] << [(1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)]
@@ -692,12 +692,12 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
             self.assertAlmostEqual(x, 9.0, places=4)
 
     def test_column_vectorized_connect(self):
-        # cv[:, 2] << PlugList(sources) connects one source per element.
-        from rig._internal.list import PlugList
+        # cv[:, 2] << List(sources) connects one source per element.
+        from rig._internal.list import List
 
         shape = self._plane("np_col_conn")
         locs  = [cmds.spaceLocator(name=f"np_loc{u}")[0] for u in range(4)]
-        Node(shape).cv[:, 2] << PlugList([Node(loc).translate for loc in locs])
+        Node(shape).cv[:, 2] << List([Node(loc).translate for loc in locs])
         for u, loc in enumerate(locs):
             conns = cmds.listConnections(
                 f"{shape}.cv[{u}][2]", s=True, d=False, plugs=True
@@ -748,21 +748,21 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
     # -- slice edge cases (length-1 / empty / mixed sub-grid) -- #
 
     def test_length_one_slice_is_pluglist_not_element(self):
-        # A length-1 slice still yields a PlugList -- it does NOT collapse to a
+        # A length-1 slice still yields a List -- it does NOT collapse to a
         # bare element (the "element iff every axis is an explicit int" rule).
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         shape = self._plane("np_len1")
         sel   = Node(shape).cv[0:1, 0]
-        self.assertIsInstance(sel, PlugList)
+        self.assertIsInstance(sel, List)
         self.assertEqual(len(sel), 1)
 
     def test_empty_slice_returns_empty_pluglist(self):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         shape = self._plane("np_empty")
         sel   = Node(shape).cv[5:5, 0]
-        self.assertIsInstance(sel, PlugList)
+        self.assertIsInstance(sel, List)
         self.assertEqual(len(sel), 0)
 
     def test_mixed_subgrid_range_by_full_slice(self):
@@ -800,11 +800,11 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
         self.assertEqual(str(Node(shape).controlPoints[0]), f"{shape}.controlPoints[0]")
 
     def test_bare_single_index_is_not_flat_controlpoint(self):
-        from rig._internal.list import PlugList
+        from rig._internal.list import List
 
         shape = self._plane("np_notflat")
-        # cv[2] is row 2 (a PlugList), NOT the flat controlPoints[2].
-        self.assertIsInstance(Node(shape).cv[2], PlugList)
+        # cv[2] is row 2 (a List), NOT the flat controlPoints[2].
+        self.assertIsInstance(Node(shape).cv[2], List)
 
     # -- errors -- #
 
@@ -906,11 +906,11 @@ class TestNodeUnresolvedMultiChild(MayaTestCase):
             _ = bs.weights[:]
 
     def test_weight_multi_accessor_unaffected(self):
-        from rig import PlugList
+        from rig import List
 
         bs     = self._blendshape()
         sliced = bs.weight[:]
-        self.assertIsInstance(sliced, PlugList)
+        self.assertIsInstance(sliced, List)
         self.assertEqual(len(sliced), 2)
         self.assertIsInstance(bs.weight[0], Plug)
 

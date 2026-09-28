@@ -4,7 +4,7 @@ from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig import Node, Plug, PlugList
+from rig import List, Node, Plug
 from rig._internal.types import (
     _arity_of,
     _get_compound,
@@ -74,9 +74,9 @@ class TestClassPredicates(MayaTestCase):
         self.assertTrue(_is_attribute(plug))  # Plug subclasses Attribute
 
     def test_is_list(self):
-        plist = PlugList([Node.create("transform", name="a")])
+        plist = List([Node.create("transform", name="a")])
         self.assertTrue(_is_list(plist))
-        self.assertFalse(_is_list([1, 2, 3]))  # plain list is not PlugList
+        self.assertFalse(_is_list([1, 2, 3]))  # plain list is not List
 
     def test_is_attribute_spec(self):
         spec = Float("blend")

@@ -18,7 +18,7 @@ from unittest import mock
 
 from maya import cmds, OpenMaya as om1
 from maya.api import OpenMaya
-from rig import Node, Plug, PlugList, lift
+from rig import lift, List, Node, Plug
 from rig.nodetypes import PyNode, _base
 from rig.nodetypes._base import Attribute
 from rig._internal import plug as plug_module
@@ -81,7 +81,7 @@ def _unowned(prefix):
         "PyNode(str)":                (PyNode(f"{held}.ty"), held),
         "PyNode(MPlug)":              (PyNode(_mplug(f"{held}.ty")), held),
         "lift(str)":                  (lift(f"{held}.ty"), held),
-        "PlugList(str)[0]":           (PlugList([f"{held}.ty"])[0], held),
+        "List(str)[0]":               (List([f"{held}.ty"])[0], held),
         "Plug child by name":         (Plug(f"{held}.t").translateY, held),
         "Plug child(1)":              (Plug(f"{held}.t").child(1), held),
         "Plug compound [1]":          (Plug(f"{held}.t")[1], held),
@@ -172,7 +172,7 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
                 node << Float("weight"), surface.cv, surface.cv[1, 2],
                 surface.cv[1], typed.find_alias("hoist"),
             ]
-            str(PlugList(plugs))
+            str(List(plugs))
         self.assertEqual(spy.call_count, 0)
         self.assertIs(vars(node.tx)["_node"], node)
         self.assertIsNone(vars(node.tx)["_handle1"])
@@ -248,7 +248,7 @@ class TestUnownedPlugsHeldAcrossAFreeRaise(MayaTestCase):
             "child":      lambda p: p.child(0),
         }
         # a typed attr is lifted into the DSL (a Plug is returned as is)
-        typed_ops = {"lift": lift, "PlugList": lambda p: PlugList([p])}
+        typed_ops = {"lift": lift, "List": lambda p: List([p])}
         for label, (attr, _node) in held.items():
             dsl = isinstance(attr, Plug)
             checked = {**ops, **(dsl_ops if dsl else typed_ops)}

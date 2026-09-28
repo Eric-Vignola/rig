@@ -2,7 +2,7 @@
 
 ``Plug`` subclasses ``str``, so ``t.tx == "cube.ty"`` used to reach the op:
 it built an ``equal`` node, failed to set the string on it and raised
-``InjectionError``, and the node stayed in the scene. Every Plug / PlugList
+``InjectionError``, and the node stayed in the scene. Every Plug / List
 operator and every public math function now raises ``TypeError`` for a plain
 str operand (a str that is not an Attribute, alone or inside a list, tuple or
 numpy array) before it creates any node or container. Config strings (the
@@ -26,10 +26,10 @@ from rig import (
     functions as F,
     interpolate as I,
     InjectionError,
+    List,
     matrix as M,
     Node,
     Plug,
-    PlugList,
     quaternion as Q,
     random as R,
     set_options,
@@ -191,7 +191,7 @@ class TestPlugOperators(_OperandCase):
         self.assertEqual(cmds.nodeType((self.t.tx == Plug(S)).node), "equal")
         self.assertEqual(cmds.nodeType((self.t.tx + PyNode("cube").find_attr("ty")).node), "sum")
         self.assertEqual(cmds.nodeType((self.t.t + [1, self.u.tx, 2]).node), "plusMinusAverage")
-        self.assertEqual(cmds.nodeType((PlugList([self.t.tx]) + [Plug(S)])[0].node), "sum")
+        self.assertEqual(cmds.nodeType((List([self.t.tx]) + [Plug(S)])[0].node), "sum")
 
     def test_text_through_str_and_fstrings(self):
         plug = self.t.tx
@@ -212,14 +212,14 @@ class TestPlugOperators(_OperandCase):
         self.assertIn("already deleted", str(ctx.exception))
 
 
-class TestPlugListOperators(_OperandCase):
+class TestListOperators(_OperandCase):
     def test_every_operator_checks_every_row_first(self):
         for symbol, op in _BINARY.items():
             for label, call in (
-                ("list + str", lambda: op(PlugList([self.t.tx, self.t.ty]), S)),
-                ("list + [1, str]", lambda: op(PlugList([self.t.tx, self.t.ty]), [1, S])),
-                ("str + list", lambda: op(S, PlugList([self.t.tx, self.t.ty]))),
-                ("[1, str] + list", lambda: op([1, S], PlugList([self.t.tx, self.t.ty]))),
+                ("list + str", lambda: op(List([self.t.tx, self.t.ty]), S)),
+                ("list + [1, str]", lambda: op(List([self.t.tx, self.t.ty]), [1, S])),
+                ("str + list", lambda: op(S, List([self.t.tx, self.t.ty]))),
+                ("[1, str] + list", lambda: op([1, S], List([self.t.tx, self.t.ty]))),
             ):
                 if symbol == "%" and label == "str + list":
                     continue  # str.__mod__ runs first: text formatting (next test)
@@ -227,23 +227,23 @@ class TestPlugListOperators(_OperandCase):
                     self.assertRejects(call, "is a plain str")
 
     def test_str_left_of_percent_is_text_formatting(self):
-        # PlugList is no str subclass, so str.__mod__ formats it as a mapping
+        # List is no str subclass, so str.__mod__ formats it as a mapping
         before = _scene()
-        self.assertEqual(S % PlugList([self.t.tx]), S)
+        self.assertEqual(S % List([self.t.tx]), S)
         self.assertEqual(_scene(), before)
 
     def test_message_names_the_row(self):
-        err = self.assertRejects(lambda: PlugList([self.t.tx, self.t.ty]) + [1, S])
+        err = self.assertRejects(lambda: List([self.t.tx, self.t.ty]) + [1, S])
         self.assertTrue(str(err).startswith("List row 1, t.translateY + 'cube.ty': "), str(err))
 
     def test_a_raw_str_element_is_checked_too(self):
-        items = PlugList([self.t.tx])
-        list.append(items, S)  # bypasses the lifting of PlugList()
+        items = List([self.t.tx])
+        list.append(items, S)  # bypasses the lifting of List()
         self.assertRejects(lambda: items + self.u.tx)
         self.assertRejects(lambda: self.u.tx + items)
 
     def test_a_freed_plug_still_reports_the_free(self):
-        items = PlugList([self.t.tx, self.t.ty])
+        items = List([self.t.tx, self.t.ty])
         cmds.file(new=True, force=True)
         for call in (lambda: items + S, lambda: S + items, lambda: items == [1, S]):
             with self.assertRaises(RuntimeError) as ctx:
@@ -251,16 +251,16 @@ class TestPlugListOperators(_OperandCase):
             self.assertIn("already deleted", str(ctx.exception))
 
     def test_rows_without_a_plug_are_left_alone(self):
-        nodes = PlugList([Node("t"), Node("u")])
+        nodes = List([Node("t"), Node("u")])
         before = _scene()
         self.assertEqual(list(nodes == ["t", "x"]), [Node("t") == "t", Node("u") == "x"])
         self.assertEqual(list(nodes != "t"), [Node("t") != "t", Node("u") != "t"])
-        self.assertTrue("t.translateX" in PlugList([self.t.tx]))
-        self.assertEqual(PlugList([self.t.tx]).index("t.translateX"), 0)
-        self.assertEqual(PlugList([self.t.tx]).count("t.translateX"), 1)
+        self.assertTrue("t.translateX" in List([self.t.tx]))
+        self.assertEqual(List([self.t.tx]).index("t.translateX"), 0)
+        self.assertEqual(List([self.t.tx]).count("t.translateX"), 1)
         self.assertEqual(_scene(), before)
-        # PlugList() lifts a "node.attr" str to a Plug
-        self.assertEqual(cmds.nodeType((PlugList([S]) + 1)[0].node), "sum")
+        # List() lifts a "node.attr" str to a Plug
+        self.assertEqual(cmds.nodeType((List([S]) + 1)[0].node), "sum")
 
 
 class TestPublicFunctions(_OperandCase):
@@ -376,12 +376,12 @@ class TestPublicFunctions(_OperandCase):
         self.assertTrue(str(err).startswith("rig.functions.sum() argument 'tokens': "), str(err))
 
     def test_a_broadcast_is_checked_before_its_first_row_builds(self):
-        rows = PlugList([self.t.tx, self.u.tx])
+        rows = List([self.t.tx, self.u.tx])
         self.assertRejects(lambda: V.lerp(rows, [1, S]))
         self.assertRejects(lambda: F.clamp(rows, [0, S], 1))
-        self.assertRejects(lambda: Q.slerp(PlugList([self.q1, self.q2]), [self.q2, S]))
+        self.assertRejects(lambda: Q.slerp(List([self.q1, self.q2]), [self.q2, S]))
         self.assertRejects(lambda: rig.lerp(rows, 1, weight=[0.5, S]))
-        mixed = PlugList([self.t.tx])
+        mixed = List([self.t.tx])
         list.append(mixed, S)
         self.assertRejects(lambda: F.abs(mixed))
 
@@ -444,7 +444,7 @@ class TestConfigStrings(_OperandCase):
         before = _scene()
         self.assertEqual((condition(1, "yes", "no"), condition(0, "yes", "no")), ("yes", "no"))
         self.assertEqual(condition(True, ["a", "b"], "c"), ["a", "b"])
-        self.assertEqual(list(condition(PlugList([1, 0]), "yes", "no")), ["yes", "no"])
+        self.assertEqual(list(condition(List([1, 0]), "yes", "no")), ["yes", "no"])
         with force_nodes():
             self.assertEqual(condition(1, "yes", "no"), "yes")
         self.assertEqual(_scene(), before)
@@ -453,7 +453,7 @@ class TestConfigStrings(_OperandCase):
         self.assertRejects(lambda: condition(test, 1, ["a", 2]), "argument 'if_false'")
         # a list test builds a condition node, so its branches are operands
         self.assertRejects(lambda: condition([1, 0], "yes", "no"))
-        self.assertRejects(lambda: condition(PlugList([1, test]), "yes", "no"))
+        self.assertRejects(lambda: condition(List([1, test]), "yes", "no"))
 
     def test_rotate_order_is_not_checked_as_an_operand(self):
         # Re-pinned in round 4a (decision S3 Q1): a rotate order is config, and

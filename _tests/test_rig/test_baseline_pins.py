@@ -1,7 +1,7 @@
 """Baseline pins for the ``<<`` / ``>>`` operators before the membership grammar.
 
 The membership grammar (``Tag``, materials, later ``Set`` / ``VertexColor``)
-adds new RHS families to ``Node``, ``Plug`` and ``PlugList`` operators. Every
+adds new RHS families to ``Node``, ``Plug`` and ``List`` operators. Every
 test here pins what those operators do TODAY for the RHS families that
 already exist, so the new branches cannot silently alter them. None of the
 behaviour below is new; each test is a contract that the later steps must
@@ -19,14 +19,14 @@ from __future__ import annotations
 
 import numpy as np
 from maya import cmds
-from rig import Node, Plug, PlugList
+from rig import List, Node, Plug
 from rig.nodetypes.dg_node import DGNode
 from rig.spec import Float, lock
 from rig._tests._base import MayaTestCase
 
 
 class _Opaque:
-    """A non-Plug, non-Node, non-str element that survives PlugList."""
+    """A non-Plug, non-Node, non-str element that survives List."""
 
     def __repr__(self) -> str:
         return "_Opaque()"
@@ -43,20 +43,20 @@ class TestPlugListSpecBroadcast(MayaTestCase):
         self.n2 = Node.create("transform", name="n2")
 
     def test_pluglist_lshift_float_gives_one_plug_per_element(self):
-        result = PlugList([self.n1, self.n2]) << Float("x")
-        self.assertIsInstance(result, PlugList)
+        result = List([self.n1, self.n2]) << Float("x")
+        self.assertIsInstance(result, List)
         self.assertEqual([str(p) for p in result], ["n1.x", "n2.x"])
         for node in ("n1", "n2"):
             self.assertTrue(cmds.attributeQuery("x", node=node, exists=True))
 
     def test_pluglist_of_plugs_lshift_float_adds_to_each_owner(self):
-        result = PlugList([self.n1.tx, self.n2.ty]) << Float("y")
+        result = List([self.n1.tx, self.n2.ty]) << Float("y")
         self.assertEqual([str(p) for p in result], ["n1.y", "n2.y"])
 
     def test_pluglist_lshift_lock_locks_each(self):
-        plugs  = PlugList([self.n1.tx, self.n2.tx])
+        plugs  = List([self.n1.tx, self.n2.tx])
         result = plugs << lock
-        self.assertIsInstance(result, PlugList)
+        self.assertIsInstance(result, List)
         self.assertEqual(
             [str(p) for p in result], ["n1.translateX", "n2.translateX"]
         )
@@ -64,8 +64,8 @@ class TestPlugListSpecBroadcast(MayaTestCase):
             self.assertTrue(cmds.getAttr(f"{node}.tx", lock=True))
 
     def test_pluglist_of_nodes_rshift_float_declares_output_attr_per_node(self):
-        result = PlugList([self.n1, self.n2]) >> Float("q")
-        self.assertIsInstance(result, PlugList)
+        result = List([self.n1, self.n2]) >> Float("q")
+        self.assertIsInstance(result, List)
         self.assertEqual([str(p) for p in result], ["n1.q", "n2.q"])
         for node in ("n1", "n2"):
             self.assertTrue(cmds.attributeQuery("q", node=node, exists=True))
@@ -77,7 +77,7 @@ class TestPlugListSpecBroadcast(MayaTestCase):
         # was dropped from the result with no error -- 3 in, 2 out (this
         # test pinned that as ``..._TODAY``). The fan-out now refuses the
         # element by index BEFORE applying the spec to anything.
-        pl = PlugList([self.n1, self.n2, _Opaque()])
+        pl = List([self.n1, self.n2, _Opaque()])
         self.assertEqual(len(pl), 3)
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, r"element \[2\] \(_Opaque\(\)\)"):
@@ -104,14 +104,14 @@ class TestPlugLshiftNone(MayaTestCase):
 
 
 class TestComponentSliceBroadcast(MayaTestCase):
-    """Component slices are PlugLists: ``<<`` pairs element to element."""
+    """Component slices are Lists: ``<<`` pairs element to element."""
 
     TEST_START_NEW_SCENE = True
 
     def test_curve_cv_slice_lshift_pluglist_t_connects_per_element(self):
         crv   = cmds.curve(d=1, p=[(0, 0, 0), (1, 0, 0), (2, 0, 0)])
         shape = Node(cmds.listRelatives(crv, type="nurbsCurve")[0])
-        ctrls = PlugList(
+        ctrls = List(
             [Node.create("transform", name=f"c{i}") for i in range(3)]
         )
         ctrls.t << [[5, 6, 7], [8, 9, 10], [11, 12, 13]]

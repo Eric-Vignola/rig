@@ -1,7 +1,7 @@
-"""Tests for ``rig._internal.list`` -- vectorised PlugList broadcasts."""
+"""Tests for ``rig._internal.list`` -- vectorised List broadcasts."""
 
 from maya import cmds
-from rig import Node, Plug, PlugList
+from rig import List, Node, Plug
 from rig._tests._base import MayaTestCase
 
 
@@ -9,13 +9,13 @@ class TestPlugListConstruction(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_empty_list(self):
-        pl = PlugList()
+        pl = List()
         self.assertEqual(len(pl), 0)
 
     def test_from_strings(self):
         cmds.createNode("transform", name="cube1")
         cmds.createNode("transform", name="cube2")
-        pl = PlugList(["cube1", "cube2"])
+        pl = List(["cube1", "cube2"])
         self.assertEqual(len(pl), 2)
         self.assertIsInstance(pl[0], Node)
         self.assertIsInstance(pl[1], Node)
@@ -23,20 +23,19 @@ class TestPlugListConstruction(MayaTestCase):
     def test_from_attribute_strings(self):
         cmds.createNode("transform", name="cube1")
         cmds.createNode("transform", name="cube2")
-        pl = PlugList(["cube1.tx", "cube2.tx"])
+        pl = List(["cube1.tx", "cube2.tx"])
         self.assertIsInstance(pl[0], Plug)
         self.assertIsInstance(pl[1], Plug)
 
     def test_from_mixed_numbers_and_nodes(self):
         node = Node.create("transform", name="cube1")
-        pl   = PlugList([3.14, node, 42])
+        pl   = List([3.14, node, 42])
         self.assertEqual(pl[0], 3.14)
         self.assertIsInstance(pl[1], Node)
         self.assertEqual(pl[2], 42)
 
     def test_repr(self):
-        # the class is List (PlugList is its former name, the same class)
-        pl = PlugList([1, 2, 3])
+        pl = List([1, 2, 3])
         r  = repr(pl)
         self.assertEqual(r, "List([1, 2, 3])")
 
@@ -47,16 +46,16 @@ class TestPlugListAttributeAccess(MayaTestCase):
     def test_attr_access_broadcasts(self):
         Node.create("transform", name="cube1")
         Node.create("transform", name="cube2")
-        pl    = PlugList(["cube1", "cube2"])
+        pl    = List(["cube1", "cube2"])
         plugs = pl.translateX
-        self.assertIsInstance(plugs, PlugList)
+        self.assertIsInstance(plugs, List)
         self.assertEqual(len(plugs), 2)
         for p in plugs:
             self.assertIsInstance(p, Plug)
 
     def test_numeric_passes_through(self):
         node  = Node.create("transform", name="cube1")
-        pl    = PlugList([node, 3.14])
+        pl    = List([node, 3.14])
         plugs = pl.translateX
         # First gets .translateX, second (number) passes through.
         self.assertEqual(len(plugs), 2)
@@ -71,7 +70,7 @@ class TestPlugListInjection(MayaTestCase):
         Node.create("transform", name="cube1")
         Node.create("transform", name="cube2")
         Node.create("transform", name="cube3")
-        pl = PlugList(["cube1", "cube2", "cube3"])
+        pl = List(["cube1", "cube2", "cube3"])
         pl.tx << 5.0
         self.assertAlmostEqual(cmds.getAttr("cube1.tx"), 5.0)
         self.assertAlmostEqual(cmds.getAttr("cube2.tx"), 5.0)
@@ -80,7 +79,7 @@ class TestPlugListInjection(MayaTestCase):
     def test_lshift_list_pairs(self):
         Node.create("transform", name="cube1")
         Node.create("transform", name="cube2")
-        pl = PlugList(["cube1", "cube2"])
+        pl = List(["cube1", "cube2"])
         pl.tx << [1.0, 2.0]
         self.assertAlmostEqual(cmds.getAttr("cube1.tx"), 1.0)
         self.assertAlmostEqual(cmds.getAttr("cube2.tx"), 2.0)
@@ -92,14 +91,14 @@ class TestPlugListSlicing(MayaTestCase):
     def test_slice_returns_pluglist(self):
         for i in range(4):
             Node.create("transform", name=f"c{i}")
-        pl  = PlugList(["c0", "c1", "c2", "c3"])
+        pl  = List(["c0", "c1", "c2", "c3"])
         sub = pl[1:3]
-        self.assertIsInstance(sub, PlugList)
+        self.assertIsInstance(sub, List)
         self.assertEqual(len(sub), 2)
 
     def test_int_index_returns_element(self):
         node = Node.create("transform", name="cube1")
-        pl   = PlugList([node])
+        pl   = List([node])
         self.assertIs(pl[0], node)
 
     # -- list / tuple keys (fancy indexing) -- #
@@ -110,28 +109,28 @@ class TestPlugListSlicing(MayaTestCase):
         # key, so ``pl[[0, 2]]`` was broken.
         for i in range(3):
             Node.create("transform", name=f"c{i}")
-        pl  = PlugList(["c0", "c1", "c2"]).tx
+        pl  = List(["c0", "c1", "c2"]).tx
         sub = pl[[0, 2]]
-        self.assertIsInstance(sub, PlugList)
+        self.assertIsInstance(sub, List)
         self.assertEqual([str(x) for x in sub], ["c0.translateX", "c2.translateX"])
 
     def test_tuple_key_and_negative_index(self):
         for i in range(3):
             Node.create("transform", name=f"c{i}")
-        pl = PlugList(["c0", "c1", "c2"]).tx
+        pl = List(["c0", "c1", "c2"]).tx
         self.assertEqual([str(x) for x in pl[(1,)]], ["c1.translateX"])
         self.assertEqual([str(x) for x in pl[[-1, 0]]], ["c2.translateX", "c0.translateX"])
 
     def test_list_key_out_of_range_raises_indexerror(self):
         Node.create("transform", name="c0")
         with self.assertRaises(IndexError):
-            PlugList(["c0"]).tx[[3]]
+            List(["c0"]).tx[[3]]
 
     def test_list_key_on_component_slice(self):
         cube  = cmds.polyCube(name="pc")[0]
         shape = Node(cmds.listRelatives(cube, shapes=True)[0])
         sub   = shape.vtx[:8][[0, 2]]
-        self.assertIsInstance(sub, PlugList)
+        self.assertIsInstance(sub, List)
         self.assertEqual(
             [str(x) for x in sub],
             [f"{shape}.controlPoints[0]", f"{shape}.controlPoints[2]"],
@@ -144,10 +143,10 @@ class TestPlugListArithmetic(MayaTestCase):
     def test_add_broadcasts(self):
         Node.create("transform", name="a")
         Node.create("transform", name="b")
-        pl_a   = PlugList(["a", "b"]).tx
-        pl_b   = PlugList(["a", "b"]).ty
+        pl_a   = List(["a", "b"]).tx
+        pl_b   = List(["a", "b"]).ty
         result = pl_a + pl_b
-        self.assertIsInstance(result, PlugList)
+        self.assertIsInstance(result, List)
         self.assertEqual(len(result), 2)
         for r in result:
             # Maya 2024+ may use native ``sum`` node; older uses ``plusMinusAverage``.
@@ -159,9 +158,9 @@ class TestPlugListArithmetic(MayaTestCase):
     def test_negate(self):
         Node.create("transform", name="a")
         Node.create("transform", name="b")
-        pl     = PlugList(["a", "b"]).tx
+        pl     = List(["a", "b"]).tx
         result = -pl
-        self.assertIsInstance(result, PlugList)
+        self.assertIsInstance(result, List)
         self.assertEqual(len(result), 2)
 
 
@@ -170,14 +169,14 @@ class TestPlugListHashable(MayaTestCase):
 
     def test_pluglist_hashable(self):
         node = Node.create("transform", name="cube1")
-        pl   = PlugList([node])
+        pl   = List([node])
         # Can be used in a set / dict.
         s = {pl}
         self.assertEqual(len(s), 1)
 
 
 class TestPlugListRshift(MayaTestCase):
-    """``PlugList.__rshift__`` broadcasts per-element."""
+    """``List.__rshift__`` broadcasts per-element."""
 
     TEST_START_NEW_SCENE = True
 
@@ -188,7 +187,7 @@ class TestPlugListRshift(MayaTestCase):
         cmds.createNode("transform", name="cube2")
         cmds.setAttr("cube1.tx", 3.0)
         cmds.setAttr("cube2.tx", 5.0)
-        pl     = PlugList(["cube1", "cube2"]).tx
+        pl     = List(["cube1", "cube2"]).tx
         values = pl >> None
         # Numpy 1-D array of the per-element scalar values.
         self.assertIsInstance(values, np.ndarray)
@@ -202,7 +201,7 @@ class TestPlugListRshift(MayaTestCase):
         cmds.createNode("transform", name="cubeB")
         cmds.setAttr("cubeA.t", 1.0, 2.0, 3.0, type="double3")
         cmds.setAttr("cubeB.t", 4.0, 5.0, 6.0, type="double3")
-        pl     = PlugList(["cubeA", "cubeB"]).t
+        pl     = List(["cubeA", "cubeB"]).t
         values = pl >> None
         self.assertIsInstance(values, np.ndarray)
         self.assertEqual(values.shape, (2, 3))
@@ -213,7 +212,7 @@ class TestPlugListRshift(MayaTestCase):
 
         cmds.createNode("transform", name="m1")
         cmds.createNode("transform", name="m2")
-        pl     = PlugList(["m1", "m2"]).matrix
+        pl     = List(["m1", "m2"]).matrix
         values = pl >> None
         self.assertIsInstance(values, np.ndarray)
         # Matrix list => shape (-1, 4, 4).
@@ -224,7 +223,7 @@ class TestPlugListRshift(MayaTestCase):
 
         cmds.createNode("transform", name="nodeA")
         cmds.createNode("transform", name="nodeB")
-        pl     = PlugList(["nodeA", "nodeB"])
+        pl     = List(["nodeA", "nodeB"])
         values = pl >> None
         # Heterogeneous (or DGNode-typed) => plain Python list.
         self.assertIsInstance(values, list)
@@ -240,16 +239,16 @@ class TestPlugListRshift(MayaTestCase):
         c = Node.create("transform", name="c")
         a << Float("custom1") << 0.1
         b << Float("custom2") << 0.2
-        srcs      = PlugList([a.custom1, b.custom2])
+        srcs      = List([a.custom1, b.custom2])
         new_plugs = srcs >> c
-        self.assertIsInstance(new_plugs, PlugList)
+        self.assertIsInstance(new_plugs, List)
         self.assertEqual(len(new_plugs), 2)
         self.assertTrue(cmds.attributeQuery("custom1", node="c", exists=True))
         self.assertTrue(cmds.attributeQuery("custom2", node="c", exists=True))
 
     def test_rshift_unsupported_propagates_typeerror(self):
         node = Node.create("transform", name="cube1")
-        pl   = PlugList([node]).tx
+        pl   = List([node]).tx
         with self.assertRaises(TypeError):
             _ = pl >> 5
 
@@ -260,21 +259,21 @@ class TestPlugListRshift(MayaTestCase):
 
         node = Node.create("transform", name="cube1")
         node.tx << 7.0
-        pl     = PlugList([node.tx, 42.0])
+        pl     = List([node.tx, 42.0])
         values = pl >> None
         self.assertIsInstance(values, np.ndarray)
         np.testing.assert_array_almost_equal(values, [7.0, 42.0])
 
 
 class TestPlugListComponentRange(MayaTestCase):
-    """``Node('shape').vtx[0:5]`` returns a PlugList of indexed
+    """``Node('shape').vtx[0:5]`` returns a List of indexed
     controlPoints plugs -- numpy-style slicing on geometry components.
 
-    The previous implementation built the PlugList via the non-idiomatic
-    ``PlugList([f"{shape}.vtx[0:5]"])`` (string range parsing). The
+    The previous implementation built the List via the non-idiomatic
+    ``List([f"{shape}.vtx[0:5]"])`` (string range parsing). The
     intended user-facing API is ``Node(shape).vtx[0:5]``, which goes
     through Attribute's component-aware ``__getitem__`` and returns a
-    PlugList of indexed controlPoints plugs directly.
+    List of indexed controlPoints plugs directly.
     """
 
     TEST_START_NEW_SCENE = True
@@ -283,7 +282,7 @@ class TestPlugListComponentRange(MayaTestCase):
         cube  = cmds.polyCube(name="poly_for_range")[0]
         shape = Node(cmds.listRelatives(cube, shapes=True)[0])
         pl    = shape.vtx[0:5]
-        self.assertIsInstance(pl, PlugList)
+        self.assertIsInstance(pl, List)
         self.assertEqual(len(pl), 5)
         # Each element is an indexed controlPoints plug (vtx is the alias).
         # On a mesh, Maya resolves ``vtx`` to the ``pnts`` spelling rather than
@@ -299,8 +298,8 @@ class TestPlugListComponentRange(MayaTestCase):
 
 
 class TestPlugListGet(MayaTestCase):
-    """v3.O: ``PlugList.get()`` returns numpy-aware stacked values, mirroring
-    ``pluglist >> None``. Useful for snapshot-copy idioms
+    """v3.O: ``List.get()`` returns numpy-aware stacked values, mirroring
+    ``items >> None``. Useful for snapshot-copy idioms
     (``target.t << source.t.get()``) without building live connections.
     """
 
@@ -316,7 +315,7 @@ class TestPlugListGet(MayaTestCase):
         b.tx << 2.0
         c.tx << 3.0
 
-        result = PlugList([a.tx, b.tx, c.tx]).get()
+        result = List([a.tx, b.tx, c.tx]).get()
         self.assertIsInstance(result, np.ndarray)
         self.assertEqual(result.shape, (3,))
         np.testing.assert_array_almost_equal(result, [1.0, 2.0, 3.0])
@@ -331,16 +330,16 @@ class TestPlugListGet(MayaTestCase):
 
         # Compound plugs unwrap Maya's [(x, y, z)] envelope and stack
         # into a homogeneous (N, 3) array -- same shape as ``>> None``.
-        result = PlugList([a.t, b.t]).get()
+        result = List([a.t, b.t]).get()
         self.assertIsInstance(result, np.ndarray)
         self.assertEqual(result.shape, (2, 3))
         np.testing.assert_array_almost_equal(result[0], [1.0, 2.0, 3.0])
         np.testing.assert_array_almost_equal(result[1], [4.0, 5.0, 6.0])
 
     def test_get_passes_through_non_plug_elements(self):
-        # PlugList allows numbers / None pass-through; ``_stack_values``
+        # List allows numbers / None pass-through; ``_stack_values``
         # rejects ``None``-containing lists and returns the raw list.
-        result = PlugList([1.0, None, 2.0]).get()
+        result = List([1.0, None, 2.0]).get()
         self.assertEqual(result, [1.0, None, 2.0])
 
     def test_get_enables_snapshot_copy_idiom(self):
@@ -350,9 +349,9 @@ class TestPlugListGet(MayaTestCase):
         a.t << [1.0, 2.0, 3.0]
 
         # Snapshot copy: no live connection, just one-shot value transfer.
-        # PlugList([a.t]).get() now returns shape (1, 3); index [0] gives
+        # List([a.t]).get() now returns shape (1, 3); index [0] gives
         # the single (3,) vector that goes into b.t.
-        b.t << PlugList([a.t]).get()[0]
+        b.t << List([a.t]).get()[0]
 
         # Verify b.t got the value AND no incoming connection was made.
         self.assertAlmostEqual(cmds.getAttr("b.tx"), 1.0)
@@ -363,7 +362,7 @@ class TestPlugListGet(MayaTestCase):
 
 
 class TestGetMatchesRshiftNone(MayaTestCase):
-    """Regression: ``Plug.get()`` and ``PlugList.get()`` must produce the
+    """Regression: ``Plug.get()`` and ``List.get()`` must produce the
     same shape as their ``>> None`` counterparts. Pins the unification
     so a future refactor of either path stays in sync.
     """
@@ -389,7 +388,7 @@ class TestGetMatchesRshiftNone(MayaTestCase):
         b = Node.create("transform", name="b")
         a.tx << 1.0
         b.tx << 2.0
-        pl = PlugList([a.tx, b.tx])
+        pl = List([a.tx, b.tx])
         np.testing.assert_array_equal(pl.get(), pl >> None)
 
     def test_pluglist_compound_get_matches_rshift_none(self):
@@ -399,12 +398,12 @@ class TestGetMatchesRshiftNone(MayaTestCase):
         b = Node.create("transform", name="b")
         a.t << [1.0, 2.0, 3.0]
         b.t << [4.0, 5.0, 6.0]
-        pl = PlugList([a.t, b.t])
+        pl = List([a.t, b.t])
         np.testing.assert_array_equal(pl.get(), pl >> None)
 
 
 class TestPlugListPow(MayaTestCase):
-    """``PlugList ** scalar`` maps the new ``Plug.__pow__`` per-element --
+    """``List ** scalar`` maps the new ``Plug.__pow__`` per-element --
     so a list of quaternions yields a list of fractional rotations.
     """
 
@@ -421,7 +420,7 @@ class TestPlugListPow(MayaTestCase):
         b = cmds.spaceLocator()[0]
         cmds.setAttr(a + ".rotateY", 90)
         cmds.setAttr(b + ".rotateY", 30)
-        quats = PlugList(
+        quats = List(
             [
                 m.decompose(Node(a).worldMatrix[0]).outputQuat,
                 m.decompose(Node(b).worldMatrix[0]).outputQuat,
@@ -439,7 +438,7 @@ class TestPlugListPow(MayaTestCase):
 
 
 class TestPlugListGetInputsOutputs(MayaTestCase):
-    """N-aligned connection queries. Every slot is a PlugList, so no slot
+    """N-aligned connection queries. Every slot is a List, so no slot
     can be a ``None`` that ``<<`` would read as "disconnect"."""
 
     TEST_START_NEW_SCENE = True
@@ -456,7 +455,7 @@ class TestPlugListGetInputsOutputs(MayaTestCase):
         got = Node("ctrl").t[:].get_inputs()
         self.assertEqual(len(got), 3)
         for slot in got:
-            self.assertIsInstance(slot, PlugList)
+            self.assertIsInstance(slot, List)
         self.assertEqual([str(x) for x in got[0]], ["drv.translateX"])
         self.assertEqual(len(got[1]), 0)
         self.assertEqual(len(got[2]), 0)
@@ -472,19 +471,19 @@ class TestPlugListGetInputsOutputs(MayaTestCase):
             self.assertTrue(all(slot is not None for slot in got))
 
     def test_empty_list_yields_empty_result(self):
-        self.assertEqual(len(PlugList().get_inputs()), 0)
-        self.assertEqual(len(PlugList().get_outputs()), 0)
+        self.assertEqual(len(List().get_inputs()), 0)
+        self.assertEqual(len(List().get_outputs()), 0)
 
     def test_non_plug_element_raises(self):
         with self.assertRaises(TypeError):
-            PlugList([Node("ctrl")]).get_inputs()
+            List([Node("ctrl")]).get_inputs()
 
     def test_retired_sentinels_raise(self):
         pl = Node("ctrl").t[:]
         with self.assertRaises(TypeError):
-            pl << PlugList
+            pl << List
         with self.assertRaises(TypeError):
-            pl >> PlugList
+            pl >> List
 
 
 class TestPlugListContainment(MayaTestCase):
@@ -500,12 +499,12 @@ class TestPlugListContainment(MayaTestCase):
             cmds.createNode("transform", name=name)
 
     def test_in_matches_by_plug_name(self):
-        pl = PlugList([Node("a").t, Node("b").t])
+        pl = List([Node("a").t, Node("b").t])
         self.assertIn(Plug("a.translate"), pl)
         self.assertNotIn(Plug("c.translate"), pl)
 
     def test_in_builds_no_nodes(self):
-        pl     = PlugList([Node("a").t, Node("b").t])
+        pl     = List([Node("a").t, Node("b").t])
         before = set(cmds.ls())
         self.assertIn(Plug("a.translate"), pl)
         self.assertNotIn(Plug("c.translate"), pl)
@@ -513,36 +512,36 @@ class TestPlugListContainment(MayaTestCase):
 
     def test_index_finds_the_correct_slot(self):
         a, b = Node("a").t, Node("b").t
-        pl = PlugList([a, b])
+        pl = List([a, b])
         self.assertEqual(pl.index(a), 0)
         self.assertEqual(pl.index(b), 1)
 
     def test_index_missing_raises(self):
         with self.assertRaises(ValueError):
-            PlugList([Node("a").t]).index(Node("c").t)
+            List([Node("a").t]).index(Node("c").t)
 
     def test_count_is_per_element(self):
-        pl = PlugList([Node("a").t, Node("b").t])
+        pl = List([Node("a").t, Node("b").t])
         self.assertEqual(pl.count(Node("a").t), 1)
         self.assertEqual(pl.count(Node("c").t), 0)
 
     def test_remove_deletes_the_matching_element(self):
-        pl = PlugList([Node("a").t, Node("b").t])
+        pl = List([Node("a").t, Node("b").t])
         pl.remove(Node("b").t)
         self.assertEqual([str(x) for x in pl], ["a.translate"])
 
     def test_remove_missing_raises(self):
         with self.assertRaises(ValueError):
-            PlugList([Node("a").t]).remove(Node("c").t)
+            List([Node("a").t]).remove(Node("c").t)
 
     def test_node_elements_match_by_name(self):
-        pl = PlugList([Node("a"), Node("b")])
+        pl = List([Node("a"), Node("b")])
         self.assertIn(Node("a"), pl)
         self.assertNotIn(Node("c"), pl)
         self.assertEqual(pl.index(Node("b")), 1)
 
     def test_non_plug_elements_use_plain_equality(self):
-        pl = PlugList([1, 2.5, 7])
+        pl = List([1, 2.5, 7])
         self.assertIn(2.5, pl)
         self.assertNotIn(99, pl)
         self.assertEqual(pl.index(7), 2)
@@ -571,7 +570,7 @@ class TestNestedPlugListGet(MayaTestCase):
     def test_rectangular_nesting_yields_numbers_not_names(self):
         import numpy as np
 
-        got = PlugList([Node("ctrl").tx, Node("ctrl").ty]).get_outputs().get()
+        got = List([Node("ctrl").tx, Node("ctrl").ty]).get_outputs().get()
         self.assertIsInstance(got, np.ndarray)
         self.assertEqual(got.shape, (2, 2))
         self.assertTrue(np.issubdtype(got.dtype, np.floating), got.dtype)

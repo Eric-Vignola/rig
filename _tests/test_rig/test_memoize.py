@@ -7,7 +7,7 @@ and ``@vectorize`` (NumPy-style strict broadcasting).
 from unittest import mock
 
 from maya import cmds, OpenMaya as om1
-from rig import Node, Plug, PlugList
+from rig import List, Node, Plug
 from rig._internal import memoize as memoize_module
 from rig._internal.memoize import (
     _attribute_key,
@@ -38,7 +38,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_no_pluglist_calls_func_directly(self):
-        # No PlugList among the args => no vectorisation, raw call.
+        # No List among the args => no vectorisation, raw call.
         @vectorize
         def f(a, b):
             return (a, b)
@@ -52,7 +52,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a, b):
             return a + b
 
-        nodes_a = PlugList([1, 2, 3])
+        nodes_a = List([1, 2, 3])
         result  = f(nodes_a, [10, 20, 30])
         self.assertEqual(list(result), [11, 22, 33])
 
@@ -61,7 +61,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a, b):
             return a + b
 
-        nodes_a = PlugList([1, 2, 3])
+        nodes_a = List([1, 2, 3])
         result  = f(nodes_a, 5)
         self.assertEqual(list(result), [6, 7, 8])
 
@@ -70,7 +70,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a, b):
             return a + b
 
-        nodes_a = PlugList([1, 2, 3])
+        nodes_a = List([1, 2, 3])
         result  = f(nodes_a, [100])
         self.assertEqual(list(result), [101, 102, 103])
 
@@ -79,7 +79,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a, b):
             return a + b
 
-        nodes_a = PlugList([1, 2, 3, 4, 5])
+        nodes_a = List([1, 2, 3, 4, 5])
         with self.assertRaises(ValueError) as cm:
             f(nodes_a, [10, 20, 30])
         msg = str(cm.exception)
@@ -92,7 +92,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a, b=None):
             return (a, b)
 
-        nodes_a = PlugList([1, 2, 3])
+        nodes_a = List([1, 2, 3])
         with self.assertRaises(ValueError) as cm:
             f(nodes_a, b=[10, 20])
         msg = str(cm.exception)
@@ -105,7 +105,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a, b):
             return (a, b)
 
-        nodes_a = PlugList([])
+        nodes_a = List([])
         # Length-0 vs length-3 must error (NumPy-style strict).
         with self.assertRaises(ValueError):
             f(nodes_a, [1, 2, 3])
@@ -115,8 +115,8 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a):
             return a * 2
 
-        result = f(PlugList([5]))
-        # One result => returned directly, not wrapped in PlugList.
+        result = f(List([5]))
+        # One result => returned directly, not wrapped in List.
         self.assertEqual(result, 10)
 
     def test_multiple_results_wrapped_in_pluglist(self):
@@ -124,8 +124,8 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a):
             return a * 2
 
-        result = f(PlugList([1, 2, 3]))
-        self.assertIsInstance(result, PlugList)
+        result = f(List([1, 2, 3]))
+        self.assertIsInstance(result, List)
         self.assertEqual(list(result), [2, 4, 6])
 
     def test_favor_index_caps_iteration(self):
@@ -134,7 +134,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
             return (a, b)
 
         # Even with longer matching lists, favor_index=0 caps to len(args[0]).
-        nodes_a = PlugList([1, 2])
+        nodes_a = List([1, 2])
         result  = f(nodes_a, [10, 20])  # both len 2 anyway
         self.assertEqual(list(result), [(1, 10), (2, 20)])
 
@@ -151,7 +151,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a):
             return 0 if a < 5 else a
 
-        result = f(PlugList([1, 2, 10]))
+        result = f(List([1, 2, 10]))
         self.assertEqual(list(result), [0, 0, 10])
 
     def test_none_returns_dropped(self):
@@ -159,7 +159,7 @@ class TestVectorizeStrictBroadcast(MayaTestCase):
         def f(a):
             return None if a < 5 else a
 
-        result = f(PlugList([1, 2, 10]))
+        result = f(List([1, 2, 10]))
         # None is filtered; only the qualifying result remains.
         self.assertEqual(result, 10)
 
