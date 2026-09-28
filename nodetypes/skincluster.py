@@ -11,6 +11,7 @@ from typing import Callable, List, Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
+from rig._internal.undo import _undo_chunk
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.deformer import Deformer
@@ -88,6 +89,9 @@ class SkinCluster(Deformer):
 
         Returns:
             Name of the created skincluster node.
+
+        One undo step named ``rig.SkinCluster.create``: the delete of a current
+        skincluster, the skinCluster and, from a SkinData, its weights.
         """
         from cgmath.geometry import SkinData
 
@@ -105,11 +109,6 @@ class SkinCluster(Deformer):
             raise RuntimeError(f"Geometry {geom} not found.")
         geom = geoms_found[0]
 
-        # delete current skincluster if exists
-        skin = cmds.ls(cmds.listHistory(geom), type="skinCluster")
-        if skin:
-            cmds.delete(skin)
-
         # set some default kwargs
         for ln, sn, dv in (
             ("toSelectedBones", "tsb", True),
@@ -119,13 +118,19 @@ class SkinCluster(Deformer):
             if sn in kwargs:
                 kwargs.pop(sn)
 
-        # make the skincluster
-        name = cmds.skinCluster(influences, geom, **kwargs)[0]
+        with _undo_chunk("rig.SkinCluster.create"):
+            # delete current skincluster if exists
+            skin = cmds.ls(cmds.listHistory(geom), type="skinCluster")
+            if skin:
+                cmds.delete(skin)
 
-        # weights columns already align with skin_data.influences (creation
-        # preserves order), so set them directly without serialize/conform
-        if skin_data is not None:
-            SetSkinWeightsCommand(cls(name), skin_data.weights)
+            # make the skincluster
+            name = cmds.skinCluster(influences, geom, **kwargs)[0]
+
+            # weights columns already align with skin_data.influences (creation
+            # preserves order), so set them directly without serialize/conform
+            if skin_data is not None:
+                SetSkinWeightsCommand(cls(name), skin_data.weights)
 
         return name
 
@@ -252,6 +257,14 @@ class SkinCluster(Deformer):
                 Otherwise, replaces the existing influences.
                 Ignored if `data` is not a SkinData object.
             indices: A 1D array of vertex indices to set the weights. If None, set all weights.
+
+        One undo step: an array is one ``MFnSkinCluster.setWeights``; with a
+        SkinData, the influences it adds, the weights and the influences it
+        removes undo together (a step named ``rig.SkinCluster.set_weights``).
+
+        Raises:
+            ValueError: before any edit, when there is not one row of weights
+                per point set (per index, or per point of the geometry).
         """
         from cgmath.geometry import SkinData
 
@@ -270,20 +283,28 @@ class SkinCluster(Deformer):
         SkinData.conform(cur_data, new_data)
         new_infs = self._sanitize_influences(cur_data.influences)
 
-        # add any missing joints to self, maintaining order
-        cur_infs = set(self.get_influence_objects())
-        to_add   = [x for x in new_infs if x not in cur_infs]
-        if to_add:
-            self.add_influence_objects(to_add)
+        count = _weight_components(self, indices)[2]
+        if len(new_data.weights) != count:
+            raise ValueError(
+                f"SkinCluster.set_weights: {len(new_data.weights)} rows of weights for "
+                f"{count} points of {self.name}"
+            )
 
-        # apply weights
-        SetSkinWeightsCommand(self, new_data.weights, indices=indices)
+        with _undo_chunk("rig.SkinCluster.set_weights"):
+            # add any missing joints to self, maintaining order
+            cur_infs = set(self.get_influence_objects())
+            to_add   = [x for x in new_infs if x not in cur_infs]
+            if to_add:
+                self.add_influence_objects(to_add)
 
-        # remove excessive influences that might be introduced by conforming
-        if not additive:
-            to_remove = set(new_infs) - set(org_infs)
-            if to_remove:
-                self.remove_influence_objects(to_remove)
+            # apply weights
+            SetSkinWeightsCommand(self, new_data.weights, indices=indices)
+
+            # remove excessive influences that might be introduced by conforming
+            if not additive:
+                to_remove = set(new_infs) - set(org_infs)
+                if to_remove:
+                    self.remove_influence_objects(to_remove)
 
     @staticmethod
     def rebind(geo) -> None:
@@ -482,9 +503,21 @@ class SkinCluster(Deformer):
             )
 
 
+def _weight_components(
+    skincluster: SkinCluster, indices: None | np.ndarray
+) -> tuple[OpenMaya.MDagPath, OpenMaya.MObject, int]:
+    """The skincluster's geometry path, the components of `indices` (every point
+    when None) and their number."""
+    geom  = skincluster.get_geometries()[0]
+    comps = geom.get_component_mobject(indices=indices)
+    return geom.mdagpath, comps, OpenMaya.MFnComponent(comps).elementCount
+
+
 class SetSkinWeightsCommand:
     """
-    A set skin weights command with undo/redo support.
+    A set skin weights command with undo/redo support: one undo step (rig's
+    plug-in command). Raises ValueError, before any edit, when the weights are
+    not one per point per influence.
     """
 
     def __init__(
@@ -499,15 +532,18 @@ class SetSkinWeightsCommand:
         self._fn_set = skincluster.fn_set
         inf_count    = len(self._fn_set.influenceObjects())
         inf_ids      = OpenMaya.MIntArray(range(inf_count))
-        geom         = skincluster.get_geometries()[0]
-        geom_path    = geom.mdagpath
 
         # if no indices are given, set all weights
-        comps = geom.get_component_mobject(indices=indices)
+        geom_path, comps, count = _weight_components(skincluster, indices)
 
-        # if weights is 2D, reshape it to 1D
-        if weights.ndim == 2:
-            weights = weights.flatten()
+        # a 2D array (per component per influence) is set flat; Maya takes any
+        # length without a word, so the count is checked here
+        weights = np.asarray(weights, dtype=float).ravel()
+        if len(weights) != count * inf_count:
+            raise ValueError(
+                f"SkinCluster.set_weights: {len(weights)} weights for {count} points "
+                f"x {inf_count} influences of {skincluster.name}"
+            )
 
         # internal vars
         self._weights     = OpenMaya.MDoubleArray(weights)
