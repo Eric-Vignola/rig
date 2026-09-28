@@ -17,7 +17,7 @@ from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.joint import Joint
 from rig.nodetypes.mesh import Mesh
-from rig.nodetypes.plugins import load_plugin
+from rig.nodetypes.plugins import _run_undoable
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
@@ -514,8 +514,7 @@ class SetSkinWeightsCommand:
         self._old_weights = None
         self._args        = [geom_path, comps, inf_ids]
 
-        with load_plugin("undoable_api_command"):
-            cmds.rigUndoableAPICommand(self)
+        _run_undoable(self)
 
     def doIt(self) -> None:
         """Sets the requested weights and store the old weights for undo()."""
