@@ -69,8 +69,11 @@ def mesh_state(name):
 
     Object-space points (rounded), ``getVertices``, ``getHoles``, the UV set names in
     order with each set's UVs and assignments, the current UV set, and the colour set
-    names with each set's representation and per-face-vertex colours (an unset colour
-    reads ``(-1, -1, -1, -1)``), and the current colour set.
+    names in order with each set's representation, clamping, colour count and
+    per-face-vertex colours (an unset colour reads ``-1`` in every channel), and the
+    current colour set. A colour holds the channels of its set's representation only:
+    Maya reports no data in an Alpha set's r, g, b or an RGB set's alpha (they echo
+    other colours of the mesh).
     """
     path = _dag_path(name)
     if path is None or not path.hasFn(OpenMaya.MFn.kMesh):
@@ -93,9 +96,18 @@ def mesh_state(name):
     colors = {}
     for color_set in color_sets:
         values = fn.getFaceVertexColors(colorSet=color_set, defaultUnsetColor=unset)
+        rep = int(fn.getColorRepresentation(color_set))
+        if rep == OpenMaya.MFnMesh.kAlpha:
+            channels = tuple((_r(c.a),) for c in values)
+        elif rep == OpenMaya.MFnMesh.kRGB:
+            channels = tuple((_r(c.r), _r(c.g), _r(c.b)) for c in values)
+        else:
+            channels = tuple((_r(c.r), _r(c.g), _r(c.b), _r(c.a)) for c in values)
         colors[color_set] = (
-            int(fn.getColorRepresentation(color_set)),
-            tuple((_r(c.r), _r(c.g), _r(c.b), _r(c.a)) for c in values),
+            rep,
+            bool(fn.isColorClamped(color_set)),
+            int(fn.numColors(color_set)),
+            channels,
         )
     return {
         "points": tuple(
