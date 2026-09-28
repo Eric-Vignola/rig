@@ -438,6 +438,16 @@ class TestEnumFieldNames(UndoWalk, MayaTestCase):
         with self.assertRaises(InjectionError):
             rn.transform(name="ru_tx", translateX="abc")
 
+    def test_factory_misspelled_attribute_with_a_str(self):
+        # MNodeClass.attribute gives a null MObject for an unknown name (it does not
+        # raise, as the Blind mock above does): the str reached MFnAttribute(null) and
+        # raised "(kFailure): Object does not exist" (round U2 FIX review, p_enum2.py)
+        for value in ("xzy", 3, ["xzy"]):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(AttributeError, r"rotateOrdr"):
+                    rn.transform(name="ru_typo", rotateOrdr=value)
+                cmds.delete(cmds.ls("ru_typo*"))
+
     # -- unchanged -- #
 
     def test_string_and_numeric_attributes_are_unchanged(self):
