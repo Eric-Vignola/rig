@@ -383,15 +383,17 @@ class DGNode(Node):
         The node's own state (``_mobject``, ``_attr_dict`` ...) and a Python
         attribute already stored on this instance (``vars(node)["tag"] = 1``)
         are stored. A class attribute of that name wins: a property's setter
-        runs (``node.namespace = "ns"``), a read-only property raises, and a
-        method or constant raises too (``node.find_attr("rename") << value``
-        reaches a Maya attr of such a name), unless a callable replaces a
-        method on this instance (``node.get_parent = f``,
-        ``mock.patch.object(node, ...)``). A ``_`` name is Python state unless
-        the live node has a Maya attr of that name (``node.__parked__ = 4.0``).
-        Any other name must be a Maya attr: a typo raises "Attribute not found"
-        instead of adding a Python attribute, and a deleted node raises
-        ``already deleted!``.
+        runs (``node.namespace = "ns"``), a read-only property raises, a data
+        default declared on the class (``side = None`` in a subclass body) is
+        shadowed on the instance, so a node class keeps Python state under the
+        names it declares (``self.side = "L"``), and a method or other class
+        member raises (``Plug(node.find_attr("rename")) << value`` reaches a
+        Maya attr of such a name), unless a callable replaces a method on this
+        instance (``node.get_parent = f``, ``mock.patch.object(node, ...)``). A
+        ``_`` name is Python state unless the live node has a Maya attr of that
+        name (``node.__parked__ = 4.0``). Any other name must be a Maya attr: a
+        typo raises "Attribute not found" instead of adding a Python attribute,
+        and a deleted node raises ``already deleted!``.
         """
         d = self.__dict__
         # the node state, and a Python attribute already stored on this instance
@@ -413,10 +415,15 @@ class DGNode(Node):
             ):
                 d[name] = value
                 return
+            # a data default the class declares (not callable, not a
+            # descriptor): Python state of the instance
+            if not callable(found) and not hasattr(type(found), "__get__"):
+                d[name] = value
+                return
             raise AttributeError(
                 f"{type(self).__name__}.{name} is a method or class attribute, "
-                f"not a plug; use node.find_attr({name!r}) << value for a Maya "
-                f"attr of that name"
+                f"not a plug; use Plug(node.find_attr({name!r})) << value for a "
+                f"Maya attr of that name"
             )
         if name[:1] == "_":
             fn = d.get("_fn_set")
@@ -424,7 +431,14 @@ class DGNode(Node):
                 # private Python state (on a deleted or freed node too)
                 d[name] = value
                 return
-        type(self).__getattr__(self, name) << value
+        try:
+            plug = type(self).__getattr__(self, name)
+        except AttributeError as error:
+            raise AttributeError(
+                f"{error} (to keep Python state on a node object, declare a "
+                f"default in its class body, {name} = None, or use a '_' name)"
+            ) from error
+        plug << value
 
     # --- DSL operators
 
