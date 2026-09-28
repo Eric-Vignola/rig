@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from maya import cmds, mel
 from maya.api import OpenMaya
-from rig.nodetypes._base import _handle_valid, get_custom_type, PyNode
+from rig.nodetypes._base import _cast, _handle_valid, get_custom_type
 from rig.nodetypes.dg_node import DGNode
 
 
@@ -202,7 +202,7 @@ class DAGNode(DGNode):
         """
         # force long name
         kwargs["fullPath"] = True
-        return [PyNode(x) for x in cmds.listRelatives(self.name, **kwargs) or []]
+        return [_cast(x) for x in cmds.listRelatives(self.name, **kwargs) or []]
 
     def get_parent(self, index: int = 0) -> DGNode | None:
         """Returns the parent object at a given index.
@@ -220,7 +220,7 @@ class DAGNode(DGNode):
             if not _parent_valid(mobject):
                 break
             fn_set = OpenMaya.MFnDagNode(mobject)
-        return PyNode(mobject) if _parent_valid(mobject) else None
+        return _cast(mobject) if _parent_valid(mobject) else None
 
     def iter_parents(self, node_type: str | list[str] | None = None) -> DGNode:
         """Iterates over parent nodes matching the given type.
@@ -244,7 +244,7 @@ class DAGNode(DGNode):
             fn_set = OpenMaya.MFnDagNode(mobject)
             name   = fn_set.getPath().partialPathName()
             if not node_types or cmds.nodeType(name) in node_types:
-                yield PyNode(mobject)
+                yield _cast(mobject)
 
     def get_parents(self, node_type: str | list[str] | None = None) -> list[DGNode]:
         """Returns a list of parents matching the given type.
@@ -308,7 +308,7 @@ class DAGNode(DGNode):
             if not node_types or typ in node_types:
                 if not skip_tweak or typ != "tweak":
                     if first_only:
-                        return PyNode(deformer)
+                        return _cast(deformer)
                     else:
-                        deformers.append(PyNode(deformer))
+                        deformers.append(_cast(deformer))
         return None if first_only else deformers

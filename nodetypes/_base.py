@@ -51,9 +51,20 @@ def _class_attr(cls: type, name: str) -> Any:
     return _MISSING
 
 
+# The node class registry: the node type (a class's ``CUSTOM_NODE_TYPE``, else
+# its ``NATIVE_NODE_TYPE``) -> the class, filled by `NodeMeta`. `_cast` and
+# `Node.create` / `Node.find_all` dispatch through it.
+_NODE_CLASS_DICT: dict = {}
+# `_cast`'s caches, cleared by every new node class: (typeName, typeId) -> the
+# class of a node without custom type, and the keys an MObject was cast from
+_CLASS_BY_TYPE: dict = {}
+_CASTABLE_TYPES: set = set()
+
+
 class NodeMeta(type):
     """
-    A metaclass that register node classes to the cached dict in PyNode.
+    The metaclass of every node class: it registers a class for its node type
+    (`_NODE_CLASS_DICT`), which the typed cast and ``Node.create`` read.
 
     Calling the root :class:`Node` itself is the DSL node factory
     (``Node("pCube1")`` returns the typed node); calling any other node class
@@ -110,108 +121,30 @@ class NodeMeta(type):
         cls_obj   = type.__new__(mcs, class_name, bases, attrs)
 
         # a new class can change the dispatch of any node type
-        PyNode._CLASS_BY_TYPE.clear()
-        PyNode._CASTABLE_TYPES.clear()
+        _CLASS_BY_TYPE.clear()
+        _CASTABLE_TYPES.clear()
         _STATIC_DATA_TYPE.clear()
 
         node_type = attrs.get("CUSTOM_NODE_TYPE")
         if not node_type:
             node_type = attrs.get("NATIVE_NODE_TYPE")
         if node_type:
-            PyNode._NODE_CLASS_DICT[node_type] = cls_obj
+            _NODE_CLASS_DICT[node_type] = cls_obj
 
         return cls_obj
 
 
-class PyNode:
-    """
-    A factory class that for casting arbitrary objects into the most suitable
-    object classes.
+def _cast(obj: Any) -> Any:
+    """The typed cast, the one cast core (D12). Private: the public doors are
+    ``Node(x)`` (always a node; it calls this) and ``Attribute(x)`` /
+    ``Plug(x)`` (an attribute).
 
-    **If you know the type of the object you are working with, it is recommended to
-    explicitly cast it into the associated class instead of going through the `PyNode`
-    factory process, which yields better performance.**
-    """
-
-    _NODE_CLASS_DICT = {}
-    _CLASS_BY_TYPE   = {}     # (typeName, typeId) -> class of a node without custom type
-    _CASTABLE_TYPES  = set()  # (typeName, typeId) keys an MObject was cast from
-
-    def __new__(
-        cls,
-        obj: str | OpenMaya.MObject | OpenMaya.MDagPath | OpenMaya.MPlug,
-        *args,
-        **kwargs,
-    ) -> Any:
-        """Cast a object (node or attr) into the most suitable class.
-
-        Args:
-            obj: Node: name string, MObject, or MDagPath.
-                Attribute: name string or MPlug.
-
-        Returns:
-            An object instance.
-        """
-        if args or kwargs:
-            # what `object.__new__` raised for them, before `_cast` (D12)
-            raise TypeError(
-                "object.__new__() takes exactly one argument (the type to instantiate)"
-            )
-        return _cast(cls, obj)
-
-    @classmethod
-    def create(cls, node_type, *args, **kwargs) -> Any:
-        """Thin wrapper around cmds.createNode().
-
-        A registered type goes to its class's typed ``create``. Any other type,
-        given no positional args, joins an open ``with container()`` scope as
-        ``Node.create`` does (``container.createNode``: D13b), outside a typed
-        create and unless ``container=False``; ``container=`` is consumed.
-        Outside a scope it is ``cmds.createNode`` as before.
-        """
-        node_cls = cls._NODE_CLASS_DICT.get(node_type)
-        if node_cls:
-            return node_cls.create(*args, **kwargs)
-        else:
-            hook = _PYNODE_CREATE_HOOK
-            if hook is not None and not args:
-                node = hook(node_type, kwargs)
-                if node is not None:
-                    return node
-            result = cmds.createNode(node_type, *args, **kwargs)
-            if isinstance(result, (list, tuple)):
-                return [cls(x) for x in result]
-            elif result:
-                return cls(result)
-            return result
-
-    @classmethod
-    def find_all(cls, node_type: str, exact_type: bool = True) -> list[Any]:
-        """Thin wrapper around cmds.ls()."""
-        node_cls = cls._NODE_CLASS_DICT.get(node_type)
-        if node_cls:
-            return node_cls.find_all(exact_type=exact_type)
-        else:
-            raise NotImplementedError(f"Node type {node_type} not implemented")
-
-
-# D13b: ``rig._internal.container`` sets this when it loads, to
-# ``_pynode_create(node_type, kwargs)``, the scope door of `PyNode.create`'s
-# unregistered-type branch (None when it does not act)
-_PYNODE_CREATE_HOOK = None
-
-# the class the `Node` factory hands `_cast`: bound once, so a test that
-# patches the module global `PyNode` (to count `Attribute.node`'s casts)
-# neither counts nor breaks the factory's
-_PYNODE_CLASS = PyNode
-
-
-def _cast(cls, obj: Any) -> Any:
-    """The typed cast (``PyNode(obj)``; see `PyNode.__new__`): the one cast core
-    (D12). `cls` is the `PyNode` class, whose registries it reads. The `Node`
-    factory calls it directly, without PyNode's class call. A node object or an
-    Attribute is returned as is, an MPlug or a dotted name gives an Attribute,
-    and a node name, uuid, MObject or MDagPath gives the typed node."""
+    A node object or an Attribute is returned as is, an MPlug or a dotted name
+    gives an Attribute, and a node name, uuid, MObject or MDagPath gives the
+    typed node: an instance of the most derived class registered for its custom
+    type or type chain (`_NODE_CLASS_DICT`). Anything else raises ValueError.
+    The package casts through this function wherever a Maya name, MObject or
+    MPlug becomes an object."""
     mobj     = None
     dag_path = None
     if isinstance(obj.__class__, NodeMeta) or isinstance(obj, Attribute):
@@ -271,54 +204,57 @@ def _cast(cls, obj: Any) -> Any:
     except (RuntimeError, ValueError, TypeError):
         key = None
     if key is None:
-        return _pynode_legacy_tail(cls, obj)
+        return _cast_by_name(obj)
 
-    if key in cls._CLASS_BY_TYPE:
-        cls_obj = cls._CLASS_BY_TYPE[key]
+    if key in _CLASS_BY_TYPE:
+        cls_obj = _CLASS_BY_TYPE[key]
     else:
-        cls_obj = cls._CLASS_BY_TYPE[key] = _native_node_class(cls, obj)
+        cls_obj = _CLASS_BY_TYPE[key] = _native_node_class(obj)
     if not cls_obj:
         raise ValueError(f"Failed casting {obj}")
 
     # a type already cast from an MObject passes the class's type check
     # again, so a base-constructor class is built without re-running it
     inst = None
-    if from_mobject and key in cls._CASTABLE_TYPES:
+    if from_mobject and key in _CASTABLE_TYPES:
         inst = _construct_checked_type(cls_obj, obj)
     if inst is None:
         # a node class is constructed without NodeMeta.__call__'s frame,
         # which only dispatches the root Node to its factory
         inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
     if from_mobject:
-        cls._CASTABLE_TYPES.add(key)
+        _CASTABLE_TYPES.add(key)
     return inst
 
 
-def _native_node_class(cls, obj: str) -> Any:
+def _native_node_class(obj: str) -> Any:
     """Returns the class the node's type chain maps to, ignoring any custom type."""
     # set default node type to DAG or DG
     default_type = "dagNode" if cmds.ls(obj, dag=True) else "entity"
-    cls_obj      = cls._NODE_CLASS_DICT.get(default_type)
+    cls_obj      = _NODE_CLASS_DICT.get(default_type)
 
     # override cls_obj with a defined node class if any
     for t in reversed(cmds.nodeType(obj, inherited=True)):
-        if t in cls._NODE_CLASS_DICT:
-            cls_obj = cls._NODE_CLASS_DICT.get(t)
+        if t in _NODE_CLASS_DICT:
+            cls_obj = _NODE_CLASS_DICT.get(t)
             break
     return cls_obj
 
 
-def _pynode_legacy_tail(cls, obj: str) -> Any:
-    """Casts a node name string by querying its custom type and type chain by name."""
+def _cast_by_name(obj: str) -> Any:
+    """`_cast`'s tail for a name the API does not resolve to one node without a
+    custom type (a custom-typed node, a name several nodes or none have, a
+    deleted or undone node): casts it by querying its custom type and type
+    chain by name."""
     cls_obj     = None
     custom_type = get_custom_type(obj)
     if custom_type:
-        cls_obj = cls._NODE_CLASS_DICT.get(custom_type)
+        cls_obj = _NODE_CLASS_DICT.get(custom_type)
     if not cls_obj:
-        cls_obj = _native_node_class(cls, obj)
+        cls_obj = _native_node_class(obj)
 
     if cls_obj:
-        # as in `PyNode.__new__`: no NodeMeta.__call__ frame
+        # as in `_cast`: no NodeMeta.__call__ frame
         return type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
 
     raise ValueError(f"Failed casting {obj}")
@@ -958,7 +894,7 @@ def _point_count(attr: Any) -> int:
     class the user chose (``DAGNode(mesh).vtx[0:2]``), which has none."""
     node = attr.node
     if not hasattr(type(node), "num_weight_points"):
-        node = PyNode(attr.plug.node())
+        node = _cast(attr.plug.node())
     return node.num_weight_points
 
 
@@ -1739,7 +1675,7 @@ class Attribute(str):
     def node(self) -> Any:
         """Returns the node object of this attr: the node object it was read from
         (``node.tx.node is node``; children and elements share it). An attr built
-        from a name or an MPlug casts its node on first use (``PyNode`` of its
+        from a name or an MPlug casts its node on first use (the typed cast of its
         MPlug's node), and raises ``already deleted!`` if that node was deleted
         or freed since it was built (see `_ensure_node_castable`)."""
         d    = self.__dict__
@@ -1747,7 +1683,7 @@ class Attribute(str):
         if node is None:
             _ensure_node_castable(self)
             # through `__setattr__`, as a Plug's other post-init state writes
-            node = self._node = PyNode(d["_mplug"].node())
+            node = self._node = _cast(d["_mplug"].node())
         return node
 
     @property
@@ -2037,7 +1973,7 @@ class Attribute(str):
         for each in cmds.listConnections(self.full_name, **kwargs) or []:
             obj = casted.get(each)
             if not obj:
-                obj          = PyNode(each)
+                obj          = _cast(each)
                 casted[each] = obj
             result.append(obj)
         return result
@@ -2068,11 +2004,11 @@ class Attribute(str):
         """
         default_excludes = ["defaultShaderList1", "time1", "renderPartition"]
         if not _processed:
-            _processed = {PyNode(x) for x in default_excludes}
+            _processed = {_cast(x) for x in default_excludes}
         if exclude_nodes:
             for x in exclude_nodes:
                 if cmds.objExists(x):
-                    _processed.add(PyNode(x))
+                    _processed.add(_cast(x))
 
         connections = cmds.listConnections(
             str(self),
@@ -2088,7 +2024,7 @@ class Attribute(str):
             return result
 
         for c in connections:
-            c = PyNode(c)
+            c = _cast(c)
             if c in processed:
                 continue
             processed.add(c)
@@ -2357,12 +2293,12 @@ class Attribute(str):
         # 1. If the owning node IS the geometry of this plug's data type,
         #    return the shape itself (e.g. mesh.outMesh -> Mesh node).
         if is_shape and expected_shape_fn and owner_obj.hasFn(expected_shape_fn):
-            return PyNode(owner_obj).serialize()
+            return _cast(owner_obj).serialize()
 
         # 2. Prefer a real downstream node consumer.
         dests = self.plug.destinations()
         if dests:
-            return PyNode(dests[0].node()).serialize()
+            return _cast(dests[0].node()).serialize()
 
         # 2.5. Known geometry-routing nodes (e.g. choice node): walk upstream via
         #      the registered tracer to find the source shape.
@@ -2372,7 +2308,7 @@ class Attribute(str):
             if tracer is not None:
                 src_plug = tracer(self.plug)
                 if src_plug is not None and src_plug.node().hasFn(expected_shape_fn):
-                    return PyNode(src_plug.node()).serialize()
+                    return _cast(src_plug.node()).serialize()
 
         # 3. Wrap the computed data via the matching MFn fn set.
         if data is None or data.isNull() or data.apiType() == OpenMaya.MFn.kInvalid:
@@ -2579,38 +2515,87 @@ class Attribute(str):
 Attribute._CHILD_CLASS = Attribute
 
 
+# `Node.create`'s body: ``rig._internal.container`` sets it when it loads, to
+# ``_node_create(node_type, args, kwargs)`` (the D31 pattern keeps nodetypes free
+# of ``rig._internal`` imports; None only mid-import)
+_NODE_CREATE_HOOK = None
+
+
 class Node(metaclass=NodeMeta):
-    """The root of every node class, and the DSL node factory.
+    """The root of every node class, and the DSL node factory: the one entry
+    point from a Maya name or object to a node.
 
-    ``Node(x)`` returns the typed node (``Transform``, ``Mesh``, ...) of ``x``: a
-    node name, uuid, MObject or MDagPath (cast by :class:`PyNode`), a node object
-    (returned as is: ``Node(x) is x``), an attribute or plug (its node), a dotted
-    ``"node.attr"`` string or an MPlug (its node). Anything else raises
-    ``ValueError``. ``isinstance(x, Node)`` is True for every node object.
-    :class:`DGNode` and its subclasses carry the typed API and the DSL: attribute
-    access returns :class:`Plug` instances owned by the node (``node.tx.node is
-    node``), ``<<`` / ``>>`` inject and introspect, ``node.tx = 5`` is
-    ``node.tx << 5``.
+    ``Node(x)`` returns the node object of ``x``, always a node:
 
-    ``Node.create(type, ...)`` is the container-aware factory. On a node class
-    other than ``Node`` and ``Container``, and so on any node (``node.create``),
-    ``create`` is that class's typed creator (``Transform.create(...)``).
-    ``Node.wrap`` lives on the metaclass, so a node's Maya attr ``wrap`` stays
-    reachable. ``PyNode`` stays the typed-layer cast (a dotted string gives an
-    :class:`Attribute`).
+    * a node object: itself (``Node(x) is x``);
+    * an attribute (a typed :class:`Attribute`, a :class:`Plug`, a component
+      plug) or an MPlug: the node it belongs to (a plug's own node object);
+    * a str with a ``.``: the node named before the FIRST ``.``
+      (``Node("a.tx")`` is node ``a``; paths and namespaces are kept);
+    * a node name, uuid, MObject or MDagPath: the typed node (``Transform``,
+      ``Mesh``, ...: the most derived class registered for its custom type or
+      type chain).
+
+    Anything else raises ``ValueError``. The attribute a ``"node.attr"`` string
+    names is ``Attribute("a.tx")`` (typed) or ``Plug("a.tx")`` (DSL).
+    ``isinstance(x, Node)`` is True for every node object. :class:`DGNode` and
+    its subclasses carry the typed API and the DSL: attribute access returns
+    :class:`Plug` instances owned by the node (``node.tx.node is node``),
+    ``<<`` / ``>>`` inject and introspect, ``node.tx = 5`` is ``node.tx << 5``.
+
+    ``Node.create(type, ...)`` makes a node (see :meth:`create`) and
+    ``Node.find_all(type)`` lists the nodes of a type. On a node class other
+    than ``Node`` and ``Container``, and so on any node (``node.create``),
+    ``create`` and ``find_all`` are that class's typed versions
+    (``Transform.create(...)``, ``Joint.find_all()``). ``Node.wrap`` lives on
+    the metaclass, so a node's Maya attr ``wrap`` stays reachable.
     """
 
     @classmethod
-    def create(cls, node_type: str, **kwargs: Any) -> Any:
-        """Create a new node and register it with the active container scope.
+    def create(cls, node_type: str, *args: Any, **kwargs: Any) -> Any:
+        """Create a new node of ``node_type`` and return the typed node.
 
-        Returns the typed node.
+        * A type a node class is registered for (its ``NATIVE_NODE_TYPE`` or
+          ``CUSTOM_NODE_TYPE``: ``transform``, ``joint``, ``choice``, ``mesh``,
+          ``nurbsCurve``, ``skinCluster``, ``blendShape``, ``displayLayer``,
+          ``objectSet``, ``shadingEngine``, ``reference``, a user class, ...)
+          runs that class's typed create with the arguments:
+          ``Node.create("joint", name="j")`` is ``Joint.create(name="j")``,
+          ``Node.create("skinCluster", mesh, joints)`` is
+          ``SkinCluster.create(mesh, joints)``. Inside ``with container()`` it
+          joins the scope by the typed-create rules (D13); the scene registries
+          (display layers, sets and shading engines, references) stay out of it
+          unless ``container=True``.
+        * Any other type is made by the container scope's ``createNode``
+          (``Node.create("multiplyDivide", name="md")``): the node joins the
+          active scope, an explicit ``name=`` takes the flattened scope's
+          prefix, a GC-eligible utility type is tagged for ``cleanup()``, and
+          ``container=False`` leaves the node out of the scope. No positional
+          argument may follow the type.
+
+        Either way ``skipSelect`` defaults to ``ContainerOptions.skip_selection``
+        (for a typed create, when its ``_create`` forwards the flag to
+        ``cmds.createNode``), so the new node is not selected unless asked.
         """
-        # container.createNode puts the new node in the active scope AND gives
-        # it the right name prefix when nested in a flattened block.
-        from rig._internal.container import container
+        hook = _NODE_CREATE_HOOK
+        if hook is None:
+            # mid-import only: loading the container module installs the hook
+            import rig._internal.container  # noqa: F401
 
-        return container.createNode(node_type, **kwargs)
+            hook = _NODE_CREATE_HOOK
+        return hook(node_type, args, kwargs)
+
+    @classmethod
+    def find_all(cls, node_type: str, exact_type: bool = True) -> list[Any]:
+        """The nodes of ``node_type`` in the scene, as typed nodes: the
+        ``find_all`` of the class registered for the type
+        (``Node.find_all("joint")`` is ``Joint.find_all()``; ``exact_type=False``
+        also lists the types derived from it). A type no node class is
+        registered for raises NotImplementedError."""
+        node_cls = _NODE_CLASS_DICT.get(node_type)
+        if node_cls:
+            return node_cls.find_all(exact_type=exact_type)
+        raise NotImplementedError(f"Node type {node_type} not implemented")
 
 
 def _node_factory(obj: Any) -> Any:
@@ -2628,7 +2613,7 @@ def _node_factory(obj: Any) -> Any:
             obj = obj.split(".", 1)[0]
     elif isinstance(obj, OpenMaya.MPlug):
         obj = obj.node()
-    # the cast core itself, without PyNode's class call (D12)
-    result = _cast(_PYNODE_CLASS, obj)
+    # the cast core itself (D12)
+    result = _cast(obj)
     # defensive: an exotic input the cast resolves to an attribute gives its node
     return result.node if isinstance(result, Attribute) else result

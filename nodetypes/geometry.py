@@ -3,9 +3,9 @@ Base geometry node class
 
 Usage::
 
-    from rig.nodetypes import PyNode
+    from rig import Node
 
-    mesh = PyNode("pSphereShape1")
+    mesh = Node("pSphereShape1")
     mesh.injection_node                          # the node holding editable tags
     mesh.add_component_tag("cap")
     mesh.set_component_tag_contents("cap", [0, 1, 2])
@@ -23,7 +23,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig.nodetypes._base import Attribute, PyNode
+from rig.nodetypes._base import _cast, Attribute
 from rig.nodetypes.dag_node import DAGNode
 
 if TYPE_CHECKING:
@@ -219,7 +219,7 @@ class Geometry(DAGNode):
         nodes = cmds.deformableShape(self.long_name, tagInjectionNode=True)
         if not nodes or cmds.ls(nodes[0], long=True)[0] == self.long_name:
             return self
-        return PyNode(nodes[0])
+        return _cast(nodes[0])
 
     def _component_tag_owner(self, key: str) -> tuple[str, bool] | None:
         """Returns (node, procedural) for the entry of a tag that resolves, or None."""

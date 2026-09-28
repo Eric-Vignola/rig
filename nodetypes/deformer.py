@@ -15,7 +15,7 @@ import fnmatch
 import re
 
 from maya import cmds
-from rig.nodetypes._base import PyNode
+from rig.nodetypes._base import _cast
 from rig.nodetypes.dg_node import DGNode
 
 
@@ -64,7 +64,7 @@ class Deformer(DGNode):
         """Returns a list of geometry objects (post-deformation).
         TODO support components
         """
-        return [PyNode(x) for x in cmds.deformer(self.name, query=True, geometry=True)]
+        return [_cast(x) for x in cmds.deformer(self.name, query=True, geometry=True)]
 
     def get_original_geometries(self) -> list[DGNode]:
         """Returns a list of original geometry objects (pre-deformation)."""
@@ -78,4 +78,4 @@ class Deformer(DGNode):
             )
             or []
         )
-        return [PyNode(x.split(".", 1)[0]) for x in geom]
+        return [_cast(x.split(".", 1)[0]) for x in geom]

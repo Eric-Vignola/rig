@@ -70,7 +70,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import PyNode
+from rig.nodetypes._base import _cast
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
 from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
@@ -210,7 +210,7 @@ class _Home:
     @property
     def holder(self) -> Geometry:
         """The geometry node holding the tag (never a procedural owner)."""
-        return PyNode(self.node)
+        return _cast(self.node)
 
     def ids(self) -> np.ndarray:
         """What the holder's own output resolves for the tag."""
@@ -240,7 +240,7 @@ def _state_of(geo: Geometry, path: str, name: str, entry: dict, node: str) -> _H
     )
     if answer["modReplace"]:
         state = _EDITABLE
-    elif PyNode(node).get_component_tag_index(name) != -1:
+    elif _cast(node).get_component_tag_index(name) != -1:
         state = _BAKED
     else:
         state = _PROCEDURAL
@@ -496,7 +496,7 @@ class Tag(_MemberSpec):
                     f"means the tag itself and components mean members. Split them"
                 )
             category = self._category(group)
-            geo      = PyNode(group.path)
+            geo      = _cast(group.path)
             if self._name is None:
                 steps.extend(self._plan_purge(group, geo, category))
             elif group.whole:
@@ -756,7 +756,7 @@ class Tag(_MemberSpec):
                 f"asks about the tag, components about themselves. Split them"
             )
         cls._category(group)
-        return group, PyNode(group.path)
+        return group, _cast(group.path)
 
     def _query(self, selections: list[_Selection]) -> np.ndarray:
         if self._options.get("at") is not None:
@@ -806,7 +806,7 @@ class Tag(_MemberSpec):
                     f"/ .f[...] / .e[...]); Tag({self._name!r}).clear(node) empties it"
                 )
             category = self._category(group)
-            geo      = PyNode(group.path)
+            geo      = _cast(group.path)
             home     = self._home(geo, group.path)
             names    = [name for s in group.comps for name in s.names]
             if home.state == _PROCEDURAL:
@@ -898,7 +898,7 @@ class Tag(_MemberSpec):
                     f"({group.comps[0].names[0]}); members << -Tag({self._name!r}) "
                     f"removes some"
                 )
-            homes.append(self._home(PyNode(group.path), group.path))
+            homes.append(self._home(_cast(group.path), group.path))
         return homes
 
     def _clear(self, home: _Home) -> None:

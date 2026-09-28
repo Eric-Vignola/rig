@@ -49,7 +49,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya as om
-from rig.nodetypes._base import _connected_attrs, _path_instance_number, Attribute, PyNode
+from rig.nodetypes._base import _cast, _connected_attrs, _path_instance_number, Attribute
 from rig._internal.types import _is_quaternion
 
 
@@ -135,7 +135,7 @@ def _node_is_transform(node: Any) -> bool:
         node.ensure_valid()
     else:
         try:
-            node = PyNode(str(node))
+            node = _cast(str(node))
         except (RuntimeError, ValueError):
             return False
     try:
@@ -152,7 +152,7 @@ def _resolve_rotate_order(node: Any) -> int:
     rather than ``cmds.getAttr`` with string-formatted names.
     """
     try:
-        wrapped = node if hasattr(node, "find_attr") else PyNode(str(node))
+        wrapped = node if hasattr(node, "find_attr") else _cast(str(node))
         return int(wrapped.find_attr("rotateOrder").get())
     except (RuntimeError, AttributeError):
         return 0
@@ -258,7 +258,7 @@ def _apply_full_decomposition(
     Uses :meth:`DGNode.find_attr` (canonical API) to obtain attribute
     plugs by name rather than building ``f"{node}.t"`` strings.
     """
-    wrapped = node if hasattr(node, "find_attr") else PyNode(str(node))
+    wrapped = node if hasattr(node, "find_attr") else _cast(str(node))
 
     def _set_channel(attr_name: str, values: Any) -> None:
         try:
@@ -366,7 +366,7 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
         except (RuntimeError, TypeError, AttributeError):
             index = 0
         try:
-            wrapped         = PyNode(node_str)
+            wrapped         = _cast(node_str)
             parent_inv_flat = wrapped.find_attr(f"parentInverseMatrix[{index}]").get()
         except (RuntimeError, AttributeError):
             parent_inv_flat = list(np.eye(4).ravel())
@@ -379,7 +379,7 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
             # Preserve world translation by composing the existing world
             # translation into row 3 before re-localising.
             try:
-                wrapped          = PyNode(node_str)
+                wrapped          = _cast(node_str)
                 world_flat       = wrapped.find_attr(f"worldMatrix[{index}]").get()
                 existing_world_t = world_flat[12:15]
             except (RuntimeError, AttributeError):

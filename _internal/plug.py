@@ -52,7 +52,7 @@ reads :class:`Attribute` instances. ``plug.node`` is the node object the plug
 was read from (``node.tx.node is node``; children and elements share it), and
 a plug read through a node with more than one DAG path is named through that
 node's path. A plug built from a string or an MPlug casts its node on first
-access (``Attribute.node``: ``PyNode`` of its MPlug's node), and is named as
+access (``Attribute.node``: the typed cast of its MPlug's node), and is named as
 Maya names it (``Plug("|T2|S.v")`` is ``T1|S.visibility``). Until then it checks the API
 1.0 handle of its node it took when it was built (its children and elements
 share it), so once that node is deleted or freed it raises ``already
@@ -306,7 +306,7 @@ class Plug(Attribute):
             return
         if isinstance(name_or_mplug, Attribute):
             # the plug `name_or_mplug` stands for, read through the node object it
-            # holds: ``Plug(PyNode("|T2|S").find_attr("v"))`` is T2's, as the
+            # holds: ``Plug(Node("|T2|S").find_attr("v"))`` is T2's, as the
             # str buffer ``str.__new__`` took from its name is; with no owner, it
             # takes the handle of its node `name_or_mplug` took
             _ensure_owner_alive(name_or_mplug)

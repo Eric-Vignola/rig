@@ -13,6 +13,7 @@ from rig.nodetypes._base import (
     _MISSING,
     _attr_handle,
     _attr_mobject,
+    _cast,
     _class_attr,
     _deleted_error,
     _ensure_owner_alive,
@@ -24,7 +25,6 @@ from rig.nodetypes._base import (
     Attribute,
     get_custom_type,
     Node,
-    PyNode,
     set_custom_type,
 )
 
@@ -560,7 +560,7 @@ class DGNode(Node):
                 nodes.append(
                     cls(node)
                     if cmds.nodeType(node) == cls.NATIVE_NODE_TYPE
-                    else PyNode(node)
+                    else _cast(node)
                 )
         return nodes
 
@@ -620,10 +620,10 @@ class DGNode(Node):
         if kwargs.get("returnRootsOnly", kwargs.get("rr", False)):
             for node in cmds.ls(dagObjects=True, long=True):
                 if node not in old_nodes:
-                    return [PyNode(node)]
+                    return [_cast(node)]
             return []
         return [
-            PyNode(x) for x in cmds.ls(dagObjects=True, long=True) if x not in old_nodes
+            _cast(x) for x in cmds.ls(dagObjects=True, long=True) if x not in old_nodes
         ]
 
     def delete(
@@ -975,7 +975,7 @@ class DGNode(Node):
         for each in cmds.listConnections(self.name, **kwargs) or []:
             obj = casted.get(each)
             if not obj:
-                obj          = PyNode(each)
+                obj          = _cast(each)
                 casted[each] = obj
             result.append(obj)
         return result
