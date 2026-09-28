@@ -27,7 +27,9 @@ Two user-facing classes carry the language:
 
 Operator conventions:
     * ``<<`` (right-to-left) -- inject: setAttr / connectAttr / disconnect /
-      addAttr-spec / type-shorthand. Chains because it returns the LHS.
+      addAttr-spec / type-shorthand. Chains because it returns the LHS. An
+      enum plug takes a field name as well as its int (``t.ro << "zxy"``,
+      ``md.operation << "divide"``); a wrong name raises TypeError.
     * ``>>`` (left-to-right) -- introspect: ``plug >> None`` reads the value;
       ``plug >> Node`` clones the attr-spec onto another node.
     * ``<<`` with a collection spec (``Tag("x")``) makes the LHS a member

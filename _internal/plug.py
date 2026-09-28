@@ -96,8 +96,10 @@ from rig.nodetypes._base import (
     _attr_handle,
     _attr_state,
     _class_attr,
+    _enum_value,
     _ensure_owner_alive,
     _inherit_owner,
+    _is_enum_attr,
     _new_attr,
     _path_instance_number,
     _plug_hash,
@@ -580,6 +582,12 @@ class Plug(Attribute):
 
     def __lshift__(self, other: Any) -> Any:
         """``plug << other`` -- set, connect, disconnect, or add an attribute.
+
+        An enum plug takes a field name as well as its int (``t.ro << "zxy"``,
+        ``md.operation << "divide"``): the exact name first, then the one field
+        that matches once case, spaces, ``_`` and ``-`` are ignored. Any other
+        str raises TypeError naming the fields, and changes nothing; to connect
+        a plug named by a str, write ``Plug("a.b")``.
 
         Returns ``self`` so chaining works:
         ``node << Float("x") << 5 << lock``.
@@ -2497,10 +2505,15 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
             _do_set(dst_attr, src)
         return
 
-    # String.
+    # String. An enum takes a field name (``t.ro << "zxy"``): its int is set,
+    # as for ``t.ro << 2``. The name is read before ``_do_set``, so a wrong one
+    # raises TypeError with the connection and the value left as they were.
     if isinstance(src, str):
         if dst_attr is not None:
-            _do_set(dst_attr, src, type="string")
+            if _is_enum_attr(dst_attr):
+                _do_set(dst_attr, _enum_value(dst_attr.plug, src, str(dst_attr)))
+            else:
+                _do_set(dst_attr, src, type="string")
         else:
             try:
                 cmds.setAttr(str(dst), src, type="string")

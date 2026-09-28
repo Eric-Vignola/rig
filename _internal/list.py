@@ -43,10 +43,14 @@ import functools
 import numbers
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
+import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _ensure_owner_alive,
+    _enum_value,
+    _is_enum_attr,
+    _is_text,
     _plug_identity_name,
     _same_plug,
     Attribute,
@@ -104,8 +108,39 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
     return rows
 
 
+def _holds_text(other: Any) -> bool:
+    """True if the right side of a List ``<<`` is a plain str, or a sequence
+    with one as an element (a numeric ndarray is answered by its dtype)."""
+    if isinstance(other, str):
+        return not isinstance(other, Attribute)
+    if isinstance(other, np.ndarray):
+        return other.dtype.kind == "U" or (
+            other.dtype == object and any(_is_text(o) for o in other)
+        )
+    return isinstance(other, (list, tuple)) and any(_is_text(o) for o in other)
+
+
+def _enum_rows(rows: Iterable) -> list:
+    """The broadcast rows ``(element, value)`` of a List ``<<``, each plain str
+    given to an enum Plug replaced by the value of that field, read for every
+    row before any row is set (see `_enum_value`): a wrong name raises
+    TypeError, naming its row, and sets nothing. Other rows are left as they
+    are."""
+    resolved = []
+    for row, (mine, theirs) in enumerate(rows):
+        if isinstance(mine, Plug) and _is_text(theirs) and _is_enum_attr(mine):
+            theirs = _enum_value(mine.plug, theirs, f"List row {row}, {mine}")
+        resolved.append((mine, theirs))
+    return resolved
+
+
 class List(list):
-    """List-of-Plug-or-Node that propagates attribute access and arithmetic."""
+    """List-of-Plug-or-Node that propagates attribute access and arithmetic.
+
+    ``nodes.ro << "zxy"`` and ``nodes.ro << ["xzy", "yxz"]`` set enum plugs by
+    field name; every name is read before the first set, so one wrong name
+    raises TypeError and sets nothing (see :meth:`Plug.__lshift__`).
+    """
 
     # -- construction -- #
 
@@ -218,8 +253,12 @@ class List(list):
 
         # Asymmetric broadcast. A Components element dispatches too, so
         # ``List([cube.f[:2], cube.f[2:]]) << [Tag("a"), Tag("b")]``
-        # pairs each selection with its own spec.
-        for s, o in sequences(list(self), other):
+        # pairs each selection with its own spec. Enum field names are read
+        # for every row first, so a wrong one sets nothing.
+        rows = sequences(list(self), other)
+        if _holds_text(other):
+            rows = _enum_rows(rows)
+        for s, o in rows:
             if isinstance(s, (Plug, Node)) or _is_components(s):
                 s << o
         return self
