@@ -232,7 +232,7 @@ that is where the constructor signatures diverge:
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss` only; any other `createNode` flag (`shared=`) is not passed |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`, every flag passed: in the parent's space, at identity |
 | `Mesh.create(mesh_data, uv_data=, name=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step |
-| `SkinCluster.create(geo, influences_or_SkinData, **skinCluster_kwargs)` | `cmds.skinCluster(toSelectedBones=True)`, existing skin deleted first |
+| `SkinCluster.create(geo, influences_or_SkinData, **skinCluster_kwargs)` | `cmds.skinCluster(toSelectedBones=True)`, existing skin deleted first, one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
 | `BlendShape.create(*geometries_or_morphs, **blendShape_kwargs)` | `cmds.blendShape(frontOfChain=True)` |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
 | `DisplayLayer.create(*objects, **createDisplayLayer_kwargs)` | `cmds.createDisplayLayer`, empty unless objects (or `empty=` / `noRecurse=`) are given |
@@ -365,14 +365,21 @@ on the way back and creates parents first.
 `MFnMesh.setPoints`, `MFnSkinCluster.setWeights` and `MFnMesh.create` are
 not undoable by themselves. The bundled `undoable_api_command` plug-in
 registers `cmds.rigUndoableAPICommand(obj)` (a name of rig's own): give it
-any object with `doIt` / `undoIt` / `redoIt` and it runs in one undo chunk.
+any object with `doIt` / `undoIt` / `redoIt` and its edit is one undo step.
 rig's mesh edits (points, UV sets and their UVs, colour sets and their
-colours) and skin weights go through it, API only: a UV or colour set is made,
-renamed and deleted through `MFnMesh` too, never `polyUVSet` / `polyColorSet`,
-whose undo beside API data edits and later vertex edits restores broken sets.
-`Mesh.create` needs no command: the shape rides a recorded `createNode`
-transform. `load_plugin` loads the plug-in by full path from
-`rig/nodetypes/plugins`, once per session, so nothing needs configuring.
+colours) and skin weights go through it, one step each, API only: a UV or
+colour set is made, renamed and deleted through `MFnMesh` too, never
+`polyUVSet` / `polyColorSet`, whose undo beside API data edits and later
+vertex edits restores broken sets. `Mesh.create` needs no command (the
+shape rides a recorded `createNode` transform); it, `SkinCluster.create`
+and `set_weights(SkinData)` are one step each, named `rig.Mesh.create`,
+`rig.SkinCluster.create`, `rig.SkinCluster.set_weights`.
+
+Your own API edits take the same command: [CHEATSHEET section 21](CHEATSHEET.md#21-plugins--load_plugin-and-undo)
+has the recipe and the object's rules (apply the change first, in `doIt`;
+API only; no `cmds` in `undoIt` / `redoIt`), and `rig.undo_chunk` makes
+several edits one named step. `load_plugin` loads the plug-in by full path
+from `rig/nodetypes/plugins`, once per session, so nothing needs configuring.
 
 ---
 
@@ -472,8 +479,15 @@ Verified on Maya 2025; not bugs to work around blindly.
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so
   pass `ColorSet.Representation.RGBA` (or `["RGBA"]` on the enum).
 - **`Mesh.set_uv_data(uv, uv_set)` renames the set to `uv.name`** when they
-  differ, and fails when that name already exists on the mesh. Set
-  `uv.name` first.
+  differ, and raises a `RuntimeError` before any edit when that name
+  already exists on the mesh. Set `uv.name` first.
+- **On a mesh with history, UVs written into a set the history made are
+  lost when it evaluates again.** `add_uv_set` there adds a `createUVSet`
+  node, and the UVs `set_uv_data` writes into that set are dropped by
+  Maya on the next evaluation of the history (a `polyCube1.width` change,
+  a joint move, an undo through it); UVs in `map1` stay. There too,
+  `set_uv_data` with fewer UVs than the set holds is a `RuntimeError`
+  before any edit.
 - **`Mesh.get_closest_point` returns `(MPoint, face id)`**, the raw
   `MFnMesh.getClosestPoint` tuple, not the point its docstring describes.
 - **`Mesh.outMesh.get()` returns `(MeshData, UVList)`**: the shape's

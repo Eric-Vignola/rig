@@ -5,7 +5,7 @@ attributes, connect them. `rig` turns those verbs into Python operators
 on Maya's nodes and plugs, so a network reads like the maths it computes
 and a build script reads like a description of the rig instead of a
 transcript of `createNode` / `setAttr` / `connectAttr` calls. It uses
-Maya's own nodes (no plug-in, nothing custom saved in the scene), vectorizes 
+Maya's own nodes (no custom node types, nothing custom saved in the scene), vectorizes 
 over lists, and memoizes so the same expression twice costs one network.
 
 ![](https://github.com/Eric-Vignola/rig/blob/main/examples/ye_olde_lerp.gif)
@@ -136,6 +136,13 @@ Two operators carry the language:
   then a sibling Maya attribute on the same node, so `(a.tx + 5).input`
   reaches the `sum` node behind the output. It never reaches the node's
   Python methods: `a.tx.rename` is an `AttributeError`.
+- **Undo.** Every edit is undoable, one step per Maya command a statement
+  runs. A membership edit (`<< Tag("x")`, `<< Blinn("x")`...),
+  `Mesh.create` and `SkinCluster.create` are one named step each
+  (`rig.tag`, `rig.Mesh.create`), and an API edit (`Mesh.set_points`, the
+  UV and colour set edits, skin weights) is one step through rig's plug-in
+  command `rigUndoableAPICommand`. `with rig.undo_chunk("build arm"):`, or
+  `@rig.undo_chunk` on a function, makes a whole build one named step.
 
 ```python
 from rig import set_options, lerp, functions as f
@@ -172,7 +179,8 @@ the cross-type math verbs, so most scripts import from `rig` directly.
 ```
 rig/
 ├── __init__.py          Node, Plug, List, Container, container, set_options / get_options,
-│                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant
+│                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant,
+│                        undo_chunk
 ├── spec/                attribute specs: Float Int Bool Angle Time, Vector Color Euler Quat, Enum,
 │                        Matrix Mesh Message NurbsCurve NurbsSurface String; modifiers lock unlock
 │                        hide unhide skip destroy Note
@@ -210,7 +218,7 @@ rig/
 The names most scripts start from:
 
 ```python
-from rig import Node, Plug, List, Container, container, Components, Tag, Layer
+from rig import Node, Plug, List, Container, container, Components, Tag, Layer, undo_chunk
 from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
 from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
 from rig import functions, trigonometry, matrix, vector, quaternion, euler, interpolate, tween

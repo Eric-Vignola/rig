@@ -57,6 +57,7 @@ for the node classes and their typed methods.
 | 35 | [Layer](#35-layer) | exclusive display layers, `Layer.of`, kwargs and `update=`, `defaultLayer` as no layer |
 | 36 | [Materials](#36-materials) | `Blinn` / `Lambert` / `Phong` / ... / `Default`, kwargs, `unique=`, per-face carving, green faces, `shade.repair` / `tidy` |
 | 37 | [Shader conversion](#37-shader-conversion) | `Phong(mat)`, `.astype`, `shade.convert` and the `Conversion` report, parked attributes, `strict=` / `park=`, undo |
+| 38 | [Undo](#38-undo) | what one undo step is, `rig.undo_chunk` as a context manager and a decorator, rig's plug-in command |
 
 ---
 
@@ -2653,6 +2654,63 @@ cmds.undo()
 print(cmds.nodeType("lossy"), type(lossy).__name__)         # blinn Phong   the spec still says phong
 Blinn(lossy)                                                # same type as the scene: a free re-sync
 print(repr(lossy.node))                                     # DGNode("lossy")
+```
+
+---
+
+## 38. Undo
+
+Everything rig does to the scene is undoable, with `cmds.undo()` or the
+Edit menu. How many steps a statement makes depends on what it runs:
+
+| What | Undo steps |
+|---|---|
+| a DSL statement (`<<`, an operator network, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | one per Maya command it runs, so an operator network is several |
+| a membership edit (`<< Tag("x")`, `<< Layer("x")`, `<< Blinn("x")`), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.shade.convert` |
+| `Mesh.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
+| an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |
+
+`rig.undo_chunk` makes any run of statements one named step:
+`with rig.undo_chunk("build arm"):`, `@rig.undo_chunk` on a function or a
+method (the step is named after its `__qualname__`), or
+`@rig.undo_chunk("build arm")`. Chunks nest, rig's own included: the
+outermost one is the step. A chunk closes when its block raises too, and
+what the block did stays one step for one `cmds.undo()`. The decorator
+opens a new chunk on every call; it refuses a class, a generator or a
+coroutine function (their body runs after the call, outside the chunk)
+and an empty name.
+
+```python
+import rig
+from rig import Tag
+from rig.bridges import commands as rc
+from rig.spec import Float
+
+cmds.file(new=True, force=True)
+cmds.undoInfo(state=True, infinity=True)
+
+with rig.undo_chunk("build arm"):
+    arm  = Node.create("transform", name="arm")
+    hand = Node.create("transform", name="hand")
+    hand.ty << arm.tx * 2 + 1
+print(cmds.undoInfo(query=True, undoName=True))  # build arm
+cmds.undo()                                      # the nodes and the network, in one step
+print(cmds.ls("arm", "hand"))                    # []
+cmds.redo()
+print(cmds.ls("arm", "hand"))                    # ['arm', 'hand']
+
+@rig.undo_chunk
+def build_leg(side):
+    leg = Node.create("transform", name=f"{side}_leg")
+    leg << Float("stretch", min=0) << 1
+    return leg
+
+build_leg("L")
+print(cmds.undoInfo(query=True, undoName=True))  # build_leg
+
+box = rc.polyCube(name="box", constructionHistory=False)[0]
+box.f[:2] << Tag("lid")
+print(cmds.undoInfo(query=True, undoName=True))  # rig.tag
 ```
 
 ---
