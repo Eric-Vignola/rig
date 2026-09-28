@@ -150,6 +150,8 @@ def _enum_kwargs(node_type: str, kwargs: dict) -> dict:
             attribute = node_class.attribute(attr_name)
         except (RuntimeError, TypeError, ValueError):
             continue
+        if attribute.isNull():  # no such static attribute: MNodeClass does not raise
+            continue
         where = f"{node_type}.{attr_name}"
         if _is_text(value) and attribute.hasFn(_om.MFn.kEnumAttribute):
             resolved[attr_name] = _enum_value(attribute, value, where)
