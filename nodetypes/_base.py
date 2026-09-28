@@ -468,7 +468,7 @@ def _fn_set_name(node: Any) -> str:
 # The API 1.0 handle of a node (`_objhandle1`, an `OpenMaya1.MObjectHandle`) is
 # the one object that is safe to read once a new scene, a file open or a
 # reference unload freed the node: its API 2.0 objects then point at freed
-# memory. The cold readers ask these two helpers; the hot paths read the handle
+# memory. The cold readers ask `_handle_valid`; the hot paths read the handle
 # inline, and every such site (and every `_fn_set1` reader) is marked
 # "NW6: API 1.0 handle" and listed in
 # `test_node_model.TestApi1HandleReaders`, so that moving the handles off API
@@ -480,14 +480,6 @@ def _handle_valid(d: dict) -> bool:
     to the undo queue. False for a half-built node (no handle yet)."""
     handle = d.get("_objhandle1")
     return handle is not None and handle.isValid()
-
-
-def _handle_alive(d: dict) -> bool:
-    """True if the node whose `__dict__` is `d` is alive: not freed by a new
-    scene, a file open or a reference unload (a node deleted to the undo queue
-    is alive). False for a half-built node (no handle yet)."""
-    handle = d.get("_objhandle1")
-    return handle is not None and handle.isAlive()
 
 
 def _ensure_owner_alive(attr: Any) -> None:

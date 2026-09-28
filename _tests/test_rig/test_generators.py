@@ -188,16 +188,16 @@ class TestYieldFastPath(MayaTestCase):
         ):
             self._assert_same(obj, indices)
 
-    def test_yield_plug_list_returns_the_stored_element(self):
+    def test_yield_list_returns_the_stored_element(self):
         from maya import cmds
 
         from rig._internal.generators import _yield
         from rig._internal.list import List
 
-        a  = cmds.createNode("transform", name="yield_c")
-        pl = List([f"{a}.tx", f"{a}.ty"])
-        self.assertIs(_yield(pl, 0), list.__getitem__(pl, 0))
-        self.assertIs(_yield(pl, 1), list(pl)[1])
+        a     = cmds.createNode("transform", name="yield_c")
+        plugs = List([f"{a}.tx", f"{a}.ty"])
+        self.assertIs(_yield(plugs, 0), list.__getitem__(plugs, 0))
+        self.assertIs(_yield(plugs, 1), list(plugs)[1])
 
     def test_yield_custom_iter_uses_legacy_path(self):
         from rig._internal.generators import _yield
