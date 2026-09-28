@@ -37,9 +37,10 @@ spec objects, and type-shorthand all work naturally::
     nodes.transform(matrix=np.eye(4))                  # routes through _decompose
     nodes.plusMinusAverage(input1D=[1, 2, 3])          # multi-attr fan-out
 
-For occasional direct ``cmds.createNode`` use (without going through
-this module), ``Node.create()`` and the explicit converter
-:meth:`Node.wrap` remain available.
+For occasional direct node creation (without going through this module),
+``Node.create()`` (a registered type's typed create, else the scope's
+``createNode``) and the explicit converter :meth:`Node.wrap` remain
+available.
 """
 
 from __future__ import annotations

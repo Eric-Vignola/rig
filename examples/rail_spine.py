@@ -106,7 +106,7 @@ def create_rail(
             visible cubes at each rider position.
 
     Returns:
-        The :class:`Node` wrapping the rail transform.
+        The rail transform node.
     """
 
     def _order_controls(controls, position_controls):

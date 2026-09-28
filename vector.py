@@ -312,7 +312,8 @@ def dist(vector1: Any, vector2: Any) -> Any:
 @memoize
 def rotate(vector_in: Any, rotate_vec: Any, rotate_order: Any = 0) -> Any:
     """``rotate(v, euler, rotate_order=0)`` -- rotate a vector by an
-    euler triple. ``rotate_order`` is ``0..5`` (XYZ, YZX, ...).
+    euler triple. ``rotate_order`` is ``0..5`` or its name (``"xyz"``,
+    ``"yzx"``, ``"zxy"``, ``"xzy"``, ``"yxz"``, ``"zyx"``), or a plug.
 
     Maya 2024+ uses the native ``rotateVector`` node. Pre-2024 falls
     back to ``composeMatrix`` (build a rotation matrix from the euler)
