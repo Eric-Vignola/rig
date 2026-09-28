@@ -21,15 +21,15 @@ for the node classes and their typed methods.
 |---|---|---|
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
 | 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, `Node.wrap`, `lift`, a deleted or freed node |
-| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, `plug.node`, instance paths |
-| 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, `[:]` slicing, multi attrs, blendShape targets |
+| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.node`, instance paths |
+| 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, `plug >> container` |
 | 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes |
 | 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
 | 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, no truth value for an ordering, per-channel fan-out, `condition(...)`, `constant(...)` |
-| 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `.indices` / `.count` / `.names`, `>> None` |
+| 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `.indices` / `.count` / `.names`, `>> None`, a lattice `pt[s]` refused |
 | 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container` |
 | 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection |
 | 13 | [`memoize`, `vectorize`, `prune_memoize_caches`](#13-memoize-vectorize-prune_memoize_caches) | the two decorators and the cache sweep |
@@ -46,7 +46,7 @@ for the node classes and their typed methods.
 | 24 | [`matrix` — blend](#24-matrix--blend) | `lerp` vs `blend` vs `slerp` vs `pow` |
 | 25 | [`vector`](#25-vector) | `X` `Y` `Z`, `dot` / `cross` / `triple_product`, `length` / `normalize` / `dist`, `angle`, `rotate`, `lerp` / `slerp` / `elerp` |
 | 26 | [`quaternion`](#26-quaternion) | Hamilton arithmetic, `angle`, conversions, `slerp` / `pow`, axis-angle both ways |
-| 27 | [`euler`](#27-euler) | `reorder`, `to_matrix` / `to_quaternion`, `slerp`, rotate-order names and numbers |
+| 27 | [`euler`](#27-euler) | `reorder`, `to_matrix` / `to_quaternion`, `slerp`, rotate-order names and numbers, on functions and on plugs |
 | 28 | [`interpolate`](#28-interpolate) | `sequence` and its `method=`, `smoothstep` / `smootherstep`, `inverse_lerp` |
 | 29 | [`tween`](#29-tween) | the 42 easing curves by family, extrapolation |
 | 30 | [`random`](#30-random) | `value` / `uniform` / `randint` and the `3D` variants, `seed`, `trigger` |
@@ -238,6 +238,23 @@ a._note = "by hand"                                # a '_' name is Python state
 print(a._note, cmds.attributeQuery("_note", node="a", exists=True))   # by hand False
 ```
 
+An enum plug takes a field name as well as its int, through `<<`, `=`,
+`Attribute.set`, a `List` and the `rn` factories: the exact name first,
+then the one field that matches with case, spaces, `_` and a `-` between
+letters ignored (`"YXZ"`, `"greater_than"` for `"Greater Than"`). Any other
+string is a `TypeError` that lists the fields, raised before anything is set.
+
+```python
+a.ro << "zxy"
+a.ro = "YXZ"                                       # no exact field: case is ignored
+print(a.ro >> None)                                # 4
+try:
+    a.ro << "abc"
+except TypeError as err:
+    print(str(err).split(";")[0])                  # a.rotateOrder: 'abc' is not one of its enum fields
+a.ro << 0
+```
+
 `>> None` is numpy-aware: scalars stay Python numbers, compounds come back
 as arrays, matrices as `(4, 4)`, strings as `str`. `plug.get()` is the same
 read as a method.
@@ -337,13 +354,18 @@ print(dst.t >> None)                         # [1. 2. 3.]
 ```
 
 Shape mismatches are refused, numpy style: the source must match the
-channel count or be a single value.
+channel count or be a single value. A string in a numeric slot is refused
+before the first channel is set, so the compound keeps all its values.
 
 ```python
 try:
     dst.t << [1, 2]
 except ValueError as err:
     print(str(err)[:56])                     # Cannot inject sequence of size 2 into 3-channel compound
+try:
+    dst.t << [5, "abc", 7]
+except RuntimeError as err:                  # an InjectionError
+    print(type(err).__name__, dst.t >> None) # InjectionError [1. 2. 3.]  -- nothing set
 ```
 
 The right side has an order: a `set`, `frozenset` or `dict` is a
@@ -844,12 +866,23 @@ cmds.select(cube.f[[0, 1, 2, 5]].names)                                  # names
 print(cmds.ls(selection=True))                                           # ['pCube1.f[0:2]', 'pCube1.f[5]']
 ```
 
-A NURBS surface `cv` and a lattice `pt` index per axis, numpy style.
+A NURBS surface `cv` and a lattice `pt` index per axis, numpy style. A
+lattice int key that leaves two or three axes open (`lat.pt[0]`) is an
+`IndexError` that names the spellings: `pt[0, :, :]` for the slab,
+`pt[s, t, u]` for one point (a chained `pt[0][1]` would pick from the
+flattened slab).
 
 ```python
 surface = Node(cmds.nurbsPlane(name="plane1")[0])
 print(repr(surface.cv[1, 2]), len(surface.cv[:, 0]), len(surface.cv[:]))  # ComponentPlug("plane1Shape.cv[1][2]") 4 16
 print(Components(surface, "cv")[:2].names)                                # ['|plane1|plane1Shape.cv[0][0:1]']
+
+lat = Node(cmds.lattice("pCube1", divisions=(3, 4, 5), name="ffd")[1])
+print(repr(lat.pt[0, 1, 2]), len(lat.pt[0, 1]), len(lat.pt[0, :, :]))    # ComponentPlug("ffdLatticeShape.pt[0][1][2]") 5 20
+try:
+    lat.pt[0]
+except IndexError as err:
+    print(str(err).split(",")[0])                                          # ffdLatticeShape.pt[0] leaves 2 of 3 axes unspecified
 ```
 
 Real attributes always win over the fallback: `curveShape.f` is `form`.
@@ -1835,11 +1868,12 @@ print(axis_plug >> None, angle_plug >> None)  # [0. 0. 1.] 90.0
 Rotate orders are Maya's: `xyz=0 yzx=1 zxy=2 xzy=3 yxz=4 zyx=5`. Every
 `rotate_order` argument (and `reorder`'s two) takes the name, the number or
 a plug (`tilt.ro`); a name and its number are the same call, and any other
-string (`"XYZ"`) is a `TypeError` before anything is built. The names are
-the functions': a rotate-order *plug* takes the number (`tilt.ro << 2`),
-and `tilt.ro << "zxy"` is Maya's `InjectionError`. `reorder` needs **both**
-orders, positionally; it goes through quaternion space, so what comes back
-is a `quatToEuler`.
+string (`"XYZ"`) is a `TypeError` before anything is built. A rotate-order
+*plug* is an enum and takes its field names as any enum does (section 2):
+`tilt.ro << "zxy"` sets 2, and there the match is loose, so
+`tilt.ro << "XYZ"` sets 0 where `rotate_order="XYZ"` is refused. `reorder`
+needs **both** orders, positionally; it goes through quaternion space, so
+what comes back is a `quatToEuler`.
 
 ```python
 tilt = Node.create("transform", name="tilt")
@@ -1851,6 +1885,10 @@ try:
     e.reorder(tilt.r, "XYZ", "zyx")
 except TypeError as err:
     print(str(err).split(";")[0])  # rig.euler.reorder() argument 'rotate_order0': 'XYZ' is not a rotate order
+tilt.ro << "zxy"
+print(tilt.ro >> None)             # 2
+tilt.ro << "XYZ"                   # a plug's match ignores case
+print(tilt.ro >> None)             # 0
 
 print(kind(e.to_matrix(tilt.r, rotate_order=tilt.ro)), m.rotation(e.to_matrix(tilt.r)) >> None)  # composeMatrix [30. 45. 60.]
 print(kind(e.to_quaternion(spin.r)), (e.to_quaternion(spin.r) >> None).round(4))                 # eulerToQuat [0.     0.     0.7071 0.7071]

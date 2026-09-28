@@ -320,8 +320,11 @@ print(repr(parked), ctrl.__parked__ >> None)   # Plug("ctrl.__parked__") 3.5
   (`double4`), `Euler` is `X Y Z` with each child a `doubleAngle`.
 - **Angles are degrees** on the node, as everywhere in Maya's UI units:
   `ctrl.twist << 90` then `ctrl.twist >> None` is `90.0`.
-- **Enums are set by index.** `en=` takes a list or a colon string;
-  the value is the position, and a string is an `InjectionError`.
+- **Enums are set by index or by field name.** `en=` takes a list or a
+  colon string; a value (`<< 2`, `dv=`) is the position or its name
+  (`<< "auto"`): the exact name first, then the one field that matches
+  with case, spaces, `_` and a `-` between letters ignored. Any other
+  string is a `TypeError` that lists the fields, before anything is set.
   `plug.enums` lists the names.
 - **Modifiers return the plug they edited**, so they can sit anywhere in
   a chain and inside a per-channel list: `ctrl.s << [lock, skip, hide]`.

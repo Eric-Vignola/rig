@@ -53,7 +53,7 @@ Two operators carry the language:
 
 | Spelling | Meaning | Returns |
 |---|---|---|
-| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr`, a plug is `connectAttr`, `None` disconnects | `a`, so it chains |
+| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects | `a`, so it chains |
 | `a >> None` | **introspect**: read the value (`getAttr`); on a node, the node itself | a float, a NumPy array, a string... |
 | `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
 | `node << Float("x")` | add an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide` | the new plug, so its value goes next |

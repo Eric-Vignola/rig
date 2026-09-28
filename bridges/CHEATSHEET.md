@@ -20,7 +20,7 @@ Concepts and the file map live in [`README.md`](README.md).
 | 6 | [Only created nodes join the active container](#6-only-created-nodes-join-the-active-container) | queries and edits never capture, `container=False`, what refuses |
 | 7 | [`Node.wrap` for manual use](#7-nodewrap-for-manual-use) | converting raw `maya.cmds` results |
 | 8 | [Factories: the create kwargs](#8-factories-the-create-kwargs) | `name` / `n`, `parent` / `p`, `shared` / `s`, `skipSelect` / `ss` |
-| 9 | [Attribute kwargs go through `<<`](#9-attribute-kwargs-go-through-) | scalars, compounds, multis, plugs, matrices, specs come after |
+| 9 | [Attribute kwargs go through `<<`](#9-attribute-kwargs-go-through-) | scalars, compounds, multis, plugs, enum field names, matrices, specs come after |
 | 10 | [Keyword collisions](#10-keyword-collisions) | `and_`, `or_`, `not_` |
 | 11 | [Keyword-only signature](#11-keyword-only-signature) | `rn.blinn("x")` vs `rn.blinn(name="x")` |
 | 12 | [Factories and the container scope](#12-factories-and-the-container-scope) | `container=False`, nested-scope name prefix |
@@ -315,6 +315,13 @@ src = rn.transform(name="src", translate=[1, 2, 3], ry=45)   # a compound, and a
 print(cmds.getAttr("src.t"), cmds.getAttr("src.ry"))          # [(1.0, 2.0, 3.0)] 45.0
 dst = rn.transform(name="dst", tx=src.tx)                     # a Plug value connects
 print(cmds.listConnections("dst.tx", p=True))                 # ['src.translateX']
+
+sub = rn.plusMinusAverage(operation="subtract", input1D=[10, 3])              # an enum takes a field name
+print(sub.output1D >> None, cmds.getAttr(f"{sub}.operation", asString=True))  # 7.0 Subtract
+try:
+    rn.transform(name="bad", rotateOrder="abc")
+except TypeError:
+    print(cmds.ls("bad"))                                     # [] -- no such field: refused before the node is made
 ```
 
 A matrix value takes the matrix shorthand: a literal is decomposed and set, a
