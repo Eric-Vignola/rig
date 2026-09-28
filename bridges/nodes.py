@@ -37,6 +37,17 @@ spec objects, and type-shorthand all work naturally::
     nodes.transform(matrix=np.eye(4))                  # routes through _decompose
     nodes.plusMinusAverage(input1D=[1, 2, 3])          # multi-attr fan-out
 
+An enum attribute takes a field name as well as its int, by long or short
+name, as ``<<`` reads one (the exact name, else the one field that matches
+once case, spaces, ``_`` and ``-`` are ignored)::
+
+    nodes.transform(rotateOrder="xzy")                 # 3, as ro="xzy"
+    nodes.multiplyDivide(operation="power")            # 3 (Maya's "Power")
+    nodes.decomposeMatrix(inputRotateOrder="zxy")      # 2
+
+The names are read before the node is created, so a wrong one raises
+``TypeError`` (naming the fields) and creates nothing.
+
 For occasional direct node creation (without going through this module),
 ``Node.create()`` (a registered type's typed create, else the scope's
 ``createNode``) and the explicit converter :meth:`Node.wrap` remain
@@ -49,6 +60,7 @@ import keyword
 from typing import Any, Callable
 
 from maya import cmds as _mc
+from maya.api import OpenMaya as _om
 
 
 # Per-name wrapper cache. Built lazily by ``__getattr__``.
@@ -111,6 +123,37 @@ def _resolve_alias(name: str) -> str:
     return name
 
 
+def _enum_kwargs(node_type: str, kwargs: dict) -> dict:
+    """`kwargs` (a factory's attribute kwargs) with each plain str given to an
+    enum attribute of `node_type` replaced by the value of that field, read
+    before the node is created: a wrong name raises TypeError naming the fields
+    (see :func:`rig.nodetypes._base._enum_value`) and nothing is created.
+
+    The attribute is the type's static one, found by its long or short name
+    through ``OpenMaya.MNodeClass``. A name it cannot describe (a dynamic
+    attribute, a type it does not know) keeps its str for the ``<<`` after
+    creation, which reads an enum field name the same way.
+    """
+    from rig.nodetypes._base import _enum_value, _is_text
+
+    node_class = None
+    resolved   = dict(kwargs)
+    for attr_name, value in kwargs.items():
+        if not _is_text(value):
+            continue
+        if node_class is None:
+            node_class = _om.MNodeClass(node_type)
+        try:
+            attribute = node_class.attribute(attr_name)
+        except (RuntimeError, TypeError, ValueError):
+            continue
+        if attribute.hasFn(_om.MFn.kEnumAttribute):
+            resolved[attr_name] = _enum_value(
+                attribute, value, f"{node_type}.{attr_name}"
+            )
+    return resolved
+
+
 def _make_factory(node_type: str) -> Callable:
     """Build a factory function for ``cmds.createNode(node_type, ...)``."""
 
@@ -124,6 +167,11 @@ def _make_factory(node_type: str) -> Callable:
             if short in kwargs:
                 create_kwargs[canonical] = kwargs.pop(short)
         add_to_container = kwargs.pop("container", True)
+
+        # Enum field names (``rotateOrder="xzy"``) are read before the node
+        # exists, so a wrong one raises with the scene untouched.
+        if kwargs:
+            kwargs = _enum_kwargs(node_type, kwargs)
 
         # Create the node (auto-joins active container scope unless
         # opted out via ``container=False``).
@@ -150,7 +198,9 @@ def _make_factory(node_type: str) -> Callable:
         f"  - ``skipSelect`` / ``ss``: see ``cmds.createNode(skipSelect=...)``\n"
         f"  - ``container``: opt out of active container scope (default True)\n\n"
         f"All remaining kwargs are interpreted as initial attribute values\n"
-        f"and applied via the DSL ``<<`` operator.\n\n"
+        f"and applied via the DSL ``<<`` operator. An enum attribute takes a\n"
+        f"field name (``rotateOrder='xzy'``), read before the node is created:\n"
+        f"a wrong name raises TypeError and creates nothing.\n\n"
         f"Returns the new ``Node``."
     )
     return factory
