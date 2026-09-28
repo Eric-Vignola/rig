@@ -117,7 +117,10 @@ class UndoableAPICommand(OpenMaya.MPxCommand):
         cmd_func = getattr(cmds, COMMAND_NAME, None)
         if cmd_func is None:
             # registered again after a forced unload: Maya makes no new maya.cmds function
-            raise RuntimeError(f"maya.cmds has no {COMMAND_NAME} (after a forced unload, restart Maya)")
+            raise RuntimeError(
+                f"maya.cmds has no {COMMAND_NAME} (after a forced unload): run cmds.flushUndo() and "
+                "cmds.unloadPlugin('undoable_api_command'), then load it again (or restart Maya)"
+            )
         if hasattr(cmd_func, "__wrapped__"):
             return
 

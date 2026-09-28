@@ -520,6 +520,43 @@ class TestLoadPlugin(_CommandCase):
         self.undo_steps(1)
         self.assertEqual(cmds.getAttr("t.tx"), 0.0)
 
+    def test_the_block_error_is_the_one_raised(self):
+        # ported from 2d30eb4 (the first attempt's TestLoadPluginUnloadOnExit)
+        self.unload()
+        with self.assertRaisesRegex(ValueError, "the block"):
+            with load_plugin(PLUGIN, unload_on_exit=True):
+                raise ValueError("the block")
+        self.assertFalse(cmds.pluginInfo(PLUGIN, query=True, loaded=True))
+        self.assertFalse(hasattr(cmds, UNDOABLE_API_COMMAND))
+
+    def test_unload_on_exit_when_a_later_name_fails_to_load(self):
+        # the plug-ins loaded before the failing name stayed loaded
+        # (runs\rU2\review_crash_reload\p7_loadlist.py)
+        self.unload()
+        with self.assertRaisesRegex(RuntimeError, "noSuchPlugin"):
+            with load_plugin([PLUGIN, "noSuchPlugin"], unload_on_exit=True):
+                pass
+        self.assertFalse(cmds.pluginInfo(PLUGIN, query=True, loaded=True))
+        self.assertFalse(hasattr(cmds, UNDOABLE_API_COMMAND))
+
+    def test_a_loaded_plugin_without_its_command_raises_at_once(self):
+        # what a forced unload leaves (Maya makes no maya.cmds function on the reload): no
+        # loadPlugin (about 250 ms each time), the recovery in the message
+        wrapper = command()
+        delattr(cmds, UNDOABLE_API_COMMAND)
+        try:
+            with mock.patch.object(cmds, "loadPlugin") as load:
+                for call in (lambda: _run_undoable(SetDouble("t.tx", 1.0)), lambda: load_plugin(PLUGIN).__enter__()):
+                    with self.assertRaisesRegex(
+                        RuntimeError, r"is loaded, but maya\.cmds has no rigUndoableAPICommand: run "
+                        r"cmds\.flushUndo\(\) and cmds\.unloadPlugin\('undoable_api_command'\)"
+                    ):
+                        call()
+            load.assert_not_called()
+        finally:
+            setattr(cmds, UNDOABLE_API_COMMAND, wrapper)
+        self.assertEqual(cmds.getAttr("t.tx"), 0.0)
+
 
 class TestUndoableAPICommandCost(_CommandCase):
     """The lean route rig's edits take costs a fraction of the chunked one."""
