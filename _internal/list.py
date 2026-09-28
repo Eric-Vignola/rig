@@ -43,12 +43,13 @@ import functools
 import numbers
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
-import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _check_enum_names,
     _ensure_owner_alive,
     _enum_value,
+    _holds_text as _holds_text_deep,
     _is_enum_attr,
     _is_text,
     _plug_identity_name,
@@ -110,26 +111,26 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
 
 def _holds_text(other: Any) -> bool:
     """True if the right side of a List ``<<`` is a plain str, or a sequence
-    with one as an element (a numeric ndarray is answered by its dtype)."""
-    if isinstance(other, str):
-        return not isinstance(other, Attribute)
-    if isinstance(other, np.ndarray):
-        return other.dtype.kind == "U" or (
-            other.dtype == object and any(_is_text(o) for o in other)
-        )
-    return isinstance(other, (list, tuple)) and any(_is_text(o) for o in other)
+    holding one at any depth (a numeric ndarray is answered by its dtype)."""
+    return _holds_text_deep(other)
 
 
 def _enum_rows(rows: Iterable) -> list:
     """The broadcast rows ``(element, value)`` of a List ``<<``, each plain str
     given to an enum Plug replaced by the value of that field, read for every
     row before any row is set (see `_enum_value`): a wrong name raises
-    TypeError, naming its row, and sets nothing. Other rows are left as they
-    are."""
+    TypeError, naming its row, and sets nothing. A row whose Plug is a compound
+    or a multi (``pair << ["x", "y"]``) has every name its value holds read
+    the same way (`_check_enum_names`), and keeps its value. Other rows are
+    left as they are."""
     resolved = []
     for row, (mine, theirs) in enumerate(rows):
-        if isinstance(mine, Plug) and _is_text(theirs) and _is_enum_attr(mine):
-            theirs = _enum_value(mine.plug, theirs, f"List row {row}, {mine}")
+        if isinstance(mine, Plug) and _holds_text(theirs):
+            where = f"List row {row}, {mine}"
+            if _is_text(theirs) and _is_enum_attr(mine):
+                theirs = _enum_value(mine.plug, theirs, where)
+            else:
+                _check_enum_names(mine.mobject, theirs, where, element=not mine.plug.isArray)
         resolved.append((mine, theirs))
     return resolved
 

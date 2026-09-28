@@ -95,9 +95,11 @@ from rig.nodetypes._base import (
     _MISSING,
     _attr_handle,
     _attr_state,
+    _check_enum_names,
     _class_attr,
     _enum_value,
     _ensure_owner_alive,
+    _holds_text,
     _inherit_owner,
     _is_enum_attr,
     _new_attr,
@@ -585,9 +587,13 @@ class Plug(Attribute):
 
         An enum plug takes a field name as well as its int (``t.ro << "zxy"``,
         ``md.operation << "divide"``): the exact name first, then the one field
-        that matches once case, spaces, ``_`` and ``-`` are ignored. Any other
-        str raises TypeError naming the fields, and changes nothing; to connect
-        a plug named by a str, write ``Plug("a.b")``.
+        that matches with case and outer spaces ignored, then once case,
+        spaces, ``_`` and a ``-`` between letters are ignored (a leading ``-``
+        is a sign: ``"-x"`` is never ``"X"``). Any other str, an empty one
+        included, raises TypeError naming the fields, and changes nothing,
+        also when it is one of several values for a compound, a multi or a List
+        (every name is read before the first set); to connect a plug named by a
+        str, write ``Plug("a.b")``.
 
         Returns ``self`` so chaining works:
         ``node << Float("x") << 5 << lock``.
@@ -2153,6 +2159,16 @@ def _inject_value(dst: Any, src: Any) -> None:
         leaves = None
     _assert_settable(dst, exempt=_spec_slot_channels(dst, src), leaves=leaves)
 
+    # Enum field names that reach several leaves in one set (a list into a
+    # compound or a multi, a str into every child of a compound, a str into
+    # the element a multi root appends) are all read before the first set, so
+    # a wrong one raises TypeError and changes nothing (a plain str into one
+    # enum leaf is read by _set_or_connect, before its set).
+    if _holds_text(src) and isinstance(dst, Attribute):
+        is_array = dst.plug.isArray
+        if compound_dst or is_array or not isinstance(src, str):
+            _check_enum_names(dst.mobject, src, str(dst), element=not is_array)
+
     # Resolve dst data type once.
     try:
         dst_data_type = dst.data_type
@@ -2329,6 +2345,11 @@ def _inject_value(dst: Any, src: Any) -> None:
             #     the routing above would've handled it; for stray 16-flat
             #     into a non-transform we re-check here.
             flat = arr.ravel()
+            if arr.dtype.kind in "US":
+                # numpy makes every element of ["x", 1] a str: keep each one
+                # as given, so a mixed list of enum names and ints reaches
+                # its channels as it was written
+                flat = np.asarray(src, dtype=object).ravel()
 
             if dst_data_type == "matrix":
                 if flat.size == 16:
