@@ -1022,9 +1022,10 @@ def _mesh_topology(
     mesh_data: MeshData,
 ) -> tuple[object, object, set[tuple[int, int]], dict[int, list[int]]]:
     """Checks `mesh_data` and returns what `MFnMesh.create` builds from it:
-    ``(counts, indices, internal_edges, hole_triangles)``.
+    ``(counts, indices, internal_edges, hole_triangles)``, the counts and
+    indices as lists (the API converts a list 2-3x faster than an ndarray).
 
-    Without holes: the data's own ``counts`` / ``indices``, no edges and no
+    Without holes: the data's own counts / indices, no edges and no
     triangles. With holes, every holed face is CDT-triangulated in place
     (`_triangulate_holed_face`), ``internal_edges`` holds the triangulation
     edges `_delete_internal_edges` removes again, and ``hole_triangles`` maps
@@ -1050,7 +1051,7 @@ def _mesh_topology(
 
     has_holes = mesh_data.hole_faces is not None and len(mesh_data.hole_faces) > 0
     if not has_holes:
-        return mesh_data.counts, mesh_data.indices, set(), {}
+        return counts.tolist(), indices.tolist(), set(), {}
 
     if mesh_data.hole_counts is None or mesh_data.hole_indices is None:
         raise RuntimeError("MeshData: hole_faces is set without hole_counts / hole_indices")
@@ -1157,17 +1158,22 @@ def _triangulated_uvs(
     return _UVArrays(uv_data.name, uv_data.points, np.concatenate(counts), np.concatenate(ids))
 
 
-def _write_uv_set(fn: OpenMaya.MFnMesh, uv_set: str, uv_data: UVData) -> None:
+def _write_uv_set(
+    fn: OpenMaya.MFnMesh, uv_set: str, uv_data: UVData, clear: bool = True
+) -> None:
     """Replaces the UVs of the set `uv_set` of the mesh `fn` with `uv_data`'s
     (``points`` as ``(n, 2)``, ``counts``, ``indices``; a UVData or a
     `_UVArrays`). ``clearUVs`` first, so a different UV count or an empty
-    set is written exactly; nothing more when the data holds no UVs. Pure API
-    (no cmds): safe in a journal item's undo / redo."""
-    fn.clearUVs(uv_set)
-    points = uv_data.points
-    if len(points) or len(uv_data.indices):
-        fn.setUVs(points[:, 0], points[:, 1], uv_set)
-        fn.assignUVs(uv_data.counts, uv_data.indices, uv_set)
+    set is written exactly (``clear=False`` skips it for a set known to be
+    empty, a new one: about 1 ms on 10k faces); nothing more when the data
+    holds no UVs. Pure API (no cmds): safe in a journal item's undo / redo."""
+    if clear:
+        fn.clearUVs(uv_set)
+    points  = np.asarray(uv_data.points)
+    indices = np.asarray(uv_data.indices)
+    if len(points) or len(indices):
+        fn.setUVs(points[:, 0].tolist(), points[:, 1].tolist(), uv_set)
+        fn.assignUVs(np.asarray(uv_data.counts).tolist(), indices.tolist(), uv_set)
 
 
 def _mesh_create_name(name: str | None) -> str | None:
@@ -1177,6 +1183,10 @@ def _mesh_create_name(name: str | None) -> str | None:
     if name and re.search("Shape[0-9]*$", name):
         name = "".join(name.rpartition("Shape")[::2])
     return name or None
+
+
+# the flat 4x4 identity: a MeshData.matrix that needs no xform
+_IDENTITY_16 = np.eye(4).ravel()
 
 
 def _create_mesh(
@@ -1198,7 +1208,8 @@ def _create_mesh(
        UVs;
     6. ``cmds.sets`` into ``initialShadingGroup``, ``cmds.rename`` of the
        transform (Maya renames the shape after it, as it always did) and
-       ``cmds.xform`` of the data's matrix.
+       ``cmds.xform`` of the data's matrix (skipped for the identity, which
+       the new transform already has).
 
     Any error after step 2 deletes the transform before it propagates.
     """
@@ -1215,28 +1226,34 @@ def _create_mesh(
     handle = OpenMaya.MObjectHandle(parent)
     try:
         shape = Mesh.FN_SET().create(
-            OpenMaya.MPointArray(mesh_data.points), counts, indices, parent=parent
+            OpenMaya.MPointArray(np.asarray(mesh_data.points).tolist()),
+            counts,
+            indices,
+            parent=parent,
         )
         fn = OpenMaya.MFnMesh(shape)
         for i, uv in enumerate(uv_sets):
             if i == 0:
-                # the default set
+                # the default set (new, so empty)
                 current = fn.currentUVSetName()
-                _write_uv_set(fn, current, uv)
+                _write_uv_set(fn, current, uv, clear=False)
                 if uv.name != current:
                     fn.renameUVSet(current, uv.name)
             else:
                 if uv.name in fn.getUVSetNames():
                     raise RuntimeError(f"UV set {uv.name} already exists.")
                 fn.createUVSet(uv.name)
-                _write_uv_set(fn, uv.name, uv)
+                _write_uv_set(fn, uv.name, uv, clear=False)
         if internal_edges:
             _delete_internal_edges(shape, internal_edges)
         cmds.sets(xform, forceElement="initialShadingGroup")
         if name:
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
             xform = cmds.rename(xform, name)
-        cmds.xform(xform, matrix=mesh_data.matrix.ravel())
+        matrix = mesh_data.matrix.ravel()
+        if not np.array_equal(matrix, _IDENTITY_16):
+            # a new transform is at rest already (world-space data has no matrix)
+            cmds.xform(xform, matrix=matrix)
     except BaseException:
         if handle.isValid():
             cmds.delete(OpenMaya.MFnDagNode(parent).fullPathName())
