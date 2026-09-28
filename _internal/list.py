@@ -44,7 +44,12 @@ from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import _ensure_owner_alive, _same_plug, Attribute
+from rig.nodetypes._base import (
+    _ensure_owner_alive,
+    _plug_identity_name,
+    _same_plug,
+    Attribute,
+)
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.node import Node
@@ -418,8 +423,12 @@ class List(list):
         pattern or a range, a name more than one object has, a node deleted to
         the undo queue (see ``_plug_named``). The str is resolved once per call,
         when the first plug element is reached. A node element matches a str
-        by its name, and any other element as ``list`` does. A plug element of a
-        deleted or freed node raises ``already deleted!``, as its name does.
+        that names it, as ``Node(text) == element`` would (``"|a"`` and ``"a"``
+        find ``Node("a")``; another instance path is another DAG node object),
+        and any other element as ``list`` does. A plug element of a deleted or
+        freed node raises ``already deleted!``, as its name does. The probe is
+        read once per call too (its name, its plug identity), at the first
+        element; an element that is the probe object matches at once.
 
         ``index``, ``count`` and ``remove`` match elements the same way.
         """
@@ -470,11 +479,70 @@ def _lift_or_pass(obj: Any) -> Any:
 
 def _matcher(probe: Any) -> Callable[[Any], bool]:
     """The test `List.__contains__`, `index` and `count` run on each element for
-    `probe`: `_NamedPlug` for a plain str (not an Attribute), else
+    `probe`: `_NamedPlug` for a plain str (not an Attribute), `_SamePlug` for a
+    plug, `_SameNode` for a node (each reads the probe once per call), else
     `_same_entity`."""
-    if isinstance(probe, str) and not isinstance(probe, Attribute):
+    if isinstance(probe, str):
+        if isinstance(probe, Attribute):
+            return _SamePlug(probe)
         return _NamedPlug(probe)
+    if isinstance(probe, Node):
+        return _SameNode(probe)
     return functools.partial(_same_entity, probe=probe)
+
+
+class _SamePlug:
+    """The element test of a plug probe, `_same_entity`'s rule with the probe
+    read once, at the first element: named (a deleted or freed probe raises, as
+    its name does), its node and plug identity kept. An element that is the
+    probe matches; another plug element is named (a deleted one raises) and
+    matches when it is the same Maya plug (see `_same_plug`); any other element
+    compares by name."""
+
+    __slots__ = ("probe", "name", "mnode", "identity")
+
+    def __init__(self, probe: Attribute) -> None:
+        self.probe = probe
+        self.name  = None
+
+    def __call__(self, item: Any) -> bool:
+        probe = self.probe
+        if self.name is None:
+            self.name     = probe.full_name
+            self.mnode    = probe.__dict__["_mplug"].node()
+            self.identity = _plug_identity_name(probe)
+        if item is probe:
+            return True
+        if isinstance(item, Attribute):
+            item.full_name
+            return item.__dict__["_mplug"].node() == self.mnode and (
+                _plug_identity_name(item) == self.identity
+            )
+        if isinstance(item, List):
+            return False
+        return str(item) == self.name
+
+
+class _SameNode:
+    """The element test of a node probe, `_same_entity`'s rule with the probe's
+    name read once, at the first element (a deleted or freed probe raises, as
+    its name does): an element that is the probe matches, any other compares
+    by name (a deleted element raises)."""
+
+    __slots__ = ("probe", "name")
+
+    def __init__(self, probe: Any) -> None:
+        self.probe = probe
+        self.name  = None
+
+    def __call__(self, item: Any) -> bool:
+        if self.name is None:
+            self.name = str(self.probe)
+        if item is self.probe:
+            return True
+        if isinstance(item, List):
+            return False
+        return str(item) == self.name
 
 
 def _plug_named(text: str) -> Optional[Plug]:
@@ -511,17 +579,30 @@ class _NamedPlug:
     """The element test of a plain str probe (see `List.__contains__`): a plug
     element matches when it is the Maya plug the str names (`_same_plug`),
     which is resolved once, when the first plug element is reached; a str
-    that names none matches no plug element. Any other element is compared
-    by `_same_entity` (a node by its name)."""
+    that names none matches no plug element. A node element matches when the
+    str is its name, or names it (`_node_named`, resolved once, when the first
+    node element the str is not the name of is reached). Any other element is
+    compared by `_same_entity`."""
 
-    __slots__ = ("text", "plug", "pending")
+    __slots__ = ("text", "plug", "pending", "node_name", "node_pending")
 
     def __init__(self, text: str) -> None:
-        self.text    = text
-        self.plug    = None
-        self.pending = True
+        self.text         = text
+        self.plug         = None
+        self.pending      = True
+        self.node_name    = None
+        self.node_pending = True
 
     def __call__(self, item: Any) -> bool:
+        if isinstance(item, Node):
+            # its name raises for a deleted or freed node
+            name = str(item)
+            if name == self.text:
+                return True
+            if self.node_pending:
+                self.node_pending = False
+                self.node_name    = _node_named(self.text)
+            return name == self.node_name
         if not isinstance(item, Attribute):
             return _same_entity(item, self.text)
         if self.pending:
@@ -533,6 +614,25 @@ class _NamedPlug:
             item.full_name
             return False
         return _same_plug(item, self.plug)
+
+
+def _node_named(text: str) -> Optional[str]:
+    """The name (``str(node)``) of the one node `text` names (``"|a"``,
+    ``"ns:a"``, a uuid), or None when it names none or more than one, or names
+    a plug, a component or a pattern. Builds no node."""
+    if not text or "." in text or "*" in text or "?" in text:
+        return None
+    try:
+        selection = OpenMaya.MSelectionList()
+        selection.add(text)
+        if selection.length() != 1:
+            return None
+        try:
+            return selection.getDagPath(0).partialPathName()
+        except TypeError:
+            return OpenMaya.MFnDependencyNode(selection.getDependNode(0)).name()
+    except Exception:
+        return None
 
 
 def _same_entity(item: Any, probe: Any) -> bool:
