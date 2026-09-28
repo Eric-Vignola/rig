@@ -266,6 +266,31 @@ class TestSkinClusterUndo(UndoWalk, MayaTestCase):
                 self.assert_state_equal(self.state(), before)
                 self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
 
+    def test_create_from_skin_data_of_the_wrong_size_raises_before_any_edit(self):
+        # the check ran after the delete of the current skincluster: with undo off its
+        # painted weights were lost (runs\rU2\review_undo\p_skinbad.py)
+        from cgmath.geometry import SkinData
+
+        SkinCluster.create(self.cube, SkinData(influences=[self.j1, self.j2], weights=np.tile([0.9, 0.1], (8, 1))))
+        cmds.flushUndo()
+        before = self.state()
+        cases  = {
+            "fewer rows": np.tile([0.5, 0.5], (5, 1)),
+            "more rows": np.tile([0.5, 0.5], (9, 1)),
+            "a missing column": np.ones((8, 1)),
+        }
+        for undo in (True, False):
+            for label, weights in cases.items():
+                with self.subTest(label, undo=undo):
+                    cmds.undoInfo(state=undo)
+                    try:
+                        with self.assertRaisesRegex(ValueError, r"^SkinCluster\.create: .* 8 points x 2 influences of c$"):
+                            SkinCluster.create(self.cube, SkinData(influences=[self.j1, self.j2], weights=weights))
+                    finally:
+                        cmds.undoInfo(state=True)
+                    self.assert_state_equal(self.state(), before)
+                    self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
     def test_inside_a_user_undo_chunk(self):
         import rig
 
