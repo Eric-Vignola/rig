@@ -29,7 +29,7 @@ Usage::
     cube << red                              # builds red + redSG, sets color, assigns; returns cube
     cube.f[:3] << Lambert("decal")           # faces 0-2 leave redSG for decalSG; returns cube.f[:3]
     red.color << (0, 1, 0)                   # Plug("red.color"): the spec is the handle (find-only)
-    red.node ; red.engine                    # Node("red") ; Node("redSG")   ValueError until built
+    red.node ; red.engine                    # DGNode("red") ; ShadingEngine("redSG")   ValueError until built
     cube >> Blinn("red")                     # array([3, 4, 5])   faces wearing red (all: object-level)
     Material.of(cube)                        # [Blinn('red'), Lambert('decal')]   by live nodeType
 

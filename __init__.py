@@ -64,9 +64,12 @@ Operator conventions:
       raises ``TypeError`` before anything is built: write ``Plug("a.tx")``.
     * ``& | ^`` -- logical AND/OR/XOR networks.
     * ``== != < <= > >=`` -- build ``condition`` nodes (returns the output
-      Plug, NOT a bool). ``__hash__`` is overridden to key the Maya plug
-      (its node, attribute and logical indices, kept across a rename) so
-      dict / set membership still works.
+      Plug, NOT a bool), except that ``==`` / ``!=`` of two objects of one
+      Maya plug fold to ``True`` / ``False`` with no node (unless
+      ``force_nodes()``). An ordering result (``<`` ...) has no truth value:
+      ``if plug > 0:`` and ``sorted(plugs)`` raise TypeError. ``__hash__`` is
+      overridden to key the Maya plug (its node, attribute and logical
+      indices, kept across a rename) so dict / set membership still works.
 
 Examples::
 
