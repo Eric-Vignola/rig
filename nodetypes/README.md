@@ -367,9 +367,8 @@ not undoable by themselves. The bundled `undoable_api_command` plug-in
 registers `cmds.rigUndoableAPICommand(obj)` (a name of rig's own): give it
 any object with `doIt` / `undoIt` / `redoIt` and it runs in one undo chunk.
 `Mesh.create` needs no command: the shape rides a recorded `createNode`
-transform. `load_plugin`
-finds the plug-in on `MAYA_PLUG_IN_PATH` first and in `rig/nodetypes/plugins`
-second, so nothing needs configuring.
+transform. `load_plugin` loads the plug-in by full path from
+`rig/nodetypes/plugins`, once per session, so nothing needs configuring.
 
 ---
 
