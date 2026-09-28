@@ -1624,7 +1624,10 @@ def _check_enum_names(
     * a compound: a str goes to every child, a sequence one value per child
       (extra values are dropped, as the fan-out drops them);
     * an enum leaf: a str, or the one str of a one-element sequence, is read
-      with `_enum_value`.
+      with `_enum_value`;
+    * a numeric leaf: such a str raises the InjectionError its set would raise,
+      but before the leaves ahead of it are set (``t.t << [5, "abc", 7]`` sets
+      nothing).
 
     It only checks: the set itself reads each name again."""
     fn = OpenMaya.MFnAttribute(attr)
@@ -1645,14 +1648,21 @@ def _check_enum_names(
         for child, item in pairs:
             _check_enum_names(child, item, f"{where}.{OpenMaya.MFnAttribute(child).name}")
         return
-    if not attr.hasFn(OpenMaya.MFn.kEnumAttribute):
-        return
     if _is_value_sequence(value) and len(value) == 1:
         value = value[0]
     if isinstance(value, np.str_):
         value = str(value)
-    if _is_text(value):
+    if not _is_text(value):
+        return
+    if attr.hasFn(OpenMaya.MFn.kEnumAttribute):
         _enum_value(attr, value, where)
+    elif attr.hasFn(OpenMaya.MFn.kNumericAttribute) or attr.hasFn(OpenMaya.MFn.kUnitAttribute):
+        from rig._internal.plug import InjectionError  # plug imports this module
+
+        raise InjectionError(
+            f"Cannot set {where!r}: a numeric attribute does not accept data of type "
+            f"'string' ({value!r}); nothing was set"
+        )
 
 
 @total_ordering

@@ -28,6 +28,7 @@ first set; an ``Enum`` spec's ``dv`` takes a field name; a ``Layer`` /
 material spec's enum kwargs are read before its node is made.
 """
 
+import re
 from unittest import mock
 
 import numpy as np
@@ -630,6 +631,43 @@ class TestEnumNamesReview(MayaTestCase):
         self.assertEqual((cmds.getAttr("ru_t.ma"), cmds.getAttr("ru_t.mb")), (0, 0))
         self.t.mix << "q"
         self.assertEqual((cmds.getAttr("ru_t.ma"), cmds.getAttr("ru_t.mb")), (1, 0))
+
+    def test_a_str_for_a_numeric_leaf_sets_nothing(self):
+        # the leaves ahead of it were set first (round U2 FIX review:
+        # runs\rU2\review_semantics_completeness\p_partial.py, p_enum3.py)
+        cmds.addAttr("ru_t", longName="cpd", attributeType="compound", numberOfChildren=2)
+        cmds.addAttr("ru_t", longName="ce", attributeType="enum", enumName="p:q", parent="cpd")
+        cmds.addAttr("ru_t", longName="cf", attributeType="double", parent="cpd")
+        cmds.setAttr("ru_t.ce", 1)
+
+        def values():
+            return (cmds.getAttr("ru_t.t")[0], cmds.getAttr("ru_t.r")[0], cmds.getAttr("ru_t.ce"),
+                    cmds.getAttr("ru_t.cf"), self.ro())
+
+        before = values()
+        forms = {
+            "t << [5, 'abc', 7]": (lambda: self.t.t << [5, "abc", 7], "ru_t.translate.translateY"),
+            "t = [5, 'abc', 7]": (lambda: setattr(self.t, "t", [5, "abc", 7]), "ru_t.translate.translateY"),
+            "r << (1, 2, 'x')": (lambda: self.t.r << (1, 2, "x"), "ru_t.rotate.rotateZ"),
+            "cpd << [0, 'abc']": (lambda: self.t.cpd << [0, "abc"], "ru_t.cpd.cf"),
+            "List([ro, tx]) << 'zxy'": (lambda: List([self.t.ro, self.t.tx]) << "zxy", "List row 1, ru_t.translateX"),
+        }
+        for form, (call, where) in forms.items():
+            with self.subTest(form=form):
+                with self.assertRaisesRegex(
+                    InjectionError, rf"^Cannot set '{re.escape(where)}': a numeric attribute does not accept "
+                    r"data of type 'string' \('\w+'\); nothing was set$"
+                ):
+                    call()
+                self.assertEqual(values(), before)
+        # a str for a string leaf, an enum name and a number together still set
+        cmds.addAttr("ru_t", longName="scp", attributeType="compound", numberOfChildren=2)
+        cmds.addAttr("ru_t", longName="sn", dataType="string", parent="scp")
+        cmds.addAttr("ru_t", longName="sd", attributeType="double", parent="scp")
+        self.t.scp << ["hello", 2.0]
+        self.t.cpd << ["p", 3]
+        self.assertEqual((cmds.getAttr("ru_t.sn"), cmds.getAttr("ru_t.sd")), ("hello", 2.0))
+        self.assertEqual((cmds.getAttr("ru_t.ce"), cmds.getAttr("ru_t.cf")), (0, 3.0))
 
     def test_a_list_into_a_multi_root_creates_nothing_on_a_wrong_name(self):
         cmds.addAttr("ru_t", longName="menu", attributeType="enum", enumName="p:q:r", multi=True)
