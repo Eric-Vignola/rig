@@ -1,27 +1,31 @@
 """rig's undoable API command: puts a Python object's API edits on Maya's undo queue.
 
 Maya records an API 2.0 edit (``MFnMesh.setPoints``, ``MFnSkinCluster.setWeights``, ...)
-only through a registered command. This plug-in registers one, ``rigUndoableAPICommand``
-(a name of rig's own: another studio plug-in registers ``runUndoableAPICommand``),
-and replaces it in ``maya.cmds`` with a wrapper that takes the object to run.
+only through a registered command. This plug-in registers ``rigUndoableAPICommand`` (a
+name of rig's own) and replaces it in ``maya.cmds`` with a wrapper that takes the object
+to run::
 
-* ``cmds.rigUndoableAPICommand(obj)`` runs the command inside an undo chunk named
-  ``rigUndoableAPICommand``: one undo step, which ``cmds`` calls made in ``obj.doIt``
-  join (Maya undoes them after ``obj.undoIt`` and redoes them before ``obj.redoIt``).
-* ``cmds.rigUndoableAPICommand.run(obj)`` is the same call without the chunk: one
-  unnamed undo step (about 3 us where the chunk costs about 14 us more), for an
-  ``obj`` whose ``doIt`` calls no ``cmds`` (without the chunk, such a call is an
-  undo step of its own).
-* ``cmds`` calls made in ``obj.undoIt`` / ``obj.redoIt`` are not recorded (recorded,
-  they would flush the redo queue).
-* The object is handed to the command for that call only: ``doIt`` takes it and clears
-  the slot, so the command keeps nothing alive once its entry leaves the queue, and a
-  bare call (``rigUndoableAPICommand`` in MEL, or the builtin without an object) raises
-  instead of running an earlier object again.
-* The command is wrapped once: loading this file again, or importing it as a module,
-  never wraps it twice, and unloading the plug-in takes the wrapper out of
-  ``maya.cmds``. A wrapper kept from before an unload hands over to the current one
-  (its own builtin is gone), or raises when the plug-in is not loaded.
+    with load_plugin("undoable_api_command"):
+        cmds.rigUndoableAPICommand(obj)   # one undo step, named rigUndoableAPICommand
+    cmds.rigUndoableAPICommand.run(obj)   # the same without the chunk: one unnamed step
+
+The object's rules (rig's own edits keep them):
+
+* ``doIt`` keeps what ``undoIt`` needs, then applies the change through the API. It
+  checks the edit before it changes anything: an exception out of ``doIt`` puts nothing
+  on the queue and leaves what it changed already as it is.
+* ``undoIt`` puts the scene back and ``redoIt`` applies the change again, through the
+  API only: a ``cmds`` call made there is not recorded, and Maya replays on its own the
+  ``cmds`` calls ``doIt`` made, so no ``cmds`` edit in ``doIt`` either (a
+  ``cmds.move`` there moves twice on redo; a node ``undoIt`` deletes after a recorded
+  ``cmds`` call touched it crashes Maya on undo).
+* The object is handed over for that one call (``doIt`` takes it): a bare
+  ``rigUndoableAPICommand`` (MEL, or the builtin without an object) raises.
+
+The command is wrapped once per load; unloading the plug-in takes the wrapper out of
+``maya.cmds``, and a wrapper kept from before an unload hands over to the current one,
+or raises when the plug-in is not loaded. After a forced unload, run ``cmds.flushUndo()``
+and ``cmds.unloadPlugin("undoable_api_command")`` before loading it again.
 """
 
 import functools
