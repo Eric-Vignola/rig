@@ -69,7 +69,7 @@ rig/nodetypes/
 ├── follicle.py        Follicle               follicle
 └── plugins/
     ├── __init__.py    load_plugin() context manager, bundled_plugin_path()
-    └── undoable_api_command.py   the runUndoableAPICommand plug-in (undo for API edits)
+    └── undoable_api_command.py   the rigUndoableAPICommand plug-in (undo for API edits)
 ```
 
 The public surface:
@@ -231,7 +231,7 @@ that is where the constructor signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss` only; any other `createNode` flag (`shared=`) is not passed |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`, every flag passed: in the parent's space, at identity |
-| `Mesh.create(mesh_data, uv_data=, name=)` | `MFnMesh.create` inside an undoable command |
+| `Mesh.create(mesh_data, uv_data=, name=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step |
 | `SkinCluster.create(geo, influences_or_SkinData, **skinCluster_kwargs)` | `cmds.skinCluster(toSelectedBones=True)`, existing skin deleted first |
 | `BlendShape.create(*geometries_or_morphs, **blendShape_kwargs)` | `cmds.blendShape(frontOfChain=True)` |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
@@ -364,8 +364,10 @@ on the way back and creates parents first.
 
 `MFnMesh.setPoints`, `MFnSkinCluster.setWeights` and `MFnMesh.create` are
 not undoable by themselves. The bundled `undoable_api_command` plug-in
-registers `cmds.runUndoableAPICommand(obj)`: give it any object with
-`doIt` / `undoIt` / `redoIt` and it runs in one undo chunk. `load_plugin`
+registers `cmds.rigUndoableAPICommand(obj)` (a name of rig's own): give it
+any object with `doIt` / `undoIt` / `redoIt` and it runs in one undo chunk.
+`Mesh.create` needs no command: the shape rides a recorded `createNode`
+transform. `load_plugin`
 finds the plug-in on `MAYA_PLUG_IN_PATH` first and in `rig/nodetypes/plugins`
 second, so nothing needs configuring.
 

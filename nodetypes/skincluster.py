@@ -515,7 +515,7 @@ class SetSkinWeightsCommand:
         self._args        = [geom_path, comps, inf_ids]
 
         with load_plugin("undoable_api_command"):
-            cmds.runUndoableAPICommand(self)
+            cmds.rigUndoableAPICommand(self)
 
     def doIt(self) -> None:
         """Sets the requested weights and store the old weights for undo()."""
