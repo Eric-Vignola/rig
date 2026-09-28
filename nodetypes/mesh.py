@@ -1410,6 +1410,13 @@ def _propagate_holes_to_uvs(mesh_data: MeshData, uv_list: UVList) -> None:
 #   polyUVSet / polyColorSet: Maya undoes those by swapping the mesh's set data,
 #   which, beside rig's API data edits and a later vertex edit, brings back a
 #   broken set (an API write into it crashes Maya) or wrong data on redo.
+# * The user's own polyUVSet / polyColorSet can still leave such a set (Maya does
+#   it without rig): every set edit first puts the mesh's sets into its cached
+#   input (`_sync_sets`).
+# * A set keeps its element of the mesh's uvSet[] / colorSet[] array, and the
+#   element its connections (a uvLink): an undone set creation frees the element it
+#   made, a delete's undo makes the sets again in their elements and reconnects
+#   them (`_free_elements`, `_relink`). Maya's own set commands undo by element.
 # * A mesh with history (its inMesh connected: construction history or a deformer)
 #   gets a node for each API set or colour edit: the edit passes an MDGModifier,
 #   and its undo / redo are the modifier's.
@@ -1432,19 +1439,101 @@ def _modified(modifier: OpenMaya.MDGModifier | None) -> dict:
     return {} if modifier is None else {"modifier": modifier}
 
 
+def _sync_sets(fn: OpenMaya.MFnMesh) -> bool:
+    """Puts the UV and colour sets of the history-free mesh `fn` into its cached
+    input mesh when the two differ; True when it did (`fn` is then stale).
+
+    A history-free mesh keeps a copy of its input (``cachedInMesh``) from its
+    first vertex tweak on, and API set edits go through that copy. The undo /
+    redo of Maya's polyUVSet / polyColorSet swaps the mesh's sets but not the
+    copy's: after a native set edit, a vertex edit and the undo of both, the
+    mesh has a set its copy has not, and any API write into that set crashes
+    Maya (Maya's own polyUVSet -delete fails there). The copy takes the mesh's
+    data with its own points (the tweaks stay added to them)."""
+    if fn.findPlug("inMesh", False).isDestination:
+        return False
+    plug = fn.findPlug("cachedInMesh", False)
+    try:
+        cached = OpenMaya.MFnMesh(plug.asMObject())
+    except RuntimeError:  # no copy (never tweaked)
+        return False
+    if (
+        cached.getUVSetNames() == fn.getUVSetNames()
+        and cached.getColorSetNames() == fn.getColorSetNames()
+    ):
+        return False
+    if cached.numVertices != fn.numVertices:
+        raise RuntimeError(
+            f"{fn.fullPathName()}: Maya left the mesh out of step with its cached input "
+            "(the undo of a native mesh edit after a vertex edit); flush the undo queue "
+            "(cmds.flushUndo()) before editing its sets"
+        )
+    data = OpenMaya.MFnMeshData().create()
+    OpenMaya.MFnMesh().copy(fn.findPlug("outMesh", False).asMObject(), data)
+    OpenMaya.MFnMesh(data).setPoints(cached.getPoints())
+    plug.setMObject(data)
+    return True
+
+
+def _set_element(fn: OpenMaya.MFnMesh, array: str, name: str) -> OpenMaya.MPlug | None:
+    """The element of the mesh's ``uvSet`` / ``colorSet`` `array` that holds the
+    set `name` (its first child is the set's name), or None."""
+    plug = fn.findPlug(array, False)
+    for i in range(plug.numElements()):
+        element = plug.elementByPhysicalIndex(i)
+        if element.child(0).asString() == name:
+            return element
+    return None
+
+
+def _links(fn: OpenMaya.MFnMesh, array: str, name: str) -> tuple:
+    """What `_relink` makes again for the set `name`: ``(element index,
+    [(child, [destination plugs])])``."""
+    element  = _set_element(fn, array, name)
+    children = [(c, list(element.child(c).destinations())) for c in range(element.numChildren())]
+    return element.logicalIndex(), children
+
+
+def _free_elements(fn: OpenMaya.MFnMesh, array: str, indices) -> None:
+    """Removes the EMPTY elements `indices` of `array` (an API delete empties
+    the set's element and keeps it), so that the API's next sets take them
+    back (it takes the first free element)."""
+    plug     = fn.findPlug(array, False)
+    modifier = OpenMaya.MDGModifier()
+    for index in indices:
+        element = plug.elementByLogicalIndex(index)
+        if not element.child(0).asString():
+            modifier.removeMultiInstance(element, True)
+    modifier.doIt()
+
+
+def _relink(fn: OpenMaya.MFnMesh, array: str, name: str, links: tuple) -> None:
+    """Connects the element of the set `name` to the destinations `links` holds
+    (`_links`) that nothing drives now."""
+    element  = _set_element(fn, array, name)
+    modifier = OpenMaya.MDGModifier()
+    for child, destinations in links[1]:
+        for destination in destinations:
+            if not destination.isDestination:
+                modifier.connect(element.child(child), destination)
+    modifier.doIt()
+
+
 class _MeshEdit:
     """[Internal] An undoable edit of one mesh: a copy of its MDagPath, and
-    `fn`, a new MFnMesh of it on every call."""
+    `fn`, a new MFnMesh of it on every call, its sets synced (`_sync_sets`)."""
 
     def __init__(self, mesh: Mesh) -> None:
         self._path = OpenMaya.MDagPath(mesh.mdagpath)
 
     def fn(self) -> OpenMaya.MFnMesh:
-        return OpenMaya.MFnMesh(self._path)
+        fn = OpenMaya.MFnMesh(self._path)
+        return OpenMaya.MFnMesh(self._path) if _sync_sets(fn) else fn
 
 
 class _MeshSetPointsCommand(_MeshEdit):
-    """`Mesh.set_points`: every point of the mesh, in one space."""
+    """`Mesh.set_points`: every point of the mesh, in one space. It edits no
+    set, so it skips `_sync_sets` (setPoints keeps the sets either way)."""
 
     def __init__(self, mesh: Mesh, points: OpenMaya.MPointArray, space: int) -> None:
         super().__init__(mesh)
@@ -1454,15 +1543,15 @@ class _MeshSetPointsCommand(_MeshEdit):
         _run_undoable(self)
 
     def doIt(self) -> None:
-        fn        = self.fn()
+        fn        = OpenMaya.MFnMesh(self._path)
         self._old = fn.getPoints(self._space)
         _put_points(fn, self._points, self._space)
 
     def undoIt(self) -> None:
-        _put_points(self.fn(), self._old, self._space)
+        _put_points(OpenMaya.MFnMesh(self._path), self._old, self._space)
 
     def redoIt(self) -> None:
-        _put_points(self.fn(), self._points, self._space)
+        _put_points(OpenMaya.MFnMesh(self._path), self._points, self._space)
 
 
 class _MeshSetsEdit(_MeshEdit):
@@ -1551,7 +1640,8 @@ def _put_uvs(fn: OpenMaya.MFnMesh, uv_set: str, uvs: tuple, history: bool) -> No
 
 
 class _MeshAddUVSetCommand(_MeshSetsEdit):
-    """`Mesh.add_uv_set`: an empty UV set."""
+    """`Mesh.add_uv_set`: an empty UV set. Undo frees its element, so a redo
+    makes it in the same one."""
 
     def __init__(self, mesh: Mesh, name: str) -> None:
         self._name = name
@@ -1561,7 +1651,9 @@ class _MeshAddUVSetCommand(_MeshSetsEdit):
         fn.createUVSet(self._name, **_modified(modifier))
 
     def _revert(self, fn):
+        index = _set_element(fn, "uvSet", self._name).logicalIndex()
         fn.deleteUVSet(self._name)
+        _free_elements(fn, "uvSet", [index])
 
 
 class _MeshRenameUVSetCommand(_MeshEdit):
@@ -1588,13 +1680,15 @@ class _MeshRenameUVSetCommand(_MeshEdit):
 class _MeshDeleteUVSetCommand(_MeshSetsEdit):
     """`Mesh.delete_uv_set`. Undo makes the set again with its UVs, in its
     place (the API adds a set last, so the sets after it are made again after
-    it), and the current set is current again. With history the modifier's
-    undo brings the set back from the history, without the UVs written into it
-    through the API: they are written again."""
+    it), each in its uvSet[] element with its connections, and the current set
+    is current again. With history the modifier's undo brings the set back from
+    the history, without the UVs written into it through the API: they are
+    written again."""
 
     def __init__(self, mesh: Mesh, name: str) -> None:
         self._name    = name
         self._uvs     = None
+        self._links   = None
         self._later   = ()
         self._current = ""
         super().__init__(mesh)
@@ -1602,6 +1696,7 @@ class _MeshDeleteUVSetCommand(_MeshSetsEdit):
     def _capture(self, fn):
         names         = list(fn.getUVSetNames())
         self._uvs     = _uvs_of(fn, self._name)
+        self._links   = _links(fn, "uvSet", self._name)
         self._later   = names[names.index(self._name) + 1 :]
         self._current = fn.currentUVSetName()
 
@@ -1614,12 +1709,15 @@ class _MeshDeleteUVSetCommand(_MeshSetsEdit):
             _put_uvs(self.fn(), self._name, self._uvs, True)
 
     def _revert(self, fn):
-        later = [(name, _uvs_of(fn, name)) for name in self._later]
-        for name, _ in later:
+        later = [(name, _uvs_of(fn, name), _links(fn, "uvSet", name)) for name in self._later]
+        for name, _, _ in later:
             fn.deleteUVSet(name)
-        for name, uvs in [(self._name, self._uvs), *later]:
+        sets = [(self._name, self._uvs, self._links), *later]
+        _free_elements(fn, "uvSet", [links[0] for _, _, links in sets])
+        for name, uvs, links in sets:
             fn.createUVSet(name)
             _put_uvs(fn, name, uvs, False)
+            _relink(fn, "uvSet", name, links)
         if fn.currentUVSetName() != self._current:
             fn.setCurrentUVSetName(self._current)
 
@@ -1756,7 +1854,8 @@ def _write_vertex_colors(
 
 
 class _MeshAddColorSetCommand(_MeshSetsEdit):
-    """`Mesh.add_color_set`: an empty, unclamped colour set."""
+    """`Mesh.add_color_set`: an empty, unclamped colour set. Undo frees its
+    element, so a redo makes it in the same one."""
 
     def __init__(self, mesh: Mesh, name: str, rep: int) -> None:
         self._name = name
@@ -1767,7 +1866,9 @@ class _MeshAddColorSetCommand(_MeshSetsEdit):
         fn.createColorSet(self._name, False, rep=self._rep, **_modified(modifier))
 
     def _revert(self, fn):
+        index = _set_element(fn, "colorSet", self._name).logicalIndex()
         fn.deleteColorSet(self._name)
+        _free_elements(fn, "colorSet", [index])
 
 
 class _ColorSetDataCommand(_MeshSetsEdit):
@@ -1781,10 +1882,6 @@ class _ColorSetDataCommand(_MeshSetsEdit):
         self._old     = None
         self._current = ""
         super().__init__(mesh)
-
-    def doIt(self) -> None:
-        self._current = self.fn().currentColorSetName()
-        super().doIt()
 
     def undoIt(self) -> None:
         super().undoIt()
@@ -1801,6 +1898,7 @@ class _ColorSetDataCommand(_MeshSetsEdit):
             fn.setCurrentColorSetName(self._current)
 
     def _capture(self, fn):
+        self._current = fn.currentColorSetName()
         if self._modifier is None:
             self._old = _capture_colors(fn, self._name)
 
@@ -1831,12 +1929,13 @@ def _make_color_set(fn: OpenMaya.MFnMesh, color_set: str, saved: tuple) -> None:
 class _ColorSetDeleteCommand(_MeshSetsEdit):
     """`ColorSet.delete`. Undo makes the set again with its representation,
     clamping and colours, in its place (the API adds a set last, so the sets
-    after it are made again after it), and the current set is current
-    again."""
+    after it are made again after it), each in its colorSet[] element with its
+    connections, and the current set is current again."""
 
     def __init__(self, mesh: Mesh, name: str) -> None:
         self._name    = name
         self._saved   = None
+        self._links   = None
         self._later   = ()
         self._current = ""
         super().__init__(mesh)
@@ -1845,6 +1944,7 @@ class _ColorSetDeleteCommand(_MeshSetsEdit):
         if self._modifier is None:
             names         = list(fn.getColorSetNames())
             self._saved   = _color_set_of(fn, self._name)
+            self._links   = _links(fn, "colorSet", self._name)
             self._later   = names[names.index(self._name) + 1 :]
             self._current = fn.currentColorSetName()
 
@@ -1852,11 +1952,14 @@ class _ColorSetDeleteCommand(_MeshSetsEdit):
         fn.deleteColorSet(self._name, **_modified(modifier))
 
     def _revert(self, fn):
-        later = [(name, _color_set_of(fn, name)) for name in self._later]
-        for name, _ in later:
+        later = [(name, _color_set_of(fn, name), _links(fn, "colorSet", name)) for name in self._later]
+        for name, _, _ in later:
             fn.deleteColorSet(name)
-        for name, saved in [(self._name, self._saved), *later]:
+        sets = [(self._name, self._saved, self._links), *later]
+        _free_elements(fn, "colorSet", [links[0] for _, _, links in sets])
+        for name, saved, links in sets:
             _make_color_set(fn, name, saved)
+            _relink(fn, "colorSet", name, links)
         if self._current and fn.currentColorSetName() != self._current:
             fn.setCurrentColorSetName(self._current)
 

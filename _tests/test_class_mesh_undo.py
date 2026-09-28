@@ -6,6 +6,8 @@ Every mesh edit is one undo step through rig's plug-in command
 set edits (``add_color_set``, the ``ColorSet.data`` setter, ``ColorSet.delete``). Each
 is API only, sets included (never ``polyUVSet`` / ``polyColorSet``, whose undo beside
 API data edits and a later vertex edit restores broken sets: runs\\rU2\\S3\\probe).
+The user's own polyUVSet / polyColorSet beside them: TestNativeSetEditsBesideRig and
+TestSetElementsAndLinks (round U2, FIX: runs\\rU2\\FIX).
 
 Undo tests check the scene (``rig._tests._undo``), never ``cmds.undo()``'s return
 value. The walks run on a history-free cube, one with vertex tweaks, one with
@@ -719,6 +721,194 @@ class TestColorSetUndo(_UndoCase):
                 self.undo_steps(1)  # one on the redo queue
         mesh = self.build("history")
         self.walk(mesh, [lambda: mesh.add_color_set("cs1", RGBA)], cycles=1)
+
+
+# --- the user's own set commands beside rig's set edits ---------------------------------------------
+
+
+def set_elements(mesh, array):
+    """{set name: [logical indices]} of the mesh's ``uvSet`` / ``colorSet`` elements
+    (an emptied element reads under '')."""
+    plug = mesh.fn_set.findPlug(array, False)
+    out  = {}
+    for i in range(plug.numElements()):
+        element = plug.elementByPhysicalIndex(i)
+        out.setdefault(element.child(0).asString(), []).append(element.logicalIndex())
+    return out
+
+
+def link_uv_set(mesh, uv_set):
+    """A file texture linked to the UV set `uv_set` (what the UV Linking editor makes)."""
+    texture = cmds.shadingNode("file", asTexture=True, name=f"tex_{uv_set}")
+    index   = set_elements(mesh, "uvSet")[uv_set][0]
+    cmds.uvLink(uvSet=f"{mesh.long_name}.uvSet[{index}].uvSetName", texture=texture)
+
+
+class TestNativeSetEditsBesideRig(_UndoCase):
+    """The user's polyUVSet / polyColorSet (the UV / Color Set Editors) beside rig's
+    set edits on a history-free mesh (the round-U2 FIX review's blockers,
+    runs\\rU2\\review_undo). Maya undoes its own set commands by element and by
+    swapping the mesh's sets, but not those of the mesh's cached input (made by a
+    vertex edit): rig's set edits sync that input first (an API write crashed
+    Maya), and keep each set's uvSet[] / colorSet[] element."""
+
+    def test_a_native_uv_set_delete_then_a_vertex_edit(self):
+        # crashed Maya in the undo of set_uv_data (clearUVs), after a user's move or rig's set_points
+        for vertex_edit in ("move", "set_points"):
+            with self.subTest(vertex_edit):
+                cmds.file(new=True, force=True)
+                cube = make_mesh()
+                cmds.flushUndo()
+                self.walk(cube, [
+                    lambda: cube.add_uv_set("a"),
+                    lambda: cube.set_uv_data(uv_data(cube, "map1", "a", 0.3), "a"),
+                    lambda: cmds.polyUVSet(cube.name, delete=True, uvSet="a"),
+                    (lambda: move_vertices(cube)) if vertex_edit == "move" else (lambda: cube.set_points(lifted(cube))),
+                ], msg=vertex_edit)
+
+    def test_a_native_copy_rig_delete_then_a_vertex_edit(self):
+        # crashed Maya in the undo of delete_uv_set (setUVs)
+        cube = make_mesh()
+        cmds.flushUndo()
+        self.walk(cube, [
+            lambda: cmds.polyUVSet(cube.name, copy=True, uvSet="map1", newUVSet="a"),
+            lambda: cube.delete_uv_set("a"),
+            lambda: move_vertices(cube),
+        ])
+
+    def test_a_native_colour_set_delete_then_a_vertex_edit(self):
+        # crashed Maya in the undo of ColorSet.data (clearColors). After the vertex edit the
+        # undo of Maya's own delete brings the colours back inexactly (Maya, not rig), so the
+        # walk checks the ends: where it started, where it ended, both ways, twice
+        for vertex_edit in ("move", "set_points"):
+            with self.subTest(vertex_edit):
+                cmds.file(new=True, force=True)
+                mesh = make_mesh()
+                cmds.flushUndo()
+                before = self.state(mesh)
+                mesh.add_color_set("cs", RGBA)
+                ColorSet(mesh, "cs").data = colours(mesh, [0.1, 0.5, 0.9, 1.0])
+                cmds.polyColorSet(mesh.name, delete=True, colorSet="cs")
+                if vertex_edit == "move":
+                    move_vertices(mesh)
+                else:
+                    mesh.set_points(lifted(mesh))
+                after = self.state(mesh)
+                for cycle in range(2):
+                    self.assertEqual(self.undo_all(), 4)
+                    self.read_through(mesh)
+                    self.assertEqual(self.state(mesh), before, f"{vertex_edit} undo_all {cycle}")
+                    self.assertEqual(self.redo_all(), 4)
+                    self.read_through(mesh)
+                    self.assertEqual(self.state(mesh), after, f"{vertex_edit} redo_all {cycle}")
+
+    def test_rig_edits_after_the_undo_of_native_set_edits(self):
+        # Maya alone leaves the sets 'a' and 'cs' out of the mesh's cached input: an API
+        # write into them crashed Maya, and rename_uv_set did nothing
+        cube = make_mesh()
+        cmds.polyUVSet(cube.name, copy=True, uvSet="map1", newUVSet="a")
+        cmds.polyColorSet(cube.name, create=True, colorSet="cs", representation="RGBA")
+        cmds.polyUVSet(cube.name, delete=True, uvSet="a")
+        cmds.polyColorSet(cube.name, delete=True, colorSet="cs")
+        move_vertices(cube)
+        self.undo_steps(3)
+        self.assertEqual(list(cube.uv_sets), ["map1", "a"])
+        self.assertEqual([c.name for c in cube.get_color_sets()], ["cs"])
+        self.walk(cube, [
+            lambda: cube.set_uv_data(uv_data(cube, "map1", "a", 0.5), "a"),
+            lambda: setattr(ColorSet(cube, "cs"), "data", colours(cube, [0.2, 0.4, 0.6, 1.0])),
+            lambda: cube.rename_uv_set("r", "a"),
+        ])
+        self.assertEqual(list(cube.uv_sets), ["map1", "r"])
+
+    def test_a_native_create_rig_delete(self):
+        # the redo of rig's delete deleted nothing, and the next undo made a set 'a1'
+        for kind in HISTORY_FREE:
+            with self.subTest(kind):
+                cmds.file(new=True, force=True)
+                cube = make_mesh(kind)
+                cmds.flushUndo()
+                self.walk(cube, [
+                    lambda: cmds.polyUVSet(cube.name, create=True, uvSet="a"),
+                    lambda: cube.delete_uv_set("a"),
+                ], msg=kind)
+                self.walk(cube, [
+                    lambda: cmds.polyUVSet(cube.name, copy=True, uvSet="map1", newUVSet="b"),
+                    lambda: cube.delete_uv_set("b"),
+                ], msg=f"{kind} copy")
+                self.walk(cube, [
+                    lambda: cmds.polyColorSet(cube.name, create=True, colorSet="cs", representation="RGBA"),
+                    lambda: ColorSet(cube, "cs").delete(),
+                    lambda: cube.set_points(lifted(cube)),
+                ], msg=f"{kind} colour")
+                self.assertEqual(list(cube.uv_sets), ["map1"])
+
+    def test_rig_add_then_a_native_delete(self):
+        # rig's add, undone and redone, made the set in a new element, which the redo of
+        # Maya's delete then left in place
+        cube = make_mesh()
+        cmds.flushUndo()
+        self.walk(cube, [
+            lambda: cube.add_uv_set("a"),
+            lambda: cube.set_uv_data(uv_data(cube, "map1", "a", 0.3), "a"),
+            lambda: cmds.polyUVSet(cube.name, delete=True, uvSet="a"),
+            lambda: move_vertices(cube),
+        ])
+
+
+class TestSetElementsAndLinks(_UndoCase):
+    """A set keeps its uvSet[] / colorSet[] element through rig's undo and redo, and
+    the element its connections (a uvLink to a texture). The round-U2 FIX review's
+    blocker: delete_uv_set's undo dropped the links of the set and of every later
+    set, and each cycle moved the sets to new elements."""
+
+    def build(self):
+        cube = make_mesh()
+        for name, scale in (("a", 0.2), ("b", 0.4)):
+            cube.add_uv_set(name)
+            cube.set_uv_data(uv_data(cube, "map1", name, scale), name)
+            link_uv_set(cube, name)
+        cmds.flushUndo()
+        return cube
+
+    def test_delete_keeps_the_elements_and_the_links(self):
+        for deleted in ("a", "b"):  # a set in the middle, the last set
+            with self.subTest(deleted):
+                cmds.file(new=True, force=True)
+                cube     = self.build()
+                elements = set_elements(cube, "uvSet")
+                self.assertEqual(elements, {"map1": [0], "a": [1], "b": [2]})
+                self.walk(cube, [lambda: cube.delete_uv_set(deleted)], msg=deleted)  # connections included
+                self.undo_steps(1)
+                self.assertEqual(set_elements(cube, "uvSet"), elements)
+                for name, chooser in (("a", "uvChooser1"), ("b", "uvChooser2")):
+                    self.assertEqual(
+                        cmds.listConnections(f"{cube.long_name}.uvSet[{elements[name][0]}].uvSetName", plugs=True),
+                        [f"{chooser}.uvSets[0]"],
+                    )
+
+    def test_add_undo_and_redo_keep_the_element(self):
+        cube = make_mesh()
+        cmds.flushUndo()
+        self.walk(cube, [lambda: cube.add_uv_set("a"), lambda: cube.add_color_set("cs", RGBA)])
+        self.assertEqual(set_elements(cube, "uvSet"), {"map1": [0], "a": [1]})
+        self.assertEqual(set_elements(cube, "colorSet"), {"cs": [0]})
+        self.undo_steps(2)
+        self.assertEqual(set_elements(cube, "uvSet"), {"map1": [0]})
+        self.assertEqual(set_elements(cube, "colorSet"), {})
+
+    def test_colour_delete_keeps_the_elements(self):
+        mesh = make_mesh()
+        for name in ("c0", "c1", "c2"):
+            mesh.add_color_set(name, RGBA)
+            ColorSet(mesh, name).data = colours(mesh, [0.1, 0.2, 0.3, 1.0])
+        cmds.flushUndo()
+        elements = set_elements(mesh, "colorSet")
+        self.assertEqual(elements, {"c0": [0], "c1": [1], "c2": [2]})
+        self.walk(mesh, [lambda: ColorSet(mesh, "c1").delete(), lambda: ColorSet(mesh, "c0").delete()])
+        self.undo_steps(2)
+        self.assertEqual(set_elements(mesh, "colorSet"), elements)
+        self.assertEqual([c.name for c in mesh.get_color_sets()], ["c0", "c1", "c2"])
 
 
 # --- several edits: create, chunks, errors, undo off --------------------------------------------
