@@ -33,7 +33,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 18 | [`Reference`](#18-reference) | file references and their namespaces |
 | 19 | [Name helpers](#19-name-helpers) | short / clean names, suffixes, component range strings |
 | 20 | [`cmds` results as typed nodes, and `Axis`](#20-cmds-results-as-typed-nodes-and-axis) | casting `maya.cmds` results with `Node`; the mirror axis |
-| 21 | [`plugins` — `load_plugin` and undo](#21-plugins--load_plugin-and-undo) | an undoable API command in six lines |
+| 21 | [`plugins` — `load_plugin` and undo](#21-plugins--load_plugin-and-undo) | `rigUndoableAPICommand`: your own API edit as one undo step, and its rules |
 
 ---
 
@@ -1175,38 +1175,59 @@ except RuntimeError as e:
     print(str(e)[:44])                                            # Plug-in, "noSuchPlugin", was not found on MA
 ```
 
-The bundled plug-in registers `rigUndoableAPICommand` (a name of rig's
-own): hand it any object with `doIt` / `undoIt` / `redoIt` and it runs
-inside one undo chunk. `cmds` calls made in `doIt` join that step; the ones
-made in `undoIt` / `redoIt` are not recorded. The object is handed over for
-that one call: nothing keeps it once its step leaves the queue. This is how
-`Mesh.set_points`, the UV set edits (`add_uv_set`, `rename_uv_set`,
+Maya puts an API edit (`MFnMesh.setPoints`, `MPlug.setDouble`, ...) on
+the undo queue only through a registered command. The bundled plug-in
+registers one, `rigUndoableAPICommand` (a name of rig's own), for any
+object with `doIt` / `undoIt` / `redoIt`: `cmds.rigUndoableAPICommand(obj)`
+runs `obj.doIt()` at once as one undo step, and
+`cmds.rigUndoableAPICommand.run(obj)` is the same step without the
+command's own chunk (inside a `rig.undo_chunk`, both join that chunk's
+step). The object's rules:
+
+* **Apply the change first, in `doIt`**: the call runs it. `doIt` checks
+  the edit and keeps what `undoIt` needs before it changes anything; an
+  exception out of `doIt` queues nothing.
+* **`undoIt` puts the scene back, `redoIt` applies the change again.**
+* **No `cmds` calls inside `undoIt` / `redoIt`**, and no `cmds` edit in
+  `doIt`: API only. A `cmds` call in `undoIt` / `redoIt` is not recorded,
+  and Maya replays the `cmds` edits `doIt` made on top of `redoIt` (a
+  relative move lands twice).
+* The object is handed over for that one call, and released when its step
+  leaves the queue (a flush, a new scene).
+
+rig's own API edits keep these rules and go through `.run(obj)`, one step
+each: `Mesh.set_points`, the UV set edits (`add_uv_set`, `rename_uv_set`,
 `delete_uv_set`, `set_uv_data`), the colour set edits (`add_color_set`,
-`ColorSet.data`, `ColorSet.delete`) and `SkinCluster.set_weights` get their
-undo, through `cmds.rigUndoableAPICommand.run(obj)`: the same call without
-the chunk, one unnamed step (their `doIt`, `undoIt` and `redoIt` call no
-`cmds`; a `cmds` call in `doIt` would be a step of its own).
+`ColorSet.data`, `ColorSet.delete`) and `SkinCluster.set_weights`.
+`Mesh.create` needs no command: its shape rides a recorded `createNode`
+transform.
 
 ```python
-class MoveX:
+from maya.api import OpenMaya as om
+
+class SetX:
+    """translateX set through the API, as one undo step."""
+
     def __init__(self, node, value):
-        self.node, self.value, self.old = node, value, None
+        self.plug  = om.MSelectionList().add(f"{node}.translateX").getPlug(0)
+        self.value = float(value)
+        self.old   = None
         with load_plugin("undoable_api_command"):
-            cmds.rigUndoableAPICommand(self)
+            cmds.rigUndoableAPICommand(self)       # runs doIt now
 
     def doIt(self):
-        self.old = cmds.getAttr(f"{self.node}.tx")
-        self.redoIt()
-
-    def redoIt(self):
-        cmds.setAttr(f"{self.node}.tx", self.value)
+        self.old = self.plug.asDouble()            # keep what undoIt needs,
+        self.plug.setDouble(self.value)            # then apply the change
 
     def undoIt(self):
-        cmds.setAttr(f"{self.node}.tx", self.old)
+        self.plug.setDouble(self.old)
+
+    def redoIt(self):
+        self.plug.setDouble(self.value)
 
 cmds.undoInfo(state=True)
 loc = cmds.spaceLocator(name="loc")[0]
-MoveX(loc, 5.0)
+SetX(loc, 5.0)
 print(cmds.getAttr("loc.tx"))  # 5.0
 cmds.undo()
 print(cmds.getAttr("loc.tx"))  # 0.0
