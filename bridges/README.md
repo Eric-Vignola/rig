@@ -1,8 +1,8 @@
 # `rig.bridges` — `maya.cmds` and node types, in DSL form
 
 The two things you call most in Maya, handed back as DSL objects. `commands`
-wraps every `maya.cmds` function so node names come back as `Node` /
-`PlugList`; `nodes` gives every registered node type a factory that creates
+wraps every `maya.cmds` function so node names come back as typed nodes and
+`List`s; `nodes` gives every registered node type a factory that creates
 the node and sets its attributes in one call. Both are built lazily, one name
 at a time, on first touch.
 
@@ -20,10 +20,10 @@ cmds.file(new=True, force=True)
 from rig.bridges import commands as rc
 from rig.bridges import nodes as rn
 
-cube, history = rc.polyCube(name="cube")                  # every node name comes back as a Node
+cube, history = rc.polyCube(name="cube")                  # every node name comes back as a node
 ctrl = rn.transform(name="ctrl", translate=[0, 5, 0])     # createNode + attribute setup, one call
 cube.t << ctrl.t * 2
-print(repr(cube), repr(ctrl), cmds.getAttr("cube.t"))     # Node("cube") Node("ctrl") [(0.0, 10.0, 0.0)]
+print(repr(cube), repr(ctrl), cmds.getAttr("cube.t"))     # Transform("cube") Transform("ctrl") [(0.0, 10.0, 0.0)]
 ```
 
 `rc` and `rn` are the conventional aliases; the rest of the `rig` docs use
@@ -81,32 +81,32 @@ Every wrapper runs the real command, then converts the result:
 
 | `maya.cmds` returned | you get |
 |---|---|
-| a `str` that names a node | `Node` |
-| a `str` that names a plug (`"a.translateX"`) | `Node("a")` — the attribute is stripped |
+| a `str` that names a node | the typed node, `Node(name)` |
+| a `str` that names a plug (`"a.translateX"`) | the node `a` — the attribute is stripped |
 | a `str` that is not a node (`"transform"`, `"hello"`) | the `str`, unchanged |
-| a `list` of node names | `PlugList` of `Node` |
-| a `list` of values (`getAttr` of a compound, `xform -q`) | `PlugList` of those values |
+| a `list` of node names | a `List` of nodes |
+| a `list` of values (`getAttr` of a compound, `xform -q`) | `List` of those values |
 | a `list` of strings that are not nodes (`listAttr`) | a plain `list` |
 | `bool`, a number, `None` | unchanged |
 
-So `rc.createNode("transform")` is a `Node`, `rc.polyCube()` is
-`PlugList([Node("pCube1"), Node("polyCube1")])`, `rc.ls(sl=True)` with nothing
-selected is `PlugList([])`, `rc.listRelatives(x, p=True)` on a root node is
-`None`, and `rc.getAttr("x.tx")` is a `float`. A `PlugList` broadcasts, so
+So `rc.createNode("transform")` is a `Transform`, `rc.polyCube()` is
+`List([Transform("pCube1"), DGNode("polyCube1")])`, `rc.ls(sl=True)` with nothing
+selected is `List([])`, `rc.listRelatives(x, p=True)` on a root node is
+`None`, and `rc.getAttr("x.tx")` is a `float`. A `List` broadcasts, so
 `rc.ls(sl=True).ty << 2` is a one-liner.
 
 Two consequences are easy to trip on. A string *value* that happens to name
 an existing node is wrapped as that node (`rc.getAttr("x.label")` holding
-`"persp"` comes back as `Node("persp")`). And plug strings collapse to their
+`"persp"` comes back as `Transform("persp")`). And plug strings collapse to their
 node, so `rc.listConnections(x, plugs=True)` loses the attribute — use
 `plug.get_inputs()` / `plug.get_outputs()` on the DSL side, or raw
 `cmds.listConnections`, when you need the plug.
 
 ### What goes in
 
-Maya commands take node names; the DSL holds `Node` objects. Before the call,
-every positional and keyword argument is converted: a `Node` becomes its name,
-a list or tuple that contains any `Node` becomes a list of names. A `Plug` is
+Maya commands take node names; the DSL holds node objects. Before the call,
+every positional and keyword argument is converted: a node becomes its name,
+a list or tuple that contains any node becomes a list of names. A `Plug` is
 already a `str` subclass and passes through as is, once its node is checked: a
 plug whose node was deleted or freed raises `already deleted!` instead of
 letting cmds read a node that took its name. So `rc.parent(child, root)`,
@@ -121,7 +121,7 @@ because they carry callback strings, expressions or code to evaluate:
 | `evalDeferred`, `scriptJob`, `scriptNode`, `expression`, `undo`, `redo`, `undoInfo`, `warning`, `error` |
 
 Pass names (`str(node)`) to those. In Maya 2025 `maya.cmds` stringifies a
-`Node` on its own, so `rc.expression(o=node)` happens to work anyway; the
+node object on its own, so `rc.expression(o=node)` happens to work anyway; the
 bridge converts explicitly rather than lean on that.
 
 ### Only the nodes a call creates join the active container
@@ -175,9 +175,11 @@ Everything else is applied **in order** as `getattr(node, key) << value`, so
 the whole injection grammar is available at creation: a number sets, a list
 sets a compound, a list on a multi fans out (`input1D=[1, 2, 3]`), a `Plug`
 connects, a literal matrix is decomposed and set, a matrix `Plug` gets a
-`decomposeMatrix` wired in. Short attribute names work (`tx=5`). The
-attribute has to exist already — an attribute spec (`Float("weight")`) is not
-a valid kwarg value; add it after creation with `node << Float("weight")`.
+`decomposeMatrix` wired in. Short attribute names work (`tx=5`), and an
+enum takes its index (`rotateOrder=2`: the rotate-order names `rig`'s
+functions take, `"zxy"`, are no attribute value). The attribute has to
+exist already — an attribute spec (`Float("weight")`) is not a valid
+kwarg value; add it after creation with `node << Float("weight")`.
 
 Node types whose name is a Python keyword take a trailing underscore:
 `rn.and_`, `rn.or_`, `rn.not_` create Maya's `and` / `or` / `not` logic nodes
@@ -204,17 +206,18 @@ The `AttributeError` for an unknown type names `_refresh_node_types()` in its
 message. `rc` needs no refresh: a command a plugin adds to `maya.cmds` is
 found on first call.
 
-### Four ways to make a node
+### Five ways to make a node
 
 | Call | joins the active scope | selects the new node | loads `matrixNodes` / `quatNodes` on demand | attribute kwargs |
 |---|---|---|---|---|
 | `rc.createNode("transform", name="x")` | yes | yes — Maya's default | no — an unregistered type becomes an `unknown` node, with a warning | no |
 | `rn.transform(name="x", tx=5)` | yes | no (`skip_selection`) | yes, once the type is in the cached set — `decomposeMatrix` always is, `quatSlerp` only after `quatNodes` loads and a refresh | yes, through `<<` |
-| `Node.create("transform", name="x")` | yes | no | yes, with no registry check in the way | no |
+| `Node.create("multiplyDivide", name="x")` | yes | no | yes, with no registry check in the way | no |
+| `Transform.create(name="x")`, the typed create a registered type also gets from `Node.create("transform", ...)` | yes; display layers, sets, shading engines and references stay out | no in a scope or through `Node.create` (`skip_selection`); yes for a direct call outside a scope | — | no |
 | `Node.wrap(cmds.createNode("transform", name="x"))` | no | yes | no | no |
 
 `Node.wrap` is the manual converter for when you call `maya.cmds` yourself:
-`str` → `Node`, list → `PlugList`, `None` and numbers pass through, a string
+`str` → node, list → `List`, `None` and numbers pass through, a string
 that is not a node passes through. It never touches the container scope.
 
 ---
@@ -230,9 +233,9 @@ that is not a node passes through. It never touches the container scope.
   level, so `rn.transform(name="root")` twice gives `root` and `root1`; a
   `child` under `root` and a `child` at world level both keep their name and
   `str(node)` is the shortest unique path, `|child`.
-- **Results are the DSL's own types** — `Node`, `Plug` (a `str` subclass),
-  `PlugList` — so anything a wrapper returns takes `<<`, `>>` and the math
-  operators directly.
+- **Results are the DSL's own types** — typed nodes, `Plug` (a `str`
+  subclass), `List` — so anything a wrapper returns takes `<<`, `>>` and
+  the math operators directly.
 - **Keyword collisions** use PEP 8's trailing underscore: `and_`, `or_`,
   `not_`, and any future type whose name is a Python keyword.
 
@@ -244,14 +247,14 @@ Not bugs to work around blindly — how it actually behaves under Maya 2025.
 
 - A string result that names an existing node is wrapped as that node, even
   when it is a value: `rc.getAttr("x.label")` holding `"persp"` returns
-  `Node("persp")`; holding `"hello"` it returns `'hello'`.
+  `Transform("persp")`; holding `"hello"` it returns `'hello'`.
 - Plug strings collapse to nodes. `rc.listConnections("b.tx", p=True)` is
-  `PlugList([Node("a")])`, the same as without `p=True`. Use
-  `b.tx.get_inputs()` (`PlugList([Plug("a.translateX")])`) or
+  `List([Transform("a")])`, the same as without `p=True`. Use
+  `b.tx.get_inputs()` (`List([Plug("a.translateX")])`) or
   `cmds.listConnections`.
-- A list of values comes back as a `PlugList`: `rc.getAttr("x.t")` is
-  `PlugList([(1.0, 2.0, 3.0)])`, `rc.xform("x", q=True, t=True)` is
-  `PlugList([1.0, 2.0, 3.0])`. A list of non-node strings (`rc.listAttr`)
+- A list of values comes back as a `List`: `rc.getAttr("x.t")` is
+  `List([(1.0, 2.0, 3.0)])`, `rc.xform("x", q=True, t=True)` is
+  `List([1.0, 2.0, 3.0])`. A list of non-node strings (`rc.listAttr`)
   stays a plain `list`.
 - `rc.createNode` goes straight to `maya.cmds` and loads no plugin.
   `rc.createNode("quatSlerp")` with `quatNodes` unloaded gives an `unknown`

@@ -46,7 +46,7 @@ happened until each spec reached `<<`.
 |---|---|
 | Copy-paste an example of every spec class, kwarg and modifier | [`CHEATSHEET.md`](CHEATSHEET.md) — runnable top to bottom |
 | The operator table, the conventions, the rest of the DSL | [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) |
-| The typed node layer a spec lands on (`Attribute`, `DGNode`) | [`../nodetypes/README.md`](../nodetypes/README.md) |
+| The node classes a spec lands on (`Attribute`, `DGNode`) | [`../nodetypes/README.md`](../nodetypes/README.md) |
 
 ---
 
@@ -90,6 +90,10 @@ alike. The capitalised name is always the attribute spec.
 | `rig.Mesh` | a `mesh` data attribute spec | `rig.nodetypes.Mesh`, the typed shape node |
 | `rig.Matrix` | a `matrix` attribute spec | `rig.matrix`, the matrix function library |
 | `rig.Vector`, `rig.Euler`, `rig.Quat` | compound attribute specs | `rig.vector`, `rig.euler`, `rig.quaternion`, the function libraries |
+
+A node's `repr` names its node class, so `Mesh("cubeShape")` in an output
+is a `rig.nodetypes.Mesh` (likewise `NurbsCurve`, `NurbsSurface`), never the
+`rig.Mesh` spec.
 
 ```python
 from rig.nodetypes import Mesh as MeshNode
@@ -138,8 +142,10 @@ plug = ctrl << Float("gain") << 2.0 << hide
 print(repr(plug), plug >> None, cmds.getAttr("ctrl.gain", keyable=True))   # Plug("ctrl.gain") 2.0 False
 ```
 
-A plug on the left works too and means its node: `ctrl.tx << Float("y")`
-adds `y` to `ctrl`.
+The new plug belongs to the node object the spec was applied to:
+`(ctrl << Float("x")).node is ctrl`. A plug on the left works too and
+means its node: `ctrl.tx << Float("y")` adds `y` to `ctrl`, and the new
+plug's `node` is `ctrl`.
 
 ### `overwrite=` decides what an existing name means
 
@@ -181,9 +187,9 @@ drv = Node.create("transform", name="drv")
 ctrl.tx << drv.tx
 ctrl.tz << drv.tz
 ctrl.t  << [skip, 4.0, skip]                     # write Y; X and Z keep their drivers
-print(ctrl.tx.get_inputs(), ctrl.t >> None)     # PlugList([Plug("drv.translateX")]) [0. 4. 0.]
+print(ctrl.tx.get_inputs(), ctrl.t >> None)     # List([Plug("drv.translateX")]) [0. 4. 0.]
 ctrl.t << [None, 4.0, None]                     # write Y; X and Z are DISCONNECTED
-print(ctrl.tx.get_inputs())                     # PlugList([])
+print(ctrl.tx.get_inputs())                     # List([])
 ```
 
 `destroy` follows `cmds.deleteAttr`: connections are auto-severed (one
@@ -202,7 +208,7 @@ try:
 except RuntimeError as e:
     print(str(e).splitlines()[0])               # Cannot destroy 'ctrl.scratch': has 0 incoming + 1 outgoing connection(s):
 ctrl.scratch << destroy                             # the plug form; auto-disconnects drv.ty
-print(cmds.attributeQuery("scratch", node="ctrl", exists=True), drv.ty.get_inputs())   # False PlugList([])
+print(cmds.attributeQuery("scratch", node="ctrl", exists=True), drv.ty.get_inputs())   # False List([])
 ```
 
 ### `node >> Float("x")` declares an output
@@ -218,7 +224,7 @@ result = ctrl >> Float("result")
 print(repr(result), cmds.attributeQuery("result", node="ctrl", writable=True))   # Plug("ctrl.result") False
 result << 5
 drv.sx << result
-print(drv.sx.get_inputs())                      # PlugList([Plug("ctrl.result")])
+print(drv.sx.get_inputs())                      # List([Plug("ctrl.result")])
 try:
     result << drv.tx
 except Exception as e:
@@ -270,19 +276,19 @@ ctrl << Vector("offsets", multi=True)
 print(cmds.getAttr("ctrl.offsets", multiIndices=True))                            # None -- no size, no indices yet
 ```
 
-### `PlugList` fans a spec out
+### `List` fans a spec out
 
-A spec injected into a `PlugList` is applied to every element's node,
-and the result is a `PlugList` of the new plugs, so the value and the
+A spec injected into a `List` is applied to every element's node,
+and the result is a `List` of the new plugs, so the value and the
 modifiers broadcast next.
 
 ```python
-from rig import PlugList
+from rig import List
 
-nodes = PlugList([a, b])
+nodes = List([a, b])
 gains = nodes << Float("gain", min=0, max=2) << [0.5, 1.5] << lock
-print(repr(gains), gains >> None)   # PlugList([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
-print(repr(nodes >> Float("out")))  # PlugList([Plug("a.out"), Plug("b.out")])
+print(repr(gains), gains >> None)   # List([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
+print(repr(nodes >> Float("out")))  # List([Plug("a.out"), Plug("b.out")])
 ```
 
 ### Leading underscores are fine
@@ -349,7 +355,7 @@ Verified on Maya 2025; not bugs to work around blindly.
   value). And where `plug >> "name"` refuses an existing name, `plug >>
   Node` **replaces** a same-named dynamic attribute on the target
   (`overwrite=True` in the spec it builds), resetting its value.
-  Cloning a `PlugList` of same-named plugs onto one node therefore keeps
+  Cloning a `List` of same-named plugs onto one node therefore keeps
   only the last.
 - **`Color` clones back as a `Vector`.** The clone sees three `double`
   children and builds `X Y Z`, so `src.tint >> dst` gives `dst.tintX`,
@@ -365,7 +371,7 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **Pre-sizing writes the default into every index**, which for a
   `String` multi is the string `'0'`.
 - **`nodes << [Float("a"), Float("b")]`** (a list of specs on a
-  `PlugList`) pairs each element with its own spec but returns the
+  `List`) pairs each element with its own spec but returns the
   **nodes**, not the new plugs; only a single spec broadcast returns
   plugs.
 - **`unhide` leaves `channelBox=False`.** It sets `keyable=True`, which

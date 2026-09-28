@@ -13,7 +13,7 @@ Concepts and the file map live in [`README.md`](README.md).
 |---|---|---|
 | — | [Setup](#setup) | mayapy / Maya init, the three imports |
 | 1 | [Import surface](#1-import-surface) | lazy wrappers, caching, `dir()`, unknown names |
-| 2 | [Commands return `Node` and `PlugList`](#2-commands-return-node-and-pluglist) | `createNode`, `polyCube`, `ls`, `listRelatives`, empty results, broadcasting |
+| 2 | [Commands return `Node` and `List`](#2-commands-return-node-and-list) | `createNode`, `polyCube`, `ls`, `listRelatives`, empty results, broadcasting |
 | 3 | [Values pass through](#3-values-pass-through) | `getAttr`, `objExists`, `nodeType`, `xform`, `listAttr`, the two wrap traps |
 | 4 | [Arguments go in as strings](#4-arguments-go-in-as-strings) | `Node` / list-of-`Node` / `Plug` arguments, in args and kwargs |
 | 5 | [The `_NO_COERCE` list](#5-the-_no_coerce-list) | nine commands whose arguments reach Maya untouched |
@@ -39,7 +39,7 @@ except Exception:
 from maya import cmds
 cmds.file(new=True, force=True)
 
-from rig import Node, PlugList, container
+from rig import Node, List, container
 from rig.bridges import commands as rc
 from rig.bridges import nodes as rn
 ```
@@ -74,33 +74,33 @@ for probe in (lambda: rc.noSuchCommand, lambda: rn.noSuchNodeType):
 
 ---
 
-## 2. Commands return `Node` and `PlugList`
+## 2. Commands return `Node` and `List`
 
-A string result is a `Node`, a list result is a `PlugList`; `str(node)` is
-the real Maya name.
+A string result is a `Node` in its typed class (`Transform`, `Mesh`, ...), a
+list result is a `List`; `str(node)` is the real Maya name.
 
 ```python
 cmds.file(new=True, force=True)
 cube = rc.createNode("transform", name="cube")
-print(repr(cube), str(cube))    # Node("cube") cube
-print(rc.polyCube(name="box"))  # PlugList([Node("box"), Node("polyCube1")])
+print(repr(cube), str(cube))    # Transform("cube") cube
+print(rc.polyCube(name="box"))  # List([Transform("box"), DGNode("polyCube1")])
 cmds.select("cube", "box")
 sel = rc.ls(sl=True)
-print(sel, type(sel).__name__)          # PlugList([Node("cube"), Node("box")]) PlugList
-print(rc.listRelatives("box", s=True))  # PlugList([Node("boxShape")])
+print(sel, type(sel).__name__)          # List([Transform("cube"), Transform("box")]) List
+print(rc.listRelatives("box", s=True))  # List([Mesh("boxShape")])
 ```
 
 Empty stays empty, and `None` stays `None` — whatever the command itself does:
 
 ```python
-print(rc.ls("nothing_*"), rc.listRelatives("cube", p=True))   # PlugList([]) None
+print(rc.ls("nothing_*"), rc.listRelatives("cube", p=True))   # List([]) None
 ```
 
-A `PlugList` broadcasts, so a query result takes `<<` directly:
+A `List` broadcasts, so a query result takes `<<` directly:
 
 ```python
 sel.ty << 2
-print(sel.ty, cmds.getAttr("box.ty"))            # PlugList([Plug("cube.translateY"), Plug("box.translateY")]) 2.0
+print(sel.ty, cmds.getAttr("box.ty"))            # List([Plug("cube.translateY"), Plug("box.translateY")]) 2.0
 ```
 
 ---
@@ -108,14 +108,14 @@ print(sel.ty, cmds.getAttr("box.ty"))            # PlugList([Plug("cube.translat
 ## 3. Values pass through
 
 Booleans, numbers and strings that are not node names come back unchanged. A
-list of values is still a `PlugList`; a list of non-node strings is a plain
+list of values is still a `List`; a list of non-node strings is a plain
 `list`.
 
 ```python
 cube.tx << 5
 print(rc.getAttr("cube.tx"), rc.objExists("cube"), rc.nodeType("cube"))  # 5.0 True transform
-print(rc.getAttr("cube.t"))                                              # PlugList([(5.0, 2.0, 0.0)])
-print(rc.xform("cube", q=True, ws=True, t=True))                         # PlugList([5.0, 2.0, 0.0])
+print(rc.getAttr("cube.t"))                                              # List([(5.0, 2.0, 0.0)])
+print(rc.xform("cube", q=True, ws=True, t=True))                         # List([5.0, 2.0, 0.0])
 print(rc.listAttr("cube", k=True)[:2])                                   # ['visibility', 'translateX'] -- not node names: a plain list
 print(rc.delete("box"))                                                  # None
 ```
@@ -126,7 +126,7 @@ node.
 ```python
 cmds.addAttr("cube", ln="label", dt="string")
 cmds.setAttr("cube.label", "persp", type="string")
-print(repr(rc.getAttr("cube.label")))  # Node("persp") -- the value names a node, so it is one
+print(repr(rc.getAttr("cube.label")))  # Transform("persp") -- the value names a node, so it is one
 cmds.setAttr("cube.label", "hello", type="string")
 print(repr(rc.getAttr("cube.label")))  # 'hello'
 ```
@@ -137,9 +137,9 @@ attribute), so `plugs=True` is lost. Ask the DSL, or raw `cmds`, for plugs.
 ```python
 other = rc.createNode("transform", name="other")
 other.tx << cube.tx
-print(rc.listConnections("other.tx", p=True))    # PlugList([Node("cube")]) -- the attribute is gone
+print(rc.listConnections("other.tx", p=True))    # List([Transform("cube")]) -- the attribute is gone
 print(cmds.listConnections("other.tx", p=True))  # ['cube.translateX']
-print(other.tx.get_inputs())                     # PlugList([Plug("cube.translateX")])
+print(other.tx.get_inputs())                     # List([Plug("cube.translateX")])
 ```
 
 ---
@@ -155,9 +155,9 @@ cmds.file(new=True, force=True)
 root = rc.createNode("transform", name="root")
 a    = rc.createNode("transform", name="a")
 b    = rc.createNode("transform", name="b", parent=root)      # a Node in a kwarg
-print(rc.parent(a, root))                                      # PlugList([Node("a")])
+print(rc.parent(a, root))                                      # List([Transform("a")])
 print(sorted(str(x) for x in rc.listRelatives(root, c=True)))  # ['a', 'b']
-print(rc.parent([a, b], world=True))                           # PlugList([Node("a"), Node("b")]) -- a list of Nodes
+print(rc.parent([a, b], world=True))                           # List([Transform("a"), Transform("b")]) -- a list of Nodes
 print(rc.getAttr(a.tx))                                        # 0.0 -- a Plug argument
 ```
 
@@ -174,7 +174,7 @@ from rig.bridges.commands import _NO_COERCE
 print(sorted(_NO_COERCE))
 # ['error', 'evalDeferred', 'expression', 'redo', 'scriptJob', 'scriptNode', 'undo', 'undoInfo', 'warning']
 expr = rc.expression(s="a.ty = a.tx * 2;", o=str(a))         # str(node), not node
-print(repr(expr))                                             # Node("expression1") -- results still wrap
+print(repr(expr))                                             # DGNode("expression1") -- results still wrap
 a.tx << 3
 print(cmds.getAttr("a.ty"))                                   # 6.0
 ```
@@ -237,7 +237,7 @@ longer offers them:
 with container("scope"):
     cams = rc.ls(type="camera")                          # quiet: a query adds nothing
 print(cams, cmds.container("scope", q=True, nodeList=True))
-# PlugList([Node("frontShape"), Node("perspShape"), Node("sideShape"), Node("topShape")]) None
+# List([DAGNode("frontShape"), DAGNode("perspShape"), DAGNode("sideShape"), DAGNode("topShape")]) None
 ```
 
 ---
@@ -250,9 +250,9 @@ way the wrappers do — and never touches the container scope.
 ```python
 cmds.file(new=True, force=True)
 cmds.createNode("transform", name="foo")
-print(repr(Node.wrap("foo")), Node.wrap(["foo", "persp"]))       # Node("foo") PlugList([Node("foo"), Node("persp")])
+print(repr(Node.wrap("foo")), Node.wrap(["foo", "persp"]))       # Transform("foo") List([Transform("foo"), Transform("persp")])
 print(Node.wrap(None), Node.wrap(5.0), Node.wrap("not_a_node"))  # None 5.0 not_a_node
-print(repr(Node.wrap("foo.tx")))                                 # Node("foo") -- attribute stripped, as in section 3
+print(repr(Node.wrap("foo.tx")))                                 # Transform("foo") -- attribute stripped, as in section 3
 with container("build"):
     wrapped = Node.wrap(cmds.createNode("transform", name="wrapped"))
     created = Node.create("transform", name="created")
@@ -271,7 +271,7 @@ the scope opt-out; everything else is an attribute (section 9).
 cmds.file(new=True, force=True)
 root  = rn.transform(name="root")
 child = rn.transform(n="child", p=root)                  # short forms, a Node as parent
-print(repr(root), repr(child), cmds.listRelatives("child", parent=True))  # Node("root") Node("child") ['root']
+print(repr(root), repr(child), cmds.listRelatives("child", parent=True))  # Transform("root") Transform("child") ['root']
 print(str(rn.transform(name="root")))                                     # root1 -- a clash at the same DAG level: Maya uniquifies, str(node) is the real name
 print(str(rn.transform(name="child")))                                    # |child -- no clash with |root|child, so no rename: str(node) is the shortest unique path
 print(rn.transform.__doc__.splitlines()[0])                               # Create a Maya ``transform`` node and apply attribute kwargs.
@@ -374,7 +374,7 @@ try:
 except TypeError as err:
     print(err)                                    # rig.bridges.nodes.blinn() takes 0 positional arguments but 1 was given
 shiny = rn.blinn(name="shiny", color=[1, 0, 0])
-print(repr(shiny), cmds.getAttr("shiny.color"))   # Node("shiny") [(1.0, 0.0, 0.0)]
+print(repr(shiny), cmds.getAttr("shiny.color"))   # DGNode("shiny") [(1.0, 0.0, 0.0)]
 ```
 
 ---
@@ -393,7 +393,7 @@ with container("net"):
     outside = rn.transform(name="outside", container=False)
     with container("sub"):
         nested = rn.transform(name="nested")
-print(cmds.container("net", q=True, nodeList=True), repr(nested))   # ['inside', 'sub_nested'] Node("sub_nested")
+print(cmds.container("net", q=True, nodeList=True), repr(nested))   # ['inside', 'sub_nested'] Transform("sub_nested")
 ```
 
 ---
@@ -420,7 +420,7 @@ except AttributeError:
     print("AttributeError")                        # still -- the cached set is stale
 rn._refresh_node_types()                           # re-query Maya, drop the factory cache
 fm = rn.floatMath(operation=2, floatA=3, floatB=4)
-print(repr(fm), fm.outFloat >> None)               # Node("floatMath1") 12.0
+print(repr(fm), fm.outFloat >> None)               # DGNode("floatMath1") 12.0
 ```
 
 `rc.createNode` goes straight to `maya.cmds` and loads nothing. Given a type
@@ -429,9 +429,9 @@ Maya does not know, Maya makes an `unknown` node and warns; the factory path
 
 ```python
 u = rc.createNode("noSuchNodeType")               # Warning: Unrecognized node type 'noSuchNodeType'; preserving node information during this session.
-print(repr(u), cmds.nodeType(str(u)))             # Node("unknown1") unknown
+print(repr(u), cmds.nodeType(str(u)))             # DGNode("unknown1") unknown
 q = Node.create("quatSlerp")
-print(repr(q), cmds.pluginInfo("quatNodes", q=True, loaded=True))   # Node("quatSlerp1") True
+print(repr(q), cmds.pluginInfo("quatNodes", q=True, loaded=True))   # DGNode("quatSlerp1") True
 ```
 
 A command a plugin adds to `maya.cmds` needs no refresh: `rc.<name>` looks it
