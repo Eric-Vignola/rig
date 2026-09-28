@@ -92,6 +92,10 @@ class SkinCluster(Deformer):
 
         One undo step named ``rig.SkinCluster.create``: the delete of a current
         skincluster, the skinCluster and, from a SkinData, its weights.
+
+        Raises:
+            ValueError: before any edit (the current skincluster is kept), when
+                a SkinData's weights are not one per point per influence.
         """
         from cgmath.geometry import SkinData
 
@@ -108,6 +112,15 @@ class SkinCluster(Deformer):
         if not geoms_found:
             raise RuntimeError(f"Geometry {geom} not found.")
         geom = geoms_found[0]
+
+        if skin_data is not None:
+            count   = _bind_point_count(geom)
+            weights = np.asarray(skin_data.weights)
+            if count is not None and weights.size != count * len(influences):
+                raise ValueError(
+                    f"SkinCluster.create: weights of shape {weights.shape} for {count} points "
+                    f"x {len(influences)} influences of {geom}"
+                )
 
         # set some default kwargs
         for ln, sn, dv in (
@@ -501,6 +514,22 @@ class SkinCluster(Deformer):
             raise RuntimeError(
                 f"Inpainting failed. Solution needs more than {iterations} iterations."
             )
+
+
+def _bind_point_count(geom: str) -> int | None:
+    """The number of points a skincluster on `geom` (a shape, or a transform
+    and its shape) weights, counted as `_weight_components` counts them; None
+    for a shape rig has no geometry class for."""
+    shapes = (
+        [geom]
+        if cmds.objectType(geom, isAType="shape")
+        else cmds.listRelatives(geom, shapes=True, noIntermediate=True, fullPath=True) or []
+    )
+    shape = _cast(shapes[0]) if shapes else None
+    if not hasattr(shape, "get_component_mobject"):
+        return None
+    comps = shape.get_component_mobject()  # held: an MFnComponent does not keep it alive
+    return OpenMaya.MFnComponent(comps).elementCount
 
 
 def _weight_components(
