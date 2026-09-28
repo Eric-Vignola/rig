@@ -693,7 +693,7 @@ def _condition_legacy(input0: Any, op: str, input1: Any) -> Any:
 
 
 def _picks_in_python(args: tuple, kwargs: dict) -> bool:
-    """True when ``condition()``'s test is a number, or a PlugList of numbers
+    """True when ``condition()``'s test is a number, or a List of numbers
     (each broadcast row's test a number): it then picks its branches in Python
     and builds no node, so a branch may be any value (``condition(1, "yes",
     "no")`` is ``"yes"``). A plain list test builds a condition node."""

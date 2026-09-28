@@ -20,7 +20,7 @@ layers, and a layer never joins the active rig container.
 
 Usage::
 
-    from rig import Node, PlugList, Tag, Layer
+    from rig import Node, List, Tag, Layer
 
     sph = Node("pSphere1")
     sph.vtx[:8] << Tag("cap")             # create 'cap' WITH vtx[0:7] at the injection node
@@ -51,7 +51,7 @@ Usage::
     geo = Node("arm_geo")
     geo << Layer("geometry")              # find-or-create; moves geo (exclusive); returns geo
     geo << Layer("ref", displayType=2, visibility=False)   # kwargs are the layer's attributes on create
-    PlugList([geo, Node("ctl")]) << Layer("rig")           # one editDisplayLayerMembers call
+    List([geo, Node("ctl")]) << Layer("rig")           # one editDisplayLayerMembers call
     geo << -Layer("rig") ; geo << Layer()                   # both: back to defaultLayer
     geo >> Layer("rig")                   # True / False
     geo >> Layer() ; Layer.of(geo)        # Layer('rig') or None ; [Layer('rig')] or []
@@ -1035,7 +1035,7 @@ class Layer(_MemberSpec):
     moves it back to ``defaultLayer`` (a no-op when it is in another
     layer), ``node << Layer()`` is ``defaultLayer`` too; a component on the
     left is a ``TypeError`` (Maya would silently store the shape), a DG
-    node a ``TypeError`` (layers hold DAG objects). A ``PlugList`` of nodes
+    node a ``TypeError`` (layers hold DAG objects). A ``List`` of nodes
     is one ``editDisplayLayerMembers`` call; ``<<`` returns the left-hand
     side and every write of one ``<<`` is one undo chunk; a new layer never
     joins the active rig container.

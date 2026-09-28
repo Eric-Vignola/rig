@@ -6,7 +6,7 @@ sequence of them. A *plain* str is not one. ``Plug`` and ``Attribute``
 subclass ``str``, so "plain" means a str that is not an Attribute. Without a
 check, ``t.tx == "cube.ty"`` builds an ``equal`` node, fails to set the
 string on it and raises ``InjectionError``, and the node stays in the scene.
-So every Plug / PlugList operator and every public math function raises a
+So every Plug / List operator and every public math function raises a
 ``TypeError`` for a plain str operand before it creates anything. Write
 ``Plug("cube.ty")`` for the plug of a name, and ``str(plug)`` or an
 f-string for text.
@@ -83,7 +83,7 @@ def _first_text(obj: Any, with_bytes: bool) -> Optional[Any]:
     """The first plain str in ``obj`` (or bytes, ``with_bytes``), or None.
 
     ``obj`` is checked itself, and so are the elements of a list, tuple or
-    PlugList and the elements of a numpy array, nested to any depth. A str
+    List and the elements of a numpy array, nested to any depth. A str
     that is an Attribute (a Plug) is not plain. A numpy str array holds
     ``np.str_`` elements, which are plain strs; a numpy bytes array holds
     ``np.bytes_`` elements.
@@ -127,7 +127,7 @@ def _text_operand(obj: Any) -> Optional[Any]:
 
 def _live_text_operand(obj: Any) -> Optional[Any]:
     """`_text_operand(obj)`, raising the node's ``"... already deleted!"`` first
-    for a plug in ``obj`` (``obj`` itself, or one in a list, tuple, PlugList or
+    for a plug in ``obj`` (``obj`` itself, or one in a list, tuple, List or
     object array, nested to any depth, before the first plain str) whose node
     was freed (see `_ensure_owner_alive`): the type predicates a function
     starts with read its operands' MPlugs, which then point at freed memory."""
@@ -233,7 +233,7 @@ def text_format_error(fmt: str, plug: str) -> TypeError:
     return TypeError(message)
 
 
-# Plug / PlugList operator dunder -> (symbol, reflected). The comparisons have
+# Plug / List operator dunder -> (symbol, reflected). The comparisons have
 # no reflected form: Python reflects them onto the opposite comparison.
 OPERATOR_SYMBOLS = {
     "__add__": ("+", False),       "__radd__": ("+", True),
@@ -274,7 +274,7 @@ def operator_where(dunder: str, left: str, right: Any, row: Optional[int] = None
     """``left <dunder> right`` as it was written, for a message: ``left`` is the
     name (or rendering) of the operand the dunder ran on, and a reflected dunder
     renders its ``right`` first (``'%s' % plug``). ``row`` is the row of a
-    PlugList operator the pair came from."""
+    List operator the pair came from."""
     symbol, reflected = OPERATOR_SYMBOLS[dunder]
     if reflected:
         where = f"{_render(right)} {symbol} {left}"

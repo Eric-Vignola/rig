@@ -951,7 +951,7 @@ class _ContainerStack:
            (auto-typed from source if no ``at``/``dt`` is given), then
            wires source -> container.<name>.
 
-        3. **Sequence / PlugList form** (v4.G+ extension) -- ``source``
+        3. **Sequence / List form** (v4.G+ extension) -- ``source``
            is a sequence of Plugs / values. Creates a multi attribute
            on the container per ``add_attr_kwargs`` (auto-typed as
            compound multi if elements are vec3, scalar multi if
@@ -1001,7 +1001,7 @@ class _ContainerStack:
         _refuse_container_member_name(name)
         # Auto-resolve a bare multi-parent plug (e.g. ``worldMatrix``) to its
         # ``[0]`` element so it publishes as a SINGLE attr. No-op for
-        # sequences / PlugLists / single plugs / explicit ``multi=True`` (the
+        # sequences / Lists / single plugs / explicit ``multi=True`` (the
         # sequence-output form still creates real multis from list sources).
         source = _resolve_multi_parent_source(source, add_attr_kwargs)
         # Internal-plug form: source is a Plug already owned by a node
@@ -1862,7 +1862,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
     """Return ``addAttr`` kwargs that match ``source``'s type / shape.
 
     Handles plain numbers, strings, :class:`Attribute` (mirrors its
-    ``data_type``), short sequences, and 2D arrays / PlugList of
+    ``data_type``), short sequences, and 2D arrays / List of
     compounds (returned with ``multi=True``). Falls back to ``{"at":
     "double"}`` for anything unrecognised so the caller still gets a
     valid attr.
@@ -1894,7 +1894,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
         return {"dt": "string"}
     if source is None:
         return {"at": "double"}
-    # PlugList / list of Attribute -> infer multi from first element's shape.
+    # List / list of Attribute -> infer multi from first element's shape.
     try:
         first_attr_elem = next((x for x in source if isinstance(x, Attribute)), None)
     except (TypeError, AttributeError):
@@ -1904,7 +1904,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
             dt = first_attr_elem.data_type
         except Exception:
             dt = "double"
-        # v4.R: 3- or 4-element scalar PlugList -> compound vec3/vec4
+        # v4.R: 3- or 4-element scalar List -> compound vec3/vec4
         # (preserves the v4.Q-style compound publish shape for math-op
         # outputs that previously went through a `_constant` aggregator).
         # Falls through to multi-attr default for variable-length lists
@@ -1953,7 +1953,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
     if n == 16:
         return {"dt": "matrix"}
     # Flat all-numeric vec3 / vec4 literal -> compound double3 / double4.
-    # Mirrors the PlugList-of-3/4 and 2D-array (``ndim == 2``) compound
+    # Mirrors the List-of-3/4 and 2D-array (``ndim == 2``) compound
     # heuristics above so a raw ``[x, y, z]`` passed to ``publish_input``
     # types as a vector, not a scalar. Without this a flat vector literal
     # fell through to ``{"at": "double"}`` and ``publish_input`` crashed
@@ -2047,7 +2047,7 @@ def _create_external_output(
 
     Used by :meth:`_ContainerStack.publish_output` for the external-source
     and sequence-source forms (source is external Plug, sequence /
-    PlugList of values or Plugs, scalar, or ``None``). The attr is created on
+    List of values or Plugs, scalar, or ``None``). The attr is created on
     the host ``network`` node; ``container.<name>`` is a native publishName /
     bindAttr alias for ``host.<name>`` (single / compound) or resolves through
     the multi registry (sequence / multi). Returns the real ``host.<name>``
@@ -2057,9 +2057,8 @@ def _create_external_output(
     ``source[i]`` -> ``host.<name>[i]``. Compound element types
     (``double3`` etc.) automatically get their X/Y/Z child attrs.
     """
-    from rig._internal.list import PlugList
     from rig._internal.plug import Plug
-    from rig._internal.types import _get_compound, _is_sequence
+    from rig._internal.types import _get_compound, _is_list, _is_sequence
     from rig.spec._base import _clone_attribute
 
     if isinstance(container_node, Node):
@@ -2074,8 +2073,8 @@ def _create_external_output(
 
     host = _get_or_create_host(container_target)
 
-    # Sequence / PlugList -> multi attribute on the host, per-index connect.
-    is_sequence_source = isinstance(source, PlugList) or (
+    # Sequence / List -> multi attribute on the host, per-index connect.
+    is_sequence_source = _is_list(source) or (
         not isinstance(source, Attribute)
         and not isinstance(source, str)
         and not isinstance(source, numbers.Real)

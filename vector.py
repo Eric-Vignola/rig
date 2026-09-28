@@ -406,12 +406,12 @@ def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
                 node.weight[1] << weight
                 outputs.append(node.output)
             # Gather per-channel scalars into a vec output. Could be a
-            # `PlugList(outputs)` here (saving 1 node) but that returns
-            # a PlugList from `lerp`, which @vectorize-ed downstream
+            # `List(outputs)` here (saving 1 node) but that returns
+            # a List from `lerp`, which @vectorize-ed downstream
             # consumers like `compose(translate=...)` then fan out per-
             # channel -- producing N composeMatrix nodes instead of 1.
             # Until @vectorize learns to treat fixed-arity scalar
-            # PlugLists as compound singletons (deferred to v4.S+),
+            # Lists as compound singletons (deferred to v4.S+),
             # keep the `_constant` aggregator here so the result stays
             # a single Plug.
             result    = _constant([0] * len(outputs), name="lerp_out1")

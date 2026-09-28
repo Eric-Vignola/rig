@@ -67,7 +67,7 @@ class NodeMeta(type):
 
     def wrap(cls, value: Any) -> Any:
         """Wrap a ``maya.cmds`` result (str / list-of-str) as a node /
-        :class:`PlugList`.
+        :class:`List`.
 
         A metaclass method, so ``Node.wrap`` (and ``Transform.wrap``) works but a
         node never has it: a Maya attr ``wrap`` (3D textures) stays reachable as
@@ -81,7 +81,7 @@ class NodeMeta(type):
             from rig import Node
 
             n   = Node.wrap(cmds.createNode("transform"))     # -> Transform
-            sel = Node.wrap(cmds.ls(sl=True))                  # -> PlugList of nodes
+            sel = Node.wrap(cmds.ls(sl=True))                  # -> List of nodes
             x   = Node.wrap(5.0)                                # -> 5.0 (passthrough)
             none = Node.wrap(None)                              # -> None
 
@@ -97,11 +97,11 @@ class NodeMeta(type):
             except Exception:
                 return value
         if isinstance(value, (list, tuple)):
-            from rig._internal.list import PlugList
+            from rig._internal.list import List
 
             wrapped = [Node.wrap(v) for v in value]
             try:
-                return PlugList(wrapped)
+                return List(wrapped)
             except Exception:
                 return wrapped
         return value
