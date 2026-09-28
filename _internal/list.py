@@ -176,9 +176,8 @@ class List(list):
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:
             raise TypeError(
-                "'<list> << List' (formerly PlugList) has been replaced by "
-                "'<list>.get_inputs()'. Use '<list> << List([...])' -- an "
-                "INSTANCE -- to connect."
+                "'<list> << List' has been replaced by '<list>.get_inputs()'. "
+                "Use '<list> << List([...])' -- an INSTANCE -- to connect."
             )
 
         # Collection spec -- the whole list is the left-hand side (grouped
@@ -250,8 +249,7 @@ class List(list):
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:
             raise TypeError(
-                "'<list> >> List' (formerly PlugList) has been replaced by "
-                "'<list>.get_outputs()'."
+                "'<list> >> List' has been replaced by '<list>.get_outputs()'."
             )
 
         results = []
