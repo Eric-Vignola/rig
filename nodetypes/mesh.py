@@ -949,14 +949,20 @@ class Mesh(Geometry):
     def add_color_set(
         self, name: str, representation: ColorSet.Representation
     ) -> ColorSet:
-        """Create a color set with the given name and representation"""
+        """Create a color set with the given name and representation (not
+        clamped): one undo step. The first colour set of a mesh becomes its
+        current one.
+
+        Raises:
+            ValueError: `representation` is not a ``ColorSet.Representation``
+                (or its value), or the mesh already has a colour set `name`.
+        """
         # cast or throw ValueError
         representation = ColorSet.Representation(representation)
 
         if name in self.fn_set.getColorSetNames():
             raise ValueError(f"{self.name} has color set {name}!")
-        created_name = self.fn_set.createColorSet(name, False, rep=representation.value)
-        assert created_name == name
+        _MeshAddColorSetCommand(self, name, representation.value)
         return ColorSet(mesh=self, name=name)
 
     # --- data transfer
@@ -1695,6 +1701,166 @@ def _check_uv_data(fn: OpenMaya.MFnMesh, uv_set: str, uv_data: UVData) -> None:
         )
 
 
+# --- colour sets
+
+
+def _color_ids(fn: OpenMaya.MFnMesh, color_set: str) -> list[int]:
+    """The colour index of every face-vertex of `color_set`, face by face (-1:
+    no colour)."""
+    ids = []
+    it  = OpenMaya.MItMeshPolygon(fn.object())
+    while not it.isDone():
+        try:
+            ids.extend(it.getColorIndices(color_set))
+        except RuntimeError:  # a face without colours
+            ids.extend([-1] * it.polygonVertexCount())
+        it.next()
+    return ids
+
+
+def _capture_colors(fn: OpenMaya.MFnMesh, color_set: str) -> tuple:
+    """The colours of `color_set` as `_put_colors` puts them back: ``(pool,
+    ids)``; nothing to read for a set without colours."""
+    if not fn.numColors(color_set):
+        return (), ()
+    return fn.getColors(color_set), _color_ids(fn, color_set)
+
+
+def _put_colors(fn: OpenMaya.MFnMesh, color_set: str, colors: tuple, rep: int) -> None:
+    """Replaces the colours of `color_set` with `colors` (`_capture_colors`):
+    ``clearColors``, then the pool and the per-face-vertex indices."""
+    pool, ids = colors
+    fn.clearColors(color_set)
+    if len(pool):
+        fn.setColors(pool, color_set, rep=rep)
+        fn.assignColors(ids, color_set)
+
+
+def _write_vertex_colors(
+    fn:        OpenMaya.MFnMesh,
+    color_set: str,
+    colors:    OpenMaya.MColorArray,
+    rep:       int,
+    modifier:  OpenMaya.MDGModifier | None,
+) -> None:
+    """``setVertexColors`` of every vertex into `color_set`, made the current
+    set for the write (the current set is put back after it)."""
+    current = fn.currentColorSetName()
+    if current != color_set:
+        fn.setCurrentColorSetName(color_set)
+    try:
+        fn.setVertexColors(colors, range(fn.numVertices), rep=rep, **_modified(modifier))
+    finally:
+        if current and current != color_set:
+            fn.setCurrentColorSetName(current)
+
+
+class _MeshAddColorSetCommand(_MeshSetsEdit):
+    """`Mesh.add_color_set`: an empty, unclamped colour set."""
+
+    def __init__(self, mesh: Mesh, name: str, rep: int) -> None:
+        self._name = name
+        self._rep  = rep
+        super().__init__(mesh)
+
+    def _apply(self, fn, modifier):
+        fn.createColorSet(self._name, False, rep=self._rep, **_modified(modifier))
+
+    def _revert(self, fn):
+        fn.deleteColorSet(self._name)
+
+
+class _ColorSetDataCommand(_MeshSetsEdit):
+    """`ColorSet.data`: one colour per vertex. Undo puts the set's colours back
+    face-vertex by face-vertex; the current colour set stays current."""
+
+    def __init__(self, mesh: Mesh, name: str, rep: int, colors: OpenMaya.MColorArray) -> None:
+        self._name    = name
+        self._rep     = rep
+        self._colors  = colors
+        self._old     = None
+        self._current = ""
+        super().__init__(mesh)
+
+    def doIt(self) -> None:
+        self._current = self.fn().currentColorSetName()
+        super().doIt()
+
+    def undoIt(self) -> None:
+        super().undoIt()
+        self._keep_current()
+
+    def redoIt(self) -> None:
+        super().redoIt()
+        self._keep_current()
+
+    def _keep_current(self) -> None:
+        # with history, the modifier's undo / redo re-evaluates the mesh
+        fn = self.fn()
+        if self._current and fn.currentColorSetName() != self._current:
+            fn.setCurrentColorSetName(self._current)
+
+    def _capture(self, fn):
+        if self._modifier is None:
+            self._old = _capture_colors(fn, self._name)
+
+    def _apply(self, fn, modifier):
+        _write_vertex_colors(fn, self._name, self._colors, self._rep, modifier)
+
+    def _revert(self, fn):
+        _put_colors(fn, self._name, self._old, self._rep)
+
+
+def _color_set_of(fn: OpenMaya.MFnMesh, color_set: str) -> tuple:
+    """What `_make_color_set` makes `color_set` again from: ``(representation,
+    clamped, colours)``."""
+    return (
+        fn.getColorRepresentation(color_set),
+        fn.isColorClamped(color_set),
+        _capture_colors(fn, color_set),
+    )
+
+
+def _make_color_set(fn: OpenMaya.MFnMesh, color_set: str, saved: tuple) -> None:
+    """Makes the colour set `color_set` again from `saved` (`_color_set_of`)."""
+    rep, clamped, colors = saved
+    fn.createColorSet(color_set, clamped, rep=rep)
+    _put_colors(fn, color_set, colors, rep)
+
+
+class _ColorSetDeleteCommand(_MeshSetsEdit):
+    """`ColorSet.delete`. Undo makes the set again with its representation,
+    clamping and colours, in its place (the API adds a set last, so the sets
+    after it are made again after it), and the current set is current
+    again."""
+
+    def __init__(self, mesh: Mesh, name: str) -> None:
+        self._name    = name
+        self._saved   = None
+        self._later   = ()
+        self._current = ""
+        super().__init__(mesh)
+
+    def _capture(self, fn):
+        if self._modifier is None:
+            names         = list(fn.getColorSetNames())
+            self._saved   = _color_set_of(fn, self._name)
+            self._later   = names[names.index(self._name) + 1 :]
+            self._current = fn.currentColorSetName()
+
+    def _apply(self, fn, modifier):
+        fn.deleteColorSet(self._name, **_modified(modifier))
+
+    def _revert(self, fn):
+        later = [(name, _color_set_of(fn, name)) for name in self._later]
+        for name, _ in later:
+            fn.deleteColorSet(name)
+        for name, saved in [(self._name, self._saved), *later]:
+            _make_color_set(fn, name, saved)
+        if self._current and fn.currentColorSetName() != self._current:
+            fn.setCurrentColorSetName(self._current)
+
+
 class ColorSet:
     """Represents a color set of a mesh"""
 
@@ -1746,13 +1912,14 @@ class ColorSet:
 
     @data.setter
     def data(self, data):
-        """set the colorset data"""
-        if data.shape[0] != self.mesh.num_vertices:
-            raise RuntimeError(f"shape of data is not ({self.mesh.num_vertices}, 4): !")
-        with self.as_current_color_set():
-            self.mesh.fn_set.setVertexColors(
-                data, range(self.mesh.num_vertices), rep=self.representation.value
-            )
+        """set the colorset data: one colour per vertex, a ``(V, 4)`` array. One
+        undo step, whose undo puts back the set's colours as they were,
+        face-vertex by face-vertex. The current colour set is unchanged."""
+        mesh = self.mesh
+        if data.shape[0] != mesh.num_vertices:
+            raise RuntimeError(f"shape of data is not ({mesh.num_vertices}, 4): !")
+        rep = self.representation.value  # raises for a colour set that is gone
+        _ColorSetDataCommand(mesh, self.name, rep, OpenMaya.MColorArray(data))
 
     @contextlib.contextmanager
     def as_current_color_set(self) -> Generator[None, None, None]:
@@ -1771,6 +1938,8 @@ class ColorSet:
                 self.mesh.fn_set.setCurrentColorSetName(current_colorset)
 
     def delete(self):
-        """Delete this color set"""
+        """Delete this color set (nothing happens when it no longer exists): one
+        undo step, whose undo brings the set back with its representation,
+        clamping and colours (current again if it was)."""
         if self.is_valid:
-            self.mesh.fn_set.deleteColorSet(self.name)
+            _ColorSetDeleteCommand(self.mesh, self.name)
