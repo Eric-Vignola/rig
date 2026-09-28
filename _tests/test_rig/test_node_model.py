@@ -694,14 +694,22 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
             ("%", lambda: a.tx % b.tx),
             ("//", lambda: a.tx // b.tx),
             ("==", lambda: a.tx == b.tx),
-            ("sorted", lambda: sorted([b.tx, a.tx])),
         ):
             with self.subTest(op=label):
                 before = _scene_nodes()
                 result = build()
                 self.assertTrue(_scene_nodes() - before, label)
-                if label != "sorted":
-                    self.assertIsInstance(result, Plug)
+                self.assertIsInstance(result, Plug)
+        # an ordering comparison builds its node and has no truth value, so
+        # sorted() raises at its first comparison instead of ordering by a
+        # condition plug that is always true
+        before = _scene_nodes()
+        with self.assertRaisesRegex(TypeError, r"ordering comparison"):
+            sorted([b.tx, a.tx])
+        self.assertEqual(len(_scene_nodes() - before), 1)
+        self.assertEqual(
+            [str(p) for p in sorted([b.tx, a.tx], key=str)], ["a.translateX", "b.translateX"]
+        )
         # get() is numpy-shaped; the typed API reads the getAttr shape
         np.testing.assert_array_equal(a.t.get(), [0.0, 0.0, 0.0])
         self.assertEqual(a.find_attr("t").get(), [(0.0, 0.0, 0.0)])
