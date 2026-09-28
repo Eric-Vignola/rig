@@ -502,17 +502,51 @@ class TestMeshCreateErrors(_MeshCreateCase):
         self.assertEqual(cmds.getAttr("selprobe.translateX"), 0.0)
 
     def test_error_after_the_transform_leaves_no_node(self):
-        # a second UV set of a name already there fails after the transform is made
+        # a UV write failing after the transform is made (duplicate UV set names, the
+        # case this test first used, are refused before it since round U2's FIX)
+        from rig.nodetypes import mesh as mesh_module
+
         data, (map1,) = _cube_data()
-        dup = map1.copy()
-        dup.name = "map1"
-        self.ready()
-        self._bad(data, [map1, dup])
+        second = map1.copy()
+        second.name = "uv2"
+
+        def failing(fn, uv_set, uv_data, clear=True):
+            raise RuntimeError("a UV write failed")
+
+        original = mesh_module._write_uv_set
+        mesh_module._write_uv_set = failing
+        try:
+            self.ready()
+            self._bad(data, [map1, second])
+        finally:
+            mesh_module._write_uv_set = original
         self.assertFalse(cmds.ls(type="mesh"))
         self.undo_all()
         self.redo_all()
         self.assertFalse(cmds.ls(type="mesh"))
         self.assertEqual(cmds.getAttr("selprobe.translateX"), 7.0)
+
+    def test_duplicate_uv_set_names_raise_before_anything_is_made(self):
+        # they raised after the transform was made: the error left an empty create step
+        # and flushed the redo queue (runs\rU2\review_undo\p_empty.py)
+        data, (map1,) = _cube_data()
+        for names in (("map1", "map1"), ("a", "b", "a")):
+            with self.subTest(names):
+                uvs = []
+                for uv_name in names:
+                    uv = map1.copy()
+                    uv.name = uv_name
+                    uvs.append(uv)
+                self.ready()
+                cmds.setAttr("selprobe.translateY", 3.0)
+                self.undo_steps(1)  # the user's step on the redo queue
+                with self.assertRaisesRegex(RuntimeError, rf"^UV set {names[-1]} already exists\.$"):
+                    Mesh.create(data, uv_data=uvs, name="m")
+                self.assertFalse(cmds.ls(type="mesh"))
+                self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+                self.redo_steps(1)
+                self.assertEqual(cmds.getAttr("selprobe.translateY"), 3.0)
+                cmds.setAttr("selprobe.translateY", 0.0)
 
 
 # ---------------------------------------------------------------------------------------------

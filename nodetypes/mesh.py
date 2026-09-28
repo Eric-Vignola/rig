@@ -1278,8 +1278,9 @@ def _create_mesh(
 
     In this order (`Mesh.create` holds the one undo chunk around it):
 
-    1. check the data, triangulate the holed faces and hand their UVs to the
-       triangles (`_mesh_topology`, `_triangulated_uvs`): nothing is made yet;
+    1. check the data and that the UV set names differ, triangulate the holed
+       faces and hand their UVs to the triangles (`_mesh_topology`,
+       `_triangulated_uvs`): nothing is made yet;
     2. ``cmds.createNode("transform", name="polySurface#", skipSelect=True)``,
        the recorded node the mesh rides with (today's default name);
     3. ``MFnMesh.create(..., parent=<transform>)``: the shape, under it;
@@ -1297,6 +1298,10 @@ def _create_mesh(
     """
     counts, indices, internal_edges, hole_triangles = _mesh_topology(mesh_data)
     uv_sets = list(uv_data or ())
+    names   = [uv.name for uv in uv_sets]
+    for i, uv_name in enumerate(names):
+        if uv_name in names[:i]:  # the first renames the default set, the others are new
+            raise RuntimeError(f"UV set {uv_name} already exists.")
     if hole_triangles:
         uv_sets = [_triangulated_uvs(mesh_data, uv, hole_triangles) for uv in uv_sets]
     name = _mesh_create_name(name or mesh_data.name)
@@ -1322,8 +1327,6 @@ def _create_mesh(
                 if uv.name != current:
                     fn.renameUVSet(current, uv.name)
             else:
-                if uv.name in fn.getUVSetNames():
-                    raise RuntimeError(f"UV set {uv.name} already exists.")
                 fn.createUVSet(uv.name)
                 _write_uv_set(fn, uv.name, uv, clear=False)
         if internal_edges:
