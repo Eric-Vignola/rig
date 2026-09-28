@@ -398,23 +398,36 @@ class Mesh(Geometry):
         return self.fn_set.currentUVSetName()
 
     def add_uv_set(self, uv_set: str) -> None:
-        """Adds an emptyUV set.
+        """Adds an empty UV set: one undo step.
 
         Args:
             uv_set: A uv set name to add.
+
+        Raises:
+            RuntimeError: The mesh already has a UV set of that name.
         """
         if uv_set in self.uv_sets:
             raise RuntimeError(f"UV set {uv_set} already exists.")
         _MeshAddUVSetCommand(self, uv_set)
 
     def delete_uv_set(self, uv_set: str | None = None) -> None:
-        """Deletes a given uv set.
+        """Deletes a given uv set: one undo step, whose undo brings the set back
+        with its UVs (current again if it was).
 
         Args:
             uv_set: A uv set name to delete. If None, use current uv set.
+
+        Raises:
+            RuntimeError: The mesh has no UV set of that name, or it is the
+                mesh's default (first) set, which Maya never deletes.
         """
         uv_set = uv_set or self.current_uv_set
-        cmds.polyUVSet(self.name, delete=True, uvSet=uv_set)
+        names  = self.uv_sets
+        if uv_set not in names:
+            raise RuntimeError(f"UV set {uv_set} does not exist.")
+        if uv_set == names[0]:
+            raise RuntimeError("The default uv set cannot be deleted.")
+        _MeshDeleteUVSetCommand(self, uv_set)
 
     def delete_map(self, map_name: str | None = None) -> None:
         """Deletes a given map.
@@ -427,15 +440,24 @@ class Mesh(Geometry):
             cmds.deleteAttr(map_name)
 
     def rename_uv_set(self, new_name: str, uv_set: str | None = None) -> None:
-        """Renames the current uv set.
+        """Renames the current uv set: one undo step.
 
         Args:
             new_name: New uv set name.
             uv_set: A uv set name to rename. If None, use current uv set.
+
+        Raises:
+            RuntimeError: The mesh has no UV set `uv_set`, or has one named
+                `new_name` already.
         """
         uv_set = uv_set or self.current_uv_set
         if uv_set != new_name:
-            cmds.polyUVSet(self.name, rename=True, uvSet=uv_set, newUVSet=new_name)
+            names = self.uv_sets
+            if uv_set not in names:
+                raise RuntimeError(f"UV set {uv_set} does not exist.")
+            if new_name in names:
+                raise RuntimeError(f"UV set {new_name} already exists.")
+            _MeshRenameUVSetCommand(self, uv_set, new_name)
 
     def get_uv_coords(self, uv_set: str | None = None) -> np.ndarray:
         """Returns an array of uv coordinates.
@@ -467,13 +489,31 @@ class Mesh(Geometry):
     def set_uv_data(self, uv_data: UVData, uv_set: str | None = None) -> None:
         """Sets the data of an uv set.
 
+        The set's UVs and their assignment are replaced by `uv_data`'s (the UV
+        count may change; data without UVs empties the set), then the set is
+        renamed ``uv_data.name`` when that differs from `uv_set`. One undo
+        step, whose undo puts back the old name, UVs and assignment.
+
+        On a mesh with history (construction history or a deformer) the set is
+        never cleared (Maya's ``clearUVs`` there clears the current set): data
+        with fewer UVs than the set has raises, and the undo of data with more
+        puts back the old UVs and assignment but keeps the extra UVs in the
+        set, unassigned.
+
         Args:
             uv_data: A UVData object.
             uv_set: A uv set name to operate on. If None, use current uv set.
-        """
-        from cgmath.geometry import UVData
 
+        Raises:
+            RuntimeError: before any edit, when `uv_set` does not exist, another
+                set is named ``uv_data.name`` already, the data does not fit the
+                mesh (not one UV count per face, counts not adding up to the
+                indices, an index that is not one of the UVs), or it has fewer
+                UVs than the set of a mesh with history.
+            TypeError: ``uv_data.name`` is not a non-empty str.
+        """
         uv_set = uv_set or self.current_uv_set
+        _check_uv_data(OpenMaya.MFnMesh(self.mdagpath), uv_set, uv_data)
         _MeshSetUVDataCommand(self, uv_set, uv_data)
 
     # --- deformation
@@ -1360,11 +1400,30 @@ def _propagate_holes_to_uvs(mesh_data: MeshData, uv_list: UVList) -> None:
 #   kept across an edit of the mesh's sets made some other way (a polyUVSet /
 #   polyColorSet, or the undo / redo of one) can point at freed geometry and crash
 #   Maya when it is used again.
+# * UV and colour SETS are made, renamed and deleted here too, never with
+#   polyUVSet / polyColorSet: Maya undoes those by swapping the mesh's set data,
+#   which, beside rig's API data edits and a later vertex edit, brings back a
+#   broken set (an API write into it crashes Maya) or wrong data on redo.
+# * A mesh with history (its inMesh connected: construction history or a deformer)
+#   gets a node for each API set or colour edit: the edit passes an MDGModifier,
+#   and its undo / redo are the modifier's.
+
+
+def _has_history(fn: OpenMaya.MFnMesh) -> bool:
+    """True when the mesh's ``inMesh`` is connected (construction history, a
+    deformer)."""
+    return fn.findPlug("inMesh", False).isDestination
 
 
 def _put_points(fn: OpenMaya.MFnMesh, points: OpenMaya.MPointArray, space: int) -> None:
     fn.setPoints(points, space)
     fn.updateSurface()
+
+
+def _modified(modifier: OpenMaya.MDGModifier | None) -> dict:
+    """The ``modifier`` keyword of an MFnMesh call: none without one (the API
+    takes no None)."""
+    return {} if modifier is None else {"modifier": modifier}
 
 
 class _MeshEdit:
@@ -1400,60 +1459,240 @@ class _MeshSetPointsCommand(_MeshEdit):
         _put_points(self.fn(), self._points, self._space)
 
 
-class _MeshAddUVSetCommand:
-    def __init__(self, mesh: Mesh, uv_set: str) -> None:
-        super().__init__()
-        self._fn_set = mesh.fn_set
-        self._uv_set = uv_set
+class _MeshSetsEdit(_MeshEdit):
+    """[Internal] An edit of the mesh's UV or colour sets. `_capture` keeps
+    what the undo needs, then `_apply` makes the edit. Without history, redo
+    is `_apply` again and undo is `_revert`. With history (``_modifier`` is
+    set before `_capture`), `_apply` gets an MDGModifier, which records the
+    nodes the API adds, and undo / redo are the modifier's. The subclass sets
+    its fields, then calls this constructor, which runs it."""
 
+    def __init__(self, mesh: Mesh) -> None:
+        super().__init__(mesh)
+        self._modifier = None
         _run_undoable(self)
 
     def doIt(self) -> None:
-        self._fn_set.createUVSet(self._uv_set)
+        fn = self.fn()
+        if _has_history(fn):
+            self._modifier = OpenMaya.MDGModifier()
+        self._capture(fn)
+        self._apply(fn, self._modifier)
 
     def undoIt(self) -> None:
-        self._fn_set.deleteUVSet(self._uv_set)
+        fn = self.fn()  # first: a mesh deleted since raises here, not in the modifier
+        if self._modifier is None:
+            self._revert(fn)
+        else:
+            self._modifier.undoIt()
+
+    def redoIt(self) -> None:
+        fn = self.fn()
+        if self._modifier is None:
+            self._apply(fn, None)
+        else:
+            self._modifier.doIt()
+
+    def _capture(self, fn: OpenMaya.MFnMesh) -> None:
+        pass
+
+    def _apply(self, fn: OpenMaya.MFnMesh, modifier: OpenMaya.MDGModifier | None) -> None:
+        raise NotImplementedError
+
+    def _revert(self, fn: OpenMaya.MFnMesh) -> None:
+        raise NotImplementedError
+
+
+# --- UV sets
+
+
+def _uv_lists(uv_data: UVData) -> tuple[list, list, list, list]:
+    """`uv_data`'s UVs as the lists the API takes: ``(u, v, counts, ids)``."""
+    points = np.asarray(uv_data.points, dtype=float).reshape(-1, 2)
+    return (
+        points[:, 0].tolist(),
+        points[:, 1].tolist(),
+        np.asarray(uv_data.counts, dtype=np.int64).ravel().tolist(),
+        np.asarray(uv_data.indices, dtype=np.int64).ravel().tolist(),
+    )
+
+
+def _uvs_of(fn: OpenMaya.MFnMesh, uv_set: str) -> tuple:
+    """The UVs of the set `uv_set`: ``(u, v, counts, ids)``."""
+    return (*fn.getUVs(uv_set), *fn.getAssignedUVs(uv_set))
+
+
+def _put_uvs(fn: OpenMaya.MFnMesh, uv_set: str, uvs: tuple, history: bool) -> None:
+    """Replaces the UVs of the set `uv_set` with `uvs` (``(u, v, counts, ids)``).
+
+    Fewer UVs than the set has: without history the set is cleared first
+    (``setUVs`` cannot shrink it); with history it is not (Maya's ``clearUVs``
+    there adds a ``polyMapDel`` node that clears the CURRENT set), so the extra
+    UVs stay in the set, unassigned (`Mesh.set_uv_data` refuses to write fewer
+    UVs there)."""
+    u, v, counts, ids = uvs
+    now = fn.numUVs(uv_set)
+    if len(u) < now:
+        if history:
+            old_u, old_v = fn.getUVs(uv_set)
+            u = list(u) + list(old_u)[len(u):]
+            v = list(v) + list(old_v)[len(v):]
+        else:
+            fn.clearUVs(uv_set)
+    if len(u):
+        fn.setUVs(u, v, uv_set)
+        fn.assignUVs(counts, ids, uv_set)
+
+
+class _MeshAddUVSetCommand(_MeshSetsEdit):
+    """`Mesh.add_uv_set`: an empty UV set."""
+
+    def __init__(self, mesh: Mesh, name: str) -> None:
+        self._name = name
+        super().__init__(mesh)
+
+    def _apply(self, fn, modifier):
+        fn.createUVSet(self._name, **_modified(modifier))
+
+    def _revert(self, fn):
+        fn.deleteUVSet(self._name)
+
+
+class _MeshRenameUVSetCommand(_MeshEdit):
+    """`Mesh.rename_uv_set`. A rename adds no node, with or without history,
+    so it takes no modifier (whose undo would re-evaluate the history and drop
+    the UVs written into the set through the API)."""
+
+    def __init__(self, mesh: Mesh, name: str, new_name: str) -> None:
+        super().__init__(mesh)
+        self._name     = name
+        self._new_name = new_name
+        _run_undoable(self)
+
+    def doIt(self) -> None:
+        self.fn().renameUVSet(self._name, self._new_name)
+
+    def undoIt(self) -> None:
+        self.fn().renameUVSet(self._new_name, self._name)
 
     def redoIt(self) -> None:
         self.doIt()
 
 
-class _MeshSetUVDataCommand:
+class _MeshDeleteUVSetCommand(_MeshSetsEdit):
+    """`Mesh.delete_uv_set`. Undo makes the set again with its UVs, in its
+    place (the API adds a set last, so the sets after it are made again after
+    it), and the current set is current again. With history the modifier's
+    undo brings the set back from the history, without the UVs written into it
+    through the API: they are written again."""
+
+    def __init__(self, mesh: Mesh, name: str) -> None:
+        self._name    = name
+        self._uvs     = None
+        self._later   = ()
+        self._current = ""
+        super().__init__(mesh)
+
+    def _capture(self, fn):
+        names         = list(fn.getUVSetNames())
+        self._uvs     = _uvs_of(fn, self._name)
+        self._later   = names[names.index(self._name) + 1 :]
+        self._current = fn.currentUVSetName()
+
+    def _apply(self, fn, modifier):
+        fn.deleteUVSet(self._name, **_modified(modifier))
+
+    def undoIt(self) -> None:
+        super().undoIt()
+        if self._modifier is not None:
+            _put_uvs(self.fn(), self._name, self._uvs, True)
+
+    def _revert(self, fn):
+        later = [(name, _uvs_of(fn, name)) for name in self._later]
+        for name, _ in later:
+            fn.deleteUVSet(name)
+        for name, uvs in [(self._name, self._uvs), *later]:
+            fn.createUVSet(name)
+            _put_uvs(fn, name, uvs, False)
+        if fn.currentUVSetName() != self._current:
+            fn.setCurrentUVSetName(self._current)
+
+
+class _MeshSetUVDataCommand(_MeshEdit):
+    """`Mesh.set_uv_data`: the UVs of one set, and its rename to the data's
+    name. The UVs are data, written through the API with or without history
+    (see `_put_uvs`)."""
+
     def __init__(self, mesh: Mesh, uv_set: str, uv_data: UVData) -> None:
-        from cgmath.geometry import UVData
-
-        super().__init__()
-        self._fn_set  = mesh.fn_set
+        super().__init__(mesh)
         self._uv_set  = uv_set
-        self._u_vals  = uv_data.points[:, 0]
-        self._v_vals  = uv_data.points[:, 1]
-        self._ids     = uv_data.indices
-        self._counts  = uv_data.counts
-        self._uv_name = uv_data.name
-
-        self._old_u_vals = None
-        self._old_v_vals = None
-        self._old_ids    = None
-        self._old_counts = None
-
+        self._name    = uv_data.name
+        self._new     = _uv_lists(uv_data)
+        self._old     = None
+        self._history = False
         _run_undoable(self)
 
     def doIt(self) -> None:
-        self._old_u_vals, self._old_v_vals = self._fn_set.getUVs(self._uv_set)
-        self._old_counts, self._old_ids = self._fn_set.getAssignedUVs(self._uv_set)
-        self.redoIt()
+        fn            = self.fn()
+        self._history = _has_history(fn)
+        self._old     = _uvs_of(fn, self._uv_set)
+        try:
+            _put_uvs(fn, self._uv_set, self._new, self._history)
+        except BaseException:
+            _put_uvs(fn, self._uv_set, self._old, self._history)  # nothing is queued
+            raise
+        self._rename(fn, self._uv_set, self._name)
 
     def undoIt(self) -> None:
-        self._fn_set.setUVs(self._old_u_vals, self._old_v_vals, self._uv_name)
-        self._fn_set.assignUVs(self._old_counts, self._old_ids, self._uv_name)
-        if self._uv_name != self._uv_set:
-            self._fn_set.renameUVSet(self._uv_name, self._uv_set)
+        fn = self.fn()
+        self._rename(fn, self._name, self._uv_set)
+        _put_uvs(fn, self._uv_set, self._old, self._history)
 
     def redoIt(self) -> None:
-        self._fn_set.setUVs(self._u_vals, self._v_vals, self._uv_set)
-        self._fn_set.assignUVs(self._counts, self._ids, self._uv_set)
-        if self._uv_name != self._uv_set:
-            self._fn_set.renameUVSet(self._uv_set, self._uv_name)
+        fn = self.fn()
+        _put_uvs(fn, self._uv_set, self._new, self._history)
+        self._rename(fn, self._uv_set, self._name)
+
+    @staticmethod
+    def _rename(fn: OpenMaya.MFnMesh, name: str, new_name: str) -> None:
+        if name != new_name:
+            fn.renameUVSet(name, new_name)
+
+
+def _check_uv_data(fn: OpenMaya.MFnMesh, uv_set: str, uv_data: UVData) -> None:
+    """Raises, before any edit, when `Mesh.set_uv_data` cannot write `uv_data`
+    into the set `uv_set` of the mesh `fn` and rename it ``uv_data.name``."""
+    names = fn.getUVSetNames()
+    if uv_set not in names:
+        raise RuntimeError(f"UV set {uv_set} does not exist.")
+    name = uv_data.name
+    if not isinstance(name, str) or not name:
+        raise TypeError(f"UVData.name must be a non-empty str, not {name!r}")
+    if name != uv_set and name in names:
+        raise RuntimeError(f"UV set {name} already exists.")
+    n_uvs   = len(np.asarray(uv_data.points, dtype=float).reshape(-1, 2))
+    counts  = np.asarray(uv_data.counts, dtype=np.int64).ravel()
+    indices = np.asarray(uv_data.indices, dtype=np.int64).ravel()
+    if n_uvs < fn.numUVs(uv_set) and _has_history(fn):
+        raise RuntimeError(
+            f"UVData {name!r}: {n_uvs} UVs for the {fn.numUVs(uv_set)} of UV set {uv_set}: "
+            "rig cannot remove UVs from a mesh with history (Maya's clearUVs there clears "
+            "the current UV set); delete its history first"
+        )
+    if not n_uvs and not len(indices):
+        return  # no UVs: the set is emptied
+    if len(counts) != fn.numPolygons:
+        raise RuntimeError(f"UVData {name!r}: {len(counts)} face counts for {fn.numPolygons} faces")
+    if int(counts.sum()) != len(indices):
+        raise RuntimeError(
+            f"UVData {name!r}: the face counts add up to {int(counts.sum())}, "
+            f"but there are {len(indices)} indices"
+        )
+    if len(indices) and (int(indices.min()) < 0 or int(indices.max()) >= n_uvs):
+        raise RuntimeError(
+            f"UVData {name!r}: an index is not one of the {n_uvs} UVs "
+            f"(indices range {int(indices.min())}..{int(indices.max())})"
+        )
 
 
 class ColorSet:
