@@ -326,7 +326,10 @@ class TestTypedCreateInContainer(MayaTestCase):
 
     # -- 4 nesting -- #
 
-    def test_skincluster_registers_its_helpers_and_no_temporary_joint(self):
+    def test_skincluster_registers_its_own_nodes_and_no_temporary_joint(self):
+        # the Orig shape under the user's mesh and the shared bindPose belong
+        # to nodes that existed before the call, so they are not registered
+        # (see test_r4a_review.TestScopeRegistersItsOwnNodes)
         j1   = cmds.createNode("joint", name="j1")
         j2   = cmds.createNode("joint", name="j2", parent=j1)
         cube = self._cube()
@@ -337,10 +340,9 @@ class TestTypedCreateInContainer(MayaTestCase):
             skin.set_influence_objects([j1])
             after = _frame_uuids()
         members = _members(box)
-        self.assertIn(str(skin), members)
-        self.assertIn("cubeShapeOrig", members)
-        self.assertTrue(any(cmds.nodeType(m) == "dagPose" for m in members))
-        self.assertFalse([m for m in members if cmds.nodeType(m) == "joint"])
+        self.assertEqual(members, [str(skin)])
+        self.assertTrue(cmds.objExists("cubeShapeOrig"))
+        self.assertTrue(cmds.ls(type="dagPose"))
         self.assertEqual(after, before)
         for uid in after[0]:
             name = cmds.ls(uid)
