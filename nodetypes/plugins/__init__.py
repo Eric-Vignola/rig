@@ -47,6 +47,13 @@ def _ensure_loaded(name: str, quiet: bool) -> List[str]:
     if command is not None:
         if hasattr(cmds, command):
             return []
+        if cmds.pluginInfo(name, query=True, loaded=True):
+            # another plug-in of that name, or rig's after a forced unload (Maya makes
+            # no maya.cmds function again): a loadPlugin would change nothing
+            raise RuntimeError(
+                f"a plug-in named {name!r} is loaded, but maya.cmds has no {command}: "
+                + _RECOVERY.format(name=name)
+            )
     elif cmds.pluginInfo(name, query=True, loaded=True):
         return []
     path   = bundled_plugin_path(name)
@@ -54,10 +61,14 @@ def _ensure_loaded(name: str, quiet: bool) -> List[str]:
     if command is not None and not hasattr(cmds, command):
         # Maya prints an initializePlugin error and returns: loadPlugin does not raise
         raise RuntimeError(
-            f"rig's plug-in {path} did not register {command}: see Maya's error above, "
-            f"or unload the other plug-in named {name!r} first"
+            f"rig's plug-in {path} did not register {command} (see Maya's error above): "
+            + _RECOVERY.format(name=name)
         )
     return loaded
+
+
+# how to get a bundled plug-in's command back without a restart
+_RECOVERY = "run cmds.flushUndo() and cmds.unloadPlugin({name!r}), then try again (or restart Maya)"
 
 
 @contextmanager
@@ -83,12 +94,12 @@ def load_plugin(
     if isinstance(plugins, str):
         plugins = [plugins]
 
-    # load plugins, keeping the names this call loaded
     loaded = []
-    for each in plugins:
-        loaded.extend(_ensure_loaded(each, quiet))
-
     try:
+        # load plugins, keeping the names this call loaded (unloaded below also when
+        # a later name fails to load)
+        for each in plugins:
+            loaded.extend(_ensure_loaded(each, quiet))
         yield
     finally:
         # unload what this call loaded, if requested (unloadPlugin has no quiet flag)
