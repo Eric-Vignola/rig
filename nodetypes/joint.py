@@ -251,9 +251,9 @@ class Joint(Transform):
 
     def convert_orients_to_rotation(self):
         """converts joint orientation into rotations"""
-        # Imported lazily: ``transforms`` is only needed for orientation math,
-        # so importing rig must not pay for it.
-        from transforms import matrix_to_euler, XYZ
+        # Imported lazily: ``cgmath.transforms`` is only needed for orientation
+        # math, so importing rig must not pay for it.
+        from cgmath.transforms import matrix_to_euler, XYZ
 
         matrix = _world_matrix(self.name)
         rot    = np.degrees(matrix_to_euler(matrix, XYZ))[0].tolist()
@@ -262,7 +262,7 @@ class Joint(Transform):
 
     def convert_rotation_to_orients(self):
         """converts joint rotation into orients"""
-        from transforms import matrix_to_euler, XYZ
+        from cgmath.transforms import matrix_to_euler, XYZ
 
         local_matrix = np.reshape(cmds.getAttr(f"{self.name}.matrix"), (4, 4))
         rotation     = np.degrees(matrix_to_euler(local_matrix, XYZ))[0].tolist()
@@ -290,7 +290,7 @@ class Joint(Transform):
 
     def orient_joint(self, aim_axis="x", up_axis="y", root_joint=False):
         """sets joint orient based on axis and up vector"""
-        from transforms import vector_to_euler
+        from cgmath.transforms import vector_to_euler
 
         self.convert_orients_to_rotation()
 
