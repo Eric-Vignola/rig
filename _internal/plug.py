@@ -103,6 +103,7 @@ from rig.nodetypes._base import (
     _plug_hash,
     _same_plug,
     Attribute,
+    Node,
 )
 from rig._internal.generators import sequences
 from rig._internal.introspect import _to_numpy
@@ -110,6 +111,7 @@ from rig._internal.maya_version import is_at_least
 from rig._internal.operands import (
     _CAN_HOLD_STR,
     _prepared_operand,
+    _render as _render_operand,
     _RESHAPED,
     _SCALARS,
     _text_operand,
@@ -355,8 +357,12 @@ class Plug(Attribute):
         # 2) Fall back to sibling on the same node -- restores Eric's
         #    `dec.outputRotate` linguistic affordance:
         #    ``Plug('foo.outputTranslate').outputRotate`` => ``Plug('foo.outputRotate')``.
+        #    A Maya attribute (or component) of the node only, through the node
+        #    class's ``__getattr__``: never the node's Python members, so
+        #    ``node.tx.delete()`` / ``.rename()`` / ``.uuid`` do not reach the node.
+        node = self.node
         try:
-            return getattr(self.node, attr_name)
+            return type(node).__getattr__(node, attr_name)
         except AttributeError:
             pass
 
@@ -378,8 +384,10 @@ class Plug(Attribute):
         if owner:
             from rig._internal.container import Container
 
+            # a published name or an attribute of the container, never its
+            # Python members (``cleanup``, ``name`` ...)
             try:
-                return getattr(Container(owner), attr_name)
+                return Container.__getattr__(Container(owner), attr_name)
             except AttributeError:
                 pass
 
@@ -509,8 +517,8 @@ class Plug(Attribute):
         of different instances (``worldMatrix[0]``, ``worldMatrix[1]``), different
         plugs, hash apart (``==`` on two matrices raises), as do the plugs of a
         freed node and of a node made after it. A plug never hashes as its name:
-        a plain str is not a key for it, and neither is a typed Attribute (its
-        hash is salted).
+        a plain str is not a key for it. A typed Attribute of the plug is the
+        same key (it compares equal, see ``__eq__``).
         """
         return _plug_hash(self)
 
@@ -601,6 +609,11 @@ class Plug(Attribute):
         # Attribute spec.
         if lazy.types._is_attribute_spec(other):
             return other.apply(self)
+
+        # The operand shapes (F14): a set, frozenset or dict raises TypeError
+        # (unordered), an iterator is read into a list.
+        if not isinstance(other, _SCALARS) and isinstance(other, _RESHAPED):
+            other = _prepared_operand(other, f"{self} << {_render_operand(other)}")
 
         # Type-shorthand (matrix->transform, quat->euler, ...).
         if lazy.shorthand.shorthand(other, self):
@@ -1120,10 +1133,11 @@ class Plug(Attribute):
         lookup through a second object of a plug builds nothing. Under
         ``set_options(constant_folding=False)`` / ``with force_nodes():`` it
         builds the node as for two plugs (its truth value is then True). A
-        deleted or freed plug raises as it did before the fold.
+        deleted or freed plug raises as it did before the fold. A node is never
+        a plug: ``plug == node`` is ``False`` and builds nothing (a node has no
+        value to compare), so ``node in [plug, node]`` finds the node.
         """
         from rig._internal.math_nodes import _condition_op
-        from rig._internal.node import Node
 
         if isinstance(other, Attribute):
             # names both first: a deleted node raises as the names do
@@ -1134,18 +1148,17 @@ class Plug(Attribute):
             if isinstance(result, Plug):
                 result._identity = same
             return result
-        result = _condition_op(self, "==", other)
-        if isinstance(result, Plug) and isinstance(other, Node):
-            result._identity = str(self) == str(other)
-        return result
+        if isinstance(other, Node):
+            return False
+        return _condition_op(self, "==", other)
 
     def __ne__(self, other: Any) -> "Plug | bool":
         """``self != other``: the output of a ``condition`` node comparing the
         two, whose truth value says whether they are different Maya plugs (see
         ``_identity``). Two objects of one Maya plug fold to ``False`` and build
-        no node, by the rules ``__eq__`` folds to ``True`` with."""
+        no node, by the rules ``__eq__`` folds to ``True`` with; ``plug != node``
+        is ``True`` and builds nothing."""
         from rig._internal.math_nodes import _condition_op
-        from rig._internal.node import Node
 
         if isinstance(other, Attribute):
             # names both first: a deleted node raises as the names do
@@ -1156,10 +1169,9 @@ class Plug(Attribute):
             if isinstance(result, Plug):
                 result._identity = not same
             return result
-        result = _condition_op(self, "!=", other)
-        if isinstance(result, Plug) and isinstance(other, Node):
-            result._identity = str(self) != str(other)
-        return result
+        if isinstance(other, Node):
+            return True
+        return _condition_op(self, "!=", other)
 
     # ``list`` / ``set`` / ``dict`` containment calls ``PyObject_IsTrue()`` on
     # the ``__eq__`` result, so this is the only hook that can answer them.
@@ -1169,31 +1181,56 @@ class Plug(Attribute):
     # ``_same_plug``). With constant folding on, a comparison of one plug with
     # itself returns the bool and no result exists, so a result built with it
     # on is always False (``!=``: True). The class default keeps ``bool(plug)`` off
-    # ``__getattr__`` (a child / sibling / container lookup).
+    # ``__getattr__`` (a child / sibling / container lookup). An ordering result
+    # (``<``, ``<=``, ``>``, ``>=``) holds None: it has no truth value (see
+    # ``__bool__``).
     _identity = True
 
     def __bool__(self) -> bool:
-        return getattr(self, "_identity", True)
+        """A plug is true, and a ``==`` / ``!=`` result says whether its two
+        operands are the same Maya plug (see ``_identity``). An ordering result
+        (``a.tx > 0``) raises TypeError, as a numpy array does: its value is
+        only known when Maya evaluates it, so ``if plug > 0:``, ``sorted(plugs)``,
+        ``min`` / ``max`` and chained comparisons would silently take it as
+        true."""
+        identity = getattr(self, "_identity", True)
+        if identity is None:
+            raise TypeError(
+                f"the truth value of {self.full_name!r}, the output of an ordering "
+                f"comparison (<, <=, >, >=), is only known when Maya evaluates it; "
+                f"read it with .get(), pick with rig.condition(...), or order plugs "
+                f"by name with sorted(plugs, key=str)"
+            )
+        return identity
 
     def __ge__(self, other: Any) -> "Plug":
         from rig._internal.math_nodes import _condition_op
 
-        return _condition_op(self, ">=", other)
+        return _ordering(_condition_op(self, ">=", other))
 
     def __le__(self, other: Any) -> "Plug":
         from rig._internal.math_nodes import _condition_op
 
-        return _condition_op(self, "<=", other)
+        return _ordering(_condition_op(self, "<=", other))
 
     def __gt__(self, other: Any) -> "Plug":
         from rig._internal.math_nodes import _condition_op
 
-        return _condition_op(self, ">", other)
+        return _ordering(_condition_op(self, ">", other))
 
     def __lt__(self, other: Any) -> "Plug":
         from rig._internal.math_nodes import _condition_op
 
-        return _condition_op(self, "<", other)
+        return _ordering(_condition_op(self, "<", other))
+
+
+def _ordering(result: Any) -> Any:
+    """`result`, the output of an ordering comparison, marked as having no
+    truth value when it is a Plug (see `Plug.__bool__`); a folded number or a
+    List of results is returned as it is."""
+    if isinstance(result, Plug):
+        result.__dict__["_identity"] = None
+    return result
 
 
 # ``Plug`` inherits ``str`` so ``cmds`` calls accept it directly, but that also
