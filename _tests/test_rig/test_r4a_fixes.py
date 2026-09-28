@@ -29,6 +29,13 @@ Round 4a, step M10 (spec S5): a named spec's plug is owned by the node object
 it was applied to, ``(node << Float("x")).node is node``, and by the node object
 a Plug target holds (``plug << Float("x")``), named for cmds through the path
 that node holds.
+
+Round 4a, step R2: ``Node`` is the only node factory; ``PyNode`` was removed
+(``from rig.nodetypes import PyNode`` is an ImportError and no package module
+names it). ``Node(x)``'s full input table, the private cast core, and
+``Node.create`` (a registered type's typed create, with D13's opt-outs; any
+other type ``container.createNode``) and ``Node.find_all`` are pinned in
+``TestNodeOnly``.
 """
 
 import itertools
@@ -1779,3 +1786,353 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         self.assertEqual(len(calls), 2)
         self.assertIsNot(again, first)
         self.assertEqual(again.get(), 0.0)
+
+
+def _names_pynode(path):
+    """The (line, token) pairs of a .py file whose token mentions PyNode (any case)."""
+    import io
+    import tokenize
+
+    with open(path, encoding="utf-8") as fh:
+        source = fh.read()
+    return [
+        (tok.start[0], tok.string)
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline)
+        if "pynode" in tok.string.lower()
+    ]
+
+
+def _mplug(name):
+    from maya.api import OpenMaya
+
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return sel.getPlug(0)
+
+
+class TestNodeOnly(_SceneCase):
+    """``Node`` is the only node factory: ``PyNode`` was removed (step R2). The
+    typed cast is the private ``nodetypes._base._cast``; ``Node.create`` runs a
+    registered type's typed create (D13 opt-outs kept) and ``container.createNode``
+    for any other type; ``Node.find_all`` is the former ``PyNode.find_all``."""
+
+    def setUp(self):
+        super().setUp()
+        from rig.nodetypes import _base
+
+        self._registered = dict(_base._NODE_CLASS_DICT)
+        cmds.select(clear=True)
+
+    def tearDown(self):
+        from rig.nodetypes import _base
+
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
+        set_options(skip_selection=True)
+        super().tearDown()
+
+    # -- the name is gone -- #
+
+    def test_pynode_is_gone(self):
+        import importlib
+        import sys
+
+        import rig
+        import rig.nodetypes
+        from rig._internal import container as container_module
+        from rig.nodetypes import _base
+
+        for module in ("rig", "rig.nodetypes", "rig.nodetypes._base"):
+            with self.subTest(module=module):
+                with self.assertRaises(ImportError):
+                    exec(f"from {module} import PyNode", {})
+                self.assertFalse(hasattr(importlib.import_module(module), "PyNode"))
+        with self.assertRaises(AttributeError):
+            rig.PyNode
+        with self.assertRaises(AttributeError):
+            rig.nodetypes.PyNode
+        with self.assertRaises(AttributeError):
+            _base.PyNode
+        # no loaded rig module holds the name, nor the private leftovers of it
+        leftovers = ("PyNode", "_PYNODE_CLASS", "_PYNODE_CREATE_HOOK", "_pynode_legacy_tail",
+                     "_pynode_create")
+        holders = sorted(
+            (name, left)
+            for name, module in list(sys.modules.items())
+            if (name == "rig" or name.startswith("rig.")) and module is not None
+            and not name.startswith("rig._tests")
+            for left in leftovers
+            if left in vars(module)
+        )
+        self.assertEqual(holders, [])
+        self.assertFalse(hasattr(container_module, "_pynode_create"))
+        # the cast core is private: no public module exports it
+        self.assertFalse(hasattr(rig, "_cast"))
+        self.assertFalse(hasattr(rig.nodetypes, "_cast"))
+        self.assertTrue(callable(_base._cast))
+
+    def test_only_node_is_exported(self):
+        import rig
+        import rig.nodetypes
+
+        self.assertIn("Node", rig.__all__)
+        self.assertNotIn("PyNode", rig.__all__)
+        for module in ("rig", "rig.nodetypes"):
+            with self.subTest(module=module):
+                namespace = {}
+                exec(f"from {module} import *", namespace)
+                self.assertIs(namespace["Node"], rig.Node)
+                self.assertNotIn("PyNode", namespace)
+                self.assertNotIn("_cast", namespace)
+        self.assertIs(rig.nodetypes.Node, rig.Node)
+
+    def test_no_package_module_names_pynode(self):
+        """No .py file of the package outside the tests mentions PyNode: no
+        name, string, docstring or comment (the .md docs are the docs step's)."""
+        import rig
+
+        root = os.path.dirname(os.path.abspath(rig.__file__))
+        found = []
+        for folder, subfolders, files in os.walk(root):
+            subfolders[:] = [d for d in subfolders if d not in ("_tests", "__pycache__")]
+            for file in files:
+                if file.endswith(".py"):
+                    path = os.path.join(folder, file)
+                    found += [
+                        (os.path.relpath(path, root), line, text)
+                        for line, text in _names_pynode(path)
+                    ]
+        self.assertEqual(found, [])
+
+    # -- Node(x): the full input table -- #
+
+    def test_node_input_table(self):
+        from maya.api import OpenMaya
+        from rig.nodetypes import DGNode, Geometry, Joint, Mesh, Transform
+
+        cmds.addAttr("t", longName="myDyn", attributeType="double")
+        cube = cmds.polyCube(name="cube", ch=False)[0]
+        cmds.createNode("transform", name="T1")
+        cmds.createNode("transform", name="T2")
+        cmds.createNode("locator", name="S", parent="T1")
+        cmds.parent("|T1|S", "|T2", shape=True, addObject=True)
+        cmds.namespace(add="ns")
+        cmds.createNode("transform", name="ns:n")
+        cmds.createNode("joint", name="jnt")
+        cmds.createNode("multiplyDivide", name="md")
+        node  = self.t
+        uuid  = cmds.ls("t", uuid=True)[0]
+        sel   = OpenMaya.MSelectionList()
+        sel.add("t")
+        sel.add("|T2|S")
+        mobj  = sel.getDependNode(0)
+        mdag  = sel.getDagPath(1)
+        mplug = _mplug("t.tx")
+        with container("box") as ctn:
+            Node.create("transform", name="inside")
+        # a node object is itself; an attribute or plug the node object it holds
+        for label, value in (
+            ("node object", node),
+            ("plug", node.tx),
+            ("compound child plug", node.t[1]),
+            ("dynamic attr plug", node.myDyn),
+            ("typed attribute", node.find_attr("tx")),
+            ("typed child", node.find_attr("t").child(0)),
+        ):
+            with self.subTest(value=label):
+                self.assertIs(Node(value), node)
+        self.assertIs(Node(ctn), ctn)
+        md = Node("md")
+        self.assertIs(Node(md), md)
+        # everything else is the typed node it names (a new node object)
+        for label, value, cls, name in (
+            ("name-built Plug", Plug("t.ty"), Transform, "t"),
+            ("Attribute(str)", Attribute("t.tz"), Transform, "t"),
+            ("component plug", Node(cube).vtx[1], Mesh, "cubeShape"),
+            ("MPlug", mplug, Transform, "t"),
+            ("MObject", mobj, Transform, "t"),
+            ("MDagPath of an instance", mdag, Geometry, "T2|S"),
+            ("name", "t", Transform, "t"),
+            ("long name", "|t", Transform, "t"),
+            ("uuid", uuid, Transform, "t"),
+            ("joint", "jnt", Joint, "jnt"),
+            ("DG node", "md", DGNode, "md"),
+            ("instance path", "|T1|S", Geometry, "T1|S"),
+            ("dotted", "t.tx", Transform, "t"),
+            ("dotted long name", "t.translateX", Transform, "t"),
+            ("dotted compound", "t.translate", Transform, "t"),
+            ("dotted instance path", "|T2|S.v", Geometry, "T2|S"),
+            ("dotted namespace", "ns:n.tx", Transform, "ns:n"),
+            ("dotted component", "cube.vtx[1]", Transform, "cube"),
+            ("dotted, empty attr", "t.", Transform, "t"),
+            ("keyword", None, Transform, "t"),
+        ):
+            with self.subTest(value=label):
+                result = Node(obj="t") if value is None else Node(value)
+                self.assertIs(type(result), cls)
+                self.assertEqual(str(result), name)
+                self.assertIsInstance(result, Node)
+        # what names no node raises the cast's TypeError; a non-name its ValueError
+        for label, value in (("missing", "nope"), ("missing, dotted", "nope.tx"),
+                             ("empty", ""), ("no node before the dot", ".tx")):
+            with self.subTest(error=label):
+                with self.assertRaisesRegex(TypeError, "No object matches name"):
+                    Node(value)
+        for label, value in (("int", 3), ("None", None), ("float", 1.5), ("list", [node]),
+                             ("bytes", b"t"), ("faces", Node(cube).f[0:2])):
+            with self.subTest(error=label):
+                with self.assertRaisesRegex(ValueError, "is not a str, MObject, MDagPath, or MPlug"):
+                    Node(value)
+        for label, call in (("no argument", lambda: Node()), ("two", lambda: Node("t", "u")),
+                            ("keyword", lambda: Node("t", k=1))):
+            with self.subTest(error=label):
+                with self.assertRaises(TypeError):
+                    call()
+        # the attribute a dotted name names is Attribute(...) (typed) or Plug(...) (DSL)
+        self.assertIs(type(Attribute("t.tx")), Attribute)
+        self.assertEqual(str(Attribute("t.tx")), "t.translateX")
+        self.assertIs(type(Plug("t.tx")), Plug)
+        self.assertEqual(str(Plug("t.tx")), "t.translateX")
+
+    def test_node_and_the_cast_core_agree_on_nodes(self):
+        from rig.nodetypes import _base
+
+        cube = cmds.polyCube(name="cube", ch=False)[0]
+        for value in ("t", "|t", cube, "cubeShape", cmds.ls("t", uuid=True)[0], _mplug("t.tx").node()):
+            with self.subTest(value=str(value)):
+                self.assertIs(type(Node(value)), type(_base._cast(value)))
+                self.assertEqual(str(Node(value)), str(_base._cast(value)))
+        # the core keeps the attribute branch the package relies on
+        for value in ("t.tx", _mplug("t.tx")):
+            with self.subTest(attr=str(value)):
+                self.assertIs(type(_base._cast(value)), Attribute)
+                self.assertIs(type(Node(value)), type(self.t))
+        # a plugs=True connection list still gives attributes
+        self.u.tx << self.t.tx
+        self.assertEqual([type(x) for x in self.u.find_attr("tx").list_connections(plugs=True)],
+                         [type(Attribute("t.tx"))])
+        self.assertEqual([str(x) for x in self.u.list_connections(plugs=True)], ["t.translateX"])
+
+    # -- Node.create -- #
+
+    def test_node_create_runs_the_typed_create_of_a_registered_type(self):
+        from rig.nodetypes import (
+            BlendShape, DGNode, DisplayLayer, Joint, ObjectSet, ShadingEngine,
+            SkinCluster, Transform,
+        )
+
+        joint = Node.create("joint", name="j")
+        self.assertIs(type(joint), Joint)
+        # a scene registry made by its own command, not a bare createNode
+        sg = Node.create("shadingEngine", name="sg")
+        self.assertIs(type(sg), ShadingEngine)
+        self.assertIn("renderPartition", cmds.listConnections("sg.partition") or [])
+        layer = Node.create("displayLayer", name="L")
+        self.assertIs(type(layer), DisplayLayer)
+        self.assertIn("layerManager", cmds.listConnections("L.identification") or [])
+        self.assertIs(type(Node.create("objectSet", name="S")), ObjectSet)
+        # positional arguments reach the typed create
+        base   = cmds.polyCube(name="base", ch=False)[0]
+        target = cmds.polyCube(name="target", ch=False)[0]
+        self.assertIs(type(Node.create("blendShape", target, base)), BlendShape)
+        skinned = cmds.polyCube(name="skinned", ch=False)[0]
+        self.assertIs(type(Node.create("skinCluster", skinned, joint)), SkinCluster)
+
+        # a user class: its own create, its custom type
+        class _Meta(DGNode):
+            NATIVE_NODE_TYPE = "network"
+            CUSTOM_NODE_TYPE = "r2NodeCreateMeta"
+
+        meta = Node.create("r2NodeCreateMeta", name="meta")
+        self.assertIs(type(meta), _Meta)
+        self.assertEqual(cmds.nodeType("meta"), "network")
+        self.assertIs(type(Node("meta")), _Meta)
+        self.assertIs(type(Node.create("transform", name="x")), Transform)
+
+    def test_node_create_of_another_type_is_create_node(self):
+        from rig.nodetypes import DGNode
+
+        md = Node.create("multiplyDivide", name="md")
+        self.assertIs(type(md), DGNode)
+        self.assertEqual(str(md), "md")
+        # the GC tag of a utility type, as container.createNode gives it
+        self.assertTrue(cmds.attributeQuery("__rig__", node="md", exists=True))
+        # no positional argument after a type with no class, and nothing is made
+        before = _scene()
+        with self.assertRaisesRegex(TypeError, "takes keyword arguments only"):
+            Node.create("multiplyDivide", "x")
+        self.assertEqual(_new(before), [])
+
+    def test_node_create_joins_a_scope_with_the_d13_opt_outs(self):
+        with container("box") as box:
+            with container("inner"):
+                t = Node.create("transform", name="t")
+                j = Node.create("joint", name="j")
+                m = Node.create("multiplyDivide", name="m")
+                s = Node.create("objectSet", name="S")
+                layer = Node.create("displayLayer", name="L")
+                kept = Node.create("objectSet", name="K", container=True)
+                loose = Node.create("transform", name="loose", container=False)
+        self.assertEqual([str(x) for x in (t, j, m, s, layer, kept, loose)],
+                         ["inner_t", "inner_j", "inner_m", "S", "L", "K", "loose"])
+        members = sorted(cmds.container(str(box), query=True, nodeList=True) or [])
+        self.assertEqual(members, ["K", "inner_j", "inner_m", "inner_t"])
+        self.assertEqual(cmds.ls(selection=True), [])
+
+    def test_node_create_does_not_select(self):
+        from rig.nodetypes import Transform
+
+        for node_type in ("transform", "joint", "choice", "objectSet", "multiplyDivide"):
+            with self.subTest(node_type=node_type):
+                cmds.select(clear=True)
+                Node.create(node_type, name=f"n_{node_type}")
+                self.assertEqual(cmds.ls(selection=True), [])
+        # the caller's flag wins, and the option is read
+        Node.create("transform", name="chosen", skipSelect=False)
+        self.assertEqual(cmds.ls(selection=True), ["chosen"])
+        set_options(skip_selection=False)
+        Node.create("transform", name="selected")
+        self.assertEqual(cmds.ls(selection=True), ["selected"])
+        set_options(skip_selection=True)
+        # a typed create outside a scope still selects, as before (D13)
+        Transform.create(name="typed")
+        self.assertEqual(cmds.ls(selection=True), ["typed"])
+
+    def test_node_create_on_a_container_is_the_root_factory(self):
+        from rig import Container
+
+        with container("box") as box:
+            made = Container.create("transform", name="c")
+        self.assertIs(type(made), type(self.t))
+        self.assertIn(str(made), cmds.container(str(box), query=True, nodeList=True))
+
+    # -- Node.find_all -- #
+
+    def test_node_find_all(self):
+        from rig.nodetypes import DGNode, Joint, Transform
+
+        cmds.createNode("joint", name="j1")
+        cmds.createNode("joint", name="j2")
+        joints = Node.find_all("joint")
+        self.assertEqual(sorted(str(x) for x in joints), ["j1", "j2"])
+        self.assertTrue(all(type(x) is Joint for x in joints))
+        exact = {str(x) for x in Node.find_all("transform")}
+        self.assertIn("t", exact)
+        self.assertNotIn("j1", exact)
+        wide = {str(x) for x in Node.find_all("transform", exact_type=False)}
+        self.assertTrue({"t", "u", "j1", "j2"} <= wide)
+
+        class _Tagged(DGNode):
+            NATIVE_NODE_TYPE = "network"
+            CUSTOM_NODE_TYPE = "r2FindAllMeta"
+
+        made = [_Tagged.create(name=f"meta{i}") for i in range(2)]
+        cmds.createNode("network", name="plainNet")
+        self.assertEqual(set(Node.find_all("r2FindAllMeta")), set(made))
+        with self.assertRaisesRegex(NotImplementedError, "Node type multiplyDivide not implemented"):
+            Node.find_all("multiplyDivide")
+        # a node class keeps its own typed find_all
+        self.assertEqual({str(x) for x in Joint.find_all()}, {"j1", "j2"})
+        self.assertIs(Transform.find_all.__func__, DGNode.find_all.__func__)
