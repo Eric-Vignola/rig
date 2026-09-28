@@ -41,6 +41,8 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes import _base as _nodetypes_base, dg_node as _dg_node_module
 from rig.nodetypes._base import (
+    _class_attr,
+    _MISSING,
     _PLAIN_NODE_NAME,
     _path_instance_number,
     Attribute,
@@ -1796,8 +1798,10 @@ def _destroy_published_name(container_node, name: str) -> bool:
 def _refuse_container_member_name(name: str) -> None:
     """Raise ``ValueError`` if ``name`` is a Python member of :class:`Container`
     (``name``, ``uuid``, ``cleanup``, ...): ``ctn.<name>`` gives the member, so
-    an attribute published under that name could never be read back."""
-    if hasattr(Container, name):
+    an attribute published under that name could never be read back. A member
+    of the metaclass (``wrap``) is not one: a container reads it as its
+    published attribute."""
+    if _class_attr(Container, name) is not _MISSING:
         raise ValueError(
             f"{name!r} is a Container attribute "
             f"({type(getattr(Container, name)).__name__}); "
@@ -2372,9 +2376,11 @@ class Container(DGNode):
 
     __hash__ = DGNode.__hash__
 
-    # the root Node's container-aware factory: DGNode's typed ``create`` would
-    # build a node of this unregistered class's inherited type ("entity")
-    create = classmethod(Node.create.__func__)
+    # the root Node's container-aware factory and finder: DGNode's typed
+    # ``create`` / ``find_all`` would build / list nodes of this unregistered
+    # class's inherited type ("entity")
+    create   = classmethod(Node.create.__func__)
+    find_all = classmethod(Node.find_all.__func__)
 
     # -- attribute lookup -- #
 

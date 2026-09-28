@@ -2131,8 +2131,14 @@ class TestNodeOnly(_SceneCase):
         made = [_Tagged.create(name=f"meta{i}") for i in range(2)]
         cmds.createNode("network", name="plainNet")
         self.assertEqual(set(Node.find_all("r2FindAllMeta")), set(made))
-        with self.assertRaisesRegex(NotImplementedError, "Node type multiplyDivide not implemented"):
-            Node.find_all("multiplyDivide")
+        # a type no class is registered for lists the casts of its nodes
+        cmds.createNode("multiplyDivide", name="md")
+        found = Node.find_all("multiplyDivide")
+        self.assertEqual([str(x) for x in found], ["md"])
+        self.assertIs(type(found[0]), DGNode)
+        self.assertEqual(Node.find_all("plusMinusAverage"), [])
+        with self.assertRaisesRegex(ValueError, "'nosuchType' is not a Maya node type"):
+            Node.find_all("nosuchType")
         # a node class keeps its own typed find_all
         self.assertEqual({str(x) for x in Joint.find_all()}, {"j1", "j2"})
         self.assertIs(Transform.find_all.__func__, DGNode.find_all.__func__)
