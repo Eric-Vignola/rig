@@ -176,10 +176,12 @@ the whole injection grammar is available at creation: a number sets, a list
 sets a compound, a list on a multi fans out (`input1D=[1, 2, 3]`), a `Plug`
 connects, a literal matrix is decomposed and set, a matrix `Plug` gets a
 `decomposeMatrix` wired in. Short attribute names work (`tx=5`), and an
-enum takes its index (`rotateOrder=2`: the rotate-order names `rig`'s
-functions take, `"zxy"`, are no attribute value). The attribute has to
-exist already — an attribute spec (`Float("weight")`) is not a valid
-kwarg value; add it after creation with `node << Float("weight")`.
+enum takes its index or a field name (`rotateOrder=2` or
+`rotateOrder="zxy"`, `operation="divide"`); a name that is no field is a
+`TypeError` before the node is made. The attribute has to exist already
+(a misspelled one is an `AttributeError`, once the node is made) — an
+attribute spec (`Float("weight")`) is not a valid kwarg value; add it
+after creation with `node << Float("weight")`.
 
 Node types whose name is a Python keyword take a trailing underscore:
 `rn.and_`, `rn.or_`, `rn.not_` create Maya's `and` / `or` / `not` logic nodes

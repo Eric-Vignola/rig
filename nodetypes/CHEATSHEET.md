@@ -373,7 +373,7 @@ names.set(["a", "b"])
 print(names.get())                                         # ['a', 'b']
 
 mode = cube.add_attr("mode", attributeType="enum", enumName="off:on:auto")
-mode.set(2)
+mode.set("auto")                                           # or 2: an enum takes a field name too
 mode.default_value = 1                                     # dynamic attrs only
 mode.add_category("rigging")
 print(mode.get(), mode.enums, mode.default_value, mode.get_categories(), mode.has_category("rigging"))  # 2 ['off', 'on', 'auto'] 1.0 ['rigging'] True

@@ -16,7 +16,7 @@ Concepts, conventions and the verified behaviour live in [`README.md`](README.md
 | 2 | [Anatomy of a spec](#2-anatomy-of-a-spec) | `.kargs`, laziness, reuse, the return value |
 | 3 | [Numeric — `Float` `Int` `Bool` `Angle` `Time`](#3-numeric--float-int-bool-angle-time) | |
 | 4 | [Typed — `String` `Matrix` `Message` `Mesh` `NurbsCurve` `NurbsSurface`](#4-typed--string-matrix-message-mesh-nurbscurve-nurbssurface) | |
-| 5 | [`Enum`](#5-enum) | list or colon string, default, set by index |
+| 5 | [`Enum`](#5-enum) | list or colon string, default, set by index or by field name |
 | 6 | [Compounds — `Vector` `Color` `Euler` `Quat`](#6-compounds--vector-color-euler-quat) | children, per-child defaults, ranges |
 | 7 | [The kwargs](#7-the-kwargs) | `min` `max` `dv` `keyable` `k` `hidden` `sn` `nn` `multi` `size` `overwrite` |
 | 8 | [Modifiers — `lock` `unlock` `hide` `unhide` `skip`](#8-modifiers--lock-unlock-hide-unhide-skip) | on plugs, on compounds, inside a fan-out |
@@ -222,7 +222,10 @@ print(dt("ctrl.crvIn"), dt("ctrl.srfIn"), at("ctrl.crvIn"))         # nurbsCurve
 
 `en=` (or `enumName=`) takes a list or a colon-delimited string; the
 default is a two-state `False:True`. Values are indices; `plug.enums`
-lists the names.
+lists the names. A value (`<<`, `=`, `dv=`) is the index or a field name:
+the exact name first, then the one field that matches with case, spaces,
+`_` and a `-` between letters ignored. Any other string is a `TypeError`
+that lists the fields, raised before anything is set.
 
 ```python
 ctrl << Enum("mode", en=["off", "on", "auto"]) << 2
@@ -231,13 +234,16 @@ print(ctrl.mode.enums, cmds.getAttr("ctrl.mode", asString=True))                
 
 ctrl << Enum("side", en="L:R:")                                     # trailing colon optional
 ctrl << Enum("toggle")
-ctrl << Enum("axis", en=["x", "y", "z"], dv=2)
+ctrl << Enum("axis", en=["x", "y", "z"], dv="z")                    # dv=2 is the same default
 print(cmds.attributeQuery("side", node="ctrl", listEnum=True), cmds.attributeQuery("toggle", node="ctrl", listEnum=True), ctrl.axis >> None)   # ['L:R'] ['False:True'] 2
 
+ctrl.mode << "on"                                                   # a field name sets its index
+ctrl.side = "r"                                                     # no exact field: case is ignored
+print(ctrl.mode >> None, ctrl.side >> None)                         # 1 1
 try:
-    ctrl.mode << "on"
-except Exception as e:
-    print(type(e).__name__)                                         # InjectionError -- set by index, not by name
+    ctrl.mode << "of"
+except TypeError as e:
+    print(str(e).split(";")[0])                                     # ctrl.mode: 'of' is not one of its enum fields
 ```
 
 ---
@@ -310,7 +316,7 @@ print(ctrl.flat >> None)                        # [0. 0. 0.]
 | Kwarg | Alias | Meaning | Handled by |
 |---|---|---|---|
 | `min`, `max` | | range; on a compound, the children's | `addAttr` |
-| `dv` | `defaultValue` | default; a sequence per child needs the `defaultValue` spelling | `addAttr` |
+| `dv` | `defaultValue` | default; a sequence per child needs the `defaultValue` spelling; an `Enum` default is an index or a field name | `addAttr` |
 | `keyable` | `k` | default `True`; `False` also drops it from the channel box | `addAttr` |
 | `hidden` | `h` | hidden from the UI | `addAttr` |
 | `sn`, `nn` | `shortName`, `niceName` | | `addAttr` |
