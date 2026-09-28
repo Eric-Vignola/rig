@@ -29,8 +29,9 @@ FACET_SOURCE_HOLES    = ((0, (4, 7, 6, 5)),)
 FACET_VERTICES        = ((8,), (3, 0, 1, 2, 7, 6, 5, 4))
 FACET_HOLES           = ((0, (7, 6, 5, 4)),)
 GRID_FACE4_SOURCE     = (5, 6, 10, 9, 16, 17, 18, 19, 20, 21, 22, 23)
-GRID_FACE4            = (10, 9, 5, 6, 19, 16, 17, 18, 21, 22, 23, 20)
-GRID_HOLES            = ((4, (19, 16, 17, 18)), (4, (21, 22, 23, 20)))
+# the grid's holed face (face 4) is compared up to rotation (`_loops`): the
+# vertex each of its loops starts at follows cgmath's serialisation (it moved
+# with cgmath 1.0.4), not rig
 
 
 # -- sources
@@ -552,7 +553,8 @@ class TestMeshCreateErrors(_MeshCreateCase):
 # ---------------------------------------------------------------------------------------------
 class TestMeshCreateHoles(_MeshCreateCase):
     """A holed face comes back with its loops, its points and each UV on its vertex, with no
-    polyDelEdge node and no Orig shape; the loops start where today's create started them."""
+    polyDelEdge node and no Orig shape. The facet's loops start where today's create starts them;
+    the grid's holed face is compared up to rotation (its start vertices follow cgmath)."""
 
     def test_facet_hole_round_trip(self):
         t = _facet()
@@ -586,11 +588,10 @@ class TestMeshCreateHoles(_MeshCreateCase):
         got = mesh_state(str(mesh))
         self.assertEqual(got["points"], source["points"])
         self.assertEqual(got["vertices"][0], source["vertices"][0])
-        self.assertEqual(_loops(got), _loops(source))
-        self.assertEqual(got["vertices"][1][16:28], GRID_FACE4)  # today's order (U0 reference)
+        self.assertEqual(_loops(got), _loops(source))  # face 4's outer loop and both holes, any start vertex
         self.assertEqual(got["vertices"][1][:16], source["vertices"][1][:16])
         self.assertEqual(got["vertices"][1][28:], source["vertices"][1][28:])
-        self.assertEqual(got["holes"], GRID_HOLES)
+        self.assertEqual([face for face, _ in got["holes"]], [face for face, _ in source["holes"]])
         self.assertEqual(_uv_placement(str(mesh)), placed)
         self.assert_no_history(mesh)
 
@@ -608,6 +609,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
     def test_holed_undo_redo_keeps_the_uvs_on_their_vertices(self):
         t = _grid()
         placed = _uv_placement(_shape(t))
+        source_loops = _loops(mesh_state(_shape(t)))
         data, uvs = _serialized(t)
         cmds.delete(t)
         self.ready()
@@ -619,5 +621,5 @@ class TestMeshCreateHoles(_MeshCreateCase):
             self.redo_steps(1)
             self.assertTrue(handle.isValid())
             self.assertEqual(_uv_placement("mShape"), placed)
-            self.assertEqual(mesh_state("mShape")["holes"], GRID_HOLES)
+            self.assertEqual(_loops(mesh_state("mShape")), source_loops)  # holes up to rotation
         self.assertEqual(cmds.ls(type="polyDelEdge"), [])
