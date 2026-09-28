@@ -8,7 +8,7 @@
 * Operand shapes (F14): a set, frozenset or dict operand raises TypeError before
   anything is built, and an iterator operand (generator, map, zip, iter, an
   itertools object) is read into a list first, so it memoizes like the list.
-* A memo entry that returned a typed attribute (``PyNode("a").find_attr("tx")``)
+* A memo entry that returned a typed attribute (``Node("a").find_attr("tx")``)
   keeps its node's handle, like a Plug's, so a delete, a new scene or a
   reference unload drops it (decision S4 Q5).
 * Every Plug operator is checked by one frame (``_checking_operands``).
@@ -57,7 +57,6 @@ from rig._internal import memoize as memoize_module
 from rig._internal import operands as operands_module
 from rig._internal.memoize import memoize
 from rig._internal.plug import Plug
-from rig.nodetypes import PyNode
 from rig.nodetypes._base import Attribute
 from rig.spec import Float
 from rig._tests._base import MayaTestCase
@@ -496,7 +495,7 @@ class TestOperandShapes(_SceneCase):
 
 
 class _TypedAttrMemo:
-    """A user @memoize function returning ``PyNode(name).find_attr("tx")``,
+    """A user @memoize function returning ``Node(name).find_attr("tx")``,
     taken out of the memo registry after the test."""
 
     def __init__(self, case, name):
@@ -506,7 +505,7 @@ class _TypedAttrMemo:
         @memoize
         def typed_tx(i):
             self.calls += 1
-            return PyNode(name).find_attr("tx")
+            return Node(name).find_attr("tx")
 
         self.function = typed_tx
         added = memoize_module._ALL_MEMOIZED[count:]
@@ -530,14 +529,14 @@ class TestMemoHandleOfTypedAttr(MayaTestCase):
     def test_the_handle_is_collected(self):
         cmds.createNode("transform", name="a")
         cmds.createNode("transform", name="b")
-        typed = PyNode("a").find_attr("tx")
+        typed = Node("a").find_attr("tx")
         self.assertIs(type(typed), Attribute)
         for label, value, count in (
             ("typed attr", typed, 1),
             ("plug", Plug("a.tx"), 1),
-            ("typed attrs in a list", [typed, PyNode("b").find_attr("ty")], 2),
+            ("typed attrs in a list", [typed, Node("b").find_attr("ty")], 2),
             ("typed attr in a List", List([typed]), 1),
-            ("typed shape attr", PyNode(cmds.createNode("locator", name="aShape", parent="a")).find_attr("localPositionX"), 1),
+            ("typed shape attr", Node(cmds.createNode("locator", name="aShape", parent="a")).find_attr("localPositionX"), 1),
         ):
             with self.subTest(label):
                 out = []
@@ -753,8 +752,8 @@ class TestSamePlugFold(_SceneCase):
             "an unindexed matrix and its element": lambda: (t.worldMatrix, t.worldMatrix[0]),
             "a dynamic attr": lambda: (t.knob, Node("t").knob),
             "a namespaced node": lambda: (Node("ns:a").tx, Plug("ns:a.translateX")),
-            "a typed attr on the right": lambda: (t.tx, PyNode("t").find_attr("tx")),
-            "a typed attr on the left": lambda: (PyNode("t").find_attr("tx"), t.tx),
+            "a typed attr on the right": lambda: (t.tx, Node("t").find_attr("tx")),
+            "a typed attr on the left": lambda: (Node("t").find_attr("tx"), t.tx),
         }
         for label, pair in cases.items():
             with self.subTest(label):
@@ -822,7 +821,7 @@ class TestSamePlugFold(_SceneCase):
         for label, (p, q) in {
             "two nodes": (t.tx, u.tx),
             "two attrs": (t.tx, t.ty),
-            "a typed attr": (t.tz, PyNode("u").find_attr("tz")),
+            "a typed attr": (t.tz, Node("u").find_attr("tz")),
         }.items():
             with self.subTest(label):
                 before = _scene()
@@ -854,7 +853,7 @@ class TestSamePlugFold(_SceneCase):
                 with scope():
                     eq = t.tx == t.tx
                     ne = t.tx != t.tx
-                    typed = PyNode("t").find_attr("tx") == t.tx  # reflected: Plug.__eq__
+                    typed = Node("t").find_attr("tx") == t.tx  # reflected: Plug.__eq__
                 self.assertIsInstance(eq, Plug)
                 self.assertIs(bool(eq), True)
                 self.assertIsInstance(ne, Plug)
@@ -1185,7 +1184,7 @@ class TestListStrProbe(_SceneCase):
                 self._assert_finds(probe, element, others=[u.tx, u.ty])
         # a typed Attribute element (List() would lift it to a Plug)
         items = List([u.tx])
-        list.append(items, PyNode("a").find_attr("translateX"))
+        list.append(items, Node("a").find_attr("translateX"))
         self.assertIs(type(items[1]), Attribute)
         before = _scene()
         self.assertIn("a.tx", items)

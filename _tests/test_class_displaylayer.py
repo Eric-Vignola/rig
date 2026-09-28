@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.nodetypes import DisplayLayer, PyNode
+from rig.nodetypes import DisplayLayer, Node
 from rig._tests._base import MayaTestCase
 
 
@@ -13,7 +13,7 @@ class TestDisplayLayer(MayaTestCase):
     def setUp(self):
         super().setUp()
         self.default_layer = DisplayLayer("defaultLayer")
-        self.xform         = PyNode(cmds.group(empty=True))
+        self.xform         = Node(cmds.group(empty=True))
         self.layer         = DisplayLayer.create()
         self.layer.add_members(self.xform)
 
@@ -35,7 +35,7 @@ class TestDisplayLayer(MayaTestCase):
         with self.assertRaisesRegex(TypeError, "not a displayLayer"):
             DisplayLayer.get_or_create(self.xform.name)
         self.assertEqual(DisplayLayer.for_node(self.xform), self.layer)
-        other = PyNode(cmds.group(empty=True, name="other"))
+        other = Node(cmds.group(empty=True, name="other"))
         self.assertIsNone(DisplayLayer.for_node(other))
         self.assertFalse(fresh.is_default)
         self.assertTrue(self.default_layer.is_default)
@@ -49,7 +49,7 @@ class TestDisplayLayer(MayaTestCase):
             cmds.namespace(set=":")
 
     def test_remove_members_and_delete(self):
-        other = PyNode(cmds.group(empty=True, name="other"))
+        other = Node(cmds.group(empty=True, name="other"))
         fresh = DisplayLayer.get_or_create("fresh")
         fresh.add_members(other)
         # a node held by another layer is left there

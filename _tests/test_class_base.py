@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.nodetypes import PyNode, Transform
+from rig.nodetypes import Node, Transform
 from rig._tests._base import MayaTestCase
 
 
@@ -15,20 +15,20 @@ class TestBaseNodes(MayaTestCase):
         self.node_name = "test_xform"
 
         # make 3 transform nodes, 2 with the same name
-        self.parent = PyNode.create("transform", name=self.node_name)
-        self.child  = PyNode.create("transform", parent=self.parent)
+        self.parent = Node.create("transform", name=self.node_name)
+        self.child  = Node.create("transform", parent=self.parent)
         self.child.rename(self.node_name)
 
     def test_uuid(self):
-        # checks if a PyNode object can be created from a uuid string
-        node_from_uid = PyNode(self.parent.uuid)
+        # checks if a node object can be created from a uuid string
+        node_from_uid = Node(self.parent.uuid)
         self.assertEqual(self.parent, node_from_uid)
 
     def test_properties(self):
         # casting node name
-        self.assertEqual(PyNode("|" + self.node_name), self.parent)
-        self.assertEqual(PyNode(self.parent.mobject),  self.parent)
-        self.assertEqual(PyNode(self.parent.mdagpath), self.parent)
+        self.assertEqual(Node("|" + self.node_name), self.parent)
+        self.assertEqual(Node(self.parent.mobject),  self.parent)
+        self.assertEqual(Node(self.parent.mdagpath), self.parent)
 
         # name
         self.assertEqual(self.child.short_name, self.parent.short_name, self.node_name)
@@ -40,12 +40,12 @@ class TestBaseNodes(MayaTestCase):
         joint = cmds.createNode("joint")
         self.assertFalse(self.child.is_type(joint))
 
-        all_xforms = PyNode.find_all("transform")
-        self.assertFalse(PyNode(joint) in all_xforms)
+        all_xforms = Node.find_all("transform")
+        self.assertFalse(Node(joint) in all_xforms)
         for each in (self.parent, self.child):
             self.assertTrue(each in all_xforms)
-        all_xforms = PyNode.find_all("transform", exact_type=False)
-        for each in (PyNode(joint), self.parent, self.child):
+        all_xforms = Node.find_all("transform", exact_type=False)
+        for each in (Node(joint), self.parent, self.child):
             self.assertTrue(each in all_xforms)
 
     def test_delete(self):
@@ -82,7 +82,7 @@ class TestBaseNodes(MayaTestCase):
         self.assertNotEqual(dup[1].short_name, self.child.short_name)
 
     def test_hier(self):
-        child2 = PyNode.create("transform")
+        child2 = Node.create("transform")
         child2.set_parent(self.child)
 
         self.assertEqual(self.parent.get_children(), [self.child])
@@ -101,9 +101,9 @@ class TestBaseNodes(MayaTestCase):
 
         c_node_name = "test_custom_node"
         c_node      = TestNode.create(name=c_node_name)
-        c_node2     = PyNode.create(custom_type_name)
+        c_node2     = Node.create(custom_type_name)
 
-        self.assertEqual(set(PyNode.find_all(custom_type_name)), {c_node, c_node2})
+        self.assertEqual(set(Node.find_all(custom_type_name)), {c_node, c_node2})
 
         self.assertFalse(Transform.is_type(c_node_name))
         self.assertTrue(Transform.is_type(c_node_name, exact_type=False))
@@ -113,7 +113,7 @@ class TestBaseNodes(MayaTestCase):
         self.assertFalse(TestNode.is_type(self.child.name, exact_type=False))
 
     def test_connections(self):
-        joint = PyNode.create("joint")
+        joint = Node.create("joint")
         self.parent.find_attr("tx") >> self.child.find_attr("ty")
         self.child.find_attr("ty") >> joint.find_attr("tz")
 
@@ -172,7 +172,7 @@ class TestListAttrCompoundChildren(MayaTestCase):
         # transform nodes have publishedNodeInfo (multi-of-compound) which
         # triggers the bug.
         self._node_name = cmds.createNode("transform", name="cube_listattr")
-        self._node      = PyNode(self._node_name)
+        self._node      = Node(self._node_name)
 
     def tearDown(self):
         super().tearDown()
@@ -228,8 +228,8 @@ class TestComponentAliasResolution(MayaTestCase):
         self._lattice_shape = cmds.listRelatives(lat[1], shapes=True)[0]
 
     def _fresh(self, shape):
-        # always use a fresh PyNode so we don't read a cached _attr_dict entry
-        return PyNode(shape)
+        # always use a fresh node object so we don't read a cached _attr_dict entry
+        return Node(shape)
 
     # --- mesh: should accept mesh aliases, reject curve aliases
 

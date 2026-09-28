@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 
 from maya import cmds
-from rig.nodetypes import PyNode, Reference
+from rig.nodetypes import Node, Reference
 from rig._tests._base import MayaTestCase
 
 
@@ -31,8 +31,8 @@ class TestReference(MayaTestCase):
             self.assertEqual(ref1.namespace, "ns1")
             self.assertEqual(ref2.namespace, "ns2")
 
-            self.assertTrue(PyNode("ns1:cube") in ref1.get_nodes())
-            self.assertTrue(PyNode("ns2:cube") in ref2.get_nodes())
+            self.assertTrue(Node("ns1:cube") in ref1.get_nodes())
+            self.assertTrue(Node("ns2:cube") in ref2.get_nodes())
 
             self.assertEqual(Reference.find_by_path(path), [ref1, ref2])
 

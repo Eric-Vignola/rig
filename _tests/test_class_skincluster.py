@@ -1,5 +1,5 @@
 from maya import cmds
-from rig.nodetypes import Joint, PyNode, SkinCluster
+from rig.nodetypes import Joint, Node, SkinCluster
 from rig._tests._base import MayaTestCase
 
 
@@ -14,15 +14,15 @@ class TestSkinCluster(MayaTestCase):
         super().setUp()
 
         # make a joint chain
-        self.joint1 = PyNode.create("joint", name="cube_1_joint")
-        self.joint2 = PyNode.create("joint", name="cube_2_joint", parent=self.joint1)
+        self.joint1 = Node.create("joint", name="cube_1_joint")
+        self.joint2 = Node.create("joint", name="cube_2_joint", parent=self.joint1)
         self.joint2.t.set(0, 1, 0)
 
         # make a cube
-        self.cube = PyNode(cmds.polyCube(name="base", height=2, ch=False)[0])
+        self.cube = Node(cmds.polyCube(name="base", height=2, ch=False)[0])
 
         # create a skincluster
-        self.skin = PyNode.create("skinCluster", self.cube, (self.joint1, self.joint2))
+        self.skin = Node.create("skinCluster", self.cube, (self.joint1, self.joint2))
         cmds.skinPercent(
             self.skin, f"{self.cube}.vtx[0:3]", transformValue=[(self.joint1, 1)]
         )
@@ -66,7 +66,7 @@ class TestSkinCluster(MayaTestCase):
         """set_weights routes joints it has to add through the same helper."""
         data = self.skin.serialize()
         self.skin.delete()
-        skin = PyNode.create("skinCluster", self.cube, self.joint1)
+        skin = Node.create("skinCluster", self.cube, self.joint1)
 
         cmds.select([f"{self.cube}.vtx[0]", f"{self.cube}.vtx[3]"])
         before = cmds.ls(selection=True, long=True)
@@ -90,7 +90,7 @@ class TestSkinCluster(MayaTestCase):
 
         # test apply skin data to a skincluster with less influences
         self.skin.delete()
-        skin = PyNode.create("skinCluster", self.cube, self.joint1)
+        skin = Node.create("skinCluster", self.cube, self.joint1)
         skin.set_weights(org_data)
         data = skin.serialize()
         self.assertEqual(org_data, data)
@@ -98,7 +98,7 @@ class TestSkinCluster(MayaTestCase):
         # test apply skin data to a skincluster with more influences (non-additive)
         skin.delete()
         extra_joint = Joint.create()
-        skin = PyNode.create(
+        skin = Node.create(
             "skinCluster", self.cube, [self.joint1, self.joint2, extra_joint]
         )
         skin.set_weights(org_data)
@@ -108,7 +108,7 @@ class TestSkinCluster(MayaTestCase):
 
         # test apply skin data to a skincluster with more influences (additive)
         skin.delete()
-        skin = PyNode.create(
+        skin = Node.create(
             "skinCluster", self.cube, [self.joint1, self.joint2, extra_joint]
         )
         skin.set_weights(org_data, additive=True)

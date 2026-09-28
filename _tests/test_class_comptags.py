@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 from maya import cmds
-from rig.nodetypes import PyNode
+from rig.nodetypes import Node
 from rig.nodetypes.deformer import tag_references
 from rig._tests._base import initialize_standalone, MayaTestCase
 
@@ -28,7 +28,7 @@ class TestComponentTags(MayaTestCase):
         super().setUp()
 
         # make a sphere with some comp tags
-        self.mesh        = PyNode(cmds.polySphere(ch=False)[0]).get_children(type="mesh")[0]
+        self.mesh        = Node(cmds.polySphere(ch=False)[0]).get_children(type="mesh")[0]
         self.tags        = ["tag1", "tag2"]
         self.ids         = [0, 1]
         self.cats        = ["v", "f"]
@@ -122,12 +122,12 @@ class TestComponentTagLocations(MayaTestCase):
     CUBE_TAGS = ["back", "bottom", "front", "left", "right", "top"]
 
     def test_injection_node_undeformed(self):
-        mesh = PyNode(cmds.polySphere(ch=False)[0]).get_children(type="mesh")[0]
+        mesh = Node(cmds.polySphere(ch=False)[0]).get_children(type="mesh")[0]
         self.assertEqual(mesh.injection_node, mesh)
 
     def test_clustered_mesh(self):
         xform = cmds.polySphere(ch=False)[0]
-        mesh  = PyNode(xform).get_children(type="mesh")[0]
+        mesh  = Node(xform).get_children(type="mesh")[0]
         cmds.cluster(xform)
         orig = cmds.deformableShape(mesh.name, tagInjectionNode=True)[0]
         self.assertNotEqual(orig, mesh.name)
@@ -156,7 +156,7 @@ class TestComponentTagLocations(MayaTestCase):
 
     def test_nurbs_curve(self):
         crv   = cmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)])
-        curve = PyNode(crv).get_children(type="nurbsCurve")[0]
+        curve = Node(crv).get_children(type="nurbsCurve")[0]
         curve.add_component_tag("root")
         curve.set_component_tag_contents("root", [0, 1, 2])
         # the native token: a 'vtx[...]' tag on a curve resolves to nothing
@@ -175,7 +175,7 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertEqual(curve.get_component_tag_contents("root"), ["cv[0:2]"])
 
     def test_periodic_nurbs_surface(self):
-        surface = PyNode(cmds.sphere()[0]).get_children(type="nurbsSurface")[0]
+        surface = Node(cmds.sphere()[0]).get_children(type="nurbsSurface")[0]
         # the whole read path raised AttributeError on a nurbsSurface
         self.assertFalse(surface.has_component_tag("rim"))
         surface.add_component_tag("rim")
@@ -205,7 +205,7 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertEqual(surface.serialize_component_tags(), [data])
 
     def test_polycube_with_history_is_procedural(self):
-        mesh = PyNode(cmds.polyCube()[0]).get_children(type="mesh")[0]
+        mesh = Node(cmds.polyCube()[0]).get_children(type="mesh")[0]
         self.assertTrue(mesh.has_component_tag("top"))
         self.assertEqual(mesh.get_component_tag_index("top"), -1)
         self.assertEqual(mesh.component_tags, self.CUBE_TAGS)
@@ -233,7 +233,7 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertEqual(mesh.get_component_tag_contents("cap"), ["f[0:1]"])
 
     def test_polycube_baked_tags_are_editable(self):
-        mesh = PyNode(cmds.polyCube(ch=False)[0]).get_children(type="mesh")[0]
+        mesh = Node(cmds.polyCube(ch=False)[0]).get_children(type="mesh")[0]
         self.assertEqual(mesh.component_tags, self.CUBE_TAGS)
         self.assertEqual(mesh.get_component_tag_index("top"), 5)
         self.assertTrue(mesh.has_component_tag(5))
@@ -276,8 +276,8 @@ class TestComponentTagLocations(MayaTestCase):
             from cgmath.geometry.resample import MeshDataResampler  # noqa: F401
         except ImportError:
             self.skipTest("cgmath.geometry.resample unavailable")
-        src = PyNode(cmds.polySphere(ch=False, name="srcS")[0]).get_children(type="mesh")[0]
-        dst = PyNode(cmds.polySphere(ch=False, name="dstS")[0]).get_children(type="mesh")[0]
+        src = Node(cmds.polySphere(ch=False, name="srcS")[0]).get_children(type="mesh")[0]
+        dst = Node(cmds.polySphere(ch=False, name="dstS")[0]).get_children(type="mesh")[0]
         src.add_component_tag("cap")
         src.set_component_tag_contents("cap", [0, 1, 2, 3], "v")
         cmds.cluster(dst.name)                       # dst now injects on its Orig
@@ -288,7 +288,7 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertGreaterEqual(dst.get_component_tag_index("cap"), 0)
         self.assertGreater(dst.get_component_tag_indices("cap").size, 0)
         # a colliding procedural name on a history polyCube refuses instead of no-op'ing
-        cube = PyNode(cmds.polyCube(ch=True, name="hcube")[0]).get_children(type="mesh")[0]
+        cube = Node(cmds.polyCube(ch=True, name="hcube")[0]).get_children(type="mesh")[0]
         src.add_component_tag("top")
         src.set_component_tag_contents("top", [0, 1], "v")
         with self.assertRaisesRegex(RuntimeError, "procedural"):

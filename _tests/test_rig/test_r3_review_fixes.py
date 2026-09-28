@@ -13,7 +13,7 @@ from unittest import mock
 from maya import cmds, OpenMaya as om1
 from maya.api import OpenMaya
 from rig import Node, Plug
-from rig.nodetypes import PyNode, _base
+from rig.nodetypes import _base
 from rig.nodetypes._base import Attribute
 from rig._internal.node_ops import NodeOp
 from rig._tests._base import MayaTestCase
@@ -127,7 +127,7 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
             cmds.createNode("transform", name="proxy")
             code  = _hash_code("proxy")
             held  = [Node("proxy").tx, Node("keep").tx]
-            typed = [PyNode("proxy").find_attr("tx"), PyNode("keep").find_attr("tx")]
+            typed = [Node("proxy").find_attr("tx"), Node("keep").find_attr("tx")]
             seen, typed_seen = set(held), set(typed)
             cmds.delete("proxy")
             cmds.createNode("transform", name="fresh")
@@ -137,11 +137,11 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
         else:
             self.fail("Maya never recycled a hashCode in 200 create/delete cycles")
         self._assert_misses(seen, Node("fresh").tx)
-        self._assert_misses(typed_seen, PyNode("fresh").find_attr("tx"))
+        self._assert_misses(typed_seen, Node("fresh").find_attr("tx"))
         # the held keys are still found, the live one by a new spelling too
         self.assertIn(held[0], seen)
         self.assertIn(Node("keep").tx, seen)
-        self.assertIn(PyNode("keep").find_attr("tx"), typed_seen)
+        self.assertIn(Node("keep").find_attr("tx"), typed_seen)
 
     def test_flushed_undo_then_a_new_node(self):
         cmds.undoInfo(state=True)
@@ -156,14 +156,14 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
         names = [cmds.createNode("transform", name=f"a{i}") for i in range(100)]
         codes = {_hash_code(name) for name in names}
         table = {Node(name).tx: name for name in names}
-        typed = {PyNode(name).find_attr("ty"): name for name in names}
+        typed = {Node(name).find_attr("ty"): name for name in names}
         cmds.file(new=True, force=True)
         recycled = 0
         for i in range(200):
             name = cmds.createNode("transform", name=f"c{i}")
             recycled += _hash_code(name) in codes
             self.assertNotIn(Node(name).tx, table)
-            self.assertNotIn(PyNode(name).find_attr("ty"), typed)
+            self.assertNotIn(Node(name).find_attr("ty"), typed)
         self.assertGreater(recycled, 0)
         self.assertEqual(len(table), 100)
 
@@ -180,7 +180,7 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
             cmds.file(path, open=True, force=True)
             for name in names:
                 self.assertNotIn(Node(name).tx, table)
-                self.assertNotIn(PyNode(name).find_attr("tx"), table)
+                self.assertNotIn(Node(name).find_attr("tx"), table)
             cmds.file(new=True, force=True)
             cmds.file(path, reference=True, namespace="ref")
             table = {Node(f"ref:{name}").tx: name for name in names}
@@ -204,7 +204,7 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
         cmds.undo()
         self.assertIn(Node("a").tx, seen)
         # two node objects of one node share the serial
-        self.assertEqual(_base._node_serial(PyNode("a")), _base._node_serial(Node("a")))
+        self.assertEqual(_base._node_serial(Node("a")), _base._node_serial(Node("a")))
 
     def test_the_serial_table_drops_freed_nodes(self):
         for i in range(20):
@@ -227,24 +227,24 @@ class TestTypedAttributeAndPlugKeys(MayaTestCase):
         cmds.createNode("transform", name="b")
         cmds.connectAttr("a.tx", "b.tx")
         before = sorted(cmds.ls())
-        typed_tx = PyNode("a").find_attr("tx")
-        typed_wm = PyNode("a").find_attr("worldMatrix")[0]
+        typed_tx = Node("a").find_attr("tx")
+        typed_wm = Node("a").find_attr("worldMatrix")[0]
         self.assertIsNone({typed_tx: 1}.get(Node("a").tx))
         self.assertIsNone({Node("a").tx: 1}.get(typed_tx))
         self.assertNotIn(Node("a").worldMatrix[0], {typed_wm})
         self.assertNotIn(typed_wm, {Node("a").worldMatrix[0]})
-        self.assertNotIn(Node("a").tx, set(PyNode("a").list_attr(keyable=True)))
+        self.assertNotIn(Node("a").tx, set(Node("a").list_attr(keyable=True)))
         dst = set(typed_tx.get_connected_attrs(src=False, dst=True))
         self.assertNotIn(Node("b").tx, dst)
         self.assertEqual(sorted(cmds.ls()), before)
         # one plug all the same, and a typed probe finds the typed key
         self.assertTrue(Node("a").tx.equals(typed_tx))
-        self.assertIn(PyNode("b").find_attr("tx"), dst)
+        self.assertIn(Node("b").find_attr("tx"), dst)
 
     def test_each_layer_is_one_key_through_two_instance_paths(self):
         _instanced_locator()
         plugs = [Node("|T1|S").v, Node("|T2|S").v]
-        typed = [PyNode("|T1|S").find_attr("v"), PyNode("|T2|S").find_attr("v")]
+        typed = [Node("|T1|S").find_attr("v"), Node("|T2|S").find_attr("v")]
         self.assertEqual(len(set(plugs)), 1)
         self.assertEqual(len(set(typed)), 1)
         self.assertEqual(len(set(plugs) | set(typed)), 2)
@@ -258,27 +258,27 @@ class TestAttributeInequality(MayaTestCase):
 
     def test_ne_negates_eq(self):
         cmds.createNode("transform", name="a")
-        by_name, found = Attribute("a.tx"), PyNode("a").find_attr("tx")
+        by_name, found = Attribute("a.tx"), Node("a").find_attr("tx")
         self.assertTrue(by_name == found)
         self.assertFalse(by_name != found)
-        other = PyNode("a").find_attr("ty")
+        other = Node("a").find_attr("ty")
         self.assertFalse(found == other)
         self.assertTrue(found != other)
         # a str is never equal, so it is always unequal
         self.assertFalse(found == "a.translateX")
         self.assertTrue(found != "a.translateX")
         cmds.rename("a", "m")
-        renamed = PyNode("m").find_attr("translateX")
+        renamed = Node("m").find_attr("translateX")
         self.assertTrue(found == renamed)
         self.assertFalse(found != renamed)
 
     def test_ne_through_instance_paths(self):
         _instanced_locator()
-        a, b = PyNode("|T1|S").find_attr("v"), PyNode("|T2|S").find_attr("v")
+        a, b = Node("|T1|S").find_attr("v"), Node("|T2|S").find_attr("v")
         self.assertFalse(a != b)
-        wm = PyNode("|T1|S").find_attr("worldMatrix")
+        wm = Node("|T1|S").find_attr("worldMatrix")
         self.assertTrue(wm[0] != wm[1])
-        self.assertFalse(wm[1] != PyNode("|T2|S").find_attr("worldMatrix")[1])
+        self.assertFalse(wm[1] != Node("|T2|S").find_attr("worldMatrix")[1])
 
 
 class TestFindAttrCacheOfInstancedElements(MayaTestCase):
@@ -293,7 +293,7 @@ class TestFindAttrCacheOfInstancedElements(MayaTestCase):
         _instanced_locator()
         for path in ("|T1|S", "|T2|S"):
             with self.subTest(path=path):
-                node = PyNode(path)
+                node = Node(path)
                 element = node.find_attr("worldMatrix[1]")
                 self.assertTrue(element.plug.isElement)
                 self.assertEqual(element.plug.logicalIndex(), 1)
@@ -302,14 +302,14 @@ class TestFindAttrCacheOfInstancedElements(MayaTestCase):
                 self.assertIs(node.find_attr("worldMatrix[1]"), element)
                 self.assertTrue(node.find_attr("iog[1]").plug.isElement)
                 self.assertTrue(node.find_attr("instObjGroups").plug.isArray)
-        node = Node(PyNode("|T1|S"))
+        node = Node(Node("|T1|S"))
         node.find_attr("worldMatrix[1]")
         self.assertTrue(node.worldMatrix.plug.isArray)
         self.assertEqual(str(node.worldMatrix), "T1|S.worldMatrix")
 
     def test_single_instance_element_lookup_then_index(self):
         cmds.createNode("transform", name="a")
-        node = PyNode("a")
+        node = Node("a")
         node.find_attr("worldMatrix[0]")
         self.assertEqual(str(Node(node).worldMatrix[0]), "a.worldMatrix")
 
@@ -368,7 +368,7 @@ class TestTypedChildrenShareTheOwner(MayaTestCase):
         _instanced_locator()
         cmds.addAttr("|T1|S", longName="arr", attributeType="double", multi=True)
         cmds.setAttr("|T1|S.arr[3]", 1.0)
-        node = PyNode("|T2|S")
+        node = Node("|T2|S")
         lp = node.find_attr("localPosition")
         for label, attr, name in (
             ("child(0)", lp.child(0), "T2|S.localPositionX"),
@@ -385,11 +385,11 @@ class TestTypedChildrenShareTheOwner(MayaTestCase):
                 self.assertEqual(str(attr), name)
         # a node with one path, and an attr of another node, as before
         cmds.createNode("plusMinusAverage", name="pma")
-        element = PyNode("pma").find_attr("input3D")[1]
+        element = Node("pma").find_attr("input3D")[1]
         self.assertEqual(str(element.input3Dx), "pma.input3D[1].input3Dx")
         cmds.createNode("transform", name="dst")
         cmds.connectAttr("T1.tx", "dst.tx")
-        (source,) = PyNode("dst").find_attr("tx").get_connected_attrs(dst=False)
+        (source,) = Node("dst").find_attr("tx").get_connected_attrs(dst=False)
         self.assertIsNone(source.__dict__["_node"])
         self.assertEqual(str(source), "T1.translateX")
 
@@ -406,7 +406,7 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
         from rig import lift, List
 
         _instanced_locator()
-        typed = PyNode("|T2|S").find_attr("worldMatrix")
+        typed = Node("|T2|S").find_attr("worldMatrix")
         for label, make in (
             ("lift", lift),
             ("Plug", Plug),
@@ -424,7 +424,7 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
                 sel.add(f"{dst}.matrixIn[0]")
                 self.assertEqual(sel.getPlug(0).source().logicalIndex(), 1)
                 self.assertEqual(cmds.getAttr(f"{dst}.matrixSum")[12], 7.0)
-        visibility = PyNode("|T2|S").find_attr("v")
+        visibility = Node("|T2|S").find_attr("v")
         self.assertEqual(str(lift(visibility)), "T2|S.visibility")
         self.assertEqual(lift(visibility).node.long_name, "|T2|S")
 
@@ -434,7 +434,7 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
         node = Node(cmds.createNode("transform", name="a"))
         self.assertIs(Node(node.tx), node)
         self.assertIs(type(Node(node.tx) >> None), Transform)
-        self.assertIs(type(Node(PyNode("a").find_attr("tx")) >> None), Transform)
+        self.assertIs(type(Node(Node("a").find_attr("tx")) >> None), Transform)
 
 
 class TestHeldAcrossAFreeRaise(MayaTestCase):
@@ -454,7 +454,7 @@ class TestHeldAcrossAFreeRaise(MayaTestCase):
 
     def _hold(self, prefix):
         surface = Node(f"{prefix}npShape")
-        typed   = PyNode(f"{prefix}pma").find_attr("input3D")
+        typed   = Node(f"{prefix}pma").find_attr("input3D")
         return {
             "cv handle":         surface.cv,
             "cv row":            surface.cv[1][0],
@@ -462,8 +462,8 @@ class TestHeldAcrossAFreeRaise(MayaTestCase):
             "cv element child":  surface.cv[1, 2].xValue,
             "typed element":     typed[1],
             "typed child":       typed[1].input3Dx,
-            "typed get_parent":  PyNode(f"{prefix}held").find_attr("tx").get_parent(),
-            "typed attr":        PyNode(f"{prefix}held").find_attr("ty"),
+            "typed get_parent":  Node(f"{prefix}held").find_attr("tx").get_parent(),
+            "typed attr":        Node(f"{prefix}held").find_attr("ty"),
         }
 
     def _assert_freed(self, held):
@@ -536,8 +536,8 @@ class TestCmdsReadsTheHeldInstance(MayaTestCase):
             ("wm", second.worldMatrix, "T2|S.worldMatrix", 7.0),
             ("wm[0]", second.worldMatrix[0], "T2|S.worldMatrix[0]", 0.0),
             ("wm[1]", second.worldMatrix[1], "T2|S.worldMatrix", 7.0),
-            ("typed wm", PyNode("|T2|S").find_attr("worldMatrix"), "T2|S.worldMatrix", 7.0),
-            ("typed wm[1]", PyNode("|T2|S").find_attr("worldMatrix")[1], "T2|S.worldMatrix", 7.0),
+            ("typed wm", Node("|T2|S").find_attr("worldMatrix"), "T2|S.worldMatrix", 7.0),
+            ("typed wm[1]", Node("|T2|S").find_attr("worldMatrix")[1], "T2|S.worldMatrix", 7.0),
         ):
             with self.subTest(plug=label):
                 self.assertEqual(str.__str__(plug), name)
@@ -562,7 +562,7 @@ class TestCmdsReadsTheHeldInstance(MayaTestCase):
     def test_a_node_with_one_path_keeps_the_mplug_name(self):
         cmds.createNode("transform", name="A")
         cmds.createNode("transform", name="ctrl", parent="A")
-        for plug in (Node("ctrl").tx, Node("A|ctrl").t[0], PyNode("ctrl").find_attr("ty")):
+        for plug in (Node("ctrl").tx, Node("A|ctrl").t[0], Node("ctrl").find_attr("ty")):
             with self.subTest(plug=str(plug)):
                 self.assertEqual(str.__str__(plug), plug.plug.name())
 
