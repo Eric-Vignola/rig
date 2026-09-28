@@ -1,12 +1,14 @@
-# `rig.nodetypes` — the typed node layer under the DSL
+# `rig.nodetypes` — the node classes
 
-The object model the `rig` DSL stands on. Every DSL `Node` wraps one typed
-node from here: a `Transform`, a `Mesh`, a `SkinCluster`, a `ShadingEngine`,
-or the plain `DGNode` / `DAGNode` fallback. The typed node holds an
-OpenMaya handle (rename-safe, deletion-aware), prints as its name so it
-drops into `maya.cmds` unchanged, and carries the methods the DSL does not:
-skin weights as arrays, component tags, material bindings, hierarchy
-serialisation to `cgmath`.
+The object model the `rig` DSL is made of. Every node object is an instance
+of one class from here: a `Transform`, a `Mesh`, a `SkinCluster`, a
+`ShadingEngine`, or the plain `DGNode` / `DAGNode` fallback, all under the
+root class `Node`, which is also the factory that picks the class. A node
+holds an OpenMaya handle (rename-safe, deletion-aware), prints as its name so
+it drops into `maya.cmds` unchanged, and carries the DSL (`node.tx` plugs,
+`<<`, `>>`) and the methods the operators do not cover: skin weights as
+arrays, component tags, material bindings, hierarchy serialisation to
+`cgmath`.
 
 ```python
 from maya import standalone
@@ -19,16 +21,17 @@ cmds.file(new=True, force=True)
 
 from rig.bridges import commands as rc
 
-cube = rc.polyCube(name="cube", ch=False)[0]  # a DSL Node
-mesh = cube.get_shape()                       # a method the DSL does not have: delegated, typed
-print(repr(cube), repr(cube >> None), repr(mesh))  # Node("cube") Transform("cube") Mesh("cubeShape")
-print(mesh.get_materials(), mesh.num_vertices)     # [DGNode("standardSurface1")] 8
+cube = rc.polyCube(name="cube", ch=False)[0]  # a Transform
+mesh = cube.get_shape()                       # a typed method, on the same object
+print(repr(cube), (cube >> None) is cube, repr(mesh))  # Transform("cube") True Mesh("cubeShape")
+print(mesh.get_materials(), mesh.num_vertices)         # [DGNode("standardSurface1")] 8
 ```
 
-You rarely import from `rig.nodetypes` at all: the DSL reaches through. You do
-when you want a class as a constructor (`Mesh("cubeShape")`,
-`SkinCluster.create(...)`), a classmethod (`ShadingEngine.for_material`,
-`DisplayLayer.for_node`), or a subclass of your own.
+You rarely import from `rig.nodetypes` at all: `Node(x)` and the `rc` / `rn`
+bridges already hand back these classes. You do when you want a class as a
+constructor (`Mesh("cubeShape")`, `SkinCluster.create(...)`), a classmethod
+(`ShadingEngine.for_material`, `DisplayLayer.for_node`), or a subclass of
+your own.
 
 ---
 
@@ -37,7 +40,7 @@ when you want a class as a constructor (`Mesh("cubeShape")`,
 | You want to... | Read |
 |---|---|
 | Copy-paste an example of every class and method here | [`CHEATSHEET.md`](CHEATSHEET.md) — runnable top to bottom |
-| The DSL on top: `Node`, `Plug`, `<<` / `>>`, `PlugList`, `rig.bridges` | [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) |
+| The DSL: `Plug`, `<<` / `>>`, the operators, `List`, `rig.bridges` | [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) |
 
 ---
 
@@ -45,8 +48,8 @@ when you want a class as a constructor (`Mesh("cubeShape")`,
 
 ```
 rig/nodetypes/
-├── __init__.py        re-exports the classes below, Attribute and Axis (not Deformer, tag_references, ColorSet)
-├── _base.py           PyNode factory, NodeMeta, the custom-type stamp;
+├── __init__.py        re-exports Node, the classes below, Attribute and Axis (not Deformer, tag_references, ColorSet)
+├── _base.py           Node (the root class and the factory), NodeMeta, the cast, the custom-type stamp;
 │                      Attribute -- the MPlug wrapper: get / set / connect, slicing, components
 ├── dg_node.py         DGNode                 entity          get_short_name(), get_clean_name()
 ├── dag_node.py        DAGNode                dagNode
@@ -73,7 +76,7 @@ The public surface:
 
 ```python
 from rig.nodetypes import (
-    PyNode, Attribute, DGNode, DAGNode, Transform, Joint, Geometry, Mesh, NurbsCurve,
+    Node, Attribute, DGNode, DAGNode, Transform, Joint, Geometry, Mesh, NurbsCurve,
     NurbsSurface, SkinCluster, BlendShape, ObjectSet, ShadingEngine, DisplayLayer,
     Reference, Choice, Follicle, Axis,
 )
@@ -91,7 +94,8 @@ from rig.nodetypes.plugins import load_plugin
 
 | Class | Wraps | What it adds |
 |---|---|---|
-| `DGNode` | any dependency node | name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets` |
+| `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
+| `DGNode` | any dependency node | the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `mdagpath`, `get_bounding_box`, `get_deformers` |
 | `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy` |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
@@ -116,63 +120,75 @@ every `Geometry`, `DAGNode` and `DGNode` method, and a `ShadingEngine` is an
 
 ## Concepts
 
-### Two layers, one node
+### One node, two attribute spellings
 
-The DSL's `Node` is a composition wrapper, not a subclass: it holds a typed
-node in `_dg_node` and delegates through `__getattr__`. Three things follow.
+`Node` is the root of every class here and the DSL's factory: `Node("name")`
+returns the typed node, `Node(node)` is `node` itself, and the DSL and the
+typed API live on the same object. What differs is how you reach an
+attribute.
 
 | Spelling | Gives | Notes |
 |---|---|---|
-| `node >> None` | the typed node (`Transform`, `Mesh`, ...) | the only `>>` on a `Node` that reads |
-| `node.get_shape()`, `node.serialize()`, ... | whatever the typed method returns | typed results, not `Node`s |
-| `node.tx` | a `Plug` | the typed node's `Attribute`, re-wrapped for the operators; `node.tx.node is node` |
-| `typed.tx` | an `Attribute` | `get()` / `set()` / `connect()`, no network building; `typed.tx.node is typed` |
+| `node >> None` | the node itself | |
+| `node.get_shape()`, `node.serialize()`, ... | whatever the typed method returns | typed results |
+| `node.tx` | a `Plug` owned by `node` | the DSL: `<<` sets or connects, the operators build networks, `get()` is numpy-shaped (`[1. 2. 3.]`) |
+| `node.find_attr("tx")` | an `Attribute` owned by `node` | the typed plug: `get()` mirrors `cmds.getAttr` (`[(1.0, 2.0, 3.0)]`), `>>` connects, `//` disconnects |
 
-Going the other way is `Node(typed)`, or `Node("name")`; `Node` and typed
-node compare equal by the node they hold. `Node(plug)` wraps the typed node
-the plug was read from, in the class it was read as.
+A `Plug` is an `Attribute` subclass, so it has every method below; only its
+operators and its `get()` differ. The two spellings of one plug are equal
+and one dict or set key, and the typed methods hand back `Attribute`s
+(`list_attr`, `list_connections(plugs=True)`). `Node(plug)` is the node the
+plug was read from.
 
-### `PyNode` is a factory
+### `Node` is the factory
 
-`PyNode(x)` never returns a `PyNode`. It resolves `x` (a name, uuid,
-`MObject`, `MDagPath` or `MPlug`) and returns the most specific registered
-class:
+`Node(x)` never returns a bare `Node`. It resolves `x` (a name, uuid,
+`MObject` or `MDagPath`; an attribute, an `MPlug` or a `"node.attr"` string
+gives its node) and returns the most specific registered class:
 
 1. a locked `__custom_node_type__` string attribute, when the node has one;
 2. otherwise `cmds.nodeType(x, inherited=True)` walked from the most derived
    type down, the first registered type wins;
 3. otherwise `DAGNode` for DAG nodes, `DGNode` for the rest.
 
-A string with a `.` in it resolves to an `Attribute`. So a `cluster` comes
-back as a `Deformer` (registered as `geometryFilter`), a lattice shape or a
-locator as a `Geometry` (`geometryShape`), a camera as a `DAGNode`, a
-material as a `DGNode`.
+So a `cluster` comes back as a `Deformer` (registered as `geometryFilter`),
+a lattice shape or a locator as a `Geometry` (`geometryShape`), a camera as
+a `DAGNode`, a material as a `DGNode`. A node object is returned as it is
+(`Node(x) is x`); anything that names no node raises. The attribute a
+`"node.attr"` string names is `Attribute("node.attr")` (typed) or
+`Plug("node.attr")` (DSL).
 
 Registration is the `NodeMeta` metaclass: any class that sets
 `NATIVE_NODE_TYPE` (a Maya type) or `CUSTOM_NODE_TYPE` (a name of your
-choosing) lands in `PyNode._NODE_CLASS_DICT` when the class statement
-runs. A custom type stamps the string onto every node it creates, so
-`PyNode` recognises those nodes later. `Transform.is_type(custom_node)` is
-`False` at exact type and `True` with `exact_type=False`.
+choosing) registers with the factory when the class statement runs. A
+custom type stamps the string onto every node it creates, so `Node`
+recognises those nodes later. `Transform.is_type(custom_node)` is `False`
+at exact type and `True` with `exact_type=False`.
 
-`PyNode.create(type, ...)` forwards to the registered class's `create`
-when there is one — which is how `PyNode.create("skinCluster", geo, joints)`
-ends up in `SkinCluster._create` (the DSL's `Node.create` takes keyword
-arguments only and forwards the same way).
+`Node.create(type, ...)` runs the registered class's `create` with the
+arguments when there is one — which is how `Node.create("skinCluster", geo,
+joints)` ends up in `SkinCluster._create` and `"shadingEngine"` is built
+wired — and `createNode` for any other type, with every `createNode` flag.
+A class that makes just its node (`transform`, `joint`, `choice`, ...) takes
+keyword arguments only; one built from inputs (`skinCluster`, `blendShape`,
+`mesh`, `reference`) raises a `TypeError` without them, before anything is
+made; a display layer is empty unless objects are given. `Node.find_all(type)`
+is the registered class's `find_all`, or the nodes `cmds.ls` lists for any
+other type.
 
 ### Handles, not names
 
-A typed node holds an `MObject` (a DAG node also an `MDagPath`). `name` is
-read back from the handle each time, so a wrapper survives renames and
+A node object holds an `MObject` (a DAG node also an `MDagPath`). `name` is
+read back from the handle each time, so the object survives renames and
 reparenting; `is_valid` says whether the node still exists and any method
 after deletion raises `RuntimeError("... already deleted!")`. A handle never
 falls back to its name: a new node that takes the name is not picked up, and
 an undo of the delete brings the old one back. A new scene, a file open or a
-reference unload frees the node for good; its wrappers and attributes then
-raise `RuntimeError("Transform node (freed by a new scene, a file open or a
-reference unload) already deleted!")`, naming the class only, since the
-freed handle can no longer be read. An attribute built from a string or an
-MPlug (`Attribute("held.ty")`, `PyNode("held.ty")`) that never cast its node
+reference unload frees the node for good; the node object and its
+attributes then raise `RuntimeError("Transform node (freed by a new
+scene, a file open or a reference unload) already deleted!")`, naming the
+class only, since the freed handle can no longer be read. An attribute built from a string or an
+MPlug (`Attribute("held.ty")`, `Plug("held.ty")`) that never cast its node
 keeps a handle of that node: deleted, it raises `"held already deleted!"`,
 and freed, `"held node (freed by a new scene, a file open or a reference
 unload) already deleted!"`, named by the name it was built with.
@@ -190,33 +206,48 @@ found through its node, which `deleteExtension` frees at once.
 
 A DAG node keeps the path it was taken through, and the attributes it finds
 are named through that path: with `S` instanced under `T1` and `T2`,
-`PyNode("|T2|S").find_attr("v")` is `T2|S.visibility`, while
+`Node("|T2|S").find_attr("v")` is `T2|S.visibility`, while
 `Attribute("|T2|S.v")`, built from a string, is named as Maya names it,
 `T1|S.visibility`. When that instance is removed, the node answers through
 another path until an undo brings its own back.
 
 Equality is class plus name, hashing is the long name. Two consequences:
-`Transform("x") == PyNode("x")` because `PyNode("x")` *is* a `Transform`,
-but `ObjectSet("initialShadingGroup") != PyNode("initialShadingGroup")`
-because the second is a `ShadingEngine`. Wrap with `PyNode` when you want
-the canonical class.
+`Transform("x") == Node("x")` because `Node("x")` *is* a `Transform`,
+but `ObjectSet("initialShadingGroup") != Node("initialShadingGroup")`
+because the second is a `ShadingEngine`. Cast with `Node` when you want
+the canonical class. A class called on a node object of another class
+takes it by name, so `Mesh(cube)` finds the transform's mesh shape as
+`Mesh("cube")` does, and `copy.copy(node)` is an equal node object that
+shares the handle.
 
 ### `create()` is final, `_create()` is the hook
 
 `DGNode.create(*args, **kwargs)` calls the class's `_create` (which must
-return a node name), stamps a custom type when there is one and wraps the
+return a node name), stamps a custom type when there is one and casts the
 result. Subclasses override `_create`, and
 that is where the constructor signatures diverge:
 
 | Call | Builds with |
 |---|---|
-| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode`, then `cmds.parent` |
+| `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss` only; any other `createNode` flag (`shared=`) is not passed |
+| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`, every flag passed: in the parent's space, at identity |
 | `Mesh.create(mesh_data, uv_data=, name=)` | `MFnMesh.create` inside an undoable command |
 | `SkinCluster.create(geo, influences_or_SkinData, **skinCluster_kwargs)` | `cmds.skinCluster(toSelectedBones=True)`, existing skin deleted first |
 | `BlendShape.create(*geometries_or_morphs, **blendShape_kwargs)` | `cmds.blendShape(frontOfChain=True)` |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
-| `DisplayLayer.create(**createDisplayLayer_kwargs)` | `cmds.createDisplayLayer` |
+| `DisplayLayer.create(*objects, **createDisplayLayer_kwargs)` | `cmds.createDisplayLayer`, empty unless objects (or `empty=` / `noRecurse=`) are given |
 | `Reference.create(file_path, namespace)` | `cmds.file(reference=True)` |
+
+Inside `with container()` a typed create joins the scope as `Node.create`
+does: an explicit `name=` takes the flattened scope's prefix, every node the
+call made for itself is registered (`Mesh.create`'s transform and shape,
+`SkinCluster.create`'s skin and bind pose, not the `Orig` shape it puts
+under your mesh), `skipSelect` defaults to the `skip_selection` option, and
+the call is one undo step. `container=False` leaves the nodes unregistered.
+Display layers, sets (so shading engines) and references are scene
+registries, found again by name: in a scope they stay out, unprefixed,
+unless `container=True`. Outside a scope a direct typed create is plain
+Maya: no prefix, and the new node is selected (through `Node.create` it is not, per `skip_selection`).
 
 `ObjectSet.get_or_create(name)` and `DisplayLayer.get_or_create(name)` look
 the name up as given and in the current namespace, refuse with a
@@ -224,28 +255,31 @@ the name up as given and in the current namespace, refuse with a
 
 ### `Attribute` wraps an `MPlug` and subclasses `str`
 
-`typed.tx` is an `Attribute`: `get()` mirrors `cmds.getAttr`, `set()`
-mirrors `cmds.setAttr` and fills in `type=` for typed data (a single list
-also stands for the `(count, *items)` form of `stringArray` /
+`node.find_attr("tx")` is an `Attribute`: `get()` mirrors `cmds.getAttr`,
+`set()` mirrors `cmds.setAttr` and fills in `type=` for typed data (a single
+list also stands for the `(count, *items)` form of `stringArray` /
 `vectorArray` / `pointArray`). `a >> b` connects with force, `a // b`
-disconnects, `connect(other, force=False)` refuses an occupied input.
+disconnects, `connect(other, force=False)` refuses an occupied input. The
+DSL spelling, `node.tx`, is a `Plug`: the same methods, the DSL's
+operators, a numpy-shaped `get()`.
 
 Because it is a `str`, `cmds.setAttr(attr, 1)` just works, and `f"{attr}"`
 is the full name. Equality and hashing are not the string's, though: two
 attributes are equal, and hash alike, when they are the same Maya plug
 (node, attribute, logical indices), whatever instance path each is named
 through, and a rename or an alias keeps the hash. An attribute never equals
-a plain string; compare `str(attr)` for names. A DSL `Plug` of the same plug
-hashes apart, so the two layers never share a dict or set key;
-`plug.equals(attr)` compares across them.
+a plain string; compare `str(attr)` for names, or `plug.equals("a.tx")`. A
+DSL `Plug` of the same plug is equal too (its `==` folds to `True` and
+builds nothing) and hashes alike: the two spellings are one dict or set key.
 
-An attribute a node finds (`typed.tx`, `typed.find_attr("tx")`) is owned by
-that node object: its `node` is `typed`, and its children, elements and
-parent share it.
+An attribute a node finds (`node.find_attr("tx")`, and the `Plug`
+`node.tx`) is owned by that node object: its `node` is `node`, and its
+children, elements and parent share it.
 
 Indexing is the multi / component surface: `attr[i]` is the element at a
 logical index (created on access, Maya's own semantics), `attr[a:b]` and
-`attr[[i, j, k]]` give lists of elements, `del attr[i]` removes one.
+`attr[[i, j, k]]` give lists of elements (a `List` of `Plug`s on a `Plug`),
+`del attr[i]` removes one.
 Geometry components (`mesh.vtx`, `curve.cv`, `surface.cv`) are
 range-checked against the point count and accept negative ids in a list
 key; `mesh.vtx`, `mesh.pnts` and `mesh.pt` are the same `controlPoints`
@@ -368,7 +402,7 @@ second, so nothing needs configuring.
 
 ---
 
-## When to drop below the DSL
+## When to reach for the typed methods
 
 - You need a **result as data**: skin weights as an array, a mesh as a
   `MeshData`, a hierarchy as a `HierarchyData`, a target as a `MorphData`.
@@ -378,14 +412,15 @@ second, so nothing needs configuring.
 - You are **writing a tool**, not a network: a duplicate-clean-geometry
   step, a skeleton duplicate with a suffix, an orient pass, a map mirror.
 - You want **your own node type**: subclass `Transform` (or any class here)
-  with `CUSTOM_NODE_TYPE`, and `PyNode` will hand your class back for the
+  with `CUSTOM_NODE_TYPE`, and `Node` will hand your class back for the
   nodes it created.
-- You need `cmds.*` results as **typed nodes** without the DSL: wrap them,
-  `PyNode(cmds.polyCube(ch=False)[0])`.
+- You need `cmds.*` results as **typed nodes**: cast them,
+  `Node(cmds.polyCube(ch=False)[0])`, or `Node.wrap(result)` for a whole
+  result.
 
-Stay in the DSL for setting, connecting and building math networks: that
-is what `<<`, `>>` and the operators are for, and `Node.__getattr__` already
-gives you every method on this page.
+Stay with the DSL for setting, connecting and building math networks: that
+is what `<<`, `>>` and the operators are for, and every method on this page
+is on the same node object.
 
 ---
 
@@ -393,15 +428,12 @@ gives you every method on this page.
 
 Verified on Maya 2025; not bugs to work around blindly.
 
-- **`Mesh("transformName")` finds the transform's first mesh shape**, but a
-  transform *without* one raises `TypeError` (`object of type 'NoneType' has
-  no len()`), not the `ValueError` the message in the source promises. And
-  `Mesh(a_transform_instance)` is a `ValueError` (`... is not a mesh`): the
-  transform shortcut only reads a name string. `SkinCluster.transfer_to_mesh`
-  and `Mesh.transfer_maps` go through `Mesh(other)`, so pass them a shape or
-  a name.
-- **Iterating an `Attribute` raises** (`__iter__` takes a stray argument).
-  Use `attr[:]` or `attr.get_logical_indices()`.
+- **`Mesh("transformName")` and `Mesh(transform)` find the transform's
+  first mesh shape**, but a transform *without* one raises `TypeError`
+  (`object of type 'NoneType' has no len()`), not the `ValueError` the
+  message in the source promises.
+- **Iterating an `Attribute` or a `Plug` raises** (`__iter__` takes a
+  stray argument). Use `attr[:]` or `attr.get_logical_indices()`.
 - **`attr[:]` on a multi creates the gaps**: the slice runs `0..max+1`
   through `elementByLogicalIndex`, so `[0, 3]` becomes `[0, 1, 2, 3]`.
   `attr[[0, 3]]` and `get_logical_indices()` do not.
@@ -409,7 +441,8 @@ Verified on Maya 2025; not bugs to work around blindly.
   `controlPoints[-1]`; `mesh.vtx[[-1]]` is the last point.
 - **`Attribute("cubeShape.vtx[0]")` raises** (`item is not a plug`): the
   string constructor takes real plugs only. Reach components through the
-  node, `mesh.vtx[0]`, which resolves the alias.
+  node, `mesh.vtx[0]`, or build the DSL `Plug("cubeShape.vtx[0]")`; both
+  resolve the alias.
 - **`Joint.get_root_joint()` walks parents only**, so on a root joint it
   returns `None`, and `match_hierarchy` — which calls it on both sides —
   must be called from a child joint of each chain.

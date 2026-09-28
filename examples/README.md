@@ -24,10 +24,10 @@ A spine in six lines: four locators become the CVs of a curve, twelve
 joints ride it.
 
 ```python
-from rig import Node, PlugList
+from rig import Node, List
 from rig.examples import rail_spine_simple
 
-controls = PlugList()
+controls = List()
 for i in range(4):
     controls.append(Node(cmds.spaceLocator()[0]))
     controls[i].ty << i * 5                                 # stacked along Y
@@ -65,8 +65,8 @@ print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 | `ye_olde_lerp.gif` | the animation the root README embeds | |
 | `__init__.py` | empty; it makes `rig.examples` importable | |
 
-Every builder returns rig objects, never strings: a `Node` for the rail
-transform, a `namedtuple` of `Node`s and `PlugList`s for the image rigs.
+Every builder returns rig objects, never strings: the rail's `Transform`
+node, a `namedtuple` of nodes and `List`s for the image rigs.
 
 ### Which language features each one showcases
 
@@ -74,11 +74,11 @@ transform, a `namedtuple` of `Node`s and `PlugList`s for the image rigs.
 |---|---|---|---|---|
 | `with container("name"):` — a scoped utility graph | yes | yes | yes | yes |
 | `container.add(node)` — enrol a node made outside the scope | | | yes | yes |
-| `rc.*` — `maya.cmds` returning `Node` / `PlugList` (`rc.curve`, `rc.polyPlane`, `rc.parent`) | yes | yes | yes | yes |
+| `rc.*` — `maya.cmds` returning nodes / `List` (`rc.curve`, `rc.polyPlane`, `rc.parent`) | yes | yes | yes | yes |
 | `rn.*` — node factories with attribute kwargs (`rn.motionPath()`, `rn.file()`, `rn.colorCorrect()`) | yes | yes | yes | yes |
 | `node << Float("x", min=0, max=1) << value << lock` spec injection | `Float` | `Float`, `Enum` | `Float`, `Int`, `Enum`, `String` | `Float`, `Int`, `String` |
 | `plug << lock`, `plug << hide` | `hide` | both | both | `lock` |
-| `PlugList(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | |
+| `List(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | |
 | `rail_shape.cv[:] << matrices` — matrix-to-CV shorthand | yes | yes | | |
 | `rider << matrix_plug` — matrix-to-transform shorthand (t / r / s + shear) | yes | yes | | |
 | `plug.get()` — the `getAttr` idiom | yes | yes | | demo |
@@ -104,15 +104,15 @@ transform, a `namedtuple` of `Node`s and `PlugList`s for the image rigs.
 
 Each script is importable with `rig`'s parent folder on `sys.path`. Import
 the module and call its build function; the arguments are plain Maya names,
-`Node`s or a `PlugList` of either.
+nodes or a `List` of either.
 
 <!-- notest -->
 ```python
-from rig import Node, PlugList
+from rig import Node, List
 from rig.bridges import commands as rc
 from rig.examples import rail_spine_simple, rail_spine, perspective_image_planes, image_loop
 
-controls = rc.ls(selection=True)                                # a PlugList of the selected controls
+controls = rc.ls(selection=True)                                # a List of the selected controls
 rail     = rail_spine_simple.create_simple_rail(controls, riders=10)
 rail     = rail_spine.create_rail(controls, 20, orient_controls=controls, scale_controls=controls)
 setup    = perspective_image_planes.create_setup("camera1", 5)  # .camera .planes .shapes
@@ -142,7 +142,7 @@ feature at a time, in eight numbered steps you can read in one sitting:
 1. `rc.curve(d=3, p=cv_positions)` from the controls' world positions;
    the rail transform's `t` / `r` / `s` are hidden — it is only a parent.
 2. `rail_shape.cv[:] << position_controls.wm * rail.wim` — every CV is
-   driven live. A `PlugList` of `worldMatrix` plugs times the rail's
+   driven live. A `List` of `worldMatrix` plugs times the rail's
    `worldInverseMatrix` lands the controls in rail space, and injecting a
    matrix into a CV extracts its translation for you. No `decomposeMatrix`
    by hand.
@@ -229,7 +229,7 @@ Everything the tutorial omits on purpose, from the original rig
   list gives each rider its own u, and a string in that list names a plug.
 
 `create_rail(position_controls, u, orient_controls=None, scale_controls=None, rail_name="rail1", rider_name="rider1", degree=3, periodic=False, aim_axis=1, up_axis=0, invert_aim=False, invert_up=False, control_up=None, invert_up_control=False, debug=True)`
-returns the rail `Node`. `orient_controls` and `scale_controls` must be
+returns the rail transform node. `orient_controls` and `scale_controls` must be
 members of `position_controls` when there is more than one of them.
 
 ```python
@@ -239,7 +239,7 @@ from rig.examples import rail_spine
 
 set_options(create_containers=True)                        # False shows the raw graph instead of railNode1
 
-controls = PlugList()
+controls = List()
 for i in range(5):
     controls.append(Node(cmds.spaceLocator()[0]))
     controls[i].ty << i * 5
@@ -317,9 +317,9 @@ builds a camera and `count` poly planes parented under it, one every
 drives the camera's `hfa` / `vfa`; an orthographic camera is handled by
 `condition(camera_shape.orthographic, ...)`.
 
-It returns `(camera, planes, shapes)`: the camera transform `Node`, a
-`PlugList` of plane transforms and a `PlugList` of plane shapes. Because
-`shapes.image` is a `PlugList` of plugs, `shapes.image[:] << list_of_paths`
+It returns `(camera, planes, shapes)`: the camera's `Transform`, a
+`List` of plane transforms and a `List` of plane shapes. Because
+`shapes.image` is a `List` of plugs, `shapes.image[:] << list_of_paths`
 fans a list of files across the planes in one line.
 
 ```python
@@ -388,7 +388,7 @@ from rig.examples import image_loop
 
 loop = image_loop.create_plane(images_dir, name="dogs")
 print(loop)
-# Output(transform=Node("mesh_dogs"), shape=Node("mesh_dogsShape"), material=Node("dogs"), texture=Node("file1"))
+# Output(transform=Transform("mesh_dogs"), shape=Mesh("mesh_dogsShape"), material=DGNode("dogs"), texture=DGNode("file1"))
 print(loop.shape.sequenceStart.get(), loop.shape.sequenceEnd.get())   # 1 5
 
 plane = cmds.ls(type="polyPlane")[0]
@@ -457,7 +457,7 @@ this per-plane look in, so deleting the plane's container takes its look
 with it. The spec keeps working as the material afterwards:
 `material.transparency << ...` reaches the lambert's plug. `unique=True` keeps the old behaviour on a
 rebuild: a second `create_plane(name="run")` gets its own `run1` and
-`run1SG` instead of re-using `run`. `m.node` is the material `Node` the
+`run1SG` instead of re-using `run`. `m.node` is the material node the
 rest of the script wires textures into; `m.engine` is the shading engine.
 
 ---
@@ -476,7 +476,7 @@ Verified on Maya 2025; not bugs to work around blindly.
   `rc.parent`ed under the rail. Maya renames a node when it is reparented,
   which would confuse the container's membership tracking; the maths sits
   inside `railNode1` / `simpleRail1`, the joints and their debug cubes sit
-  outside, and `rc.parent` keeps the `Node` pointing at the renamed joint.
+  outside, and `rc.parent` keeps the node object pointing at the renamed joint.
 - `rail_spine_simple` snapshots the default arc length with `.get()` at
   build time, so editing the controls after the build changes the stretch
   ratio; `rail_spine` keeps a hidden proxy curve shape under the rail so
@@ -498,8 +498,8 @@ Verified on Maya 2025; not bugs to work around blindly.
   `/Users/ericvignola/...`; on any other machine `perspective_image_planes`
   builds and prints "No images found", `image_loop` raises. The `images/`
   folder beside them is a valid input for both.
-- `PlugList` reads come back as NumPy arrays (`controls.ty.get()` is
-  `[ 0.  5. 10. 15.]`), and so does a compound on a single `Node`
+- `List` reads come back as NumPy arrays (`controls.ty.get()` is
+  `[ 0.  5. 10. 15.]`), and so does a compound on a single node
   (`rider.t.get()` is `[ 0. 15.  0.]`).
 - `set_options(create_containers=False)` before a build leaves the whole
   graph loose in the scene — handy for reading it in the Node Editor, and

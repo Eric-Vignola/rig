@@ -2,7 +2,8 @@
 :class:`List` -- vectorised broadcast for the rig DSL.
 
 A ``List`` is a regular ``list`` whose attribute access propagates to
-each element. Numeric / non-Plug elements pass through unchanged.
+each element. Numeric / non-Plug elements pass through unchanged. It is
+``rig.List``, not ``typing.List``.
 
 Examples::
 
@@ -30,8 +31,8 @@ Both methods iterate elements directly rather than routing through
 
 ``in``, ``index``, ``count`` and ``remove`` never build a node: two plugs
 match when they are one Maya plug (``Node("|T1|S").v`` and
-``Node("|T2|S").v``), a node matches a str by its name, and a plain str given
-for a plug is read as the Maya plug it names, so ``"a.tx"``,
+``Node("|T2|S").v``), a node matches a str that names it (``"a"``, ``"|a"``),
+and a plain str given for a plug is read as the Maya plug it names, so ``"a.tx"``,
 ``"a.translateX"`` and an alias all find ``a.tx`` (see
 :meth:`List.__contains__`).
 """

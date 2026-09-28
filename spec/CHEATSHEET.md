@@ -25,7 +25,7 @@ Concepts, conventions and the verified behaviour live in [`README.md`](README.md
 | 11 | [`node >> spec` declares an output](#11-node--spec-declares-an-output) | `writable=False` |
 | 12 | [`plug >> Node` and `plug >> "name"` clone](#12-plug--node-and-plug--name-clone) | what travels, what does not |
 | 13 | [Multis and pre-sizing](#13-multis-and-pre-sizing) | `multi=True`, `size=`, slices, `append` |
-| 14 | [`PlugList` fan-out](#14-pluglist-fan-out) | one spec, many nodes |
+| 14 | [`List` fan-out](#14-list-fan-out) | one spec, many nodes |
 | 15 | [`Note`](#15-note) | the `notes` attribute |
 | 16 | [Leading underscores](#16-leading-underscores) | `__parked__` |
 
@@ -44,7 +44,7 @@ cmds.file(new=True, force=True)
 
 import numpy as np
 
-from rig import Node, PlugList
+from rig import Node, List
 from rig.spec import (
     Angle, Bool, Float, Int, Time,
     Color, Euler, Quat, Vector,
@@ -68,7 +68,7 @@ def dt(plug):
     return cmds.getAttr(plug, type=True)
 
 
-print(repr(ctrl), cmds.ls(type="container"))   # Node("ctrl") [] -- no container outside a `with container():`
+print(repr(ctrl), cmds.ls(type="container"))   # Transform("ctrl") [] -- no container outside a `with container():`
 ```
 
 ---
@@ -131,10 +131,12 @@ print(cmds.getAttr("drv.weight"))                                          # 0.5
 ```
 
 A plug on the left means its node — `ctrl.tx << Float("y")` adds `y` to
-`ctrl`:
+`ctrl` — and the new plug is owned by that node object, as `(ctrl <<
+Float("y")).node is ctrl`:
 
 ```python
-print(repr(ctrl.tx << Float("y")))   # Plug("ctrl.y")
+y = ctrl.tx << Float("y")
+print(repr(y), y.node is ctrl)   # Plug("ctrl.y") True
 ```
 
 ---
@@ -191,14 +193,14 @@ print(dt("ctrl.label"), ctrl.label >> None)                         # string hel
 ctrl << Matrix("xf")
 print(at("ctrl.xf"), (ctrl.xf >> None).shape)                       # matrix (4, 4)
 ctrl.xf << drv.worldMatrix                                          # a plug connects
-print(ctrl.xf.get_inputs())                                         # PlugList([Plug("drv.worldMatrix")])
+print(ctrl.xf.get_inputs())                                         # List([Plug("drv.worldMatrix")])
 ctrl.xf << None
 ctrl.xf << np.eye(4) * 2                                            # an array sets
 print((ctrl.xf >> None)[0, 0])                                      # 2.0
 
 ctrl        << Message("driver")
 ctrl.driver << drv.message
-print(at("ctrl.driver"), ctrl.driver.get_inputs())                  # message PlugList([Plug("drv.message")])
+print(at("ctrl.driver"), ctrl.driver.get_inputs())                  # message List([Plug("drv.message")])
 ```
 
 The geometry data types are wires for shapes:
@@ -207,7 +209,7 @@ The geometry data types are wires for shapes:
 cmds.polyCube(name="cube")
 ctrl         << Mesh("shapeIn")
 ctrl.shapeIn << Node("cubeShape").outMesh
-print(dt("ctrl.shapeIn"), ctrl.shapeIn.get_inputs())                # mesh PlugList([Plug("cubeShape.outMesh")])
+print(dt("ctrl.shapeIn"), ctrl.shapeIn.get_inputs())                # mesh List([Plug("cubeShape.outMesh")])
 
 ctrl << NurbsCurve("crvIn")
 ctrl << NurbsSurface("srfIn")
@@ -275,7 +277,7 @@ print(ctrl.rot >> None)                         # [90.  0.  0.]
 ctrl.q << [0, 0, 0, 1]
 print(ctrl.q >> None)                           # [0. 0. 0. 1.]
 ctrl.tint << drv.t
-print(ctrl.tint.get_inputs())                   # PlugList([Plug("drv.translate")])
+print(ctrl.tint.get_inputs())                   # List([Plug("drv.translate")])
 ```
 
 Per-child defaults are `defaultValue=[...]`; `min` / `max` land on the
@@ -393,9 +395,9 @@ ctrl.s  << [unlock, skip, unhide]
 ctrl.tx << drv.tx
 ctrl.tz << drv.tz
 ctrl.t  << [skip, 4.0, skip]                     # write Y, keep the X and Z drivers
-print(ctrl.tx.get_inputs(), ctrl.t >> None)     # PlugList([Plug("drv.translateX")]) [0. 4. 0.]
+print(ctrl.tx.get_inputs(), ctrl.t >> None)     # List([Plug("drv.translateX")]) [0. 4. 0.]
 ctrl.t << [None, 4.0, None]                     # write Y, DISCONNECT X and Z
-print(ctrl.tx.get_inputs(), ctrl.tz.get_inputs())   # PlugList([]) PlugList([])
+print(ctrl.tx.get_inputs(), ctrl.tz.get_inputs())   # List([]) List([])
 ```
 
 ---
@@ -413,7 +415,7 @@ ctrl.foo << destroy
 print(cmds.attributeQuery("foo", node="ctrl", exists=True))          # False
 
 ctrl << Float("bar"); ctrl << Float("baz")
-print(repr(ctrl << destroy("bar", "baz")), cmds.attributeQuery("baz", node="ctrl", exists=True))   # Node("ctrl") False
+print(repr(ctrl << destroy("bar", "baz")), cmds.attributeQuery("baz", node="ctrl", exists=True))   # Transform("ctrl") False
 ```
 
 Keyword flags:
@@ -433,7 +435,7 @@ except RuntimeError as e:
     print(str(e).splitlines()[0])               # Cannot destroy 'ctrl.scratch': has 0 incoming + 1 outgoing connection(s):
 print(cmds.attributeQuery("scratch", node="ctrl", exists=True))          # True -- untouched
 ctrl << destroy("scratch", verbose=True)            # logs: destroy ctrl.scratch: disconnecting ctrl.scratch -> drv.translateY
-print(drv.ty.get_inputs())                      # PlugList([])
+print(drv.ty.get_inputs())                      # List([])
 
 ctrl << destroy("nope", silent=True)            # no-op
 try:
@@ -486,7 +488,7 @@ existing attribute stays and its plug is returned, whatever its type.
 ctrl   << Float("mix", min=0, max=1) << 0.75
 drv.tz << ctrl.mix
 ctrl   << Float("mix", min=-5, max=5)
-print(ctrl.mix >> None, cmds.attributeQuery("mix", node="ctrl", min=True), drv.tz.get_inputs())   # 0.0 [-5.0] PlugList([])
+print(ctrl.mix >> None, cmds.attributeQuery("mix", node="ctrl", min=True), drv.tz.get_inputs())   # 0.0 [-5.0] List([])
 
 ctrl.mix << 0.3 << lock
 ctrl     << Float("mix", dv=2.0)
@@ -511,7 +513,7 @@ out = ctrl >> Float("result")
 print(repr(out), cmds.attributeQuery("result", node="ctrl", writable=True))   # Plug("ctrl.result") False
 out    << 5
 drv.sx << out
-print(out >> None, drv.sx.get_inputs())         # 5.0 PlugList([Plug("ctrl.result")])
+print(out >> None, drv.sx.get_inputs())         # 5.0 List([Plug("ctrl.result")])
 try:
     out << drv.tx
 except Exception as e:
@@ -527,7 +529,7 @@ print(cmds.attributeQuery("outVecX", node="ctrl", writable=True))   # False -- c
 `>> None` and anything else keep their old meaning:
 
 ```python
-print(type(ctrl >> None).__name__)              # Transform -- the typed DGNode
+print((ctrl >> None) is ctrl)                    # True -- the node itself
 try:
     ctrl >> 42
 except TypeError as e:
@@ -630,26 +632,26 @@ print((ctrl.mats[:] >> None).shape, cmds.getAttr("ctrl.names[0]"))           # (
 
 ---
 
-## 14. `PlugList` fan-out
+## 14. `List` fan-out
 
-A spec injected into a `PlugList` is applied to every element's node
-(a plug element means its node); the result is a `PlugList` of the new
+A spec injected into a `List` is applied to every element's node
+(a plug element means its node); the result is a `List` of the new
 plugs, so values, modifiers and `>> None` broadcast next.
 
 ```python
 a     = Node.create("transform", name="a")
 b     = Node.create("transform", name="b")
-nodes = PlugList([a, b])
+nodes = List([a, b])
 
 gains = nodes << Float("gain", min=0, max=2) << [0.5, 1.5] << lock
-print(repr(gains), gains >> None)                                  # PlugList([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
+print(repr(gains), gains >> None)                                  # List([Plug("a.gain"), Plug("b.gain")]) [0.5 1.5]
 print([cmds.getAttr(f"{n}.gain", lock=True) for n in ("a", "b")])  # [True, True]
 
 aims = nodes << Vector("aim") << [[1, 0, 0], [0, 1, 0]]
 print(aims >> None)                                                   # [[1. 0. 0.]
                                                                       #  [0. 1. 0.]]
-print(repr(nodes >> Float("out")), cmds.attributeQuery("out", node="b", writable=True))  # PlugList([Plug("a.out"), Plug("b.out")]) False
-print(repr(PlugList([a.tx, b.ty]) << Float("viaPlug")))                                  # PlugList([Plug("a.viaPlug"), Plug("b.viaPlug")])
+print(repr(nodes >> Float("out")), cmds.attributeQuery("out", node="b", writable=True))  # List([Plug("a.out"), Plug("b.out")]) False
+print(repr(List([a.tx, b.ty]) << Float("viaPlug")))                                      # List([Plug("a.viaPlug"), Plug("b.viaPlug")])
 ```
 
 Modifiers pair element-wise, `destroy` returns the nodes, and a list of
@@ -660,13 +662,13 @@ nodes.tx << [lock, hide]
 print(cmds.getAttr("a.tx", lock=True), cmds.getAttr("b.tx", keyable=True))   # True False
 nodes.tx << [unlock, unhide]
 
-print(repr(nodes << [Float("fa"), Float("fb")]))                                                           # PlugList([Node("a"), Node("b")])
+print(repr(nodes << [Float("fa"), Float("fb")]))                                                           # List([Transform("a"), Transform("b")])
 print(cmds.attributeQuery("fa", node="a", exists=True), cmds.attributeQuery("fa", node="b", exists=True))  # True False
 
 gains << unlock
-print(repr(nodes << destroy("gain")), cmds.attributeQuery("gain", node="a", exists=True))   # PlugList([Node("a"), Node("b")]) False
+print(repr(nodes << destroy("gain")), cmds.attributeQuery("gain", node="a", exists=True))   # List([Transform("a"), Transform("b")]) False
 try:
-    PlugList([a, 3.5]) << Float("x")                                 # a string that names a node would lift to it
+    List([a, 3.5]) << Float("x")                                     # a string that names a node would lift to it
 except TypeError as e:
     print(str(e)[:36])                                               # element [1] (3.5) is not a Plug or a
 ```
@@ -715,5 +717,5 @@ except AttributeError as e:
 | Read | For |
 |---|---|
 | [`README.md`](README.md) | the concepts, the conventions, the verified behaviour |
-| [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) | the whole DSL: operators, `PlugList` broadcasting, containers, membership |
+| [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) | the whole DSL: operators, `List` broadcasting, containers, membership |
 | [`../nodetypes/README.md`](../nodetypes/README.md) | `Attribute` and `DGNode`, the layer every spec lands on |

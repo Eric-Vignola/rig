@@ -1,7 +1,7 @@
 # `rig` Cheatsheet
 
 Every public name of the language, one small runnable block each: the
-core (`Node`, `Plug`, `PlugList`, the operators, containers), the
+core (`Node`, `Plug`, `List`, the operators, containers), the
 function libraries, and the membership grammar (tags, layers,
 materials). The blocks run top to bottom as one script and share a
 namespace, notebook style; every section that needs a clean scene
@@ -11,7 +11,7 @@ Concepts and conventions live in [`README.md`](README.md). The
 subpackages have their own cheatsheets: [`spec/`](spec/CHEATSHEET.md)
 for attribute specs and modifiers, [`bridges/`](bridges/CHEATSHEET.md)
 for `maya.cmds` and the node factories, [`nodetypes/`](nodetypes/CHEATSHEET.md)
-for the typed node layer underneath.
+for the node classes and their typed methods.
 
 ---
 
@@ -20,23 +20,23 @@ for the typed node layer underneath.
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
-| 1 | [Node](#1-node) | create, wrap, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.wrap`, `lift`, a deleted or freed node |
-| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5`, `plug.node`, instance paths |
+| 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, `Node.wrap`, `lift`, a deleted or freed node |
+| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, `plug.node`, instance paths |
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, `[:]` slicing, multi attrs, blendShape targets |
-| 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node, `equals`, dict and set keys |
+| 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, `plug >> container` |
-| 6 | [PlugList](#6-pluglist) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None` |
+| 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes |
 | 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
-| 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, per-channel fan-out, `condition(...)`, `constant(...)` |
+| 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, no truth value for an ordering, per-channel fan-out, `condition(...)`, `constant(...)` |
 | 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `.indices` / `.count` / `.names`, `>> None` |
-| 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, publishing, `Container` |
+| 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container` |
 | 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection |
 | 13 | [`memoize`, `vectorize`, `prune_memoize_caches`](#13-memoize-vectorize-prune_memoize_caches) | the two decorators and the cache sweep |
 | 14 | [`sequences` and `arguments`](#14-sequences-and-arguments) | the asymmetric generators behind every broadcast |
 | 15 | [`NodeOp` and the target Maya version](#15-nodeop-and-the-target-maya-version) | version-keyed impls, `set_options(maya_version=...)`, `set_target_version` |
 | 16 | [`InjectionError`](#16-injectionerror) | the one thing `<<` refuses |
-| 17 | [Function libraries: the map](#17-function-libraries-the-map) | the nine modules and twelve verbs, folding, memoisation, `PlugList` broadcast, the six rules |
+| 17 | [Function libraries: the map](#17-function-libraries-the-map) | the nine modules and twelve verbs, folding, memoisation, `List` broadcast, the seven rules |
 | 18 | [`functions` — scalar math](#18-functions--scalar-math) | `abs` `int` `trunc` `floor` `ceil` `sign` `round` `clamp` `sqrt` `pow` `exp` `log` `rev` |
 | 19 | [`functions` — lists: reduce, pick, search](#19-functions--lists-reduce-pick-search) | `sum` `avg` `max` `min` `argmax` `argmin` `all` `any` `diff` `cumsum` `choice` `searchsorted` |
 | 20 | [`functions` — time, constants, comparison and logic](#20-functions--time-constants-comparison-and-logic) | `frame` `pi` `inf`, `equal` and the comparison wrappers, `logical_and` / `or` / `xor` / `not` |
@@ -46,13 +46,13 @@ for the typed node layer underneath.
 | 24 | [`matrix` — blend](#24-matrix--blend) | `lerp` vs `blend` vs `slerp` vs `pow` |
 | 25 | [`vector`](#25-vector) | `X` `Y` `Z`, `dot` / `cross` / `triple_product`, `length` / `normalize` / `dist`, `angle`, `rotate`, `lerp` / `slerp` / `elerp` |
 | 26 | [`quaternion`](#26-quaternion) | Hamilton arithmetic, `angle`, conversions, `slerp` / `pow`, axis-angle both ways |
-| 27 | [`euler`](#27-euler) | `reorder`, `to_matrix` / `to_quaternion`, `slerp`, the rotate-order table |
+| 27 | [`euler`](#27-euler) | `reorder`, `to_matrix` / `to_quaternion`, `slerp`, rotate-order names and numbers |
 | 28 | [`interpolate`](#28-interpolate) | `sequence` and its `method=`, `smoothstep` / `smootherstep`, `inverse_lerp` |
 | 29 | [`tween`](#29-tween) | the 42 easing curves by family, extrapolation |
 | 30 | [`random`](#30-random) | `value` / `uniform` / `randint` and the `3D` variants, `seed`, `trigger` |
 | 31 | [The cross-type verbs at `rig.*`](#31-the-cross-type-verbs-at-rig) | `dist` `lerp` `slerp` `blend` `elerp` `normalize` `inverse` `angle` `to_euler` `to_quaternion` `to_matrix`, the routing table |
 | 32 | [The membership grammar](#32-the-membership-grammar) | `<< Spec('x')` / `<< -Spec('x')` / `<< Spec()` / `>> Spec('x')` / `>> Spec()` for `Tag`, materials and `Layer`; the return-value rule; the rejected spellings |
-| 33 | [Components as members](#33-components-as-members) | the bare handle is the whole kind, `sph.vtx` is all points, no `__len__`, `PlugList` pairing |
+| 33 | [Components as members](#33-components-as-members) | the bare handle is the whole kind, `sph.vtx` is all points, no `__len__`, `List` pairing |
 | 34 | [Tag](#34-tag) | one category per tag, `.set` / `.clear` / `.rename` / `.delete`, queries as arrays, `componentTagExpression`, procedural `polyCube` tags and `at=` |
 | 35 | [Layer](#35-layer) | exclusive display layers, `Layer.of`, kwargs and `update=`, `defaultLayer` as no layer |
 | 36 | [Materials](#36-materials) | `Blinn` / `Lambert` / `Phong` / ... / `Default`, kwargs, `unique=`, per-face carving, green faces, `shade.repair` / `tidy` |
@@ -76,7 +76,7 @@ cmds.file(new=True, force=True)
 
 import numpy as np
 
-from rig import Node, Plug, PlugList
+from rig import Node, Plug, List
 print(cmds.about(version=True))      # the Maya this page was vetted on
 ```
 
@@ -90,53 +90,70 @@ target one (section 15), they build the classic `plusMinusAverage` /
 
 ## 1. Node
 
-A `Node` wraps any Maya node. Attribute access returns a `Plug`; method
-access delegates to the typed node underneath. Two wrappers of one node are
-equal and one key. That key is the node's long name, so a rename changes
-it; a `Plug`'s key survives one (section 4).
+`Node(x)` gives the node of any Maya node in its typed class: a
+`Transform`, a `Mesh`, ..., or the `DGNode` / `DAGNode` fallback, from
+[`rig.nodetypes`](nodetypes/README.md). `Node` is the root of those classes,
+so the DSL and the typed methods are on one object: attribute access
+returns a `Plug`, and `a.list_attr()` is a `DGNode` method. Two node objects
+of one node are equal and one key. That key is the node's long name, so a
+rename changes it; a `Plug`'s key survives one (section 4).
 
 ```python
 a = Node.create("transform", name="a")  # createNode, registered with the active container scope
-b = Node("a")                           # wrap by name
-print(str(a), repr(a))                          # a Node("a")
-print(a == b, hash(a) == hash(b), len({a, b}))  # True True 1  -- two wrappers, one node
-print(cmds.objExists(a), cmds.nodeType(a))      # True transform  -- a Node passes straight into cmds
-print(a.list_attr()[:2])                        # [Attribute("a.message"), Attribute("a.caching")]  -- a DGNode method, delegated
+b = Node("a")                           # the node named "a"
+print(str(a), repr(a), isinstance(a, Node))            # a Transform("a") True
+print(a == b, a is b, hash(a) == hash(b), len({a, b}))  # True False True 1  -- two objects, one node
+print(cmds.objExists(a), cmds.nodeType(a))      # True transform  -- a node passes straight into cmds
+print(a.list_attr()[:2])                        # [Attribute("a.message"), Attribute("a.caching")]  -- a DGNode method
 ```
 
-`Node(plug)` and `Node("node.attr")` strip the attribute and give the owning
-node; `node >> None` leaves the DSL and hands back the typed node
-(`Transform`, `Mesh`, ...).
+`Node(x)` is `x` for a node object. `Node(plug)` is the node the plug was
+read from and `Node("node.attr")` the node named before the first `.`;
+`node >> None` is the node itself. Anything that names no node raises
+(`Node(3)` is a `ValueError`).
 
 ```python
-print(repr(Node(a.tx)), repr(Node("a.translate")))   # Node("a") Node("a")
-typed = a >> None
-print(type(typed).__name__, isinstance(typed, Node))  # Transform False
+print(Node(a) is a, Node(a.tx) is a, repr(Node("a.translate")))  # True True Transform("a")
+print((a >> None) is a)                                          # True
 ```
 
-`Node.wrap` turns a `maya.cmds` result back into the DSL and `lift` casts a
-string, `Attribute` or `DGNode` to the right wrapper (a typed `Attribute`
-keeps the node it was read from, as `Plug(attr)` does).
+`Node.create(type, ...)` runs the typed create of a type a node class is
+registered for (`transform`, `joint`, `skinCluster`, `shadingEngine`, ...,
+[`rig.nodetypes`](nodetypes/README.md)) and `createNode` for any other;
+`Node.find_all(type)` lists the nodes of a type.
+
+```python
+jnt = Node.create("joint", name="jnt", parent=a)   # Joint.create, under a
+md  = Node.create("multiplyDivide", name="md")     # createNode
+print(repr(jnt), jnt.get_parent(), repr(md))                     # Joint("jnt") a DGNode("md")
+print(Node.find_all("joint"), Node.find_all("multiplyDivide"))   # [Joint("jnt")] [DGNode("md")]
+```
+
+`Node.wrap` turns a `maya.cmds` result into nodes and `List`s, and `lift`
+casts a string or a typed `Attribute` to the DSL, a node or a `Plug` (a
+typed `Attribute` keeps the node it was read from, as `Plug(attr)` does).
 
 ```python
 from rig import lift
 
-print(repr(Node.wrap(cmds.createNode("transform", name="c"))))   # Node("c")
+print(repr(Node.wrap(cmds.createNode("transform", name="c"))))   # Transform("c")
 cmds.select("a", "c")
-print(repr(Node.wrap(cmds.ls(selection=True))))                  # PlugList([Node("a"), Node("c")])
+print(repr(Node.wrap(cmds.ls(selection=True))))                  # List([Transform("a"), Transform("c")])
 print(Node.wrap(5.0), Node.wrap(None), Node.wrap("not a node"))  # 5.0 None not a node  -- passthrough
-print(repr(lift("a")), repr(lift("a.tx")), lift(a) is a)         # Node("a") Plug("a.translateX") True
+print(repr(lift("a")), repr(lift("a.tx")), lift(a) is a)         # Transform("a") Plug("a.translateX") True
 ```
 
 `node << spec` adds an attribute and `node >> spec` adds an output-only
 one (`writable=False`); `node << matrix` decomposes onto the transform
 (section 8); a collection spec (`Tag`, a material, `Layer`) is membership
-(section 32). A bare value on a bare `Node` is a `TypeError`.
+(section 32). A bare value on a node is a `TypeError`. The new plug is
+owned by the node it was added to.
 
 ```python
 from rig.spec import Float
 
-print(repr(a << Float("blend")))                               # Plug("a.blend")
+blend = a << Float("blend")
+print(repr(blend), blend.node is a)                            # Plug("a.blend") True
 print(repr(a >> Float("result")))                              # Plug("a.result")
 print(cmds.attributeQuery("result", node="a", writable=True))  # False
 try:
@@ -145,7 +162,7 @@ except TypeError as err:
     print(type(err).__name__)                             # TypeError
 ```
 
-A handle never falls back to a name. A `Node` or `Plug` whose node was
+A handle never falls back to a name. A node or `Plug` whose node was
 deleted raises `RuntimeError("... already deleted!")`, even once another
 node has taken the name, and an undo brings it back. A plug built from a
 string or an MPlug, never asked for its node, keeps a handle of that node
@@ -202,10 +219,22 @@ print(cmds.listConnections("b.tx", source=True))               # None
 ```
 
 Short and long names both work, and `node.tx = 5` is sugar for `node.tx << 5`.
+Python's own names keep their meaning: a property setter runs
+(`a.namespace = "ns"`), a method or class member is an `AttributeError` that
+names `Plug(a.find_attr(name)) << value` for a Maya attribute it shadows,
+and a `_` name, or a default the class body declares (`side = None` in a
+subclass), is Python state on the object. Any other name is
+`Attribute not found`, never a new Python attribute.
 
 ```python
 a.translateY = 2
 print(str(a.ty), a.ty >> None, str(a.translate))   # a.translateY 2.0 a.translate
+try:
+    a.translateXX = 1                              # a typo
+except AttributeError as err:
+    print(str(err).split(" (")[0])                 # Attribute not found: a.translateXX
+a._note = "by hand"                                # a '_' name is Python state
+print(a._note, cmds.attributeQuery("_note", node="a", exists=True))   # by hand False
 ```
 
 `>> None` is numpy-aware: scalars stay Python numbers, compounds come back
@@ -239,7 +268,7 @@ the same node, so a result plug still reaches its node's other attributes.
 total = a.tx + b.tx                          # a result plug on a sum node
 print(str(total), str(total.input))  # add1.output add1.input
 print(repr(a.matrix.ro))             # Plug("a.rotateOrder")  -- sibling of a typed-atomic plug
-total.node.input[1] << 10                    # .node is the owning Node
+total.node.input[1] << 10                    # .node is the owning node
 print(total >> None)                         # 11.0
 ```
 
@@ -248,15 +277,14 @@ Plug introspection you will reach for:
 ```python
 print(a.tx.alias, a.tx.data_type, a.t.num_children)  # translateX doubleLinear 3
 print(a.wm.is_multi, a.wm.data_type)                 # True matrix
-print(a.tx.full_name, repr(a.tx.node))               # a.translateX Node("a")
+print(a.tx.full_name, repr(a.tx.node))               # a.translateX Transform("a")
 ```
 
 A plug is owned by the node you read it from: `plug.node` is that very
-`Node`, shared by the plug's children and elements, in the class you wrapped
-it as. A node with two instance paths names its plugs through the path you
-took, and a world space array (`worldMatrix`, `worldInverseMatrix`,
-`worldMesh`, ...) read through a path is that instance's element; `cmds`
-reads the same name. A plug built from a string has no owner to follow:
+node object, shared by the plug's children and elements. A node with two
+instance paths names its plugs through the path you took, and a world space
+array (`worldMatrix`, `worldInverseMatrix`, `worldMesh`, ...) read through a
+path is that instance's element; `cmds` reads the same name. A plug built from a string has no owner to follow:
 `Plug("|T2|S.v")` is named as Maya names it, through the first path.
 
 ```python
@@ -298,11 +326,11 @@ dst.t << 7                                   # a scalar broadcasts across the co
 print(dst.t >> None)                         # [7. 7. 7.]
 ```
 
-A compound indexes and slices like a sequence; the slice is a `PlugList`.
+A compound indexes and slices like a sequence; the slice is a `List`.
 
 ```python
 print(str(dst.t[0]), str(dst.t[-1]))  # dst.translateX dst.translateZ
-print(repr(dst.t[::-1]))              # PlugList([Plug("dst.translateZ"), Plug("dst.translateY"), Plug("dst.translateX")])
+print(repr(dst.t[::-1]))              # List([Plug("dst.translateZ"), Plug("dst.translateY"), Plug("dst.translateX")])
 dst.t[:] << [1, 2, 3]
 print(dst.t >> None)                         # [1. 2. 3.]
 ```
@@ -315,6 +343,19 @@ try:
     dst.t << [1, 2]
 except ValueError as err:
     print(str(err)[:56])                     # Cannot inject sequence of size 2 into 3-channel compound
+```
+
+The right side has an order: a `set`, `frozenset` or `dict` is a
+`TypeError` before anything is written, and a generator or an iterator is
+read into a list first.
+
+```python
+try:
+    dst.t << {1, 2, 3}
+except TypeError as err:
+    print(str(err).split(": ")[1].split(",")[0])  # a set is unordered
+dst.t << (v * 2 for v in (1, 2, 3))
+print(dst.t >> None)                              # [2. 4. 6.]
 ```
 
 Multi attributes: a bare multi `<< scalar` appends at the next free index,
@@ -330,7 +371,7 @@ net = Node.create("network", name="net")
 net   << Float("w", multi=True)
 net.w << 1.0
 net.w << 2.0                                 # appended at [1]
-print(net.w.next_index, repr(net.w[:]))      # 2 PlugList([Plug("net.w[0]"), Plug("net.w[1]")])
+print(net.w.next_index, repr(net.w[:]))      # 2 List([Plug("net.w[0]"), Plug("net.w[1]")])
 net.w[:4] << [10, 20, 30, 40]                # indices 0..3, the missing two created on write
 print(net.w[:] >> None)                      # [10. 20. 30. 40.]
 net.w << [100, 200]                          # the bare multi with a sequence: index by index from 0
@@ -362,7 +403,7 @@ print(bs.weight[3] >> None)                  # 1.0
 ## 4. Plug — connections, hashing, equality
 
 Connection queries are methods, never operators, and always answer with a
-`PlugList` (empty when nothing is wired). Direct connections only: a
+`List` (empty when nothing is wired). Direct connections only: a
 compound whose children are driven reports nothing, so slice it.
 
 ```python
@@ -372,38 +413,42 @@ ctrl.tx  << drv.tx
 spare.tx << ctrl.tx
 spare.ty << ctrl.tx
 
-print(repr(ctrl.tx.get_inputs()))                                # PlugList([Plug("drv.translateX")])
-print(repr(ctrl.tx.get_outputs()))                               # PlugList([Plug("spare.translateX"), Plug("spare.translateY")])
-print(repr(ctrl.ty.get_inputs()))                                # PlugList([])
+print(repr(ctrl.tx.get_inputs()))                                # List([Plug("drv.translateX")])
+print(repr(ctrl.tx.get_outputs()))                               # List([Plug("spare.translateX"), Plug("spare.translateY")])
+print(repr(ctrl.ty.get_inputs()))                                # List([])
 print(len(ctrl.t.get_inputs()), len(ctrl.t[:].get_inputs()[0]))  # 0 1
 ```
 
 `==` on a plug builds a comparison node and returns *its output plug*, not
-a bool. Use `equals` for identity. Identity is the Maya plug: hashing is by
-the node (a serial number never reused for another node) plus the attribute
-and its indices, so plugs still work as dict and set keys, and a rename, an
-alias or a delete to the undo queue keeps the key. One plug read through two
-instance paths of a node (`Node("|T1|S").v`, `Node("|T2|S").v`) is one key,
-though each is named through its own path; the world space elements of two
-instances (`worldMatrix[0]`, `[1]`) are two plugs. A typed `Attribute` of
-the same plug is a different key, though `equals` says `True`. A plain
-string is never a plug's key; a `PlugList` compares a string with the
-plug's name. A plain list does not: `plug == "a.tx"` is a `TypeError`
-(section 7), so `"a.tx" in [plug]` is one too.
+a bool, unless both sides are the same Maya plug: then `==` is `True`, `!=`
+is `False`, and nothing is built (constant folding: `force_nodes()` builds
+the node, section 12). A plug is never a node: `plug == node` is `False`.
+`equals` is the same identity test as a method. Identity is the Maya plug:
+hashing is by the node (a serial number never reused for another node) plus
+the attribute and its indices, so plugs still work as dict and set keys, and
+a rename, an alias or a delete to the undo queue keeps the key. One plug read
+through two instance paths of a node (`Node("|T1|S").v`, `Node("|T2|S").v`)
+is one key, though each is named through its own path; the world space
+elements of two instances (`worldMatrix[0]`, `[1]`) are two plugs. A typed
+`Attribute` of the same plug is the same key. A plain string is never a
+plug's key: `plug == "a.tx"` is a `TypeError` (section 7), so `"a.tx" in
+[plug]` is one too, while a `List` reads a string as the plug it names
+(section 6).
 
-A dict or set confirms a hash match with `==`, so looking a key up through
-a second `Plug` object of the same plug builds an `equal` node (memoized:
-once per pair); for matrix plugs it raises `InjectionError` and leaves that
-node behind. Key and look up with one object, or use a `PlugList` or
-`equals`, when that matters.
+A dict or set confirms a hash match with `==`, which folds, so a lookup
+through any object of the plug builds nothing, matrix plugs included. A
+plain `list` or `tuple` scan runs `==` against every element it passes, and
+each *other* plug builds an `equal` node: `x in [a, b, x]` builds two. `List`
+containment compares Maya plugs and builds nothing.
 
 ```python
 test = ctrl.tx == 5
 print(repr(test), cmds.nodeType(test.node))                      # Plug("equal1.output") equal
+print(ctrl.tx == Node("ctrl").tx, ctrl.tx != ctrl.translateX)    # True False  -- one Maya plug: a bool, no node
 print(ctrl.tx.equals(ctrl.tx), ctrl.tx.equals(drv.tx))           # True False
 print(len({ctrl.tx, ctrl.tx}), {ctrl.tx: "x"}[Node("ctrl").tx])  # 1 x
-print(ctrl.tx in PlugList([drv.tx, ctrl.tx]))                    # True  -- containment compares plugs, builds nothing
-print("ctrl.translateX" in PlugList([ctrl.tx]), "ctrl.tx" in PlugList([ctrl.tx]))  # True False  -- a string is a name
+print(ctrl.tx in List([drv.tx, ctrl.tx]), len(cmds.ls(type="equal")))   # True 1  -- containment builds nothing
+print("ctrl.translateX" in List([ctrl.tx]), "ctrl.tx" in List([ctrl.tx]), "ctrl.nope" in List([ctrl.tx]))  # True True False  -- the plug a string names
 key = hash(ctrl.tx)
 cmds.rename("ctrl", "rig_ctrl")
 print(hash(Node("rig_ctrl").tx) == key, ctrl.tx.equals(Plug("rig_ctrl.tx")))      # True True  -- a rename keeps the key
@@ -482,20 +527,20 @@ flattened (nested under the default `flatten_containers=True`), when
 
 ---
 
-## 6. PlugList
+## 6. List
 
-A `PlugList` is a `list` whose attribute access and operators broadcast
-over its elements. Strings lift to `Node` / `Plug`; numbers and `None` pass
-through.
+A `List` is a `list` whose attribute access and operators broadcast
+over its elements. Strings lift to nodes and `Plug`s; numbers and `None`
+pass through. It is `rig.List`, not `typing.List`.
 
 ```python
 cmds.file(new=True, force=True)
 for name in ("c0", "c1", "c2"):
     Node.create("transform", name=name)
 
-nodes = PlugList(["c0", "c1", "c2"])
-print(repr(nodes.tx))                               # PlugList([Plug("c0.translateX"), Plug("c1.translateX"), Plug("c2.translateX")])
-print(repr(PlugList([Node("c0"), 3.14, None]).ty))  # PlugList([Plug("c0.translateY"), 3.14, None])
+nodes = List(["c0", "c1", "c2"])
+print(repr(nodes.tx))                               # List([Plug("c0.translateX"), Plug("c1.translateX"), Plug("c2.translateX")])
+print(repr(List([Node("c0"), 3.14, None]).ty))      # List([Plug("c0.translateY"), 3.14, None])
 ```
 
 `<<` broadcasts a scalar to every element and pairs a sequence element by
@@ -514,9 +559,9 @@ Slicing keeps the type; a list, tuple or array key picks slots (fancy
 indexing); an `int` returns the element.
 
 ```python
-print(repr(nodes[1:]))                        # PlugList([Node("c1"), Node("c2")])
-print(repr(nodes.tx[[0, 2]]))                 # PlugList([Plug("c0.translateX"), Plug("c2.translateX")])
-print(repr(nodes[-1]), repr(nodes["ty"][0]))  # Node("c2") Plug("c0.translateY")
+print(repr(nodes[1:]))                        # List([Transform("c1"), Transform("c2")])
+print(repr(nodes.tx[[0, 2]]))                 # List([Plug("c0.translateX"), Plug("c2.translateX")])
+print(repr(nodes[-1]), repr(nodes["ty"][0]))  # Transform("c2") Plug("c0.translateY")
 ```
 
 `>> None` (or `.get()`) stacks the values into one array when the shapes
@@ -526,17 +571,27 @@ map element by element.
 ```python
 print(nodes.tx >> None, (nodes.t >> None).shape, (nodes.matrix >> None).shape)  # [1. 2. 3.] (3, 3) (3, 4, 4)
 print(type(nodes >> None).__name__, type((nodes >> None)[0]).__name__)          # list Transform
-print(repr(nodes.tx + nodes.ty))                                                # PlugList([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
+print(repr(nodes.tx + nodes.ty))                                                # List([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
 print((nodes.tx * 2) >> None)                                                   # [2. 4. 6.]
 print(Node("c1") in nodes, nodes.index(Node("c2")))                             # True 2
 ```
 
-Connection queries are N-aligned: one `PlugList` per element, so a slot is
+`in`, `index`, `count` and `remove` read a plain string as the node or the
+Maya plug it names, so every spelling of it matches (`"c0.tx"`,
+`"c0.translateX"`, `"|c0.tx"`, an alias), and a string that names nothing
+is simply not in the list. Nothing is built.
+
+```python
+print("c1" in nodes, "|c1" in nodes, "c9" in nodes)             # True True False
+print(nodes.tx.index("c2.translateX"), "|c0.tx" in nodes.tx)    # 2 True
+```
+
+Connection queries are N-aligned: one `List` per element, so a slot is
 never a `None` that `<<` would read as "disconnect".
 
 ```python
 Node("c1").tx << Node("c0").tx
-print(repr(nodes.tx.get_inputs()))  # PlugList([PlugList([]), PlugList([Plug("c0.translateX")]), PlugList([])])
+print(repr(nodes.tx.get_inputs()))  # List([List([]), List([Plug("c0.translateX")]), List([])])
 print(nodes.tx.get_inputs().get())  # [[], array([1.]), []]  -- a query result reads as values
 ```
 
@@ -680,8 +735,9 @@ print(d.s >> None, d.t >> None)              # [2. 3. 4.] [1. 2. 3.]
 ## 9. Logic, comparisons, `condition`, `constant`
 
 `& | ^` build AND / OR / XOR networks and `~` is logical NOT; every
-comparison builds a comparison node. On a compound they fan out per
-channel inside a published container and return its assembled output.
+comparison builds a comparison node (`==` / `!=` of one Maya plug fold,
+section 4). On a compound they fan out per channel inside a published
+container and return its assembled output.
 
 ```python
 cmds.file(new=True, force=True)
@@ -702,9 +758,24 @@ print(repr(zero), zero >> None)  # Plug("output_plug1.value") [1. 0. 1.]
 print(repr(zero.input1))         # Plug("condition1_host.input1")  -- the published interface
 ```
 
+An ordering result (`<`, `<=`, `>`, `>=`) has no truth value, as a numpy
+array has none: its value is only known when Maya evaluates it. `if a.tx >
+b.tx:`, `sorted(plugs)`, `min` / `max` and a chained `0 < a.tx < 1` raise a
+`TypeError`. Read the value with `>> None`, pick with `condition`, or order
+plugs by name with `key=str`.
+
+```python
+try:
+    sorted([b.tx, a.tx])
+except TypeError as err:
+    print(type(err).__name__, "ordering" in str(err))   # TypeError True
+print(sorted([b.tx, a.tx], key=str))                   # [Plug("a.translateX"), Plug("b.translateX")]
+```
+
 `condition(test, if_true, if_false)` is the value picker (a `condition`
 node); a numeric test short-circuits in Python, so its branches may be any
-value, while a plug test makes them operands (no plain strings, section 7).
+value but a set or a dict, while a plug test makes them operands (no plain
+strings, section 7).
 `constant(values)` holds a literal in a `network` node (a `holdMatrix` for
 matrix shapes) and dedupes.
 
@@ -729,7 +800,7 @@ print(repr(constant(np.eye(4))))                               # Plug("constant3
 
 Point components are plugs: `vtx` / `cv` / `pt` / `map` resolve to the
 shape's `controlPoints` / `uvpt`, through a transform with one geometry
-shape. A slice is a `PlugList`, a list key is fancy indexing.
+shape. A slice is a `List`, a list key is fancy indexing.
 
 ```python
 cmds.file(new=True, force=True)
@@ -737,7 +808,7 @@ cube  = Node(cmds.polyCube(name="pCube1", constructionHistory=False)[0])
 shape = Node("pCube1Shape")
 
 print(repr(cube.vtx), len(cube.vtx[:]))  # Plug("pCube1Shape.controlPoints") 8
-print(repr(shape.vtx[[0, 7]]))           # PlugList([Plug("pCube1Shape.controlPoints[0]"), Plug("pCube1Shape.controlPoints[7]")])
+print(repr(shape.vtx[[0, 7]]))           # List([Plug("pCube1Shape.controlPoints[0]"), Plug("pCube1Shape.controlPoints[7]")])
 
 cube.vtx[::2] << [0, 0, 0]                   # one point value, broadcast to the four even vertices
 print(cmds.pointPosition("pCube1.vtx[2]", local=True))   # [0.0, 0.0, 0.0]
@@ -761,7 +832,7 @@ print(cube.f[[5, 2]] == cube.f[[2, 5]], bool(cube.f[6:]))                       
 ```
 
 `Components(node, kind, ids)` is the explicit carrier for every point kind
-(a numpy array in, no `PlugList` built), and `Components("pCube1.f[0:3]")`
+(a numpy array in, no `List` built), and `Components("pCube1.f[0:3]")`
 reads a Maya component string.
 
 ```python
@@ -845,6 +916,24 @@ with container("offset1") as box:
 print(sorted(cmds.nodeType(n) for n in cmds.container("offset1", query=True, nodeList=True)))   # ['multiply', 'sum']
 ```
 
+So do the typed creators of [`rig.nodetypes`](nodetypes/README.md)
+(`Transform.create`, `Joint.create`, `Mesh.create`, `SkinCluster.create`, a
+subclass of your own), by the rules of `Node.create`: an explicit name takes
+the flattened prefix, and `container=False` leaves the node out. Display
+layers, sets, shading engines and references are scene registries, found
+again by name: they stay out unless `container=True`.
+
+```python
+from rig.nodetypes import DisplayLayer, Joint
+
+with container("leg"):
+    hip = Joint.create(name="hip")
+    with container("lower"):
+        knee = Joint.create(name="knee", parent=hip)  # flattened: the inner prefix
+    geo = DisplayLayer.create(name="leg_geo")         # a registry: stays out
+print(str(knee), knee.get_parent(), sorted(cmds.container("leg", query=True, nodeList=True)))   # lower_knee hip ['hip', 'lower_knee']
+```
+
 ---
 
 ## 12. Options, `force_nodes`, `cleanup`
@@ -863,7 +952,7 @@ print(get_options())
 set_options(create_containers=False)          # every with container(): becomes scope-only
 with container("ghost") as ghost:
     Node.create("transform", name="free")
-print(ghost, cmds.ls(type="container"), ContainerOptions.create_containers)   # None ['arm', 'ik', 'lerp1', 'offset1'] False
+print(ghost, cmds.ls(type="container"), ContainerOptions.create_containers)   # None ['arm', 'ik', 'leg', 'lerp1', 'offset1'] False
 set_options(create_containers=True)
 ```
 
@@ -931,7 +1020,7 @@ nodes made with `create_containers=False`.
 ## 13. `memoize`, `vectorize`, `prune_memoize_caches`
 
 `@memoize` caches a function's return keyed on the identity of every
-`Plug` / `Node` / `PlugList` argument and the value of every number. The
+`Plug` / `Node` / `List` argument and the value of every number. The
 key survives renames; an entry is dropped when any node it returned has
 been deleted, and when a dynamic attribute a plug argument names was
 deleted or renamed since (a new attribute of that name gets a new network).
@@ -974,24 +1063,24 @@ def half(x):
 print(half(8), repr(half(Node("renamed").tx)), half._foldable)   # 4.0 Plug("div1.output") scalar
 ```
 
-`@vectorize` broadcasts a call across `PlugList` arguments with numpy's
+`@vectorize` broadcasts a call across `List` arguments with numpy's
 strict rule: every list must be the same length, or length one, or a
-scalar. One row returns the bare result; more return a `PlugList`.
+scalar. One row returns the bare result; more return a `List`.
 
 ```python
 from rig import vectorize
 
 for name in ("p", "q", "r"):
     Node.create("transform", name=name)
-ctrls = PlugList(["p", "q", "r"])
+ctrls = List(["p", "q", "r"])
 
 @vectorize
 def offset(plug, amount):
     return plug + amount
 
-print(repr(offset(ctrls.tx, 1)))                 # PlugList([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
-print(repr(offset(ctrls.tx, [10, 20, 30])))      # PlugList([Plug("add4.output"), Plug("add5.output"), Plug("add6.output")])
-print(repr(offset(PlugList([ctrls.tx[0]]), 5)))  # Plug("add7.output")  -- one row, unwrapped
+print(repr(offset(ctrls.tx, 1)))                 # List([Plug("add1.output"), Plug("add2.output"), Plug("add3.output")])
+print(repr(offset(ctrls.tx, [10, 20, 30])))      # List([Plug("add4.output"), Plug("add5.output"), Plug("add6.output")])
+print(repr(offset(List([ctrls.tx[0]]), 5)))      # Plug("add7.output")  -- one row, unwrapped
 try:
     offset(ctrls.tx, [1, 2])
 except ValueError as err:
@@ -1028,7 +1117,7 @@ print(list(arguments([1, 2], scale=[10, 20], name="n")))  # [([1], {'scale': 10,
 print(list(sequences()), list(arguments()))               # [] []
 ```
 
-`sequences` is the permissive rule (`<<` and `PlugList` use it);
+`sequences` is the permissive rule (`<<` and `List` use it);
 `@vectorize` checks lengths first and raises instead of capping.
 
 ---
@@ -1138,7 +1227,7 @@ cmds.file(new=True, force=True)
 
 import math
 
-from rig import Node, Plug, PlugList
+from rig import Node, Plug, List
 from rig import functions as f, trigonometry as trig
 from rig import matrix as m, vector as v, quaternion as q, euler as e
 from rig import interpolate as ip, tween as tw, random as r
@@ -1159,7 +1248,7 @@ print(repr(out), kind(out))                     # Plug("abs1.output") absolute
 print(out >> None)                              # 1.0 -- the live value
 print(f.abs(-2.5))                              # 2.5 -- all-literal input folds to a float, no node
 print(str(f.abs(src.tx)) == str(out))           # True -- same call, same plug (memoised)
-print(repr(f.abs(PlugList([src.tx, src.ty]))))  # PlugList([Plug("abs1.output"), Plug("abs2.output")]) -- broadcast; abs1 reused
+print(repr(f.abs(List([src.tx, src.ty]))))      # List([Plug("abs1.output"), Plug("abs2.output")]) -- broadcast; abs1 reused
 ```
 
 | Module | Import as | Holds |
@@ -1175,16 +1264,17 @@ print(repr(f.abs(PlugList([src.tx, src.ty]))))  # PlugList([Plug("abs1.output"),
 | `rig.random` | `r` | LCG pseudo-random networks, scalar and 3D |
 | `rig.*` verbs | flat | `dist` `lerp` `slerp` `blend` `elerp` `normalize` `inverse` `angle` `angle_degrees` `to_euler` `to_quaternion` `to_matrix` — type-dispatched |
 
-Six rules that hold everywhere:
+Seven rules that hold everywhere:
 
 | Rule | What it means |
 |---|---|
 | Literals fold | all-number input returns a Python number and builds nothing (`f.clamp(5, 0, 1)` is `1`). `tween` and `random` are the exceptions: they always build |
 | Calls are memoised | the same function with the same arguments returns the same plug, so a value used twice costs one network |
-| `PlugList` broadcasts, a plain list is a value | `f.abs(PlugList([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector |
+| `List` broadcasts, a plain list is a value | `f.abs(List([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector |
 | Maya 2024+ gets native nodes | `absolute`, `clampRange`, `sin`, `dotProduct`, `lerp`, `smoothStep` … Older Maya gets the equivalent legacy network — same value, more nodes. Each section's table says which |
 | `functions` shadows builtins | `abs`, `int`, `round`, `min`, `max`, `sum`, `pow`, `all`, `any` … Always `from rig import functions as f`, never `import *` |
-| A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`. `method=` takes a callable and `rotate_order` a number or a plug, never a name |
+| A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`. `method=` takes a callable; `rotate_order` takes a name (`"zxy"`), a number or a plug, and any other string is a `TypeError` |
+| An operand has an order | a `set`, `frozenset` or `dict` raises `TypeError` before any node is built; a generator or an iterator is read into a list first, so `f.sum(c.tx for c in ctrls)` works |
 
 With the default options every composite function's container is
 flattened, so you get the raw node plugs shown here.
@@ -1251,7 +1341,8 @@ print(f.sqrt(16), f.pow(2, 8), f.log(100, base=10))           # 4.0 256 2.0 -- l
 
 ## 19. `functions` — lists: reduce, pick, search
 
-The reducers take **one list** as their argument, not `*args`. `max`
+The reducers take **one list** as their argument, not `*args`; a
+generator is read into a list, so `f.sum(c.tx for c in ctrls)` works. `max`
 and `min` want at least two entries.
 
 ```python
@@ -1272,16 +1363,17 @@ for name in ("sum", "avg", "max", "min", "argmax", "argmin", "all", "any"):
 # any     condition  1.0
 ```
 
-`diff` and `cumsum` return a `PlugList`, one plug per output:
+`diff` and `cumsum` return a `List`, one plug per output:
 
 ```python
-print(repr(f.diff(chans)))                   # PlugList([Plug("sub8.output"), Plug("sub9.output")])
+print(repr(f.diff(chans)))                   # List([Plug("sub8.output"), Plug("sub9.output")])
 print([d >> None for d in f.diff(chans)])    # [4.0, -2.0]
 print([c >> None for c in f.cumsum(chans)])  # [1.0, 6.0, 9.0]
 ```
 
 `choice` wraps Maya's `choice` node; `searchsorted` is
-`numpy.searchsorted` as a `condition` ladder:
+`numpy.searchsorted` as a `condition` ladder (`side="left"` or `"right"`;
+anything else is a `ValueError` before a node is built):
 
 ```python
 pick = f.choice(chans, selector=2)
@@ -1739,17 +1831,25 @@ print(axis_plug >> None, angle_plug >> None)  # [0. 0. 1.] 90.0
 
 ## 27. `euler`
 
-Rotate orders are Maya's: `XYZ=0 YZX=1 ZXY=2 XZY=3 YXZ=4 ZYX=5`, given
-as the number or a plug (`tilt.ro`); a name such as `"xyz"` is not accepted.
-`reorder` needs **both** orders, positionally; it goes through
-quaternion space, so what comes back is a `quatToEuler`.
+Rotate orders are Maya's: `xyz=0 yzx=1 zxy=2 xzy=3 yxz=4 zyx=5`. Every
+`rotate_order` argument (and `reorder`'s two) takes the name, the number or
+a plug (`tilt.ro`); a name and its number are the same call, and any other
+string (`"XYZ"`) is a `TypeError` before anything is built. The names are
+the functions': a rotate-order *plug* takes the number (`tilt.ro << 2`),
+and `tilt.ro << "zxy"` is Maya's `InjectionError`. `reorder` needs **both**
+orders, positionally; it goes through quaternion space, so what comes back
+is a `quatToEuler`.
 
 ```python
 tilt = Node.create("transform", name="tilt")
 tilt.r << (30, 45, 60)
-zyx = e.reorder(tilt.r, 0, 5)                  # XYZ -> ZYX
+zyx = e.reorder(tilt.r, "xyz", "zyx")
 print(repr(zyx), kind(zyx), (zyx >> None).round(3))                                              # Plug("quatToEuler6.outputRotate") quatToEuler [-24.597  47.663  58.334]
-print(e.reorder(zyx, 5, 0) >> None)                                                              # [30. 45. 60.] -- round trip
+print(e.reorder(tilt.r, 0, 5).equals(zyx), e.reorder(zyx, 5, 0) >> None)                         # True [30. 45. 60.] -- the numbers are the same call; a round trip
+try:
+    e.reorder(tilt.r, "XYZ", "zyx")
+except TypeError as err:
+    print(str(err).split(";")[0])  # rig.euler.reorder() argument 'rotate_order0': 'XYZ' is not a rotate order
 
 print(kind(e.to_matrix(tilt.r, rotate_order=tilt.ro)), m.rotation(e.to_matrix(tilt.r)) >> None)  # composeMatrix [30. 45. 60.]
 print(kind(e.to_quaternion(spin.r)), (e.to_quaternion(spin.r) >> None).round(4))                 # eulerToQuat [0.     0.     0.7071 0.7071]
@@ -1979,19 +2079,19 @@ for call in (lambda: lerp(qa, qb), lambda: to_matrix(p0.t), lambda: dist(1.0, 2.
 # blend() does not support vector operands
 ```
 
-A `PlugList` operand is classified by its first element and broadcast:
+A `List` operand is classified by its first element and broadcast:
 
 ```python
-out = lerp(PlugList([p0.t, p1.t]), PlugList([p1.t, p0.t]), weight=0.5)
-print(repr(out), len(out))     # PlugList([Plug("lerp_out2.value"), Plug("lerp_out3.value")]) 2
+out = lerp(List([p0.t, p1.t]), List([p1.t, p0.t]), weight=0.5)
+print(repr(out), len(out))     # List([Plug("lerp_out2.value"), Plug("lerp_out3.value")]) 2
 ```
 
 ---
 
 ## 32. The membership grammar
 
-Everything below builds its own geometry; `make()` wraps a `maya.cmds`
-creator's transform as a `Node`, `members()` reads a shading engine's
+Everything below builds its own geometry; `make()` returns a `maya.cmds`
+creator's transform as a node, `members()` reads a shading engine's
 membership the way `cmds.sets` prints it.
 
 ```python
@@ -2003,7 +2103,7 @@ from rig.bridges import nodes as rn
 
 
 def make(command, name, **kwargs):
-    """Run a maya.cmds creator and wrap its transform as a Node."""
+    """Run a maya.cmds creator and return its transform node."""
     return Node(command(name=name, **kwargs)[0])
 
 
@@ -2080,7 +2180,7 @@ Section 10 covers the `Components` carrier itself (`.indices`, `.count`,
 `.names`, `>> None`, the explicit constructor). On the left of a membership
 operator the bare handle means the whole kind: `sph.f` is every face, and
 `sph.vtx`, the bare `controlPoints` multi, means **all points** at no cost,
-while `sph.vtx[:3]` is a `PlugList` of element plugs. Surfaces index as
+while `sph.vtx[:3]` is a `List` of element plugs. Surfaces index as
 `srf.cv[u, v]`, lattices as `lat.pt[s, t, u]`.
 
 ```python
@@ -2088,12 +2188,12 @@ print(sph.f, sph.f.is_all, sph.f[:3])   # Components("|sph|sphShape.f[*]") True 
 print(repr(sph.vtx), len(sph.vtx[:3]))  # Plug("sphShape.controlPoints") 3
 ```
 
-`Components` has no `__len__` and no `__iter__` on purpose: a `PlugList`
+`Components` has no `__len__` and no `__iter__` on purpose: a `List`
 keeps it as one opaque element and broadcasts it as a scalar, so a list of
 selections pairs with a list of specs.
 
 ```python
-PlugList([sph.f[:2], sph.f[2:4]]) << [Tag("aa"), Tag("bb")]
+List([sph.f[:2], sph.f[2:4]]) << [Tag("aa"), Tag("bb")]
 print(sph >> Tag("aa"), sph >> Tag("bb"))       # [0 1] [2 3]
 ```
 
@@ -2247,7 +2347,7 @@ other << Layer("ref", visibility=True)          # found: kwargs skipped
 print(Layer("ref").visibility >> None)          # False
 other << Layer("ref", visibility=True, update=True)     # update=True re-asserts them
 print(Layer("ref").visibility >> None)          # True
-PlugList([cube, other]) << Layer("rig")         # one editDisplayLayerMembers call
+List([cube, other]) << Layer("rig")             # one editDisplayLayerMembers call
 ```
 
 ```python
@@ -2274,7 +2374,7 @@ other << Layer()                                # the purge is defaultLayer too
 print(Layer.of(other))                          # []
 
 bg = Layer("bg")
-print(bg.node, bg.visibility << False)  # bg bg.visibility   a Node and the Plug, for chaining
+print(bg.node, bg.visibility << False)  # bg bg.visibility   the layer node and the Plug, for chaining
 bg.rename("background")                 # the spec follows
 print(bg, cmds.objExists("bg"))         # background False
 Layer("rig").clear()                            # members to defaultLayer, the layer survives
@@ -2314,7 +2414,7 @@ factories: a value sets, a plug connects, a spec (`lock`) applies. The
 spec is the find-only handle afterwards.
 
 ```python
-print(red.node, red.engine)    # red redSG   Nodes; a ValueError until built
+print(red.node, red.engine)    # red redSG   nodes; a ValueError until built
 print(red.color << (0, 1, 0))  # red.color   the Plug: forwards to the node; a typo raises and creates nothing
 red.diffuse = 0.5                               # the same injection as sugar
 print(red.diffuse >> None)                      # 0.5
@@ -2324,14 +2424,14 @@ cube << Blinn("skin", color=tex.outColor, diffuse=0.25, reflectivity=lock)
 print(cmds.listConnections("skin.color", plugs=True), cmds.getAttr("skin.reflectivity", lock=True))   # ['tex.outColor'] True
 ```
 
-A `PlugList` on the left is one material, one engine, one `cmds.sets`.
+A `List` on the left is one material, one engine, one `cmds.sets`.
 `unique=True` builds a fresh network per `<<`. A material is a shared,
 scene-level asset: inside `with container():` a new network stays out of
 the scope unless `container=True` (a per-asset look); the geometry never
 joins.
 
 ```python
-PlugList([cube, other.f[:2]]) << Lambert("both")
+List([cube, other.f[:2]]) << Lambert("both")
 print(sorted(members("bothSG")))                # ['cubeShape', 'other.f[0:1]']   one engine holds both entries
 
 spec = Lambert("plane", unique=True)
@@ -2394,13 +2494,13 @@ The module readers, `.delete()` / `.rename()`, and the two sweepers:
 deletes orphan groupIds. Both are off the operator path.
 
 ```python
-print(shade.materials(cube))                    # PlugList([Node("standardSurface1"), Node("decal")])
+print(shade.materials(cube))                    # List([DGNode("standardSurface1"), DGNode("decal")])
 for material, faces in shade.bindings(cube):
     print(material, faces.indices)              # standardSurface1 [3 4 5] / decal [0 1 2]
 
 Material("decal").delete()                      # material + engine + materialInfo; members go green
 print(Material.of(cube.f[0]))  # []
-print(shade.repair())          # PlugList([Node("cubeShape")])   the shapes re-homed
+print(shade.repair())          # List([Mesh("cubeShape")])   the shapes re-homed
 print(cube >> Default())       # [0 1 2 3 4 5]
 
 cube.f[:3] << red
@@ -2514,7 +2614,7 @@ print(cmds.listAttr("drop", userDefined=True))  # None
 
 Refused before any write, none forceable: an unregistered or non-surface
 type, a Maya default, referenced or `lockNode`'d material, `Default()`,
-a `Node` (wrap it first), and a **string** with the wrong type (a name
+a node object (wrap it in a spec first), and a **string** with the wrong type (a name
 asserts; `Phong(Material('lossy'))` converts).
 
 ```python
@@ -2533,8 +2633,8 @@ for bad in (
 print(cmds.nodeType("lossy"), cmds.ls(type="unknown"))   # blinn []
 ```
 
-One `cmds.undo()` restores the old node (its uuid included). Live `Node`
-/ `Plug` wrappers of the old node die; the spec, resolved by name, is the
+One `cmds.undo()` restores the old node (its uuid included). Live node
+objects and plugs of the old node die; the spec, resolved by name, is the
 surviving handle — after an undo its class is stale until a same-type
 constructor re-syncs it for free.
 
@@ -2547,12 +2647,12 @@ try:
     stale.name
 except RuntimeError as err:
     print("already deleted" in str(err))        # True
-print(Node("lossy").name, round(lossy.diffuse >> None, 2))  # lossy 0.33   fresh wrappers and the spec are fine
+print(Node("lossy").name, round(lossy.diffuse >> None, 2))  # lossy 0.33   a fresh node object and the spec are fine
 
 cmds.undo()
 print(cmds.nodeType("lossy"), type(lossy).__name__)         # blinn Phong   the spec still says phong
 Blinn(lossy)                                                # same type as the scene: a free re-sync
-print(repr(lossy.node))                                     # Node("lossy")
+print(repr(lossy.node))                                     # DGNode("lossy")
 ```
 
 ---
@@ -2564,5 +2664,5 @@ print(repr(lossy.node))                                     # Node("lossy")
 | [`README.md`](README.md) | the operator table, the conventions, the map, the verified behaviour |
 | [`spec/CHEATSHEET.md`](spec/CHEATSHEET.md) | every attribute spec, kwarg and modifier |
 | [`bridges/CHEATSHEET.md`](bridges/CHEATSHEET.md) | `maya.cmds` returning nodes, and the node factories |
-| [`nodetypes/CHEATSHEET.md`](nodetypes/CHEATSHEET.md) | the typed node layer underneath |
+| [`nodetypes/CHEATSHEET.md`](nodetypes/CHEATSHEET.md) | the node classes and their typed methods |
 | [`examples/README.md`](examples/README.md) | four complete builds |

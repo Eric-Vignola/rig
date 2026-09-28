@@ -2,7 +2,7 @@
 
 Rigging in a node-based DCC comes down to three verbs: create nodes, set
 attributes, connect them. `rig` turns those verbs into Python operators
-on wrapped Maya objects, so a network reads like the maths it computes
+on Maya's nodes and plugs, so a network reads like the maths it computes
 and a build script reads like a description of the rig instead of a
 transcript of `createNode` / `setAttr` / `connectAttr` calls. It uses
 Maya's own nodes (no plug-in, nothing custom saved in the scene), vectorizes 
@@ -20,7 +20,7 @@ network, a component tag and a material.
 
 ```python
 from maya import cmds
-from rig import Node, PlugList, container, Tag
+from rig import Node, List, container, Tag
 from rig.spec import Float, lock
 from rig.bridges import commands as rc
 from rig.shade import Blinn, Material
@@ -54,14 +54,14 @@ Two operators carry the language:
 | Spelling | Meaning | Returns |
 |---|---|---|
 | `a << b` | **inject**: `b` flows into `a`. A value is `setAttr`, a plug is `connectAttr`, `None` disconnects | `a`, so it chains |
-| `a >> None` | **introspect**: read the value (`getAttr`) | a float, a NumPy array, a string... |
+| `a >> None` | **introspect**: read the value (`getAttr`); on a node, the node itself | a float, a NumPy array, a string... |
 | `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
 | `node << Float("x")` | add an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide` | the new plug, so its value goes next |
 | `node >> Float("x")` | add an output-only (non-writable) attribute | the new plug |
 | `node.tx = 5` | sugar for `node.tx << 5` | |
 | `a + b`, `a - b`, `a * b`, `a / b`, `a ** b`, `a // b`, `a % b` | arithmetic builds nodes. Matrices and quaternions are detected and routed to `multMatrix`, `quatProd`...; `[x, y, z] * m` is point-by-matrix | the output plug |
 | `-a`, `~a` | negate; logical NOT | the output plug |
-| `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes | the output plug, **never a bool** |
+| `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes; `==` / `!=` of a Maya plug with itself fold to a bool | the output plug; `True` / `False` for one plug |
 | `a & b`, `a \| b`, `a ^ b` | logical AND / OR / XOR networks | the output plug |
 
 
@@ -69,18 +69,29 @@ Two operators carry the language:
 
 ## Conventions
 
+- **Every node is a `Node`, typed.** `Node("x")` returns the node in its
+  typed class (`Transform("x")`, `Mesh("xShape")`, from
+  [`rig.nodetypes`](nodetypes/README.md)), which carries the DSL and the
+  typed methods on one object. `Node(x) is x` for a node, `Node(plug)` and
+  `Node("x.tx")` give the plug's node, and `node >> None` is the node
+  itself. `node.tx` is a DSL `Plug`; `node.find_attr("tx")` is the typed
+  `Attribute` of the same plug. `Node.create(type, ...)` makes a node and
+  `Node.find_all(type)` lists them.
 - **Injection is right-to-left and returns the left-hand side.**
   `obj.t << [1, 2, 3] << lock` reads "t receives 1,2,3, then a lock". The
   one exception is an attribute spec: `node << Float("w")` returns the
   **new plug**, because the next thing you inject is its value.
   Collection specs return the LHS again, so `cube.f[:3] << Tag("a") << Tag("b")`.
-- **`PlugList` vectorizes, under two broadcast rules.** Attribute access
-  maps over the list (`cubes.t` is a `PlugList` of plugs). The
+- **`List` vectorizes, under two broadcast rules.** Attribute access
+  maps over the list (`cubes.t` is a `List` of plugs). The
   **operators** (`<<`, `+`, `==`...) pair elements and cap the shorter
   operand to its last element: `cubes.ty << [1, 2]` sets 1, 2, 2. The
   **function libraries** (`rig.functions`, `lerp`, `dist`...) are
   NumPy-strict: every list must be the same length, or length 1, or a
-  scalar, and a mismatch is a `ValueError`.
+  scalar, and a mismatch is a `ValueError`. An operand is a plug, a number
+  or a sequence of them: a generator is read into a list first
+  (`f.sum(c.tx for c in ctrls)`), and a `set`, `frozenset` or `dict` is a
+  `TypeError`, since it has no order. `rig.List` is not `typing.List`.
 - **Components live on the shape.** `cube.f` and `cube.e` are
   `Components` (faces and edges have no plug to wrap); `cube.vtx` and
   `cube.uv` are plugs (`controlPoints`, `uvpt`), as is `surface.cv`, and
@@ -92,9 +103,11 @@ Two operators carry the language:
   the outermost, prefixing their nodes with the inner block's name
   (`inner_add1`); `preserve=True` makes a real sub-container instead.
   Only nodes a call *creates* join: a query, a `parent` or a `rename`
-  never moves a node in. Geometry, display layers and materials never
-  join (`container=True` on a material spec opts a per-asset look in);
-  `container=False` opts any `rc` / `rn` call out.
+  never moves a node in. The typed creators join too
+  (`Transform.create(name="x")`, `Joint.create(...)`). Geometry, display
+  layers, sets and materials never join (`container=True` on a material
+  spec opts a per-asset look in); `container=False` opts any `rc` / `rn`
+  call or typed create out.
 - **Memoization.** A function or operator called twice with the same
   plugs and the same literals returns the same output plug; the cache
   forgets nodes that were deleted, and a new scene or a file open clears
@@ -105,9 +118,13 @@ Two operators carry the language:
   The target is the live Maya, or `set_options(maya_version=2023)` to
   build networks an older release can open.
 - **Comparisons are nodes.** `a == b` builds a node and returns its
-  output plug; `Plug.__hash__` is overridden so plugs still work as dict
+  output plug, unless `a` and `b` are the same Maya plug: then `==` is
+  `True` and `!=` is `False`, and nothing is built (`force_nodes()` builds
+  it anyway). `Plug.__hash__` is overridden so plugs still work as dict
   keys and set members, keyed by the Maya plug (a rename keeps the key,
-  and one plug read through two instance paths is one key).
+  one plug read through two instance paths is one key, and a lookup
+  builds nothing). An ordering result (`<`, `>=`...) has no truth value:
+  `if plug > 0:` and `sorted(plugs)` are a `TypeError`.
 - **A plug belongs to the node you read it from.** `node.tx.node is
   node`. An instanced node names its plugs through the path you took
   (`Node("|T2|S").v` is `T2|S.visibility`, and its `worldMatrix` is T2's
@@ -116,14 +133,15 @@ Two operators carry the language:
   `already deleted!` instead of reaching a new node of the same name. So
   does a plug built from a string (`Plug("a.tx")`) or an MPlug.
 - **Sibling fallback.** `plug.foo` looks for a child attribute first,
-  then a sibling on the same node, so `(a.tx + 5).operation` reaches the
-  math node behind the output.
+  then a sibling Maya attribute on the same node, so `(a.tx + 5).input`
+  reaches the `sum` node behind the output. It never reaches the node's
+  Python methods: `a.tx.rename` is an `AttributeError`.
 
 ```python
 from rig import set_options, lerp, functions as f
 
 cmds.file(new=True, force=True)
-cubes = PlugList([rc.polyCube(name=n)[0] for n in ("a", "b", "c")])
+cubes = List([rc.polyCube(name=n)[0] for n in ("a", "b", "c")])
 cubes.ty << [1, 2, 3]  # one value per element
 cubes.tz << 7          # a scalar broadcasts
 print(cubes.ty >> None, cubes.tz >> None)            # [1. 2. 3.] [7. 7. 7.]
@@ -132,7 +150,7 @@ print(cubes.ty >> None)                              # [1. 2. 2.]
 
 a, b, c = cubes
 try:
-    lerp(cubes.tx, PlugList([a.ty, b.ty]), 0.5)      # a function is strict: 3 against 2
+    lerp(cubes.tx, List([a.ty, b.ty]), 0.5)          # a function is strict: 3 against 2
 except ValueError:
     print("strict")                                  # strict
 
@@ -153,13 +171,13 @@ the cross-type math verbs, so most scripts import from `rig` directly.
 
 ```
 rig/
-├── __init__.py          Node, Plug, PlugList, Container, container, set_options / get_options,
+├── __init__.py          Node, Plug, List, Container, container, set_options / get_options,
 │                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant
 ├── spec/                attribute specs: Float Int Bool Angle Time, Vector Color Euler Quat, Enum,
 │                        Matrix Mesh Message NurbsCurve NurbsSurface String; modifiers lock unlock
 │                        hide unhide skip destroy Note
 ├── bridges/
-│   ├── commands.py      maya.cmds returning Node / PlugList instead of strings   (rc)
+│   ├── commands.py      maya.cmds returning nodes / List instead of strings   (rc)
 │   └── nodes.py         one factory per Maya node type, kwargs are injections     (rn)
 │
 ├── functions.py         abs clamp min max sum avg floor ceil round choice searchsorted ... on plugs
@@ -178,8 +196,8 @@ rig/
 ├── shade.py             Blinn Lambert Phong PhongE SurfaceShader StandardSurface OpenPBRSurface,
 │                        Material, Default; convert / repair / tidy / materials / bindings
 │
-├── nodetypes/           the object-model layer under the DSL: typed PyNode wrappers, the
-│                        Attribute plug wrapper, plugins/ (the bundled undo plug-in)
+├── nodetypes/           the node classes every node is: Node (the root), DGNode, Transform,
+│                        Mesh ...; Attribute, the MPlug wrapper; plugins/ (the undo plug-in)
 ├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
 │                        perspective_image_planes.py, ye_olde_lerp.gif
 ├── utils.py             run_tests()
@@ -192,7 +210,7 @@ rig/
 The names most scripts start from:
 
 ```python
-from rig import Node, Plug, PlugList, Container, container, Components, Tag, Layer
+from rig import Node, Plug, List, Container, container, Components, Tag, Layer
 from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
 from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
 from rig import functions, trigonometry, matrix, vector, quaternion, euler, interpolate, tween
@@ -218,7 +236,7 @@ for it) and a **CHEATSHEET** (every public name, with a runnable example).
 | **this page** | the operator table, conventions, the map | [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/CHEATSHEET.md) — every operator and top-level name, runnable |
 | `rig.spec` | attribute specs (`Float`, `Vector`, `Enum`...) and the modifiers (`lock`, `hide`, `destroy`...) | [README](https://github.com/Eric-Vignola/rig/blob/main/spec/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/spec/CHEATSHEET.md) |
 | `rig.bridges` | `commands` (`maya.cmds` returning nodes) and `nodes` (a factory per node type) | [README](https://github.com/Eric-Vignola/rig/blob/main/bridges/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/bridges/CHEATSHEET.md) |
-| `rig.nodetypes` | the typed node layer the DSL stands on: `PyNode`, `Attribute`, the typed node classes | [README](https://github.com/Eric-Vignola/rig/blob/main/nodetypes/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/nodetypes/CHEATSHEET.md) |
+| `rig.nodetypes` | the node classes every node is (`Transform`, `Mesh`, ...), their typed methods, `Attribute` | [README](https://github.com/Eric-Vignola/rig/blob/main/nodetypes/README.md) · [CHEATSHEET](https://github.com/Eric-Vignola/rig/blob/main/nodetypes/CHEATSHEET.md) |
 | `examples/` | complete builds: a rail spine, an image loop, perspective image planes | [README](https://github.com/Eric-Vignola/rig/blob/main/examples/README.md) |
 
 ---
@@ -231,11 +249,13 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   them, so `cube.f` / `cube.e` are `Components`; `cube.vtx` is
   `Plug("cubeShape.controlPoints")` and `cube.uv` is `uvpt`. `cube.cv` on
   a mesh is an `AttributeError` (CVs belong to NURBS).
-- **A comparison is always truthy.** `cube.tx == 3` returns the output
-  plug of an `equal` node, and a `Plug` is a truthy object, so
+- **A comparison with a value is always truthy.** `cube.tx == 3` returns
+  the output plug of an `equal` node, and a `Plug` is a truthy object, so
   `if cube.tx == 3:` always enters the branch and leaves a node behind.
-  Read values first: `(cube.tx >> None) == 3`. The same holds for
-  `a == b` between two results: test `a.equals(b)`, the same Maya plug.
+  Read values first: `(cube.tx >> None) == 3`. An ordering (`cube.tx > 3`)
+  has no truth value at all: `if cube.tx > 3:` is a `TypeError`. Between
+  two plugs `==` is identity: `a.tx == a.tx` is `True` with no node, and
+  `a.tx == b.tx` builds the `equal` node, whose truth value is `False`.
 - **A string is not an operand.** A `Plug` is a `str`, but
   `cube.tx == "ball.ty"`, `cube.wm + "[0]"`, `"%s" % cube.tx` and
   `f.abs("ball.ty")` raise a `TypeError` before they build anything. Write
@@ -287,6 +307,12 @@ print(cube >> Tag("top"))                            # [0 1 2]
 
 cond = cube.tx == 3
 print(cond, bool(cond))                              # equal1.output True
+print(cube.tx == Node("pCube1").translateX)          # True  -- one Maya plug: a bool, no node
+try:
+    if cube.tx > 3:
+        pass
+except TypeError:
+    print("no truth value")                          # no truth value
 
 xf = rc.createNode("transform", name="xf")
 with container("c1"):
