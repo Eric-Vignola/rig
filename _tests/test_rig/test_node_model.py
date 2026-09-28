@@ -521,14 +521,13 @@ _API1_NAMES = frozenset({"_objhandle1", "_fn_set1"})
 _NW6_MARKER = "NW6: API 1.0 handle"
 
 # Every (module, function) of the package that reads or stores `_objhandle1` /
-# `_fn_set1`. The cold readers ask `_handle_valid` / `_handle_alive`; each site
+# `_fn_set1`. The cold readers ask `_handle_valid`; each site
 # below reads the objects inline, on a hot path or because it keeps them, and
 # marks the line "NW6: API 1.0 handle". A new reader is added here (and marked).
 _API1_SITES = frozenset(
     {
-        # the two helpers
+        # the helper
         ("rig.nodetypes._base", "_handle_valid"),
-        ("rig.nodetypes._base", "_handle_alive"),
         # the constructors, which store them (a copy constructor reads them)
         ("rig.nodetypes.dg_node", "DGNode.__init__"),
         ("rig.nodetypes.dg_node", "DGNode._cache_api1_objects"),
@@ -603,7 +602,7 @@ def _api1_accesses():
 
 
 class TestApi1HandleReaders(MayaTestCase):
-    """M2: the API 1.0 handle helpers (`_handle_valid` / `_handle_alive`) and the
+    """M2: the API 1.0 handle helper (`_handle_valid`) and the
     complete list of the package's `_objhandle1` / `_fn_set1` readers, so that
     round 5 (NW6, the handles off API 1.0) has one list of sites to edit."""
 
@@ -614,7 +613,7 @@ class TestApi1HandleReaders(MayaTestCase):
         self.assertEqual(sites, _API1_SITES)
 
     def test_inline_readers_are_marked(self):
-        helpers  = {("rig.nodetypes._base", "_handle_valid"), ("rig.nodetypes._base", "_handle_alive")}
+        helpers  = {("rig.nodetypes._base", "_handle_valid")}
         unmarked = [
             f"{os.path.basename(path)}:{line} {func}"
             for module, func, path, line, marked in _api1_accesses()
@@ -623,7 +622,11 @@ class TestApi1HandleReaders(MayaTestCase):
         self.assertEqual(unmarked, [])
 
     def test_the_helpers(self):
-        from rig.nodetypes._base import _handle_alive, _handle_valid
+        from rig.nodetypes import _base
+        from rig.nodetypes._base import _handle_valid
+
+        # the other helper had no package caller once the wrapper was gone
+        self.assertFalse(hasattr(_base, "_handle_alive"))
 
         cmds.undoInfo(state=True, infinity=True)
         live    = Node(cmds.createNode("transform", name="live"))
@@ -632,17 +635,15 @@ class TestApi1HandleReaders(MayaTestCase):
         half    = object.__new__(Transform)
         cmds.delete("deleted")
         cases = {
-            "live": (live, True, True),
-            "deleted": (deleted, False, True),
-            "half_built": (half, False, False),
+            "live": (live, True),
+            "deleted": (deleted, False),
+            "half_built": (half, False),
         }
-        for label, (node, valid, alive) in cases.items():
+        for label, (node, valid) in cases.items():
             with self.subTest(case=label):
                 self.assertIs(_handle_valid(vars(node)), valid)
-                self.assertIs(_handle_alive(vars(node)), alive)
                 self.assertIs(node.is_valid, valid)
         self.assertIs(_handle_valid({}), False)
-        self.assertIs(_handle_alive({}), False)
         cmds.undo()
         self.assertTrue(deleted.is_valid)
         cmds.file(new=True, force=True)
@@ -650,7 +651,6 @@ class TestApi1HandleReaders(MayaTestCase):
         probe = mock.Mock()
         vars(freed)["_fn_set"] = probe
         self.assertIs(_handle_valid(vars(freed)), False)
-        self.assertIs(_handle_alive(vars(freed)), False)
         self.assertIs(freed.is_valid, False)
         self.assertEqual(probe.mock_calls, [])
 
@@ -766,10 +766,9 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         self.assertTrue(str(ctx.exception).endswith("a already deleted!"))
 
     def test_setattr_through_node(self):
-        # renamed at round 4a M4 (was test_setattr_through_the_wrapper, an M3
-        # id): the Node factory returns the typed node, so this is the typed
-        # node's sugar reached through Node(...), and a Container's (a DGNode
-        # subclass since M4) published names
+        # the Node factory returns the typed node, so this is the typed node's
+        # sugar reached through Node(...), and a Container's (a DGNode subclass)
+        # published names
         cmds.createNode("transform", name="a")
         node = Node("a")
         self.assertIs(type(node), Transform)
@@ -2686,11 +2685,8 @@ class TestInstancedPlugIdentity(MayaTestCase):
         self.assertFalse(a == "T1|S.visibility")
 
     def test_every_spelling_of_a_plug_is_one_key(self):
-        # equals() and hash agree for every way of reaching one plug. The review
-        # of 29a4128 re-pinned the typed spellings: a typed attr hashes the Maya
-        # plug salted, so it is one key with the other typed spellings, not with
-        # the Plugs (see test_typed_attributes_through_two_paths_are_one_key)
-        from rig.nodetypes._base import Attribute, _plug_hash
+        # equals() and hash agree for every way of reaching one plug, typed
+        # spellings included (see test_typed_attributes_through_two_paths_are_one_key)
 
         _instanced_locator()
         pma = cmds.createNode("plusMinusAverage", name="pma")
