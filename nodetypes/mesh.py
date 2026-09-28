@@ -160,18 +160,38 @@ class Mesh(Geometry):
     def set_points(
         self, points: OpenMaya.MPointArray, world_space: bool = False
     ) -> None:
-        """Set the vertex points of the mesh."""
+        """Set the vertex points of the mesh: one undo step.
+
+        Args:
+            points: One point per vertex: an MPointArray, a point sequence (list
+                or numpy array) or a MeshData (its points). Copied: changing it
+                afterwards changes nothing.
+            world_space: If True, the points are in world space, otherwise in
+                object space.
+
+        Raises:
+            ValueError: before any edit, when there is not one point per vertex.
+        """
         from cgmath.geometry import MeshData
 
         # if given MeshData
         if isinstance(points, MeshData):
-            points = OpenMaya.MPointArray(points.points)
+            points = points.points
 
-        # else assume we're given a point sequence (list, or numpy array)
-        elif not isinstance(points, OpenMaya.MPointArray):
-            points = OpenMaya.MPointArray(points)
+        # a point sequence (list, numpy array) or an MPointArray, copied: the undo
+        # queue keeps the points of this call (the API converts a list about twice
+        # as fast as an ndarray)
+        if isinstance(points, np.ndarray):
+            points = points.tolist()
+        points = OpenMaya.MPointArray(points)
 
-        _MeshSetPointsCommand(self, points, world_space)
+        count = self.num_vertices
+        if len(points) != count:
+            raise ValueError(
+                f"Mesh.set_points: {len(points)} points for the {count} vertices of {self.name}"
+            )
+        space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
+        _MeshSetPointsCommand(self, points, space)
 
     def get_closest_point(
         self,
@@ -1326,29 +1346,58 @@ def _propagate_holes_to_uvs(mesh_data: MeshData, uv_list: UVList) -> None:
         uv.hole_indices = np.array(uv_hole_indices, dtype=int)
 
 
-class _MeshSetPointsCommand:
-    def __init__(
-        self, mesh: Mesh, points: OpenMaya.MPointArray, world_space: bool
-    ) -> None:
-        super().__init__()
-        self._fn_set     = mesh.fn_set
-        self._points     = points
-        self._space      = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        self._old_points = None
+# --- rig's undoable mesh edits ------------------------------------------------------------
+#
+# Each class below is one edit rig puts on Maya's undo queue through its plug-in
+# command (`_run_undoable`, one undo step): the caller checks the edit first, the
+# constructor keeps what the edit needs and runs it, doIt makes the change (and keeps
+# what undoIt needs), undoIt puts the mesh back and redoIt makes the change again.
+#
+# * API only: no cmds or mel in doIt, undoIt or redoIt. redo must replay the API
+#   change (a cmds call there would be recorded, and flush the redo queue), and a
+#   cmds call in doIt would be an undo step of its own.
+# * A new MFnMesh for every call, from a copy of the mesh's MDagPath: an MFnMesh
+#   kept across an edit of the mesh's sets made some other way (a polyUVSet /
+#   polyColorSet, or the undo / redo of one) can point at freed geometry and crash
+#   Maya when it is used again.
 
+
+def _put_points(fn: OpenMaya.MFnMesh, points: OpenMaya.MPointArray, space: int) -> None:
+    fn.setPoints(points, space)
+    fn.updateSurface()
+
+
+class _MeshEdit:
+    """[Internal] An undoable edit of one mesh: a copy of its MDagPath, and
+    `fn`, a new MFnMesh of it on every call."""
+
+    def __init__(self, mesh: Mesh) -> None:
+        self._path = OpenMaya.MDagPath(mesh.mdagpath)
+
+    def fn(self) -> OpenMaya.MFnMesh:
+        return OpenMaya.MFnMesh(self._path)
+
+
+class _MeshSetPointsCommand(_MeshEdit):
+    """`Mesh.set_points`: every point of the mesh, in one space."""
+
+    def __init__(self, mesh: Mesh, points: OpenMaya.MPointArray, space: int) -> None:
+        super().__init__(mesh)
+        self._points = points
+        self._space  = space
+        self._old    = None
         _run_undoable(self)
 
     def doIt(self) -> None:
-        self._old_points = self._fn_set.getPoints(self._space)
-        self.redoIt()
+        fn        = self.fn()
+        self._old = fn.getPoints(self._space)
+        _put_points(fn, self._points, self._space)
 
     def undoIt(self) -> None:
-        self._fn_set.setPoints(self._old_points, self._space)
-        self._fn_set.updateSurface()
+        _put_points(self.fn(), self._old, self._space)
 
     def redoIt(self) -> None:
-        self._fn_set.setPoints(self._points, self._space)
-        self._fn_set.updateSurface()
+        _put_points(self.fn(), self._points, self._space)
 
 
 class _MeshAddUVSetCommand:
