@@ -9,10 +9,11 @@ Written on the unmodified library (the tree after B1), before any 4b change:
   ``with container(...)`` and ``container.createNode`` always make a new
   node: two calls, two nodes, the second uniquified by Maya.
 * ``TestTagIdiomsStay``: the component-tag spellings 4b keeps, with their
-  results.
+  results (``components >> Tag('x')`` included: the ids form).
 * ``TestPlugCloneStays``: ``plug >> node`` clones the attribute, ``plug >>
-  'name'`` clones it on the same node, ``plug >> container_node`` publishes
-  (and the scope form passes through in a flattened scope).
+  'name'`` clones it on the same node (``'node.name'`` onto that node),
+  ``plug >> container_node`` publishes (and the scope form passes through in
+  a flattened scope).
 
 The rows 4b flips (error types, the typed reference, the plug-left membership
 forms, ``Spec(None)``, ``shared=``, the attribute re-declaration ...) are not
@@ -282,6 +283,29 @@ class TestTagIdiomsStay(MayaTestCase):
         # a vertex purge leaves the face tags alone
         np.testing.assert_array_equal(self.cube >> Tag("top"), [1])
 
+    def test_components_on_the_left_read_their_ids(self):
+        # ``components >> Tag('x')``: the native ids of the left-hand side that
+        # are in the tag (the ids form 4b keeps; yes/no moves to ``in``)
+        self.cube.vtx[2:6] << Tag("pts")
+        self.cube.f[:3] << Tag("cap")
+        for label, lhs, tag, expected in (
+            ("vtx[4:8]", self.cube.vtx[4:8], "pts", [4, 5]),
+            ("vtx",      self.cube.vtx,      "pts", [2, 3, 4, 5]),
+            ("vtx[3]",   self.cube.vtx[3],   "pts", [3]),
+            ("vtx[0]",   self.cube.vtx[0],   "pts", []),
+            ("f[1:]",    self.cube.f[1:],    "cap", [1, 2]),
+            ("f",        self.cube.f,        "cap", [0, 1, 2]),
+        ):
+            with self.subTest(lhs=label):
+                ids = lhs >> Tag(tag)
+                self.assertIsInstance(ids, np.ndarray)
+                np.testing.assert_array_equal(ids, expected)
+        # one tag holds one category: vertices against a face tag is a TypeError
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(TypeError, "'cap' on cubeShape is a face tag"):
+            self.cube.vtx[:2] >> Tag("cap")
+        self.assertEqual(set(cmds.ls()), before)
+
     def test_expression_sugar_writes_the_name(self):
         cluster = Node(cmds.cluster("cube")[0])
         expr    = cluster.input[0].componentTagExpression
@@ -294,7 +318,8 @@ class TestTagIdiomsStay(MayaTestCase):
 
 class TestPlugCloneStays(MayaTestCase):
     """``plug >> node`` clones the attribute; ``plug >> 'name'`` clones it on
-    the same node; ``plug >> container_node`` publishes."""
+    the same node and ``plug >> 'node.name'`` onto that node; ``plug >>
+    container_node`` publishes."""
 
     TEST_START_NEW_SCENE = True
 
@@ -322,6 +347,16 @@ class TestPlugCloneStays(MayaTestCase):
         self.assertEqual(cmds.attributeQuery("w2", node="src", attributeType=True), "double")
         self.assertAlmostEqual(cmds.getAttr("src.w2"), 0.25)
         self.assertIsNone(cmds.listConnections("src.w2"))
+        self.assertEqual(set(cmds.ls()), before)
+
+    def test_plug_to_a_node_dot_name_clones_onto_that_node(self):
+        before = set(cmds.ls())
+        clone  = self.src.w >> "other_transform.w3"
+        self.assertIsInstance(clone, Plug)
+        self.assertEqual(str(clone), "other_transform.w3")
+        self.assertEqual(cmds.attributeQuery("w3", node="other_transform", attributeType=True), "double")
+        self.assertAlmostEqual(cmds.getAttr("other_transform.w3"), 0.25)
+        self.assertIsNone(cmds.listConnections("other_transform.w3"))
         self.assertEqual(set(cmds.ls()), before)
 
     def test_plug_to_a_container_node_publishes(self):
