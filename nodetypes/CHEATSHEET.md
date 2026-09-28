@@ -1158,8 +1158,11 @@ print(Axis.X, Axis.Z.value)  # Axis.X 2
 
 ## 21. `plugins` — `load_plugin` and undo
 
-`load_plugin` is a context manager: it loads by name from
-`MAYA_PLUG_IN_PATH`, and falls back to the copy bundled in `rig/nodetypes/plugins`.
+`load_plugin` is a context manager: a plug-in bundled in `rig/nodetypes/plugins`
+loads by full path (once per session: while its command is in `maya.cmds`,
+nothing is queried), any other name by name from `MAYA_PLUG_IN_PATH`. With
+`unload_on_exit=True` it unloads, when the block ends, only what it loaded;
+Maya refusing (the plug-in still in use) is a warning.
 
 ```python
 print(bundled_plugin_path("undoable_api_command").endswith("undoable_api_command.py"), bundled_plugin_path("nope"))   # True None
