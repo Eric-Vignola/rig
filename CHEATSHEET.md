@@ -1307,7 +1307,7 @@ Seven rules that hold everywhere:
 | `List` broadcasts, a plain list is a value | `f.abs(List([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector |
 | Maya 2024+ gets native nodes | `absolute`, `clampRange`, `sin`, `dotProduct`, `lerp`, `smoothStep` … Older Maya gets the equivalent legacy network — same value, more nodes. Each section's table says which |
 | `functions` shadows builtins | `abs`, `int`, `round`, `min`, `max`, `sum`, `pow`, `all`, `any` … Always `from rig import functions as f`, never `import *` |
-| A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`. `method=` takes a callable; `rotate_order` takes a name (`"zxy"`), a number or a plug, and any other string is a `TypeError` |
+| A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`. `method=` takes a callable; `rotate_order` takes a name (`"zxy"`, matched like an enum plug's fields, so `"ZXY"` too), a number or a plug, and any other string is a `TypeError` |
 | An operand has an order | a `set`, `frozenset` or `dict` raises `TypeError` before any node is built; a generator or an iterator is read into a list first, so `f.sum(c.tx for c in ctrls)` works |
 
 With the default options every composite function's container is
@@ -1867,13 +1867,13 @@ print(axis_plug >> None, angle_plug >> None)  # [0. 0. 1.] 90.0
 
 Rotate orders are Maya's: `xyz=0 yzx=1 zxy=2 xzy=3 yxz=4 zyx=5`. Every
 `rotate_order` argument (and `reorder`'s two) takes the name, the number or
-a plug (`tilt.ro`); a name and its number are the same call, and any other
-string (`"XYZ"`) is a `TypeError` before anything is built. A rotate-order
-*plug* is an enum and takes its field names as any enum does (section 2):
-`tilt.ro << "zxy"` sets 2, and there the match is loose, so
-`tilt.ro << "XYZ"` sets 0 where `rotate_order="XYZ"` is refused. `reorder`
-needs **both** orders, positionally; it goes through quaternion space, so
-what comes back is a `quatToEuler`.
+a plug (`tilt.ro`), and a name and its number are the same call. Names match
+the way an enum plug matches its field names (section 2): case, outer spaces,
+`_` and a `-` between letters are ignored, so `"XYZ"`, `" xyz"` and `"x_y_z"`
+are all 0, in `rotate_order="XYZ"` and in `tilt.ro << "XYZ"` alike. Any other
+string (`"xy"`) is a `TypeError` before anything is built. `reorder` needs
+**both** orders, positionally; it goes through quaternion space, so what
+comes back is a `quatToEuler`.
 
 ```python
 tilt = Node.create("transform", name="tilt")
@@ -1881,13 +1881,14 @@ tilt.r << (30, 45, 60)
 zyx = e.reorder(tilt.r, "xyz", "zyx")
 print(repr(zyx), kind(zyx), (zyx >> None).round(3))                                              # Plug("quatToEuler6.outputRotate") quatToEuler [-24.597  47.663  58.334]
 print(e.reorder(tilt.r, 0, 5).equals(zyx), e.reorder(zyx, 5, 0) >> None)                         # True [30. 45. 60.] -- the numbers are the same call; a round trip
+print(e.reorder(tilt.r, "XYZ", "ZYX").equals(zyx))                                                # True -- names ignore case, as on a plug
 try:
-    e.reorder(tilt.r, "XYZ", "zyx")
+    e.reorder(tilt.r, "xy", "zyx")
 except TypeError as err:
-    print(str(err).split(";")[0])  # rig.euler.reorder() argument 'rotate_order0': 'XYZ' is not a rotate order
+    print(str(err).split(";")[0])  # rig.euler.reorder() argument 'rotate_order0': 'xy' is not a rotate order
 tilt.ro << "zxy"
 print(tilt.ro >> None)             # 2
-tilt.ro << "XYZ"                   # a plug's match ignores case
+tilt.ro << "XYZ"                   # the same loose match
 print(tilt.ro >> None)             # 0
 
 print(kind(e.to_matrix(tilt.r, rotate_order=tilt.ro)), m.rotation(e.to_matrix(tilt.r)) >> None)  # composeMatrix [30. 45. 60.]
