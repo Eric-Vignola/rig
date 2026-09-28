@@ -246,6 +246,25 @@ class TestMeshCreateNames(_MeshCreateCase):
                     self.assertEqual(written.counts.tolist(), uv.counts.tolist())
                     self.assertTrue(abs(written.points - uv.points).max() < 1e-6)
 
+    def test_world_space_data_leaves_the_transform_at_rest(self):
+        # world-space data carries the identity matrix: no xform, the points are world points
+        t = cmds.polyCube(name="src", constructionHistory=False)[0]
+        cmds.xform(t, translation=(1, 2, 3), rotation=(10, 20, 30))
+        data, uvs = Mesh(t).serialize()
+        cmds.delete(t)
+        self.ready()
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self._check(mesh, "m", "mShape", data)
+        identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        self.assertEqual(cmds.xform("m", query=True, matrix=True, worldSpace=True), identity)
+        points = mesh.get_points(world_space=True)
+        for i, row in enumerate(data.points):
+            for got, want in zip((points[i].x, points[i].y, points[i].z), row):
+                self.assertAlmostEqual(got, float(want), places=6)
+        self.assertEqual(self.undo_name(), CHUNK)
+        self.undo_steps(1)
+        self.assertFalse(cmds.objExists("m"))
+
     def test_no_uvs_leaves_map1_empty(self):
         data, _ = _cube_data()
         mesh = Mesh.create(data, uv_data=[], name="m")
