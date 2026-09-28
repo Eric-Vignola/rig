@@ -175,8 +175,19 @@ class TestRotateOrderNames(_SceneCase):
                 self.assertIs(operands_module._rotate_order("f", "rotate_order", value), value)
         self.assertEqual(operands_module._ROTATE_ORDERS, dict(zip(_NAMES, range(6))))
 
+    def test_names_match_like_an_enum_plug(self):
+        # one loose rule (user, 2026-09-28): a function takes every spelling an
+        # enum plug takes, and both give the same rotate order
+        wm = self.t.worldMatrix[0]
+        for spelling, order in (("XYZ", 0), (" xyz", 0), ("Zyx", 5), ("ZXY ", 2), ("x_z_y", 3), ("Y-X-Z", 4)):
+            with self.subTest(spelling=spelling):
+                self.assertIs(M.decompose(wm, rotate_order=spelling), M.decompose(wm, rotate_order=order))
+                self.assertEqual(operands_module._rotate_order("f", "rotate_order", spelling), order)
+                self.u.ro << spelling
+                self.assertEqual(cmds.getAttr(f"{self.u}.rotateOrder"), order)
+
     def test_any_other_str_raises_before_any_node(self):
-        bad = ("XYZ", "", "xy", "xyzz", " xyz", "Zyx", "0")
+        bad = ("", "xy", "xyzz", "0", "abc", "x y")
         scopes = {
             "top": lambda: _Nothing(),
             "container": lambda: container("box"),

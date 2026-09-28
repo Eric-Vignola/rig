@@ -39,8 +39,10 @@ A rotate order (``rotate_order``, and ``rotate_order0`` / ``rotate_order1`` of
 the six names of Maya's ``rotateOrder`` enum: ``"xyz"`` (0), ``"yzx"`` (1),
 ``"zxy"`` (2), ``"xzy"`` (3), ``"yxz"`` (4), ``"zyx"`` (5). :func:`operands`
 replaces a name by its int before the function runs, so ``rotate_order="zxy"``
-and ``rotate_order=2`` build (and memoize) one network, and any other str
-(``"XYZ"``, ``""``, ``"xy"``) raises TypeError before any node or container is
+and ``rotate_order=2`` build (and memoize) one network. A name matches the way
+an enum plug matches its field names (case, outer spaces, ``_`` and a ``-``
+between letters ignored), so ``"XYZ"`` is 0 here as in ``t.ro << "XYZ"``; any
+other str (``""``, ``"xy"``) raises TypeError before any node or container is
 created. A list or tuple of rotate orders (a broadcast call) is mapped element
 by element.
 """
@@ -53,7 +55,7 @@ import inspect
 from typing import Any, Callable, Iterable, Optional, Tuple
 
 import numpy as np
-from rig.nodetypes._base import _ensure_owner_alive, Attribute
+from rig.nodetypes._base import _ensure_owner_alive, _match_enum_field, Attribute
 
 
 # The operand types that can be, or can hold, a plain str (or bytes). Numbers,
@@ -304,19 +306,27 @@ def operator_error(
 
 def _rotate_order(label: str, name: str, value: Any) -> Any:
     """``value`` given to the rotate-order parameter ``name`` of the function
-    ``label``, a rotate-order name replaced by its int. Any other plain str
-    raises TypeError; an int, a plug (an Attribute), None or anything else is
-    returned as it is. A list or tuple is mapped element by element, one level
-    (a broadcast call), and returned as it is when it holds no name."""
+    ``label``, a rotate-order name replaced by its int. A name is matched the
+    way an enum plug matches its field names (`_match_enum_field`: exact, then
+    case and outer spaces ignored, then loosely), so ``'XYZ'`` and ``'xyz'``
+    are both 0, as ``t.ro << 'XYZ'`` is. Any other plain str raises TypeError;
+    an int, a plug (an Attribute), None or anything else is returned as it is.
+    A list or tuple is mapped element by element, one level (a broadcast call),
+    and returned as it is when it holds no name."""
     if isinstance(value, str):
         if isinstance(value, Attribute):
             return value
         order = _ROTATE_ORDERS.get(value)
         if order is None:
-            raise TypeError(
-                f"{label}() argument {name!r}: {value!r} is not a rotate order; use "
-                f"'xyz', 'yzx', 'zxy', 'xzy', 'yxz' or 'zyx' (0-5), an int 0-5 or a plug"
-            )
+            try:
+                order = _match_enum_field(
+                    list(_ROTATE_ORDERS.items()), value, f"{label}() {name}", exact=False
+                )
+            except TypeError:
+                raise TypeError(
+                    f"{label}() argument {name!r}: {value!r} is not a rotate order; use "
+                    f"'xyz', 'yzx', 'zxy', 'xzy', 'yxz' or 'zyx' (0-5), an int 0-5 or a plug"
+                ) from None
         return order
     if isinstance(value, (list, tuple)) and any(
         isinstance(element, str) and not isinstance(element, Attribute)
