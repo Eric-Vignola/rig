@@ -1062,7 +1062,7 @@ def _handle_serial(handle: Any) -> int:
 
 def _plug_hash(attr: Any) -> int:
     """The hash of the Maya plug `attr` is (see `_same_plug`), for `Plug.__hash__`
-    (a typed `Attribute` salts it, see `Attribute.__hash__`).
+    and `Attribute.__hash__` (a typed attr and a Plug of one plug are one key).
 
     It is the node's serial (see `_node_serial`) and the attribute's long name
     with every logical index, the instanced ones too (``worldMatrix[1]``), so it
@@ -1478,12 +1478,12 @@ class Attribute(str):
 
     def __hash__(self) -> int:
         # the Maya plug's identity, not the name: one key through every instance
-        # path, kept across a rename (see `_plug_hash`). Salted, so a typed attr
-        # and a DSL Plug of one plug are two keys: a dict or set lookup that
-        # found them alike would compare them with `Plug.__eq__`, which folds
-        # one plug to True but, under `force_nodes()` / `constant_folding=False`,
-        # builds an equal node (and raises for matrices)
-        return hash(("Attribute", _plug_hash(self)))
+        # path, kept across a rename (see `_plug_hash`). A typed attr and a DSL
+        # Plug of one plug compare equal (`Plug.__eq__` folds them to True, X1),
+        # so they hash alike and are one dict / set key; under `force_nodes()` /
+        # `constant_folding=False` a lookup that mixes them builds the equal node,
+        # as a lookup through two Plugs of the plug does
+        return _plug_hash(self)
 
     def __eq__(self, other: Any) -> bool:
         """True if `other` is an Attribute of the same Maya plug (node, attribute

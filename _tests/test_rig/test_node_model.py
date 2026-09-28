@@ -2664,15 +2664,17 @@ class TestInstancedPlugIdentity(MayaTestCase):
         self.assertEqual(len({a, b}), 1)
         self.assertIn(b, [a])
         self.assertEqual([a].index(b), 0)
-        # through a rig Node, and against the Plug of the same plug: the same
-        # plug (equals), but another key. The review of 29a4128 re-pinned this:
-        # S2 hashed a typed attr and a Plug alike, so a dict or set lookup that
-        # mixed them compared them with Plug.__eq__, which built an equal node
-        # (and raised for a matrix); the typed hash is salted now
+        # through a rig Node, and against the Plug of the same plug: equal (the
+        # X1 fold) and one key, so a mixed dict or set lookup builds nothing
         self.assertTrue(Node("|T1|S").find_attr("v") == Node("|T2|S").find_attr("v"))
         plug = Node("|T2|S").v
-        self.assertNotEqual(hash(plug), hash(a))
+        self.assertEqual(hash(plug), hash(a))
         self.assertTrue(plug.equals(a))
+        before = sorted(cmds.ls())
+        self.assertIn(plug, {a})
+        self.assertIn(a, {plug: 1})
+        self.assertEqual(len({a, plug}), 1)
+        self.assertEqual(sorted(cmds.ls()), before)
         # another attribute, another node, another instance's element: another key
         self.assertFalse(a == second.find_attr("lodVisibility"))
         self.assertFalse(a == Node("T1").find_attr("v"))
@@ -2704,11 +2706,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
             with self.subTest(plug=str(group[0])):
                 for other in group[1:]:
                     self.assertTrue(group[0].equals(other), str(other))
-                    key = hash(group[0])
-                    if not isinstance(other, Plug):
-                        self.assertIsInstance(other, Attribute)
-                        key = hash(("Attribute", _plug_hash(group[0])))
-                    self.assertEqual(hash(other), key, str(other))
+                    self.assertEqual(hash(other), hash(group[0]), str(other))
         # distinct plugs of the groups hash apart
         firsts = [group[0] for group in spellings] + [Node(pma).input3D[2].input3Dx]
         self.assertEqual(len({hash(plug) for plug in firsts}), len(firsts))

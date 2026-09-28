@@ -216,30 +216,34 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
 
 
 class TestTypedAttributeAndPlugKeys(MayaTestCase):
-    """A typed Attribute and a DSL Plug of one Maya plug are two keys again (as on
-    d6ad8b2). At 29a4128 they hashed alike, so a dict or set lookup mixing them
-    ran Plug.__eq__, which built an equal node, and raised for matrix plugs."""
+    """A typed Attribute and a DSL Plug of one Maya plug are one key: they compare
+    equal (``Plug.__eq__`` folds one plug to True, X1) and hash alike, so a dict
+    or set lookup that mixes them finds the entry and builds nothing, for a
+    matrix plug too."""
 
     TEST_START_NEW_SCENE = True
 
-    def test_mixed_lookups_miss_and_build_nothing(self):
+    def test_mixed_lookups_hit_and_build_nothing(self):
         cmds.createNode("transform", name="a")
         cmds.createNode("transform", name="b")
         cmds.connectAttr("a.tx", "b.tx")
         before = sorted(cmds.ls())
         typed_tx = Node("a").find_attr("tx")
         typed_wm = Node("a").find_attr("worldMatrix")[0]
-        self.assertIsNone({typed_tx: 1}.get(Node("a").tx))
-        self.assertIsNone({Node("a").tx: 1}.get(typed_tx))
-        self.assertNotIn(Node("a").worldMatrix[0], {typed_wm})
-        self.assertNotIn(typed_wm, {Node("a").worldMatrix[0]})
-        self.assertNotIn(Node("a").tx, set(Node("a").list_attr(keyable=True)))
+        self.assertEqual({typed_tx: 1}.get(Node("a").tx), 1)
+        self.assertEqual({Node("a").tx: 1}.get(typed_tx), 1)
+        self.assertIn(Node("a").worldMatrix[0], {typed_wm})
+        self.assertIn(typed_wm, {Node("a").worldMatrix[0]})
+        self.assertIn(Node("a").tx, set(Node("a").list_attr(keyable=True)))
         dst = set(typed_tx.get_connected_attrs(src=False, dst=True))
-        self.assertNotIn(Node("b").tx, dst)
-        self.assertEqual(sorted(cmds.ls()), before)
-        # one plug all the same, and a typed probe finds the typed key
-        self.assertTrue(Node("a").tx.equals(typed_tx))
+        self.assertIn(Node("b").tx, dst)
         self.assertIn(Node("b").find_attr("tx"), dst)
+        self.assertEqual(sorted(cmds.ls()), before)
+        self.assertTrue(Node("a").tx.equals(typed_tx))
+        # another plug is another key
+        self.assertIsNone({typed_tx: 1}.get(Node("a").ty))
+        self.assertNotIn(Node("a").worldMatrix[0], {Node("a").find_attr("matrix")})
+        self.assertEqual(sorted(cmds.ls()), before)
 
     def test_each_layer_is_one_key_through_two_instance_paths(self):
         _instanced_locator()
@@ -247,7 +251,8 @@ class TestTypedAttributeAndPlugKeys(MayaTestCase):
         typed = [Node("|T1|S").find_attr("v"), Node("|T2|S").find_attr("v")]
         self.assertEqual(len(set(plugs)), 1)
         self.assertEqual(len(set(typed)), 1)
-        self.assertEqual(len(set(plugs) | set(typed)), 2)
+        # and both layers together
+        self.assertEqual(len(set(plugs) | set(typed)), 1)
 
 
 class TestAttributeInequality(MayaTestCase):
