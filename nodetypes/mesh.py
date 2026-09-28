@@ -1248,7 +1248,8 @@ def _write_uv_set(
     `_UVArrays`). ``clearUVs`` first, so a different UV count or an empty
     set is written exactly (``clear=False`` skips it for a set known to be
     empty, a new one: about 1 ms on 10k faces); nothing more when the data
-    holds no UVs. Pure API (no cmds): safe in a journal item's undo / redo."""
+    holds no UVs. Pure API (no cmds): `Mesh.create` calls it while it builds the
+    shape, before any recorded command touches it."""
     if clear:
         fn.clearUVs(uv_set)
     points  = np.asarray(uv_data.points)
