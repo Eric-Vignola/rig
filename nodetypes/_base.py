@@ -1424,6 +1424,124 @@ GEOMETRY_ROUTING_TRACERS = {
 POLYMORPHIC_OUTPUT_NODE_TYPES = frozenset({"choice"})
 
 
+# --- enum field names (see `Attribute.enums`)
+
+
+def _is_text(value: Any) -> bool:
+    """True if `value` is a plain str: a str that is not a plug (an `Attribute`
+    is a str too, and names a connection)."""
+    return isinstance(value, str) and not isinstance(value, Attribute)
+
+
+def _is_enum_attr(attr: Any) -> bool:
+    """True if the Maya attribute of `attr` (an `Attribute`) is an enum.
+    Raises ``"... already deleted!"`` as `Attribute.mobject` does."""
+    _ensure_owner_alive(attr)
+    return _attr_mobject(attr).hasFn(OpenMaya.MFn.kEnumAttribute)
+
+
+# the widest value range `_enum_fields` scans value by value (a value with no
+# field costs about 2 us); a wider one is read from the attribute's addAttr
+# command instead (a sparse ``en="a=-32000:b=32000"`` would take about 0.1 s)
+_ENUM_SCAN_SPAN = 1024
+
+# the ``-enumName "..."`` flag of `MFnAttribute.getAddAttrCmd`
+_ENUM_NAME_FLAG = re.compile(r'-enumName "((?:[^"\\]|\\.)*)"')
+
+# a str that names a plug (``"t1.tx"``, ``"|grp|t1.tx"``, ``"ns:t1.tx"``),
+# not a number (``"4.0"``)
+_PLUG_NAME_LIKE = re.compile(r"[A-Za-z_|:][^.]*\.[A-Za-z_]")
+
+
+def _enum_fields(fn: OpenMaya.MFnEnumAttribute) -> list[tuple[str, int]]:
+    """The ``(field name, value)`` pairs of the enum `fn`, by value. The values
+    can be sparse (``en="a=5:b=10"``), and a value with no field has no pair."""
+    low, high = fn.getMin(), fn.getMax()
+    if high - low > _ENUM_SCAN_SPAN:
+        declared = _declared_enum_fields(fn)
+        if declared is not None:
+            return declared
+    fields = []
+    for value in range(low, high + 1):
+        try:
+            fields.append((fn.fieldName(value), value))
+        except RuntimeError:
+            pass
+    return fields
+
+
+def _declared_enum_fields(fn: OpenMaya.MFnEnumAttribute) -> list[tuple[str, int]] | None:
+    """The fields of the enum `fn` as its ``-enumName`` flag declares them
+    (``"a:b=5:c"`` is a=0, b=5, c=6), each pair kept only if `fn` gives that
+    name for that value; None when the flag is missing."""
+    found = _ENUM_NAME_FLAG.search(fn.getAddAttrCmd(True))
+    if found is None:
+        return None
+    fields = []
+    value  = 0
+    for piece in re.sub(r"\\(.)", r"\1", found.group(1)).split(":"):
+        name, sep, given = piece.rpartition("=")
+        if sep and given.lstrip("-").isdigit():
+            value = int(given)
+        else:
+            name = piece
+        try:
+            if fn.fieldName(value) == name:
+                fields.append((name, value))
+        except RuntimeError:
+            pass
+        value += 1
+    return sorted(fields, key=lambda field: field[1])
+
+
+def _field_key(name: str) -> str:
+    """`name` compared loosely: casefolded, without spaces, ``_`` or ``-``."""
+    return re.sub(r"[\s_\-]", "", name).casefold()
+
+
+def _enum_value(
+    attr: OpenMaya.MObject | OpenMaya.MPlug, name: str, where: str
+) -> int:
+    """The value of the field `name` of the enum attribute `attr` (its attribute
+    MObject, or an MPlug of it), for a field name set on an enum.
+
+    An exact field name is found first (``"zxy"``, Maya's ``"Multiply"``);
+    otherwise the one field that matches once case, spaces, ``_`` and ``-`` are
+    ignored on both sides (``"multiply"``, ``"greater_than"`` for
+    ``"Greater Than"``, ``"hasnoeffect"``). Anything else raises TypeError before
+    any edit, naming `where` (the attribute, as the caller calls it) and every
+    field with its value, with a hint to write ``Plug("a.b")`` when the name looks
+    like a plug to connect.
+    """
+    if isinstance(attr, OpenMaya.MPlug):
+        attr = attr.attribute()
+    fn = OpenMaya.MFnEnumAttribute(attr)
+    try:
+        return fn.fieldValue(name)
+    except (RuntimeError, TypeError, ValueError):
+        pass
+    fields = _enum_fields(fn)
+    key    = _field_key(name)
+    found  = [value for field, value in fields if key and _field_key(field) == key]
+    if len(found) == 1:
+        return found[0]
+    listed = ", ".join(f"{field}={value}" for field, value in fields) or "none"
+    if found:
+        message = (
+            f"{where}: {name!r} matches {len(found)} of its enum fields once case, "
+            f"spaces, '_' and '-' are ignored; write one of them exactly, or its "
+            f"int: {listed}"
+        )
+    else:
+        message = (
+            f"{where}: {name!r} is not one of its enum fields; write a field name "
+            f"or its int: {listed}"
+        )
+    if _PLUG_NAME_LIKE.match(name):
+        message += f"; to connect, write Plug({name!r})"
+    raise TypeError(message)
+
+
 @total_ordering
 class Attribute(str):
     """
@@ -2119,11 +2237,26 @@ class Attribute(str):
             - automatically assign `type` argument, if not provided.
             - a single list given to a `stringArray`, `vectorArray` or `pointArray`
               attr is expanded to the (count, *items) form cmds.setAttr() expects.
+            - an enum attr takes a field name as well as its int:
+              ``node.find_attr("ro").set("zyx")`` sets 5. The exact field name is
+              found first, then the one field that matches once case, spaces,
+              ``_`` and ``-`` are ignored (``"multiply"`` for Maya's
+              ``"Multiply"``); any other str raises TypeError naming the fields,
+              and the value is left as it was (see `_enum_value`).
 
         Args:
             args, kwargs: args supported by cmds.setAttr()
         """
         _ensure_owner_alive(self)
+        # a field name given to an enum (a plain str, never a plug)
+        if (
+            len(args) == 1
+            and isinstance(args[0], str)
+            and not isinstance(args[0], Attribute)
+            and "type" not in kwargs
+            and _attr_mobject(self).hasFn(OpenMaya.MFn.kEnumAttribute)
+        ):
+            args = (_enum_value(_attr_mobject(self), args[0], self.full_name),)
         if "type" not in kwargs and not self._is_fixed_kind_outside_array():
             # typed attr requires the `type` arg to be specified.
             # the only weird one-off is `fltMatrix`, which is not typed but still
@@ -2318,7 +2451,11 @@ class Attribute(str):
 
     @property
     def enums(self) -> list[str]:
-        """Returns a list of enum values if this attr is an enum attr."""
+        """Returns a list of enum values if this attr is an enum attr.
+
+        Each field is written as `cmds.attributeQuery(listEnum=True)` writes it
+        (``"b=10"`` once the values are sparse). A field name set on an enum
+        attr (``plug << "zxy"``, `set`) is read by `_enum_value`."""
         enums = cmds.attributeQuery(self.name, node=self.node, listEnum=True)
         if enums:
             return enums[0].split(":")
