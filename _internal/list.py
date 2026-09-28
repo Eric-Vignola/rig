@@ -2,9 +2,7 @@
 :class:`List` -- vectorised broadcast for the rig DSL.
 
 A ``List`` is a regular ``list`` whose attribute access propagates to
-each element. Numeric / non-Plug elements pass through unchanged. It was
-called ``PlugList``; ``PlugList`` is the same class under its former name
-(``PlugList is List``).
+each element. Numeric / non-Plug elements pass through unchanged.
 
 Examples::
 
@@ -101,10 +99,7 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
 
 
 class List(list):
-    """List-of-Plug-or-Node that propagates attribute access and arithmetic.
-
-    Formerly ``PlugList``, which stays the same class (``PlugList is List``).
-    """
+    """List-of-Plug-or-Node that propagates attribute access and arithmetic."""
 
     # -- construction -- #
 
@@ -460,11 +455,6 @@ class List(list):
             return hash(tuple(hash(x) for x in self))
         except TypeError:
             return id(self)
-
-
-# The former name: the same class, so `isinstance(x, PlugList)`, `PlugList(...)`
-# and `x << PlugList` (the retired sentinel) are what they were.
-PlugList = List
 
 
 def _lift_or_pass(obj: Any) -> Any:

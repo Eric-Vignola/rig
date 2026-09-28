@@ -19,9 +19,11 @@ folding is off (``force_nodes()``); different plugs build the condition node.
 A dict / set lookup through a second object of a plug builds nothing (round-3
 F10), and a plain list scan still compares every different plug it passes.
 
-Round 4a, step M6: ``PlugList`` is now ``List`` (``PlugList is List``, both
-exported, repr ``List([...])``), and ``in`` / ``index`` / ``count`` /
-``remove`` read a plain str probe as the Maya plug it names (decision S3 Q4).
+Round 4a, step M6: the list class is ``List`` (repr ``List([...])``), and
+``in`` / ``index`` / ``count`` / ``remove`` read a plain str probe as the Maya
+plug it names (decision S3 Q4). Step R1 removed its former name ``PlugList``:
+``from rig import PlugList`` is an ImportError, and no package module,
+export or message names it.
 
 Round 4a, step M10 (spec S5): a named spec's plug is owned by the node object
 it was applied to, ``(node << Float("x")).node is node``, and by the node object
@@ -43,9 +45,9 @@ from rig import (
     force_nodes,
     functions as F,
     InjectionError,
+    List,
     matrix as M,
     Node,
-    PlugList,
     quaternion as Q,
     set_options,
     vector as V,
@@ -199,11 +201,11 @@ class TestRotateOrderNames(_SceneCase):
                     self.assertEqual(cmds.container("box", query=True, nodeList=True) or [], [])
 
     def test_a_list_broadcast(self):
-        mats = PlugList([self.t.worldMatrix[0], self.u.worldMatrix[0]])
+        mats = List([self.t.worldMatrix[0], self.u.worldMatrix[0]])
         for orders in (["zxy", "yxz"], ("zxy", "yxz"), ["zxy", 4]):
             with self.subTest(orders=orders):
                 out = M.decompose(mats, rotate_order=orders)
-                self.assertIsInstance(out, PlugList)
+                self.assertIsInstance(out, List)
                 self.assertEqual(
                     [cmds.getAttr(f"{plug.node}.inputRotateOrder") for plug in out], [2, 4]
                 )
@@ -315,7 +317,7 @@ class TestOperandShapes(_SceneCase):
                 before = _scene()
                 self.assertIs(iterated(), by_list)
                 self.assertEqual(_scene(), before)
-        pairs = PlugList([t.tx, u.tx])
+        pairs = List([t.tx, u.tx])
         by_list = pairs + [1, 2]
         reflected_by_list = [3, 4] - pairs
         before = _scene()
@@ -324,9 +326,9 @@ class TestOperandShapes(_SceneCase):
             ("map", map(int, "12")),
             ("iter", iter([1, 2])),
         ):
-            with self.subTest("PlugList operator", kind=label):
+            with self.subTest("List operator", kind=label):
                 out = pairs + operand
-                self.assertIsInstance(out, PlugList)
+                self.assertIsInstance(out, List)
                 self.assertEqual(len(out), 2)
                 self.assertTrue(all(a is b for a, b in zip(out, by_list)))
         reflected = iter([3, 4]) - pairs
@@ -366,11 +368,11 @@ class TestOperandShapes(_SceneCase):
                 ("< set", lambda: t.tx < {1}, "t.translateX < {1}: a set"),
                 ("matrix * set", lambda: t.worldMatrix[0] * {1}, "a set is unordered"),
             ],
-            "PlugList operator": [
-                ("+ set", lambda: PlugList([t.tx, u.tx]) + {1, 2}, "+ {1, 2}: a set is unordered"),
-                ("reflected + set", lambda: {1, 2} + PlugList([t.tx]), "{1, 2} + List(["),
-                ("== dict", lambda: PlugList([t.tx]) == {"a": 1}, "== {'a': 1}: a dict is a mapping"),
-                ("* frozenset", lambda: PlugList([t.tx]) * frozenset([2]), "a frozenset is unordered"),
+            "List operator": [
+                ("+ set", lambda: List([t.tx, u.tx]) + {1, 2}, "+ {1, 2}: a set is unordered"),
+                ("reflected + set", lambda: {1, 2} + List([t.tx]), "{1, 2} + List(["),
+                ("== dict", lambda: List([t.tx]) == {"a": 1}, "== {'a': 1}: a dict is a mapping"),
+                ("* frozenset", lambda: List([t.tx]) * frozenset([2]), "a frozenset is unordered"),
             ],
         }
 
@@ -426,7 +428,7 @@ class TestOperandShapes(_SceneCase):
         for label, call in (
             ("function", lambda: F.sum(x for x in [t.tx, "cube.ty"])),
             ("plug operator", lambda: t.t + iter([1, "cube.ty", 2])),
-            ("PlugList operator", lambda: PlugList([t.tx]) + (x for x in ["cube.ty"])),
+            ("List operator", lambda: List([t.tx]) + (x for x in ["cube.ty"])),
         ):
             with self.subTest(label):
                 with self.assertRaises(TypeError) as ctx:
@@ -447,7 +449,7 @@ class TestOperandShapes(_SceneCase):
             ("function keyword", lambda: F.sum(tokens=iter([t.tx, held]))),
             ("lerp", lambda: V.lerp(t.tx, map(lambda p: p, [held]))),
             ("plug operator", lambda: t.t + (x for x in (held, 1, 2))),
-            ("PlugList operator", lambda: PlugList([t.tx]) + iter([held])),
+            ("List operator", lambda: List([t.tx]) + iter([held])),
         ):
             with self.subTest(label):
                 with self.assertRaisesRegex(RuntimeError, _FREED):
@@ -534,7 +536,7 @@ class TestMemoHandleOfTypedAttr(MayaTestCase):
             ("typed attr", typed, 1),
             ("plug", Plug("a.tx"), 1),
             ("typed attrs in a list", [typed, PyNode("b").find_attr("ty")], 2),
-            ("typed attr in a PlugList", PlugList([typed]), 1),
+            ("typed attr in a List", List([typed]), 1),
             ("typed shape attr", PyNode(cmds.createNode("locator", name="aShape", parent="a")).find_attr("localPositionX"), 1),
         ):
             with self.subTest(label):
@@ -885,7 +887,7 @@ class TestSamePlugFold(_SceneCase):
 
     def test_a_plain_list_scan_still_compares_different_plugs(self):
         # the residual: each DIFFERENT plug a list scan passes is compared with
-        # the DSL ==, which builds an equal node; a PlugList builds nothing
+        # the DSL ==, which builds an equal node; a List builds nothing
         t, u = self.t, self.u
         before = _scene()
         self.assertIs(t.tx in [u.tx, u.ty, t.tx], True)
@@ -894,10 +896,10 @@ class TestSamePlugFold(_SceneCase):
         self.assertEqual([u.tx, u.ty, t.tx].index(t.tx), 2)
         self.assertEqual(_new(before), [])  # the same two comparisons, memoized
         before = _scene()
-        self.assertIs(t.tx in PlugList([u.tx, u.ty, t.tx]), True)
-        self.assertEqual(PlugList([u.tx, u.ty, t.tx]).index(t.tx), 2)
+        self.assertIs(t.tx in List([u.tx, u.ty, t.tx]), True)
+        self.assertEqual(List([u.tx, u.ty, t.tx]).index(t.tx), 2)
         self.assertIs(
-            t.worldMatrix[0] in PlugList([u.worldMatrix[0], t.worldMatrix[0]]), True
+            t.worldMatrix[0] in List([u.worldMatrix[0], t.worldMatrix[0]]), True
         )
         self.assertEqual(_new(before), [])
         with self.assertRaises(InjectionError):
@@ -980,64 +982,127 @@ class TestSamePlugFold(_SceneCase):
 
 
 # --------------------------------------------------------------------- #
-#  Step M6: List, with PlugList as its former name (the same class)
+#  Step M6: List (step R1: its former name PlugList is gone)
 # --------------------------------------------------------------------- #
 
 
-class TestListName(_SceneCase):
-    """``PlugList`` is now ``List``; ``PlugList`` stays as the same class."""
+def _names_pluglist(path):
+    """The (line, token) pairs of a .py file whose token mentions PlugList."""
+    import io
+    import tokenize
 
-    def test_pluglist_is_list(self):
+    with open(path, encoding="utf-8") as fh:
+        source = fh.read()
+    return [
+        (tok.start[0], tok.string)
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline)
+        if "PlugList" in tok.string
+    ]
+
+
+class TestListName(_SceneCase):
+    """``List`` is the class's only name: ``PlugList`` was removed (step R1)."""
+
+    def test_pluglist_is_gone(self):
+        import importlib
         import rig
-        from rig import List as exported, PlugList as former
+        import rig.nodetypes
         from rig._internal import list as list_module
 
-        self.assertIs(former, exported)
-        self.assertIs(list_module.PlugList, list_module.List)
-        self.assertIs(exported, list_module.List)
-        self.assertIs(rig.List, rig.PlugList)
-        self.assertEqual(exported.__name__, "List")
-        # what the package builds is a List under either name
-        for built in (self.t.t[:], self.t.tx.get_inputs(), PlugList([self.t.tx]) + 1):
-            self.assertIs(type(built), exported)
-            self.assertIsInstance(built, former)
+        for module in ("rig", "rig.nodetypes", "rig._internal.list"):
+            with self.subTest(module=module):
+                with self.assertRaises(ImportError):
+                    exec(f"from {module} import PlugList", {})
+                self.assertFalse(hasattr(importlib.import_module(module), "PlugList"))
+        with self.assertRaises(AttributeError):
+            rig.PlugList
+        with self.assertRaises(AttributeError):
+            rig.nodetypes.PlugList
+        with self.assertRaises(AttributeError):
+            list_module.PlugList
+        # no loaded rig module holds the name
+        import sys
 
-    def test_both_names_are_exported(self):
+        holders = sorted(
+            name
+            for name, module in list(sys.modules.items())
+            if (name == "rig" or name.startswith("rig.")) and module is not None
+            and "PlugList" in vars(module)
+        )
+        self.assertEqual(holders, [])
+        # what the package builds is a List
+        self.assertIs(List, list_module.List)
+        self.assertEqual(List.__name__, "List")
+        for built in (self.t.t[:], self.t.tx.get_inputs(), List([self.t.tx]) + 1):
+            self.assertIs(type(built), List)
+
+    def test_only_list_is_exported(self):
         import rig
 
         self.assertIn("List", rig.__all__)
-        self.assertIn("PlugList", rig.__all__)
+        self.assertNotIn("PlugList", rig.__all__)
         namespace = {}
         exec("from rig import *", namespace)
-        self.assertIs(namespace["List"], namespace["PlugList"])
+        self.assertIs(namespace["List"], List)
+        self.assertNotIn("PlugList", namespace)
+
+    def test_no_package_module_names_pluglist(self):
+        """No .py file of the package outside the tests mentions PlugList: no
+        name, string, docstring or comment (the .md docs are the docs step's)."""
+        import rig
+
+        root = os.path.dirname(os.path.abspath(rig.__file__))
+        found = []
+        for folder, subfolders, files in os.walk(root):
+            subfolders[:] = [d for d in subfolders if d not in ("_tests", "__pycache__")]
+            for file in files:
+                if file.endswith(".py"):
+                    path = os.path.join(folder, file)
+                    found += [
+                        (os.path.relpath(path, root), line, text)
+                        for line, text in _names_pluglist(path)
+                    ]
+        self.assertEqual(found, [])
+
+    def test_no_message_names_pluglist(self):
+        plug, items = self.t.tx, List([self.t.tx, self.t.ty])
+        before = _scene()
+        for label, call, error in (
+            ("plug << List", lambda: plug << List, TypeError),
+            ("plug >> List", lambda: plug >> List, TypeError),
+            ("list << List", lambda: items << List, TypeError),
+            ("list >> List", lambda: items >> List, TypeError),
+            ("row error", lambda: items + [1, "u.ty"], TypeError),
+            ("index", lambda: items.index(self.u.tx), ValueError),
+        ):
+            with self.subTest(label):
+                with self.assertRaises(error) as caught:
+                    call()
+                self.assertNotIn("PlugList", str(caught.exception))
+                self.assertIn("List", str(caught.exception))
+        self.assertEqual(_new(before), [])
 
     def test_repr(self):
-        from rig import List
-
         cmds.createNode("transform", name="a")
         cmds.createNode("transform", name="b")
         self.assertEqual(
             repr(List([Node("a"), Node("b")])), 'List([Transform("a"), Transform("b")])'
         )
         self.assertEqual(repr(List([Plug("a.translateX")])), 'List([Plug("a.translateX")])')
-        self.assertEqual(repr(PlugList(["a.tx", 1.5])), 'List([Plug("a.translateX"), 1.5])')
+        self.assertEqual(repr(List(["a.tx", 1.5])), 'List([Plug("a.translateX"), 1.5])')
         self.assertEqual(repr(List()), "List([])")
         self.assertEqual(repr(Node("a").tx.get_inputs()), "List([])")
 
     def test_the_retired_sentinels_name_list(self):
-        from rig import List
-
         plug, items = self.t.tx, List([self.t.tx])
         before = _scene()
         for label, call, arrow in (
             ("plug << List", lambda: plug << List, "<<"),
             ("plug >> List", lambda: plug >> List, ">>"),
-            ("plug << PlugList", lambda: plug << PlugList, "<<"),
             ("plug << Plug", lambda: plug << Plug, "<<"),
             ("plug >> Plug", lambda: plug >> Plug, ">>"),
             ("list << List", lambda: items << List, "<<"),
             ("list >> List", lambda: items >> List, ">>"),
-            ("list >> PlugList", lambda: items >> PlugList, ">>"),
         ):
             with self.subTest(label):
                 with self.assertRaisesRegex(
@@ -1050,8 +1115,6 @@ class TestListName(_SceneCase):
         self.assertEqual(cmds.listConnections("u.tz", plugs=True), ["t.translateY"])
 
     def test_a_missing_value_names_list(self):
-        from rig import List
-
         with self.assertRaisesRegex(ValueError, r"^Plug\(\"u\.translateX\"\) is not in List$"):
             List([self.t.tx]).index(self.u.tx)
         with self.assertRaisesRegex(ValueError, r"^7 is not in List$"):
@@ -1059,13 +1122,11 @@ class TestListName(_SceneCase):
 
     def test_the_generic_alias(self):
         import types
-        from rig import List
 
         alias = List[str]
         self.assertIsInstance(alias, types.GenericAlias)
         self.assertIs(alias.__origin__, List)
         self.assertEqual(alias.__args__, (str,))
-        self.assertIs(PlugList[int].__origin__, List)
 
 
 class TestListStrProbe(_SceneCase):
@@ -1076,8 +1137,6 @@ class TestListStrProbe(_SceneCase):
     def _assert_finds(self, probe, element, others=()):
         """`probe` finds `element` in a List of `others` + [element], by
         every method, and builds nothing."""
-        from rig import List
-
         before = _scene()
         items = List(list(others) + [element])
         at = len(items) - 1
@@ -1125,8 +1184,6 @@ class TestListStrProbe(_SceneCase):
             with self.subTest(label):
                 self._assert_finds(probe, element, others=[u.tx, u.ty])
         # a typed Attribute element (List() would lift it to a Plug)
-        from rig import List
-
         items = List([u.tx])
         list.append(items, PyNode("a").find_attr("translateX"))
         self.assertIs(type(items[1]), Attribute)
@@ -1139,8 +1196,6 @@ class TestListStrProbe(_SceneCase):
 
     def test_through_another_instance_path(self):
         # E3: one Maya plug, whatever path names it
-        from rig import List
-
         n1, n2 = _instanced()
         for label, probe, element in (
             ("|T1|S.v for |T2|S", "|T1|S.v", n2.v),
@@ -1157,8 +1212,6 @@ class TestListStrProbe(_SceneCase):
 
     def test_components(self):
         # E6: a component name is the plug of its storage
-        from rig import List
-
         plane = cmds.nurbsPlane(name="np", degree=3, patchesU=1, patchesV=1, ch=False)[0]
         shape = cmds.listRelatives(plane, shapes=True)[0]
         cmds.polyCube(name="box", ch=False)
@@ -1193,8 +1246,6 @@ class TestListStrProbe(_SceneCase):
         self._assert_finds("holder.weight", Node("outer").weight)
 
     def test_strs_that_name_no_single_plug(self):
-        from rig import List
-
         cmds.createNode("transform", name="a")
         for parent in ("P1", "P2"):
             cmds.createNode("transform", name=parent)
@@ -1220,8 +1271,6 @@ class TestListStrProbe(_SceneCase):
         self._assert_finds("P1|X.tx", Node("|P1|X").tx)
 
     def test_nodes_and_other_elements_keep_their_rule(self):
-        from rig import List
-
         cmds.createNode("transform", name="a")
         nodes = List([Node("a"), self.t])
         before = _scene()
@@ -1244,7 +1293,6 @@ class TestListStrProbe(_SceneCase):
     def test_the_str_is_resolved_once_and_only_for_a_plug_element(self):
         from unittest import mock
 
-        from rig import List
         from rig._internal import list as list_module
 
         cmds.createNode("transform", name="a")
@@ -1271,8 +1319,6 @@ class TestListStrProbe(_SceneCase):
                     self.assertEqual(resolve.call_count, calls)
 
     def test_a_renamed_node(self):
-        from rig import List
-
         cmds.createNode("transform", name="a")
         items = List([Node("a").tx])
         cmds.rename("a", "b")
@@ -1282,8 +1328,6 @@ class TestListStrProbe(_SceneCase):
     def test_a_deleted_element(self):
         # E1: a plug of a node deleted to the undo queue raises, as its name
         # does; the undo brings it back; a new node of its name is another plug
-        from rig import List
-
         cmds.undoInfo(state=True, infinity=True)
         try:
             cmds.createNode("transform", name="gone")
@@ -1315,8 +1359,6 @@ class TestListStrProbe(_SceneCase):
 
     def test_a_deleted_dynamic_attr(self):
         # E7: the attribute of the held element is freed
-        from rig import List
-
         cmds.addAttr("t", ln="knob", at="double")
         items = List([self.t.knob])
         cmds.deleteAttr("t.knob")
@@ -1328,8 +1370,6 @@ class TestListStrProbe(_SceneCase):
 
     def test_a_freed_element(self):
         # E2: a new scene or a file open frees the node of the held element
-        from rig import List
-
         folder = tempfile.mkdtemp(prefix="rig_r4a_list_")
         path = os.path.join(folder, "held.ma").replace("\\", "/")
         try:
@@ -1501,8 +1541,6 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         self.assertEqual(str(clone), "other.pk")
 
     def test_a_list_target(self):
-        from rig import List
-
         node, other = _owned_spec_scene()
         added = List([node, other.tx]) << Float("lst")
         self.assertEqual([str(p) for p in added], ["held.lst", "other.lst"])
