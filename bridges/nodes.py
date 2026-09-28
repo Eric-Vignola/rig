@@ -39,7 +39,8 @@ spec objects, and type-shorthand all work naturally::
 
 An enum attribute takes a field name as well as its int, by long or short
 name, as ``<<`` reads one (the exact name, else the one field that matches
-once case, spaces, ``_`` and ``-`` are ignored)::
+with case and outer spaces ignored, else once case, spaces, ``_`` and a ``-``
+between letters are ignored; a leading ``-`` is a sign)::
 
     nodes.transform(rotateOrder="xzy")                 # 3, as ro="xzy"
     nodes.multiplyDivide(operation="power")            # 3 (Maya's "Power")
@@ -127,19 +128,21 @@ def _enum_kwargs(node_type: str, kwargs: dict) -> dict:
     """`kwargs` (a factory's attribute kwargs) with each plain str given to an
     enum attribute of `node_type` replaced by the value of that field, read
     before the node is created: a wrong name raises TypeError naming the fields
-    (see :func:`rig.nodetypes._base._enum_value`) and nothing is created.
+    (see :func:`rig.nodetypes._base._enum_value`) and nothing is created. A
+    list or tuple for a multi or a compound (``displayLevel=["Show", "Hide"]``)
+    has every name it holds read the same way, and is kept as it is.
 
     The attribute is the type's static one, found by its long or short name
     through ``OpenMaya.MNodeClass``. A name it cannot describe (a dynamic
     attribute, a type it does not know) keeps its str for the ``<<`` after
     creation, which reads an enum field name the same way.
     """
-    from rig.nodetypes._base import _enum_value, _is_text
+    from rig.nodetypes._base import _check_enum_names, _enum_value, _holds_text, _is_text
 
     node_class = None
     resolved   = dict(kwargs)
     for attr_name, value in kwargs.items():
-        if not _is_text(value):
+        if not _holds_text(value):
             continue
         if node_class is None:
             node_class = _om.MNodeClass(node_type)
@@ -147,10 +150,11 @@ def _enum_kwargs(node_type: str, kwargs: dict) -> dict:
             attribute = node_class.attribute(attr_name)
         except (RuntimeError, TypeError, ValueError):
             continue
-        if attribute.hasFn(_om.MFn.kEnumAttribute):
-            resolved[attr_name] = _enum_value(
-                attribute, value, f"{node_type}.{attr_name}"
-            )
+        where = f"{node_type}.{attr_name}"
+        if _is_text(value) and attribute.hasFn(_om.MFn.kEnumAttribute):
+            resolved[attr_name] = _enum_value(attribute, value, where)
+        else:
+            _check_enum_names(attribute, value, where)
     return resolved
 
 

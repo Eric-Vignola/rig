@@ -1470,6 +1470,24 @@ def _enum_fields(fn: OpenMaya.MFnEnumAttribute) -> list[tuple[str, int]]:
     return fields
 
 
+def _parse_enum_names(names: str) -> list[tuple[str, int]]:
+    """The ``(field name, value)`` pairs an ``-enumName`` string declares, in
+    order (``"a:b=5:c"`` is a=0, b=5, c=6; an empty piece, as a trailing ``:``
+    leaves, declares nothing)."""
+    fields = []
+    value  = 0
+    for piece in names.split(":"):
+        name, sep, given = piece.rpartition("=")
+        if sep and given.lstrip("-").isdigit():
+            value = int(given)
+        else:
+            name = piece
+        if name:
+            fields.append((name, value))
+        value += 1
+    return fields
+
+
 def _declared_enum_fields(fn: OpenMaya.MFnEnumAttribute) -> list[tuple[str, int]] | None:
     """The fields of the enum `fn` as its ``-enumName`` flag declares them
     (``"a:b=5:c"`` is a=0, b=5, c=6), each pair kept only if `fn` gives that
@@ -1478,59 +1496,62 @@ def _declared_enum_fields(fn: OpenMaya.MFnEnumAttribute) -> list[tuple[str, int]
     if found is None:
         return None
     fields = []
-    value  = 0
-    for piece in re.sub(r"\\(.)", r"\1", found.group(1)).split(":"):
-        name, sep, given = piece.rpartition("=")
-        if sep and given.lstrip("-").isdigit():
-            value = int(given)
-        else:
-            name = piece
+    for name, value in _parse_enum_names(re.sub(r"\\(.)", r"\1", found.group(1))):
         try:
             if fn.fieldName(value) == name:
                 fields.append((name, value))
         except RuntimeError:
             pass
-        value += 1
     return sorted(fields, key=lambda field: field[1])
 
 
+# a '-' between two word characters ("Greater-Than"): a separator the loose
+# match drops. A leading or lone '-' ("-X") is a sign and stays.
+_INNER_DASH = re.compile(r"(?<=\w)-(?=\w)")
+
+
 def _field_key(name: str) -> str:
-    """`name` compared loosely: casefolded, without spaces, ``_`` or ``-``."""
-    return re.sub(r"[\s_\-]", "", name).casefold()
+    """`name` compared loosely: casefolded, without spaces, ``_`` or a ``-``
+    between two word characters (``"Greater-Than"`` is ``"greaterthan"``; the
+    sign of ``"-x"`` stays, so ``"-x"`` is never ``"x"``)."""
+    return re.sub(r"[\s_]", "", _INNER_DASH.sub("", name)).casefold()
 
 
-def _enum_value(
-    attr: OpenMaya.MObject | OpenMaya.MPlug, name: str, where: str
+def _match_enum_field(
+    fields: list[tuple[str, int]], name: str, where: str, exact: bool = True
 ) -> int:
-    """The value of the field `name` of the enum attribute `attr` (its attribute
-    MObject, or an MPlug of it), for a field name set on an enum.
+    """The value of the field `name` among `fields` (``(field name, value)``
+    pairs), in three tiers, each tried only when the one before finds nothing:
 
-    An exact field name is found first (``"zxy"``, Maya's ``"Multiply"``);
-    otherwise the one field that matches once case, spaces, ``_`` and ``-`` are
-    ignored on both sides (``"multiply"``, ``"greater_than"`` for
-    ``"Greater Than"``, ``"hasnoeffect"``). Anything else raises TypeError before
-    any edit, naming `where` (the attribute, as the caller calls it) and every
-    field with its value, with a hint to write ``Plug("a.b")`` when the name looks
-    like a plug to connect.
-    """
-    if isinstance(attr, OpenMaya.MPlug):
-        attr = attr.attribute()
-    fn = OpenMaya.MFnEnumAttribute(attr)
-    try:
-        return fn.fieldValue(name)
-    except (RuntimeError, TypeError, ValueError):
-        pass
-    fields = _enum_fields(fn)
-    key    = _field_key(name)
-    found  = [value for field, value in fields if key and _field_key(field) == key]
+    1. the exact name (skipped when `exact` is False: the caller tried it);
+    2. the name with its outer spaces and its case ignored on both sides
+       (``"x"`` for ``"X"``, ``"-X"`` for Maya's ``" -X"``);
+    3. the loose key of `_field_key` on both sides (``"greater_than"`` for
+       ``"Greater Than"``, ``"hasnoeffect"``).
+
+    Two or more fields found by a tier, or none by any, raise TypeError naming
+    `where` (the attribute, as the caller calls it) and every field with its
+    value, with a hint to write ``Plug("a.b")`` when the name looks like a plug
+    to connect. An empty or blank name is never a field."""
+    found = []
+    if exact:
+        found = [value for field, value in fields if field == name]
+    if not found:
+        folded = name.strip().casefold()
+        if folded:
+            found = [value for field, value in fields if field.strip().casefold() == folded]
+    if not found:
+        key = _field_key(name)
+        if key:
+            found = [value for field, value in fields if _field_key(field) == key]
     if len(found) == 1:
         return found[0]
     listed = ", ".join(f"{field}={value}" for field, value in fields) or "none"
     if found:
         message = (
             f"{where}: {name!r} matches {len(found)} of its enum fields once case, "
-            f"spaces, '_' and '-' are ignored; write one of them exactly, or its "
-            f"int: {listed}"
+            f"spaces, '_' and a '-' between letters are ignored; write one of them "
+            f"exactly, or its int: {listed}"
         )
     else:
         message = (
@@ -1540,6 +1561,98 @@ def _enum_value(
     if _PLUG_NAME_LIKE.match(name):
         message += f"; to connect, write Plug({name!r})"
     raise TypeError(message)
+
+
+def _enum_value(
+    attr: OpenMaya.MObject | OpenMaya.MPlug, name: str, where: str
+) -> int:
+    """The value of the field `name` of the enum attribute `attr` (its attribute
+    MObject, or an MPlug of it), for a field name set on an enum.
+
+    An exact field name is found first (``"zxy"``, Maya's ``"Multiply"``);
+    otherwise the one field that matches with case and outer spaces ignored
+    (``"x"`` for ``"X"``, ``"-X"`` for ``" -X"``), then the one that matches
+    once case, spaces, ``_`` and a ``-`` between letters are ignored on both
+    sides (``"multiply"``, ``"greater_than"`` for ``"Greater Than"``,
+    ``"hasnoeffect"``); a leading ``-`` is a sign (``"-x"`` is never ``"X"``).
+    Anything else, an empty name included, raises TypeError before any edit
+    (see `_match_enum_field`).
+    """
+    if isinstance(attr, OpenMaya.MPlug):
+        attr = attr.attribute()
+    fn = OpenMaya.MFnEnumAttribute(attr)
+    try:
+        value = fn.fieldValue(name)
+        # Maya answers some names that are no field (fieldValue("") is the
+        # first value): a hit counts only when it names that value back
+        if fn.fieldName(value) == name:
+            return value
+    except (RuntimeError, TypeError, ValueError):
+        pass
+    return _match_enum_field(_enum_fields(fn), name, where, exact=False)
+
+
+def _is_value_sequence(value: Any) -> bool:
+    """True for a list, tuple or ndarray of values (never a str)."""
+    return isinstance(value, (list, tuple, np.ndarray))
+
+
+def _holds_text(value: Any) -> bool:
+    """True if `value` is a plain str, or a list / tuple / ndarray holding one
+    at any depth (a numeric ndarray is answered by its dtype)."""
+    if isinstance(value, str):
+        return not isinstance(value, Attribute)
+    if isinstance(value, np.ndarray):
+        if value.dtype.kind == "U":
+            return True
+        return value.dtype == object and any(_holds_text(item) for item in value.ravel())
+    if isinstance(value, (list, tuple)):
+        return any(_holds_text(item) for item in value)
+    return False
+
+
+def _check_enum_names(
+    attr: OpenMaya.MObject, value: Any, where: str, element: bool = False
+) -> None:
+    """Raises TypeError, before any edit, when `value` set on the attribute
+    `attr` (its MObject; `element`: a plug of one element of it, when it is an
+    array) would give a plain str that is no field name to an enum, the way a
+    set of `value` reaches the leaves:
+
+    * an array root: a str is the auto-appended element's, a sequence one
+      value per element;
+    * a compound: a str goes to every child, a sequence one value per child
+      (extra values are dropped, as the fan-out drops them);
+    * an enum leaf: a str, or the one str of a one-element sequence, is read
+      with `_enum_value`.
+
+    It only checks: the set itself reads each name again."""
+    fn = OpenMaya.MFnAttribute(attr)
+    if fn.array and not element:
+        if _is_value_sequence(value):
+            for i, item in enumerate(value):
+                _check_enum_names(attr, item, f"{where}[{i}]", True)
+        else:
+            _check_enum_names(attr, value, where, True)
+        return
+    if attr.hasFn(OpenMaya.MFn.kCompoundAttribute):
+        compound = OpenMaya.MFnCompoundAttribute(attr)
+        children = [compound.child(i) for i in range(compound.numChildren())]
+        if _is_value_sequence(value):
+            pairs = zip(children, value)
+        else:
+            pairs = ((child, value) for child in children)
+        for child, item in pairs:
+            _check_enum_names(child, item, f"{where}.{OpenMaya.MFnAttribute(child).name}")
+        return
+    if not attr.hasFn(OpenMaya.MFn.kEnumAttribute):
+        return
+    if _is_value_sequence(value) and len(value) == 1:
+        value = value[0]
+    if isinstance(value, np.str_):
+        value = str(value)
+    if _is_text(value):
+        _enum_value(attr, value, where)
 
 
 @total_ordering
@@ -2239,10 +2352,12 @@ class Attribute(str):
               attr is expanded to the (count, *items) form cmds.setAttr() expects.
             - an enum attr takes a field name as well as its int:
               ``node.find_attr("ro").set("zyx")`` sets 5. The exact field name is
-              found first, then the one field that matches once case, spaces,
-              ``_`` and ``-`` are ignored (``"multiply"`` for Maya's
-              ``"Multiply"``); any other str raises TypeError naming the fields,
-              and the value is left as it was (see `_enum_value`).
+              found first, then the one field that matches with case and outer
+              spaces ignored, then once case, spaces, ``_`` and a ``-`` between
+              letters are ignored (``"multiply"`` for Maya's ``"Multiply"``; a
+              leading ``-`` is a sign); any other str, an empty one included,
+              raises TypeError naming the fields, and the value is left as it
+              was (see `_enum_value`).
 
         Args:
             args, kwargs: args supported by cmds.setAttr()

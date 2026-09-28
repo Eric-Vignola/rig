@@ -881,12 +881,36 @@ def _find_node(name: str) -> str | None:
 def _check_attrs(attrs: dict, *, node_type: str | None = None, node: str | None = None) -> None:
     """Every kwarg must name an attribute of the collection's node (by type
     before a create, on the node before an update), so a typo raises before
-    any write."""
-    for attr in attrs:
+    any write. A field name given to an enum attribute (``displayType=
+    "reference"``) is read the same way, so a wrong one raises TypeError
+    naming the fields before the node is made (see
+    ``rig.nodetypes._base._check_enum_names``)."""
+    from rig.nodetypes._base import _check_enum_names, _holds_text
+
+    for attr, value in attrs.items():
         query = {"type": node_type} if node is None else {"node": node}
         if not cmds.attributeQuery(attr, exists=True, **query):
             where = f"a {node_type}" if node is None else f"'{node}'"
             raise AttributeError(f"{where} has no attribute '{attr}'")
+        if _holds_text(value):
+            attribute = _attribute_of(attr, node_type=node_type, node=node)
+            if attribute is not None:
+                _check_enum_names(attribute, value, f"{node or node_type}.{attr}")
+
+
+def _attribute_of(attr: str, *, node_type: str | None, node: str | None):
+    """The attribute MObject `attr` names on `node` (or, before a create, on
+    the type `node_type`), or None when the API cannot find it."""
+    try:
+        if node is None:
+            found = OpenMaya.MNodeClass(node_type).attribute(attr)
+        else:
+            sel = OpenMaya.MSelectionList()
+            sel.add(node)
+            found = OpenMaya.MFnDependencyNode(sel.getDependNode(0)).attribute(attr)
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    return None if found.isNull() else found
 
 
 # ---------- Member-spec protocol base ------------------------------------ #

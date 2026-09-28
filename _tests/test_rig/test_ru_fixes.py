@@ -17,6 +17,15 @@ the one field that matches once case, spaces, ``_`` and ``-`` are ignored. A
 wrong name is a ``TypeError`` naming the fields, raised before any edit (a List
 sets nothing, a factory creates no node). A str into a string attribute, a str
 into a numeric attribute and the operators' plain-str refusal are unchanged.
+
+The review of U6 (:class:`TestEnumNamesReview`): an exact hit counts only when
+Maya names that value back (``fieldValue("")`` is the first value, so ``""``
+set the first field); the loose match is two tiers, case and outer spaces
+first, then spaces, ``_`` and a ``-`` between letters (a leading ``-`` is a
+sign: ``"-x"`` is never ``"X"``); a list into a compound or a multi, a List
+row of a compound and a factory's list kwarg have every name read before the
+first set; an ``Enum`` spec's ``dv`` takes a field name; a ``Layer`` /
+material spec's enum kwargs are read before its node is made.
 """
 
 from unittest import mock
@@ -480,3 +489,231 @@ class TestEnumFieldNames(UndoWalk, MayaTestCase):
         self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
         self.redo_steps(1)
         self.assertEqual(self.ro(), 2)
+
+
+class TestEnumNamesReview(MayaTestCase):
+    """The round-U review of U6: an empty name is no field, a leading ``-`` is a
+    sign, every name of a set that reaches several leaves is read before the
+    first set, an ``Enum`` spec default takes a field name, and a collection
+    spec's enum kwargs are read before its node is made."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self.t = Node(cmds.createNode("transform", name="ru_t"))
+
+    def ro(self, name="ru_t"):
+        return cmds.getAttr(f"{name}.rotateOrder")
+
+    # -- an empty name -- #
+
+    def test_an_empty_or_blank_name_is_no_field(self):
+        self.t.ro << 3
+        md = Node(cmds.createNode("multiplyDivide", name="ru_md"))
+        md.operation << 2
+        self.t << Enum("sparse", en="a=5:b=10")
+        self.t.sparse << "b"
+        nodes = List([Node(cmds.createNode("transform", name=f"ru_l{i}")) for i in range(2)])
+        nodes.ro << 4
+        forms = {
+            "<<": lambda: self.t.ro << "",
+            "=": lambda: setattr(self.t, "ro", ""),
+            "set": lambda: self.t.find_attr("ro").set(""),
+            "blank": lambda: self.t.ro << "   ",
+            "sparse": lambda: self.t.sparse << "",
+            "operation": lambda: md.operation << "",
+            "List row": lambda: nodes.ro << ["", "zyx"],
+        }
+        for form, call in forms.items():
+            with self.subTest(form=form):
+                with self.assertRaisesRegex(TypeError, r"is not one of its enum fields"):
+                    call()
+        self.assertEqual(self.ro(), 3)
+        self.assertEqual(cmds.getAttr("ru_md.operation"), 2)
+        self.assertEqual(cmds.getAttr("ru_t.sparse"), 10)
+        self.assertEqual([self.ro("ru_l0"), self.ro("ru_l1")], [4, 4])
+        before = _scene()
+        with self.assertRaisesRegex(TypeError, r"^transform\.ro: '' is not one of its enum fields"):
+            rn.transform(name="ru_empty", ro="")
+        self.assertEqual(_scene(), before)
+
+    # -- the sign of an axis -- #
+
+    def test_a_leading_dash_is_a_sign(self):
+        mp = Node(cmds.createNode("motionPath", name="ru_mp"))
+        mp.frontAxis << 2
+        for name in ("-x", "-X"):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    TypeError, rf"'{name}' is not one of its enum fields.*X=0, Y=1, Z=2$"
+                ):
+                    mp.frontAxis << name
+                self.assertEqual(cmds.getAttr("ru_mp.frontAxis"), 2)
+        mp.frontAxis << "x"
+        self.assertEqual(cmds.getAttr("ru_mp.frontAxis"), 0)
+        before = _scene()
+        with self.assertRaises(TypeError):
+            rn.motionPath(name="ru_mp2", upAxis="-z")
+        self.assertEqual(_scene(), before)
+        self.t << Enum("signed", en="X:Y:Z:-X:-Y:-Z")
+        for name, value in (("x", 0), ("-x", 3), ("-X", 3), ("X", 0), ("-z", 5), (" -y ", 4)):
+            with self.subTest(name=name):
+                self.t.signed << name
+                self.assertEqual(cmds.getAttr("ru_t.signed"), value)
+        self.t << Enum("aim", en="x:y:z")
+        self.t.aim << 2
+        with self.assertRaises(TypeError):
+            self.t.aim << "-x"
+        self.assertEqual(cmds.getAttr("ru_t.aim"), 2)
+
+    def test_a_field_with_outer_spaces(self):
+        fog = Node(cmds.createNode("envFog", name="ru_fog"))
+        fields = dict(
+            base_module._enum_fields(
+                base_module.OpenMaya.MFnEnumAttribute(fog.find_attr("fogAxis").mobject)
+            )
+        )
+        self.assertEqual(fields[" -X"], 1)
+        fog.fogAxis << "-X"
+        self.assertEqual(cmds.getAttr("ru_fog.fogAxis"), 1)
+        fog.fogAxis << "-z"
+        self.assertEqual(cmds.getAttr("ru_fog.fogAxis"), 5)
+        fog.fogAxis << "X"
+        self.assertEqual(cmds.getAttr("ru_fog.fogAxis"), 0)
+
+    def test_a_dash_between_letters_still_matches(self):
+        cond = Node(cmds.createNode("condition", name="ru_cond"))
+        cond.operation << "Greater-Than"
+        self.assertEqual(cmds.getAttr("ru_cond.operation"), 2)
+        self.t.nodeState << "waiting-normal"
+        self.assertEqual(cmds.getAttr("ru_t.nodeState"), 8)
+        self.t << Enum("sgn", en="positive:negative")
+        self.t.sgn << "nega-tive"
+        self.assertEqual(cmds.getAttr("ru_t.sgn"), 1)
+
+    # -- every name read before the first set -- #
+
+    def _pair(self, node="ru_t"):
+        cmds.addAttr(node, longName="pair", attributeType="compound", numberOfChildren=2)
+        cmds.addAttr(node, longName="pa", attributeType="enum", enumName="x:y", parent="pair")
+        cmds.addAttr(node, longName="pb", attributeType="enum", enumName="x:y", parent="pair")
+
+    def _pairs(self, node="ru_t"):
+        return cmds.getAttr(f"{node}.pa"), cmds.getAttr(f"{node}.pb")
+
+    def test_a_list_into_a_compound_sets_nothing_on_a_wrong_name(self):
+        self._pair()
+        forms = {
+            "<<": lambda: self.t.pair << ["y", "bad"],
+            "=": lambda: setattr(self.t, "pair", ["y", "bad"]),
+            "ndarray": lambda: self.t.pair << np.array(["y", "bad"]),
+        }
+        for form, call in forms.items():
+            with self.subTest(form=form):
+                with self.assertRaisesRegex(
+                    TypeError, r"^ru_t\.pair\.pb: 'bad' is not one of its enum fields"
+                ):
+                    call()
+                self.assertEqual(self._pairs(), (0, 0))
+        self.t.pair << ["y", "x"]
+        self.assertEqual(self._pairs(), (1, 0))
+        self.t.pair << ["x", 1]
+        self.assertEqual(self._pairs(), (0, 1))
+
+    def test_a_str_into_a_compound_of_different_enums(self):
+        cmds.addAttr("ru_t", longName="mix", attributeType="compound", numberOfChildren=2)
+        cmds.addAttr("ru_t", longName="ma", attributeType="enum", enumName="p:q", parent="mix")
+        cmds.addAttr("ru_t", longName="mb", attributeType="enum", enumName="q:r", parent="mix")
+        with self.assertRaisesRegex(TypeError, r"^ru_t\.mix\.mb: 'p' is not one of its enum fields"):
+            self.t.mix << "p"
+        self.assertEqual((cmds.getAttr("ru_t.ma"), cmds.getAttr("ru_t.mb")), (0, 0))
+        self.t.mix << "q"
+        self.assertEqual((cmds.getAttr("ru_t.ma"), cmds.getAttr("ru_t.mb")), (1, 0))
+
+    def test_a_list_into_a_multi_root_creates_nothing_on_a_wrong_name(self):
+        cmds.addAttr("ru_t", longName="menu", attributeType="enum", enumName="p:q:r", multi=True)
+        with self.assertRaisesRegex(TypeError, r"^ru_t\.menu\[2\]: 'bad' is not one of its enum fields"):
+            self.t.menu << ["q", "r", "bad"]
+        self.assertIsNone(cmds.getAttr("ru_t.menu", multiIndices=True))
+        self.t.menu << ["q", "r"]
+        self.assertEqual([cmds.getAttr(f"ru_t.menu[{i}]") for i in range(2)], [1, 2])
+        with self.assertRaises(TypeError):
+            self.t.menu << "bad"  # the auto-appended element
+        self.assertEqual(cmds.getAttr("ru_t.menu", multiIndices=True), [0, 1])
+
+    def test_a_list_of_compound_rows_sets_nothing_on_a_wrong_name(self):
+        other = Node(cmds.createNode("transform", name="ru_o"))
+        self._pair()
+        self._pair("ru_o")
+        rows = List([self.t.pair, other.pair])
+        with self.assertRaisesRegex(TypeError, r"^List row 1, ru_o\.pair\.pa: 'bad'"):
+            rows << ["y", "bad"]
+        with self.assertRaisesRegex(TypeError, r"^List row 1, ru_o\.pair\.pb: 'bad'"):
+            rows << [["y", "y"], ["x", "bad"]]
+        self.assertEqual((self._pairs(), self._pairs("ru_o")), ((0, 0), (0, 0)))
+        rows << [["y", "x"], ["x", "y"]]
+        self.assertEqual((self._pairs(), self._pairs("ru_o")), ((1, 0), (0, 1)))
+
+    def test_a_factory_list_kwarg_creates_nothing_on_a_wrong_name(self):
+        before = _scene()
+        with self.assertRaisesRegex(
+            TypeError, r"^lodGroup\.displayLevel\[1\]: 'bad' is not one of its enum fields"
+        ):
+            rn.lodGroup(name="ru_lod", displayLevel=["show", "bad"])
+        with self.assertRaisesRegex(TypeError, r"^transform\.rotateOrder: 'bad'"):
+            rn.transform(name="ru_ro", rotateOrder=["bad"])
+        self.assertEqual(_scene(), before)
+        lod = rn.lodGroup(name="ru_lod", displayLevel=["show", "hide"])
+        self.assertEqual([cmds.getAttr(f"{lod}.displayLevel[{i}]") for i in range(2)], [1, 2])
+        node = rn.transform(rotateOrder=["xzy"])
+        self.assertEqual(cmds.getAttr(f"{node}.rotateOrder"), 3)
+
+    # -- an Enum spec's default -- #
+
+    def test_an_enum_spec_default_takes_a_field_name(self):
+        cases = (
+            ("m0", {"en": "a:b:c", "dv": "b"}, 1),
+            ("m1", {"en": "a:b:c", "defaultValue": "C"}, 2),
+            ("m2", {"en": "a=5:b=10", "dv": "b"}, 10),
+            ("m3", {"en": ["low", "high"], "dv": "HIGH"}, 1),
+            ("m4", {"en": "a:b:c", "dv": 2}, 2),
+        )
+        for name, kwargs, value in cases:
+            with self.subTest(kwargs=kwargs):
+                self.t << Enum(name, **kwargs)
+                self.assertEqual(cmds.getAttr(f"ru_t.{name}"), value)
+                self.assertEqual(
+                    cmds.attributeQuery(name, node="ru_t", listDefault=True), [float(value)]
+                )
+        self.t << Enum("many", en="a:b:c", multi=True, dv="b")
+        self.assertEqual(cmds.attributeQuery("many", node="ru_t", listDefault=True), [1.0])
+        with self.assertRaisesRegex(
+            TypeError, r"^Enum 'bad' dv: 'd' is not one of its enum fields; .*: a=0, b=1, c=2$"
+        ):
+            Enum("bad", en="a:b:c", dv="d")
+
+    # -- collection-spec kwargs -- #
+
+    def test_collection_spec_enum_kwargs_are_read_before_the_node_is_made(self):
+        from rig import Layer
+        from rig.shade import Lambert
+
+        cube = Node(cmds.polyCube(name="ru_cube", ch=False)[0])
+        layers = set(cmds.ls(type="displayLayer"))
+        with self.assertRaisesRegex(
+            TypeError, r"^displayLayer\.displayType: 'refrence' is not one of its enum fields"
+        ):
+            cube << Layer("ru_bad", displayType="refrence")
+        self.assertEqual(set(cmds.ls(type="displayLayer")), layers)
+        cube << Layer("ru_ok", displayType="reference")
+        self.assertEqual(cmds.getAttr("ru_ok.displayType"), 2)
+        with self.assertRaisesRegex(TypeError, r"^ru_ok\.displayType: 'x' is not one of its enum fields"):
+            cube << Layer("ru_ok", update=True, displayType="x")
+        self.assertEqual(cmds.getAttr("ru_ok.displayType"), 2)
+        before = _scene()
+        with self.assertRaisesRegex(TypeError, r"^lambert\.matteOpacityMode: 'solid mate'"):
+            cube << Lambert("ru_m2", matteOpacityMode="solid mate")
+        self.assertEqual(_scene(), before)
+        cube << Lambert("ru_m1", matteOpacityMode="solid matte")
+        self.assertEqual(cmds.getAttr("ru_m1.matteOpacityMode"), 1)
