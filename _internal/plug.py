@@ -588,10 +588,9 @@ class Plug(Attribute):
         # other way, so the arrow pointed at the wrong end.
         if other is lazy.list.List or other is Plug:
             raise TypeError(
-                "'plug << List' (formerly PlugList) has been replaced by "
-                "'plug.get_inputs()', which always returns a List (empty when "
-                "nothing drives the plug). Use 'plug << List([...])' -- an "
-                "INSTANCE -- to connect."
+                "'plug << List' has been replaced by 'plug.get_inputs()', "
+                "which always returns a List (empty when nothing drives the "
+                "plug). Use 'plug << List([...])' -- an INSTANCE -- to connect."
             )
 
         # Collection spec: a component plug becomes a member (the spec
@@ -702,9 +701,9 @@ class Plug(Attribute):
         # on the right).
         if other is List or other is Plug:
             raise TypeError(
-                "'plug >> List' (formerly PlugList) has been replaced by "
-                "'plug.get_outputs()', which always returns a List (empty "
-                "when the plug drives nothing)."
+                "'plug >> List' has been replaced by 'plug.get_outputs()', "
+                "which always returns a List (empty when the plug drives "
+                "nothing)."
             )
 
         if isinstance(other, Node):

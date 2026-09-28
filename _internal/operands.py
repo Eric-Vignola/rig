@@ -281,7 +281,7 @@ def operator_where(dunder: str, left: str, right: Any, row: Optional[int] = None
     else:
         where = f"{left} {symbol} {_render(right)}"
     if row is not None:
-        where = f"PlugList row {row}, {where}"
+        where = f"List row {row}, {where}"
     return where
 
 

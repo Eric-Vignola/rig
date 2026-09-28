@@ -1041,7 +1041,7 @@ class TestListName(_SceneCase):
         ):
             with self.subTest(label):
                 with self.assertRaisesRegex(
-                    TypeError, r"^'<?\w+>? %s List' \(formerly PlugList\) has been replaced" % arrow
+                    TypeError, r"^'<?\w+>? %s List' has been replaced" % arrow
                 ):
                     call()
         self.assertEqual(_new(before), [])

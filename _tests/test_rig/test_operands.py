@@ -234,7 +234,7 @@ class TestPlugListOperators(_OperandCase):
 
     def test_message_names_the_row(self):
         err = self.assertRejects(lambda: PlugList([self.t.tx, self.t.ty]) + [1, S])
-        self.assertTrue(str(err).startswith("PlugList row 1, t.translateY + 'cube.ty': "), str(err))
+        self.assertTrue(str(err).startswith("List row 1, t.translateY + 'cube.ty': "), str(err))
 
     def test_a_raw_str_element_is_checked_too(self):
         items = PlugList([self.t.tx])
