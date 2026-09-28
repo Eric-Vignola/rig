@@ -7,12 +7,14 @@ from __future__ import annotations
 import contextlib
 import enum
 import re
+from collections import namedtuple
 from numbers import Number
 from typing import Generator, List
 
 import numpy as np
 from maya import cmds, mel
 from maya.api import OpenMaya
+from rig._internal.undo import _undo_chunk
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
@@ -49,17 +51,17 @@ class Mesh(Geometry):
     # --- creation
 
     @classmethod
-    def _create(cls, mesh_data: MeshData, name: str | None = None, **kwargs) -> str:
-        """[Internal] Creates a mesh from a mesh data object and returns the mesh name.
-
-        Args:
-            mesh_data: A MeshData object.
-        """
-        from cgmath.geometry import MeshData
-
-        cmd = _MeshCreateCommand(mesh_data, name=name)
-        with load_plugin("undoable_api_command"):
-            return cmds.runUndoableAPICommand(cmd)[0]
+    def _create(
+        cls,
+        mesh_data: MeshData,
+        name:      str | None          = None,
+        uv_data:   list[UVData] | None = None,
+        **kwargs,
+    ) -> str:
+        """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uv_data`
+        (a list, or None) and returns the transform's name. `Mesh.create` wraps
+        it in its undo chunk; see there."""
+        return _create_mesh(mesh_data, name, uv_data)
 
     @classmethod
     def create(
@@ -73,26 +75,44 @@ class Mesh(Geometry):
 
         Args:
             mesh_data: A MeshData object.
-            uv_data: One or more UVData objects.
-            name: The name of the mesh to create
+            uv_data: One or more UVData objects. The first one fills the default
+                set (``map1``, renamed to its name when that differs); each
+                other one becomes a new set of its name, in order.
+            name: The name of the mesh to create (a trailing ``Shape<digits>``
+                is dropped: ``"mShape2"`` names the transform ``m2`` and the
+                shape ``mShape2``). None: ``mesh_data.name``, else
+                ``polySurface<N>``.
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
-        """
-        from cgmath.geometry import MeshData, UVData, UVList
 
-        mesh = super().create(mesh_data, name=name, container=container)
+        The whole call is ONE undo step named ``rig.Mesh.create``: one
+        ``cmds.undo()`` removes the transform and the shape (with the UV sets,
+        the ``initialShadingGroup`` membership, the matrix and, in a scope, the
+        registration), and ``cmds.redo()`` brings back the same node (its UUID,
+        and any Mesh object held on it, stay valid). The mesh rides a recorded
+        ``createNode`` transform: the shape is made under it through the API,
+        and its UVs are written through the API before any recorded command
+        touches the mesh. It never changes the selection and leaves no
+        construction history.
+
+        A face with holes is built as the triangulation of its outer loop and
+        hole loops, whose internal edges one ``polyDelEdge`` (no construction
+        history, no Orig shape) removes again. Its face-vertex lists may start
+        at another vertex of each loop than ``mesh_data``'s (Maya's merge
+        order); each UV stays on its vertex. Invalid mesh data raises
+        RuntimeError before anything is made; an error after the transform is
+        made deletes it again before it propagates.
+        """
+        from cgmath.geometry import UVData
+
         if uv_data:
             if isinstance(uv_data, UVData):
                 uv_data = [uv_data]
-            for i, each in enumerate(uv_data):
-                # reuse the default uv set
-                if i == 0:
-                    mesh.set_uv_data(each, i)
-                else:
-                    mesh.add_uv_set(each.name)
-                    mesh.set_uv_data(each, each.name)
-        return mesh
+        else:
+            uv_data = None
+        with _undo_chunk("rig.Mesh.create"):
+            return super().create(mesh_data, uv_data=uv_data, name=name, container=container)
 
     # --- mesh geometry data methods
 
@@ -964,22 +984,264 @@ def _triangulate_holed_face(
                 out_internal_edges.add(ek)
 
 
-def _delete_internal_edges(xform: str, internal_edges: set[tuple[int, int]]) -> None:
-    """Delete triangulation edges from a mesh to restore N-gon + hole topology."""
-    shape = cmds.listRelatives(xform, shapes=True, fullPath=True)[0]
-    sel   = OpenMaya.MSelectionList()
-    sel.add(shape)
-    fn = OpenMaya.MFnMesh(sel.getDagPath(0))
+def _delete_internal_edges(
+    shape: OpenMaya.MObject, internal_edges: set[tuple[int, int]]
+) -> None:
+    """Deletes the triangulation edges of the holed faces (``(min, max)``
+    vertex pairs) from the mesh `shape`, restoring each N-gon with its holes.
 
-    edge_ids = []
-    for eid in range(fn.numEdges):
-        v0, v1 = fn.getEdgeVertices(eid)
-        if (min(v0, v1), max(v0, v1)) in internal_edges:
-            edge_ids.append(eid)
+    One ``polyDelEdge`` of every edge, ``cleanVertices=False`` (no vertex
+    goes) and ``constructionHistory=False`` (no ``polyDelEdge`` node, no Orig
+    shape). Each edge is found from one of its vertices (a lookup per edge,
+    not a scan of the mesh). The shape's UVs must be written before this call:
+    it is a recorded command that rewrites the mesh, so API data written after
+    it would be lost on redo (the ride rule), while data written before it
+    comes back with every undo / redo, each UV on its vertex.
+    """
+    fn     = OpenMaya.MFnMesh(shape)
+    it     = OpenMaya.MItMeshVertex(shape)
+    found  = set()
+    for a, b in internal_edges:
+        a, b = int(a), int(b)
+        it.setIndex(a)
+        for eid in it.getConnectedEdges():
+            v0, v1 = fn.getEdgeVertices(eid)
+            if v0 == b or v1 == b:
+                found.add(eid)
+                break
+    if found:
+        path = OpenMaya.MFnDagNode(shape).fullPathName()
+        cmds.polyDelEdge(
+            [f"{path}.e[{eid}]" for eid in sorted(found)],
+            cleanVertices=False,
+            constructionHistory=False,
+        )
 
-    if edge_ids:
-        edges = [f"{shape}.e[{eid}]" for eid in edge_ids]
-        cmds.polyDelEdge(edges, cleanVertices=False)
+
+def _mesh_topology(
+    mesh_data: MeshData,
+) -> tuple[object, object, set[tuple[int, int]], dict[int, list[int]]]:
+    """Checks `mesh_data` and returns what `MFnMesh.create` builds from it:
+    ``(counts, indices, internal_edges, hole_triangles)``.
+
+    Without holes: the data's own ``counts`` / ``indices``, no edges and no
+    triangles. With holes, every holed face is CDT-triangulated in place
+    (`_triangulate_holed_face`), ``internal_edges`` holds the triangulation
+    edges `_delete_internal_edges` removes again, and ``hole_triangles`` maps
+    each holed face to the flat vertex ids of its triangles.
+
+    Raises RuntimeError, before anything is made, when the face counts do not
+    add up to the indices, an index is not a point, or the hole arrays do not
+    match each other, the faces or the points.
+    """
+    counts   = np.asarray(mesh_data.counts, dtype=np.int64).ravel()
+    indices  = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
+    n_points = len(mesh_data.points)
+    if int(counts.sum()) != len(indices):
+        raise RuntimeError(
+            f"MeshData: the face counts add up to {int(counts.sum())} face-vertices, "
+            f"but there are {len(indices)} indices"
+        )
+    if len(indices) and (int(indices.min()) < 0 or int(indices.max()) >= n_points):
+        raise RuntimeError(
+            f"MeshData: a face index is not one of the {n_points} points "
+            f"(indices range {int(indices.min())}..{int(indices.max())})"
+        )
+
+    has_holes = mesh_data.hole_faces is not None and len(mesh_data.hole_faces) > 0
+    if not has_holes:
+        return mesh_data.counts, mesh_data.indices, set(), {}
+
+    if mesh_data.hole_counts is None or mesh_data.hole_indices is None:
+        raise RuntimeError("MeshData: hole_faces is set without hole_counts / hole_indices")
+    hole_faces   = np.asarray(mesh_data.hole_faces, dtype=np.int64).ravel()
+    hole_counts  = np.asarray(mesh_data.hole_counts, dtype=np.int64).ravel()
+    hole_indices = np.asarray(mesh_data.hole_indices, dtype=np.int64).ravel()
+    if len(hole_faces) != len(hole_counts) or int(hole_counts.sum()) != len(hole_indices):
+        raise RuntimeError(
+            f"MeshData: {len(hole_faces)} hole faces, {len(hole_counts)} hole counts "
+            f"adding up to {int(hole_counts.sum())}, and {len(hole_indices)} hole indices "
+            "do not match"
+        )
+    if int(hole_faces.min()) < 0 or int(hole_faces.max()) >= len(counts):
+        raise RuntimeError(f"MeshData: a hole face is not one of the {len(counts)} faces")
+    if len(hole_indices) and (
+        int(hole_indices.min()) < 0 or int(hole_indices.max()) >= n_points
+    ):
+        raise RuntimeError(f"MeshData: a hole index is not one of the {n_points} points")
+
+    hole_map       = _build_hole_map(mesh_data)
+    new_counts     = []
+    new_indices    = []
+    internal_edges = set()
+    hole_triangles = {}
+    offset         = 0
+    for fi in range(len(counts)):
+        c          = int(counts[fi])
+        face_verts = mesh_data.indices[offset : offset + c]
+        if fi not in hole_map:
+            new_counts.append(c)
+            new_indices.extend(int(v) for v in face_verts)
+        else:
+            start = len(new_indices)
+            _triangulate_holed_face(
+                mesh_data.points,
+                face_verts,
+                hole_map[fi],
+                new_counts,
+                new_indices,
+                internal_edges,
+            )
+            hole_triangles[fi] = new_indices[start:]
+        offset += c
+    return new_counts, new_indices, internal_edges, hole_triangles
+
+
+# a UV set's data in the shape `_write_uv_set` reads (a UVData has these fields)
+_UVArrays = namedtuple("_UVArrays", "name points counts indices")
+
+
+def _triangulated_uvs(
+    mesh_data: MeshData, uv_data: UVData, hole_triangles: dict[int, list[int]]
+) -> _UVArrays:
+    """`uv_data`'s assignment for the mesh `_mesh_topology` builds: each holed
+    face's UVs are handed to its triangles by vertex (every other face keeps
+    its own), so each UV stays on its vertex through `_delete_internal_edges`.
+
+    Raises RuntimeError when the UV counts do not match the faces (one count
+    per face, 0 or the face's vertex count on a holed face) or the UV indices.
+    """
+    mesh_counts = np.asarray(mesh_data.counts, dtype=np.int64).ravel()
+    mesh_ids    = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
+    uv_counts   = np.asarray(uv_data.counts, dtype=np.int64).ravel()
+    uv_ids      = np.asarray(uv_data.indices, dtype=np.int64).ravel()
+    if len(uv_counts) != len(mesh_counts) or int(uv_counts.sum()) != len(uv_ids):
+        raise RuntimeError(
+            f"UVData {uv_data.name!r}: {len(uv_counts)} face counts adding up to "
+            f"{int(uv_counts.sum())} for {len(mesh_counts)} faces and {len(uv_ids)} indices"
+        )
+    mesh_starts = np.concatenate(([0], np.cumsum(mesh_counts)))
+    uv_starts   = np.concatenate(([0], np.cumsum(uv_counts)))
+    counts, ids = [], []
+    previous    = 0
+    for face in sorted(hole_triangles):
+        # the faces before this one keep their assignment
+        counts.append(uv_counts[previous:face])
+        ids.append(uv_ids[uv_starts[previous] : uv_starts[face]])
+        triangles = hole_triangles[face]
+        n_uvs     = int(uv_counts[face])
+        if n_uvs == 0:
+            counts.append(np.zeros(len(triangles) // 3, dtype=np.int64))
+        elif n_uvs == int(mesh_counts[face]):
+            by_vertex = dict(
+                zip(
+                    mesh_ids[mesh_starts[face] : mesh_starts[face + 1]].tolist(),
+                    uv_ids[uv_starts[face] : uv_starts[face + 1]].tolist(),
+                )
+            )
+            try:
+                ids.append(np.array([by_vertex[v] for v in triangles], dtype=np.int64))
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"UVData {uv_data.name!r}: holed face {face} has no UV for vertex {exc}"
+                ) from None
+            counts.append(np.full(len(triangles) // 3, 3, dtype=np.int64))
+        else:
+            raise RuntimeError(
+                f"UVData {uv_data.name!r}: holed face {face} has {n_uvs} UVs for "
+                f"{int(mesh_counts[face])} face-vertices"
+            )
+        previous = face + 1
+    counts.append(uv_counts[previous:])
+    ids.append(uv_ids[uv_starts[previous] :])
+    return _UVArrays(uv_data.name, uv_data.points, np.concatenate(counts), np.concatenate(ids))
+
+
+def _write_uv_set(fn: OpenMaya.MFnMesh, uv_set: str, uv_data: UVData) -> None:
+    """Replaces the UVs of the set `uv_set` of the mesh `fn` with `uv_data`'s
+    (``points`` as ``(n, 2)``, ``counts``, ``indices``; a UVData or a
+    `_UVArrays`). ``clearUVs`` first, so a different UV count or an empty
+    set is written exactly; nothing more when the data holds no UVs. Pure API
+    (no cmds): safe in a journal item's undo / redo."""
+    fn.clearUVs(uv_set)
+    points = uv_data.points
+    if len(points) or len(uv_data.indices):
+        fn.setUVs(points[:, 0], points[:, 1], uv_set)
+        fn.assignUVs(uv_data.counts, uv_data.indices, uv_set)
+
+
+def _mesh_create_name(name: str | None) -> str | None:
+    """The name `Mesh.create` gives the transform: `name` without a trailing
+    ``Shape<digits>`` (``"mShape2"`` is ``"m2"``, whose shape Maya names
+    ``mShape2``); None when there is no name."""
+    if name and re.search("Shape[0-9]*$", name):
+        name = "".join(name.rpartition("Shape")[::2])
+    return name or None
+
+
+def _create_mesh(
+    mesh_data: MeshData, name: str | None, uv_data: list[UVData] | None
+) -> str:
+    """`Mesh._create`'s body: the ride. Returns the transform's name.
+
+    In this order (`Mesh.create` holds the one undo chunk around it):
+
+    1. check the data, triangulate the holed faces and hand their UVs to the
+       triangles (`_mesh_topology`, `_triangulated_uvs`): nothing is made yet;
+    2. ``cmds.createNode("transform", name="polySurface#", skipSelect=True)``,
+       the recorded node the mesh rides with (today's default name);
+    3. ``MFnMesh.create(..., parent=<transform>)``: the shape, under it;
+    4. the UV sets through the API (`_write_uv_set`): the first into the
+       current set (renamed to its name when that differs), each other one
+       into a new set of its name;
+    5. the holed faces' internal edges (`_delete_internal_edges`), after the
+       UVs;
+    6. ``cmds.sets`` into ``initialShadingGroup``, ``cmds.rename`` of the
+       transform (Maya renames the shape after it, as it always did) and
+       ``cmds.xform`` of the data's matrix.
+
+    Any error after step 2 deletes the transform before it propagates.
+    """
+    counts, indices, internal_edges, hole_triangles = _mesh_topology(mesh_data)
+    uv_sets = list(uv_data or ())
+    if hole_triangles:
+        uv_sets = [_triangulated_uvs(mesh_data, uv, hole_triangles) for uv in uv_sets]
+    name = _mesh_create_name(name or mesh_data.name)
+
+    xform  = cmds.createNode("transform", name="polySurface#", skipSelect=True)
+    sel    = OpenMaya.MSelectionList()
+    sel.add(xform)
+    parent = sel.getDependNode(0)
+    handle = OpenMaya.MObjectHandle(parent)
+    try:
+        shape = Mesh.FN_SET().create(
+            OpenMaya.MPointArray(mesh_data.points), counts, indices, parent=parent
+        )
+        fn = OpenMaya.MFnMesh(shape)
+        for i, uv in enumerate(uv_sets):
+            if i == 0:
+                # the default set
+                current = fn.currentUVSetName()
+                _write_uv_set(fn, current, uv)
+                if uv.name != current:
+                    fn.renameUVSet(current, uv.name)
+            else:
+                if uv.name in fn.getUVSetNames():
+                    raise RuntimeError(f"UV set {uv.name} already exists.")
+                fn.createUVSet(uv.name)
+                _write_uv_set(fn, uv.name, uv)
+        if internal_edges:
+            _delete_internal_edges(shape, internal_edges)
+        cmds.sets(xform, forceElement="initialShadingGroup")
+        if name:
+            # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
+            xform = cmds.rename(xform, name)
+        cmds.xform(xform, matrix=mesh_data.matrix.ravel())
+    except BaseException:
+        if handle.isValid():
+            cmds.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+        raise
+    return xform
 
 
 def _build_hole_map(mesh_data: MeshData) -> dict[int, list[list[int]]]:
@@ -1029,107 +1291,6 @@ def _propagate_holes_to_uvs(mesh_data: MeshData, uv_list: UVList) -> None:
             offset += count
 
         uv.hole_indices = np.array(uv_hole_indices, dtype=int)
-
-
-class _MeshCreateCommand:
-    def __init__(self, mesh_data: MeshData, name: str | None = None) -> None:
-        from cgmath.geometry import MeshData
-
-        super().__init__()
-        self._mesh_data  = mesh_data
-        self._name       = name
-        self._mesh_xform = None
-
-    def doIt(self) -> None:
-        mesh_data = self._mesh_data
-        points    = mesh_data.points
-
-        has_holes = mesh_data.hole_faces is not None and len(mesh_data.hole_faces) > 0
-
-        if not has_holes:
-            mobject = Mesh.FN_SET().create(
-                OpenMaya.MPointArray(points),
-                mesh_data.counts,
-                mesh_data.indices,
-            )
-            self._mesh_xform = OpenMaya.MFnDagNode(mobject).partialPathName()
-        else:
-            self._mesh_xform = self._create_with_holes()
-
-        cmds.sets(self._mesh_xform, forceElement="initialShadingGroup")
-
-        # if a name is not specified, attempt to use the one stored in mesh_data
-        self._name = self._name or mesh_data.name
-
-        if self._name:
-            # if name ends with "Shape#", remove it
-            if bool(re.search("Shape[0-9]*$", self._name)):
-                self._name = "".join(self._name.rpartition("Shape")[::2])
-            # apply name to the transform and let maya rename the shape
-            self._mesh_xform = cmds.rename(self._mesh_xform, self._name)
-
-        # transform the parent by the stored matrix
-        cmds.xform(self._mesh_xform, matrix=mesh_data.matrix.ravel())
-
-        return self._mesh_xform
-
-    def _create_with_holes(self) -> str:
-        """Creates a mesh with hole-aware face creation.
-
-        CDT-triangulates holed faces, creates the entire mesh via a single
-        MFnMesh.create() call, then deletes the internal triangulation
-        edges so Maya reconstructs the original N-gon + hole topology.
-        """
-        mesh_data = self._mesh_data
-        points    = mesh_data.points
-        counts    = mesh_data.counts
-        indices   = mesh_data.indices
-        hole_map  = _build_hole_map(mesh_data)
-
-        new_counts     = []
-        new_indices    = []
-        internal_edges = set()
-
-        idx_offset = 0
-        for fi in range(len(counts)):
-            c          = int(counts[fi])
-            face_verts = indices[idx_offset : idx_offset + c]
-
-            if fi not in hole_map:
-                new_counts.append(c)
-                new_indices.extend(int(v) for v in face_verts)
-            else:
-                _triangulate_holed_face(
-                    points,
-                    face_verts,
-                    hole_map[fi],
-                    new_counts,
-                    new_indices,
-                    internal_edges,
-                )
-
-            idx_offset += c
-
-        # single MFnMesh.create() call for the entire mesh
-        mobject = Mesh.FN_SET().create(
-            OpenMaya.MPointArray(points),
-            new_counts,
-            new_indices,
-        )
-        xform = OpenMaya.MFnDagNode(mobject).partialPathName()
-
-        # delete internal triangulation edges to restore hole topology
-        if internal_edges:
-            _delete_internal_edges(xform, internal_edges)
-
-        return xform
-
-    def undoIt(self) -> None:
-        if self._mesh_xform and cmds.objExists(self._mesh_xform):
-            cmds.delete(self._mesh_xform)
-
-    def redoIt(self) -> None:
-        self.doIt()
 
 
 class _MeshSetPointsCommand:
