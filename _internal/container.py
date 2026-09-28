@@ -1036,14 +1036,19 @@ container = _ContainerStack()
 
 def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict) -> tuple:
     """Call ``fn`` and return ``(result, created)``: the full names of the
-    nodes Maya created during the call.
+    nodes Maya created during the call for the call itself, the nodes a scope
+    registers.
 
     A node-added callback is the only exact way to tell what a command
     made from what it merely returned: a query returns nodes it looked up,
     ``parent`` and ``rename`` return nodes that already existed, and
     ``polyCube`` makes a shape it never returns. A node the command created
     and deleted again within the call is dropped (its handle is no longer
-    valid). Used by the ``rc.*`` bridges and by the typed creators.
+    valid). So is a node it made for a node that already existed, which a
+    delete of the scope's container must not take with it (see
+    `_made_for_others`): a deformer's ``...ShapeOrig`` under the user's mesh,
+    a history shape, a skin's shared ``bindPose``. Used by the ``rc.*``
+    bridges and by the typed creators.
     """
     handles = []
 
@@ -1056,16 +1061,55 @@ def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict) -> tuple:
     finally:
         OpenMaya.MMessage.removeCallback(callback_id)
 
+    made    = [handle.object() for handle in handles if handle.isValid()]
     created = []
-    for handle in handles:
-        if not handle.isValid():
+    for obj in made:
+        if _made_for_others(obj, made, result):
             continue
-        obj = handle.object()
         if obj.hasFn(OpenMaya.MFn.kDagNode):
             created.append(OpenMaya.MFnDagNode(obj).fullPathName())
         else:
             created.append(OpenMaya.MFnDependencyNode(obj).name())
     return result, created
+
+
+def _made_for_others(obj: Any, made: list, result: Any) -> bool:
+    """True for a node a call made (`obj`, one of the MObjects `made`) that
+    belongs to a node that existed before the call, so a scope must not
+    register it (deleting the scope's container would delete it too):
+
+    * an intermediate DAG object under a node the call did not make: the
+      ``...ShapeOrig`` a skinCluster, blendShape or cluster puts under the
+      deformed mesh's transform, the history shape a poly command adds to a
+      mesh that had none. Deleted with the deformer, the mesh lost its rest
+      shape and froze posed; left alone, Maya restores it when the deformer
+      goes;
+    * a ``dagPose`` the call does not return: the ``bindPose`` a skinCluster
+      makes for its joints, which every later skin of those joints shares.
+
+    A node the call returns (`result`: a node name or a list of them) is its
+    own, whatever it is (``rc.dagPose(save=True, name="p")``)."""
+    if obj.hasFn(OpenMaya.MFn.kDagNode):
+        dag = OpenMaya.MFnDagNode(obj)
+        if not dag.isIntermediateObject or not dag.parentCount():
+            return False
+        parent = dag.parent(0)
+        if parent.hasFn(OpenMaya.MFn.kWorld) or any(parent == other for other in made):
+            return False
+        return not _returned(result, dag.fullPathName(), dag.partialPathName())
+    if obj.apiType() != OpenMaya.MFn.kDagPose:
+        return False
+    name = OpenMaya.MFnDependencyNode(obj).name()
+    return not _returned(result, name, name)
+
+
+def _returned(result: Any, long_name: str, short_name: str) -> bool:
+    """True if the command result `result` (a node name or a list of them)
+    names the node of `long_name` / `short_name`."""
+    names = result if isinstance(result, (list, tuple)) else (result,)
+    return any(
+        isinstance(name, str) and str(name) in (long_name, short_name) for name in names
+    )
 
 
 def _gc_tag(node_name: str) -> None:
@@ -1139,7 +1183,9 @@ def _typed_create(
     * the returned node is tagged for :func:`cleanup` when
       ``cls.NATIVE_NODE_TYPE`` is GC-eligible and the class has no
       ``CUSTOM_NODE_TYPE`` (a user's metadata node is never collected);
-    * every node the call made (else the returned node) is registered with
+    * every node the call made for itself (see :func:`_call_tracking_creation`:
+      not a deformer's Orig shape under the user's mesh, nor a shared bind
+      pose), else the returned node, is registered with
       :meth:`_ContainerStack.add`.
 
     Every other keyword reaches ``run`` untouched.

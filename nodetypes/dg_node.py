@@ -593,7 +593,8 @@ class DGNode(Node):
         ``ContainerOptions.skip_selection`` (for the ``_create``s that forward
         it to ``cmds.createNode``: DGNode's and DAGNode's), the returned node is
         tagged for ``cleanup()`` when its type is a GC-eligible utility type,
-        and every node the call made is registered. ``container=False`` opts
+        and every node the call made for itself is registered (a deformer's
+        Orig shape under the user's mesh and a shared bind pose are not). ``container=False`` opts
         out; a scene registry (``_CONTAINER_AWARE = False``: display layers,
         sets and shading engines, references) stays out unless
         ``container=True`` (then registered, never prefixed). Only the
