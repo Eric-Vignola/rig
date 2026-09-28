@@ -2,7 +2,7 @@
 
 Maya records an API 2.0 edit (``MFnMesh.setPoints``, ``MFnSkinCluster.setWeights``, ...)
 only through a registered command. This plug-in registers one, ``rigUndoableAPICommand``
-(a name of rig's own: MPyNode's ``mpynode_api2`` registers ``runUndoableAPICommand``),
+(a name of rig's own: another studio plug-in registers ``runUndoableAPICommand``),
 and replaces it in ``maya.cmds`` with a wrapper that takes the object to run.
 
 * ``cmds.rigUndoableAPICommand(obj)`` runs the command inside an undo chunk named
