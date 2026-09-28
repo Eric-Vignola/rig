@@ -429,8 +429,9 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
     """numpy-style N-D indexing for multi-dimensional geometry components.
 
     NURBS-surface ``cv`` (2-D) and lattice ``pt`` (3-D) support numpy-style
-    per-axis indexing: ``cv[u, v]`` is an element; a bare/partial index or any
-    slice yields a ``List`` (row / column / grid / range); the resulting
+    per-axis indexing: ``cv[u, v]`` is an element; any slice, or an int key
+    leaving one axis, yields a ``List`` (row / column / grid / range), and an
+    int key leaving two axes (``pt[0]``) raises ``IndexError``; the resulting
     plugs *display* as ``cv[u][v]`` / ``pt[s][t][u]`` while resolving to the
     real flat ``controlPoints[k]`` storage. 1-D components (curve ``cv``, mesh
     ``vtx``/``pnts``, mesh ``uv``/``map``) are unchanged: a single index is the
@@ -603,8 +604,13 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
         )
 
     def test_lattice_slab(self):
+        # Round U (U5, user decision): a bare int leaving 2 axes raises, so a
+        # chained pt[0][1] can never silently read pt[0][0][1]. The slab is
+        # spelled with explicit slices.
         shape = self._lattice("lat_slab", (3, 4, 5))
-        slab  = Node(shape).pt[0]  # all (t,u) at s=0 -> 4*5=20
+        with self.assertRaises(IndexError):
+            Node(shape).pt[0]
+        slab  = Node(shape).pt[0, :, :]  # all (t,u) at s=0 -> 4*5=20
         self.assertEqual(len(slab), 20)
         self.assertEqual(str(slab[0]), f"{shape}.pt[0][0][0]")
 
@@ -652,7 +658,9 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
         shape   = self._lattice("lat_rename_pre", (3, 4, 5))
         handle  = Node(shape).pt  # bind before the rename
         renamed = cmds.rename(shape, "lat_rename_post")
-        slab    = handle[0]       # exercises _axis_sizes lattice branch + _element
+        # exercises _axis_sizes lattice branch + _element (round U: a bare
+        # handle[0] raises IndexError, the slab is spelled handle[0, :, :])
+        slab    = handle[0, :, :]
         self.assertEqual(len(slab), 20)  # 4 * 5 at s=0
         self.assertEqual(str(slab[0]), f"{renamed}.pt[0][0][0]")
 
