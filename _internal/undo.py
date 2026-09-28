@@ -27,8 +27,7 @@ Usage::
     def build_other_leg():
         ...
 
-rig's operations open their named chunks through this module (round 5's
-statement barrier goes into :class:`_Chunk`).
+rig's operations open their named chunks through this module.
 """
 
 from __future__ import annotations
