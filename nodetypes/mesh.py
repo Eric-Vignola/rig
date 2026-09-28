@@ -21,7 +21,7 @@ from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.geometry import Geometry
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
-from rig.nodetypes.plugins import load_plugin
+from rig.nodetypes.plugins import _run_undoable
 from scipy.spatial import cKDTree
 
 
@@ -1320,8 +1320,7 @@ class _MeshSetPointsCommand:
         self._space      = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         self._old_points = None
 
-        with load_plugin("undoable_api_command"):
-            cmds.rigUndoableAPICommand(self)
+        _run_undoable(self)
 
     def doIt(self) -> None:
         self._old_points = self._fn_set.getPoints(self._space)
@@ -1342,8 +1341,7 @@ class _MeshAddUVSetCommand:
         self._fn_set = mesh.fn_set
         self._uv_set = uv_set
 
-        with load_plugin("undoable_api_command"):
-            cmds.rigUndoableAPICommand(self)
+        _run_undoable(self)
 
     def doIt(self) -> None:
         self._fn_set.createUVSet(self._uv_set)
@@ -1373,8 +1371,7 @@ class _MeshSetUVDataCommand:
         self._old_ids    = None
         self._old_counts = None
 
-        with load_plugin("undoable_api_command"):
-            cmds.rigUndoableAPICommand(self)
+        _run_undoable(self)
 
     def doIt(self) -> None:
         self._old_u_vals, self._old_v_vals = self._fn_set.getUVs(self._uv_set)

@@ -299,7 +299,7 @@ class TestPublicUndoChunk(UndoWalk, MayaTestCase):
         self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
 
     def test_rig_edits_inside_a_user_chunk(self):
-        # a rig API edit (runUndoableAPICommand and its own chunk) joins the user's step
+        # a rig API edit (rigUndoableAPICommand, no chunk of its own) joins the user's step
         mesh = Mesh(cmds.polyCube(name="c", constructionHistory=False)[0])
         cmds.flushUndo()
         before = mesh_state("c")

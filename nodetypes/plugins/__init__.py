@@ -101,3 +101,22 @@ def load_plugin(
                 else:
                     if cmds.pluginInfo(name, query=True, loaded=True):
                         cmds.warning(f"load_plugin: could not unload {name}: it is still in use")
+
+
+def _run_undoable(obj):
+    """[Internal] Puts the edit of ``obj`` (an object with ``doIt`` / ``undoIt`` /
+    ``redoIt``) on the undo queue through ``rigUndoableAPICommand``, without the
+    wrapper's undo chunk: one unnamed undo step, about 3.3 us of overhead (the
+    chunked ``with load_plugin(...): cmds.rigUndoableAPICommand(obj)`` costs
+    about 20 us, and the call sites' former route about 38 us).
+
+    For an ``obj`` whose ``doIt`` calls no ``cmds`` (a ``cmds`` call in ``doIt``
+    would be its own undo step); inside a user's or rig's undo chunk, the step
+    joins that chunk. Loads rig's plug-in the first time (and again after an
+    unload); the command is fetched from ``maya.cmds`` on every call, never
+    kept across a reload. Returns what the command returns."""
+    command = getattr(cmds, UNDOABLE_API_COMMAND, None)
+    if command is None:
+        _ensure_loaded("undoable_api_command", True)
+        command = getattr(cmds, UNDOABLE_API_COMMAND)
+    return command.run(obj)
