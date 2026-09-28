@@ -1344,6 +1344,9 @@ _MULTIDIM_ALIASES = frozenset().union(
     *(aliases for _, aliases in _MULTIDIM_COMPONENTS.values())
 )
 
+# The axis letters per dimension count, for error hints only.
+_AXIS_NAMES = {2: ("u", "v"), 3: ("s", "t", "u")}
+
 
 class ComponentPlug(Plug):
     """A :class:`Plug` for a *multi-dimensional* geometry component -- a
@@ -1356,12 +1359,21 @@ class ComponentPlug(Plug):
 
     * an all-integer key (``cv[1, 2]``, ``pt[1, 2, 0]``) returns a single
       **element** :class:`ComponentPlug`;
-    * any key containing a slice -- or a bare/partial int, which pads the
-      remaining axes with ``:`` (numpy ``arr[i] == arr[i, :, ...]``) -- returns
-      a :class:`List` of element plugs in row-major order: ``cv[0]`` /
-      ``cv[0, :]`` row, ``cv[:, 1]`` column, ``cv[:]`` full grid, ``cv[1:3, 2]``
-      range, ``pt[:, :, 0]`` plane, and so on. Chained ``cv[i][j]`` therefore
-      still works (``cv[i]`` is the row :class:`List`; ``[j]`` picks it).
+    * any key containing a slice returns a :class:`List` of element plugs in
+      row-major order, missing trailing axes meaning ``:`` (numpy
+      ``arr[i, :] == arr[i, :, :]``): ``cv[0, :]`` row, ``cv[:, 1]`` column,
+      ``cv[:]`` full grid, ``cv[1:3, 2]`` range, ``pt[0, :, :]`` slab,
+      ``pt[:, :, 0]`` plane, and so on;
+    * an all-integer key that leaves exactly **one** axis returns that line
+      as a :class:`List`: ``cv[0]`` is row 0, ``pt[1, 2]`` the ``u`` line at
+      ``s=1, t=2``. Chained ``cv[i][j]`` / ``pt[s, t][u]`` therefore still work
+      (the line :class:`List`; ``[j]`` picks along the last axis);
+    * an all-integer key that leaves **two or more** axes (``pt[0]``,
+      ``pt[-1]``, ``pt[0,]`` -- and so ``pt[0][1]``) raises
+      :class:`IndexError` before any scene query. Its result would be a
+      flattened slab, and a chained index would silently pick from it
+      (``pt[0][1]`` would be ``pt[0][0][1]``, not the ``s=0, t=1`` line).
+      Write ``pt[0, t, u]`` for one point or ``pt[0, :, :]`` for the slab.
 
     Element plugs *display* (``str`` / ``repr`` / :attr:`full_name`) in the
     component form ``cv[u][v]`` / ``pt[s][t][u]`` -- both valid Maya component
@@ -1453,6 +1465,15 @@ class ComponentPlug(Plug):
             raise IndexError(
                 f"{self._comp_alias} is {ndims}-D but {len(specs)} indices given"
             )
+        if (
+            ndims - len(specs) >= 2
+            and specs
+            and all(isinstance(s, int) and not isinstance(s, bool) for s in specs)
+        ):
+            # A partial int key leaving 2+ axes (only a lattice ``pt[s]``) would
+            # give a flattened slab, and chaining would silently misread it
+            # (``pt[0][1]`` == ``pt[0][0][1]``). Refuse before any scene query.
+            raise IndexError(self._partial_key_hint(specs))
         # numpy: a missing trailing axis means "all of it" (arr[i] == arr[i, :]).
         specs     = specs + (slice(None),) * (ndims - len(specs))
         sizes     = self._axis_sizes()
@@ -1487,6 +1508,23 @@ class ComponentPlug(Plug):
         from rig._internal.list import List
 
         return List(elements)
+
+    def _partial_key_hint(self, specs: tuple) -> str:
+        """The :class:`IndexError` text for an int key leaving 2+ axes, e.g.
+        ``ffd1LatticeShape.pt[0] leaves 2 of 3 axes unspecified, ...: write
+        pt[0, t, u] for one point or pt[0, :, :] for the slab``. Names the live
+        node (as :meth:`_element` does) and the alias the handle answers to."""
+        ndims   = self._comp_ndims
+        alias   = self._comp_alias
+        given   = ", ".join(str(s) for s in specs)
+        missing = _AXIS_NAMES[ndims][len(specs):]
+        left    = len(missing)
+        return (
+            f"{self.node.name}.{alias}[{given}] leaves {left} of {ndims} axes "
+            "unspecified, and a chained index would pick from the flattened "
+            f"selection: write {alias}[{given}, {', '.join(missing)}] for one "
+            f"point or {alias}[{given}, {', '.join(':' * left)}] for the slab"
+        )
 
     def _element(self, coords: tuple) -> "ComponentPlug":
         """Build the resolved element plug for ``coords`` (one index per axis).
