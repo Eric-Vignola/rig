@@ -488,17 +488,31 @@ class TestMaterialAssign(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
 
     def test_a_plug_on_a_transform_with_a_control_curve_skips_it_too(self):
+        """Historical id (v2.0.0a2): pinned an attribute plug of a transform with
+        a control curve standing for the transform (the curve skipped); it now
+        pins that plug refused on '<<', '>>' and of before any write (user
+        decision Q4 option A: the node is the member), and the transform on the
+        left skipping the curve."""
         crv = cmds.circle(name="crv", ch=False)[0]
         cmds.parent(_shape(crv), str(self.cube), shape=True, relative=True)
         cmds.delete(crv)
-        plug   = self.cube.tx
-        result = plug << self.red
-        self.assertIs(result, plug)
+        before = set(cmds.ls())
+        for call in (
+            lambda: self.cube.tx << self.red,
+            lambda: self.cube.t >> self.red,
+            lambda: Material.of(self.cube.tx),
+            lambda: self.cube.ty >> Material(),
+            lambda: self.cube.sx << -self.red,
+        ):
+            with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+                call()
+        self.assertEqual(set(cmds.ls()), before)
+        self.assertIs(self.cube << self.red, self.cube)
         self.assertEqual(_members("redSG"), ["cubeShape"])
-        np.testing.assert_array_equal(self.cube.t >> self.red, np.arange(6))
-        self.assertEqual(_names(Material.of(self.cube.tx)), ["Blinn('red')"])
-        self.assertEqual(_names(self.cube.ty >> Material()), ["Blinn('red')"])
-        self.cube.sx << -self.red
+        np.testing.assert_array_equal(self.cube >> self.red, np.arange(6))
+        self.assertEqual(_names(Material.of(self.cube)), ["Blinn('red')"])
+        self.assertEqual(_names(self.cube >> Material()), ["Blinn('red')"])
+        self.cube << -self.red
         self.assertEqual(_members("redSG"), [])
 
     def test_transform_skips_its_control_curve_shape(self):
@@ -572,35 +586,38 @@ class TestMaterialAssign(MayaTestCase):
         self.assertEqual(_members(ISG), ["cubeShape"])
 
     def test_an_attribute_plug_stands_for_its_node(self):
-        plug   = self.cube.tx
-        result = plug << self.red
-        self.assertIs(result, plug)
-        self.assertEqual(_members("redSG"), ["cubeShape"])
-        np.testing.assert_array_equal(self.cube.t >> self.red, np.arange(6))
-        self.assertEqual(_names(self.cube.rotate >> Blinn()),             ["Blinn('red')"])
-        self.assertEqual(_names(Material.of(self.cube.visibility)),       ["Blinn('red')"])
-        self.assertEqual([str(x) for x in shade.materials(self.cube.tx)], ["red"])
-        # two plugs of one node are one node
-        List([self.cube.tx, self.cube.ty]) << self.blue
-        self.assertEqual(_members("blueSG"), ["cubeShape"])
-        self.assertEqual(_members("redSG"), [])
-        self.cube.sx << -self.blue
-        self.assertEqual(_engines(self.shape), [])
-        self.cube.v << Default()
-        self.assertEqual(_members(ISG), ["cubeShape"])
-        # the shape's own plugs stand for the shape
-        Node(self.shape).castsShadows << self.red
-        self.assertEqual(_members("redSG"), ["cubeShape"])
-        # component plugs keep their meaning; a plug of a node with nothing
-        # shadeable refuses as the node would
+        """Historical id (v2.0.0a2): pinned an attribute plug standing for its
+        node on '<<', '>>' and of; it now pins it refused there before any
+        write (user decision Q4 option A: the node is the member; 'in' keeps a
+        plug standing for its node, NC7 for materials), while shade.materials
+        still reads a plug as its node and component plugs stay members."""
+        before = set(cmds.ls())
         joint  = Node.create("joint", name="joint1")
+        for label, call in (
+            ("cube.tx << red",                  lambda: self.cube.tx << self.red),
+            ("cube.t >> red",                   lambda: self.cube.t >> self.red),
+            ("cube.rotate >> Blinn()",          lambda: self.cube.rotate >> Blinn()),
+            ("Material.of(cube.visibility)",    lambda: Material.of(self.cube.visibility)),
+            ("List([cube.tx, cube.ty]) << blue", lambda: List([self.cube.tx, self.cube.ty]) << self.blue),
+            ("cube.sx << -blue",                lambda: self.cube.sx << -self.blue),
+            ("cube.v << Default()",             lambda: self.cube.v << Default()),
+            ("shape.castsShadows << red",       lambda: Node(self.shape).castsShadows << self.red),
+            ("joint.tx << red",                 lambda: joint.tx << self.red),
+            ("List([cube.tx, cube.vtx[0]]) << blue", lambda: List([self.cube.tx, self.cube.vtx[0]]) << self.blue),
+        ):
+            with self.subTest(label):
+                with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+                    call()
+        self.assertEqual(set(cmds.ls()) - {"joint1"}, before)
+        self.assertEqual(_engines(self.shape), [ISG])
+        # the node is the member
+        self.cube << self.red
+        self.assertEqual(_members("redSG"), ["cubeShape"])
+        self.assertEqual([str(x) for x in shade.materials(self.cube.tx)], ["red"])
+        # component plugs keep their meaning
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "vertices"):
             self.cube.vtx[:3] << self.red
-        with self.assertRaisesRegex(TypeError, "no shadeable shape"):
-            joint.tx << self.red
-        with self.assertRaisesRegex(TypeError, "vertices"):
-            List([self.cube.tx, self.cube.vtx[0]]) << self.blue
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_members("redSG"), ["cubeShape"])
 
@@ -820,12 +837,19 @@ class TestMaterialQuery(MayaTestCase):
         self.cube.f[3]  << Lambert("skin")
         for lhs in (
             self.cube, self.cube.f, self.cube.f[0], self.cube.f[[0, 3]],
-            self.cube.f[4:], self.cube.tx,
+            self.cube.f[4:],
         ):
             for cls in (Material, Blinn, Lambert):
                 got = lhs >> cls()
                 self.assertIsInstance(got, list)
                 self.assertEqual(_names(got), _names(cls.of(lhs)))
+        # re-pinned (round 4b NC6): an attribute plug on the left is refused
+        # (the node is the member), on '>>' and of alike
+        for cls in (Material, Blinn, Lambert):
+            with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+                self.cube.tx >> cls()
+            with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+                cls.of(self.cube.tx)
         self.assertEqual(
             _names(self.cube >> Material()), ["Default()", "Blinn('red')", "Lambert('skin')"]
         )
@@ -1101,7 +1125,8 @@ class TestMaterialErrors(MayaTestCase):
             self.joint << Blinn("x")
         with self.assertRaisesRegex(TypeError, "not geometry"):
             Node("lambert1") << Blinn("x")
-        with self.assertRaisesRegex(TypeError, "not geometry"):
+        # re-pinned (round 4b NC6): an attribute plug is refused as a plug
+        with self.assertRaisesRegex(TypeError, "'lambert1.color' is a plug"):
             Node("lambert1").color << Blinn("x")
         with self.assertRaisesRegex(TypeError, r"element \[1\]"):
             List([self.cube, 5, None]) << Blinn("x")

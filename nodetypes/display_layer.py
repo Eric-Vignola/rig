@@ -129,6 +129,12 @@ class DisplayLayer(DGNode):
             f"them from every layer"
         )
 
+    def __contains__(self, lhs: Any) -> bool:
+        """``x in layer``: whether every node of ``x`` (a node, a plug, which
+        stands for its node, or a list of them) is in this layer
+        (``defaultLayer``: in no layer)."""
+        return self._member().contains(lhs)
+
     @classmethod
     def of(cls, x: Any) -> list[DisplayLayer]:
         """The layer holding the DAG node ``x``, ``[DisplayLayer("L")]``, or

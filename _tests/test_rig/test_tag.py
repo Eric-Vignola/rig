@@ -211,9 +211,14 @@ class TestTagOnSphere(MayaTestCase):
         # removing non-members asserts a state that already holds
         self.sph.vtx[:2] << -Tag("cap")
         np.testing.assert_array_equal(self.sph >> Tag("cap"), [2, 3, 4, 5, 6, 7])
+        # re-pinned (round 4b NC6, user decision 2026-09-28: a tag is untyped for
+        # queries): faces are not in a vertex tag, so removing them is a no-op
+        # with nothing written (it used to be a TypeError)
         before = set(cmds.ls())
-        with self.assertRaisesRegex(TypeError, "vertex tag"):
-            self.sph.f[:1] << -Tag("cap")
+        with mock.patch.object(cmds, "componentTag", wraps=cmds.componentTag) as tag_cmd:
+            faces = self.sph.f[:1]
+            self.assertIs(faces << -Tag("cap"), faces)
+        self.assertFalse([c for c in tag_cmd.call_args_list if "modify" in c.kwargs])
         self.assertEqual(set(cmds.ls()), before)
         np.testing.assert_array_equal(self.sph >> Tag("cap"), [2, 3, 4, 5, 6, 7])
 
@@ -242,6 +247,11 @@ class TestTagOnSphere(MayaTestCase):
             self.sph >> Tag("cap")
 
     def test_missing_tag_is_a_value_error_never_an_empty_answer(self):
+        """Historical id (v2.0.0a2): pinned every spelling on a missing tag as a
+        ValueError; it now pins them but one: the ids of components in a missing
+        tag are an empty array, none of them being in it (user decision
+        2026-09-28, the lead's default for '>>', consistent with 'in' answering
+        False)."""
         before = set(cmds.ls())
         with self.assertRaisesRegex(ValueError, "no component tag 'nope'"):
             self.sph.vtx[:2] << -Tag("nope")
@@ -249,8 +259,11 @@ class TestTagOnSphere(MayaTestCase):
             self.sph << -Tag("nope")
         with self.assertRaises(ValueError):
             self.sph >> Tag("nope")
-        with self.assertRaises(ValueError):
-            self.sph.vtx[:2] >> Tag("nope")
+        ids = self.sph.vtx[:2] >> Tag("nope")
+        self.assertIsInstance(ids, np.ndarray)
+        self.assertEqual(ids.shape, (0,))
+        self.assertFalse(self.sph.vtx[:2] in Tag("nope"))
+        self.assertFalse(self.sph in Tag("nope"))
         with self.assertRaises(ValueError):
             Tag("nope").clear(self.sph)
         with self.assertRaises(ValueError):
@@ -289,10 +302,16 @@ class TestTagOnSphere(MayaTestCase):
         np.testing.assert_array_equal(self.sph.vtx[[7, 0, 9]] >> Tag("cap"), [0, 7])
         np.testing.assert_array_equal(self.sph.vtx >> Tag("cap"), np.arange(8))
         np.testing.assert_array_equal(Components(self.sph, "vtx", [1, 30]) >> Tag("cap"), [1])
-        with self.assertRaisesRegex(TypeError, "vertex tag"):
-            self.sph.f >> Tag("cap")
-        with self.assertRaises(TypeError):
-            self.sph.f[:2] >> Tag("cap")
+        # re-pinned (round 4b NC6, user decision 2026-09-28: a tag is untyped for
+        # queries): faces are not in a vertex tag, so their ids are an empty
+        # array (it used to be a TypeError), and 'in' answers False
+        for faces in (self.sph.f, self.sph.f[:2]):
+            ids = faces >> Tag("cap")
+            self.assertIsInstance(ids, np.ndarray)
+            self.assertEqual(ids.shape, (0,))
+            self.assertFalse(faces in Tag("cap"))
+        self.assertTrue(self.sph.vtx[:8] in Tag("cap"))
+        self.assertFalse(self.sph.vtx[:9] in Tag("cap"))
         # the ids go back through the handle
         self.sph.vtx[self.sph >> Tag("cap")] << Tag("copy")
         np.testing.assert_array_equal(self.sph >> Tag("copy"), np.arange(8))
@@ -305,13 +324,21 @@ class TestTagOnSphere(MayaTestCase):
         # '>> Tag()' is Tag.of: the tags holding the left-hand side
         for lhs in (
             self.sph, self.sph.vtx[:2], self.sph.vtx[3], self.sph.vtx[[3, 9]],
-            self.sph.f[:2], self.sph.e[0], self.sph.vtx, self.sph.tx,
+            self.sph.f[:2], self.sph.e[0], self.sph.vtx,
         ):
             got = lhs >> Tag()
             self.assertIsInstance(got, list)
             self.assertEqual(_names(got), _names(Tag.of(lhs)))
         self.assertEqual(_names(self.sph >> Tag()), ["cap", "lid"])
         self.assertEqual(_names(self.sph >> Tag(None)), ["cap", "lid"])
+        # re-pinned (round 4b NC6): an attribute plug on the left is refused
+        # (the node is the member)
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+            self.sph.tx >> Tag()
+        with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+            Tag.of(self.sph.tx)
+        self.assertEqual(set(cmds.ls()), before)
         found = self.sph.vtx[3] >> Tag()
         self.assertEqual(_names(found), ["cap"])
         self.assertIsInstance(found[0], Tag)
@@ -330,30 +357,51 @@ class TestTagOnSphere(MayaTestCase):
         self.assertEqual(set(cmds.ls()) - {"other", "otherShape", "polySphere2"}, before)
 
     def test_an_attribute_plug_stands_for_its_node(self):
-        # sph.tx << Tag('x') is sph << Tag('x'): the tag itself, on the shape
+        """Historical id (v2.0.0a2): pinned an attribute plug standing for its
+        node on '<<', '>>' and Tag.of; it now pins that it stands for its node
+        in 'in' only, and is refused on '<<', '>>' and Tag.of before any write
+        (user decision Q4 option A: the node is the member), while component
+        plugs stay members."""
         plug   = self.sph.tx
-        result = plug << Tag("cap")
-        self.assertIs(result, plug)
-        self.assertEqual(_tags(self.sph), ["cap"])
+        before = set(cmds.ls())
+        for label, call in (
+            ("sph.tx << Tag('cap')",          lambda: plug << Tag("cap")),
+            ("sph.ty << -Tag('cap')",         lambda: self.sph.ty << -Tag("cap")),
+            ("sph.t >> Tag('cap')",           lambda: self.sph.t >> Tag("cap")),
+            ("sph.rotate >> Tag()",           lambda: self.sph.rotate >> Tag()),
+            ("Tag.of(sph.visibility)",        lambda: Tag.of(self.sph.visibility)),
+            ("Tag.of(shape.componentTags[0])", lambda: Tag.of(Node(self.shape).componentTags[0])),
+        ):
+            with self.subTest(label):
+                with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+                    call()
+        self.assertEqual(set(cmds.ls()), before)
+        self.assertEqual(_tags(self.sph), [])
+        # the node is the member: the tag itself, on the shape
+        self.assertIs(self.sph << Tag("cap"), self.sph)
         self.assertEqual(_entries(self.sph, "cap"), [("sphShape", True, True)])
         self.sph.vtx[:3] << Tag("cap")
-        np.testing.assert_array_equal(self.sph.t >> Tag("cap"), [0, 1, 2])
-        self.assertEqual(_names(self.sph.rotate >> Tag()), ["cap"])
-        self.assertEqual(_names(Tag.of(self.sph.visibility)), ["cap"])
-        self.assertEqual(_names(Tag.of(Node(self.shape).componentTags[0])), ["cap"])
-        self.sph.ty << -Tag("cap")
+        # 'in': a plug stands for its node
+        self.assertTrue(self.sph.tx in Tag("cap"))
+        self.assertTrue(self.sph.t in Tag("cap"))
+        self.assertTrue(List([self.sph.tx, self.sph.vtx[1]]) in Tag("cap"))
+        self.assertFalse(self.sph.tx in Tag("nope"))
+        self.sph << -Tag("cap")
         self.assertEqual(_tags(self.sph), [])
         # component plugs keep their own meaning
         self.sph.vtx[[1, 2]] << Tag("verts")
         np.testing.assert_array_equal(self.sph >> Tag("verts"), [1, 2])
-        # a plug of a node without geometry refuses as the node would
+        # a plug of a node without geometry: refused as a plug; in 'in' it
+        # stands for the node, which is no geometry
         joint  = Node(cmds.createNode("joint", name="joint1"))
         before = set(cmds.ls())
-        with self.assertRaisesRegex(TypeError, "not geometry"):
+        with self.assertRaisesRegex(TypeError, "'joint1.translateX' is a plug"):
             joint.tx << Tag("xx")
-        with self.assertRaisesRegex(TypeError, "not geometry"):
+        with self.assertRaisesRegex(TypeError, "'joint1.translateX' is a plug"):
             joint.tx >> Tag()
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(TypeError, "not geometry"):
+            joint.tx in Tag("xx")
+        with self.assertRaisesRegex(TypeError, "is a plug"):
             self.sph.tx >> Tag("nope")
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_tags(self.sph), ["verts"])
@@ -467,21 +515,24 @@ class TestTagOnSphere(MayaTestCase):
         self.assertEqual(_tags(self.sph), [])
 
     def test_a_string_plug_that_is_not_an_expression_stands_for_its_node(self):
+        """Historical id (v2.0.0a2): pinned a string plug that is no deformer
+        expression standing for its node (the tag made on it, the string never
+        written); it now pins it refused before any write, the string never
+        written either (user decision Q4 option A: the node is the member)."""
         # only a deformer's componentTagExpression receives the name (decided
-        # by attribute name); any other string plug is an attribute plug and
-        # stands for its node, so the string is never written
+        # by attribute name); any other string plug is an attribute plug
         self.sph << String("label")
         plug   = self.sph.label
-        result = plug << Tag("viaLabel")
-        self.assertIs(result, plug)
-        self.assertEqual(_tags(self.sph), ["viaLabel"])
-        self.assertIsNone(cmds.getAttr("sph.label"))
-        node = Node.create("transform", name="labelled")
+        node   = Node.create("transform", name="labelled")
         node << String("label")
         before = set(cmds.ls())
-        with self.assertRaisesRegex(TypeError, "not geometry"):
+        with self.assertRaisesRegex(TypeError, "'sph.label' is a plug; membership takes the node: sph << Tag"):
+            plug << Tag("viaLabel")
+        with self.assertRaisesRegex(TypeError, "'labelled.label' is a plug"):
             node.label << Tag("xx")
         self.assertEqual(set(cmds.ls()), before)
+        self.assertEqual(_tags(self.sph), [])
+        self.assertIsNone(cmds.getAttr("sph.label"))
         self.assertIsNone(cmds.getAttr("labelled.label"))
 
     def test_chain_returns_the_lhs(self):
@@ -604,8 +655,9 @@ class TestTagOnClusteredMesh(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(self.expr >> None, "cap")
         # the sugar is decided by attribute name, before the attribute-plug
-        # fallback: the cluster is a DG node the fallback would refuse
-        with self.assertRaisesRegex(TypeError, "not geometry"):
+        # refusal (re-pinned, round 4b NC6: any other attribute plug is refused,
+        # where it used to stand for its node, a DG node refused as not geometry)
+        with self.assertRaisesRegex(TypeError, "'cluster1.envelope' is a plug"):
             self.cluster.envelope << Tag("cap")
         self.assertEqual(_tags(self.sph), ["cap"])
         # expressions stay plain strings

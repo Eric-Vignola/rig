@@ -19,15 +19,21 @@ stands for its node: ``cube.tx`` is ``cube``), a :class:`Components`, or any
 nesting of those in a ``List`` / list / tuple -- into one
 :class:`_Selection` per ``(path, kind)`` carrying the compact shape-scoped
 tokens ``maya.cmds`` accepts. Nothing is ever dropped: a number, ``None`` or
-a raw string on the left is a ``TypeError`` naming the element.
+a raw string on the left is a ``TypeError`` naming the element. The
+membership verbs (``<<``, ``>>``, ``of``) pass ``refuse_plugs``: there an
+attribute plug on the left is refused (the node is the member); ``in`` keeps
+it standing for its node.
 
 :class:`_MemberSpec` is the protocol base of the collection specs (``Tag``,
-the materials, ``Layer``): the constructor contract, ``-spec``, the ``~spec``
-refusal, and the ``inject`` / ``query`` / ``of`` verbs that normalise the
-left-hand side, validate it BEFORE any scene write and run the kind's writes
-inside one undo chunk. ``<<`` with a collection spec returns the left-hand
-side unchanged (the next collection goes next); ``>>`` returns a plain value,
-and ``>> Spec()`` enumerates the collections holding the left-hand side.
+the materials) and of the private member of a membership node class (a
+display layer's ``_LayerMember``): the constructor contract, ``-spec``, the
+``~spec`` refusal, and the ``inject`` / ``query`` / ``contains`` / ``of``
+verbs that normalise the left-hand side, validate it BEFORE any scene write
+and run the kind's writes inside one undo chunk. ``<<`` with a collection
+returns the left-hand side unchanged (the next collection goes next); ``>>``
+returns a plain value (ids), ``>> Spec()`` enumerates the collections holding
+the left-hand side, and ``lhs in spec`` answers whether every member of the
+left-hand side is in the collection.
 
 Usage::
 
@@ -290,8 +296,9 @@ class Components:
     is a ``TypeError``. On the whole-kind handle positions ARE the native ids.
 
     ``c >> None`` reads the native ids (or coordinates) as an ndarray; ``<<``
-    and ``>>`` with a collection spec are the membership verbs (a later
-    step). There is deliberately no ``__len__`` / ``__iter__`` and no
+    and ``>>`` with a collection (``Tag('x')``, a material, a kind or removal
+    token) are the membership verbs, and ``c in Tag('x')`` asks whether every
+    component is in it. There is deliberately no ``__len__`` / ``__iter__`` and no
     arithmetic: :class:`List` keeps a ``Components`` element opaque and
     broadcasts it as a scalar.
     """
@@ -709,10 +716,13 @@ def _at(where: str) -> str:
 
 class _Normaliser:
     """Folds a left-hand side into :class:`_Group` accumulators keyed by
-    ``(path, kind, flat)`` in first-appearance order."""
+    ``(path, kind, flat)`` in first-appearance order. ``refuse`` (None, or a
+    callable given an attribute plug, returning the exception to raise)
+    refuses attribute plugs instead of reading them as their node."""
 
-    def __init__(self, want_shapes: bool) -> None:
+    def __init__(self, want_shapes: bool, refuse: Any = None) -> None:
         self.want_shapes = want_shapes
+        self.refuse      = refuse
         self.groups:   dict[tuple[str, str, bool], _Group] = {}
         self.contexts: dict[int, _NodeContext] = {}
 
@@ -815,8 +825,11 @@ class _Normaliser:
                     group = self._ctx_group(ctx, "uv", False)
                     group.ids.append(index)
             else:
-                # An attribute plug stands for its node: ``cube.tx << Layer("x")``
-                # is ``cube << Layer("x")``.
+                # An attribute plug: refused by the membership verbs (the node
+                # is the member), else it stands for its node (``cube.tx in
+                # Layer("x")`` asks about ``cube``).
+                if self.refuse is not None:
+                    raise self.refuse(item)
                 self.add_node(item.node, source=item)
                 continue
             group.sources.append(item)
@@ -833,7 +846,7 @@ class _Normaliser:
         return [selection for selection in result if selection is not None]
 
 
-def normalise(lhs: Any, *, want_shapes: bool) -> list[_Selection]:
+def normalise(lhs: Any, *, want_shapes: bool, refuse_plugs: Any = None) -> list[_Selection]:
     """Fold a membership left-hand side into one :class:`_Selection` per
     ``(path, kind)``.
 
@@ -846,9 +859,12 @@ def normalise(lhs: Any, *, want_shapes: bool) -> list[_Selection]:
       contributes ``logicalIndex()``; a resolved ``ComponentPlug`` its
       coordinates; a plain ``controlPoints[k]`` on a surface / lattice passes
       through as ``'controlPoints[a:b]'`` with ``flat=True``; any other plug
-      stands for its node, exactly as the ``Node`` would (``cube.tx`` is
-      ``cube``), with the plug as the selection's source. Component plugs
-      are grouped by node MObject and never rendered to strings.
+      (an attribute plug) stands for its node, exactly as the ``Node`` would
+      (``cube.tx`` is ``cube``), with the plug as the selection's source,
+      unless ``refuse_plugs`` is given: then the exception
+      ``refuse_plugs(plug)`` returns is raised (the membership verbs ``<<``,
+      ``>>`` and ``of``: the node is the member). Component plugs are
+      grouped by node MObject and never rendered to strings.
     - ``Components``: its own selection. ``List`` / list / tuple:
       flattened recursively. ``str``: ``TypeError`` pointing at
       ``Components(...)``. A number / ``None``: ``TypeError`` naming the
@@ -857,7 +873,7 @@ def normalise(lhs: Any, *, want_shapes: bool) -> list[_Selection]:
       entries on one path both survive. An empty result is
       ``ValueError('nothing to inject')``.
     """
-    normaliser = _Normaliser(want_shapes)
+    normaliser = _Normaliser(want_shapes, refuse_plugs)
     normaliser.add(lhs, "")
     selections = normaliser.selections()
     if not selections:
@@ -891,17 +907,19 @@ def _find_node(name: str) -> str | None:
 
 
 class _MemberSpec:
-    """Protocol base of the collection specs (``Tag``, the materials,
-    ``Layer``).
+    """Protocol base of the collection specs (``Tag``, the materials) and of
+    the private member of a membership node class (a display layer's
+    ``_LayerMember``).
 
-    ``Spec('x')`` names a collection; ``Spec(None)`` -- and ``Spec()``, the
-    same object -- means no particular one: on ``<<`` it is the purge (every
-    collection of this kind, mirroring ``plug << None``) and on ``>>`` it
-    enumerates, answering what :meth:`of` answers. ``-Spec('x')`` is a copy
-    that removes members instead of adding them; ``-Spec()`` (a double
-    negative), ``--Spec('x')`` and ``~Spec(...)`` are ``TypeError``s. The
-    constructor makes zero Maya calls; :meth:`_validate_name` is the per-kind
-    validation hook.
+    ``Spec('x')`` names a collection; ``Spec()`` means no particular one (the
+    kind token): on ``<<`` it is the purge (every collection of this kind,
+    mirroring ``plug << None``) and on ``>>`` it enumerates, answering what
+    :meth:`of` answers. ``-Spec('x')`` is a copy that removes members instead
+    of adding them (the removal token); ``-Spec()`` (a double negative),
+    ``--Spec('x')`` and ``~Spec(...)`` are ``TypeError``s. The constructor
+    makes zero Maya calls; :meth:`_validate_name` is the per-kind validation
+    hook. :meth:`_member` is the spec itself (a membership node class answers
+    its own member): the ``<<`` / ``>>`` slots run ``other._member()``'s verb.
 
     The verbs are template methods. :meth:`inject` (``lhs << spec``)
     normalises the left-hand side, applies :attr:`ACCEPTS`, hands the
@@ -909,19 +927,27 @@ class _MemberSpec:
     BEFORE any scene write -- then runs :meth:`_apply` inside one undo chunk
     named ``rig.<KIND>`` and returns the left-hand side unchanged.
     :meth:`query` (``lhs >> spec``) returns whatever :meth:`_query` reads: a
-    plain value, never a :class:`Components`; a missing collection is a
-    ``ValueError``. :meth:`of` enumerates the collections holding ``x``; an
-    :attr:`EXCLUSIVE` kind (a node is in at most one collection) answers
-    ``lhs >> Spec()`` with that one spec or ``None``. A kind that gives a
-    bare ``Plug`` a meaning of its own (a tag name written into a deformer's
-    expression) claims it in :meth:`_plan_plug`; any other attribute plug
-    stands for its node.
+    plain value (ids), never a :class:`Components`. :meth:`of` enumerates the
+    collections holding ``x``; an :attr:`EXCLUSIVE` kind (a node is in at
+    most one collection) answers ``lhs >> Spec()`` with that one or
+    ``None``. :meth:`contains` (``lhs in spec``) answers whether every member
+    of the left-hand side is in the collection (:meth:`_contains`); a kind or
+    removal token there is a ``TypeError``.
+
+    A plug on the left: a kind that gives a bare ``Plug`` a meaning of its
+    own (a tag name written into a deformer's expression) claims it in
+    :meth:`_plan_plug`; component plugs are members; any other attribute
+    plug is refused by ``<<``, ``>>`` and ``of`` (the node is the member:
+    ``cube << Tag('x')``) and stands for its node in ``in`` (``cube.tx in
+    Tag('x')`` asks about ``cube``).
     """
 
     KIND:        str = ""
     ACCEPTS:     frozenset[str] = frozenset()
     WANT_SHAPES: bool = False
     EXCLUSIVE:   bool = False
+    # whether ``lhs >> Spec('x')`` answers ids (a layer holds whole objects)
+    HAS_IDS:     bool = True
 
     def __init__(self, name: Any = None, **kw: Any) -> None:
         if name is not None:
@@ -952,6 +978,12 @@ class _MemberSpec:
         node class answers its own, see ``_types._MEMBERSHIP``)."""
         return self
 
+    @classmethod
+    def _kind_name(cls) -> str:
+        """How messages spell the kind (``Tag``; ``Layer`` for a layer's
+        member)."""
+        return cls.__name__
+
     @property
     def name(self) -> str | None:
         return self._name
@@ -963,7 +995,7 @@ class _MemberSpec:
 
     @property
     def purges(self) -> bool:
-        """``True`` for ``Spec()`` / ``Spec(None)``: no particular collection
+        """``True`` for the kind token ``Spec()``: no particular collection
         (every one of this kind on ``<<``, the enumeration on ``>>``)."""
         return self._name is None
 
@@ -1001,12 +1033,18 @@ class _MemberSpec:
 
     def inject(self, lhs: Any) -> Any:
         """``lhs << spec``: make the left-hand side a member (or, for a
-        removal / purge copy, not a member). Everything is validated before
+        removal / kind token, not a member). Everything is validated before
         the first scene write; the writes run in one undo chunk; the
-        left-hand side comes back unchanged so the next ``<<`` targets it."""
+        left-hand side comes back unchanged so the next ``<<`` targets it.
+        An attribute plug on the left is a ``TypeError`` (the node is the
+        member), unless the kind claims it (:meth:`_plan_plug`)."""
         plan = self._plan_plug(lhs) if isinstance(lhs, Plug) else None
         if plan is None:
-            selections = normalise(lhs, want_shapes=self.WANT_SHAPES)
+            selections = normalise(
+                lhs,
+                want_shapes  = self.WANT_SHAPES,
+                refuse_plugs = lambda plug: self._plug_error(plug, "<<"),
+            )
             self._check_kinds(selections)
             plan = self._plan(selections)
         with _undo_chunk(f"rig.{self.KIND}"):
@@ -1015,33 +1053,80 @@ class _MemberSpec:
 
     def query(self, lhs: Any) -> Any:
         """``lhs >> spec``: a plain value read out of the left-hand side --
-        the native ids of its members that are in the collection, or a bool
-        for whole-object membership. A missing collection is a ``ValueError``,
-        never an empty answer. ``lhs >> Spec()`` enumerates instead: the
-        specs :meth:`of` lists, or, for an :attr:`EXCLUSIVE` kind, the one
-        spec holding the left-hand side or ``None``."""
-        cls = type(self).__name__
+        the native ids of its members that are in the collection.
+        ``lhs >> Spec()`` enumerates instead: the collections :meth:`of`
+        lists, or, for an :attr:`EXCLUSIVE` kind, the one holding the
+        left-hand side or ``None``. A removal token or an attribute plug on
+        the left is a ``TypeError``."""
         if self._remove:
             raise TypeError(
-                f"'>>' queries membership; -{cls}({self._name!r}) is a removal. "
-                f"Use lhs >> {cls}({self._name!r})"
+                f"'>>' queries membership; {self!r} is a removal. "
+                f"Use lhs >> {repr(self)[1:]}"
             )
-        selections = normalise(lhs, want_shapes=self.WANT_SHAPES)
+        selections = normalise(
+            lhs,
+            want_shapes  = self.WANT_SHAPES,
+            refuse_plugs = lambda plug: self._plug_error(plug, ">>"),
+        )
         self._check_kinds(selections)
-        if self._name is not None:
+        if not self.purges:
             return self._query(selections)
         found = self._of(selections)
         if self.EXCLUSIVE:
             return found[0] if found else None
         return found
 
+    def __contains__(self, lhs: Any) -> bool:
+        return self.contains(lhs)
+
+    def contains(self, lhs: Any) -> bool:
+        """``lhs in spec``: whether EVERY member of the left-hand side is in
+        this collection (every node, every component; a ``List`` / list of
+        them: every element). An attribute plug stands for its node. A kind
+        token (``Spec()``) or a removal token (``-Spec('x')``) names no one
+        collection: ``TypeError`` (``lhs >> Spec()`` enumerates)."""
+        if self._remove:
+            raise TypeError(
+                f"'in' asks about one collection; {self!r} is a removal: ask with "
+                f"x in {repr(self)[1:]}"
+            )
+        if self.purges:
+            raise TypeError(
+                f"'in' asks about one collection; {self!r} names every one of its "
+                f"kind: x >> {self!r} enumerates the ones holding x"
+            )
+        selections = normalise(lhs, want_shapes=self.WANT_SHAPES)
+        self._check_kinds(selections)
+        return bool(self._contains(selections))
+
     @classmethod
-    def of(cls, x: Any) -> list["_MemberSpec"]:
-        """The collections of this kind holding ``x``, as re-injectable
-        specs."""
-        selections = normalise(x, want_shapes=cls.WANT_SHAPES)
+    def of(cls, x: Any) -> list:
+        """The collections of this kind holding ``x`` (re-injectable). An
+        attribute plug is a ``TypeError`` (the node is the member)."""
+        selections = normalise(
+            x,
+            want_shapes  = cls.WANT_SHAPES,
+            refuse_plugs = lambda plug: TypeError(
+                f"'{plug}' is a plug; membership takes the node: "
+                f"{cls._kind_name()}.of({plug.node})"
+            ),
+        )
         cls()._check_kinds(selections)   # the same gate as ``x >> Spec()``
         return cls._of(selections)
+
+    def _plug_error(self, plug: Plug, verb: str) -> TypeError:
+        """The refusal of an attribute plug on the left of ``verb`` (``<<`` /
+        ``>>``): the node is the member, and ``in`` reads a plug as its node."""
+        node = plug.node
+        if verb == "<<":
+            how = f"{node} << {self!r} (to connect, name a plug: other.attr)"
+        elif self.purges:
+            how = f"{node} >> {self!r} enumerates"
+        else:
+            how = f"ask with {plug} in {self!r} (a plug stands for its node there)"
+            if self.HAS_IDS:
+                how += f", or {node} >> {self!r} for ids"
+        return TypeError(f"'{plug}' is a plug; membership takes the node: {how}")
 
     # -- per-kind hooks -- #
 
@@ -1074,6 +1159,13 @@ class _MemberSpec:
     def _query(self, selections: list[_Selection]) -> Any:
         raise NotImplementedError(f"{type(self).__name__} does not implement '>>'")
 
+    def _contains(self, selections: list[_Selection]) -> bool:
+        """Whether every selection is in the collection (all-members)."""
+        raise TypeError(
+            f"{type(self).__name__} does not answer 'in'; lhs >> {self!r} reads "
+            f"the ids of the members"
+        )
+
     @classmethod
-    def _of(cls, selections: list[_Selection]) -> list["_MemberSpec"]:
+    def _of(cls, selections: list[_Selection]) -> list:
         raise NotImplementedError(f"{cls.__name__} does not implement 'of'")

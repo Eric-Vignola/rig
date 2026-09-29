@@ -293,31 +293,30 @@ class TestLayerAdd(MayaTestCase):
         self.assertEqual([repr(x) for x in lhs >> [Layer(), Layer()]], ["Layer('a')", "Layer('b')"])
 
     def test_an_attribute_plug_stands_for_its_node(self):
-        plug   = self.cube.tx
-        result = plug << Layer("x")
-        self.assertIs(result, plug)
-        self.assertEqual(_members("x"), ["|cube"])
-        self.assertTrue(self.cube.t >> Layer("x"))
-        self.assertEqual(repr(self.cube.rotate >> Layer()), "Layer('x')")
-        self.assertEqual(_names(Layer.of(self.cube.visibility)), ["Layer('x')"])
-        List([self.cube.tx, self.cube.ty]) << Layer("y")
-        self.assertEqual(_layer("|cube"), "y")
-        self.cube.sx << -Layer("y")
-        self.assertIsNone(_layer("|cube"))
-        self.cube.tx << Layer("y")
-        self.cube.ry << Layer()
-        self.assertIsNone(self.cube.ty >> Layer())
-        # the shape's own plug stands for the shape
-        Node(self.shape).castsShadows << Layer("x")
-        self.assertEqual(_members("x"), [self.shape])
-        # component plugs keep their meaning
+        """Historical id (v2.0.0a2): pinned an attribute plug standing for its
+        node on '<<', '>>' and Layer.of; it now pins them refused before any
+        write (round 4b NC6, user decision Q4 option A: the node is the
+        member), component plugs keeping their meaning."""
         before = set(cmds.ls())
+        for call in (
+            lambda: self.cube.tx << Layer("x"),
+            lambda: self.cube.t >> Layer("x"),
+            lambda: self.cube.rotate >> Layer(),
+            lambda: Layer.of(self.cube.visibility),
+            lambda: List([self.cube.tx, self.cube.ty]) << Layer("y"),
+            lambda: self.cube.sx << -Layer("y"),
+            lambda: Node(self.shape).castsShadows << Layer("x"),
+        ):
+            with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
+                call()
+        self.assertEqual(set(cmds.ls()), before)
+        self.assertIsNone(_layer("|cube"))
+        # component plugs keep their meaning
         with self.assertRaisesRegex(TypeError, "layers hold objects"):
             self.cube.vtx[0] << Layer("x")
         with self.assertRaisesRegex(TypeError, "cannot be fanned"):
             self.cube.t << [Layer("x"), 1, 2]
         self.assertEqual(set(cmds.ls()), before)
-
     def test_a_new_layer_never_joins_the_container(self):
         with container("rigctn"):
             self.cube << Layer("x")
