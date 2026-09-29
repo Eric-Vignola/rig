@@ -129,14 +129,13 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
 
         # ---- Material -------------------------------------------------------
         # The texture feeds color and ambientColor (full-bright in the
-        # viewport). Injecting the spec builds the lambert, its shading
-        # engine and materialInfo, applies the kwargs and assigns the shape;
-        # unique=True keeps a second create_plane(name=...) on its OWN
-        # material; container=True makes this per-plane look part of the
-        # plane's container. The spec stays the handle for the material's plugs.
-        material = Lambert(
-            name,
-            unique       = True,
+        # viewport). Lambert.create always makes a new network -- the lambert,
+        # its shading engine and materialInfo, with the attributes set -- so a
+        # second create_plane(name=...) gets its OWN material; container=True
+        # makes this per-plane look part of the plane's container. The node
+        # on the right of << assigns the shape.
+        material = Lambert.create(
+            name         = name,
             container    = True,
             diffuse      = 1,
             color        = texture.outColor,
@@ -186,7 +185,7 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
         plane.width  << ratio_w * target_size
         plane.height << ratio_h * target_size
 
-        return Output(transform, shape, material.node, texture)
+        return Output(transform, shape, material, texture)
 
 
 if __name__ == "__main__":

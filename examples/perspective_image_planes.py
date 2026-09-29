@@ -136,15 +136,15 @@ def create_setup(
 
             shape = rc.listRelatives(transform, type="mesh")[0]
 
-            # File texture for color, and the material it feeds: injecting
-            # the spec builds the lambert, its shading engine and
-            # materialInfo, applies the kwargs and assigns the shape.
-            # unique=True keeps a rebuild on its OWN material; container=True
-            # makes this per-plane look part of the planes' container.
+            # File texture for color, and the material it feeds:
+            # Lambert.create always makes a new network (the lambert, its
+            # shading engine and materialInfo, with the attributes set), so a
+            # rebuild gets its OWN material; container=True makes this
+            # per-plane look part of the planes' container. The node on the
+            # right of << assigns the shape.
             texture  = rn.file()
-            material = Lambert(
-                name_suffix.lower(),
-                unique       = True,
+            material = Lambert.create(
+                name         = name_suffix.lower(),
                 container    = True,
                 diffuse      = 1,
                 color        = texture.outColor,
