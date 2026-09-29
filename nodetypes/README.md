@@ -24,7 +24,7 @@ from rig.bridges import commands as rc
 cube = rc.polyCube(name="cube", ch=False)[0]  # a Transform
 mesh = cube.get_shape()                       # a typed method, on the same object
 print(repr(cube), (cube >> None) is cube, repr(mesh))  # Transform("cube") True Mesh("cubeShape")
-print(mesh.get_materials(), mesh.num_vertices)         # [DGNode("standardSurface1")] 8
+print(mesh.get_materials(), mesh.num_vertices)         # [StandardSurface("standardSurface1")] 8
 ```
 
 You rarely import from `rig.nodetypes` at all: `Node(x)` and the `rc` / `rn`
@@ -148,12 +148,14 @@ gives its node) and returns the most specific registered class:
 
 1. a locked `__custom_node_type__` string attribute, when the node has one;
 2. otherwise `cmds.nodeType(x, inherited=True)` walked from the most derived
-   type down, the first registered type wins;
-3. otherwise `DAGNode` for DAG nodes, `DGNode` for the rest.
+   type down, the first registered type wins (a shader class takes only its
+   exact type: a blinn is no `Lambert`);
+3. otherwise `DAGNode` for DAG nodes, `Material` for a type Maya classifies
+   a surface shader, `DGNode` for the rest.
 
 So a `cluster` comes back as a `Deformer` (registered as `geometryFilter`),
 a lattice shape or a locator as a `Geometry` (`geometryShape`), a camera as
-a `DAGNode`, a material as a `DGNode`. A node object is returned as it is
+a `DAGNode`, a blinn as a `Blinn` (an anisotropic as a `Material`). A node object is returned as it is
 (`Node(x) is x`); anything that names no node raises. The attribute a
 `"node.attr"` string names is `Attribute("node.attr")` (typed) or
 `Plug("node.attr")` (DSL).

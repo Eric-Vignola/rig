@@ -99,6 +99,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import _cast_node
+from rig.nodetypes.material_node import _gate_type, _is_surface_shader
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal.list import List
 from rig._internal.members import (
@@ -141,9 +142,6 @@ __all__ = [
 
 # Shape types a shading engine binds at object level.
 _SHADEABLE = frozenset({"mesh", "nurbsSurface", "subdiv"})
-
-# The classification every surface shader satisfies.
-_SURFACE = "shader/surface"
 
 # The engine every new particle shape is a member of; never a material.
 _PARTICLE_ENGINE = "initialParticleSE"
@@ -194,10 +192,6 @@ class _Found:
     node_type: str
 
 
-def _is_surface_shader(node_type: str) -> bool:
-    return bool(cmds.getClassification(node_type, satisfies=_SURFACE))
-
-
 def _classify(name: str) -> _Found:
     """What an existing node means as a material: a surface shader is
     itself; a shading engine stands for the shader feeding it."""
@@ -227,24 +221,6 @@ def _classify(name: str) -> _Found:
     raise TypeError(
         f"'{name}' exists and is a {node_type}, not a surface shader or a "
         f"shading engine"
-    )
-
-
-def _gate_type(node_type: str) -> None:
-    """Refuse a type Maya cannot build a surface shader from (``createNode``
-    of an unregistered type silently makes an ``unknown`` node)."""
-    legal = cmds.listNodeTypes(_SURFACE) or []
-    if node_type in legal and _is_surface_shader(node_type):
-        return
-    classification = [c for c in cmds.getClassification(node_type) or [] if c]
-    if classification:
-        raise TypeError(
-            f"'{node_type}' is not a surface shader ({classification[0]}); "
-            f"legal types: {legal}"
-        )
-    raise ValueError(
-        f"'{node_type}' is not a registered surface shader (load its plugin "
-        f"first); legal types: {legal}"
     )
 
 
