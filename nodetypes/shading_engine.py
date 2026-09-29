@@ -55,6 +55,20 @@ def _shown(absolute: str) -> str:
     return absolute[1:] if absolute[:1] == ":" else absolute
 
 
+def _listed(shader: OpenMaya.MFnDependencyNode) -> bool:
+    """Whether ``defaultShaderList1.shaders`` lists the shader (a plug of it
+    feeds an element), read from the shader's own connections: the cost of
+    one shader, never of the list (which holds every shader of the scene)."""
+    sel = OpenMaya.MSelectionList()
+    sel.add("defaultShaderList1.shaders")
+    shaders = sel.getPlug(0)
+    return any(
+        destination.isElement and destination.array() == shaders
+        for plug in shader.getConnections()
+        for destination in plug.destinations()
+    )
+
+
 class ShadingEngine(ObjectSet):
     """
     Shading engine class
@@ -206,10 +220,7 @@ class ShadingEngine(ObjectSet):
 
         engine = cls.create(name=default_name)
         engine.set_material(material)
-        shaders = cmds.listConnections(
-            "defaultShaderList1.shaders", source=True, destination=False
-        )
-        if material not in {_absolute(name) for name in shaders or []}:
+        if not _listed(shader):
             cmds.connectAttr(
                 f"{material}.message", "defaultShaderList1.shaders", nextAvailable=True
             )
