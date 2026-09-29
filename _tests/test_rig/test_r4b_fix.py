@@ -494,6 +494,13 @@ class TestRedeclareFixes(_Case):
         self.assertFalse(cmds.attributeQuery("ey", node="rd", exists=True))
         self.node << Enum("ez", dv="True")
         self.assertEqual(_q("rd.ez", "defaultValue"), 1)
+        # overwrite=True adds it again: against the default fields, before the delete
+        self.node << Enum("mode", dv="True", overwrite=True)
+        self.assertEqual(_q("rd.mode", "defaultValue"), 1)
+        self.node << Enum("mode", en="a:b:c") << 2
+        with self.assertRaisesRegex(TypeError, r"'b' is not one of its enum fields"):
+            self.node << Enum("mode", dv="b", overwrite=True)
+        self.assertEqual(cmds.getAttr("rd.mode"), 2)
 
     def test_a_list_checks_every_element_first(self):
         from rig import List

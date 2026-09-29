@@ -78,10 +78,11 @@ class Enum(_AttrSpec):
                 self._dv_name = (key, value)
 
     def _apply_addattr(self, node_string: str, wrap_node: Any) -> Any:
-        """A new attribute's default given without ``en=`` is read against the
-        default fields (``False:True``) first: a wrong name or value raises
-        TypeError before the attribute is added."""
-        if self._dv_name is not None and not wrap_node.has_attr(self.kargs["longName"]):
+        """A new attribute's default given without ``en=`` (an attribute added,
+        or added again with ``overwrite=True``) is read against the default
+        fields (``False:True``) first: a wrong name or value raises TypeError
+        before the attribute is added (or deleted)."""
+        if self._dv_name is not None and (self.overwrite or not wrap_node.has_attr(self.kargs["longName"])):
             key, value = self._dv_name
             self.kargs[key] = _default_of(
                 _parse_enum_names(self.kargs["en"]), value, f"Enum {self.kargs['longName']!r} {key}"
