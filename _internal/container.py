@@ -1419,6 +1419,17 @@ class _DefineScope:
             return ""
         return container._compute_flatten_prefix()
 
+    @staticmethod
+    def frames() -> List[tuple]:
+        """The scope's frames, outermost first, as ``(requested name, the real
+        Container or None)``."""
+        return [(frame.name, frame.container_node) for frame in container._stack]
+
+    @staticmethod
+    def owner(node_name: str) -> Optional[str]:
+        """The container that holds ``node_name``, or None."""
+        return cmds.container(query=True, findContainer=[node_name])
+
     # the node-added tracking and the undo chunk
     track = staticmethod(_call_tracking_creation)
     chunk = staticmethod(_undo_chunk)
