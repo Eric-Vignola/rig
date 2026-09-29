@@ -276,18 +276,18 @@ def _cast(obj: Any, build: bool = True) -> Any:
     if not build and type(cls_obj) is NodeMeta:
         return cls_obj
 
-    # a type already cast from an MObject passes the class's type check
-    # again, so a base-constructor class is built without re-running it
+    # a type already cast passes the class's type check again, so a
+    # base-constructor class is built without re-running it (from the
+    # selection a name was just resolved in)
     inst = None
-    if from_mobject and key in _CASTABLE_TYPES:
-        inst = _construct_checked_type(cls_obj, obj)
+    if key in _CASTABLE_TYPES:
+        inst = _construct_checked_type(cls_obj, obj, sel)
     if inst is None:
         # a node class is constructed without NodeMeta.__call__'s frame (the
         # reference, which casts): a metaclass derived from NodeMeta may
         # override ``_wrap``
         inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj._wrap(obj)
-    if from_mobject:
-        _CASTABLE_TYPES.add(key)
+    _CASTABLE_TYPES.add(key)
     return inst
 
 
@@ -432,13 +432,15 @@ def _cast_node(name: str) -> Any:
 _BASE_CONSTRUCTOR_PARTS = None
 
 
-def _construct_checked_type(cls_obj, obj: str) -> Any:
+def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
     """Builds `cls_obj(obj)` without its `is_type` check, or returns None.
 
     For a class that keeps the DGNode or DAGNode constructor, type check, name
     property and API 1.0 cache, `is_type` only depends on the node type and the
     custom type attr, so it passes for every node of a type that was already
-    cast. The constructor's state is set in the constructor's order. Returns
+    cast. The constructor's state is set in the constructor's order. ``sel``
+    is the MSelectionList the cast resolved the name ``obj`` in (one node),
+    which is the one the constructor would make; None makes it. Returns
     None when the class does not qualify or a step raises, and the caller then
     runs the real constructor, which raises its own errors.
     """
@@ -470,8 +472,9 @@ def _construct_checked_type(cls_obj, obj: str) -> Any:
     ):
         return None
     try:
-        sel = OpenMaya.MSelectionList()
-        sel.add(str(obj))
+        if sel is None:
+            sel = OpenMaya.MSelectionList()
+            sel.add(str(obj))
         inst = object.__new__(cls_obj)
         d    = inst.__dict__
         if init is dag_init:
