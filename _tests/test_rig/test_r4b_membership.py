@@ -668,9 +668,12 @@ class TestTagRules(_Case):
         self.assertEqual((srf.cv >> Tag("ghost")).shape, (0, 2))
         self.assertEqual((lattice.pt[0, 0, :] >> Tag("ghost")).shape, (0, 3))
         self.assertEqual((lattice.pt >> Tag("ghost")).shape, (0, 3))
+        # the node on the left reads the same empty answer (round 4b follow-up
+        # F4; it was a ValueError): a missing tag holds nothing
+        self.assertEqual((self.sph >> Tag("ghost")).shape, (0,))
+        self.assertEqual((srf >> Tag("ghost")).shape, (0, 2))
+        self.assertEqual((lattice >> Tag("ghost")).shape, (0, 3))
         self.assertEqual(_scene(), before)
-        # the node on the left asks for the tag's contents: a missing tag is an error
-        self.assertRefused(ValueError, "no component tag 'ghost' on sphShape", lambda: self.sph >> Tag("ghost"))
 
     def test_removing_another_kind_is_a_no_op(self):
         before = _scene()

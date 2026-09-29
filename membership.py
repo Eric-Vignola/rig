@@ -49,6 +49,7 @@ Usage::
     sph >> Tag("lid")                     # array([0, 1, 2])   native ids, the tag's own category
     sph.vtx[4:12] >> Tag("cap")           # array([4, 5, 6, 7])
     sph.f[:2] >> Tag("cap")               # array([], ...)     faces are not in a vertex tag
+    sph >> Tag("ghost")                   # array([], ...)     no such tag: it holds nothing
     sph.vtx[3] >> Tag() ; Tag.of(sph.vtx[3])   # [Tag('cap')]   the tags holding that vertex
     sph.vtx[:3] in Tag("cap")             # True: every one is in it
     sph in Tag("cap") ; sph in Tag("ghost")    # True ; False (no such tag)
@@ -99,6 +100,7 @@ from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal import types as _types
 from rig._internal.members import (
     _GEOMETRY_TYPES,
+    _POINT_KIND,
     _MemberSpec,
     _NeverHolds,
     _ndims,
@@ -368,9 +370,9 @@ class Tag(_MemberSpec):
 
     ``lhs >> Tag('x')`` reads the native ids of the left-hand side that are
     in the tag (``(N, 2)`` on a surface, ``(N, 3)`` on a lattice): none for
-    components of another kind or a tag the node does not have (an empty
-    array); a whole node reads the tag's contents in its own category (a
-    missing tag is a ``ValueError`` there); ``lhs >> Tag()`` is
+    components of another kind; a whole node reads the tag's contents in its
+    own category; a tag the node does not have holds nothing, so the node or
+    its components read an empty array; ``lhs >> Tag()`` is
     ``Tag.of(lhs)``, the tags holding the left-hand side. ``lhs in
     Tag('x')`` is True when every component of the left is in the tag (a
     node on the left: the node has the tag); a tag the node does not have,
@@ -820,9 +822,7 @@ class Tag(_MemberSpec):
         group, geo = self._single(selections, "'>>' queries")
         name       = self._name
         if not geo.has_component_tag(name):
-            if group.whole:
-                raise ValueError(f"no component tag '{name}' on {_short(group.path)}")
-            return _no_ids(group)   # components: none of them is in it
+            return _no_ids(group)   # a tag the node does not have holds nothing
         ids = geo.get_component_tag_indices(name)
         if group.whole:
             return ids
@@ -1018,11 +1018,16 @@ class Tag(_MemberSpec):
 
 def _no_ids(group: _TagGroup) -> np.ndarray:
     """The empty id array of the group's components (their dtype and shape:
-    ``(0,)``, or ``(0, 2)`` / ``(0, 3)`` for surface / lattice coordinates)."""
-    selection = group.comps[0]
-    if selection.indices is not None:
-        return selection.indices[:0]
-    ndims = _ndims(selection.kind, group.node_type)
+    ``(0,)``, or ``(0, 2)`` / ``(0, 3)`` for surface / lattice coordinates);
+    for the node itself, that of its points (an empty tag's ids)."""
+    if not group.comps:
+        kind = _POINT_KIND[group.node_type]
+    else:
+        selection = group.comps[0]
+        if selection.indices is not None:
+            return selection.indices[:0]
+        kind = selection.kind
+    ndims = _ndims(kind, group.node_type)
     return np.empty((0,) if ndims == 1 else (0, ndims), dtype=int)
 
 

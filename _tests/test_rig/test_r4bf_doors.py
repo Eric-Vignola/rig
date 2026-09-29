@@ -1,4 +1,5 @@
-"""Round 4b follow-up F4: a class reference's miss names ``define``.
+"""Round 4b follow-up F4: a class reference's miss names ``define``; a missing
+tag reads no ids with a node on the left too.
 
 * ``TestDefineDoor``: ``Cls("x")`` for a name no node has ends its
   NodeNotFoundError with "; Cls.define('x') finds or makes it", after the
@@ -13,6 +14,11 @@
   error is printed, as the hints are (a caller that discards the error never
   reads it). Only the message changes: the same error class and facts,
   nothing written, and the hit is untouched.
+* ``TestGhostTag``: ``node >> Tag("ghost")`` (a tag the node does not have)
+  answers an empty id array, as components on the left did, of the shape an
+  empty tag of that node reads (``(0,)``, ``(0, 2)`` on a surface, ``(0, 3)``
+  on a lattice); ``node in Tag("ghost")`` stays False; nothing is written; the
+  other refusals are unchanged.
 """
 
 import os
@@ -305,3 +311,73 @@ class TestDefineDoor(_Case):
         with self.assertRaisesRegex(RuntimeError, r"^Missing joints found: \['nosuch_x'\]$"):
             SkinCluster._sanitize_influences(["nosuch_x"])
 
+
+class TestGhostTag(_Case):
+    def setUp(self):
+        super().setUp()
+        self.sph = Node(cmds.polySphere(name="sph", ch=False)[0])
+        self.srf = Node(cmds.sphere(name="srf", ch=False)[0])
+        self.crv = Node(cmds.curve(name="crv", degree=1, point=[(0, 0, 0), (1, 0, 0), (2, 0, 0)]))
+        box      = cmds.polyCube(name="box", ch=False)[0]
+        self.lat = Node(cmds.lattice(box, divisions=(2, 3, 4))[1])
+
+    def test_a_node_reads_no_ids_from_a_missing_tag(self):
+        shapes = {"sph": (0,), "srf": (0, 2), "crv": (0,), "lat": (0, 3)}
+        for attr, shape in shapes.items():
+            geo = getattr(self, attr)
+            with self.subTest(geo=attr):
+                before = _scene()
+                with mock.patch.object(cmds, "componentTag", wraps=cmds.componentTag) as tag_cmd:
+                    ids = geo >> Tag("ghost")
+                tag_cmd.assert_not_called()
+                self.assertEqual(_scene(), before)
+                self.assertIsInstance(ids, np.ndarray)
+                self.assertEqual(ids.shape, shape)
+                # the answer an empty tag of that node gives
+                geo << Tag("empty")
+                empty = geo >> Tag("empty")
+                self.assertEqual((ids.shape, ids.dtype), (empty.shape, empty.dtype))
+                self.assertFalse(geo in Tag("ghost"))
+                self.assertTrue(geo not in Tag("ghost"))
+
+    def test_the_node_agrees_with_its_components(self):
+        for lhs, comps in (
+            (self.sph, self.sph.vtx[:3]),
+            (self.srf, self.srf.cv[1:3, 2:4]),
+            (self.lat, self.lat.pt[0, 0, :]),
+        ):
+            with self.subTest(lhs=str(lhs)):
+                node_ids = lhs >> Tag("ghost")
+                self.assertEqual(node_ids.shape, (comps >> Tag("ghost")).shape)
+                # the dtype of the node's own reads (a component read keeps its
+                # selection's dtype, as before)
+                comps << Tag("real")
+                self.assertEqual(node_ids.dtype, (lhs >> Tag("real")).dtype)
+        # a transform stands for its shape, a List of one node for the node
+        self.assertEqual((Node("sph") >> Tag("ghost")).shape, (0,))
+        self.assertEqual((List([self.sph]) >> Tag("ghost")).shape, (0,))
+
+    def test_a_deleted_tag_reads_no_ids(self):
+        self.sph.vtx[:8] << Tag("cap")
+        np.testing.assert_array_equal(self.sph >> Tag("cap"), np.arange(8))
+        self.sph << -Tag("cap")
+        self.assertEqual((self.sph >> Tag("cap")).shape, (0,))
+        self.assertFalse(self.sph in Tag("cap"))
+
+    def test_the_other_refusals_are_unchanged(self):
+        joint  = Node(cmds.createNode("joint", name="jnt"))
+        before = _scene()
+        for error, pattern, call in (
+            (ValueError, r"^no component tag 'ghost' on sphShape$", lambda: self.sph << -Tag("ghost")),
+            (ValueError, r"^no component tag 'ghost' on sphShape$",
+             lambda: self.sph.vtx[:2] << -Tag("ghost")),
+            (ValueError, r"^no component tag 'ghost' on sphShape$", lambda: Tag("ghost").clear(self.sph)),
+            (TypeError, "is a plug; membership takes the node", lambda: self.sph.tx >> Tag("ghost")),
+            (TypeError, "one node at a time", lambda: List([self.sph, self.srf]) >> Tag("ghost")),
+            (TypeError, "not geometry", lambda: joint >> Tag("ghost")),
+            (TypeError, "at= places a tag", lambda: self.sph >> Tag("ghost", at=self.sph)),
+        ):
+            with self.subTest(pattern=pattern):
+                with self.assertRaisesRegex(error, pattern):
+                    call()
+        self.assertEqual(_scene(), before)
