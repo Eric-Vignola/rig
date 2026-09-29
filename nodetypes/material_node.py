@@ -40,11 +40,17 @@ Usage::
     Lambert("red")                                 # NodeTypeError: 'red' is a blinn, not a lambert; ...
     red.color << (0, 1, 0)                         # a plain plug: red is the node
     Lambert.find_all(exact_type=False)             # lamberts, and the blinns and phongs typed Blinn / Phong
+
+    red.engine                                     # ShadingEngine("redSG") (find-only; ValueError when none)
+    red.rename("blue")                             # blue and blueSG (the engine follows <mat>SG)
+    red.delete()                                   # the shader, its engines and their materialInfos
+    cmds.delete("blue")                            # the one-node escape
 """
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, Callable
 
 from maya import cmds
 from rig._internal.undo import _undo_chunk
@@ -52,6 +58,7 @@ from rig.nodetypes import _base
 from rig.nodetypes._base import (
     _NODE_CLASS_DICT,
     _cast,
+    _lookup,
     _shared_refused,
     set_custom_type,
 )
@@ -62,7 +69,7 @@ from rig.nodetypes.dg_node import (
     _got,
     DGNode,
 )
-from rig.nodetypes.errors import _article
+from rig.nodetypes.errors import _article, NodeNotFoundError
 from rig.nodetypes.shading_engine import ShadingEngine
 
 
@@ -73,6 +80,9 @@ _SURFACE = "shader/surface"
 # ``getClassification`` per type per session (a type Maya does not know yet,
 # such as a plug-in's before it loads, is not remembered)
 _IS_SURFACE: dict = {}
+
+# A name ``rename`` takes: identifiers joined by namespace or path separators.
+_NAME_RE = re.compile(r"^\|?[A-Za-z_][A-Za-z0-9_]*(?:[:|][A-Za-z_][A-Za-z0-9_]*)*$")
 
 
 def _is_surface_shader(node_type: str) -> bool:
@@ -118,12 +128,91 @@ def _gate_type(node_type: str) -> None:
     )
 
 
+def _leaf(name: str) -> str:
+    """The name without its path and namespace."""
+    return name.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+
+
 def _own_type(cls: type) -> str | None:
     """The exact node type of a shader class, through its MRO (a user's
     ``CUSTOM_NODE_TYPE`` subclass of ``Blinn`` inherits ``blinn``); None for
     the generic ``Material``, whose ``NATIVE_NODE_TYPE`` is DGNode's."""
     node_type = cls.NATIVE_NODE_TYPE
     return None if node_type == DGNode.NATIVE_NODE_TYPE else node_type
+
+
+def _engines_fed_by(material: str) -> list[str]:
+    """The shading engines whose ``surfaceShader`` a material feeds."""
+    plugs = cmds.listConnections(
+        material, type="shadingEngine", source=False, destination=True, plugs=True
+    )
+    engines = []
+    for plug in plugs or []:
+        node, _, attr = plug.rpartition(".")
+        if attr == "surfaceShader" and node not in engines:
+            engines.append(node)
+    return engines
+
+
+def _guard_owned(material: str, verb: str) -> None:
+    """Refuse a network verb on a Maya default or a referenced shader."""
+    if cmds.ls(material, defaultNodes=True):
+        raise RuntimeError(f"'{material}' is a Maya default node and cannot be {verb}")
+    if cmds.referenceQuery(material, isNodeReferenced=True):
+        raise RuntimeError(f"'{material}' is referenced and cannot be {verb}; edit the source file")
+
+
+def _delete_network(material: str) -> None:
+    """Delete the shader ``material``, the engines it feeds (not a Maya
+    default one) and their materialInfos, in one undo step."""
+    _guard_owned(material, "deleted")
+    engines = [name for name in _engines_fed_by(material) if not cmds.ls(name, defaultNodes=True)]
+    infos   = [info for name in engines for info in ShadingEngine._wrap(name).get_material_info()]
+    with _undo_chunk("rig.material"):
+        for name in [*infos, *engines, material]:
+            if cmds.objExists(name):
+                cmds.delete(name)
+    if cmds.objExists(material) or any(cmds.objExists(name) for name in engines):
+        raise RuntimeError(f"'{material}' survived its deletion")
+
+
+def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngine | None]) -> str:
+    """Rename the shader ``material`` to ``new``, and its engine
+    (``engine_of()``) to ``<new>SG`` when it follows the ``<mat>SG``
+    convention, in one undo step; returns the shader's new name. Refused
+    before any write: a Maya default or referenced shader, a name that
+    exists, a taken ``<new>SG``."""
+    _guard_owned(material, "renamed")
+    if _exists(new):
+        raise ValueError(f"'{new}' already exists")
+    engine  = engine_of()
+    old     = _leaf(material)
+    follows = engine is not None and _leaf(engine.name) == f"{old}SG"
+    if follows and _exists(f"{new}SG"):
+        raise ValueError(
+            f"'{new}SG' already exists, so the engine of '{new}' could not follow "
+            f"the <mat>SG convention; rename or delete '{new}SG' first"
+        )
+    with _undo_chunk("rig.material"):
+        got = cmds.rename(material, new)
+        if _leaf(got) != _leaf(new):
+            raise RuntimeError(f"Maya renamed '{material}' to '{got}', not '{new}'")
+        if follows:
+            got_engine = cmds.rename(engine.name, f"{new}SG")
+            if _leaf(got_engine) != f"{_leaf(new)}SG":
+                raise RuntimeError(
+                    f"Maya renamed '{engine.name}' to '{got_engine}', not '{new}SG'"
+                )
+    return got
+
+
+def _exists(name: str) -> bool:
+    """Whether the lookup rule finds a node named ``name`` (ambiguity raises)."""
+    try:
+        _lookup(name)
+    except NodeNotFoundError:
+        return False
+    return True
 
 
 class Material(DGNode):
@@ -359,6 +448,48 @@ class Material(DGNode):
         types = cmds.listNodeTypes(_SURFACE) or []
         found = cmds.ls(*args, type=types, **kwargs) if types else []
         return [node for node in map(_cast, found or ()) if cls.is_type(node.name)]
+
+    @property
+    def engine(self) -> ShadingEngine:
+        """The shading engine this shader feeds (``<shader>SG`` when it feeds
+        several and one is named so; ValueError when several and none is).
+        Find-only: ValueError when it feeds none (an assignment builds one)."""
+        engine = ShadingEngine.for_material(self, create=False)
+        if engine is None:
+            name = self.name
+            raise ValueError(
+                f"'{name}' feeds no shading engine yet; assigning it (geometry << {self!r}) "
+                f"builds {_leaf(name)}SG"
+            )
+        return engine
+
+    def delete(self, nodes: Any = None, **kwargs) -> None:
+        """Deletes the shader network: the shader, the engines it feeds and
+        their materialInfos, in one undo step (the members are left in no
+        engine: green; ``rig.shade.repair()`` re-homes them). ``nodes``, when
+        given, are deleted as :meth:`DGNode.delete` does. Refuses a Maya
+        default (``lambert1``, ``standardSurface1``) or referenced shader
+        (RuntimeError). ``cmds.delete(name)`` deletes the shader alone."""
+        if nodes is not None:
+            super().delete(nodes, **kwargs)
+            return
+        _delete_network(self.name)
+
+    def rename(self, new_name: Any) -> None:
+        """Renames the shader, and its engine when the engine follows the
+        ``<mat>SG`` convention (``red``, ``redSG`` -> ``blue``, ``blueSG``),
+        in one undo step. Refused before any write: a Maya default or
+        referenced shader (RuntimeError), a name that exists or a taken
+        ``<new>SG`` (ValueError), a name Maya would not keep. ``cmds.rename``
+        renames the shader alone."""
+        if not isinstance(new_name, str) or not new_name:
+            raise TypeError(f"a shader's new name is a non-empty str, not {new_name!r}")
+        if not _NAME_RE.match(new_name):
+            raise ValueError(
+                f"{new_name!r} is not a node name Maya keeps: identifiers of "
+                f"[A-Za-z0-9_] not starting with a digit, joined by ':' or '|'"
+            )
+        _rename_network(self.name, new_name, lambda: ShadingEngine.for_material(self, create=False))
 
 
 class Lambert(Material):
