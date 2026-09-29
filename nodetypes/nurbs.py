@@ -29,6 +29,11 @@ class NurbsCurve(Geometry):
     # built from its points (``Node.create("nurbsCurve")`` with none raises, naming them)
     _CREATE_TAKES_INPUTS = "points"
 
+    _DEFINE_REFUSED = (
+        "a nurbsCurve is a shape built from its data: rc.curve(point=..., name='x') makes "
+        "one; NurbsCurve('x') refers to one"
+    )
+
     # --- creation
 
     @classmethod
@@ -185,6 +190,11 @@ class NurbsSurface(Geometry):
     NATIVE_NODE_TYPE = "nurbsSurface"
     FN_SET           = OpenMaya.MFnNurbsSurface
     POINT_COMP_TYPE  = "cv"
+
+    _DEFINE_REFUSED = (
+        "a nurbsSurface is a shape built from its data: rc.surface(...) or "
+        "rc.nurbsPlane(name='x') makes one; NurbsSurface('x') refers to one"
+    )
 
     @property
     def num_cvs(self) -> int:

@@ -96,6 +96,11 @@ class SkinCluster(Deformer):
         }
     )
 
+    _DEFINE_REFUSED = (
+        "a skinCluster is keyed by its geometry: SkinCluster.create(geom, influences) "
+        "makes one; SkinCluster('x') refers to one"
+    )
+
     # --- creation
 
     @classmethod

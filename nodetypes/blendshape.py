@@ -49,6 +49,11 @@ class BlendShape(Deformer):
         }
     )
 
+    _DEFINE_REFUSED = (
+        "a blendShape is keyed by its geometry: BlendShape.create(*targets, base) makes "
+        "one; BlendShape('x') refers to one"
+    )
+
     @classmethod
     def _create(cls, *args, **kwargs) -> str:
         """[Internal] Creates a blendshape node and returns the mesh name.

@@ -34,6 +34,11 @@ class Reference(DGNode):
     # ``container=True``
     _CONTAINER_AWARE = False
 
+    _DEFINE_REFUSED = (
+        "a reference is made from its file: Reference.create(file_path, namespace) "
+        "references it; Reference('xRN') refers to one"
+    )
+
     @classmethod
     def _create(cls, file_path: str | os.PathLike, namespace: str) -> str:
         """[Internal] Creates a reference node and returns its name.

@@ -178,7 +178,9 @@ class AmbiguousNodeError(NodeLookupError):
     (``candidates`` are their full paths; "use a path"), or a bare name at the
     root namespace and in the current one (``namespaces=True``, ``candidates``
     ``[':x', ':char:x']``; "spell the namespace"). An instanced node is one
-    node."""
+    node. ``define`` raises it too, with its own ``message``, when the node it
+    would make shares its name with nodes elsewhere (``'root' exists at
+    |char_grp|root``): the name would then be ambiguous."""
 
     def __init__(
         self,
@@ -186,12 +188,16 @@ class AmbiguousNodeError(NodeLookupError):
         candidates: Iterable[str] = (),
         label: str = "node",
         namespaces: bool = False,
+        message: str | None = None,
     ) -> None:
         super().__init__(name, label)
         self.candidates = list(candidates)
         self.namespaces = namespaces
+        self._text_given = message
 
     def _text(self) -> str:
+        if self._text_given:
+            return self._text_given
         if self.namespaces:
             return (
                 f"{self.name!r} is ambiguous: it names {' and '.join(self.candidates)}; "
@@ -211,6 +217,11 @@ class NodeTypeError(TypeError, ValueError):
     ``'grp' is a transform, not a joint`` and an optional ``hint`` (the
     spelling that works).
 
+    ``define`` raises it with its own ``message`` when Maya would give the
+    node it makes another name than its key: a DG node holds the name
+    (``'knob' is taken by a multiplyDivide``), or the made node came out
+    renamed.
+
     Attributes:
         name: the name as it was given.
         label: the type the class names (``"joint"``).
@@ -218,14 +229,24 @@ class NodeTypeError(TypeError, ValueError):
         hint: the text after the ``;``, or ``""``.
     """
 
-    def __init__(self, name: str = "", label: str = "node", node_type: str = "", hint: str = "") -> None:
+    def __init__(
+        self,
+        name: str = "",
+        label: str = "node",
+        node_type: str = "",
+        hint: str = "",
+        message: str | None = None,
+    ) -> None:
         super().__init__(name)
         self.name      = name
         self.label     = label
         self.node_type = node_type
         self.hint      = hint
+        self._message  = message
 
     def __str__(self) -> str:
+        if self._message:
+            return self._message
         text = (
             f"{self.name!r} is {_article(self.node_type)} {self.node_type}, "
             f"not {_article(self.label)} {self.label}"
