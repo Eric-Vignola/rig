@@ -8,12 +8,16 @@
   ``namespace -relativeNames`` on, the list emptied, referenced ones, and
   ``create=False``. ``defaultShaderList1`` itself can be neither deleted nor
   renamed, so the check never meets a missing list.
-* ``TestNoWholeListRead``: no create, define, assignment or adopt reads
-  ``defaultShaderList1.shaders`` whole (a per-material read of every shader
-  of the scene: N materials cost O(N^2)).
+* ``TestConvertListCheck``: a conversion's read-back of the list slot
+  (``shade_convert._verify``): one slot at the old index passes; none, or
+  several, raise naming them in index order.
+* ``TestNoWholeListRead``: no create, define, assignment, adopt or conversion
+  reads ``defaultShaderList1.shaders`` whole (a per-material read of every
+  shader of the scene: N materials cost O(N^2)).
 """
 
 import os
+import re
 import shutil
 import tempfile
 from unittest import mock
@@ -175,10 +179,46 @@ class TestShaderListCheck(_Case):
         self.assertEqual(len(_slots("red")), 1)
 
 
+class TestConvertListCheck(_Case):
+    """``shade_convert._verify``'s list slot, read from the new node."""
+
+    def setUp(self):
+        super().setUp()
+        from rig._internal import shade_convert
+
+        self.convert = shade_convert
+        cmds.shadingNode("blinn", asShader=True, name="red")   # listed, no engine
+        self.index = int(_slots("red")[0].rpartition("[")[2][:-1])
+        self.scan  = shade_convert._scan("red", "blinn", "phong", True)
+        self.assertEqual(self.scan.dsl1_index, self.index)
+        self.new = cmds.createNode("phong", name="red__new")
+        cmds.disconnectAttr("red.message", f"defaultShaderList1.shaders[{self.index}]")
+
+    def test_one_slot_at_the_old_index_passes(self):
+        cmds.connectAttr(f"{self.new}.message", f"defaultShaderList1.shaders[{self.index}]")
+        self.assertIsNone(self.convert._verify(self.scan, self.new))
+
+    def test_no_slot_or_several_raise_in_index_order(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            rf"^defaultShaderList1 lists the new phong at \[\], not at the old index {self.index}$",
+        ):
+            self.convert._verify(self.scan, self.new)
+        # connected out of index order: the text lists them in index order
+        for index in (self.index + 70, self.index, self.index + 60):
+            cmds.connectAttr(f"{self.new}.message", f"defaultShaderList1.shaders[{index}]")
+        slots = [f"defaultShaderList1.shaders[{self.index + k}]" for k in (0, 60, 70)]
+        text  = f"defaultShaderList1 lists the new phong at {slots}, not at the old index {self.index}"
+        with self.assertRaisesRegex(RuntimeError, f"^{re.escape(text)}$"):
+            self.convert._verify(self.scan, self.new)
+
+
 class TestNoWholeListRead(_Case):
     """No material verb reads ``defaultShaderList1.shaders`` whole."""
 
     def test_the_material_verbs(self):
+        from rig.nodetypes import Phong
+
         cube  = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
         reads = []
         real  = cmds.listConnections
@@ -193,6 +233,8 @@ class TestNoWholeListRead(_Case):
             cube << Blinn.create(name="blue")
             cube << red
             cube << rn.blinn(name="bare")
+            phong = red.astype(Phong)
         self.assertTrue(reads)
         self.assertEqual([arg for arg in reads if "defaultShaderList" in arg], [])
+        self.assertEqual(len(_slots(phong.name)), 1)
         self.assertEqual(len(_slots("bare")), 1)

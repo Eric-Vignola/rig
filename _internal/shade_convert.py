@@ -821,14 +821,17 @@ def _verify(scan: _Scan, new: str) -> None:
         if fed != [new]:
             raise RuntimeError(f"{info}.material reads {fed}, not the new {dst}")
     if scan.dsl1_index is not None:
-        shaders = cmds.listConnections(
-            "defaultShaderList1.shaders", source=True, destination=False, plugs=True,
-            connections=True,
-        ) or []
-        slots = [
-            slot for slot, source in zip(shaders[0::2], shaders[1::2])
-            if source == f"{new}.message"
-        ]
+        # read from the new node's own wires, never from the list (which
+        # holds every shader of the scene), in the list's index order
+        slots = sorted(
+            (
+                slot for slot in cmds.listConnections(
+                    f"{new}.message", source=False, destination=True, plugs=True
+                ) or []
+                if _DSL1_RE.fullmatch(slot)
+            ),
+            key=lambda slot: int(_DSL1_RE.fullmatch(slot).group(1)),
+        )
         if slots != [f"defaultShaderList1.shaders[{scan.dsl1_index}]"]:
             raise RuntimeError(
                 f"defaultShaderList1 lists the new {dst} at {slots}, not at the old "
