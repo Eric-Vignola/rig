@@ -10,8 +10,10 @@ Usage::
     node = Node("ctrl")
     node << Float("weight", min=0, max=1) << 0.5 << lock
     node << Vector("aim")
-    node << Enum("mode", en=["off", "on", "auto"])
+    node << Enum("mode", en=["off", "on", "auto"])     # or en={"off": 0, "on": 5}
     node << Float("blend", multi=True)
+    node << Float("weight", max=2)      # declared again: max applied, value 0.5 and the lock kept
+    node << Float("weight", overwrite=True)            # deleted and added again
 """
 
 from __future__ import annotations

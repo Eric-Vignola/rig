@@ -90,10 +90,10 @@ node, a `namedtuple` of nodes and `List`s for the image rigs.
 | `rf.frame()` and `%` — scene time and modulo | | `%` | both | both |
 | `trigonometry.atand`, `trigonometry.sind` — degree variants, no conversion nodes | | | yes | |
 | `constant(0)` — a literal that must be a plug | | yes | yes | |
-| `Lambert(name, unique=True, ...)`; `shape << material` | | | yes | yes |
+| `Lambert.create(name=..., ...)` — a new material network; `shape << material` | | | yes | yes |
 | `set_options(create_containers=...)` | | demo | | |
 | `container=False` on a factory, then `rc.parent` | yes | yes | yes | `container=False` only |
-| `Lambert(..., container=True)` — a per-plane look opts into the container | | | yes | yes |
+| `Lambert.create(..., container=True)` — a per-plane look opts into the container | | | yes | yes |
 
 `rc` is `rig.bridges.commands`, `rn` is `rig.bridges.nodes`, `rf` is
 `rig.functions`.
@@ -347,7 +347,7 @@ print([(round(cmds.getAttr(p + ".width"), 2), round(cmds.getAttr(p + ".height"),
 # [(7.26, 4.84), (10.89, 14.51), (21.77, 16.31), (29.03, 29.01), (36.29, 25.28)]
 
 from rig.shade import Material
-print(setup.shapes[0] >> Material(), cmds.ls(type="container"))   # [Lambert('sticker_layer_0')] ['sticker_layer_container']
+print(setup.shapes[0] >> Material(), cmds.ls(type="container"))   # [Lambert("sticker_layer_0")] ['sticker_layer_container']
 ```
 
 Five images of five different aspects, five planes at five distances, all
@@ -388,7 +388,7 @@ from rig.examples import image_loop
 
 loop = image_loop.create_plane(images_dir, name="dogs")
 print(loop)
-# Output(transform=Transform("mesh_dogs"), shape=Mesh("mesh_dogsShape"), material=DGNode("dogs"), texture=DGNode("file1"))
+# Output(transform=Transform("mesh_dogs"), shape=Mesh("mesh_dogsShape"), material=Lambert("dogs"), texture=DGNode("file1"))
 print(loop.shape.sequenceStart.get(), loop.shape.sequenceEnd.get())   # 1 5
 
 plane = cmds.ls(type="polyPlane")[0]
@@ -400,7 +400,7 @@ for t in (1, 5, 6, 7):
     frames.append(loop.texture.frameExtension.get())
 print(frames)                                               # [1, 5, 1, 2]  -- wraps after frame 5
 
-print(loop.shape >> Material(), cmds.ls(type="container"))  # [Lambert('dogs')] ['dogs_container']
+print(loop.shape >> Material(), cmds.ls(type="container"))  # [Lambert("dogs")] ['dogs_container']
 ```
 
 ---
@@ -434,31 +434,30 @@ Now, with `rig.shade`:
 <!-- notest -->
 ```python
 texture  = rn.file()
-material = Lambert(
-    name,
-    unique       = True,
+material = Lambert.create(
+    name         = name,
     container    = True,
     diffuse      = 1,
     color        = texture.outColor,
     ambientColor = texture.outColor,
 )
 shape                 << material
-material.transparency << remap.outColor      # the spec is the handle for the material's plugs
+material.transparency << remap.outColor      # the material is the node: its attributes are plugs
 ```
 
-`Lambert(name, ...)` is a lazy handle — it makes no Maya call until it
-meets `<<`. Then the shader, `<name>SG`, its `materialInfo` and the
-`defaultShaderList1` link are built in one go, the kwargs are applied as
-attribute injections (a value sets `diffuse`, a plug connects the texture
-into `color` and `ambientColor`), and the shape is moved into the engine
-with one `cmds.sets(forceElement=...)`. A material is a scene-level asset
-and stays out of the active container by default; `container=True` opts
-this per-plane look in, so deleting the plane's container takes its look
-with it. The spec keeps working as the material afterwards:
-`material.transparency << ...` reaches the lambert's plug. `unique=True` keeps the old behaviour on a
-rebuild: a second `create_plane(name="run")` gets its own `run1` and
-`run1SG` instead of re-using `run`. `m.node` is the material node the
-rest of the script wires textures into; `m.engine` is the shading engine.
+`Lambert.create(name=...)` builds the shader, `<name>SG`, its
+`materialInfo` and the `defaultShaderList1` link in one go, and applies
+the keywords as attribute injections (a value sets `diffuse`, a plug
+connects the texture into `color` and `ambientColor`). The node on the
+right of `<<` then moves the shape into the engine with one
+`cmds.sets(forceElement=...)`. A material is a scene-level asset and stays
+out of the active container by default; `container=True` opts this
+per-plane look in, so deleting the plane's container takes its look with
+it. `create` always makes a new network, so a second
+`create_plane(name="run")` gets its own `run1` and `run1SG` instead of
+re-using `run`; `Lambert.define(name, ...)` would find `run` and share it.
+The returned `Lambert` is the node the rest of the script wires textures
+into; `material.engine` is its shading engine.
 
 ---
 

@@ -4,7 +4,12 @@ The attribute half of [`rig`](../README.md). A spec is a small, lazy
 description of a Maya attribute — its name, type, range, default and any
 other `cmds.addAttr` flag — that does nothing until it meets `<<`. Inject
 it into a node and the attribute exists; the spec hands back the new plug
-so the value goes next.
+so the value goes next. A spec is a **declaration**: what lives inside a
+node is declared and applied with `<<`, while a node itself is named,
+defined or created through its class (the
+[construction rule](../README.md#the-construction-rule)). Declaring an
+attribute the node already has applies the settings you pass and keeps
+its value and its connections.
 
 Every block on this page runs top to bottom as one script, under `mayapy`
 or inside Maya. This is the setup:
@@ -79,22 +84,23 @@ print(rig.Float is Float, rig.lock is lock, rig.destroy is destroy)  # True True
 print(len(rig.spec.__all__))                                         # 23
 ```
 
-### Names that collide on purpose
+### Names to keep apart
 
 The top-level re-export puts a few spec names next to things that sound
-alike. The capitalised name is always the attribute spec.
+alike. The capitalised name is always the attribute spec, and no public
+name is both a node class and a declaration.
 
 | Name | Is | Not to be confused with |
 |---|---|---|
 | `rig.Color` | an RGB `double3` attribute spec (children `R`, `G`, `B`) | a colour value, or a vertex colour set |
-| `rig.MeshAttr` | a `mesh` data attribute spec | `rig.nodetypes.Mesh`, the typed shape node |
+| `rig.MeshAttr`, `rig.NurbsCurveAttr`, `rig.NurbsSurfaceAttr` | `mesh` / `nurbsCurve` / `nurbsSurface` data attribute specs | `rig.nodetypes.Mesh` / `NurbsCurve` / `NurbsSurface`, the shape node classes, and `cgmath.geometry.MeshData`, the data |
 | `rig.Matrix` | a `matrix` attribute spec | `rig.matrix`, the matrix function library |
 | `rig.Vector`, `rig.Euler`, `rig.Quat` | compound attribute specs | `rig.vector`, `rig.euler`, `rig.quaternion`, the function libraries |
 
 A node's `repr` names its node class, so `Mesh("cubeShape")` in an output
-is a `rig.nodetypes.Mesh` (likewise `NurbsCurve`, `NurbsSurface`). The data
-specs are `rig.MeshAttr`, `rig.NurbsCurveAttr` and `rig.NurbsSurfaceAttr`:
-no public name is both a node class and a declaration.
+is a `rig.nodetypes.Mesh`, and `ctrl << Mesh("shapeIn")` names a mesh
+node: it raises `NodeNotFoundError` (no mesh has that name) before `<<`
+runs. The data attribute is `ctrl << MeshAttr("shapeIn")`.
 
 ```python
 from rig.nodetypes import Mesh as MeshNode
@@ -110,12 +116,13 @@ print(hasattr(rig, "Mesh"), rig.MeshAttr is MeshNode, rig.Matrix is rig.matrix) 
 The positional argument is the long name. Every keyword is an `addAttr`
 flag, short or long spelling, with three exceptions the spec keeps for
 itself: `multi` / `m`, `size` and `overwrite`. `keyable=True` is filled
-in for you.
+in for you. Any other keyword (a typo, `define`'s `update=`) is a
+`TypeError` when the spec is made, with a did-you-mean hint.
 
 ```python
 spec = Float("weight", min=0, max=1, dv=0.5)
 print(spec.kargs)                                               # {'min': 0, 'max': 1, 'dv': 0.5, 'keyable': True, 'longName': 'weight', 'attributeType': 'double'}
-print(spec.size, spec.overwrite, spec.compound)                 # None True None
+print(spec.size, spec.overwrite, spec.compound)                 # None False None
 print(cmds.attributeQuery("weight", node="ctrl", exists=True))  # True -- from the taste above, not from this spec
 ```
 
@@ -148,22 +155,45 @@ The new plug belongs to the node object the spec was applied to:
 means its node: `ctrl.tx << Float("y")` adds `y` to `ctrl`, and the new
 plug's `node` is `ctrl`.
 
-### `overwrite=` decides what an existing name means
+### Declaring it again applies the settings and keeps the value
 
-By default a spec **replaces** an attribute that already has its name:
-the old one is unlocked, deleted (severing its connections) and rebuilt
-from the spec, so the value goes back to the default. `overwrite=False`
-keeps the existing attribute and returns its plug, without checking that
-the types agree.
+A spec whose name the node already has, as the same kind of attribute,
+**keeps** that attribute: its value and its connections are never
+touched (the value is set only when the attribute is created), and the
+settings you pass are applied in place: the default, `min` / `max`, the
+soft range, `keyable`, `hidden`, `niceName`, an `Enum`'s fields. rig's
+own `keyable=True` is not a setting you passed, so a hidden or
+non-keyable attribute stays so. Declaring twice is declaring once, so a
+build can run again in the same scene.
 
 ```python
-ctrl << Float("blend", min=0, max=1) << 0.75
-ctrl << Float("blend", min=-5, max=5)
-print(cmds.getAttr("ctrl.blend"), cmds.attributeQuery("blend", node="ctrl", min=True))   # 0.0 [-5.0]
+knob = Node.create("transform", name="knob")
+ctrl << Float("mix", dv=0.5) << 0.75
+ctrl.mix << knob.tx
+knob.tx << 0.3
+ctrl << Float("mix")                                     # the same declaration: nothing changes
+ctrl << Float("mix", min=-5, max=5)                      # the range is applied; the value and the wire are kept
+print(ctrl.mix >> None, cmds.attributeQuery("mix", node="ctrl", range=True), ctrl.mix.get_inputs())   # 0.3 [-5.0, 5.0] List([Plug("knob.translateX")])
+```
 
-ctrl.blend << 0.3
-same = ctrl << Float("blend", min=0, max=1, overwrite=False)
-print(same >> None, cmds.attributeQuery("blend", node="ctrl", min=True))                 # 0.3 [-5.0]
+Everything is checked before the first edit, and a re-declaration is
+one undo step that restores what it changed. Another kind of attribute
+under the name is a `TypeError`, and so are a setting that cannot change
+in place (`sn=`, `multi=`), a range that would exclude the attribute's
+default (pass `dv=` with it) and a static attribute's name
+(`Float("tx")`). `overwrite=True` is the explicit replace: the old
+attribute is unlocked and deleted, severing its connections, and added
+again from the spec, so the value goes back to the default.
+
+```python
+from rig.spec import String
+
+try:
+    ctrl << String("mix")
+except TypeError as e:
+    print(e)                                             # 'ctrl.mix' exists as a double, not a string; overwrite=True replaces it
+ctrl << Float("mix", overwrite=True)
+print(ctrl.mix >> None, ctrl.mix.get_inputs())           # 0.0 List([])
 ```
 
 ### Modifiers are specs with no name
@@ -232,8 +262,8 @@ except Exception as e:
     print(type(e).__name__)                     # InjectionError
 ```
 
-`node >> Float("x")` declares; `node >> Tag("x")` (a collection spec)
-queries. The right-hand family decides, as the
+`node >> Float("x")` declares; `node >> Tag("x")` and `node >> red` (a
+membership collection) query. The right-hand family decides, as the
 [root README](../README.md) puts it.
 
 ### `plug >> Node` clones the attribute
@@ -243,10 +273,12 @@ equivalent attribute to that node under the same name. Type, compound
 shape, enum names and multi-ness travel; **min, max, default, value and
 connections do not**. A multi's populated indices are mirrored, values
 included. `plug >> "name"` and `plug >> "other.name"` are the same clone
-under a chosen name plus the current value, and they refuse a name the
-target already has. A plug on the right is not a name, though it is a
-`str`: `plug >> other_plug` is a `TypeError` that spells the
-`other_plug << plug` to write.
+under a chosen name plus the current value. Every spelling refuses a
+name the target already has (re-declare it with a spec, or `destroy` it
+first). A plug on the right is not a name, though it is a `str`: `plug >>
+other_plug` is a `TypeError` that spells the `other_plug << plug` to
+write. A membership node on the right (a layer, a shader) is refused
+too, naming the `in` question and the named clone (`plug >> "red.w"`).
 
 ```python
 src = Node.create("transform", name="src")
@@ -313,23 +345,28 @@ print(repr(parked), ctrl.__parked__ >> None)   # Plug("ctrl.__parked__") 3.5
   default; `k=False` makes a hidden-from-channel-box attribute, `hidden=True`
   hides it from the UI entirely.
 - **`min` / `max` / `dv` (or `defaultValue`)** are `addAttr`'s own. On a
-  compound they land on the children; a per-child default is a sequence
-  passed as **`defaultValue=[...]`** (see *Real behaviour, verified* for
-  `dv=[...]`).
+  compound they land on the children; a per-child default is a sequence,
+  `dv=[1, 0, 0]` or `defaultValue=[1, 0, 0]`.
 - **Compound children are name + suffix**: `Vector("aim")` is `aim` plus
   `aimX aimY aimZ` (`double3`), `Color` is `R G B`, `Quat` is `X Y Z W`
   (`double4`), `Euler` is `X Y Z` with each child a `doubleAngle`.
 - **Angles are degrees** on the node, as everywhere in Maya's UI units:
   `ctrl.twist << 90` then `ctrl.twist >> None` is `90.0`.
-- **Enums are set by index or by field name.** `en=` takes a list or a
-  colon string; a value (`<< 2`, `dv=`) is the position or its name
-  (`<< "auto"`): the exact name first, then the one field that matches
-  with case, spaces, `_` and a `-` between letters ignored. Any other
-  string is a `TypeError` that lists the fields, before anything is set.
-  `plug.enums` lists the names.
+- **Enums are set by index or by field name.** `en=` takes a colon
+  string (`"off:on:auto"`, `"red=1:green=5"`), a list or tuple of names,
+  a dict of names to values (`{"red": 1, "green": 5}`, in its order) or
+  `(name, value)` pairs (`[("red", 1), ("green", 5)]`); a `set` is a
+  `TypeError`, since it has no order. A value (`<< 2`, `dv=`) is the
+  field's value or its name (`<< "auto"`): the exact name first, then the
+  one field that matches with case, spaces, `_` and a `-` between letters
+  ignored. Any other string is a `TypeError` that lists the fields, before
+  anything is set. `plug.enums` lists the names.
 - **Modifiers return the plug they edited**, so they can sit anywhere in
   a chain and inside a per-channel list: `ctrl.s << [lock, skip, hide]`.
 - **Every spec name is also at `rig.*`**; `rig.spec.*` is the home.
+- **Declaring again keeps the attribute.** A spec whose name the node has
+  applies the settings passed and keeps the value and the connections;
+  `overwrite=True` deletes it and adds it again; another kind raises.
 - **`destroy` is two spellings of one thing**: `plug << destroy` for a
   plug you hold, `node << destroy("a", "b", ...)` for names. `node <<
   destroy` (no names) and `plug << destroy("a")` are `TypeError`s that
@@ -341,34 +378,19 @@ print(repr(parked), ctrl.__parked__ >> None)   # Plug("ctrl.__parked__") 3.5
 
 Verified on Maya 2025; not bugs to work around blindly.
 
-- **`Time` cannot be injected.** It asks `addAttr` for
-  `dataType="time"`, and `time` is an *attribute* type, so injection
-  raises `RuntimeError: Type specified for new attribute's data type is
-  unknown`. Cloning a time plug fails the same way. Until that is fixed,
-  `cmds.addAttr(node, ln="when", at="time")` and then `node.when` works
-  like any other plug.
-- **A per-child default is `defaultValue=[...]`, not `dv=[...]`.**
-  `Vector("aim", dv=[1, 0, 0])` forwards the list to every child next to
-  its scalar default and `addAttr` raises `TypeError` — *after* creating
-  the parent. That half-built parent is invisible to `attributeQuery`,
-  `listAttr`, `deleteAttr` and `destroy`, yet blocks the name on that
-  node for the rest of the session. Use `defaultValue=[1, 0, 0]`. A
-  scalar `dv=5` on a compound is silently ignored.
+- **A scalar `dv=5` on a compound is silently ignored**; a per-child
+  default is a sequence, `dv=[1, 0, 0]`.
 - **A `>> Node` clone is type-only.** `min`, `max`, `dv`, the value and
   the keyable state are not carried (only the named forms copy the
-  value). And where `plug >> "name"` refuses an existing name, `plug >>
-  Node` **replaces** a same-named dynamic attribute on the target
-  (`overwrite=True` in the spec it builds), resetting its value.
-  Cloning a `List` of same-named plugs onto one node therefore keeps
-  only the last.
+  value), and a name the target already has is refused, so cloning a
+  `List` of same-named plugs onto one node stops at the second.
 - **`Color` clones back as a `Vector`.** The clone sees three `double`
   children and builds `X Y Z`, so `src.tint >> dst` gives `dst.tintX`,
   not `dst.tintR`.
-- **A name that matches a built-in short name fails inside `addAttr`.**
-  `Float("c")` on a transform (`c` is `center`; `tmp` is `template`) is a
-  `RuntimeError: Found no valid items to add the attribute to`. The spec's own
-  existence check looks at long names only, so `overwrite` never
-  triggers.
+- **A static attribute's name is refused, long or short.** `Float("c")`
+  on a transform (`c` is `center`; `tmp` is `template`) and `Float("tx")`
+  are a `TypeError` naming the attribute, before any edit: a declaration
+  adds a dynamic attribute.
 - **A compound child cannot be destroyed alone**: `ctrl.aimX << destroy`
   is Maya's `Cannot delete child 'ctrl.aimX' of compound attribute 'aim'`.
   Destroy the parent.
@@ -382,5 +404,5 @@ Verified on Maya 2025; not bugs to work around blindly.
   is what shows the attribute again; a non-keyable-but-displayed state
   needs `plug.set(channelBox=True)` by hand.
 - **`overwrite=True` is destructive by design**: value reset, outgoing
-  and incoming connections severed, a lock removed first. Reach for
-  `overwrite=False` in code that may run twice.
+  and incoming connections severed, a lock removed first. Code that may
+  run twice needs no flag: the default re-declaration keeps what is there.
