@@ -847,7 +847,9 @@ class _Normaliser:
         return [selection for selection in result if selection is not None]
 
 
-def normalise(lhs: Any, *, want_shapes: bool, refuse_plugs: Any = None) -> list[_Selection]:
+def normalise(
+    lhs: Any, *, want_shapes: bool, refuse_plugs: Any = None, empty: str = "nothing to inject"
+) -> list[_Selection]:
     """Fold a membership left-hand side into one :class:`_Selection` per
     ``(path, kind)``.
 
@@ -872,30 +874,25 @@ def normalise(lhs: Any, *, want_shapes: bool, refuse_plugs: Any = None) -> list[
       element.
     - Equal ``(path, kind)`` merge; a whole-object entry and component
       entries on one path both survive. An empty result is
-      ``ValueError('nothing to inject')``.
+      ``ValueError(empty)`` (``'nothing to inject'``; a query words its own).
     """
     normaliser = _Normaliser(want_shapes, refuse_plugs)
     normaliser.add(lhs, "")
     selections = normaliser.selections()
     if not selections:
-        raise ValueError("nothing to inject")
+        raise ValueError(empty)
     return selections
 
 
+class _NeverHolds(TypeError):
+    """A left-hand side a membership kind can never hold (a vertex for a
+    material, a component or a DG node for a layer, a group for a tag). On
+    ``<<`` / ``-`` it is the refusal (a TypeError, before any write); a query
+    answers by contents instead: ``in`` is False, ``.of`` / ``>> Kind()``
+    list nothing (the user's rule for tags, for every kind)."""
+
+
 # ---------- Shared helpers of the named kinds ----------------------------- #
-
-
-def _find_node(name: str) -> str | None:
-    """The node called ``name`` by the lookup rule of ``Node(x)``
-    (``rig.nodetypes._base._lookup``): a path or ``ns:name`` as written, a
-    bare name at the root namespace and in the current one. Its name as
-    ``cmds.ls(long=True)`` prints it, or ``None`` when no node has it. A name
-    several nodes have (two DAG paths, or ``:x`` and ``:<current>:x``) raises
-    AmbiguousNodeError and a pattern NodeLookupError (both ValueErrors)."""
-    try:
-        return _lookup(name)
-    except NodeNotFoundError:
-        return None
 
 
 # ``_check_attrs`` / ``_attribute_of`` (the collections' attribute kwargs,
@@ -907,7 +904,33 @@ def _find_node(name: str) -> str | None:
 # ---------- Member-spec protocol base ------------------------------------ #
 
 
-class _MemberSpec:
+def _class_operand_error(cls: Any, verb: str) -> str | None:
+    """The TypeError text for a membership class written without its
+    parentheses on the right of ``verb`` (``cube in Blinn``, ``cube << Tag``),
+    or None when ``cls`` is no membership class."""
+    if not isinstance(cls, type):
+        return None
+    name = cls.__name__
+    if issubclass(cls, _MemberSpec) or (issubclass(cls, Node) and getattr(cls, "_MEMBER_KIND", False)):
+        return (
+            f"{name} is the class: {name}() is the kind token (every one: x >> {name}() "
+            f"lists them, x << {name}() takes x out of them) and {name}('x') one; "
+            f"write x {verb} {name}('x')"
+        )
+    if issubclass(cls, Node) and getattr(cls, "_KIND_HINT", None):
+        return f"{name} is the class: {name}('x') refers to one; {cls._KIND_HINT}; write x {verb} {name}('x')"
+    return None
+
+
+class _SpecMeta(type):
+    """The metaclass of the membership specs: ``x in Tag`` (the class) is a
+    TypeError naming ``Tag('x')`` and ``Tag()``."""
+
+    def __contains__(cls, lhs: Any) -> bool:
+        raise TypeError(_class_operand_error(cls, "in"))
+
+
+class _MemberSpec(metaclass=_SpecMeta):
     """Protocol base of the collection spec ``Tag`` and of the private member
     of a membership node class (a display layer's ``_LayerMember``, a shader's
     or shading engine's ``rig.shade._MaterialMember``).
@@ -1039,6 +1062,14 @@ class _MemberSpec:
         left-hand side comes back unchanged so the next ``<<`` targets it.
         An attribute plug on the left is a ``TypeError`` (the node is the
         member), unless the kind claims it (:meth:`_plan_plug`)."""
+        plan = self._prepare(lhs)
+        with _undo_chunk(f"rig.{self.KIND}"):
+            self._apply(plan)
+        return lhs
+
+    def _prepare(self, lhs: Any) -> Any:
+        """`inject`'s checks and plan, which write nothing (a ``List`` pair
+        broadcast runs them for every pair before its first write)."""
         plan = self._plan_plug(lhs) if isinstance(lhs, Plug) else None
         if plan is None:
             selections = normalise(
@@ -1048,9 +1079,7 @@ class _MemberSpec:
             )
             self._check_kinds(selections)
             plan = self._plan(selections)
-        with _undo_chunk(f"rig.{self.KIND}"):
-            self._apply(plan)
-        return lhs
+        return plan
 
     def query(self, lhs: Any) -> Any:
         """``lhs >> spec``: a plain value read out of the left-hand side --
@@ -1068,11 +1097,16 @@ class _MemberSpec:
             lhs,
             want_shapes  = self.WANT_SHAPES,
             refuse_plugs = lambda plug: self._plug_error(plug, ">>"),
+            empty        = "nothing to ask about: the left-hand side of '>>' names no member",
         )
-        self._check_kinds(selections)
         if not self.purges:
+            self._check_kinds(selections)
             return self._query(selections)
-        found = self._of(selections)
+        try:
+            self._check_kinds(selections)
+            found = self._of(selections)
+        except _NeverHolds:
+            found = []   # a left-hand side this kind never holds: in none
         if self.EXCLUSIVE:
             return found[0] if found else None
         return found
@@ -1083,9 +1117,12 @@ class _MemberSpec:
     def contains(self, lhs: Any) -> bool:
         """``lhs in spec``: whether EVERY member of the left-hand side is in
         this collection (every node, every component; a ``List`` / list of
-        them: every element). An attribute plug stands for its node. A kind
-        token (``Spec()``) or a removal token (``-Spec('x')``) names no one
-        collection: ``TypeError`` (``lhs >> Spec()`` enumerates)."""
+        them: every element). An attribute plug stands for its node. A member
+        the kind can never hold (a vertex for a material, a group for a tag,
+        a component or a DG node for a layer) is not in it: False, as ``.of``
+        lists nothing for it. A kind token (``Spec()``) or a removal token
+        (``-Spec('x')``) names no one collection: ``TypeError`` (``lhs >>
+        Spec()`` enumerates)."""
         if self._remove:
             raise TypeError(
                 f"'in' asks about one collection; {self!r} is a removal: ask with "
@@ -1096,9 +1133,17 @@ class _MemberSpec:
                 f"'in' asks about one collection; {self!r} names every one of its "
                 f"kind: x >> {self!r} enumerates the ones holding x"
             )
-        selections = normalise(lhs, want_shapes=self.WANT_SHAPES)
-        self._check_kinds(selections)
-        return bool(self._contains(selections))
+        selections = normalise(
+            lhs, want_shapes=self.WANT_SHAPES,
+            empty="nothing to ask about: the left-hand side of 'in' names no member",
+        )
+        try:
+            self._check_kinds(selections)
+            return bool(self._contains(selections))
+        except _NeverHolds:
+            # a member this kind can never hold (a vertex for a material, a
+            # group for a tag, a component for a layer): not in it
+            return False
 
     @classmethod
     def of(cls, x: Any) -> list:
@@ -1112,8 +1157,11 @@ class _MemberSpec:
                 f"{cls._kind_name()}.of({plug.node})"
             ),
         )
-        cls()._check_kinds(selections)   # the same gate as ``x >> Spec()``
-        return cls._of(selections)
+        try:
+            cls()._check_kinds(selections)   # the same gate as ``x >> Spec()``
+            return cls._of(selections)
+        except _NeverHolds:
+            return []   # a left-hand side this kind never holds: in none
 
     def _plug_error(self, plug: Plug, verb: str) -> TypeError:
         """The refusal of an attribute plug on the left of ``verb`` (``<<`` /
@@ -1127,7 +1175,15 @@ class _MemberSpec:
             how = f"ask with {plug} in {self!r} (a plug stands for its node there)"
             if self.HAS_IDS:
                 how += f", or {node} >> {self!r} for ids"
+            target = self._clone_target()
+            if target is not None:
+                how += f"; to clone the attribute onto it: {plug} >> '{target}.{plug.alias}'"
         return TypeError(f"'{plug}' is a plug; membership takes the node: {how}")
+
+    def _clone_target(self) -> str | None:
+        """The node a ``plug >> token`` could have meant to clone onto (a
+        membership node: a layer, a shader, an engine), or None."""
+        return None
 
     # -- per-kind hooks -- #
 
@@ -1135,7 +1191,7 @@ class _MemberSpec:
         """Apply :attr:`ACCEPTS`; :meth:`_kind_error` words the refusal."""
         for selection in selections:
             if selection.kind not in self.ACCEPTS:
-                raise TypeError(self._kind_error(selection))
+                raise _NeverHolds(self._kind_error(selection))
 
     def _kind_error(self, selection: _Selection) -> str:
         return (

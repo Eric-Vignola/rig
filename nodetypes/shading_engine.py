@@ -42,6 +42,19 @@ from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.object_set import ObjectSet
 
 
+def _absolute(name: str) -> str:
+    """The absolute name (``:x``, ``:lib:x``) of the node a name Maya returned
+    names."""
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return OpenMaya.MFnDependencyNode(sel.getDependNode(0)).absoluteName()
+
+
+def _shown(absolute: str) -> str:
+    """An absolute name as a user reads it (``x``, ``lib:x``)."""
+    return absolute[1:] if absolute[:1] == ":" else absolute
+
+
 class ShadingEngine(ObjectSet):
     """
     Shading engine class
@@ -142,38 +155,51 @@ class ShadingEngine(ObjectSet):
 
         - none: with ``create``, a ``<material>SG`` is built and connected and the
           material is listed in ``defaultShaderList1`` the way
-          ``cmds.shadingNode(asShader=True)`` does. Otherwise None.
+          ``cmds.shadingNode(asShader=True)`` does. Otherwise None. The engine
+          of a referenced shader is built at the root (``:<leaf>SG``): a node
+          made in the reference's namespace would be unreferenced there.
         - one: that engine.
         - many: ``<material>SG`` when it is one of them, else a ValueError naming them.
+
+        Names are compared absolutely (``namespace -relativeNames`` changes how
+        Maya prints them, not which node they name).
 
         Args:
             material: A surface shader node.
             create: If True, build the engine when the material has none.
         """
-        found = cmds.ls(str(material))
-        if len(found) != 1:
-            raise ValueError(f"Material must match one node: {material} -> {found}")
-        material = found[0]
+        sel = OpenMaya.MSelectionList()
+        try:
+            sel.add(material.name if isinstance(material, DGNode) else str(material))
+        except RuntimeError:
+            found = cmds.ls(str(material))
+            raise ValueError(f"Material must match one node: {material} -> {found}") from None
+        shader   = OpenMaya.MFnDependencyNode(sel.getDependNode(0))
+        material = shader.absoluteName()
 
-        engines  = []
+        engines = []
         plugs   = cmds.listConnections(
             material, type="shadingEngine", source=False, destination=True, plugs=True
         )
         for plug in plugs or []:
             node, _, attr = plug.rpartition(".")
-            if attr == "surfaceShader" and node != "initialParticleSE":
-                if node not in engines:
-                    engines.append(node)
+            if attr != "surfaceShader":
+                continue
+            node = _absolute(node)
+            if node != ":initialParticleSE" and node not in engines:
+                engines.append(node)
 
-        default_name = f"{material}SG"
+        leaf         = material.rsplit(":", 1)[-1]
+        default_name = f":{leaf}SG" if shader.isFromReferencedFile else f"{material}SG"
         if len(engines) == 1:
             return cls._wrap(engines[0])
         if engines:
             if default_name in engines:
                 return cls._wrap(default_name)
+            shown = [_shown(name) for name in engines]
             raise ValueError(
-                f"{material} feeds {len(engines)} shading engines {engines} and none "
-                f"is named {default_name}; pick one explicitly."
+                f"{_shown(material)} feeds {len(engines)} shading engines {shown} and none "
+                f"is named {_shown(default_name)}; pick one explicitly."
             )
         if not create:
             return None
@@ -183,7 +209,7 @@ class ShadingEngine(ObjectSet):
         shaders = cmds.listConnections(
             "defaultShaderList1.shaders", source=True, destination=False
         )
-        if material not in (shaders or []):
+        if material not in {_absolute(name) for name in shaders or []}:
             cmds.connectAttr(
                 f"{material}.message", "defaultShaderList1.shaders", nextAvailable=True
             )

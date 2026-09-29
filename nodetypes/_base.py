@@ -86,8 +86,26 @@ class NodeMeta(type):
     ``Node("j1")`` gives, ``Joint("j1")``, checked to be a Transform. That is the one branch
     point of a node class call. The cast core never runs it: it builds a class
     with ``type.__call__``, and the package's own sites that already know a
-    node's exact class build it with ``Cls._wrap(x)``.
+    node's exact class build it with ``Cls._wrap(x)``. ``x in Cls`` (the
+    class, not a node) is a TypeError naming the node spelling (``x in
+    Blinn('red')``; ``x >> Blinn()`` lists them).
     """
+
+    def __contains__(cls, lhs: Any) -> bool:
+        name = cls.__name__
+        if getattr(cls, "_MEMBER_KIND", False):
+            text = (
+                f"{name} is the class: {name}() is the kind token (x >> {name}() lists "
+                f"them) and {name}('x') one; write x in {name}('x')"
+            )
+        elif getattr(cls, "_KIND_HINT", None):
+            text = f"{name} is the class: write x in {name}('x'); {cls._KIND_HINT}"
+        else:
+            text = (
+                f"{name} is a node class: 'in' asks a membership node or Tag "
+                f"(x in Layer('L'), x in Blinn('red'), x in Tag('cap'))"
+            )
+        raise TypeError(text)
 
     def __call__(cls, *args, **kwargs):
         if cls is Node:
@@ -685,25 +703,26 @@ def _ensure_node_valid(attr: Any) -> None:
 
 
 # The nodes a shader conversion deleted (``rig._internal.shade_convert``):
-# {the name the old node was deleted under, ``red__rigold`` (no namespace):
-# (its name, the type it was converted to)}. `_deleted_error` reads it, on the
-# error path only; the conversion module clears it before a new scene or a
-# file open.
+# {the old node's uuid: (its name, the type it was converted to)}, so each
+# held node of a chain of conversions, in any namespace, names its own.
+# `_deleted_error` reads it, on the error path only; the conversion module
+# clears it before a new scene or a file open.
 _CONVERTED: dict = {}
 
 
-def _deleted_error(name: str, freed: bool = False) -> RuntimeError:
+def _deleted_error(name: str, freed: bool = False, uuid: str | None = None) -> RuntimeError:
     """The ``"... already deleted!"`` RuntimeError of the node `name`, deleted to
     the undo queue, or, `freed`, freed by a new scene, a file open or a reference
     unload: a freed node cannot be read, so `name` is then its class name (a node
     object, see `DGNode.ensure_valid`) or the name a plug with no owner was built
     with (see `_raise_deleted`). Every guard raises through it. A node a shader
-    conversion replaced (`_CONVERTED`) names the conversion: "'red' was converted
-    to a phong; use the node astype() returned (red__rigold already deleted!)"."""
+    conversion replaced (`_CONVERTED`, by the node's `uuid`) names the
+    conversion: "'red' was converted to a phong; use the node astype() returned
+    (red__rigold already deleted!)"."""
     if freed:
         name = f"{name} node (freed by a new scene, a file open or a reference unload)"
-    elif _CONVERTED:
-        converted = _CONVERTED.get(name.rsplit(":", 1)[-1])
+    elif _CONVERTED and uuid is not None:
+        converted = _CONVERTED.get(uuid)
         if converted is not None:
             old, node_type = converted
             return RuntimeError(
@@ -720,7 +739,8 @@ def _raise_deleted(attr: Any, handle: Any) -> None:
     class it would be cast to was never known, so it is named by the node part of
     the name the plug was built with (its str buffer)."""
     if handle.isAlive():
-        raise _deleted_error(OpenMaya1.MFnDependencyNode(handle.objectRef()).name())
+        fn = OpenMaya1.MFnDependencyNode(handle.objectRef())
+        raise _deleted_error(fn.name(), uuid=fn.uuid().asString())
     raise _deleted_error(str.__str__(attr).split(".", 1)[0], freed=True)
 
 
@@ -785,7 +805,8 @@ def _mplug_handle(mplug: OpenMaya.MPlug) -> Any:
     except Exception:
         return None
     if not handle2.isValid():
-        raise _deleted_error(OpenMaya.MFnDependencyNode(mobject).name())
+        fn = OpenMaya.MFnDependencyNode(mobject)
+        raise _deleted_error(fn.name(), uuid=str(fn.uuid()))
     entries = _NODE_HANDLES.get(code)
     if entries is not None:
         for known, handle in entries:

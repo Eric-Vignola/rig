@@ -49,7 +49,6 @@ from rig.nodetypes import (
 from rig.bridges import commands as rc
 from rig.nodetypes._base import _lookup, set_custom_type
 from rig.shade import Blinn
-from rig._internal.members import _find_node
 from rig._tests._base import MayaTestCase
 
 
@@ -629,9 +628,11 @@ class TestNamespaceLookup(MayaTestCase):
 
 
 class TestFindNodeSharesTheRule(MayaTestCase):
-    """The membership lookups (``_find_node``: ``Layer``, the materials) follow
-    ``Node(x)``'s rule; ``define`` (``get_or_create``'s replacement) reads its
-    key."""
+    """The membership lookups (``Layer``, the materials: node references,
+    through ``_lookup``) follow ``Node(x)``'s rule; ``define``
+    (``get_or_create``'s replacement) reads its key. (Round 4b FIX: the
+    membership ``_find_node`` was dead code, removed; its tests pin
+    ``_lookup``.)"""
 
     TEST_START_NEW_SCENE = True
 
@@ -680,18 +681,21 @@ class TestFindNodeSharesTheRule(MayaTestCase):
         self.assertEqual(self._layer_of_cube(), ["x"])
 
     def test_find_node(self):
-        self.assertEqual(_find_node("cube"), "|cube")
-        self.assertEqual(_find_node("x"), "x")
-        self.assertEqual(_find_node("char:x"), "char:x")
-        self.assertIsNone(_find_node("nosuch"))
-        self.assertIsNone(_find_node("only"))
+        """Historical id (round 4b NC1): pinned members._find_node; it now pins
+        the lookup rule ``_lookup`` it wrapped (a miss raises)."""
+        self.assertEqual(_lookup("cube"), "|cube")
+        self.assertEqual(_lookup("x"), "x")
+        self.assertEqual(_lookup("char:x"), "char:x")
+        for name in ("nosuch", "only"):
+            with self.assertRaises(NodeNotFoundError):
+                _lookup(name)
         cmds.namespace(setNamespace=":char")
         with self.assertRaises(AmbiguousNodeError):
-            _find_node("x")
+            _lookup("x")
         cmds.createDisplayLayer(empty=True, name="only")
-        self.assertEqual(_find_node("only"), "char:only")
+        self.assertEqual(_lookup("only"), "char:only")
         with self.assertRaises(NodeLookupError):
-            _find_node("red*")
+            _lookup("red*")
 
     def test_a_dag_ambiguity_keeps_the_old_words(self):
         """``assertRaisesRegex(ValueError, "ambiguous")`` (test_shade) and "use a
@@ -699,7 +703,7 @@ class TestFindNodeSharesTheRule(MayaTestCase):
         group = cmds.group(empty=True, name="grp")
         cmds.createNode("transform", name="cube", parent=group)
         with self.assertRaisesRegex(ValueError, "ambiguous.*use a path"):
-            _find_node("cube")
+            _lookup("cube")
 
     def test_get_or_create(self):
         """Re-pinned in round 4b NC4 (get_or_create removed): ``define`` reads its

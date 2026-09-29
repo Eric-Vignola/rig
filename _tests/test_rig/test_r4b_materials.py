@@ -388,6 +388,8 @@ class TestNodeRhs(_Case):
         self.assertEqual(_members("redSG"), ["cubeShape"])
 
     def test_the_particle_engine_and_a_shaderless_engine_are_refused(self):
+        """Pins (round 4b FIX): the particle engine is refused; an engine node
+        fed by no surface shader is exactly that engine (it was refused)."""
         particle = ShadingEngine("initialParticleSE")
         empty    = ShadingEngine(_engine("emptySG"))
         for call in (
@@ -397,14 +399,15 @@ class TestNodeRhs(_Case):
             lambda: self.cube in particle,
         ):
             self.assertRefused(TypeError, "is the particle engine, not a material", call)
-        for call in (
-            lambda: self.cube << empty,
-            lambda: self.cube.f[:2] << -empty,
-            lambda: self.cube >> empty,
-            lambda: self.cube in empty,
-        ):
-            self.assertRefused(ValueError, "shading engine 'emptySG' has no surface shader", call)
         self.assertEqual(_members(ISG), ["cubeShape"])
+        self.assertNotIn(self.cube, empty)
+        self.cube.f[:2] << empty
+        self.assertEqual(_members("emptySG"), ["cube.f[0:1]"])
+        self.assertIn(self.cube.f[:2], empty)
+        np.testing.assert_array_equal(self.cube >> empty, [0, 1])
+        self.assertIn(empty, Material.of(self.cube.f[:2]))
+        self.cube.f[:2] << -empty
+        self.assertEqual(_members("emptySG"), [])
 
     def test_a_shader_over_two_engines(self):
         red = self.red
@@ -417,28 +420,33 @@ class TestNodeRhs(_Case):
         self.cube.f[2:4] << alt
         self.assertEqual(_members("altSG"), ["cube.f[2:3]"])
         np.testing.assert_array_equal(self.cube >> alt, [2, 3])
-        np.testing.assert_array_equal(self.cube >> red, [0, 1])
+        # a read looks at every engine the shader feeds (round 4b FIX)
+        np.testing.assert_array_equal(self.cube >> red, [0, 1, 2, 3])
         self.assertIn(self.cube.f[2:4], alt)
-        self.assertNotIn(self.cube.f[2:4], red)
-        self.assertEqual(Material.of(self.cube.f[2]), [red])   # the shader (not a round trip: ADD C1)
+        self.assertIn(self.cube.f[2:4], red)
+        # the engine: the answer '<<' takes back (red would go to redSG)
+        self.assertEqual(Material.of(self.cube.f[2]), [alt])
+        self.assertEqual(Material.of(self.cube.f[0]), [red])
+        self.assertEqual(Blinn.of(self.cube.f[2]), [red])
         self.cube.f[2:4] << -alt
         self.assertEqual(_members("altSG"), [])
         # with no engine named <shader>SG the shader raises before any write
         _engine("otherSG")
         cmds.connectAttr("red.outColor", "otherSG.surfaceShader")
         cmds.delete("redSG")
-        for call in (
-            lambda: self.cube << red, lambda: self.cube >> red, lambda: self.cube in red,
-            lambda: self.cube << -red,
-        ):
-            self.assertRefused(ValueError, "feeds 2 shading engines", call)
+        # '<<' needs the one engine; a read or a removal reads them all
+        self.assertRefused(ValueError, "feeds 2 shading engines", lambda: self.cube << red)
+        self.assertNotIn(self.cube, red)
+        self.assertEqual(list(self.cube >> red), [])
+        self.cube << -red   # nothing in either: a no-op
         self.cube << alt
         self.assertEqual(_members("altSG"), ["cubeShape"])
 
     def test_an_empty_list_is_a_value_error(self):
         for rhs in (self.red, -self.red, self.red.engine, Material()):
             self.assertRefused(ValueError, "nothing to inject", lambda rhs=rhs: List([]) << rhs)
-        self.assertRefused(ValueError, "nothing to inject", lambda: List([]) >> self.red)
+        self.assertRefused(ValueError, r"nothing to ask about: the left-hand side of '>>' names no member",
+                           lambda: List([]) >> self.red)
 
     def test_a_member_node_on_the_left_writes_nothing(self):
         sg     = self.red.engine
@@ -539,28 +547,38 @@ class TestMaterialIn(_Case):
         cmds.connectAttr("red.outColor", "altSG.surfaceShader")
         self.cube << ShadingEngine("altSG")
         self.assertIn(self.cube, ShadingEngine("altSG"))
-        self.assertNotIn(self.cube, self.red)      # red's engine is redSG
+        # a read looks at every engine red feeds (round 4b FIX); '<<' at redSG
+        self.assertIn(self.cube, self.red)
+        self.assertEqual(Material.of(self.cube), [ShadingEngine("altSG")])
         self.cube << self.red
         self.assertIn(self.cube, self.red)
         self.assertNotIn(self.cube, ShadingEngine("altSG"))
         _engine("otherSG")
         cmds.connectAttr("red.outColor", "otherSG.surfaceShader")
         cmds.delete("redSG")
-        self.assertRefused(ValueError, "feeds 2 shading engines", lambda: self.cube in self.red)
+        self.assertNotIn(self.cube, self.red)
+        self.assertRefused(ValueError, "feeds 2 shading engines", lambda: self.cube << self.red)
 
     def test_tokens_and_wrong_kinds_are_refused(self):
         crv = Node(cmds.circle(name="crv", ch=False)[0])
         for error, pattern, call in (
             (TypeError, r"'in' asks about one collection; -Blinn\(\"red\"\) is a removal", lambda: self.cube in -self.red),
             (TypeError, r"'in' asks about one collection; Material\(\) names every one", lambda: self.cube in Material()),
-            (TypeError, "materials bind faces or whole objects", lambda: self.cube.vtx[:2] in self.red),
-            (TypeError, "nurbsCurve, not a shadeable", lambda: crv in self.red),
-            (TypeError, "not geometry", lambda: Node("lambert1") in self.red),
             (NodeNotFoundError, "no blinn named 'nope'", lambda: self.cube in Blinn("nope")),
-            (ValueError, "nothing to inject", lambda: List([]) in self.red),
+            (ValueError, "nothing to ask about: the left-hand side of 'in' names no member",
+             lambda: List([]) in self.red),
         ):
             with self.subTest(pattern):
                 self.assertRefused(error, pattern, call)
+        # a query answers by contents (round 4b FIX): what a material never
+        # holds (vertices, a curve, a DG node) is not in it
+        before = _scene()
+        for lhs in (self.cube.vtx[:2], crv, Node("lambert1"), List([self.cube, crv])):
+            with self.subTest(lhs=repr(lhs)):
+                self.assertNotIn(lhs, self.red)
+                self.assertEqual(Material.of(lhs) if not isinstance(lhs, List) else [], [])
+        self.assertEqual(crv >> Material(), [])
+        self.assertEqual(_scene(), before)
 
     def test_a_shader_with_no_engine_holds_nothing(self):
         rn.blinn(name="bare")
@@ -726,8 +744,9 @@ class TestConvertedHandle(_Case):
 
     def test_a_new_scene_or_a_file_open_clears_the_record(self):
         held = self.red
+        uuid = held.uuid
         held.astype(Phong)
-        self.assertEqual(_base._CONVERTED.get("red__rigold"), ("red", "phong"))
+        self.assertEqual(_base._CONVERTED.get(uuid), ("red", "phong"))
         cmds.file(new=True, force=True)
         self.assertEqual(_base._CONVERTED, {})
         self.assertRefused(RuntimeError, r"^Blinn node \(freed by a new scene", lambda: str(held))
@@ -737,8 +756,10 @@ class TestConvertedHandle(_Case):
         try:
             cmds.file(rename=path)
             cmds.file(save=True, type="mayaAscii", force=True)
-            Blinn.define("red").astype(Phong)
-            self.assertIn("red__rigold", _base._CONVERTED)
+            red = Blinn.define("red")
+            uuid = red.uuid
+            red.astype(Phong)
+            self.assertIn(uuid, _base._CONVERTED)
             cmds.file(path, open=True, force=True)
             self.assertEqual(_base._CONVERTED, {})
         finally:
@@ -755,8 +776,10 @@ class TestConvertedHandle(_Case):
         second = first.astype(Phong)
         third  = second.astype(Lambert)
         self.assertEqual(repr(third), 'Lambert("red")')
-        for held in (first, second):
-            self.assertRefused(RuntimeError, r"^'red' was converted to a lambert; use the node astype\(\) returned",
+        # each held node names its own conversion (round 4b FIX: the record
+        # is by uuid; by name both said 'a lambert')
+        for held, kind in ((first, "phong"), (second, "lambert")):
+            self.assertRefused(RuntimeError, rf"^'red' was converted to a {kind}; use the node astype\(\) returned",
                                lambda held=held: str(held))
         self.assertIn(self.cube, third)
         cmds.undo()

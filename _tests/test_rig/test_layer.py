@@ -274,10 +274,9 @@ class TestLayerAdd(MayaTestCase):
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "layers hold DAG objects"):
             Node("lambert1") << layer
-        with self.assertRaisesRegex(TypeError, "layers hold DAG objects"):
-            Node("lambert1") in layer
-        with self.assertRaises(TypeError):
-            Layer.of(Node("time1"))
+        # a query answers by contents (round 4b FIX): a DG node is in no layer
+        self.assertNotIn(Node("lambert1"), layer)
+        self.assertEqual(Layer.of(Node("time1")), [])
         with self.assertRaisesRegex(TypeError, "layers hold DAG objects"):
             List([self.cube, Node("lambert1")]) << layer
         self.assertEqual(set(cmds.ls()), before)
@@ -580,9 +579,6 @@ class TestLayerQuery(MayaTestCase):
                     self.cube.e[0], Components(self.cube, "vtx", [0])):
             for label, call in (
                 (">> Layer('x')",  lambda: lhs >> Layer("x")),
-                (">> Layer()",     lambda: lhs >> Layer()),
-                ("Layer.of",       lambda: Layer.of(lhs)),
-                ("in Layer('x')",  lambda: lhs in Layer("x")),
                 ("<< Layer('x')",  lambda: lhs << Layer("x")),
                 ("<< -Layer('x')", lambda: lhs << -Layer("x")),
                 ("<< Layer()",     lambda: lhs << Layer()),
@@ -590,6 +586,11 @@ class TestLayerQuery(MayaTestCase):
                 with self.subTest(lhs=repr(lhs), call=label):
                     with self.assertRaisesRegex(TypeError, "layers hold objects"):
                         call()
+            # a query answers by contents (round 4b FIX): components are in no layer
+            with self.subTest(lhs=repr(lhs), call="queries"):
+                self.assertNotIn(lhs, Layer("x"))
+                self.assertIsNone(lhs >> Layer())
+                self.assertEqual(Layer.of(lhs), [])
         with self.assertRaises(ValueError):
             self.cube.f[6:] << Layer("x")
         self.assertEqual(set(cmds.ls()), before)

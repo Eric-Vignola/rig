@@ -693,21 +693,32 @@ class TestTourW4(_Case):
 
 def _count_lookups(run):
     """``(run(), counts)``: the name lookups made while ``run`` runs
-    (``cmds.ls``, ``cmds.objExists``, ``cmds.namespaceInfo``, the membership
-    ``_find_node``), as the NC0 pins count them."""
+    (``cmds.ls``, ``cmds.objExists``, ``cmds.namespaceInfo``, the lookup rule
+    ``_lookup``), as the NC0 pins count them."""
+    import sys
+
+    from rig.nodetypes import _base
+
     names   = ("ls", "objExists", "namespaceInfo")
+    lookup  = mock.MagicMock(wraps=_base._lookup)
     patches = [mock.patch.object(cmds, name, wraps=getattr(cmds, name)) for name in names]
-    patches.append(mock.patch.object(_members, "_find_node", wraps=_members._find_node))
+    patches += [
+        mock.patch.object(module, "_lookup", lookup)
+        for name, module in sorted(sys.modules.items())
+        if name.startswith("rig") and getattr(module, "_lookup", None) is _base._lookup
+    ]
     mocks = [patch.start() for patch in patches]
     try:
         result = run()
     finally:
         for patch in patches:
             patch.stop()
-    return result, dict(zip(names + ("_find_node",), (m.call_count for m in mocks)))
+    counts = dict(zip(names, (m.call_count for m in mocks)))
+    counts["_lookup"] = lookup.call_count
+    return result, counts
 
 
-_NO_LOOKUP = {"ls": 0, "objExists": 0, "namespaceInfo": 0, "_find_node": 0}
+_NO_LOOKUP = {"ls": 0, "objExists": 0, "namespaceInfo": 0, "_lookup": 0}
 
 
 class TestTourW5(_Case):

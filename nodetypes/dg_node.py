@@ -1012,7 +1012,8 @@ class DGNode(Node):
         handle = self._objhandle1  # NW6: API 1.0 handle read (hot)
         if not handle.isValid():
             if handle.isAlive():
-                raise _deleted_error(self._fn_set1.name())  # NW6: API 1.0 handle read
+                fn = self._fn_set1  # NW6: API 1.0 handle read
+                raise _deleted_error(fn.name(), uuid=fn.uuid().asString())
             raise _deleted_error(type(self).__name__, freed=True)
 
     @property

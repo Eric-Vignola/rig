@@ -108,14 +108,20 @@ class DisplayLayer(DGNode):
         The layer is empty unless objects are given (``args``) or the caller
         passes ``empty`` / ``noRecurse``: ``cmds.createDisplayLayer`` alone would
         move the selection (with its hierarchy) out of its layers into the new
-        one. ``empty=False`` takes the selection, as the command does.
+        one. ``empty=False`` takes the selection, as the command does. The
+        objects given join as the nodes themselves, never their subtrees (as
+        ``node << layer`` does): ``noRecurse=True`` unless the caller passes
+        ``noRecurse`` / ``nr`` (``noRecurse=False`` takes the hierarchy).
 
         Args:
             args, kwargs: the objects, and the ``_CREATE_FLAGS`` given to
                 ``create``, for cmds.createDisplayLayer()
         """
-        if not args and not any(key in kwargs for key in ("empty", "e", "noRecurse", "nr")):
+        recurse = any(key in kwargs for key in ("noRecurse", "nr"))
+        if not args and not recurse and not any(key in kwargs for key in ("empty", "e")):
             kwargs["empty"] = True
+        elif args and not recurse:
+            kwargs["noRecurse"] = True
         return cmds.createDisplayLayer(*args, **kwargs)
 
     # --- properties
