@@ -188,9 +188,10 @@ class TestRedeclare(MayaTestCase):
         for kwargs, text in (
             ({"min": 20},                   r"min=20 is above max=10\.0"),
             ({"min": 3, "max": 1},          r"min=3 is above max=1"),
-            ({"dv": 50},                    r"dv=50 is outside its range \[0\.0, 10\.0\]"),
-            ({"dv": 50, "nn": "Never"},     r"dv=50 is outside"),
-            ({"dv": -1, "max": 4},          r"dv=-1 is outside its range \[0\.0, 4\]"),
+            ({"dv": 50},                    r"'rd\.w': dv=50 is above max=10\.0$"),
+            ({"dv": 50, "nn": "Never"},     r"dv=50 is above max=10\.0"),
+            ({"dv": -1, "max": 4},          r"'rd\.w': dv=-1 is below min=0\.0$"),
+            ({"dv": 5, "max": 4},           r"dv=5 is above max=4$"),
         ):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaisesRegex(TypeError, text):
