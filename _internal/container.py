@@ -51,6 +51,7 @@ from rig.nodetypes._base import (
     _MISSING,
     _PLAIN_NODE_NAME,
     _path_instance_number,
+    _shared_refused,
     Attribute,
     is_valid_maya_uid,
 )
@@ -1329,7 +1330,13 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     node (:func:`_makes_just_its_node`; ``parent=`` places it). A class that
     builds its node from inputs (``_CREATE_TAKES_INPUTS``: a skinCluster, a
     blendShape, a mesh, a nurbsCurve, a reference) refuses a call with none,
-    before anything is made (``cmds.blendShape`` alone deforms the selection)."""
+    before anything is made (``cmds.blendShape`` alone deforms the selection).
+    ``shared=`` is refused first, for every type: create always makes a new
+    node."""
+    if "shared" in kwargs:
+        raise _shared_refused(
+            f"Node.create({node_type!r}, shared=...)", node_type, kwargs.get("name", kwargs.get("n"))
+        )
     node_cls = _nodetypes_base._NODE_CLASS_DICT.get(node_type)
     if node_cls is None:
         if args:

@@ -35,8 +35,9 @@ class TestNodesFactories(MayaTestCase):
         self.assertAlmostEqual(cmds.getAttr("cube1.tz"), 3.0)
 
     def test_create_kwargs_are_consumed_not_setattr(self):
-        # name / parent / shared / skipSelect / container should NOT be
-        # interpreted as attribute setters -- they're createNode kwargs.
+        # name / parent / skipSelect / container should NOT be interpreted as
+        # attribute setters -- they're createNode kwargs. (NC3: shared= is
+        # refused, so s= is the scale attribute; test_r4b_create pins both.)
         n = nodes.transform(name="foo")
         self.assertEqual(str(n), "foo")
 

@@ -2914,6 +2914,27 @@ Attribute._CHILD_CLASS = Attribute
 _NODE_CREATE_HOOK = None
 
 
+def _shared_refused(
+    call: str, node_type: str, name: Any = None, node_cls: type | None = None
+) -> TypeError:
+    """The TypeError of ``shared=`` on a creator (``Cls.create``,
+    ``Node.create``, ``rn.<type>``), raised before anything is made: create
+    always makes a new node, and ``define`` finds or makes one (CC-6). `call`
+    spells the call (``"Transform.create(shared=...)"``); `name` is its name,
+    if any, for the hint; the class named is `node_cls`, else the one
+    registered for `node_type`, else ``Node.define(type, ...)``."""
+    key      = name if isinstance(name, str) and name else "x"
+    node_cls = node_cls or _NODE_CLASS_DICT.get(node_type)
+    define   = (
+        f"{node_cls.__name__}.define({key!r})"
+        if node_cls is not None
+        else f"Node.define({node_type!r}, {key!r})"
+    )
+    return TypeError(
+        f"{call}: create always makes a new node; {define} finds or makes it"
+    )
+
+
 class Node(metaclass=NodeMeta):
     """The root of every node class, and the DSL node factory: the one entry
     point from a Maya name or object to a node.
@@ -3009,7 +3030,8 @@ class Node(metaclass=NodeMeta):
         an AttributeError, a wrong enum field name a TypeError, nothing made)
         and set with ``<<`` once it exists:
         ``Node.create("multiplyDivide", operation="divide", input1X=3)``,
-        ``Node.create("transform", name="t", tx=1)``.
+        ``Node.create("transform", name="t", tx=1)``. ``shared=`` is refused
+        (TypeError, nothing made): create always makes a new node.
 
         Either way ``skipSelect`` defaults to ``ContainerOptions.skip_selection``
         (for a typed create, when its ``_create`` forwards the flag to
