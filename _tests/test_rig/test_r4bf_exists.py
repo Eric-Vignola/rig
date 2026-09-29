@@ -20,6 +20,10 @@ instead of being built.
 * ``TestNothingBuiltNothingRaised``: a hit of the class or a subclass builds no
   node, a miss makes no NodeNotFoundError and runs no cast by name, another
   type makes no NodeTypeError.
+* ``TestSanitizeInfluences``: ``SkinCluster._sanitize_influences`` looks each
+  name up once (one reference, no ``exists``) and answers as before: the
+  Joints in order, every missing name in one RuntimeError, an ambiguous name
+  or a pattern raising as the reference does.
 """
 
 import os
@@ -49,6 +53,7 @@ from rig.nodetypes.errors import (
     NodeNotFoundError,
     NodeTypeError,
 )
+from rig.nodetypes.skincluster import SkinCluster
 from rig._tests._base import MayaTestCase
 
 
@@ -298,3 +303,80 @@ class TestNothingBuiltNothingRaised(_Scene):
             with self.subTest(cls=cls.__name__, name=name):
                 self.assertIs(cls.exists(name), False)
         self.assertEqual(made, [])
+
+
+class TestSanitizeInfluences(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        for name in ("j0", "j1", "j2"):
+            cmds.createNode("joint", name=name)
+        cmds.createNode("transform", name="grp")
+        cmds.shadingNode("blinn", asShader=True, name="red")
+        for group in ("g1", "g2"):
+            cmds.createNode("transform", name=group)
+            cmds.createNode("joint", name="a", parent=group)
+        cmds.select(clear=True)
+
+    @staticmethod
+    def before(infs):
+        """``_sanitize_influences`` as round 4b wrote it (the oracle)."""
+        infs = [infs] if not isinstance(infs, (list, tuple, set)) else infs
+        out, missing = [], []
+        for inf in infs:
+            if isinstance(inf, Joint):
+                out.append(inf)
+            else:
+                inf = str(inf)
+                if not Joint.exists(inf):
+                    missing.append(inf)
+                else:
+                    out.append(Joint(inf))
+        if missing:
+            raise RuntimeError(f"Missing joints found: {missing}")
+        return out
+
+    def test_the_same_answers(self):
+        j2 = Node("j2")
+        cases = (
+            ["j0", "j1", "j2"], ("j2", "j0"), {"j1"}, "j0", j2, ["j0", j2, "j1.tx"],
+            ["j0", "nosuch", "grp", "red", "j1"], "nosuch", ["|g1|a", "|g2|a"], ["a"], ["j*"],
+            [Node("grp")], [],
+        )
+        for infs in cases:
+            with self.subTest(infs=infs):
+                self.assertEqual(
+                    _outcome(lambda: SkinCluster._sanitize_influences(infs)),
+                    _outcome(lambda: self.before(infs)),
+                )
+
+    def test_the_answers(self):
+        self.assertEqual(SkinCluster._sanitize_influences(["j1", "j0"]), [Node("j1"), Node("j0")])
+        self.assertTrue(all(type(j) is Joint for j in SkinCluster._sanitize_influences("j0")))
+        with self.assertRaisesRegex(
+            RuntimeError, r"^Missing joints found: \['nosuch', 'grp', 'red'\]$"
+        ):
+            SkinCluster._sanitize_influences(["j0", "nosuch", "grp", "red", "j1"])
+        with self.assertRaisesRegex(AmbiguousNodeError, "'a' is ambiguous"):
+            SkinCluster._sanitize_influences(["j0", "a"])
+        with self.assertRaises(NodeLookupError):
+            SkinCluster._sanitize_influences(["j*"])
+
+    def test_each_name_is_looked_up_once(self):
+        refers = []
+        original = _base._refer
+
+        def spy(cls, args, kwargs):
+            refers.append((cls.__name__, args))
+            return original(cls, args, kwargs)
+
+        with mock.patch.object(_base, "_refer", spy), \
+                mock.patch.object(DGNode, "exists", side_effect=AssertionError("exists")):
+            SkinCluster._sanitize_influences(["j0", "j1", Node("j2")])
+            with self.assertRaises(RuntimeError):
+                SkinCluster._sanitize_influences(["nosuch", "grp"])
+        self.assertEqual(
+            refers,
+            [("Joint", ("j0",)), ("Joint", ("j1",)), ("Joint", ("nosuch",)), ("Joint", ("grp",))],
+        )

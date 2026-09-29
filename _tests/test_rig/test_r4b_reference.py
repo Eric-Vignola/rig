@@ -436,7 +436,7 @@ _ALLOWED_SITES = {
     ("nodetypes/skincluster.py", "flatten_vertices", "Mesh"): (
         2, "user input: the names of the vertex strings given"),
     ("nodetypes/skincluster.py", "SkinCluster._sanitize_influences", "Joint"): (
-        1, "user input: an influence name, after Joint.exists"),
+        1, "user input: an influence name, looked up once (a miss or another type is missing)"),
     ("nodetypes/skincluster.py", "SkinCluster.connect_bind_pre_matrices", "Joint"): (
         1, "user input: the driver the caller's search function names"),
     ("nodetypes/skincluster.py", "SkinCluster.set_influence_objects", "Joint"): (

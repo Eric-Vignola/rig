@@ -16,6 +16,7 @@ from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.dg_node import get_short_name
+from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
 from rig.nodetypes.joint import Joint
 from rig.nodetypes.mesh import Mesh
 from rig.nodetypes.plugins import _run_undoable
@@ -179,7 +180,8 @@ class SkinCluster(Deformer):
     def _sanitize_influences(cls, infs: INF_TYPE) -> list[Joint]:
         """The influences as Joints; a name no joint has raises RuntimeError
         naming every missing one, a name several nodes have
-        AmbiguousNodeError (``Joint.exists`` raises it: "use a path")."""
+        AmbiguousNodeError (the reference raises it: "use a path"). Each name
+        is looked up once."""
         infs = [infs] if not isinstance(infs, (list, tuple, set)) else infs
 
         out     = []
@@ -189,10 +191,10 @@ class SkinCluster(Deformer):
                 out.append(inf)
             else:
                 inf = str(inf)
-                if not Joint.exists(inf):
-                    missing.append(inf)
-                else:
+                try:
                     out.append(Joint(inf))
+                except (NodeNotFoundError, NodeTypeError):
+                    missing.append(inf)
 
         if missing:
             raise RuntimeError(f"Missing joints found: {missing}")
