@@ -187,7 +187,7 @@ class NodeMeta(type):
         return cls_obj
 
 
-def _cast(obj: Any) -> Any:
+def _cast(obj: Any, build: bool = True) -> Any:
     """The typed cast, the one cast core (D12). Private: the public doors are
     ``Node(x)`` (always a node; it calls this) and ``Attribute(x)`` /
     ``Plug(x)`` (an attribute).
@@ -197,9 +197,15 @@ def _cast(obj: Any) -> Any:
     typed node: an instance of the most derived class registered for its custom
     type or type chain (`_NODE_CLASS_DICT`). Anything else raises ValueError.
     The package casts through this function wherever a Maya name, MObject or
-    MPlug becomes an object."""
+    MPlug becomes an object.
+
+    ``build=False`` is ``Cls.exists``' probe: where the type key decides the
+    class, the class is returned instead of the node built from it, and a
+    plain name MSelectionList resolves to no node gives None (the cast by name
+    would fail: Maya's by-name queries resolve the name alike)."""
     mobj     = None
     dag_path = None
+    sel      = None
     if isinstance(obj.__class__, NodeMeta) or isinstance(obj, Attribute):
         return obj
     elif isinstance(obj, OpenMaya.MPlug):
@@ -257,6 +263,8 @@ def _cast(obj: Any) -> Any:
     except (RuntimeError, ValueError, TypeError):
         key = None
     if key is None:
+        if not build and sel is not None and not sel.length():
+            return None
         return _cast_by_name(obj)
 
     if key in _CLASS_BY_TYPE:
@@ -265,6 +273,8 @@ def _cast(obj: Any) -> Any:
         cls_obj = _CLASS_BY_TYPE[key] = _native_node_class(obj)
     if not cls_obj:
         raise ValueError(f"Failed casting {obj}")
+    if not build and type(cls_obj) is NodeMeta:
+        return cls_obj
 
     # a type already cast from an MObject passes the class's type check
     # again, so a base-constructor class is built without re-running it
@@ -342,7 +352,7 @@ def _from_root(name: str) -> str:
     return name
 
 
-def _lookup(name: str, label: str = "node") -> str:
+def _lookup(name: str, label: str = "node", probe: bool = False) -> str | None:
     """The one node ``name`` names, by the lookup rule shared by ``Node(x)``,
     the node classes and the membership lookups. Cold: ``Node(x)`` runs it
     after a failed cast, and for a bare name while a namespace other than the
@@ -360,7 +370,8 @@ def _lookup(name: str, label: str = "node") -> str:
     * A name several DAG nodes have raises AmbiguousNodeError listing their
       paths (an instanced node is one node).
     * No node raises NodeNotFoundError, whose message names ``label``
-      ("no joint named 'x'") and carries the hints (see ``errors``).
+      ("no joint named 'x'") and carries the hints (see ``errors``); with
+      ``probe=True`` (``Cls.exists``) it returns None instead.
 
     Returns the node's name as ``cmds.ls(long=True)`` prints it (a full path
     for a DAG node), which names that one node.
@@ -379,6 +390,8 @@ def _lookup(name: str, label: str = "node") -> str:
     if len(found) == 1:
         return found[0]
     if not found:
+        if probe:
+            return None
         raise NodeNotFoundError(name, label)
     # several nodes: DAG nodes under different parents, or both namespaces
     by_spelling = [(s, cmds.ls(s, long=True) or []) for s in spellings]
@@ -3215,7 +3228,7 @@ def _node_factory(obj: Any) -> Any:
     return result.node if isinstance(result, Attribute) else result
 
 
-def _node_from_str(name: str, label: str = "node") -> Any:
+def _node_from_str(name: str, label: str = "node", probe: bool = False) -> Any:
     """``Node(name)`` for a node name or uuid: the cast core on a hit, the
     lookup rule (`_lookup`) around it. ``label`` names what the name was to
     be in the lookup errors (a node class's reference passes its type:
@@ -3227,26 +3240,50 @@ def _node_from_str(name: str, label: str = "node") -> Any:
     is refused before the cast. When the cast raises, `_lookup` gives the
     error of the family (not found with its hints, ambiguous); when it finds
     the one node the cast failed on, the cast's own error is raised. A uuid no
-    node has raises NodeNotFoundError naming it."""
+    node has raises NodeNotFoundError naming it.
+
+    ``probe=True`` is ``Cls.exists``' mode of the same rule: a name no node
+    has gives None instead of raising NodeNotFoundError, and the cast's probe
+    (``_cast(name, build=False)``) gives the class of a node its type key
+    decides instead of the node built from it."""
     spelled = name
     if name.isidentifier():
         if _current_namespace() != ":" and not _is_uuid(name):
-            return _cast(_lookup(name, label))
+            found = _lookup(name, label, probe)
+            return None if found is None else _cast(found)
     elif _PATTERN_CHARS.search(name):
         raise NodeLookupError(name, label)
     elif ":" in name:
         spelled = _from_root(name)
     try:
-        return _cast(spelled)
+        found = _cast(spelled, not probe)
     except (TypeError, ValueError, RuntimeError) as exc:
         error = exc
+    else:
+        if found is not None:
+            return found
+        # the probe: no node has the name as the cast spells it, so the cast
+        # fails and the lookup decides; the one node it may find gives what
+        # the reference gives, the cast's node or its error
+        found = _lookup(name, label, True)
+        return None if found is None else _cast(spelled)
     if _is_uuid(name):
         if cmds.ls(name, uid=True):
             raise error
+        if probe:
+            return None
         raise NodeNotFoundError(name, label, uuid=True)
-    _lookup(name, label)
+    if _lookup(name, label, probe) is None:
+        return None
     # the lookup found the one node the cast failed on: its own error
     raise error
+
+
+def _typed(cls: Any, node: Any) -> Any:
+    """The node ``cls(x)`` returns for the node ``Node(x)`` gives: ``node``
+    when it is an instance of ``cls``, else what the class's ``_coerce`` hook
+    gives, or None (the reference then raises NodeTypeError)."""
+    return node if isinstance(node, cls) else cls._coerce(node)
 
 
 def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
@@ -3282,9 +3319,7 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
         # a plug gives its node, as in Node(x)
         node = _node_factory(obj)
         name = None
-    if isinstance(node, cls):
-        return node
-    found = cls._coerce(node)
+    found = _typed(cls, node)
     if found is not None:
         return found
     if name is None:

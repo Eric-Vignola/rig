@@ -24,9 +24,11 @@ from rig.nodetypes._base import (
     _lookup,
     _named_through_owner,
     _new_attr,
+    _node_from_str,
     _queried_data_type,
     _shared_refused,
     _type_label,
+    _typed,
     Attribute,
     get_custom_type,
     Node,
@@ -1075,9 +1077,26 @@ class DGNode(Node):
         raises as the reference does: AmbiguousNodeError (two ``a``: a False
         would let ``if not Transform.exists("a"): Transform.create(name="a")``
         add a third ``a``) and the pattern's NodeLookupError (``"red*"`` is a
-        search: ``cmds.ls``)."""
+        search: ``cmds.ls``).
+
+        A name takes the reference's own lookup in its probe mode
+        (`_node_from_str`), which neither raises for a miss nor builds a node
+        whose class its type key decides; only a node of another class is
+        built, for the class's ``_coerce`` hook."""
         if name is None:
             return False
+        if isinstance(name, str) and not isinstance(name, Attribute):
+            label = _type_label(cls)
+            name  = name.split(".", 1)[0]
+            found = _node_from_str(name, label, probe=True)
+            if found is None:
+                return False
+            if isinstance(found, type):
+                if issubclass(found, cls):
+                    return True
+                found = _node_from_str(name, label)
+            node = _typed(cls, found)
+            return node is not None and node.is_valid
         try:
             node = cls(name)
         except (NodeNotFoundError, NodeTypeError):
