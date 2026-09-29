@@ -67,6 +67,7 @@ from rig.nodetypes._base import _attribute_of, _check_attrs, _lookup  # noqa: F4
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.errors import NodeNotFoundError
 from rig.nodetypes.geometry import iter_component_tokens
+from rig._internal import types as _types
 from rig._internal.node import Node
 from rig._internal.plug import ComponentPlug, Plug
 from rig._internal.undo import _undo_chunk
@@ -482,27 +483,27 @@ class Components:
     # -- operators -- #
 
     def __lshift__(self, other: Any) -> Any:
-        if isinstance(other, _MemberSpec):
-            return other.inject(self)
+        if isinstance(other, _types._MEMBERSHIP):
+            return other._member().inject(self)
         if other is None:
             raise TypeError(
                 "Components << None is not a clear; use members << -Spec('x') to "
-                "remove them from one collection or members << Spec(None) to remove "
+                "remove them from one collection or members << Spec() to remove "
                 "them from every collection of that kind"
             )
         raise TypeError(
-            f"the right-hand side of a membership '<<' is a collection spec "
+            f"the right-hand side of a membership '<<' is a collection "
             f"(Tag('x'), Blinn('x'), ...), not {type(other).__name__}"
         )
 
     def __rshift__(self, other: Any) -> Any:
         if other is None:
             return self.indices
-        if isinstance(other, _MemberSpec):
-            return other.query(self)
+        if isinstance(other, _types._MEMBERSHIP):
+            return other._member().query(self)
         raise TypeError(
             f"'>>' on Components supports '>> None' (the native ids) or a "
-            f"collection spec query, not {type(other).__name__}"
+            f"membership query (Tag('x'), Tag()), not {type(other).__name__}"
         )
 
     # -- equality / hashing / display -- #
@@ -945,6 +946,11 @@ class _MemberSpec:
             raise TypeError(
                 f"{type(self).__name__} name must be a non-empty str, got {name!r}"
             )
+
+    def _member(self) -> "_MemberSpec":
+        """The spec that runs the membership verbs: this one (a membership
+        node class answers its own, see ``_types._MEMBERSHIP``)."""
+        return self
 
     @property
     def name(self) -> str | None:

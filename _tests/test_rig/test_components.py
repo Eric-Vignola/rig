@@ -15,7 +15,7 @@ from rig._internal.members import (
     normalise,
 )
 from rig._internal.plug import ComponentPlug
-from rig._internal.types import _is_components, _is_member_spec, _is_sequence
+from rig._internal.types import _is_components, _is_membership, _is_sequence
 from rig._tests._base import MayaTestCase
 
 
@@ -459,9 +459,15 @@ class TestComponentsOperators(MayaTestCase):
         self.assertTrue(_is_components(faces))
         self.assertFalse(_is_components(Node(shape)))
         self.assertFalse(_is_components("pCube1.f[0]"))
-        self.assertTrue(_is_member_spec(_Spec("x")))
-        self.assertFalse(_is_member_spec(faces))
-        self.assertFalse(_is_member_spec(None))
+        # re-pinned (round 4b NC6): _is_member_spec is _is_membership, which
+        # also takes the membership node classes (a display layer)
+        self.assertTrue(_is_membership(_Spec("x")))
+        self.assertFalse(_is_membership(faces))
+        self.assertFalse(_is_membership(None))
+        self.assertFalse(_is_membership(Node(shape)))
+        from rig.nodetypes import DisplayLayer
+
+        self.assertTrue(_is_membership(DisplayLayer.create(name="L")))
 
 
 # --------------------------------------------------------------------- #

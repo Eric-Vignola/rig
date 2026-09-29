@@ -32,6 +32,25 @@ from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 
 
+# ``rig.membership._LayerMember``, the membership a layer node runs (its
+# ``<<`` / ``>>`` / ``in`` / ``of``): set when ``rig.membership`` loads (the
+# D31 pattern keeps nodetypes free of imports of the DSL modules)
+_LAYER_MEMBER = None
+
+# ``defaultLayer`` spelled absolutely: the name a command resolves while
+# another namespace is current and ``namespace -relativeNames`` is on (there
+# the bare ``defaultLayer`` names ``:<current>:defaultLayer``)
+_DEFAULT_ABSOLUTE = ":defaultLayer"
+
+
+def _layer_member() -> Any:
+    """`_LAYER_MEMBER`, loading ``rig.membership`` first if it is not yet set
+    (mid-import only)."""
+    if _LAYER_MEMBER is None:
+        import rig.membership  # noqa: F401 -- sets it
+    return _LAYER_MEMBER
+
+
 class DisplayLayer(DGNode):
     """
     Display layer class
@@ -52,6 +71,13 @@ class DisplayLayer(DGNode):
     _CREATE_FLAGS = frozenset(
         {"name", "n", "empty", "e", "noRecurse", "nr", "number", "num", "makeCurrent", "mc"}
     )
+
+    # ``DisplayLayer()`` (``Layer()``) is the kind token, not a refusal: on
+    # ``<<`` defaultLayer (out of every layer), on ``>>`` the enumeration
+    _MEMBER_KIND = True
+
+    # ``DisplayLayer(None)``: a failed lookup must not mean every layer
+    _NONE_TEXT = "None is not a layer name; Layer() is defaultLayer (it removes from every layer)"
 
     # --- creation
 
@@ -76,8 +102,38 @@ class DisplayLayer(DGNode):
 
     @property
     def is_default(self) -> bool:
-        """Whether this is ``defaultLayer``, the layer that means no layer."""
-        return self.name == self.DEFAULT
+        """Whether this is ``defaultLayer``, the layer that means no layer
+        (by its absolute name: ``namespace -relativeNames`` cannot change the
+        answer)."""
+        return self.fn_set.absoluteName() == _DEFAULT_ABSOLUTE
+
+    # --- the membership grammar (rig.Layer)
+
+    @classmethod
+    def _kind(cls) -> Any:
+        """``DisplayLayer()``: the kind token (see NodeMeta's reference)."""
+        return _layer_member()(None)
+
+    def _member(self) -> Any:
+        """The membership this layer runs on the right of ``<<`` / ``>>``."""
+        return _layer_member()(self)
+
+    def __neg__(self) -> Any:
+        """``-layer``: the removal token (``cube << -layer`` moves cube back to
+        defaultLayer when it is in this layer)."""
+        return _layer_member()(self, remove=True)
+
+    def __invert__(self) -> Any:
+        raise TypeError(
+            f"~{self!r} is unassigned; -layer removes members and Layer() removes "
+            f"them from every layer"
+        )
+
+    @classmethod
+    def of(cls, x: Any) -> list[DisplayLayer]:
+        """The layer holding the DAG node ``x``, ``[DisplayLayer("L")]``, or
+        ``[]`` in defaultLayer (``x >> Layer()`` answers it or None)."""
+        return _layer_member().of(x)
 
     # --- membership
 
@@ -115,7 +171,7 @@ class DisplayLayer(DGNode):
             objects = [objects]
         mine = [str(x) for x in objects if self.for_node(x) == self]
         if mine:
-            cmds.editDisplayLayerMembers(self.DEFAULT, *mine, noRecurse=True)
+            cmds.editDisplayLayerMembers(_DEFAULT_ABSOLUTE, *mine, noRecurse=True)
 
     def clear(self) -> None:
         """Clear object(s) in this layer."""

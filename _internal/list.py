@@ -71,7 +71,7 @@ from rig._internal.operands import (
     REFLECTED,
 )
 from rig._internal.plug import Plug
-from rig._internal.types import _is_attribute_spec, _is_components, _is_member_spec
+from rig._internal.types import _is_attribute_spec, _is_components, _is_membership
 
 
 def _operand_rows(dunder: str, items: list, other: Any) -> list:
@@ -211,11 +211,12 @@ class List(list):
                 "Use '<list> << List([...])' -- an INSTANCE -- to connect."
             )
 
-        # Collection spec -- the whole list is the left-hand side (grouped
-        # per node by the spec); sits BEFORE the attribute-spec fan-out so a
-        # Components element is never fanned out element by element.
-        if _is_member_spec(other):
-            return other.inject(self)
+        # Membership -- the whole list is the left-hand side (grouped per
+        # node by the spec, validated before any element is written); sits
+        # BEFORE the attribute-spec fan-out so a Components element is never
+        # fanned out element by element.
+        if _is_membership(other):
+            return other._member().inject(self)
 
         # Spec broadcast -- apply the same spec to every element node. An
         # element that cannot take an attribute is a TypeError naming it,
@@ -264,8 +265,10 @@ class List(list):
         """Broadcast ``__rshift__`` across each element.
 
         - ``items >> None`` => :meth:`get` (numpy-aware stacked value).
-        - ``items >> Tag("x")`` (a collection spec) => query membership of
-          the whole list at once; the spec answers with a plain value.
+        - ``items >> Tag("x")`` (membership: a collection spec, a layer
+          node, a kind token) => query membership of the whole list at once
+          (never an element-wise clone onto a layer node); the spec answers
+          with a plain value.
         - ``items >> Node`` => clone each plug's spec onto the target,
           returning a :class:`List` of new :class:`Plug` instances.
         - Other RHS types delegate to each element's :meth:`Plug.__rshift__`,
@@ -278,8 +281,8 @@ class List(list):
         if other is None:
             return self.get()
 
-        if _is_member_spec(other):
-            return other.query(self)
+        if _is_membership(other):
+            return other._member().query(self)
 
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:

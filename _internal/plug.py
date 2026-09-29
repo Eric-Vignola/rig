@@ -619,10 +619,13 @@ class Plug(Attribute):
                 "plug). Use 'plug << List([...])' -- an INSTANCE -- to connect."
             )
 
-        # Collection spec: a component plug becomes a member (the spec
-        # decides what a non-component plug means); returns this plug.
-        if lazy.types._is_member_spec(other):
-            return other.inject(self)
+        # Membership (a collection spec, a layer node, a kind or removal
+        # token): the collection decides what this plug means (a component
+        # plug becomes a member and this plug comes back). Checked before the
+        # shorthand and the string-plug set, which would read a node as a
+        # value.
+        if lazy.types._is_membership(other):
+            return other._member().inject(self)
 
         # Attribute spec.
         if lazy.types._is_attribute_spec(other):
@@ -710,8 +713,9 @@ class Plug(Attribute):
         ``rig.container`` instance): same as above, dispatched
         to the active container scope.
 
-        ``vtx[:8] >> Tag("x")`` (a collection spec) => query membership:
-        the native ids of these components that are in the collection.
+        ``vtx[:8] >> Tag("x")`` (membership: a collection spec, a layer
+        node, a kind token) => query membership: the native ids of these
+        components that are in the collection.
 
         ``plug >> other_plug`` => ``TypeError`` naming ``other_plug << plug``
         (a plug is a str too, but never a clone name).
@@ -720,15 +724,17 @@ class Plug(Attribute):
         """
         from rig._internal.list import List
         from rig._internal.node import Node
-        from rig._internal.types import _is_member_spec
+        from rig._internal.types import _is_membership
 
         # a freed node's MPlug points at freed memory
         _ensure_owner_alive(self)
         if other is None:
             return self.get()
 
-        if _is_member_spec(other):
-            return other.query(self)
+        # membership, before the clone onto a node: a layer node on the
+        # right is a collection, not a clone target
+        if _is_membership(other):
+            return other._member().query(self)
 
         # Retired connection-query sentinels (the List class or Plug itself
         # on the right).
@@ -2432,7 +2438,8 @@ def _fanout_channel(src: Any, dst: Any) -> None:
     Gives a per-channel slot the same vocabulary a whole plug has: ``None``
     disconnects (as ``plug << None`` does), an ``_AttrSpec`` applies itself
     (``lock`` / ``hide`` / ``skip``), everything else is a set-or-connect.
-    A collection spec has no per-channel meaning and raises.
+    A membership right-hand side (a collection spec, a layer node) has no
+    per-channel meaning and raises.
     """
     types = _lazy().types
 
@@ -2440,9 +2447,9 @@ def _fanout_channel(src: Any, dst: Any) -> None:
         _disconnect_incoming(dst)
     elif types._is_attribute_spec(src):
         src.apply(dst)
-    elif types._is_member_spec(src):
+    elif types._is_membership(src):
         raise TypeError(
-            f"{src!r} is a collection spec and cannot be fanned into channel "
+            f"{src!r} names a collection and cannot be fanned into channel "
             f"{dst}; inject it into the node or its components"
         )
     else:
