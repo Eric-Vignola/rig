@@ -255,6 +255,35 @@ def _reference_of(namespace: str) -> str | None:
     return None
 
 
+def _refuse_owner(hook: Any, node: Any, refer: str) -> None:
+    """The container-owner guard of a found node (CC-11): inside a real
+    ``with container()`` scope, define finds a node no container owns or one
+    a container on the stack owns; any other owner is refused, before any
+    write, with the re-run text when that owner has the current real scope's
+    requested name and Maya renamed the scope (a build run again in the same
+    scene)."""
+    reals = [(requested, real) for requested, real in hook.frames() if real is not None]
+    if not reals:
+        return
+    long_name = node.long_name
+    owner     = hook.owner(long_name)
+    if owner is None or owner in {str(real) for _, real in reals}:
+        return
+    requested, current = reals[-1]
+    here  = str(current)
+    shown = node.name
+    if owner == requested and here != requested:
+        raise ValueError(
+            f"{shown!r} belongs to container {owner!r} from an earlier run; this scope is "
+            f"{here!r}. Delete {owner!r} to rebuild it, or build in a new scene."
+        )
+    raise ValueError(
+        f"{shown!r} belongs to container {owner!r}; define inside {here!r} only finds "
+        f"nodes this build scope owns. Refer to it with {refer}({shown!r}), or define it "
+        f"outside the containers."
+    )
+
+
 def _define(
     spell:  Any,
     refer:  str,
@@ -330,6 +359,8 @@ def _define(
                 name, label, found.node_type,
                 f"Node({shown!r}) is {found!r}{hint(found) if hint else ''}",
             )
+        if aware or joins:
+            _refuse_owner(hook, node, refer)
         if update and attrs:
             _check_attrs(attrs, node=node.name)
             with hook.chunk("rig.define"):
@@ -1106,7 +1137,11 @@ class DGNode(Node):
         subclass (``Transform.define("j1")`` is ``Joint("j1")``), else
         NodeTypeError. It is never moved, reparented or added to a container;
         the attribute keywords are set only with ``update=True`` (in one undo
-        step, ``rig.define``).
+        step, ``rig.define``). Inside a real ``with container()`` scope a node
+        owned by a container that is not on the scope's stack is refused (a
+        re-run in the same scene: "'arm_root' belongs to container 'arm' from
+        an earlier run; this scope is 'arm1' ..."); a registry is checked only
+        with ``container=True``.
 
         **Missing at the key**: refused when the reference ``Cls(name)``
         (without ``parent=``) already finds a node elsewhere or is ambiguous

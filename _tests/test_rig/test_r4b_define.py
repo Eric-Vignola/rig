@@ -19,8 +19,11 @@
 * ``TestDefineCleanup``: a made node that is not the key after all is deleted,
   exactly what the call made, with the undo queue on or off; the user's previous
   undo step is never undone (CC-4).
-* ``TestDefineInContainer``: the flattened scope's prefix is in the key; a found
-  node is never added to the scope.
+* ``TestDefineInContainer``: the flattened scope's prefix is in the key; a node a
+  container off the scope's stack owns is refused (a re-run in the same scene; a
+  node from another module's container); an enclosing container's node is found;
+  a registry is checked only with ``container=True``; a found node is never added
+  to the scope.
 
 Every refusal writes nothing (a zero ``cmds.ls()`` delta).
 """
@@ -550,7 +553,7 @@ class TestDefineCleanup(_Case):
 
 
 class TestDefineInContainer(_Case):
-    """The flattened scope's key; a found node is never enrolled."""
+    """CC-11 and the flattened scope's key."""
 
     def test_a_flattened_scope_prefixes_the_key(self):
         with container("arm") as arm:
@@ -562,6 +565,58 @@ class TestDefineInContainer(_Case):
         # outside the scope 'k' is another key
         self.assertEqual(Transform.define("k").long_name, "|k")
 
+    def test_a_rerun_in_a_new_container_is_refused(self):
+        def build():
+            with container("arm") as arm:
+                Transform.define("arm_root")
+            return arm
+
+        first = build()
+        with container("arm") as second:
+            self.assertEqual(str(second), "arm1")
+            self.assertRefused(
+                ValueError,
+                r"^'arm_root' belongs to container 'arm' from an earlier run; this scope is 'arm1'\. "
+                r"Delete 'arm' to rebuild it, or build in a new scene\.$",
+                lambda: Transform.define("arm_root"),
+            )
+        self.assertEqual(cmds.container(str(first), query=True, nodeList=True), ["arm_root"])
+        self.assertIsNone(cmds.container(str(second), query=True, nodeList=True))
+
+    def test_a_node_from_another_container_is_refused(self):
+        with container("arm"):
+            root = Transform.define("rig_root")
+        with container("leg") as leg:
+            self.assertRefused(
+                ValueError,
+                r"^'rig_root' belongs to container 'arm'; define inside 'leg' only finds nodes this "
+                r"build scope owns\. Refer to it with Transform\('rig_root'\), or define it outside "
+                r"the containers\.$",
+                lambda: Transform.define("rig_root"),
+            )
+            self.assertEqual(Transform("rig_root"), root)
+        self.assertIsNone(cmds.container(str(leg), query=True, nodeList=True))
+        # outside any scope it is found
+        self.assertEqual(Transform.define("rig_root"), root)
+
+    def test_a_node_an_enclosing_container_owns_is_found(self):
+        with container("rig") as rig:
+            root = Transform.define("root")
+            with container("arm", preserve=True) as arm:
+                self.assertEqual(Transform.define("root"), root)
+                Transform.define("arm_ctl")
+        self.assertEqual(cmds.container(str(rig), query=True, nodeList=True), ["root", "arm"])
+        self.assertEqual(cmds.container(str(arm), query=True, nodeList=True), ["arm_ctl"])
+
+    def test_registries_are_checked_only_with_container_true(self):
+        with container("arm") as arm:
+            layer = DisplayLayer.define("L", container=True)
+        self.assertEqual(cmds.container(str(arm), query=True, nodeList=True), ["L"])
+        with container("leg"):
+            self.assertEqual(DisplayLayer.define("L"), layer)
+            self.assertRefused(ValueError, r"^'L' belongs to container 'arm'",
+                               lambda: DisplayLayer.define("L", container=True))
+
     def test_found_nodes_are_never_enrolled(self):
         free = Transform.define("free")
         with container("box") as box:
@@ -569,3 +624,13 @@ class TestDefineInContainer(_Case):
         self.assertIsNone(cmds.container(str(box), query=True, nodeList=True))
         self.assertEqual(cmds.getAttr("free.tx"), 2.0)
         self.assertIsNone(cmds.container(query=True, findContainer=["free"]))
+
+    def test_without_real_containers_nothing_is_checked(self):
+        with container("arm"):
+            Transform.define("arm_root")
+        set_options(create_containers=False)
+        try:
+            with container("again"):
+                self.assertEqual(str(Transform.define("arm_root")), "arm_root")
+        finally:
+            set_options(create_containers=True)
