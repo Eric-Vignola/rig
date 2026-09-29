@@ -690,7 +690,8 @@ class Plug(Attribute):
         """``plug >> None`` => :meth:`get` (numpy-aware value).
 
         ``plug >> Node`` => clone this plug's spec onto the target node,
-        return the new Plug.
+        return the new Plug; a node that has the name already is a
+        ``TypeError`` (a clone never overwrites, as ``plug >> "name"``).
 
         ``plug >> "newName"`` => clone this plug's spec onto the SAME node
         under ``newName``; ``plug >> "other.newName"`` onto another node.
@@ -713,9 +714,13 @@ class Plug(Attribute):
         ``rig.container`` instance): same as above, dispatched
         to the active container scope.
 
-        ``vtx[:8] >> Tag("x")`` (membership: a collection spec, a layer
-        node, a kind token) => query membership: the native ids of these
-        components that are in the collection.
+        ``vtx[:8] >> Tag("x")`` (membership: a membership node or ``Tag``,
+        a kind token) => query membership: the native ids of these
+        components that are in the collection. An attribute plug on the left
+        of a membership ``>>`` is a ``TypeError`` naming ``plug in
+        collection`` and ``node >> collection`` (a plug stands for its node
+        in ``in``; ``>>`` onto a layer, shader or engine names the clone
+        ``plug >> 'node.name'`` too).
 
         ``plug >> other_plug`` => ``TypeError`` naming ``other_plug << plug``
         (a plug is a str too, but never a clone name).

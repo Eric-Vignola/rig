@@ -949,7 +949,8 @@ class DGNode(Node):
     # --- DSL operators
 
     def __lshift__(self, other: Any) -> Any:
-        """``node << X`` -- inject: a collection spec makes the node a member, an
+        """``node << X`` -- inject: a membership node (a layer, a shader, an
+        engine) or ``Tag`` makes the node a member, an
         attribute spec adds an attribute, a matrix source on a transform drives
         its channels. See :func:`rig._internal.node._node_lshift`."""
         from rig._internal.node import _node_lshift

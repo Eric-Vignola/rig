@@ -914,3 +914,34 @@ class TestMembershipMessages(_Case):
         self.assertNotEqual(Tag("cap"), Tag("lid"))
         self.assertIn(Tag("cap"), Tag.of(cube.vtx[1]))
         self.assertEqual(len({Tag("cap"), Tag("cap")}), 1)
+
+
+class TestDefaultRefusals(_Case):
+    """Review minors (completeness C7, C8): one exception type for a Maya
+    default's delete / rename; an ambiguous influence name is the lookup
+    rule's error."""
+
+    def test_a_maya_default_refuses_with_a_type_error(self):
+        from rig.nodetypes import Lambert, StandardSurface
+        from rig.shade import Default
+
+        for call in (
+            lambda: Lambert("lambert1").delete(), lambda: Lambert("lambert1").rename("x"),
+            lambda: StandardSurface("standardSurface1").delete(),
+            lambda: Default().delete(), lambda: Default().rename("x"),
+            lambda: DisplayLayer("defaultLayer").delete(),
+        ):
+            self.assertLeavesNothing(TypeError, call)
+
+    def test_an_ambiguous_influence(self):
+        from rig import AmbiguousNodeError
+        from rig.nodetypes import SkinCluster
+
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        for group in ("a", "b"):
+            cmds.group(empty=True, name=group)
+            cmds.select(clear=True)
+            cmds.joint(name="dup")
+            cmds.parent(f"|dup", group)
+        self.assertLeavesNothing(AmbiguousNodeError, lambda: SkinCluster.create(cube, ["dup"]), "use a path")
+        self.assertLeavesNothing(RuntimeError, lambda: SkinCluster.create(cube, ["nope"]), r"Missing joints found: \['nope'\]")

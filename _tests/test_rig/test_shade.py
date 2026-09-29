@@ -1040,15 +1040,17 @@ class TestMaterialMethods(MayaTestCase):
     def test_delete_refuses_default_and_referenced_nodes(self):
         self.cube << Default()
         before = set(cmds.ls())
-        with self.assertRaisesRegex(RuntimeError, "default node"):
+        # a Maya default refuses with a TypeError, the material as the engine
+        # does (round 4b FIX: the material's was a RuntimeError)
+        with self.assertRaisesRegex(TypeError, "default node"):
             Material("lambert1").delete()
-        with self.assertRaisesRegex(RuntimeError, "default node"):
+        with self.assertRaisesRegex(TypeError, "default node"):
             Material("standardSurface1").delete()
         with self.assertRaisesRegex(TypeError, "cannot be deleted"):
             Default().delete()
         with self.assertRaisesRegex(TypeError, "cannot be renamed"):
             Default().rename("x")
-        with self.assertRaisesRegex(RuntimeError, "default node"):
+        with self.assertRaisesRegex(TypeError, "default node"):
             Material("lambert1").rename("x")
         with self.assertRaises(ValueError):
             Material("nope").delete()

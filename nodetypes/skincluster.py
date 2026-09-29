@@ -177,11 +177,13 @@ class SkinCluster(Deformer):
 
     @classmethod
     def _sanitize_influences(cls, infs: INF_TYPE) -> list[Joint]:
+        """The influences as Joints; a name no joint has raises RuntimeError
+        naming every missing one, a name several nodes have
+        AmbiguousNodeError (``Joint.exists`` raises it: "use a path")."""
         infs = [infs] if not isinstance(infs, (list, tuple, set)) else infs
 
         out     = []
         missing = []
-        multi   = []
         for inf in infs:
             if isinstance(inf, Joint):
                 out.append(inf)
@@ -189,15 +191,11 @@ class SkinCluster(Deformer):
                 inf = str(inf)
                 if not Joint.exists(inf):
                     missing.append(inf)
-                elif len(cmds.ls(inf, long=True, type="joint")) > 1:
-                    missing.append(inf)
                 else:
                     out.append(Joint(inf))
 
         if missing:
             raise RuntimeError(f"Missing joints found: {missing}")
-        if multi:
-            raise RuntimeError(f"Multiple joints found with the same name: {multi}")
 
         return out
 

@@ -512,10 +512,12 @@ class TestShaderNetworkVerbs(_Case):
             (ValueError, r"^'greenSG' already exists, so the engine of 'green'", lambda: red.rename("green")),
             (ValueError, r"^'1bad' is not a node name Maya keeps", lambda: red.rename("1bad")),
             (TypeError, r"non-empty str", lambda: red.rename("")),
-            (RuntimeError, r"^'lambert1' is a Maya default node and cannot be deleted$", lambda: Lambert("lambert1").delete()),
-            (RuntimeError, r"^'standardSurface1' is a Maya default node and cannot be deleted$",
+            # a Maya default refuses with a TypeError, as the default engine and
+            # defaultLayer do (round 4b FIX; it was a RuntimeError)
+            (TypeError, r"^'lambert1' is a Maya default node and cannot be deleted$", lambda: Lambert("lambert1").delete()),
+            (TypeError, r"^'standardSurface1' is a Maya default node and cannot be deleted$",
              lambda: StandardSurface("standardSurface1").delete()),
-            (RuntimeError, r"^'lambert1' is a Maya default node and cannot be renamed$",
+            (TypeError, r"^'lambert1' is a Maya default node and cannot be renamed$",
              lambda: Lambert("lambert1").rename("x")),
         )
         for error, pattern, call in cases:
