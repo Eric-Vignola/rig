@@ -1318,7 +1318,11 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     is added first when ``ContainerOptions.skip_selection`` is on, neither
     ``ss`` nor ``skipSelect`` was given, and the class's create is
     `DGNode.create` with a ``_create`` that forwards the flag, as
-    :meth:`_ContainerStack.createNode` defaults it. Any other type is
+    :meth:`_ContainerStack.createNode` defaults it (a registered shader
+    class's own create makes the shader network). A type Maya classifies a
+    surface shader, with no class of its own (``_base._CLASSIFY``:
+    ``anisotropic``, a plug-in shader), is ``Material.create(type=...)``:
+    the network, out of the scope unless ``container=True``. Any other type is
     :meth:`_ContainerStack.createNode`, given ``cmds.createNode``'s flags
     (``name`` / ``n``, ``parent`` / ``p``, ``skipSelect`` / ``ss``) and
     ``container=``; every other keyword is an attribute, as for a typed
@@ -1345,6 +1349,12 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
                 f"node class is registered for {node_type!r}, so it is made by "
                 f"createNode (got {len(args)} positional argument(s) after the type)"
             )
+        classify = _nodetypes_base._CLASSIFY
+        shader   = classify(node_type) if classify is not None else None
+        if shader is not None:
+            # a surface shader without an exact class: its network, as
+            # Material.create makes it (out of the scope unless container=True)
+            return shader.create(type=node_type, **kwargs)
         if kwargs and not _NODE_CREATE_FLAGS.issuperset(kwargs):
             return _node_create_with_attrs(node_type, kwargs)
         return container.createNode(node_type, **kwargs)

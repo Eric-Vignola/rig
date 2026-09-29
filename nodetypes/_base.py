@@ -3040,6 +3040,13 @@ class Node(metaclass=NodeMeta):
           ``blendShape``, ``mesh``, ``nurbsCurve``, ``reference``) raises
           TypeError without them, before anything is made. A display layer is
           empty unless objects are given.
+        * A surface shader type makes the shader's network (the shader, its
+          ``<shader>SG`` engine and materialInfo) outside the scope unless
+          ``container=True``: ``Node.create("blinn", name="red")`` is
+          ``Blinn.create(name="red")``, and a type Maya classifies a surface
+          shader without a class of its own (``"anisotropic"``, a plug-in
+          shader) is ``Material.create(type=..., ...)``. (``rn.blinn()``
+          makes the bare shader, in the scope.)
         * Any other type is made by the container scope's ``createNode``
           (``Node.create("multiplyDivide", name="md")``): the node joins the
           active scope, an explicit ``name=`` takes the flattened scope's
@@ -3097,10 +3104,19 @@ class Node(metaclass=NodeMeta):
         (checked on the type before any lookup):
         ``Node.define("multiplyDivide", "knee_md", operation="divide")``. A
         shape type (``"locator"``) is refused: Maya makes a shape under a new
-        transform, so no key names it."""
+        transform, so no key names it. A surface shader type makes its network
+        (``Node.define("blinn", "red")`` is ``Blinn.define("red")``,
+        ``Node.define("anisotropic", "ani")`` is ``Material.define("ani",
+        type="anisotropic")``)."""
         node_cls = _NODE_CLASS_DICT.get(node_type)
         if node_cls is not None:
             return node_cls.define(name, parent=parent, update=update, container=container, **kwargs)
+        shader = _CLASSIFY(node_type) if _CLASSIFY is not None else None
+        if shader is not None:
+            # a surface shader without an exact class: its network
+            return shader.define(
+                name, parent=parent, update=update, container=container, type=node_type, **kwargs
+            )
         from rig.nodetypes.dg_node import _define_untyped  # dg_node imports this module
 
         return _define_untyped(node_type, name, parent, update, container, kwargs)
