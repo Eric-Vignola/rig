@@ -85,7 +85,7 @@ inside a node (an attribute, a component tag) is declared, with `Float`,
 | | **refer** `Cls("x")` | **define** `Cls.define("x", ...)` | **create** `Cls.create(name="x", ...)` |
 |---|---|---|---|
 | writes the scene | never | only when `x` is missing (values on a found node only with `update=True`) | always |
-| `x` missing | `NodeNotFoundError`, with a did-you-mean hint | makes it, with the attributes given | makes it |
+| `x` missing | `NodeNotFoundError`, with a did-you-mean hint and the `define` that makes it | makes it, with the attributes given | makes it |
 | `x` exists | that node, as its most derived class (`Transform("j1")` is `Joint("j1")`) | that node; its attributes are left as they are | a second one, which Maya names `x1` |
 | `x` exists only elsewhere (under another parent, in another namespace) | that node, when it is the only one | refused: pass `parent=` or spell the namespace | — |
 | `x` is another type | `NodeTypeError` | `NodeTypeError` | — |
@@ -108,7 +108,7 @@ Joint.create(name="spine_01")
 try:
     Joint("spnie_01")                         # a typo never creates
 except NodeNotFoundError as err:
-    print(err)                                # no joint named 'spnie_01' (did you mean 'spine_01'?)
+    print(err)                                # no joint named 'spnie_01' (did you mean 'spine_01'?); Joint.define('spnie_01') finds or makes it
 
 cmds.namespace(add="char")
 cmds.namespace(set="char")
@@ -117,7 +117,7 @@ cmds.namespace(set=":")
 try:
     Joint("root")
 except NodeNotFoundError as err:
-    print(err)                                # no joint named 'root' ('char:root' exists)
+    print(err)                                # no joint named 'root' ('char:root' exists); Joint.define('root') finds or makes it
 print(repr(Joint("char:root")))               # Joint("char:root")
 
 def build():
@@ -363,8 +363,8 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   raise `NodeNotFoundError` (a `ValueError`) at the reference when the
   material or layer is missing, before anything is written; `define` is
   the verb that makes one. A tag lives on the node, so a missing tag is
-  simply not holding anything: `cube in Tag("nope")` is `False`, and only
-  `cube >> Tag("nope")` (the node asks for the whole tag) raises.
+  simply not holding anything: `cube in Tag("nope")` is `False`, and
+  `cube >> Tag("nope")` reads no ids, as components do.
 - **Materials are exclusive, and removal leaves faces green.**
   `cube.f[:3] << decal` carves those faces out of `redSG`;
   `cube.f[:3] << -decal` puts them in **no** engine (Maya draws them
