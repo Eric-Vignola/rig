@@ -62,7 +62,7 @@ class Follicle(DAGNode):
             t = cmds.xform(ref_object, rp=True, q=True, ws=True)
 
         # create the follicle node and make connections
-        follicle  = cls(cmds.createNode("follicle", name=name + "Shape"))
+        follicle  = cls._wrap(cmds.createNode("follicle", name=name + "Shape"))
         fTranform = follicle.get_parent()
         follicle.find_attr("outTranslate") >> fTranform.find_attr("translate")
         follicle.find_attr("outRotate") >> fTranform.find_attr("rotate")

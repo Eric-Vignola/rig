@@ -510,7 +510,7 @@ class _ContainerStack:
         container_node = None
         if wants_real_container:
             ctn_name       = cmds.createNode("container", name=args["name"], skipSelect=True)
-            container_node = Container(ctn_name)
+            container_node = Container._wrap(ctn_name)
             # If we're nested under an outer real container, register this
             # new sub-container as a member of the outer scope BEFORE we
             # push the new frame. At this point ``self._stack`` still has

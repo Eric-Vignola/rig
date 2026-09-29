@@ -143,7 +143,7 @@ class SkinCluster(Deformer):
             # weights columns already align with skin_data.influences (creation
             # preserves order), so set them directly without serialize/conform
             if skin_data is not None:
-                SetSkinWeightsCommand(cls(name), skin_data.weights)
+                SetSkinWeightsCommand(cls._wrap(name), skin_data.weights)
 
         return name
 

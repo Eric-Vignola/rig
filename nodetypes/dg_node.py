@@ -613,13 +613,14 @@ class DGNode(Node):
         type_key = "exactType" if exact_type else "type"
         kwargs.setdefault(type_key, cls.NATIVE_NODE_TYPE)
 
+        # a node listed by its type is built as this class (its exact type)
         for node in cmds.ls(*args, **kwargs):
             if cls.CUSTOM_NODE_TYPE:
                 if get_custom_type(node) == cls.CUSTOM_NODE_TYPE:
-                    nodes.append(cls(node))
+                    nodes.append(cls._wrap(node))
             else:
                 nodes.append(
-                    cls(node)
+                    cls._wrap(node)
                     if cmds.nodeType(node) == cls.NATIVE_NODE_TYPE
                     else _cast(node)
                 )
@@ -676,7 +677,8 @@ class DGNode(Node):
         """Post creation operations. Can be overridden by subclasses."""
         if cls.CUSTOM_NODE_TYPE:
             set_custom_type(new_node_name, cls.CUSTOM_NODE_TYPE)
-        return cls(new_node_name)
+        # the node just made is of this class
+        return cls._wrap(new_node_name)
 
     def duplicate(self, *args, **kwargs) -> list[DGNode]:
         """Thin wrapper around `cmds.duplicate()`."""

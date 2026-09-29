@@ -315,7 +315,7 @@ class Mesh(Geometry):
             return nodes
 
         for sg in shading_engines:
-            sg = ShadingEngine(sg)
+            sg = ShadingEngine._wrap(sg)
             # skip empty shading engines
             if not sg.get_members(as_components=True):
                 continue
