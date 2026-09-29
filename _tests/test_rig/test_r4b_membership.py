@@ -91,6 +91,221 @@ class _Case(MayaTestCase):
 
 
 # --------------------------------------------------------------------- #
+#  Layers are the display layer nodes
+# --------------------------------------------------------------------- #
+
+
+class TestLayerNode(_Case):
+    def setUp(self):
+        super().setUp()
+        self.cube  = _cube("cube")
+        self.other = _cube("other")
+        self.L     = Layer.define("L")
+
+    def test_layer_is_displaylayer(self):
+        self.assertIs(rig.Layer, DisplayLayer)
+        self.assertIs(rig.membership.Layer, DisplayLayer)
+        self.assertIsInstance(self.L, DisplayLayer)
+        self.assertEqual(Layer("L"), self.L)
+        self.assertEqual(Layer.create(name="L2").name, "L2")
+        self.assertEqual(Layer.define("L3", displayType=2).displayType >> None, 2)
+
+    def test_assign_remove_purge_and_the_answers(self):
+        before = _scene()
+        self.assertIs(self.cube << self.L, self.cube)
+        self.assertEqual(_scene(), before)
+        self.assertEqual(_layer("|cube"), "L")
+        self.assertTrue(self.cube in self.L)
+        self.assertEqual(self.cube >> Layer(), self.L)
+        self.assertIsInstance(self.cube >> Layer(), DisplayLayer)
+        self.assertEqual(Layer.of(self.cube), [self.L])
+        self.assertEqual(DisplayLayer.of(self.cube), [self.L])
+        self.assertIsNone(self.other >> Layer())
+        self.assertEqual(Layer.of(self.other), [])
+        self.assertIs(self.cube << -self.L, self.cube)
+        self.assertIsNone(_layer("|cube"))
+        self.cube << self.L
+        self.assertIs(self.cube << Layer(), self.cube)
+        self.assertIsNone(_layer("|cube"))
+        self.assertEqual(_scene(), before)
+
+    def test_a_list_is_one_edit_call(self):
+        lhs = List([self.cube, self.other])
+        with mock.patch.object(cmds, "editDisplayLayerMembers", wraps=cmds.editDisplayLayerMembers) as edit:
+            self.assertIs(lhs << self.L, lhs)
+        writes = [c for c in edit.call_args_list if not c.kwargs.get("query")]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(_members("L"), ["|cube", "|other"])
+        self.assertTrue(lhs in self.L)
+        with mock.patch.object(cmds, "editDisplayLayerMembers", wraps=cmds.editDisplayLayerMembers) as edit:
+            lhs << -self.L
+        self.assertEqual(len([c for c in edit.call_args_list if not c.kwargs.get("query")]), 1)
+        self.assertEqual(_members("L"), [])
+
+    def test_a_missing_layer_is_the_references_error(self):
+        for label, call in (
+            ("Layer('ghost')",          lambda: Layer("ghost")),
+            ("cube << Layer('ghost')",  lambda: self.cube << Layer("ghost")),
+            ("cube << -Layer('ghost')", lambda: self.cube << -Layer("ghost")),
+            ("cube in Layer('ghost')",  lambda: self.cube in Layer("ghost")),
+        ):
+            with self.subTest(label):
+                self.assertRefused(NodeNotFoundError, r"^no displayLayer named 'ghost'", call)
+        self.assertFalse(Layer.exists("ghost"))
+        self.assertFalse(cmds.objExists("ghost"))
+
+    def test_default_layer_reads_as_no_layer(self):
+        default = Layer("defaultLayer")
+        self.assertTrue(self.cube in default)
+        self.cube << self.L
+        self.assertFalse(self.cube in default)
+        self.assertIs(self.cube << default, self.cube)
+        self.assertIsNone(_layer("|cube"))
+        self.assertIsNone(self.cube >> Layer())
+        self.assertRefused(TypeError, "contradictory", lambda: self.cube << -default)
+
+    def test_node_guards(self):
+        default = Layer("defaultLayer")
+        for verb, call in (
+            ("deleted", default.delete),
+            ("renamed", lambda: default.rename("z")),
+            ("cleared", default.clear),
+        ):
+            with self.subTest(verb):
+                self.assertRefused(TypeError, rf"^'defaultLayer' cannot be {verb}: it is the layer of no layer$", call)
+        self.other << Layer.define("taken")
+        for error, pattern, call in (
+            (ValueError, r"^'taken' already exists$", lambda: self.L.rename("taken")),
+            (ValueError, r"^'cube' already exists$", lambda: self.L.rename("cube")),
+            (ValueError, "not a display layer name Maya keeps", lambda: self.L.rename("1bad")),
+            (ValueError, "not a display layer name Maya keeps", lambda: self.L.rename("a|b")),
+            (TypeError, "non-empty str", lambda: self.L.rename("")),
+            (TypeError, "non-empty str", lambda: self.L.rename(None)),
+        ):
+            with self.subTest(pattern):
+                self.assertRefused(error, pattern, call)
+        self.assertIsNone(self.L.rename("L"))
+        self.cube << self.L
+        self.L.rename("M")
+        self.assertEqual(str(self.L), "M")
+        self.assertTrue(self.cube in self.L)
+
+    def test_a_referenced_layer_refuses_the_network_verbs(self):
+        folder = tempfile.mkdtemp(prefix="rig_layer_")
+        try:
+            path = os.path.join(folder, "layer.ma").replace("\\", "/")
+            cmds.file(new=True, force=True)
+            cube = cmds.polyCube(name="rcube", ch=False)[0]
+            cmds.createDisplayLayer(cube, name="rl", noRecurse=True)
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            layer = Layer("ref:rl")
+            self.assertTrue(Node("ref:rcube") in layer)
+            for verb, call in (
+                ("deleted", layer.delete),
+                ("renamed", lambda: layer.rename("mine")),
+                ("cleared", layer.clear),
+            ):
+                with self.subTest(verb):
+                    self.assertRefused(RuntimeError, rf"^'ref:rl' is referenced and cannot be {verb}", call)
+            self.assertTrue(Node("ref:rcube") in layer)
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_one_undo_per_lshift(self):
+        cmds.undoInfo(state=True, infinity=True)
+        for step, check in (
+            (lambda: self.cube << self.L, lambda: self.assertEqual(_layer("|cube"), "L")),
+            (lambda: List([self.cube, self.other]) << self.L, lambda: self.assertEqual(_members("L"), ["|cube", "|other"])),
+        ):
+            before = (_layer("|cube"), _layer("|other"))
+            step()
+            check()
+            cmds.undo()
+            self.assertEqual((_layer("|cube"), _layer("|other")), before)
+        List([self.cube, self.other]) << self.L
+        for step in (
+            lambda: self.cube << -self.L,
+            lambda: self.cube << Layer(),
+            lambda: self.L.clear(),
+        ):
+            step()
+            self.assertIsNone(_layer("|cube"))
+            cmds.undo()
+            self.assertEqual(_layer("|cube"), "L")
+        self.L.delete()
+        self.assertFalse(cmds.objExists("L"))
+        cmds.undo()
+        self.assertEqual(_members("L"), ["|cube", "|other"])
+        self.L.rename("M")
+        cmds.undo()
+        self.assertEqual(str(self.L), "L")
+
+    def test_a_held_layer_across_delete_undo_rename_and_a_new_scene(self):
+        cmds.undoInfo(state=True, infinity=True)
+        held = self.L
+        cmds.rename("L", "renamed")
+        self.assertEqual(repr(-held), '-DisplayLayer("renamed")')
+        self.cube << held
+        self.assertEqual(_layer("|cube"), "renamed")
+        cmds.delete("renamed")
+        for label, call in (
+            ("cube << held", lambda: self.cube << held),
+            ("cube << -held", lambda: self.cube << -held),
+            ("cube in held", lambda: self.cube in held),
+        ):
+            with self.subTest(label):
+                self.assertRefused(RuntimeError, "already deleted", call)
+        cmds.undo()
+        self.assertTrue(self.cube in held)
+        self.cube << -held
+        self.assertIsNone(_layer("|cube"))
+        # a layer made under the old name is another node
+        cmds.delete("renamed")
+        fresh = Layer.define("renamed")
+        self.assertRefused(RuntimeError, "already deleted", lambda: self.cube << held)
+        self.cube << fresh
+        self.assertEqual(_layer("|cube"), "renamed")
+        cmds.file(new=True, force=True)
+        cube = _cube("cube")
+        self.assertRefused(RuntimeError, "already deleted", lambda: cube << fresh)
+        self.assertRefused(NodeNotFoundError, "no displayLayer named 'renamed'", lambda: Layer("renamed"))
+
+    def test_namespaces(self):
+        cmds.namespace(add="char")
+        cmds.createDisplayLayer(name="char:L", empty=True)
+        cmds.namespace(set=":char")
+        try:
+            for relative in (False, True):
+                cmds.namespace(relativeNames=relative)
+                with self.subTest(relative_names=relative):
+                    self.assertRefused(AmbiguousNodeError, "spell the namespace", lambda: self.cube << Layer("L"))
+                    self.cube << Layer(":char:L")
+                    self.assertTrue(self.cube in Layer(":char:L"))
+                    self.assertFalse(self.cube in Layer(":L"))
+                    self.assertEqual(self.cube >> Layer(), Layer(":char:L"))
+                    self.cube << Layer()
+                    self.assertIsNone(self.cube >> Layer())
+        finally:
+            cmds.namespace(relativeNames=False)
+            cmds.namespace(set=":")
+
+    def test_scopes_never_enrol_a_layer(self):
+        with container("real") as real:
+            self.cube << self.L
+            inner = Layer.define("inner")
+            self.other << inner
+        self.assertIsNone(cmds.container(query=True, findContainer=["L"]))
+        self.assertIsNone(cmds.container(query=True, findContainer=["inner"]))
+        self.assertEqual(_layer("|cube"), "L")
+        self.assertEqual(_layer("|other"), "inner")
+        self.assertTrue(cmds.objExists(str(real)))
+
+
+# --------------------------------------------------------------------- #
 #  The kind and removal tokens
 # --------------------------------------------------------------------- #
 

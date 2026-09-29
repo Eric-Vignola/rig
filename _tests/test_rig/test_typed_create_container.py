@@ -462,7 +462,7 @@ class TestTypedCreateInContainer(MayaTestCase):
         def build():
             cube = Node(self._cube())
             cube << Blinn("red")
-            cube << Layer("lay")
+            cube << Layer.define("lay")   # re-pinned (round 4b NC6): Layer is DisplayLayer
 
         def scene():
             return sorted(

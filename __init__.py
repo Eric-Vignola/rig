@@ -32,21 +32,27 @@ Operator conventions:
       ``md.operation << "divide"``); a wrong name raises TypeError.
     * ``>>`` (left-to-right) -- introspect: ``plug >> None`` reads the value;
       ``plug >> Node`` clones the attr-spec onto another node.
-    * ``<<`` with a collection spec (``Tag("x")``) makes the LHS a member
-      and returns the LHS, so collections chain: ``cube.f[:3] << Tag("a")
-      << Tag("b")``. An attribute spec returns the new plug instead (a
-      value goes next): ``<<`` returns what the next ``<<`` should target.
-    * ``-Spec("x")`` removes the LHS from that collection; ``Spec()`` (the
-      same object as ``Spec(None)``) names no particular one: on ``<<`` it
-      purges, removing the LHS from every collection of that kind; on
-      ``>>`` it enumerates, ``cube >> Tag()`` being ``Tag.of(cube)``.
-    * ``>>`` with a collection spec queries a plain value (the native ids
-      of the LHS that are members); a missing collection is a ValueError.
-      ``node >> Float("x")`` DECLARES an output attr, ``node >> Tag("x")``
-      QUERIES: the RHS family decides.
-    * An attribute plug on the left stands for its node, for every kind:
-      ``cube.tx << Layer("x")`` and ``cube.t >> Layer()`` act on ``cube``.
-      Component plugs (``cube.vtx[:3]``) keep their own meaning, and a
+    * ``<<`` with a collection (``Tag("x")``, a layer node) makes the LHS a
+      member and returns the LHS, so collections chain: ``cube.f[:3] <<
+      Tag("a") << Tag("b")``. An attribute spec returns the new plug instead
+      (a value goes next): ``<<`` returns what the next ``<<`` should target.
+    * ``-x`` removes the LHS from that collection (``-Tag("x")``, ``-layer``);
+      the kind token ``Tag()`` / ``Layer()`` names no particular one: on
+      ``<<`` it purges, removing the LHS from every collection of that kind;
+      on ``>>`` it enumerates, ``cube >> Tag()`` being ``Tag.of(cube)``.
+      ``Tag(None)`` / ``Layer(None)`` are TypeErrors (a failed lookup must
+      not mean every collection).
+    * ``lhs in x`` / ``lhs not in x`` asks yes or no, with all-members
+      semantics: ``cube.vtx[:3] in Tag("cap")`` is True when all three are
+      in it, ``cube in layer`` when cube is; a plug stands for its node there
+      (``cube.tx in layer``). A tag the node does not have answers False.
+    * ``>>`` with a collection answers ids (the native ids of the LHS that
+      are members); ``node >> Float("x")`` DECLARES an output attr, ``node
+      >> Tag("x")`` QUERIES: the RHS family decides. A layer holds whole
+      objects and has no ids (``cube >> layer`` raises, naming ``in``).
+    * An attribute plug on the left of a membership ``<<`` / ``>>`` / ``of``
+      is refused (the node is the member: ``cube << layer``; to connect,
+      name a plug). Component plugs (``cube.vtx[:3]``) are members, and a
       deformer's ``componentTagExpression`` plug receives a ``Tag``'s name.
     * A node on the left of a per-node kind means the collection itself:
       ``cube << Tag("x")`` creates the tag, ``cube << -Tag("x")`` deletes
@@ -55,11 +61,13 @@ Operator conventions:
       the LHS into x's shading engine (built on first use);
       ``-Material("x")`` carves the LHS out; ``Material()`` leaves it in
       no engine (green); ``Default()`` reverts to initialShadingGroup.
-    * ``Layer`` (display layers) is exclusive and holds objects only, never
-      components: ``cube << Layer("x")`` moves cube (its children follow
-      through the DAG without joining); ``-Layer("x")`` and ``Layer()``
-      both land in defaultLayer, which reads as "no layer" (``cube >>
-      Layer()`` is ``None`` there).
+    * ``Layer`` is the display layer node class (``Layer is DisplayLayer``):
+      ``Layer("x")`` refers to an existing layer, ``Layer.define("x")`` finds
+      or makes it. Layers are exclusive and hold objects only, never
+      components: ``cube << layer`` moves cube (its children follow through
+      the DAG without joining); ``-layer`` and ``Layer()`` both land in
+      defaultLayer, which reads as "no layer" (``cube >> Layer()`` is
+      ``None`` there).
     * ``+ - * / ** // %`` -- Pythonic math (build ``plusMinusAverage``,
       ``multiplyDivide``, ``modulo``, ...). Matrix and quaternion are
       detected and routed to the right node type. A plain ``str`` operand

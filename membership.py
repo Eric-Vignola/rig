@@ -1,22 +1,35 @@
 """
-Membership specs: the collections geometry components and objects belong to.
+Membership: the collections geometry components and objects belong to.
 
 :class:`Tag` is the component-tag kind, the Maya 2025 pivot for deformers,
 which read tags by name through ``input[i].componentTagExpression``. A tag
 lives on one geometry node (its injection node: the shape, or the Orig once
 a deformer exists), holds ONE category (vertices / CVs / points, edges or
-faces) and is edited here through ``cmds.componentTag`` with an explicit
+faces: Maya reads a tag as one component type, the first one stored) and is
+edited here through ``cmds.componentTag`` with an explicit
 ``injectionLocation`` so every write lands where Maya reads it. The six
 face tags a ``polyCube`` ships are procedural (owned by ``polyCube1``) and
 refuse edits; shadowing one on purpose is the ``at=`` escape hatch. A
 ``polyCube(ch=False)`` bakes them into the shape's own ``componentTags``
 multi where the command refuses them but the plug path edits them.
 
-:class:`Layer` is the display-layer kind: objects only, exclusive (a node
-is in one layer), the node itself and never its subtree (children follow
-through the DAG), with ``defaultLayer`` read as "no layer". Membership is
-read from the node side (its ``drawOverride`` input), never by enumerating
-layers, and a layer never joins the active rig container.
+``Layer`` is the display layer node class itself (``Layer is
+DisplayLayer``): objects only, exclusive (a node is in one layer), the node
+itself and never its subtree (children follow through the DAG), with
+``defaultLayer`` read as "no layer". ``Layer('x')`` refers to a layer that
+exists (never creates it), ``Layer.define('x', ...)`` finds or makes it and
+``Layer.create(name='x')`` makes a new one. Membership is read from the node
+side (its ``drawOverride`` input), never by enumerating layers, and a layer
+never joins the active rig container.
+
+The membership verbs are one grammar for every kind: ``<<`` adds (``-x``
+removes; the kind token ``Tag()`` / ``Layer()`` purges), ``in`` / ``not in``
+asks yes or no with all-members semantics (every node, every component, every
+element of a list), ``>>`` reads ids (``>> Tag()`` / ``>> Layer()``
+enumerates). An attribute plug on the left of ``<<`` / ``>>`` / ``of`` is
+refused (the node is the member: ``sph << Tag("x")``), and stands for its
+node in ``in``; component plugs are members. A component tag is untyped for
+queries: faces in a vertex tag are simply not in it.
 
 Usage::
 
@@ -31,11 +44,14 @@ Usage::
     sph         << -Tag("cap")            # delete it (RuntimeError while a deformer references it)
     sph.vtx[:8] << Tag()                  # out of every editable vertex tag on the node
     sph         << Tag()                  # delete every editable tag on the node
-    sph.tx      << Tag("cap")             # an attribute plug stands for its node
+    sph.tx      << Tag("cap")             # TypeError: a plug; the node is the member
 
     sph >> Tag("lid")                     # array([0, 1, 2])   native ids, the tag's own category
     sph.vtx[4:12] >> Tag("cap")           # array([4, 5, 6, 7])
+    sph.f[:2] >> Tag("cap")               # array([], ...)     faces are not in a vertex tag
     sph.vtx[3] >> Tag() ; Tag.of(sph.vtx[3])   # [Tag('cap')]   the tags holding that vertex
+    sph.vtx[:3] in Tag("cap")             # True: every one is in it
+    sph in Tag("cap") ; sph in Tag("ghost")    # True ; False (no such tag)
 
     Tag("cap").set(sph.f[:2])             # replace; may flip the category
     Tag("cap").clear(sph)                 # empty, name survives
@@ -48,16 +64,18 @@ Usage::
 
     cluster.input[0].componentTagExpression << Tag("cap")   # writes 'cap'; warns when absent upstream
 
-    geo = Node("arm_geo")
-    geo << Layer("geometry")              # find-or-create; moves geo (exclusive); returns geo
-    geo << Layer("ref", displayType=2, visibility=False)   # kwargs are the layer's attributes on create
-    List([geo, Node("ctl")]) << Layer("rig")           # one editDisplayLayerMembers call
-    geo << -Layer("rig") ; geo << Layer()                   # both: back to defaultLayer
-    geo >> Layer("rig")                   # True / False
-    geo >> Layer() ; Layer.of(geo)        # Layer('rig') or None ; [Layer('rig')] or []
-    Layer("rig").node ; Layer("rig").visibility << False   # the spec is the handle (find-only)
-    Layer("rig").rename("anim") ; Layer("rig").clear() ; Layer("rig").delete()
-    geo.f[:3] << Layer("x")               # TypeError: layers hold objects (Maya would store the shape)
+    geo  = Node("arm_geo")
+    geom = Layer.define("geometry")       # DisplayLayer("geometry"): found, or made (empty)
+    geo << geom                           # moves geo (exclusive); returns geo
+    ref  = Layer.define("ref", displayType=2, visibility=False)   # attributes set when it is made
+    List([geo, Node("ctl")]) << ref       # one editDisplayLayerMembers call
+    geo << -ref ; geo << Layer()          # both: back to defaultLayer
+    geo in ref ; geo.tx in ref            # True / False (a plug stands for its node)
+    geo >> Layer() ; Layer.of(geo)        # DisplayLayer("ref") or None ; [DisplayLayer("ref")] or []
+    Layer("rig")                          # NodeNotFoundError when it does not exist: never created
+    ref.visibility << False ; ref.rename("anim") ; ref.clear() ; ref.delete()
+    geo.f[:3] << ref                      # TypeError: layers hold objects (Maya would store the shape)
+    geo >> ref                            # TypeError: a layer has no ids; ask with geo in ref
 """
 
 from __future__ import annotations
@@ -71,14 +89,12 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes import display_layer as _display_layer
-from rig.nodetypes._base import _cast, _cast_node
+from rig.nodetypes._base import _cast
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
 from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
 from rig._internal import types as _types
 from rig._internal.members import (
-    _check_attrs,
-    _find_node,
     _GEOMETRY_TYPES,
     _MemberSpec,
     _ndims,
@@ -1027,20 +1043,11 @@ def _holds_all(group: _TagGroup, name: str, ids: np.ndarray) -> bool:
 
 # ---------- Layer --------------------------------------------------------- #
 
-# A display layer name Maya keeps: identifiers joined by namespace separators.
-_LAYER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z_][A-Za-z0-9_]*)*$")
 
-
-def _leaf(name: str) -> str:
-    """The name without its namespace."""
-    return name.rsplit(":", 1)[-1]
-
-
-def _layer_of(path: str) -> str | None:
+def _holding_layer(path: str) -> DisplayLayer | None:
     """The display layer holding the node at ``path``, read from the node's
     own ``drawOverride`` input; ``None`` in ``defaultLayer``."""
-    layer = DisplayLayer.for_node(path)
-    return layer.name if layer is not None else None
+    return DisplayLayer.for_node(path)
 
 
 def _component_message(selection: _Selection) -> str:
@@ -1065,12 +1072,6 @@ def _layer_targets(selections: list[_Selection]) -> list[str]:
             )
         paths.append(selection.path)
     return paths
-
-
-def _holding_layer(path: str) -> DisplayLayer | None:
-    """The display layer holding the node at ``path``, read from the node's
-    own ``drawOverride`` input; ``None`` in ``defaultLayer``."""
-    return DisplayLayer.for_node(path)
 
 
 class _LayerMember(_MemberSpec):
@@ -1226,276 +1227,8 @@ class _LayerMember(_MemberSpec):
         return [layer] if layer is not None else []
 
 
-class Layer(_MemberSpec):
-    """A display layer: ``Layer('x')``, ``-Layer('x')``, ``Layer()``.
-
-    ``Layer(name=None, *, update=False, **attrs)`` makes zero Maya calls.
-    ``name`` is the find-or-create key, found by the lookup rule of
-    ``Node(x)`` (a path or ``ns:name`` as written; a bare name at the root
-    namespace and in the current one, both at once an AmbiguousNodeError); a
-    node of that name that is not a display layer is a ``TypeError``.
-    ``attrs`` are the layer's attributes, applied on create
-    (``Layer('ref', displayType=2, visibility=False)``) and skipped on a
-    found layer unless ``update=True``; a typo raises before any write.
-
-    Layers hold objects, exclusively: ``node << Layer('x')`` moves the node
-    itself into ``x`` (never its subtree: children draw with the parent's
-    override through the DAG without joining), ``node << -Layer('x')``
-    moves it back to ``defaultLayer`` (a no-op when it is in another
-    layer), ``node << Layer()`` is ``defaultLayer`` too; a component on the
-    left is a ``TypeError`` (Maya would silently store the shape), a DG
-    node a ``TypeError`` (layers hold DAG objects). A ``List`` of nodes
-    is one ``editDisplayLayerMembers`` call; ``<<`` returns the left-hand
-    side and every write of one ``<<`` is one undo chunk; a new layer never
-    joins the active rig container.
-
-    ``defaultLayer`` reads as "no layer": ``node >> Layer('x')`` is a
-    ``bool``, ``node >> Layer()`` the ``Layer`` holding the node or ``None``,
-    ``Layer.of(node)`` ``[Layer('x')]`` or ``[]``; ``Layer('defaultLayer')``
-    still wraps it. The spec is the find-only handle: ``.node`` is the
-    layer (``ValueError`` until it exists), any other name forwards to it
-    (``bg.visibility << False``; ``bg.visibility = False`` is the same
-    injection as sugar). ``.delete()`` sends the members to ``defaultLayer``
-    and deletes the layer, ``.rename(new)`` renames it and the spec follows,
-    ``.clear()`` empties it; all three refuse ``defaultLayer``.
-    """
-
-    KIND        = "layer"
-    ACCEPTS     = frozenset({"whole"})
-    WANT_SHAPES = False
-    EXCLUSIVE   = True
-    DEFAULT     = DisplayLayer.DEFAULT
-
-    def __init__(
-        self,
-        name:     Any  = None,
-        *members: Any,
-        update:   bool = False,
-        **attrs:  Any,
-    ) -> None:
-        if members:
-            raise TypeError(
-                "members belong on the left: node << Layer('x') moves it into the "
-                "layer and node << -Layer('x') moves it back to defaultLayer"
-            )
-        super().__init__(name)
-        self._update = bool(update)
-        self._attrs  = dict(attrs)
-
-    def _validate_name(self, name: Any) -> None:
-        super()._validate_name(name)
-        if not _LAYER_NAME_RE.match(name):
-            raise ValueError(
-                f"{name!r} is not a display layer name Maya keeps: identifiers of "
-                f"[A-Za-z0-9_] not starting with a digit, joined by ':'"
-            )
-
-    def __eq__(self, other: Any) -> bool:
-        return (
-            isinstance(other, Layer)
-            and self._name == other._name
-            and self._remove == other._remove
-        )
-
-    def __hash__(self) -> int:
-        return hash((self._name, self._remove))
-
-    # -- spec-as-handle -- #
-
-    def __getattr__(self, name: str) -> Any:
-        # Python probes private and dunder names (``__deepcopy__``,
-        # ``__setstate__``); a layer's own attributes never start with an
-        # underscore, so those stay on the spec.
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return getattr(self.node, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name.startswith("_"):
-            object.__setattr__(self, name, value)
-            return
-        getattr(self.node, name) << value
-
-    @property
-    def attrs(self) -> dict:
-        """The pending attribute injections (a copy)."""
-        return dict(self._attrs)
-
-    @property
-    def node(self) -> Node:
-        """The display layer node; ``ValueError`` until it exists."""
-        return _cast_node(self._require())
-
-    # -- resolution (reads only) -- #
-
-    def _verb(self, verb: str) -> None:
-        if self._remove:
-            raise TypeError(
-                f"-Layer({self._name!r}).{verb}() is unassigned; call the method on "
-                f"Layer({self._name!r})"
-            )
-        if self._name is None:
-            raise TypeError(f"Layer().{verb}(): a method names one layer")
-
-    def _find(self) -> str | None:
-        """The layer this spec names as it exists now, or ``None``."""
-        if self._name is None:
-            raise TypeError("Layer() names no layer; it is defaultLayer, the layer of no layer")
-        name = _find_node(self._name)
-        if name is None:
-            return None
-        node_type = cmds.nodeType(name)
-        if node_type != DisplayLayer.NATIVE_NODE_TYPE:
-            raise TypeError(
-                f"'{name}' exists and is a {node_type}, not a display layer"
-            )
-        return name
-
-    def _require(self) -> str:
-        found = self._find()
-        if found is None:
-            raise ValueError(
-                f"no display layer named '{self._name}'; {self!r} creates it when "
-                f"it meets '<<'"
-            )
-        return found
-
-    def _guard(self, layer: str, verb: str) -> None:
-        if layer == self.DEFAULT:
-            raise TypeError(
-                f"'{layer}' cannot be {verb}: defaultLayer is the layer of no layer"
-            )
-        if cmds.referenceQuery(layer, isNodeReferenced=True):
-            raise RuntimeError(
-                f"'{layer}' is referenced and cannot be {verb}; edit the source file"
-            )
-
-    @staticmethod
-    def _single(selections: list[_Selection], verb: str) -> str:
-        paths = _layer_targets(selections)
-        if len(paths) > 1:
-            raise TypeError(
-                f"{verb} one node at a time; got {', '.join(_short(p) for p in paths)}"
-            )
-        return paths[0]
-
-    # -- refusals -- #
-
-    def _kind_error(self, selection: _Selection) -> str:
-        return _component_message(selection)
-
-    # -- '<<' -- #
-
-    def _plan(self, selections: list[_Selection]) -> list[Callable[[], None]]:
-        paths = _layer_targets(selections)
-        if self._name is None:
-            return [lambda: self._move(self.DEFAULT, paths)]
-        if self._remove:
-            found = self._require()
-            if found == self.DEFAULT:
-                raise TypeError(
-                    "-Layer('defaultLayer') is contradictory: defaultLayer is the layer "
-                    "of no layer, so nothing leaves it; node << Layer('x') moves the "
-                    "node into a layer"
-                )
-            mine = [path for path in paths if _layer_of(path) == found]
-            return [lambda: self._move(self.DEFAULT, mine)] if mine else []
-        found = self._find()
-        if found is None:
-            _check_attrs(self._attrs, node_type=DisplayLayer.NATIVE_NODE_TYPE)
-        elif self._update:
-            _check_attrs(self._attrs, node=found)
-        return [lambda: self._move(self._realise(found), paths)]
-
-    def _apply(self, plan: list[Callable[[], None]]) -> None:
-        for step in plan:
-            step()
-
-    def _realise(self, found: str | None) -> str:
-        """Find or create the layer (inside the caller's undo chunk) and
-        return its name."""
-        if found is not None:
-            if self._update:
-                self._inject_attrs(found)
-            return found
-        layer = DisplayLayer.create(empty=True, name=self._name).name
-        if _leaf(layer) != _leaf(self._name):
-            cmds.warning(
-                f"rig.Layer: Maya named the new display layer '{layer}', not "
-                f"'{self._name}', so {self!r} cannot find it again: pick a name "
-                f"Maya keeps"
-            )
-        self._inject_attrs(layer)
-        return layer
-
-    def _inject_attrs(self, layer: str) -> None:
-        node = _cast_node(layer)
-        for attr, value in self._attrs.items():
-            getattr(node, attr) << value
-
-    def _move(self, layer: str, paths: list[str]) -> None:
-        """One ``editDisplayLayerMembers`` for every path, then read each
-        membership back from the node side."""
-        if not paths:
-            return
-        cmds.editDisplayLayerMembers(layer, *paths, noRecurse=True)
-        expected = None if layer == self.DEFAULT else layer
-        for path in paths:
-            if _layer_of(path) != expected:
-                raise RuntimeError(
-                    f"'{path}' did not land in {layer}; its drawOverride reads "
-                    f"{_layer_of(path)}"
-                )
-
-    # -- '>>' -- #
-
-    def _query(self, selections: list[_Selection]) -> bool:
-        path  = self._single(selections, "'>>' queries")
-        found = self._require()
-        return (_layer_of(path) or self.DEFAULT) == found
-
-    @classmethod
-    def _of(cls, selections: list[_Selection]) -> list["Layer"]:
-        path  = cls._single(selections, "Layer.of takes")
-        layer = _layer_of(path)
-        return [cls(layer)] if layer is not None else []
-
-    # -- methods -- #
-
-    def delete(self) -> None:
-        """Delete the layer; its members go to ``defaultLayer``. Refuses
-        ``defaultLayer`` and a referenced layer."""
-        self._verb("delete")
-        found = self._require()
-        self._guard(found, "deleted")
-        with _undo_chunk(f"rig.{self.KIND}"):
-            DisplayLayer._wrap(found).delete()
-        if cmds.objExists(found):
-            raise RuntimeError(f"'{found}' survived its deletion")
-
-    def rename(self, new: str) -> None:
-        """Rename the layer and point this spec at the new name."""
-        self._verb("rename")
-        Layer(new)
-        found = self._require()
-        self._guard(found, "renamed")
-        if _find_node(new) is not None:
-            raise ValueError(f"'{new}' already exists")
-        with _undo_chunk(f"rig.{self.KIND}"):
-            got = cmds.rename(found, new)
-        if _leaf(got) != _leaf(new):
-            raise RuntimeError(f"Maya renamed '{found}' to '{got}', not '{new}'")
-        self._name = got
-
-    def clear(self) -> None:
-        """Send every member of the layer to ``defaultLayer``; the layer
-        survives."""
-        self._verb("clear")
-        found = self._require()
-        self._guard(found, "cleared")
-        with _undo_chunk(f"rig.{self.KIND}"):
-            DisplayLayer._wrap(found).clear()
-
+# ``rig.Layer``: the display layer node class itself (``Layer is DisplayLayer``)
+Layer = DisplayLayer
 
 # the membership right-hand sides of ``<<`` / ``>>`` (D31: ``_internal.types``
 # and ``nodetypes`` cannot import this module; it binds them when it loads)

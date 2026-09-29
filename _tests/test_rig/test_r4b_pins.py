@@ -51,12 +51,14 @@ _COUNTED_CMDS = ("ls", "objExists", "namespaceInfo")
 
 def _count_lookups(run):
     """``(run(), counts)``: the calls of each counted name lookup while ``run``
-    runs. ``_find_node`` is patched in every module that imports it."""
+    runs. ``_find_node`` is patched in every module that imports it (round 4b
+    NC6: ``rig.membership`` no longer does, its layers being nodes)."""
     find_node = mock.MagicMock(wraps=_members._find_node)
     patches = [mock.patch.object(cmds, name, wraps=getattr(cmds, name)) for name in _COUNTED_CMDS]
     patches += [
         mock.patch.object(module, "_find_node", find_node)
         for module in (_members, _membership, _shade)
+        if hasattr(module, "_find_node")
     ]
     mocks = [patch.start() for patch in patches]
     try:
