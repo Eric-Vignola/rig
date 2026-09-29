@@ -359,7 +359,7 @@ def _define(
     joins:  bool | None,
     typed:  bool,
     hint:   Any = None,
-    plain:  bool = False,
+    plain:  Any = False,
 ) -> Any:
     """The body of every ``define`` (``Cls.define``, ``Node.define``): find the
     node at the key, or make it there, never a second node under a name the
@@ -372,9 +372,9 @@ def _define(
     `aware` / `typed` say how the scope prefixes the made node's name (a typed
     create of a container-aware class, or ``createNode``), `joins` is the
     ``container=`` given; `hint(found)` adds to the type mismatch's text.
-    `plain`: `make` makes just the node it returns, and deletes it itself when
-    an attribute value fails, so no node-added tracking is needed (about
-    140 us a miss). Every refusal raises before any write; a value the new
+    `plain` (a bool, or a callable read on a miss only): `make` makes just
+    the node it returns, and deletes it itself when an attribute value fails,
+    so no node-added tracking is needed. Every refusal raises before any write; a value the new
     node refuses deletes what the call made."""
     hook = _define_hook()
     call = spell(repr(name))
@@ -500,7 +500,7 @@ def _define(
     # value the new node refuses deletes what the call made (the create's own
     # cleanup for a plain make, else the tracking's)
     with hook.chunk("rig.define"):
-        if plain:
+        if plain is True or (callable(plain) and plain()):
             node    = make(made_name, parent_node)
             created = [node.long_name if dag else node.name]
         else:
@@ -1345,7 +1345,7 @@ class DGNode(Node):
             lambda args: f"{cls.__name__}.define({args})", cls.__name__, label, name, parent,
             dag=issubclass(cls.FN_SET, OpenMaya.MFnDagNode), update=update, attrs=attrs,
             accept=accept, make=make, aware=cls._CONTAINER_AWARE, joins=container, typed=True,
-            hint=cls._mismatch_hint, plain=_makes_just_the_node(cls),
+            hint=cls._mismatch_hint, plain=lambda: _makes_just_the_node(cls),
         )
 
     @classmethod

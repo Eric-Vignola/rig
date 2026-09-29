@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional
 from maya import cmds
 from maya.api import OpenMaya
 # rig.nodetypes imports neither rig.spec nor rig._internal.plug
+from rig._internal.undo import _undo_chunk  # a leaf module: maya.cmds only
 from rig.nodetypes._base import (
     Attribute,
     Node,
@@ -420,9 +421,13 @@ class _AttrSpec:
                     cmds.getAttr(plug_name)
                 except (RuntimeError, ValueError) as e:
                     LOGGER.debug("could not read %s before its edit: %s", plug_name, e)
-            from rig._internal.undo import _undo_chunk
-
-            with _undo_chunk("rig.attr"):
+            # one undo step: a chunk when more than one command edits
+            steps = sum(bool(e[0]) + sum(x is not None for x in e[1:]) for e in edits)
+            if steps > 1:
+                with _undo_chunk("rig.attr"):
+                    for (target, name, _, _, _), edit in zip(targets, edits):
+                        _apply_settings(target, fn.attribute(name), *edit)
+            else:
                 for (target, name, _, _, _), edit in zip(targets, edits):
                     _apply_settings(target, fn.attribute(name), *edit)
 
@@ -834,17 +839,19 @@ def _check_settings(
         low, high = bound("minValue", "hasMinValue"), bound("maxValue", "hasMaxValue")
         if low is not None and high is not None and low > high:
             raise TypeError(f"'{target}': min={low} is above max={high}")
-        soft_low  = bound("softMinValue", "hasSoftMinValue")
-        soft_high = bound("softMaxValue", "hasSoftMaxValue")
-        if soft_low is not None and soft_high is not None and soft_low > soft_high:
-            raise TypeError(f"'{target}': softMinValue={soft_low} is above softMaxValue={soft_high}")
-        for soft, label in ((soft_low, "softMinValue"), (soft_high, "softMaxValue")):
-            if soft is None or not ({label, "minValue", "maxValue"} & edit.keys()):
-                continue
-            if low is not None and soft < low:
-                raise TypeError(f"'{target}': {label}={soft} is below min={low}")
-            if high is not None and soft > high:
-                raise TypeError(f"'{target}': {label}={soft} is above max={high}")
+        if {"softMinValue", "softMaxValue"} & edit.keys():
+            # a soft bound given: inside the soft pair and the range
+            soft_low  = bound("softMinValue", "hasSoftMinValue")
+            soft_high = bound("softMaxValue", "hasSoftMaxValue")
+            if soft_low is not None and soft_high is not None and soft_low > soft_high:
+                raise TypeError(f"'{target}': softMinValue={soft_low} is above softMaxValue={soft_high}")
+            for soft, label in ((soft_low, "softMinValue"), (soft_high, "softMaxValue")):
+                if soft is None or label not in edit:
+                    continue
+                if low is not None and soft < low:
+                    raise TypeError(f"'{target}': {label}={soft} is below min={low}")
+                if high is not None and soft > high:
+                    raise TypeError(f"'{target}': {label}={soft} is above max={high}")
         dv = edit.get("defaultValue")
         if isinstance(dv, (int, float)):
             if low is not None and dv < low:

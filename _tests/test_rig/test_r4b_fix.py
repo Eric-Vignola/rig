@@ -377,7 +377,6 @@ class TestRedeclareFixes(_Case):
             with self.subTest(plug):
                 value = cmds.getAttr(plug)
                 self.node << spec
-                self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.attr")
                 self.assertAlmostEqual(_q(plug, "defaultValue"), after)
                 cmds.undo()
                 self.assertAlmostEqual(_q(plug, "defaultValue"), before)
