@@ -1128,6 +1128,25 @@ class DGNode(Node):
         return ""
 
     @classmethod
+    def _define_door(cls, name: str) -> str | None:
+        """The call the reference's NodeNotFoundError names for a missing
+        ``name`` ("Joint.define('spnie_01') finds or makes it"), read when the
+        error is printed (``NodeNotFoundError.door``), or None when
+        ``define`` would not make the node from the name alone: a class that
+        refuses it (``_DEFINE_REFUSED``), an abstract type (DGNode, DAGNode,
+        Geometry, the generic Material, which takes ``type=``), a name that is
+        no define key (a path, ``1bad``), or a key in a namespace that does
+        not exist or belongs to a file reference (define's own guards)."""
+        if cls._DEFINE_REFUSED or cls.NATIVE_NODE_TYPE in _ABSTRACT_TYPES or not _DEFINE_NAME.match(name):
+            return None
+        # define's key: the name's namespace, or else the current one
+        space = name.lstrip(":").rpartition(":")[0]
+        space = f":{space}" if space else ":" if name[0] == ":" else _current_namespace()
+        if space != ":" and (not OpenMaya.MNamespace.namespaceExists(space) or _reference_of(space)):
+            return None
+        return f"{cls.__name__}.define({name!r})"
+
+    @classmethod
     def find_all(cls, *args, exact_type: bool = True, **kwargs) -> list["DGNode"]:
         """Returns a list of objects of this type in the scene.
 

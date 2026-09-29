@@ -341,9 +341,11 @@ class TestReference(MayaTestCase):
         self.assertNotIsInstance(caught.exception, (NodeLookupError, NodeTypeError))
 
     def test_a_miss_names_the_class(self):
+        # the miss ends with the class's define (round 4b follow-up F4)
         self.assertRefused(
             NodeNotFoundError,
-            r"^no joint named 'spnie_01' \(did you mean 'spine_01'\?\)$",
+            r"^no joint named 'spnie_01' \(did you mean 'spine_01'\?\); "
+            r"Joint\.define\('spnie_01'\) finds or makes it$",
             lambda: Joint("spnie_01"),
         )
         self.assertRefused(NodeNotFoundError, r"^no mesh named 'nosuch'", lambda: Mesh("nosuch"))

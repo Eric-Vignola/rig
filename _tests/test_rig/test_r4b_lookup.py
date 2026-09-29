@@ -320,9 +320,11 @@ class TestErrorFamily(MayaTestCase):
         _build_scene()
         cases = (
             (lambda: Node("spnie_01"), "no node named 'spnie_01' (did you mean 'spine_01'?)"),
-            (lambda: Joint("spnie_01"), "no joint named 'spnie_01' (did you mean 'spine_01'?)"),
+            # a class's miss ends with its define (round 4b follow-up F4)
+            (lambda: Joint("spnie_01"),
+             "no joint named 'spnie_01' (did you mean 'spine_01'?); Joint.define('spnie_01') finds or makes it"),
             (lambda: Node("root"), "no node named 'root' ('char:root' exists)"),
-            (lambda: Joint("root"), "no joint named 'root' ('char:root' exists)"),
+            (lambda: Joint("root"), "no joint named 'root' ('char:root' exists); Joint.define('root') finds or makes it"),
             (lambda: Node("chr:root"), "no node named 'chr:root' ('char:root' exists)"),
         )
         for call, text in cases:
