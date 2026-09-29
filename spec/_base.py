@@ -463,14 +463,11 @@ class _AttrSpec:
             if self.compoundType:
                 child_kargs["attributeType"] = self.compoundType
 
-            # Per-child default value (if user passed a sequence).
-            base_dv = self.kargs.get("dv", self.kargs.get("defaultValue"))
-            if base_dv is not None:
-                if isinstance(base_dv, (list, tuple)) and len(base_dv) > i:
-                    child_kargs["defaultValue"] = base_dv[i]
-                else:
-                    child_kargs.pop("defaultValue", None)
-                    child_kargs.pop("dv", None)
+            # Per-child default value, from a sequence given as dv= or
+            # defaultValue= (never the sequence itself); a scalar is ignored.
+            base_dv = self._pop_alias(child_kargs, ("defaultValue", "dv"), default=None)
+            if isinstance(base_dv, (list, tuple)) and len(base_dv) > i:
+                child_kargs["defaultValue"] = base_dv[i]
 
             child_long_name = f"{self.kargs['longName']}{self.compound[i]}"
             child_kargs.pop("longName", None)

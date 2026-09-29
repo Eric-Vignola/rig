@@ -442,3 +442,51 @@ class TestRedeclare(MayaTestCase):
         Node("ns:c") << Float("k") << 1
         Node("ns:c") << Float("k", nn="Kay")
         self.assertEqual((_q("ns:c.k", "niceName"), cmds.getAttr("ns:c.k")), ("Kay", 1))
+
+
+class TestVectorDefaults(MayaTestCase):
+    """``Vector("v", dv=[1, 2, 3])`` gives each child its value on creation (the
+    user's TODO: the child ``addAttr`` used to get the whole list next to its own
+    value and raise, leaving a half-built parent); ``dv`` and ``defaultValue``
+    are one setting. A scalar default on a compound stays ignored."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        # a network: no static attribute shares these short names
+        self.node = Node.create("network", name="vd")
+
+    def test_dv_list_gives_each_child_its_default(self):
+        from rig.spec import Color, Quat
+
+        for spec, children, values in (
+            (Vector("va", dv=[1, 2, 3]),              "XYZ",  [1, 2, 3]),
+            (Vector("vb", defaultValue=[4, 5, 6]),    "XYZ",  [4, 5, 6]),
+            (Color("col", dv=(0.5, 0.25, 1), max=1),  "RGB",  [0.5, 0.25, 1]),
+            (Quat("quat", dv=[0, 0, 0, 1]),           "XYZW", [0, 0, 0, 1]),
+            (Vector("short", dv=[7, 8]),              "XYZ",  [7, 8, 0]),
+            (Vector("flat", dv=5),                    "XYZ",  [0, 0, 0]),
+        ):
+            name = spec.kargs["longName"]
+            with self.subTest(name=name):
+                plug = self.node << spec
+                self.assertEqual(str(plug), f"vd.{name}")
+                self.assertEqual([_q(f"vd.{name}{c}", "defaultValue") for c in children], values)
+                self.assertEqual([cmds.getAttr(f"vd.{name}{c}") for c in children], values)
+        self.assertEqual([_q(f"vd.col{c}", "maxValue") for c in "RGB"], [1, 1, 1])
+        # an angle's default is given as addAttr takes it (radians)
+        self.node << Euler("eul", dv=[0.5, 1, 1.5])
+        self.assertEqual([_q(f"vd.eul{c}", "defaultValue") for c in "XYZ"], [0.5, 1, 1.5])
+
+    def test_a_multi_vector_with_a_dv_list(self):
+        self.node << Vector("mv", multi=True, size=2, dv=[1, 2, 3])
+        self.assertEqual(cmds.getAttr("vd.mv", multiIndices=True), [0, 1])
+        self.assertEqual(_q("vd.mv[0].mvY", "defaultValue"), 2)
+
+    def test_redeclared_with_a_dv_list(self):
+        self.node << Vector("vv", dv=[1, 2, 3])
+        cmds.setAttr("vd.vvX", 9)
+        self.node << Vector("vv", dv=[4, 5, 6])
+        self.assertEqual([_q(f"vd.vv{c}", "defaultValue") for c in "XYZ"], [4, 5, 6])
+        self.assertEqual(cmds.getAttr("vd.vv"), [(9, 2, 3)])
