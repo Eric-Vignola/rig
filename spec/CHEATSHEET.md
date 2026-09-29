@@ -15,7 +15,7 @@ Concepts, conventions and the verified behaviour live in [`README.md`](README.md
 | 1 | [Import surface](#1-import-surface) | the 23 names, the `rig.*` re-exports, the collisions |
 | 2 | [Anatomy of a spec](#2-anatomy-of-a-spec) | `.kargs`, laziness, reuse, the return value |
 | 3 | [Numeric — `Float` `Int` `Bool` `Angle` `Time`](#3-numeric--float-int-bool-angle-time) | |
-| 4 | [Typed — `String` `Matrix` `Message` `Mesh` `NurbsCurve` `NurbsSurface`](#4-typed--string-matrix-message-mesh-nurbscurve-nurbssurface) | |
+| 4 | [Typed — `String` `Matrix` `Message` `MeshAttr` `NurbsCurveAttr` `NurbsSurfaceAttr`](#4-typed--string-matrix-message-meshattr-nurbscurveattr-nurbssurfaceattr) | |
 | 5 | [`Enum`](#5-enum) | list or colon string, default, set by index or by field name |
 | 6 | [Compounds — `Vector` `Color` `Euler` `Quat`](#6-compounds--vector-color-euler-quat) | children, per-child defaults, ranges |
 | 7 | [The kwargs](#7-the-kwargs) | `min` `max` `dv` `keyable` `k` `hidden` `sn` `nn` `multi` `size` `overwrite` |
@@ -48,7 +48,7 @@ from rig import Node, List
 from rig.spec import (
     Angle, Bool, Float, Int, Time,
     Color, Euler, Quat, Vector,
-    Matrix, Mesh, Message, NurbsCurve, NurbsSurface, String,
+    Matrix, MeshAttr, Message, NurbsCurveAttr, NurbsSurfaceAttr, String,
     Enum,
     Note, destroy, hide, lock, skip, unhide, unlock,
 )
@@ -83,7 +83,7 @@ import rig
 from rig.spec import (
     Angle, Bool, Float, Int, Time,                    # numeric
     Color, Euler, Quat, Vector,                       # compound
-    Matrix, Mesh, Message, NurbsCurve, NurbsSurface, String,   # typed
+    Matrix, MeshAttr, Message, NurbsCurveAttr, NurbsSurfaceAttr, String,   # typed
     Enum,
     Note, destroy, hide, lock, skip, unhide, unlock,  # modifiers
 )
@@ -92,13 +92,13 @@ print(rig.spec.__all__ == [n for n in rig.spec.__all__ if getattr(rig, n) is get
 print(rig.Float is Float, rig.lock is lock)                                                          # True True
 ```
 
-Three collisions to keep in mind — the capitalised name is always the
-attribute spec:
+Names to keep apart — the capitalised name is always the attribute spec,
+and a geometry data spec ends in `Attr` (`Mesh` is the shape's node class):
 
 ```python
 from rig.nodetypes import Mesh as MeshNode
 
-print(rig.Mesh is MeshNode)           # False -- rig.Mesh is the `mesh` data attribute; MeshNode is the shape
+print(rig.MeshAttr is MeshNode, hasattr(rig, "Mesh"))  # False False -- rig.MeshAttr is the `mesh` data attribute; MeshNode is the shape
 print(rig.Matrix, rig.matrix)         # <class 'rig.spec.typed.Matrix'> <module 'rig.matrix' ...>
 print(rig.Color.__mro__[1].__name__)  # Float -- an RGB double3, not a colour value
 ```
@@ -181,7 +181,7 @@ print(at("ctrl.when"), ctrl.when >> None)                           # time 24.0
 
 ---
 
-## 4. Typed — `String` `Matrix` `Message` `Mesh` `NurbsCurve` `NurbsSurface`
+## 4. Typed — `String` `Matrix` `Message` `MeshAttr` `NurbsCurveAttr` `NurbsSurfaceAttr`
 
 `Matrix` and `Message` are attribute types; the other four are data
 types, which `attributeQuery` reports as `typed` and `getAttr` by name.
@@ -207,12 +207,12 @@ The geometry data types are wires for shapes:
 
 ```python
 cmds.polyCube(name="cube")
-ctrl         << Mesh("shapeIn")
+ctrl         << MeshAttr("shapeIn")
 ctrl.shapeIn << Node("cubeShape").outMesh
 print(dt("ctrl.shapeIn"), ctrl.shapeIn.get_inputs())                # mesh List([Plug("cubeShape.outMesh")])
 
-ctrl << NurbsCurve("crvIn")
-ctrl << NurbsSurface("srfIn")
+ctrl << NurbsCurveAttr("crvIn")
+ctrl << NurbsSurfaceAttr("srfIn")
 print(dt("ctrl.crvIn"), dt("ctrl.srfIn"), at("ctrl.crvIn"))         # nurbsCurve nurbsSurface typed
 ```
 

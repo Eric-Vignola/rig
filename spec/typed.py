@@ -1,5 +1,9 @@
-"""Typed attribute specs: ``String``, ``Matrix``, ``Mesh``, ``NurbsCurve``,
-``NurbsSurface``, ``Message``."""
+"""Typed attribute specs: ``String``, ``Matrix``, ``MeshAttr``, ``NurbsCurveAttr``,
+``NurbsSurfaceAttr``, ``Message``.
+
+The geometry data specs carry an ``Attr`` suffix because the bare names are
+the node classes (``rig.nodetypes.Mesh``, ``NurbsCurve``, ``NurbsSurface``):
+no public name is both a node class and a declaration."""
 
 from __future__ import annotations
 
@@ -30,7 +34,7 @@ class Matrix(_AttrSpec):
         self.kargs.pop("dt",       None)
 
 
-class Mesh(_AttrSpec):
+class MeshAttr(_AttrSpec):
     """Mesh data attribute (``dataType='mesh'``)."""
 
     def __init__(self, name: str, **kargs: Any) -> None:
@@ -41,7 +45,7 @@ class Mesh(_AttrSpec):
         self.kargs.pop("at",            None)
 
 
-class NurbsCurve(_AttrSpec):
+class NurbsCurveAttr(_AttrSpec):
     """NURBS-curve data attribute (``dataType='nurbsCurve'``)."""
 
     def __init__(self, name: str, **kargs: Any) -> None:
@@ -52,7 +56,7 @@ class NurbsCurve(_AttrSpec):
         self.kargs.pop("at",            None)
 
 
-class NurbsSurface(_AttrSpec):
+class NurbsSurfaceAttr(_AttrSpec):
     """NURBS-surface data attribute (``dataType='nurbsSurface'``)."""
 
     def __init__(self, name: str, **kargs: Any) -> None:

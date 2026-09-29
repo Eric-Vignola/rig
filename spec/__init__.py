@@ -22,10 +22,10 @@ from rig.spec.modifiers import destroy, hide, lock, Note, skip, unhide, unlock
 from rig.spec.numeric import Angle, Bool, Float, Int, Time
 from rig.spec.typed import (
     Matrix,
-    Mesh,
+    MeshAttr,
     Message,
-    NurbsCurve,
-    NurbsSurface,
+    NurbsCurveAttr,
+    NurbsSurfaceAttr,
     String,
 )
 
@@ -44,10 +44,10 @@ __all__ = [
     "Vector",
     # Typed
     "Matrix",
-    "Mesh",
+    "MeshAttr",
     "Message",
-    "NurbsCurve",
-    "NurbsSurface",
+    "NurbsCurveAttr",
+    "NurbsSurfaceAttr",
     "String",
     # Enum
     "Enum",

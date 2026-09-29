@@ -183,8 +183,8 @@ rig/
 │                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant,
 │                        undo_chunk
 ├── spec/                attribute specs: Float Int Bool Angle Time, Vector Color Euler Quat, Enum,
-│                        Matrix Mesh Message NurbsCurve NurbsSurface String; modifiers lock unlock
-│                        hide unhide skip destroy Note
+│                        Matrix MeshAttr Message NurbsCurveAttr NurbsSurfaceAttr String; modifiers
+│                        lock unlock hide unhide skip destroy Note
 ├── bridges/
 │   ├── commands.py      maya.cmds returning nodes / List instead of strings   (rc)
 │   └── nodes.py         one factory per Maya node type, kwargs are injections     (rn)
