@@ -112,6 +112,12 @@ def _node_lshift(node: Any, other: Any) -> Any:
                 ):
                     return node
 
+    if isinstance(other, type):
+        from rig._internal.members import _class_operand_error
+
+        text = _class_operand_error(other, "<<")
+        if text:
+            raise TypeError(text)
     # a node on the right is named "Node", whatever its class, as it always was
     kind = "Node" if isinstance(other, Node) else type(other).__name__
     raise TypeError(
@@ -134,6 +140,12 @@ def _node_rshift(node: Any, other: Any) -> Any:
         # Stamp writable=False onto a fresh copy of the spec so the
         # caller's instance is untouched (specs may be reused).
         return _apply_spec_as_output(other, node)
+    if isinstance(other, type):
+        from rig._internal.members import _class_operand_error
+
+        text = _class_operand_error(other, ">>")
+        if text:
+            raise TypeError(text)
     raise TypeError(
         "'>>' on a Node supports `>> None` (returns the node "
         "itself), `>> spec` (declares an output-only attr, "

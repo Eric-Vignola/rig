@@ -604,3 +604,313 @@ class TestRedeclareFixes(_Case):
         cmds.redo()
         self.assertEqual((_q("rd.qw", "hasMaxValue"), _q("rd.qw", "maxValue")), (True, 8))
         self.assertEqual(cmds.getAttr("rd.qw"), 4)
+
+
+
+def _sets(member):
+    return sorted(cmds.listSets(object=member, type=1) or [])
+
+
+class TestMaterialEngines(_Case):
+    """Review majors (membership M1, M2) and a minor (M9): every Material.of
+    answer goes back through ``in`` and ``<<``; a read never raises where a
+    shader feeds several engines; an engine node is exactly that engine."""
+
+    def setUp(self):
+        super().setUp()
+        from rig.bridges import nodes as rn
+        from rig.nodetypes import ShadingEngine
+
+        self.cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        self.red  = Blinn.define("red")
+        self.cube << self.red
+        alt = ShadingEngine.create(name="altSG")
+        alt.set_material(self.red)
+        self.cube.f[1] << alt
+        ShadingEngine.create(name="rampSG")
+        rn.ramp(name="ramp1")
+        cmds.connectAttr("ramp1.outColor", "rampSG.surfaceShader")
+        cmds.sets("cube.f[2]", edit=True, forceElement="rampSG")
+        ShadingEngine.create(name="emptySG")
+        cmds.sets("cube.f[3]", edit=True, forceElement="emptySG")
+
+    def test_every_answer_round_trips(self):
+        from rig.nodetypes import ShadingEngine
+        from rig.shade import Default  # noqa: F401
+
+        expected = {0: [self.red], 1: [ShadingEngine("altSG")], 2: [ShadingEngine("rampSG")],
+                    3: [ShadingEngine("emptySG")]}
+        for i in range(6):
+            face    = self.cube.f[i]
+            answers = Material.of(face)
+            with self.subTest(face=i):
+                self.assertEqual(answers, expected.get(i, [self.red]))
+                engines = _sets(f"cube.f[{i}]")
+                for answer in answers:
+                    self.assertIn(face, answer)
+                    other = Node(cmds.polyCube(name=f"o{i}", constructionHistory=False)[0])
+                    other << answer
+                    self.assertEqual(_sets(f"o{i}Shape"), engines)
+                    face << -answer
+                    self.assertEqual(_sets(f"cube.f[{i}]"), [])
+        # the purge takes the faces out of every engine, the shaderless one too
+        cmds.sets("cube.f[1]", edit=True, forceElement="altSG")
+        cmds.sets("cube.f[2]", edit=True, forceElement="rampSG")
+        cmds.sets("cube.f[3]", edit=True, forceElement="emptySG")
+        self.cube << Material()
+        for i in range(6):
+            self.assertEqual(_sets(f"cube.f[{i}]"), [])
+
+    def test_a_read_looks_at_every_engine_the_shader_feeds(self):
+        self.assertIn(self.cube.f[1], self.red)
+        self.assertEqual(list(self.cube.f[:2] >> self.red), [0, 1])
+        self.cube.f[1] << -self.red
+        self.assertEqual(_sets("cube.f[1]"), [])
+        # a shader over two engines, neither named <shader>SG: reads answer,
+        # '<<' still needs the engine named
+        from rig.nodetypes import ShadingEngine
+
+        blue = Blinn.create(name="blue")
+        cmds.delete("blueSG")
+        for name in ("b1SG", "b2SG"):
+            ShadingEngine.create(name=name).set_material(blue)
+        cmds.sets("cube.f[4]", edit=True, forceElement="b1SG")
+        cmds.sets("cube.f[5]", edit=True, forceElement="b2SG")
+        before = _scene()
+        self.assertIn(self.cube.f[4:6], blue)
+        self.assertEqual(list(self.cube >> blue), [4, 5])
+        self.assertEqual(Material.of(self.cube.f[4]), [ShadingEngine("b1SG")])
+        self.assertEqual(Blinn.of(self.cube.f[4]), [blue])
+        self.assertLeavesNothing(ValueError, lambda: self.cube << blue, "feeds 2 shading engines")
+        self.cube.f[4:6] << -blue
+        self.assertEqual((_sets("cube.f[4]"), _sets("cube.f[5]")), ([], []))
+
+    def test_the_default_engine_with_relative_names(self):
+        from rig.nodetypes import ShadingEngine, StandardSurface
+        from rig.shade import Default
+
+        other = Node(cmds.polyCube(name="other", constructionHistory=False)[0])
+        cmds.namespace(add="lib")
+        cmds.namespace(setNamespace="lib")
+        cmds.namespace(relativeNames=True)
+        other << Default()
+        self.assertEqual(Material.of(other), [ShadingEngine("initialShadingGroup")])
+        std = StandardSurface(":standardSurface1")
+        self.assertIn(other, std)
+        other << self.red
+        other << std
+        self.assertEqual(_sets(":otherShape"), [":initialShadingGroup"])
+
+
+class TestQueriesAnswerByContents(_Case):
+    """Review major (membership M3): a yes/no query never raises for what a
+    kind can never hold; ``<<`` still refuses it before any write."""
+
+    def test_every_kind(self):
+        from rig import List, Tag
+
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        grp  = Node(cmds.group(empty=True, name="grp"))
+        loc  = Node(cmds.spaceLocator(name="loc")[0])
+        crv  = Node(cmds.circle(name="crv", constructionHistory=False)[0])
+        red  = Blinn.define("red")
+        lay  = DisplayLayer.define("L")
+        cube << red
+        cube.vtx[:3] << Tag("cap")
+        before = _scene()
+        for lhs, kind in (
+            (loc, red), (grp, red), (crv, red), (List([cube, loc]), red), (cube.vtx[0], red),
+            (cube.f[:3], lay), (Node("lambert1"), lay),
+            (grp, Tag("cap")), (loc, Tag("cap")), (cube.f[:2], Tag("cap")),
+        ):
+            with self.subTest(lhs=repr(lhs), kind=repr(kind)):
+                self.assertNotIn(lhs, kind)
+        self.assertEqual([n for n in (cube, grp, loc) if n in red], [cube])
+        for lhs in (grp, loc, crv, cube.vtx[0]):
+            with self.subTest(of=repr(lhs)):
+                self.assertEqual(Material.of(lhs), [])
+                self.assertEqual(lhs >> Material(), [])
+        self.assertIsNone(cube.f[0] >> DisplayLayer())
+        self.assertEqual(DisplayLayer.of(cube.vtx[0]), [])
+        self.assertEqual(Tag.of(grp), [])
+        self.assertEqual(_scene(), before)
+        # '<<' refuses them, before any write
+        for call in (lambda: grp << red, lambda: cube.vtx[0] << red, lambda: cube.f[0] << lay, lambda: grp << Tag("cap")):
+            self.assertLeavesNothing(TypeError, call)
+
+    def test_an_empty_left_hand_side_names_the_query(self):
+        from rig import List
+
+        red = Blinn.define("red")
+        self.assertLeavesNothing(ValueError, lambda: List([]) in red,
+                                 r"^nothing to ask about: the left-hand side of 'in' names no member$")
+        self.assertLeavesNothing(ValueError, lambda: List([]) >> red,
+                                 r"^nothing to ask about: the left-hand side of '>>' names no member$")
+        self.assertLeavesNothing(ValueError, lambda: List([]) << red, r"^nothing to inject$")
+
+
+class TestLayerCreate(_Case):
+    """Review major (membership M5): Layer.create(grp) holds grp, not its
+    subtree, as grp << layer does."""
+
+    def test_the_objects_given_join_themselves(self):
+        grp = cmds.group(empty=True, name="grp")
+        cmds.polyCube(name="child", constructionHistory=False)
+        cmds.parent("child", grp)
+        la = DisplayLayer.create(Node("grp"), name="La")
+        self.assertEqual([str(m) for m in la.get_members()], ["grp"])
+        self.assertNotIn(Node("child"), la)
+        lb = DisplayLayer.create(Node("grp"), name="Lb", noRecurse=False)
+        self.assertIn(Node("child"), lb)
+
+
+class TestPairBroadcast(_Case):
+    """Review major (membership M6): a pair broadcast with memberships checks
+    every pair before its first write, and is one undo step."""
+
+    def test_a_refused_pair_writes_nothing(self):
+        from rig import List
+
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        sph  = Node(cmds.polySphere(name="sph", constructionHistory=False)[0])
+        grp  = Node(cmds.group(empty=True, name="grp"))
+        red, blue = Blinn.define("red"), Blinn.define("blue")
+        lay = DisplayLayer.define("L")
+        engines = _sets("cubeShape")
+        for call in (lambda: List([cube, grp]) << [red, blue], lambda: List([cube, sph.tx]) << [red, lay]):
+            self.assertLeavesNothing(TypeError, call)
+            self.assertEqual(_sets("cubeShape"), engines)
+        self.assertLeavesNothing(TypeError, lambda: List([cube, sph]) << [red, 5], "a membership on every right-hand side")
+        cmds.flushUndo()
+        List([cube, sph]) << [red, blue]
+        self.assertEqual((_sets("cubeShape"), _sets("sphShape")), (["redSG"], ["blueSG"]))
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.membership")
+        cmds.undo()
+        self.assertEqual(_sets("cubeShape"), engines)
+
+
+class TestConvertInANamespace(_Case):
+    """Review major (membership M4, safety C1): a conversion with another
+    namespace current keeps the material's own name."""
+
+    def test_root_and_namespaced_materials(self):
+        from rig.nodetypes import Lambert, Phong
+
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        cube << Blinn.define("red")
+        cmds.namespace(add="look")
+        cmds.shadingNode("blinn", asShader=True, name="look:red")
+        cmds.namespace(add="lib")
+        cmds.namespace(setNamespace="lib")
+        for relative, kind in ((False, Lambert), (True, Phong)):
+            with self.subTest(relativeNames=relative):
+                cmds.namespace(relativeNames=relative)
+                new = Material(":red").astype(kind)
+                self.assertEqual(new.uuid, cmds.ls(":red", uuid=True)[0])
+                self.assertEqual(cmds.nodeType(":red"), kind.NATIVE_NODE_TYPE)
+                self.assertIn(cube, new)
+                look = Material(":look:red").astype(kind)
+                self.assertEqual(look.uuid, cmds.ls(":look:red", uuid=True)[0])
+                self.assertEqual(cmds.ls("lib:*"), [])
+
+
+class TestConvertedRecord(_Case):
+    """Review minor (membership M7): each held node names its own conversion."""
+
+    def test_a_chain_and_a_namespace(self):
+        from rig.nodetypes import Lambert, Phong
+
+        x   = Blinn.define("x")
+        p   = x.astype(Phong)
+        l_  = p.astype(Lambert)
+        l_.astype(Blinn)
+        for held, kind in ((x, "phong"), (p, "lambert"), (l_, "blinn")):
+            with self.subTest(kind):
+                with self.assertRaisesRegex(RuntimeError, rf"^'x' was converted to a {kind}; use the node astype"):
+                    str(held)
+        cmds.namespace(add="ns")
+        root = Blinn.define("y")
+        root.astype(Phong)
+        ns_y = Blinn.define("ns:y")
+        ns_y.astype(Lambert)
+        with self.assertRaisesRegex(RuntimeError, r"^'y' was converted to a phong"):
+            str(root)
+
+
+class TestReferencedShaderEngine(_Case):
+    """Review minor (membership M8): the engine of a referenced shader is
+    built at the root, not in the reference's namespace."""
+
+    def test_the_engine_is_built_at_the_root(self):
+        import os
+        import shutil
+        import tempfile
+
+        folder = tempfile.mkdtemp(prefix="r4b_fix_")
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        self.addCleanup(cmds.file, new=True, force=True)
+        cmds.shadingNode("blinn", asShader=True, name="refbare")
+        path = os.path.join(folder, "mat.ma").replace("\\", "/")
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        cmds.file(new=True, force=True)
+        cmds.file(path, reference=True, namespace="lib")
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        cube << Blinn("lib:refbare")
+        self.assertEqual(_sets("cubeShape"), ["refbareSG"])
+        self.assertIn(cube, Blinn("lib:refbare"))
+        self.assertEqual(cmds.ls("lib:*SG"), [])
+        other = Node(cmds.polyCube(name="other", constructionHistory=False)[0])
+        other << Blinn("lib:refbare")
+        self.assertEqual(_sets("otherShape"), ["refbareSG"])
+
+
+class TestMembershipMessages(_Case):
+    """Review minors (membership M10, M11, M12, M16)."""
+
+    def test_a_class_without_parentheses(self):
+        from rig import Tag
+
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        for call, text in (
+            (lambda: cube in Blinn,         r"^Blinn is the class: Blinn\(\) is the kind token"),
+            (lambda: cube in DisplayLayer,  r"^DisplayLayer is the class: DisplayLayer\(\) is the kind token"),
+            (lambda: cube in Tag,           r"^Tag is the class: Tag\(\) is the kind token"),
+            (lambda: cube << Blinn,         r"^Blinn is the class: .*write x << Blinn\('x'\)$"),
+            (lambda: cube >> Material,      r"^Material is the class: .*write x >> Material\('x'\)$"),
+            (lambda: cube in Transform,     r"^Transform is a node class: 'in' asks a membership node or Tag"),
+        ):
+            with self.subTest(text):
+                self.assertLeavesNothing(TypeError, call, text)
+
+    def test_the_plug_refusal_names_the_clone_spelling(self):
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        from rig.spec import Float
+
+        cube << Float("w")
+        red, lay = Blinn.define("red"), DisplayLayer.define("L")
+        for token, node in ((red, "red"), (lay, "L"), (red.engine, "redSG")):
+            with self.subTest(node):
+                self.assertLeavesNothing(TypeError, lambda: cube.w >> token,
+                                         rf"; to clone the attribute onto it: cube\.w >> '{node}\.w'$")
+        self.assertEqual(str(cube.w >> "red.w"), "red.w")
+
+    def test_a_hint_spells_a_call_that_works(self):
+        nsph = Node(cmds.sphere(name="nsph", constructionHistory=False)[0])
+        red  = Blinn.define("red")
+        nsph << red
+        with self.assertRaises(TypeError) as ctx:
+            nsph >> red
+        self.assertIn('Material.of(NurbsSurface("nsphShape"))', str(ctx.exception))
+        self.assertEqual(Material.of(Node("nsphShape")), [red])
+
+    def test_tags_compare_by_value(self):
+        from rig import Tag
+
+        cube = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
+        cube.vtx[:3] << Tag("cap")
+        self.assertEqual(Tag("cap"), Tag("cap"))
+        self.assertNotEqual(Tag("cap"), -Tag("cap"))
+        self.assertNotEqual(Tag("cap"), Tag("lid"))
+        self.assertIn(Tag("cap"), Tag.of(cube.vtx[1]))
+        self.assertEqual(len({Tag("cap"), Tag("cap")}), 1)

@@ -99,6 +99,7 @@ from rig._internal import types as _types
 from rig._internal.members import (
     _GEOMETRY_TYPES,
     _MemberSpec,
+    _NeverHolds,
     _ndims,
     _Selection,
     _single_geometry_shape,
@@ -414,6 +415,19 @@ class Tag(_MemberSpec):
     def __repr__(self) -> str:
         return "Tag()" if self._name is None else super().__repr__()
 
+    def _key(self) -> tuple:
+        return (self._name, self._remove, self._options.get("at"), bool(self._options.get("force")))
+
+    def __eq__(self, other: Any) -> bool:
+        """Tags compare by value (name, removal, ``at=``, ``force=``), so
+        ``Tag('cap') in Tag.of(x)`` asks what it reads."""
+        if not isinstance(other, Tag):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(("Tag", *self._key()))
+
     def _validate_name(self, name: Any) -> None:
         super()._validate_name(name)
         if len(name) < 2 or not _TAG_NAME_RE.match(name):
@@ -445,7 +459,7 @@ class Tag(_MemberSpec):
     @staticmethod
     def _check_geometry(group: _TagGroup) -> None:
         if group.node_type not in _GEOMETRY_TYPES:
-            raise TypeError(
+            raise _NeverHolds(
                 f"'{group.path}' is a {group.node_type}, not geometry; component "
                 f"tags live on mesh / nurbsSurface / nurbsCurve / lattice shapes"
             )
@@ -1073,9 +1087,9 @@ def _layer_targets(selections: list[_Selection]) -> list[str]:
     paths = []
     for selection in selections:
         if selection.kind != "whole":
-            raise TypeError(_component_message(selection))
+            raise _NeverHolds(_component_message(selection))
         if not selection.path.startswith("|"):
-            raise TypeError(
+            raise _NeverHolds(
                 f"'{selection.path}' is a {selection.node_type}, not a DAG object; "
                 f"layers hold DAG objects (transforms, shapes, joints, ...)"
             )
@@ -1153,6 +1167,9 @@ class _LayerMember(_MemberSpec):
         if self._layer is None:
             return "DisplayLayer()"
         return f"{'-' if self._remove else ''}{self._layer!r}"
+
+    def _clone_target(self) -> str | None:
+        return None if self._layer is None or self._remove else self._layer.name
 
     def __getattr__(self, name: str) -> Any:
         # a token is no layer: its methods and plugs are the layer node's

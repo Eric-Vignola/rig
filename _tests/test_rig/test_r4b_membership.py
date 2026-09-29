@@ -411,8 +411,11 @@ class TestIn(_Case):
         self.assertFalse(List([self.sph, self.cube]) in self.L)
         self.assertFalse([self.sph, self.cube.tx] in self.L)
         self.assertEqual(_scene(), before)
-        self.assertRefused(TypeError, "layers hold objects", lambda: self.sph.f[0] in self.L)
-        self.assertRefused(TypeError, "layers hold DAG objects", lambda: Node("lambert1") in self.L)
+        # a query answers by contents (round 4b FIX): components and DG nodes
+        # are in no layer
+        self.assertNotIn(self.sph.f[0], self.L)
+        self.assertNotIn(Node("lambert1"), self.L)
+        self.assertEqual(_scene(), before)
 
     def test_tag_node_on_the_left(self):
         self.assertTrue(self.sph in Tag("cap"))
@@ -421,8 +424,10 @@ class TestIn(_Case):
         self.assertFalse(self.cube in Tag("cap"))
         self.assertFalse(List([self.sph, self.cube]) in Tag("cap"))
         joint = Node.create("joint", name="j")
-        self.assertRefused(TypeError, "not geometry", lambda: joint in Tag("cap"))
-        self.assertRefused(TypeError, "not geometry", lambda: joint.tx in Tag("cap"))
+        # a query answers by contents (round 4b FIX): a joint has no tag
+        self.assertNotIn(joint, Tag("cap"))
+        self.assertNotIn(joint.tx, Tag("cap"))
+        self.assertEqual(Tag.of(joint), [])
 
     def test_tag_components_are_all_members(self):
         self.assertTrue(self.sph.vtx[:8] in Tag("cap"))
@@ -526,7 +531,8 @@ class TestPlugLeftRefused(_Case):
             (r'^\'cube.translateX\' is a plug; membership takes the node: cube << DisplayLayer\("L"\) '
              r"\(to connect, name a plug: other.attr\)$", lambda: self.cube.tx << self.L),
             (r'^\'cube.translate\' is a plug; membership takes the node: ask with cube.translate in '
-             r'DisplayLayer\("L"\) \(a plug stands for its node there\)$', lambda: self.cube.t >> self.L),
+             r'DisplayLayer\("L"\) \(a plug stands for its node there\); to clone the attribute onto it: '
+             r"cube.translate >> 'L.translate'$", lambda: self.cube.t >> self.L),
             (r"^'cube.translate' is a plug; membership takes the node: ask with cube.translate in "
              r"Tag\('cap'\) \(a plug stands for its node there\), or cube >> Tag\('cap'\) for ids$",
              lambda: self.cube.t >> Tag("cap")),

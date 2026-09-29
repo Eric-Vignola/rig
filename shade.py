@@ -114,7 +114,6 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes import material_node as _material_node
 from rig.nodetypes.material_node import (
-    _is_surface_shader,
     _own_type,
     Blinn,
     Lambert,
@@ -130,6 +129,7 @@ from rig._internal.list import List
 from rig._internal.members import (
     _GEOMETRY_TYPES,
     _MemberSpec,
+    _NeverHolds,
     _render_tokens,
     _Selection,
     Components,
@@ -204,44 +204,27 @@ def _dedupe(names: list[str] | None) -> list[str]:
 
 @dataclass(frozen=True)
 class _Found:
-    """A material that exists: its node, the engine it was named through
-    (when the spec wrapped a shading engine) and its node type."""
+    """A material as a membership token reads it: the shader (None for an
+    engine fed by none), the engine it was named through (a ``ShadingEngine``
+    node token) and the shader's node type."""
 
-    material:  str
+    material:  str | None
     engine:    str | None
-    node_type: str
+    node_type: str | None
 
 
-def _classify(name: str) -> _Found:
-    """What an existing node means as a material: a surface shader is
-    itself; a shading engine stands for the shader feeding it."""
-    node_type = cmds.nodeType(name)
-    if node_type == "shadingEngine":
-        if _leaf(name) == _PARTICLE_ENGINE:
-            raise TypeError(
-                f"'{name}' is the particle engine, not a material; Default() is "
-                f"initialShadingGroup"
-            )
-        shaders = cmds.listConnections(f"{name}.surfaceShader", source=True, destination=False)
-        if not shaders:
-            raise ValueError(
-                f"shading engine '{name}' has no surface shader; connect one or "
-                f"name a material"
-            )
-        material    = shaders[0]
-        shader_type = cmds.nodeType(material)
-        if not _is_surface_shader(shader_type):
-            raise TypeError(
-                f"shading engine '{name}' is fed by '{material}', a {shader_type}, "
-                f"not a surface shader"
-            )
-        return _Found(material, name, shader_type)
-    if _is_surface_shader(node_type):
-        return _Found(name, None, node_type)
-    raise TypeError(
-        f"'{name}' exists and is a {node_type}, not a surface shader or a "
-        f"shading engine"
-    )
+def _engine_found(name: str) -> _Found:
+    """A ``ShadingEngine`` node token: exactly that engine, whatever feeds it
+    (a surface shader, a ramp, nothing); only the particle engine is refused
+    (it holds particles, not surfaces)."""
+    if _leaf(name) == _PARTICLE_ENGINE:
+        raise TypeError(
+            f"'{name}' is the particle engine, not a material; Default() is "
+            f"initialShadingGroup"
+        )
+    shaders  = cmds.listConnections(f"{name}.surfaceShader", source=True, destination=False)
+    material = shaders[0] if shaders else None
+    return _Found(material, name, cmds.nodeType(material) if material else None)
 
 
 def _engines_of(path: str) -> list[str]:
@@ -469,7 +452,7 @@ def _kind_message(selection: _Selection) -> str:
 def _check_kinds(selections: list[_Selection]) -> None:
     for selection in selections:
         if selection.kind not in _MaterialMember.ACCEPTS:
-            raise TypeError(_kind_message(selection))
+            raise _NeverHolds(_kind_message(selection))
 
 
 def _shadeable(target: _Target) -> list[_Target]:
@@ -480,12 +463,12 @@ def _shadeable(target: _Target) -> list[_Target]:
         return [target]
     path = target.path
     if target.node_type in _GEOMETRY_TYPES:
-        raise TypeError(
+        raise _NeverHolds(
             f"'{_short(path)}' is a {target.node_type}, not a shadeable surface "
             f"(mesh / nurbsSurface / subdiv)"
         )
     if not path.startswith("|"):
-        raise TypeError(
+        raise _NeverHolds(
             f"'{path}' is a {target.node_type}, not geometry; materials bind "
             f"mesh / nurbsSurface / subdiv shapes or mesh faces"
         )
@@ -503,7 +486,7 @@ def _shadeable(target: _Target) -> list[_Target]:
         if meshes
         else ""
     )
-    raise TypeError(
+    raise _NeverHolds(
         f"'{_short(path)}' ({target.node_type}) has no shadeable shape of its own{hint}"
     )
 
@@ -668,8 +651,8 @@ def _adopt(material: str) -> ShadingEngine:
 
 
 def _engine_of(found: _Found, create: bool) -> ShadingEngine | None:
-    """The engine a found material assigns to: the one it was named through
-    (a ``ShadingEngine`` node), else the one its shader feeds
+    """The engine a found material assigns to (``<<``): the one it was named
+    through (a ``ShadingEngine`` node), else the one its shader feeds
     (``<shader>SG`` among several; a ``ValueError`` when several and none is
     named so), else None."""
     if found.engine is not None:
@@ -677,21 +660,62 @@ def _engine_of(found: _Found, create: bool) -> ShadingEngine | None:
     return ShadingEngine.for_material(found.material, create=create)
 
 
+def _engines_read(found: _Found) -> list[ShadingEngine]:
+    """The engines a query or a removal reads (``in``, ``>>``, ``-mat``): the
+    one a ``ShadingEngine`` token names, else every engine the shader feeds
+    (the particle engine aside), so no read raises where a shader feeds
+    several engines and none is named ``<shader>SG``."""
+    if found.engine is not None:
+        return [ShadingEngine._wrap(found.engine)]
+    return [
+        ShadingEngine._wrap(name) for name in _material_node._engines_fed_by(found.material)
+        if _leaf(name) != _PARTICLE_ENGINE
+    ]
+
+
+def _held_by(engines: list[ShadingEngine], path: str) -> Any:
+    """What the engines hold of the shape at ``path`` together, as `_held`
+    answers for one: ``None`` for the whole object (or every face), the face
+    ids, or :data:`_NOT_MEMBER`."""
+    parts = []
+    for engine in engines:
+        held = _held(engine, path)
+        if held is None:
+            return None
+        if held is not _NOT_MEMBER:
+            parts.append(held)
+    if not parts:
+        return _NOT_MEMBER
+    ids = np.unique(np.concatenate(parts))
+    if cmds.nodeType(path) == "mesh" and ids.size == _num_faces(path):
+        return None
+    return ids
+
+
+def _is_default(engine: ShadingEngine) -> bool:
+    """Whether ``engine`` is ``initialShadingGroup``, by its leaf (the name
+    reads ``:initialShadingGroup`` with ``namespace -relativeNames`` on)."""
+    return _leaf(engine.name) == ShadingEngine.DEFAULT
+
+
 def _answer(kind: type, engine: ShadingEngine) -> Any:
     """What ``kind.of(x)`` lists for an engine holding ``x``: its shader when
     the shader is of ``kind`` (flat: ``Lambert`` never lists a blinn), or None.
-    ``Material`` lists every engine's shader, and the engine itself for
-    ``initialShadingGroup`` (``Default()``) or an engine fed by something that
-    is no surface shader (so every answer goes back through ``<<``); an engine
-    fed by nothing is not listed."""
+    ``Material`` lists every engine's shader, and the engine itself where the
+    shader would not go back to it through ``<<`` (so every answer does):
+    ``initialShadingGroup`` (``Default()``), an engine fed by nothing or by
+    something that is no surface shader, an engine that is not the one
+    ``x << shader`` picks (the shader feeds several)."""
     shader = engine.get_material()
-    if shader is None:
-        return None
-    if kind is Material:
-        if engine.name == ShadingEngine.DEFAULT or not isinstance(shader, Material):
-            return engine
-        return shader
-    return shader if isinstance(shader, kind) else None
+    if kind is not Material:
+        return shader if isinstance(shader, kind) else None
+    if shader is None or _is_default(engine) or not isinstance(shader, Material):
+        return engine
+    try:
+        pick = ShadingEngine.for_material(shader, create=False)
+    except ValueError:
+        pick = None
+    return shader if pick is not None and pick.name == engine.name else engine
 
 
 def _of(kind: type, selections: list[_Selection]) -> list:
@@ -796,8 +820,11 @@ class _MaterialMember(_MemberSpec):
         ``already deleted!`` here, before any write."""
         name = self._node.name
         if isinstance(self._node, ShadingEngine):
-            return _classify(name)
+            return _engine_found(name)
         return _Found(name, None, cmds.nodeType(name))
+
+    def _clone_target(self) -> str | None:
+        return None if self._node is None or self._remove else self._node.name
 
     # -- refusals -- #
 
@@ -829,12 +856,12 @@ class _MaterialMember(_MemberSpec):
         return steps
 
     def _plan_remove(self, targets: list[_Target]) -> list:
-        engine = _engine_of(self._found(), create=False)
-        if engine is None:
-            return []
-        for target in targets:
-            _check_instanced(engine.name, target)
-        return [lambda t=target: _remove_members(engine, t) for target in targets]
+        steps = []
+        for engine in _engines_read(self._found()):
+            for target in targets:
+                _check_instanced(engine.name, target)
+                steps.append(lambda e=engine, t=target: _remove_members(e, t))
+        return steps
 
     def _plan_add(self, targets: list[_Target]) -> list:
         found = self._found()
@@ -864,14 +891,12 @@ class _MaterialMember(_MemberSpec):
         if target.node_type != "mesh":
             raise TypeError(
                 f"'>>' reads face ids and '{_short(target.path)}' is a "
-                f"{target.node_type} without faces; Material.of({_short(target.path)!r}) "
+                f"{target.node_type} without faces; Material.of({Node(target.path)!r}) "
                 f"lists its materials"
             )
-        engine = _engine_of(self._found(), create=False)
-        empty  = np.empty(0, dtype=np.int64)
-        if engine is None:
-            return empty
-        held = _held(engine, target.path)
+        engines = _engines_read(self._found())
+        empty   = np.empty(0, dtype=np.int64)
+        held    = _held_by(engines, target.path)
         if held is _NOT_MEMBER:
             return empty
         if held is None:
@@ -882,11 +907,11 @@ class _MaterialMember(_MemberSpec):
 
     def _contains(self, selections: list[_Selection]) -> bool:
         targets = _targets(selections)
-        engine  = _engine_of(self._found(), create=False)
-        if engine is None:
+        engines = _engines_read(self._found())
+        if not engines:
             return False
         for target in targets:
-            held = _held(engine, target.path)
+            held = _held_by(engines, target.path)
             if held is _NOT_MEMBER:
                 return False
             if held is None:
@@ -900,7 +925,8 @@ class _MaterialMember(_MemberSpec):
 
     def _enumerate(self, x: Any) -> list:
         """``Cls.of(x)``: the materials of this token's kind holding ``x``
-        (an attribute plug is a ``TypeError``: the node is the member)."""
+        (an attribute plug is a ``TypeError``: the node is the member; what a
+        material never holds, a vertex or a curve, wears none: ``[]``)."""
         kind       = self._kind.__name__
         selections = normalise(
             x,
@@ -909,8 +935,11 @@ class _MaterialMember(_MemberSpec):
                 f"'{plug}' is a plug; membership takes the node: {kind}.of({plug.node})"
             ),
         )
-        self._check_kinds(selections)
-        return _of(self._kind, selections)
+        try:
+            self._check_kinds(selections)
+            return _of(self._kind, selections)
+        except _NeverHolds:
+            return []   # what a material never holds wears none
 
 
 def Default(*args: Any, **kwargs: Any) -> ShadingEngine:
@@ -1020,7 +1049,11 @@ def _scene_targets(targets: Any) -> list[_Target]:
 
 def materials(target: Any) -> List:
     """The materials of ``target`` (a node, faces, or a list of them) as
-    material ``Node``s, in connection order, each once."""
+    material ``Node``s, in connection order, each once: the shaders
+    themselves (``initialShadingGroup``'s is ``standardSurface1``), where
+    ``Material.of(x)`` answers the handles ``<<`` takes back (``Default()``
+    for the default engine, the engine for one ``x << shader`` would not
+    pick)."""
     found: list[Node] = []
     for item in _scene_targets(target):
         for engine, _ in _entries(item):
@@ -1036,14 +1069,15 @@ def materials(target: Any) -> List:
 def bindings(target: Any) -> list[tuple[Node, Components]]:
     """``(material, faces)`` per engine holding faces of ``target``; an
     object-level membership is reported as the whole-kind ``f[*]``
-    :class:`Components`. Read through ``MFnSet``, never through the strings
-    ``cmds.sets(q=True)`` prints. Mesh only."""
+    :class:`Components`. The material is the engine's shader, as
+    :func:`materials` answers it. Read through ``MFnSet``, never through the
+    strings ``cmds.sets(q=True)`` prints. Mesh only."""
     result = []
     for item in _scene_targets(target):
         if item.node_type != "mesh":
             raise TypeError(
                 f"bindings are per face and '{_short(item.path)}' is a "
-                f"{item.node_type}; materials({_short(item.path)!r}) lists its materials"
+                f"{item.node_type}; shade.materials({Node(item.path)!r}) lists its materials"
             )
         shape = Node(item.path)
         for engine, held in _entries(item):

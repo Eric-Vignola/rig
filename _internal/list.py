@@ -72,6 +72,7 @@ from rig._internal.operands import (
 )
 from rig._internal.plug import Plug
 from rig._internal.types import _is_attribute_spec, _is_components, _is_membership
+from rig._internal.undo import _undo_chunk
 
 
 def _operand_rows(dunder: str, items: list, other: Any) -> list:
@@ -257,10 +258,31 @@ class List(list):
         # pairs each selection with its own spec. Enum field names are read
         # for every row first, so a wrong one sets nothing.
         rows = sequences(list(self), other)
+        if isinstance(other, (list, tuple)) and any(_is_membership(o) for o in other):
+            return self._membership_rows(list(rows))
         if _holds_text(other):
             rows = _enum_rows(rows)
         for s, o in rows:
             if isinstance(s, (Plug, Node)) or _is_components(s):
+                s << o
+        return self
+
+    def _membership_rows(self, rows: list) -> "List":
+        """``List([a, b]) << [red, blue]``: every pair's checks and plan first
+        (a refused pair writes nothing, not even the pairs before it), then the
+        pairs in order, in one undo step (``rig.membership``). Every right-hand
+        side is a membership (a collection node, a token, a Tag)."""
+        for i, (s, o) in enumerate(rows):
+            if not _is_membership(o):
+                raise TypeError(
+                    f"a pair broadcast with membership takes a membership on every right-hand "
+                    f"side; [{i}] is {o!r}: write one '<<' per kind"
+                )
+            if not (isinstance(s, (Plug, Node)) or _is_components(s)):
+                raise TypeError(f"element [{i}] ({s!r}) is not a node, a plug or components")
+            o._member()._prepare(s)
+        with _undo_chunk("rig.membership"):
+            for s, o in rows:
                 s << o
         return self
 

@@ -664,13 +664,24 @@ def _scan_topology(scan: _Scan) -> None:
 # ---------- The writes ---------------------------------------------------- #
 
 
+def _absolute(name: str) -> str:
+    """The absolute name (``:red``, ``:look:red``) of the node a name Maya
+    returned names."""
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return OpenMaya.MFnDependencyNode(sel.getDependNode(0)).absoluteName()
+
+
 def _prepare(scan: _Scan, park: bool) -> str:
     """Create the new node and give it everything the old one holds as
     values: dynamic attributes (parked ones included), non-default values.
     On failure the new node is deleted and the error re-raised: no wire has
     moved, so the old node is untouched."""
     old, dst = scan.old, scan.dst
-    new      = cmds.createNode(dst, name=f"{_leaf(old)}{SUFFIX}", skipSelect=True)
+    # spelled absolutely, in the old node's namespace: a bare name would land
+    # in the current namespace, and the rename back would fail
+    space    = _absolute(old).rpartition(":")[0]
+    new      = cmds.createNode(dst, name=f"{space}:{_leaf(old)}{SUFFIX}", skipSelect=True)
     try:
         if cmds.nodeType(new) != dst:
             raise RuntimeError(f"Maya made a {cmds.nodeType(new)} for '{dst}', not a {dst}")
@@ -757,10 +768,13 @@ def _commit(scan: _Scan, new: str, park: bool) -> str:
     # user's own undo chunk -- where the guarded rollback cannot fire --
     # leaves the material in the scene under a temporary name instead of
     # gone.
-    aside      = cmds.rename(old, f"{old}__rigold")
+    # absolute names: a bare or relative new name would land in the current
+    # namespace (Maya renames 'look:red' to 'lib:red' while lib is current)
+    absolute   = _absolute(old)
+    aside      = cmds.rename(old, f"{absolute}__rigold")
     scan.aside = aside
-    got        = cmds.rename(new, old)
-    if got != old:
+    got        = cmds.rename(new, absolute)
+    if _absolute(got) != absolute:
         raise RuntimeError(
             f"the new {dst} could not take the name '{old}' back (Maya named it "
             f"'{got}'); the conversion is rolled back"
@@ -903,8 +917,9 @@ def convert(
     On a shader already of that type the node itself is returned, ``attrs``
     written only under ``update``."""
     _gate_type(dst)
-    old = node.name   # a deleted node raises here (naming its conversion, if any)
-    src = cmds.nodeType(old)
+    old  = node.name   # a deleted node raises here (naming its conversion, if any)
+    uuid = node.uuid
+    src  = cmds.nodeType(old)
     if cmds.ls(old, defaultNodes=True):
         raise RuntimeError(
             f"'{old}' is a Maya default node and cannot be converted (cmds.delete "
@@ -936,7 +951,7 @@ def convert(
         cmds.warning(str(report))
     name = _run(scan, park, attrs)
     prune_memoize_caches()
-    _record(scan.aside, old, dst)
+    _record(uuid, old, dst)
     return _cast(name)
 
 
@@ -967,23 +982,24 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> str:
 
 # ---------- The converted-node record -------------------------------------- #
 #
-# ``_base._CONVERTED`` maps the name a converted node was deleted under
-# (``red__rigold``; a deleted node's name has no namespace) to ``(its name,
-# the target type)``, so ``_base._deleted_error`` names the conversion when an
-# object of the old node is used. Read on that error path only; cleared before
+# ``_base._CONVERTED`` maps the uuid of a converted node (read before the
+# conversion; a node deleted to the undo queue keeps it) to ``(its name, the
+# target type)``, so ``_base._deleted_error`` names the conversion when an
+# object of the old node is used: each held node of a chain names its own,
+# whatever other conversion reuses its name. Read on that error path only; cleared before
 # a new scene or a file open (the old scene's nodes are freed then, and a freed
 # node never reaches the record). Registered once per Maya session through
 # rig._internal.callbacks, like the memo caches.
 
 
-def _record(aside: str, old: str, dst: str) -> None:
-    """Remember that the node deleted as ``aside`` was ``old``, converted to a
+def _record(uuid: str, old: str, dst: str) -> None:
+    """Remember that the node of ``uuid`` was ``old``, converted to a
     ``dst``."""
     if not _CALLBACKS_READY[0]:
         _CALLBACKS_READY[0] = _callbacks.ensure(
             __name__, _THIS_MODULE, _callback_specs(), release=_clear
         )
-    _base._CONVERTED[aside.rsplit(":", 1)[-1]] = (old, dst)
+    _base._CONVERTED[uuid] = (old, dst)
 
 
 def _clear(*args: Any) -> None:

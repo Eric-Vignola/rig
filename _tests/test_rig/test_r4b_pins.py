@@ -4,7 +4,7 @@ Written on the unmodified library (the tree after B1), before any 4b change:
 
 * ``TestMathPathLookups``: the math and creation paths make no name lookup.
   Any later step that adds one here (``cmds.ls``, ``cmds.objExists``,
-  ``cmds.namespaceInfo`` or the membership ``_find_node``) fails this test.
+  ``cmds.namespaceInfo`` or the lookup rule ``_lookup``) fails this test.
 * ``TestAlwaysNew``: ``Node.create``, ``rn.*``, ``rc.*``, ``Cls.create``,
   ``with container(...)`` and ``container.createNode`` always make a new
   node: two calls, two nodes, the second uniquified by Maya.
@@ -44,22 +44,34 @@ from rig._tests._base import MayaTestCase
 # Those are per-process type caches, not name lookups, and other tests clear or
 # fill them, so each test runs its scenario once in a scene it then discards
 # before it counts.
-_WARM_LOOKUPS = {"ls": 0, "objExists": 0, "namespaceInfo": 0, "_find_node": 0}
+_WARM_LOOKUPS = {"ls": 0, "objExists": 0, "namespaceInfo": 0, "_lookup": 0}
 
 _COUNTED_CMDS = ("ls", "objExists", "namespaceInfo")
 
 
+def _lookup_patches(lookup):
+    """Patches putting ``lookup`` in place of the lookup rule
+    ``rig.nodetypes._base._lookup`` in every rig module that holds it (round 4b
+    FIX: the membership ``_find_node`` it replaced is gone)."""
+    import sys
+
+    from rig.nodetypes import _base
+
+    return [
+        mock.patch.object(module, "_lookup", lookup)
+        for name, module in sorted(sys.modules.items())
+        if name.startswith("rig") and getattr(module, "_lookup", None) is _base._lookup
+    ]
+
+
 def _count_lookups(run):
     """``(run(), counts)``: the calls of each counted name lookup while ``run``
-    runs. ``_find_node`` is patched in every module that imports it (round 4b
-    NC6: ``rig.membership`` no longer does, its layers being nodes)."""
-    find_node = mock.MagicMock(wraps=_members._find_node)
+    runs. ``_lookup`` is patched in every module that holds it."""
+    from rig.nodetypes import _base
+
+    lookup  = mock.MagicMock(wraps=_base._lookup)
     patches = [mock.patch.object(cmds, name, wraps=getattr(cmds, name)) for name in _COUNTED_CMDS]
-    patches += [
-        mock.patch.object(module, "_find_node", find_node)
-        for module in (_members, _membership, _shade)
-        if hasattr(module, "_find_node")
-    ]
+    patches += _lookup_patches(lookup)
     mocks = [patch.start() for patch in patches]
     try:
         result = run()
@@ -67,7 +79,7 @@ def _count_lookups(run):
         for patch in patches:
             patch.stop()
     counts = {name: m.call_count for name, m in zip(_COUNTED_CMDS, mocks)}
-    counts["_find_node"] = find_node.call_count
+    counts["_lookup"] = lookup.call_count
     return result, counts
 
 
@@ -77,7 +89,7 @@ def _members_of(name):
 
 class TestMathPathLookups(MayaTestCase):
     """The math and creation hot paths make no name lookup (0 ``cmds.ls`` /
-    ``objExists`` / ``namespaceInfo`` / ``_find_node`` calls). Any later step
+    ``objExists`` / ``namespaceInfo`` / ``_lookup`` calls). Any later step
     adding a lookup here fails this test."""
 
     TEST_START_NEW_SCENE = True

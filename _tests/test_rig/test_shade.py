@@ -347,14 +347,17 @@ class TestMaterialCreate(MayaTestCase):
         self.assertEqual(_members("bareSG"), ["cubeShape"])
         self.assertEqual(Default().get_material(), Node("standardSurface1"))
         self.assertEqual(Default(), Material("standardSurface1").engine)
-        # a shaderless engine names no material, the particle engine none either
+        # an engine node is exactly that engine, a shaderless one too (round 4b
+        # FIX); the particle engine is refused
         empty  = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="emptySG")
         before = set(cmds.ls())
-        with self.assertRaisesRegex(ValueError, "no surface shader"):
-            self.cube << ShadingEngine(empty)
         with self.assertRaisesRegex(TypeError, "particle"):
             self.cube << ShadingEngine("initialParticleSE")
         self.assertEqual(set(cmds.ls()), before)
+        self.cube << ShadingEngine(empty)
+        self.assertEqual(_members("emptySG"), ["cubeShape"])
+        self.assertEqual(Material.of(self.cube), [ShadingEngine("emptySG")])
+        self.cube << Default()
         self.assertEqual(bare, Material("bare"))
 
     def test_warns_when_maya_keeps_another_name(self):
@@ -542,8 +545,8 @@ class TestMaterialAssign(MayaTestCase):
             lat << self.red
         with self.assertRaisesRegex(TypeError, r"without faces.*Material\.of"):
             srf >> self.red
-        with self.assertRaisesRegex(TypeError, "nurbsCurve, not a shadeable"):
-            crv in self.red
+        # a query answers by contents (round 4b FIX): a curve wears no material
+        self.assertNotIn(crv, self.red)
         self.assertEqual(set(cmds.ls()), before)
 
     def test_a_plug_on_a_transform_with_a_control_curve_skips_it_too(self):
@@ -600,8 +603,8 @@ class TestMaterialAssign(MayaTestCase):
             lone << self.red
         with self.assertRaisesRegex(TypeError, "nurbsCurve, not a shadeable"):
             List([self.cube, lone]) << self.red
-        with self.assertRaises(TypeError):
-            Material.of(lone)
+        # a query answers by contents (round 4b FIX): a curve wears none
+        self.assertEqual(Material.of(lone), [])
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_engines(self.shape), [])
 
@@ -933,8 +936,8 @@ class TestMaterialQuery(MayaTestCase):
         np.testing.assert_array_equal(self.cube >> Blinn("red"), [0, 1, 2, 5])
         other  = _cube("other")
         before = set(cmds.ls())
-        with self.assertRaisesRegex(TypeError, "vertices"):
-            self.cube.vtx[0] >> Material()
+        # an enumeration answers by contents (round 4b FIX): a vertex wears none
+        self.assertEqual(self.cube.vtx[0] >> Material(), [])
         with self.assertRaisesRegex(TypeError, "one node at a time"):
             List([self.cube, other]) >> Material()
         self.assertEqual(set(cmds.ls()), before)
@@ -967,8 +970,8 @@ class TestMaterialQuery(MayaTestCase):
         before = set(cmds.ls())
         with self.assertRaises(TypeError):
             Material.of(List([self.cube, _cube("other")]))
-        with self.assertRaises(TypeError):
-            Material.of(self.cube.vtx[0])
+        # a query answers by contents (round 4b FIX): a vertex wears none
+        self.assertEqual(Material.of(self.cube.vtx[0]), [])
         self.assertEqual(set(cmds.ls()) - {"other", "otherShape"}, before)
 
     def test_module_readers(self):
@@ -1277,8 +1280,8 @@ class TestMaterialErrors(MayaTestCase):
             other << Blinn("red")
         with self.assertRaises(ValueError):
             Blinn("red").engine
-        with self.assertRaisesRegex(ValueError, "redX"):
-            other in Blinn("red")
+        # a query reads every engine the shader feeds (round 4b FIX): no raise
+        self.assertNotIn(other, Blinn("red"))
         self.assertEqual(set(cmds.ls()), self.before)
         # naming the engine picks it
         other << ShadingEngine("redY")

@@ -406,8 +406,8 @@ class TestTagOnSphere(MayaTestCase):
             joint.tx << Tag("xx")
         with self.assertRaisesRegex(TypeError, "'joint1.translateX' is a plug"):
             joint.tx >> Tag()
-        with self.assertRaisesRegex(TypeError, "not geometry"):
-            joint.tx in Tag("xx")
+        # a query answers by contents (round 4b FIX): a joint has no tag
+        self.assertNotIn(joint.tx, Tag("xx"))
         with self.assertRaisesRegex(TypeError, "is a plug"):
             self.sph.tx >> Tag("nope")
         self.assertEqual(set(cmds.ls()), before)
@@ -464,13 +464,14 @@ class TestTagOnSphere(MayaTestCase):
         self.assertEqual(_tags(self.sph), ["other"])
 
     def test_of_applies_the_same_kind_gate_as_the_enumeration(self):
+        """Pins (round 4b FIX): the enumeration and ``of`` answer by contents
+        alike: UVs, which no tag holds, are in none; ``<<`` still refuses them."""
         before = set(cmds.ls())
+        self.assertEqual(Tag.of(self.sph.map[0]), [])
+        self.assertEqual(Tag.of(self.sph.map), [])
+        self.assertEqual(self.sph.map[0] >> Tag(), [])
         with self.assertRaisesRegex(TypeError, "UVs cannot be tagged"):
-            Tag.of(self.sph.map[0])
-        with self.assertRaisesRegex(TypeError, "UVs cannot be tagged"):
-            Tag.of(self.sph.map)
-        with self.assertRaisesRegex(TypeError, "UVs cannot be tagged"):
-            self.sph.map[0] >> Tag()
+            self.sph.map[0] << Tag("uvs")
         self.assertEqual(set(cmds.ls()), before)
 
     def test_uvs_non_geometry_and_channel_fanout_refuse(self):

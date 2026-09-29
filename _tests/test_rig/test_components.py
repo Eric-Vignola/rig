@@ -986,5 +986,6 @@ class TestMemberSpecContract(MayaTestCase):
             _Strict("cap").inject(node.f)
         with self.assertRaisesRegex(TypeError, "does not take 'whole' components"):
             _Strict("cap").query(node)
-        with self.assertRaisesRegex(TypeError, "does not take 'whole' components"):
-            _Strict().query(node)
+        # an enumeration answers by contents (round 4b FIX): a left-hand side
+        # the kind never holds is in none
+        self.assertEqual(_Strict().query(node), [])
