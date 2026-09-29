@@ -249,22 +249,25 @@ class TestTagOnSphere(MayaTestCase):
         result = self.sph << -Tag("cap")
         self.assertIs(result, self.sph)
         self.assertEqual(_tags(self.sph), [])
-        with self.assertRaises(ValueError):
-            self.sph >> Tag("cap")
+        # the deleted tag holds nothing: no ids, not in it (round 4b follow-up
+        # F4; it was a ValueError)
+        self.assertEqual((self.sph >> Tag("cap")).shape, (0,))
+        self.assertFalse(self.sph in Tag("cap"))
 
     def test_missing_tag_is_a_value_error_never_an_empty_answer(self):
         """Historical id (v2.0.0a2): pinned every spelling on a missing tag as a
-        ValueError; it now pins them but one: the ids of components in a missing
-        tag are an empty array, none of them being in it (user decision
-        2026-09-28, the lead's default for '>>', consistent with 'in' answering
-        False)."""
+        ValueError; it now pins them but the queries: the ids of a missing tag
+        are an empty array, with components (user decision 2026-09-28, the
+        lead's default for '>>', consistent with 'in' answering False) and with
+        the node on the left (round 4b follow-up F4, the same rule)."""
         before = set(cmds.ls())
         with self.assertRaisesRegex(ValueError, "no component tag 'nope'"):
             self.sph.vtx[:2] << -Tag("nope")
         with self.assertRaises(ValueError):
             self.sph << -Tag("nope")
-        with self.assertRaises(ValueError):
-            self.sph >> Tag("nope")
+        ids = self.sph >> Tag("nope")
+        self.assertIsInstance(ids, np.ndarray)
+        self.assertEqual(ids.shape, (0,))
         ids = self.sph.vtx[:2] >> Tag("nope")
         self.assertIsInstance(ids, np.ndarray)
         self.assertEqual(ids.shape, (0,))
