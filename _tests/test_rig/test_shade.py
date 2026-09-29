@@ -359,13 +359,14 @@ class TestMaterialCreate(MayaTestCase):
 
     def test_warns_when_maya_keeps_another_name(self):
         """Historical id (v2.0.0a2): pinned the warning when Maya kept another
-        name than the spec's; it now pins that Blinn.define refuses it,
-        deleting what it made (round 4b CC-4), that Blinn.create takes Maya's
-        name, and define's name checks before any call."""
-        # 'shared' is reserved by Maya: shadingNode(name='shared') makes 'shared1'
+        name than the spec's; it now pins that Blinn.define refuses it before
+        any write (round 4b CC-4, the rename predicted: 'shared' is a Maya
+        namespace), that Blinn.create takes Maya's name, and define's name
+        checks before any call."""
+        # 'shared' is a Maya namespace: shadingNode(name='shared') makes 'shared1'
         before = set(cmds.ls())
         with mock.patch.object(cmds, "warning") as warning:
-            with self.assertRaisesRegex(NodeTypeError, "Maya made 'shared1', not the key 'shared'"):
+            with self.assertRaisesRegex(ValueError, "'shared' is the name of a namespace; Maya would rename"):
                 self.cube << Blinn.define("shared")
         warning.assert_not_called()
         self.assertEqual(set(cmds.ls()), before)

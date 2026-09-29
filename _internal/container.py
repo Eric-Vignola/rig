@@ -1045,10 +1045,12 @@ container = _ContainerStack()
 # --------------------------------------------------------------------- #
 
 
-def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict) -> tuple:
+def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict, discard: bool = False) -> tuple:
     """Call ``fn`` and return ``(result, created)``: the full names of the
     nodes Maya created during the call for the call itself, the nodes a scope
-    registers.
+    registers. With ``discard``, a call that raises has what it made for
+    itself deleted (`_discard_made`) before the error propagates: a create or
+    define whose attribute value is refused leaves no half-built node.
 
     A node-added callback is the only exact way to tell what a command
     made from what it merely returned: a query returns nodes it looked up,
@@ -1069,8 +1071,12 @@ def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict) -> tuple:
     callback_id = OpenMaya.MDGMessage.addNodeAddedCallback(on_added, "dependNode")
     try:
         result = fn(*args, **kwargs)
-    finally:
+    except BaseException:
         OpenMaya.MMessage.removeCallback(callback_id)
+        if discard:
+            _discard_made(handles)
+        raise
+    OpenMaya.MMessage.removeCallback(callback_id)
 
     made    = [handle.object() for handle in handles if handle.isValid()]
     created = []
@@ -1082,6 +1088,42 @@ def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict) -> tuple:
         else:
             created.append(OpenMaya.MFnDependencyNode(obj).name())
     return result, created
+
+
+# what a failed call's cleanup never deletes: a scope's container (made with
+# its first member) and its hyperLayout (deleting it deletes the container)
+_KEPT_ON_DISCARD = frozenset({"container", "dagContainer", "hyperLayout"})
+
+
+def _discard_made(handles: list) -> None:
+    """Delete the nodes a call that raised made for itself (the live
+    ``handles`` of `_call_tracking_creation`; not a node made for a node that
+    existed before, `_made_for_others`, nor a scope's container), with
+    ``cmds.delete`` (never ``cmds.undo()``): the failed call leaves the scene
+    as it found it. A cleanup that fails is logged; the call's own error is
+    the one raised."""
+    made  = [handle.object() for handle in handles if handle.isValid()]
+    names = []
+    for obj in made:
+        if _made_for_others(obj, made, None):
+            continue
+        fn = OpenMaya.MFnDependencyNode(obj)
+        if fn.typeName in _KEPT_ON_DISCARD:
+            continue
+        if obj.hasFn(OpenMaya.MFn.kDagNode):
+            names.append(OpenMaya.MFnDagNode(obj).fullPathName())
+        else:
+            names.append(fn.absoluteName())
+    # a DAG child goes with its parent
+    alive = [
+        name for name in names
+        if cmds.objExists(name) and not any(name.startswith(f"{other}|") for other in names)
+    ]
+    if alive:
+        try:
+            cmds.delete(alive)
+        except RuntimeError as error:
+            LOGGER.debug("could not delete %s after a failed create: %s", alive, error)
 
 
 def _made_for_others(obj: Any, made: list, result: Any) -> bool:
@@ -1386,7 +1428,8 @@ def _node_create_with_attrs(node_type: str, kwargs: dict) -> Any:
     """`_node_create` of an unregistered `node_type` given attribute keywords
     (the keywords of `kwargs` not in ``_NODE_CREATE_FLAGS``): each checked on
     the type before the node is made (a typo raises AttributeError, a wrong
-    enum field name TypeError, nothing made), then set with ``<<``."""
+    enum field name TypeError, nothing made), then set with ``<<``, in one
+    ``rig.create`` undo step (a value the node refuses deletes it)."""
     attrs = {key: value for key, value in kwargs.items() if key not in _NODE_CREATE_FLAGS}
     for key in attrs:
         del kwargs[key]
@@ -1398,9 +1441,10 @@ def _node_create_with_attrs(node_type: str, kwargs: dict) -> Any:
             f"Node.create({node_type!r}, ...): {error}, and no createNode flag is named "
             f"so ({', '.join(sorted(_NODE_CREATE_FLAGS))}); nothing was made"
         ) from None
-    node = container.createNode(node_type, **kwargs)
-    for attr, value in attrs.items():
-        getattr(node, attr) << value
+    with _undo_chunk("rig.create"):
+        node = container.createNode(node_type, **kwargs)
+        # a value the node refuses deletes it: nothing half-built is left
+        _dg_node_module._set_or_delete(node, attrs)
     return node
 
 

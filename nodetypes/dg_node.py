@@ -151,13 +151,55 @@ def _create_template(cls, args, kwargs):
     """`DGNode.create`'s body: ``cls._create``, then ``cls.post_create``, given
     the call's ``args`` tuple and ``kwargs`` dict, then the attribute keywords
     (``kwargs[_CREATE_ATTRS]``, checked by type before) set on the new node
-    with ``<<``: inside a scope, in the hook's one ``rig.create`` undo chunk."""
-    attrs    = kwargs.pop(_CREATE_ATTRS, None)
-    new_node = cls._create(*args, **kwargs)
-    node     = cls.post_create(new_node, *args, **kwargs)
-    if attrs:
+    with ``<<``. With attributes, the whole create is one ``rig.create`` undo
+    step, and a value the attribute refuses (``t=(1, 2)``) deletes every node
+    the call made before its error propagates: nothing half-built is left."""
+    attrs = kwargs.pop(_CREATE_ATTRS, None)
+    if not attrs:
+        new_node = cls._create(*args, **kwargs)
+        return cls.post_create(new_node, *args, **kwargs)
+    hook = _define_hook()
+    with hook.chunk("rig.create"):
+        node, _ = hook.track(_create_with_attrs, (cls, args, kwargs, attrs), {}, discard=True)
+    return node
+
+
+def _makes_just_the_node(cls: type) -> bool:
+    """True for a class whose ``create`` makes just the node it returns (and,
+    given attributes, deletes it itself when a value fails): DGNode's
+    ``_create`` on a DG class, DAGNode's on a transform class (a shape type's
+    ``createNode`` also makes its transform), DGNode's ``post_create``."""
+    make = getattr(cls._create, "__func__", None)
+    if make not in _PLAIN_CREATES or getattr(cls.post_create, "__func__", None) is not _DG_POST_CREATE:
+        return False
+    if not issubclass(cls.FN_SET, OpenMaya.MFnDagNode):
+        return True
+    from rig.nodetypes.transform import Transform
+
+    return issubclass(cls, Transform) and make is not DGNode._create.__func__
+
+
+def _set_or_delete(node: Any, attrs: dict) -> None:
+    """Set the attribute values of a node just made, which makes nothing else;
+    a value the node refuses deletes it (``cmds.delete``, never an undo) before
+    the error propagates."""
+    try:
         for attr, value in attrs.items():
             getattr(node, attr) << value
+    except BaseException:
+        try:
+            cmds.delete(node.long_name if isinstance(node.fn_set, OpenMaya.MFnDagNode) else node.name)
+        except (RuntimeError, ValueError):
+            pass
+        raise
+
+
+def _create_with_attrs(cls, args, kwargs, attrs):
+    """`_create_template`'s create, then the attribute values."""
+    new_node = cls._create(*args, **kwargs)
+    node     = cls.post_create(new_node, *args, **kwargs)
+    for attr, value in attrs.items():
+        getattr(node, attr) << value
     return node
 
 
@@ -261,7 +303,9 @@ def _refuse_owner(hook: Any, node: Any, refer: str) -> None:
     a container on the stack owns; any other owner is refused, before any
     write, with the re-run text when that owner has the current real scope's
     requested name and Maya renamed the scope (a build run again in the same
-    scene)."""
+    scene: the requested name, or it with the digits Maya adds when a node
+    had the name already). The re-run text names this scope's container too,
+    which the refused run leaves empty."""
     reals = [(requested, real) for requested, real in hook.frames() if real is not None]
     if not reals:
         return
@@ -272,16 +316,29 @@ def _refuse_owner(hook: Any, node: Any, refer: str) -> None:
     requested, current = reals[-1]
     here  = str(current)
     shown = node.name
-    if owner == requested and here != requested:
+    if here != requested and re.fullmatch(rf"{re.escape(requested)}\d*", owner):
         raise ValueError(
             f"{shown!r} belongs to container {owner!r} from an earlier run; this scope is "
-            f"{here!r}. Delete {owner!r} to rebuild it, or build in a new scene."
+            f"{here!r}. Delete {owner!r} and {here!r} to rebuild it, or build in a new scene."
         )
     raise ValueError(
         f"{shown!r} belongs to container {owner!r}; define inside {here!r} only finds "
         f"nodes this build scope owns. Refer to it with {refer}({shown!r}), or define it "
         f"outside the containers."
     )
+
+
+def _check_define_name(spell: Any, refer: str, name: Any) -> None:
+    """``define``'s name checks that need no scene read: a str (TypeError),
+    whose ``:`` parts Maya keeps as written (ValueError; a path is refused by
+    `_define`, which names the parent= form)."""
+    if not isinstance(name, str) or isinstance(name, Attribute):
+        raise TypeError(f"{spell('name')} takes the node's name, a str (got {name!r}); {refer}(x) refers to a node")
+    if "|" not in name and not _DEFINE_NAME.match(name):
+        raise ValueError(
+            f"{spell(repr(name))}: {name!r} is not a name Maya keeps as written: each ':' part is a letter "
+            f"or '_' and then letters, digits or '_' (Maya would rename the node)"
+        )
 
 
 def _define(
@@ -300,6 +357,7 @@ def _define(
     joins:  bool | None,
     typed:  bool,
     hint:   Any = None,
+    plain:  bool = False,
 ) -> Any:
     """The body of every ``define`` (``Cls.define``, ``Node.define``): find the
     node at the key, or make it there, never a second node under a name the
@@ -312,23 +370,20 @@ def _define(
     `aware` / `typed` say how the scope prefixes the made node's name (a typed
     create of a container-aware class, or ``createNode``), `joins` is the
     ``container=`` given; `hint(found)` adds to the type mismatch's text.
-    Every refusal raises before any write."""
+    `plain`: `make` makes just the node it returns, and deletes it itself when
+    an attribute value fails, so no node-added tracking is needed (about
+    140 us a miss). Every refusal raises before any write; a value the new
+    node refuses deletes what the call made."""
     hook = _define_hook()
     call = spell(repr(name))
     # 1. the name: a key Maya keeps as written
-    if not isinstance(name, str) or isinstance(name, Attribute):
-        raise TypeError(f"{spell('name')} takes the node's name, a str (got {name!r}); {refer}(x) refers to a node")
+    _check_define_name(spell, refer, name)
     if "|" in name:
         if not dag:
             raise TypeError(f"{call}: {_article(label)} {label} is a DG node: its name has no '|'")
         up, _, leaf = name.rstrip("|").rpartition("|")
         where = f"{spell(f'{leaf!r}, parent={up!r}')} keys it under {up!r}" if up else f"{spell(repr(leaf))} keys it at the world"
         raise TypeError(f"{call}: a define's name is a key, not a path: {where}")
-    if not _DEFINE_NAME.match(name):
-        raise ValueError(
-            f"{call}: {name!r} is not a name Maya keeps as written: each ':' part is a letter "
-            f"or '_' and then letters, digits or '_' (Maya would rename the node)"
-        )
     # 2. the key, spelled absolutely: the node create(name=...) would make
     if ":" in name:
         space, _, leaf = name.lstrip(":").rpartition(":")
@@ -382,6 +437,13 @@ def _define(
                 f"define never makes a node there (Maya would make it in the reference's "
                 f"namespace, unreferenced)"
             )
+    # a name Maya would change because a namespace has it (a node and a
+    # namespace of one name cannot live side by side: ``rig`` becomes ``rig1``)
+    if OpenMaya.MNamespace.namespaceExists(absolute):
+        raise ValueError(
+            f"{call}: {_shown(absolute)!r} is the name of a namespace; Maya would rename a new "
+            f"{label} ({_shown(absolute)}1): pick another name"
+        )
     # a name Maya would change on the new node: a DG node's (any node's, for a
     # DG key), since a DG name is unique among every node's short names
     holders = [n for n in cmds.ls(absolute, long=True) or () if not dag or n[:1] != "|"]
@@ -423,16 +485,24 @@ def _define(
                     f"{who}({other_abs!r}) refers to it, {spell(repr(spelled))} makes {key}"
                 )
             else:
-                up      = other_node.get_parent() if dag else None
+                # the define of that key only when it would find the node (a
+                # node of another type there would raise)
+                up      = other_node.get_parent() if dag and who == refer else None
                 message = (
                     f"{call}: {name!r} exists at {other}; {who}({name!r}) refers to it"
                     + (f", and {spell(f'{name!r}, parent={up.name!r}')} keys it there" if up is not None else "")
                 )
             raise AmbiguousNodeError(name, [other], label, message=message)
 
-    # 5. make it, in one undo chunk, knowing exactly what the call made
+    # 5. make it, in one undo chunk, knowing exactly what the call made; a
+    # value the new node refuses deletes what the call made (the create's own
+    # cleanup for a plain make, else the tracking's)
     with hook.chunk("rig.define"):
-        node, created = hook.track(make, (made_name, parent_node), {})
+        if plain:
+            node    = make(made_name, parent_node)
+            created = [node.long_name if dag else node.name]
+        else:
+            node, created = hook.track(make, (made_name, parent_node), {}, discard=True)
         # 6. the post-condition: the new node is the key; else what the call
         # made is deleted (never cmds.undo(): with the queue off it raises and
         # keeps the node, with it on it names the user's previous step)
@@ -463,6 +533,15 @@ def _define_untyped(
     it), and so is a container (``with container()`` makes one)."""
     hook  = _define_hook()
     spell = lambda args: f"Node.define({node_type!r}, {args})"  # noqa: E731
+    # the refusals that read nothing come before the plug-in load (a refused
+    # define writes nothing: a loaded plug-in is a requirement of the file)
+    _check_define_name(spell, "Node", name)
+    own = _DEFINE_OWN.intersection(kwargs)
+    if own:
+        raise TypeError(
+            f"{spell('name')} takes its name after the type and parent= "
+            f"(got {', '.join(f'{key}=' for key in sorted(own))})"
+        )
     hook.ensure_plugin(node_type)
     try:
         chain = cmds.nodeType(node_type, isTypeName=True, inherited=True) or []
@@ -484,12 +563,6 @@ def _define_untyped(
         )
     dag   = "dagNode" in chain
     flags = frozenset({"name", "n", "skipSelect", "ss"} | ({"parent", "p"} if dag else set()))
-    own   = _DEFINE_OWN.intersection(kwargs)
-    if own:
-        raise TypeError(
-            f"{spell('name')} takes its name after the type and parent= "
-            f"(got {', '.join(f'{key}=' for key in sorted(own))})"
-        )
     if parent is not None and not dag:
         raise TypeError(f"{spell(repr(name))} takes no parent=: {_article(node_type)} {node_type} is a DG node")
     attrs = {}
@@ -503,13 +576,13 @@ def _define_untyped(
         if parent_node is not None:
             kwargs["parent"] = parent_node.long_name
         node = hook.create_node(node_type, name=made_name, container=joins, **kwargs)
-        for attr, value in attrs.items():
-            getattr(node, attr) << value
+        if attrs:
+            _set_or_delete(node, attrs)
         return node
 
     return _define(
         spell, "Node", node_type, name, parent, dag=dag, update=update, attrs=attrs,
-        accept=accept, make=make, aware=True, joins=joins, typed=False,
+        accept=accept, make=make, aware=True, joins=joins, typed=False, plain=True,
     )
 
 
@@ -1268,7 +1341,7 @@ class DGNode(Node):
             lambda args: f"{cls.__name__}.define({args})", cls.__name__, label, name, parent,
             dag=issubclass(cls.FN_SET, OpenMaya.MFnDagNode), update=update, attrs=attrs,
             accept=accept, make=make, aware=cls._CONTAINER_AWARE, joins=container, typed=True,
-            hint=cls._mismatch_hint,
+            hint=cls._mismatch_hint, plain=_makes_just_the_node(cls),
         )
 
     @classmethod
@@ -1687,6 +1760,7 @@ class DGNode(Node):
 
 
 _PLAIN_CREATES.add(DGNode._create.__func__)
+_DG_POST_CREATE = DGNode.post_create.__func__
 
 # Node classes whose data type fallback hook only reads the scene before it calls
 # DGNode's, mapped to that hook. With DGNode's own hook nothing runs in between.

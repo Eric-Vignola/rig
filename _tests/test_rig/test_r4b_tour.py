@@ -479,7 +479,7 @@ class TestTourW2(_Case):
             self.assertRefused(
                 ValueError,
                 r"^'arm_root' belongs to container 'arm' from an earlier run; this scope is 'arm1'\. "
-                r"Delete 'arm' to rebuild it, or build in a new scene\.$",
+                r"Delete 'arm' and 'arm1' to rebuild it, or build in a new scene\.$",
                 lambda: Transform.define("arm_root"),
             )
         self.assertEqual(cmds.container(str(first), query=True, nodeList=True), ["arm_root"])

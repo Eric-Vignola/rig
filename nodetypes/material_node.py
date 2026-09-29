@@ -77,6 +77,7 @@ from rig.nodetypes.dg_node import (
     _DEFINE_OWN,
     _attribute_keywords,
     _define,
+    _define_hook,
     _got,
     DGNode,
 )
@@ -390,29 +391,41 @@ class Material(DGNode):
             name = kwargs.get("n")
         skip = kwargs.get("skipSelect", kwargs.get("ss", True))
         with _undo_chunk("rig.create"):
-            shader = cmds.shadingNode(
-                node_type, asShader=True, name=name or cls.CUSTOM_NODE_TYPE or node_type,
-                skipSelect=skip,
+            # a value the shader refuses (or a network that does not read
+            # back) deletes every node the call made before the error
+            node, _ = _define_hook().track(
+                cls._build, (node_type, name, skip, container, attrs), {}, discard=True
             )
-            engine = ShadingEngine.for_material(shader, create=True)
-            if container is True:
-                # a material is a shared, scene-level asset: it joins the
-                # active scope only when asked
-                from rig._internal.container import container as scope
+        return node
 
-                scope.add([shader, engine.name, *engine.get_material_info()])
-            if cls.CUSTOM_NODE_TYPE:
-                set_custom_type(shader, cls.CUSTOM_NODE_TYPE)
-            # the node just made is of this class (the generic class: its cast)
-            node = cls._wrap(shader) if _own_type(cls) else _cast(shader)
-            for attr, value in attrs.items():
-                getattr(node, attr) << value
-            fed = engine.get_material()
-            if fed is None or fed.name != shader:
-                raise RuntimeError(
-                    f"{engine.name}.surfaceShader does not read '{shader}' after the "
-                    f"build (it reads {fed})"
-                )
+    @classmethod
+    def _build(cls, node_type: str, name: Any, skip: Any, container: Any, attrs: dict) -> "Material":
+        """`create`'s network: the shader, its ``<shader>SG`` engine and
+        materialInfo, the scope registration (``container=True``), then the
+        attribute values; the engine is checked to read the shader."""
+        shader = cmds.shadingNode(
+            node_type, asShader=True, name=name or cls.CUSTOM_NODE_TYPE or node_type,
+            skipSelect=skip,
+        )
+        engine = ShadingEngine.for_material(shader, create=True)
+        if container is True:
+            # a material is a shared, scene-level asset: it joins the
+            # active scope only when asked
+            from rig._internal.container import container as scope
+
+            scope.add([shader, engine.name, *engine.get_material_info()])
+        if cls.CUSTOM_NODE_TYPE:
+            set_custom_type(shader, cls.CUSTOM_NODE_TYPE)
+        # the node just made is of this class (the generic class: its cast)
+        node = cls._wrap(shader) if _own_type(cls) else _cast(shader)
+        for attr, value in attrs.items():
+            getattr(node, attr) << value
+        fed = engine.get_material()
+        if fed is None or fed.name != shader:
+            raise RuntimeError(
+                f"{engine.name}.surfaceShader does not read '{shader}' after the "
+                f"build (it reads {fed})"
+            )
         return node
 
     @classmethod

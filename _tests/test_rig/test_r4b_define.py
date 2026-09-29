@@ -430,12 +430,13 @@ class TestDefineElsewhere(_Case):
         self.assertEqual(made.long_name, "|other|root")
 
     def test_another_type_nested_names_node(self):
+        """The hint names no define of that key: a transform there would make
+        ``Joint.define('t', parent='grp')`` raise (FIX: review safety D7)."""
         cmds.createNode("transform", name="grp")
         cmds.createNode("transform", name="t", parent="grp")
         self.assertRefused(
             AmbiguousNodeError,
-            r"^Joint\.define\('t'\): 't' exists at \|grp\|t; Node\('t'\) refers to it, "
-            r"and Joint\.define\('t', parent='grp'\) keys it there$",
+            r"^Joint\.define\('t'\): 't' exists at \|grp\|t; Node\('t'\) refers to it$",
             lambda: Joint.define("t"),
         )
 
@@ -638,7 +639,7 @@ class TestDefineInContainer(_Case):
             self.assertRefused(
                 ValueError,
                 r"^'arm_root' belongs to container 'arm' from an earlier run; this scope is 'arm1'\. "
-                r"Delete 'arm' to rebuild it, or build in a new scene\.$",
+                r"Delete 'arm' and 'arm1' to rebuild it, or build in a new scene\.$",
                 lambda: Transform.define("arm_root"),
             )
         self.assertEqual(cmds.container(str(first), query=True, nodeList=True), ["arm_root"])
