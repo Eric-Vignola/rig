@@ -151,7 +151,9 @@ class TestBaseNodes(MayaTestCase):
         self.assertTrue(Transform.exists("abc"))
         cmds.delete("abc")
         cmds.createNode("joint", name="abc")
-        self.assertFalse(Transform.exists("abc"))
+        # re-pinned (round 4b NC2): exists answers whether Transform("abc")
+        # returns a node, and a joint is a transform (was False)
+        self.assertTrue(Transform.exists("abc"))
 
 
 class TestListAttrCompoundChildren(MayaTestCase):

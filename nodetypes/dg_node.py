@@ -29,6 +29,7 @@ from rig.nodetypes._base import (
     Node,
     set_custom_type,
 )
+from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
 
 
 # Maya recognises these short names in cmds and MSelectionList parsing,
@@ -573,9 +574,23 @@ class DGNode(Node):
         return False
 
     @classmethod
-    def exists(cls, name: str) -> bool:
-        """Checks if a node of this type exists."""
-        return name and cmds.objExists(name) and cls.is_type(name)
+    def exists(cls, name: Any) -> bool:
+        """Whether ``cls(name)`` would return a node: True for a node of this
+        class or a subclass (a joint is a transform: ``Transform.exists("j1")``
+        is True), False for a name no node has, a node of another type
+        (``DisplayLayer.exists("cube")``), a node object that was deleted, and
+        ``None`` or ``""`` (no name). A name it cannot answer yes or no for
+        raises as the reference does: AmbiguousNodeError (two ``a``: a False
+        would let ``if not Transform.exists("a"): Transform.create(name="a")``
+        add a third ``a``) and the pattern's NodeLookupError (``"red*"`` is a
+        search: ``cmds.ls``)."""
+        if name is None:
+            return False
+        try:
+            node = cls(name)
+        except (NodeNotFoundError, NodeTypeError):
+            return False
+        return node.is_valid
 
     @classmethod
     def _coerce(cls, node: Any) -> Any:

@@ -19,6 +19,9 @@
   ``X._wrap(x)`` (today's constructor), the others take user input and keep
   the reference. A new site fails until it is listed. The cast core and the
   converted sites never run the reference (round 5 A2 builds on it).
+* ``TestExists``: ``Cls.exists(x)`` is True exactly when ``Cls(x)`` returns a
+  node; False for a missing name, another type, a deleted node object and no
+  name (``None``); an ambiguous name and a pattern raise.
 """
 
 import ast
@@ -412,6 +415,8 @@ class TestReference(MayaTestCase):
 # and is not listed; these take user input (or answer for it) and keep the
 # reference, which type-checks and returns the most derived class.
 _ALLOWED_SITES = {
+    ("nodetypes/dg_node.py", "DGNode.exists", "cls"): (
+        1, "the reference itself: exists answers whether cls(name) returns a node"),
     ("nodetypes/follicle.py", "Follicle.create_on_mesh", "Transform"): (
         1, "user input: the mesh transform to attach to"),
     ("nodetypes/joint.py", "Joint.match_hierarchy", "Joint"): (
@@ -575,3 +580,113 @@ class TestInternalSites(MayaTestCase):
                 ("m.py", "Transform.f", "type(...)"): 1,
             },
         )
+
+
+class TestExists(MayaTestCase):
+    """``Cls.exists(x)`` is True exactly when ``Cls(x)`` returns a node (C12)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        _build_scene()
+
+    def tearDown(self):
+        cmds.namespace(set=":")
+        super().tearDown()
+
+    def test_the_c12_rows(self):
+        before = set(cmds.ls())
+        # a transform is not a layer, a blinn is not an engine (both True before)
+        self.assertFalse(DisplayLayer.exists("body"))
+        self.assertFalse(ShadingEngine.exists("red"))
+        # ambiguous raises (a TypeError before): False would let
+        # `if not exists: create` add a third 'a'
+        with self.assertRaisesRegex(AmbiguousNodeError, "'a' is ambiguous"):
+            Transform.exists("a")
+        # a pattern is a search, not a name (True before)
+        with self.assertRaises(NodeLookupError) as caught:
+            DGNode.exists("red*")
+        self.assertNotIsInstance(caught.exception, (NodeNotFoundError, AmbiguousNodeError))
+        self.assertEqual(set(cmds.ls()), before)
+
+    def test_answers_whether_the_reference_returns_a_node(self):
+        rows = (
+            (Transform, "j1", True),  # a joint is a transform (False before)
+            (Joint, "j1", True),
+            (Joint, "grp", False),
+            (Transform, "nosuch", False),
+            (DGNode, "", False),
+            (DGNode, "red", True),
+            (ObjectSet, "initialShadingGroup", True),
+            (ShadingEngine, "s1", False),
+            (DisplayLayer, "L", True),
+            (Mesh, "body", True),  # a transform with a mesh shape
+            (Mesh, "grp", False),
+            (NurbsCurve, "crv", True),
+            (Container, "box", True),
+            (Container, "grp", False),
+            (Transform, "|g1|a", True),
+            (Transform, "grp.tx", True),
+        )
+        for cls, name, expected in rows:
+            with self.subTest(cls=cls.__name__, name=name):
+                self.assertIs(cls.exists(name), expected)
+                if expected:
+                    self.assertIsInstance(cls(name), cls)
+
+    def test_node_objects_and_none(self):
+        grp = Node("grp")
+        self.assertTrue(Transform.exists(grp))
+        self.assertFalse(Joint.exists(grp))
+        self.assertTrue(Transform.exists(grp.tx))
+        cmds.delete("grp")
+        self.assertFalse(Transform.exists(grp))
+        # no name names no node (Transform(None) raises TypeError)
+        self.assertIs(Transform.exists(None), False)
+        self.assertIs(Transform.exists(""), False)
+
+    def test_user_classes(self):
+        class _ExCtl(Transform):
+            CUSTOM_NODE_TYPE = "r4bExistsCtl"
+
+        class _ExWrapper(Transform):
+            pass
+
+        _ExCtl.create(name="ctl")
+        self.assertTrue(_ExCtl.exists("ctl"))
+        self.assertFalse(_ExCtl.exists("grp"))
+        self.assertTrue(Transform.exists("ctl"))
+        self.assertTrue(_ExWrapper.exists("grp"))
+        self.assertTrue(_ExWrapper.exists("j1"))
+        self.assertFalse(_ExWrapper.exists("red"))
+
+    def test_a_held_node_across_undo_rename_and_a_new_scene(self):
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.flushUndo()
+        held = Transform.create(name="held")
+        cmds.undo()
+        self.assertFalse(Transform.exists(held))
+        self.assertFalse(Transform.exists("held"))
+        cmds.redo()
+        self.assertTrue(Transform.exists(held))
+        cmds.rename("held", "moved")
+        self.assertTrue(Transform.exists(held))
+        self.assertFalse(Transform.exists("held"))
+        self.assertTrue(Transform.exists("moved"))
+        cmds.file(new=True, force=True)
+        self.assertFalse(Transform.exists(held))
+        self.assertFalse(Transform.exists("moved"))
+
+    def test_in_a_namespace_it_follows_the_lookup_rule(self):
+        cmds.createNode("transform", name="x")
+        cmds.namespace(add="char")
+        cmds.createNode("joint", name="char:root")
+        cmds.namespace(set="char")
+        self.assertTrue(Joint.exists("root"))
+        cmds.createNode("transform", name=":char:x")
+        with self.assertRaisesRegex(AmbiguousNodeError, "spell the namespace"):
+            Transform.exists("x")
+        cmds.namespace(set=":")
+        self.assertFalse(Joint.exists("root"))
+        self.assertTrue(Transform.exists("x"))

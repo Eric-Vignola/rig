@@ -171,7 +171,7 @@ try:
 except ValueError as e:
     print(e)                                       # 'noSuchType' is not a Maya node type
 
-print(Transform.exists("jnt"), Joint.exists("jnt"))                          # False True
+print(Transform.exists("jnt"), Joint.exists("jnt"))                          # True True -- a joint is a transform
 print(Transform.is_type("jnt"), Transform.is_type("jnt", exact_type=False))  # False True
 ```
 
