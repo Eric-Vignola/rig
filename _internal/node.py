@@ -193,6 +193,9 @@ def _apply_spec_as_output(spec: Any, target: "Node") -> Any:
     cloned                   = _copy.copy(spec)
     cloned.kargs             = dict(spec.kargs)
     cloned.kargs["writable"] = False
+    # a setting, as if written: re-declared on an existing attribute, it must
+    # be an output already (addAttr cannot edit writable)
+    cloned._given            = tuple(getattr(spec, "_given", ())) + ("writable",)
     return cloned.apply(target)
 
 

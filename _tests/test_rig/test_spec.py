@@ -190,17 +190,22 @@ class TestOverwrite(MayaTestCase):
 
     def test_overwrite_replaces_existing(self):
         node = Node.create("transform", name="ctrl")
-        node << Float("blend", min=0, max=1)
-        # Re-add with different range -- should replace.
-        node << Float("blend", min=-5, max=5)
+        node << Float("blend", min=0, max=1) << 0.5
+        # overwrite=True: deleted and added again with the new range, the value reset
+        node << Float("blend", min=-5, max=5, overwrite=True)
         self.assertEqual(cmds.attributeQuery("blend", node="ctrl", min=True), [-5.0])
+        self.assertEqual(cmds.getAttr("ctrl.blend"), 0.0)
 
     def test_no_overwrite_keeps_existing(self):
+        """Historical id (v2.0.0a2): pinned that overwrite=False kept the attribute
+        and ignored the settings passed; it now pins that the attribute and its
+        value are kept and the settings passed (min / max) apply (round 4b NC8)."""
         node = Node.create("transform", name="ctrl")
-        node << Float("blend", min=0, max=1)
+        node << Float("blend", min=0, max=1) << 0.5
         node << Float("blend", min=-5, max=5, overwrite=False)
-        # Original kept.
-        self.assertEqual(cmds.attributeQuery("blend", node="ctrl", min=True), [0.0])
+        self.assertEqual(cmds.attributeQuery("blend", node="ctrl", min=True), [-5.0])
+        self.assertEqual(cmds.attributeQuery("blend", node="ctrl", max=True), [5.0])
+        self.assertEqual(cmds.getAttr("ctrl.blend"), 0.5)
 
 class TestUnderscoreNames(MayaTestCase):
     """Attributes whose name starts with ``_`` (``__parked__``) go through the
