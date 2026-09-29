@@ -3219,7 +3219,8 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
     if isinstance(obj, cls):
         return obj
     if obj is None:
-        raise TypeError(cls._NONE_TEXT or f"None is not {_article(label)} {label} name")
+        text = cls._NONE_TEXT or f"None is not {_article(label)} {label} name"
+        raise TypeError(f"{text}; {cls._KIND_HINT}" if cls._KIND_HINT else text)
     if isinstance(obj, str) and not isinstance(obj, Attribute):
         name = obj.split(".", 1)[0] if "." in obj else obj
         node = _node_from_str(name, label)
@@ -3249,6 +3250,7 @@ def _refer_call_error(cls: Any, label: str, args: tuple, kwargs: dict) -> str:
             f"{kind}() names no node: {kind}('x') refers to x; "
             + (f"{kind}.define('x') finds or makes it; " if defines else "")
             + f"{kind}.create(name='x') makes one"
+            + (f"; {cls._KIND_HINT}" if cls._KIND_HINT else "")
         )
     name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
     name = name if isinstance(name, str) else "x"

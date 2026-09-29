@@ -45,6 +45,14 @@ Usage::
     red.rename("blue")                             # blue and blueSG (the engine follows <mat>SG)
     red.delete()                                   # the shader, its engines and their materialInfos
     cmds.delete("blue")                            # the one-node escape
+
+    cube << red ; cube << -red ; cube << Material()    # assign ; remove ; out of every engine (rig.shade)
+    cube in red ; cube >> red ; Blinn.of(cube)     # every face? ; the face ids ; [Blinn("red")] or []
+
+A shader node is a membership collection (``rig.shade``): on the right of
+``<<`` it assigns, ``-red`` is the removal token, ``Material()`` /
+``Blinn()`` the kind token (out of every engine on ``<<``, the enumeration on
+``>>``), ``x in red`` asks. ``Blinn(None)`` is a TypeError.
 """
 
 from __future__ import annotations
@@ -83,6 +91,19 @@ _IS_SURFACE: dict = {}
 
 # A name ``rename`` takes: identifiers joined by namespace or path separators.
 _NAME_RE = re.compile(r"^\|?[A-Za-z_][A-Za-z0-9_]*(?:[:|][A-Za-z_][A-Za-z0-9_]*)*$")
+
+# ``rig.shade._MaterialMember``, the membership a shader or shading engine node
+# runs (its ``<<`` / ``>>`` / ``in`` / ``of``): set when ``rig.shade`` loads (the
+# D31 pattern keeps nodetypes free of imports of the DSL modules)
+_MATERIAL_MEMBER = None
+
+
+def _material_member() -> Any:
+    """`_MATERIAL_MEMBER`, loading ``rig.shade`` first if it is not yet set
+    (mid-import only)."""
+    if _MATERIAL_MEMBER is None:
+        import rig.shade  # noqa: F401 -- sets it
+    return _MATERIAL_MEMBER
 
 
 def _is_surface_shader(node_type: str) -> bool:
@@ -229,6 +250,11 @@ class Material(DGNode):
     ``Material.create(type=..., ...)`` / ``Material.define(name, type=...)``
     make any surface type, a plug-in's included
     (``type="aiStandardSurface"``).
+
+    A shader is a membership collection (``rig.shade``): ``cube << red``
+    assigns, ``cube << -red`` removes, ``cube in red`` asks, ``cube >> red``
+    reads the face ids; ``Material()`` / ``Blinn()`` is the kind token (out of
+    every engine on ``<<``; ``cube >> Blinn()`` is ``Blinn.of(cube)``).
     """
 
     # no NATIVE_NODE_TYPE: unregistered, the class of the surface types
@@ -249,6 +275,13 @@ class Material(DGNode):
     # ``cmds.shadingNode``'s name and skipSelect (True unless given); every
     # other keyword of ``create`` / ``define`` is an attribute of the shader
     _CREATE_FLAGS = frozenset({"name", "n", "skipSelect", "ss"})
+
+    # ``Material()`` / ``Blinn()`` is the kind token, not a refusal: on ``<<``
+    # out of every shading engine, on ``>>`` the enumeration of the class
+    _MEMBER_KIND = True
+
+    # ``Blinn(None)``: a failed lookup must not mean every material
+    _NONE_TEXT = "None is not a material name; Material() removes all"
 
     @classmethod
     def is_type(cls, node_name, failfast: bool = False, **kwargs) -> bool:
@@ -448,6 +481,47 @@ class Material(DGNode):
         types = cmds.listNodeTypes(_SURFACE) or []
         found = cmds.ls(*args, type=types, **kwargs) if types else []
         return [node for node in map(_cast, found or ()) if cls.is_type(node.name)]
+
+    # --- the membership grammar (rig.shade)
+
+    @classmethod
+    def _kind(cls) -> Any:
+        """``Material()`` / ``Blinn()``: the kind token (see NodeMeta's
+        reference)."""
+        return _material_member()(None, kind=cls)
+
+    def _member(self) -> Any:
+        """The membership this shader runs on the right of ``<<`` / ``>>``."""
+        return _material_member()(self)
+
+    def __neg__(self) -> Any:
+        """``-red``: the removal token (``cube << -red`` takes cube out of
+        red's engine)."""
+        return _material_member()(self, remove=True)
+
+    def __invert__(self) -> Any:
+        raise TypeError(
+            f"~{self!r} is unassigned; -mat removes members and Material() removes "
+            f"them from every shading engine"
+        )
+
+    def __contains__(self, lhs: Any) -> bool:
+        """``x in red``: whether every face of every shadeable shape of ``x``
+        (a node, faces, a plug, which stands for its node, or a list of them),
+        or the whole object, wears this shader (through its engine, the
+        ``<shader>SG`` rule of ``<<``)."""
+        return self._member().contains(lhs)
+
+    @classmethod
+    def of(cls, x: Any) -> list:
+        """The shaders of this class holding ``x`` (a node or faces): live
+        nodes, each once (``Lambert.of`` never lists a blinn); ``Material.of``
+        lists every engine's shader, and ``Default()`` (the
+        ``initialShadingGroup`` node) for the faces the default engine holds.
+        ``x >> Blinn()`` is the operator spelling."""
+        return cls._kind()._enumerate(x)
+
+    # --- the network
 
     @property
     def engine(self) -> ShadingEngine:

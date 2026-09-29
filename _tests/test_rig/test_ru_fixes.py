@@ -762,9 +762,11 @@ class TestEnumNamesReview(MayaTestCase):
         with self.assertRaisesRegex(TypeError, r"^displayLayer\.displayType: 'x' is not one of its enum fields"):
             cube << Layer.define("ru_ok", update=True, displayType="x")
         self.assertEqual(cmds.getAttr("ru_ok.displayType"), 2)
+        # re-pinned (round 4b NC7): a material's attributes go to Lambert.define,
+        # which reads the enum names before the network is made
         before = _scene()
         with self.assertRaisesRegex(TypeError, r"^lambert\.matteOpacityMode: 'solid mate'"):
-            cube << Lambert("ru_m2", matteOpacityMode="solid mate")
+            cube << Lambert.define("ru_m2", matteOpacityMode="solid mate")
         self.assertEqual(_scene(), before)
-        cube << Lambert("ru_m1", matteOpacityMode="solid matte")
+        cube << Lambert.define("ru_m1", matteOpacityMode="solid matte")
         self.assertEqual(cmds.getAttr("ru_m1.matteOpacityMode"), 1)

@@ -19,11 +19,19 @@ Usage::
     sg.assign(["|pCube1|pCubeShape1"])             # whole object
     sg.get_face_members()                          # [(Mesh("pCubeShape1"), None)]
     sg.get_material()                              # Blinn("myBlinn")
+
+    cube << sg ; faces << -sg ; cube in sg ; cube >> sg   # the membership grammar (rig.shade)
+
+An engine node on the right of ``<<`` / ``>>`` / ``in`` names exactly that
+engine (``faces << ShadingEngine("altSG")``, while a shader node goes to the
+engine it feeds); ``-sg`` is its removal token. It is no kind:
+``ShadingEngine()`` is a TypeError, and ``Material()`` takes the members out
+of every engine.
 """
 
 from __future__ import annotations
 
-from typing import Iterator, Sequence
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 from maya import cmds
@@ -48,6 +56,60 @@ class ShadingEngine(ObjectSet):
     # ``cmds.sets``' name (``renderable``, ``noSurfaceShader`` and ``empty`` are
     # always set); ``create``'s other keywords are the engine's attributes
     _CREATE_FLAGS = frozenset({"name", "n"})
+
+    # an engine is a membership collection but no kind: ``ShadingEngine()`` /
+    # ``ShadingEngine(None)`` are refused, naming the kind token of materials
+    _KIND_HINT = "Material() takes the members out of every shading engine"
+
+    # --- the membership grammar (rig.shade)
+
+    def _member(self) -> Any:
+        """The membership this engine runs on the right of ``<<`` / ``>>``:
+        exactly this engine."""
+        from rig.nodetypes.material_node import _material_member
+
+        return _material_member()(self)
+
+    def __neg__(self) -> Any:
+        """``-sg``: the removal token (``faces << -sg`` takes the faces out of
+        this engine)."""
+        from rig.nodetypes.material_node import _material_member
+
+        return _material_member()(self, remove=True)
+
+    def __invert__(self) -> Any:
+        raise TypeError(
+            f"~{self!r} is unassigned; -sg removes members and Material() removes "
+            f"them from every shading engine"
+        )
+
+    def __contains__(self, lhs: Any) -> bool:
+        """``x in sg``: whether every face of every shadeable shape of ``x``
+        (or the whole object) is in exactly this engine."""
+        return self._member().contains(lhs)
+
+    def _refuse_default(self, verb: str) -> None:
+        """A Maya default engine (``initialShadingGroup``, ``initialParticleSE``)
+        takes no delete or rename: TypeError, nothing written (Maya itself
+        prints an error and deletes nothing, or raises a RuntimeError)."""
+        name = self.name
+        if cmds.ls(name, defaultNodes=True):
+            raise TypeError(f"'{name}' cannot be {verb}: it is a Maya default shading engine")
+
+    def delete(self, nodes=None, **kwargs) -> None:
+        """Deletes this engine (its members are left in no engine: green;
+        ``rig.shade.repair()`` re-homes them), or ``nodes`` when given, as
+        :meth:`DGNode.delete` does. Refuses a Maya default engine
+        (``Default()``): TypeError."""
+        if nodes is None:
+            self._refuse_default("deleted")
+        super().delete(nodes, **kwargs)
+
+    def rename(self, new_name: Any) -> None:
+        """Renames this engine. Refuses a Maya default engine (``Default()``):
+        TypeError."""
+        self._refuse_default("renamed")
+        super().rename(new_name)
 
     # --- creation
 

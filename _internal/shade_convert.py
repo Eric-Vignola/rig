@@ -1,6 +1,5 @@
 """
-Shader conversion: the engine behind ``Phong(mat)``, ``mat.astype("phong")``
-and ``shade.convert(mat, "phong")``.
+Shader conversion: the engine behind ``shade.convert(mat, "phong")``.
 
 Maya has no node-type mutation. Its own Attribute Editor "Type" dropdown is
 ``createNode`` + MEL ``replaceNode`` + ``delete``: a brand-new node, the
@@ -54,8 +53,8 @@ artist's dropdown; ``duplicate`` copies parked attributes (harmless, a
 duplicate converted later restores them too); keyable / channelBox flags of
 built-in attributes are not preserved; an expression string driving a lost
 attribute is not rewritten. Live ``Node`` / ``Plug`` objects of the old
-node are poisoned (``already deleted!``) and nothing is rebound: the spec
-re-resolves by name and is the surviving handle.
+node are poisoned (``already deleted!``) and nothing is rebound; after an
+undo the old node is live again.
 """
 
 from __future__ import annotations
@@ -70,7 +69,8 @@ from maya import cmds
 from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
-from rig.nodetypes._base import _cast_node
+from rig.nodetypes._base import _cast_node, _check_attrs
+from rig.nodetypes.material_node import _gate_type, _leaf
 from rig.spec._base import _spec_from_attribute
 
 
@@ -115,10 +115,10 @@ class Conversion:
     ``default_shift`` ``(attr, value, source default, target default)`` for a
     non-default value that crossed between types whose factory defaults
     differ; ``opaque`` the attributes whose value could not be compared
-    (ramp arrays, typed values); ``dropped_kwargs`` the pending kwargs a lazy
-    retype pruned; ``parked`` the entries of the lost lists that were parked
-    on the node instead of lost (their names as the lines print them);
-    ``restored`` the attributes an earlier park gave back this time."""
+    (ramp arrays, typed values); ``parked`` the entries of the lost lists
+    that are parked on the node instead of lost (their names as the lines
+    print them); ``restored`` the attributes an earlier park gave back this
+    time."""
 
     name:           str
     source:         str
@@ -131,7 +131,6 @@ class Conversion:
     lost_outputs:   tuple = ()
     default_shift:  tuple = ()
     opaque:         tuple = ()
-    dropped_kwargs: tuple = ()
     parked:         tuple = ()
     restored:       tuple = ()
 
@@ -657,9 +656,7 @@ def _prepare(scan: _Scan, park: bool) -> str:
     On failure the new node is deleted and the error re-raised: no wire has
     moved, so the old node is untouched."""
     old, dst = scan.old, scan.dst
-    from rig.shade import _leaf
-
-    new = cmds.createNode(dst, name=f"{_leaf(old)}{SUFFIX}", skipSelect=True)
+    new      = cmds.createNode(dst, name=f"{_leaf(old)}{SUFFIX}", skipSelect=True)
     try:
         if cmds.nodeType(new) != dst:
             raise RuntimeError(f"Maya made a {cmds.nodeType(new)} for '{dst}', not a {dst}")
@@ -876,27 +873,21 @@ def _restore(node: str, dst: str) -> list:
 
 
 def convert(
-    spec:    Any,
+    node:    Any,
     dst:     str,
     *,
     strict:  bool,
     dry_run: bool,
     park:    bool,
     attrs:   dict,
-    update:  bool | None = None,
 ) -> Conversion:
-    """Convert the material ``spec`` names to the node type ``dst``: a free
-    retype when the material does not exist yet, a scene conversion in one
-    undo chunk otherwise. The spec is retyped in place afterwards. On a
-    material already of that type ``attrs`` follow the found-material rule:
-    written only under ``update`` (the spec's own flag when not given)."""
-    from rig.shade import _check_attrs, _gate_type
-
+    """Convert the shader ``node`` (a live material node) to the node type
+    ``dst`` in one undo chunk and return the :class:`Conversion` report (with
+    what an earlier park gave back); ``dry_run`` returns it with nothing
+    written. On a shader already of that type nothing is written."""
     _gate_type(dst)
-    found = spec._locate()
-    if found is None:
-        return _retype_lazy(spec, dst, attrs)
-    old, src = found.material, found.node_type
+    old = node.name   # a deleted node raises here
+    src = cmds.nodeType(old)
     if cmds.ls(old, defaultNodes=True):
         raise RuntimeError(
             f"'{old}' is a Maya default node and cannot be converted (cmds.delete "
@@ -911,11 +902,6 @@ def convert(
         raise RuntimeError(f"'{old}' is locked (lockNode); unlock it first")
     _check_attrs(attrs, node_type=dst)
     if src == dst:
-        if attrs and (spec._update if update is None else update):
-            with _undo_chunk("rig.material"):
-                for attr, value in attrs.items():
-                    Plug(f"{old}.{attr}") << value
-        _retype(spec, dst, attrs)
         return Conversion(old, src, dst)
     scan   = _scan(old, src, dst, park)
     report = scan.report()
@@ -927,9 +913,6 @@ def convert(
         cmds.warning(str(report))
     restored = _run(scan, park, attrs)
     prune_memoize_caches()
-    _retype(spec, dst, attrs)
-    if spec._unique and spec._built is not None:
-        spec._built = cmds.ls(old, uuid=True)[0]
     return replace(report, restored=tuple(restored))
 
 
@@ -957,34 +940,3 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> list:
         if not was_on:
             cmds.undoInfo(state=False)
     return restored
-
-
-def _retype_lazy(spec: Any, dst: str, attrs: dict) -> Conversion:
-    """A material that does not exist yet: validate the pending kwargs
-    against the target type, prune the ones it lacks with one warning, swap
-    the class. Zero scene writes."""
-    from rig.shade import _check_attrs
-
-    _check_attrs(attrs, node_type=dst)
-    dropped = [k for k in spec._attrs if not _q(k, "exists", type=dst)]
-    src     = spec._type or ""
-    if dropped:
-        listed = ", ".join(f"{k}={spec._attrs[k]!r}" for k in dropped)
-        plural = "s" if len(dropped) > 1 else ""
-        cmds.warning(
-            f"rig.shade: {spec._name!r} {src} -> {dst} drops kwarg{plural} {listed} "
-            f"({dst} has no {', '.join(dropped)})"
-        )
-    for k in dropped:
-        del spec._attrs[k]
-    _retype(spec, dst, attrs)
-    return Conversion(spec._name, src, dst, dropped_kwargs=tuple(dropped))
-
-
-def _retype(spec: Any, dst: str, attrs: dict) -> None:
-    from rig.shade import _BY_TYPE, Material
-
-    spec._attrs.update(attrs)
-    spec._attrs    = {k: v for k, v in spec._attrs.items() if _q(k, "exists", type=dst)}
-    spec.__class__ = _BY_TYPE.get(dst, Material)
-    spec._type     = dst
