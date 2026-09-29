@@ -69,7 +69,7 @@ def _class_attr(cls: type, name: str) -> Any:
 # `Node.create` / `Node.find_all` dispatch through it.
 _NODE_CLASS_DICT: dict = {}
 # `_cast`'s caches, cleared by every new node class: (typeName, typeId) -> the
-# class of a node without custom type, and the keys an MObject was cast from
+# class of a node without custom type, and the keys a node was built for
 _CLASS_BY_TYPE: dict = {}
 _CASTABLE_TYPES: set = set()
 
