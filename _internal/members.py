@@ -24,9 +24,10 @@ membership verbs (``<<``, ``>>``, ``of``) pass ``refuse_plugs``: there an
 attribute plug on the left is refused (the node is the member); ``in`` keeps
 it standing for its node.
 
-:class:`_MemberSpec` is the protocol base of the collection specs (``Tag``,
-the materials) and of the private member of a membership node class (a
-display layer's ``_LayerMember``): the constructor contract, ``-spec``, the
+:class:`_MemberSpec` is the protocol base of the collection spec ``Tag`` and
+of the private member of a membership node class (a display layer's
+``_LayerMember``, a shader's or shading engine's ``_MaterialMember``): the
+constructor contract, ``-spec``, the
 ``~spec`` refusal, and the ``inject`` / ``query`` / ``contains`` / ``of``
 verbs that normalise the left-hand side, validate it BEFORE any scene write
 and run the kind's writes inside one undo chunk. ``<<`` with a collection
@@ -907,9 +908,9 @@ def _find_node(name: str) -> str | None:
 
 
 class _MemberSpec:
-    """Protocol base of the collection specs (``Tag``, the materials) and of
-    the private member of a membership node class (a display layer's
-    ``_LayerMember``).
+    """Protocol base of the collection spec ``Tag`` and of the private member
+    of a membership node class (a display layer's ``_LayerMember``, a shader's
+    or shading engine's ``rig.shade._MaterialMember``).
 
     ``Spec('x')`` names a collection; ``Spec()`` means no particular one (the
     kind token): on ``<<`` it is the purge (every collection of this kind,

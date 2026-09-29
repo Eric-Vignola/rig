@@ -57,10 +57,11 @@ Operator conventions:
     * A node on the left of a per-node kind means the collection itself:
       ``cube << Tag("x")`` creates the tag, ``cube << -Tag("x")`` deletes
       it; its components (``cube.vtx[:5]``, ``cube.f``) mean membership.
-    * Materials (``rig.shade``) are exclusive: ``cube << Blinn("x")`` moves
-      the LHS into x's shading engine (built on first use);
-      ``-Material("x")`` carves the LHS out; ``Material()`` leaves it in
-      no engine (green); ``Default()`` reverts to initialShadingGroup.
+    * Materials (``rig.shade``) are node classes, and exclusive: ``cube <<
+      Blinn("x")`` moves the LHS into x's shading engine (x must exist;
+      ``Blinn.define("x")`` finds or makes it); ``-mat`` carves the LHS out;
+      ``Material()`` leaves it in no engine (green); ``Default()`` reverts to
+      initialShadingGroup.
     * ``Layer`` is the display layer node class (``Layer is DisplayLayer``):
       ``Layer("x")`` refers to an existing layer, ``Layer.define("x")`` finds
       or makes it. Layers are exclusive and hold objects only, never

@@ -461,7 +461,7 @@ class TestTypedCreateInContainer(MayaTestCase):
     def test_materials_and_layers_leave_the_same_scene_inside_a_scope(self):
         def build():
             cube = Node(self._cube())
-            cube << Blinn("red")
+            cube << Blinn.define("red")   # re-pinned (round 4b NC7): a material is a node
             cube << Layer.define("lay")   # re-pinned (round 4b NC6): Layer is DisplayLayer
 
         def scene():

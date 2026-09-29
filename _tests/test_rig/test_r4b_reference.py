@@ -444,14 +444,9 @@ _ALLOWED_SITES = {
         1, "user input: the other mesh"),
     ("nodetypes/skincluster.py", "SkinCluster.copy_skincluster", "Mesh"): (
         2, "user input: the source meshes"),
-    # rig.shade's spec classes share the shader node classes' names (NC5);
-    # NC7 retires the specs, and these entries with them
-    ("shade.py", "Material._spec_for", "cls"): (
-        1, "not a node class: the rig.shade spec Material, building a spec"),
-    ("shade.py", "Material.rename", "Material"): (
-        1, "not a node class: the rig.shade spec Material, checking the new name"),
+    # round 4b NC7: the rig.shade specs retired; rig.shade.Material is the node class
     ("shade.py", "convert", "Material"): (
-        1, "not a node class: the rig.shade spec Material, wrapping a name"),
+        1, "user input: the shader to convert, a node or a name"),
 }
 
 

@@ -93,6 +93,8 @@ from rig.nodetypes._base import _cast
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
 from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
+from rig.nodetypes.material_node import Material
+from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal import types as _types
 from rig._internal.members import (
     _GEOMETRY_TYPES,
@@ -1237,7 +1239,9 @@ class _LayerMember(_MemberSpec):
 # ``rig.Layer``: the display layer node class itself (``Layer is DisplayLayer``)
 Layer = DisplayLayer
 
-# the membership right-hand sides of ``<<`` / ``>>`` (D31: ``_internal.types``
-# and ``nodetypes`` cannot import this module; it binds them when it loads)
-_types._MEMBERSHIP           = (_MemberSpec, DisplayLayer)
+# the membership right-hand sides of ``<<`` / ``>>``: the collection specs and
+# tokens, and the membership node classes (layers; shaders and shading engines,
+# whose membership ``rig.shade`` holds) (D31: ``_internal.types`` and
+# ``nodetypes`` cannot import this module; it binds them when it loads)
+_types._MEMBERSHIP           = (_MemberSpec, DisplayLayer, Material, ShadingEngine)
 _display_layer._LAYER_MEMBER = _LayerMember

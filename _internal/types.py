@@ -96,7 +96,8 @@ def _is_attribute_spec(obj: Any) -> bool:
 
 # The membership right-hand sides of ``<<`` / ``>>``: the collection specs
 # (:class:`rig._internal.members._MemberSpec`: ``Tag``, the kind and removal
-# tokens, a material spec) and the membership node classes (``DisplayLayer``).
+# tokens) and the membership node classes (``DisplayLayer``, the shader classes
+# under ``Material``, ``ShadingEngine``).
 # ``rig.membership`` binds it when it loads (the D31 pattern: members.py
 # imports Node / Plug / List at module top, so this module cannot import it);
 # until then, mid-import only, nothing is membership.

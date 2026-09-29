@@ -47,7 +47,7 @@ from rig import (
     NodeNotFoundError,
     Tag,
 )
-from rig.nodetypes import DisplayLayer
+from rig.nodetypes import DisplayLayer, ShadingEngine
 from rig.shade import Blinn, Material
 from rig.spec import Float, String
 from rig._internal.members import _MemberSpec
@@ -365,10 +365,16 @@ class TestTokens(_Case):
                         getattr(token, name)
 
     def test_the_membership_slot_is_one_bound_tuple(self):
-        self.assertEqual(_types._MEMBERSHIP, (_MemberSpec, DisplayLayer))
+        # re-pinned (round 4b NC7): the shader classes and ShadingEngine joined
+        # the tuple; a material is a node (Blinn("red") refers to one that exists)
+        self.assertEqual(_types._MEMBERSHIP, (_MemberSpec, DisplayLayer, Material, ShadingEngine))
         cube = _cube("cube")
         cube << Float("w")
-        for value in (Tag("cap"), Tag(), -Tag("cap"), self.L, DisplayLayer(), -self.L, Blinn("red")):
+        red = Blinn.create(name="red")
+        for value in (
+            Tag("cap"), Tag(), -Tag("cap"), self.L, DisplayLayer(), -self.L, red, -red, Blinn(),
+            Material(), red.engine, -red.engine,
+        ):
             with self.subTest(repr(value)):
                 self.assertTrue(_types._is_membership(value))
         for value in (cube, cube.w, Float("x"), None, "L", 1, [self.L]):
@@ -495,7 +501,9 @@ class TestPlugLeftRefused(_Case):
         self.assertEqual(after[3], before[3])
 
     def test_every_kind_and_verb(self):
-        red = Blinn("red")
+        # re-pinned (round 4b NC7): a material is a node, made before the
+        # refusals; the refusals leave cube where it was (initialShadingGroup)
+        red = Blinn.create(name="red")
         for spec in (self.L, -self.L, DisplayLayer(), Tag("cap"), -Tag("cap"), Tag(), red, -red, Material()):
             for plug in (self.cube.tx, self.cube.t, self.cube.w, self.cube.note, self.cube.visibility):
                 before = self._state()
@@ -510,7 +518,8 @@ class TestPlugLeftRefused(_Case):
         for kind in (DisplayLayer, Tag, Material, Blinn):
             with self.subTest(of=kind.__name__):
                 self.assertRefused(TypeError, f"^'cube.translateX' {PLUG}", lambda: kind.of(self.cube.tx))
-        self.assertFalse(cmds.objExists("red"))
+        self.assertEqual(cmds.listConnections("cubeShape", type="shadingEngine"), ["initialShadingGroup"])
+        self.assertIsNone(cmds.sets("redSG", query=True))
 
     def test_the_messages(self):
         for pattern, call in (

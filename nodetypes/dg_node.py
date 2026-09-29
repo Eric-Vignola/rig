@@ -653,6 +653,10 @@ class DGNode(Node):
     _MEMBER_KIND = False
     _NONE_TEXT   = None
 
+    # A membership class that is no kind (``ShadingEngine``) names the kind
+    # token of its collections in its ``Cls()`` / ``Cls(None)`` refusals
+    _KIND_HINT = None
+
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
         """Initialize an instance from a node name or a MObject.
 

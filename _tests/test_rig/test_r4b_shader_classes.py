@@ -156,7 +156,10 @@ class TestShaderNodeClasses(_Case):
         )
         self.assertRefused(NodeNotFoundError, r"^no blinn named 'nosuch'", lambda: Blinn("nosuch"))
         self.assertRefused(NodeNotFoundError, r"^no surface shader named 'x'", lambda: Material("x"))
-        self.assertRefused(TypeError, "names no node", lambda: Blinn())
+        # re-pinned (round 4b NC7): Blinn() is the kind token (materials are the
+        # membership nodes); Blinn(None) is refused, naming it
+        self.assertEqual(repr(Blinn()), "Blinn()")
+        self.assertRefused(TypeError, r"^None is not a material name; Material\(\) removes all$", lambda: Blinn(None))
         self.assertRefused(TypeError, "takes no attributes", lambda: Blinn("b", color=(1, 0, 0)))
         # the classes' own constructor asserts the exact type (ValueError, the DAG precedent)
         with self.assertRaisesRegex(ValueError, "b is not a lambert"):
