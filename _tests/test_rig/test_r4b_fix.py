@@ -303,3 +303,304 @@ class TestRerunInANamespace(_Case):
             r"'char:arm1'\. Delete 'char:arm' and 'char:arm1' to rebuild it",
         ):
             build()
+
+
+
+def _q(plug, flag):
+    return cmds.addAttr(plug, query=True, **{flag: True})
+
+
+def _inputs(plug):
+    return cmds.listConnections(plug, source=True, destination=False, plugs=True) or []
+
+
+class TestRedeclareFixes(_Case):
+    """Review blockers and majors (attrs_undo, completeness): re-declaring an
+    attribute checks everything before any edit and is one undo step that
+    restores everything."""
+
+    def setUp(self):
+        super().setUp()
+        self.node = Node.create("transform", name="rd")
+        self.drv  = Node.create("transform", name="drv")
+        cmds.setAttr("drv.tx", 7)
+
+    def _state(self, plug):
+        node, attr = plug.split(".", 1)
+        return (
+            cmds.getAttr(plug), _inputs(plug), _q(plug, "minValue"), _q(plug, "maxValue"),
+            _q(plug, "defaultValue"), cmds.attributeQuery(attr, node=node, niceName=True),
+            cmds.getAttr(plug, keyable=True), _q(plug, "hidden"), set(cmds.ls()),
+        )
+
+    def test_an_unknown_keyword_is_refused_when_the_spec_is_made(self):
+        from rig.spec import Float, Vector
+
+        for kwargs, text in (
+            ({"niceNmae": "W"},    r"^Float\('qd'\): niceNmae= is not an addAttr flag \(did you mean niceName=\?\); nothing was changed$"),
+            ({"update": True},     r"update= is not an addAttr flag; re-declaring an attribute applies the settings you pass"),
+            ({"channelBox": True}, r"channelBox= is not an addAttr flag"),
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(TypeError, text):
+                    Float("qd", **kwargs)
+        # overwrite=True never deletes an attribute it cannot add again
+        self.node << Float("qd") << 1
+        self.node.qd << self.drv.tx
+        self.node << Vector("qv", dv=[1, 2, 3])
+        self.node.qvY << self.drv.tx
+        before = (self._state("rd.qd"), cmds.getAttr("rd.qv"), _inputs("rd.qvY"))
+        for spec in (
+            lambda: Vector("qv", dv=["a", "b", "c"], overwrite=True),
+            lambda: Float("qd", min="0", overwrite=True),
+            lambda: Float("qd", dv="x", overwrite=True),
+        ):
+            with self.assertRaisesRegex(TypeError, "is not a number"):
+                self.node << spec()
+        self.assertEqual((self._state("rd.qd"), cmds.getAttr("rd.qv"), _inputs("rd.qvY")), before)
+
+    def test_a_default_edit_undoes_and_redoes(self):
+        from rig.spec import Angle, Enum, Float
+
+        self.node << Float("a", dv=5)
+        self.node << Float("rg", dv=1, min=0, max=10) << 4
+        self.node << Enum("e", en="a:b:c", dv=1)
+        self.node << Angle("ang", dv=0.5)
+        cmds.flushUndo()
+        for spec, before, after in (
+            (Float("a", dv=3),                5.0, 3.0),
+            (Float("rg", dv=6, min=5, max=20), 1.0, 6.0),
+            (Enum("e", dv="c"),               1.0, 2.0),
+            (Angle("ang", dv=1.5),            0.5, 1.5),
+        ):
+            plug = f"rd.{spec.kargs['longName']}"
+            with self.subTest(plug):
+                value = cmds.getAttr(plug)
+                self.node << spec
+                self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.attr")
+                self.assertAlmostEqual(_q(plug, "defaultValue"), after)
+                cmds.undo()
+                self.assertAlmostEqual(_q(plug, "defaultValue"), before)
+                cmds.redo()
+                self.assertAlmostEqual(_q(plug, "defaultValue"), after)
+                self.assertEqual(cmds.getAttr(plug), value)
+        # the range moved with the default, and comes back with it
+        for _ in range(3):
+            cmds.undo()
+        self.assertEqual((_q("rd.rg", "minValue"), _q("rd.rg", "maxValue"), _q("rd.rg", "defaultValue")), (0, 10, 1))
+
+    def test_one_redeclaration_is_one_undo_step(self):
+        from rig.spec import Float, Vector
+
+        self.node << Float("qw", max=3) << 2
+        self.node.qw << self.drv.tx
+        self.node << Vector("qv")
+        cmds.flushUndo()
+        for spec, plug in (
+            (Float("qw", max=20, nn="After", hidden=True, k=False), "rd.qw"),
+            (Vector("qv", max=20, k=False, nn="V", hidden=True), "rd.qvX"),
+        ):
+            with self.subTest(plug):
+                before = self._state(plug)
+                self.node << spec
+                self.assertNotEqual(self._state(plug), before)
+                self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.attr")
+                cmds.undo()
+                self.assertEqual(self._state(plug), before)
+
+    def test_a_compound_redeclared_is_the_compound_created(self):
+        from rig.spec import Vector
+
+        def look(name):
+            parts = [name] + [f"{name}{axis}" for axis in "XYZ"]
+            return [
+                (_q(f"rd.{p}", "hidden"), cmds.attributeQuery(p, node="rd", niceName=True),
+                 cmds.getAttr(f"rd.{p}", keyable=True))
+                for p in parts
+            ]
+
+        self.node << Vector("qv", hidden=True, nn="Vee", k=False)
+        self.node << Vector("qv", hidden=False, nn="Other", k=True)
+        self.node << Vector("fresh", hidden=False, nn="Other", k=True)
+        self.assertEqual(look("qv"), [(h, n.replace("Other", "Other"), k) for h, n, k in look("fresh")])
+        self.node << Vector("qv", hidden=True)
+        self.node << Vector("qv", hidden=False)
+        self.assertEqual(
+            sorted(cmds.listAttr("rd", keyable=True, visible=True, userDefined=True) or []),
+            ["fresh", "freshX", "freshY", "freshZ", "qv", "qvX", "qvY", "qvZ"],
+        )
+
+    def test_an_alias_or_a_published_name_is_refused(self):
+        from rig import set_options
+        from rig.spec import Float
+
+        net = Node.create("network", name="net")
+        net << Float("qw", max=3) << 2
+        cmds.aliasAttr("smile", "net.qw")
+        self.assertLeavesNothing(TypeError, lambda: net << Float("smile", max=9),
+                                 r"^'net\.smile' is an alias of net\.qw; re-declare qw, or pick another name$")
+        self.assertEqual(_q("net.qw", "maxValue"), 3)
+        base = cmds.polyCube(name="base")[0]
+        tgt  = cmds.polyCube(name="tgt")[0]
+        bs   = Node(cmds.blendShape(tgt, base, name="bs")[0])
+        self.assertLeavesNothing(TypeError, lambda: bs << Float("tgt"), r"'bs\.tgt' is an alias of bs\.weight\[0\]")
+        set_options(flatten_containers=False)
+        try:
+            with container("outer"):
+                inner = Node.create("transform", name="cube1")
+                inner << Float("weight", dv=0.5, max=1) << 0.7
+                container.publish_input(inner.weight, "weight")
+            outer = Node("outer")
+            attrs = cmds.listAttr("outer", userDefined=True)
+            self.assertLeavesNothing(TypeError, lambda: outer << Float("weight", max=5),
+                                     r"^'outer\.weight' is a name the container publishes")
+            self.assertEqual(cmds.listAttr("outer", userDefined=True), attrs)
+            self.assertEqual(_q("cube1.weight", "maxValue"), 1)
+        finally:
+            set_options(flatten_containers=True)
+
+    def test_enum_forms_refuse_a_repeated_value_or_name(self):
+        from rig.spec import Enum
+
+        for en, text in (
+            ({"a": 1, "b": 1},      r"fields 'a' and 'b' both have the value 1; Maya keeps only the first"),
+            (["red", ("green", 0)], r"fields 'red' and 'green' both have the value 0"),
+            (["x", ("y", 0), "z"],  r"fields 'x' and 'y' both have the value 0"),
+            ([("a", 1), ("a", 2)],  r"names the field 'a' twice"),
+        ):
+            with self.subTest(en=en):
+                with self.assertRaisesRegex(TypeError, text):
+                    Enum("e", en=en)
+        self.assertEqual(Enum("e", en={"a": 1, "b": 5}).kargs["en"], "a=1:b=5")
+        self.assertEqual(Enum("e", en=["red", ("green", 5), "blue"]).kargs["en"], "red:green=5:blue")
+
+    def test_an_enum_default_reads_the_attributes_fields(self):
+        from rig.spec import Enum
+
+        self.node << Enum("mode", en="a:b:c") << 2
+        self.node << Enum("mode", dv="b")
+        self.assertEqual((_q("rd.mode", "defaultValue"), cmds.getAttr("rd.mode")), (1, 2))
+        before = self._state("rd.mode")
+        for spec, text in (
+            (lambda: Enum("mode", dv=9),   r"'rd\.mode' dv: 9 is not the value of one of its enum fields: a=0, b=1, c=2"),
+            (lambda: Enum("mode", dv="z"), r"'rd\.mode' dv: 'z' is not one of its enum fields"),
+        ):
+            with self.assertRaisesRegex(TypeError, text):
+                self.node << spec()
+        self.assertEqual(self._state("rd.mode"), before)
+        # on creation: against en= when the spec is made, else the default fields
+        with self.assertRaisesRegex(TypeError, r"7 is not the value of one of its enum fields: a=0, b=1, c=2"):
+            Enum("ex", en="a:b:c", dv=7)
+        self.assertLeavesNothing(TypeError, lambda: self.node << Enum("ey", dv="b"), r"'b' is not one of its enum fields")
+        self.assertFalse(cmds.attributeQuery("ey", node="rd", exists=True))
+        self.node << Enum("ez", dv="True")
+        self.assertEqual(_q("rd.ez", "defaultValue"), 1)
+
+    def test_a_list_checks_every_element_first(self):
+        from rig import List
+        from rig.spec import Enum, Float
+
+        na, nb = Node.create("network", name="na"), Node.create("network", name="nb")
+        na << Float("qw", max=3)
+        nb << Enum("qw", en="a:b")
+        before = (self._state("na.qw"), cmds.addAttr("nb.qw", query=True, enumName=True))
+        with self.assertRaisesRegex(TypeError, r"'nb\.qw' exists as an enum, not a double"):
+            List([na, nb]) << Float("qw", max=9, nn="Nine")
+        self.assertEqual((self._state("na.qw"), cmds.addAttr("nb.qw", query=True, enumName=True)), before)
+
+    def test_plug_clone_onto_a_taken_name_is_refused(self):
+        from rig.spec import Enum, Float
+
+        src, dst = Node.create("network", name="src"), Node.create("network", name="dst")
+        src << Enum("qn", en="x:y:z")
+        dst << Enum("qn", en="p:q") << 1
+        src << Float("qm")
+        dst << Enum("qm", en="a:b")
+        for plug in ("qn", "qm"):
+            with self.subTest(plug):
+                self.assertLeavesNothing(
+                    TypeError, lambda: getattr(src, plug) >> dst,
+                    rf"^'dst' already has an attribute '{plug}': '>>' clones, it never overwrites",
+                )
+        self.assertEqual(cmds.addAttr("dst.qn", query=True, enumName=True), "p:q")
+        self.assertEqual(cmds.getAttr("dst.qn"), 1)
+        self.assertEqual(str(src.qm >> Node.create("network", name="free")), "free.qm")
+
+    def test_the_soft_range_is_checked(self):
+        from rig.spec import Float
+
+        self.node << Float("qw", min=0, max=10)
+        before = self._state("rd.qw")
+        for kwargs, text in (
+            ({"smn": 6, "smx": 2}, r"softMinValue=6 is above softMaxValue=2"),
+            ({"smn": -5},          r"softMinValue=-5 is below min=0"),
+            ({"smx": 50},          r"softMaxValue=50 is above max=10"),
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(TypeError, text):
+                    self.node << Float("qw", **kwargs)
+                self.assertEqual(self._state("rd.qw"), before)
+        self.node << Float("qw", smn=2, smx=8)
+        self.assertEqual((_q("rd.qw", "softMinValue"), _q("rd.qw", "softMaxValue")), (2, 8))
+
+    def test_time_is_a_time_attribute(self):
+        from rig.spec import Time
+
+        plug = self.node << Time("qt", dv=3)
+        self.assertEqual(cmds.getAttr("rd.qt", type=True), "time")
+        self.assertEqual(str(plug), "rd.qt")
+        self.node << Time("qt", max=48)
+        self.assertEqual(_q("rd.qt", "maxValue"), 48)
+        clone = plug >> Node.create("network", name="other")
+        self.assertEqual(cmds.getAttr(str(clone), type=True), "time")
+
+
+    def test_a_referenced_attribute_keeps_its_keyable_and_hidden_state(self):
+        import os
+        import shutil
+        import tempfile
+
+        from rig.spec import Float
+
+        folder = tempfile.mkdtemp(prefix="r4b_fix_")
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        self.addCleanup(cmds.file, new=True, force=True)
+        net = Node.create("network", name="net")
+        net << Float("qk", max=3) << 2
+        src = os.path.join(folder, "src.ma").replace("\\", "/")
+        cmds.file(rename=src)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        cmds.file(new=True, force=True)
+        cmds.file(src, reference=True, namespace="ref")
+        ref   = Node("ref:net")
+        edits = cmds.referenceQuery("refRN", editStrings=True)
+        for kwargs, text in (
+            ({"max": 9, "nn": "Nine", "k": False}, r"its keyable state is set in that file"),
+            ({"max": 8, "hidden": True},          r"its hidden flag is set in that file"),
+        ):
+            with self.subTest(kwargs=kwargs):
+                before = self._state("ref:net.qk")
+                with self.assertRaisesRegex(TypeError, rf"^'ref:net\.qk' comes from a referenced file: {text}"):
+                    ref << Float("qk", **kwargs)
+                self.assertEqual(self._state("ref:net.qk"), before)
+                self.assertEqual(cmds.referenceQuery("refRN", editStrings=True), edits)
+        # the settings Maya keeps as reference edits still apply
+        ref << Float("qk", max=9)
+        self.assertEqual(_q("ref:net.qk", "maxValue"), 9)
+        # an attribute added in this scene is the scene's: its keyable state changes
+        ref << Float("mine")
+        ref << Float("mine", k=False)
+        self.assertFalse(cmds.getAttr("ref:net.mine", keyable=True))
+
+    def test_a_new_max_undoes_and_redoes(self):
+        from rig.spec import Float
+
+        self.node << Float("qw") << 4
+        cmds.flushUndo()
+        self.node << Float("qw", max=8)
+        self.assertEqual((_q("rd.qw", "hasMaxValue"), _q("rd.qw", "maxValue")), (True, 8))
+        cmds.undo()
+        self.assertFalse(_q("rd.qw", "hasMaxValue"))
+        cmds.redo()
+        self.assertEqual((_q("rd.qw", "hasMaxValue"), _q("rd.qw", "maxValue")), (True, 8))
+        self.assertEqual(cmds.getAttr("rd.qw"), 4)

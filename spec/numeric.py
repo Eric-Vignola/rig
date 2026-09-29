@@ -52,11 +52,12 @@ class Bool(_AttrSpec):
 
 
 class Time(_AttrSpec):
-    """Time attribute (``dataType='time'``)."""
+    """Time attribute (``attributeType='time'``: ``time`` is no Maya data
+    type, so ``dataType='time'`` added nothing)."""
 
     def __init__(self, name: str, **kargs: Any) -> None:
         super().__init__(name, **kargs)
-        self.kargs["dataType"] = "time"
-        self.kargs.pop("dt",            None)
-        self.kargs.pop("attributeType", None)
-        self.kargs.pop("at",            None)
+        self.kargs["attributeType"] = "time"
+        self.kargs.pop("at",       None)
+        self.kargs.pop("dataType", None)
+        self.kargs.pop("dt",       None)

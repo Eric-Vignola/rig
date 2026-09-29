@@ -228,6 +228,11 @@ class List(list):
                         f"element [{i}] ({x!r}) is not a Plug or a Node and cannot "
                         f"take an attribute spec"
                     )
+            # every element's checks first: a refused one (another kind of
+            # attribute, a setting that cannot apply) leaves every other as it was
+            if len(self) > 1:
+                for x in self:
+                    other._precheck(x)
             return List(other.apply(x) for x in self)
 
         # v4.F.b: empty List from ``multi[:]`` slicing on an

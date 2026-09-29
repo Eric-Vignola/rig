@@ -10,11 +10,11 @@ defaults (``keyable=True``). A default is the attribute's default, not its value
 out means the default. Refused with a TypeError before any edit: another kind of
 attribute (attributeType / dataType, multi, a compound's children), a setting
 ``addAttr`` cannot edit that differs, a min above the max, a default outside the
-range, and any setting on a static attribute (with none, its plug).
+range, and a static attribute (round 4b FIX: with or without settings).
 
 Maya's own limit, not rig's: an undone ``addAttr -edit -defaultValue`` leaves the
-default at 0 (``runs\\r4b\\NC8\\probe_addattr.txt``), so the undo test edits no
-default.
+default at 0 (``runs\\r4b\\NC8\\probe_addattr.txt``); since the FIX step a
+default goes through rig's undoable command, which ``test_r4b_fix`` undoes.
 """
 
 import os
@@ -149,26 +149,34 @@ class TestRedeclare(MayaTestCase):
         self.assertEqual(cmds.getAttr("rd.w"), 1.5)
 
     def test_has_min_and_max_apply_only_when_they_differ(self):
-        # Maya's addAttr -edit toggles them whatever the value: given twice, a
-        # removal stays a removal
+        """Pins (round 4b FIX): hasMinValue / hasMaxValue are fixed settings.
+        Maya's addAttr -edit toggles them whatever the value, and its undo /
+        redo are not inverses (redo gives the opposite state): the same state
+        passes, another raises naming overwrite=True, nothing changed; a max
+        given still sets hasMaxValue."""
         self.node << Float("w", min=0, max=10) << 4
-        for _ in range(2):
-            self.node << Float("w", hasMaxValue=False)
-            self.assertFalse(_q("rd.w", "hasMaxValue"))
-            self.assertTrue(_q("rd.w", "hasMinValue"))
-        self.node << Float("w", hnv=False)
-        self.assertFalse(_q("rd.w", "hasMinValue"))
+        before = _state("rd.w")
+        self.node << Float("w", hasMaxValue=True, hnv=True)
+        self.assertEqual(_state("rd.w"), before)
+        for kwargs, flag in (({"hasMaxValue": False}, "hasMaxValue"), ({"hnv": False}, "hasMinValue")):
+            with self.subTest(flag):
+                with self.assertRaisesRegex(
+                    TypeError, rf"'rd\.w': {flag} cannot be changed on an existing attribute .*overwrite=True"
+                ):
+                    self.node << Float("w", **kwargs)
+                self.assertEqual(_state("rd.w"), before)
         self.node << Float("w", max=8)
         self.assertEqual((_q("rd.w", "hasMaxValue"), _q("rd.w", "maxValue")), (True, 8))
         self.assertEqual(cmds.getAttr("rd.w"), 4)
 
     def test_a_default_is_not_the_value(self):
         # a plug never set reads its default: re-declaring a default (or a range
-        # the default moves into) leaves the value it had, saved and reopened too
+        # with the default in it) leaves the value it had, saved and reopened
+        # too (round 4b FIX: a range that excludes the default takes dv=)
         self.node << Float("w", dv=5)
         self.node << Float("rr", dv=5, min=0, max=10)
         self.node << Float("w", dv=3)
-        self.node << Float("rr", min=20, max=30)
+        self.node << Float("rr", min=20, max=30, dv=25)
         self.assertEqual((_q("rd.w", "defaultValue"), cmds.getAttr("rd.w")), (3, 5))
         self.assertEqual((_q("rd.rr", "minValue"), cmds.getAttr("rd.rr")), (20, 5))
         folder = tempfile.mkdtemp(prefix="r4b_nc8_")
@@ -197,8 +205,12 @@ class TestRedeclare(MayaTestCase):
                 with self.assertRaisesRegex(TypeError, text):
                     self.node << Float("w", **kwargs)
                 self.assertEqual(_state("rd.w"), before)
-        # both moved together, it holds
-        self.node << Float("w", min=20, max=30)
+        # both moved together, with a default inside, it holds (round 4b FIX:
+        # the attribute's own default 5 outside the new range is refused)
+        with self.assertRaisesRegex(TypeError, r"'rd\.w': the default 5\.0 is below min=20; pass dv="):
+            self.node << Float("w", min=20, max=30)
+        self.assertEqual(_state("rd.w"), before)
+        self.node << Float("w", min=20, max=30, dv=25)
         self.assertEqual((_q("rd.w", "minValue"), _q("rd.w", "maxValue")), (20, 30))
         self.assertEqual(cmds.getAttr("rd.w"), 2)
 
@@ -313,15 +325,22 @@ class TestRedeclare(MayaTestCase):
     # -- static, another kind, overwrite -- #
 
     def test_static_attribute(self):
-        plug = self.node << Float("tx")
-        self.assertIs(plug.node, self.node)
-        self.assertEqual(str(plug), "rd.translateX")
+        """Pins (round 4b FIX): a declaration that names a static attribute,
+        by its long or short name, is refused before any edit, with settings
+        or without (it returned the static plug, so Float('s') << 2 set the
+        scale; BASE raised Maya's 'Found no valid items')."""
         before = set(cmds.ls())
-        for spec in (Float("tx", min=0), Float("translateX", k=False), Float("visibility", nn="V")):
+        for spec in (
+            Float("tx"), Float("tx", min=0), Float("translateX", k=False), Float("visibility", nn="V"),
+            Float("s"), Float("v"), Float("t"), Float("tmp"), Vector("r"), String("v"),
+            Float("tx", overwrite=True),
+        ):
             with self.subTest(spec=spec.kargs["longName"]):
-                with self.assertRaisesRegex(TypeError, r"'rd\.\w+' is a static attribute; its settings cannot be changed"):
+                with self.assertRaisesRegex(TypeError, r"^'rd\.\w+' is a static attribute of the transform \("):
                     self.node << spec
         self.assertEqual(set(cmds.ls()), before)
+        self.assertEqual(cmds.getAttr("rd.s"), [(1.0, 1.0, 1.0)])
+        self.assertTrue(cmds.getAttr("rd.v"))
         self.assertTrue(cmds.getAttr("rd.tx", keyable=True))
         self.assertFalse(cmds.attributeQuery("tx", node="rd", minExists=True))
 
