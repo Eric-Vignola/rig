@@ -226,7 +226,7 @@ __all__ = [
     "NodeNotFoundError",
     "AmbiguousNodeError",
     "NodeTypeError",
-    # Membership (collection specs and the component carrier)
+    # Membership (the layer node class, the Tag declaration, the component carrier)
     "Components",
     "Layer",
     "Tag",

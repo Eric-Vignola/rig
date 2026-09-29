@@ -180,9 +180,11 @@ def _engines_fed_by(material: str) -> list[str]:
 
 
 def _guard_owned(material: str, verb: str) -> None:
-    """Refuse a network verb on a Maya default or a referenced shader."""
+    """Refuse a network verb on a Maya default (TypeError, as the default
+    engine and ``defaultLayer`` refuse theirs) or a referenced shader
+    (RuntimeError, as the referenced engines and layers)."""
     if cmds.ls(material, defaultNodes=True):
-        raise RuntimeError(f"'{material}' is a Maya default node and cannot be {verb}")
+        raise TypeError(f"'{material}' is a Maya default node and cannot be {verb}")
     if cmds.referenceQuery(material, isNodeReferenced=True):
         raise RuntimeError(f"'{material}' is referenced and cannot be {verb}; edit the source file")
 
@@ -596,8 +598,9 @@ class Material(DGNode):
         their materialInfos, in one undo step (the members are left in no
         engine: green; ``rig.shade.repair()`` re-homes them). ``nodes``, when
         given, are deleted as :meth:`DGNode.delete` does. Refuses a Maya
-        default (``lambert1``, ``standardSurface1``) or referenced shader
-        (RuntimeError). ``cmds.delete(name)`` deletes the shader alone."""
+        default (``lambert1``, ``standardSurface1``: TypeError) or a
+        referenced shader (RuntimeError). ``cmds.delete(name)`` deletes the
+        shader alone."""
         if nodes is not None:
             super().delete(nodes, **kwargs)
             return
@@ -606,8 +609,8 @@ class Material(DGNode):
     def rename(self, new_name: Any) -> None:
         """Renames the shader, and its engine when the engine follows the
         ``<mat>SG`` convention (``red``, ``redSG`` -> ``blue``, ``blueSG``),
-        in one undo step. Refused before any write: a Maya default or
-        referenced shader (RuntimeError), a name that exists or a taken
+        in one undo step. Refused before any write: a Maya default
+        (TypeError) or referenced shader (RuntimeError), a name that exists or a taken
         ``<new>SG`` (ValueError), a name Maya would not keep. ``cmds.rename``
         renames the shader alone."""
         if not isinstance(new_name, str) or not new_name:

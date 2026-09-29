@@ -70,11 +70,12 @@ Usage::
     ref  = Layer.define("ref", displayType=2, visibility=False)   # attributes set when it is made
     List([geo, Node("ctl")]) << ref       # one editDisplayLayerMembers call
     geo << -ref ; geo << Layer()          # both: back to defaultLayer
-    geo in ref ; geo.tx in ref            # True / False (a plug stands for its node)
+    geo in ref ; geo.tx in ref            # True ; True (a plug stands for its node)
     geo >> Layer() ; Layer.of(geo)        # DisplayLayer("ref") or None ; [DisplayLayer("ref")] or []
     Layer("rig")                          # NodeNotFoundError when it does not exist: never created
     ref.visibility << False ; ref.rename("anim") ; ref.clear() ; ref.delete()
     geo.f[:3] << ref                      # TypeError: layers hold objects (Maya would store the shape)
+    geo.f[:3] in ref                      # False: a query answers by contents (no layer holds faces)
     geo >> ref                            # TypeError: a layer has no ids; ask with geo in ref
 """
 

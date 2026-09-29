@@ -39,10 +39,11 @@ def _node_lshift(node: Any, other: Any) -> Any:
     """``node << other`` for a node (``DGNode.__lshift__``): dispatches by RHS
     type:
 
-    - Membership (a collection spec: ``Tag``, a material; a layer node; a
-      kind or removal token) -- makes this node a member (``node <<
-      Tag("x")`` on a per-node kind means the collection itself) and
-      returns the node.
+    - Membership (a membership node: a layer, a shader, a shading engine;
+      ``Tag``; a kind or removal token) -- makes this node a member (``node
+      << Tag("x")`` on a per-node kind means the collection itself) and
+      returns the node. A membership class without its parentheses
+      (``node << Blinn``) is a TypeError naming ``Blinn()`` / ``Blinn('x')``.
     - ``_AttrSpec`` (``Float``, ``Vector``, ``lock``, ...) -- adds an
       attribute on this node.
     - **Matrix-shaped source on a transform** -- applies the matrix to
