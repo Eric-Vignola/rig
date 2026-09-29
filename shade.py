@@ -4,7 +4,8 @@ Materials through the membership grammar.
 A material spec -- ``Blinn("red")``, ``Lambert("skin", diffuse=0.8)``,
 ``Material("look:x", type="phong")`` -- is a lazy handle on a surface shader
 and its shading engine. It makes zero Maya calls until it meets ``<<``: then
-``red`` is found by name (exact, then in the current namespace) or built --
+``red`` is found by name (the lookup rule of ``Node(x)``: as written, a bare
+name at the root namespace and in the current one) or built --
 ``cmds.shadingNode`` for the shader, ``cmds.sets(renderable=True)`` for
 ``redSG`` with its materialInfo, renderPartition, lightLinker and
 defaultShaderList1 wiring -- the kwargs are applied as attribute injections

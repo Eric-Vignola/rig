@@ -1023,9 +1023,11 @@ class Layer(_MemberSpec):
     """A display layer: ``Layer('x')``, ``-Layer('x')``, ``Layer()``.
 
     ``Layer(name=None, *, update=False, **attrs)`` makes zero Maya calls.
-    ``name`` is the find-or-create key (exact, then in the current
-    namespace); a node of that name that is not a display layer is a
-    ``TypeError``. ``attrs`` are the layer's attributes, applied on create
+    ``name`` is the find-or-create key, found by the lookup rule of
+    ``Node(x)`` (a path or ``ns:name`` as written; a bare name at the root
+    namespace and in the current one, both at once an AmbiguousNodeError); a
+    node of that name that is not a display layer is a ``TypeError``.
+    ``attrs`` are the layer's attributes, applied on create
     (``Layer('ref', displayType=2, visibility=False)``) and skipped on a
     found layer unless ``update=True``; a typo raises before any write.
 

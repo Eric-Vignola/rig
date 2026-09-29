@@ -27,7 +27,16 @@ from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig import Container, InjectionError, Node, Plug, lock
+from rig import (
+    AmbiguousNodeError,
+    Container,
+    InjectionError,
+    Node,
+    NodeLookupError,
+    NodeNotFoundError,
+    Plug,
+    lock,
+)
 from rig.nodetypes import Choice, DAGNode, DGNode, Joint, Transform
 from rig.nodetypes import _base
 from rig.nodetypes import dg_node as dg_node_module
@@ -226,14 +235,26 @@ class TestCastDispatch(MayaTestCase):
         self.assertEqual([m.call_count for m in mocks], [0, 0, 0])
 
     def test_cast_error_messages_unchanged(self):
+        # re-pinned (round 4b NC1): the cast core's errors are unchanged, and
+        # Node() raises the lookup family instead of the cast's Maya text
+        # (each one still a TypeError and a ValueError)
         cmds.createNode("transform", name="dup")
         cmds.createNode("transform", name="dup", parent=cmds.createNode("transform"))
-        for name in ("nope", "dup", "", "|", "du*"):
+        for name, cls, text in (
+            ("nope", NodeNotFoundError, "no node named 'nope'"),
+            ("dup", AmbiguousNodeError, "'dup' is ambiguous: it names 2 nodes: "),
+            ("", NodeNotFoundError, "no node named ''"),
+            ("|", NodeNotFoundError, "no node named '|'"),
+            ("du*", NodeLookupError, "'du*' is a pattern, not a node name"),
+        ):
             with self.subTest(name=name):
                 expected = _outcome(_cast_by_name, name)
                 self.assertEqual(expected[0], "error")
                 self.assertEqual(_outcome(_cast, name), expected)
-                self.assertEqual(_outcome(Node, name), expected)
+                outcome = _outcome(Node, name)
+                self.assertEqual(outcome[:2], ("error", cls))
+                self.assertTrue(issubclass(cls, TypeError) and issubclass(cls, ValueError))
+                self.assertTrue(outcome[2].startswith(text), outcome[2])
 
         for unknown in (
             "DEADBEEF-0000-4000-8000-000000000000",
@@ -241,11 +262,14 @@ class TestCastDispatch(MayaTestCase):
         ):
             with self.subTest(uid=unknown):
                 self.assertTrue(is_valid_maya_uid(unknown))
+                self.assertEqual(
+                    _outcome(_cast, unknown),
+                    ("error", TypeError, f"No object matches uuid: {unknown}."),
+                )
                 with self.assertRaises(TypeError) as ctx:
                     Node(unknown)
-                self.assertEqual(
-                    str(ctx.exception), f"No object matches uuid: {unknown}."
-                )
+                self.assertIs(type(ctx.exception), NodeNotFoundError)
+                self.assertEqual(str(ctx.exception), f"no node has the uuid {unknown!r}")
 
     def test_deleted_node_mobject_casts_by_name(self):
         cmds.undoInfo(state=True, infinity=True)

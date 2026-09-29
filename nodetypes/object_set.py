@@ -8,9 +8,10 @@ from typing import Any
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _lookup
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.errors import NodeNotFoundError
 
 
 class ObjectSet(DGNode):
@@ -73,10 +74,12 @@ class ObjectSet(DGNode):
     def get_or_create(cls, name: str) -> ObjectSet:
         """Creates an object set or return the existing one.
 
-        The name is looked up as given and in the current namespace (where
-        ``create`` puts a new node). A node of that name that is not a set of
-        this type raises a TypeError: the caller named something else, and a
-        set called ``name1`` beside it would silently fork.
+        The name follows the lookup rule of ``Node(x)``: a bare name is
+        looked up at the root namespace and in the current one (where
+        ``create`` puts a new node); both raise AmbiguousNodeError, a pattern
+        NodeLookupError. A node of that name that is not a set of this type
+        raises a TypeError: the caller named something else, and a set called
+        ``name1`` beside it would silently fork.
 
         Args:
             name: An object set name to find or create.
@@ -84,17 +87,15 @@ class ObjectSet(DGNode):
         Returns:
             An ObjectSet instance.
         """
-        namespace = cmds.namespaceInfo(currentNamespace=True)
-        for candidate in (name, f"{namespace}:{name}"):
-            if not cmds.objExists(candidate):
-                continue
-            if cmds.ls(candidate, type=cls.NATIVE_NODE_TYPE):
-                # the cast picks the most derived registered class, so a
-                # shadingEngine comes back as a ShadingEngine, equal to any
-                # other node object of it.
-                return _cast(candidate)
-            node_type = cmds.nodeType(cmds.ls(candidate, long=True)[0])
-            raise TypeError(
-                f"'{candidate}' exists and is a {node_type}, not a {cls.NATIVE_NODE_TYPE}"
-            )
-        return cls.create(name=name)
+        try:
+            found = _lookup(name)
+        except NodeNotFoundError:
+            return cls.create(name=name)
+        if cmds.ls(found, type=cls.NATIVE_NODE_TYPE):
+            # the cast picks the most derived registered class, so a
+            # shadingEngine comes back as a ShadingEngine, equal to any
+            # other node object of it.
+            return _cast(found)
+        raise TypeError(
+            f"'{name}' exists and is a {cmds.nodeType(found)}, not a {cls.NATIVE_NODE_TYPE}"
+        )

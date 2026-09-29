@@ -63,7 +63,9 @@ from typing import Any, Iterable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig.nodetypes._base import _lookup
 from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.errors import NodeNotFoundError
 from rig.nodetypes.geometry import iter_component_tokens
 from rig._internal.node import Node
 from rig._internal.plug import ComponentPlug, Plug
@@ -866,16 +868,16 @@ def normalise(lhs: Any, *, want_shapes: bool) -> list[_Selection]:
 
 
 def _find_node(name: str) -> str | None:
-    """The node called ``name``: exact, then ``<currentNamespace>:name``.
-    ``None`` when absent; ``ValueError`` when the name is ambiguous."""
-    found = cmds.ls(name) or []
-    if not found:
-        namespace = cmds.namespaceInfo(currentNamespace=True)
-        if namespace != ":":
-            found = cmds.ls(f"{namespace}:{name}") or []
-    if len(found) > 1:
-        raise ValueError(f"'{name}' is ambiguous: {found}; use a full path")
-    return found[0] if found else None
+    """The node called ``name`` by the lookup rule of ``Node(x)``
+    (``rig.nodetypes._base._lookup``): a path or ``ns:name`` as written, a
+    bare name at the root namespace and in the current one. Its name as
+    ``cmds.ls(long=True)`` prints it, or ``None`` when no node has it. A name
+    several nodes have (two DAG paths, or ``:x`` and ``:<current>:x``) raises
+    AmbiguousNodeError and a pattern NodeLookupError (both ValueErrors)."""
+    try:
+        return _lookup(name)
+    except NodeNotFoundError:
+        return None
 
 
 def _check_attrs(attrs: dict, *, node_type: str | None = None, node: str | None = None) -> None:

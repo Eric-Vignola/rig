@@ -14,7 +14,7 @@ Usage::
 
     from rig.nodetypes import DisplayLayer
 
-    layer = DisplayLayer.get_or_create("geometry")   # exact name, then <currentNamespace>:name
+    layer = DisplayLayer.get_or_create("geometry")   # the lookup rule of Node(x), else a new layer
     layer.add_members(["|pCube1", "|grp"])           # the nodes themselves, never the subtree
     DisplayLayer.for_node("|pCube1")                 # DisplayLayer("geometry"); None in defaultLayer
     layer.get_members()                              # [Transform("pCube1"), Transform("grp")]
@@ -27,9 +27,10 @@ from __future__ import annotations
 from typing import Any
 
 from maya import cmds
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _lookup
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.errors import NodeNotFoundError
 
 
 class DisplayLayer(DGNode):
@@ -69,26 +70,27 @@ class DisplayLayer(DGNode):
     def get_or_create(cls, name: str) -> DisplayLayer:
         """Creates a display layer or returns the existing one.
 
-        The name is looked up as given and in the current namespace (where
-        ``create`` puts a new node). A node of that name that is not a display
-        layer raises a TypeError: the caller named something else, and a layer
+        The name follows the lookup rule of ``Node(x)``: a bare name is
+        looked up at the root namespace and in the current one (where
+        ``create`` puts a new node); both raise AmbiguousNodeError, a pattern
+        NodeLookupError. A node of that name that is not a display layer
+        raises a TypeError: the caller named something else, and a layer
         called ``name1`` beside it would silently fork. The new layer is empty
         (the selection is never read) and does not become the current layer.
 
         Args:
             name: A display layer name to find or create.
         """
-        namespace = cmds.namespaceInfo(currentNamespace=True)
-        for candidate in (name, f"{namespace}:{name}"):
-            if not cmds.objExists(candidate):
-                continue
-            if cmds.ls(candidate, type=cls.NATIVE_NODE_TYPE):
-                return cls(candidate)
-            raise TypeError(
-                f"'{candidate}' exists and is a {cmds.nodeType(candidate)}, not a "
-                f"{cls.NATIVE_NODE_TYPE}"
-            )
-        return cls.create(empty=True, name=name)
+        try:
+            found = _lookup(name)
+        except NodeNotFoundError:
+            return cls.create(empty=True, name=name)
+        if cmds.ls(found, type=cls.NATIVE_NODE_TYPE):
+            return cls(found)
+        raise TypeError(
+            f"'{name}' exists and is a {cmds.nodeType(found)}, not a "
+            f"{cls.NATIVE_NODE_TYPE}"
+        )
 
     # --- properties
 

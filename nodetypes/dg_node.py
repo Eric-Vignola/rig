@@ -19,9 +19,11 @@ from rig.nodetypes._base import (
     _ensure_owner_alive,
     _full_name_buffer,
     _handle_valid,
+    _lookup,
     _named_through_owner,
     _new_attr,
     _queried_data_type,
+    _type_label,
     Attribute,
     get_custom_type,
     Node,
@@ -257,7 +259,10 @@ class DGNode(Node):
                 try:
                     sel.add(str(node))
                 except Exception:
-                    raise ValueError(f"Invalid node name: {node}")
+                    # the lookup rule of Node(x): its error (not found,
+                    # ambiguous, a pattern), or the node it finds (the
+                    # current namespace's)
+                    sel.add(_lookup(str(node), _type_label(type(self))))
                 d["_mobject"] = sel.getDependNode(0)
             d["_fn_set"] = self.FN_SET(d["_mobject"])
             self._cache_api1_objects(d["_fn_set"].name())
