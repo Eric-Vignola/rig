@@ -316,14 +316,15 @@ class TestReference(MayaTestCase):
         cases = (
             (lambda: Transform(), TypeError,
              r"^Transform\(\) names no node: Transform\('x'\) refers to x; "
-             r"Transform\.create\(name='x'\) makes one$"),
+             r"Transform\.define\('x'\) finds or makes it; Transform\.create\(name='x'\) makes one$"),
             (lambda: Transform(None), TypeError, r"^None is not a transform name$"),
             (lambda: DisplayLayer(None), TypeError, r"^None is not a displayLayer name$"),
             (lambda: ObjectSet(None), TypeError, r"^None is not an objectSet name$"),
             (lambda: Container(None), TypeError, r"^None is not a container name$"),
             (lambda: Transform("grp", tx=1), TypeError,
              r"^Transform\('grp', \.\.\.\) refers to an existing transform and takes no "
-             r"attributes; Transform\.create\(name='grp', \.\.\.\) makes a new one$"),
+             r"attributes; Transform\.define\('grp', \.\.\.\) finds or makes it, "
+             r"Transform\.create\(name='grp', \.\.\.\) makes a new one$"),
             (lambda: Transform("grp", "x"), TypeError, r"refers to an existing transform"),
             (lambda: Transform(name="grp"), TypeError, r"^Transform\('grp', \.\.\.\) refers"),
             (lambda: Joint(name="new_joint"), TypeError, r"Joint\.create\(name='new_joint'"),
@@ -417,6 +418,8 @@ class TestReference(MayaTestCase):
 _ALLOWED_SITES = {
     ("nodetypes/dg_node.py", "DGNode.exists", "cls"): (
         1, "the reference itself: exists answers whether cls(name) returns a node"),
+    ("nodetypes/dg_node.py", "_define", "DAGNode"): (
+        1, "user input: define's parent=, resolved by the reference rule before any write"),
     ("nodetypes/follicle.py", "Follicle.create_on_mesh", "Transform"): (
         1, "user input: the mesh transform to attach to"),
     ("nodetypes/joint.py", "Joint.match_hierarchy", "Joint"): (

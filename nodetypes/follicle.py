@@ -20,6 +20,11 @@ class Follicle(DAGNode):
 
     NATIVE_NODE_TYPE = "follicle"
 
+    _DEFINE_REFUSED = (
+        "a follicle is placed on a surface: Follicle.create_on_mesh(mesh, ref_object, "
+        "name='x') makes one; Follicle('x') refers to one"
+    )
+
     @classmethod
     @_typed_creator
     def create_on_mesh(

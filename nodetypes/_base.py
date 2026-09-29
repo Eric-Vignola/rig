@@ -2925,6 +2925,12 @@ def _shared_refused(
     registered for `node_type`, else ``Node.define(type, ...)``."""
     key      = name if isinstance(name, str) and name else "x"
     node_cls = node_cls or _NODE_CLASS_DICT.get(node_type)
+    if node_cls is not None and getattr(node_cls, "_DEFINE_REFUSED", None):
+        # a class built from data or inputs (Mesh, SkinCluster ...) has no define
+        return TypeError(
+            f"{call}: create always makes a new node; "
+            f"{node_cls.__name__}({key!r}) refers to an existing one"
+        )
     define   = (
         f"{node_cls.__name__}.define({key!r})"
         if node_cls is not None
@@ -3165,15 +3171,18 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
 def _refer_call_error(cls: Any, label: str, args: tuple, kwargs: dict) -> str:
     """The message of a class call that names no node (``Transform()``) or
     passes more than the node (``Transform("x", tx=1)``)."""
-    kind = cls.__name__
+    kind    = cls.__name__
+    defines = not getattr(cls, "_DEFINE_REFUSED", None)  # Mesh, SkinCluster ... refuse it
     if not args and not kwargs:
         return (
             f"{kind}() names no node: {kind}('x') refers to x; "
-            f"{kind}.create(name='x') makes one"
+            + (f"{kind}.define('x') finds or makes it; " if defines else "")
+            + f"{kind}.create(name='x') makes one"
         )
     name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
     name = name if isinstance(name, str) else "x"
     return (
         f"{kind}({name!r}, ...) refers to an existing {label} and takes no attributes; "
-        f"{kind}.create(name={name!r}, ...) makes a new one"
+        + (f"{kind}.define({name!r}, ...) finds or makes it, " if defines else "")
+        + f"{kind}.create(name={name!r}, ...) makes a new one"
     )

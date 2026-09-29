@@ -1405,7 +1405,27 @@ def _scope_name(name: str) -> Optional[str]:
     return _flattened_name(prefix, name) if prefix else None
 
 
+class _DefineScope:
+    """What ``define`` reads from the container scope (``dg_node._DEFINE_HOOK``;
+    the D31 pattern keeps nodetypes free of ``rig._internal`` imports)."""
+
+    @staticmethod
+    def prefix(aware: bool, typed: bool) -> str:
+        """The flattened scope's prefix the create of a define puts on its
+        name's leaf, or "": :func:`_typed_create` prefixes the outermost typed
+        create (`typed`) of a container-aware class (`aware`),
+        :meth:`_ContainerStack.createNode` every name."""
+        if not container._stack or (typed and (_TYPED_DEPTH or not aware)):
+            return ""
+        return container._compute_flatten_prefix()
+
+    # the node-added tracking and the undo chunk
+    track = staticmethod(_call_tracking_creation)
+    chunk = staticmethod(_undo_chunk)
+
+
 _dg_node_module._TYPED_CREATE_HOOK = _typed_create
+_dg_node_module._DEFINE_HOOK = _DefineScope
 _nodetypes_base._NODE_CREATE_HOOK = _node_create
 _nodetypes_errors._SCOPE_HINT_HOOK = _scope_name
 
@@ -2430,6 +2450,11 @@ class Container(DGNode):
 
     # how the reference's errors name this unregistered class's nodes
     _TYPE_LABEL = "container"
+
+    _DEFINE_REFUSED = (
+        "a container is made by its scope: with container('x'): makes one; "
+        "Container('x') refers to one"
+    )
 
     def __repr__(self) -> str:
         return f'Container("{self.name}")'

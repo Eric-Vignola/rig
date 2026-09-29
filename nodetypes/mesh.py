@@ -52,6 +52,11 @@ class Mesh(Geometry):
     # mesh's attributes
     _CREATE_FLAGS = frozenset({"name", "uv_data"})
 
+    _DEFINE_REFUSED = (
+        "a mesh is built from its data: Mesh.create(mesh_data, name='x') makes one; "
+        "Mesh('x') refers to one"
+    )
+
     @property
     def fn_set(self) -> OpenMaya.MFnMesh:
         """A new ``MFnMesh`` of this mesh, on every access (about 3 us).

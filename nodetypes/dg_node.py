@@ -16,6 +16,7 @@ from rig.nodetypes._base import (
     _cast,
     _check_attrs,
     _class_attr,
+    _current_namespace,
     _deleted_error,
     _ensure_owner_alive,
     _full_name_buffer,
@@ -31,7 +32,7 @@ from rig.nodetypes._base import (
     Node,
     set_custom_type,
 )
-from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
+from rig.nodetypes.errors import _article, AmbiguousNodeError, NodeNotFoundError, NodeTypeError
 
 
 # Maya recognises these short names in cmds and MSelectionList parsing,
@@ -131,6 +132,20 @@ _ABSTRACT_TYPES = frozenset({"entity", "dagNode", "geometryShape"})
 # positional argument.
 _PLAIN_CREATES = set()
 
+# The container scope's define hook (the D31 pattern): ``rig._internal.container``
+# sets it when it loads, to the object `_define` reads the scope through (its
+# ``_DefineScope``: the flatten prefix, the stack's frames, the node-added
+# tracking, the container owner of a node, the undo chunk, ``createNode``).
+_DEFINE_HOOK = None
+
+# ``define``'s name: ':'-separated parts Maya keeps as written (a letter or
+# '_', then letters, digits or '_'); a leading ':' is the root namespace
+_DEFINE_NAME = re.compile(r"^:?(?:[A-Za-z_]\w*:)*[A-Za-z_]\w*$", re.ASCII)
+
+# the create flags ``define`` refuses: its name and ``parent=`` are its own
+# arguments (the key)
+_DEFINE_OWN = frozenset({"n", "p"})
+
 
 def _create_template(cls, args, kwargs):
     """`DGNode.create`'s body: ``cls._create``, then ``cls.post_create``, given
@@ -149,6 +164,262 @@ def _create_template(cls, args, kwargs):
 def _got(inputs: tuple) -> str:
     """The positional arguments of a refused call, for its message."""
     return ", ".join(repr(x) for x in inputs)
+
+
+def _attribute_keywords(node_type: str, kwargs: dict, flags: frozenset, call: str) -> dict:
+    """The keywords of `kwargs` that are no flag in `flags`, taken out of it:
+    the attributes of a create or define, each checked on `node_type` first (a
+    typo raises AttributeError naming `call`, before anything is made)."""
+    attrs = {key: value for key, value in kwargs.items() if key not in flags}
+    for key in attrs:
+        del kwargs[key]
+    try:
+        _check_attrs(attrs, node_type=node_type)
+    except AttributeError as error:
+        raise AttributeError(
+            f"{call}: {error}, and no create flag is named so "
+            f"({', '.join(sorted(flags)) or 'it takes none'}); nothing was made"
+        ) from None
+    return attrs
+
+
+def _define_hook() -> Any:
+    """`_DEFINE_HOOK`, loading the container module first if it is not yet
+    set (mid-import only)."""
+    if _DEFINE_HOOK is None:
+        import rig._internal.container  # noqa: F401 -- sets the hook
+    return _DEFINE_HOOK
+
+
+def _shown(spelling: str) -> str:
+    """A key spelled absolutely (``|:grp|:char:x``, ``:x``) as a user reads it
+    (``|grp|char:x``, ``x``)."""
+    return "|".join(part[1:] if part[:1] == ":" else part for part in spelling.split("|"))
+
+
+def _absolute_path(dag_path: OpenMaya.MDagPath) -> str:
+    """The path of `dag_path` with every node's absolute name (``|:grp|:char:x``),
+    which names it whatever the current namespace and ``relativeNames``."""
+    path  = OpenMaya.MDagPath(dag_path)
+    parts = []
+    while path.length():
+        parts.append(OpenMaya.MFnDependencyNode(path.node()).absoluteName())
+        path.pop()
+    return "|" + "|".join(reversed(parts))
+
+
+def _node_at(spelling: str, dag: bool) -> Any:
+    """The node an absolute spelling names (a DAG key: that exact path), cast,
+    or None when no single node has it."""
+    sel = OpenMaya.MSelectionList()
+    try:
+        sel.add(spelling)
+    except RuntimeError:
+        return None
+    return _cast(sel.getDagPath(0) if dag else sel.getDependNode(0))
+
+
+def _is_at(node: Any, spelling: str) -> bool:
+    """True if the absolute spelling names exactly the node object `node`."""
+    sel = OpenMaya.MSelectionList()
+    try:
+        sel.add(spelling)
+        return sel.getDependNode(0) == node.mobject
+    except RuntimeError:
+        return False
+
+
+def _absolute_name(name: str) -> str:
+    """The absolute name (``:char:x``) of the one node a name Maya returned
+    names."""
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return OpenMaya.MFnDependencyNode(sel.getDependNode(0)).absoluteName()
+
+
+def _reference_of(namespace: str) -> str | None:
+    """The file reference whose namespace is `namespace` (absolute, not the
+    root) or holds it (``:char:sub`` is in ``:char``), loaded or not, as
+    ``charRN (C:/.../char.ma)``; None when no reference owns it."""
+    for node in cmds.ls(type="reference") or ():
+        try:
+            owned = cmds.referenceQuery(node, namespace=True)
+        except RuntimeError:  # sharedReferenceNode, _UNKNOWN_REF_NODE_: no file
+            continue
+        if owned != ":" and (namespace == owned or namespace.startswith(owned + ":")):
+            try:
+                path = cmds.referenceQuery(node, filename=True, withoutCopyNumber=True)
+            except RuntimeError:
+                return node
+            return f"{node} ({path})"
+    return None
+
+
+def _define(
+    spell:  Any,
+    refer:  str,
+    label:  str,
+    name:   Any,
+    parent: Any,
+    *,
+    dag:    bool,
+    update: bool,
+    attrs:  dict,
+    accept: Any,
+    make:   Any,
+    aware:  bool,
+    joins:  bool | None,
+    typed:  bool,
+    hint:   Any = None,
+) -> Any:
+    """The body of every ``define`` (``Cls.define``, ``Node.define``): find the
+    node at the key, or make it there, never a second node under a name the
+    reference already gives.
+
+    `spell(args)` spells the call (``Transform.define(args)``), `refer` the
+    reference that finds its nodes (``Transform``), `label` their type
+    (``"transform"``); `accept(found)` is the node to return for a node found
+    at the key (None: another type), `make(name, parent)` makes the node;
+    `aware` / `typed` say how the scope prefixes the made node's name (a typed
+    create of a container-aware class, or ``createNode``), `joins` is the
+    ``container=`` given; `hint(found)` adds to the type mismatch's text.
+    Every refusal raises before any write."""
+    hook = _define_hook()
+    call = spell(repr(name))
+    # 1. the name: a key Maya keeps as written
+    if not isinstance(name, str) or isinstance(name, Attribute):
+        raise TypeError(f"{spell('name')} takes the node's name, a str (got {name!r}); {refer}(x) refers to a node")
+    if "|" in name:
+        if not dag:
+            raise TypeError(f"{call}: {_article(label)} {label} is a DG node: its name has no '|'")
+        up, _, leaf = name.rstrip("|").rpartition("|")
+        where = f"{spell(f'{leaf!r}, parent={up!r}')} keys it under {up!r}" if up else f"{spell(repr(leaf))} keys it at the world"
+        raise TypeError(f"{call}: a define's name is a key, not a path: {where}")
+    if not _DEFINE_NAME.match(name):
+        raise ValueError(
+            f"{call}: {name!r} is not a name Maya keeps as written: each ':' part is a letter "
+            f"or '_' and then letters, digits or '_' (Maya would rename the node)"
+        )
+    # 2. the key, spelled absolutely: the node create(name=...) would make
+    if ":" in name:
+        space, _, leaf = name.lstrip(":").rpartition(":")
+        space = f":{space}" if space else ":"
+    else:
+        space, leaf = _current_namespace(), name
+    made_name = f"{space}:{leaf}" if space != ":" else f":{leaf}"
+    prefix    = hook.prefix(aware, typed)
+    key_leaf  = f"{prefix}_{leaf}" if prefix else leaf
+    absolute  = f"{space}:{key_leaf}" if space != ":" else f":{key_leaf}"
+    parent_node = None
+    if parent is not None:
+        from rig.nodetypes.dag_node import DAGNode
+
+        parent_node = DAGNode(parent)  # the reference: a missing parent raises here
+        spelling    = f"{_absolute_path(parent_node.mdagpath)}|{absolute}"
+    else:
+        spelling = f"|{absolute}" if dag else absolute
+    key = _shown(spelling)
+
+    # 3. found at the key: that node, of the class, never moved or enrolled
+    found = _node_at(spelling, dag)
+    if found is not None:
+        node = accept(found)
+        if node is None:
+            shown = found.name
+            raise NodeTypeError(
+                name, label, found.node_type,
+                f"Node({shown!r}) is {found!r}{hint(found) if hint else ''}",
+            )
+        if update and attrs:
+            _check_attrs(attrs, node=node.name)
+            with hook.chunk("rig.define"):
+                for attr, value in attrs.items():
+                    getattr(node, attr) << value
+        return node
+
+    # 4. missing at the key: the guards
+    if space != ":":
+        if not OpenMaya.MNamespace.namespaceExists(space):
+            raise ValueError(
+                f"{call}: there is no namespace {space[1:]!r}; define never creates one "
+                f"(cmds.namespace(add={space[1:]!r}) does)"
+            )
+        reference = _reference_of(space)
+        if reference:
+            raise ValueError(
+                f"{call}: the namespace {space[1:]!r} belongs to the file reference {reference}; "
+                f"define never makes a node there (Maya would make it in the reference's "
+                f"namespace, unreferenced)"
+            )
+    # a name Maya would change on the new node: a DG node's (any node's, for a
+    # DG key), since a DG name is unique among every node's short names
+    holders = [n for n in cmds.ls(absolute, long=True) or () if not dag or n[:1] != "|"]
+    if holders:
+        kind = cmds.nodeType(holders[0])
+        what = (
+            f"{_article(kind)} {kind} ({holders[0]})" if len(holders) == 1
+            else f"{len(holders)} nodes ({', '.join(holders[:3])}{', ...' if len(holders) > 3 else ''})"
+        )
+        raise NodeTypeError(
+            name, label, kind,
+            message=f"{call}: {_shown(absolute)!r} is taken by {what}; Maya would rename a new {label}",
+        )
+    if parent is None:
+        # the reference of the name finds a node elsewhere (nested, or in the
+        # other namespace the lookup rule reads): a second one would fork it
+        bare = key_leaf if ":" not in name else absolute
+        try:
+            other = _lookup(bare, label)
+        except NodeNotFoundError:
+            other = None
+        except AmbiguousNodeError as error:
+            raise AmbiguousNodeError(
+                name, error.candidates, label, namespaces=error.namespaces,
+                message=(
+                    f"{call}: {name!r} already names {' and '.join(error.candidates)}; "
+                    f"{_article(label)} {label} at the key {key} would be one more: "
+                    + ("pass parent= to key one of them" if dag else "spell the namespace")
+                ),
+            ) from None
+        if other is not None:
+            other_node = _cast(other)
+            other_abs  = _absolute_name(other)
+            who        = refer if accept(other_node) is not None else "Node"
+            if other_abs != absolute:
+                spelled = f"{space[1:]}:{name}" if space != ":" else f":{name}"
+                message = (
+                    f"{call}: {name!r} exists as {other_abs}; this define's key is {key}: "
+                    f"{who}({other_abs!r}) refers to it, {spell(repr(spelled))} makes {key}"
+                )
+            else:
+                up      = other_node.get_parent() if dag else None
+                message = (
+                    f"{call}: {name!r} exists at {other}; {who}({name!r}) refers to it"
+                    + (f", and {spell(f'{name!r}, parent={up.name!r}')} keys it there" if up is not None else "")
+                )
+            raise AmbiguousNodeError(name, [other], label, message=message)
+
+    # 5. make it, in one undo chunk, knowing exactly what the call made
+    with hook.chunk("rig.define"):
+        node, created = hook.track(make, (made_name, parent_node), {})
+        # 6. the post-condition: the new node is the key; else what the call
+        # made is deleted (never cmds.undo(): with the queue off it raises and
+        # keeps the node, with it on it names the user's previous step)
+        if not _is_at(node, spelling):
+            made  = node.long_name
+            # not the hyperLayout a scope's container makes with its first
+            # member: deleting it deletes the container
+            alive = [n for n in created if cmds.objExists(n) and cmds.nodeType(n) != "hyperLayout"]
+            if alive:
+                cmds.delete(alive)
+            raise NodeTypeError(
+                name, label, label,
+                message=(
+                    f"{call}: Maya made {made!r}, not the key {key!r}; define deleted what "
+                    f"the call made ({', '.join(alive) or 'nothing'})"
+                ),
+            )
+    return node
 
 
 def _typed_creator(fn):
@@ -277,6 +548,11 @@ class DGNode(Node):
     # new node. A class whose ``_create`` runs another command (or takes other
     # keywords) declares its own.
     _CREATE_FLAGS = frozenset({"name", "n", "skipSelect", "ss"})
+
+    # Why ``define`` is refused for this class, naming its creator (a class
+    # built from data or inputs rather than a name, or made another way); None:
+    # ``define`` finds or makes its nodes
+    _DEFINE_REFUSED = None
 
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
         """Initialize an instance from a node name or a MObject.
@@ -784,17 +1060,9 @@ class DGNode(Node):
                 raise TypeError(f"{cls.__name__}.create() takes no parent=: {why}")
             kwargs["parent"] = parent
         if kwargs and not flags.issuperset(kwargs):
-            attrs = {key: value for key, value in kwargs.items() if key not in flags}
-            for key in attrs:
-                del kwargs[key]
-            try:
-                _check_attrs(attrs, node_type=cls.NATIVE_NODE_TYPE)
-            except AttributeError as error:
-                raise AttributeError(
-                    f"{cls.__name__}.create(): {error}, and no create flag is named so "
-                    f"({', '.join(sorted(flags)) or 'it takes none'}); nothing was made"
-                ) from None
-            kwargs[_CREATE_ATTRS] = attrs
+            kwargs[_CREATE_ATTRS] = _attribute_keywords(
+                cls.NATIVE_NODE_TYPE, kwargs, flags, f"{cls.__name__}.create()"
+            )
         if container is not None:
             kwargs["container"] = container
         hook = _TYPED_CREATE_HOOK
@@ -802,6 +1070,98 @@ class DGNode(Node):
             kwargs.pop("container", None)
             return _create_template(cls, inputs, kwargs)
         return hook(cls, _create_template, inputs, kwargs)
+
+    @classmethod
+    def define(
+        cls,
+        name:      str,
+        *,
+        parent:    Any         = None,
+        update:    bool        = False,
+        container: bool | None = None,
+        **kwargs:  Any,
+    ) -> "DGNode":
+        """Finds the node of this class at the key ``name`` names, or makes it
+        there: never a second node under a name ``Cls(name)`` already refers to.
+        ``Cls(x)`` refers (never writes), ``Cls.create(name=...)`` always makes
+        a new node, ``Cls.define(name)`` makes sure it exists::
+
+            rig  = Transform.define("rig")                   # |rig: made, or found on a re-run
+            ctl  = Transform.define("ctl", parent=rig, tx=1) # |rig|ctl; tx set only when it is made
+            Transform.define("ctl", parent=rig, tx=5, update=True)   # found: tx set to 5
+            layer = DisplayLayer.define("proxy", displayType=2)
+
+        **The key** is the node ``create(name=name, parent=parent)`` would
+        make, spelled in full: the flattened ``with container()`` scope's
+        prefix on the leaf (a container-aware class; the registries - layers,
+        sets, engines - never), the name's namespace or else the current one,
+        and for a DAG class the path of ``parent=`` (the reference rule: a
+        missing parent raises NodeNotFoundError) or else the world. So
+        ``Transform.define("ctl", parent="L_arm")`` and ``parent="R_arm"`` are
+        two keys. The name is a str without ``|`` (a DAG parent is
+        ``parent=``) whose ``:`` parts Maya keeps as written (``"1bad"``:
+        ValueError); a namespace in it is read from the root (``"char:x"``).
+
+        **Found at the key**: that node, when it is of this class or a
+        subclass (``Transform.define("j1")`` is ``Joint("j1")``), else
+        NodeTypeError. It is never moved, reparented or added to a container;
+        the attribute keywords are set only with ``update=True`` (in one undo
+        step, ``rig.define``).
+
+        **Missing at the key**: refused when the reference ``Cls(name)``
+        (without ``parent=``) already finds a node elsewhere or is ambiguous
+        (``'root' exists at |char_grp|root; Joint('root') refers to it, and
+        Joint.define('root', parent='char_grp') keys it there``;
+        AmbiguousNodeError), when the namespace does not exist (define never
+        creates one) or belongs to a file reference, loaded or not
+        (ValueError), and when a DG node holds the name, which Maya would
+        change (``'knob' is taken by a multiplyDivide``, NodeTypeError). Else
+        ``create`` makes it, in one undo step (``rig.define``), with every
+        keyword: the class's command flags (``_CREATE_FLAGS``) and the
+        attributes, whose names are checked on the node type before any
+        lookup (a typo raises on a hit and on a miss). If the made node is not
+        the key after all, define deletes exactly what the call made (never
+        ``cmds.undo()``) and raises NodeTypeError.
+
+        Every refusal writes nothing. A class built from data or inputs
+        (``Mesh``, ``NurbsCurve``, ``NurbsSurface``, ``SkinCluster``,
+        ``BlendShape``, ``Reference``, ``Follicle``) and ``Container`` refuse
+        ``define`` (TypeError naming their creator).
+        """
+        refused = cls._DEFINE_REFUSED
+        if refused:
+            raise TypeError(f"{cls.__name__}.define() is refused: {refused}")
+        if cls.NATIVE_NODE_TYPE in _ABSTRACT_TYPES:
+            raise TypeError(
+                f"{cls.__name__}.define() makes no node: {cls.NATIVE_NODE_TYPE!r} is an "
+                f"abstract Maya type; Node.define('<type>', 'x') finds or makes a node of a type"
+            )
+        label = _type_label(cls)
+        flags = cls._CREATE_FLAGS
+        own   = _DEFINE_OWN.intersection(kwargs)
+        if own:
+            raise TypeError(
+                f"{cls.__name__}.define() takes its name first and parent= "
+                f"(got {', '.join(f'{key}=' for key in sorted(own))})"
+            )
+        if parent is not None and "parent" not in flags:
+            raise TypeError(f"{cls.__name__}.define() takes no parent=: {_article(label)} {label} is a DG node")
+        attrs = {}
+        if kwargs and not flags.issuperset(kwargs):
+            attrs = _attribute_keywords(cls.NATIVE_NODE_TYPE, kwargs, flags, f"{cls.__name__}.define()")
+
+        def accept(found):
+            return found if isinstance(found, cls) else cls._coerce(found)
+
+        def make(made_name, parent_node):
+            return cls.create(name=made_name, parent=parent_node, container=container, **kwargs, **attrs)
+
+        return _define(
+            lambda args: f"{cls.__name__}.define({args})", cls.__name__, label, name, parent,
+            dag=issubclass(cls.FN_SET, OpenMaya.MFnDagNode), update=update, attrs=attrs,
+            accept=accept, make=make, aware=cls._CONTAINER_AWARE, joins=container, typed=True,
+            hint=cls._mismatch_hint,
+        )
 
     @classmethod
     def post_create(cls, new_node_name: str, *args, **kwargs) -> "DGNode":
