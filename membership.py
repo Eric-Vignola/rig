@@ -81,6 +81,7 @@ from rig._internal.members import (
     _find_node,
     _GEOMETRY_TYPES,
     _MemberSpec,
+    _ndims,
     _Selection,
     _single_geometry_shape,
     Components,
@@ -326,22 +327,31 @@ class Tag(_MemberSpec):
 
     ``members << Tag('x')`` adds members (create-with-components when the
     tag is missing, ``modify replace`` when it is empty -- ``modify add`` on
-    an empty tag is a silent no-op -- and ``modify add`` otherwise); one tag
-    holds one category, so faces into a vertex tag is a ``TypeError`` naming
-    ``Tag('x').set(...)``. ``node << Tag('x')`` means the tag itself (created
-    empty; no-op when present) and ``node << -Tag('x')`` deletes it, refusing
-    while a deformer references it unless ``force=True``. ``members <<
-    Tag()`` removes them from every editable tag of their category on that
-    node; ``node << Tag()`` deletes every editable tag. ``<<`` returns the
-    left-hand side; every write of one ``<<`` is one undo chunk. An
-    attribute plug on the left stands for its node (``sph.tx << Tag('x')``
-    is ``sph << Tag('x')``); only a deformer's ``componentTagExpression``
-    plug keeps its own meaning and receives the name.
+    an empty tag is a silent no-op -- and ``modify add`` otherwise). Maya
+    reads a tag as one component type, the first one stored, so faces into a
+    non-empty vertex tag are a ``TypeError`` naming ``Tag('x').set(...)``
+    (Maya would store them and never read them); removing faces from a vertex
+    tag is a no-op (none are in it). ``node << Tag('x')`` means the tag itself
+    (created empty; no-op when present) and ``node << -Tag('x')`` deletes it,
+    refusing while a deformer references it unless ``force=True``.
+    ``members << Tag()`` removes them from every editable tag of their
+    category on that node; ``node << Tag()`` deletes every editable tag.
+    ``<<`` returns the left-hand side; every write of one ``<<`` is one undo
+    chunk. An attribute plug on the left of ``<<`` / ``>>`` / ``Tag.of`` is
+    a ``TypeError`` (the node is the member: ``sph << Tag('x')``); only a
+    deformer's ``componentTagExpression`` plug keeps its own meaning and
+    receives the name.
 
     ``lhs >> Tag('x')`` reads the native ids of the left-hand side that are
-    in the tag (``(N, 2)`` on a surface, ``(N, 3)`` on a lattice); a whole
-    node reads the tag's contents in its own category; ``lhs >> Tag()`` is
-    ``Tag.of(lhs)``, the tags holding the left-hand side. Names are
+    in the tag (``(N, 2)`` on a surface, ``(N, 3)`` on a lattice): none for
+    components of another kind or a tag the node does not have (an empty
+    array); a whole node reads the tag's contents in its own category (a
+    missing tag is a ``ValueError`` there); ``lhs >> Tag()`` is
+    ``Tag.of(lhs)``, the tags holding the left-hand side. ``lhs in
+    Tag('x')`` is True when every component of the left is in the tag (a
+    node on the left: the node has the tag); a tag the node does not have,
+    or components of another kind, answer False; an attribute plug stands
+    for its node there. ``Tag()`` is the kind token. Names are
     validated at construction: at least two characters of ``[A-Za-z0-9_:]``
     not starting with a digit (Maya stores a one-character name as ``''``).
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
@@ -534,13 +544,10 @@ class Tag(_MemberSpec):
                 raise self._refuse_missing(home)
             if home.state == _PROCEDURAL:
                 raise self._refuse_procedural(home, "edited", shadow=False)
-            if home.empty:
+            if home.empty or home.category != category:
+                # none of them is in it: an empty tag, or another kind (Maya
+                # reads a tag as one component type), so nothing to remove
                 return []
-            if home.category != category:
-                raise TypeError(
-                    f"{home.describe()} is a {_CATEGORY_WORD[home.category]} tag; "
-                    f"{names[0]} are {words} (Maya returns False silently)"
-                )
             return [lambda: self._remove_members(home, group.comps, names)]
         if home.state == _PROCEDURAL:
             raise self._refuse_procedural(home, "edited", shadow=True)
@@ -550,8 +557,9 @@ class Tag(_MemberSpec):
             return [lambda: self._replace_members(home, group.comps, names, category)]
         if home.category != category:
             raise TypeError(
-                f"{home.describe()} is a {_CATEGORY_WORD[home.category]} tag and one "
-                f"tag holds one category; nothing was written. "
+                f"{home.describe()} is a {_CATEGORY_WORD[home.category]} tag, and Maya "
+                f"reads a tag as one component type, the first one stored: it would "
+                f"store {names[0]} and never read them, so nothing was written. "
                 f"Tag({home.name!r}).set(<{words}>) replaces its contents"
             )
         return [lambda: self._add_members(home, group.comps, names)]
@@ -772,11 +780,38 @@ class Tag(_MemberSpec):
         group, geo = self._single(selections, "'>>' queries")
         name       = self._name
         if not geo.has_component_tag(name):
-            raise ValueError(f"no component tag '{name}' on {_short(group.path)}")
+            if group.whole:
+                raise ValueError(f"no component tag '{name}' on {_short(group.path)}")
+            return _no_ids(group)   # components: none of them is in it
         ids = geo.get_component_tag_indices(name)
         if group.whole:
             return ids
         return _rows_of(group, geo, name, ids)
+
+    def _contains(self, selections: list[_Selection]) -> bool:
+        if self._options.get("at") is not None:
+            raise TypeError(
+                "at= places a tag; 'in' reads the tag the geometry resolves. "
+                "Drop at= from the 'in' spec"
+            )
+        name = self._name
+        for group in _group(selections):
+            self._check_geometry(group)
+            geo = _cast(group.path)
+            if not geo.has_component_tag(name):
+                return False
+            if not group.comps:
+                continue   # a node on the left: it has the tag
+            ids = geo.get_component_tag_indices(name)
+            if not ids.size:
+                return False
+            # untyped for queries: components of another kind are not in it
+            category = geo.get_component_tag_category(name)
+            if any(_CATEGORY_OF_KIND[s.kind] != category for s in group.comps):
+                return False
+            if not _holds_all(group, name, ids):
+                return False
+        return True
 
     @classmethod
     def _of(cls, selections: list[_Selection]) -> list["Tag"]:
@@ -941,17 +976,25 @@ class Tag(_MemberSpec):
             cmds.setAttr(plug, expression, type="string")
 
 
+def _no_ids(group: _TagGroup) -> np.ndarray:
+    """The empty id array of the group's components (their dtype and shape:
+    ``(0,)``, or ``(0, 2)`` / ``(0, 3)`` for surface / lattice coordinates)."""
+    selection = group.comps[0]
+    if selection.indices is not None:
+        return selection.indices[:0]
+    ndims = _ndims(selection.kind, group.node_type)
+    return np.empty((0,) if ndims == 1 else (0, ndims), dtype=int)
+
+
 def _rows_of(group: _TagGroup, geo: Geometry, name: str, ids: np.ndarray) -> np.ndarray:
-    """The ids of the group's components that are in the tag ``name``."""
+    """The ids of the group's components that are in the tag ``name``: none
+    when the tag is empty or of another kind (Maya reads a tag as one
+    component type, so faces are never in a vertex tag)."""
     category = _CATEGORY_OF_KIND[group.comps[0].kind]
     if ids.size == 0:
         return ids
-    tag_category = geo.get_component_tag_category(name)
-    if tag_category != category:
-        raise TypeError(
-            f"'{name}' on {_short(group.path)} is a {_CATEGORY_WORD[tag_category]} tag; "
-            f"{group.comps[0].names[0]} are {_CATEGORY_PLURAL[category]}"
-        )
+    if geo.get_component_tag_category(name) != category:
+        return _no_ids(group)
     parts = []
     for selection in group.comps:
         if selection.flat:
@@ -1059,6 +1102,7 @@ class _LayerMember(_MemberSpec):
     ACCEPTS     = frozenset({"whole"})
     WANT_SHAPES = False
     EXCLUSIVE   = True
+    HAS_IDS     = False
 
     def __init__(self, layer: DisplayLayer | None = None, remove: bool = False) -> None:
         # the layer node (None: the kind token); its name is read at each use,
@@ -1074,6 +1118,10 @@ class _LayerMember(_MemberSpec):
     @property
     def purges(self) -> bool:
         return self._layer is None
+
+    @classmethod
+    def _kind_name(cls) -> str:
+        return "Layer"
 
     def __neg__(self) -> "_LayerMember":
         if self._layer is None:
@@ -1166,6 +1214,11 @@ class _LayerMember(_MemberSpec):
             f"a layer holds whole objects and has no ids; ask with "
             f"{_short(path)} in {self!r}"
         )
+
+    def _contains(self, selections: list[_Selection]) -> bool:
+        paths    = _layer_targets(selections)
+        expected = None if self._layer.is_default else self._layer
+        return all(_holding_layer(path) == expected for path in paths)
 
     @classmethod
     def _of(cls, selections: list[_Selection]) -> list[DisplayLayer]:

@@ -300,10 +300,13 @@ class TestTagIdiomsStay(MayaTestCase):
                 ids = lhs >> Tag(tag)
                 self.assertIsInstance(ids, np.ndarray)
                 np.testing.assert_array_equal(ids, expected)
-        # one tag holds one category: vertices against a face tag is a TypeError
+        # re-pinned (round 4b NC6, user decision 2026-09-28: a tag is untyped
+        # for queries): vertices against a face tag are none of its members, an
+        # empty id array (it was a TypeError at NC0)
         before = set(cmds.ls())
-        with self.assertRaisesRegex(TypeError, "'cap' on cubeShape is a face tag"):
-            self.cube.vtx[:2] >> Tag("cap")
+        ids    = self.cube.vtx[:2] >> Tag("cap")
+        self.assertIsInstance(ids, np.ndarray)
+        self.assertEqual(ids.shape, (0,))
         self.assertEqual(set(cmds.ls()), before)
 
     def test_expression_sugar_writes_the_name(self):
