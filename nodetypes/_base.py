@@ -17,12 +17,19 @@ import numpy as np
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
+from rig.nodetypes.errors import AmbiguousNodeError, NodeLookupError, NodeNotFoundError
 
 
 CUSTOM_TYPE_ATTR = "__custom_node_type__"
 
 # a node name MSelectionList can resolve without wildcards, plugs or components
 _PLAIN_NODE_NAME = re.compile(r"^[|:\w]+$")
+
+# a search pattern (`_lookup` refuses it: a pattern is never a node's name)
+_PATTERN_CHARS = re.compile(r"[*?\[\]]")
+
+# the current namespace, ":" at the root (an API call, 0.5 us: no command runs)
+_current_namespace = OpenMaya.MNamespace.currentNamespace
 
 
 def is_valid_maya_uid(uid_string: str) -> bool:
@@ -258,6 +265,63 @@ def _cast_by_name(obj: str) -> Any:
         return type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
 
     raise ValueError(f"Failed casting {obj}")
+
+
+def _lookup(name: str, label: str = "node") -> str:
+    """The one node ``name`` names, by the lookup rule shared by ``Node(x)``,
+    the node classes and the membership lookups. Cold: ``Node(x)`` runs it
+    after a failed cast, and for a bare name while a namespace other than the
+    root is current.
+
+    * A qualified name (a path or ``ns:name``) is looked up as written.
+    * A bare name is looked up at the root namespace (``:x``) and, when the
+      current namespace is not the root, in it too (``:char:x``), both spelled
+      absolutely so ``namespace -relativeNames`` cannot change the answer. A
+      node at both raises AmbiguousNodeError ("spell the namespace").
+    * A pattern (``*``, ``?``, ``[]``) raises NodeLookupError: a pattern is a
+      search (``cmds.ls``, ``find_all``), never a node's name.
+    * A name several DAG nodes have raises AmbiguousNodeError listing their
+      paths (an instanced node is one node).
+    * No node raises NodeNotFoundError, whose message names ``label``
+      ("no joint named 'x'") and carries the hints (see ``errors``).
+
+    Returns the node's name as ``cmds.ls(long=True)`` prints it (a full path
+    for a DAG node), which names that one node.
+    """
+    if _PATTERN_CHARS.search(name):
+        raise NodeLookupError(name, label)
+    if ":" in name or "|" in name:
+        spellings = (name,)
+    else:
+        current   = _current_namespace()
+        spellings = (f":{name}",) if current == ":" else (f":{name}", f"{current}:{name}")
+    try:
+        found = cmds.ls(*spellings, long=True) or []
+    except RuntimeError:  # no name Maya can parse ('', '|', '1bad')
+        found = []
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise NodeNotFoundError(name, label)
+    # several nodes: DAG nodes under different parents, or both namespaces
+    by_spelling = [(s, cmds.ls(s, long=True) or []) for s in spellings]
+    for _, nodes in by_spelling:
+        if len(nodes) > 1:
+            raise AmbiguousNodeError(name, nodes, label)
+    raise AmbiguousNodeError(name, [s for s, nodes in by_spelling if nodes], label, namespaces=True)
+
+
+def _type_label(cls: type) -> str:
+    """How a lookup error names the nodes of node class ``cls``: its node type
+    (``"joint"``), ``"node"`` for DGNode and ``"DAG node"`` for DAGNode."""
+    label = cls.CUSTOM_NODE_TYPE or cls.NATIVE_NODE_TYPE
+    return {"entity": "node", "dagNode": "DAG node"}.get(label, label)
+
+
+def _is_uuid(name: str) -> bool:
+    """Whether ``_cast`` reads the str ``name`` as a uuid (as it does: 32 hex
+    digits or more, the uuid form)."""
+    return len(name) >= 32 and is_valid_maya_uid(name)
 
 
 # (DGNode.__init__, DAGNode.__init__, their is_type functions, their name
@@ -2790,8 +2854,18 @@ class Node(metaclass=NodeMeta):
       ``Mesh``, ...: the most derived class registered for its custom type or
       type chain).
 
-    Anything else raises ``ValueError``. The attribute a ``"node.attr"`` string
-    names is ``Attribute("a.tx")`` (typed) or ``Plug("a.tx")`` (DSL).
+    A name follows one lookup rule (the node classes and the membership
+    lookups share it): a path or ``ns:name`` is looked up as written; a bare
+    name at the root namespace and, while another namespace is current, in it
+    too (``Node("root")`` finds ``char:root`` while ``char`` is current). A
+    name that gives no single node raises the lookup family of
+    :mod:`rig.nodetypes.errors`, every one also a TypeError and a ValueError:
+    NodeNotFoundError (with hints: did you mean, the name in another
+    namespace, the scope prefix), AmbiguousNodeError (two DAG paths: use a
+    path; ``:x`` and ``:char:x``: spell the namespace), NodeLookupError for a
+    pattern (``"red*"`` is a search: ``cmds.ls``). Anything that is not a
+    name or node raises ``ValueError``. The attribute a ``"node.attr"``
+    string names is ``Attribute("a.tx")`` (typed) or ``Plug("a.tx")`` (DSL).
     ``isinstance(x, Node)`` is True for every node object. :class:`DGNode` and
     its subclasses carry the typed API and the DSL: attribute access returns
     :class:`Plug` instances owned by the node (``node.tx.node is node``),
@@ -2883,9 +2957,39 @@ def _node_factory(obj: Any) -> Any:
         # no ".")
         if "." in obj:
             obj = obj.split(".", 1)[0]
-    elif isinstance(obj, OpenMaya.MPlug):
+        return _node_from_str(obj)
+    if isinstance(obj, OpenMaya.MPlug):
         obj = obj.node()
     # the cast core itself (D12)
     result = _cast(obj)
     # defensive: an exotic input the cast resolves to an attribute gives its node
     return result.node if isinstance(result, Attribute) else result
+
+
+def _node_from_str(name: str) -> Any:
+    """``Node(name)`` for a node name or uuid: the cast core on a hit, the
+    lookup rule (`_lookup`) around it.
+
+    A bare name costs one API call more than the cast (the current namespace):
+    at the root namespace the cast decides; in another one the name may name a
+    node there too (``:x`` and ``:char:x``), so `_lookup` decides. A pattern
+    is refused before the cast. When the cast raises, `_lookup` gives the
+    error of the family (not found with its hints, ambiguous); when it finds
+    the one node the cast failed on, the cast's own error is raised. A uuid no
+    node has raises NodeNotFoundError naming it."""
+    if name.isidentifier():
+        if _current_namespace() != ":" and not _is_uuid(name):
+            return _cast(_lookup(name))
+    elif _PATTERN_CHARS.search(name):
+        raise NodeLookupError(name)
+    try:
+        return _cast(name)
+    except (TypeError, ValueError, RuntimeError) as exc:
+        error = exc
+    if _is_uuid(name):
+        if cmds.ls(name, uid=True):
+            raise error
+        raise NodeNotFoundError(name, uuid=True)
+    _lookup(name)
+    # the lookup found the one node the cast failed on: its own error
+    raise error

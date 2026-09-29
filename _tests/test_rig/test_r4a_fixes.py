@@ -578,7 +578,8 @@ class TestMemoHandleOfTypedAttr(MayaTestCase):
         self.assertIs(memo(), first)
         self.assertEqual(memo.calls, 1)
         cmds.delete("a")  # freed
-        with self.assertRaisesRegex(TypeError, "No object matches name: a"):
+        # re-pinned (round 4b NC1): Node()'s miss is NodeNotFoundError, a TypeError
+        with self.assertRaisesRegex(TypeError, "^no node named 'a'$"):
             memo()
         self.assertEqual(memo.calls, 2)
         self.assertFalse(memo.holds(first))
@@ -615,7 +616,8 @@ class TestMemoHandleOfTypedAttr(MayaTestCase):
             self.assertEqual(first.get(), 2.0)
             # deleted to the undo queue: the entry is stale, recomputed
             cmds.delete("a")
-            with self.assertRaisesRegex(TypeError, "No object matches name: a"):
+            # re-pinned (round 4b NC1): NodeNotFoundError, a TypeError
+            with self.assertRaisesRegex(TypeError, "^no node named 'a'$"):
                 memo()
             self.assertEqual(memo.calls, 2)
             cmds.undo()
@@ -636,7 +638,8 @@ class TestMemoHandleOfTypedAttr(MayaTestCase):
             first = memo()
             cmds.file(new=True, force=True)
             self.assertFalse(memo.holds(first))
-            with self.assertRaisesRegex(TypeError, "No object matches name: a"):
+            # re-pinned (round 4b NC1): NodeNotFoundError, a TypeError
+            with self.assertRaisesRegex(TypeError, "^no node named 'a'$"):
                 memo()
             cmds.file(path, open=True, force=True)
             opened = memo()
@@ -662,7 +665,8 @@ class TestMemoHandleOfTypedAttr(MayaTestCase):
             cmds.file(unloadReference="refRN")
             # pruned by the unload callback: the stale typed attr is never returned
             self.assertFalse(memo.holds(first))
-            with self.assertRaisesRegex(TypeError, "No object matches name: ref:refT"):
+            # re-pinned (round 4b NC1): NodeNotFoundError, a TypeError
+            with self.assertRaisesRegex(TypeError, "^no node named 'ref:refT'$"):
                 memo()
             self.assertEqual(memo.calls, 2)
             cmds.file(loadReference="refRN")
@@ -1987,11 +1991,13 @@ class TestNodeOnly(_SceneCase):
                 self.assertIs(type(result), cls)
                 self.assertEqual(str(result), name)
                 self.assertIsInstance(result, Node)
-        # what names no node raises the cast's TypeError; a non-name its ValueError
+        # what names no node raises NodeNotFoundError, a TypeError (re-pinned,
+        # round 4b NC1: it was the cast's "No object matches name"); a non-name
+        # the cast's ValueError
         for label, value in (("missing", "nope"), ("missing, dotted", "nope.tx"),
                              ("empty", ""), ("no node before the dot", ".tx")):
             with self.subTest(error=label):
-                with self.assertRaisesRegex(TypeError, "No object matches name"):
+                with self.assertRaisesRegex(TypeError, "^no node named '(nope)?'$"):
                     Node(value)
         for label, value in (("int", 3), ("None", None), ("float", 1.5), ("list", [node]),
                              ("bytes", b"t"), ("faces", Node(cube).f[0:2])):

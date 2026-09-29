@@ -55,7 +55,7 @@ from unittest import mock
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig import Container, container, List, Node, Plug
+from rig import Container, container, List, Node, NodeNotFoundError, Plug
 from rig.nodetypes import DGNode, Transform, _base
 from rig._internal.math_nodes import _decompose_matrix
 from rig._internal.members import Components
@@ -2011,8 +2011,17 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
                 cast(missing)
             except Exception as exc:
                 errors.append((type(exc), str(exc)))
-        self.assertEqual(len(errors), 2)
-        self.assertEqual(errors[0], errors[1])
+        # re-pinned (round 4b NC1): Node() raises the lookup family's
+        # NodeNotFoundError naming the uuid (a TypeError, as the core's is); the
+        # core keeps its own error
+        self.assertEqual(
+            errors,
+            [
+                (NodeNotFoundError, f"no node has the uuid {missing!r}"),
+                (TypeError, f"No object matches uuid: {missing}."),
+            ],
+        )
+        self.assertTrue(issubclass(errors[0][0], TypeError))
         for args, kwargs in ((("x",), {}), ((), {"k": 1})):
             with self.subTest(extra=(args, kwargs)):
                 with self.assertRaises(TypeError):

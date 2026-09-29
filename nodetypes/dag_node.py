@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from maya import cmds, mel
 from maya.api import OpenMaya
-from rig.nodetypes._base import _cast, _handle_valid, get_custom_type
+from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type
 from rig.nodetypes.dg_node import DGNode
 
 
@@ -51,7 +51,8 @@ class DAGNode(DGNode):
                 try:
                     sel.add(str(node))
                 except Exception:
-                    raise ValueError(f"Invalid node name: {node}")
+                    # the lookup rule of Node(x) (see DGNode.__init__)
+                    sel.add(_lookup(str(node), _type_label(type(self))))
                 d["_mdagpath"] = sel.getDagPath(0)
                 d["_mobject"]  = d["_mdagpath"].node()
             d["_fn_set"] = self.FN_SET(d["_mdagpath"])
