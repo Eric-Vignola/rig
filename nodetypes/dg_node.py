@@ -24,6 +24,7 @@ from rig.nodetypes._base import (
     _named_through_owner,
     _new_attr,
     _queried_data_type,
+    _shared_refused,
     _type_label,
     Attribute,
     get_custom_type,
@@ -726,6 +727,8 @@ class DGNode(Node):
           flag and an attribute (a skinCluster's ``normalizeWeights``) is the
           flag. A value the attribute refuses raises once the node exists, as
           ``node.attr << value`` would.
+        * ``shared=`` is refused (TypeError, nothing made): create always
+          makes a new node; ``Transform.define("x")`` finds or makes one.
         * The base classes of an abstract Maya type (``DGNode``, ``DAGNode``,
           ``Geometry``) make no node: TypeError, naming ``Node.create(type,
           ...)``.
@@ -751,6 +754,13 @@ class DGNode(Node):
         (``container=`` is always consumed, never passed on). The attribute
         keywords are set inside that undo step.
         """
+        if "shared" in kwargs:
+            raise _shared_refused(
+                f"{cls.__name__}.create(shared=...)",
+                cls.NATIVE_NODE_TYPE,
+                name or kwargs.get("n"),
+                cls,
+            )
         flags = cls._CREATE_FLAGS
         if inputs and getattr(cls._create, "__func__", None) in _PLAIN_CREATES:
             keywords = "name= and parent= as keywords" if "parent" in flags else "name= as a keyword"

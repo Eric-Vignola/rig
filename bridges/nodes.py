@@ -74,14 +74,14 @@ _NODE_TYPES_LOADED = False
 
 
 # Recognised createNode-time kwargs (vs. attribute kwargs). Values are
-# the canonical long form passed to ``container.createNode``.
+# the canonical long form passed to ``container.createNode``. ``shared=`` is
+# refused (a factory always makes a new node), so ``s=`` is an attribute: a
+# transform's scale.
 _CREATE_KWARGS = {
     "name":       "name",
     "n":          "name",
     "parent":     "parent",
     "p":          "parent",
-    "shared":     "shared",
-    "s":          "shared",
     "skipSelect": "skipSelect",
     "ss":         "skipSelect",
 }
@@ -167,6 +167,14 @@ def _make_factory(node_type: str) -> Callable:
         # Lazy imports to avoid circular dependency at module load.
         from rig._internal.container import container
 
+        # create always makes a new node: shared= is refused before anything
+        if "shared" in kwargs:
+            from rig.nodetypes._base import _shared_refused
+
+            raise _shared_refused(
+                f"rn.{node_type}(shared=...)", node_type, kwargs.get("name", kwargs.get("n"))
+            )
+
         # Split kwargs into createNode-time vs attribute-init.
         create_kwargs = {}
         for short, canonical in _CREATE_KWARGS.items():
@@ -197,14 +205,17 @@ def _make_factory(node_type: str) -> Callable:
     factory.__qualname__ = f"rig.bridges.nodes.{node_type}"
     factory.__doc__ = (
         f"Create a Maya ``{node_type}`` node and apply attribute kwargs.\n\n"
+        f"Always makes a new node.\n\n"
         f"Recognised createNode kwargs (consumed before attribute init):\n"
         f"  - ``name`` / ``n``: node name\n"
         f"  - ``parent`` / ``p``: parent transform\n"
-        f"  - ``shared`` / ``s``: see ``cmds.createNode(shared=...)``\n"
         f"  - ``skipSelect`` / ``ss``: see ``cmds.createNode(skipSelect=...)``\n"
         f"  - ``container``: opt out of active container scope (default True)\n\n"
+        f"``shared=`` is refused (TypeError, nothing created): create always\n"
+        f"makes a new node, and ``define`` finds or makes one.\n\n"
         f"All remaining kwargs are interpreted as initial attribute values\n"
-        f"and applied via the DSL ``<<`` operator. An enum attribute takes a\n"
+        f"and applied via the DSL ``<<`` operator (``s=`` is the attribute\n"
+        f"``s``: a transform's scale). An enum attribute takes a\n"
         f"field name (``rotateOrder='xzy'``), read before the node is created:\n"
         f"a wrong name raises TypeError and creates nothing.\n\n"
         f"Returns the new ``Node``."

@@ -16,6 +16,10 @@
 * ``TestCreateFlags``: each class's ``_CREATE_FLAGS`` go to its command; a
   name that is both a flag and an attribute is the flag (a skinCluster's
   ``normalizeWeights``, a blendShape's ``envelope``).
+* ``TestSharedRefused``: ``shared=`` on ``Cls.create``, ``Node.create`` and
+  ``rn.<type>`` is a TypeError before anything is made (create always makes a
+  new node; the message names ``define``); ``rn``'s ``s=`` is the attribute
+  ``s``, a transform's scale.
 """
 
 import tempfile
@@ -25,6 +29,7 @@ from unittest import mock
 from maya import cmds
 
 from rig import container, lock, Node
+from rig.bridges import nodes as rn
 from rig.nodetypes import (
     BlendShape,
     Choice,
@@ -403,3 +408,88 @@ class TestCreateFlags(_SceneCase):
             self.assertTrue(cmds.objExists("hero:thing"))
             ref.delete()
             self.new_scene()
+
+
+class TestSharedRefused(_SceneCase):
+    """``shared=`` on any creator is a TypeError naming ``define``, with nothing
+    made (CC-6); ``rn``'s ``s=`` is the scale attribute."""
+
+    def test_typed_create(self):
+        cmds.createNode("transform", name="s")
+        before = _scene()
+        for cls, name, text in (
+            (Transform, "s", r"^Transform\.create\(shared=\.\.\.\): create always makes a new node; "
+                             r"Transform\.define\('s'\) finds or makes it$"),
+            (Joint, None, r"^Joint\.create\(shared=\.\.\.\): .* Joint\.define\('x'\) finds or makes it$"),
+            (Choice, "c", r"^Choice\.create\(shared=\.\.\.\): .* Choice\.define\('c'\)"),
+            (DisplayLayer, "L", r"^DisplayLayer\.create\(shared=\.\.\.\): .* DisplayLayer\.define\('L'\)"),
+        ):
+            for value in (True, False):
+                with self.subTest(cls=cls.__name__, shared=value):
+                    with self.assertRaisesRegex(TypeError, text):
+                        cls.create(name=name, shared=value)
+                    self.assertNothingMade(before)
+
+        class Ctl(Transform):
+            pass
+
+        with self.assertRaisesRegex(TypeError, r"Ctl\.define\('k'\)"):
+            Ctl.create(n="k", shared=True)
+        self.assertNothingMade(before)
+
+    def test_node_create(self):
+        cmds.createNode("transform", name="s")
+        before = _scene()
+        with self.assertRaisesRegex(
+            TypeError,
+            r"^Node\.create\('transform', shared=\.\.\.\): create always makes a new node; "
+            r"Transform\.define\('s'\) finds or makes it$",
+        ):
+            Node.create("transform", name="s", shared=True)
+        self.assertNothingMade(before)
+        with self.assertRaisesRegex(
+            TypeError,
+            r"^Node\.create\('multiplyDivide', shared=\.\.\.\): create always makes a new node; "
+            r"Node\.define\('multiplyDivide', 'x'\) finds or makes it$",
+        ):
+            Node.create("multiplyDivide", shared=True)
+        self.assertNothingMade(before)
+
+    def test_rn_factories(self):
+        cmds.createNode("transform", name="r")
+        before = _scene()
+        with self.assertRaisesRegex(
+            TypeError,
+            r"^rn\.transform\(shared=\.\.\.\): create always makes a new node; "
+            r"Transform\.define\('r'\) finds or makes it$",
+        ):
+            rn.transform(name="r", shared=True)
+        self.assertNothingMade(before)
+        with self.assertRaisesRegex(TypeError, r"Node\.define\('multiplyDivide', 'm'\)"):
+            rn.multiplyDivide(n="m", shared=False)
+        self.assertNothingMade(before)
+        # inside a scope: nothing made, nothing registered
+        with container("box") as box:
+            inside = _scene()
+            with self.assertRaises(TypeError):
+                rn.transform(name="r", shared=True)
+            with self.assertRaises(TypeError):
+                Transform.create(name="r", shared=True)
+            with self.assertRaises(TypeError):
+                Node.create("transform", name="r", shared=True)
+            self.assertNothingMade(inside)
+        self.assertEqual(cmds.container(str(box), query=True, nodeList=True), None)
+
+    def test_rn_s_is_the_scale(self):
+        a = rn.transform(name="a", s=[2, 2, 2])
+        b = rn.transform(name="a", s=[1, 3, 1])
+        self.assertEqual(cmds.getAttr(f"{a}.s"), [(2.0, 2.0, 2.0)])
+        self.assertEqual(cmds.getAttr(f"{b}.s"), [(1.0, 3.0, 1.0)])
+        self.assertEqual((str(a), str(b)), ("a", "a1"))  # two nodes: s is no longer shared
+        # the typed create too: s is no create flag
+        t = Transform.create(name="t", s=[4, 4, 4])
+        self.assertEqual(cmds.getAttr(f"{t}.s"), [(4.0, 4.0, 4.0)])
+        # the other short flags keep their meaning
+        grp = rn.transform(n="grp")
+        kid = rn.transform(n="kid", p=grp, ss=True)
+        self.assertEqual(kid.long_name, "|grp|kid")
