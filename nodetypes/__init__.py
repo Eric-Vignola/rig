@@ -8,6 +8,12 @@ from rig.nodetypes.choice import Choice
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.display_layer import DisplayLayer
+from rig.nodetypes.errors import (
+    AmbiguousNodeError,
+    NodeLookupError,
+    NodeNotFoundError,
+    NodeTypeError,
+)
 from rig.nodetypes.follicle import Follicle
 from rig.nodetypes.geometry import Geometry
 from rig.nodetypes.joint import Joint

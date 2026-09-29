@@ -39,7 +39,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes import _base as _nodetypes_base, dg_node as _dg_node_module
+from rig.nodetypes import (
+    _base as _nodetypes_base,
+    dg_node as _dg_node_module,
+    errors as _nodetypes_errors,
+)
 from rig.nodetypes._base import (
     _class_attr,
     _MISSING,
@@ -1346,8 +1350,20 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     return node_cls.create(*args, **kwargs)
 
 
+def _scope_name(name: str) -> Optional[str]:
+    """The name a create inside the active flattened scope gives ``name`` (the
+    scope prefix on its leaf, as :meth:`_ContainerStack.createNode` spells
+    it), or None outside one: the scope hint of a NodeNotFoundError
+    (``errors._SCOPE_HINT_HOOK``; "'inner_k' exists (the scope prefix)")."""
+    if not container._stack:
+        return None
+    prefix = container._compute_flatten_prefix()
+    return _flattened_name(prefix, name) if prefix else None
+
+
 _dg_node_module._TYPED_CREATE_HOOK = _typed_create
 _nodetypes_base._NODE_CREATE_HOOK = _node_create
+_nodetypes_errors._SCOPE_HINT_HOOK = _scope_name
 
 
 def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -> Any:

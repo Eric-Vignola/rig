@@ -165,6 +165,12 @@ from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
 from rig._internal.undo import undo_chunk
 from rig.membership import Components, Layer, Tag
+from rig.nodetypes.errors import (
+    AmbiguousNodeError,
+    NodeLookupError,
+    NodeNotFoundError,
+    NodeTypeError,
+)
 
 # v4.T: Re-export the spec submodule's public API for top-level
 # ergonomic imports. Spec types are value types used inline
@@ -205,6 +211,11 @@ __all__ = [
     "List",
     "Container",
     "InjectionError",
+    # Lookup errors (one family; each is also a TypeError and a ValueError)
+    "NodeLookupError",
+    "NodeNotFoundError",
+    "AmbiguousNodeError",
+    "NodeTypeError",
     # Membership (collection specs and the component carrier)
     "Components",
     "Layer",
