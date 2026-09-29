@@ -17,6 +17,16 @@ from rig.nodetypes.errors import (
 from rig.nodetypes.follicle import Follicle
 from rig.nodetypes.geometry import Geometry
 from rig.nodetypes.joint import Joint
+from rig.nodetypes.material_node import (
+    Blinn,
+    Lambert,
+    Material,
+    OpenPBRSurface,
+    Phong,
+    PhongE,
+    StandardSurface,
+    SurfaceShader,
+)
 from rig.nodetypes.mesh import Axis, Mesh
 from rig.nodetypes.nurbs import NurbsCurve, NurbsSurface
 from rig.nodetypes.object_set import ObjectSet

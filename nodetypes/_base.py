@@ -263,17 +263,35 @@ def _cast(obj: Any) -> Any:
     return inst
 
 
+# The cast rule's fallback for a DG type no class is registered for (D31:
+# ``rig.nodetypes.material_node`` sets it when it loads): type name -> the
+# generic ``Material`` for a type Maya classifies a surface shader
+# (``anisotropic``, a plug-in shader), else None; memoised per type.
+_CLASSIFY = None
+
+
 def _native_node_class(obj: str) -> Any:
-    """Returns the class the node's type chain maps to, ignoring any custom type."""
+    """Returns the class the node's type chain maps to, ignoring any custom type.
+
+    The most derived registered type of the chain wins, except that a class
+    flagged ``_EXACT_TYPE`` (the shader classes) only takes its own exact
+    type: ``Lambert`` never claims a blinn. A DG node that no class claims is
+    a ``Material`` when Maya classifies its type a surface shader
+    (``_CLASSIFY``), else a ``DGNode``."""
     # set default node type to DAG or DG
     default_type = "dagNode" if cmds.ls(obj, dag=True) else "entity"
-    cls_obj      = _NODE_CLASS_DICT.get(default_type)
+    default      = _NODE_CLASS_DICT.get(default_type)
+    cls_obj      = default
 
     # override cls_obj with a defined node class if any
-    for t in reversed(cmds.nodeType(obj, inherited=True)):
-        if t in _NODE_CLASS_DICT:
-            cls_obj = _NODE_CLASS_DICT.get(t)
+    chain = cmds.nodeType(obj, inherited=True)
+    for depth, t in enumerate(reversed(chain)):
+        found = _NODE_CLASS_DICT.get(t)
+        if found is not None and not (depth and getattr(found, "_EXACT_TYPE", False)):
+            cls_obj = found
             break
+    if cls_obj is default and default_type == "entity" and chain and _CLASSIFY is not None:
+        cls_obj = _CLASSIFY(chain[-1]) or cls_obj
     return cls_obj
 
 

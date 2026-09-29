@@ -18,7 +18,7 @@ Usage::
     sg.get_face_members()                          # [(Mesh("pCubeShape1"), array([0, 1]))]
     sg.assign(["|pCube1|pCubeShape1"])             # whole object
     sg.get_face_members()                          # [(Mesh("pCubeShape1"), None)]
-    sg.get_material()                              # DGNode("myBlinn")
+    sg.get_material()                              # Blinn("myBlinn")
 """
 
 from __future__ import annotations

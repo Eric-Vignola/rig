@@ -90,7 +90,7 @@ print(repr(cube), xf is cube, Node(cube) is cube)  # Transform("cube") True True
 print(type(Node("cubeShape")).__name__)            # Mesh
 
 print(cube.get_shapes())                          # [Mesh("cubeShape")]
-print(cube.get_shape().get_materials())           # [DGNode("standardSurface1")]
+print(cube.get_shape().get_materials())           # [StandardSurface("standardSurface1")]
 print(Node("cubeShape").get_material_bindings())  # standardSurface1 -- one material, the node itself
 ```
 
@@ -114,8 +114,10 @@ print(cube.tx.node is cube, cube.find_attr("tx").node is cube, cube.tx == cube.f
 ## 2. `Node` — resolution and registration
 
 `Node(name)` is a factory: it walks `cmds.nodeType(name, inherited=True)`
-from the most derived type down and returns the first registered class.
-Anything unregistered is a `DAGNode` or a `DGNode`; a string with a `.` is
+from the most derived type down and returns the first registered class
+(a shader class takes only its exact type: a blinn is a `Blinn`, never a
+`Lambert`). Anything unregistered is a `DAGNode` or a `DGNode` (a type Maya
+classifies a surface shader is a `Material`); a string with a `.` is
 the node before it (the attribute is `Attribute("node.attr")`); a uuid
 string works too.
 
@@ -127,10 +129,12 @@ rc.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)], name="crv")
 cmds.spaceLocator(name="loc")
 cmds.lattice("cube", name="ffd")
 cmds.joint(name="jnt")
+cmds.shadingNode("blinn", asShader=True, name="shiny")
+cmds.shadingNode("anisotropic", asShader=True, name="aniso")
 
 for name in ("cube", "cubeShape", "ballShape", "curveShape1", "locShape", "ffdLatticeShape",
-             "ffd", "jnt", "perspShape", "time1", "lambert1", "initialShadingGroup",
-             "defaultObjectSet", "defaultLayer"):
+             "ffd", "jnt", "perspShape", "time1", "lambert1", "shiny", "aniso",
+             "initialShadingGroup", "defaultObjectSet", "defaultLayer"):
     print(f"{name:20s} {cmds.nodeType(name):14s} -> {type(Node(name)).__name__}")
 # cube                 transform      -> Transform
 # cubeShape            mesh           -> Mesh
@@ -142,7 +146,9 @@ for name in ("cube", "cubeShape", "ballShape", "curveShape1", "locShape", "ffdLa
 # jnt                  joint          -> Joint
 # perspShape           camera         -> DAGNode
 # time1                time           -> DGNode
-# lambert1             lambert        -> DGNode
+# lambert1             lambert        -> Lambert
+# shiny                blinn          -> Blinn
+# aniso                anisotropic    -> Material
 # initialShadingGroup  shadingEngine  -> ShadingEngine
 # defaultObjectSet     objectSet      -> ObjectSet
 # defaultLayer         displayLayer   -> DisplayLayer
@@ -744,14 +750,14 @@ mesh, otherwise `(material, face ids)` pairs; `verbose=True` always gives
 the pairs.
 
 ```python
-print(mesh.get_materials(), mesh.get_shading_engines())  # [DGNode("standardSurface1")] [ShadingEngine("initialShadingGroup")]
+print(mesh.get_materials(), mesh.get_shading_engines())  # [StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup")]
 print(mesh.get_material_bindings())                      # standardSurface1
-print(mesh.get_material_bindings(verbose=True))          # [(DGNode("standardSurface1"), array([0, 1, 2, 3, 4, 5]))]
+print(mesh.get_material_bindings(verbose=True))          # [(StandardSurface("standardSurface1"), array([0, 1, 2, 3, 4, 5]))]
 
 red = cmds.shadingNode("blinn", asShader=True, name="red")
 ShadingEngine.for_material(red).assign(["cube.f[0:1]"], touched=[mesh.long_name])
-print(sorted(mesh.get_materials()), sorted(mesh.get_shading_engines()))                # [DGNode("red"), DGNode("standardSurface1")] [ShadingEngine("initialShadingGroup"), ShadingEngine("redSG")]
-print(mesh.get_material_bindings())                                                    # [(DGNode("red"), array([0, 1])), (DGNode("standardSurface1"), array([2, 3, 4, 5]))]
+print(sorted(mesh.get_materials()), sorted(mesh.get_shading_engines()))                # [Blinn("red"), StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup"), ShadingEngine("redSG")]
+print(mesh.get_material_bindings())                                                    # [(Blinn("red"), array([0, 1])), (StandardSurface("standardSurface1"), array([2, 3, 4, 5]))]
 print(mesh.get_materials(as_pairs=True)[0][0].get_material() in mesh.get_materials())  # True -- (engine, material) pairs
 ```
 
