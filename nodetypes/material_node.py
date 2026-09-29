@@ -48,11 +48,14 @@ Usage::
 
     cube << red ; cube << -red ; cube << Material()    # assign ; remove ; out of every engine (rig.shade)
     cube in red ; cube >> red ; Blinn.of(cube)     # every face? ; the face ids ; [Blinn("red")] or []
+    red = red.astype(Phong)                        # Phong("red"): the new node; the held blinn raises
 
 A shader node is a membership collection (``rig.shade``): on the right of
 ``<<`` it assigns, ``-red`` is the removal token, ``Material()`` /
 ``Blinn()`` the kind token (out of every engine on ``<<``, the enumeration on
-``>>``), ``x in red`` asks. ``Blinn(None)`` is a TypeError.
+``>>``), ``x in red`` asks. ``Blinn(None)`` is a TypeError. ``astype``
+converts: it makes a new node of the target type, which it returns; the old
+node object raises from then on, naming the conversion.
 """
 
 from __future__ import annotations
@@ -255,6 +258,7 @@ class Material(DGNode):
     assigns, ``cube << -red`` removes, ``cube in red`` asks, ``cube >> red``
     reads the face ids; ``Material()`` / ``Blinn()`` is the kind token (out of
     every engine on ``<<``; ``cube >> Blinn()`` is ``Blinn.of(cube)``).
+    ``red.astype(Phong)`` converts it and returns the new node.
     """
 
     # no NATIVE_NODE_TYPE: unregistered, the class of the surface types
@@ -520,6 +524,43 @@ class Material(DGNode):
         ``initialShadingGroup`` node) for the faces the default engine holds.
         ``x >> Blinn()`` is the operator spelling."""
         return cls._kind()._enumerate(x)
+
+    def astype(
+        self,
+        to:      Any,
+        *,
+        strict:  bool = False,
+        dry_run: bool = False,
+        park:    bool = True,
+        update:  bool = False,
+        **attrs: Any,
+    ) -> Any:
+        """Converts this shader to the node type ``to`` (a class such as
+        ``Phong``, or a type name, ``'phong'``) and returns THE NEW NODE
+        (``Phong("red")``): ``red = red.astype(Phong)``. From then on this
+        node object (and its plugs) raise "'red' was converted to a phong; use
+        the node astype() returned"; after an undo it is the live node again.
+
+        One undo chunk (``rig.shade.convert``) makes the new node and keeps
+        the name, the engines, the materialInfo, the ``defaultShaderList1``
+        slot, the container, the dynamic attributes and the locks, moves the
+        wires the target can hold and parks the rest on the node as hidden
+        ``__attr__`` attributes, given back when it becomes a type that has
+        them (``park=False`` drops the values and disconnects the wires
+        instead). One ``cmds.warning`` names whatever was parked or lost;
+        ``strict=True`` turns it into a ``ValueError`` with nothing written;
+        ``dry_run=True`` writes nothing and returns the ``Conversion``
+        report. ``attrs`` are checked against the target before any write and
+        set inside the chunk. A shader already of that type is returned as it
+        is, its ``attrs`` set only with ``update=True``. Refused before any
+        write: the generic ``Material`` (it names no type), a type that is no
+        surface shader, a Maya default, referenced or ``lockNode``'d
+        shader."""
+        from rig.shade import convert
+
+        return convert(
+            self, to, strict=strict, dry_run=dry_run, park=park, update=update, **attrs
+        )
 
     # --- the network
 

@@ -61,7 +61,8 @@ Operator conventions:
       Blinn("x")`` moves the LHS into x's shading engine (x must exist;
       ``Blinn.define("x")`` finds or makes it); ``-mat`` carves the LHS out;
       ``Material()`` leaves it in no engine (green); ``Default()`` reverts to
-      initialShadingGroup.
+      initialShadingGroup; ``mat.astype(Phong)`` converts, returning the new
+      node.
     * ``Layer`` is the display layer node class (``Layer is DisplayLayer``):
       ``Layer("x")`` refers to an existing layer, ``Layer.define("x")`` finds
       or makes it. Layers are exclusive and hold objects only, never
