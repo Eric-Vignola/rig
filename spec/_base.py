@@ -641,10 +641,11 @@ def _check_settings(target: str, name: str, at: str, multi: bool, settings: dict
         if low is not None and high is not None and low > high:
             raise TypeError(f"'{target}': min={low} is above max={high}")
         dv = edit.get("defaultValue")
-        if isinstance(dv, (int, float)) and (
-            (low is not None and dv < low) or (high is not None and dv > high)
-        ):
-            raise TypeError(f"'{target}': dv={dv} is outside its range [{low}, {high}]")
+        if isinstance(dv, (int, float)):
+            if low is not None and dv < low:
+                raise TypeError(f"'{target}': dv={dv} is below min={low}")
+            if high is not None and dv > high:
+                raise TypeError(f"'{target}': dv={dv} is above max={high}")
     return edit, has, settings.get("keyable"), settings.get("hidden")
 
 
