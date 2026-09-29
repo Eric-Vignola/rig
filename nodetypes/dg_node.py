@@ -316,7 +316,9 @@ def _refuse_owner(hook: Any, node: Any, refer: str) -> None:
     requested, current = reals[-1]
     here  = str(current)
     shown = node.name
-    if here != requested and re.fullmatch(rf"{re.escape(requested)}\d*", owner):
+    # (by leaf: a scope's container is made in the current namespace)
+    leaf = requested.rsplit(":", 1)[-1]
+    if here != requested and re.fullmatch(rf"{re.escape(leaf)}\d*", owner.rsplit(":", 1)[-1]):
         raise ValueError(
             f"{shown!r} belongs to container {owner!r} from an earlier run; this scope is "
             f"{here!r}. Delete {owner!r} and {here!r} to rebuild it, or build in a new scene."

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from maya import cmds, mel
 from maya.api import OpenMaya
 from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type
@@ -15,6 +16,18 @@ def _parent_valid(mobject) -> bool:
     ):
         return False
     return True
+
+
+def _parent_path(parent: Any) -> str:
+    """The long name of the DAG node a ``parent=`` names: a DAG node object's
+    own path, else the reference ``DAGNode(parent)`` (the lookup rule: a
+    missing name raises NodeNotFoundError, a name several nodes have
+    AmbiguousNodeError, a DG node NodeTypeError; all ValueErrors), read before
+    anything is made. Used by every create that takes ``parent=``
+    (``DAGNode._create``, ``container.createNode``, so ``rn.<type>``)."""
+    if isinstance(parent, DAGNode):
+        return parent.long_name
+    return DAGNode(parent).long_name
 
 
 class DAGNode(DGNode):
@@ -77,17 +90,11 @@ class DAGNode(DGNode):
         it), named among the parent's children, so a world node of the same
         name does not rename it.
         """
-        # resolve the parent to its long name before creating anything: a
-        # missing or ambiguous parent raises with nothing made
+        # resolve the parent to its long name before creating anything, by
+        # the reference rule define reads parent= with (DAGNode(x)): a missing
+        # or ambiguous parent, or a DG node, raises with nothing made
         if parent:
-            if isinstance(parent, DAGNode):
-                parent = parent.long_name
-            else:
-                found = cmds.ls(str(parent), long=True)
-                if len(found) != 1:
-                    raise ValueError(f"Parent must match one node: {parent} -> {found}")
-                parent = found[0]
-            kwargs["parent"] = parent
+            kwargs["parent"] = _parent_path(parent)
 
         node = cmds.createNode(cls.NATIVE_NODE_TYPE, **kwargs)
         sel  = OpenMaya.MSelectionList()

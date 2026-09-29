@@ -422,6 +422,9 @@ _ALLOWED_SITES = {
         1, "the reference itself: exists answers whether cls(name) returns a node"),
     ("nodetypes/dg_node.py", "_define", "DAGNode"): (
         1, "user input: define's parent=, resolved by the reference rule before any write"),
+    ("nodetypes/dag_node.py", "_parent_path", "DAGNode"): (
+        1, "user input: a create's parent= (DAGNode._create, container.createNode, rn), "
+           "resolved by the reference rule define reads parent= with (FIX)"),
     ("nodetypes/follicle.py", "Follicle.create_on_mesh", "Transform"): (
         1, "user input: the mesh transform to attach to"),
     ("nodetypes/joint.py", "Joint.match_hierarchy", "Joint"): (

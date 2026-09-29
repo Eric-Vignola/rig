@@ -314,13 +314,25 @@ def _cast_by_name(obj: str) -> Any:
     raise ValueError(f"Failed casting {obj}")
 
 
+def _from_root(name: str) -> str:
+    """A node name as the lookup rule reads it: a namespaced name that is no
+    path and names no namespace from the root (``char:x``) spelled from the
+    root (``:char:x``), so ``namespace -relativeNames`` cannot turn it
+    relative to the current namespace; any other name as written."""
+    if ":" in name and name[0] != ":" and "|" not in name:
+        return f":{name}"
+    return name
+
+
 def _lookup(name: str, label: str = "node") -> str:
     """The one node ``name`` names, by the lookup rule shared by ``Node(x)``,
     the node classes and the membership lookups. Cold: ``Node(x)`` runs it
     after a failed cast, and for a bare name while a namespace other than the
     root is current.
 
-    * A qualified name (a path or ``ns:name``) is looked up as written.
+    * A qualified name (a path or ``ns:name``) is looked up as written, a
+      namespace from the root (``char:x`` is ``:char:x``, whatever
+      ``namespace -relativeNames``, as ``define`` keys it).
     * A bare name is looked up at the root namespace (``:x``) and, when the
       current namespace is not the root, in it too (``:char:x``), both spelled
       absolutely so ``namespace -relativeNames`` cannot change the answer. A
@@ -338,7 +350,7 @@ def _lookup(name: str, label: str = "node") -> str:
     if _PATTERN_CHARS.search(name):
         raise NodeLookupError(name, label)
     if ":" in name or "|" in name:
-        spellings = (name,)
+        spellings = (_from_root(name),)
     else:
         current   = _current_namespace()
         spellings = (f":{name}",) if current == ":" else (f":{name}", f"{current}:{name}")
@@ -3195,13 +3207,16 @@ def _node_from_str(name: str, label: str = "node") -> Any:
     error of the family (not found with its hints, ambiguous); when it finds
     the one node the cast failed on, the cast's own error is raised. A uuid no
     node has raises NodeNotFoundError naming it."""
+    spelled = name
     if name.isidentifier():
         if _current_namespace() != ":" and not _is_uuid(name):
             return _cast(_lookup(name, label))
     elif _PATTERN_CHARS.search(name):
         raise NodeLookupError(name, label)
+    elif ":" in name:
+        spelled = _from_root(name)
     try:
-        return _cast(name)
+        return _cast(spelled)
     except (TypeError, ValueError, RuntimeError) as exc:
         error = exc
     if _is_uuid(name):

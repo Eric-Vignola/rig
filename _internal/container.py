@@ -55,7 +55,7 @@ from rig.nodetypes._base import (
     Attribute,
     is_valid_maya_uid,
 )
-from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.dag_node import _parent_path, DAGNode
 from rig.nodetypes.dg_node import _create_template, DGNode
 from rig.nodetypes.transform import Transform
 from rig._internal.maya_version import get_target_version, set_target_version
@@ -605,6 +605,12 @@ class _ContainerStack:
         Returns the typed node (the name Maya returned, cast as Maya resolves
         it: ``_cast_node``). If ``name`` is given and we're inside a flattened
         sub-scope, prefixes ``name`` with the flattened scope name.
+
+        A ``parent=`` / ``p=`` is read before anything is made, by the
+        reference rule (``DAGNode(parent)``): a name no node has raises
+        NodeNotFoundError (Maya would make the node at the world with a
+        warning), an ambiguous one AmbiguousNodeError. ``shared=`` is refused
+        (TypeError): a create always makes a new node.
         """
         # Apply name prefix if we're inside a flattened sub-scope, on the leaf
         # of a namespaced name (``ns:x`` is ``ns:inner_x``).
@@ -618,6 +624,14 @@ class _ContainerStack:
             skipSelect = ContainerOptions.skip_selection
 
         create_kwargs = dict(kwargs)
+        if kwargs:
+            # (the math nodes pass no other keyword: nothing to read)
+            if "shared" in kwargs:
+                raise _shared_refused(f"container.createNode({node_type!r}, shared=...)", node_type, name)
+            for key in ("parent", "p"):
+                parent = kwargs.get(key)
+                if parent is not None:
+                    create_kwargs[key] = _parent_path(parent)
         if name is not None:
             create_kwargs["name"] = name
         if ss is not None:
