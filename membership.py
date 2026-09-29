@@ -70,10 +70,12 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig.nodetypes import display_layer as _display_layer
 from rig.nodetypes._base import _cast, _cast_node
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
 from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
+from rig._internal import types as _types
 from rig._internal.members import (
     _check_attrs,
     _find_node,
@@ -373,6 +375,9 @@ class Tag(_MemberSpec):
                 "Tag('x').set(cube.vtx[[0, 1, 2]]) replaces the tag's contents"
             )
         super().__init__(name, at=at, force=force)
+
+    def __repr__(self) -> str:
+        return "Tag()" if self._name is None else super().__repr__()
 
     def _validate_name(self, name: Any) -> None:
         super()._validate_name(name)
@@ -1019,6 +1024,155 @@ def _layer_targets(selections: list[_Selection]) -> list[str]:
     return paths
 
 
+def _holding_layer(path: str) -> DisplayLayer | None:
+    """The display layer holding the node at ``path``, read from the node's
+    own ``drawOverride`` input; ``None`` in ``defaultLayer``."""
+    return DisplayLayer.for_node(path)
+
+
+class _LayerMember(_MemberSpec):
+    """The membership of display layers (private): what a layer node, its
+    removal token and the kind token run for ``<<`` / ``>>`` / ``in`` /
+    ``of``. Built by :class:`DisplayLayer` (``layer._member()``, ``-layer``,
+    ``DisplayLayer()`` / ``Layer()``), never by a user.
+
+    Layers hold objects, exclusively: ``node << layer`` moves the node itself
+    into the layer (never its subtree: children draw with the parent's
+    override through the DAG without joining), ``node << -layer`` moves it
+    back to ``defaultLayer`` (a no-op when it is in another layer), ``node <<
+    Layer()`` is ``defaultLayer`` too; a component on the left is a
+    ``TypeError`` (Maya would silently store the shape), a DG node a
+    ``TypeError`` (layers hold DAG objects), an attribute plug a
+    ``TypeError`` (the node is the member). A ``List`` of nodes is one
+    ``editDisplayLayerMembers`` call; every write of one ``<<`` is one undo
+    chunk.
+
+    ``defaultLayer`` reads as "no layer": ``node in layer`` is True when the
+    node is in it (every node of a list: all-members; ``node in
+    Layer('defaultLayer')`` when it is in no layer), ``node >> Layer()`` the
+    layer holding the node or ``None``, ``Layer.of(node)`` ``[layer]`` or
+    ``[]``. A layer holds whole objects and has no ids: ``node >> layer`` is
+    a ``TypeError`` naming ``in``.
+    """
+
+    KIND        = "layer"
+    ACCEPTS     = frozenset({"whole"})
+    WANT_SHAPES = False
+    EXCLUSIVE   = True
+
+    def __init__(self, layer: DisplayLayer | None = None, remove: bool = False) -> None:
+        # the layer node (None: the kind token); its name is read at each use,
+        # so a renamed layer is followed and a deleted one raises
+        self._layer   = layer
+        self._remove  = remove
+        self._options = {}
+
+    @property
+    def _name(self) -> str | None:
+        return None if self._layer is None else self._layer.name
+
+    @property
+    def purges(self) -> bool:
+        return self._layer is None
+
+    def __neg__(self) -> "_LayerMember":
+        if self._layer is None:
+            raise TypeError(
+                "-DisplayLayer() is a double negative: DisplayLayer() (Layer()) already "
+                "moves the members to defaultLayer, out of every layer"
+            )
+        if self._remove:
+            raise TypeError(f"-{self!r}: a removal cannot be negated again")
+        return _LayerMember(self._layer, remove=True)
+
+    def __invert__(self) -> Any:
+        raise TypeError(
+            f"~{self!r} is unassigned; -layer removes members and Layer() removes "
+            f"them from every layer"
+        )
+
+    def __repr__(self) -> str:
+        if self._layer is None:
+            return "DisplayLayer()"
+        return f"{'-' if self._remove else ''}{self._layer!r}"
+
+    def __getattr__(self, name: str) -> Any:
+        # a token is no layer: its methods and plugs are the layer node's
+        if name.startswith("_"):
+            raise AttributeError(name)
+        what = "the kind token (every layer)" if self._layer is None else "a removal token"
+        raise AttributeError(
+            f"{self!r} is {what}, not a layer; {name} is the layer node's: "
+            f"Layer('x').{name}"
+        )
+
+    @staticmethod
+    def _single(selections: list[_Selection], verb: str) -> str:
+        paths = _layer_targets(selections)
+        if len(paths) > 1:
+            raise TypeError(
+                f"{verb} one node at a time; got {', '.join(_short(p) for p in paths)}"
+            )
+        return paths[0]
+
+    # -- refusals -- #
+
+    def _kind_error(self, selection: _Selection) -> str:
+        return _component_message(selection)
+
+    # -- '<<' -- #
+
+    def _plan(self, selections: list[_Selection]) -> list[Callable[[], None]]:
+        paths = _layer_targets(selections)
+        if self._layer is None:
+            return [lambda: self._move(None, paths)]
+        # a deleted layer raises here, before any write; defaultLayer is no layer
+        layer = None if self._layer.is_default else self._layer
+        if not self._remove:
+            return [lambda: self._move(layer, paths)]
+        if layer is None:
+            raise TypeError(
+                "-DisplayLayer(\"defaultLayer\") is contradictory: defaultLayer is the "
+                "layer of no layer, so nothing leaves it; node << layer moves the "
+                "node into a layer"
+            )
+        mine = [path for path in paths if _holding_layer(path) == layer]
+        return [lambda: self._move(None, mine)] if mine else []
+
+    def _apply(self, plan: list[Callable[[], None]]) -> None:
+        for step in plan:
+            step()
+
+    def _move(self, layer: DisplayLayer | None, paths: list[str]) -> None:
+        """One ``editDisplayLayerMembers`` for every path into ``layer``
+        (None: ``defaultLayer``, by its absolute name), then read each
+        membership back from the node side."""
+        if not paths:
+            return
+        target = _display_layer._DEFAULT_ABSOLUTE if layer is None else layer.name
+        cmds.editDisplayLayerMembers(target, *paths, noRecurse=True)
+        for path in paths:
+            if _holding_layer(path) != layer:
+                raise RuntimeError(
+                    f"'{path}' did not land in {target}; its drawOverride reads "
+                    f"{_holding_layer(path)}"
+                )
+
+    # -- '>>' and 'in' -- #
+
+    def _query(self, selections: list[_Selection]) -> Any:
+        path = _layer_targets(selections)[0]
+        raise TypeError(
+            f"a layer holds whole objects and has no ids; ask with "
+            f"{_short(path)} in {self!r}"
+        )
+
+    @classmethod
+    def _of(cls, selections: list[_Selection]) -> list[DisplayLayer]:
+        layer = _holding_layer(cls._single(selections, "Layer.of takes"))
+        return [layer] if layer is not None else []
+
+
 class Layer(_MemberSpec):
     """A display layer: ``Layer('x')``, ``-Layer('x')``, ``Layer()``.
 
@@ -1288,3 +1442,9 @@ class Layer(_MemberSpec):
         self._guard(found, "cleared")
         with _undo_chunk(f"rig.{self.KIND}"):
             DisplayLayer._wrap(found).clear()
+
+
+# the membership right-hand sides of ``<<`` / ``>>`` (D31: ``_internal.types``
+# and ``nodetypes`` cannot import this module; it binds them when it loads)
+_types._MEMBERSHIP           = (_MemberSpec, DisplayLayer)
+_display_layer._LAYER_MEMBER = _LayerMember

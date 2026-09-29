@@ -57,13 +57,13 @@ class TestTagConstruction(MayaTestCase):
 
     def test_no_name_is_the_purge(self):
         before = set(cmds.ls())
-        # an empty call is the purge: the same spec as Tag(None)
+        # an empty call is the purge, the kind token: the same spec as Tag(None)
+        # (re-pinned, round 4b NC6: the kind token's repr is "Tag()")
         for purge in (Tag(), Tag(None)):
             self.assertTrue(purge.purges)
             self.assertIsNone(purge.name)
-            self.assertEqual(repr(purge), "Tag(None)")
+            self.assertEqual(repr(purge), "Tag()")
         self.assertEqual(set(cmds.ls()), before)
-
     def test_name_validation(self):
         for bad in ("t", "q", "1bad", "bad name", "bad-name", "a.b"):
             with self.assertRaises(ValueError):

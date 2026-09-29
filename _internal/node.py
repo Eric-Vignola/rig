@@ -39,9 +39,10 @@ def _node_lshift(node: Any, other: Any) -> Any:
     """``node << other`` for a node (``DGNode.__lshift__``): dispatches by RHS
     type:
 
-    - Collection spec (``Tag``, a material, ...) -- makes this node a
-      member (``node << Tag("x")`` on a per-node kind means the
-      collection itself) and returns the node.
+    - Membership (a collection spec: ``Tag``, a material; a layer node; a
+      kind or removal token) -- makes this node a member (``node <<
+      Tag("x")`` on a per-node kind means the collection itself) and
+      returns the node.
     - ``_AttrSpec`` (``Float``, ``Vector``, ``lock``, ...) -- adds an
       attribute on this node.
     - **Matrix-shaped source on a transform** -- applies the matrix to
@@ -58,12 +59,12 @@ def _node_lshift(node: Any, other: Any) -> Any:
     from rig._internal.types import (
         _is_attribute_spec,
         _is_matrix,
-        _is_member_spec,
+        _is_membership,
     )
 
-    # 0. Collection-spec injection -- membership; returns the node.
-    if _is_member_spec(other):
-        return other.inject(node)
+    # 0. Membership -- returns the node.
+    if _is_membership(other):
+        return other._member().inject(node)
 
     # 1. Attribute-spec injection -- add an attribute on this node.
     if _is_attribute_spec(other):
@@ -122,13 +123,13 @@ def _node_lshift(node: Any, other: Any) -> Any:
 def _node_rshift(node: Any, other: Any) -> Any:
     """``node >> other`` for a node (``DGNode.__rshift__``), once the caller
     handled ``>> None`` (the node itself): ``>> spec`` declares an output-only attribute
-    (``writable=False``), ``>> Tag("x")`` queries membership. Anything else
-    raises :class:`TypeError`."""
+    (``writable=False``), ``>> Tag("x")`` answers membership ids and ``>>
+    Layer()`` enumerates. Anything else raises :class:`TypeError`."""
     # Lazy imports to avoid circulars.
-    from rig._internal.types import _is_attribute_spec, _is_member_spec
+    from rig._internal.types import _is_attribute_spec, _is_membership
 
-    if _is_member_spec(other):
-        return other.query(node)
+    if _is_membership(other):
+        return other._member().query(node)
     if _is_attribute_spec(other):
         # Stamp writable=False onto a fresh copy of the spec so the
         # caller's instance is untouched (specs may be reused).

@@ -3206,15 +3206,20 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
     class's ``_coerce`` hook decides (a geometry class takes a transform's
     shape, an unregistered class wraps what its ``is_type`` accepts), else
     NodeTypeError. No argument, ``None``, a second argument or any keyword
-    raises TypeError: a class call names one node that exists."""
+    raises TypeError: a class call names one node that exists; except that a
+    membership class (``_MEMBER_KIND``: ``DisplayLayer``) called with no
+    argument is its kind token (``Layer()``), and its ``None`` refusal names
+    it (``_NONE_TEXT``)."""
     label = _type_label(cls)
     if kwargs or len(args) != 1:
+        if not args and not kwargs and cls._MEMBER_KIND:
+            return cls._kind()
         raise TypeError(_refer_call_error(cls, label, args, kwargs))
     obj = args[0]
     if isinstance(obj, cls):
         return obj
     if obj is None:
-        raise TypeError(f"None is not {_article(label)} {label} name")
+        raise TypeError(cls._NONE_TEXT or f"None is not {_article(label)} {label} name")
     if isinstance(obj, str) and not isinstance(obj, Attribute):
         name = obj.split(".", 1)[0] if "." in obj else obj
         node = _node_from_str(name, label)

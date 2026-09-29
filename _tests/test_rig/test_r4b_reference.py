@@ -318,7 +318,9 @@ class TestReference(MayaTestCase):
              r"^Transform\(\) names no node: Transform\('x'\) refers to x; "
              r"Transform\.define\('x'\) finds or makes it; Transform\.create\(name='x'\) makes one$"),
             (lambda: Transform(None), TypeError, r"^None is not a transform name$"),
-            (lambda: DisplayLayer(None), TypeError, r"^None is not a displayLayer name$"),
+            # re-pinned (round 4b NC6): a membership class's None names its kind token
+            (lambda: DisplayLayer(None), TypeError,
+             r"^None is not a layer name; Layer\(\) is defaultLayer \(it removes from every layer\)$"),
             (lambda: ObjectSet(None), TypeError, r"^None is not an objectSet name$"),
             (lambda: Container(None), TypeError, r"^None is not a container name$"),
             (lambda: Transform("grp", tx=1), TypeError,

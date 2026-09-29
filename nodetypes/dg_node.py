@@ -645,6 +645,14 @@ class DGNode(Node):
     # ``define`` finds or makes its nodes
     _DEFINE_REFUSED = None
 
+    # A membership class (a collection on the right of ``<<`` / ``>>`` /
+    # ``in``: ``DisplayLayer``) sets True: then ``Cls()`` is its kind token
+    # (``cls._kind()``, ``Layer()``) instead of a TypeError. ``_NONE_TEXT`` is
+    # the text of the ``Cls(None)`` TypeError (None: "None is not a joint
+    # name").
+    _MEMBER_KIND = False
+    _NONE_TEXT   = None
+
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
         """Initialize an instance from a node name or a MObject.
 

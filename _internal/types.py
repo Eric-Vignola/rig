@@ -94,13 +94,20 @@ def _is_attribute_spec(obj: Any) -> bool:
     return isinstance(obj, _AttrSpec)
 
 
-def _is_member_spec(obj: Any) -> bool:
-    """Return ``True`` if ``obj`` is a collection spec
-    (:class:`rig._internal.members._MemberSpec`: ``Tag``, a material, ...)."""
-    # Lazy-bound: members.py imports Node / Plug / List at module top,
-    # so it must never be loaded while this module is being imported.
+# The membership right-hand sides of ``<<`` / ``>>``: the collection specs
+# (:class:`rig._internal.members._MemberSpec`: ``Tag``, the kind and removal
+# tokens, a material spec) and the membership node classes (``DisplayLayer``).
+# ``rig.membership`` binds it when it loads (the D31 pattern: members.py
+# imports Node / Plug / List at module top, so this module cannot import it);
+# until then, mid-import only, nothing is membership.
+_MEMBERSHIP: tuple = ()
 
-    return isinstance(obj, _lazy().members._MemberSpec)
+
+def _is_membership(obj: Any) -> bool:
+    """Return ``True`` if ``obj`` is a membership right-hand side (a collection
+    spec or a membership node, see ``_MEMBERSHIP``): one ``isinstance``.
+    ``obj._member()`` is then the spec that runs the verb (a spec is its own)."""
+    return isinstance(obj, _MEMBERSHIP)
 
 
 def _is_components(obj: Any) -> bool:
