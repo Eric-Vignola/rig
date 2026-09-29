@@ -407,18 +407,24 @@ class TestTypedLayerPrep(MayaTestCase):
         Node(_mobject(shape))
         from_path = OpenMaya.MSelectionList()
         from_path.add(xform)
+        # re-pinned (round 4b NC2): the constructors are reached by
+        # Cls._wrap(x); Cls(x) is the reference, which returns the node of
+        # the most derived class (built by the cast)
         cases = {
-            "dg": (DGNode(md), _DG_KEYS),
-            "dg_copy": (DGNode(DGNode(md)), _DG_KEYS),
-            "dg_mobject": (DGNode(_mobject(md)), _DG_KEYS),
-            "dag": (DAGNode(xform), _DAG_KEYS),
-            "dag_path": (DAGNode(from_path.getDagPath(0)), _DAG_KEYS),
-            "dag_mobject": (DAGNode(_mobject(xform)), [_DAG_KEYS[1], _DAG_KEYS[0]] + _DAG_KEYS[2:]),
-            "dag_copy": (
-                DAGNode(DAGNode(xform)),
+            "dg": (DGNode._wrap(md), _DG_KEYS),
+            "dg_copy": (DGNode._wrap(DGNode._wrap(md)), _DG_KEYS),
+            "dg_mobject": (DGNode._wrap(_mobject(md)), _DG_KEYS),
+            "dag": (DAGNode._wrap(xform), _DAG_KEYS),
+            "dag_path": (DAGNode._wrap(from_path.getDagPath(0)), _DAG_KEYS),
+            "dag_mobject": (
+                DAGNode._wrap(_mobject(xform)),
                 [_DAG_KEYS[1], _DAG_KEYS[0]] + _DAG_KEYS[2:],
             ),
-            "geometry": (Mesh(shape), _DAG_KEYS + _GEO_KEYS),
+            "dag_copy": (
+                DAGNode._wrap(DAGNode._wrap(xform)),
+                [_DAG_KEYS[1], _DAG_KEYS[0]] + _DAG_KEYS[2:],
+            ),
+            "geometry": (Mesh._wrap(shape), _DAG_KEYS + _GEO_KEYS),
             "checked_dg": (Node(_mobject(md)), _DG_KEYS),
             "checked_dag": (Node(_mobject(xform)), _DAG_KEYS),
         }

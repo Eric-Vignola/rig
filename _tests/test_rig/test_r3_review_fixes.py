@@ -588,7 +588,9 @@ class TestComponentSliceOnAChosenClass(MayaTestCase):
         expected = ["pcShape.controlPoints[0]", "pcShape.controlPoints[1]"]
         for cls in (DAGNode, DGNode):
             with self.subTest(cls=cls.__name__):
-                node = Node(cls("pcShape"))
+                # re-pinned (round 4b NC2): cls("pcShape") is the reference,
+                # which returns Mesh; the class-chosen wrapper is cls._wrap
+                node = Node(cls._wrap("pcShape"))
                 self.assertIs(type(node.vtx.node), cls)
                 self.assertEqual([str(p) for p in node.vtx[0:2]], expected)
                 self.assertEqual([str(p) for p in node.vtx[[0, 1]]], expected)
@@ -596,7 +598,7 @@ class TestComponentSliceOnAChosenClass(MayaTestCase):
                 self.assertEqual(len(node.vtx[:]), 8)
                 with self.assertRaisesRegex(IndexError, "index out of range for 8 points"):
                     node.vtx[[8]]
-        surface = Node(DAGNode("npShape"))
+        surface = Node(DAGNode._wrap("npShape"))
         self.assertEqual(
             [str(p) for p in surface.controlPoints[0:2]],
             ["npShape.controlPoints[0]", "npShape.controlPoints[1]"],

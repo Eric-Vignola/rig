@@ -2381,10 +2381,24 @@ class Container(DGNode):
     the same hash.
 
     Instances are produced by ``with container("name") as ctn:``.
+    ``Container("box")`` refers to an existing container node (a node of
+    another type raises NodeTypeError).
     """
+
+    # how the reference's errors name this unregistered class's nodes
+    _TYPE_LABEL = "container"
 
     def __repr__(self) -> str:
         return f'Container("{self.name}")'
+
+    @classmethod
+    def _coerce(cls, node: Any) -> Any:
+        """The reference's hook (see ``DGNode._coerce``): the unregistered
+        Container wraps a node of type ``container`` (a cast of one is a plain
+        node); any other node is refused."""
+        if cmds.objectType(node.name, isAType="container"):
+            return cls._wrap(node.name)
+        return None
 
     def __eq__(self, other: Any) -> bool:
         # symmetric with a plain node of the same container (DGNode's own test

@@ -191,7 +191,7 @@ print(Transform.is_type("hand_ctl"), Transform.is_type("hand_ctl", exact_type=Fa
 try:
     Control("persp")
 except ValueError as e:
-    print(e)                                                                       # persp is not a control
+    print(e)                                                                       # 'persp' is a transform, not a control; Node('persp') is Transform("persp")
 ```
 
 ---

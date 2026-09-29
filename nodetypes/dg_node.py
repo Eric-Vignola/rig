@@ -214,7 +214,10 @@ class DGNode(Node):
     A subclass of the root :class:`rig.nodetypes._base.Node` (its metaclass,
     NodeMeta, is inherited): ``Node("x")`` returns an instance of the class the
     node's type maps to, which carries this typed API and the DSL
-    (``node.tx`` is a :class:`Plug`, ``<<`` / ``>>``, the ``=`` sugar)."""
+    (``node.tx`` is a :class:`Plug`, ``<<`` / ``>>``, the ``=`` sugar).
+    ``DGNode("x")`` and every subclass's call is the strict typed reference
+    (see :class:`Node`): the node ``Node("x")`` gives, checked to be of the
+    class; ``create`` makes a node."""
 
     # the maya native node type string
     NATIVE_NODE_TYPE = "entity"
@@ -241,9 +244,11 @@ class DGNode(Node):
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
         """Initialize an instance from a node name or a MObject.
 
-        A node of this class (or a subclass) shares its internals; any other node
-        object is taken by its name. The state is written to ``__dict__``, in this
-        order, so no ``__setattr__`` runs.
+        Reached through the cast and ``Cls._wrap(x)`` (a class call is the
+        reference, see :class:`Node`). A node of this class (or a subclass)
+        shares its internals; any other node object is taken by its name. The
+        state is written to ``__dict__``, in this order, so no ``__setattr__``
+        runs.
         """
         d = self.__dict__
         if isinstance(node, type(self)):
@@ -293,6 +298,10 @@ class DGNode(Node):
         return hash(self.long_name)
 
     def __eq__(self, other: Any) -> bool:
+        # another object answers for itself (a plug: ``plug == node`` is
+        # False and builds nothing)
+        if not isinstance(other, Node):
+            return NotImplemented
         return isinstance(other, type(self)) and self.name == other.name
 
     def __gt__(self, other: Any) -> bool:
@@ -567,6 +576,30 @@ class DGNode(Node):
     def exists(cls, name: str) -> bool:
         """Checks if a node of this type exists."""
         return name and cmds.objExists(name) and cls.is_type(name)
+
+    @classmethod
+    def _coerce(cls, node: Any) -> Any:
+        """``cls(x)``'s hook for the node ``Node(x)`` gave when it is not an
+        instance of ``cls``: the node object to return instead, or None (the
+        reference then raises NodeTypeError).
+
+        A class with no node type of its own (``NATIVE_NODE_TYPE`` /
+        ``CUSTOM_NODE_TYPE`` in its body: a user's wrapper subclass, which is
+        not registered for a type) wraps a node its ``is_type`` accepts, as
+        its constructor does. A registered class takes nothing else."""
+        own = cls.__dict__
+        if own.get("CUSTOM_NODE_TYPE") or own.get("NATIVE_NODE_TYPE"):
+            return None
+        name = node.name
+        if not cls.is_type(name, exact_type=False):
+            return None
+        return cls._wrap(name)
+
+    @classmethod
+    def _mismatch_hint(cls, node: Any) -> str:
+        """Text the reference's NodeTypeError adds after ``Node('x') is ...``
+        (empty by default)."""
+        return ""
 
     @classmethod
     def find_all(cls, *args, exact_type: bool = True, **kwargs) -> list["DGNode"]:

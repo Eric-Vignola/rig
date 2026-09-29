@@ -82,11 +82,14 @@ class TestShadingEngine(MayaTestCase):
         self.assertIs(type(Node(ShadingEngine.DEFAULT) >> None), ShadingEngine)
         self.assertIs(type(Node.create("shadingEngine", name="viaFactorySG")), ShadingEngine)
 
-        # registration makes ObjectSet(sg) and Node(sg) different objects
+        # re-pinned (round 4b NC2): ObjectSet(sg) refers to the engine, the
+        # most derived class (an engine is an objectSet), so it equals
+        # ShadingEngine(sg) and Node(sg) (it was an ObjectSet wrapper, unequal)
         name = self.sg_a.name
         self.assertEqual(ShadingEngine(name), Node(name))
-        self.assertNotEqual(ShadingEngine(name), ObjectSet(name))
-        self.assertNotEqual(Node(name), ObjectSet(name))
+        self.assertIs(type(ObjectSet(name)), ShadingEngine)
+        self.assertEqual(ShadingEngine(name), ObjectSet(name))
+        self.assertEqual(Node(name), ObjectSet(name))
 
         # a fresh cube sits in the default engine
         self.assertEqual(Mesh(self.shape).get_shading_engines(), [default])
