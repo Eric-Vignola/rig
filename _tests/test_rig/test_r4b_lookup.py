@@ -15,8 +15,8 @@
   at ``:x`` and ``:char:x``: one of them is the node, both are ambiguous,
   with ``namespace -relativeNames`` off and on.
 * ``TestFindNodeSharesTheRule``: the membership lookups (``Layer``, the
-  materials) and ``get_or_create`` follow the same rule, and an ambiguity
-  refuses before any write.
+  materials) follow the same rule, and an ambiguity refuses before any write;
+  ``define`` (which replaced ``get_or_create`` in NC4) reads its key.
 """
 
 import pickle
@@ -629,8 +629,9 @@ class TestNamespaceLookup(MayaTestCase):
 
 
 class TestFindNodeSharesTheRule(MayaTestCase):
-    """The membership lookups (``_find_node``: ``Layer``, the materials) and
-    ``get_or_create`` follow ``Node(x)``'s rule."""
+    """The membership lookups (``_find_node``: ``Layer``, the materials) follow
+    ``Node(x)``'s rule; ``define`` (``get_or_create``'s replacement) reads its
+    key."""
 
     TEST_START_NEW_SCENE = True
 
@@ -701,16 +702,25 @@ class TestFindNodeSharesTheRule(MayaTestCase):
             _find_node("cube")
 
     def test_get_or_create(self):
+        """Re-pinned in round 4b NC4 (get_or_create removed): ``define`` reads its
+        key, the node create would make (``:char:x`` while ``char`` is current),
+        not the lookup rule; a name the rule reads elsewhere (``:cube``) is
+        refused rather than forked."""
         cmds.namespace(setNamespace=":char")
         before = set(cmds.ls())
-        for call in (lambda: DisplayLayer.get_or_create("x"), lambda: ObjectSet.get_or_create("red")):
-            with self.assertRaises(AmbiguousNodeError):
-                call()
+        # the key: the current namespace's node, found
+        self.assertEqual(str(DisplayLayer.define("x")), "char:x")
+        with self.assertRaises(NodeTypeError):
+            ObjectSet.define("red")  # :char:red is a blinn
         self.assertEqual(set(cmds.ls()), before)
-        # one of them: found, not forked
-        self.assertEqual(str(DisplayLayer.get_or_create("char:x")), "char:x")
-        made = ObjectSet.get_or_create("fresh")
+        self.assertEqual(str(DisplayLayer.define("char:x")), "char:x")
+        made = ObjectSet.define("fresh")
         self.assertEqual(str(made), "char:fresh")
-        self.assertEqual(ObjectSet.get_or_create("fresh"), made)
-        with self.assertRaisesRegex(TypeError, r"^'cube' exists and is a transform, not a displayLayer$"):
-            DisplayLayer.get_or_create("cube")
+        self.assertEqual(ObjectSet.define("fresh"), made)
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(AmbiguousNodeError, r"'cube' exists as :cube; this define's key is char:cube"):
+            DisplayLayer.define("cube")
+        self.assertEqual(set(cmds.ls()), before)
+        # from the root namespace the bare name's key is the root node
+        cmds.namespace(setNamespace=":")
+        self.assertEqual(str(DisplayLayer.define("x")), "x")

@@ -3056,6 +3056,38 @@ class Node(metaclass=NodeMeta):
         return hook(node_type, args, kwargs)
 
     @classmethod
+    def define(
+        cls,
+        node_type: str,
+        name:      str,
+        *,
+        parent:    Any         = None,
+        update:    bool        = False,
+        container: bool | None = None,
+        **kwargs:  Any,
+    ) -> Any:
+        """Find the node of ``node_type`` at the key ``name`` names, or make it
+        there (see ``DGNode.define``): ``Node.define("transform", "rig")`` is
+        ``Transform.define("rig")``.
+
+        A type a node class is registered for runs that class's ``define``
+        with the arguments. Any other type is keyed and guarded the same way;
+        a node found at the key must be of exactly ``node_type``
+        (NodeTypeError otherwise), and a missing one is made by the container
+        scope's ``createNode`` (the flattened scope's prefix, the tag, the
+        registration) with ``createNode``'s flags, then the attribute keywords
+        (checked on the type before any lookup):
+        ``Node.define("multiplyDivide", "knee_md", operation="divide")``. A
+        shape type (``"locator"``) is refused: Maya makes a shape under a new
+        transform, so no key names it."""
+        node_cls = _NODE_CLASS_DICT.get(node_type)
+        if node_cls is not None:
+            return node_cls.define(name, parent=parent, update=update, container=container, **kwargs)
+        from rig.nodetypes.dg_node import _define_untyped  # dg_node imports this module
+
+        return _define_untyped(node_type, name, parent, update, container, kwargs)
+
+    @classmethod
     def find_all(cls, node_type: str, exact_type: bool = True) -> list[Any]:
         """The nodes of ``node_type`` in the scene, as a list of typed nodes:
         the ``find_all`` of the class registered for the type

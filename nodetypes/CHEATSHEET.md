@@ -25,9 +25,9 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create` |
 | 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips |
 | 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild |
-| 13 | [`ObjectSet`](#13-objectset) | `get_or_create`, members and components |
+| 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
 | 14 | [`ShadingEngine`](#14-shadingengine) | `for_material`, `assign`, `get_face_members` |
-| 15 | [`DisplayLayer`](#15-displaylayer) | `get_or_create`, `for_node`, exclusive membership |
+| 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership |
 | 16 | [`Choice`](#16-choice) | data types that follow the selector |
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
 | 18 | [`Reference`](#18-reference) | file references and their namespaces |
@@ -467,7 +467,7 @@ print(cube.get_shapes(), cube.get_shape(), cube.get_shapes(no_interm=False))  # 
 print(list(grp.iter_shapes("mesh")), grp.find_shape("mesh", "cu"))            # [Transform("cube")] cube -- transforms of matching shapes
 print(list(grp.iter_shapes("mesh", as_transform=False)))                      # [Mesh("cubeShape")]
 
-DisplayLayer.get_or_create("geo").add_members(cube)
+DisplayLayer.define("geo").add_members(cube)
 clean = cube.duplicate_geometry(name="cube_clean")           # no history, no sets or layers, zeroed xform, pivots at origin
 print(repr(clean), clean.get_parent(), clean.get_shapes(), clean.t.get())           # Transform("cube_clean") None [Mesh("cube_cleanShape")] [0. 0. 0.]
 print(DisplayLayer.for_node(clean), cube.duplicate_geometry(parent=grp).long_name)  # None |grp|cube2
@@ -952,8 +952,8 @@ cmds.file(new=True, force=True)
 cube  = Node(cmds.polyCube(name="cube", ch=False)[0])
 mesh  = cube.get_shape()
 
-group = ObjectSet.get_or_create("mySet")                          # finds it, in the current namespace too
-print(repr(group), ObjectSet.get_or_create("mySet") == group)                                # ObjectSet("mySet") True
+group = ObjectSet.define("mySet")                                 # found, or made in the current namespace
+print(repr(group), ObjectSet.define("mySet") == group)                                       # ObjectSet("mySet") True
 group.add_members([cube, "cube.vtx[0:2]"])
 print(group.get_members())                                                                   # [Transform("cube")] -- DAG nodes only
 print(sorted((node, comp is None) for node, comp in group.get_members(as_components=True)))  # [(Transform("cube"), True), (Mesh("cubeShape"), False)]
@@ -967,10 +967,10 @@ other.clear()
 print(other.get_members())                                             # []
 
 try:
-    ObjectSet.get_or_create("cube")
+    ObjectSet.define("cube")
 except TypeError as e:
-    print(e)                                                      # 'cube' exists and is a transform, not a objectSet
-print(repr(ObjectSet.get_or_create("initialShadingGroup")))       # ShadingEngine("initialShadingGroup") -- the cast picks the most derived class
+    print(e)                                                      # 'cube' is a transform, not an objectSet; Node('cube') is Transform("cube")
+print(repr(ObjectSet.define("initialShadingGroup")))              # ShadingEngine("initialShadingGroup") -- a subtype passes, as the most derived class
 ```
 
 ---
@@ -1024,7 +1024,7 @@ Exclusive, objects only, read from the node's own `drawOverride` input.
 `defaultLayer` means "no layer": `for_node` answers `None` there.
 
 ```python
-layer = DisplayLayer.get_or_create("geometry")                    # empty; never becomes the current layer
+layer = DisplayLayer.define("geometry")                           # empty; never becomes the current layer
 print(repr(layer), layer.is_default, DisplayLayer("defaultLayer").is_default)         # DisplayLayer("geometry") False True
 
 layer.add_members(cube)                                                               # the node itself, never the subtree
@@ -1035,7 +1035,7 @@ cube.set_parent(grp)
 layer.add_members([grp])
 print(layer.get_members(), layer.get_members(no_recurse=False))   # [Transform("grp"), Transform("cube")] [Transform("grp"), Transform("cube")]
 
-ref = DisplayLayer.get_or_create("ref")
+ref = DisplayLayer.define("ref")
 ref.add_members(cube)                                                                            # exclusive: cube leaves geometry
 print(DisplayLayer.for_node(cube), layer.get_members())                                          # ref [Transform("grp")]
 layer.remove_members(cube)                                                                       # not ours: left alone

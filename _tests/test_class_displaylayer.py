@@ -26,14 +26,17 @@ class TestDisplayLayer(MayaTestCase):
         self.assertEqual(DisplayLayer.find_all(), [self.default_layer, self.layer])
 
     def test_get_or_create_and_for_node(self):
-        self.assertEqual(DisplayLayer.get_or_create(self.layer.name), self.layer)
+        """Historical id (v2.0.0a2): pinned DisplayLayer.get_or_create and for_node; it
+        now pins DisplayLayer.define (get_or_create's replacement, round 4b NC4) and
+        for_node."""
+        self.assertEqual(DisplayLayer.define(self.layer.name), self.layer)
         cmds.select(self.xform.name)
-        fresh = DisplayLayer.get_or_create("fresh")
+        fresh = DisplayLayer.define("fresh")
         self.assertEqual(fresh.name, "fresh")
         self.assertEqual(fresh.get_members(), [])
-        self.assertEqual(DisplayLayer.get_or_create("fresh"), fresh)
+        self.assertEqual(DisplayLayer.define("fresh"), fresh)
         with self.assertRaisesRegex(TypeError, "not a displayLayer"):
-            DisplayLayer.get_or_create(self.xform.name)
+            DisplayLayer.define(self.xform.name)
         self.assertEqual(DisplayLayer.for_node(self.xform), self.layer)
         other = Node(cmds.group(empty=True, name="other"))
         self.assertIsNone(DisplayLayer.for_node(other))
@@ -42,15 +45,15 @@ class TestDisplayLayer(MayaTestCase):
         cmds.namespace(add="ns")
         cmds.namespace(set="ns")
         try:
-            spaced = DisplayLayer.get_or_create("spaced")
+            spaced = DisplayLayer.define("spaced")
             self.assertEqual(spaced.name, "ns:spaced")
-            self.assertEqual(DisplayLayer.get_or_create("spaced"), spaced)
+            self.assertEqual(DisplayLayer.define("spaced"), spaced)
         finally:
             cmds.namespace(set=":")
 
     def test_remove_members_and_delete(self):
         other = Node(cmds.group(empty=True, name="other"))
-        fresh = DisplayLayer.get_or_create("fresh")
+        fresh = DisplayLayer.define("fresh")
         fresh.add_members(other)
         # a node held by another layer is left there
         self.layer.remove_members(other)
