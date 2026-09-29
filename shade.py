@@ -91,7 +91,6 @@ captured.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -99,7 +98,13 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import _cast_node
-from rig.nodetypes.material_node import _gate_type, _is_surface_shader
+from rig.nodetypes.material_node import (
+    _delete_network,
+    _gate_type,
+    _is_surface_shader,
+    _NAME_RE,
+    _rename_network,
+)
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal.list import List
 from rig._internal.members import (
@@ -145,9 +150,6 @@ _SHADEABLE = frozenset({"mesh", "nurbsSurface", "subdiv"})
 
 # The engine every new particle shape is a member of; never a material.
 _PARTICLE_ENGINE = "initialParticleSE"
-
-# A node name Maya keeps: identifiers joined by namespace or path separators.
-_NAME_RE = re.compile(r"^\|?[A-Za-z_][A-Za-z0-9_]*(?:[:|][A-Za-z_][A-Za-z0-9_]*)*$")
 
 # What a shape holds in an engine: the whole object (None), face ids, or
 # nothing at all.
@@ -227,19 +229,6 @@ def _classify(name: str) -> _Found:
 def _engines_of(path: str) -> list[str]:
     """The shading engines a shape is connected to, in connection order."""
     return _dedupe(cmds.listConnections(path, type="shadingEngine"))
-
-
-def _engines_fed_by(material: str) -> list[str]:
-    """The shading engines whose ``surfaceShader`` a material feeds."""
-    plugs = cmds.listConnections(
-        material, type="shadingEngine", source=False, destination=True, plugs=True
-    )
-    engines = []
-    for plug in plugs or []:
-        node, _, attr = plug.rpartition(".")
-        if attr == "surfaceShader" and node not in engines:
-            engines.append(node)
-    return engines
 
 
 def _dag_path(path: str) -> OpenMaya.MDagPath:
@@ -1129,66 +1118,23 @@ class Material(_MemberSpec):
             material, _ = self._realise(found)
         return _cast_node(material)
 
-    def _guard_owned(self, material: str, verb: str) -> None:
-        if cmds.ls(material, defaultNodes=True):
-            raise RuntimeError(
-                f"'{material}' is a Maya default node and cannot be {verb}"
-            )
-        if cmds.referenceQuery(material, isNodeReferenced=True):
-            raise RuntimeError(
-                f"'{material}' is referenced and cannot be {verb}; edit the source file"
-            )
-
     def delete(self) -> None:
         """Delete the material, the engines it feeds and their materialInfo
-        nodes. Members are left in no engine (green); :func:`repair`
-        re-homes them. Refuses a Maya default or referenced node."""
+        nodes (the material node's network ``delete``). Members are left in
+        no engine (green); :func:`repair` re-homes them. Refuses a Maya
+        default or referenced node."""
         self._verb("delete")
-        found    = self._require()
-        material = found.material
-        self._guard_owned(material, "deleted")
-        engines = [
-            name for name in _engines_fed_by(material)
-            if not cmds.ls(name, defaultNodes=True)
-        ]
-        infos = [
-            info for name in engines for info in ShadingEngine._wrap(name).get_material_info()
-        ]
-        with _undo_chunk(f"rig.{self.KIND}"):
-            for name in [*infos, *engines, material]:
-                if cmds.objExists(name):
-                    cmds.delete(name)
-        if cmds.objExists(material) or any(cmds.objExists(name) for name in engines):
-            raise RuntimeError(f"'{material}' survived its deletion")
+        _delete_network(self._require().material)
 
     def rename(self, new: str) -> None:
         """Rename the material -- and its engine when the engine follows the
-        ``<mat>SG`` convention -- and point this spec at the new name."""
+        ``<mat>SG`` convention -- and point this spec at the new name (the
+        material node's network ``rename``, through the engine this spec
+        names)."""
         self._verb("rename")
         Material(new)
-        found    = self._require()
-        material = found.material
-        self._guard_owned(material, "renamed")
-        if _find_node(new) is not None:
-            raise ValueError(f"'{new}' already exists")
-        engine  = self._engine_of(found, create=False)
-        old     = _leaf(material)
-        follows = engine is not None and _leaf(engine.name) == f"{old}SG"
-        if follows and _find_node(f"{new}SG") is not None:
-            raise ValueError(
-                f"'{new}SG' already exists, so the engine of '{new}' could not follow "
-                f"the <mat>SG convention; rename or delete '{new}SG' first"
-            )
-        with _undo_chunk(f"rig.{self.KIND}"):
-            got = cmds.rename(material, new)
-            if _leaf(got) != _leaf(new):
-                raise RuntimeError(f"Maya renamed '{material}' to '{got}', not '{new}'")
-            if follows:
-                got_engine = cmds.rename(engine.name, f"{new}SG")
-                if _leaf(got_engine) != f"{_leaf(new)}SG":
-                    raise RuntimeError(
-                        f"Maya renamed '{engine.name}' to '{got_engine}', not '{new}SG'"
-                    )
+        found = self._require()
+        got   = _rename_network(found.material, new, lambda: self._engine_of(found, create=False))
         self._name  = got
         self._built = None
 

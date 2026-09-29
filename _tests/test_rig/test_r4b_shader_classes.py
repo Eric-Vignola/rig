@@ -14,6 +14,12 @@
   ``Material.create(type=...)`` is the door for any surface type; ``define``
   finds or makes the network; ``Node.create`` / ``Node.define`` of a surface
   type route there; ``rn.blinn()`` stays the bare shader.
+* ``TestShaderNetworkVerbs``: ``.engine`` (find-only), the network ``delete``
+  and ``rename`` with their refusals, a held shader deleted or freed;
+  ``cmds.delete`` / ``cmds.rename`` stay the one-node escape.
+* ``TestShaderMemberNames``: no Python member of the shader classes shadows a
+  Maya attribute of a surface shader, a display layer or a shading engine
+  (ADD C18; the loaded types, a renderer's when its plug-in is loaded).
 
 Every refusal writes nothing (a zero ``cmds.ls()`` delta).
 """
@@ -432,3 +438,147 @@ class TestShaderCreate(_Case):
             md = Node.create("multiplyDivide", name="md", operation="divide")
         self.assertIs(type(md), DGNode)
         self.assertEqual(_members(str(box2)), ["md"])
+
+
+class TestShaderNetworkVerbs(_Case):
+    """.engine, the network delete and rename, their refusals."""
+
+    def test_the_engine_is_find_only(self):
+        red = Blinn.create(name="red")
+        self.assertEqual(red.engine, ShadingEngine("redSG"))
+        bare = Node(_shader("blinn", "bare"))
+        self.assertRefused(
+            ValueError,
+            r"^'bare' feeds no shading engine yet; assigning it \(geometry << Blinn\(\"bare\"\)\) builds bareSG$",
+            lambda: bare.engine,
+        )
+        # two engines: <mat>SG wins; none named so: refused
+        alt = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="altSG")
+        cmds.connectAttr("red.outColor", f"{alt}.surfaceShader")
+        self.assertEqual(red.engine, ShadingEngine("redSG"))
+        cmds.rename("redSG", "mainSG")
+        self.assertRefused(ValueError, "feeds 2 shading engines", lambda: red.engine)
+
+    def test_delete_removes_the_network(self):
+        cube = cmds.polyCube(name="cube", constructionHistory=False)[0]
+        red  = Blinn.create(name="red")
+        info = red.engine.get_material_info()
+        cmds.sets(cube, edit=True, forceElement="redSG")
+        self.assertIsNone(red.delete())
+        for name in ("red", "redSG", *info):
+            self.assertFalse(cmds.objExists(name))
+        # the members are green: in no engine
+        self.assertFalse(cmds.listConnections("cubeShape", type="shadingEngine"))
+        self.assertFalse(red.is_valid)
+        # one undo step brings the network back
+        cmds.undo()
+        self.assertTrue(all(cmds.objExists(n) for n in ("red", "redSG", *info)))
+        # the one-node escape
+        cmds.delete("red")
+        self.assertTrue(cmds.objExists("redSG"))
+        # nodes= is DGNode.delete's
+        blue = Blinn.create(name="blue")
+        grp  = cmds.createNode("transform", name="grp")
+        blue.delete(grp)
+        self.assertFalse(cmds.objExists("grp"))
+        self.assertTrue(cmds.objExists("blue"))
+
+    def test_rename_follows_the_engine_convention(self):
+        red = Blinn.create(name="red")
+        self.assertIsNone(red.rename("blue"))
+        self.assertEqual(str(red), "blue")
+        self.assertEqual(str(red.engine), "blueSG")
+        self.assertFalse(cmds.objExists("redSG"))
+        cmds.undo()
+        self.assertEqual((cmds.objExists("red"), cmds.objExists("redSG")), (True, True))
+        cmds.redo()
+        # an engine off the convention keeps its name
+        cmds.rename("blueSG", "customSG")
+        red.rename("green")
+        self.assertEqual(str(red.engine), "customSG")
+        # the one-node escape
+        cmds.rename("green", "plain")
+        self.assertTrue(cmds.objExists("customSG"))
+
+    def test_the_verbs_refuse_before_any_write(self):
+        red = Blinn.create(name="red")
+        Blinn.create(name="blue")
+        cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="greenSG")
+        cases = (
+            (ValueError, r"^'blue' already exists$", lambda: red.rename("blue")),
+            (ValueError, r"^'greenSG' already exists, so the engine of 'green'", lambda: red.rename("green")),
+            (ValueError, r"^'1bad' is not a node name Maya keeps", lambda: red.rename("1bad")),
+            (TypeError, r"non-empty str", lambda: red.rename("")),
+            (RuntimeError, r"^'lambert1' is a Maya default node and cannot be deleted$", lambda: Lambert("lambert1").delete()),
+            (RuntimeError, r"^'standardSurface1' is a Maya default node and cannot be deleted$",
+             lambda: StandardSurface("standardSurface1").delete()),
+            (RuntimeError, r"^'lambert1' is a Maya default node and cannot be renamed$",
+             lambda: Lambert("lambert1").rename("x")),
+        )
+        for error, pattern, call in cases:
+            with self.subTest(pattern=pattern):
+                self.assertRefused(error, pattern, call)
+
+    def test_a_held_shader_dies_loudly(self):
+        # deleted to the undo queue, then freed by a new scene: every verb
+        # raises "already deleted!", never a crash; the name refers again
+        red = Blinn.create(name="red")
+        cmds.delete("red")
+        for verb in (lambda: red.engine, lambda: red.delete(), lambda: red.rename("x")):
+            self.assertRefused(RuntimeError, "already deleted!", verb)
+        cmds.undo()
+        self.assertEqual(str(red.engine), "redSG")
+        cmds.file(new=True, force=True)
+        for verb in (lambda: red.engine, lambda: red.delete(), lambda: red.rename("x")):
+            self.assertRefused(RuntimeError, r"freed by a new scene.*already deleted!", verb)
+        self.assertRefused(NodeNotFoundError, "no blinn named 'red'", lambda: Blinn("red"))
+        self.assertIs(type(Blinn.create(name="red")), Blinn)
+
+    def test_a_referenced_shader_is_refused(self):
+        folder = tempfile.mkdtemp(prefix="rig_shader_ref_")
+        path   = os.path.join(folder, "rig_shader_ref.ma")
+        try:
+            Blinn.create(name="refmat")
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ref")
+            shader = Blinn("ref:refmat")
+            self.assertRefused(RuntimeError, r"^'ref:refmat' is referenced and cannot be deleted",
+                               lambda: shader.delete())
+            self.assertRefused(RuntimeError, r"^'ref:refmat' is referenced and cannot be renamed",
+                               lambda: shader.rename("x"))
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+class TestShaderMemberNames(MayaTestCase):
+    """ADD C18: a Python member wins over a Maya attribute of the same name, so
+    none of the shader classes' members may be one.
+
+    The types are the live ``shader/surface`` types: a renderer's shaders are
+    covered when its plug-in is loaded. The test does not load one: loaded
+    here, ``mtoa`` would stay loaded for the rest of the suite (``test_shade``
+    pins ``aiStandardSurface`` as an unregistered type), and mayapy crashed at
+    exit after it; the check was run with ``mtoa`` loaded in its own process
+    (round 4b, NC5: no collision)."""
+
+    # the members round 4b gives the material family (of / astype arrive with
+    # the membership step) and the verbs every class inherits
+    _PLANNED = frozenset({"engine", "of", "astype", "create", "define", "exists"})
+
+    def test_no_member_shadows_a_maya_attribute(self):
+        members = set(self._PLANNED)
+        for cls in _CLASSES:
+            members |= {name for name in vars(cls) if not name.startswith("_")}
+        types = [*(cmds.listNodeTypes("shader/surface") or []), "displayLayer", "shadingEngine"]
+        for node_type in types:
+            names = set()
+            attrs = OpenMaya.MNodeClass(node_type).getAttributes()
+            for i in range(len(attrs)):
+                fn = OpenMaya.MFnAttribute(attrs[i])
+                names.update((fn.name, fn.shortName))
+            with self.subTest(node_type=node_type):
+                self.assertEqual(members & names, set())
+        self.assertLessEqual({"engine", "create", "define", "delete", "rename"}, members)
