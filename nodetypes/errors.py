@@ -62,6 +62,12 @@ def _leaf(name: str) -> str:
     return name.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
 
 
+def _namespace(name: str) -> str:
+    """The namespace a node name is spelled in, ``""`` for the root
+    (``|g|ns:a`` is ``ns``; ``:a`` and ``a`` are ``""``)."""
+    return name.rsplit("|", 1)[-1].rpartition(":")[0].strip(":")
+
+
 def _article(word: str) -> str:
     return "an" if word[:1].lower() in "aeiou" else "a"
 
@@ -163,11 +169,16 @@ class NodeNotFoundError(NodeLookupError):
         return f"{shown} {'exists' if len(found) == 1 else 'exist'}"
 
     def _close_name_hint(self) -> str | None:
-        """The scene names whose leaf is closest to the missing leaf."""
+        """The scene names whose leaf is closest to the missing leaf. Of the
+        names that share a leaf, the one in the missing name's own namespace is
+        shown (``'spine_01'`` rather than a reference's ``'char:spine_01'``)."""
         leaf    = _leaf(self.name)
+        home    = _namespace(self.name)
         by_leaf = {}
         for name in (cmds.ls() or [])[:_HINT_NAME_LIMIT]:
-            by_leaf.setdefault(_leaf(name), name)
+            key = _leaf(name)
+            if key not in by_leaf or _namespace(name) == home != _namespace(by_leaf[key]):
+                by_leaf[key] = name
         by_leaf.pop(leaf, None)  # the same leaf elsewhere is the namespace hint
         close = difflib.get_close_matches(leaf, list(by_leaf), n=3, cutoff=0.75)
         return f"did you mean {_quoted(by_leaf[c] for c in close)}?" if close else None
