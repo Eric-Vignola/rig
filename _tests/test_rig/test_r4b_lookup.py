@@ -46,6 +46,7 @@ from rig.nodetypes import (
     _base,
     errors as _errors,
 )
+from rig.bridges import commands as rc
 from rig.nodetypes._base import _lookup, set_custom_type
 from rig.shade import Blinn
 from rig._internal.members import _find_node
@@ -589,6 +590,30 @@ class TestNamespaceLookup(MayaTestCase):
         self.assertEqual(made, "char:made")
         self.assertEqual(Node(made).uuid, _uuid(":char:made"))
         self.assertEqual(Node("made").uuid, _uuid(":char:made"))
+
+    def test_names_maya_returns_stay_exact(self):
+        """``container.createNode``, the ``rc`` results and ``Node.wrap`` cast the
+        name Maya returned as Maya resolves it (``_cast_node``): a returned
+        ``x`` is never ambiguous because another namespace is current, in either
+        relativeNames mode (where Maya returns the relative ``x`` for char:x)."""
+        for name in ("x1", "x2", "md1", "md2"):
+            node_type = "multiplyDivide" if name.startswith("md") else "transform"
+            cmds.createNode(node_type, name=f":{name}")
+
+        def in_char(node):
+            return node.uuid in cmds.ls(":char:*", uuid=True)
+
+        for relative in self._modes():
+            with self.subTest(relative=relative):
+                self.assertEqual(rc.ls(":x")[0].uuid, _uuid(":x"))
+                self.assertEqual(rc.ls(":char:x")[0].uuid, _uuid(":char:x"))
+                self.assertEqual(Node.wrap(cmds.ls(":x"))[0].uuid, _uuid(":x"))
+                self.assertEqual(Node.wrap(cmds.ls(":char:x"))[0].uuid, _uuid(":char:x"))
+                self.assertTrue(in_char(container.createNode("multiplyDivide", name="md1")))
+                self.assertTrue(in_char(container.createNode("transform", name="x")))
+                self.assertTrue(in_char(rc.createNode("transform", name="x")))
+                with container("scope"):
+                    self.assertTrue(in_char(Node.create("multiplyDivide", name="md1")))
 
     def test_one_lookup_call_off_the_root(self):
         """A bare name while another namespace is current costs one
