@@ -17,7 +17,13 @@ import numpy as np
 from maya import cmds, OpenMaya as OpenMaya1
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig.nodetypes.errors import AmbiguousNodeError, NodeLookupError, NodeNotFoundError
+from rig.nodetypes.errors import (
+    _article,
+    AmbiguousNodeError,
+    NodeLookupError,
+    NodeNotFoundError,
+    NodeTypeError,
+)
 
 
 CUSTOM_TYPE_ATTR = "__custom_node_type__"
@@ -73,15 +79,34 @@ class NodeMeta(type):
     The metaclass of every node class: it registers a class for its node type
     (`_NODE_CLASS_DICT`), which the typed cast and ``Node.create`` read.
 
-    Calling the root :class:`Node` itself is the DSL node factory
-    (``Node("pCube1")`` returns the typed node); calling any other node class
-    constructs it as usual. That is the one branch point of a node class call.
+    Calling a node class names a node that already exists, and never writes
+    the scene. The root :class:`Node` is the DSL node factory
+    (``Node("pCube1")`` returns the typed node); any other class is the strict
+    typed reference (`_refer`): ``Transform("j1")`` returns the node
+    ``Node("j1")`` gives, ``Joint("j1")``, checked to be a Transform. That is the one branch
+    point of a node class call. The cast core never runs it: it builds a class
+    with ``type.__call__``, and the package's own sites that already know a
+    node's exact class build it with ``Cls._wrap(x)``.
     """
 
     def __call__(cls, *args, **kwargs):
         if cls is Node:
             return _node_factory(*args, **kwargs)
-        return type.__call__(cls, *args, **kwargs)
+        return _refer(cls, args, kwargs)
+
+    def _wrap(cls, obj: Any) -> Any:
+        """The node object of class ``cls`` for ``obj`` (a name, MObject,
+        MDagPath or node object), built by the class's constructor, its
+        ``is_type`` check included, without the reference's lookup and
+        most-derived cast.
+
+        Private, for the package's own sites whose node's exact class is known:
+        a node just created (``post_create``), read by type (``cmds.ls(type=)``,
+        ``listConnections(type=)``) or type-checked. Anything else calls
+        ``Cls(x)`` / ``Node(x)``, so no exact-class wrapper of a subtype node (a
+        ``Transform`` object of a joint) reaches a user. A metaclass method, so
+        a node never has it."""
+        return type.__call__(cls, obj)
 
     def wrap(cls, value: Any) -> Any:
         """Wrap a ``maya.cmds`` result (str / list-of-str) as a node /
@@ -229,9 +254,10 @@ def _cast(obj: Any) -> Any:
     if from_mobject and key in _CASTABLE_TYPES:
         inst = _construct_checked_type(cls_obj, obj)
     if inst is None:
-        # a node class is constructed without NodeMeta.__call__'s frame,
-        # which only dispatches the root Node to its factory
-        inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
+        # a node class is constructed without NodeMeta.__call__'s frame (the
+        # reference, which casts): a metaclass derived from NodeMeta may
+        # override ``_wrap``
+        inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj._wrap(obj)
     if from_mobject:
         _CASTABLE_TYPES.add(key)
     return inst
@@ -265,7 +291,7 @@ def _cast_by_name(obj: str) -> Any:
 
     if cls_obj:
         # as in `_cast`: no NodeMeta.__call__ frame
-        return type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj(obj)
+        return type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj._wrap(obj)
 
     raise ValueError(f"Failed casting {obj}")
 
@@ -316,8 +342,9 @@ def _lookup(name: str, label: str = "node") -> str:
 
 def _type_label(cls: type) -> str:
     """How a lookup error names the nodes of node class ``cls``: its node type
-    (``"joint"``), ``"node"`` for DGNode and ``"DAG node"`` for DAGNode."""
-    label = cls.CUSTOM_NODE_TYPE or cls.NATIVE_NODE_TYPE
+    (``"joint"``), ``"node"`` for DGNode and ``"DAG node"`` for DAGNode, or
+    the class's ``_TYPE_LABEL`` (the unregistered Container: ``"container"``)."""
+    label = getattr(cls, "_TYPE_LABEL", None) or cls.CUSTOM_NODE_TYPE or cls.NATIVE_NODE_TYPE
     return {"entity": "node", "dagNode": "DAG node"}.get(label, label)
 
 
@@ -2885,6 +2912,26 @@ class Node(metaclass=NodeMeta):
     :class:`Plug` instances owned by the node (``node.tx.node is node``),
     ``<<`` / ``>>`` inject and introspect, ``node.tx = 5`` is ``node.tx << 5``.
 
+    Every other node class is a reference to a node that already exists
+    (naming never creates): ``Joint("spine_01")`` takes what ``Node(x)`` takes,
+    by the same lookup rule, and returns the node ``Node(x)`` gives, which
+    must be an instance of the class. D9 amended: ``Cls(x)`` returns the
+    canonical typed object, the most derived class, so ``Transform("j1")``
+    gives ``Joint("j1")``, equal to ``Node("j1")`` both ways, and
+    ``Cls(x) is x`` for a node object already of the class. A node of another type raises
+    NodeTypeError (``'grp' is a transform, not a joint; Node('grp') is
+    Transform("grp")``), with nothing written; the DG classes check the type
+    too (``DisplayLayer("red")`` on a blinn raises). Subtypes pass: an
+    engine is an objectSet (``ObjectSet("initialShadingGroup")`` is a
+    ``ShadingEngine``). A geometry class takes a transform for its first
+    non-intermediate shape of the class's type (``Mesh("body")`` gives
+    ``Mesh("bodyShape")``). A class with no node type of its own (a user
+    wrapper subclass) wraps a node its ``is_type`` accepts. A class call takes
+    exactly one argument: ``Transform()``, ``Transform(None)`` and
+    ``Transform("x", tx=1)`` raise TypeError (``Transform.create(name="x",
+    ...)`` makes a node). ``Cls.exists(x)`` answers whether ``Cls(x)`` would
+    return a node.
+
     ``Node.create(type, ...)`` makes a node (see :meth:`create`) and
     ``Node.find_all(type)`` lists the nodes of a type. On a node class other
     than ``Node`` and ``Container``, and so on any node (``node.create``),
@@ -2980,9 +3027,11 @@ def _node_factory(obj: Any) -> Any:
     return result.node if isinstance(result, Attribute) else result
 
 
-def _node_from_str(name: str) -> Any:
+def _node_from_str(name: str, label: str = "node") -> Any:
     """``Node(name)`` for a node name or uuid: the cast core on a hit, the
-    lookup rule (`_lookup`) around it.
+    lookup rule (`_lookup`) around it. ``label`` names what the name was to
+    be in the lookup errors (a node class's reference passes its type:
+    "no joint named 'x'").
 
     A bare name costs one API call more than the cast (the current namespace):
     at the root namespace the cast decides; in another one the name may name a
@@ -2993,9 +3042,9 @@ def _node_from_str(name: str) -> Any:
     node has raises NodeNotFoundError naming it."""
     if name.isidentifier():
         if _current_namespace() != ":" and not _is_uuid(name):
-            return _cast(_lookup(name))
+            return _cast(_lookup(name, label))
     elif _PATTERN_CHARS.search(name):
-        raise NodeLookupError(name)
+        raise NodeLookupError(name, label)
     try:
         return _cast(name)
     except (TypeError, ValueError, RuntimeError) as exc:
@@ -3003,7 +3052,63 @@ def _node_from_str(name: str) -> Any:
     if _is_uuid(name):
         if cmds.ls(name, uid=True):
             raise error
-        raise NodeNotFoundError(name, uuid=True)
-    _lookup(name)
+        raise NodeNotFoundError(name, label, uuid=True)
+    _lookup(name, label)
     # the lookup found the one node the cast failed on: its own error
     raise error
+
+
+def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
+    """``Cls(x)`` for a node class other than :class:`Node`: the strict typed
+    reference. It never writes the scene.
+
+    ``x`` is anything ``Node(x)`` takes, by the same lookup rule and errors
+    (a miss says "no joint named 'spnie_01'"), and the result is the node
+    ``Node(x)`` gives: returned when it is an instance of ``cls`` (the most
+    derived class; ``Cls(x) is x`` for a node object of the class), else the
+    class's ``_coerce`` hook decides (a geometry class takes a transform's
+    shape, an unregistered class wraps what its ``is_type`` accepts), else
+    NodeTypeError. No argument, ``None``, a second argument or any keyword
+    raises TypeError: a class call names one node that exists."""
+    label = _type_label(cls)
+    if kwargs or len(args) != 1:
+        raise TypeError(_refer_call_error(cls, label, args, kwargs))
+    obj = args[0]
+    if isinstance(obj, cls):
+        return obj
+    if obj is None:
+        raise TypeError(f"None is not {_article(label)} {label} name")
+    if isinstance(obj, str) and not isinstance(obj, Attribute):
+        name = obj.split(".", 1)[0] if "." in obj else obj
+        node = _node_from_str(name, label)
+    else:
+        # a plug gives its node, as in Node(x)
+        node = _node_factory(obj)
+        name = None
+    if isinstance(node, cls):
+        return node
+    found = cls._coerce(node)
+    if found is not None:
+        return found
+    if name is None:
+        name = node.name
+    raise NodeTypeError(
+        name, label, node.node_type, f"Node({name!r}) is {node!r}{cls._mismatch_hint(node)}"
+    )
+
+
+def _refer_call_error(cls: Any, label: str, args: tuple, kwargs: dict) -> str:
+    """The message of a class call that names no node (``Transform()``) or
+    passes more than the node (``Transform("x", tx=1)``)."""
+    kind = cls.__name__
+    if not args and not kwargs:
+        return (
+            f"{kind}() names no node: {kind}('x') refers to x; "
+            f"{kind}.create(name='x') makes one"
+        )
+    name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
+    name = name if isinstance(name, str) else "x"
+    return (
+        f"{kind}({name!r}, ...) refers to an existing {label} and takes no attributes; "
+        f"{kind}.create(name={name!r}, ...) makes a new one"
+    )

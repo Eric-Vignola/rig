@@ -153,6 +153,33 @@ class Geometry(DAGNode):
         d["_Geometry__local_shape_attr"] = None
         d["_Geometry__world_shape_attr"] = None
 
+    @classmethod
+    def _coerce(cls, node: Any) -> Any:
+        """The reference's hook (see ``DGNode._coerce``): a transform stands
+        for its first non-intermediate shape of this class's type
+        (``Mesh("body")`` gives ``Mesh("bodyShape")``), the rule the
+        constructor has; a transform with none is refused."""
+        if cmds.nodeType(node.long_name) == "transform":
+            shapes = cmds.listRelatives(
+                node.long_name,
+                shapes         = True,
+                type           = cls.NATIVE_NODE_TYPE,
+                noIntermediate = True,
+                fullPath       = True,
+            )
+            if not shapes:
+                return None
+            node = _cast(shapes[0])
+            if isinstance(node, cls):
+                return node
+        return super()._coerce(node)
+
+    @classmethod
+    def _mismatch_hint(cls, node: Any) -> str:
+        if cmds.nodeType(node.long_name) == "transform":
+            return f", which has no {cls.NATIVE_NODE_TYPE} shape"
+        return ""
+
     # --- attr helpers
 
     @property

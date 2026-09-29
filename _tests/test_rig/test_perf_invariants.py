@@ -1456,7 +1456,9 @@ class TestPlugNodeReuse(MayaTestCase):
         self.assertEqual(len({first: 1, second: 2}), 1)
 
     def test_user_chosen_class_not_seeded(self):
-        plug = Node(Transform(self._known_type("joint"))).tx
+        # re-pinned (round 4b NC2): Transform(joint) is the reference, which
+        # returns Joint; the exact-class wrapper is Transform._wrap
+        plug = Node(Transform._wrap(self._known_type("joint"))).tx
         self.assertEqual(self._casts(lambda: str(plug)), 0)
         self.assertIs(type(plug.node), Transform)
 
