@@ -58,7 +58,7 @@ happened until each spec reached `<<`.
 | `_base.py` | `_AttrSpec` — the base class; `apply()`, the compound builder, multi pre-sizing, and `_clone_attribute` behind `plug >> Node` |
 | `numeric.py` | `Float`, `Int`, `Bool`, `Angle`, `Time` |
 | `compound.py` | `Vector`, `Quat`, `Color`, `Euler` — 3- and 4-channel compounds |
-| `typed.py` | `String`, `Matrix`, `Mesh`, `NurbsCurve`, `NurbsSurface`, `Message` |
+| `typed.py` | `String`, `Matrix`, `MeshAttr`, `NurbsCurveAttr`, `NurbsSurfaceAttr`, `Message` |
 | `enum_attr.py` | `Enum` (the file avoids shadowing the stdlib `enum`) |
 | `modifiers.py` | `lock`, `unlock`, `hide`, `unhide`, `skip`, `destroy`, `Note` |
 
@@ -71,7 +71,7 @@ import rig
 from rig.spec import (
     Angle, Bool, Float, Int, Time,                    # numeric
     Color, Euler, Quat, Vector,                       # compound
-    Matrix, Mesh, Message, NurbsCurve, NurbsSurface, String,   # typed
+    Matrix, MeshAttr, Message, NurbsCurveAttr, NurbsSurfaceAttr, String,   # typed
     Enum,
     Note, destroy, hide, lock, skip, unhide, unlock,  # modifiers
 )
@@ -87,17 +87,18 @@ alike. The capitalised name is always the attribute spec.
 | Name | Is | Not to be confused with |
 |---|---|---|
 | `rig.Color` | an RGB `double3` attribute spec (children `R`, `G`, `B`) | a colour value, or a vertex colour set |
-| `rig.Mesh` | a `mesh` data attribute spec | `rig.nodetypes.Mesh`, the typed shape node |
+| `rig.MeshAttr` | a `mesh` data attribute spec | `rig.nodetypes.Mesh`, the typed shape node |
 | `rig.Matrix` | a `matrix` attribute spec | `rig.matrix`, the matrix function library |
 | `rig.Vector`, `rig.Euler`, `rig.Quat` | compound attribute specs | `rig.vector`, `rig.euler`, `rig.quaternion`, the function libraries |
 
 A node's `repr` names its node class, so `Mesh("cubeShape")` in an output
-is a `rig.nodetypes.Mesh` (likewise `NurbsCurve`, `NurbsSurface`), never the
-`rig.Mesh` spec.
+is a `rig.nodetypes.Mesh` (likewise `NurbsCurve`, `NurbsSurface`). The data
+specs are `rig.MeshAttr`, `rig.NurbsCurveAttr` and `rig.NurbsSurfaceAttr`:
+no public name is both a node class and a declaration.
 
 ```python
 from rig.nodetypes import Mesh as MeshNode
-print(rig.Mesh is MeshNode, rig.Matrix is rig.matrix)   # False False
+print(hasattr(rig, "Mesh"), rig.MeshAttr is MeshNode, rig.Matrix is rig.matrix)   # False False False
 ```
 
 ---

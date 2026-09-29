@@ -812,10 +812,10 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
     from rig.spec.numeric import Angle, Bool, Float, Int, Time
     from rig.spec.typed import (
         Matrix,
-        Mesh,
+        MeshAttr,
         Message,
-        NurbsCurve,
-        NurbsSurface,
+        NurbsCurveAttr,
+        NurbsSurfaceAttr,
         String,
     )
 
@@ -866,9 +866,9 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
         "bool":         Bool,
         "string":       String,
         "time":         Time,
-        "mesh":         Mesh,
-        "nurbsCurve":   NurbsCurve,
-        "nurbsSurface": NurbsSurface,
+        "mesh":         MeshAttr,
+        "nurbsCurve":   NurbsCurveAttr,
+        "nurbsSurface": NurbsSurfaceAttr,
         "message":      Message,
     }
     spec_cls = mapping.get(data_type) or mapping.get(attr_type) or Float
