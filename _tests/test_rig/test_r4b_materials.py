@@ -1,5 +1,5 @@
 """Round 4b, step NC7: membership on nodes II -- materials are the membership
-nodes.
+nodes, and a conversion returns the new node.
 
 * ``TestMaterialNodes``: the recommendation's W3 / W4 / W6 rows (define once
   and assign many; queries and removals before a material exists never create
@@ -18,10 +18,21 @@ nodes.
 * ``TestMaterialIn``: ``x in red`` / ``x in ShadingEngine('altSG')``: every
   face (or the whole object) of every shape, all members of a list, a plug
   standing for its node; the tokens and wrong kinds refused.
+* ``TestConversionReturnsNode``: ``astype`` / ``shade.convert`` return the new
+  node (a class or a type name; a name converts too); ``dry_run`` returns the
+  report; ``strict``; the generic ``Material`` and non-shader targets refused;
+  a reference never converts; a shader already of the type comes back as is.
+* ``TestConvertedHandle``: the held old node (and its plugs) raise, naming the
+  conversion; an undo revives it and kills the new one (plain message); a new
+  scene or a file open clears the record; a chain of conversions; a
+  namespaced node.
 
 Every refusal asserts a zero ``cmds.ls()`` delta.
 """
 
+import os
+import shutil
+import tempfile
 from unittest import mock
 
 import numpy as np
@@ -29,6 +40,7 @@ from maya import cmds
 
 import rig
 import rig.nodetypes as nodetypes
+import rig.nodetypes._base as _base
 from rig import (
     AmbiguousNodeError,
     container,
@@ -136,6 +148,7 @@ class TestMaterialNodes(_Case):
             NodeTypeError, r"'shiny' is a phong, not a blinn.*Phong\('shiny'\)\.astype\(Blinn\) converts it",
             lambda: Blinn.define("shiny"),
         )
+        self.assertEqual(repr(Phong("shiny").astype(Blinn)), 'Blinn("shiny")')
 
     def test_w4_queries_and_removals_before_existence_never_create(self):
         for call in (
@@ -316,6 +329,7 @@ class TestNodeRhs(_Case):
             lambda: self.cube >> red,
             lambda: self.cube in red,
             lambda: red.engine,
+            lambda: red.astype(Phong),
         ):
             self.assertRefused(RuntimeError, "red already deleted!", call)
         cmds.undo()
@@ -554,3 +568,209 @@ class TestMaterialIn(_Case):
         self.assertNotIn(self.cube, Blinn("bare"))
         self.assertEqual((self.cube >> Blinn("bare")).shape, (0,))
         self.assertEqual(_scene(), before)   # 'in' never builds the engine
+
+
+# --------------------------------------------------------------------- #
+#  Conversion returns the new node
+# --------------------------------------------------------------------- #
+
+
+class TestConversionReturnsNode(_Case):
+    def setUp(self):
+        super().setUp()
+        self.red = Blinn.define("red", color=(1, 0, 0))
+        self.cube << self.red
+
+    def test_astype_and_convert_return_the_new_node(self):
+        new = self.red.astype(Phong)
+        self.assertIs(type(new), Phong)
+        self.assertEqual(repr(new), 'Phong("red")')
+        self.assertEqual(new, Node("red"))
+        self.assertEqual(new, Phong("red"))
+        self.assertIn(self.cube, new)
+        self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
+        lam = shade.convert("red", "lambert")         # a name, a type name
+        self.assertEqual(repr(lam), 'Lambert("red")')
+        std = shade.convert(lam, StandardSurface)     # a node, a class
+        self.assertEqual(repr(std), 'StandardSurface("red")')
+        ramp = std.astype("rampShader")               # a type without a class
+        self.assertIs(type(ramp), Material)
+        self.assertEqual(cmds.nodeType("red"), "rampShader")
+        self.assertEqual(Material.of(self.cube), [ramp])
+
+    def test_dry_run_returns_the_report_and_writes_nothing(self):
+        self.red.eccentricity << 0.6
+        before = _scene()
+        with mock.patch.object(cmds, "warning") as warn:
+            report = self.red.astype(Phong, dry_run=True)
+            same   = shade.convert("red", "phong", dry_run=True)
+        self.assertEqual(warn.call_count, 0)
+        self.assertEqual(_scene(), before)
+        self.assertIsInstance(report, Conversion)
+        self.assertEqual(report, same)
+        self.assertEqual(report.parked, ("eccentricity",))
+        self.assertEqual(str(report).splitlines()[0], "rig.shade: 'red' blinn -> phong parks:")
+        self.assertTrue(self.red.is_valid)
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        # a shader already of the type: an empty report
+        self.assertEqual(self.red.astype(Blinn, dry_run=True), Conversion("red", "blinn", "blinn"))
+        with mock.patch.object(cmds, "warning") as warn:
+            new = self.red.astype(Phong)
+        self.assertEqual(warn.call_args[0][0], str(report))
+        self.assertAlmostEqual(cmds.getAttr("red.__eccentricity__"), 0.6, places=5)
+        self.assertIs(type(new), Phong)
+
+    def test_strict_refuses_a_lossy_conversion(self):
+        self.red.eccentricity << 0.6
+        report = self.red.astype(Phong, dry_run=True)
+        self.assertRefused(ValueError, "^rig.shade: 'red' blinn -> phong parks:",
+                           lambda: self.red.astype(Phong, strict=True))
+        with self.assertRaises(ValueError) as caught:
+            shade.convert(self.red, "phong", strict=True)
+        self.assertEqual(str(caught.exception), str(report))
+        self.assertTrue(self.red.is_valid)
+        self.red.eccentricity << 0.3
+        self.assertIs(type(self.red.astype(Phong, strict=True)), Phong)
+
+    def test_the_generic_material_and_other_targets_are_refused(self):
+        wiring = sorted(cmds.listConnections("red", connections=True, plugs=True) or [])
+        for error, pattern, target in (
+            (TypeError, r"^Material names no node type", Material),
+            (TypeError, r"^a conversion target is a shader class \(Phong\) or a node type name", Transform),
+            (TypeError, r"^a conversion target", ""),
+            (TypeError, r"^a conversion target", None),
+            (TypeError, "not a surface shader", "multiplyDivide"),
+            (ValueError, "not a registered surface shader", "noSuchType"),
+        ):
+            with self.subTest(target=target):
+                self.assertRefused(error, pattern, lambda target=target: self.red.astype(target))
+        self.assertRefused(TypeError, "membership token", lambda: shade.convert(-self.red, Phong))
+        self.assertRefused(TypeError, "membership token", lambda: shade.convert(Blinn(), Phong))
+        self.assertRefused(RuntimeError, "default node", lambda: shade.convert("lambert1", Phong))
+        self.assertEqual(sorted(cmds.listConnections("red", connections=True, plugs=True) or []), wiring)
+        self.assertTrue(self.red.is_valid)
+
+    def test_a_reference_never_converts(self):
+        for call in (lambda: Phong(self.red), lambda: Phong("red"), lambda: Phong(Node("red").color)):
+            self.assertRefused(
+                NodeTypeError, r"^'red' is a blinn, not a phong; .*; Blinn\('red'\)\.astype\(Phong\) converts it$",
+                call,
+            )
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertTrue(self.red.is_valid)
+
+    def test_a_shader_of_the_type_is_returned_as_is(self):
+        cmds.flushUndo()
+        before = _scene()
+        self.assertIs(self.red.astype(Blinn), self.red)
+        self.assertIs(self.red.astype("blinn", color=(0, 1, 0)), self.red)
+        self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
+        self.assertIs(self.red.astype(Blinn, update=True, color=(0, 1, 0)), self.red)
+        self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 1.0, 0.0))
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.material")
+        self.assertRefused(AttributeError, "no attribute 'nope'", lambda: self.red.astype(Blinn, nope=1))
+        self.assertEqual(_scene(), before)
+
+
+# --------------------------------------------------------------------- #
+#  The held old node names the conversion
+# --------------------------------------------------------------------- #
+
+
+class TestConvertedHandle(_Case):
+    CONVERTED = r"^'red' was converted to a phong; use the node astype\(\) returned \(red__rigold already deleted!\)$"
+
+    def setUp(self):
+        super().setUp()
+        self.red = Blinn.define("red")
+        self.cube << self.red
+
+    def test_the_held_node_names_the_conversion(self):
+        held  = self.red
+        plug  = held.color
+        token = -held
+        new   = held.astype(Phong)
+        for label, call in (
+            ("str", lambda: str(held)), ("repr", lambda: repr(held)), ("name", lambda: held.name),
+            ("plug", lambda: held.color.get()), ("get", lambda: plug.get()),
+            ("set", lambda: plug << (1, 0, 0)), ("engine", lambda: held.engine),
+            ("astype", lambda: held.astype(Lambert)), ("<<", lambda: self.cube << held),
+            ("<< token", lambda: self.cube << token), ("in", lambda: self.cube in held),
+            ("refer", lambda: Phong(held)), ("convert", lambda: shade.convert(held, "lambert")),
+            ("delete", lambda: held.delete()),
+        ):
+            with self.subTest(label):
+                self.assertRefused(RuntimeError, self.CONVERTED, call)
+        self.assertFalse(held.is_valid)
+        self.assertEqual(held == new, False)
+        # a node deleted another way keeps the plain message
+        other = Blinn.define("other")
+        cmds.delete("other")
+        self.assertRefused(RuntimeError, r"^other already deleted!$", lambda: str(other))
+        self.assertIs(type(new), Phong)
+        self.assertIn(self.cube, new)
+
+    def test_an_undo_revives_the_old_node_and_kills_the_new(self):
+        held = self.red
+        new  = held.astype(Phong)
+        cmds.undo()
+        self.assertTrue(held.is_valid)
+        self.assertEqual(held, Blinn("red"))
+        self.assertIn(self.cube, held)
+        self.assertRefused(RuntimeError, r"^red__rigconvert already deleted!$", lambda: str(new))
+        cmds.redo()
+        self.assertRefused(RuntimeError, self.CONVERTED, lambda: str(held))
+        self.assertEqual(Node("red"), Phong("red"))
+        self.assertIs(type(Node("red")), Phong)
+
+    def test_a_new_scene_or_a_file_open_clears_the_record(self):
+        held = self.red
+        held.astype(Phong)
+        self.assertEqual(_base._CONVERTED.get("red__rigold"), ("red", "phong"))
+        cmds.file(new=True, force=True)
+        self.assertEqual(_base._CONVERTED, {})
+        self.assertRefused(RuntimeError, r"^Blinn node \(freed by a new scene", lambda: str(held))
+        # a file open too
+        folder = tempfile.mkdtemp(prefix="rig_nc7_open_")
+        path   = os.path.join(folder, "nc7.ma")
+        try:
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            Blinn.define("red").astype(Phong)
+            self.assertIn("red__rigold", _base._CONVERTED)
+            cmds.file(path, open=True, force=True)
+            self.assertEqual(_base._CONVERTED, {})
+        finally:
+            cmds.file(new=True, force=True)
+            shutil.rmtree(folder, ignore_errors=True)
+        # a node later deleted under the old aside name keeps the plain message
+        cmds.createNode("transform", name="red__rigold")
+        node = Node("red__rigold")
+        cmds.delete("red__rigold")
+        self.assertRefused(RuntimeError, r"^red__rigold already deleted!$", lambda: str(node))
+
+    def test_a_chain_of_conversions(self):
+        first  = self.red
+        second = first.astype(Phong)
+        third  = second.astype(Lambert)
+        self.assertEqual(repr(third), 'Lambert("red")')
+        for held in (first, second):
+            self.assertRefused(RuntimeError, r"^'red' was converted to a lambert; use the node astype\(\) returned",
+                               lambda held=held: str(held))
+        self.assertIn(self.cube, third)
+        cmds.undo()
+        self.assertTrue(second.is_valid)
+        self.assertRefused(RuntimeError, "already deleted", lambda: str(third))
+
+    def test_a_namespaced_node(self):
+        cmds.namespace(add="look")
+        cmds.shadingNode("blinn", asShader=True, name="look:red")
+        held = Blinn("look:red")
+        new  = held.astype(Phong)
+        self.assertEqual(repr(new), 'Phong("look:red")')
+        self.assertRefused(RuntimeError, r"^'look:red' was converted to a phong; use the node astype\(\) returned",
+                           lambda: str(held))
+        # the root red is untouched
+        self.assertTrue(self.red.is_valid)
+        self.assertEqual(cmds.nodeType("red"), "blinn")

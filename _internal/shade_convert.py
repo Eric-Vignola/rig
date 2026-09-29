@@ -1,5 +1,6 @@
 """
-Shader conversion: the engine behind ``shade.convert(mat, "phong")``.
+Shader conversion: the engine behind ``mat.astype(Phong)`` and
+``shade.convert(mat, "phong")``, which return the new node.
 
 Maya has no node-type mutation. Its own Attribute Editor "Type" dropdown is
 ``createNode`` + MEL ``replaceNode`` + ``delete``: a brand-new node, the
@@ -26,7 +27,8 @@ chunk named ``rig.shade.convert``:
 * REPORT: a frozen :class:`Conversion`; ``bool(report)`` means something is
   parked or lost, ``str(report)`` is the warning text. ``dry_run`` returns
   it with zero writes; ``strict`` raises ``ValueError(str(report))``;
-  otherwise ONE ``cmds.warning`` before anything moves.
+  otherwise ONE ``cmds.warning`` before anything moves, and the conversion
+  returns the new node.
 * PARK (the default): every doomed value, wire and animCurve is cloned onto
   the SAME node as a hidden dynamic attribute of the same type
   (``cosinePower`` -> ``__cosinePower__``), the wire re-homed onto it. Parked
@@ -53,8 +55,12 @@ artist's dropdown; ``duplicate`` copies parked attributes (harmless, a
 duplicate converted later restores them too); keyable / channelBox flags of
 built-in attributes are not preserved; an expression string driving a lost
 attribute is not rewritten. Live ``Node`` / ``Plug`` objects of the old
-node are poisoned (``already deleted!``) and nothing is rebound; after an
-undo the old node is live again.
+node are poisoned and nothing is rebound: the old node, renamed
+``<name>__rigold`` and deleted, is recorded in ``_base._CONVERTED``, so its
+objects raise "'red' was converted to a phong; use the node astype()
+returned" (the record is read on that error path only, and cleared by a new
+scene or a file open); after an undo the old node is live again and the new
+one raises the plain ``already deleted!``.
 """
 
 from __future__ import annotations
@@ -62,14 +68,18 @@ from __future__ import annotations
 import logging
 import math
 import re
-from dataclasses import dataclass, field, replace
+import sys
+from dataclasses import dataclass, field
 from typing import Any
 
 from maya import cmds
+from maya.api import OpenMaya
+from rig._internal import callbacks as _callbacks
 from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
-from rig.nodetypes._base import _cast_node, _check_attrs
+from rig.nodetypes import _base
+from rig.nodetypes._base import _cast, _cast_node, _check_attrs
 from rig.nodetypes.material_node import _gate_type, _leaf
 from rig.spec._base import _spec_from_attribute
 
@@ -117,8 +127,8 @@ class Conversion:
     differ; ``opaque`` the attributes whose value could not be compared
     (ramp arrays, typed values); ``parked`` the entries of the lost lists
     that are parked on the node instead of lost (their names as the lines
-    print them); ``restored`` the attributes an earlier park gave back this
-    time."""
+    print them). A dry run returns it; a conversion warns its text and
+    returns the new node."""
 
     name:           str
     source:         str
@@ -132,7 +142,6 @@ class Conversion:
     default_shift:  tuple = ()
     opaque:         tuple = ()
     parked:         tuple = ()
-    restored:       tuple = ()
 
     def __bool__(self) -> bool:
         return bool(
@@ -411,6 +420,7 @@ class _Scan:
     container:      str | None = None
     bindings:       list = field(default_factory=list)  # (container, leaf, published name, carried)
     relock:         list = field(default_factory=list)  # plug names to lock on the new node
+    aside:          str | None = None                   # the old node's name once renamed aside
 
     def report(self) -> Conversion:
         carried = sorted(set(self.values) | {_root_of(self.old, a) for a in self.wires})
@@ -743,8 +753,9 @@ def _commit(scan: _Scan, new: str, park: bool) -> str:
     # user's own undo chunk -- where the guarded rollback cannot fire --
     # leaves the material in the scene under a temporary name instead of
     # gone.
-    aside = cmds.rename(old, f"{old}__rigold")
-    got   = cmds.rename(new, old)
+    aside      = cmds.rename(old, f"{old}__rigold")
+    scan.aside = aside
+    got        = cmds.rename(new, old)
     if got != old:
         raise RuntimeError(
             f"the new {dst} could not take the name '{old}' back (Maya named it "
@@ -880,13 +891,15 @@ def convert(
     dry_run: bool,
     park:    bool,
     attrs:   dict,
-) -> Conversion:
+    update:  bool,
+) -> Any:
     """Convert the shader ``node`` (a live material node) to the node type
-    ``dst`` in one undo chunk and return the :class:`Conversion` report (with
-    what an earlier park gave back); ``dry_run`` returns it with nothing
-    written. On a shader already of that type nothing is written."""
+    ``dst`` in one undo chunk and return the new node (typed: ``Phong("red")``);
+    ``dry_run`` returns the :class:`Conversion` report with nothing written.
+    On a shader already of that type the node itself is returned, ``attrs``
+    written only under ``update``."""
     _gate_type(dst)
-    old = node.name   # a deleted node raises here
+    old = node.name   # a deleted node raises here (naming its conversion, if any)
     src = cmds.nodeType(old)
     if cmds.ls(old, defaultNodes=True):
         raise RuntimeError(
@@ -902,7 +915,13 @@ def convert(
         raise RuntimeError(f"'{old}' is locked (lockNode); unlock it first")
     _check_attrs(attrs, node_type=dst)
     if src == dst:
-        return Conversion(old, src, dst)
+        if dry_run:
+            return Conversion(old, src, dst)
+        if attrs and update:
+            with _undo_chunk("rig.material"):
+                for attr, value in attrs.items():
+                    Plug(f"{old}.{attr}") << value
+        return node
     scan   = _scan(old, src, dst, park)
     report = scan.report()
     if dry_run:
@@ -911,25 +930,25 @@ def convert(
         raise ValueError(str(report))
     if str(report):
         cmds.warning(str(report))
-    restored = _run(scan, park, attrs)
+    name = _run(scan, park, attrs)
     prune_memoize_caches()
-    return replace(report, restored=tuple(restored))
+    _record(scan.aside, old, dst)
+    return _cast(name)
 
 
-def _run(scan: _Scan, park: bool, attrs: dict) -> list:
-    """The chunk. The undo queue is on for its duration (a rollback needs
-    it) and put back afterwards; a failure closes the chunk and undoes it
-    only when the chunk recorded something."""
-    was_on   = cmds.undoInfo(query=True, state=True)
-    restored = []
+def _run(scan: _Scan, park: bool, attrs: dict) -> str:
+    """The chunk; returns the new node's name. The undo queue is on for its
+    duration (a rollback needs it) and put back afterwards; a failure closes
+    the chunk and undoes it only when the chunk recorded something."""
+    was_on = cmds.undoInfo(query=True, state=True)
     if not was_on:
         cmds.undoInfo(state=True)
     try:
         try:
             with _undo_chunk(CHUNK):
-                new      = _prepare(scan, park)
-                name     = _commit(scan, new, park)
-                restored = _restore(name, scan.dst)
+                new  = _prepare(scan, park)
+                name = _commit(scan, new, park)
+                _restore(name, scan.dst)
                 for attr, value in attrs.items():
                     Plug(f"{name}.{attr}") << value
         except Exception:
@@ -939,4 +958,48 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> list:
     finally:
         if not was_on:
             cmds.undoInfo(state=False)
-    return restored
+    return name
+
+
+# ---------- The converted-node record -------------------------------------- #
+#
+# ``_base._CONVERTED`` maps the name a converted node was deleted under
+# (``red__rigold``; a deleted node's name has no namespace) to ``(its name,
+# the target type)``, so ``_base._deleted_error`` names the conversion when an
+# object of the old node is used. Read on that error path only; cleared before
+# a new scene or a file open (the old scene's nodes are freed then, and a freed
+# node never reaches the record). Registered once per Maya session through
+# rig._internal.callbacks, like the memo caches.
+
+
+def _record(aside: str, old: str, dst: str) -> None:
+    """Remember that the node deleted as ``aside`` was ``old``, converted to a
+    ``dst``."""
+    if not _CALLBACKS_READY[0]:
+        _CALLBACKS_READY[0] = _callbacks.ensure(
+            __name__, _THIS_MODULE, _callback_specs(), release=_clear
+        )
+    _base._CONVERTED[aside.rsplit(":", 1)[-1]] = (old, dst)
+
+
+def _clear(*args: Any) -> None:
+    """kBeforeNew / kBeforeOpen: forget every converted node. A callback never
+    raises into Maya."""
+    try:
+        _base._CONVERTED.clear()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _callback_specs() -> list:
+    msg = OpenMaya.MSceneMessage
+    return [
+        (msg.addCallback, msg.kBeforeNew,  _clear),
+        (msg.addCallback, msg.kBeforeOpen, _clear),
+    ]
+
+
+_THIS_MODULE     = sys.modules.get(__name__)
+_CALLBACKS_READY = [
+    _callbacks.register(__name__, _THIS_MODULE, _callback_specs(), release=_clear)
+]

@@ -61,13 +61,13 @@ Usage::
     shade.repair()                           # List of the shapes re-homed to initialShadingGroup
     shade.tidy()                             # all-faces memberships collapsed to object level
 
-    shade.convert(red, Phong)                # the Conversion report; red is a phong now
-    shade.convert("red", "lambert", dry_run=True)   # the report, nothing written
+    red = red.astype(Phong)                  # Phong("red"): the new node, in one undo chunk
+    shade.convert("red", "lambert", dry_run=True)   # the Conversion report, nothing written
 
-Conversion (``shade.convert(mat, "phong")``, ``mat`` a shader node or its
-name) makes a new node of the target type in the old one's place;
-``Phong(mat)`` is a reference, never a conversion (a blinn there is a
-``NodeTypeError``). It keeps the name, the engines, the materialInfo, the ``defaultShaderList1``
+Conversion (``mat.astype(Phong)``, ``shade.convert(mat, "phong")``) makes a
+new node of the target type and returns it; ``Phong(mat)`` is a reference,
+never a conversion (a blinn there is a ``NodeTypeError`` naming ``astype``).
+It keeps the name, the engines, the materialInfo, the ``defaultShaderList1``
 slot, the container, the dynamic attributes and the locks, moves every wire
 the target can hold, and PARKS what it cannot: each non-default value, wire
 or animCurve on an attribute the target lacks is cloned onto the same node as
@@ -75,9 +75,9 @@ a hidden ``__attr__`` of the same type and given back the next time the
 material becomes a type that has it. One ``cmds.warning`` names what was
 parked (``park=False`` drops the values and disconnects the wires instead,
 sources kept; ``strict=True`` refuses anything lossy; ``dry_run=True`` writes
-nothing). It returns the :class:`Conversion` report. Live ``Node`` /
-``Plug`` objects of the old node die (``already deleted!``); after an undo
-they are the live node again.
+nothing and returns the :class:`Conversion` report). The old node object, and
+its plugs, then raise "'red' was converted to a phong; use the node astype()
+returned"; after an undo it is the live node again.
 
 Exclusive membership means faces into the engine that already owns their
 whole object is the one no-op of the grammar: the state already holds.
@@ -956,25 +956,26 @@ def convert(
     strict:  bool = False,
     dry_run: bool = False,
     park:    bool = True,
+    update:  bool = False,
     **attrs: Any,
-) -> Conversion:
-    """The conversion engine: make the material ``x`` -- a shader node or its
-    name, read by ``Material(x)`` (a missing name is a NodeNotFoundError,
-    another type a NodeTypeError) -- the node type ``to`` (a class such as
-    ``Phong`` or a type name) and return the :class:`Conversion` report
-    (``bool(report)`` is "something was parked or lost", ``str(report)`` the
-    warning text). ``strict=True`` refuses anything lossy (``ValueError``),
-    ``dry_run=True`` writes nothing, ``park=False`` drops instead of parking;
-    ``attrs`` are checked against the target before any write and set inside
-    the chunk (skipped on a shader already of that type)."""
+) -> Any:
+    """Make the material ``x`` -- a shader node or its name, read by
+    ``Material(x)`` (a missing name is a NodeNotFoundError, another type a
+    NodeTypeError) -- the node type ``to`` (a class such as ``Phong`` or a
+    type name) and return THE NEW NODE (``Phong("red")``); the node object
+    ``x`` was then raises, naming the conversion. See
+    :meth:`rig.nodetypes.Material.astype` for the options; ``dry_run=True``
+    returns the :class:`Conversion` report instead (``bool(report)`` is
+    "something would be parked or lost", ``str(report)`` the warning text) and
+    writes nothing."""
     if isinstance(x, _MemberSpec):
         raise TypeError(
             f"{x!r} is a membership token, not a material; convert the material "
-            f"node: shade.convert(mat, ...)"
+            f"node: mat.astype(...) or shade.convert(mat, ...)"
         )
     return shade_convert.convert(
         Material(x), _target_type(to), strict=strict, dry_run=dry_run, park=park,
-        attrs=attrs,
+        attrs=attrs, update=update,
     )
 
 
