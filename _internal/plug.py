@@ -832,19 +832,23 @@ class Plug(Attribute):
         from rig._internal.node import Node
 
         node_name, sep, attr_name = target.rpartition(".")
-        if not sep:
-            node_name, attr_name = str(self.node), target
         if not _ATTR_NAME_RE.fullmatch(attr_name):
             raise TypeError(
                 f"'>>' clones an attribute under a plain name; {attr_name!r} is not "
                 f"one (identifiers of [A-Za-z0-9_] not starting with a digit)"
             )
-        if not node_name or not cmds.objExists(node_name):
-            raise TypeError(
-                f"'>>' clones onto an existing node and '{node_name}' does not exist; "
-                f"write plug >> 'name' for the same node or plug >> 'node.name'"
-            )
-        dst_node = Node(node_name)
+        if not sep:
+            # the plug's own node: never looked up again by its name (which
+            # the lookup rule could find ambiguous while a namespace is current)
+            dst_node  = self.node
+            node_name = str(dst_node)
+        else:
+            if not node_name or not cmds.objExists(node_name):
+                raise TypeError(
+                    f"'>>' clones onto an existing node and '{node_name}' does not exist; "
+                    f"write plug >> 'name' for the same node or plug >> 'node.name'"
+                )
+            dst_node = Node(node_name)
         if dst_node.has_attr(attr_name):
             raise TypeError(
                 f"'{node_name}' already has an attribute '{attr_name}': '>>' clones, "

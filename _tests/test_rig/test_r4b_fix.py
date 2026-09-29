@@ -174,3 +174,132 @@ class TestDefineGuards(_Case):
             r"Delete 'arm1' and 'arm2' to rebuild it, or build in a new scene\.$",
         ):
             build()
+
+
+class TestOneLookupRule(_Case):
+    """Review majors (safety): a name reads one way whatever the verb, the
+    current namespace and ``namespace -relativeNames``."""
+
+    def _char(self):
+        cmds.namespace(add="char")
+
+    def test_a_clone_onto_the_plugs_own_node_never_looks_it_up(self):
+        from rig import AmbiguousNodeError
+
+        cmds.createNode("transform", name="cube")
+        self._char()
+        cmds.createNode("transform", name="char:cube")
+        cmds.namespace(setNamespace="char")
+        for relative in (False, True):
+            with self.subTest(relativeNames=relative):
+                cmds.namespace(relativeNames=relative)
+                cube = Node(":cube")
+                plug = cube.tx >> f"k{int(relative)}"
+                self.assertIs(plug.node, cube)
+                self.assertTrue(cmds.attributeQuery(f"k{int(relative)}", node=":cube", exists=True))
+                self.assertFalse(cmds.attributeQuery(f"k{int(relative)}", node=":char:cube", exists=True))
+        cmds.namespace(relativeNames=False)
+        # a user-written 'node.name' is the user's name: the lookup rule reads it
+        before = _scene()
+        with self.assertRaises(AmbiguousNodeError):
+            Node(":cube").tx >> "cube.k2"
+        self.assertEqual(_scene(), before)
+
+    def test_a_qualified_name_is_read_from_the_root(self):
+        from rig import NodeNotFoundError
+
+        cmds.namespace(add="sub")
+        cmds.createNode("transform", name="sub:x")
+        self._char()
+        cmds.namespace(add="sub", parent="char")
+        cmds.createNode("transform", name="char:sub:x")
+        root, inner = cmds.ls(":sub:x", uuid=True)[0], cmds.ls(":char:sub:x", uuid=True)[0]
+        cmds.namespace(setNamespace="char")
+        for relative in (False, True):
+            with self.subTest(relativeNames=relative):
+                cmds.namespace(relativeNames=relative)
+                before = _scene()
+                self.assertEqual(Transform("sub:x").uuid, root)
+                self.assertEqual(Node("sub:x").uuid, root)
+                self.assertEqual(Node("sub:x.tx").uuid, root)
+                self.assertEqual(Transform.define("sub:x").uuid, root)
+                self.assertTrue(Transform.exists("sub:x"))
+                self.assertEqual(Transform(":char:sub:x").uuid, inner)
+                self.assertEqual(_scene(), before)
+        cmds.namespace(relativeNames=False)
+        cmds.delete(":sub:x")
+        cmds.namespace(relativeNames=True)
+        # only :char:sub:x: 'sub:x' is :sub:x, which does not exist
+        with self.assertRaises(NodeNotFoundError):
+            Transform("sub:x")
+        self.assertFalse(Transform.exists("sub:x"))
+        self.assertEqual(Transform("char:sub:x").uuid, inner)
+
+    def test_create_reads_parent_by_the_reference_rule(self):
+        from rig import AmbiguousNodeError, NodeNotFoundError
+        from rig.bridges import nodes as rn
+
+        self._char()
+        cmds.createNode("transform", name="char:grp")
+        cmds.namespace(setNamespace="char")
+        # only :char:grp: every create parents under it, as define does
+        for label, call in {
+            "Transform.create":  lambda: Transform.create(name="a", parent="grp"),
+            "Node.create":       lambda: Node.create("transform", name="b", parent="grp"),
+            "rn.transform":      lambda: rn.transform(name="c", parent="grp"),
+            "container.createNode": lambda: container.createNode("transform", name="d", parent="grp"),
+            "Transform.define":  lambda: Transform.define("e", parent="grp"),
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(call().get_parent().long_name, "|char:grp")
+        cmds.createNode("transform", name=":grp")
+        # :grp and :char:grp: every create refuses, as define does
+        for label, call in {
+            "Transform.create":  lambda: Transform.create(name="a", parent="grp"),
+            "Node.create":       lambda: Node.create("transform", name="b", parent="grp"),
+            "rn.transform":      lambda: rn.transform(name="c", parent="grp"),
+            "container.createNode": lambda: container.createNode("transform", name="d", parent="grp"),
+            "Transform.define":  lambda: Transform.define("e2", parent="grp"),
+        }.items():
+            with self.subTest(label):
+                self.assertLeavesNothing(AmbiguousNodeError, call)
+        cmds.namespace(setNamespace=":")
+        # a parent= typo raises, where Maya made the node at the world with a warning
+        for label, call in {
+            "rn.transform":      lambda: rn.transform(name="c", parent="gpr"),
+            "rn.joint":          lambda: rn.joint(name="j", parent="gpr"),
+            "container.createNode": lambda: container.createNode("transform", name="k", p="gpr"),
+            "Transform.create":  lambda: Transform.create(name="t", parent="gpr"),
+        }.items():
+            with self.subTest(label):
+                self.assertLeavesNothing(NodeNotFoundError, call, "no DAG node named 'gpr'")
+        self.assertEqual(rn.transform(name="ok", parent=Node(":grp")).get_parent().long_name, "|grp")
+
+    def test_container_create_node_refuses_shared(self):
+        cmds.createNode("multiplyDivide", name="md")
+        for _ in range(2):
+            self.assertLeavesNothing(
+                TypeError, lambda: container.createNode("multiplyDivide", name="md", shared=True),
+                "create always makes a new node",
+            )
+
+
+class TestRerunInANamespace(_Case):
+    """FIX probe (a build with a namespace current): the re-run of a scope
+    made in the current namespace ('char:arm') gets the re-run text."""
+
+    def test_the_rerun_text(self):
+        cmds.namespace(add="char")
+        cmds.namespace(setNamespace="char")
+
+        def build():
+            with container("arm"):
+                return Transform.define("arm_root")
+
+        build()
+        with self.assertRaisesRegex(
+            ValueError,
+            r"^'char:arm_root' belongs to container 'char:arm' from an earlier run; this scope is "
+            r"'char:arm1'\. Delete 'char:arm' and 'char:arm1' to rebuild it",
+        ):
+            build()
