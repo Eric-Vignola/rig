@@ -45,6 +45,10 @@ class ShadingEngine(ObjectSet):
     # the shading engine every new shadeable shape is a member of
     DEFAULT = "initialShadingGroup"
 
+    # ``cmds.sets``' name (``renderable``, ``noSurfaceShader`` and ``empty`` are
+    # always set); ``create``'s other keywords are the engine's attributes
+    _CREATE_FLAGS = frozenset({"name", "n"})
+
     # --- creation
 
     @classmethod
@@ -56,8 +60,9 @@ class ShadingEngine(ObjectSet):
         ("Source node will not allow the connection"); ``cmds.sets`` wires all of them.
 
         Args:
-            kwargs: kwargs supported by cmds.sets(). ``name`` / ``n`` names the set;
-                ``renderable``, ``noSurfaceShader`` and ``empty`` are always set.
+            kwargs: the ``_CREATE_FLAGS`` given to ``create``: ``name`` / ``n``
+                names the set; ``renderable``, ``noSurfaceShader`` and
+                ``empty`` are always set.
         """
         name = kwargs.pop("name", kwargs.pop("n", None)) or cls.NATIVE_NODE_TYPE
         return cmds.sets(

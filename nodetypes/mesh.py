@@ -48,6 +48,10 @@ class Mesh(Geometry):
     # built from its mesh data (``Node.create("mesh")`` with none raises, naming it)
     _CREATE_TAKES_INPUTS = "mesh_data"
 
+    # the keywords ``_create`` takes; ``create``'s other keywords are the
+    # mesh's attributes
+    _CREATE_FLAGS = frozenset({"name", "uv_data"})
+
     @property
     def fn_set(self) -> OpenMaya.MFnMesh:
         """A new ``MFnMesh`` of this mesh, on every access (about 3 us).
@@ -82,8 +86,10 @@ class Mesh(Geometry):
         cls,
         mesh_data: MeshData,
         uv_data:   UVData   | UVList | list[UVData] | None = None,
+        *,
         name:      str      | None                         = None,
         container: bool     | None                         = None,
+        **kwargs,
     ) -> "Mesh":
         """Creates a mesh object from a mesh data object.
 
@@ -92,13 +98,15 @@ class Mesh(Geometry):
             uv_data: One or more UVData objects. The first one fills the default
                 set (``map1``, renamed to its name when that differs); each
                 other one becomes a new set of its name, in order.
-            name: The name of the mesh to create (a trailing ``Shape<digits>``
-                is dropped: ``"mShape2"`` names the transform ``m2`` and the
-                shape ``mShape2``). None: ``mesh_data.name``, else
-                ``polySurface<N>``.
+            name: The name of the mesh to create, a keyword (a trailing
+                ``Shape<digits>`` is dropped: ``"mShape2"`` names the transform
+                ``m2`` and the shape ``mShape2``). None: ``mesh_data.name``,
+                else ``polySurface<N>``.
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
+            kwargs: attributes of the mesh, checked by type before anything
+                is made and set once it exists (see `DGNode.create`).
 
         The whole call is ONE undo step named ``rig.Mesh.create``: one
         ``cmds.undo()`` removes the transform and the shape (with the UV sets,
@@ -126,7 +134,9 @@ class Mesh(Geometry):
         else:
             uv_data = None
         with _undo_chunk("rig.Mesh.create"):
-            return super().create(mesh_data, uv_data=uv_data, name=name, container=container)
+            return super().create(
+                mesh_data, uv_data=uv_data, name=name, container=container, **kwargs
+            )
 
     # --- mesh geometry data methods
 

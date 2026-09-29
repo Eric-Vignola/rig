@@ -48,6 +48,12 @@ class DisplayLayer(DGNode):
     # stays out of the scope (no prefix, not registered) unless ``container=True``
     _CONTAINER_AWARE = False
 
+    # ``cmds.createDisplayLayer``'s flags; ``create``'s other keywords are the
+    # layer's attributes (``displayType=2``, ``visibility=False``)
+    _CREATE_FLAGS = frozenset(
+        {"name", "n", "empty", "e", "noRecurse", "nr", "number", "num", "makeCurrent", "mc"}
+    )
+
     # --- creation
 
     @classmethod
@@ -60,7 +66,8 @@ class DisplayLayer(DGNode):
         one. ``empty=False`` takes the selection, as the command does.
 
         Args:
-            args, kwargs: args and kwargs supported by cmds.createDisplayLayer()
+            args, kwargs: the objects, and the ``_CREATE_FLAGS`` given to
+                ``create``, for cmds.createDisplayLayer()
         """
         if not args and not any(key in kwargs for key in ("empty", "e", "noRecurse", "nr")):
             kwargs["empty"] = True

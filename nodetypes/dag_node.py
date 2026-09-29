@@ -3,7 +3,7 @@ from __future__ import annotations
 from maya import cmds, mel
 from maya.api import OpenMaya
 from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type
-from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.dg_node import _PLAIN_CREATES, DGNode
 
 
 def _parent_valid(mobject) -> bool:
@@ -24,6 +24,9 @@ class DAGNode(DGNode):
 
     NATIVE_NODE_TYPE = "dagNode"
     FN_SET           = OpenMaya.MFnDagNode
+
+    # ``cmds.createNode``'s flags: DGNode's and the parent
+    _CREATE_FLAGS = DGNode._CREATE_FLAGS | {"parent", "p"}
 
     def __init__(self, node: str | OpenMaya.MObject | OpenMaya.MDagPath) -> None:
         """Initialize an instance from a node name or a MObject.
@@ -63,14 +66,16 @@ class DAGNode(DGNode):
     # --- creation
 
     @classmethod
-    def _create(cls, parent: str | DAGNode | None = None, *args, **kwargs) -> str:
+    def _create(cls, *, parent: str | DAGNode | None = None, **kwargs) -> str:
         """[Internal] Creates a node of this type.
         This class can only use Maya APIs and must return a node name string.
 
-        A ``parent`` gets the node from ``cmds.createNode(parent=...)``: in the
-        parent's space at identity (as ``Node.create``'s ``createNode`` has
-        always put it), named among the parent's children, so a world node of
-        the same name does not rename it.
+        `create` hands it only its ``_CREATE_FLAGS`` (``name`` / ``n``,
+        ``parent`` / ``p``, ``skipSelect`` / ``ss``), by keyword. A ``parent``
+        gets the node from ``cmds.createNode(parent=...)``: in the parent's
+        space at identity (as ``Node.create``'s ``createNode`` has always put
+        it), named among the parent's children, so a world node of the same
+        name does not rename it.
         """
         # resolve the parent to its long name before creating anything: a
         # missing or ambiguous parent raises with nothing made
@@ -316,3 +321,8 @@ class DAGNode(DGNode):
                     else:
                         deformers.append(_cast(deformer))
         return None if first_only else deformers
+
+
+# DAGNode's ``_create`` makes just the node too: its class's create takes no
+# positional argument
+_PLAIN_CREATES.add(DAGNode._create.__func__)

@@ -32,6 +32,23 @@ class BlendShape(Deformer):
     # naming them: ``cmds.blendShape`` alone would deform the selection)
     _CREATE_TAKES_INPUTS = "*targets, base"
 
+    # ``cmds.blendShape``'s create-mode flags (Maya 2025 docs, each accepted in
+    # a create by runs/r4b/NC3/probe_flags_bs.py; the symmetry flags work only
+    # in edit mode); ``create``'s other keywords are the blendShape's
+    # attributes. ``envelope``, ``origin`` and ``topologyCheck`` are attributes
+    # too: the flag.
+    _CREATE_FLAGS = frozenset(
+        {
+            "after", "af", "afterReference", "ar", "automatic", "at", "before", "bf",
+            "envelope", "en", "exclusive", "ex", "frontOfChain", "foc", "ignoreSelected", "is",
+            "inBetween", "ib", "inBetweenType", "ibt", "includeHiddenSelections", "ihs",
+            "name", "n", "origin", "o", "parallel", "par", "split", "sp",
+            "suppressDialog", "sd", "tangentSpace", "ts", "target", "t",
+            "topologyCheck", "tc", "useComponentTags", "uct", "weight", "w",
+            "weightCount", "wc",
+        }
+    )
+
     @classmethod
     def _create(cls, *args, **kwargs) -> str:
         """[Internal] Creates a blendshape node and returns the mesh name.
@@ -41,7 +58,8 @@ class BlendShape(Deformer):
                 can be given in place of a target geometry, in which case a
                 target is built for each morph and its offsets are applied
                 immediately after the node is created.
-            kwargs: kwargs supported by cmds.blendShape()
+            kwargs: the ``_CREATE_FLAGS`` given to ``create``, for
+                cmds.blendShape()
         """
         from cgmath.geometry import MorphData, MorphList
 
