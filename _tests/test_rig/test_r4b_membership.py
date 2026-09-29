@@ -601,6 +601,22 @@ class TestTagRules(_Case):
         self.sph.vtx[:8] << Tag("vtxTag")
         self.sph.f[:3]   << Tag("faceTag")
 
+    def test_tag_none_is_refused(self):
+        for pattern, call in (
+            (r"^None is not a tag name; Tag\(\) means every tag$", lambda: Tag(None)),
+            (r"^None is not a tag name", lambda: Tag(None, force=True)),
+            (r"^None is not a tag name", lambda: Tag(name=None)),
+            (r"^None is not a tag name", lambda: self.sph.vtx[:2] << Tag(None)),
+            (r"^None is not a tag name", lambda: self.sph >> Tag(None)),
+        ):
+            with self.subTest(pattern):
+                self.assertRefused(TypeError, pattern, call)
+        # the no-argument call is the kind token: purge on '<<', enumerate on '>>'
+        self.assertEqual(sorted(str(t) for t in self.sph >> Tag()), ["faceTag", "vtxTag"])
+        lhs = self.sph.vtx[:2]
+        self.assertIs(lhs << Tag(), lhs)
+        np.testing.assert_array_equal(self.sph >> Tag("vtxTag"), np.arange(2, 8))
+
     def test_queries_answer_by_contents(self):
         before = _scene()
         self.assertFalse(self.sph.f[:3] in Tag("vtxTag"))

@@ -337,6 +337,10 @@ def _group(selections: list[_Selection]) -> list[_TagGroup]:
 
 # ---------- Tag ----------------------------------------------------------- #
 
+# ``Tag()``'s default: the kind token (``Tag(None)`` is refused, so a failed
+# lookup never means every tag)
+_KIND = object()
+
 
 class Tag(_MemberSpec):
     """A component tag: ``Tag('cap')``, ``-Tag('cap')``, ``Tag()``.
@@ -367,7 +371,8 @@ class Tag(_MemberSpec):
     Tag('x')`` is True when every component of the left is in the tag (a
     node on the left: the node has the tag); a tag the node does not have,
     or components of another kind, answer False; an attribute plug stands
-    for its node there. ``Tag()`` is the kind token. Names are
+    for its node there. ``Tag()`` is the kind token; ``Tag(None)`` is a
+    ``TypeError`` (a failed lookup must not mean every tag). Names are
     validated at construction: at least two characters of ``[A-Za-z0-9_:]``
     not starting with a digit (Maya stores a one-character name as ``''``).
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
@@ -389,7 +394,7 @@ class Tag(_MemberSpec):
 
     def __init__(
         self,
-        name:     Any  = None,
+        name:     Any  = _KIND,
         *members: Any,
         at:       Any  = None,
         force:    bool = False,
@@ -400,7 +405,9 @@ class Tag(_MemberSpec):
                 "them, cube.vtx[[0, 1, 2]] << -Tag('x') removes them and "
                 "Tag('x').set(cube.vtx[[0, 1, 2]]) replaces the tag's contents"
             )
-        super().__init__(name, at=at, force=force)
+        if name is None:
+            raise TypeError("None is not a tag name; Tag() means every tag")
+        super().__init__(None if name is _KIND else name, at=at, force=force)
 
     def __repr__(self) -> str:
         return "Tag()" if self._name is None else super().__repr__()

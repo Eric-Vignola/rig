@@ -56,14 +56,20 @@ class TestTagConstruction(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_no_name_is_the_purge(self):
+        # re-pinned (round 4b NC6, user decision Q4: Spec(None) is refused): the
+        # empty call is the purge, the kind token Tag() (repr "Tag()"); Tag(None)
+        # is a TypeError, so a failed lookup never means every tag
         before = set(cmds.ls())
-        # an empty call is the purge, the kind token: the same spec as Tag(None)
-        # (re-pinned, round 4b NC6: the kind token's repr is "Tag()")
-        for purge in (Tag(), Tag(None)):
-            self.assertTrue(purge.purges)
-            self.assertIsNone(purge.name)
-            self.assertEqual(repr(purge), "Tag()")
+        purge  = Tag()
+        self.assertTrue(purge.purges)
+        self.assertIsNone(purge.name)
+        self.assertEqual(repr(purge), "Tag()")
+        with self.assertRaisesRegex(TypeError, r"^None is not a tag name; Tag\(\) means every tag$"):
+            Tag(None)
+        with self.assertRaises(TypeError):
+            Tag(None, force=True)
         self.assertEqual(set(cmds.ls()), before)
+
     def test_name_validation(self):
         for bad in ("t", "q", "1bad", "bad name", "bad-name", "a.b"):
             with self.assertRaises(ValueError):
@@ -93,22 +99,22 @@ class TestTagConstruction(MayaTestCase):
         self.assertEqual(repr(removal), "-Tag('cap')")
         with self.assertRaises(TypeError):
             -removal
-        with self.assertRaises(TypeError):
-            -Tag(None)
+        with self.assertRaisesRegex(TypeError, "double negative"):
+            -Tag()
         with self.assertRaisesRegex(TypeError, "unassigned"):
             ~spec
-        with self.assertRaises(TypeError):
-            ~Tag(None)
+        with self.assertRaisesRegex(TypeError, "unassigned"):
+            ~Tag()
 
     def test_methods_refuse_removal_and_purge_copies(self):
         sph    = Node(cmds.polySphere(name="sph")[0])
         before = set(cmds.ls())
         with self.assertRaises(TypeError):
             (-Tag("cap")).set(sph.vtx[:2])
-        with self.assertRaises(TypeError):
-            Tag(None).clear(sph)
-        with self.assertRaises(TypeError):
-            Tag(None).delete(sph)
+        with self.assertRaisesRegex(TypeError, "a method names one tag"):
+            Tag().clear(sph)
+        with self.assertRaisesRegex(TypeError, "a method names one tag"):
+            Tag().delete(sph)
         with self.assertRaises(TypeError):
             (-Tag("cap")).rename(sph, "lid")
         self.assertEqual(set(cmds.ls()), before)
@@ -277,7 +283,7 @@ class TestTagOnSphere(MayaTestCase):
         self.sph.vtx[2:6] << Tag("bb")
         self.sph.f[:2]    << Tag("ff")
         lhs    = self.sph.vtx[:3]
-        result = lhs << Tag(None)
+        result = lhs << Tag()
         self.assertIs(result, lhs)
         np.testing.assert_array_equal(self.sph >> Tag("aa"), [3])
         np.testing.assert_array_equal(self.sph >> Tag("bb"), [3, 4, 5])
@@ -288,7 +294,7 @@ class TestTagOnSphere(MayaTestCase):
         self.sph.vtx[:4] << Tag("aa")
         self.sph.f[:2]   << Tag("ff")
         self.sph         << Tag("empty")
-        result = self.sph << Tag(None)
+        result = self.sph << Tag()
         self.assertIs(result, self.sph)
         self.assertEqual(_tags(self.sph), [])
 
@@ -330,14 +336,15 @@ class TestTagOnSphere(MayaTestCase):
             self.assertIsInstance(got, list)
             self.assertEqual(_names(got), _names(Tag.of(lhs)))
         self.assertEqual(_names(self.sph >> Tag()), ["cap", "lid"])
-        self.assertEqual(_names(self.sph >> Tag(None)), ["cap", "lid"])
         # re-pinned (round 4b NC6): an attribute plug on the left is refused
-        # (the node is the member)
+        # (the node is the member), and Tag(None) is no longer the kind token
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
             self.sph.tx >> Tag()
         with self.assertRaisesRegex(TypeError, "is a plug; membership takes the node"):
             Tag.of(self.sph.tx)
+        with self.assertRaisesRegex(TypeError, "None is not a tag name"):
+            self.sph >> Tag(None)
         self.assertEqual(set(cmds.ls()), before)
         found = self.sph.vtx[3] >> Tag()
         self.assertEqual(_names(found), ["cap"])
@@ -588,7 +595,7 @@ class TestTagOnSphere(MayaTestCase):
         self.sph.vtx[3:6] << Tag("both")
         cmds.undo()
         np.testing.assert_array_equal(self.sph >> Tag("both"), [0, 1, 2])
-        self.sph << Tag(None)
+        self.sph << Tag()
         self.assertEqual(_tags(self.sph), [])
         cmds.undo()
         np.testing.assert_array_equal(self.sph >> Tag("both"), [0, 1, 2])
@@ -708,7 +715,7 @@ class TestTagOnClusteredMesh(MayaTestCase):
         with self.assertRaises(RuntimeError):
             self.sph << -Tag("cap")
         with self.assertRaises(RuntimeError):
-            self.sph << Tag(None)
+            self.sph << Tag()
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_tags(self.sph), ["cap"])
         # an unreferenced tag still goes without force
@@ -721,7 +728,7 @@ class TestTagOnClusteredMesh(MayaTestCase):
         self.sph         << -Tag("cap", force=True)
         self.assertEqual(_tags(self.sph), [])
         self.sph.vtx[:4] << Tag("cap")
-        self.sph         << Tag(None, force=True)
+        self.sph         << Tag(force=True)
         self.assertEqual(_tags(self.sph), [])
 
     def test_rename_rewrites_exact_references_with_force(self):
@@ -834,7 +841,7 @@ class TestTagOnHistoryCube(MayaTestCase):
     def test_purge_lists_procedural_names_in_one_warning(self):
         self.cube.f[:2] << Tag("cap")
         with mock.patch.object(cmds, "warning") as warning:
-            self.cube.f[:2] << Tag(None)
+            self.cube.f[:2] << Tag()
         self.assertEqual((self.cube >> Tag("cap")).shape, (0,))
         warning.assert_called_once()
         message = warning.call_args[0][0]
@@ -842,13 +849,13 @@ class TestTagOnHistoryCube(MayaTestCase):
             self.assertIn(name, message)
         self.assertIn("polyCube1", message)
         with mock.patch.object(cmds, "warning") as warning:
-            self.cube << Tag(None)
+            self.cube << Tag()
         self.assertEqual(_tags(self.cube), CUBE_TAGS)
         warning.assert_called_once()
         # a vertex purge does not mention the face tags
         self.cube.vtx[:2] << Tag("verts")
         with mock.patch.object(cmds, "warning") as warning:
-            self.cube.vtx[:2] << Tag(None)
+            self.cube.vtx[:2] << Tag()
         warning.assert_not_called()
         self.assertEqual((self.cube >> Tag("verts")).shape, (0,))
 
@@ -902,9 +909,9 @@ class TestTagOnBakedCube(MayaTestCase):
         self.assertNotIn("top", _tags(self.cube))
         self.cube.f << -Tag("bottom")
         self.assertEqual((self.cube >> Tag("bottom")).shape, (0,))
-        self.cube.vtx[:2] << Tag(None)
+        self.cube.vtx[:2] << Tag()
         self.assertEqual((self.cube >> Tag("front")).shape, (0,))
-        self.cube << Tag(None)
+        self.cube << Tag()
         self.assertEqual(_tags(self.cube), [])
 
     def test_baked_edits_undo_as_one_step(self):
@@ -921,7 +928,7 @@ class TestTagOnBakedCube(MayaTestCase):
         self.cube << -Tag("top")
         self.assertNotIn("top", _tags(self.cube))
         with mock.patch.object(cmds, "warning") as warning:
-            self.cube << Tag(None)
+            self.cube << Tag()
         warning.assert_not_called()
         self.assertEqual(_tags(self.cube), [])
 
