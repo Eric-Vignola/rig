@@ -198,7 +198,7 @@ print(Transform("jnt") == Node("jnt"), Joint.exists("grp"), Transform.exists("no
 try:
     Joint("jnnt")
 except NodeNotFoundError as e:
-    print(e)                                       # no joint named 'jnnt' (did you mean 'jnt' or 'jnt2'?)
+    print(e)                                       # no joint named 'jnnt' (did you mean 'jnt' or 'jnt2'?); Joint.define('jnnt') finds or makes it
 try:
     Joint("grp")
 except NodeTypeError as e:

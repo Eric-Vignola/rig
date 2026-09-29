@@ -168,7 +168,8 @@ creates, `define` makes sure, `create` makes new.
   `ObjectSet("initialShadingGroup")` is the `ShadingEngine`, while
   `Lambert("b")` on a blinn is refused (the shader classes are siblings;
   `Material("b")` takes any shader). A reference never writes the scene. A
-  missing name is `NodeNotFoundError` with a did-you-mean hint, a name two
+  missing name is `NodeNotFoundError` with a did-you-mean hint (and the
+  class's `define`, when that makes the node from the name), a name two
   nodes have is `AmbiguousNodeError` (use a path, or spell the namespace),
   another type is `NodeTypeError`. `Cls(x, tx=1)` is a `TypeError` that
   names `define` and `create`; `Cls()` and `Cls(None)` are `TypeError`s

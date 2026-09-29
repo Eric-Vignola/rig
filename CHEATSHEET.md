@@ -2252,9 +2252,10 @@ print(sph in red, faces in red, sph in geo, sph.tx in geo)      # True True True
 print((sph >> red).size, sph >> Layer(), Material.of(sph))      # 400 geometry [Blinn("red")]
 ```
 
-A missing layer or material raises at the reference; a missing tag holds
-nothing, so `in` is `False` and components read no ids (only a node on the
-left, which asks for the whole tag, raises). The refusals write nothing.
+A missing layer or material raises at the reference, naming the `define`
+that makes it; a missing tag holds nothing, so `in` is `False` and `>>`
+reads no ids, with the node or its components on the left. The refusals
+write nothing.
 
 ```python
 for bad in (
@@ -2267,16 +2268,12 @@ for bad in (
         bad()
     except (NodeNotFoundError, TypeError) as err:
         print(str(err)[:58])
-# no blinn named 'blue'
-# no displayLayer named 'nope'
+# no blinn named 'blue'; Blinn.define('blue') finds or makes
+# no displayLayer named 'nope'; DisplayLayer.define('nope')
 # 'sph.translateX' is a plug; membership takes the node: sph
 # a layer holds whole objects and has no ids; ask with sph i
 
-print(sph in Tag("nope"), sph.vtx[:3] >> Tag("nope"))   # False []
-try:
-    sph >> Tag("nope")
-except ValueError as err:
-    print(err)                                  # no component tag 'nope' on sphShape
+print(sph in Tag("nope"), sph.vtx[:3] >> Tag("nope"), sph >> Tag("nope"))   # False [] []
 ```
 
 The rejected spellings are `TypeError`s that write nothing: members never
@@ -2502,7 +2499,7 @@ for bad in (lambda: cube.f[:2] << bg, lambda: cube.tx << bg, lambda: cube << Lay
         print(str(err)[:37])
 # layers hold objects, not components (
 # 'cube.translateX' is a plug; membersh
-# no displayLayer named 'nope'
+# no displayLayer named 'nope'; Display
 ```
 
 `-layer` and `Layer()` both land in `defaultLayer`. The layer node is the
