@@ -17,6 +17,15 @@ The spec returns the new (or modified) ``Plug`` so chaining works:
 (``(node << Float("x")).node is node``; ``plug << Float("x")`` adds ``x`` to
 ``plug.node``).
 
+Re-declaring an attribute the node has already keeps it, with its value and
+its connections, and applies the settings the spec was given (the keywords
+its caller passed: ``dv``, ``min`` / ``max``, the soft range, ``keyable``,
+``hidden``, ``niceName``, an ``Enum``'s ``en`` ...; never rig's own
+``keyable=True``): ``node << Float("w", dv=5); node.w << drv.tx; node <<
+Float("w", max=10)`` keeps ``w`` driven and gives it a max. Another kind of
+attribute raises TypeError; ``overwrite=True`` deletes it and adds it again
+(see ``_AttrSpec._redeclare``).
+
 Ported from Eric Vignola's BSD-3 ``rig.attributes._Attribute``, slimmed to
 use ``rig.nodetypes.Attribute.data_type`` instead of regex-parsing
 ``getAddAttrCmd()`` output.
@@ -28,11 +37,45 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from maya import cmds
+from maya.api import OpenMaya
 # rig.nodetypes imports neither rig.spec nor rig._internal.plug
 from rig.nodetypes._base import Attribute, Node, _attr_handle, _attr_state, _handle_valid
 
 
 LOGGER = logging.getLogger(__name__)
+
+# addAttr's short flags -> long names (``cmds.help("addAttr")``, Maya 2025): the
+# settings of a re-declaration are keyed by long name
+_LONG_FLAGS = {
+    "at": "attributeType", "bt": "binaryTag", "ci": "cachedInternally", "ct": "category",
+    "dcb": "disconnectBehaviour", "dt": "dataType", "dv": "defaultValue", "en": "enumName",
+    "h": "hidden", "hnv": "hasMinValue", "hsn": "hasSoftMinValue", "hsx": "hasSoftMaxValue",
+    "hxv": "hasMaxValue", "im": "indexMatters", "is": "internalSet", "k": "keyable",
+    "ln": "longName", "m": "multi", "max": "maxValue", "min": "minValue",
+    "nc": "numberOfChildren", "nn": "niceName", "p": "parent", "pxy": "proxy",
+    "r": "readable", "s": "storable", "smn": "softMinValue", "smx": "softMaxValue",
+    "sn": "shortName", "uac": "usedAsColor", "uaf": "usedAsFilename", "uap": "usedAsProxy",
+    "w": "writable",
+}
+# what makes the attribute (its name and kind), never a setting
+_STRUCTURE = frozenset((
+    "longName", "attributeType", "dataType", "multi", "size", "overwrite", "parent",
+    "numberOfChildren",
+))
+# the settings ``addAttr -edit`` changes (runs\r4b\NC8\probe_addattr*.txt); keyable
+# goes through ``setAttr -keyable``, hidden through the API, hasMinValue /
+# hasMaxValue only when they differ (an edit toggles them, whatever the value);
+# any other setting cannot change: equal to the attribute's, or a TypeError
+_EDITABLE   = frozenset((
+    "defaultValue", "minValue", "maxValue", "softMinValue", "softMaxValue", "niceName",
+    "enumName", "category",
+))
+_HAS_RANGE  = ("hasMinValue", "hasMaxValue")
+# a compound's settings that go to its children (the parent takes the others)
+_PER_CHILD  = frozenset((
+    "defaultValue", "minValue", "maxValue", "softMinValue", "softMaxValue", "hasMinValue",
+    "hasMaxValue", "hasSoftMinValue", "hasSoftMaxValue",
+))
 
 
 def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = None) -> Any:
@@ -95,10 +138,18 @@ class _AttrSpec:
     Subclasses set ``self.kargs['attributeType']`` or ``['dataType']`` and
     optionally provide ``self.compound`` (list of child suffixes like
     ``['X', 'Y', 'Z']``) and ``self.compoundType`` (override child type).
+
+    ``overwrite=True`` replaces an attribute the node has already (deleted,
+    value and connections with it, and added again); by default, and with
+    ``overwrite=False`` written out, the attribute is re-declared: kept, the
+    settings passed applied (``_redeclare``).
     """
 
     def __init__(self, name: Optional[str] = None, **kargs: Any) -> None:
         self.kargs: Dict[str, Any] = dict(kargs)
+        # the keywords the caller passed: on an existing attribute, the settings
+        # applied (see `_redeclare`); rig's own defaults (keyable=True) are not
+        self._given: tuple = tuple(kargs)
 
         if name is not None:
             # Normalise short->long flag names; default keyable=True, longName=name.
@@ -112,9 +163,11 @@ class _AttrSpec:
             self.size: Optional[int] = self._pop_alias(
                 self.kargs, ("size",), default=None
             )
-            self.overwrite: bool = self._pop_alias(
-                self.kargs, ("overwrite",), default=True
-            )
+            # True: delete an existing attribute and add it again; otherwise (the
+            # default, False written out too) re-declare it (`_redeclare`)
+            self.overwrite: bool = bool(self._pop_alias(
+                self.kargs, ("overwrite",), default=False
+            ))
         else:
             # Modifier-only spec (lock/hide/etc.) -- kargs are pure setAttr flags.
             self.size      = None
@@ -210,26 +263,25 @@ class _AttrSpec:
         multi         = self._pop_alias(kargs, ("multi", "m"), default=False)
         default_value = self._pop_alias(kargs, ("defaultValue", "dv"), default=0)
 
-        # If attribute already exists, optionally delete-then-recreate.
+        # An existing attribute is re-declared (its settings applied, its value
+        # and connections kept), or with overwrite=True deleted and added again.
         # Use DGNode.has_attr (canonical API) instead of cmds.attributeQuery.
         if wrap_node.has_attr(long_name):
-            if self.overwrite:
-                # Use DGNode-level API: find_attr + Attribute.set + delete_attr.
-                try:
-                    existing_attr = wrap_node.find_attr(long_name, quiet=True)
-                    if existing_attr is not None:
-                        existing_attr.set(lock=False)
-                except (RuntimeError, AttributeError):
-                    pass
-                try:
-                    wrap_node.delete_attr(long_name)
-                except RuntimeError as e:
-                    LOGGER.debug(
-                        "Failed to delete %s.%s: %s", node_string, long_name, e
-                    )
-            else:
-                # Don't overwrite -- return existing.
-                return _plug_of(node_string, long_name, wrap_node)
+            if not self.overwrite:
+                return self._redeclare(node_string, long_name, wrap_node)
+            # Use DGNode-level API: find_attr + Attribute.set + delete_attr.
+            try:
+                existing_attr = wrap_node.find_attr(long_name, quiet=True)
+                if existing_attr is not None:
+                    existing_attr.set(lock=False)
+            except (RuntimeError, AttributeError):
+                pass
+            try:
+                wrap_node.delete_attr(long_name)
+            except RuntimeError as e:
+                LOGGER.debug(
+                    "Failed to delete %s.%s: %s", node_string, long_name, e
+                )
 
         # ---- Compound (Vector / Quat / Color / Euler) ---- #
         added = None
@@ -260,6 +312,117 @@ class _AttrSpec:
             new_plug << self.notes
 
         return new_plug
+
+    # -- re-declaration -- #
+
+    def _settings(self) -> Dict[str, Any]:
+        """The settings of this spec by long flag name: the keywords its caller
+        passed, with the values the spec keeps for them (an ``Enum``'s joined
+        ``en``, a ``dv`` given by field name as its index), minus the structure
+        (``_STRUCTURE``). rig's own defaults (``keyable=True``, a ``Note``'s
+        flags) are not settings."""
+        given    = {_LONG_FLAGS.get(k, k) for k in getattr(self, "_given", ())} - _STRUCTURE
+        settings: Dict[str, Any] = {}
+        for key, value in self.kargs.items():
+            flag = _LONG_FLAGS.get(key, key)
+            if flag in given and flag not in settings:
+                settings[flag] = value
+        return settings
+
+    def _kind(self) -> tuple:
+        """What this spec makes: ``(attributeType, dataType, multi, children)``,
+        children as ``((name, attributeType), ...)`` for a compound; the
+        attributeType / dataType a spec does not name are None."""
+        k        = self.kargs
+        at       = k.get("attributeType", k.get("at"))
+        dt       = k.get("dataType", k.get("dt"))
+        multi    = bool(k.get("multi", k.get("m", False)))
+        children = ()
+        if self.compound:
+            name     = k["longName"]
+            children = tuple((f"{name}{s}", self.compoundType or at) for s in self.compound)
+            at       = f"{at}{len(self.compound)}"
+        return at, dt, multi, children
+
+    def _redeclare(self, node_string: str, long_name: str, wrap_node: Any) -> Any:
+        """``node << spec`` when the node has the attribute already and the spec
+        is not ``overwrite=True``: the attribute stays, with its value and its
+        connections, and the settings the spec was given (``_settings``) apply
+        in place.
+
+        * A static attribute: its plug when the spec has no settings; a setting
+          raises TypeError (the node type owns its settings).
+        * A dynamic attribute of another kind (attributeType / dataType, multi, a
+          compound's children) raises TypeError naming ``overwrite=True``.
+        * Otherwise every setting is checked first, and one that cannot apply
+          raises TypeError with nothing changed: a setting ``addAttr`` cannot
+          edit that differs from the attribute's, a min above the max, a default
+          outside the range. Then they apply: ``addAttr -edit`` (default, min /
+          max, soft min / max, niceName, enumName, category; hasMinValue /
+          hasMaxValue when they differ), ``setAttr -keyable``, and hidden through
+          the API (one undo step, rig's undoable command). A compound's default
+          (a list, one per child) and ranges go to its children, its niceName,
+          hidden and category to the parent, keyable to both.
+        * The value and the connections are never touched. A default is the
+          attribute's default, not its value (the value is read before the
+          edit, so a plug never set keeps the value it had); ``size=`` pre-sizes
+          only a new multi. A ``Note``'s text is set, as on a new attribute.
+
+        Returns the plug, owned by ``wrap_node``."""
+        plug_name = f"{node_string}.{long_name}"
+        settings  = self._settings()
+        fn        = wrap_node.fn_set
+        if not OpenMaya.MFnAttribute(fn.attribute(long_name)).dynamic:
+            if settings:
+                raise TypeError(
+                    f"'{plug_name}' is a static attribute; its settings cannot be changed"
+                )
+            return _plug_of(node_string, long_name, wrap_node)
+
+        have = _existing_kind(node_string, long_name)
+        want = self._kind()
+        if not _same_kind(have, want):
+            have_text, want_text = _describe(*have), _describe(*want)
+            raise TypeError(
+                f"'{plug_name}' exists as {have_text}, not {want_text}; "
+                f"overwrite=True replaces it"
+            )
+
+        if settings:
+            at, _, multi, children = have
+            if children:
+                targets = [(plug_name, long_name, at, multi, {
+                    f: v for f, v in settings.items() if f not in _PER_CHILD
+                })]
+                index = "[0]" if multi else ""
+                for i, (child, child_at) in enumerate(children):
+                    own = {f: v for f, v in settings.items() if f in _PER_CHILD or f == "keyable"}
+                    dv  = own.pop("defaultValue", None)
+                    if isinstance(dv, (list, tuple)) and len(dv) > i:
+                        own["defaultValue"] = dv[i]  # a scalar is ignored, as on creation
+                    # a multi's children are named through element 0, which only a
+                    # default edit would make: their default is fixed, as a multi's
+                    child_plug = f"{plug_name}{index}.{child}" if multi else f"{node_string}.{child}"
+                    targets.append((child_plug, child, child_at, multi, own))
+            else:
+                targets = [(plug_name, long_name, at, multi, settings)]
+
+            # every check before any edit
+            edits = [_check_settings(*target) for target in targets]
+            if not multi and at not in _NO_VALUE and any(e[0] or e[1] for e in edits):
+                # a plug never set reads its default: read it now, so that a
+                # new default (or one moved into a new range) leaves it as it is
+                try:
+                    cmds.getAttr(plug_name)
+                except (RuntimeError, ValueError) as e:
+                    LOGGER.debug("could not read %s before its edit: %s", plug_name, e)
+            for (target, name, _, _, _), edit in zip(targets, edits):
+                _apply_settings(target, fn.attribute(name), *edit)
+
+        plug = _plug_of(node_string, long_name, wrap_node)
+        if self.notes is not None:
+            plug << self.notes
+        return plug
 
     def _add_compound(
         self,
@@ -366,6 +529,172 @@ class _AttrSpec:
                             i,
                             e,
                         )
+
+
+# ---------------------------------------------------------------------- #
+#  Re-declaration helpers (`_AttrSpec._redeclare`)
+# ---------------------------------------------------------------------- #
+
+# attributeTypes with no numeric value: no range check, no value read
+_NO_VALUE = frozenset(("typed", "message", "matrix"))
+
+
+def _existing_kind(node_string: str, long_name: str) -> tuple:
+    """``(attributeType, dataType, multi, children)`` of the dynamic attribute
+    ``long_name`` of the node ``node_string``, as ``_AttrSpec._kind`` spells a
+    spec's (dataType None unless the attributeType is ``typed``)."""
+    at = cmds.attributeQuery(long_name, node=node_string, attributeType=True)
+    dt = None
+    if at == "typed":
+        dt = (cmds.addAttr(f"{node_string}.{long_name}", query=True, dataType=True) or [None])[0]
+    multi    = bool(cmds.attributeQuery(long_name, node=node_string, multi=True))
+    kids     = cmds.attributeQuery(long_name, node=node_string, listChildren=True) or []
+    children = tuple(
+        (kid, cmds.attributeQuery(kid, node=node_string, attributeType=True)) for kid in kids
+    )
+    return at, dt, multi, children
+
+
+def _same_kind(have: tuple, want: tuple) -> bool:
+    """Whether the existing attribute (``have``) is of the kind a spec makes
+    (``want``); a spec that names no attributeType / dataType does not check it."""
+    at, dt, multi, children = want
+    if at is not None and at != have[0]:
+        return False
+    if dt is not None and (have[0] != "typed" or dt != have[1]):
+        return False
+    return multi == have[2] and children == have[3]
+
+
+def _describe(at: Optional[str], dt: Optional[str], multi: bool, children: tuple) -> str:
+    """``a double``, ``a multi double``, ``a string``, ``a double3 of double
+    (wX, wY, wZ)``: a kind as ``_existing_kind`` / ``_AttrSpec._kind`` give it."""
+    if at == "typed" and dt == "matrix":
+        kind = "matrix data"  # not the attributeType matrix
+    elif at in (None, "typed") and dt:
+        kind = dt
+    else:
+        kind = at or "attribute"
+    if children:
+        types = {t for _, t in children}
+        if len(types) == 1:
+            kind += f" of {types.pop()}"
+        kind += " (" + ", ".join(name for name, _ in children) + ")"
+    if multi:
+        return "a multi " + kind
+    return ("an " if kind[0] in "aeiou" else "a ") + kind
+
+
+def _same_setting(current: Any, value: Any) -> bool:
+    """Whether an attribute's setting (an ``addAttr`` query) is ``value``."""
+    if isinstance(value, bool) or isinstance(current, bool):
+        return bool(current) == bool(value)
+    if isinstance(current, (list, tuple)) and not isinstance(value, (list, tuple)):
+        return list(current) == [value]
+    if isinstance(current, (int, float)) and isinstance(value, (int, float)):
+        return abs(current - value) <= 1e-9 * max(1.0, abs(value))
+    return current == value
+
+
+def _check_settings(target: str, name: str, at: str, multi: bool, settings: dict) -> tuple:
+    """Check the settings of one attribute (``target``, its plug name) before any
+    edit: TypeError for one that cannot apply. Returns what `_apply_settings`
+    does: ``(addAttr edit flags, {hasMinValue / hasMaxValue: state}, keyable,
+    hidden)``, None for a keyable / hidden not given."""
+    edit, has = {}, {}
+    for flag, value in settings.items():
+        if flag in ("keyable", "hidden"):
+            continue
+        if flag in _HAS_RANGE:
+            has[flag] = bool(value)
+        elif (
+            flag in _EDITABLE
+            and not (flag == "defaultValue" and multi)  # Maya: a multi's default is fixed
+            and not (flag == "enumName" and at != "enum")
+        ):
+            edit[flag] = value
+        else:
+            # addAttr cannot edit it: the attribute must have it already
+            try:
+                current = cmds.addAttr(target, query=True, **{flag: True})
+            except (RuntimeError, TypeError, ValueError) as e:
+                raise TypeError(
+                    f"'{target}': {flag}={value!r} cannot be read on the existing "
+                    f"attribute ({str(e).strip()}); overwrite=True replaces it"
+                ) from None
+            if not _same_setting(current, value):
+                raise TypeError(
+                    f"'{target}': {flag} cannot be changed on an existing attribute "
+                    f"(it is {current!r}, the spec gives {value!r}); overwrite=True "
+                    f"replaces it"
+                )
+    if at not in _NO_VALUE and at != "enum" and (
+        has or {"minValue", "maxValue", "defaultValue"} & edit.keys()
+    ):
+        # Maya ignores a min above the max and a default outside the range,
+        # silently: refuse them here, before any edit
+        def bound(flag: str, has_flag: str) -> Any:
+            if flag in edit:
+                return edit[flag]
+            if has.get(has_flag) is False:
+                return None
+            return cmds.addAttr(target, query=True, **{flag: True})
+
+        low, high = bound("minValue", "hasMinValue"), bound("maxValue", "hasMaxValue")
+        if low is not None and high is not None and low > high:
+            raise TypeError(f"'{target}': min={low} is above max={high}")
+        dv = edit.get("defaultValue")
+        if isinstance(dv, (int, float)) and (
+            (low is not None and dv < low) or (high is not None and dv > high)
+        ):
+            raise TypeError(f"'{target}': dv={dv} is outside its range [{low}, {high}]")
+    return edit, has, settings.get("keyable"), settings.get("hidden")
+
+
+def _apply_settings(
+    target:    str,
+    attribute: Any,
+    edit:      dict,
+    has:       dict,
+    keyable:   Any,
+    hidden:    Any,
+) -> None:
+    """Apply one attribute's settings, checked by `_check_settings`; ``attribute``
+    is its MObject (API 2.0)."""
+    if edit:
+        cmds.addAttr(target, edit=True, **edit)
+    for flag, state in has.items():
+        # an addAttr edit toggles hasMinValue / hasMaxValue, whatever the value given
+        if bool(cmds.addAttr(target, query=True, **{flag: True})) != state:
+            cmds.addAttr(target, edit=True, **{flag: state})
+    if keyable is not None and bool(cmds.getAttr(target, keyable=True)) != bool(keyable):
+        cmds.setAttr(target, keyable=bool(keyable))
+    if hidden is not None and OpenMaya.MFnAttribute(attribute).hidden != bool(hidden):
+        from rig.nodetypes.plugins import _run_undoable
+
+        _run_undoable(_HiddenEdit(attribute, bool(hidden)))
+
+
+class _HiddenEdit:
+    """An attribute's ``hidden`` flag, set through rig's undoable command (one
+    undo step): ``addAttr -edit`` cannot change it. API only, as the command
+    requires."""
+
+    def __init__(self, attribute: Any, state: bool) -> None:
+        self.attribute = attribute
+        self.state     = state
+        self.previous  = state
+
+    def doIt(self) -> None:
+        fn            = OpenMaya.MFnAttribute(self.attribute)
+        self.previous = fn.hidden
+        fn.hidden     = self.state
+
+    def redoIt(self) -> None:
+        OpenMaya.MFnAttribute(self.attribute).hidden = self.state
+
+    def undoIt(self) -> None:
+        OpenMaya.MFnAttribute(self.attribute).hidden = self.previous
 
 
 # ---------------------------------------------------------------------- #

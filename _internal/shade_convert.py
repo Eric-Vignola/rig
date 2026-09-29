@@ -380,6 +380,10 @@ def _clone(src_plug: Plug, dst_node: str, name: str, hidden: bool | None = None)
             keyable = True
     spec.kargs["hidden"]  = hidden
     spec.kargs["keyable"] = keyable
+    # a clone is a new attribute, as it always was: a name taken on the node (a
+    # stale parked __attr__, a static attribute of the new type) is replaced or
+    # refused by Maya, never re-declared
+    spec.overwrite        = True
     new_plug              = _cast_node(dst_node) << spec
     if src_plug.is_multi:
         for index in src_plug.get_logical_indices() or []:

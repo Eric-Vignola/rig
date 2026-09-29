@@ -665,7 +665,8 @@ class TestSetTypeArgument(MayaTestCase):
         for spec in (Float("foo"), Vector("foo")):
             net << spec
             plug = net.foo
-            net << Matrix("foo")
+            # another type: replaced only when asked (round 4b NC8)
+            net << Matrix("foo", overwrite=True)
             self.assertEqual(self._set_kwargs(plug, *matrix), {"type": "matrix"})
             self.assertEqual(cmds.getAttr("net.foo"), matrix)
             cmds.deleteAttr("net.foo")

@@ -1498,7 +1498,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         node, _ = _owned_spec_scene()
         first = node << Float("k")
         first << 5.0
-        # overwrite=True (the default): deleted and re-added, the value reset
+        # overwrite=True: deleted and re-added, the value reset
         again = node << Float("k", overwrite=True)
         self._assert_owned(again, node, "k")
         self.assertEqual(again.get(), 0.0)
