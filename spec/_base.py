@@ -64,8 +64,9 @@ _STRUCTURE = frozenset((
 ))
 # the settings ``addAttr -edit`` changes (runs\r4b\NC8\probe_addattr*.txt); keyable
 # goes through ``setAttr -keyable``, hidden through the API, hasMinValue /
-# hasMaxValue only when they differ (an edit toggles them, whatever the value);
-# any other setting cannot change: equal to the attribute's, or a TypeError
+# hasMaxValue only when they differ (an edit toggles them, whatever the value;
+# a string, matrix or message attribute has no range to edit); any other
+# setting cannot change: equal to the attribute's, or a TypeError
 _EDITABLE   = frozenset((
     "defaultValue", "minValue", "maxValue", "softMinValue", "softMaxValue", "niceName",
     "enumName", "category",
@@ -358,11 +359,13 @@ class _AttrSpec:
           raises TypeError with nothing changed: a setting ``addAttr`` cannot
           edit that differs from the attribute's, a min above the max, a default
           outside the range. Then they apply: ``addAttr -edit`` (default, min /
-          max, soft min / max, niceName, enumName, category; hasMinValue /
-          hasMaxValue when they differ), ``setAttr -keyable``, and hidden through
-          the API (one undo step, rig's undoable command). A compound's default
-          (a list, one per child) and ranges go to its children, its niceName,
-          hidden and category to the parent, keyable to both.
+          max, soft min / max, niceName, enumName, category, which Maya adds to
+          the attribute's; hasMinValue / hasMaxValue when they differ; a string,
+          matrix or message attribute has no range), ``setAttr -keyable``, and
+          hidden through the API (one undo step, rig's undoable command). A
+          compound's default (a list, one per child) and ranges go to its
+          children, its niceName, hidden and category to the parent, keyable to
+          both.
         * The value and the connections are never touched. A default is the
           attribute's default, not its value (the value is read before the
           edit, so a plug never set keeps the value it had); ``size=`` pre-sizes
@@ -602,7 +605,7 @@ def _check_settings(target: str, name: str, at: str, multi: bool, settings: dict
     for flag, value in settings.items():
         if flag in ("keyable", "hidden"):
             continue
-        if flag in _HAS_RANGE:
+        if flag in _HAS_RANGE and at not in _NO_VALUE:
             has[flag] = bool(value)
         elif (
             flag in _EDITABLE

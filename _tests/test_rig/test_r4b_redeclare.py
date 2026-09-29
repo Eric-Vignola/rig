@@ -223,6 +223,27 @@ class TestRedeclare(MayaTestCase):
                     self.node << Float("w", **kwargs)
                 self.assertEqual(_state("rd.w"), before)
 
+    def test_a_string_has_no_range_to_edit(self):
+        self.node << String("label") << "hello"
+        self.node << String("label", hasMinValue=False, nn="Label")
+        self.assertEqual(_q("rd.label", "niceName"), "Label")
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(TypeError, r"'rd\.label': hasMaxValue cannot be changed.*overwrite=True"):
+            self.node << String("label", hasMaxValue=True, nn="Never")
+        self.assertEqual((_q("rd.label", "niceName"), cmds.getAttr("rd.label")), ("Label", "hello"))
+        self.assertEqual(set(cmds.ls()), before)
+        # keyable, hidden and niceName apply to any kind
+        from rig.spec import Matrix, Message
+
+        self.node << Message("link") << Matrix("xf")
+        self.node << Message("link", k=False, hidden=True, nn="Link")
+        self.node << Matrix("xf", k=False, nn="Xform")
+        self.assertEqual(
+            (cmds.getAttr("rd.link", keyable=True), _q("rd.link", "hidden"), _q("rd.link", "niceName")),
+            (False, True, "Link"),
+        )
+        self.assertEqual((cmds.getAttr("rd.xf", keyable=True), _q("rd.xf", "niceName")), (False, "Xform"))
+
     # -- Enum -- #
 
     def test_enum_fields_edit_keeps_the_value_index(self):
