@@ -283,8 +283,10 @@ class TestTagIdiomsStay(MayaTestCase):
         self.assertEqual((self.cube >> Tag("empty")).shape, (0,))
         self.assertIs(self.cube << -Tag("empty"), self.cube)
         self.assertNotIn("empty", self.shape.component_tags)
-        with self.assertRaisesRegex(ValueError, "no component tag 'empty'"):
-            self.cube >> Tag("empty")
+        # the deleted tag holds nothing: no ids, not in it (round 4b follow-up
+        # F4; it was a ValueError)
+        self.assertEqual((self.cube >> Tag("empty")).shape, (0,))
+        self.assertFalse(self.cube in Tag("empty"))
 
     def test_no_name_purges_and_enumerates(self):
         self.cube.vtx[:8] << Tag("pts")
