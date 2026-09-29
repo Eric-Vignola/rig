@@ -89,8 +89,11 @@ class NodeMeta(type):
 
         A metaclass method, so ``Node.wrap`` (and ``Transform.wrap``) works but a
         node never has it: a Maya attr ``wrap`` (3D textures) stays reachable as
-        ``node.wrap``. Every string goes through the :class:`Node` factory,
-        whichever class it is called on.
+        ``node.wrap``. Every string is a name Maya returned, cast as Maya
+        resolves it (the node before the first ``.``), whichever class it is
+        called on: never ``Node(x)``'s lookup rule for the names a user
+        writes, so a returned ``x`` stays the node Maya meant while another
+        namespace is current.
 
         Use this when calling ``maya.cmds`` directly (instead of going through
         :mod:`rig.bridges.commands`) and you want the result back in DSL form::
@@ -111,7 +114,7 @@ class NodeMeta(type):
             return None
         if isinstance(value, str):
             try:
-                return Node(value)
+                return _cast_node(value)
             except Exception:
                 return value
         if isinstance(value, (list, tuple)):
@@ -322,6 +325,17 @@ def _is_uuid(name: str) -> bool:
     """Whether ``_cast`` reads the str ``name`` as a uuid (as it does: 32 hex
     digits or more, the uuid form)."""
     return len(name) >= 32 and is_valid_maya_uid(name)
+
+
+def _cast_node(name: str) -> Any:
+    """The node of a name Maya returned (a ``cmds`` result, a node's own
+    name): the cast core on the part before the first ``.``, resolved as Maya
+    resolves it. ``Node(x)``'s lookup rule is for the names a user writes; a
+    name Maya returned is exact (``namespace -relativeNames`` included) and
+    must not turn ambiguous because another namespace is current. Used by
+    ``container.createNode``, the ``rc`` results, ``Node.wrap`` and the
+    container's uuid reads."""
+    return _cast(name.split(".", 1)[0])
 
 
 # (DGNode.__init__, DAGNode.__init__, their is_type functions, their name

@@ -45,6 +45,7 @@ from rig.nodetypes import (
     errors as _nodetypes_errors,
 )
 from rig.nodetypes._base import (
+    _cast_node,
     _class_attr,
     _MISSING,
     _PLAIN_NODE_NAME,
@@ -599,9 +600,9 @@ class _ContainerStack:
     ) -> Any:
         """Create a Maya node and register it with the active scope.
 
-        Returns the typed node (``Node(name)``). If ``name`` is given and we're
-        inside a flattened sub-scope, prefixes ``name`` with the flattened scope
-        name.
+        Returns the typed node (the name Maya returned, cast as Maya resolves
+        it: ``_cast_node``). If ``name`` is given and we're inside a flattened
+        sub-scope, prefixes ``name`` with the flattened scope name.
         """
         # Apply name prefix if we're inside a flattened sub-scope, on the leaf
         # of a namespaced name (``ns:x`` is ``ns:inner_x``).
@@ -628,7 +629,7 @@ class _ContainerStack:
         _ensure_plugin_for_node_type(node_type)
 
         node_name = cmds.createNode(node_type, **create_kwargs)
-        node      = Node(node_name)
+        node      = _cast_node(node_name)
 
         # GC ownership tag -- only on types we'd ever consider deleting.
         # See ``_GC_ELIGIBLE_TYPES`` for the whitelist; transforms / joints /
@@ -1512,14 +1513,14 @@ def _get_or_create_host(container_node) -> "Node":
     if uuid is not None:
         cached = _HOST_CACHE.get(uuid)
         if cached and cmds.objExists(cached) and _is_host(cached):
-            return Node(cached)
+            return _cast_node(cached)
 
     # Fall back to scanning the container's members for an existing host.
     for member in cmds.container(ctn, query=True, nodeList=True) or []:
         if _is_host(member):
             if uuid is not None:
                 _HOST_CACHE[uuid] = member
-            return Node(member)
+            return _cast_node(member)
 
     # Create a fresh host. Raw createNode => no ``__rig__`` tag => GC-safe.
     host_name = cmds.createNode("network", name=f"{ctn}_host", skipSelect=True)
@@ -1536,7 +1537,7 @@ def _get_or_create_host(container_node) -> "Node":
         LOGGER.debug("Failed to add host %s to %s: %s", host_name, ctn, e)
     if uuid is not None:
         _HOST_CACHE[uuid] = host_name
-    return Node(host_name)
+    return _cast_node(host_name)
 
 
 def _publish_native(container_node, inner_plug, name: str) -> str:
@@ -2460,7 +2461,8 @@ def _node_uuid(node_name: str) -> str:
     ``cmds.ls(... uid=True)``.
     """
     try:
-        return Node(node_name).uuid
+        # a name Maya returned (or a node's own name): Maya's resolution
+        return _cast_node(node_name).uuid
     except (ValueError, RuntimeError):
         raise ValueError(f"Cannot resolve UUID for {node_name!r}")
 

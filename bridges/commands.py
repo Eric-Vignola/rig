@@ -35,7 +35,7 @@ from maya import cmds as _mc
 # the node-added tracking the typed creators share (it lives with the scope)
 from rig._internal.container import _call_tracking_creation
 from rig._internal.node import Node
-from rig.nodetypes._base import _ensure_node_valid, Attribute
+from rig.nodetypes._base import _cast_node, _ensure_node_valid, Attribute
 
 
 # Per-command wrapper cache. Built lazily by ``__getattr__``.
@@ -102,6 +102,8 @@ def _wrap_result(result: Any) -> Any:
 
     Strings that don't resolve to valid nodes are passed through unchanged
     (so ``rc.getAttr("foo.attr")`` returning a string value won't be coerced).
+    A string is a name Maya returned, cast as Maya resolves it (see
+    ``_cast_node``), never by ``Node(x)``'s lookup rule for written names.
     """
     if result is None:
         return None
@@ -109,7 +111,7 @@ def _wrap_result(result: Any) -> Any:
         return result
     if isinstance(result, str):
         try:
-            return Node(result)
+            return _cast_node(result)
         except Exception:
             return result
     if isinstance(result, (list, tuple)):
@@ -119,7 +121,7 @@ def _wrap_result(result: Any) -> Any:
         for r in result:
             if isinstance(r, str):
                 try:
-                    wrapped.append(Node(r))
+                    wrapped.append(_cast_node(r))
                 except Exception:
                     wrapped.append(r)
             else:
