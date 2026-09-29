@@ -74,6 +74,28 @@ class SkinCluster(Deformer):
     # with neither raises, naming them)
     _CREATE_TAKES_INPUTS = "geom, influences"
 
+    # ``cmds.skinCluster``'s create-mode flags (Maya 2025 docs, each accepted in
+    # a create by runs/r4b/NC3/probe_flags.py) and the two inputs by keyword;
+    # ``create``'s other keywords are the skinCluster's attributes.
+    # ``bindMethod``, ``dropoffRate``, ``heatmapFalloff``, ``normalizeWeights``,
+    # ``nurbsSamples``, ``weightDistribution`` (and ``mi``) are attributes too:
+    # the flag.
+    _CREATE_FLAGS = frozenset(
+        {
+            "geom", "influences",
+            "after", "af", "afterReference", "ar", "before", "bf", "bindMethod", "bm",
+            "dropoffRate", "dr", "exclusive", "ex", "frontOfChain", "foc",
+            "heatmapFalloff", "hmf", "ignoreBindPose", "ibp", "ignoreHierarchy", "ih",
+            "ignoreSelected", "is", "includeHiddenSelections", "ihs",
+            "maximumInfluences", "mi", "multi", "mul", "name", "n", "normalizeWeights", "nw",
+            "nurbsSamples", "ns", "obeyMaxInfluences", "omi", "parallel", "par",
+            "polySmoothness", "ps", "removeUnusedInfluence", "rui", "skinMethod", "sm",
+            "split", "sp", "toSelectedBones", "tsb", "toSkeletonAndTransforms", "tst",
+            "useComponentTags", "uct", "volumeBind", "vb", "volumeType", "vt",
+            "weightDistribution", "wd",
+        }
+    )
+
     # --- creation
 
     @classmethod
@@ -85,7 +107,8 @@ class SkinCluster(Deformer):
             influences: A list of influence object names, or a SkinData object.
                 If a SkinData is given, its influences are used to create the
                 skincluster and its weights are applied immediately after.
-            kwargs: kwargs supported by cmds.skinCluster().
+            kwargs: the ``_CREATE_FLAGS`` given to ``create``, for
+                cmds.skinCluster().
 
         Returns:
             Name of the created skincluster node.

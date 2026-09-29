@@ -14,6 +14,7 @@ from rig.nodetypes._base import (
     _attr_handle,
     _attr_mobject,
     _cast,
+    _check_attrs,
     _class_attr,
     _deleted_error,
     _ensure_owner_alive,
@@ -114,12 +115,39 @@ _COMPONENT_PLUG = None  # rig._internal.plug._maybe_component_plug
 # runs plain.
 _TYPED_CREATE_HOOK = None
 
+# The key of a typed create's kwargs dict under which `DGNode.create` hands its
+# attribute keywords to `_create_template` (through the hook, which passes
+# every other keyword on untouched). Not an identifier, so no command flag.
+_CREATE_ATTRS = "<attributes>"
+
+# The abstract Maya types rig's base classes stand for (DGNode, DAGNode,
+# Geometry): ``cmds.createNode`` cannot make one (``DGNode.create()`` would
+# ask for an ``entity``).
+_ABSTRACT_TYPES = frozenset({"entity", "dagNode", "geometryShape"})
+
+# The ``_create``s that make just the class's node by ``cmds.createNode``
+# (DGNode's; dag_node adds DAGNode's): their class's create takes no
+# positional argument.
+_PLAIN_CREATES = set()
+
 
 def _create_template(cls, args, kwargs):
     """`DGNode.create`'s body: ``cls._create``, then ``cls.post_create``, given
-    the call's ``args`` tuple and ``kwargs`` dict."""
+    the call's ``args`` tuple and ``kwargs`` dict, then the attribute keywords
+    (``kwargs[_CREATE_ATTRS]``, checked by type before) set on the new node
+    with ``<<``: inside a scope, in the hook's one ``rig.create`` undo chunk."""
+    attrs    = kwargs.pop(_CREATE_ATTRS, None)
     new_node = cls._create(*args, **kwargs)
-    return cls.post_create(new_node, *args, **kwargs)
+    node     = cls.post_create(new_node, *args, **kwargs)
+    if attrs:
+        for attr, value in attrs.items():
+            getattr(node, attr) << value
+    return node
+
+
+def _got(inputs: tuple) -> str:
+    """The positional arguments of a refused call, for its message."""
+    return ", ".join(repr(x) for x in inputs)
 
 
 def _typed_creator(fn):
@@ -241,6 +269,13 @@ class DGNode(Node):
     # anything is made (a bare ``cmds.blendShape`` deforms the selection). None
     # elsewhere.
     _CREATE_TAKES_INPUTS = None
+
+    # The keywords of ``create`` handed to ``_create`` / ``post_create``: the
+    # flags of the class's command (long and short names) and the inputs of an
+    # input-built class by name; every other keyword is an attribute of the
+    # new node. A class whose ``_create`` runs another command (or takes other
+    # keywords) declares its own.
+    _CREATE_FLAGS = frozenset({"name", "n", "skipSelect", "ss"})
 
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:
         """Initialize an instance from a node name or a MObject.
@@ -648,7 +683,8 @@ class DGNode(Node):
         """[Internal] Creates a new node of this type. Can be overridden by subclasses.
         This class can only use Maya APIs and must return a node name string.
 
-        Only ``name`` / ``n`` and ``skipSelect`` / ``ss`` reach ``cmds.createNode``.
+        ``name`` / ``n`` and ``skipSelect`` / ``ss`` (its ``_CREATE_FLAGS``,
+        the only keywords `create` hands it) reach ``cmds.createNode``.
         """
         name = kwargs.get("name", kwargs.get("n"))
         name = name or (cls.CUSTOM_NODE_TYPE or cls.NATIVE_NODE_TYPE)
@@ -658,8 +694,41 @@ class DGNode(Node):
         return cmds.createNode(cls.NATIVE_NODE_TYPE, name=name, skipSelect=skip)
 
     @classmethod
-    def create(cls, *args, **kwargs) -> "DGNode":
-        """Creates a new node of this type: ``_create``, then ``post_create``.
+    def create(
+        cls,
+        *inputs:   Any,
+        name:      str | None = None,
+        parent:    Any        = None,
+        container: bool | None = None,
+        **kwargs:  Any,
+    ) -> "DGNode":
+        """Creates a new node of this type, always: ``_create``, then
+        ``post_create``, then the attribute keywords. Maya picks the final
+        name (a second ``Transform.create(name="t")`` is ``t1``).
+
+        * ``name=`` and (a DAG class) ``parent=`` are keywords only. The
+          positional arguments are the inputs a class is built from
+          (``Mesh.create(mesh_data)``, ``SkinCluster.create(geo, joints)``,
+          ``Reference.create(path, namespace)``, ``DisplayLayer.create(*objects)``);
+          a class that makes just its node refuses one before anything is
+          made (``Transform.create("test")``: TypeError). A DG class refuses
+          ``parent=``; a class whose command takes no name refuses ``name=``.
+        * Every other keyword is a flag of the class's command when it is in
+          ``_CREATE_FLAGS`` (``skipSelect`` / ``ss``; a DAG class's ``p``; a
+          display layer's ``empty`` / ``noRecurse`` / ``number`` /
+          ``makeCurrent``; a skinCluster's or blendShape's create flags),
+          else an attribute of the new node: every attribute name, and an
+          enum field name given as a value, is checked on the node type
+          before the node is made (a typo is an AttributeError with nothing
+          made), and the values are set with ``<<`` once it exists
+          (``Transform.create(name="t", tx=1, rotateOrder="xzy")``; a plug
+          connects, a spec such as ``lock`` applies). A name that is both a
+          flag and an attribute (a skinCluster's ``normalizeWeights``) is the
+          flag. A value the attribute refuses raises once the node exists, as
+          ``node.attr << value`` would.
+        * The base classes of an abstract Maya type (``DGNode``, ``DAGNode``,
+          ``Geometry``) make no node: TypeError, naming ``Node.create(type,
+          ...)``.
 
         A subclass that overrides ``create`` calls ``super().create()`` (as
         ``Mesh`` does), so the rules below hold for every class.
@@ -679,13 +748,50 @@ class DGNode(Node):
         shading engines, references) stays out (no prefix, not registered)
         unless ``container=True`` (then registered, never prefixed). Only the
         outermost typed create does this. Outside a scope nothing changes
-        (``container=`` is always consumed, never passed on).
+        (``container=`` is always consumed, never passed on). The attribute
+        keywords are set inside that undo step.
         """
+        flags = cls._CREATE_FLAGS
+        if inputs and getattr(cls._create, "__func__", None) in _PLAIN_CREATES:
+            keywords = "name= and parent= as keywords" if "parent" in flags else "name= as a keyword"
+            raise TypeError(f"{cls.__name__}.create() takes {keywords} (got {_got(inputs)})")
+        if cls.NATIVE_NODE_TYPE in _ABSTRACT_TYPES:
+            raise TypeError(
+                f"{cls.__name__}.create() makes no node: {cls.NATIVE_NODE_TYPE!r} is an "
+                f"abstract Maya type; Node.create('<type>', name=...) makes a node of a type"
+            )
+        if name is not None:
+            if "name" not in flags:
+                raise TypeError(f"{cls.__name__}.create() takes no name=: its command names the node")
+            kwargs["name"] = name
+        if parent is not None:
+            if "parent" not in flags:
+                why = (
+                    "its command places the node"
+                    if issubclass(cls.FN_SET, OpenMaya.MFnDagNode)
+                    else f"a {_type_label(cls)} is a DG node"
+                )
+                raise TypeError(f"{cls.__name__}.create() takes no parent=: {why}")
+            kwargs["parent"] = parent
+        if kwargs and not flags.issuperset(kwargs):
+            attrs = {key: value for key, value in kwargs.items() if key not in flags}
+            for key in attrs:
+                del kwargs[key]
+            try:
+                _check_attrs(attrs, node_type=cls.NATIVE_NODE_TYPE)
+            except AttributeError as error:
+                raise AttributeError(
+                    f"{cls.__name__}.create(): {error}, and no create flag is named so "
+                    f"({', '.join(sorted(flags)) or 'it takes none'}); nothing was made"
+                ) from None
+            kwargs[_CREATE_ATTRS] = attrs
+        if container is not None:
+            kwargs["container"] = container
         hook = _TYPED_CREATE_HOOK
         if hook is None:
             kwargs.pop("container", None)
-            return _create_template(cls, args, kwargs)
-        return hook(cls, _create_template, args, kwargs)
+            return _create_template(cls, inputs, kwargs)
+        return hook(cls, _create_template, inputs, kwargs)
 
     @classmethod
     def post_create(cls, new_node_name: str, *args, **kwargs) -> "DGNode":
@@ -1101,6 +1207,8 @@ class DGNode(Node):
             for i in range(0, len(result), 2):
                 cmds.disconnectAttr(result[i], result[i + 1])
 
+
+_PLAIN_CREATES.add(DGNode._create.__func__)
 
 # Node classes whose data type fallback hook only reads the scene before it calls
 # DGNode's, mapped to that hook. With DGNode's own hook nothing runs in between.

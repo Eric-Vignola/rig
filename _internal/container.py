@@ -46,6 +46,7 @@ from rig.nodetypes import (
 )
 from rig.nodetypes._base import (
     _cast_node,
+    _check_attrs,
     _class_attr,
     _MISSING,
     _PLAIN_NODE_NAME,
@@ -1300,6 +1301,12 @@ def _makes_just_its_node(node_cls: type) -> bool:
     )
 
 
+# The keywords of ``Node.create`` on a type no class is registered for that go
+# to :meth:`_ContainerStack.createNode` (``cmds.createNode``'s flags and the
+# scope's ``container=``); every other keyword is an attribute of the new node.
+_NODE_CREATE_FLAGS = frozenset({"name", "n", "parent", "p", "skipSelect", "ss", "container"})
+
+
 def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     """``Node.create(node_type, *args, **kwargs)`` (``_base._NODE_CREATE_HOOK``;
     `kwargs` is the call's own dict).
@@ -1311,13 +1318,18 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     ``ss`` nor ``skipSelect`` was given, and the class's create is
     `DGNode.create` with a ``_create`` that forwards the flag, as
     :meth:`_ContainerStack.createNode` defaults it. Any other type is
-    :meth:`_ContainerStack.createNode`. Both refuse a positional argument
-    where the node takes none: after an unregistered type, or a type whose
-    class makes just its node (:func:`_makes_just_its_node`; ``parent=`` places
-    it). A class that builds its node from inputs (``_CREATE_TAKES_INPUTS``:
-    a skinCluster, a blendShape, a mesh, a nurbsCurve, a reference) refuses a
-    call with none, before anything is made (``cmds.blendShape`` alone deforms
-    the selection)."""
+    :meth:`_ContainerStack.createNode`, given ``cmds.createNode``'s flags
+    (``name`` / ``n``, ``parent`` / ``p``, ``skipSelect`` / ``ss``) and
+    ``container=``; every other keyword is an attribute, as for a typed
+    create: its name (and an enum field name given as its value) is checked
+    on the type before the node is made, and the value is set with ``<<``
+    once it exists (``Node.create("multiplyDivide", operation="divide",
+    input1X=3)``). Both refuse a positional argument where the node takes
+    none: after an unregistered type, or a type whose class makes just its
+    node (:func:`_makes_just_its_node`; ``parent=`` places it). A class that
+    builds its node from inputs (``_CREATE_TAKES_INPUTS``: a skinCluster, a
+    blendShape, a mesh, a nurbsCurve, a reference) refuses a call with none,
+    before anything is made (``cmds.blendShape`` alone deforms the selection)."""
     node_cls = _nodetypes_base._NODE_CLASS_DICT.get(node_type)
     if node_cls is None:
         if args:
@@ -1326,6 +1338,8 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
                 f"node class is registered for {node_type!r}, so it is made by "
                 f"createNode (got {len(args)} positional argument(s) after the type)"
             )
+        if kwargs and not _NODE_CREATE_FLAGS.issuperset(kwargs):
+            return _node_create_with_attrs(node_type, kwargs)
         return container.createNode(node_type, **kwargs)
     if args and _makes_just_its_node(node_cls):
         raise TypeError(
@@ -1349,6 +1363,28 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     ):
         kwargs["skipSelect"] = True
     return node_cls.create(*args, **kwargs)
+
+
+def _node_create_with_attrs(node_type: str, kwargs: dict) -> Any:
+    """`_node_create` of an unregistered `node_type` given attribute keywords
+    (the keywords of `kwargs` not in ``_NODE_CREATE_FLAGS``): each checked on
+    the type before the node is made (a typo raises AttributeError, a wrong
+    enum field name TypeError, nothing made), then set with ``<<``."""
+    attrs = {key: value for key, value in kwargs.items() if key not in _NODE_CREATE_FLAGS}
+    for key in attrs:
+        del kwargs[key]
+    _ensure_plugin_for_node_type(node_type)
+    try:
+        _check_attrs(attrs, node_type=node_type)
+    except AttributeError as error:
+        raise AttributeError(
+            f"Node.create({node_type!r}, ...): {error}, and no createNode flag is named "
+            f"so ({', '.join(sorted(_NODE_CREATE_FLAGS))}); nothing was made"
+        ) from None
+    node = container.createNode(node_type, **kwargs)
+    for attr, value in attrs.items():
+        getattr(node, attr) << value
+    return node
 
 
 def _scope_name(name: str) -> Optional[str]:

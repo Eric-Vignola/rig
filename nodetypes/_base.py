@@ -1770,6 +1770,40 @@ def _check_enum_names(
         )
 
 
+def _check_attrs(attrs: dict, *, node_type: str | None = None, node: str | None = None) -> None:
+    """Every key of `attrs` must name an attribute of the node (by type,
+    `node_type`, before a create; on the node `node` before an update), so a
+    typo raises AttributeError before any write. A field name given to an enum
+    attribute (``displayType="reference"``) is read the same way, so a wrong
+    one raises TypeError naming the fields before the node is made (see
+    `_check_enum_names`). Used by a typed create's attribute keywords and the
+    membership collections (``rig._internal.members`` re-exports it)."""
+    for attr, value in attrs.items():
+        query = {"type": node_type} if node is None else {"node": node}
+        if not cmds.attributeQuery(attr, exists=True, **query):
+            where = f"a {node_type}" if node is None else f"'{node}'"
+            raise AttributeError(f"{where} has no attribute '{attr}'")
+        if _holds_text(value):
+            attribute = _attribute_of(attr, node_type=node_type, node=node)
+            if attribute is not None:
+                _check_enum_names(attribute, value, f"{node or node_type}.{attr}")
+
+
+def _attribute_of(attr: str, *, node_type: str | None, node: str | None):
+    """The attribute MObject `attr` names on `node` (or, before a create, on
+    the type `node_type`), or None when the API cannot find it."""
+    try:
+        if node is None:
+            found = OpenMaya.MNodeClass(node_type).attribute(attr)
+        else:
+            sel = OpenMaya.MSelectionList()
+            sel.add(node)
+            found = OpenMaya.MFnDependencyNode(sel.getDependNode(0)).attribute(attr)
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    return None if found.isNull() else found
+
+
 @total_ordering
 class Attribute(str):
     """
@@ -2967,6 +3001,15 @@ class Node(metaclass=NodeMeta):
           prefix (after any namespace), a GC-eligible utility type is tagged
           for ``cleanup()``, and ``container=False`` leaves the node out of the
           scope. No positional argument may follow the type.
+
+        Either way a keyword that is no flag of the create (``createNode``'s
+        ``name`` / ``n``, ``parent`` / ``p``, ``skipSelect`` / ``ss`` and
+        ``container=``; a typed create's ``_CREATE_FLAGS``) is an attribute of
+        the new node, checked on the type before the node is made (a typo is
+        an AttributeError, a wrong enum field name a TypeError, nothing made)
+        and set with ``<<`` once it exists:
+        ``Node.create("multiplyDivide", operation="divide", input1X=3)``,
+        ``Node.create("transform", name="t", tx=1)``.
 
         Either way ``skipSelect`` defaults to ``ContainerOptions.skip_selection``
         (for a typed create, when its ``_create`` forwards the flag to

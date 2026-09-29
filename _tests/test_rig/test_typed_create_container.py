@@ -656,11 +656,16 @@ class TestTypedCreateInContainer(MayaTestCase):
     # -- 12 keywords -- #
 
     def test_other_keywords_reach_create_unchanged(self):
+        """A keyword the class declares in ``_CREATE_FLAGS`` reaches its
+        ``_create`` unchanged (the same object); since NC3 any other keyword
+        is an attribute of the new node, set once it exists (``caching``)."""
         seen = []
 
         class _Rec(DGNode):
             NATIVE_NODE_TYPE = "network"
             CUSTOM_NODE_TYPE = "m5Rec"
+            # the keywords its _create takes (NC3: any other is an attribute)
+            _CREATE_FLAGS = DGNode._CREATE_FLAGS | {"foo", "flags"}
 
             @classmethod
             def _create(cls, *args, **kwargs):
@@ -676,11 +681,12 @@ class TestTypedCreateInContainer(MayaTestCase):
         flags = [1, 2]
         with container("outer"):
             with container("inner"):
-                _Rec.create("pos", name="r", foo=1, flags=flags, container=None)
+                _Rec.create("pos", name="r", foo=1, flags=flags, container=None, caching=True)
                 _RecT.create(name="t")
         self.assertEqual(seen[0], (("pos",), {"name": "inner_r", "foo": 1, "flags": [1, 2]}))
         self.assertIs(seen[0][1]["flags"], flags)
         self.assertEqual(seen[1], {"name": "inner_t", "skipSelect": True})
+        self.assertIs(cmds.getAttr("inner_r.caching"), True)
 
     def test_display_layer_and_skincluster_flags_pass_through(self):
         cube = self._cube()

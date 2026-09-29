@@ -24,6 +24,11 @@ class Reference(DGNode):
     # it)
     _CREATE_TAKES_INPUTS = "file_path, namespace"
 
+    # ``_create`` takes its two inputs (also by keyword: ``namespace="hero"``)
+    # and no flag (the file names the node); ``create``'s other keywords are
+    # the reference node's attributes
+    _CREATE_FLAGS = frozenset({"file_path", "namespace"})
+
     # a create references a whole file: inside ``with container()`` it stays out
     # of the scope (tracking would pour every referenced node into it) unless
     # ``container=True``
