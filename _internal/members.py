@@ -884,12 +884,22 @@ def normalise(
     return selections
 
 
-class _NeverHolds(TypeError):
-    """A left-hand side a membership kind can never hold (a vertex for a
-    material, a component or a DG node for a layer, a group for a tag). On
-    ``<<`` / ``-`` it is the refusal (a TypeError, before any write); a query
-    answers by contents instead: ``in`` is False, ``.of`` / ``>> Kind()``
-    list nothing (the user's rule for tags, for every kind)."""
+def _NeverHolds(message: str) -> TypeError:
+    """The TypeError for a left-hand side a membership kind can never hold (a
+    vertex for a material, a component or a DG node for a layer, a group for
+    a tag), marked so a query tells it from any other TypeError
+    (`_never_held`). On ``<<`` / ``-`` it is the refusal (before any write); a
+    query answers by contents instead: ``in`` is False, ``.of`` / ``>>
+    Kind()`` list nothing (the user's rule for tags, for every kind). A plain
+    TypeError to the user: the mark is an attribute, not a class."""
+    error = TypeError(message)
+    error._rig_never_held = True
+    return error
+
+
+def _never_held(error: BaseException) -> bool:
+    """Whether ``error`` is a `_NeverHolds` refusal."""
+    return getattr(error, "_rig_never_held", False)
 
 
 # ---------- Shared helpers of the named kinds ----------------------------- #
@@ -1105,7 +1115,9 @@ class _MemberSpec(metaclass=_SpecMeta):
         try:
             self._check_kinds(selections)
             found = self._of(selections)
-        except _NeverHolds:
+        except TypeError as error:
+            if not _never_held(error):
+                raise
             found = []   # a left-hand side this kind never holds: in none
         if self.EXCLUSIVE:
             return found[0] if found else None
@@ -1140,7 +1152,9 @@ class _MemberSpec(metaclass=_SpecMeta):
         try:
             self._check_kinds(selections)
             return bool(self._contains(selections))
-        except _NeverHolds:
+        except TypeError as error:
+            if not _never_held(error):
+                raise
             # a member this kind can never hold (a vertex for a material, a
             # group for a tag, a component for a layer): not in it
             return False
@@ -1160,7 +1174,9 @@ class _MemberSpec(metaclass=_SpecMeta):
         try:
             cls()._check_kinds(selections)   # the same gate as ``x >> Spec()``
             return cls._of(selections)
-        except _NeverHolds:
+        except TypeError as error:
+            if not _never_held(error):
+                raise
             return []   # a left-hand side this kind never holds: in none
 
     def _plug_error(self, plug: Plug, verb: str) -> TypeError:

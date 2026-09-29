@@ -130,6 +130,7 @@ from rig._internal.members import (
     _GEOMETRY_TYPES,
     _MemberSpec,
     _NeverHolds,
+    _never_held,
     _render_tokens,
     _Selection,
     Components,
@@ -938,7 +939,9 @@ class _MaterialMember(_MemberSpec):
         try:
             self._check_kinds(selections)
             return _of(self._kind, selections)
-        except _NeverHolds:
+        except TypeError as error:
+            if not _never_held(error):
+                raise
             return []   # what a material never holds wears none
 
 
