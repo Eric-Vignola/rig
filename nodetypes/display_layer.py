@@ -10,6 +10,12 @@ with its override through the DAG without being members themselves.
 Handing a component to ``editDisplayLayerMembers`` silently stores its
 shape, and a DG node is refused by Maya.
 
+``DisplayLayer`` is also the DSL's ``Layer`` (``rig.Layer is
+DisplayLayer``): a layer node on the right of ``<<`` / ``>>`` / ``in`` is
+the membership collection (``cube << layer``, ``cube << -layer``, ``cube in
+layer``), and ``DisplayLayer()`` (``Layer()``) is the kind token:
+defaultLayer, the layer of no layer, on ``<<``; the enumeration on ``>>``.
+
 Usage::
 
     from rig.nodetypes import DisplayLayer
@@ -20,22 +26,31 @@ Usage::
     layer.get_members()                              # [Transform("pCube1"), Transform("grp")]
     layer.remove_members("|grp")                     # back to defaultLayer
     layer.rename("geo") ; layer.clear() ; layer.delete()
+
+    cube << layer ; cube in layer ; cube << -layer   # the membership grammar (rig.Layer)
+    cube >> DisplayLayer() ; DisplayLayer.of(cube)   # the layer holding cube, or None ; [layer] or []
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from maya import cmds
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _lookup
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.errors import NodeNotFoundError
+from rig._internal.undo import _undo_chunk
 
 
 # ``rig.membership._LayerMember``, the membership a layer node runs (its
 # ``<<`` / ``>>`` / ``in`` / ``of``): set when ``rig.membership`` loads (the
 # D31 pattern keeps nodetypes free of imports of the DSL modules)
 _LAYER_MEMBER = None
+
+# A display layer name Maya keeps: identifiers joined by namespace separators.
+_LAYER_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z_][A-Za-z0-9_]*)*$")
 
 # ``defaultLayer`` spelled absolutely: the name a command resolves while
 # another namespace is current and ``namespace -relativeNames`` is on (there
@@ -49,6 +64,11 @@ def _layer_member() -> Any:
     if _LAYER_MEMBER is None:
         import rig.membership  # noqa: F401 -- sets it
     return _LAYER_MEMBER
+
+
+def _leaf(name: str) -> str:
+    """The name without its namespace."""
+    return name.rsplit(":", 1)[-1]
 
 
 class DisplayLayer(DGNode):
@@ -179,17 +199,61 @@ class DisplayLayer(DGNode):
         if mine:
             cmds.editDisplayLayerMembers(_DEFAULT_ABSOLUTE, *mine, noRecurse=True)
 
+    def _guard(self, verb: str) -> str:
+        """The layer's name, once it is known to take ``verb``: never
+        ``defaultLayer`` (TypeError) nor a referenced layer (RuntimeError)."""
+        name = self.name
+        if self.is_default:
+            raise TypeError(f"'{name}' cannot be {verb}: it is the layer of no layer")
+        if cmds.referenceQuery(name, isNodeReferenced=True):
+            raise RuntimeError(f"'{name}' is referenced and cannot be {verb}; edit the source file")
+        return name
+
     def clear(self) -> None:
-        """Clear object(s) in this layer."""
-        self.remove_members(self.get_members(no_recurse=True))
+        """Sends every member of this layer to ``defaultLayer``; the layer
+        stays. One undo step. Refuses ``defaultLayer`` and a referenced
+        layer."""
+        self._guard("cleared")
+        with _undo_chunk("rig.layer"):
+            self.remove_members(self.get_members(no_recurse=True))
 
     def delete(self, nodes: Any = None, **kwargs) -> None:
-        """Deletes this layer (its members go to ``defaultLayer``), or ``nodes``
-        when given, as :meth:`DGNode.delete` does. Refuses ``defaultLayer``."""
+        """Deletes this layer (its members go to ``defaultLayer``), in one undo
+        step, or ``nodes`` when given, as :meth:`DGNode.delete` does. Refuses
+        ``defaultLayer`` and a referenced layer."""
         if nodes is not None:
             super().delete(nodes, **kwargs)
             return
-        if self.is_default:
-            raise TypeError(f"'{self.name}' cannot be deleted: it is the layer of no layer")
-        self.clear()
-        super().delete(**kwargs)
+        name = self._guard("deleted")
+        with _undo_chunk("rig.layer"):
+            self.remove_members(self.get_members(no_recurse=True))
+            super().delete(**kwargs)
+        if cmds.objExists(name):
+            raise RuntimeError(f"'{name}' survived its deletion")
+
+    def rename(self, new_name: Any) -> None:
+        """Renames this layer (the node object follows), in one undo step.
+        Refused before any write: ``defaultLayer`` (TypeError), a referenced
+        layer (RuntimeError), a name that is no str (TypeError), a name Maya
+        would not keep or one a node already has (ValueError). Verifies Maya
+        kept the name."""
+        if not isinstance(new_name, str) or not new_name:
+            raise TypeError(f"a layer's new name is a non-empty str, not {new_name!r}")
+        if not _LAYER_NAME_RE.match(new_name):
+            raise ValueError(
+                f"{new_name!r} is not a display layer name Maya keeps: identifiers of "
+                f"[A-Za-z0-9_] not starting with a digit, joined by ':'"
+            )
+        old = self._guard("renamed")
+        if new_name in (old, self.short_name):
+            return
+        try:
+            taken = _lookup(new_name)
+        except NodeNotFoundError:
+            taken = None
+        if taken is not None:
+            raise ValueError(f"'{new_name}' already exists")
+        with _undo_chunk("rig.layer"):
+            got = cmds.rename(old, new_name)
+        if _leaf(got) != _leaf(new_name):
+            raise RuntimeError(f"Maya renamed '{old}' to '{got}', not '{new_name}'")

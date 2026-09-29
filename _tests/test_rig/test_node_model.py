@@ -1562,8 +1562,10 @@ class TestOneNodeHierarchy(MayaTestCase):
 
         cube = Node(cmds.polyCube(name="cube", ch=False)[0])
         self.assertIs(cube << Tag("t1"), cube)
-        self.assertIs(cube << Layer("L"), cube)
-        self.assertTrue(cube >> Layer("L"))
+        # re-pinned (round 4b NC6): Layer is DisplayLayer (define finds or makes
+        # it) and the yes / no query is 'in'
+        self.assertIs(cube << Layer.define("L"), cube)
+        self.assertTrue(cube in Layer("L"))
         faces = cube.f[0:2]
         self.assertIs(faces << Tag("t2"), faces)
 

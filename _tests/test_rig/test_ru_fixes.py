@@ -744,6 +744,9 @@ class TestEnumNamesReview(MayaTestCase):
     # -- collection-spec kwargs -- #
 
     def test_collection_spec_enum_kwargs_are_read_before_the_node_is_made(self):
+        # re-pinned (round 4b NC6, Layer is DisplayLayer): a layer's attributes
+        # go to Layer.define, which reads the enum names before the layer is
+        # made (and, with update=True, before a found layer is edited)
         from rig import Layer
         from rig.shade import Lambert
 
@@ -752,12 +755,12 @@ class TestEnumNamesReview(MayaTestCase):
         with self.assertRaisesRegex(
             TypeError, r"^displayLayer\.displayType: 'refrence' is not one of its enum fields"
         ):
-            cube << Layer("ru_bad", displayType="refrence")
+            cube << Layer.define("ru_bad", displayType="refrence")
         self.assertEqual(set(cmds.ls(type="displayLayer")), layers)
-        cube << Layer("ru_ok", displayType="reference")
+        cube << Layer.define("ru_ok", displayType="reference")
         self.assertEqual(cmds.getAttr("ru_ok.displayType"), 2)
-        with self.assertRaisesRegex(TypeError, r"^ru_ok\.displayType: 'x' is not one of its enum fields"):
-            cube << Layer("ru_ok", update=True, displayType="x")
+        with self.assertRaisesRegex(TypeError, r"^displayLayer\.displayType: 'x' is not one of its enum fields"):
+            cube << Layer.define("ru_ok", update=True, displayType="x")
         self.assertEqual(cmds.getAttr("ru_ok.displayType"), 2)
         before = _scene()
         with self.assertRaisesRegex(TypeError, r"^lambert\.matteOpacityMode: 'solid mate'"):
