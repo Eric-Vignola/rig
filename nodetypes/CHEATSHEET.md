@@ -14,8 +14,8 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 |---|---|---|
 | — | [Setup](#setup) | mayapy / Maya bootstrap, the imports |
 | 1 | [One node, two attribute spellings](#1-one-node-two-attribute-spellings) | `Node(x)` is the typed node, `node.<attr>` (`Plug`) vs `find_attr` (`Attribute`), `.node`, keys |
-| 2 | [`Node` — resolution and registration](#2-node--resolution-and-registration) | what a name resolves to, `create`, `find_all`, a custom node type |
-| 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle |
+| 2 | [`Node` — resolution and registration](#2-node--resolution-and-registration) | what a name resolves to, `create`, `find_all`, the three verbs (refer / define / create), `exists`, the errors, a custom node type |
+| 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, equality |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
 | 5 | [`Attribute`](#5-attribute) | get / set, `>>` and `//` on `find_attr` results, typed arrays, multis, slicing with list keys, components |
 | 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies |
@@ -26,8 +26,8 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips |
 | 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild |
 | 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
-| 14 | [`ShadingEngine`](#14-shadingengine) | `for_material`, `assign`, `get_face_members` |
-| 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership |
+| 14 | [`ShadingEngine` and the shaders](#14-shadingengine-and-the-shaders) | `for_material`, `assign`, `get_face_members`; `Blinn` / `Lambert` / ... / `Material`, the network verbs |
+| 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership, `Layer is DisplayLayer` |
 | 16 | [`Choice`](#16-choice) | data types that follow the selector |
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
 | 18 | [`Reference`](#18-reference) | file references and their namespaces |
@@ -181,6 +181,57 @@ print(Transform.exists("jnt"), Joint.exists("jnt"))                          # T
 print(Transform.is_type("jnt"), Transform.is_type("jnt", exact_type=False))  # False True
 ```
 
+A class names a node three ways (the
+[construction rule](../README.md#the-construction-rule)). `Cls("x")`
+**refers**: it never writes the scene, returns the node as its most derived
+class, and raises when `x` is missing, ambiguous or of another type.
+`Cls.exists("x")` is whether `Cls("x")` would return a node. The errors
+are one family, each also a `TypeError` and a `ValueError`:
+`NodeNotFoundError` and `AmbiguousNodeError` (both `NodeLookupError`),
+and `NodeTypeError`.
+
+```python
+from rig import AmbiguousNodeError, NodeNotFoundError, NodeTypeError
+
+print(repr(Transform("jnt")), repr(ObjectSet("initialShadingGroup")))   # Joint("jnt") ShadingEngine("initialShadingGroup")
+print(Transform("jnt") == Node("jnt"), Joint.exists("grp"), Transform.exists("nope"))   # True False False
+try:
+    Joint("jnnt")
+except NodeNotFoundError as e:
+    print(e)                                       # no joint named 'jnnt' (did you mean 'jnt' or 'jnt2'?)
+try:
+    Joint("grp")
+except NodeTypeError as e:
+    print(e)                                       # 'grp' is a transform, not a joint; Node('grp') is Transform("grp")
+```
+
+`Cls.define("x", ...)` **finds** the node at its key or **makes** it
+there, never a second node under a name `Cls("x")` already refers to; the
+attributes are set when it is made, or with `update=True`.
+`Cls.create(name="x", ...)` always makes a new node; `name=` and
+`parent=` are keywords. The key is the node `create` would make: the
+namespace (the name's own, else the current one), the flattened scope's
+prefix, and `parent=` (the world without it). Every refusal writes
+nothing: a name that exists elsewhere (pass `parent=`), a namespace that
+does not exist or belongs to a file reference, another type at the key.
+`Node.define(type, name, ...)` does the same for a type by name.
+
+```python
+hub = Transform.define("hub", tx=1)                                   # missing: made at the world, tx set
+print(repr(hub), Transform.define("hub", tx=5) == hub, hub.tx.get())  # Transform("hub") True 1.0
+Transform.define("hub", tx=5, update=True)
+print(hub.tx.get(), repr(Transform.create(name="hub")))               # 5.0 Transform("hub1")
+print(repr(Joint.define("jnt2", parent="grp")), repr(Node.define("multiplyDivide", "md")))   # Joint("jnt2") DGNode("md")
+try:
+    Joint.define("jnt2")
+except AmbiguousNodeError as e:
+    print(e)                                       # Joint.define('jnt2'): 'jnt2' exists at |grp|jnt2; Joint('jnt2') refers to it, and Joint.define('jnt2', parent='grp') keys it there
+try:
+    Transform.define("chr:hub")
+except ValueError as e:
+    print(e)                                       # Transform.define('chr:hub'): there is no namespace 'chr'; define never creates one (cmds.namespace(add='chr') does)
+```
+
 A subclass with a `CUSTOM_NODE_TYPE` registers itself (that is the
 `NodeMeta` metaclass at work). The type is stamped on the node as a locked
 `__custom_node_type__` string, and `Node` reads it before anything else.
@@ -261,9 +312,11 @@ print(s.get_members())                                      # []
 print(sorted([md, box]), {box: 1}[Transform("asset:box")])  # [Transform("asset:box"), DGNode("md")] 1
 ```
 
-Equality is by class and name, hashing by long name — `Transform("x")`,
-`Node("x")` and `DGNode("x")` compare equal only when they are the same
-class, so a `ShadingEngine` never equals the `ObjectSet` wrapping the same node.
+Equality is by name between node objects of the node's class, hashing by
+long name. Every spelling of one node gives that class — `Node("x")`,
+`Transform("x")` and `DGNode("x")` all return the most derived one — so
+two node objects of one node are equal and one dict key. A node is never
+equal to a plug.
 
 ---
 
@@ -981,7 +1034,7 @@ print(repr(ObjectSet.define("initialShadingGroup")))              # ShadingEngin
 
 ---
 
-## 14. `ShadingEngine`
+## 14. `ShadingEngine` and the shaders
 
 A shading engine is an `ObjectSet` with render wiring, and only
 `cmds.sets(renderable=True)` builds one that accepts members — so
@@ -1022,12 +1075,49 @@ print(cmds.sets("redSG", query=True), cmds.ls(type="groupId"))  # ['cubeShape'] 
 print(mesh.get_material_bindings())                             # red
 ```
 
+The surface shaders are node classes, one per exact Maya type: `Lambert`,
+`Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`,
+`OpenPBRSurface`. They are siblings, so a blinn is a `Blinn` and never a
+`Lambert`; `Material` is the reference that takes any surface shader, and
+the class of a surface type with no class of its own (`anisotropic`, a
+plug-in's shader). `define` and `create` build the network — the shader,
+`<shader>SG` and its materialInfo — outside an active `with container()`
+unless `container=True`; `.delete()` and `.rename()` act on the network,
+and `cmds.delete` on one node. `rn.blinn()` makes the bare shader, with no
+engine. In the DSL a shader node is a membership collection (`cube <<
+gold`, `cube in gold`, `cube >> gold`: the root cheatsheet, section 36).
+
+```python
+from rig.bridges import nodes as rn
+from rig.nodetypes import Blinn, Lambert, Material
+
+gold = Blinn.define("gold", color=(1, 0.8, 0))                                 # made: gold, goldSG, its materialInfo
+print(repr(gold), repr(gold.engine), Blinn.define("gold") == gold)            # Blinn("gold") ShadingEngine("goldSG") True
+print(repr(Blinn.create(name="gold")), repr(Node.create("blinn", name="b2").engine))   # Blinn("gold1") ShadingEngine("b2SG")
+print(repr(Node("red")), repr(Material("gold")), repr(Material.create(type="anisotropic", name="ani")))   # Blinn("red") Blinn("gold") Material("ani")
+bare = rn.blinn(name="bare")
+print(repr(bare), ShadingEngine.for_material("bare", create=False))           # Blinn("bare") None
+try:
+    Lambert("gold")
+except NodeTypeError as e:
+    print(e)                                       # 'gold' is a blinn, not a lambert; Node('gold') is Blinn("gold"); Material('gold') takes any surface shader; Blinn('gold').astype(Lambert) converts it
+
+gold.rename("amber")
+print(gold, gold.engine)                           # amber amberSG
+gold.delete()                                      # amber, amberSG and its materialInfo
+print(cmds.ls("amber*"), gold.is_valid)            # [] False
+```
+
 ---
 
 ## 15. `DisplayLayer`
 
 Exclusive, objects only, read from the node's own `drawOverride` input.
 `defaultLayer` means "no layer": `for_node` answers `None` there.
+`DisplayLayer` is also the DSL's `Layer` (`rig.Layer is DisplayLayer`): a
+layer node on the right of `<<` or `in` is the membership collection
+(`cube << layer`, `cube in layer`, `cube << -layer`: the root cheatsheet,
+section 35).
 
 ```python
 layer = DisplayLayer.define("geometry")                           # empty; never becomes the current layer
@@ -1053,6 +1143,8 @@ print(DisplayLayer.find_all(), Node("cube").v >> None, cmds.getAttr("cube.overri
 ref.clear()
 ref.delete()                                                                                     # members go back to defaultLayer
 print(DisplayLayer.for_node(cube), cmds.objExists("reference"))                                  # None False
+from rig import Layer
+print(Layer is DisplayLayer, cube in layer, DisplayLayer.of(grp))                                # True False [DisplayLayer("geometry")]
 try:
     DisplayLayer("defaultLayer").delete()
 except TypeError as e:

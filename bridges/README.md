@@ -166,10 +166,14 @@ is nothing to join.
 | kwarg | short form | goes to |
 |---|---|---|
 | `name` | `n` | `cmds.createNode` |
-| `parent` | `p` | `cmds.createNode` |
-| `shared` | `s` | `cmds.createNode` |
+| `parent` | `p` | `cmds.createNode`, read by the reference rule (a missing parent is a `NodeNotFoundError` before anything is made) |
 | `skipSelect` | `ss` | `cmds.createNode` — default is the rig option `skip_selection`, `True` as shipped |
 | `container` | | the scope opt-out above |
+
+`shared=` is refused, a `TypeError` before anything is made: a factory
+always makes a new node, and `Transform.define("x")` is the verb that finds
+or makes one (the [construction rule](../README.md#the-construction-rule)).
+So `s` is no short form here: `rn.transform(s=2)` is a scale of 2.
 
 Everything else is applied **in order** as `getattr(node, key) << value`, so
 the whole injection grammar is available at creation: a number sets, a list
@@ -182,6 +186,12 @@ enum takes its index or a field name (`rotateOrder=2` or
 (a misspelled one is an `AttributeError`, once the node is made) — an
 attribute spec (`Float("weight")`) is not a valid kwarg value; add it
 after creation with `node << Float("weight")`.
+
+A shader factory makes the bare shader: `rn.blinn(name="x")` is a
+`Blinn` node in the active scope with no shading engine (the first `<<` of
+it builds `xSG` beside it). `Blinn.create(name="x")` and
+`Node.create("blinn", name="x")` build the network (the shader, `xSG` and
+its materialInfo), outside the scope unless `container=True`.
 
 Node types whose name is a Python keyword take a trailing underscore:
 `rn.and_`, `rn.or_`, `rn.not_` create Maya's `and` / `or` / `not` logic nodes
@@ -214,9 +224,13 @@ found on first call.
 |---|---|---|---|---|
 | `rc.createNode("transform", name="x")` | yes | yes — Maya's default | no — an unregistered type becomes an `unknown` node, with a warning | no |
 | `rn.transform(name="x", tx=5)` | yes | no (`skip_selection`) | yes, once the type is in the cached set — `decomposeMatrix` always is, `quatSlerp` only after `quatNodes` loads and a refresh | yes, through `<<` |
-| `Node.create("multiplyDivide", name="x")` | yes | no | yes, with no registry check in the way | no |
-| `Transform.create(name="x")`, the typed create a registered type also gets from `Node.create("transform", ...)` | yes; display layers, sets, shading engines and references stay out | no in a scope or through `Node.create` (`skip_selection`); yes for a direct call outside a scope | — | no |
+| `Node.create("multiplyDivide", name="x")` | yes | no | yes, with no registry check in the way | yes, checked before the node is made |
+| `Transform.create(name="x")`, the typed create a registered type also gets from `Node.create("transform", ...)` | yes; display layers, sets, shading engines, materials and references stay out | no in a scope or through `Node.create` (`skip_selection`); yes for a direct call outside a scope | — | yes, checked before the node is made |
 | `Node.wrap(cmds.createNode("transform", name="x"))` | no | yes | no | no |
+
+Each of these always makes a new node. `Transform.define("x", ...)` (or
+`Node.define(type, "x", ...)`) is the one call that finds the node at its
+key or makes it there, and `Transform("x")` refers to one that exists.
 
 `Node.wrap` is the manual converter for when you call `maya.cmds` yourself:
 `str` → node, list → `List`, `None` and numbers pass through, a string
@@ -229,7 +243,8 @@ that is not a node passes through. It never touches the container scope.
 - **Maya's names, Maya's flags.** `rc.<name>` takes exactly what
   `cmds.<name>` takes; `rn.<type>` is exactly the Maya type name. The only
   kwarg the bridge consumes on a command is `container`; a factory also
-  consumes `name` / `n`, `parent` / `p`, `shared` / `s`, `skipSelect` / `ss`.
+  consumes `name` / `n`, `parent` / `p`, `skipSelect` / `ss`, and refuses
+  `shared`.
 - **Factories are keyword-only.**
 - **`str(node)` is the real name.** Maya uniquifies a clash at the same DAG
   level, so `rn.transform(name="root")` twice gives `root` and `root1`; a
@@ -265,9 +280,10 @@ Not bugs to work around blindly — how it actually behaves under Maya 2025.
   *and* `_refresh_node_types()` has run, because Maya does not list the
   `quatNodes` types while the plugin is unloaded. It does list the
   `matrixNodes` types, so `rn.decomposeMatrix()` works from a cold start.
-- `shared=True` on a name that already exists: `cmds.createNode` returns
-  `None`, so `rc.createNode(..., shared=True)` returns `None` and
-  `rn.transform(..., shared=True)` raises `ValueError` while wrapping it.
+- `shared=` is refused by `rn.*` and `Node.create` (a `TypeError`, nothing
+  made). `rc.createNode` is `maya.cmds` and passes it on: with a name that
+  already exists `cmds.createNode(..., shared=True)` returns `None`, and so
+  does `rc.createNode`.
 - A spec object as a factory kwarg fails with `AttributeError: Attribute not
   found: <node>.<attr>` — after the node has been created. Add specs after.
 - Inside a flattened nested scope, `name=` is prefixed with the scope name:

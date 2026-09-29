@@ -12,18 +12,18 @@ Concepts, conventions and the verified behaviour live in [`README.md`](README.md
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | Maya standalone, a clean scene, two transforms |
-| 1 | [Import surface](#1-import-surface) | the 23 names, the `rig.*` re-exports, the collisions |
+| 1 | [Import surface](#1-import-surface) | the 23 names, the `rig.*` re-exports, the names to keep apart |
 | 2 | [Anatomy of a spec](#2-anatomy-of-a-spec) | `.kargs`, laziness, reuse, the return value |
 | 3 | [Numeric — `Float` `Int` `Bool` `Angle` `Time`](#3-numeric--float-int-bool-angle-time) | |
 | 4 | [Typed — `String` `Matrix` `Message` `MeshAttr` `NurbsCurveAttr` `NurbsSurfaceAttr`](#4-typed--string-matrix-message-meshattr-nurbscurveattr-nurbssurfaceattr) | |
-| 5 | [`Enum`](#5-enum) | list or colon string, default, set by index or by field name |
+| 5 | [`Enum`](#5-enum) | the `en=` forms (string, list, dict, pairs), default, set by index or by field name |
 | 6 | [Compounds — `Vector` `Color` `Euler` `Quat`](#6-compounds--vector-color-euler-quat) | children, per-child defaults, ranges |
-| 7 | [The kwargs](#7-the-kwargs) | `min` `max` `dv` `keyable` `k` `hidden` `sn` `nn` `multi` `size` `overwrite` |
+| 7 | [The kwargs](#7-the-kwargs) | `min` `max` `dv` `keyable` `k` `hidden` `sn` `nn` `multi` `size` `overwrite`; a static name refused |
 | 8 | [Modifiers — `lock` `unlock` `hide` `unhide` `skip`](#8-modifiers--lock-unlock-hide-unhide-skip) | on plugs, on compounds, inside a fan-out |
 | 9 | [`destroy`](#9-destroy) | both forms, variadic, `strict` `silent` `verbose`, refusals |
-| 10 | [`overwrite=`](#10-overwrite) | replace vs keep |
+| 10 | [Declaring again, and `overwrite=`](#10-declaring-again-and-overwrite) | the settings apply and the value stays; another kind raises; `overwrite=True` replaces |
 | 11 | [`node >> spec` declares an output](#11-node--spec-declares-an-output) | `writable=False` |
-| 12 | [`plug >> Node` and `plug >> "name"` clone](#12-plug--node-and-plug--name-clone) | what travels, what does not |
+| 12 | [`plug >> Node` and `plug >> "name"` clone](#12-plug--node-and-plug--name-clone) | what travels, what does not, a taken name refused |
 | 13 | [Multis and pre-sizing](#13-multis-and-pre-sizing) | `multi=True`, `size=`, slices, `append` |
 | 14 | [`List` fan-out](#14-list-fan-out) | one spec, many nodes |
 | 15 | [`Note`](#15-note) | the `notes` attribute |
@@ -109,12 +109,14 @@ print(rig.Color.__mro__[1].__name__)  # Float -- an RGB double3, not a colour va
 
 The positional argument is the long name; the kwargs are `addAttr` flags
 plus three the spec keeps (`multi`, `size`, `overwrite`); `keyable=True`
-is filled in. Nothing touches Maya until `<<`.
+is filled in. Nothing touches Maya until `<<`. A spec is a declaration of
+what lives inside a node: applied to a node that already has the name, it
+keeps the attribute (section 10).
 
 ```python
 spec = Float("weight", min=0, max=1, dv=0.5)
 print(spec.kargs)                                               # {'min': 0, 'max': 1, 'dv': 0.5, 'keyable': True, 'longName': 'weight', 'attributeType': 'double'}
-print(spec.size, spec.overwrite, spec.compound, spec.notes)     # None True None None
+print(spec.size, spec.overwrite, spec.compound, spec.notes)     # None False None None
 print(cmds.attributeQuery("weight", node="ctrl", exists=True))  # False
 ```
 
@@ -149,7 +151,7 @@ print(repr(y), y.node is ctrl)   # Plug("ctrl.y") True
 | `Int` | `long` | `int` |
 | `Bool` | `bool` | `bool` |
 | `Angle` | `doubleAngle` | `float`, degrees |
-| `Time` | *(broken — see below)* | |
+| `Time` | `time` | `float`, in the scene's time unit |
 
 ```python
 ctrl << Float("blend") << 0.75
@@ -163,19 +165,11 @@ print(at("ctrl.flag"),  ctrl.flag >> None)                                      
 print(at("ctrl.twist"), ctrl.twist >> None)                                                       # doubleAngle 90.0
 ```
 
-`Time` asks `addAttr` for `dataType="time"`, which Maya does not have
-(`time` is an attribute type), so it raises. The plain `cmds` call is the
-workaround; the plug behaves normally afterwards.
+`Time` is the `time` attribute type:
 
 ```python
-print(Time("when").kargs)                                           # {'keyable': True, 'longName': 'when', 'dataType': 'time'}
-try:
-    ctrl << Time("when")
-except RuntimeError as e:
-    print(e)                                                        # Type specified for new attribute's data type is unknown.
-
-cmds.addAttr("ctrl", ln="when", at="time")
-ctrl.when << 24
+print(Time("when").kargs)                                           # {'keyable': True, 'longName': 'when', 'attributeType': 'time'}
+ctrl << Time("when") << 24
 print(at("ctrl.when"), ctrl.when >> None)                           # time 24.0
 ```
 
@@ -220,12 +214,14 @@ print(dt("ctrl.crvIn"), dt("ctrl.srfIn"), at("ctrl.crvIn"))         # nurbsCurve
 
 ## 5. `Enum`
 
-`en=` (or `enumName=`) takes a list or a colon-delimited string; the
-default is a two-state `False:True`. Values are indices; `plug.enums`
-lists the names. A value (`<<`, `=`, `dv=`) is the index or a field name:
-the exact name first, then the one field that matches with case, spaces,
-`_` and a `-` between letters ignored. Any other string is a `TypeError`
-that lists the fields, raised before anything is set.
+`en=` (or `enumName=`) takes a colon-delimited string, a list or tuple
+of names, a dict of names to values or `(name, value)` pairs; the default
+is a two-state `False:True`. Values are indices unless the fields give
+their own; `plug.enums` lists the names. A value (`<<`, `=`, `dv=`) is
+the field's value or its name: the exact name first, then the one field
+that matches with case, spaces, `_` and a `-` between letters ignored.
+Any other string is a `TypeError` that lists the fields, raised before
+anything is set.
 
 ```python
 ctrl << Enum("mode", en=["off", "on", "auto"]) << 2
@@ -244,6 +240,22 @@ try:
     ctrl.mode << "of"
 except TypeError as e:
     print(str(e).split(";")[0])                                     # ctrl.mode: 'of' is not one of its enum fields
+```
+
+Fields with values of their own: a `"name=value"` string, a dict (in its
+order) or `(name, value)` pairs, and names and pairs can mix. A `set` is a
+`TypeError`: it has no order, so the field indices would be arbitrary.
+
+```python
+ctrl << Enum("tone", en={"red": 1, "green": 5})                     # the same fields as en="red=1:green=5"
+ctrl << Enum("grade", en=[("low", 1), ("high", 10)])
+print(cmds.attributeQuery("tone", node="ctrl", listEnum=True), cmds.attributeQuery("grade", node="ctrl", listEnum=True))   # ['red=1:green=5'] ['low=1:high=10']
+ctrl.tone << "green"
+print(ctrl.tone >> None, Enum("mixed", en=["off", ("on", 5)]).kargs["en"])   # 5 off:on=5
+try:
+    Enum("bad", en={"red", "green"})
+except TypeError as e:
+    print(str(e).split(";")[0])                                     # Enum 'bad': en= takes an ordered list (['red', 'green']), a dict ({'red': 1, 'green': 5}) or a 'red:green' string
 ```
 
 ---
@@ -286,8 +298,8 @@ ctrl.tint << drv.t
 print(ctrl.tint.get_inputs())                   # List([Plug("drv.translate")])
 ```
 
-Per-child defaults are `defaultValue=[...]`; `min` / `max` land on the
-children.
+A per-child default is a sequence, `dv=[...]` or `defaultValue=[...]`;
+`min` / `max` land on the children.
 
 ```python
 ctrl << Vector("up", defaultValue=[0, 1, 0])
@@ -296,17 +308,12 @@ print(ctrl.up >> None, ctrl.base >> None)                                       
 print(cmds.attributeQuery("baseR", node="ctrl", min=True), cmds.attributeQuery("baseR", node="ctrl", max=True))  # [0.0] [1.0]
 ```
 
-`dv=[...]` on a compound is the one spelling that fails — and it leaves a
-half-built parent that blocks the name (README, *Real behaviour, verified*). A scalar
-`dv` on a compound is ignored.
+A scalar `dv` on a compound is ignored.
 
 ```python
-try:
-    ctrl << Vector("broken", dv=[1, 0, 0])
-except TypeError as e:
-    print(str(e)[:33])                          # Invalid arguments for flag 'dv'.
+ctrl << Vector("fwd", dv=[1, 0, 0])
 ctrl << Vector("flat", dv=5)
-print(ctrl.flat >> None)                        # [0. 0. 0.]
+print(ctrl.fwd >> None, ctrl.flat >> None)      # [1. 0. 0.] [0. 0. 0.]
 ```
 
 ---
@@ -316,17 +323,18 @@ print(ctrl.flat >> None)                        # [0. 0. 0.]
 | Kwarg | Alias | Meaning | Handled by |
 |---|---|---|---|
 | `min`, `max` | | range; on a compound, the children's | `addAttr` |
-| `dv` | `defaultValue` | default; a sequence per child needs the `defaultValue` spelling; an `Enum` default is an index or a field name | `addAttr` |
+| `dv` | `defaultValue` | default; on a compound a sequence, one per child; an `Enum` default is a field's value or name | `addAttr` |
 | `keyable` | `k` | default `True`; `False` also drops it from the channel box | `addAttr` |
 | `hidden` | `h` | hidden from the UI | `addAttr` |
 | `sn`, `nn` | `shortName`, `niceName` | | `addAttr` |
-| `en` | `enumName` | `Enum` names, list or colon string | `Enum` |
+| `en` | `enumName` | `Enum` fields: a colon string, a list or tuple, a dict, `(name, value)` pairs | `Enum` |
 | `multi` | `m` | array attribute | the spec |
 | `size` | | pre-create indices `0 .. size-1` on a multi | the spec |
-| `overwrite` | | default `True`: replace an existing name; `False`: keep it | the spec |
+| `overwrite` | | default `False`: a name the node has is re-declared (the settings apply, the value stays); `True`: delete it and add it again | the spec |
 
-Anything else (`writable`, `readable`, `storable`, `softMin`, ...) is an
-`addAttr` flag and goes straight through.
+Anything else (`writable`, `readable`, `storable`, `softMinValue`, ...)
+is an `addAttr` flag and goes straight through. A keyword that is no
+`addAttr` flag is a `TypeError` when the spec is made.
 
 ```python
 ctrl << Float("quiet", k=False)
@@ -339,15 +347,18 @@ print(cmds.attributeQuery("blendIn", node="ctrl", shortName=True), cmds.attribut
 print(cmds.attributeQuery("blendIn", node="ctrl", softMax=True))                                                                # [1.0]
 ```
 
-A long name that matches a built-in **short** name is refused by Maya
-(`c` is `center` on a transform), and the spec's existence check cannot
-see it coming:
+A static attribute's name, long or short, is refused before any edit
+(`c` is `center` on a transform): a declaration adds a dynamic attribute.
 
 ```python
 try:
     ctrl << Float("c")
-except RuntimeError as e:
-    print(e)                                    # Found no valid items to add the attribute to.
+except TypeError as e:
+    print(e)                                    # 'ctrl.c' is a static attribute of the transform (center, whose short name is 'c'); a declaration adds a dynamic attribute: pick another name
+try:
+    Float("w", niceNmae="W")
+except TypeError as e:
+    print(e)                                    # Float('w'): niceNmae= is not an addAttr flag (did you mean niceName=?); nothing was changed
 ```
 
 ---
@@ -484,26 +495,56 @@ for bad in (lambda: ctrl << destroy, lambda: ctrl.aim << destroy("aim"),
 
 ---
 
-## 10. `overwrite=`
+## 10. Declaring again, and `overwrite=`
 
-Default `True`: an existing attribute of that name is unlocked, deleted
-(connections and value with it) and rebuilt from the spec. `False`: the
-existing attribute stays and its plug is returned, whatever its type.
+A spec whose name the node already has, as the same kind of attribute,
+keeps it: the value, the connections and a lock stay, and the settings
+the spec was given (the default, the range, the soft range, `keyable`,
+`hidden`, `niceName`, an `Enum`'s fields) are applied in place. rig's own
+`keyable=True` is not a setting you gave. `overwrite=False` written out
+is the same thing.
 
 ```python
 ctrl   << Float("mix", min=0, max=1) << 0.75
 drv.tz << ctrl.mix
 ctrl   << Float("mix", min=-5, max=5)
-print(ctrl.mix >> None, cmds.attributeQuery("mix", node="ctrl", min=True), drv.tz.get_inputs())   # 0.0 [-5.0] List([])
+print(ctrl.mix >> None, cmds.attributeQuery("mix", node="ctrl", min=True), drv.tz.get_inputs())   # 0.75 [-5.0] List([Plug("ctrl.mix")])
 
 ctrl.mix << 0.3 << lock
-ctrl     << Float("mix", dv=2.0)
-print(ctrl.mix >> None, cmds.getAttr("ctrl.mix", lock=True))                                     # 2.0 False
+ctrl     << Float("mix", dv=2.0)                                            # a new default, not a new value
+print(ctrl.mix >> None, cmds.getAttr("ctrl.mix", lock=True), cmds.addAttr("ctrl.mix", query=True, defaultValue=True))   # 0.3 True 2.0
+```
 
-ctrl.mix << 0.3
-kept = ctrl << Float("mix", min=0, max=1, overwrite=False)
-print(kept >> None, cmds.attributeQuery("mix", node="ctrl", minExists=True))  # 0.3 False
-print(repr(ctrl << String("mix", overwrite=False)), at("ctrl.mix"))           # Plug("ctrl.mix") double -- no type check
+Everything is checked before the first edit, and a refusal changes
+nothing: another kind of attribute, a setting fixed once the attribute
+exists (`sn`, `multi`, ...), a range that would leave out the default
+(pass `dv=` with it). One re-declaration is one undo step.
+
+```python
+for bad in (lambda: ctrl << String("mix"),
+            lambda: ctrl << Float("mix", max=1),
+            lambda: ctrl << Float("mix", sn="mx")):
+    try:
+        bad()
+    except TypeError as e:
+        print(e)
+# 'ctrl.mix' exists as a double, not a string; overwrite=True replaces it
+# 'ctrl.mix': the default 2.0 is above max=1; pass dv=
+# 'ctrl.mix': shortName cannot be changed on an existing attribute (it is 'mix', the spec gives 'mx'); overwrite=True replaces it
+
+cmds.undoInfo(state=True, infinity=True)
+ctrl << Float("mix", dv=0.5)
+cmds.undo()
+print(cmds.addAttr("ctrl.mix", query=True, defaultValue=True), ctrl.mix >> None)   # 2.0 0.3
+```
+
+`overwrite=True` is the explicit replace: the attribute is unlocked,
+deleted (its connections and value with it) and added again from the
+spec, whatever its kind.
+
+```python
+ctrl << String("mix", overwrite=True)
+print(at("ctrl.mix"), dt("ctrl.mix"), drv.tz.get_inputs(), cmds.getAttr("ctrl.mix", lock=True))   # typed string List([]) False
 ```
 
 ---
@@ -572,8 +613,8 @@ print(cmds.getAttr("dst.w", multiIndices=True), cmds.getAttr("dst.w[2]"))       
 
 The named forms — `plug >> "name"` on the same node, `plug >> "node.name"`
 on another — are the same clone under a chosen name, plus the current
-value, and they refuse a taken name. `plug >> Node` does not: it
-replaces a same-named dynamic attribute.
+value. Every form refuses a name the target already has: re-declare it
+with a spec, or `destroy` it first.
 
 ```python
 print(repr(src.mix >> "mix2"), cmds.getAttr("src.mix2"))            # Plug("src.mix2") 0.4
@@ -584,8 +625,11 @@ except TypeError as e:
     print(str(e)[:50])                                              # 'dst' already has an attribute 'mix': '>>' clones,
 
 dst.mix << 0.9
-src.mix >> dst
-print(cmds.getAttr("dst.mix"))                                      # 0.0 -- replaced, value reset
+try:
+    src.mix >> dst
+except TypeError as e:
+    print(str(e)[:50])                                              # 'dst' already has an attribute 'mix': '>>' clones,
+print(cmds.getAttr("dst.mix"))                                      # 0.9 -- untouched
 ```
 
 Built-ins clone too, and `Color` comes back as a `Vector`:
@@ -685,7 +729,7 @@ except TypeError as e:
 
 Adds Maya's `notes` string attribute — hidden, non-keyable,
 `writable=False` — and sets the text when given one. A second `Note`
-replaces the first.
+replaces the text; `Note()` with no text leaves it.
 
 ```python
 n = ctrl << Note("Built by the spine module.")

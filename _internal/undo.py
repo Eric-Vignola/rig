@@ -6,7 +6,8 @@ A chunk groups everything recorded inside it into ONE undo step that the Edit
 menu names after the chunk: ``cmds`` commands and rig's undoable API edits
 (``rig.Mesh.set_points`` ...) alike (``undoInfo(openChunk)`` / ``closeChunk``
 around several ``cmds`` calls undoes atomically in batch too). Every
-``inject`` of a collection spec (``rig.tag`` ...) and ``rig.Mesh.create`` run
+membership edit (``rig.tag``, ``rig.layer``, ``rig.material`` ...), a
+``define`` that makes its node (``rig.define``) and ``rig.Mesh.create`` run
 inside one.
 
 Usage::

@@ -292,10 +292,10 @@ class List(list):
         """Broadcast ``__rshift__`` across each element.
 
         - ``items >> None`` => :meth:`get` (numpy-aware stacked value).
-        - ``items >> Tag("x")`` (membership: a collection spec, a layer
-          node, a kind token) => query membership of the whole list at once
-          (never an element-wise clone onto a layer node); the spec answers
-          with a plain value.
+        - ``items >> Tag("x")`` (membership: a tag, a layer, shader or
+          shading engine node, a kind token) => query membership of the
+          whole list at once (never an element-wise clone onto a membership
+          node); the collection answers with a plain value.
         - ``items >> Node`` => clone each plug's spec onto the target,
           returning a :class:`List` of new :class:`Plug` instances.
         - Other RHS types delegate to each element's :meth:`Plug.__rshift__`,

@@ -2,8 +2,11 @@
 
 The object model the `rig` DSL is made of. Every node object is an instance
 of one class from here: a `Transform`, a `Mesh`, a `SkinCluster`, a
-`ShadingEngine`, or the plain `DGNode` / `DAGNode` fallback, all under the
-root class `Node`, which is also the factory that picks the class. A node
+`Blinn`, a `ShadingEngine`, or the plain `DGNode` / `DAGNode` fallback, all
+under the root class `Node`, which is also the factory that picks the
+class. Each class names its nodes three ways: `Cls("x")` refers to one that
+exists, `Cls.define("x", ...)` finds or makes it, `Cls.create(name="x",
+...)` makes a new one. A node
 holds an OpenMaya handle (rename-safe, deletion-aware), prints as its name so
 it drops into `maya.cmds` unchanged, and carries the DSL (`node.tx` plugs,
 `<<`, `>>`) and the methods the operators do not cover: skin weights as
@@ -28,10 +31,11 @@ print(mesh.get_materials(), mesh.num_vertices)         # [StandardSurface("stand
 ```
 
 You rarely import from `rig.nodetypes` at all: `Node(x)` and the `rc` / `rn`
-bridges already hand back these classes. You do when you want a class as a
-constructor (`Mesh("cubeShape")`, `SkinCluster.create(...)`), a classmethod
-(`ShadingEngine.for_material`, `DisplayLayer.for_node`), or a subclass of
-your own.
+bridges already hand back these classes. You do when you want a class to
+name a node of its type (`Mesh("cubeShape")`, which refuses anything but a
+mesh), to define or create one (`Transform.define("rig")`,
+`SkinCluster.create(...)`), a classmethod (`ShadingEngine.for_material`,
+`DisplayLayer.for_node`), or a subclass of your own.
 
 ---
 
@@ -49,9 +53,11 @@ your own.
 ```
 rig/nodetypes/
 ├── __init__.py        re-exports Node, the classes below, Attribute and Axis (not Deformer, tag_references, ColorSet)
-├── _base.py           Node (the root class and the factory), NodeMeta, the cast, the custom-type stamp;
-│                      Attribute -- the MPlug wrapper: get / set / connect, slicing, components
-├── dg_node.py         DGNode                 entity          get_short_name(), get_clean_name()
+├── _base.py           Node (the root class and the factory), NodeMeta, the cast, the lookup rule,
+│                      the custom-type stamp; Attribute -- the MPlug wrapper: get / set / connect,
+│                      slicing, components
+├── errors.py          NodeLookupError, NodeNotFoundError, AmbiguousNodeError, NodeTypeError
+├── dg_node.py         DGNode                 entity          refer / define / create; get_short_name(), get_clean_name()
 ├── dag_node.py        DAGNode                dagNode
 ├── transform.py       Transform              transform
 ├── joint.py           Joint                  joint           replace_suffix()
@@ -63,6 +69,8 @@ rig/nodetypes/
 ├── blendshape.py      BlendShape
 ├── object_set.py      ObjectSet              objectSet
 ├── shading_engine.py  ShadingEngine          shadingEngine
+├── material_node.py   Material (any surface shader), Lambert, Blinn, Phong, PhongE, SurfaceShader,
+│                      StandardSurface, OpenPBRSurface
 ├── display_layer.py   DisplayLayer           displayLayer
 ├── reference.py       Reference              reference
 ├── choice.py          Choice                 choice
@@ -79,6 +87,8 @@ from rig.nodetypes import (
     Node, Attribute, DGNode, DAGNode, Transform, Joint, Geometry, Mesh, NurbsCurve,
     NurbsSurface, SkinCluster, BlendShape, ObjectSet, ShadingEngine, DisplayLayer,
     Reference, Choice, Follicle, Axis,
+    Material, Lambert, Blinn, Phong, PhongE, SurfaceShader, StandardSurface, OpenPBRSurface,
+    NodeLookupError, NodeNotFoundError, AmbiguousNodeError, NodeTypeError,
 )
 from rig.nodetypes.deformer import Deformer, tag_references
 from rig.nodetypes.dg_node import get_clean_name, get_short_name
@@ -94,8 +104,8 @@ from rig.nodetypes.plugins import load_plugin
 
 | Class | Wraps | What it adds |
 |---|---|---|
-| `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
-| `DGNode` | any dependency node | the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets` |
+| `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.define(type, name, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
+| `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `mdagpath`, `get_bounding_box`, `get_deformers` |
 | `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy` |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
@@ -107,14 +117,20 @@ from rig.nodetypes.plugins import load_plugin
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
 | `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members` |
-| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete` |
+| `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `engine`, `of`, `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
+| `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
+| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete`; the DSL's `Layer` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `namespace`, `file_path`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `data_type` of `input[i]` / `output` follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
 
 Each class inherits everything above it in its column, so a `Mesh` has
 every `Geometry`, `DAGNode` and `DGNode` method, and a `ShadingEngine` is an
-`ObjectSet`.
+`ObjectSet`. The shader classes are siblings under `Material`: Maya derives
+blinn from lambert, rig does not, so a blinn is a `Blinn` and never a
+`Lambert`. The lookup errors of `errors.py` are one family, each also a
+`TypeError` and a `ValueError`: `NodeNotFoundError` and
+`AmbiguousNodeError` (both `NodeLookupError`), and `NodeTypeError`.
 
 ---
 
@@ -140,6 +156,57 @@ and one dict or set key, and the typed methods hand back `Attribute`s
 (`list_attr`, `list_connections(plugs=True)`). `Node(plug)` is the node the
 plug was read from.
 
+### Three verbs: refer, define, create
+
+Every class names its nodes the same three ways, the
+[construction rule](../README.md#the-construction-rule): naming never
+creates, `define` makes sure, `create` makes new.
+
+- **Refer, `Cls(x)`.** `x` is anything `Node(x)` takes. The result is the
+  node `Node(x)` gives, when it is an instance of `Cls`: always the most
+  derived class, so `Transform("j1")` is `Joint("j1")` and
+  `ObjectSet("initialShadingGroup")` is the `ShadingEngine`, while
+  `Lambert("b")` on a blinn is refused (the shader classes are siblings;
+  `Material("b")` takes any shader). A reference never writes the scene. A
+  missing name is `NodeNotFoundError` with a did-you-mean hint, a name two
+  nodes have is `AmbiguousNodeError` (use a path, or spell the namespace),
+  another type is `NodeTypeError`. `Cls(x, tx=1)` is a `TypeError` that
+  names `define` and `create`; `Cls()` and `Cls(None)` are `TypeError`s
+  too, except that a membership class called with no name is its kind
+  (`Material()`, `DisplayLayer()`: every material, every layer).
+  `Cls.exists(x)` is whether `Cls(x)` would return a node; it raises the
+  `AmbiguousNodeError` a reference would.
+- **Define, `Cls.define(name, *, parent=None, update=False, container=None,
+  **attrs)`.** The name is a key: the node `create(name=name,
+  parent=parent)` would make, spelled in full — the name's namespace or
+  else the current one, the flattened `with container()` scope's prefix,
+  and for a DAG class the path of `parent=` (the world without it). Found
+  there, the node is returned (a subtype most derived, another type a
+  `NodeTypeError`), never moved or reparented, and the attributes are set
+  only with `update=True`. Missing there, it is made with the attributes,
+  in one undo step (`rig.define`). A typo in an attribute name raises on a
+  hit and on a miss.
+- **Create, `Cls.create(*inputs, name=None, parent=None, container=None,
+  **kwargs)`.** Always a new node; Maya picks the final name.
+
+`define` never makes a second node under a name you can already refer to,
+and every refusal writes nothing:
+
+| `define` is refused when | because | instead |
+|---|---|---|
+| no `parent=` is given and `Cls(name)` already finds the name elsewhere (under a group, or in another namespace) | a node at the world key would be a second one, and `Cls(name)` ambiguous | `parent=`, the namespace, or `Cls(name)` |
+| the namespace does not exist | `define` never creates a namespace | `cmds.namespace(add=...)` |
+| the namespace belongs to a file reference, loaded or not | Maya would make an unreferenced node inside the reference | define it outside the reference's namespace |
+| the key is a namespace's name, or a DG node holds a DAG key's name | Maya would rename the new node | another name |
+| inside `with container()`, the node found belongs to a container that is not on the scope's stack | a re-run in the same scene would split the rig ("'arm_root' belongs to container 'arm' from an earlier run; this scope is 'arm1' ...") | delete the old container, build in a new scene, or refer with `Cls(name)` |
+
+If Maya still renames the node it made, `define` deletes exactly what the
+call made (never `cmds.undo()`) and raises. A class built from data or
+inputs (`Mesh`, `NurbsCurve`, `NurbsSurface`, `SkinCluster`, `BlendShape`,
+`Reference`, `Follicle`) refuses `define`, naming its creator.
+`Node.define(type, name, ...)` defines a node of any type by name
+(`Node.define("multiplyDivide", "knee_md", operation="divide")`).
+
 ### `Node` is the factory
 
 `Node(x)` never returns a bare `Node`. It resolves `x` (a name, uuid,
@@ -160,6 +227,14 @@ a `DAGNode`, a blinn as a `Blinn` (an anisotropic as a `Material`). A node objec
 `"node.attr"` string names is `Attribute("node.attr")` (typed) or
 `Plug("node.attr")` (DSL).
 
+One lookup rule serves `Node(x)`, `Cls(x)`, `define` and the membership
+operators: a path or a qualified `ns:name` is looked up exactly (from the
+root namespace); a bare name at the root namespace and, while another
+namespace is current, in that namespace too, both spelled absolutely, so
+`namespace -relativeNames` changes nothing. Found in both is
+`AmbiguousNodeError` ("spell the namespace"). A pattern (`"red*"`) is
+refused: it is a search (`cmds.ls`, `Cls.find_all`).
+
 Registration is the `NodeMeta` metaclass: any class that sets
 `NATIVE_NODE_TYPE` (a Maya type) or `CUSTOM_NODE_TYPE` (a name of your
 choosing) registers with the factory when the class statement runs. A
@@ -169,14 +244,19 @@ at exact type and `True` with `exact_type=False`.
 
 `Node.create(type, ...)` runs the registered class's `create` with the
 arguments when there is one — which is how `Node.create("skinCluster", geo,
-joints)` ends up in `SkinCluster._create` and `"shadingEngine"` is built
-wired — and `createNode` for any other type, with every `createNode` flag.
-A class that makes just its node (`transform`, `joint`, `choice`, ...) takes
+joints)` ends up in `SkinCluster._create`, `"shadingEngine"` is built
+wired and `"blinn"` builds the network (a surface type with no class of its
+own is `Material.create(type=...)`) — and `createNode` for any other type.
+A keyword that is no flag of the create is an attribute of the new node,
+checked on the type before anything is made:
+`Node.create("multiplyDivide", operation="divide", input1X=3)`. A class
+that makes just its node (`transform`, `joint`, `choice`, ...) takes
 keyword arguments only; one built from inputs (`skinCluster`, `blendShape`,
 `mesh`, `nurbsCurve`, `reference`) raises a `TypeError` without them, before
 anything is made; a display layer is empty unless objects are given.
-`Node.find_all(type)` is the registered class's `find_all`, or the nodes
-`cmds.ls` lists for any other type.
+`shared=` is refused: create always makes a new node. `Node.find_all(type)`
+is the registered class's `find_all`, or the nodes `cmds.ls` lists for any
+other type.
 
 ### Handles, not names
 
@@ -213,33 +293,41 @@ are named through that path: with `S` instanced under `T1` and `T2`,
 `T1|S.visibility`. When that instance is removed, the node answers through
 another path until an undo brings its own back.
 
-Equality is class plus name, hashing is the long name. Two consequences:
-`Transform("x") == Node("x")` because `Node("x")` *is* a `Transform`,
-but `ObjectSet("initialShadingGroup") != Node("initialShadingGroup")`
-because the second is a `ShadingEngine`. Cast with `Node` when you want
-the canonical class. A class called on a node object of another class
-takes it by name, so `Mesh(cube)` finds the transform's mesh shape as
+Equality is by name between node objects of the node's class, hashing is
+the long name. Every spelling of one node gives that class —
+`Transform("j1")`, `DGNode("j1")` and `Node("j1")` are all `Joint("j1")`,
+and `ObjectSet("initialShadingGroup")` is the `ShadingEngine` — so two node
+objects of one node are equal both ways and one dict key. A node is never
+equal to a plug. A class called on a node object of another class takes
+its node, so `Mesh(cube)` finds the transform's mesh shape as
 `Mesh("cube")` does, and `copy.copy(node)` is an equal node object that
 shares the handle.
 
 ### `create()` is final, `_create()` is the hook
 
-`DGNode.create(*args, **kwargs)` calls the class's `_create` (which must
-return a node name), stamps a custom type when there is one and casts the
-result. Subclasses override `_create`, and
-that is where the constructor signatures diverge:
+`DGNode.create(*inputs, name=None, parent=None, container=None, **kwargs)`
+calls the class's `_create` (which must return a node name), stamps a
+custom type when there is one, casts the result and sets the attribute
+keywords. `name=` and `parent=` are keywords; the positional arguments are
+the inputs a class is built from. A keyword in the class's
+`_CREATE_FLAGS` goes to its command (a name that is both a flag and an
+attribute, such as a skinCluster's `normalizeWeights`, is the flag); every
+other keyword is an attribute, checked on the node type before anything is
+made and set with `<<` once the node exists. `shared=` is refused.
+Subclasses override `_create`, and that is where the signatures diverge:
 
 | Call | Builds with |
 |---|---|
-| `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss` only; any other `createNode` flag (`shared=`) is not passed |
-| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`, every flag passed: in the parent's space, at identity |
-| `Mesh.create(mesh_data, uv_data=, name=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step |
-| `NurbsCurve.create(points_or_BSplineData, degree=, kv=, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own |
-| `SkinCluster.create(geo, influences_or_SkinData, **skinCluster_kwargs)` | `cmds.skinCluster(toSelectedBones=True)`, existing skin deleted first, one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
-| `BlendShape.create(*geometries_or_morphs, **blendShape_kwargs)` | `cmds.blendShape(frontOfChain=True)` |
+| `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
+| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` |
+| `Mesh.create(mesh_data, *, name=, uv_data=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step |
+| `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own |
+| `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, existing skin deleted first, one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
+| `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
-| `DisplayLayer.create(*objects, **createDisplayLayer_kwargs)` | `cmds.createDisplayLayer`, empty unless objects (or `empty=` / `noRecurse=`) are given |
-| `Reference.create(file_path, namespace)` | `cmds.file(reference=True)` |
+| `Blinn.create(name=, ...)`, `Material.create(type=, name=, ...)` | `cmds.shadingNode(asShader=True)`, its `<shader>SG` engine and materialInfo, out of a scope unless `container=True` |
+| `DisplayLayer.create(*objects, name=, empty= / noRecurse= / number= / makeCurrent=)` | `cmds.createDisplayLayer`, empty unless objects are given, which join as themselves (`noRecurse`) |
+| `Reference.create(file_path, namespace)` | `cmds.file(reference=True)`; no `name=` |
 
 Inside `with container()` a typed create joins the scope as `Node.create`
 does: an explicit `name=` takes the flattened scope's prefix, every node the
@@ -252,10 +340,10 @@ registries, found again by name: in a scope they stay out, unprefixed,
 unless `container=True`. Outside a scope a direct typed create is plain
 Maya: no prefix, and the new node is selected (through `Node.create` it is not, per `skip_selection`).
 
-`ObjectSet.define(name)` and `DisplayLayer.define(name)` (every node class
-has `define`, which replaced `get_or_create`) find the node at its key, in
-the current namespace too, refuse with a `TypeError` when the name belongs
-to something else, and create otherwise.
+`ObjectSet.define(name)` and `DisplayLayer.define(name)` find the node at
+its key (in the current namespace, where `create` puts a new one), refuse
+with a `NodeTypeError` when the name belongs to another type, and create it
+otherwise, as every class's `define` does.
 
 ### `Attribute` wraps an `MPlug` and subclasses `str`
 
@@ -335,6 +423,26 @@ reads through `MFnSet` so per-face entries survive (`get_members` drops them).
 it covers the whole mesh, otherwise `(material, face ids)` pairs. The DSL's
 materials (`rig.shade`) sit on `for_material` and `assign`.
 
+### Shaders are node classes, one per exact type
+
+`Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`
+and `OpenPBRSurface` each take exactly their Maya type, and `Material` takes
+any type Maya classifies `shader/surface`: it is the class of `anisotropic`,
+`rampShader` or a plug-in's shader, which have no class of their own, and
+the reference that takes any shader (`Material("red")` is `Blinn("red")`).
+`create` and `define` build the network as the Hypershade does — the
+shader (`cmds.shadingNode(asShader=True)`, listed in `defaultShaderList1`),
+`<shader>SG` and its materialInfo — and, a material being a shared,
+scene-level asset, keep it out of an active `with container()` scope
+unless `container=True`. `Material.create(type="aiStandardSurface")` builds
+a type with no class. `rn.blinn()` makes only the shader, in the scope; the
+first assignment builds its engine. `engine` is the engine the shader
+feeds (find-only), `delete()` / `rename()` act on the network (the shader,
+its engines and their materialInfo; `cmds.delete` is the one-node escape),
+and `astype(Phong)` converts, returning the new node, while the old node
+object raises from then on. `find_all(exact_type=False)` lists the
+shaders Maya derives from the type, each typed by its own class.
+
 ### Display layers are exclusive and hold objects only
 
 Membership is a connection from the layer's `drawInfo` into the member's
@@ -343,7 +451,9 @@ side without enumerating layers. A node is in one layer; `defaultLayer`
 (undeletable) is where it sits when in none, and `for_node` answers `None`
 there. Children draw with a member's override through the DAG without
 being members, and `add_members` never recurses. The DSL's `Layer` is this
-class.
+class (`rig.Layer is DisplayLayer`): a layer node on the right of `<<`,
+`in` or `-` is the membership collection, and `DisplayLayer()` (`Layer()`)
+the kind, which means `defaultLayer` on `<<`.
 
 ### Serialisation goes to `cgmath`
 
@@ -410,11 +520,14 @@ from `rig/nodetypes/plugins`, once per session, so nothing needs configuring.
 - **Categories are `"v"`, `"e"`, `"f"`**; `"v"` maps to the geometry's
   `POINT_COMP_TYPE` (`vtx` on meshes, `cv` on curves and surfaces).
 - **`cmds` flags pass through.** `get_children(**listRelatives_kwargs)`,
-  `duplicate(**duplicate_kwargs)`, `SkinCluster.create(..., **skinCluster_kwargs)`,
-  `find_all(**ls_kwargs)`, `list_attr(**listAttr_kwargs)`.
-- **Names are looked up in the current namespace too** by
-  `ObjectSet.define` and `DisplayLayer.define`, because that
-  is where `create` puts a new node.
+  `duplicate(**duplicate_kwargs)`, `find_all(**ls_kwargs)`,
+  `list_attr(**listAttr_kwargs)`; a `create` passes its command's flags
+  (`SkinCluster.create(..., normalizeWeights=...)`) and sets every other
+  keyword as an attribute.
+- **One lookup rule.** A bare name is looked up at the root namespace and,
+  while another is current, there too; a path or `ns:name` exactly; a
+  pattern is refused. `define` keys a bare name in the current namespace,
+  because that is where `create` puts a new node.
 - **`match_name` arguments are regexes** (`iter_joints`, `iter_shapes`,
   `serialize_maps`, `serialize_component_tags`, `BlendShape.serialize`),
   anchored with `exact_match=True`.
@@ -426,7 +539,7 @@ from `rig/nodetypes/plugins`, once per session, so nothing needs configuring.
 - You need a **result as data**: skin weights as an array, a mesh as a
   `MeshData`, a hierarchy as a `HierarchyData`, a target as a `MorphData`.
 - You need a **classmethod**: `ShadingEngine.for_material`,
-  `DisplayLayer.for_node`, `ObjectSet.define`, `Reference.find_by_path`,
+  `DisplayLayer.for_node`, `Transform.define`, `Reference.find_by_path`,
   `Follicle.create_on_mesh`, `Transform.create_hierarchy`.
 - You are **writing a tool**, not a network: a duplicate-clean-geometry
   step, a skeleton duplicate with a suffix, an orient pass, a map mirror.
@@ -448,9 +561,8 @@ is on the same node object.
 Verified on Maya 2025; not bugs to work around blindly.
 
 - **`Mesh("transformName")` and `Mesh(transform)` find the transform's
-  first mesh shape**, but a transform *without* one raises `TypeError`
-  (`object of type 'NoneType' has no len()`), not the `ValueError` the
-  message in the source promises.
+  first mesh shape**; a transform *without* one is a `NodeTypeError`
+  (`'x' is a transform, not a mesh; ..., which has no mesh shape`).
 - **Iterating an `Attribute` or a `Plug` raises** (`__iter__` takes a
   stray argument). Use `attr[:]` or `attr.get_logical_indices()`.
 - **`attr[:]` on a multi creates the gaps**: the slice runs `0..max+1`

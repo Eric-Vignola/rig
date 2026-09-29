@@ -619,8 +619,8 @@ class Plug(Attribute):
                 "plug). Use 'plug << List([...])' -- an INSTANCE -- to connect."
             )
 
-        # Membership (a collection spec, a layer node, a kind or removal
-        # token): the collection decides what this plug means (a component
+        # Membership (a tag, a layer, shader or shading engine node, a kind
+        # or removal token): the collection decides what this plug means (a component
         # plug becomes a member and this plug comes back). Checked before the
         # shorthand and the string-plug set, which would read a node as a
         # value.
@@ -2457,7 +2457,7 @@ def _fanout_channel(src: Any, dst: Any) -> None:
     Gives a per-channel slot the same vocabulary a whole plug has: ``None``
     disconnects (as ``plug << None`` does), an ``_AttrSpec`` applies itself
     (``lock`` / ``hide`` / ``skip``), everything else is a set-or-connect.
-    A membership right-hand side (a collection spec, a layer node) has no
+    A membership right-hand side (a tag, a layer or material node) has no
     per-channel meaning and raises.
     """
     types = _lazy().types

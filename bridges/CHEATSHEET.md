@@ -19,10 +19,10 @@ Concepts and the file map live in [`README.md`](README.md).
 | 5 | [The `_NO_COERCE` list](#5-the-_no_coerce-list) | nine commands whose arguments reach Maya untouched |
 | 6 | [Only created nodes join the active container](#6-only-created-nodes-join-the-active-container) | queries and edits never capture, `container=False`, what refuses |
 | 7 | [`Node.wrap` for manual use](#7-nodewrap-for-manual-use) | converting raw `maya.cmds` results |
-| 8 | [Factories: the create kwargs](#8-factories-the-create-kwargs) | `name` / `n`, `parent` / `p`, `shared` / `s`, `skipSelect` / `ss` |
+| 8 | [Factories: the create kwargs](#8-factories-the-create-kwargs) | `name` / `n`, `parent` / `p`, `skipSelect` / `ss`; `shared=` refused, `s=` is the scale |
 | 9 | [Attribute kwargs go through `<<`](#9-attribute-kwargs-go-through-) | scalars, compounds, multis, plugs, enum field names, matrices, specs come after |
 | 10 | [Keyword collisions](#10-keyword-collisions) | `and_`, `or_`, `not_` |
-| 11 | [Keyword-only signature](#11-keyword-only-signature) | `rn.blinn("x")` vs `rn.blinn(name="x")` |
+| 11 | [Keyword-only signature](#11-keyword-only-signature) | `rn.blinn("x")` vs `rn.blinn(name="x")`; the bare shader vs `Blinn.create` |
 | 12 | [Factories and the container scope](#12-factories-and-the-container-scope) | `container=False`, nested-scope name prefix |
 | 13 | [Plugin node types and `_refresh_node_types`](#13-plugin-node-types-and-_refresh_node_types) | the cached type set, `rc.createNode` and `unknown` nodes |
 
@@ -264,8 +264,8 @@ print(cmds.container("build", q=True, nodeList=True))            # ['created'] -
 ## 8. Factories: the create kwargs
 
 `rn.<nodeType>(...)` is `cmds.createNode` followed by attribute injection.
-Four kwargs, with their Maya short forms, go to `createNode`; `container` is
-the scope opt-out; everything else is an attribute (section 9).
+Three kwargs, with their Maya short forms, go to `createNode`; `container`
+is the scope opt-out; everything else is an attribute (section 9).
 
 ```python
 cmds.file(new=True, force=True)
@@ -288,16 +288,17 @@ rc.createNode("transform", name="viaCmds")
 print(cmds.ls(sl=True))  # ['viaCmds']
 ```
 
-`shared=True` is Maya's shared-node flag. A second create of the same shared
-name makes `cmds.createNode` return `None`, which the factory cannot wrap:
+A factory always makes a new node, so Maya's `shared=` flag is refused
+before anything is made; `Transform.define("x")` is the verb that finds or
+makes a node. `s=` is then the attribute, the scale. `rc.createNode` is
+`maya.cmds` and passes `shared=` on.
 
 ```python
-shared = rn.transform(name="shared1", shared=True)       # or s=True
 try:
-    rn.transform(name="shared1", shared=True)
-except ValueError:
-    print("ValueError", cmds.ls("shared1*"))             # ValueError ['shared1']
-print(rc.createNode("transform", name="shared1", shared=True))   # None -- the command path just returns it
+    rn.transform(name="once", shared=True)
+except TypeError as err:
+    print(err)                                           # rn.transform(shared=...): create always makes a new node; Transform.define('once') finds or makes it
+print(rn.transform(name="big", s=2).sx >> None, cmds.ls("once"))   # 2.0 []
 ```
 
 ---
@@ -381,7 +382,8 @@ try:
 except TypeError as err:
     print(err)                                    # rig.bridges.nodes.blinn() takes 0 positional arguments but 1 was given
 shiny = rn.blinn(name="shiny", color=[1, 0, 0])
-print(repr(shiny), cmds.getAttr("shiny.color"))   # DGNode("shiny") [(1.0, 0.0, 0.0)]
+print(repr(shiny), cmds.getAttr("shiny.color"))   # Blinn("shiny") [(1.0, 0.0, 0.0)]
+print(cmds.listConnections("shiny", type="shadingEngine"))   # None -- the bare shader: Blinn.create(name=...) builds the network
 ```
 
 ---

@@ -20,11 +20,11 @@ for the node classes and their typed methods.
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
-| 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, `Node.wrap`, `lift`, a deleted or freed node |
+| 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node |
 | 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.node`, instance paths |
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
-| 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, `plug >> container` |
+| 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, a taken name refused, `plug >> container` |
 | 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes |
 | 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
@@ -51,12 +51,12 @@ for the node classes and their typed methods.
 | 29 | [`tween`](#29-tween) | the 42 easing curves by family, extrapolation |
 | 30 | [`random`](#30-random) | `value` / `uniform` / `randint` and the `3D` variants, `seed`, `trigger` |
 | 31 | [The cross-type verbs at `rig.*`](#31-the-cross-type-verbs-at-rig) | `dist` `lerp` `slerp` `blend` `elerp` `normalize` `inverse` `angle` `to_euler` `to_quaternion` `to_matrix`, the routing table |
-| 32 | [The membership grammar](#32-the-membership-grammar) | `<< Spec('x')` / `<< -Spec('x')` / `<< Spec()` / `>> Spec('x')` / `>> Spec()` for `Tag`, materials and `Layer`; the return-value rule; the rejected spellings |
+| 32 | [The membership grammar](#32-the-membership-grammar) | `x << c` / `x << -c` / `x << Kind()` / `x in c` / `x >> c` / `x >> Kind()` for `Tag`, materials and layers; a name on the right never creates; the plug refusal; the rejected spellings |
 | 33 | [Components as members](#33-components-as-members) | the bare handle is the whole kind, `sph.vtx` is all points, no `__len__`, `List` pairing |
-| 34 | [Tag](#34-tag) | one category per tag, `.set` / `.clear` / `.rename` / `.delete`, queries as arrays, `componentTagExpression`, procedural `polyCube` tags and `at=` |
-| 35 | [Layer](#35-layer) | exclusive display layers, `Layer.of`, kwargs and `update=`, `defaultLayer` as no layer |
-| 36 | [Materials](#36-materials) | `Blinn` / `Lambert` / `Phong` / ... / `Default`, kwargs, `unique=`, per-face carving, green faces, `shade.repair` / `tidy` |
-| 37 | [Shader conversion](#37-shader-conversion) | `Phong(mat)`, `.astype`, `shade.convert` and the `Conversion` report, parked attributes, `strict=` / `park=`, undo |
+| 34 | [Tag](#34-tag) | one category per tag, `.set` / `.clear` / `.rename` / `.delete`, `in` and queries as arrays, `componentTagExpression`, procedural `polyCube` tags and `at=` |
+| 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
+| 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `shade.repair` / `tidy`, the network verbs |
+| 37 | [Shader conversion](#37-shader-conversion) | `mat = mat.astype(Phong)`, `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, the held old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is, `rig.undo_chunk` as a context manager and a decorator, rig's plug-in command |
 
 ---
@@ -130,6 +130,45 @@ print(repr(jnt), jnt.get_parent(), repr(md))                     # Joint("jnt") 
 print(Node.find_all("joint"), Node.find_all("multiplyDivide"))   # [Joint("jnt")] [DGNode("md")]
 ```
 
+A node class names a node too, and follows the
+[construction rule](README.md#the-construction-rule): naming never creates;
+`define` makes sure; `create` makes new; declarations go inside a node.
+
+| | refer `Cls("x")` | define `Cls.define("x", ...)` | create `Cls.create(name="x", ...)` |
+|---|---|---|---|
+| writes the scene | never | only when `x` is missing (`update=True` sets the values of a found node) | always |
+| `x` missing | `NodeNotFoundError` | made, with the attributes | made |
+| `x` exists | that node, most derived class | that node | a new one (`x1`) |
+| `x` only elsewhere, or another type | the node if unique / `NodeTypeError` | refused (pass `parent=` or the namespace) / `NodeTypeError` | — |
+
+A reference returns the most derived class (`Transform("jnt")` is the
+joint) and refuses anything else with one family of errors:
+`NodeNotFoundError` and `AmbiguousNodeError` (both `NodeLookupError`) and
+`NodeTypeError`, each also a `TypeError` and a `ValueError`, so older
+`except` clauses still catch them. `Cls.exists("x")` is whether `Cls("x")`
+would return a node.
+
+```python
+from rig import NodeNotFoundError, NodeTypeError
+from rig.nodetypes import Joint, Transform
+
+print(repr(Transform("a")), repr(Transform("jnt")), Transform("jnt") == jnt)   # Transform("a") Joint("jnt") True
+print(Transform.exists("jnt"), Transform.exists("md"), Joint.exists("nope"))    # True False False
+for bad in (lambda: Joint("jnt1"), lambda: Joint("a"), lambda: Transform("a", tx=1)):
+    try:
+        bad()
+    except (NodeNotFoundError, NodeTypeError, TypeError) as err:
+        print(type(err).__name__, str(err).split(";")[0])
+# NodeNotFoundError no joint named 'jnt1' (did you mean 'jnt'?)
+# NodeTypeError 'a' is a transform, not a joint
+# TypeError Transform('a', ...) refers to an existing transform and takes no attributes
+
+hub = Transform.define("hub", tx=2)                           # missing: made, with tx
+print(Transform.define("hub", tx=5) == hub, hub.tx >> None)   # True 2.0 -- found: its attributes are left as they are
+Transform.define("hub", tx=5, update=True)                    # found, and tx set
+print(hub.tx >> None, repr(Transform.create(name="hub")))     # 5.0 Transform("hub1")
+```
+
 `Node.wrap` turns a `maya.cmds` result into nodes and `List`s, and `lift`
 casts a string or a typed `Attribute` to the DSL, a node or a `Plug` (a
 typed `Attribute` keeps the node it was read from, as `Plug(attr)` does).
@@ -144,11 +183,13 @@ print(Node.wrap(5.0), Node.wrap(None), Node.wrap("not a node"))  # 5.0 None not 
 print(repr(lift("a")), repr(lift("a.tx")), lift(a) is a)         # Transform("a") Plug("a.translateX") True
 ```
 
-`node << spec` adds an attribute and `node >> spec` adds an output-only
-one (`writable=False`); `node << matrix` decomposes onto the transform
-(section 8); a collection spec (`Tag`, a material, `Layer`) is membership
-(section 32). A bare value on a node is a `TypeError`. The new plug is
-owned by the node it was added to.
+`node << spec` declares an attribute and `node >> spec` an output-only
+one (`writable=False`); declared again, the attribute keeps its value and
+connections and takes the settings given
+([`spec/CHEATSHEET.md`](spec/CHEATSHEET.md), section 10). `node << matrix`
+decomposes onto the transform (section 8); a tag, a material or a layer
+node is membership (section 32). A bare value on a node is a `TypeError`.
+The new plug is owned by the node it was added to.
 
 ```python
 from rig.spec import Float
@@ -493,13 +534,14 @@ print(str(ctrl.tx).upper())                           # CTRL.TRANSLATEX
 ## 5. Plug — `>>` clones and publishes
 
 `plug >> Node` clones the attribute's spec onto another node (no value, no
-connection; a same-named dynamic attribute on the target is replaced).
-`plug >> "name"` clones onto the *same* node under a new name and copies
-the value; `plug >> "other.name"` onto another node; the named forms refuse
-a name the target already has. A plug is a `str` but never a name here:
-`plug >> other_plug` is a `TypeError` that spells the `<<` to write, since
-`>>` never connects. What travels and what does not is in
-[`spec/CHEATSHEET.md`](spec/CHEATSHEET.md), section 12.
+connection). `plug >> "name"` clones onto the *same* node under a new name
+and copies the value; `plug >> "other.name"` onto another node. Every form
+refuses a name the target already has. A plug is a `str` but never a name
+here: `plug >> other_plug` is a `TypeError` that spells the `<<` to write,
+since `>>` never connects, and a membership node on the right (a layer, a
+material) is refused with the `in` question to write (section 32). What
+travels and what does not is in [`spec/CHEATSHEET.md`](spec/CHEATSHEET.md),
+section 12.
 
 ```python
 from rig.spec import Color, Float
@@ -954,8 +996,12 @@ So do the typed creators of [`rig.nodetypes`](nodetypes/README.md)
 (`Transform.create`, `Joint.create`, `Mesh.create`, `SkinCluster.create`, a
 subclass of your own), by the rules of `Node.create`: an explicit name takes
 the flattened prefix, and `container=False` leaves the node out. Display
-layers, sets, shading engines and references are scene registries, found
-again by name: they stay out unless `container=True`.
+layers, sets, shading engines, materials and references are scene
+registries, found again by name: they stay out unless `container=True`.
+`Transform.define("x")` in a scope keys the name the create would make (with
+the prefix), and finds only a node the containers of the scope own: a
+re-run of a build in the same scene is refused, naming the container to
+delete.
 
 ```python
 from rig.nodetypes import DisplayLayer, Joint
@@ -2137,7 +2183,8 @@ membership the way `cmds.sets` prints it.
 ```python
 cmds.file(new=True, force=True)
 
-from rig import Components, Tag, Layer, container, lock, shade
+from rig import Components, Tag, Layer, container, lock, shade, NodeNotFoundError
+from rig.nodetypes import DisplayLayer, ShadingEngine
 from rig.shade import Blinn, Lambert, Phong, Material, Default
 from rig.bridges import nodes as rn
 
@@ -2156,54 +2203,94 @@ sph = make(cmds.polySphere, "sph")      # a polySphere ships no procedural tags:
 print(sph, sph.f.count, sph.vtx)        # sph 400 sphShape.controlPoints
 ```
 
-Three collection kinds ship: `Tag` (component tags, per geometry
-node), `Layer` (display layers) and the materials of `rig.shade`
-(`Blinn`, `Lambert`, `Phong`, …). Every kind uses the same four operator
-spellings; everything else is a method.
+Three kinds of collection ship: component tags (`Tag`, which live on a
+geometry node), display layers (`Layer`, the `DisplayLayer` node class)
+and materials (`Blinn`, `Lambert`, ..., the shader node classes of
+`rig.shade`; a `ShadingEngine` node names one engine exactly). A layer or a
+material is a node, and is named, defined or created like any other
+(section 1): `Blinn("red")` refers to an existing blinn and never creates
+one, `Blinn.define("red", color=...)` finds or makes it,
+`Blinn.create(name="red")` makes a new one. A tag is a declaration, like
+an attribute spec: `Tag("cap")` is a value that finds or makes the tag on
+the node it is applied to. Every kind uses the same spellings:
 
-| Verb | Spelling | `Tag` | Material (`Blinn` / `Lambert` / …) | `Layer` |
+| Verb | Spelling | `Tag` | Material (`red = Blinn.define("red")`) | Layer (`L = Layer.define("L")`) |
 |---|---|---|---|---|
-| add | `lhs << Spec('x')` | members into tag `x` (created with them when missing); a **node** on the left creates the tag itself, empty | move into `x`'s shading engine; material + engine built on first use (exclusive) | move the node into layer `x` (exclusive) |
-| remove these | `lhs << -Spec('x')` | members out of `x`; the tag survives; a node on the left **deletes** the tag | leave `x`'s engine: those faces are in **no** engine (green) | back to `defaultLayer`; a no-op when the node is in another layer |
-| purge | `lhs << Spec()` (== `Spec(None)`) | out of every editable tag of that category; a node on the left deletes every editable tag | out of every engine (green); `Default()` reverts | `defaultLayer` |
-| query | `lhs >> Spec('x')` | ndarray of the LHS ids in the tag; a node reads the whole tag, in its own category | ndarray of the LHS face ids wearing `x`; all faces when object-level | `bool` |
-| enumerate | `lhs >> Spec()` == `Spec.of(lhs)` | `[Tag('a'), …]` holding the LHS | `[Blinn('red'), …]` typed by the live node type | `Layer('x')` or `None` (`Layer.of` gives `[]` / `[Layer('x')]`) |
-| methods | | `.set(members)` `.clear(node)` `.rename(node, new)` `.delete(node)` | `.rename(new)` `.delete()` `.astype(type)` | `.clear()` `.rename(new)` `.delete()` |
+| add | `x << c` | members into the tag (made with them when missing); a **node** on the left makes the tag itself, empty | move into the material's shading engine (exclusive) | move the node into the layer (exclusive) |
+| remove these | `x << -c` | out of the tag, which stays; a node on the left **deletes** the tag | leave the engine: those faces are in **no** engine (green) | back to `defaultLayer` |
+| purge | `x << Kind()` | out of every editable tag of that category; a node on the left deletes every editable tag | out of every engine (green); `Default()` reverts | `defaultLayer` |
+| yes / no | `x in c`, `x not in c` | every member of `x` is in the tag | every face of `x` wears it | the node is in it |
+| ids | `x >> c` | ndarray of the ids of `x` in the tag, in its own category; a node reads the whole tag | ndarray of the face ids of `x` wearing it; all faces when object-level | refused: a layer has no ids (ask with `in`) |
+| enumerate | `x >> Kind()` == `Kind.of(x)` | `[Tag('a'), ...]` holding `x` | `[Blinn("red"), ...]` typed by the live node type | `DisplayLayer("L")` or `None` (`Layer.of` gives `[]` / `[DisplayLayer("L")]`) |
+| methods | | `.set(members)` `.clear(node)` `.rename(node, new)` `.delete(node)` | `.rename(new)` `.delete()` `.astype(Phong)` `.engine` | `.clear()` `.rename(new)` `.delete()` |
 
-Two rules hold for every kind. `<<` returns what the next `<<` should
+`Kind()` is the class called with no name: `Tag()`, `Material()` (every
+material; `Blinn()` every blinn), `Layer()`. `-c` is the removal token of
+`c`.
+
+Three rules hold for every kind. `<<` returns what the next `<<` should
 target: an attribute spec returns the new plug (a value goes next), a
-collection spec returns the **left-hand side** unchanged, so kinds chain.
-And an **attribute plug on the left stands for its node** (`sph.tx <<
-Tag('x')` is `sph << Tag('x')`); component plugs keep their own meaning.
+membership `<<` returns the **left-hand side** unchanged, so kinds chain. A
+name on the right never creates: `Blinn("blue")` or `Layer("nope")` raises
+`NodeNotFoundError` when it is missing, before `<<`, `>>` or `in` runs, so
+a query or a removal never makes what it asks about. And membership takes
+nodes and components: an **attribute plug on the left** of `<<` or `>>` is
+a `TypeError` naming the node-left form, while in `in` a plug stands for
+its node; component plugs (`sph.vtx[:3]`) are members.
 
 ```python
 faces  = sph.f[:3]
-result = faces << Tag("lid") << Tag("rim")      # every collection << returns the LHS
+red    = Blinn.define("red")                    # found, or made now: red, redSG, materialInfo
+geo    = Layer.define("geometry")               # DisplayLayer("geometry")
+result = faces << Tag("lid") << Tag("rim")      # every membership << returns the LHS
 print(result is faces)                                          # True
-print(sph >> Tag("lid"))                                        # [0 1 2]   a query is a plain value, like plug >> None
-print(sph.tx >> Tag())                                          # [Tag('lid'), Tag('rim')]   an attribute plug stands for its node
+print(sph >> Tag("lid"))                                        # [0 1 2] -- a query is a plain value, like plug >> None
+print(sph >> Tag())                                             # [Tag('lid'), Tag('rim')]
 
-print(sph << Blinn("red") << Layer("geometry") is sph)          # True   a node on the left: its shapes wear red, it sits in 'geometry'
-print((sph >> Blinn("red")).size, sph.ty >> Layer("geometry"))  # 400 True
+print(sph << red << geo is sph)                                 # True -- a node on the left: its shapes wear red, it sits in 'geometry'
+print(sph in red, faces in red, sph in geo, sph.tx in geo)      # True True True True
+print((sph >> red).size, sph >> Layer(), Material.of(sph))      # 400 geometry [Blinn("red")]
 ```
 
-A **missing** collection is a `ValueError` on `>>`, `-Spec` and the
-methods, never an empty answer; a present collection holding nothing of
-the LHS is an empty result. The rejected spellings are `TypeError`s that
-write nothing: members never ride on the spec, `-Spec()` is a double
-negative, `~Spec('x')` is unassigned, and `<< None` is never a clear (on a
-plug it disconnects).
+A missing layer or material raises at the reference; a missing tag holds
+nothing, so `in` is `False` and components read no ids (only a node on the
+left, which asks for the whole tag, raises). The refusals write nothing.
 
 ```python
+for bad in (
+    lambda: sph << Blinn("blue"),               # no such blinn: a reference never creates
+    lambda: sph in Layer("nope"),
+    lambda: sph.tx << red,                      # an attribute plug on the left
+    lambda: sph >> geo,                         # a layer has no ids
+):
+    try:
+        bad()
+    except (NodeNotFoundError, TypeError) as err:
+        print(str(err)[:58])
+# no blinn named 'blue'
+# no displayLayer named 'nope'
+# 'sph.translateX' is a plug; membership takes the node: sph
+# a layer holds whole objects and has no ids; ask with sph i
+
+print(sph in Tag("nope"), sph.vtx[:3] >> Tag("nope"))   # False []
 try:
     sph >> Tag("nope")
 except ValueError as err:
     print(err)                                  # no component tag 'nope' on sphShape
+```
 
+The rejected spellings are `TypeError`s that write nothing: members never
+ride on the right, `-Kind()` is a double negative, `~c` is unassigned,
+`Kind(None)` is refused (a failed lookup must never mean every
+collection: `Material()` is the purge), and `<< None` is never a clear (on
+a plug it disconnects).
+
+```python
 for bad in (
     lambda: Tag("xx", [0, 1, 2]),               # members belong on the left
-    lambda: -Tag(),                             # double negative
-    lambda: ~Tag("xx"),                         # unassigned
+    lambda: -Material(),                        # double negative
+    lambda: ~red,                               # unassigned
+    lambda: sph << Blinn(None),                 # None names no material
     lambda: sph.f[:2] << Tag("zz") << None,     # the first << ran; '<< None' refuses
 ):
     try:
@@ -2230,7 +2317,7 @@ print(repr(sph.vtx), len(sph.vtx[:3]))  # Plug("sphShape.controlPoints") 3
 
 `Components` has no `__len__` and no `__iter__` on purpose: a `List`
 keeps it as one opaque element and broadcasts it as a scalar, so a list of
-selections pairs with a list of specs.
+selections pairs with a list of collections.
 
 ```python
 List([sph.f[:2], sph.f[2:4]]) << [Tag("aa"), Tag("bb")]
@@ -2261,15 +2348,18 @@ sph.vtx      << Tag("allv")                     # the bare handle is every verte
 print(len(sph >> Tag("allv")))                  # 382
 ```
 
-One category per tag: faces into a vertex tag is a `TypeError` (raw Maya
-returns `False` silently). `.set()` replaces the contents and may flip
-the category.
+One category per tag: Maya reads a tag as one component type, the first
+one stored, so faces into a vertex tag that holds vertices is a
+`TypeError` (raw Maya returns `False` silently). A query answers by
+contents: faces are simply not in a vertex tag. `.set()` replaces the
+contents and may flip the category.
 
 ```python
 try:
     sph.f[:2] << Tag("cap")
 except TypeError as err:
     print("vertex tag" in str(err))             # True
+print(sph.f[:2] in Tag("cap"), sph.f[:2] >> Tag("cap"))   # False []
 Tag("cap").set(sph.f[:2])                       # replace: 'cap' is a face tag now
 print(sph >> Tag("cap"))                        # [0 1]
 Tag("cap").set(sph.vtx[:8])                     # and back
@@ -2294,14 +2384,16 @@ print(Tag.of(sph))                              # []
 ```
 
 Queries return plain arrays: the ids of the LHS that are in the tag, in
-the tag's own category. `>> Tag()` is `Tag.of`, the tags holding the LHS.
-The ids go back in through the handle by fancy indexing.
+the tag's own category; `in` is `True` when every one of them is.
+`>> Tag()` is `Tag.of`, the tags holding the LHS. The ids go back in
+through the handle by fancy indexing.
 
 ```python
 sph.vtx[:8] << Tag("cap")
 sph.f[:3]   << Tag("lid")
 print(sph.vtx[4:12] >> Tag("cap"))                                 # [4 5 6 7]
 print(sph.vtx[[7, 0, 9]] >> Tag("cap"))                            # [0 7]
+print(sph.vtx[:8] in Tag("cap"), sph.vtx[:9] in Tag("cap"))        # True False
 print(sph >> Tag())                                                # [Tag('cap'), Tag('lid')]   == Tag.of(sph)
 print(sph.vtx[3] >> Tag(), Tag.of(sph.f[1]), Tag.of(sph.vtx[20]))  # [Tag('cap')] [Tag('lid')] []
 sph.vtx[sph >> Tag("cap")] << Tag("copy")       # round trip through the handle
@@ -2367,8 +2459,9 @@ print(baked >> Tag("top"))                      # [0 1 2]
 
 ## 35. Layer
 
-Display layers hold **objects** — the node itself, never its subtree
-(children draw with the parent's override through the DAG without
+`Layer` is the display layer node class (`Layer is DisplayLayer`, repr
+`DisplayLayer("x")`). Layers hold **objects** — the node itself, never its
+subtree (children draw with the parent's override through the DAG without
 joining) — and a node is in exactly one. A component on the left is a
 `TypeError` (Maya would silently store the shape). `defaultLayer` reads
 as "no layer".
@@ -2378,110 +2471,125 @@ cmds.file(new=True, force=True)
 cube  = make(cmds.polyCube, "cube", ch=False)
 other = make(cmds.polyCube, "other", ch=False)
 
-cube << Layer("geometry")                              # find-or-create; returns cube
-cube << Layer("ref", displayType=2, visibility=False)  # exclusive: cube leaves 'geometry'; kwargs are the layer's attributes on create
-print(cube >> Layer("geometry"), cube >> Layer("ref"))  # False True
-print(cube >> Layer())                                  # ref   the one Layer('ref'), or None
-print(Layer.of(cube), Layer.of(other))                  # [Layer('ref')] []   defaultLayer is no layer
-other << Layer("ref", visibility=True)          # found: kwargs skipped
-print(Layer("ref").visibility >> None)          # False
-other << Layer("ref", visibility=True, update=True)     # update=True re-asserts them
-print(Layer("ref").visibility >> None)          # True
-List([cube, other]) << Layer("rig")             # one editDisplayLayerMembers call
+geometry = Layer.define("geometry")                             # found, or made (empty)
+ref      = Layer.define("ref", displayType=2, visibility=False) # the attributes are set when it is made
+print(Layer is DisplayLayer, repr(ref))                         # True DisplayLayer("ref")
+cube << geometry                                                # returns cube
+cube << ref                                                     # exclusive: cube leaves 'geometry'
+print(cube in geometry, cube in ref, cube.tx in ref)            # False True True -- in `in`, a plug stands for its node
+print(cube >> Layer(), other >> Layer())                        # ref None -- the one layer, or None
+print(Layer.of(cube), Layer.of(other))                          # [DisplayLayer("ref")] [] -- defaultLayer is no layer
+print(Layer.define("ref", visibility=True) == ref, ref.visibility >> None)   # True False -- found: its attributes are left as they are
+Layer.define("ref", visibility=True, update=True)               # update=True sets them
+print(ref.visibility >> None)                                   # True
+rig_layer = Layer.define("rig")
+List([cube, other]) << rig_layer                                # one editDisplayLayerMembers call
 ```
+
+`Layer("x")` is the reference, for a layer that exists; a missing one is
+a `NodeNotFoundError` with nothing written. An attribute plug on the left
+of `<<` is refused (the node is the member).
 
 ```python
 grp = Node(cmds.group(str(cube), name="grp"))
-grp << Layer("bg", visibility=False)
-print(cube >> Layer(), cube >> Layer("bg"))     # rig False   the child stays where it was, and draws hidden through grp
-try:
-    cube.f[:2] << Layer("bg")
-except TypeError as err:
-    print("layers hold objects" in str(err))    # True
-cube.tx << Layer("bg")                          # an attribute plug stands for its node
-print(cube >> Layer())                          # bg
+grp << Layer.define("bg", visibility=False)
+bg = Layer("bg")
+print(cube >> Layer(), cube in bg)              # rig False -- the child stays where it was, and draws hidden through grp
+for bad in (lambda: cube.f[:2] << bg, lambda: cube.tx << bg, lambda: cube << Layer("nope")):
+    try:
+        bad()
+    except (TypeError, ValueError) as err:
+        print(str(err)[:37])
+# layers hold objects, not components (
+# 'cube.translateX' is a plug; membersh
+# no displayLayer named 'nope'
 ```
 
-`-Layer('x')` and `Layer()` both land in `defaultLayer`. The spec is the
-find-only handle (`.node`, any attribute); `.delete()` sends the members
-to `defaultLayer`, `.rename()` is followed by the spec, `.clear()` keeps
-the layer. A new layer never joins the active rig container.
+`-layer` and `Layer()` both land in `defaultLayer`. The layer node is the
+handle: its attributes are plugs, `.rename()` keeps the node object,
+`.clear()` sends the members to `defaultLayer` and keeps the layer,
+`.delete()` sends them there and deletes it. A new layer never joins the
+active rig container, and `Layer.create(name=...)` always makes a new one.
 
 ```python
-cube  << -Layer("bg")                           # back to defaultLayer
+cube  << bg
+cube  << -bg                                    # back to defaultLayer
 print(cube >> Layer())                          # None
 other << Layer()                                # the purge is defaultLayer too
 print(Layer.of(other))                          # []
 
-bg = Layer("bg")
-print(bg.node, bg.visibility << False)  # bg bg.visibility   the layer node and the Plug, for chaining
-bg.rename("background")                 # the spec follows
-print(bg, cmds.objExists("bg"))         # background False
-Layer("rig").clear()                            # members to defaultLayer, the layer survives
-Layer("background").delete()                    # members to defaultLayer, the layer is gone
+print(bg.visibility << True)                    # bg.visibility
+bg.rename("background")                         # the node object follows the name
+print(bg, cmds.objExists("bg"))                 # background False
+rig_layer.clear()                               # members to defaultLayer, the layer stays
+bg.delete()                                     # members to defaultLayer, the layer is gone
 print(cmds.ls(type="displayLayer"))             # ['defaultLayer', 'geometry', 'ref', 'rig']
+print(repr(Layer.create(name="rig")))           # DisplayLayer("rig1")
 ```
 
 ---
 
 ## 36. Materials
 
-A material spec is a lazy handle on a surface shader **and** its shading
-engine. Zero Maya calls until it meets `<<`: then the name is found (exact,
-then in the current namespace) or the whole network is built —
-`red`, `redSG`, its materialInfo and the render-partition / shader-list
-wiring — the kwargs are applied and the LHS is moved into the engine in one
-`cmds.sets`. The classes are `Blinn`, `Lambert`, `Phong`, `PhongE`,
-`SurfaceShader`, `StandardSurface`, `OpenPBRSurface`, the generic
-`Material(name, type=...)`, and `Default()` for `initialShadingGroup`.
+The shader classes are node classes, one per Maya type — `Lambert`,
+`Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`,
+`OpenPBRSurface` — and `Material`, the reference that takes any surface
+shader (and the class of a surface type with no class of its own, such as
+a plug-in shader). A material is a shader **and** its shading engine:
+`Blinn.define("red", ...)` finds `red`, or builds the network — `red`,
+`redSG`, its materialInfo and the render-partition / shader-list wiring —
+with the attributes set; `Blinn.create(name="red")` always builds a new
+network; `Blinn("red")` refers to one that exists. The node on the right of
+`<<` moves the left-hand side into its engine in one `cmds.sets`.
+`Default()` is `initialShadingGroup`, the default engine.
 
 ```python
 cmds.file(new=True, force=True)
 cube  = make(cmds.polyCube, "cube", ch=False)
 other = make(cmds.polyCube, "other", ch=False)
 
-red   = Blinn("red", color=(1, 0, 0))             # inert: zero Maya calls
-print(cube << red)                             # cube   returns the LHS; builds red + redSG, sets color, assigns
-print(cmds.nodeType("red"), members("redSG"))  # blinn ['cubeShape']
-other << Blinn("red", color=(0, 0, 1))          # 'red' exists: a plain assignment, kwargs skipped
-print(cmds.getAttr("red.color")[0])             # (1.0, 0.0, 0.0)
-other << Blinn("red", color=(0, 0, 1), update=True)     # update=True re-asserts them
+red = Blinn.define("red", color=(1, 0, 0))      # made now: red + redSG + materialInfo, color set
+print(repr(red), repr(red.engine))              # Blinn("red") ShadingEngine("redSG")
+print(cube << red)                              # cube -- returns the LHS; assigns
+print(cmds.nodeType("red"), members("redSG"))   # blinn ['cubeShape']
+print(Blinn.define("red", color=(0, 0, 1)) == red, cmds.getAttr("red.color")[0])   # True (1.0, 0.0, 0.0) -- found: its attributes are left as they are
+Blinn.define("red", color=(0, 0, 1), update=True)                                   # update=True sets them
 print(cmds.getAttr("red.color")[0])             # (0.0, 0.0, 1.0)
 ```
 
-Kwargs are attribute injections, exactly like the `rig.bridges.nodes`
-factories: a value sets, a plug connects, a spec (`lock`) applies. The
-spec is the find-only handle afterwards.
+The material is the node: its attributes are plugs, and the attributes
+given to `define` / `create` are injections, as with the
+`rig.bridges.nodes` factories: a value sets, a plug connects, a spec
+(`lock`) applies. A name the type does not have raises before anything is
+made.
 
 ```python
-print(red.node, red.engine)    # red redSG   nodes; a ValueError until built
-print(red.color << (0, 1, 0))  # red.color   the Plug: forwards to the node; a typo raises and creates nothing
+red.color << (0, 1, 0)
 red.diffuse = 0.5                               # the same injection as sugar
-print(red.diffuse >> None)                      # 0.5
+print(red.diffuse >> None, Material("red") == red)   # 0.5 True
 
-tex = rn.file(name="tex")
-cube << Blinn("skin", color=tex.outColor, diffuse=0.25, reflectivity=lock)
+tex  = rn.file(name="tex")
+skin = Blinn.define("skin", color=tex.outColor, diffuse=0.25, reflectivity=lock)
+cube << skin
 print(cmds.listConnections("skin.color", plugs=True), cmds.getAttr("skin.reflectivity", lock=True))   # ['tex.outColor'] True
 ```
 
 A `List` on the left is one material, one engine, one `cmds.sets`.
-`unique=True` builds a fresh network per `<<`. A material is a shared,
-scene-level asset: inside `with container():` a new network stays out of
-the scope unless `container=True` (a per-asset look); the geometry never
-joins.
+`create` builds a fresh network each time (a look per object). A
+material is a shared, scene-level asset: inside `with container():` a new
+network stays out of the scope unless `container=True` (a per-asset
+look); the geometry never joins.
 
 ```python
-List([cube, other.f[:2]]) << Lambert("both")
-print(sorted(members("bothSG")))                # ['cubeShape', 'other.f[0:1]']   one engine holds both entries
+List([cube, other.f[:2]]) << Lambert.define("both")
+print(sorted(members("bothSG")))                # ['cubeShape', 'other.f[0:1]'] -- one engine holds both entries
 
-spec = Lambert("plane", unique=True)
-cube  << spec
-other << spec
-print(sorted(cmds.ls("plane*", type="lambert")))   # ['plane', 'plane1']
+looks = [Lambert.create(name="plane") for _ in range(2)]
+print(looks, [str(m.engine) for m in looks])    # [Lambert("plane"), Lambert("plane1")] ['planeSG', 'plane1SG']
 
 with container("look"):
-    cube << Blinn("free")                    # stays out: a material is a scene asset
-    cube << Blinn("inside", container=True)  # opts in: the network joins 'look'
+    free   = Blinn.define("free")                          # stays out: a material is a scene asset
+    inside = Blinn.create(name="inside", container=True)   # opts in: the network joins 'look'
 print(cmds.container(query=True, findContainer=["free"]), cmds.container(query=True, findContainer=["inside"]))   # None look
 ```
 
@@ -2491,56 +2599,61 @@ that owns the whole shape carve it; faces into the engine that **already
 owns their object** is the one permitted no-op of the grammar.
 
 ```python
+decal = Lambert.define("decal")
 cube       << red
-cube.f[:3] << Lambert("decal")                  # faces 0-2 leave redSG for decalSG; rig carves the whole-shape membership
+cube.f[:3] << decal                             # faces 0-2 leave redSG for decalSG; rig carves the whole-shape membership
 print(members("redSG"), members("decalSG"))     # ['cube.f[3:5]'] ['cube.f[0:2]']
 other       << red
 other.f[:2] << red                              # the one no-op: red already owns the whole object
 print(sorted(members("redSG")))                 # ['cube.f[3:5]', 'otherShape']
 ```
 
-`-Material('x')` leaves faces in **no** engine (green); `Material()` (any
-subclass, same spec as `Material(None)`) does it for every engine;
-`Default()` reverts to `initialShadingGroup` and `-Default()` leaves it.
+`-mat` leaves faces in **no** engine (green); `Material()` (or `Blinn()`,
+every blinn) does it for every engine; `Default()` reverts to
+`initialShadingGroup` and `-Default()` leaves it.
 
 ```python
-cube.f[[0]] << -Lambert("decal")                # face 0 is green
+cube.f[[0]] << -decal                           # face 0 is green
 print(members("decalSG"), Material.of(cube.f[0]))    # ['cube.f[1:2]'] []
 cube << Material()                              # green everywhere
 print(Material.of(cube), shade.bindings(cube))  # [] []
 cube << Default()                               # initialShadingGroup again
-print(Material.of(cube))                        # [Default()]
+print(Material.of(cube))                        # [ShadingEngine("initialShadingGroup")]
 cube << -Default()
 print(Material.of(cube))                        # []
 ```
 
-Queries read face ids; `>> Material()` / `>> Blinn()` enumerate like
-`Material.of` / `Blinn.of`, typed by the live node type.
+`in` asks whether every face of the left wears the material; `>>` reads
+face ids; `>> Material()` / `>> Blinn()` enumerate like `Material.of` /
+`Blinn.of`, typed by the live node type (`Default()` for the faces the
+default engine holds).
 
 ```python
 cube       << Default()
 cube.f[:3] << red
+print(cube in red, cube.f[:3] in red, cube.f[:4] in red)      # False True False
 print(cube >> red, cube.f[1:5] >> red)                        # [0 1 2] [1 2]
-print(cube >> Default(), other >> red)                        # [3 4 5] [0 1 2 3 4 5]   every face when object-level
-print(cube >> Material(), cube >> Blinn(), Lambert.of(cube))  # [Default(), Blinn('red')] [Blinn('red')] []
-print(cube.f[4] >> Material())                                # [Default()]
-cube.f[cube >> red] << Lambert("decal")         # the ids go back through the handle
+print(cube >> Default(), other >> red)                        # [3 4 5] [0 1 2 3 4 5] -- every face when object-level
+print(cube >> Material(), cube >> Blinn(), Lambert.of(cube))  # [ShadingEngine("initialShadingGroup"), Blinn("red")] [Blinn("red")] []
+cube.f[cube >> red] << decal                    # the ids go back through the handle
 print(members("decalSG"))                       # ['cube.f[0:2]']
 ```
 
-The module readers, `.delete()` / `.rename()`, and the two sweepers:
+The module readers, the network verbs and the two sweepers:
 `shade.repair()` re-homes anything green to `initialShadingGroup`,
 `shade.tidy()` collapses all-faces memberships to object level and
-deletes orphan groupIds. Both are off the operator path.
+deletes orphan groupIds. Both are off the operator path. `.delete()` and
+`.rename()` act on the network (the shader, its engines and their
+materialInfo); `cmds.delete("red")` deletes the shader alone.
 
 ```python
-print(shade.materials(cube))                    # List([DGNode("standardSurface1"), DGNode("decal")])
+print(shade.materials(cube))                    # List([StandardSurface("standardSurface1"), Lambert("decal")])
 for material, faces in shade.bindings(cube):
     print(material, faces.indices)              # standardSurface1 [3 4 5] / decal [0 1 2]
 
-Material("decal").delete()                      # material + engine + materialInfo; members go green
+decal.delete()                                  # material + engine + materialInfo; members go green
 print(Material.of(cube.f[0]))  # []
-print(shade.repair())          # List([Mesh("cubeShape")])   the shapes re-homed
+print(shade.repair())          # List([Mesh("cubeShape")]) -- the shapes re-homed
 print(cube >> Default())       # [0 1 2 3 4 5]
 
 cube.f[:3] << red
@@ -2549,57 +2662,54 @@ print(sorted(members("redSG")))  # ['cube.f[0:5]', 'otherShape']
 shade.tidy()
 print(sorted(members("redSG")))  # ['cubeShape', 'otherShape']
 
-red.rename("crimson")            # the engine follows the <mat>SG convention, the spec follows the name
+red.rename("crimson")            # the engine follows the <mat>SG convention; the node object follows the name
 print(red, red.engine)           # crimson crimsonSG
-for bad in (lambda: cube.vtx[:3] << red, lambda: cube << Lambert("crimson")):
+for bad in (lambda: cube.vtx[:3] << red, lambda: cube << Lambert("crimson"), lambda: cube << Blinn("nope")):
     try:
         bad()
-    except TypeError as err:
-        print(str(err).split(";")[0])           # materials bind faces or whole objects / 'crimson' exists as a blinn
+    except (TypeError, ValueError) as err:
+        print(str(err).split(";")[0])
+# materials bind faces or whole objects
+# 'crimson' is a blinn, not a lambert
+# no blinn named 'nope'
 ```
 
-`Material.build()` creates the network with no target (a library look
-built before any geometry exists); `Material('lambert1')` wraps any
-existing surface shader, `Material('redSG')` the shader feeding an engine.
-A typed class asserts the type: `Lambert('crimson')` on a blinn is a
-`TypeError` pointing at `Material('crimson')`.
+A typed class asserts its type: `Lambert("crimson")` on a blinn is a
+`NodeTypeError` that names `Material("crimson")` (any surface shader) and
+`astype` (section 37). `ShadingEngine("crimsonSG")` names exactly that
+engine (`faces << ShadingEngine("altSG")`). `Material.define(name,
+type=...)` / `Material.create(type=...)` build a shader with no class of
+its own (`type="anisotropic"`, a plug-in's shader). `rn.blinn(name="x")`
+makes the bare shader in the active scope, with no engine: the first `<<`
+builds `xSG` beside it.
 
 ---
 
 ## 37. Shader conversion
 
-`Phong(mat)` and `Material(mat, type='phong')` retype a **lazy** spec for
-free and convert a **realised** material in the scene — the one
-constructor in rig with a scene side effect. `mat` is retyped in place
-and the call returns a fresh, equal handle. `mat.astype(...)` is the verb,
-`shade.convert(...)` the engine that returns the `Conversion` report.
+`mat.astype(Phong)` (a class, or a type name: `"phong"`) converts a
+material to another type and **returns the new node**; `shade.convert(mat,
+Phong)` is the same verb as a function. The new node keeps the name, the
+engines and their members, the materialInfo, the `defaultShaderList1`
+slot, the container, the dynamic attributes and the locks, in one undo
+step. The old node object raises from then on, naming the conversion. A
+class call never converts: `Phong(mat)` on a blinn is a `NodeTypeError`
+that names `astype`.
 
 ```python
 cmds.file(new=True, force=True)
 cube = make(cmds.polyCube, "cube", ch=False)
 
-mat  = Blinn("red", color=(1, 0, 0))  # lazy
-p    = Phong(mat)                     # a free retype: no node yet, nothing to lose
-print(type(mat).__name__, p == mat, p is not mat)   # Phong True True
+mat = Blinn.define("red", color=(1, 0, 0))
 cube << mat
-print(cmds.nodeType("red"))                                                    # phong
-Material(mat, type="blinn")                                                    # realised: a scene conversion in one undo chunk; nothing set beyond color -> no warning
-print(cmds.nodeType("red"), type(mat).__name__, mat.engine, members("redSG"))  # blinn Blinn redSG ['cubeShape']   name, engine, members kept
-
-k = Phong(Blinn("k", eccentricity=0.6))         # lazy kwargs the target lacks are pruned with one warning
-print(k.attrs)                                  # {}
-```
-
-The verb takes the options; the constructor carries attribute injections
-only (`Phong(mat, cosinePower=40)` writes inside the chunk; `Phong(mat,
-strict=True)` is an `AttributeError`).
-
-```python
-print(mat.astype("phong") is mat)                                   # True   in place, chainable
-mat.astype(Blinn, diffuse=0.4)                                      # a class works; kwargs validated against the target before any write
-print(cmds.nodeType("red"), round(cmds.getAttr("red.diffuse"), 2))  # blinn 0.4
-report = shade.convert(mat, "phong", dry_run=True)         # the engine: a Conversion, nothing written, no warning
-print(bool(report), repr(str(report)))          # False ''   nothing parked or lost: nothing said
+p = mat.astype(Phong)                           # nothing set beyond color: no warning
+print(repr(p), cmds.nodeType("red"), repr(p.engine), members("redSG"))   # Phong("red") phong ShadingEngine("redSG") ['cubeShape']
+try:
+    str(mat)
+except RuntimeError as err:
+    print(str(err).split(" (")[0])              # 'red' was converted to a phong; use the node astype() returned
+mat = p.astype(Blinn, diffuse=0.4)              # attributes are checked against the target, then set in the same step
+print(repr(mat), round(cmds.getAttr("red.diffuse"), 2), cube in mat)   # Blinn("red") 0.4 True
 ```
 
 The loss policy: transfer what the target can hold, **park** what it
@@ -2607,25 +2717,26 @@ cannot. Every non-default value, wire or animCurve on an attribute the
 target lacks is cloned onto the same node as a hidden `__attr__` of the
 same type, rides through the conversion, and is restored the next time
 the material becomes a type that has it. One `cmds.warning` names what
-was parked, before anything moves; `str(report)` is that text.
+was parked, before anything moves. `dry_run=True` writes nothing and
+returns the `Conversion` report instead: `str(report)` is that text.
 
 ```python
-lossy = Blinn("lossy")
+lossy = Blinn.define("lossy")
 cube                  << lossy
 lossy.eccentricity    << 0.66 << lock                    # a blinn-only value
 lossy.specularRollOff << rn.ramp(name="ramp1").outAlpha  # a wire into a blinn-only attribute
 lossy.diffuse         << 0.33                            # shared: carried
 
-report = shade.convert(lossy, "phong", dry_run=True)
+report = shade.convert(lossy, Phong, dry_run=True)
 print(str(report))
 # rig.shade: 'lossy' blinn -> phong parks:
 #    wire        ramp1.outAlpha -> specularRollOff
 #    value       eccentricity = 0.66 [locked]
 print(report.parked, "diffuse" in report.carried)          # ('eccentricity', 'specularRollOff') True
 
-Phong(lossy)                                               # the same text once, as a warning
-print(cmds.listAttr("lossy", userDefined=True))            # ['__eccentricity__', '__specularRollOff__']   hidden, typed like the originals
-print(cmds.listConnections("ramp1.outAlpha", plugs=True))  # ['lossy.__specularRollOff__']   the ramp survives, re-homed
+lossy = lossy.astype(Phong)                                # the same text once, as a warning
+print(cmds.listAttr("lossy", userDefined=True))            # ['__eccentricity__', '__specularRollOff__'] -- hidden, typed like the originals
+print(cmds.listConnections("ramp1.outAlpha", plugs=True))  # ['lossy.__specularRollOff__'] -- the ramp survives, re-homed
 ```
 
 The round trip restores everything and destroys the parked attributes.
@@ -2634,37 +2745,36 @@ scene, values lost); `strict=True` refuses anything lossy with the same
 text and writes nothing.
 
 ```python
-back = shade.convert(lossy, "blinn")            # no warning
-print(back.restored, round(cmds.getAttr("lossy.eccentricity"), 2))                                          # ('eccentricity', 'specularRollOff') 0.66
+lossy = shade.convert(lossy, Blinn)             # no warning
+print(repr(lossy), round(cmds.getAttr("lossy.eccentricity"), 2))                                            # Blinn("lossy") 0.66
 print(cmds.listConnections("lossy.specularRollOff", plugs=True), cmds.listAttr("lossy", userDefined=True))  # ['ramp1.outAlpha'] None
 
 try:
-    lossy.astype("phong", strict=True)
+    lossy.astype(Phong, strict=True)
 except ValueError as err:
     print(str(err).splitlines()[0], cmds.nodeType("lossy"))   # rig.shade: 'lossy' blinn -> phong parks: blinn
 
-drop = Blinn("drop")
+drop = Blinn.define("drop")
 cube              << drop
 drop.eccentricity << 0.5
-drop.astype("phong", park=False)
+drop = drop.astype(Phong, park=False)
 # Warning: rig.shade: 'drop' blinn -> phong loses:
 #    value       eccentricity = 0.5
 print(cmds.listAttr("drop", userDefined=True))  # None
 ```
 
-Refused before any write, none forceable: an unregistered or non-surface
-type, a Maya default, referenced or `lockNode`'d material, `Default()`,
-a node object (wrap it in a spec first), and a **string** with the wrong type (a name
-asserts; `Phong(Material('lossy'))` converts).
+Refused before any write, none forceable: a type that is no surface
+shader or is not registered (load its plug-in), a Maya default,
+referenced or `lockNode`'d material, an engine (`Default()` is no
+material), and a class call.
 
 ```python
 for bad in (
     lambda: lossy.astype("ramp"),                    # TypeError: 'ramp' is a texture, not a surface shader
     lambda: lossy.astype("aiStandardSurface"),       # ValueError: not a registered surface shader (load its plugin)
-    lambda: Material("lambert1").astype("phong"),    # RuntimeError: a Maya default node
-    lambda: Default().astype("phong"),               # TypeError: never converted
-    lambda: Phong(Node("lossy")),                    # TypeError: wrap it first: Phong(Material('lossy'))
-    lambda: Phong("lossy").node,                     # TypeError: 'lossy' exists as a blinn
+    lambda: Lambert("lambert1").astype(Phong),       # RuntimeError: a Maya default node
+    lambda: shade.convert(Default(), Phong),         # NodeTypeError: an engine is no surface shader
+    lambda: Phong(lossy),                            # NodeTypeError: a class call refers; astype converts
 ):
     try:
         bad()
@@ -2673,26 +2783,23 @@ for bad in (
 print(cmds.nodeType("lossy"), cmds.ls(type="unknown"))   # blinn []
 ```
 
-One `cmds.undo()` restores the old node (its uuid included). Live node
-objects and plugs of the old node die; the spec, resolved by name, is the
-surviving handle — after an undo its class is stale until a same-type
-constructor re-syncs it for free.
+One `cmds.undo()` restores the old node, its uuid included: the held old
+node object works again, and the node the conversion returned is the dead
+one.
 
 ```python
 cmds.undoInfo(state=True, infinity=True)
-stale = Node("lossy")
-Phong(lossy)                                     # warns: parks again
+old = lossy
+new = lossy.astype(Phong)                        # warns: parks again
 print(cmds.undoInfo(query=True, undoName=True))  # rig.shade.convert
 try:
-    stale.name
+    old.name
 except RuntimeError as err:
-    print("already deleted" in str(err))        # True
-print(Node("lossy").name, round(lossy.diffuse >> None, 2))  # lossy 0.33   a fresh node object and the spec are fine
+    print(str(err).split(";")[0])                # 'lossy' was converted to a phong
+print(repr(new), round(new.diffuse >> None, 2))  # Phong("lossy") 0.33
 
 cmds.undo()
-print(cmds.nodeType("lossy"), type(lossy).__name__)         # blinn Phong   the spec still says phong
-Blinn(lossy)                                                # same type as the scene: a free re-sync
-print(repr(lossy.node))                                     # DGNode("lossy")
+print(cmds.nodeType("lossy"), repr(old))         # blinn Blinn("lossy")
 ```
 
 ---
@@ -2705,7 +2812,8 @@ Edit menu. How many steps a statement makes depends on what it runs:
 | What | Undo steps |
 |---|---|
 | a DSL statement (`<<`, an operator network, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | one per Maya command it runs, so an operator network is several |
-| a membership edit (`<< Tag("x")`, `<< Layer("x")`, `<< Blinn("x")`), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.shade.convert` |
+| a typed `create` with attributes, a `define` that makes its node or sets values (`update=True`), a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
+| a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
 | `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |
 

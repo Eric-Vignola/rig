@@ -38,8 +38,9 @@ print(cmds.container("ye_olde_lerp", q=True, nodeList=True))  # ['sub1', 'mul1',
 obj1.f[:3] << Tag("lid")                               # a face component tag on cube1Shape
 print(obj1 >> Tag("lid"))                              # [0 1 2]
 
-obj1 << Blinn("red", color=(1, 0, 0))                  # builds red + redSG, assigns cube1
-print(Material.of(obj1))                               # [Blinn('red')]
+red = Blinn.define("red", color=(1, 0, 0))             # finds red, or makes red + redSG
+obj1 << red                                            # the material node on the right assigns cube1
+print(Material.of(obj1), obj1 in red)                  # [Blinn("red")] True
 ```
 
 
@@ -51,19 +52,86 @@ Two operators carry the language:
 - `<<` points the way data flows in. (aka: injection)
 - `>>` points the way it flows out. (aka: introspection)
 
+`in` asks a yes-or-no membership question.
+
 | Spelling | Meaning | Returns |
 |---|---|---|
 | `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects | `a`, so it chains |
 | `a >> None` | **introspect**: read the value (`getAttr`); on a node, the node itself | a float, a NumPy array, a string... |
 | `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
-| `node << Float("x")` | add an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide` | the new plug, so its value goes next |
+| `node << Float("x")` | declare an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide`; declaring it again applies the settings given and keeps the value | the new plug, so its value goes next |
 | `node >> Float("x")` | add an output-only (non-writable) attribute | the new plug |
+| `x << red`, `x << layer`, `x << Tag("cap")` | **membership**: `x` (a node, components, a `List`) joins a material, a display layer or a component tag; `x << -red` leaves it, `x << Material()` / `Layer()` / `Tag()` leaves every one of that kind | `x`, so it chains |
+| `x in red`, `x not in layer` | yes or no: every member of `x` is in it | `bool` |
+| `x >> red`, `x >> Tag("cap")` | the ids of `x` that are in it (`cube >> red`: face ids); `x >> Material()` lists the collections holding `x` | an ndarray; a list |
 | `node.tx = 5` | sugar for `node.tx << 5` | |
 | `a + b`, `a - b`, `a * b`, `a / b`, `a ** b`, `a // b`, `a % b` | arithmetic builds nodes. Matrices and quaternions are detected and routed to `multMatrix`, `quatProd`...; `[x, y, z] * m` is point-by-matrix | the output plug |
 | `-a`, `~a` | negate; logical NOT | the output plug |
 | `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes; `==` / `!=` of a Maya plug with itself fold to a bool | the output plug; `True` / `False` for one plug |
 | `a & b`, `a \| b`, `a ^ b` | logical AND / OR / XOR networks | the output plug |
 
+
+---
+
+## The construction rule
+
+**Calling a node class names a node that already exists. `.define()`
+finds that node or makes it, and never makes a second node under a name
+you can already refer to. `.create()` always makes a new one. What lives
+inside a node (an attribute, a component tag) is declared, with `Float`,
+`Enum` or `Tag`, and applied with `<<`.** In short: naming never creates;
+`define` makes sure; `create` makes new; declarations go inside a node.
+
+| | **refer** `Cls("x")` | **define** `Cls.define("x", ...)` | **create** `Cls.create(name="x", ...)` |
+|---|---|---|---|
+| writes the scene | never | only when `x` is missing (values on a found node only with `update=True`) | always |
+| `x` missing | `NodeNotFoundError`, with a did-you-mean hint | makes it, with the attributes given | makes it |
+| `x` exists | that node, as its most derived class (`Transform("j1")` is `Joint("j1")`) | that node; its attributes are left as they are | a second one, which Maya names `x1` |
+| `x` exists only elsewhere (under another parent, in another namespace) | that node, when it is the only one | refused: pass `parent=` or spell the namespace | — |
+| `x` is another type | `NodeTypeError` | `NodeTypeError` | — |
+| the name is | a lookup: a short name, a path, `ns:name` | a key: the node `create` would make (the namespace, the scope prefix, `parent=`) | a label, `name=` keyword only |
+
+The three verbs are on every node class: `Transform`, `Joint`, `Blinn`,
+`Material`, `Layer` (the `DisplayLayer` class), `ObjectSet`, ... Every
+refusal writes nothing. The errors are one family, `NodeNotFoundError`
+and `AmbiguousNodeError` (both `NodeLookupError`) and `NodeTypeError`, and
+each is also a `TypeError` and a `ValueError`. Math and utility nodes keep
+their makers (`a.t + b.t`, `rn.*`, `rc.*`, `Node.create`), which always
+make new nodes and look no name up.
+
+```python
+from rig import NodeNotFoundError
+from rig.nodetypes import Joint, Transform
+
+cmds.file(new=True, force=True)
+Joint.create(name="spine_01")
+try:
+    Joint("spnie_01")                         # a typo never creates
+except NodeNotFoundError as err:
+    print(err)                                # no joint named 'spnie_01' (did you mean 'spine_01'?)
+
+cmds.namespace(add="char")
+cmds.namespace(set="char")
+Joint.create(name="root")                     # made in the current namespace: char:root
+cmds.namespace(set=":")
+try:
+    Joint("root")
+except NodeNotFoundError as err:
+    print(err)                                # no joint named 'root' ('char:root' exists)
+print(repr(Joint("char:root")))               # Joint("char:root")
+
+def build():
+    rig = Transform.define("rig")                            # made on the first run, found on the next
+    for side in "LR":
+        arm = Transform.define(f"{side}_arm", parent=rig)
+        Transform.define("ctl", parent=arm, tx=1)            # |rig|L_arm|ctl and |rig|R_arm|ctl: two keys
+
+build()
+before = len(cmds.ls(type="transform"))
+build()                                                      # a re-run finds every node
+print(len(cmds.ls(type="transform")) == before)              # True
+print(repr(Transform.create(name="rig")))                    # Transform("rig1") -- create is always new
+```
 
 ---
 
@@ -76,12 +144,18 @@ Two operators carry the language:
   `Node("x.tx")` give the plug's node, and `node >> None` is the node
   itself. `node.tx` is a DSL `Plug`; `node.find_attr("tx")` is the typed
   `Attribute` of the same plug. `Node.create(type, ...)` makes a node and
-  `Node.find_all(type)` lists them.
+  `Node.find_all(type)` lists them. A class names its type too:
+  `Transform("x")` is the same node, refused when `x` is no transform.
 - **Injection is right-to-left and returns the left-hand side.**
   `obj.t << [1, 2, 3] << lock` reads "t receives 1,2,3, then a lock". The
   one exception is an attribute spec: `node << Float("w")` returns the
   **new plug**, because the next thing you inject is its value.
-  Collection specs return the LHS again, so `cube.f[:3] << Tag("a") << Tag("b")`.
+  Membership returns the LHS again, so `cube.f[:3] << Tag("a") << red`.
+- **Membership takes nodes and components, never an attribute.** A
+  material, a shading engine or a display layer on the right of `<<` is
+  the node itself; the node or the components on the left are the
+  members. `cube.tx << red` is a `TypeError` that names `cube << red`
+  (with `in`, a plug stands for its node: `cube.tx in layer`).
 - **`List` vectorizes, under two broadcast rules.** Attribute access
   maps over the list (`cubes.t` is a `List` of plugs). The
   **operators** (`<<`, `+`, `==`...) pair elements and cap the shorter
@@ -105,9 +179,9 @@ Two operators carry the language:
   Only nodes a call *creates* join: a query, a `parent` or a `rename`
   never moves a node in. The typed creators join too
   (`Transform.create(name="x")`, `Joint.create(...)`). Geometry, display
-  layers, sets and materials never join (`container=True` on a material
-  spec opts a per-asset look in); `container=False` opts any `rc` / `rn`
-  call or typed create out.
+  layers, sets and materials never join (`Lambert.create(...,
+  container=True)` opts a per-asset look in); `container=False` opts any
+  `rc` / `rn` call or typed create out.
 - **Memoization.** A function or operator called twice with the same
   plugs and the same literals returns the same output plug; the cache
   forgets nodes that were deleted, and a new scene or a file open clears
@@ -137,11 +211,11 @@ Two operators carry the language:
   reaches the `sum` node behind the output. It never reaches the node's
   Python methods: `a.tx.rename` is an `AttributeError`.
 - **Undo.** Every edit is undoable, one step per Maya command a statement
-  runs. A membership edit (`<< Tag("x")`, `<< Blinn("x")`...),
-  `Mesh.create`, `NurbsCurve.create` and `SkinCluster.create` are one named
-  step each (`rig.tag`, `rig.Mesh.create`), and an API edit
-  (`Mesh.set_points`, the UV and colour set edits, skin weights) is one step
-  through rig's plug-in command `rigUndoableAPICommand`.
+  runs. A membership edit (`<< Tag("x")`, `<< red`...), a `define` that
+  makes its node, `Mesh.create`, `NurbsCurve.create` and `SkinCluster.create`
+  are one named step each (`rig.tag`, `rig.define`, `rig.Mesh.create`), and
+  an API edit (`Mesh.set_points`, the UV and colour set edits, skin weights)
+  is one step through rig's plug-in command `rigUndoableAPICommand`.
   `with rig.undo_chunk("build arm"):`, or `@rig.undo_chunk` on a function,
   makes a whole build one named step.
 
@@ -201,12 +275,14 @@ rig/
 ├── tween.py             Penner easing curves: in_quad, out_bounce, in_out_elastic ...
 ├── random.py            LCG networks that live inside the DG
 │
-├── membership.py        Tag (component tags), Layer (display layers), Components
-├── shade.py             Blinn Lambert Phong PhongE SurfaceShader StandardSurface OpenPBRSurface,
-│                        Material, Default; convert / repair / tidy / materials / bindings
+├── membership.py        Tag (component tags), Layer (the DisplayLayer node class), Components
+├── shade.py             materials: the shader node classes Blinn Lambert Phong PhongE SurfaceShader
+│                        StandardSurface OpenPBRSurface Material (from nodetypes), Default;
+│                        convert / repair / tidy / materials / bindings
 │
 ├── nodetypes/           the node classes every node is: Node (the root), DGNode, Transform,
-│                        Mesh ...; Attribute, the MPlug wrapper; plugins/ (the undo plug-in)
+│                        Mesh, the shaders ...; Attribute, the MPlug wrapper; the lookup errors;
+│                        plugins/ (the undo plug-in)
 ├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
 │                        perspective_image_planes.py, ye_olde_lerp.gif
 ├── utils.py             run_tests()
@@ -220,6 +296,7 @@ The names most scripts start from:
 
 ```python
 from rig import Node, Plug, List, Container, container, Components, Tag, Layer, undo_chunk
+from rig import NodeNotFoundError, AmbiguousNodeError, NodeTypeError
 from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
 from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
 from rig import functions, trigonometry, matrix, vector, quaternion, euler, interpolate, tween
@@ -274,26 +351,34 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   by `polyCube1`: `cube.f[:3] << Tag("top")` is a `TypeError` naming the
   owner, and `Tag("top", at=cube)` shadows it with an editable tag on the
   shape. `polyCube(ch=False)` bakes them into the shape instead.
-- **One tag, one category.** A tag holds vertices, edges or faces, never
-  a mix: faces into a vertex tag is a `TypeError` with nothing written;
-  `Tag("x").set(cube.f[:2])` replaces and may flip the category. A tag
-  name needs at least two characters (Maya stores a one-character name
-  as an empty string).
-- **A missing collection is a `ValueError`, never an empty answer.**
-  `cube >> Tag("nope")` raises; a tag that exists but holds none of the
-  LHS answers with an empty array. Same for materials and layers.
+- **One tag, one category.** Maya reads a tag as one component type,
+  the first one stored: faces into a vertex tag that holds vertices is a
+  `TypeError` with nothing written; `Tag("x").set(cube.f[:2])` replaces
+  and may flip the category. A query answers by contents: faces are not
+  in a vertex tag (`cube.f[:2] in Tag("x")` is `False`). A tag name needs
+  at least two characters (Maya stores a one-character name as an empty
+  string).
+- **A name on the right never creates.** `cube << Blinn("red")`,
+  `cube >> Blinn("red")`, `cube << -Layer("L")` and `cube in Layer("L")`
+  raise `NodeNotFoundError` (a `ValueError`) at the reference when the
+  material or layer is missing, before anything is written; `define` is
+  the verb that makes one. A tag lives on the node, so a missing tag is
+  simply not holding anything: `cube in Tag("nope")` is `False`, and only
+  `cube >> Tag("nope")` (the node asks for the whole tag) raises.
 - **Materials are exclusive, and removal leaves faces green.**
-  `cube.f[:3] << Blinn("decal")` carves those faces out of `redSG`;
-  `cube.f[:3] << -Blinn("decal")` puts them in **no** engine (Maya draws
-  them green). `cube << Default()` is the way back to
-  `initialShadingGroup`; `shade.repair()` re-homes every green shape.
-- **Conversion parks, Maya's Type dropdown deletes.** `Phong(red)`
-  retypes `red` in place and keeps the name, the engine, the container
-  and the locks; a value or an incoming wire the new type cannot hold is
-  parked on the node as a hidden `__attr__` and comes back the next time
-  the material becomes a type that has it. Maya's own Attribute Editor
-  dropdown makes a brand-new node and cascade-deletes any texture or
-  animCurve whose only link was the shader; it also wipes parked state.
+  `cube.f[:3] << decal` carves those faces out of `redSG`;
+  `cube.f[:3] << -decal` puts them in **no** engine (Maya draws them
+  green). `cube << Default()` is the way back to `initialShadingGroup`;
+  `shade.repair()` re-homes every green shape.
+- **Conversion parks, Maya's Type dropdown deletes.** `red =
+  red.astype(Phong)` makes a phong that keeps the name, the engine, the
+  container and the locks, and returns it; a value or an incoming wire the
+  new type cannot hold is parked on the node as a hidden `__attr__` and
+  comes back the next time the material becomes a type that has it. The
+  old node object raises from then on, naming the conversion. Maya's own
+  Attribute Editor dropdown makes a brand-new node and cascade-deletes any
+  texture or animCurve whose only link was the shader; it also wipes
+  parked state.
 - **Unit conversions stay outside containers.** `xf.rx << cube.tx`
   inserts Maya's `unitConversion` (linear to angle) and leaves it outside
   the active container by default (`absorb_unit_conversions=False`),

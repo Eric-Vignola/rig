@@ -10,7 +10,13 @@ Two user-facing classes carry the language:
     for a node object, and ``isinstance(x, Node)`` holds for every node.
     Attribute access (``node.translate``) returns a :class:`Plug`.
     Assignment (``node.tx = 5``) is sugar for ``node.tx << 5``.
-    Spec injection (``node << Float("blend")``) adds an attribute.
+    Spec injection (``node << Float("blend")``) declares an attribute: it
+    is added, or, when the node has it, kept with its value and connections
+    while the settings given apply. Every node class names nodes three
+    ways: ``Transform("x")`` refers to a node that exists (never writes the
+    scene; NodeNotFoundError / AmbiguousNodeError / NodeTypeError, each a
+    TypeError and a ValueError), ``Transform.define("x", ...)`` finds it or
+    makes it, ``Transform.create(name="x", ...)`` always makes a new one.
 
   * :class:`Plug` -- wraps a single MPlug. All math, comparison, injection,
     and introspection operators live here. ``plug.foo`` looks up a
@@ -31,8 +37,9 @@ Operator conventions:
       enum plug takes a field name as well as its int (``t.ro << "zxy"``,
       ``md.operation << "divide"``); a wrong name raises TypeError.
     * ``>>`` (left-to-right) -- introspect: ``plug >> None`` reads the value;
-      ``plug >> Node`` clones the attr-spec onto another node.
-    * ``<<`` with a collection (``Tag("x")``, a layer node) makes the LHS a
+      ``plug >> Node`` clones the attr-spec onto another node (a name the
+      node already has is refused).
+    * ``<<`` with a collection (``Tag("x")``, a layer or material node) makes the LHS a
       member and returns the LHS, so collections chain: ``cube.f[:3] <<
       Tag("a") << Tag("b")``. An attribute spec returns the new plug instead
       (a value goes next): ``<<`` returns what the next ``<<`` should target.
