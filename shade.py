@@ -98,6 +98,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig.nodetypes._base import _cast_node
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal.list import List
 from rig._internal.members import (
@@ -862,7 +863,7 @@ class Material(_MemberSpec):
     @property
     def node(self) -> Node:
         """The material node; ``ValueError`` until it exists."""
-        return Node(self._require().material)
+        return _cast_node(self._require().material)
 
     @property
     def engine(self) -> Node:
@@ -874,7 +875,7 @@ class Material(_MemberSpec):
                 f"'{found.material}' has no shading engine yet; assign it "
                 f"(geometry << {self!r}) or build it ({self!r}.build())"
             )
-        return Node(engine.name)
+        return engine
 
     # -- resolution (reads only) -- #
 
@@ -929,7 +930,7 @@ class Material(_MemberSpec):
     @staticmethod
     def _engine_of(found: _Found, create: bool) -> ShadingEngine | None:
         if found.engine is not None:
-            return ShadingEngine(found.engine)
+            return ShadingEngine._wrap(found.engine)
         return ShadingEngine.for_material(found.material, create=create)
 
     # -- refusals -- #
@@ -956,7 +957,7 @@ class Material(_MemberSpec):
         for target in targets:
             for name in _engines_of(target.path):
                 _check_instanced(name, target)
-                engine = ShadingEngine(name)
+                engine = ShadingEngine._wrap(name)
                 steps.append(lambda e=engine, t=target: _remove_members(e, t))
         return steps
 
@@ -1064,7 +1065,7 @@ class Material(_MemberSpec):
         return engine
 
     def _inject_attrs(self, material: str) -> None:
-        node = Node(material)
+        node = _cast_node(material)
         for attr, value in self._attrs.items():
             getattr(node, attr) << value
 
@@ -1097,7 +1098,7 @@ class Material(_MemberSpec):
         target = _single(selections, "Material.of takes")
         found  = []
         for name in _engines_of(target.path):
-            engine = ShadingEngine(name)
+            engine = ShadingEngine._wrap(name)
             held   = _held(engine, target.path)
             if held is _NOT_MEMBER:
                 continue
@@ -1150,7 +1151,7 @@ class Material(_MemberSpec):
                 _check_attrs(self._attrs, node=found.material)
         with _undo_chunk(f"rig.{self.KIND}"):
             material, _ = self._realise(found)
-        return Node(material)
+        return _cast_node(material)
 
     def _guard_owned(self, material: str, verb: str) -> None:
         if cmds.ls(material, defaultNodes=True):
@@ -1175,7 +1176,7 @@ class Material(_MemberSpec):
             if not cmds.ls(name, defaultNodes=True)
         ]
         infos = [
-            info for name in engines for info in ShadingEngine(name).get_material_info()
+            info for name in engines for info in ShadingEngine._wrap(name).get_material_info()
         ]
         with _undo_chunk(f"rig.{self.KIND}"):
             for name in [*infos, *engines, material]:
@@ -1376,7 +1377,7 @@ def _entries(target: _Target) -> list[tuple[ShadingEngine, Any]]:
     else the requested face ids the engine holds."""
     result = []
     for name in _engines_of(target.path):
-        engine = ShadingEngine(name)
+        engine = ShadingEngine._wrap(name)
         held   = _held(engine, target.path)
         if held is _NOT_MEMBER:
             continue

@@ -13,11 +13,23 @@
   wrapper class with no node type of its own wraps what its ``is_type``
   accepts. No argument, ``None``, a second argument or a keyword raises
   TypeError. Nothing here writes the scene.
+* ``TestInternalSites``: every ``X(...)`` call of a node class in the library
+  (and ``cls(...)`` / ``type(self)(...)`` inside a node class) is on an
+  allowlist with its reason: a site whose node's exact class is known uses
+  ``X._wrap(x)`` (today's constructor), the others take user input and keep
+  the reference. A new site fails until it is listed. The cast core and the
+  converted sites never run the reference (round 5 A2 builds on it).
 """
+
+import ast
+import collections
+import os
+from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
 
+import rig
 from rig import (
     AmbiguousNodeError,
     Container,
@@ -27,6 +39,7 @@ from rig import (
     NodeTypeError,
 )
 from rig.nodetypes import (
+    _base,
     Choice,
     DAGNode,
     DGNode,
@@ -392,3 +405,173 @@ class TestReference(MayaTestCase):
                 Joint("grp")
             self.assertEqual(set(cmds.ls()), before)
         self.assertNotIn("grp", cmds.container(str(arm), query=True, nodeList=True) or [])
+
+
+# The library's node-class calls, (file, enclosing def, callee) -> (count, why).
+# A site whose node's exact class is known calls X._wrap(x) (today's constructor)
+# and is not listed; these take user input (or answer for it) and keep the
+# reference, which type-checks and returns the most derived class.
+_ALLOWED_SITES = {
+    ("nodetypes/follicle.py", "Follicle.create_on_mesh", "Transform"): (
+        1, "user input: the mesh transform to attach to"),
+    ("nodetypes/joint.py", "Joint.match_hierarchy", "Joint"): (
+        1, "user input: the target joint, by name"),
+    ("nodetypes/mesh.py", "Mesh.transfer_component_tags", "Mesh"): (
+        1, "user input: the other mesh (a transform stands for its shape)"),
+    ("nodetypes/mesh.py", "Mesh.transfer_maps", "Mesh"): (
+        1, "user input: the other mesh (a transform stands for its shape)"),
+    ("nodetypes/skincluster.py", "flatten_vertices", "Mesh"): (
+        2, "user input: the names of the vertex strings given"),
+    ("nodetypes/skincluster.py", "SkinCluster._sanitize_influences", "Joint"): (
+        1, "user input: an influence name, after Joint.exists"),
+    ("nodetypes/skincluster.py", "SkinCluster.connect_bind_pre_matrices", "Joint"): (
+        1, "user input: the driver the caller's search function names"),
+    ("nodetypes/skincluster.py", "SkinCluster.set_influence_objects", "Joint"): (
+        1, "user input: the influences given"),
+    ("nodetypes/skincluster.py", "SkinCluster.get_mesh", "Mesh"): (
+        1, "the deformed geometry may be another type: the reference type-checks it"),
+    ("nodetypes/skincluster.py", "SkinCluster.transfer_to_mesh", "Mesh"): (
+        1, "user input: the other mesh"),
+    ("nodetypes/skincluster.py", "SkinCluster.copy_skincluster", "Mesh"): (
+        2, "user input: the source meshes"),
+}
+
+
+def _node_class_names():
+    """The names of the library's node classes (every class under ``Node``
+    defined in a ``rig`` module outside the tests), ``Node`` excluded."""
+    names, todo = set(), [Node]
+    while todo:
+        cls = todo.pop()
+        for sub in cls.__subclasses__():
+            todo.append(sub)
+            module = sub.__module__
+            if module.startswith("rig.") and not module.startswith("rig._tests"):
+                names.add(sub.__name__)
+    return names
+
+
+def _library_sites(root, class_names):
+    """``(file, enclosing def, callee) -> count`` of the node-class calls in
+    ``root`` (not ``_tests``, not ``examples``)."""
+    sites = collections.Counter()
+    for folder, subs, files in os.walk(root):
+        subs[:] = [s for s in subs if s not in ("_tests", "examples", "__pycache__")]
+        for file in files:
+            if not file.endswith(".py"):
+                continue
+            path = os.path.join(folder, file)
+            rel  = os.path.relpath(path, root).replace(os.sep, "/")
+            with open(path, encoding="utf-8") as handle:
+                tree = ast.parse(handle.read())
+
+            def visit(node, classes, defs):
+                if isinstance(node, ast.ClassDef):
+                    classes, defs = classes + [node.name], defs + [node.name]
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    defs = defs + [node.name]
+                elif isinstance(node, ast.Call):
+                    func, callee = node.func, None
+                    in_node_class = bool(classes) and classes[-1] in class_names
+                    if isinstance(func, ast.Name):
+                        if func.id in class_names or (func.id == "cls" and in_node_class):
+                            callee = func.id
+                    elif (
+                        isinstance(func, ast.Attribute)
+                        and func.attr in class_names
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id in ("nodetypes", "rig")
+                    ):
+                        callee = func.attr
+                    elif (
+                        isinstance(func, ast.Call)
+                        and isinstance(func.func, ast.Name)
+                        and func.func.id == "type"
+                        and in_node_class
+                    ):
+                        callee = "type(...)"
+                    if callee:
+                        sites[(rel, ".".join(defs), callee)] += 1
+                for child in ast.iter_child_nodes(node):
+                    visit(child, classes, defs)
+
+            visit(tree, [], [])
+    return sites
+
+
+class TestInternalSites(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        _build_scene()
+
+    def test_the_cast_never_runs_the_reference(self):
+        calls = []
+        original = _base._refer
+
+        def counting(cls, args, kwargs):
+            calls.append(cls.__name__)
+            return original(cls, args, kwargs)
+
+        with mock.patch.object(_base, "_refer", counting):
+            for name in ("j1", "grp", "red", "bodyShape", "L", "s1", "box", "initialShadingGroup"):
+                Node(name)
+                _base._cast(name)
+                _base._cast(_mobject(name))
+            Node.wrap(cmds.ls(type="transform"))
+            Transform.create(name="made")
+            Joint.find_all()
+            ShadingEngine.for_material("red")
+            DisplayLayer.for_node("body")
+            self.assertEqual(calls, [])
+            Transform("grp")
+            self.assertEqual(calls, ["Transform"])
+
+    def test_every_node_class_call_is_listed(self):
+        class_names = _node_class_names()
+        # the classes the pin knows (a new node class joins by itself)
+        self.assertLessEqual(
+            {"DGNode", "DAGNode", "Transform", "Joint", "Mesh", "ShadingEngine",
+             "DisplayLayer", "ObjectSet", "Container", "SkinCluster"},
+            class_names,
+        )
+        sites   = _library_sites(os.path.dirname(rig.__file__), class_names)
+        allowed = {key: count for key, (count, _why) in _ALLOWED_SITES.items()}
+        new     = {key: n for key, n in sites.items() if allowed.get(key) != n}
+        stale   = {key: n for key, n in allowed.items() if sites.get(key) != n}
+        self.assertEqual(
+            new, {},
+            "a node-class call Cls(x) the pin does not know: use Cls._wrap(x) when "
+            "the node's exact class is known (just made, read by type, type-checked), "
+            "else list the site in _ALLOWED_SITES with its reason",
+        )
+        self.assertEqual(stale, {}, "an _ALLOWED_SITES entry no longer matches the code")
+
+    def test_the_scan_finds_a_site(self):
+        # the scanner itself: a cls(...) in a node class, a typed call, a
+        # _wrap (not a site) and a call in a plain class
+        import tempfile
+
+        source = (
+            "class Transform:\n"
+            "    @classmethod\n"
+            "    def f(cls, x):\n"
+            "        cls._wrap(x)\n"
+            "        return cls(x), Joint(x), type(self)(x)\n"
+            "class Spec:\n"
+            "    def g(cls):\n"
+            "        return cls()\n"
+        )
+        with tempfile.TemporaryDirectory() as root:
+            with open(os.path.join(root, "m.py"), "w", encoding="utf-8") as handle:
+                handle.write(source)
+            sites = _library_sites(root, {"Transform", "Joint"})
+        self.assertEqual(
+            dict(sites),
+            {
+                ("m.py", "Transform.f", "cls"): 1,
+                ("m.py", "Transform.f", "Joint"): 1,
+                ("m.py", "Transform.f", "type(...)"): 1,
+            },
+        )

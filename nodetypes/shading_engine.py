@@ -100,10 +100,10 @@ class ShadingEngine(ObjectSet):
 
         default_name = f"{material}SG"
         if len(engines) == 1:
-            return cls(engines[0])
+            return cls._wrap(engines[0])
         if engines:
             if default_name in engines:
-                return cls(default_name)
+                return cls._wrap(default_name)
             raise ValueError(
                 f"{material} feeds {len(engines)} shading engines {engines} and none "
                 f"is named {default_name}; pick one explicitly."

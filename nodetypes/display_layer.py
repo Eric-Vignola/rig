@@ -86,7 +86,7 @@ class DisplayLayer(DGNode):
         except NodeNotFoundError:
             return cls.create(empty=True, name=name)
         if cmds.ls(found, type=cls.NATIVE_NODE_TYPE):
-            return cls(found)
+            return cls._wrap(found)
         raise TypeError(
             f"'{name}' exists and is a {cmds.nodeType(found)}, not a "
             f"{cls.NATIVE_NODE_TYPE}"
@@ -109,7 +109,7 @@ class DisplayLayer(DGNode):
             f"{node}.drawOverride", source=True, destination=False,
             type=cls.NATIVE_NODE_TYPE,
         )
-        return cls(layers[0]) if layers else None
+        return cls._wrap(layers[0]) if layers else None
 
     def get_members(self, no_recurse: bool = True) -> list[DAGNode]:
         """Returns a list of objects in this layer."""

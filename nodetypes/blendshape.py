@@ -65,7 +65,7 @@ class BlendShape(Deformer):
         name = cmds.blendShape(*geoms, **kwargs)[0]
 
         if morphs:
-            cls(name).set_targets_data(morphs)
+            cls._wrap(name).set_targets_data(morphs)
 
         return name
 

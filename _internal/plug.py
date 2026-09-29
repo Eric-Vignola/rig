@@ -395,7 +395,7 @@ class Plug(Attribute):
             # a published name or an attribute of the container, never its
             # Python members (``cleanup``, ``name`` ...)
             try:
-                return Container.__getattr__(Container(owner), attr_name)
+                return Container.__getattr__(Container._wrap(owner), attr_name)
             except AttributeError:
                 pass
 

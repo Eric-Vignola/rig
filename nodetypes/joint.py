@@ -77,7 +77,7 @@ class Joint(Transform):
         for part in parts:
             name += "|" + part
             if cmds.nodeType(name) == "joint":
-                return Joint(name)
+                return Joint._wrap(name)
 
     def get_parent_joint(self) -> Joint | None:
         """Returns the parent joint of this joint, if exists."""
@@ -277,7 +277,7 @@ class Joint(Transform):
         )
         child_joints.append(self.name)
         for joint in child_joints:
-            Joint(joint).convert_orients_to_rotation()
+            Joint._wrap(joint).convert_orients_to_rotation()
 
     def hierarchy_to_orients(self):
         """converts joint orients into rotations"""
@@ -286,7 +286,7 @@ class Joint(Transform):
         )
         child_joints.append(self.name)
         for joint in child_joints:
-            Joint(joint).convert_rotation_to_orients()
+            Joint._wrap(joint).convert_rotation_to_orients()
 
     def orient_joint(self, aim_axis="x", up_axis="y", root_joint=False):
         """sets joint orient based on axis and up vector"""

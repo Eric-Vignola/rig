@@ -68,9 +68,9 @@ from typing import Any
 
 from maya import cmds
 from rig._internal.memoize import prune_memoize_caches
-from rig._internal.node import Node
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
+from rig.nodetypes._base import _cast_node
 from rig.spec._base import _spec_from_attribute
 
 
@@ -372,7 +372,7 @@ def _clone(src_plug: Plug, dst_node: str, name: str, hidden: bool | None = None)
             keyable = True
     spec.kargs["hidden"]  = hidden
     spec.kargs["keyable"] = keyable
-    new_plug              = Node(dst_node) << spec
+    new_plug              = _cast_node(dst_node) << spec
     if src_plug.is_multi:
         for index in src_plug.get_logical_indices() or []:
             try:

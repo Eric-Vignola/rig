@@ -70,7 +70,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _cast_node
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
 from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
@@ -1117,7 +1117,7 @@ class Layer(_MemberSpec):
     @property
     def node(self) -> Node:
         """The display layer node; ``ValueError`` until it exists."""
-        return Node(self._require())
+        return _cast_node(self._require())
 
     # -- resolution (reads only) -- #
 
@@ -1222,7 +1222,7 @@ class Layer(_MemberSpec):
         return layer
 
     def _inject_attrs(self, layer: str) -> None:
-        node = Node(layer)
+        node = _cast_node(layer)
         for attr, value in self._attrs.items():
             getattr(node, attr) << value
 
@@ -1262,7 +1262,7 @@ class Layer(_MemberSpec):
         found = self._require()
         self._guard(found, "deleted")
         with _undo_chunk(f"rig.{self.KIND}"):
-            DisplayLayer(found).delete()
+            DisplayLayer._wrap(found).delete()
         if cmds.objExists(found):
             raise RuntimeError(f"'{found}' survived its deletion")
 
@@ -1287,4 +1287,4 @@ class Layer(_MemberSpec):
         found = self._require()
         self._guard(found, "cleared")
         with _undo_chunk(f"rig.{self.KIND}"):
-            DisplayLayer(found).clear()
+            DisplayLayer._wrap(found).clear()
