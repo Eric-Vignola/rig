@@ -326,8 +326,12 @@ class TestTourW1(_Case):
 
     def test_a_typo_raises_with_a_hint_and_writes_nothing(self):
         self.assertEqual(repr(Joint("spine_01")), 'Joint("spine_01")')
-        # the scene's own spine_01 is the hint, not the reference's char:spine_01
-        self.assertRefused(NodeNotFoundError, r"^no joint named 'spnie_01' \(did you mean 'spine_01'\?\)$",
+        # the scene's own spine_01 is the hint, not the reference's char:spine_01;
+        # a class's miss ends with its define (round 4b follow-up F4), except in
+        # the file reference's namespace, where define makes nothing
+        self.assertRefused(NodeNotFoundError,
+                           r"^no joint named 'spnie_01' \(did you mean 'spine_01'\?\); "
+                           r"Joint\.define\('spnie_01'\) finds or makes it$",
                            lambda: Joint("spnie_01"))
         self.assertRefused(NodeNotFoundError, r"^no node named 'spnie_01' \(did you mean 'spine_01'\?\)$",
                            lambda: Node("spnie_01"))
@@ -347,7 +351,8 @@ class TestTourW1(_Case):
         self.assertEqual(Transform("|g2|a").long_name, "|g2|a")
 
     def test_one_lookup_rule_for_the_namespaces(self):
-        self.assertRefused(NodeNotFoundError, r"^no joint named 'root' \('char:root' exists\)$",
+        self.assertRefused(NodeNotFoundError,
+                           r"^no joint named 'root' \('char:root' exists\); Joint\.define\('root'\) finds or makes it$",
                            lambda: Joint("root"))
         root = Joint("char:root")
         self.assertEqual(repr(root), 'Joint("char:root")')
@@ -575,7 +580,8 @@ class TestTourW3(_Case):
 
     def test_a_strict_assignment_and_another_type(self):
         cube = self.geos[0]
-        self.assertRefused(NodeNotFoundError, r"^no blinn named 'rde'$", lambda: cube << Blinn("rde"))
+        self.assertRefused(NodeNotFoundError, r"^no blinn named 'rde'; Blinn\.define\('rde'\) finds or makes it$",
+                           lambda: cube << Blinn("rde"))
         self.assertEqual(_engines("geo0Shape"), ["initialShadingGroup"])
         cmds.shadingNode("phong", asShader=True, name="shiny")
         self.assertRefused(
@@ -632,21 +638,25 @@ class TestTourW4(_Case):
 
     def test_queries_and_removals_raise_at_the_reference(self):
         cube = self.cube
-        for label, call in (
-            ("cube >> Blinn('red')", lambda: cube >> Blinn("red")),
-            ("cube << -Blinn('red')", lambda: cube << -Blinn("red")),
-            ("cube << Blinn('red')", lambda: cube << Blinn("red")),
-            ("cube in Blinn('red')", lambda: cube in Blinn("red")),
-            ("cube.f[:2] in Material('red')", lambda: cube.f[:2] in Material("red")),
-            ("cube >> Layer('L')", lambda: cube >> Layer("L")),
-            ("cube << -Layer('L')", lambda: cube << -Layer("L")),
-            ("cube in Layer('L')", lambda: cube in Layer("L")),
-            ("cube.tx in Layer('L')", lambda: cube.tx in Layer("L")),
-            ("List([cube]) << Layer('L')", lambda: List([cube]) << Layer("L")),
+        # a class's miss ends with its define (round 4b follow-up F4); the
+        # generic Material's define takes type=, so its miss names none
+        blinn = r"^no blinn named 'red'; Blinn\.define\('red'\) finds or makes it$"
+        layer = r"^no displayLayer named 'L'; DisplayLayer\.define\('L'\) finds or makes it$"
+        for label, pattern, call in (
+            ("cube >> Blinn('red')", blinn, lambda: cube >> Blinn("red")),
+            ("cube << -Blinn('red')", blinn, lambda: cube << -Blinn("red")),
+            ("cube << Blinn('red')", blinn, lambda: cube << Blinn("red")),
+            ("cube in Blinn('red')", blinn, lambda: cube in Blinn("red")),
+            ("cube.f[:2] in Material('red')", r"^no surface shader named 'red'$",
+             lambda: cube.f[:2] in Material("red")),
+            ("cube >> Layer('L')", layer, lambda: cube >> Layer("L")),
+            ("cube << -Layer('L')", layer, lambda: cube << -Layer("L")),
+            ("cube in Layer('L')", layer, lambda: cube in Layer("L")),
+            ("cube.tx in Layer('L')", layer, lambda: cube.tx in Layer("L")),
+            ("List([cube]) << Layer('L')", layer, lambda: List([cube]) << Layer("L")),
         ):
             with self.subTest(row=label):
-                self.assertRefused(NodeNotFoundError,
-                                   r"^no (blinn|surface shader|displayLayer) named '(red|L)'$", call)
+                self.assertRefused(NodeNotFoundError, pattern, call)
                 self.assertRefused(ValueError, "named", call)   # old handlers catch it
         self.assertEqual((cmds.objExists("red"), cmds.objExists("L")), (False, False))
         self.assertEqual(_engines("cubeShape"), ["initialShadingGroup"])
@@ -841,7 +851,8 @@ class TestTourW7(_Case):
         cmds.undo()
         with self.assertRaisesRegex(RuntimeError, r"^h already deleted!$"):
             str(held)
-        self.assertRefused(NodeNotFoundError, r"^no transform named 'h'$", lambda: Transform("h"))
+        self.assertRefused(NodeNotFoundError, r"^no transform named 'h'; Transform\.define\('h'\) finds or makes it$",
+                           lambda: Transform("h"))
         cmds.redo()
         self.assertEqual((str(held), Transform("h")), ("h", held))
 

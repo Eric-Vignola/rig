@@ -1,0 +1,307 @@
+"""Round 4b follow-up F4: a class reference's miss names ``define``.
+
+* ``TestDefineDoor``: ``Cls("x")`` for a name no node has ends its
+  NodeNotFoundError with "; Cls.define('x') finds or makes it", after the
+  hints (did you mean, another namespace, the scope prefix), for every class
+  whose ``define`` makes the node from the name alone, and that ``define``
+  does make the node the reference then finds. A class that refuses
+  ``define`` (``_DEFINE_REFUSED``: Mesh, SkinCluster ...), an abstract one
+  (DGNode, DAGNode, Geometry, the generic Material, which takes ``type=``),
+  ``Node("x")``, a uuid, a name ``define`` refuses as written (a path,
+  ``1bad``, ``''``) and a key in a namespace that does not exist or belongs
+  to a file reference keep the message they had. The door is read when the
+  error is printed, as the hints are (a caller that discards the error never
+  reads it). Only the message changes: the same error class and facts,
+  nothing written, and the hit is untouched.
+"""
+
+import os
+import pickle
+import shutil
+import tempfile
+from unittest import mock
+
+import numpy as np
+from maya import cmds
+
+from rig import container, Layer, List, Node, Tag
+from rig.nodetypes import (
+    BlendShape,
+    Blinn,
+    Choice,
+    DAGNode,
+    DGNode,
+    DisplayLayer,
+    Follicle,
+    Geometry,
+    Joint,
+    Lambert,
+    Material,
+    Mesh,
+    NurbsCurve,
+    NurbsSurface,
+    ObjectSet,
+    OpenPBRSurface,
+    Phong,
+    PhongE,
+    Reference,
+    ShadingEngine,
+    SkinCluster,
+    StandardSurface,
+    SurfaceShader,
+    Transform,
+)
+from rig.nodetypes.deformer import Deformer
+from rig.nodetypes.errors import NodeLookupError, NodeNotFoundError
+from rig._internal.container import Container
+from rig._tests._base import MayaTestCase
+
+
+def _scene():
+    return set(cmds.ls())
+
+
+def _label(cls):
+    from rig.nodetypes._base import _type_label
+
+    return _type_label(cls)
+
+
+class _DoorCtl(Transform):
+    CUSTOM_NODE_TYPE = "r4bfDoorCtl"
+
+
+class _DoorWrapper(Transform):
+    pass
+
+
+# the classes whose define makes a node from the name alone: their miss names it
+DOOR_CLASSES = (
+    Transform, Joint, Choice, DisplayLayer, ObjectSet, ShadingEngine, Deformer,
+    Lambert, Blinn, Phong, PhongE, SurfaceShader, StandardSurface, OpenPBRSurface,
+    _DoorCtl, _DoorWrapper,
+)
+
+# the classes whose define refuses the name alone: their miss is as it was
+NO_DOOR_CLASSES = (
+    DGNode, DAGNode, Geometry, Material,                                    # abstract / type=
+    Mesh, NurbsCurve, NurbsSurface, SkinCluster, BlendShape, Reference, Follicle, Container,
+)
+
+
+class _Case(MayaTestCase):
+    TEST_START_NEW_SCENE = True
+
+    def miss(self, call):
+        """The NodeNotFoundError ``call()`` raises, having written nothing."""
+        before = _scene()
+        with self.assertRaises(NodeNotFoundError) as caught:
+            call()
+        self.assertIs(type(caught.exception), NodeNotFoundError)
+        self.assertEqual(_scene(), before)
+        return caught.exception
+
+
+class TestDefineDoor(_Case):
+    def test_a_class_that_defines_names_its_define(self):
+        for cls in DOOR_CLASSES:
+            with self.subTest(cls=cls.__name__):
+                self.new_scene()
+                error = self.miss(lambda: cls("nosuch_x"))
+                self.assertEqual(
+                    str(error),
+                    f"no {_label(cls)} named 'nosuch_x'; {cls.__name__}.define('nosuch_x') finds or makes it",
+                )
+                self.assertEqual(error.door, f"{cls.__name__}.define('nosuch_x')")
+                # the door works: define makes the node the reference then finds
+                made = cls.define("nosuch_x")
+                self.assertEqual(cls("nosuch_x"), made)
+                self.assertIsInstance(made, cls)
+
+    def test_a_class_that_refuses_define_keeps_its_message(self):
+        for cls in NO_DOOR_CLASSES:
+            with self.subTest(cls=cls.__name__):
+                error = self.miss(lambda: cls("nosuch_x"))
+                self.assertEqual(str(error), f"no {_label(cls)} named 'nosuch_x'")
+                self.assertIsNone(error.door)
+                # the define the door would name refuses the name alone
+                before = _scene()
+                with self.assertRaises(TypeError):
+                    cls.define("nosuch_x")
+                self.assertEqual(_scene(), before)
+
+    def test_the_door_follows_the_hints(self):
+        cmds.createNode("joint", name="spine_01")
+        cmds.namespace(add="char")
+        cmds.createNode("joint", name="char:root")
+        cmds.createNode("joint", name="char:spine_01")
+        cases = (
+            (lambda: Joint("spnie_01"),
+             "no joint named 'spnie_01' (did you mean 'spine_01'?); "
+             "Joint.define('spnie_01') finds or makes it"),
+            (lambda: Joint("spnie_01.tx"),
+             "no joint named 'spnie_01' (did you mean 'spine_01'?); "
+             "Joint.define('spnie_01') finds or makes it"),
+            (lambda: Joint("root"),
+             "no joint named 'root' ('char:root' exists); Joint.define('root') finds or makes it"),
+            (lambda: Joint("char:spnie_01"),
+             "no joint named 'char:spnie_01' (did you mean 'char:spine_01'?); "
+             "Joint.define('char:spnie_01') finds or makes it"),
+            (lambda: Transform("spnie_01"),
+             "no transform named 'spnie_01' (did you mean 'spine_01'?); "
+             "Transform.define('spnie_01') finds or makes it"),
+            (lambda: Blinn("rde"), "no blinn named 'rde'; Blinn.define('rde') finds or makes it"),
+            (lambda: Layer("ghost"),
+             "no displayLayer named 'ghost'; DisplayLayer.define('ghost') finds or makes it"),
+        )
+        for call, text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(str(self.miss(call)), text)
+        # while another namespace is current the lookup reads both; define keys
+        # the current one, and the reference then finds what it made
+        cmds.namespace(set="char")
+        try:
+            error = self.miss(lambda: Joint("elbow"))
+            self.assertEqual(str(error), "no joint named 'elbow'; Joint.define('elbow') finds or makes it")
+            self.assertEqual(Joint.define("elbow").name, "char:elbow")
+            self.assertEqual(Joint("elbow").name, "char:elbow")
+        finally:
+            cmds.namespace(set=":")
+
+    def test_no_door_where_define_makes_no_namespace_or_file_node(self):
+        """define never creates a namespace nor makes a node in a file
+        reference's namespace; a miss there names no define. A namespace of the
+        scene's own keeps the door."""
+        folder = tempfile.mkdtemp(prefix="rig_r4bf_doors_")
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "char.ma").replace("\\", "/")
+        cmds.createNode("joint", name="spine_01")
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        self.new_scene()
+        cmds.file(path, reference=True, namespace="char")
+        cmds.namespace(add="rig")
+        for name, door in (
+            ("char:spnie_01", None),        # a file reference's namespace
+            ("nochar:spnie_01", None),      # no such namespace
+            ("rig:spnie_01", "Joint.define('rig:spnie_01')"),
+            (":spnie_01", "Joint.define(':spnie_01')"),
+        ):
+            with self.subTest(name=name):
+                error = self.miss(lambda: Joint(name))
+                self.assertEqual(error.door, door)
+                self.assertTrue(str(error).startswith(f"no joint named {name!r}"))
+                self.assertEqual(str(error).endswith(f"; {door} finds or makes it"), door is not None)
+                if door is None:
+                    before = _scene()
+                    with self.assertRaisesRegex(ValueError, "define never"):
+                        Joint.define(name)
+                    self.assertEqual(_scene(), before)
+        # a bare name while the reference's namespace is current: define would
+        # key it there
+        cmds.namespace(set=":char")
+        try:
+            self.assertIsNone(self.miss(lambda: Joint("elbow")).door)
+        finally:
+            cmds.namespace(set=":")
+
+    def test_the_scope_prefix_hint_comes_first(self):
+        with container("outer"):
+            with container("inner"):
+                Transform.create(name="k")
+                error = self.miss(lambda: Transform("k"))
+        self.assertEqual(
+            str(error),
+            "no transform named 'k' ('inner_k' exists (the scope prefix)); "
+            "Transform.define('k') finds or makes it",
+        )
+
+    def test_no_door_for_node_a_uuid_or_a_name_define_refuses(self):
+        cmds.createNode("transform", name="grp")
+        error = self.miss(lambda: Node("nosuch_x"))
+        self.assertEqual(str(error), "no node named 'nosuch_x'")
+        self.assertIsNone(error.door)
+        uuid = "12345678-1234-1234-1234-123456789ABC"
+        error = self.miss(lambda: Joint(uuid))
+        self.assertEqual(str(error), f"no node has the uuid '{uuid}'")
+        self.assertIsNone(error.door)
+        for name in ("|grp|nosuch_x", "grp|nosuch_x", "1bad", "", "a-b", "|", ":"):
+            with self.subTest(name=name):
+                error = self.miss(lambda: Joint(name))
+                self.assertEqual(str(error), f"no joint named {name!r}")
+                self.assertIsNone(error.door)
+                # define refuses that name as written
+                before = _scene()
+                with self.assertRaises((TypeError, ValueError)):
+                    Joint.define(name)
+                self.assertEqual(_scene(), before)
+
+    def test_only_the_message_changes(self):
+        cmds.createNode("joint", name="spine_01")
+        error = self.miss(lambda: Joint("spnie_01"))
+        # the facts and the family are the reference's
+        self.assertEqual((error.name, error.label, error.uuid), ("spnie_01", "joint", False))
+        self.assertEqual(error.args, ("spnie_01",))
+        self.assertEqual(repr(error), "NodeNotFoundError('spnie_01')")
+        for family in (NodeLookupError, LookupError, TypeError, ValueError):
+            self.assertIsInstance(error, family)
+        self.assertIs(error.node_class, Joint)
+        # the message is built once, then kept
+        text = str(error)
+        with mock.patch.object(cmds, "ls", wraps=cmds.ls) as ls:
+            self.assertEqual(str(error), text)
+        ls.assert_not_called()
+        copy = pickle.loads(pickle.dumps(error))
+        self.assertEqual((type(copy), copy.door, str(copy)), (NodeNotFoundError, error.door, text))
+        # a held error printed after the scene changed drops the hints, not the door
+        held = self.miss(lambda: Joint("spnie_01"))
+        self.new_scene()
+        self.assertEqual(str(held), "no joint named 'spnie_01'; Joint.define('spnie_01') finds or makes it")
+        # an error made directly names no door
+        self.assertEqual(str(NodeNotFoundError("nosuch_x", "joint")), "no joint named 'nosuch_x'")
+        # the hit, exists and the plug-left spelling are untouched
+        cmds.createNode("joint", name="spine_01")
+        self.assertEqual(repr(Joint("spine_01")), 'Joint("spine_01")')
+        self.assertFalse(Joint.exists("spnie_01"))
+        self.assertTrue(Joint.exists("spine_01"))
+
+    def test_the_door_is_read_when_printed(self):
+        """Like the hints: a caller that discards the error never reads the
+        door (a namespaced name's door reads the namespaces and references)."""
+        cmds.namespace(add="char")
+        with mock.patch.object(Joint, "_define_door", wraps=Joint._define_door) as door:
+            for name in ("nosuch_x", "char:nosuch_x"):
+                with self.subTest(name=name):
+                    error = self.miss(lambda: Joint(name))
+                    self.assertFalse(Joint.exists(name))
+                    door.assert_not_called()
+                    self.assertEqual(str(error), f"no joint named {name!r}; Joint.define({name!r}) finds or makes it")
+                    door.assert_called_once_with(name)
+                    str(error)
+                    door.assert_called_once_with(name)
+                    door.reset_mock()
+            with self.assertRaisesRegex(RuntimeError, "^Missing joints found"):
+                SkinCluster._sanitize_influences(["nosuch_x", "char:nosuch_x"])
+            door.assert_not_called()
+        # a scene that cannot be read drops the door, as it drops a hint
+        error = self.miss(lambda: Joint("char:nosuch_x"))
+        with mock.patch.object(Joint, "_define_door", side_effect=RuntimeError("the scene is gone")):
+            self.assertEqual(str(error), "no joint named 'char:nosuch_x'")
+            self.assertIsNone(error.door)
+
+    def test_a_membership_reference_names_its_define(self):
+        cube = Node(cmds.polyCube(name="cube", ch=False)[0])
+        for call, text in (
+            (lambda: cube << Blinn("rde"), "no blinn named 'rde'; Blinn.define('rde') finds or makes it"),
+            (lambda: cube in Blinn("rde"), "no blinn named 'rde'; Blinn.define('rde') finds or makes it"),
+            (lambda: cube << -Layer("bg"),
+             "no displayLayer named 'bg'; DisplayLayer.define('bg') finds or makes it"),
+            (lambda: cube << Mesh("shapeIn"), "no mesh named 'shapeIn'"),
+            (lambda: cube << Material("x"), "no surface shader named 'x'"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(str(self.miss(call)), text)
+        # a missing influence is still named by the skinCluster's own error
+        with self.assertRaisesRegex(RuntimeError, r"^Missing joints found: \['nosuch_x'\]$"):
+            SkinCluster._sanitize_influences(["nosuch_x"])
+

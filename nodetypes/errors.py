@@ -18,20 +18,27 @@ printed. The hints read the scene then, each in its own ``try``: "did you mean
 'spine_01'?" (the closest leaf names of ``cmds.ls()``, at most 20000 of them),
 "'char:root' exists" (the same leaf in another namespace) and "'inner_k' exists
 (the scope prefix)" (the name a create inside the active flattened
-``with container()`` scope gives). A hint that cannot be read (the scene was
-closed or replaced before the print) is left out, so printing an error never
-raises, and a caller that discards the error (``Node.wrap``) never pays for
-them.
+``with container()`` scope gives). A node class's miss then names the
+``define`` that makes the node ("; Joint.define('spnie_01') finds or makes
+it"), when that makes it from the name. A hint that cannot be read (the scene
+was closed or replaced before the print) is left out, so printing an error
+never raises, and a caller that discards the error (``Node.wrap``,
+``SkinCluster`` influences) never pays for them.
 
 Usage::
 
     from rig import Node, NodeNotFoundError
+    from rig.nodetypes import Joint
 
     try:
         Node("spnie_01")
     except NodeNotFoundError as error:
         print(error)          # no node named 'spnie_01' (did you mean 'spine_01'?)
         print(error.name)     # spnie_01
+    try:
+        Joint("spnie_01")
+    except NodeNotFoundError as error:
+        print(error)          # no joint named 'spnie_01' (did you mean 'spine_01'?); Joint.define('spnie_01') finds or makes it
 """
 
 from __future__ import annotations
@@ -130,7 +137,14 @@ class NodeLookupError(LookupError, TypeError, ValueError):
 class NodeNotFoundError(NodeLookupError):
     """No node has the name (``uuid=True``: the uuid). The message is
     ``no joint named 'spnie_01'`` with its hints (did you mean, another
-    namespace, the scope prefix), or ``no node has the uuid '...'``."""
+    namespace, the scope prefix), or ``no node has the uuid '...'``. A node
+    class's reference ends it with the call that finds or makes the node
+    (``door``), read when it is printed, as the hints are:
+    ``...; Joint.define('spnie_01') finds or makes it``."""
+
+    # the node class whose reference raised the error (``Joint``), set by the
+    # reference; None for ``Node(x)`` and an error made directly
+    node_class = None
 
     def __init__(self, name: str = "", label: str = "node", uuid: bool = False) -> None:
         super().__init__(name, label)
@@ -143,6 +157,27 @@ class NodeNotFoundError(NodeLookupError):
                 self.scope_name = hook(name)
             except Exception:  # noqa: BLE001 -- a hint must not fail the raise
                 pass
+
+    def __str__(self) -> str:
+        if self._message is None:
+            text = super().__str__()
+            door = self.door
+            self._message = f"{text}; {door} finds or makes it" if door else text
+        return self._message
+
+    @property
+    def door(self) -> str | None:
+        """The call that finds or makes the missing node
+        (``"Joint.define('spnie_01')"``), read from the scene now: the
+        reference's class's ``define`` when it makes the node from the name
+        (``DGNode._define_door``); None for a uuid, ``Node(x)``, an error made
+        directly, or a scene that cannot be read."""
+        if self.node_class is None or self.uuid:
+            return None
+        try:
+            return self.node_class._define_door(self.name)
+        except Exception:  # noqa: BLE001 -- the scene changed or closed: no door
+            return None
 
     def _text(self) -> str:
         if self.uuid:

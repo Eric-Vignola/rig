@@ -3294,8 +3294,11 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
     reference. It never writes the scene.
 
     ``x`` is anything ``Node(x)`` takes, by the same lookup rule and errors
-    (a miss says "no joint named 'spnie_01'"), and the result is the node
-    ``Node(x)`` gives: returned when it is an instance of ``cls`` (the most
+    (a miss by name also names the class's ``define`` when that makes the
+    node from the name: "no joint named 'spnie_01' (did you mean
+    'spine_01'?); Joint.define('spnie_01') finds or makes it", read when the
+    error is printed, see ``DGNode._define_door``), and the result is the
+    node ``Node(x)`` gives: returned when it is an instance of ``cls`` (the most
     derived class; ``Cls(x) is x`` for a node object of the class), else the
     class's ``_coerce`` hook decides (a geometry class takes a transform's
     shape, an unregistered class wraps what its ``is_type`` accepts), else
@@ -3317,7 +3320,11 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
         raise TypeError(f"{text}; {cls._KIND_HINT}" if cls._KIND_HINT else text)
     if isinstance(obj, str) and not isinstance(obj, Attribute):
         name = obj.split(".", 1)[0] if "." in obj else obj
-        node = _node_from_str(name, label)
+        try:
+            node = _node_from_str(name, label)
+        except NodeNotFoundError as error:
+            error.node_class = cls  # the message names its define (read when printed)
+            raise
     else:
         # a plug gives its node, as in Node(x)
         node = _node_factory(obj)
