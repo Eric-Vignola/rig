@@ -375,14 +375,15 @@ class _AttrSpec:
         plug_name = f"{node_string}.{long_name}"
         settings  = self._settings()
         fn        = wrap_node.fn_set
-        if not OpenMaya.MFnAttribute(fn.attribute(long_name)).dynamic:
+        attribute = fn.attribute(long_name)
+        if not OpenMaya.MFnAttribute(attribute).dynamic:
             if settings:
                 raise TypeError(
                     f"'{plug_name}' is a static attribute; its settings cannot be changed"
                 )
             return _plug_of(node_string, long_name, wrap_node)
 
-        have = _existing_kind(node_string, long_name)
+        have = _existing_kind(node_string, long_name, attribute)
         want = self._kind()
         if not _same_kind(have, want):
             have_text, want_text = _describe(*have), _describe(*want)
@@ -539,19 +540,32 @@ class _AttrSpec:
 _NO_VALUE = frozenset(("typed", "message", "matrix"))
 
 
-def _existing_kind(node_string: str, long_name: str) -> tuple:
+def _existing_kind(node_string: str, long_name: str, attribute: Any) -> tuple:
     """``(attributeType, dataType, multi, children)`` of the dynamic attribute
-    ``long_name`` of the node ``node_string``, as ``_AttrSpec._kind`` spells a
-    spec's (dataType None unless the attributeType is ``typed``)."""
-    at = cmds.attributeQuery(long_name, node=node_string, attributeType=True)
-    dt = None
+    ``long_name`` of the node ``node_string`` (``attribute``, its MObject), as
+    ``_AttrSpec._kind`` spells a spec's (dataType None unless the attributeType
+    is ``typed``). ``addAttr -query`` and the API (``attributeQuery -node``
+    costs about 155 us a call, ``addAttr -query`` 17 us); a multi compound's
+    children are named through element 0, which a query does not make."""
+    plug = f"{node_string}.{long_name}"
+    at   = cmds.addAttr(plug, query=True, attributeType=True)
+    dt   = None
     if at == "typed":
-        dt = (cmds.addAttr(f"{node_string}.{long_name}", query=True, dataType=True) or [None])[0]
-    multi    = bool(cmds.attributeQuery(long_name, node=node_string, multi=True))
-    kids     = cmds.attributeQuery(long_name, node=node_string, listChildren=True) or []
-    children = tuple(
-        (kid, cmds.attributeQuery(kid, node=node_string, attributeType=True)) for kid in kids
-    )
+        dt = (cmds.addAttr(plug, query=True, dataType=True) or [None])[0]
+    multi    = OpenMaya.MFnAttribute(attribute).array
+    children = ()
+    if attribute.hasFn(OpenMaya.MFn.kCompoundAttribute):
+        compound = OpenMaya.MFnCompoundAttribute(attribute)
+        names    = [
+            OpenMaya.MFnAttribute(compound.child(i)).name for i in range(compound.numChildren())
+        ]
+        children = tuple(
+            (name, cmds.addAttr(
+                f"{plug}[0].{name}" if multi else f"{node_string}.{name}",
+                query=True, attributeType=True,
+            ))
+            for name in names
+        )
     return at, dt, multi, children
 
 
