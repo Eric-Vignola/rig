@@ -259,7 +259,7 @@ class TestNodeCreateTypedDispatch(_SceneCase):
         layers = [
             Node.create("displayLayer", name="L1"),
             DisplayLayer.create(name="L2"),
-            DisplayLayer.get_or_create("L3"),
+            DisplayLayer.define("L3"),
         ]
         with container("box"):
             layers.append(Node.create("displayLayer", name="L4"))

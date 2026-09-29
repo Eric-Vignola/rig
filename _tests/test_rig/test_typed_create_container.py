@@ -431,11 +431,13 @@ class TestTypedCreateInContainer(MayaTestCase):
     # -- 5 registries -- #
 
     def test_display_layer_get_or_create_stays_out_of_a_flattened_scope(self):
+        """Historical id: pinned DisplayLayer / ObjectSet.get_or_create in a flattened
+        scope; it now pins their define (round 4b NC4): no prefix, not registered."""
         with container("outer") as outer:
             with container("inner"):
-                first  = DisplayLayer.get_or_create("L")
-                second = DisplayLayer.get_or_create("L")
-                sets   = ObjectSet.get_or_create("S")
+                first  = DisplayLayer.define("L")
+                second = DisplayLayer.define("L")
+                sets   = ObjectSet.define("S")
                 frames = _frame_uuids()
         self.assertEqual(str(first), "L")
         self.assertEqual(first, second)

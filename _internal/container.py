@@ -1430,9 +1430,14 @@ class _DefineScope:
         """The container that holds ``node_name``, or None."""
         return cmds.container(query=True, findContainer=[node_name])
 
-    # the node-added tracking and the undo chunk
-    track = staticmethod(_call_tracking_creation)
-    chunk = staticmethod(_undo_chunk)
+    @staticmethod
+    def create_node(node_type: str, **kwargs: Any) -> Any:
+        return container.createNode(node_type, **kwargs)
+
+    # the node-added tracking, the undo chunk and the plug-in loading
+    track         = staticmethod(_call_tracking_creation)
+    chunk         = staticmethod(_undo_chunk)
+    ensure_plugin = staticmethod(_ensure_plugin_for_node_type)
 
 
 _dg_node_module._TYPED_CREATE_HOOK = _typed_create

@@ -105,9 +105,9 @@ from rig.nodetypes.plugins import load_plugin
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), normalise / prune / max influences, `transfer_to_mesh`, `connect_bind_pre_matrices` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `add_empty_target`, `rebuild_target` |
-| `ObjectSet` | `objectSet` | `get_or_create`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
+| `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
 | `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members` |
-| `DisplayLayer` | `displayLayer` | `get_or_create`, `for_node`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete` |
+| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `namespace`, `file_path`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `data_type` of `input[i]` / `output` follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
@@ -250,9 +250,10 @@ registries, found again by name: in a scope they stay out, unprefixed,
 unless `container=True`. Outside a scope a direct typed create is plain
 Maya: no prefix, and the new node is selected (through `Node.create` it is not, per `skip_selection`).
 
-`ObjectSet.get_or_create(name)` and `DisplayLayer.get_or_create(name)` look
-the name up as given and in the current namespace, refuse with a
-`TypeError` when the name belongs to something else, and create otherwise.
+`ObjectSet.define(name)` and `DisplayLayer.define(name)` (every node class
+has `define`, which replaced `get_or_create`) find the node at its key, in
+the current namespace too, refuse with a `TypeError` when the name belongs
+to something else, and create otherwise.
 
 ### `Attribute` wraps an `MPlug` and subclasses `str`
 
@@ -410,7 +411,7 @@ from `rig/nodetypes/plugins`, once per session, so nothing needs configuring.
   `duplicate(**duplicate_kwargs)`, `SkinCluster.create(..., **skinCluster_kwargs)`,
   `find_all(**ls_kwargs)`, `list_attr(**listAttr_kwargs)`.
 - **Names are looked up in the current namespace too** by
-  `ObjectSet.get_or_create` and `DisplayLayer.get_or_create`, because that
+  `ObjectSet.define` and `DisplayLayer.define`, because that
   is where `create` puts a new node.
 - **`match_name` arguments are regexes** (`iter_joints`, `iter_shapes`,
   `serialize_maps`, `serialize_component_tags`, `BlendShape.serialize`),
@@ -423,7 +424,7 @@ from `rig/nodetypes/plugins`, once per session, so nothing needs configuring.
 - You need a **result as data**: skin weights as an array, a mesh as a
   `MeshData`, a hierarchy as a `HierarchyData`, a target as a `MorphData`.
 - You need a **classmethod**: `ShadingEngine.for_material`,
-  `DisplayLayer.for_node`, `ObjectSet.get_or_create`, `Reference.find_by_path`,
+  `DisplayLayer.for_node`, `ObjectSet.define`, `Reference.find_by_path`,
   `Follicle.create_on_mesh`, `Transform.create_hierarchy`.
 - You are **writing a tool**, not a network: a duplicate-clean-geometry
   step, a skeleton duplicate with a suffix, an orient pass, a map mirror.

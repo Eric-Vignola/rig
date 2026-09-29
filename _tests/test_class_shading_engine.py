@@ -257,29 +257,35 @@ class TestShadingEngine(MayaTestCase):
         with self.assertRaises(ValueError):
             self.sg_a.assign([self.shape], touched=["noSuchShape"])
 
-    # --- ObjectSet.get_or_create
+    # --- ObjectSet.define (was get_or_create)
 
     def test_get_or_create_guard(self):
+        """Historical id (v2.0.0a2): pinned ObjectSet / ShadingEngine.get_or_create's
+        type guard; it now pins their define (get_or_create's replacement, round 4b
+        NC4): a node of another type at the key is a NodeTypeError (a TypeError),
+        nothing made."""
         plain  = cmds.sets(empty=True, name="plain")
         before = cmds.ls()
         with self.assertRaisesRegex(TypeError, "transform"):
-            ObjectSet.get_or_create(self.xform)
+            ObjectSet.define(str(self.xform))
         with self.assertRaisesRegex(TypeError, "objectSet"):
-            ShadingEngine.get_or_create(plain)
+            ShadingEngine.define(plain)
         self.assertEqual(cmds.ls(), before)
 
-        self.assertEqual(ObjectSet.get_or_create(plain), ObjectSet(plain))
-        self.assertEqual(ShadingEngine.get_or_create(self.sg_a.name), self.sg_a)
-        created = ShadingEngine.get_or_create("freshSG")
+        self.assertEqual(ObjectSet.define(plain), ObjectSet(plain))
+        self.assertEqual(ShadingEngine.define(self.sg_a.name), self.sg_a)
+        created = ShadingEngine.define("freshSG")
         self.assertIs(type(created), ShadingEngine)
         self.assertTrue(cmds.listConnections(f"{created}.partition", plugs=True))
 
     def test_get_or_create_namespace(self):
+        """Historical id (v2.0.0a2): pinned ObjectSet.get_or_create in the current
+        namespace; it now pins ObjectSet.define there (round 4b NC4)."""
         cmds.namespace(add="ns")
         cmds.namespace(set="ns")
         try:
-            first  = ObjectSet.get_or_create("inNs")
-            second = ObjectSet.get_or_create("inNs")
+            first  = ObjectSet.define("inNs")
+            second = ObjectSet.define("inNs")
         finally:
             cmds.namespace(set=":")
         self.assertEqual(first.name, "ns:inNs")

@@ -453,6 +453,66 @@ def _define(
     return node
 
 
+def _define_untyped(
+    node_type: str, name: Any, parent: Any, update: bool, joins: bool | None, kwargs: dict
+) -> Any:
+    """``Node.define(node_type, name, ...)`` for a type no node class is
+    registered for: `_define` with an exact node type check on a hit and the
+    scope's ``createNode`` (plus the attribute keywords) on a miss. A shape
+    type is refused (Maya makes it under a new transform, so no key names
+    it), and so is a container (``with container()`` makes one)."""
+    hook  = _define_hook()
+    spell = lambda args: f"Node.define({node_type!r}, {args})"  # noqa: E731
+    hook.ensure_plugin(node_type)
+    try:
+        chain = cmds.nodeType(node_type, isTypeName=True, inherited=True) or []
+    except RuntimeError:
+        chain = []
+    if not chain:
+        raise ValueError(f"{node_type!r} is not a Maya node type")
+    # (not "containerBase": every entity's chain starts there)
+    if "container" in chain:
+        raise TypeError(
+            f"{spell(repr(name))} is refused: {_article(node_type)} {node_type} is made by its scope: "
+            f"with container('x'): makes one; Container('x') refers to one"
+        )
+    if "shape" in chain:
+        raise TypeError(
+            f"{spell(repr(name))}: {_article(node_type)} {node_type} is a shape, which Maya makes under a new "
+            f"transform: define the transform, then Node.create({node_type!r}, parent=...) "
+            f"makes the shape under it"
+        )
+    dag   = "dagNode" in chain
+    flags = frozenset({"name", "n", "skipSelect", "ss"} | ({"parent", "p"} if dag else set()))
+    own   = _DEFINE_OWN.intersection(kwargs)
+    if own:
+        raise TypeError(
+            f"{spell('name')} takes its name after the type and parent= "
+            f"(got {', '.join(f'{key}=' for key in sorted(own))})"
+        )
+    if parent is not None and not dag:
+        raise TypeError(f"{spell(repr(name))} takes no parent=: {_article(node_type)} {node_type} is a DG node")
+    attrs = {}
+    if kwargs and not flags.issuperset(kwargs):
+        attrs = _attribute_keywords(node_type, kwargs, flags, spell("..."))
+
+    def accept(found):
+        return found if found.node_type == node_type else None
+
+    def make(made_name, parent_node):
+        if parent_node is not None:
+            kwargs["parent"] = parent_node.long_name
+        node = hook.create_node(node_type, name=made_name, container=joins, **kwargs)
+        for attr, value in attrs.items():
+            getattr(node, attr) << value
+        return node
+
+    return _define(
+        spell, "Node", node_type, name, parent, dag=dag, update=update, attrs=attrs,
+        accept=accept, make=make, aware=True, joins=joins, typed=False,
+    )
+
+
 def _typed_creator(fn):
     """Decorate the body ``fn(cls, ...)`` of a typed creator classmethod that
     does not go through `DGNode.create` (put it under ``@classmethod``).
@@ -1161,7 +1221,8 @@ class DGNode(Node):
         Every refusal writes nothing. A class built from data or inputs
         (``Mesh``, ``NurbsCurve``, ``NurbsSurface``, ``SkinCluster``,
         ``BlendShape``, ``Reference``, ``Follicle``) and ``Container`` refuse
-        ``define`` (TypeError naming their creator).
+        ``define`` (TypeError naming their creator); ``Node.define(type,
+        name)`` is the door for a type by name.
         """
         refused = cls._DEFINE_REFUSED
         if refused:

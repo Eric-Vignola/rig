@@ -10,6 +10,9 @@
   reference; a DG node holding the name is refused (Maya would rename the new
   node); the registries define like any class; the classes built from data refuse
   define, naming their creator; a made node is one undo step.
+* ``TestNodeDefine``: ``Node.define(type, name)`` runs a registered class's define,
+  and keys, guards and makes a type no class is registered for, checking the exact
+  type on a hit.
 * ``TestDefineElsewhere``: without ``parent=`` a name the reference already gives
   another node (nested, ``|char_grp|root``: REC C2; in the other namespace the
   lookup rule reads, ``:x`` while ``char`` is current: C3) is refused, not forked.
@@ -350,6 +353,63 @@ class TestDefine(_Case):
         self.assertEqual(Transform.define("rig").long_name, "|rig")
 
 
+class TestNodeDefine(_Case):
+    """``Node.define(type, name, ...)``: the untyped door."""
+
+    def test_a_registered_type_runs_its_class_define(self):
+        root = Node.define("transform", "rig")
+        self.assertIs(type(root), Transform)
+        self.assertEqual(Node.define("transform", "rig"), root)
+        joint = Node.define("joint", "j", parent=root, tx=1)
+        self.assertEqual((type(joint), joint.long_name, cmds.getAttr("|rig|j.tx")), (Joint, "|rig|j", 1.0))
+        self.assertIs(type(Node.define("displayLayer", "L")), DisplayLayer)
+        self.assertRefused(TypeError, r"^SkinCluster\.define\(\) is refused", lambda: Node.define("skinCluster", "skin"))
+        self.assertRefused(NodeTypeError, r"not a joint", lambda: Node.define("joint", "rig"))
+
+    def test_an_unregistered_type(self):
+        made = Node.define("multiplyDivide", "md", operation="divide", input1X=3)
+        self.assertEqual((cmds.nodeType("md"), cmds.getAttr("md.operation"), cmds.getAttr("md.input1X")),
+                         ("multiplyDivide", 2, 3.0))
+        self.assertEqual(Node.define("multiplyDivide", "md", operation="multiply"), made)
+        self.assertEqual(cmds.getAttr("md.operation"), 2)
+        Node.define("multiplyDivide", "md", operation="multiply", update=True)
+        self.assertEqual(cmds.getAttr("md.operation"), 1)
+        cmds.createNode("transform", name="rig")
+        cases = (
+            (NodeTypeError, r"^'md' is a multiplyDivide, not a plusMinusAverage",
+             lambda: Node.define("plusMinusAverage", "md")),
+            (NodeTypeError, r"^'rig' is a transform, not a multiplyDivide",
+             lambda: Node.define("multiplyDivide", "rig")),
+            (AttributeError, r"^Node\.define\('multiplyDivide', \.\.\.\): a multiplyDivide has no attribute 'tyop'",
+             lambda: Node.define("multiplyDivide", "new", tyop=1)),
+            (ValueError, r"^'noSuchType' is not a Maya node type$", lambda: Node.define("noSuchType", "x")),
+            (TypeError, r"^Node\.define\('locator', 'loc'\): a locator is a shape",
+             lambda: Node.define("locator", "loc")),
+            (TypeError, r"^Node\.define\('container', 'box'\) is refused: a container is made by its scope",
+             lambda: Node.define("container", "box")),
+            (TypeError, r"takes no parent=: a multiplyDivide is a DG node",
+             lambda: Node.define("multiplyDivide", "m2", parent="rig")),
+        )
+        for error, pattern, call in cases:
+            with self.subTest(pattern=pattern):
+                self.assertRefused(error, pattern, call)
+
+    def test_an_unregistered_dag_type_takes_a_parent(self):
+        rig = Transform.create(name="rig")
+        made = Node.define("aimConstraint", "aim", parent=rig)
+        self.assertEqual((cmds.nodeType(str(made)), made.long_name), ("aimConstraint", "|rig|aim"))
+        self.assertEqual(Node.define("aimConstraint", "aim", parent="rig"), made)
+        self.assertRefused(AmbiguousNodeError, r"'aim' exists at \|rig\|aim", lambda: Node.define("aimConstraint", "aim"))
+
+    def test_an_unregistered_type_in_a_flattened_scope(self):
+        with container("outer") as outer:
+            with container("inner"):
+                made  = Node.define("multiplyDivide", "m")
+                again = Node.define("multiplyDivide", "m")
+        self.assertEqual((str(made), again), ("inner_m", made))
+        self.assertEqual(cmds.container(str(outer), query=True, nodeList=True), ["inner_m"])
+
+
 class TestDefineElsewhere(_Case):
     """CC-1 / CC-2: without ``parent=`` a name the reference already gives another
     node is refused, not forked."""
@@ -457,6 +517,7 @@ class TestDefineReferenceNamespace(_Case):
         pattern = r"^Joint\.define\('newj'\): the namespace 'char' belongs to the file reference charRN \(.*one_joint\.ma\)"
         self.assertRefused(ValueError, pattern, lambda: Joint.define("newj"))
         self.assertRefused(ValueError, "belongs to the file reference", lambda: DisplayLayer.define("L"))
+        self.assertRefused(ValueError, "belongs to the file reference", lambda: Node.define("multiplyDivide", "m"))
 
     def test_a_spelled_reference_namespace_is_refused(self):
         self.assertRefused(ValueError, r"^Joint\.define\('char:spnie'\): the namespace 'char' belongs",
