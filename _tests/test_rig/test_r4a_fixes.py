@@ -1507,22 +1507,20 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         kept = node << Float("k", overwrite=False)
         self._assert_owned(kept, node, "k")
         self.assertEqual(kept.get(), 7.0)
-        # a static attr, not overwritten: named as the spec names it, with no
-        # handle of its attribute
-        static = node << Float("tx", overwrite=False)
-        self.assertIs(static.node, node)
-        self.assertEqual(str.__str__(static), "held.tx")
-        self.assertEqual(str(static), "held.translateX")
-        self.assertIsNone(vars(static)["_attr1"])
-        self.assertTrue(_same_plug(static, node.tx))
-        # a real attr named like a component alias: the attr the name names, as
-        # its str buffer does (``node.pnts`` is the canonical controlPoints)
+        # a static attr: a declaration adds a dynamic attribute, so it is
+        # refused before any edit (round 4b FIX; it returned the static plug)
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(TypeError, r"'held\.tx' is a static attribute of the transform"):
+            node << Float("tx", overwrite=False)
+        self.assertEqual(set(cmds.ls()), before)
+        # a real (static) attr named like a component alias: refused as well
+        # (round 4b FIX; it returned the plug the name names)
         cmds.polyCube(name="box", constructionHistory=False)
-        shape = Node("boxShape")
-        pnts = shape << Float("pnts", overwrite=False)
-        self.assertIs(pnts.node, shape)
-        self.assertEqual(str.__str__(pnts), "boxShape.pnts")
-        self.assertEqual(str(pnts), "boxShape.pnts")
+        shape  = Node("boxShape")
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(TypeError, r"'boxShape\.pnts' is a static attribute of the mesh"):
+            shape << Float("pnts", overwrite=False)
+        self.assertEqual(set(cmds.ls()), before)
 
     def test_output_note_and_chain(self):
         from rig import lock

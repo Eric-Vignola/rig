@@ -785,6 +785,16 @@ class Plug(Attribute):
                 return _publish_to_container(
                     self, other, direction=direction, name=auto_name
                 )
+            # one rule for both clone spellings: '>>' never overwrites, and
+            # never re-declares (plug >> 'name' refuses a taken name too)
+            name = self.alias
+            if other.has_attr(name):
+                raise TypeError(
+                    f"'{other}' already has an attribute '{name}': '>>' clones, it never "
+                    f"overwrites. Clone under another name ({self} >> '{other}.<name>'), "
+                    f"re-declare it with {other} << <spec>, or destroy it first "
+                    f"({other} << destroy({name!r}))"
+                )
             return _clone_attribute(self, other)
 
         # Singleton shortcut: ``plug >> container`` with the module-level
