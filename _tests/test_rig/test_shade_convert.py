@@ -1,5 +1,10 @@
-"""Tests for shader conversion: ``Phong(mat)``, ``mat.astype()``,
-``shade.convert()`` and the parking engine behind them.
+"""Tests for shader conversion: ``mat.astype(Phong)``, ``shade.convert()``
+and the parking engine behind them.
+
+Round 4b (NC7): a conversion makes a new node and RETURNS it (``red =
+red.astype(Phong)``); the old node object then raises, naming the
+conversion. ``Phong(mat)`` is a reference, never a conversion.
+``dry_run=True`` returns the :class:`Conversion` report.
 
 ``cmds.warning`` is monkeypatched to count and capture; every refusal
 asserts a zero ``cmds.ls()`` delta and an unchanged connection snapshot.
@@ -11,7 +16,7 @@ import tempfile
 from unittest import mock
 
 from maya import cmds
-from rig import container, lock, memoize, Node
+from rig import container, lock, memoize, Node, NodeTypeError
 from rig import shade
 from rig.bridges import nodes as rn
 from rig.shade import (
@@ -25,6 +30,9 @@ from rig.shade import (
 )
 from rig._internal import shade_convert
 from rig._tests._base import MayaTestCase
+
+
+CONVERTED = r"'red' was converted to a {}; use the node astype\(\) returned"
 
 
 def _cube(name):
@@ -65,7 +73,7 @@ def _visible(node):
 
 
 # --------------------------------------------------------------------- #
-#  Lazy: a retype, nothing in the scene
+#  Before a material exists: its type is its define's class
 # --------------------------------------------------------------------- #
 
 
@@ -73,57 +81,64 @@ class TestLazyRetype(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_retype_is_free_and_returns_an_equal_fresh_handle(self):
+        """Historical id (v2.0.0a2): pinned Phong(spec) retyping a lazy spec for
+        free; it now pins that a reference never retypes (Phong(blinn) is the
+        reference's NodeTypeError naming astype, nothing written) and that a
+        material's type before it exists is its define's class (round 4b NC7:
+        Phong.define is the spelling)."""
         cube   = _cube("cube")
+        red    = Blinn.define("red", color=[1, 0, 0])
         before = set(cmds.ls())
-        mat    = Blinn("red", color=[1, 0, 0])
         with mock.patch.object(cmds, "warning") as warn:
-            p = Phong(mat)
+            for call in (lambda: Phong(red), lambda: Phong("red"), lambda: Phong(Node("red"))):
+                with self.assertRaisesRegex(
+                    NodeTypeError, r"^'red' is a blinn, not a phong; .*Blinn\('red'\)\.astype\(Phong\) converts it$"
+                ):
+                    call()
         self.assertEqual(warn.call_count, 0)
-        self.assertIs(type(mat), Phong)
-        self.assertEqual(mat.type,  "phong")
-        self.assertEqual(repr(mat), "Phong('red')")
-        self.assertEqual(p,         mat)
-        self.assertIsNot(p, mat)
-        self.assertIs(type(p), Phong)
-        self.assertEqual(p.attrs, {"color": [1, 0, 0]})
         self.assertEqual(set(cmds.ls()), before)
-        cube << mat
-        self.assertEqual(cmds.nodeType("red"), "phong")
-        self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
-        self.assertEqual([repr(m) for m in Material.of(cube)], ["Phong('red')"])
-        # the fresh handle names the same node
-        self.assertEqual(str(p.node), "red")
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertIs(type(red), Blinn)
+        self.assertTrue(red.is_valid)
+        # the type is chosen when the material is made
+        p = Phong.define("p", color=[1, 0, 0])
+        cube << p
+        self.assertEqual(cmds.nodeType("p"), "phong")
+        self.assertEqual(cmds.getAttr("p.color")[0], (1.0, 0.0, 0.0))
+        self.assertEqual([repr(m) for m in Material.of(cube)], ['Phong("p")'])
+        self.assertEqual(Phong("p"), p)
 
     def test_dropped_kwarg_warns_once_and_is_pruned(self):
+        """Historical id (v2.0.0a2): pinned a lazy retype pruning the kwargs the
+        target lacks with one warning; it now pins that define / create check
+        every attribute against their own type before anything is made (a phong
+        has no eccentricity: AttributeError, nothing written), and that the
+        conversion options live on astype / convert only (round 4b NC7)."""
         bump   = rn.bump2d(name="bump")
         before = set(cmds.ls())
         with mock.patch.object(cmds, "warning") as warn:
-            p = Phong(Blinn("k", eccentricity=0.6, normalCamera=bump.outNormal))
-        self.assertEqual(warn.call_count, 1)
-        text = warn.call_args[0][0]
-        self.assertIn("'k' blinn -> phong drops kwarg eccentricity=0.6", text)
-        self.assertIn("phong has no eccentricity", text)
-        self.assertEqual(list(p.attrs), ["normalCamera"])
-        self.assertEqual(str(p.attrs["normalCamera"]), "bump.outNormal")
+            with self.assertRaisesRegex(AttributeError, "a phong has no attribute 'eccentricity'"):
+                Phong.define("k", eccentricity=0.6, normalCamera=bump.outNormal)
+            with self.assertRaisesRegex(AttributeError, "a phong has no attribute 'eccentricity'"):
+                Phong.create(name="k", eccentricity=0.6)
+        self.assertEqual(warn.call_count, 0)
         self.assertEqual(set(cmds.ls()), before)
-        # the synonym and the generic re-wrap
-        with mock.patch.object(cmds, "warning") as warn:
-            q = Material(Blinn("k2", eccentricity=0.6), type="phong")
-        self.assertEqual(warn.call_count, 1)
-        self.assertIs(type(q), Phong)
-        self.assertEqual(q.attrs, {})
-        plain = Material(Blinn("k3", eccentricity=0.6))
-        self.assertIs(type(plain), Material)
-        self.assertIsNone(plain.type)
-        self.assertEqual(plain.attrs, {"eccentricity": 0.6})
         # options live on astype / convert only
-        with self.assertRaisesRegex(AttributeError, "no attribute 'strict'"):
-            Phong(Blinn("k4"), strict=True)
+        with self.assertRaisesRegex(TypeError, "takes no attributes"):
+            Phong("k", strict=True)
+        with self.assertRaisesRegex(TypeError, "takes no attributes"):
+            Material(Blinn.define("k3"), type="phong")
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(AttributeError, "no attribute 'nope'"):
+            Blinn("k3").astype(Phong, nope=1)
         self.assertEqual(set(cmds.ls()), before)
+        p = Phong.define("k", normalCamera=bump.outNormal)
+        self.assertEqual(_sources("k.normalCamera"), ["bump.outNormal"])
+        self.assertIs(type(p), Phong)
 
 
 # --------------------------------------------------------------------- #
-#  Realised: the scene conversion
+#  The scene conversion
 # --------------------------------------------------------------------- #
 
 
@@ -136,14 +151,14 @@ class TestConversion(MayaTestCase):
         self.cube = _cube("cube")
 
     def test_nothing_set_asks_no_questions_and_keeps_the_topology(self):
-        mat = Blinn("red", color=[1, 0, 0])
+        mat = Blinn.define("red", color=[1, 0, 0])
         self.cube << mat
         info = _info("redSG")
         cmds.connectAttr("red.message", f"{info}.material")
         slot   = _dsl1_index("red")
         before = set(cmds.ls())
         with mock.patch.object(cmds, "warning") as warn:
-            p = Phong(mat)
+            p = mat.astype(Phong)
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(cmds.nodeType("red"), "phong")
@@ -152,23 +167,27 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_dsl1_index("red"), slot)
         self.assertEqual(_members("redSG"), ["cubeShape"])
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
-        self.assertEqual(str(mat.node), "red")
-        self.assertEqual(str(mat.engine), "redSG")
-        self.assertIs(type(mat), Phong)
-        self.assertEqual(p, mat)
-        self.assertEqual([repr(m) for m in Material.of(self.cube)], ["Phong('red')"])
-        mat.cosinePower << 40
+        # the new node is returned; the held one names the conversion
+        self.assertIs(type(p), Phong)
+        self.assertEqual(repr(p), 'Phong("red")')
+        self.assertEqual(p, Node("red"))
+        self.assertEqual(str(p.engine), "redSG")
+        self.assertEqual([repr(m) for m in Material.of(self.cube)], ['Phong("red")'])
+        p.cosinePower << 40
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
-        with self.assertRaisesRegex(TypeError, r"Blinn\(Material\('red'\)\)"):
-            Blinn("red").node
+        with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
+            str(mat)
+        with self.assertRaisesRegex(TypeError, r"Phong\('red'\)\.astype\(Blinn\) converts it"):
+            Blinn("red")
         self.assertEqual(cmds.ls("*__rigconvert*"), [])
+        self.assertEqual(cmds.ls("*__rigold*"), [])
 
     def _lossy_red(self):
         """A blinn with something of every kind: a locked blinn-only value,
         a createNode-made ramp into a blinn-only attr, a locked shared
         value, an animCurve on a shared attr, wires into shared attrs at
         parent and child level, and a user attribute."""
-        red = Blinn("red")
+        red = Blinn.define("red")
         self.cube        << red
         red.eccentricity << 0.66 << lock
         rn.ramp(name="ramp1")
@@ -192,7 +211,7 @@ class TestConversion(MayaTestCase):
         self.assertTrue(report)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         with mock.patch.object(cmds, "warning") as warn:
-            Phong(red)
+            red = red.astype(Phong)
         self.assertEqual(warn.call_count, 1)
         self.assertEqual(warn.call_args[0][0], str(report))
         self.assertEqual(str(report).splitlines(), [
@@ -214,6 +233,7 @@ class TestConversion(MayaTestCase):
             self.assertIn(attr, report.carried)
         self.assertNotIn("eccentricity", report.carried)
         # what moved
+        self.assertIs(type(red), Phong)
         self.assertEqual(cmds.nodeType("red"),          "phong")
         self.assertEqual(_sources("red.incandescence"), ["tex.outColor"])
         self.assertEqual(_sources("red.transparencyG"), ["ramp2.outAlpha"])
@@ -238,11 +258,11 @@ class TestConversion(MayaTestCase):
 
     def test_the_cascade_pin(self):
         # rig keeps a createNode-made ramp through the conversion
-        red = Blinn("red")
+        red = Blinn.define("red")
         self.cube           << red
         red.specularRollOff << Node.create("ramp", name="ramp1").outAlpha
         with mock.patch.object(cmds, "warning"):
-            Phong(red)
+            red.astype(Phong)
         self.assertTrue(cmds.objExists("ramp1"))
         self.assertEqual(_destinations("ramp1.outAlpha"), ["red.__specularRollOff__"])
         # the pin: raw create + copyAttr + delete on a copy loses it, which
@@ -256,12 +276,12 @@ class TestConversion(MayaTestCase):
         self.assertFalse(cmds.objExists("doomed"))
 
     def test_animation_on_a_lost_attr_is_parked_with_its_keys(self):
-        red = Phong("red")
+        red = Phong.define("red")
         self.cube << red
         cmds.setKeyframe("red.cosinePower", v=10, t=1)
         cmds.setKeyframe("red.cosinePower", v=30, t=10)
         with mock.patch.object(cmds, "warning") as warn:
-            Blinn(red)
+            red = red.astype(Blinn)
         lines = warn.call_args[0][0].splitlines()
         self.assertEqual(lines[0], "rig.shade: 'red' phong -> blinn parks:")
         self.assertEqual(
@@ -275,15 +295,14 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_destinations("red_cosinePower.output"), ["red.__cosinePower__"])
         # through a type that lacks it: still parked
         with mock.patch.object(cmds, "warning") as warn:
-            Lambert(red)
+            red = red.astype(Lambert)
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(cmds.listAttr("red", userDefined=True), ["__cosinePower__"])
         self.assertEqual(_destinations("red_cosinePower.output"), ["red.__cosinePower__"])
-        # restored at the end, parked attribute destroyed
+        # restored at the end (read from the scene), parked attribute destroyed
         with mock.patch.object(cmds, "warning") as warn:
-            report = shade.convert(red, Phong)
+            red = shade.convert(red, Phong)
         self.assertEqual(warn.call_count, 0)
-        self.assertEqual(report.restored, ("cosinePower",))
         self.assertEqual(_sources("red.cosinePower"), ["red_cosinePower.output"])
         self.assertEqual(cmds.keyframe("red_cosinePower", query=True, keyframeCount=True), 2)
         self.assertIsNone(cmds.listAttr("red", userDefined=True))
@@ -292,13 +311,13 @@ class TestConversion(MayaTestCase):
     def test_round_trip_restores_everything_and_destroys_the_parked_attrs(self):
         red = self._lossy_red()
         with mock.patch.object(cmds, "warning"):
-            Phong(red)
-        with mock.patch.object(cmds, "warning") as warn:
-            report = shade.convert(red, "blinn")
-        self.assertEqual(warn.call_count, 0)
+            red = red.astype(Phong)
+        report = shade.convert(red, "blinn", dry_run=True)
         self.assertFalse(report)
-        self.assertEqual(str(report),          "")
-        self.assertEqual(report.restored,      ("eccentricity", "specularRollOff"))
+        self.assertEqual(str(report), "")
+        with mock.patch.object(cmds, "warning") as warn:
+            red = shade.convert(red, "blinn")
+        self.assertEqual(warn.call_count, 0)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertAlmostEqual(cmds.getAttr("red.eccentricity"), 0.66, places=5)
         self.assertTrue(cmds.getAttr("red.eccentricity", lock=True))
@@ -313,12 +332,12 @@ class TestConversion(MayaTestCase):
         self.assertIs(type(red), Blinn)
 
     def test_park_false_drops_and_disconnects(self):
-        red = Blinn("red")
+        red = Blinn.define("red")
         self.cube           << red
         red.eccentricity    << 0.5
         red.specularRollOff << rn.ramp(name="ramp1").outAlpha
         with mock.patch.object(cmds, "warning") as warn:
-            red.astype("phong", park=False)
+            red = red.astype("phong", park=False)
         self.assertEqual(warn.call_args[0][0].splitlines(), [
             "rig.shade: 'red' blinn -> phong loses:",
             "   wire        ramp1.outAlpha -> specularRollOff   "
@@ -329,16 +348,16 @@ class TestConversion(MayaTestCase):
         self.assertTrue(cmds.objExists("ramp1"))
         self.assertEqual(_destinations("ramp1.outAlpha"), [])
         self.assertIsNone(cmds.listAttr("red", userDefined=True))
-        Blinn(red)
+        red.astype(Blinn)
         self.assertAlmostEqual(cmds.getAttr("red.eccentricity"), 0.3, places=5)
         self.assertEqual(_sources("red.specularRollOff"), [])
 
     def test_locked_connected_shared_attr_moves_with_the_lock_on_the_parent(self):
-        red = Blinn("red")
+        red = Blinn.define("red")
         self.cube << red
         red.color << rn.ramp(name="ramp1").outColor << lock
         with mock.patch.object(cmds, "warning") as warn:
-            Phong(red)
+            red.astype(Phong)
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(_sources("red.color"), ["ramp1.outColor"])
         self.assertTrue(cmds.getAttr("red.color", lock=True))
@@ -346,9 +365,9 @@ class TestConversion(MayaTestCase):
         self.assertFalse(cmds.getAttr("red.colorR", lock=True))
 
     def test_outgoing_wires_bind_attr_aliases_and_the_container_survive(self):
-        red = Blinn("red")
+        red = Blinn.define("red")
         self.cube << red
-        other = Blinn("other")
+        other = Blinn.define("other")
         _cube("cube2") << other
         other.color    << red.color
         asset = cmds.container(name="asset", addNode=["red"])
@@ -357,7 +376,7 @@ class TestConversion(MayaTestCase):
         bound = cmds.container(asset, query=True, bindAttr=True)
         with container("look"):
             with mock.patch.object(cmds, "warning") as warn:
-                Phong(red)
+                red = red.astype(Phong)
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(_sources("other.color"), ["red.color"])
         self.assertEqual(cmds.container(asset, query=True, bindAttr=True), bound)
@@ -368,7 +387,7 @@ class TestConversion(MayaTestCase):
                 self.assertNotIn("red", cmds.container(name, query=True, nodeList=True) or [])
         # a lost output is disconnected, a lost alias unbound, both named
         with mock.patch.object(cmds, "warning") as warn:
-            StandardSurface(red)
+            red.astype(StandardSurface)
         self.assertIn("   output      color -> other.color   (disconnected)", warn.call_args[0][0])
         self.assertIn("   output      color -> asset.tint   (disconnected)", warn.call_args[0][0])
         self.assertEqual(_sources("other.color"), [])
@@ -380,15 +399,19 @@ class TestConversion(MayaTestCase):
         cmds.namespace(add="look")
         cmds.namespace(set="look")
         try:
-            self.cube << Blinn("red")
+            self.cube << Blinn.define("red")
         finally:
             cmds.namespace(set=":")
         self.assertTrue(cmds.objExists("look:red"))
-        Material("look:red").astype("phong")
+        held = Material("look:red")
+        new  = held.astype("phong")
+        self.assertEqual(repr(new), 'Phong("look:red")')
         self.assertEqual(cmds.nodeType("look:red"), "phong")
         self.assertEqual(_sources("look:redSG.surfaceShader"), ["look:red.outColor"])
         self.assertEqual(cmds.ls("*__rigconvert*", recursive=True), [])
         self.assertEqual(cmds.ls("red*", recursive=True), ["look:red", "look:redSG"])
+        with self.assertRaisesRegex(RuntimeError, r"'look:red' was converted to a phong"):
+            str(held)
 
     def test_strict_refuses_with_the_warning_text(self):
         red    = self._lossy_red()
@@ -404,64 +427,74 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_wiring("red"),        wiring)
         self.assertEqual(cmds.nodeType("red"),  "blinn")
         self.assertIs(type(red), Blinn)
+        self.assertTrue(red.is_valid)
         # nothing lossy: strict passes
-        clean = Blinn("clean")
+        clean = Blinn.define("clean")
         self.cube << clean
-        clean.astype("phong", strict=True)
+        self.assertIs(type(clean.astype("phong", strict=True)), Phong)
         self.assertEqual(cmds.nodeType("clean"), "phong")
 
     def test_same_type_opens_no_chunk_and_follows_the_found_material_rule(self):
-        m = Phong("red")
+        m = Phong.define("red")
         self.cube << m
         cmds.flushUndo()
         with mock.patch.object(cmds, "warning") as warn:
-            p = Phong(m)
             self.assertIs(m.astype("phong"), m)
-            m.astype(Phong)
+            self.assertIs(m.astype(Phong), m)
+            self.assertEqual(shade.convert("red", Phong), m)
+            self.assertEqual(shade.convert(m, "phong", dry_run=True), Conversion("red", "phong", "phong"))
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
-        self.assertEqual(p, m)
         self.assertEqual(cmds.nodeType("red"), "phong")
-        # kwargs on a material already of that type are skipped, merged
-        Phong(m, cosinePower=40)
+        self.assertTrue(m.is_valid)
+        # attributes on a material already of that type are skipped
+        self.assertIs(m.astype(Phong, cosinePower=40), m)
         self.assertEqual(cmds.getAttr("red.cosinePower"), 20)
-        self.assertEqual(m.attrs, {"cosinePower": 40})
-        Phong(m, cosinePower=40, update=True)
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
+        self.assertIs(m.astype(Phong, cosinePower=40, update=True), m)
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.material")
 
     def test_kwargs_on_a_conversion_write_inside_the_chunk(self):
-        m = Blinn("red", color=[1, 0, 0])
+        m = Blinn.define("red", color=[1, 0, 0])
         self.cube << m
         before = set(cmds.ls())
         with self.assertRaisesRegex(AttributeError, "no attribute 'nope'"):
-            Phong(m, nope=1)
+            m.astype(Phong, nope=1)
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(m), Blinn)
-        Phong(m, cosinePower=40)
+        self.assertTrue(m.is_valid)
+        p = m.astype(Phong, cosinePower=40)
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
-        self.assertEqual(m.attrs, {"color": [1, 0, 0], "cosinePower": 40})
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.shade.convert")
         cmds.undo()
         self.assertEqual(cmds.nodeType("red"), "blinn")
         cmds.redo()
         self.assertEqual(cmds.nodeType("red"), "phong")
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
-        # a rebuild in a fresh scene declares the merged kwargs
+        # a held node dies with its scene; a look that outlives it is a recipe
         cmds.file(new=True, force=True)
-        _cube("cube") << m
+        with self.assertRaisesRegex(RuntimeError, "freed by a new scene"):
+            str(p)
+
+        def look():
+            return Phong.define("red", color=[1, 0, 0], cosinePower=40)
+
+        _cube("cube") << look()
         self.assertEqual(cmds.nodeType("red"),            "phong")
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
         self.assertEqual(cmds.getAttr("red.color")[0],    (1.0, 0.0, 0.0))
 
     def test_cross_family_only_non_default_values_cross(self):
-        chrome = Blinn("chrome")
+        chrome = Blinn.define("chrome")
         self.cube << chrome
         with mock.patch.object(cmds, "warning") as warn:
-            StandardSurface(chrome)
+            chrome.astype(StandardSurface)
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(cmds.nodeType("chrome"), "standardSurface")
         self.assertEqual(cmds.getAttr("chrome.specularColor")[0], (1.0, 1.0, 1.0))
-        set_ = Blinn("set", specularColor=[0.2, 0.6, 0.8], color=[1, 0, 0], diffuse=0.5)
+        set_ = Blinn.define("set", specularColor=[0.2, 0.6, 0.8], color=[1, 0, 0], diffuse=0.5)
         _cube("cube2") << set_
         report = shade.convert(set_, "standardSurface", dry_run=True)
         self.assertEqual(report.default_shift[0][0], "specularColor")
@@ -474,7 +507,7 @@ class TestConversion(MayaTestCase):
         self.assertIn("   value       diffuse = 0.5", str(report))
         self.assertEqual(report.parked, ("diffuse", "color"))
         with mock.patch.object(cmds, "warning"):
-            StandardSurface(set_)
+            set_.astype(StandardSurface)
         got = cmds.getAttr("set.specularColor")[0]
         self.assertAlmostEqual(got[0], 0.2, places=5)
         self.assertAlmostEqual(got[2], 0.8, places=5)
@@ -485,13 +518,14 @@ class TestConversion(MayaTestCase):
         )
 
     def test_type_gate_never_bypassed(self):
-        rs = Blinn("rs", color=[1, 0, 0], reflectivity=0.9, diffuse=0.4)
+        rs = Blinn.define("rs", color=[1, 0, 0], reflectivity=0.9, diffuse=0.4)
         self.cube << rs
         report = shade.convert(rs, "rampShader", dry_run=True)
         self.assertEqual(report.parked, ("color", "reflectivity"))
         self.assertIn("diffuse", report.carried)
         with mock.patch.object(cmds, "warning"):
-            rs.astype("rampShader")
+            rs = rs.astype("rampShader")
+        self.assertIs(type(rs), Material)
         self.assertEqual(cmds.nodeType("rs"), "rampShader")
         self.assertAlmostEqual(cmds.getAttr("rs.diffuse"), 0.4, places=5)
         cmds.setAttr("rs.color[0].color_Color", 0, 0, 1, type="float3")
@@ -499,7 +533,7 @@ class TestConversion(MayaTestCase):
         self.assertIn("color", report.opaque)
         self.assertIn("   opaque      color", str(report))
         with mock.patch.object(cmds, "warning"):
-            rs.astype(Blinn)
+            rs = rs.astype(Blinn)
         self.assertEqual(cmds.nodeType("rs"), "blinn")
         self.assertEqual(cmds.getAttr("rs.color")[0], (1.0, 0.0, 0.0))
         self.assertAlmostEqual(cmds.getAttr("rs.reflectivity"), 0.9, places=5)
@@ -508,7 +542,7 @@ class TestConversion(MayaTestCase):
         report = shade.convert(rs, "useBackground", dry_run=True)
         self.assertIn("   value       matteOpacityMode = 0", str(report))
         # a shared attr whose factory default differs: the meaning line
-        aniso = Material("aniso", type="anisotropic", roughness=0.6)
+        aniso = Material.define("aniso", type="anisotropic", roughness=0.6)
         _cube("cube2") << aniso
         report = shade.convert(aniso, "phongE", dry_run=True)
         self.assertFalse(report)
@@ -523,7 +557,7 @@ class TestConversion(MayaTestCase):
         self.assertAlmostEqual(cmds.getAttr("aniso.roughness"), 0.6, places=5)
 
     def test_refusals_write_nothing(self):
-        red = Blinn("red")
+        red = Blinn.define("red")
         self.cube << red
         before = set(cmds.ls())
         wiring = _wiring("red")
@@ -534,20 +568,22 @@ class TestConversion(MayaTestCase):
             red.astype("ramp")
         with self.assertRaisesRegex(RuntimeError, "default node"):
             Material("lambert1").astype("phong")
-        with self.assertRaisesRegex(TypeError, "never converted"):
-            Default().astype("phong")
-        with self.assertRaisesRegex(TypeError, "names no material"):
+        with self.assertRaisesRegex(NodeTypeError, "is a shadingEngine, not a surface shader"):
+            shade.convert(Default(), "phong")
+        with self.assertRaisesRegex(TypeError, r"None is not a material name"):
             Phong(Material(None))
-        with self.assertRaisesRegex(TypeError, r"Phong\(Material\('red'\)\)"):
+        with self.assertRaisesRegex(NodeTypeError, r"Blinn\('red'\)\.astype\(Phong\) converts it"):
             Phong(Node("red"))
-        with self.assertRaisesRegex(TypeError, r"Phong\(Material\('red'\)\)"):
-            Phong("red").node
-        with self.assertRaisesRegex(TypeError, "contradictory"):
+        with self.assertRaisesRegex(NodeTypeError, r"Blinn\('red'\)\.astype\(Phong\) converts it"):
+            Phong("red")
+        with self.assertRaisesRegex(TypeError, "takes no attributes"):
             Blinn(red, type="phong")
-        with self.assertRaisesRegex(TypeError, "wrap it: Material"):
-            shade.convert(Node("red"), "phong")
-        with self.assertRaisesRegex(TypeError, "removal"):
-            Phong(-red)
+        with self.assertRaisesRegex(NodeTypeError, "is a transform, not a surface shader"):
+            shade.convert(Node("cube"), "phong")
+        with self.assertRaisesRegex(ValueError, "no surface shader named 'nope'"):
+            shade.convert("nope", "phong")
+        with self.assertRaisesRegex(TypeError, "membership token"):
+            shade.convert(-red, Phong)
         with self.assertRaisesRegex(TypeError, "conversion target"):
             red.astype(5)
         with self.assertRaisesRegex(TypeError, "names no node type"):
@@ -555,19 +591,20 @@ class TestConversion(MayaTestCase):
         cmds.lockNode("red", lock=True)
         try:
             with self.assertRaisesRegex(RuntimeError, "lockNode"):
-                Phong(red)
+                red.astype(Phong)
         finally:
             cmds.lockNode("red", lock=False)
         self.assertEqual(set(cmds.ls()),       before)
         self.assertEqual(_wiring("red"),       wiring)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(red), Blinn)
-        # the synonym
-        p = Material(red, type="phong")
+        self.assertTrue(red.is_valid)
+        # a name converts too, and returns the new node
+        p = shade.convert("red", "phong")
         self.assertIs(type(p), Phong)
-        self.assertEqual(p, red)
-        self.assertIs(type(red), Phong)
+        self.assertEqual(p, Node("red"))
         self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertFalse(red.is_valid)
 
     def test_referenced_shader_is_refused(self):
         folder = tempfile.mkdtemp(prefix="rig_shade_convert_ref_")
@@ -583,7 +620,7 @@ class TestConversion(MayaTestCase):
             with self.assertRaisesRegex(RuntimeError, "referenced"):
                 Material("ref:refmat").astype("phong")
             with self.assertRaisesRegex(RuntimeError, "referenced"):
-                Phong(Material("ref:refmat"))
+                shade.convert("ref:refmat", Phong)
             self.assertEqual(set(cmds.ls()), before)
             self.assertEqual(cmds.nodeType("ref:refmat"), "blinn")
         finally:
@@ -600,7 +637,7 @@ class TestConversion(MayaTestCase):
         wiring = _wiring("red")
         slot   = _dsl1_index("red")
         with mock.patch.object(cmds, "warning"):
-            Phong(red)
+            new = red.astype(Phong)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.shade.convert")
         cmds.undo()
         self.assertEqual(cmds.nodeType("red"),      "blinn")
@@ -616,26 +653,29 @@ class TestConversion(MayaTestCase):
         self.assertEqual(cmds.container(asset, query=True, nodeList=True).count("red"), 1)
         self.assertEqual(_sources("redSG.surfaceShader"), ["red.outColor"])
         self.assertEqual(_sources(f"{info}.material"), ["red.message"])
-        # the spec still says phong: the name resolves, the type does not
-        with self.assertRaisesRegex(TypeError, "exists as a blinn"):
-            red.node
+        # the undo revives the old node; the new one is gone (plain message)
+        self.assertTrue(red.is_valid)
+        self.assertEqual(red, Blinn("red"))
+        with self.assertRaisesRegex(RuntimeError, r"^red__rigconvert already deleted!$"):
+            str(new)
         with mock.patch.object(cmds, "warning") as warn:
-            Blinn(red)
+            self.assertIs(red.astype(Blinn), red)
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
-        self.assertEqual(str(red.node), "red")
         cmds.redo()
         self.assertEqual(cmds.nodeType("red"), "phong")
         self.assertEqual(
             cmds.listAttr("red", userDefined=True),
             ["myNote", "__eccentricity__", "__specularRollOff__"],
         )
-        Phong(red)
+        with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
+            str(red)
+        red = Phong("red")
         # the grammar interaction costs two entries: convert, then assign
         cmds.flushUndo()
         other = _cube("other")
         with mock.patch.object(cmds, "warning"):
-            other << Blinn(red)
+            other << red.astype(Blinn)
         self.assertEqual(sorted(_members("redSG")), ["cubeShape", "otherShape"])
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.material")
         cmds.undo()
@@ -654,28 +694,30 @@ class TestConversion(MayaTestCase):
         with mock.patch.object(shade_convert, "_clone", side_effect=RuntimeError("boom")):
             with mock.patch.object(cmds, "warning"):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
-                    Phong(red)
+                    red.astype(Phong)
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_wiring("red"), wiring)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
         self.assertIs(type(red), Blinn)
+        self.assertTrue(red.is_valid)
         # COMMIT: the rename fails after the delete -> one guarded undo
         with mock.patch.object(cmds, "rename", side_effect=RuntimeError("boom")):
             with mock.patch.object(cmds, "warning"):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
-                    Phong(red)
+                    red.astype(Phong)
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(_wiring("red"), wiring)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
         self.assertEqual(cmds.listAttr("red", userDefined=True), ["myNote"])
+        self.assertTrue(red.is_valid)
         # with the undo queue off it still rolls back, and the queue is off after
         cmds.undoInfo(state=False)
         try:
             with mock.patch.object(cmds, "rename", side_effect=RuntimeError("boom")):
                 with mock.patch.object(cmds, "warning"):
                     with self.assertRaisesRegex(RuntimeError, "boom"):
-                        Phong(red)
+                        red.astype(Phong)
             self.assertFalse(cmds.undoInfo(query=True, state=True))
         finally:
             cmds.undoInfo(state=True, infinity=True)
@@ -686,7 +728,7 @@ class TestConversion(MayaTestCase):
         cmds.undoInfo(state=False)
         try:
             with mock.patch.object(cmds, "warning"):
-                Phong(red)
+                self.assertIs(type(red.astype(Phong)), Phong)
             self.assertEqual(cmds.nodeType("red"), "phong")
             self.assertFalse(cmds.undoInfo(query=True, state=True))
         finally:
@@ -709,19 +751,25 @@ class TestConversion(MayaTestCase):
         self.assertEqual(set(cmds.ls()),       before)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(red), Blinn)
-        with mock.patch.object(cmds, "warning"):
+        with mock.patch.object(cmds, "warning") as warn:
             real = shade.convert(red, "phong")
-        self.assertEqual(real, dry)
-        self.assertEqual(real.restored, ())
+        # re-pinned (round 4b NC7): the conversion returns the new node; its
+        # warning is the dry run's report text
+        self.assertEqual(warn.call_args[0][0], str(dry))
+        self.assertEqual(real, Node("red"))
+        self.assertIs(type(real), Phong)
         with self.assertRaisesRegex(RuntimeError, "already deleted"):
             stale.name
+        with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
+            stale.name
         self.assertEqual(str(Node("red")), "red")
-        self.assertAlmostEqual(red.diffuse >> None, 0.33, places=5)
+        self.assertAlmostEqual(real.diffuse >> None, 0.33, places=5)
         self.assertEqual(len(wrap._cache), 0)
-        self.assertEqual([repr(m) for m in Material.of(self.cube)], ["Phong('red')"])
-        # specs compare by name
-        self.assertEqual(Blinn("x"), Phong("x"))
-        self.assertEqual(hash(Blinn("x")), hash(Phong("x")))
-        self.assertNotEqual(Blinn("x"),  Blinn("y"))
-        self.assertNotEqual(-Blinn("x"), Blinn("x"))
-        self.assertNotEqual(Blinn("x"),  "x")
+        self.assertEqual([repr(m) for m in Material.of(self.cube)], ['Phong("red")'])
+        # nodes compare by class and name (the specs compared by name)
+        x = Blinn.define("x")
+        self.assertEqual(Blinn("x"), x)
+        self.assertEqual(hash(Blinn("x")), hash(x))
+        self.assertNotEqual(x, Blinn.define("y"))
+        self.assertNotEqual(-x, x)
+        self.assertNotEqual(x, "x")
