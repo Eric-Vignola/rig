@@ -15,6 +15,9 @@ tag reads no ids with a node on the left too.
   reads it). Only the message changes: the same error class and facts,
   nothing written, and the hit is untouched. A pickled copy keeps the message
   and the door as text, without the class (which may not pickle).
+* ``TestReferenceGuard``: define's file-reference guard, which the door reads,
+  answers a scene with no file reference without reading its reference nodes,
+  and any other scene as the scan of every reference node did.
 * ``TestGhostTag``: ``node >> Tag("ghost")`` (a tag the node does not have)
   answers an empty id array, as components on the left did, of the shape an
   empty tag of that node reads (``(0,)``, ``(0, 2)`` on a surface, ``(0, 3)``
@@ -58,6 +61,7 @@ from rig.nodetypes import (
     SurfaceShader,
     Transform,
 )
+from rig.nodetypes import dg_node
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.errors import NodeLookupError, NodeNotFoundError
 from rig._internal.container import Container
@@ -336,6 +340,80 @@ class TestDefineDoor(_Case):
         copy  = pickle.loads(pickle.dumps(error))
         self.assertIsNone(copy._message)
         self.assertEqual(str(copy), str(error))
+
+
+def _reference_scan(namespace):
+    """``dg_node._reference_of`` as round 4b wrote it (the oracle): every
+    reference node of the scene, asked for its namespace."""
+    for node in cmds.ls(type="reference") or ():
+        try:
+            owned = cmds.referenceQuery(node, namespace=True)
+        except RuntimeError:
+            continue
+        if owned != ":" and (namespace == owned or namespace.startswith(owned + ":")):
+            try:
+                path = cmds.referenceQuery(node, filename=True, withoutCopyNumber=True)
+            except RuntimeError:
+                return node
+            return f"{node} ({path})"
+    return None
+
+
+class TestReferenceGuard(_Case):
+    """define's guard ``dg_node._reference_of`` (the door reads it too): a scene
+    with no file reference is answered without reading its reference nodes
+    (``cmds.ls(type='reference')`` walks every node); with one it answers as
+    the scan did."""
+
+    def test_a_scene_without_a_file_reference_reads_no_reference_node(self):
+        cmds.namespace(add="char")
+        cmds.createNode("reference", name="orphanRN")  # a reference node of no file
+        with mock.patch.object(cmds, "ls", wraps=cmds.ls) as ls:
+            made  = Joint.define("char:newj")
+            error = self.miss(lambda: Joint("char:nosuch_x"))
+            self.assertEqual(error.door, "Joint.define('char:nosuch_x')")
+            self.assertTrue(str(error).endswith("; Joint.define('char:nosuch_x') finds or makes it"))
+        self.assertEqual(made, Joint("char:newj"))
+        self.assertEqual([c for c in ls.call_args_list if c.kwargs.get("type") == "reference"], [])
+
+    def test_the_guard_answers_as_the_scan(self):
+        folder = tempfile.mkdtemp(prefix="rig_r4bf_refs_")
+        self.addCleanup(shutil.rmtree, folder, True)
+
+        def save(name, build):
+            self.new_scene()
+            build()
+            path = os.path.join(folder, name).replace("\\", "/")
+            cmds.file(rename=path)
+            cmds.file(save=True, type="mayaAscii", force=True)
+            return path
+
+        inner = save("inner.ma", lambda: cmds.createNode("joint", name="ij"))
+        outer = save("outer.ma", lambda: cmds.file(inner, reference=True, namespace="inner"))
+
+        def check(scene):
+            found  = cmds.namespaceInfo(":", listOnlyNamespaces=True, recurse=True) or []
+            spaces = sorted({":" + n.lstrip(":") for n in found if n not in ("UI", "shared")})
+            for space in spaces + [":nosuch", ":REF1:deeper"]:
+                with self.subTest(scene=scene, space=space):
+                    self.assertEqual(dg_node._reference_of(space), _reference_scan(space))
+
+        self.new_scene()
+        cmds.namespace(add="char")
+        cmds.createNode("reference", name="orphanRN")
+        check("no file reference")
+        cmds.file(inner, reference=True, namespace="REF1")
+        cmds.file(inner, reference=True, namespace="REF2")
+        cmds.file(unloadReference=cmds.referenceQuery(inner + "{1}", referenceNode=True))
+        check("a loaded and an unloaded reference")
+        self.new_scene()
+        cmds.file(inner, reference=True, namespace="REF1")
+        cmds.file(unloadReference=cmds.referenceQuery(inner, referenceNode=True))
+        check("its only reference unloaded")
+        self.new_scene()
+        cmds.file(outer, reference=True, namespace="outer")
+        check("a nested reference")
+        self.assertTrue(dg_node._reference_of(":outer:inner").startswith("outer:innerRN ("))
 
 
 class TestGhostTag(_Case):
