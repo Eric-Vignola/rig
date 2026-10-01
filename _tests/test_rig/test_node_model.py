@@ -11,8 +11,9 @@ Each class names the round-4a step it belongs to:
 * M2: typed constructors (``__dict__`` writes in the usual key order, copy only
   within the class, ``Mesh(transform_node)``) and the ``_`` probe guard on
   typed nodes, also on a node a new scene, a file open or a reference unload
-  freed (K S3 ``ff99c29``); the API 1.0 handle helpers and the complete list
-  of the package's ``_objhandle1`` / ``_fn_set1`` readers (for round 5, NW6).
+  freed (K S3 ``ff99c29``); the handle helpers and the complete list of the
+  package's node handle (``_objhandle``) readers (re-pinned in round 5, NW6:
+  the handles moved off API 1.0, and no retired API 1.0 name is read).
 * M3: typed nodes speak the DSL while the ``Node`` wrapper is still there (K
   S4a ``f7511a2`` and the merge-only fixes of ``82547f5``, on round 3's owner
   rule): a typed node's ``.attr`` is a Plug owned by it, the ``=`` sugar
@@ -114,9 +115,11 @@ def _maya_attr_loads_via_self():
             names |= stored.get(base.__name__, set())
         # Python state written through ``__dict__`` (never a Maya attr name):
         # the API handles and caches, plus round 3's node serial and the
-        # taken DAG path of a stale instance path.
+        # taken DAG path of a stale instance path (re-pinned, round 5 NW6: the
+        # node handle `_objhandle` replaced the API 1.0 `_fn_set1` /
+        # `_objhandle1`).
         return names | {
-            "_mobject", "_fn_set", "_fn_set1", "_objhandle1", "_attr_dict", "_mdagpath",
+            "_mobject", "_fn_set", "_objhandle", "_attr_dict", "_mdagpath",
             "_node_serial", "_taken_mdagpath",
         }
 
@@ -323,8 +326,11 @@ class TestPackageTypedDottedSites(MayaTestCase):
         self.assertEqual(cmds.ls(type="decomposeMatrix"), ["decomposeMatrix1"])
 
 
-_DG_KEYS  = ["_mobject", "_fn_set", "_fn_set1", "_objhandle1", "_attr_dict"]
-_DAG_KEYS = ["_mdagpath", "_mobject", "_fn_set", "_fn_set1", "_objhandle1", "_attr_dict"]
+# re-pinned (round 5 NW6): one node handle, `_objhandle` (API 2.0, built from
+# the MObject the constructor resolved), in place of the API 1.0 `_fn_set1` /
+# `_objhandle1`, written in their place
+_DG_KEYS  = ["_mobject", "_fn_set", "_objhandle", "_attr_dict"]
+_DAG_KEYS = ["_mdagpath", "_mobject", "_fn_set", "_objhandle", "_attr_dict"]
 _GEO_KEYS = ["_Geometry__local_shape_attr", "_Geometry__world_shape_attr"]
 
 
@@ -441,9 +447,9 @@ _PROBES = ("_x", "__array__", "__deepcopy__", "__parked__")
 class TestPrivateProbeOnAFreedNode(MayaTestCase):
     """M2, E2: the ``_`` probe guard of ``DGNode.__getattr__`` on typed nodes a new
     scene, a file open (bringing nodes of the same names) or a reference unload
-    freed. Only the API 1.0 handle is read: ``hasattr`` answers False, a Maya
+    freed. Only the node's handle is read: ``hasattr`` answers False, a Maya
     attr of a ``_`` name no longer resolves, ``copy.copy`` works and shares the
-    handle, and the freed node's API 2.0 fn set is never called."""
+    handle, and the freed node's fn set is never called."""
 
     TEST_START_NEW_SCENE = True
 
@@ -475,7 +481,8 @@ class TestPrivateProbeOnAFreedNode(MayaTestCase):
                         getattr(node, name)
                 dup = copy.copy(node)
                 self.assertIs(type(dup), type(node))
-                self.assertIs(vars(dup)["_objhandle1"], vars(node)["_objhandle1"])
+                # re-pinned (round 5 NW6): the API 2.0 node handle
+                self.assertIs(vars(dup)["_objhandle"], vars(node)["_objhandle"])
                 self.assertFalse(dup.is_valid)
                 with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
                     node.ensure_valid()
@@ -522,54 +529,54 @@ class TestPrivateProbeOnAFreedNode(MayaTestCase):
             shutil.rmtree(folder, ignore_errors=True)
 
 
-# The API 1.0 node handle and fn set, which round 5 (NW6) moves off API 1.0
-_API1_NAMES = frozenset({"_objhandle1", "_fn_set1"})
-_NW6_MARKER = "NW6: API 1.0 handle"
+# The node handle (`_objhandle`, API 2.0). Re-pinned in round 5 (NW6): it
+# replaced the API 1.0 `_objhandle1` / `_fn_set1`, which no site reads now, nor
+# the API 1.0 plug slots `_handle1` / `_attr1` (now `_handle` / `_attrh`)
+_HANDLE_NAMES  = frozenset({"_objhandle"})
+_RETIRED_NAMES = frozenset(
+    {"_objhandle1", "_fn_set1", "_handle1", "_attr1", "_cache_api1_objects"}
+)
 
-# Every (module, function) of the package that reads or stores `_objhandle1` /
-# `_fn_set1`. The cold readers ask `_handle_valid`; each site
-# below reads the objects inline, on a hot path or because it keeps them, and
-# marks the line "NW6: API 1.0 handle". A new reader is added here (and marked).
-_API1_SITES = frozenset(
+# Every (module, function) of the package that reads or stores `_objhandle`.
+# The cold readers ask `_handle_valid`; each site below reads it inline, on a
+# hot path or because it hands it on. A new reader is added here.
+_HANDLE_SITES = frozenset(
     {
         # the helper
         ("rig.nodetypes._base", "_handle_valid"),
-        # the constructors, which store them (a copy constructor reads them)
+        # the constructors and the cast's replay, which store it (a copy
+        # constructor shares it)
         ("rig.nodetypes.dg_node", "DGNode.__init__"),
-        ("rig.nodetypes.dg_node", "DGNode._cache_api1_objects"),
         ("rig.nodetypes.dag_node", "DAGNode.__init__"),
+        ("rig.nodetypes._base", "_construct_checked_type"),
         # the names of the node state the `=` sugar stores (M3)
         ("rig.nodetypes.dg_node", "<module>"),
-        # hot: `DGNode.ensure_valid` (and its name of a deleted node), the owner
-        # checks of a plug, the plug hash and node serial, the fn set of a
-        # plug's node, the memo identity of a DG node, the cache hit of a
-        # typed node's attribute lookup (the wrapper's until M3)
+        # hot: `DGNode.ensure_valid`, the plug hash and node serial, the memo
+        # identity and handles of a DG node, the cache hit of a typed node's
+        # attribute lookup
         ("rig.nodetypes.dg_node", "DGNode.ensure_valid"),
-        ("rig.nodetypes._base", "_ensure_owner_alive"),
         ("rig.nodetypes._base", "_node_serial"),
         ("rig.nodetypes._base", "_plug_hash"),
-        ("rig.nodetypes._base", "_plug_node_fn_set"),
-        ("rig._internal.plug", "_owner_alive"),
         ("rig._internal.memoize", "_named_dg_identity"),
+        ("rig._internal.memoize", "_collect_handles"),
         ("rig.nodetypes.dg_node", "DGNode.__getattr__"),
-        # they keep the handle or the fn set: the attribute handles of
-        # `find_attr` / `find_alias`, a plug of a held node, a memo attr check
+        # they hand it to a plug (`_handle`, F17) or keep it: the plugs of
+        # `find_attr` / `find_alias`, a plug of a held node, the owner a plug
+        # casts, a memo attr check, an owned spec plug (round 4a M10)
         ("rig.nodetypes.dg_node", "DGNode.find_attr"),
         ("rig.nodetypes.dg_node", "DGNode.find_alias"),
         ("rig._internal.plug", "_named_plug"),
+        ("rig.nodetypes._base", "Attribute.node"),
         ("rig._internal.memoize", "_attr_check"),
-        # the attribute handle of an owned spec plug (round 4a M10)
         ("rig.spec._base", "_plug_of"),
     }
 )
 
 
-def _api1_accesses():
-    """Every access to `_objhandle1` / `_fn_set1` in the rig package outside
-    ``_tests``: an attribute (``node._objhandle1``) or a str constant (a
-    subscript, ``d.get(...)``, ``in``), as ``(module, function, path, line,
-    marked)``; ``marked`` is True if the line, or the line above it, has the
-    "NW6: API 1.0 handle" marker."""
+def _accesses(names):
+    """Every access to one of `names` in the rig package outside ``_tests``: an
+    attribute (``node._objhandle``) or a str constant (a subscript,
+    ``d.get(...)``, ``in``), as ``(module, function, path, line)``."""
     import rig
 
     root   = os.path.dirname(rig.__file__)
@@ -584,7 +591,6 @@ def _api1_accesses():
                 module = module[: -len(".__init__")]
             with open(path, encoding="utf-8") as handle:
                 source = handle.read()
-            lines = source.splitlines()
 
             def visit(node, scope):
                 for child in ast.iter_child_nodes(node):
@@ -593,14 +599,10 @@ def _api1_accesses():
                     ):
                         visit(child, scope + [child.name])
                         continue
-                    if (isinstance(child, ast.Attribute) and child.attr in _API1_NAMES) or (
-                        isinstance(child, ast.Constant) and child.value in _API1_NAMES
+                    if (isinstance(child, ast.Attribute) and child.attr in names) or (
+                        isinstance(child, ast.Constant) and child.value in names
                     ):
-                        near   = lines[child.lineno - 1] + lines[child.lineno - 2]
-                        marked = _NW6_MARKER in near
-                        found.append(
-                            (module, ".".join(scope) or "<module>", path, child.lineno, marked)
-                        )
+                        found.append((module, ".".join(scope) or "<module>", path, child.lineno))
                     visit(child, scope)
 
             visit(ast.parse(source), [])
@@ -608,24 +610,25 @@ def _api1_accesses():
 
 
 class TestApi1HandleReaders(MayaTestCase):
-    """M2: the API 1.0 handle helper (`_handle_valid`) and the
-    complete list of the package's `_objhandle1` / `_fn_set1` readers, so that
-    round 5 (NW6, the handles off API 1.0) has one list of sites to edit."""
+    """M2: the handle helper (`_handle_valid`) and the complete list of the
+    package's node handle readers. Re-pinned in round 5 (NW6, the handles off
+    API 1.0): the list is of the API 2.0 handle `_objhandle`, and no retired API
+    1.0 name is read anywhere."""
 
     TEST_START_NEW_SCENE = True
 
     def test_readers_are_known(self):
-        sites = {(module, func) for module, func, _, _, _ in _api1_accesses()}
-        self.assertEqual(sites, _API1_SITES)
+        sites = {(module, func) for module, func, _, _ in _accesses(_HANDLE_NAMES)}
+        self.assertEqual(sites, _HANDLE_SITES)
 
     def test_inline_readers_are_marked(self):
-        helpers  = {("rig.nodetypes._base", "_handle_valid")}
-        unmarked = [
+        # re-pinned (round 5 NW6): the API 1.0 readers were marked for the move
+        # off API 1.0; it is done, so no site reads a retired name
+        retired = [
             f"{os.path.basename(path)}:{line} {func}"
-            for module, func, path, line, marked in _api1_accesses()
-            if not marked and (module, func) not in helpers
+            for module, func, path, line in _accesses(_RETIRED_NAMES)
         ]
-        self.assertEqual(unmarked, [])
+        self.assertEqual(retired, [])
 
     def test_the_helpers(self):
         from rig.nodetypes import _base
@@ -653,7 +656,7 @@ class TestApi1HandleReaders(MayaTestCase):
         cmds.undo()
         self.assertTrue(deleted.is_valid)
         cmds.file(new=True, force=True)
-        # a freed node: only its API 1.0 handle is read
+        # a freed node: only its handle is read
         probe = mock.Mock()
         vars(freed)["_fn_set"] = probe
         self.assertIs(_handle_valid(vars(freed)), False)
@@ -851,8 +854,9 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         plug = Node("a").tx
         with self.assertRaises(AttributeError):
             plug._attr_dict
+        # re-pinned (round 5 NW6): the node's handle is `_objhandle` now
         with self.assertRaises(AttributeError):
-            plug._objhandle1
+            plug._objhandle
         with mock.patch.object(cmds, "container", wraps=cmds.container) as probe:
             self.assertFalse(hasattr(plug, "__array_interface__"))
             self.assertFalse(hasattr(Node("a").t, "_ipython_canary_method_should_not_exist_"))
@@ -1311,7 +1315,7 @@ class TestTypedDslEdges(MayaTestCase):
         cmds.addAttr("a", longName="userDyn", attributeType="double")
         dg   = Node("a")
         plug = dg.userDyn
-        self.assertIsNotNone(plug.__dict__["_attr1"])
+        self.assertIsNotNone(plug.__dict__["_attrh"])  # re-pinned (round 5 NW6)
         cmds.deleteAttr("a.userDyn")
         cmds.flushUndo()
         for label, op in (
@@ -1464,7 +1468,8 @@ class TestOneNodeHierarchy(MayaTestCase):
         plug   = Node("a").tx
         before = hash(plug)
         self.assertEqual(before, hash((base._node_serial(plug.node), "translateX")))
-        self.assertNotEqual(before, hash((plug.node._objhandle1.hashCode(), "translateX")))
+        # re-pinned (round 5 NW6): the node handle is `_objhandle` (the same hashCode)
+        self.assertNotEqual(before, hash((plug.node._objhandle.hashCode(), "translateX")))
         cmds.rename("a", "b")
         self.assertEqual(str(plug), "b.translateX")
         self.assertEqual(hash(plug), before)
@@ -1819,7 +1824,8 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
             self.assertEqual(list(vars(item)), list(vars(oracle)))
             self.assertEqual(str.__str__(item), str.__str__(oracle))
             for key, value in vars(oracle).items():
-                if key in ("_node", "_handle1", "_attr1"):
+                # re-pinned (round 5 NW6): the handle slots `_handle` / `_attrh`
+                if key in ("_node", "_handle", "_attrh"):
                     self.assertIs(vars(item)[key], value, key)
                 elif key == "_mplug":
                     self.assertEqual(vars(item)[key], mplug)
@@ -2913,7 +2919,7 @@ _REMOVED_NAMES = (
 class TestNoWrapperLeft(MayaTestCase):
     """M8: the dead canonical-wrapper helpers and the ``_dg_node`` shim are gone.
     ``x._dg_node`` raises AttributeError through the ``_`` guard (on a deleted
-    or freed node too, reading only its API 1.0 handle), no package module
+    or freed node too, reading only its handle), no package module
     names a removed helper, and the package code that read the shim takes the
     node object itself (``_stack_values``, ``_node_is_transform``)."""
 
@@ -2943,7 +2949,7 @@ class TestNoWrapperLeft(MayaTestCase):
         self.assertFalse(hasattr(md, "_dg_node"))
         cmds.undo()
         self.assertFalse(hasattr(md, "_dg_node"))
-        # freed by a new scene: only the API 1.0 handle is read
+        # freed by a new scene: only the handle is read
         cmds.file(new=True, force=True)
         for label, node in nodes.items():
             with self.subTest(freed=label):

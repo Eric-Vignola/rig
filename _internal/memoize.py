@@ -4,10 +4,10 @@ Memoization and vectorization decorators for the rig DSL.
 ``@memoize`` caches function returns keyed by a stable handle of every
 ``Plug``/``Node``/``List`` argument plus the literal value of every
 scalar argument. The cache is auto-invalidated when any cached return value's
-underlying Maya nodes have been deleted (via API 1.0 ``MObjectHandle.isAlive``,
-which is the same staleness pattern used in ``rig.nodetypes.dg_node``), or
-when a dynamic attribute a plug argument reads was deleted or renamed since
-(see ``_AttrCheck``). Every new scene and file open clears the caches, and a
+underlying Maya nodes have been deleted (via ``MObjectHandle.isAlive``, the
+handles the node objects of ``rig.nodetypes.dg_node`` keep), or when a dynamic
+attribute a plug argument reads was deleted or renamed since (see
+``_AttrCheck``). Every new scene and file open clears the caches, and a
 reference unload, reload or remove prunes them (the scene callbacks at the end
 of this module).
 
@@ -29,10 +29,10 @@ import sys
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, Tuple
 
-# API 1.0 used because API 2.0 MObjects can crash Maya after a new-scene
-# load (see rig.nodetypes.dg_node._cache_api1_objects). API 2.0 is only used
-# on a node object's MObject once its API 1.0 handle says the node is valid.
-from maya import cmds, OpenMaya as OpenMaya1
+# A node object's MObject and fn set are read only once its handle (built
+# while the node was alive, see rig.nodetypes._base._ensure_owner_alive) says
+# the node is valid: after a new scene they point at freed memory.
+from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
 from rig.nodetypes._base import _handle_valid, _plug_identity_name, Attribute
@@ -102,9 +102,9 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
 
 
 def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, int]]:
-    """``_node_identity(node_str)`` read from the API 1.0 objects of the DG node
-    object (``attr``'s owner) ``attr.full_name`` just took ``node_str`` from, or
-    None.
+    """``_node_identity(node_str)`` read from the handle and fn set of the DG
+    node object (``attr``'s owner) ``attr.full_name`` just took ``node_str``
+    from, or None.
 
     A DG node's name names no other node, so when the live node object's own
     name is ``node_str``, resolving that name finds its node. A DAG path can go
@@ -114,12 +114,11 @@ def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, in
     try:
         if (
             isinstance(node, DGNode)
-            and node._objhandle1.isValid()  # NW6: API 1.0 handle read (hot)
+            and node._objhandle.isValid()
             and not node._mobject.hasFn(OpenMaya.MFn.kDagNode)
             and node._fn_set.name() == node_str
         ):
-            # NW6: API 1.0 handle read (hot)
-            return (node._fn_set1.uuid().asString(), node._objhandle1.hashCode())
+            return (node._fn_set.uuid().asString(), node._objhandle.hashCode())
     except Exception:
         pass
     return None
@@ -139,9 +138,8 @@ def _node_identity(node_name: str) -> Tuple[str, int]:
     values come from the single ``MObject`` resolved here, so this costs the
     same one ``MSelectionList`` roundtrip the old hashCode-only path did.
 
-    Resolved via API 1.0 only (never ``dg_node.uuid``, which reads the
-    API 2.0 function set -- API 2.0 MObjects can crash Maya after a new-scene
-    load).
+    Resolved by name here (never through a node object's MObject, which a new
+    scene may have freed), so the MObject read is of a live node.
 
     Raises:
         TypeError: if the node cannot be resolved in the current scene, so
@@ -151,15 +149,14 @@ def _node_identity(node_name: str) -> Tuple[str, int]:
             a same-named node in a different scene.
     """
     try:
-        sel = OpenMaya1.MSelectionList()
+        sel = OpenMaya.MSelectionList()
         sel.add(node_name)
-        mobject1 = OpenMaya1.MObject()
-        sel.getDependNode(0, mobject1)
-        hash_code = OpenMaya1.MObjectHandle(mobject1).hashCode()
+        mobject   = sel.getDependNode(0)
+        hash_code = OpenMaya.MObjectHandle(mobject).hashCode()
         try:
-            uuid_str = OpenMaya1.MFnDependencyNode(mobject1).uuid().asString()
+            uuid_str = OpenMaya.MFnDependencyNode(mobject).uuid().asString()
         except (AttributeError, RuntimeError):
-            # API 1.0 MUuid may be unavailable on older Maya; cmds is universal.
+            # the cmds route, should the API not give the uuid
             uuid_str = cmds.ls(node_name, uuid=True)[0]
         return (uuid_str, hash_code)
     except Exception as exc:
@@ -168,14 +165,48 @@ def _node_identity(node_name: str) -> Tuple[str, int]:
         ) from exc
 
 
-def _collect_handles(obj: Any, out: list[OpenMaya1.MObjectHandle]) -> None:
-    """Walk ``obj`` and append API 1.0 MObjectHandles for any plug/node found.
+# The members DGNode names its nodes with: a node whose class keeps them (and
+# whose instance patches no `ensure_valid`) is named by its fn set, and naming
+# it raises exactly when its handle is not valid (`DGNode.ensure_valid`)
+_DG_NAMING = (
+    DGNode.__dict__["name"],
+    DGNode.__dict__["fn_set"],
+    DGNode.__dict__["ensure_valid"],
+    DGNode.__dict__["__str__"],
+)
+_FULL_NAME = Attribute.__dict__["full_name"]
+
+
+def _dg_named(node: Any) -> bool:
+    """True if `node` (a node object) is named as a DGNode is: its class keeps
+    DGNode's `name`, `fn_set` and `ensure_valid` and its instance patches no
+    `ensure_valid`, so its name is its fn set's (a live DG node's name names
+    that node) and naming it raises exactly when its handle is not valid."""
+    cls = type(node)
+    return (
+        cls.name is _DG_NAMING[0]
+        and cls.fn_set is _DG_NAMING[1]
+        and cls.ensure_valid is _DG_NAMING[2]
+        and "ensure_valid" not in node.__dict__
+    )
+
+
+def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
+    """Walk ``obj`` and append MObjectHandles for any plug/node found.
 
     Used when caching a return value so we can later check ``isAlive()`` to
     invalidate dead entries. A plug is any Attribute, a Plug or a typed
-    attribute (``Node("a").find_attr("tx")``); its handle is its node's, found
-    by the node part of its full name. A plug whose node was freed or deleted
-    adds nothing.
+    attribute (``Node("a").find_attr("tx")``); its handle is its node's, the
+    node the node part of its full name names. A plug whose node was freed or
+    deleted (naming it raises) adds nothing, nor does one whose dynamic
+    attribute was freed.
+
+    A plug owned by a live DG node object named as a DGNode is (see
+    `_dg_named`), and named by `Attribute.full_name`, appends its owner's handle
+    (which it holds): its full name would name that node, and naming it raises
+    exactly when that handle is not valid or the plug's attribute handle is not
+    alive. A node object named so appends its own handle. Any other plug or
+    node is named, and its node found by that name.
     """
     if (
         obj is None
@@ -185,23 +216,42 @@ def _collect_handles(obj: Any, out: list[OpenMaya1.MObjectHandle]) -> None:
     ):
         return
     if isinstance(obj, Attribute):
+        d      = obj.__dict__
+        node   = d.get("_node")
+        handle = d.get("_handle")
+        if (
+            node is not None
+            and handle is not None
+            and type(obj).full_name is _FULL_NAME
+            and _dg_named(node)
+        ):
+            if not handle.isValid():
+                return  # naming it raises "... already deleted!"
+            if not node.__dict__["_mobject"].hasFn(OpenMaya.MFn.kDagNode):
+                attrh = d.get("_attrh")
+                if attrh is None or attrh.isAlive():
+                    out.append(handle)
+                return
         try:
             node_str = obj.full_name.split(".", 1)[0]
-            sel = OpenMaya1.MSelectionList()
+            sel = OpenMaya.MSelectionList()
             sel.add(node_str)
-            mobject1 = OpenMaya1.MObject()
-            sel.getDependNode(0, mobject1)
-            out.append(OpenMaya1.MObjectHandle(mobject1))
+            out.append(OpenMaya.MObjectHandle(sel.getDependNode(0)))
         except Exception:
             pass
         return
     if _is_node(obj):
+        handle = obj.__dict__.get("_objhandle")
+        if handle is not None and type(obj).__str__ is _DG_NAMING[3] and _dg_named(obj):
+            if not handle.isValid():
+                return  # naming it raises "... already deleted!"
+            if not obj.__dict__["_mobject"].hasFn(OpenMaya.MFn.kDagNode):
+                out.append(handle)
+                return
         try:
-            sel = OpenMaya1.MSelectionList()
+            sel = OpenMaya.MSelectionList()
             sel.add(str(obj))
-            mobject1 = OpenMaya1.MObject()
-            sel.getDependNode(0, mobject1)
-            out.append(OpenMaya1.MObjectHandle(mobject1))
+            out.append(OpenMaya.MObjectHandle(sel.getDependNode(0)))
         except Exception:
             pass
         return
@@ -219,17 +269,19 @@ class _AttrCheck:
     its name, the name keys a network built on the old attribute (disconnected,
     or reading the renamed one). The check is alive while the node and that
     attribute are, and valid while the name still finds that attribute on the
-    node, so such an entry is rebuilt. Only API 1.0 objects are read, and the
-    node's fn set only once its handle says the node is valid.
+    node, so such an entry is rebuilt. The node's fn set (made from its MObject
+    while the node was valid) is read only once its handle says the node is
+    valid, and the attribute's MObject only while its handle is alive.
     """
 
-    __slots__ = ("node", "fn", "name", "attr")
+    __slots__ = ("node", "fn", "name", "attr", "mobject")
 
-    def __init__(self, node: Any, fn: Any, name: str, attr: Any) -> None:
-        self.node = node  # the node's API 1.0 MObjectHandle
-        self.fn   = fn    # its API 1.0 MFnDependencyNode
-        self.name = name  # the attribute's long name
-        self.attr = attr  # the attribute's API 1.0 MObjectHandle
+    def __init__(self, node: Any, fn: Any, name: str, attr: Any, mobject: Any) -> None:
+        self.node    = node     # the node's MObjectHandle
+        self.fn      = fn       # an MFnDependencyNode of it
+        self.name    = name     # the attribute's long name
+        self.attr    = attr     # the attribute's MObjectHandle
+        self.mobject = mobject  # and its MObject
 
     def isAlive(self) -> bool:  # noqa: N802 -- the MObjectHandle protocol
         return self.node.isAlive() and self.attr.isAlive()
@@ -238,7 +290,7 @@ class _AttrCheck:
         if not (self.node.isValid() and self.attr.isAlive()):
             return False
         try:
-            return self.fn.attribute(self.name) == self.attr.objectRef()
+            return self.fn.attribute(self.name) == self.mobject
         except RuntimeError:
             return False
 
@@ -257,9 +309,11 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
             return None
         mobject = mplug.attribute()
         name    = OpenMaya.MFnAttribute(mobject).name
-        attr1 = node._fn_set1.attribute(name)  # NW6: API 1.0 handle read
-        # NW6: API 1.0 handle read (the check keeps the handle and the fn set)
-        return _AttrCheck(node._objhandle1, node._fn_set1, name, OpenMaya1.MObjectHandle(attr1))
+        fn      = OpenMaya.MFnDependencyNode(node._mobject)
+        found   = fn.attribute(name)
+        if found.isNull():
+            return None  # the name finds no attribute (the plug's was deleted)
+        return _AttrCheck(node._objhandle, fn, name, OpenMaya.MObjectHandle(found), found)
     except Exception:
         return None
 
@@ -278,7 +332,7 @@ def _collect_attr_checks(values: Any, out: list[Any]) -> None:
 
 def _entry_handles(result: Any, args: tuple, kwargs: dict) -> list[Any]:
     """The staleness checks of a cache entry for a call on `args` / `kwargs` that
-    returned `result`: the API 1.0 handles of the nodes in `result` (see
+    returned `result`: the handles of the nodes in `result` (see
     `_collect_handles`), then an `_AttrCheck` per dynamic attribute a plug
     argument reads. An entry is used only while every one is alive and
     valid."""
@@ -509,12 +563,12 @@ def _clear_all_caches() -> int:
 
 
 class _CacheEntry:
-    """Holds a memoized return value plus the API 1.0 handles used for
+    """Holds a memoized return value plus the handles used for
     staleness checking."""
 
     __slots__ = ("value", "handles")
 
-    def __init__(self, value: Any, handles: list[OpenMaya1.MObjectHandle]) -> None:
+    def __init__(self, value: Any, handles: list[OpenMaya.MObjectHandle]) -> None:
         self.value   = value
         self.handles = handles
         # an entry is only made once the callbacks that clear it are there

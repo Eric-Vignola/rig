@@ -1448,14 +1448,16 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         self.assertIs(type(plug), Plug)
         self.assertIs(plug.node, node)
         self.assertIs(vars(plug)["_node"], node)
-        self.assertIsNone(vars(plug)["_handle1"])
+        # re-pinned (round 5 NW6, F17): an owned plug holds its owner's handle
+        # (it took none of its own)
+        self.assertIs(vars(plug)["_handle"], vars(node)["_objhandle"])
         self.assertEqual(str.__str__(plug), f"{node}.{name}")
         same = getattr(node, name)
         self.assertEqual(str(plug), str(same))
         self.assertTrue(_same_plug(plug, same))
         self.assertEqual(hash(plug), hash(same))
         self.assertEqual(tuple(vars(plug)), tuple(vars(same)))
-        self.assertIs(vars(plug)["_attr1"], vars(same)["_attr1"])
+        self.assertIs(vars(plug)["_attrh"], vars(same)["_attrh"])  # re-pinned (NW6)
 
     def test_every_spec_kind_is_owned(self):
         from rig.spec import Enum, Int, Matrix, Message, String, Vector
@@ -1481,8 +1483,8 @@ class TestOwnerBoundSpecApply(MayaTestCase):
                     self.assertEqual(plug, node.find_attr("rename"))
                 else:
                     self._assert_owned(plug, node, name)
-                # a dynamic attr: the handle of its attribute
-                self.assertTrue(vars(plug)["_attr1"].isAlive())
+                # a dynamic attr: the handle of its attribute (re-pinned, NW6)
+                self.assertTrue(vars(plug)["_attrh"].isAlive())
         self.assertEqual(node.kd.get(), 2.5)
         # a compound spec gives its parent plug, whose children are owned too
         vector = node.vk
@@ -1597,9 +1599,8 @@ class TestOwnerBoundSpecApply(MayaTestCase):
                 found = spec_base._plug_of(str(node), name, node)
                 self.assertIs(type(found), Plug)
                 self.assertIsNone(vars(found)["_node"])
-                self.assertEqual(
-                    vars(found)["_handle1"].hashCode(), vars(node)["_objhandle1"].hashCode()
-                )
+                # re-pinned (round 5 NW6): it holds the node's own handle
+                self.assertIs(vars(found)["_handle"], vars(node)["_objhandle"])
                 self.assertTrue(_same_plug(found, same()))
         cmds.createNode("transform", name="held")
         cmds.addAttr("held", longName="k", attributeType="double")
@@ -1791,7 +1792,8 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         handles = []
         memoize_module._collect_handles(first, handles)
         self.assertEqual(len(handles), 1)
-        self.assertEqual(handles[0].hashCode(), vars(first.node)["_objhandle1"].hashCode())
+        # re-pinned (round 5 NW6): the node handle is `_objhandle`
+        self.assertEqual(handles[0].hashCode(), vars(first.node)["_objhandle"].hashCode())
         self.assertIs(spec_plug(0), first)
         self.assertEqual(len(calls), 1)
         # a new scene frees the node: the entry is dropped, never returned

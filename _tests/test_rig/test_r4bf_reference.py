@@ -56,7 +56,9 @@ def _state(node):
     d   = vars(node)
     out = [type(node).__name__, repr(node), node.name, node.long_name, list(d)]
     out.append(type(d["_fn_set"]).__name__)
-    out.append((d["_fn_set1"].name(), d["_objhandle1"].isValid()))
+    # re-pinned (round 5 NW6): the node handle (API 2.0), in place of the API
+    # 1.0 fn set and handle: of the same node, and valid
+    out.append((d["_objhandle"].hashCode(), d["_objhandle"].isValid()))
     out.append(d["_mdagpath"].fullPathName() if "_mdagpath" in d else None)
     out.append(dict(d["_attr_dict"]))
     out.append(_mobject(node.long_name) == d["_mobject"])

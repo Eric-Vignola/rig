@@ -6,9 +6,10 @@ its MPlug, so once a new scene, a file open or a reference unload freed that nod
 naming the plug read freed memory: a Maya crash, another node's name, or a wrong
 value (``Plug("held.ty").get()`` returned 1000.1 after a new scene). A node
 deleted to the undo queue was cast by name, so the plug read the new node that
-took the name. Such a plug now takes an API 1.0 handle of its node when it is
-built (its children, elements and parent share it), and raises the round-3
-``"... already deleted!"`` instead.
+took the name. Such a plug now takes a handle of its node when it is built (its
+children, elements and parent share it), and raises the round-3 ``"... already
+deleted!"`` instead. (Re-pinned in round 5, NW6: the handles are API 2.0, built
+from the plug's own node; an owned plug holds its owner's handle, F17.)
 """
 
 import os
@@ -16,7 +17,7 @@ import shutil
 import tempfile
 from unittest import mock
 
-from maya import cmds, OpenMaya as om1
+from maya import cmds
 from maya.api import OpenMaya
 from rig import lift, List, Node, Plug
 from rig.nodetypes import _base
@@ -34,12 +35,11 @@ _FREED = (
 
 
 def _hash_code(name):
-    """The API 1.0 MObjectHandle hashCode of the node `name`."""
-    sel = om1.MSelectionList()
+    """The MObjectHandle hashCode of the node `name` (re-pinned, round 5 NW6:
+    API 2.0, the same number as API 1.0's)."""
+    sel = OpenMaya.MSelectionList()
     sel.add(name)
-    mobject = om1.MObject()
-    sel.getDependNode(0, mobject)
-    return om1.MObjectHandle(mobject).hashCode()
+    return OpenMaya.MObjectHandle(sel.getDependNode(0)).hashCode()
 
 
 def _mplug(name):
@@ -105,13 +105,14 @@ def _unowned(prefix):
 
 
 def _guard_handle(attr):
-    """The API 1.0 handle `_ensure_owner_alive` reads for `attr`: its owner's, or
-    the one of its node it took (None if it has neither)."""
+    """The handle `_ensure_owner_alive` reads for `attr`: its owner's, or the one
+    of its node it took (None if it has neither). Re-pinned (round 5 NW6, F17):
+    the plug holds it (`_handle`), its owner's own object when it has one."""
     owner = vars(attr)["_node"]
-    if owner is None:
-        return vars(attr)["_handle1"]
-    # re-pinned (round 4a M4, C8): the owner is the node object itself
-    return owner._objhandle1
+    if owner is not None:
+        # re-pinned (round 4a M4, C8): the owner is the node object itself
+        assert vars(attr)["_handle"] is vars(owner)["_objhandle"]
+    return vars(attr)["_handle"]
 
 
 # the paths above whose plug has an owner: the parent cast its node when it was
@@ -123,8 +124,9 @@ _OWNED_AFTER_NAMING = {
 
 
 class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
-    """Each construction path of a plug with no owner takes the API 1.0 handle
-    of its node; a plug with an owner takes none (its owner's is read)."""
+    """Each construction path of a plug with no owner takes the handle of its
+    node; a plug with an owner holds its owner's (re-pinned, round 5 NW6, F17:
+    it took none and read its owner's)."""
 
     TEST_START_NEW_SCENE = True
 
@@ -135,7 +137,7 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
                 owned = label in _OWNED_AFTER_NAMING
                 self.assertIs(vars(attr)["_node"] is not None, owned)
                 handle = _guard_handle(attr)
-                self.assertIsInstance(handle, om1.MObjectHandle)
+                self.assertIsInstance(handle, OpenMaya.MObjectHandle)  # re-pinned (NW6)
                 self.assertEqual(handle.hashCode(), _hash_code(node))
                 self.assertTrue(handle.isValid())
 
@@ -154,15 +156,17 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
         self.assertEqual(str(component), "pcShape.controlPoints[1]")
 
     def test_owned_paths_look_up_no_handle(self):
-        # the lookup (a name parse, about 7 us) is only for a plug with no owner:
+        # the handle of an MPlug's node is made only for a plug with no owner:
         # the plugs of a node object, their children and elements, the attrs a
-        # node finds and a spec applied to a node never make it
+        # node finds and a spec applied to a node never make it (re-pinned,
+        # round 5 NW6, F17: no name lookup is left, `_mplug_handle` makes the
+        # handle, and an owned plug holds its owner's)
         _build()
         node  = Node("held")
         typed = Node("held")
         cmds.sphere(name="sphere", constructionHistory=False)
         surface = Node("sphereShape")
-        with mock.patch.object(_base, "_node_handle", wraps=_base._node_handle) as spy:
+        with mock.patch.object(_base, "_mplug_handle", wraps=_base._mplug_handle) as spy:
             plugs = [
                 node.tx, node.t, node.t[0], node.t[0:2], node.t.translateX,
                 node.t.child(1), node.worldMatrix[0], node.worldMatrix[0:1],
@@ -175,7 +179,7 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
             str(List(plugs))
         self.assertEqual(spy.call_count, 0)
         self.assertIs(vars(node.tx)["_node"], node)
-        self.assertIsNone(vars(node.tx)["_handle1"])
+        self.assertIs(vars(node.tx)["_handle"], vars(node)["_objhandle"])
 
     def test_the_state_of_every_constructor_is_the_same(self):
         _build()
@@ -195,7 +199,8 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
         # re-pinned (round 4a M10, spec S5): a spec's plug is owned by the node
         # object it was applied to (for a Plug target, the one the plug holds),
         # so it is checked through that node's handle and takes none of its own
-        # (it took the node's API 1.0 handle as `_handle1`)
+        # (it took the node's API 1.0 handle as `_handle1`); re-pinned (round 5
+        # NW6, F17): it holds that node's handle, the node's own object
         _build()
         node = Node("held")
         for target in (node, node.tx):
@@ -204,17 +209,19 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
                 self.assertIsInstance(plug, Plug)
                 self.assertEqual(str(plug), "held.fresh")
                 self.assertIs(vars(plug)["_node"], node)
-                self.assertIsNone(vars(plug)["_handle1"])
+                self.assertIs(vars(plug)["_handle"], vars(node)["_objhandle"])
                 self.assertEqual(_guard_handle(plug).hashCode(), _hash_code("held"))
         kept = node << Float("kept")
         self.assertIs(vars(kept)["_node"], node)
-        self.assertIsNone(vars(kept)["_handle1"])
+        self.assertIs(vars(kept)["_handle"], vars(node)["_objhandle"])
         typed = Node("held")
-        self.assertIs(vars(typed.find_alias("hoist"))["_handle1"], typed._objhandle1)
+        self.assertIs(vars(typed.find_alias("hoist"))["_handle"], typed._objhandle)
 
     def test_a_name_that_resolves_to_no_node_takes_no_handle(self):
-        # nothing to check: as before, the plug is not checked
-        self.assertIsNone(_base._node_handle("nothing.tx"))
+        # nothing to check: as before, the plug is not checked (re-pinned, round
+        # 5 NW6: no name is looked up for a handle any more, the handle is made
+        # from the MPlug's node, and a null plug takes none)
+        self.assertFalse(hasattr(_base, "_node_handle"))
         self.assertIsNone(_base._mplug_handle(OpenMaya.MPlug()))
 
 

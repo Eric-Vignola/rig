@@ -72,11 +72,12 @@ def _outcome(func, *args):
 def _holds_freed_node(plug):
     """True if the node object ``plug`` holds is a node that was freed (by a new
     scene or a reference unload), not just deleted to the undo queue. Only the
-    node's API 1.0 handle is read: naming a freed node reads freed memory."""
+    node's handle is read: naming a freed node reads freed memory."""
     # re-pinned (round 4a M4, C8): the owner is the node object itself (no
-    # wrapper to unwrap), so its handle is read from its __dict__ directly
+    # wrapper to unwrap), so its handle is read from its __dict__ directly;
+    # re-pinned (round 5 NW6): the handle is `_objhandle` (API 2.0)
     owner  = plug.__dict__["_node"]
-    handle = getattr(owner, "__dict__", {}).get("_objhandle1")
+    handle = getattr(owner, "__dict__", {}).get("_objhandle")
     return handle is not None and not handle.isAlive()
 
 
@@ -338,7 +339,9 @@ def _node_state(node):
         "keys":  list(vars(node)),
         "fn":    type(node._fn_set),
         "name":  node.name,
-        "api1":  (node._fn_set1.name(), node._objhandle1.isValid()),
+        # re-pinned (round 5 NW6): the node handle (API 2.0), in place of the
+        # API 1.0 fn set and handle: of the same node, and valid
+        "handle": (node._objhandle.hashCode(), node._objhandle.isValid()),
         "attrs": node._attr_dict,
     }
     if "_mdagpath" in vars(node):
@@ -1225,12 +1228,15 @@ _ATTRIBUTE_STATE_KEYS = (
     "_geometry_attr_cache",
     "_polymorphic_owner_cache",
     "_static_key_cache",
-    # re-pinned (round 3b): an attr with no owner keeps an API 1.0 handle of
-    # its node, so it raises "already deleted!" once the node is deleted or freed
-    "_handle1",
-    # re-pinned (round 3b review): a dynamic attr keeps an API 1.0 handle of its
-    # attribute, which a delete frees once it leaves the undo queue (None here)
-    "_attr1",
+    # re-pinned (round 3b): an attr with no owner keeps a handle of its node,
+    # so it raises "already deleted!" once the node is deleted or freed;
+    # re-pinned (round 5 NW6, F17): `_handle` (API 2.0), the owner's own handle
+    # when the attr has an owner
+    "_handle",
+    # re-pinned (round 3b review): a dynamic attr keeps a handle of its
+    # attribute, which a delete frees once it leaves the undo queue (None here);
+    # re-pinned (round 5 NW6): `_attrh` (API 2.0)
+    "_attrh",
 )
 _COMPONENT_STATE_KEYS = ("_comp_node", "_comp_alias", "_comp_ndims", "_comp_coords")
 

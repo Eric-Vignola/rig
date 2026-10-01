@@ -6,7 +6,8 @@ and ``@vectorize`` (NumPy-style strict broadcasting).
 
 from unittest import mock
 
-from maya import cmds, OpenMaya as om1
+from maya import cmds
+from maya.api import OpenMaya
 from rig import List, Node, Plug
 from rig._internal import memoize as memoize_module
 from rig._internal.memoize import (
@@ -313,11 +314,11 @@ class TestMemoizeNodeKeyHardening(MayaTestCase):
         for i in range(200):
             name = "recyc%d" % i
             node = Node.create("transform", name=name)
-            sel  = om1.MSelectionList()
+            # re-pinned (round 5 NW6): an API 2.0 handle (the same hashCode)
+            sel  = OpenMaya.MSelectionList()
             sel.add(name)
-            mobj = om1.MObject()
-            sel.getDependNode(0, mobj)
-            hash_code = om1.MObjectHandle(mobj).hashCode()
+            mobj = sel.getDependNode(0)
+            hash_code = OpenMaya.MObjectHandle(mobj).hashCode()
             key       = key_of(node)
             if hash_code in seen:
                 old_key = seen[hash_code]
@@ -370,12 +371,15 @@ class TestMemoizeNodeKeyHardening(MayaTestCase):
     def test_node_identity_falls_back_to_cmds_when_api_uuid_unavailable(self):
         # Older Maya may lack API 1.0 MUuid; the resolver must fall back to
         # cmds.ls(uuid=True) and still return the correct (uuid, hashCode).
+        # Re-pinned (round 5 NW6): the resolver reads API 2.0, whose fn set is
+        # the one made to fail
         Node.create("transform", name="cube1")
         expected_uuid = cmds.ls("cube1", uuid=True)[0]
         with mock.patch.object(
-            om1, "MFnDependencyNode", side_effect=AttributeError("no uuid")
-        ):
+            OpenMaya, "MFnDependencyNode", side_effect=AttributeError("no uuid")
+        ) as failing:
             uuid_str, hash_code = _node_identity("cube1")
+        self.assertEqual(failing.call_count, 1)
         self.assertEqual(uuid_str, expected_uuid)
         self.assertIsInstance(hash_code, int)
 

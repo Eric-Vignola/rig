@@ -46,15 +46,15 @@ class DAGNode(DGNode):
 
         A node of this class (or a subclass) shares its internals; any other node
         object is taken by its name. The state is written to ``__dict__``, in this
-        order, so no ``__setattr__`` runs.
+        order, so no ``__setattr__`` runs; the handle from the MObject just
+        resolved (see `DGNode.__init__`).
         """
         d = self.__dict__
         if isinstance(node, type(self)):
-            d["_mobject"]    = node._mobject
-            d["_mdagpath"]   = node._mdagpath
-            d["_fn_set"]     = node._fn_set
-            d["_fn_set1"]    = node._fn_set1  # NW6: API 1.0 handle store
-            d["_objhandle1"] = node._objhandle1  # NW6: API 1.0 handle store
+            d["_mobject"]   = node._mobject
+            d["_mdagpath"]  = node._mdagpath
+            d["_fn_set"]    = node._fn_set
+            d["_objhandle"] = node._objhandle
         else:
             if isinstance(node, OpenMaya.MObject):
                 d["_mobject"]  = node
@@ -71,8 +71,8 @@ class DAGNode(DGNode):
                     sel.add(_lookup(str(node), _type_label(type(self))))
                 d["_mdagpath"] = sel.getDagPath(0)
                 d["_mobject"]  = d["_mdagpath"].node()
-            d["_fn_set"] = self.FN_SET(d["_mdagpath"])
-            self._cache_api1_objects(d["_fn_set"].partialPathName())
+            d["_fn_set"]    = self.FN_SET(d["_mdagpath"])
+            d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
         self.is_type(self.name, exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
 

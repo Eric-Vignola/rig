@@ -7,7 +7,7 @@ from functools import total_ordering
 from types import FunctionType
 from typing import Any, Sequence
 
-from maya import cmds, OpenMaya as OpenMaya1
+from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _MISSING,
@@ -637,8 +637,7 @@ _NODE_STATE = frozenset(
         "_mobject",
         "_mdagpath",
         "_fn_set",
-        "_fn_set1",  # NW6: API 1.0 handle store (a name, for the sugar)
-        "_objhandle1",  # NW6: API 1.0 handle store (a name, for the sugar)
+        "_objhandle",
         "_attr_dict",
         "_Geometry__local_shape_attr",
         "_Geometry__world_shape_attr",
@@ -746,13 +745,16 @@ class DGNode(Node):
         shares its internals; any other node object is taken by its name. The
         state is written to ``__dict__``, in this order, so no ``__setattr__``
         runs.
+
+        The handle (``_objhandle``) is built from the MObject just resolved,
+        while the node is alive: a handle built later from a held MObject
+        cannot tell a node a new scene freed (see `_ensure_owner_alive`).
         """
         d = self.__dict__
         if isinstance(node, type(self)):
-            d["_mobject"]    = node._mobject
-            d["_fn_set"]     = node._fn_set
-            d["_fn_set1"]    = node._fn_set1  # NW6: API 1.0 handle store
-            d["_objhandle1"] = node._objhandle1  # NW6: API 1.0 handle store
+            d["_mobject"]   = node._mobject
+            d["_fn_set"]    = node._fn_set
+            d["_objhandle"] = node._objhandle
         else:
             if isinstance(node, OpenMaya.MObject):
                 d["_mobject"] = node
@@ -766,22 +768,10 @@ class DGNode(Node):
                     # current namespace's)
                     sel.add(_lookup(str(node), _type_label(type(self))))
                 d["_mobject"] = sel.getDependNode(0)
-            d["_fn_set"] = self.FN_SET(d["_mobject"])
-            self._cache_api1_objects(d["_fn_set"].name())
+            d["_fn_set"]    = self.FN_SET(d["_mobject"])
+            d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
         self.is_type(self.name, exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
-
-    def _cache_api1_objects(self, name):
-        # cache a API 1.0 MFnDependencyNode for validation purpose
-        # 2.0 mobjects crash maya after new scene...
-        # TODO check if maya fixed this in 2023+
-        sel = OpenMaya1.MSelectionList()
-        sel.add(name)
-        mobject1 = OpenMaya1.MObject()
-        sel.getDependNode(0, mobject1)
-        d                = self.__dict__
-        d["_fn_set1"]    = OpenMaya1.MFnDependencyNode(mobject1)  # NW6: API 1.0 handle store
-        d["_objhandle1"] = OpenMaya1.MObjectHandle(mobject1)  # NW6: API 1.0 handle store
 
     # --- dunders
 
@@ -811,14 +801,15 @@ class DGNode(Node):
         Only runs once normal lookup failed, so Python members always win. A
         ``_`` name (Python probes dunders constantly: ``__deepcopy__``,
         ``__array__``, ``__apiobject__``) resolves only to a Maya attr that
-        really exists on a live node; the API 1.0 handle is read first, it is
+        really exists on a live node; the node's handle is read first, it is
         safe on a node a new scene freed, and a half-built instance (``copy``)
         raises ``AttributeError``. A node a new scene, a file open or a
         reference unload freed raises ``already deleted!``, a cached attr too.
 
-        The plug takes the handle of its attribute for a dynamic attr, and, on
-        a node with more than one DAG path, is named through this node's path
-        (``Node("|T2|S").v`` is ``T2|S.visibility``). An attr of another node (a shape's, read through
+        The plug carries the handle of its node (this node's, shared) and, for
+        a dynamic attr, of its attribute, and, on a node with more than one DAG
+        path, is named through this node's path (``Node("|T2|S").v`` is
+        ``T2|S.visibility``). An attr of another node (a shape's, read through
         its transform) keeps that node as its owner, or none.
 
         Real attributes always win (``curveShape.f`` is ``form``). Only once the
@@ -856,7 +847,7 @@ class DGNode(Node):
                     if found is not None:
                         return found
                 raise
-        elif not d["_objhandle1"].isAlive():  # NW6: API 1.0 handle read (hot)
+        elif not d["_objhandle"].isAlive():
             # a node a new scene freed: its cached MPlug points at freed memory
             # (a miss raised through the fn set). `_attr_dict` is set last by
             # every constructor, so the handle is there.
@@ -867,25 +858,27 @@ class DGNode(Node):
         attr_d = attr.__dict__
         owner  = attr_d["_node"]
         # with the handle of its attribute, for a dynamic attr
-        attr1  = attr_d.get("_attr1")
+        attrh  = attr_d.get("_attrh")
         if attr_name in _MULTIDIM:
             # NURBS-surface ``cv`` / lattice ``pt``: ``node.cv[u, v]`` resolves
-            # like the ``Plug("shape.cv[u][v]")`` string path
+            # like the ``Plug("shape.cv[u][v]")`` string path (it took the
+            # handle `attr` holds, its owner's)
             plug = _COMPONENT_PLUG(attr_name, attr)
             if plug is not None:
                 plug.__dict__["_node"] = owner
                 return _named_through_owner(plug)
         if owner is self:
-            plug = _new_attr(plug_cls, attr_d["_mplug"], None, attr1)
+            plug = _new_attr(plug_cls, attr_d["_mplug"], d["_objhandle"], attrh)
             plug.__dict__["_node"] = self
             # ``find_attr`` named the attr through this node's path if it has
             # more than one; one it did not is named as the MPlug
             if not str.__contains__(attr, "|"):  # _named_through_a_path
                 return plug
             return _named_through_owner(plug)
-        # an attr of another node: its owner, or none and the handle of that
-        # node the attr took, which checks it until ``Plug.node`` casts it
-        plug = _new_attr(plug_cls, attr_d["_mplug"], attr_d["_handle1"], attr1)
+        # an attr of another node: its owner and its handle, or none and the
+        # handle of that node the attr took, which checks it until
+        # ``Plug.node`` casts it
+        plug = _new_attr(plug_cls, attr_d["_mplug"], attr_d["_handle"], attrh)
         plug.__dict__["_node"] = owner
         return _named_through_owner(plug)
 
@@ -1011,15 +1004,16 @@ class DGNode(Node):
     def ensure_valid(self) -> None:
         """Raise erros if an object is deleted.
 
-        A node deleted to the undo queue is still alive, and is named. A node a
-        new scene, a file open or a reference unload freed is not: its fn sets
-        point at freed memory, so it is named by its class only (reading its
-        name would read another node's, or crash Maya).
+        A node deleted to the undo queue is still alive, and is named (through a
+        fn set of its MObject, which is safe while it is alive). A node a new
+        scene, a file open or a reference unload freed is not: its MObject and
+        fn sets point at freed memory, so it is named by its class only
+        (reading its name would read another node's, or crash Maya).
         """
-        handle = self._objhandle1  # NW6: API 1.0 handle read (hot)
+        handle = self._objhandle
         if not handle.isValid():
             if handle.isAlive():
-                fn = self._fn_set1  # NW6: API 1.0 handle read
+                fn = OpenMaya.MFnDependencyNode(self._mobject)
                 raise _deleted_error(fn.name(), uuid=fn.uuid().asString())
             raise _deleted_error(type(self).__name__, freed=True)
 
@@ -1483,7 +1477,7 @@ class DGNode(Node):
             if type(attr) is not Attribute:
                 attr_d = attr.__dict__
                 typed  = _new_attr(
-                    Attribute, attr_d["_mplug"], attr_d["_handle1"], attr_d.get("_attr1")
+                    Attribute, attr_d["_mplug"], attr_d["_handle"], attr_d.get("_attrh")
                 )
                 typed.__dict__["_node"] = attr_d["_node"]
                 # named through its owner's path, as the plug was
@@ -1588,7 +1582,7 @@ class DGNode(Node):
         if plug.node() != self._mobject:
             attr_obj = Attribute(plug)
         else:
-            attr_obj = _new_attr(Attribute, plug)
+            attr_obj = _new_attr(Attribute, plug, self.__dict__["_objhandle"])
             attr_obj.__dict__["_node"] = self
             # named through this node's path in the str buffer cmds reads, if
             # the node has more than one (see `_named_through_owner`); the fn
@@ -1609,9 +1603,8 @@ class DGNode(Node):
                 # frees once it leaves the undo queue, and so does an extension
                 # attr, which deleteExtension frees (see `_ensure_owner_alive`)
                 name = attr if type(attr) is str and "." not in attr else None
-                attr_obj.__dict__["_attr1"] = _attr_handle(
-                    # NW6: API 1.0 handle read
-                    plug, fn1=self._fn_set1, name=name,
+                attr_obj.__dict__["_attrh"] = _attr_handle(
+                    plug, self.__dict__["_objhandle"], name=name,
                     extension=attr_class == _EXTENSION_ATTR,
                 )
 
@@ -1665,11 +1658,9 @@ class DGNode(Node):
                 sel.add(f"{self.name}.{attr_name}")
                 # a plug of this node: checked through this node's handle, and
                 # its attribute's, if dynamic
-                plug = sel.getPlug(0)
-                return _new_attr(
-                    # NW6: API 1.0 handle read
-                    Attribute, plug, self._objhandle1, _attr_handle(plug, fn1=self._fn_set1)
-                )
+                plug   = sel.getPlug(0)
+                handle = self.__dict__["_objhandle"]
+                return _new_attr(Attribute, plug, handle, _attr_handle(plug, handle))
         if not quiet:
             raise RuntimeError(f"Alias not found: {self}.{alias}")
 
