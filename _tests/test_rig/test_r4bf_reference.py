@@ -19,7 +19,8 @@ and the custom type attr, which the type key already decided.
   runs no type query; the first cast of a type by name runs the constructor
   and marks the type (an MObject cast of it then skips the check too); the
   shortcut takes the cast's own selection for a name; a class with its own
-  constructor or type check still runs them for a name.
+  constructor or type check still runs them for a name; a class of a
+  metaclass derived from NodeMeta is built by its ``_wrap`` on every cast.
 """
 
 from unittest import mock
@@ -301,3 +302,40 @@ class TestTheShortcut(MayaTestCase):
                     self.assertIs(type(Node(name)), cls)
                 self.assertIs(type(cls(nodes[0])), cls)
                 self.assertEqual(getattr(cls, counter), 5)
+
+    def test_a_metaclass_wrap_builds_every_cast(self):
+        """The cast's extension point: a metaclass derived from NodeMeta may
+        override ``_wrap``, and every cast of its class runs it (by name, by
+        the class reference, by uuid, MObject, MDagPath, ``Node.wrap``), also
+        once the type was cast before."""
+        wrapped = []
+
+        class _WrapMeta(_base.NodeMeta):
+            def _wrap(cls, obj):
+                wrapped.append(str(obj))
+                return type.__call__(cls, obj)
+
+        class _Locator(DAGNode, metaclass=_WrapMeta):
+            NATIVE_NODE_TYPE = "locator"
+
+        shapes = [
+            cmds.createNode("locator", name=f"loc{i}Shape", parent=cmds.createNode("transform", name=f"loc{i}"))
+            for i in range(2)
+        ]
+        sel = OpenMaya.MSelectionList()
+        sel.add(shapes[1])
+        uuid = cmds.ls(shapes[1], uuid=True)[0]
+        for label, call in (
+            ("first name", lambda: Node(shapes[0])),
+            ("name", lambda: Node(shapes[1])),
+            ("reference", lambda: _Locator(shapes[1])),
+            ("uuid", lambda: Node(uuid)),
+            ("MObject", lambda: Node(sel.getDependNode(0))),
+            ("MObject again", lambda: Node(sel.getDependNode(0))),
+            ("MDagPath", lambda: Node(sel.getDagPath(0))),
+            ("Node.wrap", lambda: Node.wrap(shapes[1])),
+        ):
+            with self.subTest(cast=label):
+                del wrapped[:]
+                self.assertIs(type(call()), _Locator)
+                self.assertEqual(len(wrapped), 1)
