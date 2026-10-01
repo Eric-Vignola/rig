@@ -281,9 +281,10 @@ def _cast(obj: Any, build: bool = True) -> Any:
 
     # a type already cast passes the class's type check again, so a
     # base-constructor class is built without re-running it (from the
-    # selection a name was just resolved in)
+    # selection a name was just resolved in); a class of a metaclass derived
+    # from NodeMeta is always built by its ``_wrap``, below
     inst = None
-    if key in _CASTABLE_TYPES:
+    if key in _CASTABLE_TYPES and type(cls_obj) is NodeMeta:
         inst = _construct_checked_type(cls_obj, obj, sel)
     if inst is None:
         # a node class is constructed without NodeMeta.__call__'s frame (the
