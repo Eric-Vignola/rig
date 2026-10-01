@@ -1147,6 +1147,17 @@ class DGNode(Node):
         return f"{cls.__name__}.define({name!r})"
 
     @classmethod
+    def _hint_type(cls) -> str | None:
+        """The node type whose names the reference's NodeNotFoundError
+        compares for its did-you-mean hint (``cmds.ls(type=...)``, subtypes
+        included): the class's node type, so ``Joint('spnie_01')`` compares
+        joints only; None (every node, as for ``Node(x)``) for DGNode and the
+        classes of no node type of their own (the generic Material,
+        Container)."""
+        node_type = cls.NATIVE_NODE_TYPE
+        return None if node_type == "entity" else node_type
+
+    @classmethod
     def find_all(cls, *args, exact_type: bool = True, **kwargs) -> list["DGNode"]:
         """Returns a list of objects of this type in the scene.
 
