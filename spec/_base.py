@@ -147,14 +147,14 @@ def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = No
                     or not attrh.isAlive()
                     or known["_mplug"].attribute() != mplug.attribute()
                 ):
-                    attrh = _attr_handle(mplug, handle, name=long_name)
+                    attrh = _attr_handle(mplug, node_fn=fn)
                 plug  = str.__new__(Plug, f"{node_string}.{long_name}")
                 # owned by the node, with its handle (see `_ensure_owner_alive`)
                 state = _attr_state(mplug, handle, attrh)
                 state["_node"] = node
                 plug.__dict__.update(state)
                 return plug
-    return _named_plug(f"{node_string}.{long_name}", node, long_name, added)
+    return _named_plug(f"{node_string}.{long_name}", node, added)
 
 
 class _AttrSpec:

@@ -251,17 +251,15 @@ def _maybe_translate_component(name: str) -> Any:
         return name  # API failure -- let Attribute raise
 
 
-def _named_plug(
-    name: str, node: Any = None, attr_name: Any = None, known: Any = None
-) -> "Plug":
+def _named_plug(name: str, node: Any = None, known: Any = None) -> "Plug":
     """``Plug(name)``, for a plug of ``node``, a node object the caller holds:
     checked through that node's handle (shared, see ``_ensure_owner_alive``)
     instead of one ``Attribute.__init__`` takes of its MPlug. The name resolves
     as ``Plug.__init__`` resolves it (a component name to its ``controlPoints``
-    / ``uvpt`` element). Without a node, ``Plug(name)``. ``attr_name`` is the
-    name of its attribute, and ``known`` an Attribute of the same attribute the
-    caller has (the one a spec's ``add_attr`` found), whose attribute handle it
-    takes (see ``_attr_handle``)."""
+    / ``uvpt`` element). Without a node, ``Plug(name)``. ``known`` is an
+    Attribute of the same attribute the caller has (the one a spec's
+    ``add_attr`` found), whose attribute handle it takes (see
+    ``_attr_handle``)."""
     held   = None if node is None else node.__dict__
     handle = None if held is None else held.get("_objhandle")
     if handle is None:
@@ -278,7 +276,7 @@ def _named_plug(
         or not attrh.isAlive()
         or known.__dict__["_mplug"].attribute() != mplug.attribute()
     ):
-        attrh = _attr_handle(mplug, handle, attr_name)
+        attrh = _attr_handle(mplug, handle)
     plug.__dict__.update(_attr_state(mplug, handle, attrh))
     return plug
 

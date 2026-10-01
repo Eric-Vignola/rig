@@ -1602,10 +1602,8 @@ class DGNode(Node):
                 # a dynamic attr keeps a handle of its attribute, which a delete
                 # frees once it leaves the undo queue, and so does an extension
                 # attr, which deleteExtension frees (see `_ensure_owner_alive`)
-                name = attr if type(attr) is str and "." not in attr else None
                 attr_obj.__dict__["_attrh"] = _attr_handle(
-                    plug, self.__dict__["_objhandle"], name=name,
-                    extension=attr_class == _EXTENSION_ATTR,
+                    plug, extension=attr_class == _EXTENSION_ATTR, node_fn=self._fn_set
                 )
 
         return _filtered(attr_obj, category, data_type)
