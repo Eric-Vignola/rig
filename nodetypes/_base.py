@@ -2823,9 +2823,9 @@ class Node(metaclass=NodeMeta):
           ``parent=`` puts a DAG node in its parent's space. A type whose class
           makes just its node (``transform``, ``joint``, ``choice`` ...) takes
           keyword arguments only; one built from inputs (``skinCluster``,
-          ``blendShape``, ``mesh``, ``reference``) raises TypeError without
-          them, before anything is made. A display layer is empty unless
-          objects are given.
+          ``blendShape``, ``mesh``, ``nurbsCurve``, ``reference``) raises
+          TypeError without them, before anything is made. A display layer is
+          empty unless objects are given.
         * Any other type is made by the container scope's ``createNode``
           (``Node.create("multiplyDivide", name="md")``): the node joins the
           active scope, an explicit ``name=`` takes the flattened scope's

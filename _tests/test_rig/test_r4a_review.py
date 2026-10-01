@@ -220,7 +220,7 @@ class TestNodeCreateTypedDispatch(_SceneCase):
 
     def test_a_node_that_takes_no_input_takes_no_positional_argument(self):
         before = set(cmds.ls(long=True))
-        for node_type in ("transform", "joint", "choice", "nurbsCurve", "multiplyDivide"):
+        for node_type in ("transform", "joint", "choice", "nurbsSurface", "multiplyDivide"):
             with self.subTest(node_type=node_type):
                 with self.assertRaisesRegex(TypeError, r"keyword arguments only"):
                     Node.create(node_type, "grp")
@@ -234,6 +234,7 @@ class TestNodeCreateTypedDispatch(_SceneCase):
             ("blendShape", r"\*targets, base"),
             ("skinCluster", "geom, influences"),
             ("mesh", "mesh_data"),
+            ("nurbsCurve", "points"),
             ("reference", "file_path, namespace"),
         ):
             with self.subTest(node_type=node_type):

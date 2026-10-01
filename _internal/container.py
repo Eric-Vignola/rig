@@ -1285,8 +1285,8 @@ def _makes_just_its_node(node_cls: type) -> bool:
     """True for a class whose typed create makes just the node of its type by
     ``cmds.createNode``: `DGNode.create` with DGNode's or DAGNode's ``_create``
     and DGNode's ``post_create``, no custom type (``transform``, ``joint``,
-    ``choice``, ``nurbsCurve`` ...). Its only positional argument would be a DAG
-    parent, which ``Node.create`` takes as ``parent=``."""
+    ``choice`` ...). Its only positional argument would be a DAG parent, which
+    ``Node.create`` takes as ``parent=``."""
     return (
         not node_cls.CUSTOM_NODE_TYPE
         and getattr(node_cls.create, "__func__", None) is _DG_CREATE
@@ -1310,9 +1310,9 @@ def _node_create(node_type: str, args: tuple, kwargs: dict) -> Any:
     where the node takes none: after an unregistered type, or a type whose
     class makes just its node (:func:`_makes_just_its_node`; ``parent=`` places
     it). A class that builds its node from inputs (``_CREATE_TAKES_INPUTS``:
-    a skinCluster, a blendShape, a mesh, a reference) refuses a call with none,
-    before anything is made (``cmds.blendShape`` alone deforms the
-    selection)."""
+    a skinCluster, a blendShape, a mesh, a nurbsCurve, a reference) refuses a
+    call with none, before anything is made (``cmds.blendShape`` alone deforms
+    the selection)."""
     node_cls = _nodetypes_base._NODE_CLASS_DICT.get(node_type)
     if node_cls is None:
         if args:

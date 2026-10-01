@@ -101,7 +101,7 @@ from rig.nodetypes.plugins import load_plugin
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
 | `Geometry` | `geometryShape` | component tags: `injection_node`, `component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `local_shape_attr` / `world_shape_attr`, `get_component_mobject`, paintable attrs |
 | `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
-| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `num_cvs`, `num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`) |
+| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `num_cvs`, `num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`) |
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), normalise / prune / max influences, `transfer_to_mesh`, `connect_bind_pre_matrices` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `add_empty_target`, `rebuild_target` |
@@ -171,10 +171,10 @@ joints)` ends up in `SkinCluster._create` and `"shadingEngine"` is built
 wired — and `createNode` for any other type, with every `createNode` flag.
 A class that makes just its node (`transform`, `joint`, `choice`, ...) takes
 keyword arguments only; one built from inputs (`skinCluster`, `blendShape`,
-`mesh`, `reference`) raises a `TypeError` without them, before anything is
-made; a display layer is empty unless objects are given. `Node.find_all(type)`
-is the registered class's `find_all`, or the nodes `cmds.ls` lists for any
-other type.
+`mesh`, `nurbsCurve`, `reference`) raises a `TypeError` without them, before
+anything is made; a display layer is empty unless objects are given.
+`Node.find_all(type)` is the registered class's `find_all`, or the nodes
+`cmds.ls` lists for any other type.
 
 ### Handles, not names
 
@@ -232,6 +232,7 @@ that is where the constructor signatures diverge:
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss` only; any other `createNode` flag (`shared=`) is not passed |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`, every flag passed: in the parent's space, at identity |
 | `Mesh.create(mesh_data, uv_data=, name=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step |
+| `NurbsCurve.create(points_or_BSplineData, degree=, kv=, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own |
 | `SkinCluster.create(geo, influences_or_SkinData, **skinCluster_kwargs)` | `cmds.skinCluster(toSelectedBones=True)`, existing skin deleted first, one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
 | `BlendShape.create(*geometries_or_morphs, **blendShape_kwargs)` | `cmds.blendShape(frontOfChain=True)` |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
@@ -352,7 +353,7 @@ Every `serialize()` returns a `cgmath` data object and every `create` /
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData` | `Transform.create_hierarchy` |
 | `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` |
 | `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` |
-| `NurbsCurve` / `NurbsSurface` | `BSplineData` / `BSplinePatchData` | — |
+| `NurbsCurve` / `NurbsSurface` | `BSplineData` / `BSplinePatchData` | `NurbsCurve.create` (a curve) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` |
 | `BlendShape` | `MorphList`; `get_target_data()` a `MorphData` | `set_target_data`, `BlendShape.create` |
 
@@ -363,18 +364,20 @@ on the way back and creates parents first.
 
 ### Undo for API edits
 
-`MFnMesh.setPoints`, `MFnSkinCluster.setWeights` and `MFnMesh.create` are
-not undoable by themselves. The bundled `undoable_api_command` plug-in
-registers `cmds.rigUndoableAPICommand(obj)` (a name of rig's own): give it
-any object with `doIt` / `undoIt` / `redoIt` and its edit is one undo step.
+`MFnMesh.setPoints`, `MFnSkinCluster.setWeights`, `MFnMesh.create` and
+`MFnNurbsCurve.create` are not undoable by themselves. The bundled
+`undoable_api_command` plug-in registers `cmds.rigUndoableAPICommand(obj)`
+(a name of rig's own): give it any object with `doIt` / `undoIt` / `redoIt`
+and its edit is one undo step.
 rig's mesh edits (points, UV sets and their UVs, colour sets and their
 colours) and skin weights go through it, one step each, API only: a UV or
 colour set is made, renamed and deleted through `MFnMesh` too, never
 `polyUVSet` / `polyColorSet`, whose undo beside API data edits and later
-vertex edits restores broken sets. `Mesh.create` needs no command (the
-shape rides a recorded `createNode` transform); it, `SkinCluster.create`
-and `set_weights(SkinData)` are one step each, named `rig.Mesh.create`,
-`rig.SkinCluster.create`, `rig.SkinCluster.set_weights`.
+vertex edits restores broken sets. `Mesh.create` and `NurbsCurve.create`
+need no command (the shape rides a recorded `createNode` transform); they,
+`SkinCluster.create` and `set_weights(SkinData)` are one step each, named
+`rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`,
+`rig.SkinCluster.set_weights`.
 
 Your own API edits take the same command: [CHEATSHEET section 21](CHEATSHEET.md#21-plugins--load_plugin-and-undo)
 has the recipe and the object's rules (apply the change first, in `doIt`;

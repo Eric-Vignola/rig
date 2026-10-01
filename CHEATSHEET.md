@@ -2706,7 +2706,7 @@ Edit menu. How many steps a statement makes depends on what it runs:
 |---|---|
 | a DSL statement (`<<`, an operator network, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | one per Maya command it runs, so an operator network is several |
 | a membership edit (`<< Tag("x")`, `<< Layer("x")`, `<< Blinn("x")`), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.shade.convert` |
-| `Mesh.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
+| `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |
 
 `rig.undo_chunk` makes any run of statements one named step:

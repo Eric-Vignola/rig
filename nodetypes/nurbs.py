@@ -4,9 +4,14 @@ Nurbs node class for NurbsCurve and NurbsSurface
 
 from __future__ import annotations
 
+from numbers import Integral
+
 import numpy as np
+from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes.geometry import Geometry
+from numpy.typing import ArrayLike
+from rig._internal.undo import _undo_chunk
+from rig.nodetypes.geometry import Geometry, _shape_create_name
 
 
 class NurbsCurve(Geometry):
@@ -17,6 +22,84 @@ class NurbsCurve(Geometry):
     NATIVE_NODE_TYPE = "nurbsCurve"
     FN_SET           = OpenMaya.MFnNurbsCurve
     POINT_COMP_TYPE  = "cv"
+
+    # built from its points (``Node.create("nurbsCurve")`` with none raises, naming them)
+    _CREATE_TAKES_INPUTS = "points"
+
+    # --- creation
+
+    @classmethod
+    def _create(
+        cls,
+        points: ArrayLike | BSplineData,
+        degree: int       | None = None,
+        kv:     ArrayLike | None = None,
+        name:   str       | None = None,
+        **kwargs,
+    ) -> str:
+        """[Internal] Builds the curve of `points` (control points with their
+        `degree` and `kv`, or a BSplineData) and returns the transform's name.
+        `NurbsCurve.create` wraps it in its undo chunk; see there."""
+        return _create_curve(points, degree, kv, name)
+
+    @classmethod
+    def create(
+        cls,
+        points:    ArrayLike | BSplineData,
+        degree:    int       | None = None,
+        kv:        ArrayLike | None = None,
+        name:      str       | None = None,
+        container: bool      | None = None,
+    ) -> "NurbsCurve":
+        """Creates a curve object from its control points, or from a
+        BSplineData object.
+
+        Args:
+            points: The control points (CVs), as ``(N, 3)`` numbers (a list, an
+                array, MPoints or the ``MPointArray`` `get_points` returns), in
+                the curve's object space. Or a BSplineData: the curve is built
+                from its ``points``, ``degree`` and ``kv``, and is periodic
+                when the data is (its first ``degree`` points are then repeated
+                at the end, as Maya stores a periodic curve). The data's
+                ``uniform`` and ``registered`` settings have no Maya
+                equivalent and are not used.
+            degree: The degree of a curve given as points. None: 3.
+            kv: The knots of a curve given as points, in Maya's layout:
+                ``N + degree - 1`` values that never decrease, none repeated
+                more than ``degree`` times. None: Maya's default, the knots
+                ``cmds.curve(point=..., degree=...)`` gives (one apart, the
+                end ones repeated ``degree`` times: ``0 0 0 1 2 3 3 3`` for six
+                points of degree 3).
+            name: The name of the curve to create (a trailing ``Shape<digits>``
+                is dropped: ``"cShape2"`` names the transform ``c2`` and the
+                shape ``cShape2``). None: ``curve<N>``.
+            container: Inside ``with container()``, whether the transform and
+                the shape are registered with the scope (None: yes), as for
+                every typed create (see `DGNode.create`).
+
+        A BSplineData carries its own degree and knots: ``degree`` or ``kv``
+        given with one is a TypeError.
+
+        The whole call is ONE undo step named ``rig.NurbsCurve.create``, as
+        `Mesh.create` is: one ``cmds.undo()`` removes the transform and the
+        shape (and, in a scope, the registration), and ``cmds.redo()`` brings
+        back the same node (its UUID, and any NurbsCurve object held on it,
+        stay valid). The curve rides a recorded ``createNode`` transform: the
+        shape is made under it through the API, so the points are stored as
+        given, in Maya's internal unit (what `get_points` reads), whatever the
+        scene's linear unit is (``cmds.curve`` reads its points in that unit).
+        It never changes the selection and leaves no construction history.
+
+        Input that is no curve (points that are not ``(N, 3)`` finite numbers,
+        fewer than ``degree + 1`` of them, a degree under 1, knots of the wrong
+        count or order) raises TypeError or ValueError before anything is
+        made; an error after the transform is made deletes it again before it
+        propagates.
+        """
+        with _undo_chunk("rig.NurbsCurve.create"):
+            return super().create(points, degree=degree, kv=kv, name=name, container=container)
+
+    # --- curve geometry data methods
 
     @property
     def num_cvs(self) -> int:
@@ -154,3 +237,152 @@ class NurbsSurface(Geometry):
             periodic_u = periodic_u,
             periodic_v = periodic_v,
         )
+
+
+def _curve_inputs(
+    points: ArrayLike | BSplineData, degree: int | None, kv: ArrayLike | None
+) -> tuple[np.ndarray, np.ndarray, int, bool]:
+    """`NurbsCurve.create`'s input, checked, as ``MFnNurbsCurve.create`` takes
+    it: ``(cvs (N, 3), knots (N + degree - 1,), degree, periodic)``. It makes
+    nothing; input that is no curve raises TypeError or ValueError.
+
+    A BSplineData gives its ``cv`` (its points, a periodic curve's first
+    ``degree`` repeated at the end), ``degree`` and ``kv``. Points take
+    `degree` (None: 3) and `kv` (None: Maya's default knots)."""
+    # a BSplineData, duck-typed so cgmath is never imported here; read on the
+    # class, so a node or a plug (whose attributes are Maya's) is never asked
+    if hasattr(type(points), "kv") and hasattr(type(points), "cv"):
+        given = [key for key, value in (("degree", degree), ("kv", kv)) if value is not None]
+        if given:
+            raise TypeError(
+                f"NurbsCurve.create() got {' and '.join(given)} with a "
+                f"{type(points).__name__}, which carries its own degree and knots "
+                f"(degree= and kv= describe points)"
+            )
+        periodic = bool(getattr(points, "periodic", False))
+        degree   = points.degree
+        kv       = points.kv
+        points   = points.cv
+    else:
+        periodic = False
+        if degree is None:
+            degree = 3
+
+    if isinstance(degree, bool) or not isinstance(degree, Integral):
+        raise TypeError(f"NurbsCurve.create() degree must be an int, got {degree!r}")
+    degree = int(degree)
+    if degree < 1:  # MFnNurbsCurve.create crashes Maya on degree 0
+        raise ValueError(f"NurbsCurve.create() degree must be 1 or more, got {degree}")
+
+    try:
+        cvs = np.asarray(points, dtype=np.float64)
+    except (TypeError, ValueError):
+        cvs = None
+    if cvs is None or cvs.ndim == 0:
+        raise TypeError(
+            f"NurbsCurve.create() takes (N, 3) points or a BSplineData, got "
+            f"{type(points).__name__}"
+        )
+    if cvs.ndim == 2 and cvs.shape[1] == 4:
+        # homogeneous points (MPoints, an MPointArray): a non-rational curve's w is 1
+        if not np.all(cvs[:, 3] == 1.0):
+            raise ValueError("NurbsCurve.create() makes non-rational curves: (N, 4) points take w = 1")
+        cvs = cvs[:, :3]
+    if cvs.ndim != 2 or cvs.shape[1] != 3:
+        raise ValueError(f"NurbsCurve.create() points must be (N, 3), got {cvs.shape}")
+    count = cvs.shape[0]
+    if count < degree + 1:
+        raise ValueError(
+            f"a curve of degree {degree} takes {degree + 1} points or more, got {count}"
+        )
+    if not np.isfinite(cvs).all():
+        raise ValueError("NurbsCurve.create() points must be finite (got nan or inf)")
+
+    size = count + degree - 1
+    if kv is None:
+        # Maya's default: one apart, the end knots repeated `degree` times
+        return cvs, np.clip(np.arange(size) - (degree - 1.0), 0.0, count - degree), degree, periodic
+
+    try:
+        knots = np.asarray(kv, dtype=np.float64)
+    except (TypeError, ValueError):
+        raise TypeError(
+            f"NurbsCurve.create() kv must be numbers, got {type(kv).__name__}"
+        ) from None
+    if knots.ndim != 1 or knots.shape[0] != size:
+        # scipy and The NURBS Book write one more knot at each end
+        padded = " (leave out the first and the last)" if knots.shape == (size + 2,) else ""
+        raise ValueError(
+            f"{count} points of degree {degree} take {size} knots (Maya's layout: "
+            f"points + degree - 1), got {knots.shape[0] if knots.ndim == 1 else knots.shape}"
+            f"{padded}"
+        )
+    if not np.isfinite(knots).all():
+        raise ValueError("NurbsCurve.create() kv must be finite (got nan or inf)")
+    if np.any(np.diff(knots) < 0.0):
+        raise ValueError("NurbsCurve.create() kv must never decrease")
+    repeats = int(np.unique(knots, return_counts=True)[1].max())
+    if repeats > degree:
+        raise ValueError(
+            f"a knot of a degree {degree} curve repeats {degree} times at most "
+            f"(Maya's layout), got one {repeats} times"
+        )
+    if not knots[size - degree] > knots[degree - 1]:
+        raise ValueError("NurbsCurve.create() kv must cover a parameter range longer than zero")
+    return cvs, knots, degree, periodic
+
+
+def _create_curve(
+    points: ArrayLike | BSplineData,
+    degree: int       | None,
+    kv:     ArrayLike | None,
+    name:   str       | None,
+) -> str:
+    """`NurbsCurve._create`'s body: the ride, as `Mesh.create`'s. Returns the
+    transform's name.
+
+    In this order (`NurbsCurve.create` holds the one undo chunk around it):
+
+    1. check the input (`_curve_inputs`): nothing is made yet;
+    2. ``cmds.createNode("transform", name="curve#", skipSelect=True)``, the
+       recorded node the curve rides with (``cmds.curve``'s default name);
+    3. ``MFnNurbsCurve.create(..., parent=<transform>)``: the shape, under it;
+    4. ``cmds.rename`` of the transform (Maya renames the shape after it).
+
+    Any error after step 2 deletes the transform before it propagates.
+    """
+    cvs, knots, degree, periodic = _curve_inputs(points, degree, kv)
+    name = _shape_create_name(name)
+    form = OpenMaya.MFnNurbsCurve.kPeriodic if periodic else OpenMaya.MFnNurbsCurve.kOpen
+
+    xform  = cmds.createNode("transform", name="curve#", skipSelect=True)
+    sel    = OpenMaya.MSelectionList()
+    sel.add(xform)
+    parent = sel.getDependNode(0)
+    handle = OpenMaya.MObjectHandle(parent)
+    try:
+        try:
+            NurbsCurve.FN_SET().create(
+                OpenMaya.MPointArray(cvs.tolist()),
+                OpenMaya.MDoubleArray(knots.tolist()),
+                degree,
+                form,
+                False,  # not 2D
+                False,  # not rational
+                parent,
+            )
+        except RuntimeError as error:
+            # Maya says little ("Unexpected Internal Failure" for a periodic
+            # curve whose CVs or knots do not repeat): name the curve
+            raise RuntimeError(
+                f"NurbsCurve.create(): Maya refused the curve ({len(cvs)} CVs, "
+                f"degree {degree}, {'periodic' if periodic else 'open'}): {error}"
+            ) from None
+        if name:
+            # the shape follows the transform (curveShape<N> -> <name>Shape)
+            xform = cmds.rename(xform, name)
+    except BaseException:
+        if handle.isValid():
+            cmds.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+        raise
+    return xform
