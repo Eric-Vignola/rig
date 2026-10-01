@@ -424,8 +424,9 @@ class TestTourW2(_Case):
         self.assertEqual((again, ctls_again), (root, ctls))
         self.assertEqual(_transforms() - before, {"|rider4", "|rider5", "|rider6"})
         self.assertEqual([str(r) for r in riders_again], ["rider4", "rider5", "rider6"])
-        # found values are not re-applied; the re-declared fk_ik keeps its wire
-        self.assertEqual(cmds.getAttr("|rig|L_arm|ctl.tx"), 3.0)
+        # found values are set again (the script is the source of truth); the
+        # re-declared fk_ik keeps its wire
+        self.assertEqual(cmds.getAttr("|rig|L_arm|ctl.tx"), 1.0)
         self.assertEqual(cmds.listConnections("|rig|L_arm|ctl.fk_ik", source=True, plugs=True), ["drv.translateX"])
         self.assertEqual(cmds.attributeQuery("fk_ik", node="|rig|L_arm|ctl", range=True), [0.0, 1.0])
 
@@ -530,7 +531,7 @@ class TestTourW3(_Case):
         self.assertEqual(self.geos[2] >> Material(), [red])
         self.assertEqual(sorted(cmds.sets("redSG", query=True)), ["geo0Shape", "geo1Shape", "geo2Shape"])
 
-    def test_a_rerun_finds_the_network_and_keeps_its_values(self):
+    def test_a_rerun_finds_the_network_and_sets_its_values(self):
         red = Blinn.define("red", color=(1, 0, 0))
         for geo in self.geos:
             geo << red
@@ -539,10 +540,10 @@ class TestTourW3(_Case):
         for geo in self.geos:
             geo << Blinn.define("red", color=(0, 1, 0))
         self.assertEqual(_scene(), before)
-        self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
+        self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 1.0, 0.0))  # the script's values
         self.assertEqual(sorted(cmds.sets("redSG", query=True)), ["geo0Shape", "geo1Shape", "geo2Shape"])
-        self.assertEqual(Blinn.define("red", color=(0, 1, 0), update=True), red)
-        self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 1.0, 0.0))
+        self.assertEqual(Blinn.define("red", color=(1, 0, 0), update=False), red)
+        self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 1.0, 0.0))  # update=False: left as it is
         self.assertEqual(_scene(), before)
 
     def test_a_layer_is_defined_and_takes_a_list(self):
@@ -555,9 +556,9 @@ class TestTourW3(_Case):
         self.assertTrue(self.geos[0].tx in proxy)     # a plug stands for its node
         self.assertEqual(self.geos[1] >> Layer(), proxy)
         self.assertEqual(DisplayLayer.of(self.geos[2]), [proxy])
-        # a re-run finds it and keeps its values
+        # a re-run finds it and sets the values it is given
         self.assertEqual(Layer.define("proxy", displayType=0), proxy)
-        self.assertEqual(cmds.getAttr("proxy.displayType"), 2)
+        self.assertEqual(cmds.getAttr("proxy.displayType"), 0)
         self.assertEqual(_scene() - before, {"proxy"})
 
     def test_the_node_is_the_handle(self):

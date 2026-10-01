@@ -179,14 +179,15 @@ creates, `define` makes sure, `create` makes new.
   (`Material()`, `DisplayLayer()`: every material, every layer).
   `Cls.exists(x)` is whether `Cls(x)` would return a node; it raises the
   `AmbiguousNodeError` a reference would.
-- **Define, `Cls.define(name, *, parent=None, update=False, container=None,
+- **Define, `Cls.define(name, *, parent=None, update=True, container=None,
   **attrs)`.** The name is a key: the node `create(name=name,
   parent=parent)` would make, spelled in full — the name's namespace or
   else the current one, the flattened `with container()` scope's prefix,
   and for a DAG class the path of `parent=` (the world without it). Found
   there, the node is returned (a subtype most derived, another type a
-  `NodeTypeError`), never moved or reparented, and the attributes are set
-  only with `update=True`. Missing there, it is made with the attributes,
+  `NodeTypeError`), never moved or reparented, and the attributes given are
+  set on it: the script is the source of truth (`update=False` leaves a
+  found node as it is). Missing there, it is made with the attributes,
   in one undo step (`rig.define`). A typo in an attribute name raises on a
   hit and on a miss.
 - **Create, `Cls.create(*inputs, name=None, parent=None, container=None,

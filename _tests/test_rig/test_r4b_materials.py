@@ -123,11 +123,11 @@ class TestMaterialNodes(_Case):
         for geo in geos:
             self.assertIs(geo << red, geo)
         self.assertEqual(sorted(_members("redSG")), ["bShape", "cShape", "cubeShape"])
-        # a re-run finds it: 0 writes, the attributes are not re-applied
+        # a re-run finds it, makes nothing, and sets the values it is given
         before = _scene()
         self.assertEqual(Blinn.define("red", color=(0, 1, 0)), red)
         self.assertEqual(_scene(), before)
-        self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
+        self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 1.0, 0.0))
         # the node is the handle: a plain plug
         tex = rn.file(name="tex")
         red.color << tex.outColor
@@ -681,10 +681,11 @@ class TestConversionReturnsNode(_Case):
         cmds.flushUndo()
         before = _scene()
         self.assertIs(self.red.astype(Blinn), self.red)
-        self.assertIs(self.red.astype("blinn", color=(0, 1, 0)), self.red)
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")  # nothing to write
+        self.assertIs(self.red.astype("blinn", color=(0, 1, 0), update=False), self.red)
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
-        self.assertIs(self.red.astype(Blinn, update=True, color=(0, 1, 0)), self.red)
+        self.assertIs(self.red.astype(Blinn, color=(0, 1, 0)), self.red)  # the default: set
         self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 1.0, 0.0))
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.material")
         self.assertRefused(AttributeError, "no attribute 'nope'", lambda: self.red.astype(Blinn, nope=1))

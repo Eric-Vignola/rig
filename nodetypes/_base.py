@@ -3176,7 +3176,7 @@ class Node(metaclass=NodeMeta):
         name:      str,
         *,
         parent:    Any         = None,
-        update:    bool        = False,
+        update:    bool        = True,
         container: bool | None = None,
         **kwargs:  Any,
     ) -> Any:

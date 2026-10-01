@@ -134,15 +134,27 @@ class TestDefine(_Case):
         made = _transforms()
         build()
         self.assertEqual(_transforms(), made)
-        # the values are set only when the node is made
-        self.assertEqual(cmds.getAttr("|rig|L_arm|ctl.tx"), 3.0)
+        # the build's values are set again: the script is the source of truth
+        self.assertEqual(cmds.getAttr("|rig|L_arm|ctl.tx"), 1.0)
+
+    def test_update_is_on_by_default(self):
+        # the script is the source of truth (the user's decision, 2026-10-01):
+        # every define, and a same-type conversion, sets the values it is given
+        import inspect
+
+        from rig import shade
+        from rig.nodetypes.material_node import Material
+
+        for call in (DGNode.define, Node.define, Material.define, Material.astype, shade.convert):
+            with self.subTest(call=call.__qualname__):
+                self.assertIs(inspect.signature(call).parameters["update"].default, True)
 
     def test_update_applies_the_values_in_one_undo_step(self):
         ctl = Transform.define("ctl", tx=1, ty=2)
         cmds.setAttr("ctl.tx", 9)
-        self.assertEqual(Transform.define("ctl", tx=5), ctl)
+        self.assertEqual(Transform.define("ctl", tx=5, update=False), ctl)  # update=False: left as it is
         self.assertEqual(cmds.getAttr("ctl.tx"), 9.0)
-        self.assertEqual(Transform.define("ctl", tx=5, ty=6, update=True), ctl)
+        self.assertEqual(Transform.define("ctl", tx=5, ty=6), ctl)            # the default: set
         self.assertEqual((cmds.getAttr("ctl.tx"), cmds.getAttr("ctl.ty")), (5.0, 6.0))
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.define")
         cmds.undo()
@@ -169,7 +181,7 @@ class TestDefine(_Case):
         found = Transform.define("j1", tx=4)
         self.assertIs(type(found), Joint)
         self.assertEqual(found, Node("j1"))
-        self.assertEqual(cmds.getAttr("j1.tx"), 0.0)
+        self.assertEqual(cmds.getAttr("j1.tx"), 4.0)  # found, and set
         # an engine is an objectSet
         self.assertIs(type(ObjectSet.define("initialShadingGroup")), ShadingEngine)
 
@@ -282,7 +294,7 @@ class TestDefine(_Case):
         self.assertEqual((str(layer), cmds.getAttr("L.displayType")), ("L", 2))
         self.assertIsNone(cmds.editDisplayLayerMembers("L", query=True))  # the selection is never taken
         self.assertEqual(DisplayLayer.define("L", displayType=0), layer)
-        self.assertEqual(cmds.getAttr("L.displayType"), 2)
+        self.assertEqual(cmds.getAttr("L.displayType"), 0)  # found, and set
         objset = ObjectSet.define("S")
         self.assertEqual((type(objset), ObjectSet.define("S")), (ObjectSet, objset))
         engine = ShadingEngine.define("redSG")
@@ -370,9 +382,9 @@ class TestNodeDefine(_Case):
         made = Node.define("multiplyDivide", "md", operation="divide", input1X=3)
         self.assertEqual((cmds.nodeType("md"), cmds.getAttr("md.operation"), cmds.getAttr("md.input1X")),
                          ("multiplyDivide", 2, 3.0))
-        self.assertEqual(Node.define("multiplyDivide", "md", operation="multiply"), made)
-        self.assertEqual(cmds.getAttr("md.operation"), 2)
-        Node.define("multiplyDivide", "md", operation="multiply", update=True)
+        self.assertEqual(Node.define("multiplyDivide", "md", operation="multiply", update=False), made)
+        self.assertEqual(cmds.getAttr("md.operation"), 2)  # update=False: left as it is
+        Node.define("multiplyDivide", "md", operation="multiply")  # the default: set
         self.assertEqual(cmds.getAttr("md.operation"), 1)
         cmds.createNode("transform", name="rig")
         cases = (
@@ -534,7 +546,8 @@ class TestDefineReferenceNamespace(_Case):
         cmds.namespace(setNamespace=":char")
         self.assertEqual(Joint.define("spine"), found)
         self.assertEqual(_scene(), before)
-        self.assertEqual(cmds.getAttr("char:spine.tx"), 0.0)
+        # the values given are set, as on any found node: a reference edit
+        self.assertEqual(cmds.getAttr("char:spine.tx"), 3.0)
 
     def test_an_unknown_namespace_is_refused_and_not_created(self):
         self.assertRefused(ValueError, r"^Joint\.define\('chr:root'\): there is no namespace 'chr'; define never creates one",

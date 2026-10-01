@@ -1313,7 +1313,7 @@ class DGNode(Node):
         name:      str,
         *,
         parent:    Any         = None,
-        update:    bool        = False,
+        update:    bool        = True,
         container: bool | None = None,
         **kwargs:  Any,
     ) -> "DGNode":
@@ -1323,8 +1323,8 @@ class DGNode(Node):
         a new node, ``Cls.define(name)`` makes sure it exists::
 
             rig  = Transform.define("rig")                   # |rig: made, or found on a re-run
-            ctl  = Transform.define("ctl", parent=rig, tx=1) # |rig|ctl; tx set only when it is made
-            Transform.define("ctl", parent=rig, tx=5, update=True)   # found: tx set to 5
+            ctl  = Transform.define("ctl", parent=rig, tx=1) # |rig|ctl, made or found: tx set to 1
+            Transform.define("ctl", parent=rig, tx=5, update=False)  # found: tx left as it is
             layer = DisplayLayer.define("proxy", displayType=2)
 
         **The key** is the node ``create(name=name, parent=parent)`` would
@@ -1341,8 +1341,10 @@ class DGNode(Node):
         **Found at the key**: that node, when it is of this class or a
         subclass (``Transform.define("j1")`` is ``Joint("j1")``), else
         NodeTypeError. It is never moved, reparented or added to a container;
-        the attribute keywords are set only with ``update=True`` (in one undo
-        step, ``rig.define``). Inside a real ``with container()`` scope a node
+        the attribute keywords are set on it as on a node it makes, in one undo
+        step (``rig.define``): the script is the source of truth.
+        ``update=False`` leaves a found node as it is (hand edits survive a
+        re-run). Inside a real ``with container()`` scope a node
         owned by a container that is not on the scope's stack is refused (a
         re-run in the same scene: "'arm_root' belongs to container 'arm' from
         an earlier run; this scope is 'arm1' ..."); a registry is checked only

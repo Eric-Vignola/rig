@@ -436,16 +436,16 @@ class Material(DGNode):
         name:      str,
         *,
         parent:    Any         = None,
-        update:    bool        = False,
+        update:    bool        = True,
         container: bool | None = None,
         type:      str | None  = None,
         **kwargs:  Any,
     ) -> "Material":
         """Finds the shader at the key ``name`` names, or makes its network
         there (see ``DGNode.define``; ``create`` makes it): ``Blinn.define(
-        "red", color=(1, 0, 0))``. A found shader is returned as it is (no
-        engine is built for it: the first assignment does that), and its
-        attributes are set only with ``update=True``; a shader of another
+        "red", color=(1, 0, 0))``. A found shader gets the attributes given,
+        as a new one does (``update=False`` leaves it as it is), and no engine
+        is built for it: the first assignment does that. A shader of another
         type raises NodeTypeError, whose hint names the conversion.
 
         ``Material.define(name, type=...)`` is the define of that type: of
@@ -547,7 +547,7 @@ class Material(DGNode):
         strict:  bool = False,
         dry_run: bool = False,
         park:    bool = True,
-        update:  bool = False,
+        update:  bool = True,
         **attrs: Any,
     ) -> Any:
         """Converts this shader to the node type ``to`` (a class such as
@@ -567,7 +567,7 @@ class Material(DGNode):
         ``dry_run=True`` writes nothing and returns the ``Conversion``
         report. ``attrs`` are checked against the target before any write and
         set inside the chunk. A shader already of that type is returned as it
-        is, its ``attrs`` set only with ``update=True``. Refused before any
+        is, with its ``attrs`` set (``update=False`` leaves it). Refused before any
         write: the generic ``Material`` (it names no type), a type that is no
         surface shader, a Maya default, referenced or ``lockNode``'d
         shader."""

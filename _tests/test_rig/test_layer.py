@@ -211,15 +211,15 @@ class TestLayerAdd(MayaTestCase):
         self.cube << Layer.define("ref", displayType=2, visibility=False)
         self.assertEqual(cmds.getAttr("ref.displayType"), 2)
         self.assertFalse(cmds.getAttr("ref.visibility"))
-        # skipped on a found layer
+        # set on a found layer too: the script is the source of truth
         other  = _cube("other")
         before = set(cmds.ls())
-        other << Layer.define("ref", displayType=0, visibility=True)
+        other << Layer.define("ref", displayType=1, visibility=True)
         self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(cmds.getAttr("ref.displayType"), 2)
-        self.assertFalse(cmds.getAttr("ref.visibility"))
-        # update=True re-asserts them
-        other << Layer.define("ref", displayType=1, visibility=True, update=True)
+        self.assertEqual(cmds.getAttr("ref.displayType"), 1)
+        self.assertTrue(cmds.getAttr("ref.visibility"))
+        # update=False leaves a found layer as it is
+        other << Layer.define("ref", displayType=0, visibility=False, update=False)
         self.assertEqual(cmds.getAttr("ref.displayType"), 1)
         self.assertTrue(cmds.getAttr("ref.visibility"))
         self.assertEqual(set(cmds.ls()), before)

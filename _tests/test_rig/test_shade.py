@@ -239,11 +239,11 @@ class TestMaterialCreate(MayaTestCase):
         result = other << Blinn.define("red", color=(0, 0, 1))
         self.assertIs(result, other)
         self.assertEqual(set(cmds.ls()), before)
-        # kwargs skipped on a found material
-        self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
+        # set on a found material too: the script is the source of truth
+        self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 0.0, 1.0))
         self.assertEqual(sorted(_members("redSG")), ["cubeShape", "otherShape"])
-        # update=True re-asserts them
-        other << Blinn.define("red", color=(0, 0, 1), update=True)
+        # update=False leaves it as it is
+        other << Blinn.define("red", color=(1, 0, 0), update=False)
         self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 0.0, 1.0))
         self.assertEqual(set(cmds.ls()), before)
 
