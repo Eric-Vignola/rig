@@ -7,16 +7,18 @@ cast's type key decides is answered from that class (``_cast(x, build=False)``)
 instead of being built.
 
 * ``TestSameAnswers``: every class x every name of a mixed scene (joints,
-  transforms, DAG duplicates, an instance, shapes, shaders, engines, sets, a
+  transforms, DAG duplicates, an instance, shapes, empty mesh / curve /
+  surface shapes their function set refuses, shaders, engines, sets, a
   layer, a container, a custom-typed node and class, an unregistered wrapper,
   namespaced and referenced nodes, paths, attributes, uuids, patterns, ``''``,
   a name undone away) at the root namespace, with ``char`` current, and with
   ``namespace -relativeNames`` on: the answer, or the error, of the r4b
   implementation (``try: cls(x)``, the oracle). Node objects and ``None`` too.
 * ``TestTheProbe``: the class ``_cast(x, build=False)`` gives is the class
-  ``_cast(x)`` builds; a plain name MSelectionList resolves to no node makes
-  the cast fail (the probe's None); a node the lookup finds after the probe's
-  None gives what the reference gives.
+  ``_cast(x)`` builds; a class with its own constructor (a geometry shape) is
+  built instead, so an empty shape raises the reference's error; a plain name
+  MSelectionList resolves to no node makes the cast fail (the probe's None); a
+  node the lookup finds after the probe's None gives what the reference gives.
 * ``TestNothingBuiltNothingRaised``: a hit of the class or a subclass builds no
   node, a miss makes no NodeNotFoundError and runs no cast by name, another
   type makes no NodeTypeError.
@@ -40,9 +42,11 @@ from rig.nodetypes import (
     DAGNode,
     DGNode,
     DisplayLayer,
+    Geometry,
     Joint,
     Mesh,
     NurbsCurve,
+    NurbsSurface,
     ObjectSet,
     ShadingEngine,
     Transform,
@@ -124,9 +128,16 @@ class _Scene(MayaTestCase):
         cmds.createDisplayLayer(name="L", empty=True)
         cmds.sets(name="s1", empty=True)
         cmds.createNode("transform", name="x")
+        # shapes with no data yet (no inMesh / create wired), which MFnMesh,
+        # MFnNurbsCurve and MFnNurbsSurface refuse
+        for transform, kind, shape in (("empty", "mesh", "emptyShape"),
+                                       ("emptyCrv", "nurbsCurve", "emptyCrvShape"),
+                                       ("emptySrf", "nurbsSurface", "emptySrfShape")):
+            cmds.createNode(kind, name=shape, parent=cmds.createNode("transform", name=transform))
         cmds.namespace(add="char")
         cmds.createNode("joint", name="char:root")
         cmds.createNode("transform", name="char:x")
+        cmds.createNode("mesh", name="char:emptyNsShape", parent=cmds.createNode("transform", name="char:emptyNs"))
         cmds.namespace(add="sub")
         cmds.createNode("transform", name="sub:x")
         _FCtl.create(name="ctl")
@@ -146,6 +157,8 @@ class TestSameAnswers(_Scene):
         "char:", "nosuch:x", "ctl", "REF1:rtr", "REF1:rj", "rtr", "held", "nosuch", "",
         "|", ":", "1bad", "bad name", "grp.tx", "j1.rx", "red*", "gr[p]", "r?d",
         "0123456789abcdef0123456789abcdef", "6D9E4F2B-1111-2222-3333-444455556666",
+        "emptyShape", "|empty|emptyShape", "empty", "emptyCrvShape", "|emptyCrv|emptyCrvShape",
+        "emptySrfShape", "emptyNsShape", "char:emptyNsShape", ":char:emptyNsShape",
     )
 
     def classes(self):
@@ -153,7 +166,9 @@ class TestSameAnswers(_Scene):
         return found + [DGNode, DAGNode, self.wrapper_class]
 
     def test_every_class_and_name_answers_as_the_reference(self):
-        names = list(self.NAMES) + cmds.ls(["grp", "j1", "char:root", "REF1:rj"], uuid=True)
+        names = list(self.NAMES) + cmds.ls(
+            ["grp", "j1", "char:root", "REF1:rj", "emptyShape", "emptyCrvShape", "emptySrfShape"], uuid=True
+        )
         before = set(cmds.ls())
         for namespace, relative in ((":", False), ("char", False), ("char", True)):
             cmds.namespace(setNamespace=":")
@@ -232,11 +247,36 @@ class TestTheProbe(_Scene):
                     self.assertEqual(built[0], "returns")
                     self.assertIs(type(built[1]), probed[1])
                 elif probed[0] == "returns":
-                    # a custom type (or an alias of its name): built by name
+                    # a custom type (or an alias of its name): built by name;
+                    # a class with its own constructor: built
                     self.assertIs(type(built[1]), type(probed[1]))
                 else:
                     self.assertEqual(probed, built)
         self.assertGreater(checked, 50)
+
+    def test_a_class_with_its_own_constructor_is_built(self):
+        """A geometry shape's constructor may refuse a live node of its type
+        (its function set refuses a shape with no data yet), so the probe
+        builds it: exists raises the reference's error there, as it did when
+        it called the reference, and answers True once the shape has data."""
+        self.assertIs(type(_base._cast("bodyShape", build=False)), Mesh)
+        self.assertIs(_base._cast("grp", build=False), Transform)
+        for name, kind in (("emptyShape", Mesh), ("emptyCrvShape", NurbsCurve), ("emptySrfShape", NurbsSurface),
+                           ("char:emptyNsShape", Mesh)):
+            for cls in (kind, Geometry, DAGNode, DGNode):
+                with self.subTest(name=name, cls=cls.__name__):
+                    reference = _outcome(lambda: cls(name))
+                    self.assertEqual(reference[0], "raises")
+                    self.assertEqual(_outcome(lambda: cls.exists(name)), reference)
+            with self.subTest(name=name):
+                self.assertEqual(_outcome(lambda: _base._cast(name, build=False)), _outcome(lambda: _base._cast(name)))
+        # the guard idiom does not enter the branch the reference would fail in
+        with self.assertRaises(ValueError):
+            if Mesh.exists("emptyShape"):
+                self.fail("exists answered True for a mesh its reference refuses")
+        cmds.connectAttr("bodyShape.outMesh", "emptyShape.inMesh")
+        self.assertIs(Mesh.exists("emptyShape"), True)
+        self.assertIs(Mesh.exists("empty"), True)  # its transform
 
     def test_a_plain_name_no_node_has_fails_the_cast(self):
         for name in ("nosuch", ":nosuch", "|nosuch", "char:nosuch", "nosuch:x", "|g1|b", "held",

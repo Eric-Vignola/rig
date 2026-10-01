@@ -200,7 +200,10 @@ def _cast(obj: Any, build: bool = True) -> Any:
     MPlug becomes an object.
 
     ``build=False`` is ``Cls.exists``' probe: where the type key decides the
-    class, the class is returned instead of the node built from it, and a
+    class and that class keeps the DGNode or DAGNode constructor (which builds
+    any live node of its type), the class is returned instead of the node
+    built from it; a class with its own constructor is built, since that may
+    refuse a live node (a geometry shape's: MFnMesh refuses an empty mesh). A
     plain name MSelectionList resolves to no node gives None (the cast by name
     would fail: Maya's by-name queries resolve the name alike)."""
     mobj     = None
@@ -273,7 +276,7 @@ def _cast(obj: Any, build: bool = True) -> Any:
         cls_obj = _CLASS_BY_TYPE[key] = _native_node_class(obj)
     if not cls_obj:
         raise ValueError(f"Failed casting {obj}")
-    if not build and type(cls_obj) is NodeMeta:
+    if not build and type(cls_obj) is NodeMeta and _keeps_base_constructor(cls_obj):
         return cls_obj
 
     # a type already cast passes the class's type check again, so a
@@ -430,6 +433,24 @@ def _cast_node(name: str) -> Any:
 # properties, DGNode._cache_api1_objects), bound on first use since dg_node
 # imports this module
 _BASE_CONSTRUCTOR_PARTS = None
+
+# (DGNode, DAGNode), bound on first use for the same reason
+_BASE_CLASSES = None
+
+
+def _keeps_base_constructor(cls_obj) -> bool:
+    """Whether node class ``cls_obj`` is built by the DGNode or DAGNode
+    constructor (the one those classes hold now), which builds any live node
+    of a type the cast gives the class. A class with its own constructor may
+    refuse one: a geometry shape's function set refuses an empty shape."""
+    global _BASE_CLASSES
+    if _BASE_CLASSES is None:
+        from rig.nodetypes.dag_node import DAGNode
+        from rig.nodetypes.dg_node import DGNode
+
+        _BASE_CLASSES = (DGNode, DAGNode)
+    init = cls_obj.__init__
+    return init is _BASE_CLASSES[0].__init__ or init is _BASE_CLASSES[1].__init__
 
 
 def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:

@@ -1081,8 +1081,11 @@ class DGNode(Node):
 
         A name takes the reference's own lookup in its probe mode
         (`_node_from_str`), which neither raises for a miss nor builds a node
-        whose class its type key decides; only a node of another class is
-        built, for the class's ``_coerce`` hook."""
+        whose class its type key decides, when that class keeps the base
+        constructor. A node of another class is built, for the class's
+        ``_coerce`` hook, and so is a node of a class with its own
+        constructor (a geometry shape, which an empty shape's function set
+        refuses: exists then raises the reference's error)."""
         if name is None:
             return False
         if isinstance(name, str) and not isinstance(name, Attribute):
