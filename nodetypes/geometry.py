@@ -180,6 +180,13 @@ class Geometry(DAGNode):
             return f", which has no {cls.NATIVE_NODE_TYPE} shape"
         return ""
 
+    @classmethod
+    def _hint_type(cls) -> str | None:
+        """See ``DGNode._hint_type``: None, every node, since the reference
+        takes a transform too (``Mesh("bdoy")`` may mean the transform
+        ``body``)."""
+        return None
+
     # --- attr helpers
 
     @property

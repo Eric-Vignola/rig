@@ -15,12 +15,14 @@ and the node classes raised before catches them too.
 An error keeps its facts as attributes (``name``, the class ``label`` such as
 ``"joint"``, the ``candidates``) and builds its message when it is first
 printed. The hints read the scene then, each in its own ``try``: "did you mean
-'spine_01'?" (the closest leaf names of ``cmds.ls()``, at most 20000 of them),
-"'char:root' exists" (the same leaf in another namespace) and "'inner_k' exists
-(the scope prefix)" (the name a create inside the active flattened
-``with container()`` scope gives). A node class's miss then names the
-``define`` that makes the node ("; Joint.define('spnie_01') finds or makes
-it"), when that makes it from the name. A hint that cannot be read (the scene
+'spine_01'?" (the closest leaf names among the first ones ``cmds.ls`` lists,
+about 500: of the class's node type for a class's reference, so
+``Joint('spnie_01')`` compares joints only, else of every node), "'char:root'
+exists" (the same leaf in another namespace) and "'inner_k' exists (the scope
+prefix)" (the name a create inside the active flattened ``with container()``
+scope gives). A node class's miss then names the ``define`` that makes the
+node ("; Joint.define('spnie_01') finds or makes it"), when that makes it from
+the name. A hint that cannot be read (the scene
 was closed or replaced before the print) is left out, so printing an error
 never raises, and a caller that discards the error (``Node.wrap``,
 ``SkinCluster`` influences) never pays for them.
@@ -56,9 +58,14 @@ from maya import cmds
 # NodeNotFoundError is raised, since the scope may be gone when it is printed.
 _SCOPE_HINT_HOOK = None
 
-# the "did you mean" hint compares the missing leaf with at most this many
-# scene names (the first ones ``cmds.ls()`` returns)
-_HINT_NAME_LIMIT = 20000
+# the "did you mean" hint compares the missing leaf with the first names
+# ``cmds.ls`` lists, about 500 of them: ``cmds.ls(type=..., head=500)`` for a
+# class's miss (its node type), ``cmds.ls(head=1000)`` for any other, whose
+# ``head`` also counts the ~470 default nodes ``ls`` does not list. A print
+# then costs a few ms at 30,000 nodes (``cmds.ls()`` and difflib over it took
+# 125 ms there).
+_HINT_HEAD_TYPED = 500
+_HINT_HEAD       = 1000
 
 # how many candidates a message lists before "..."
 _SHOWN = 10
@@ -204,13 +211,21 @@ class NodeNotFoundError(NodeLookupError):
         return f"{shown} {'exists' if len(found) == 1 else 'exist'}"
 
     def _close_name_hint(self) -> str | None:
-        """The scene names whose leaf is closest to the missing leaf. Of the
-        names that share a leaf, the one in the missing name's own namespace is
-        shown (``'spine_01'`` rather than a reference's ``'char:spine_01'``)."""
-        leaf    = _leaf(self.name)
-        home    = _namespace(self.name)
+        """The scene names whose leaf is closest to the missing leaf, among
+        the first ones ``cmds.ls`` lists (``_HINT_HEAD_TYPED``,
+        ``_HINT_HEAD``): of the node type the class's reference takes
+        (``node_class._hint_type()``), else of every node. Of the names that
+        share a leaf, the one in the missing name's own namespace is shown
+        (``'spine_01'`` rather than a reference's ``'char:spine_01'``)."""
+        leaf      = _leaf(self.name)
+        home      = _namespace(self.name)
+        node_type = None if self.node_class is None else self.node_class._hint_type()
+        if node_type:
+            names = cmds.ls(type=node_type, head=_HINT_HEAD_TYPED)
+        else:
+            names = cmds.ls(head=_HINT_HEAD)
         by_leaf = {}
-        for name in (cmds.ls() or [])[:_HINT_NAME_LIMIT]:
+        for name in names or []:
             key = _leaf(name)
             if key not in by_leaf or _namespace(name) == home != _namespace(by_leaf[key]):
                 by_leaf[key] = name
