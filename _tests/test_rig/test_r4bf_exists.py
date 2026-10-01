@@ -20,8 +20,9 @@ instead of being built.
   MSelectionList resolves to no node makes the cast fail (the probe's None); a
   node the lookup finds after the probe's None gives what the reference gives.
 * ``TestNothingBuiltNothingRaised``: a hit of the class or a subclass builds no
-  node, a miss makes no NodeNotFoundError and runs no cast by name, another
-  type makes no NodeTypeError.
+  node, at the root namespace and while another one is current; a miss makes
+  no NodeNotFoundError and runs no cast by name; another type makes no
+  NodeTypeError.
 * ``TestSanitizeInfluences``: ``SkinCluster._sanitize_influences`` looks each
   name up once (one reference, no ``exists``) and answers as before: the
   Joints in order, every missing name in one RuntimeError, an ambiguous name
@@ -327,6 +328,23 @@ class TestNothingBuiltNothingRaised(_Scene):
             with self.subTest(cls=cls.__name__, name=name):
                 self.assertIs(cls.exists(name), True)
         self.assertEqual((dg_built, dag_built, refers), ([], [], []))
+
+    def test_a_hit_while_a_namespace_is_current_builds_no_node(self):
+        # a bare name then takes the lookup rule's two namespaces, then the probe
+        _base._construct_checked_type(Transform, "grp")
+        dg_built  = self.count(DGNode, "__init__")
+        dag_built = self.count(DAGNode, "__init__")
+        refers    = self.count(_base, "_refer")
+        for relative in (False, True):
+            cmds.namespace(setNamespace=":")
+            cmds.namespace(relativeNames=relative)
+            cmds.namespace(setNamespace="char")
+            for cls, name in ((Joint, "root"), (Transform, "root"), (Transform, "grp"), (DGNode, "red"),
+                              (DisplayLayer, "L"), (Transform, "j1")):
+                with self.subTest(relativeNames=relative, cls=cls.__name__, name=name):
+                    self.assertIs(cls.exists(name), True)
+        self.assertEqual((dg_built, dag_built, refers), ([], [], []))
+        self.assertIs(Joint.exists("grp"), False)  # another type is still built, for its _coerce
 
     def test_a_miss_raises_no_lookup_error_and_casts_nothing_by_name(self):
         made    = self.count(NodeNotFoundError, "__init__")
