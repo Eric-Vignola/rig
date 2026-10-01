@@ -832,52 +832,46 @@ def _prune_attr_handles() -> None:
 def _attr_handle(
     mplug:       OpenMaya.MPlug,
     node_handle: Any  = None,
-    name:        Any  = None,
     extension:   bool = False,
+    node_fn:     Any  = None,
 ) -> Any:
     """The MObjectHandle of the attribute of `mplug`, a live plug, if it is a
     dynamic attribute, or an `extension` one (the caller knows its class:
     `MPlug.isDynamic` is False for it), else None: the one a plug keeps as
     `_attrh` (see `_ensure_owner_alive`). A dynamic attribute is freed once a
     delete of it leaves the undo queue, while its node lives on, and an extension
-    one by `deleteExtension`; a static one lives as long as its node type. The
-    attribute is found by name on its node (the node of `mplug`, read only while
-    `node_handle`, the handle of that node the caller holds, is alive) the first
-    time (`name`, a name of it the caller has, saves reading it), and in
-    `_ATTR_HANDLES` after that. None if the name finds another attribute (the
-    plug's was deleted) and the table has none for it."""
+    one by `deleteExtension`; a static one lives as long as its node type.
+
+    The handle is taken the first time while the attribute is on its node (so
+    its name finds it: one deleted to the undo queue is not, even once its name
+    is added again), and found in `_ATTR_HANDLES` after that. Its node is read
+    through `node_fn`, the fn set of the plug's valid node the caller holds (and
+    just read), else through a fn set of the node of `mplug`, made only while
+    `node_handle`, the handle of that node the caller holds, is alive. None for
+    an attribute no longer on its node that the table has no handle of."""
     if not (extension or mplug.isDynamic):
         return None
     try:
         mobject = mplug.attribute()
-        code    = OpenMaya.MObjectHandle(mobject).hashCode()
+        handle  = OpenMaya.MObjectHandle(mobject)
+        code    = handle.hashCode()
     except Exception:
         return None
     entries = _ATTR_HANDLES.get(code)
     if entries is not None:
-        for known, handle in entries:
-            if handle.isAlive() and known == mobject:
-                return handle
+        for known, kept in entries:
+            if kept.isAlive() and known == mobject:
+                return kept
     try:
-        if node_handle is None or not node_handle.isAlive():
+        fn = node_fn
+        if fn is None:
+            if node_handle is None or not node_handle.isAlive():
+                return None
+            fn = OpenMaya.MFnDependencyNode(mplug.node())
+        if fn.attributeClass(mobject) == OpenMaya.MFnDependencyNode.kInvalidAttr:
             return None
-        fn    = OpenMaya.MFnDependencyNode(mplug.node())
-        found = None
-        if name is not None:
-            try:
-                found = fn.attribute(name)
-            except Exception:
-                found = None
-            # an alias, or a name another attribute has: read the plug's own name
-            if found is not None and found != mobject:
-                found = None
-        if found is None:
-            found = fn.attribute(OpenMaya.MFnAttribute(mobject).name)
     except Exception:
         return None
-    if found != mobject:
-        return None
-    handle = OpenMaya.MObjectHandle(mobject)
     if entries is None:
         if len(_ATTR_HANDLES) >= _ATTR_PRUNE_AT[0]:
             _prune_attr_handles()

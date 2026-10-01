@@ -469,6 +469,56 @@ class TestAttributeHandles(MayaTestCase):
                         else:
                             self.assertIsNone(handle)
 
+    def test_a_handle_is_taken_while_the_name_finds_the_attribute(self):
+        # the rule (the attribute's class on its node) is 45d2c13's by-name rule
+        # (its own name finds that attribute) in every state of the attribute
+        def by_name(mplug):
+            fn = OpenMaya.MFnDependencyNode(mplug.node())
+            try:
+                return fn.attribute(OpenMaya.MFnAttribute(mplug.attribute()).name) == mplug.attribute()
+            except RuntimeError:
+                return False
+
+        def taken(mplug, extension=False):
+            handle = OpenMaya.MObjectHandle(mplug.node())
+            with mock.patch.dict(_base._ATTR_HANDLES, clear=True):  # no earlier answer
+                return _base._attr_handle(mplug, handle, extension=extension) is not None
+
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("multiplyDivide", name="hm")
+        cmds.addAttr("hm", longName="dynf", attributeType="double")
+        cmds.addAttr("hm", longName="dynv", attributeType="double3")
+        for axis in "XYZ":
+            cmds.addAttr("hm", longName=f"dynv{axis}", attributeType="double", parent="dynv")
+        cmds.addAttr("hm", longName="dynm", attributeType="double", multi=True)
+        plugs = {name: _mplug(f"hm.{name}") for name in ("dynf", "dynvY", "dynm[2]")}
+        states = (
+            ("live", lambda: None),
+            ("deleted", lambda: [cmds.deleteAttr(f"hm.{n}") for n in ("dynf", "dynv", "dynm")]),
+            ("re-added", lambda: [
+                cmds.addAttr("hm", longName=n, attributeType="double") for n in ("dynf", "dynvY", "dynm")
+            ]),
+            ("undone", lambda: [cmds.undo() for _ in range(6)]),
+            ("renamed", lambda: [cmds.renameAttr("hm.dynf", "dynr"), cmds.renameAttr("hm.dynm", "dynn")]),
+        )
+        for state, change in states:
+            change()
+            for name, mplug in plugs.items():
+                with self.subTest(state=state, plug=name):
+                    self.assertEqual(taken(mplug), by_name(mplug))
+        self.assertTrue(all(taken(mplug) for mplug in plugs.values()))  # renamed: live
+        # an extension attribute, on its node and once deleteExtension freed it
+        try:
+            cmds.addExtension(nodeType="network", longName="r5Ext", attributeType="double")
+            cmds.createNode("network", name="net")
+            mplug = _mplug("net.r5Ext")
+            self.assertTrue(by_name(mplug))
+            self.assertTrue(taken(mplug, extension=True))
+            self.assertFalse(taken(mplug))  # not dynamic, as the caller says
+        finally:
+            if cmds.attributeQuery("r5Ext", type="network", exists=True):
+                cmds.deleteExtension(nodeType="network", attribute="r5Ext", forceDelete=True)
+
     def test_no_memo_check_for_an_attribute_its_name_no_longer_finds(self):
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("multiplyDivide", name="hm")
