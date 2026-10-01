@@ -100,6 +100,16 @@ def iter_component_tokens(prefix: str, ids: Any) -> Iterator[str]:
         yield from iter_component_ranges(head, tail.tolist())
 
 
+def _shape_create_name(name: str | None) -> str | None:
+    """The name a shape's typed create (`Mesh.create`, `NurbsCurve.create`)
+    gives the transform: `name` without a trailing ``Shape<digits>``
+    (``"mShape2"`` is ``"m2"``, whose shape Maya names ``mShape2``); None when
+    there is no name."""
+    if name and re.search("Shape[0-9]*$", name):
+        name = "".join(name.rpartition("Shape")[::2])
+    return name or None
+
+
 class Geometry(DAGNode):
     """
     Base geometry node class

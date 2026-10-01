@@ -18,7 +18,7 @@ from rig._internal.undo import _undo_chunk
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
-from rig.nodetypes.geometry import Geometry
+from rig.nodetypes.geometry import Geometry, _shape_create_name
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.plugins import _run_undoable
@@ -1259,15 +1259,6 @@ def _write_uv_set(
         fn.assignUVs(np.asarray(uv_data.counts).tolist(), indices.tolist(), uv_set)
 
 
-def _mesh_create_name(name: str | None) -> str | None:
-    """The name `Mesh.create` gives the transform: `name` without a trailing
-    ``Shape<digits>`` (``"mShape2"`` is ``"m2"``, whose shape Maya names
-    ``mShape2``); None when there is no name."""
-    if name and re.search("Shape[0-9]*$", name):
-        name = "".join(name.rpartition("Shape")[::2])
-    return name or None
-
-
 # the flat 4x4 identity: a MeshData.matrix that needs no xform
 _IDENTITY_16 = np.eye(4).ravel()
 
@@ -1305,7 +1296,7 @@ def _create_mesh(
             raise RuntimeError(f"UV set {uv_name} already exists.")
     if hole_triangles:
         uv_sets = [_triangulated_uvs(mesh_data, uv, hole_triangles) for uv in uv_sets]
-    name = _mesh_create_name(name or mesh_data.name)
+    name = _shape_create_name(name or mesh_data.name)
 
     xform  = cmds.createNode("transform", name="polySurface#", skipSelect=True)
     sel    = OpenMaya.MSelectionList()

@@ -230,9 +230,10 @@ class DGNode(Node):
 
     # The inputs, named, of a class whose typed create builds the node from
     # positional inputs (a skinCluster's geometry and influences, a blendShape's
-    # shapes, a mesh's data, a reference's file): ``Node.create`` of its type
-    # with none raises TypeError naming them, before anything is made (a bare
-    # ``cmds.blendShape`` deforms the selection). None elsewhere.
+    # shapes, a mesh's data, a nurbsCurve's points, a reference's file):
+    # ``Node.create`` of its type with none raises TypeError naming them, before
+    # anything is made (a bare ``cmds.blendShape`` deforms the selection). None
+    # elsewhere.
     _CREATE_TAKES_INPUTS = None
 
     def __init__(self, node: str | OpenMaya.MObject | DGNode) -> None:

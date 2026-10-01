@@ -22,7 +22,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `injection_node`, add / set / query / serialize, `tag_references` |
 | 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create`, paintable maps, colour sets, materials, transfer |
-| 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags |
+| 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create` |
 | 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips |
 | 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild |
 | 13 | [`ObjectSet`](#13-objectset) | `get_or_create`, members and components |
@@ -806,6 +806,24 @@ print(ball.get_component_tag_contents("rim"), ball.get_component_tag_indices("ri
 print(ball.get_component_tag_indices("rim").shape)                                             # (2, 2)
 ```
 
+`NurbsCurve.create` builds a curve from its control points, with a degree
+(3 unless given) and knots in Maya's layout (the ones `cmds.curve` gives
+when left out), or from a `cgmath` `BSplineData`, whose points, degree,
+knots and form it takes (`uniform` and `registered` have no Maya
+equivalent). Like `Mesh.create` it is one undo step and leaves the
+selection alone; the points are stored as given, in Maya's internal unit
+(`cmds.curve` reads them in the scene's linear unit):
+
+```python
+points = [(0, 0, 0), (1, 0, 1), (2, 0, 0), (3, 0, 1), (4, 0, 0)]
+arc = NurbsCurve.create(points, name="arc")                                       # a cubic with cmds.curve's knots
+print(repr(arc), arc.get_parent(), arc.fn_set.degree, list(arc.fn_set.knots()))   # NurbsCurve("arcShape") arc 3 [0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0]
+zig = NurbsCurve.create(points, degree=1, kv=[0, 1, 2, 4, 8], name="zig")         # a degree and knots of your own
+print(zig.fn_set.degree, list(zig.fn_set.knots()))                                # 1 [0.0, 1.0, 2.0, 4.0, 8.0]
+twin = NurbsCurve.create(crv.serialize(), name="twin")                            # from a BSplineData
+print(repr(twin), twin.num_cvs, twin.fn_set.degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
+```
+
 ---
 
 ## 11. `Deformer` and `SkinCluster`
@@ -1199,8 +1217,8 @@ rig's own API edits keep these rules and go through `.run(obj)`, one step
 each: `Mesh.set_points`, the UV set edits (`add_uv_set`, `rename_uv_set`,
 `delete_uv_set`, `set_uv_data`), the colour set edits (`add_color_set`,
 `ColorSet.data`, `ColorSet.delete`) and `SkinCluster.set_weights`.
-`Mesh.create` needs no command: its shape rides a recorded `createNode`
-transform.
+`Mesh.create` and `NurbsCurve.create` need no command: their shape rides a
+recorded `createNode` transform.
 
 ```python
 from maya.api import OpenMaya as om

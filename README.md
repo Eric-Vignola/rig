@@ -138,11 +138,12 @@ Two operators carry the language:
   Python methods: `a.tx.rename` is an `AttributeError`.
 - **Undo.** Every edit is undoable, one step per Maya command a statement
   runs. A membership edit (`<< Tag("x")`, `<< Blinn("x")`...),
-  `Mesh.create` and `SkinCluster.create` are one named step each
-  (`rig.tag`, `rig.Mesh.create`), and an API edit (`Mesh.set_points`, the
-  UV and colour set edits, skin weights) is one step through rig's plug-in
-  command `rigUndoableAPICommand`. `with rig.undo_chunk("build arm"):`, or
-  `@rig.undo_chunk` on a function, makes a whole build one named step.
+  `Mesh.create`, `NurbsCurve.create` and `SkinCluster.create` are one named
+  step each (`rig.tag`, `rig.Mesh.create`), and an API edit
+  (`Mesh.set_points`, the UV and colour set edits, skin weights) is one step
+  through rig's plug-in command `rigUndoableAPICommand`.
+  `with rig.undo_chunk("build arm"):`, or `@rig.undo_chunk` on a function,
+  makes a whole build one named step.
 
 ```python
 from rig import set_options, lerp, functions as f
