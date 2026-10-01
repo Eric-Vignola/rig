@@ -13,7 +13,8 @@ tag reads no ids with a node on the left too.
   to a file reference keep the message they had. The door is read when the
   error is printed, as the hints are (a caller that discards the error never
   reads it). Only the message changes: the same error class and facts,
-  nothing written, and the hit is untouched.
+  nothing written, and the hit is untouched. A pickled copy keeps the message
+  and the door as text, without the class (which may not pickle).
 * ``TestGhostTag``: ``node >> Tag("ghost")`` (a tag the node does not have)
   answers an empty id array, as components on the left did, of the shape an
   empty tag of that node reads (``(0,)``, ``(0, 2)`` on a surface, ``(0, 3)``
@@ -310,6 +311,31 @@ class TestDefineDoor(_Case):
         # a missing influence is still named by the skinCluster's own error
         with self.assertRaisesRegex(RuntimeError, r"^Missing joints found: \['nosuch_x'\]$"):
             SkinCluster._sanitize_influences(["nosuch_x"])
+
+    def test_a_copy_keeps_the_message_and_the_door_as_text(self):
+        """A pickled error keeps its facts, message and door, and leaves out
+        the node class, which may not pickle (a class made in a function)."""
+
+        class _LocalXform(Transform):
+            pass
+
+        cmds.createNode("transform", name="spine_01")
+        for cls in (_LocalXform, Joint):
+            with self.subTest(cls=cls.__name__):
+                error = self.miss(lambda: cls("spnie_01"))
+                copy  = pickle.loads(pickle.dumps(error))
+                self.assertIs(type(copy), NodeNotFoundError)
+                self.assertEqual((copy.args, copy.name, copy.label, copy.uuid),
+                                 (error.args, error.name, error.label, error.uuid))
+                self.assertEqual((str(copy), copy.door), (str(error), error.door))
+                self.assertIn(f"; {cls.__name__}.define('spnie_01') finds or makes it", str(copy))
+                self.assertIsNone(copy.node_class)
+                self.assertIs(error.node_class, cls)
+        # Node(x)'s error has no class: pickled as before, its message read when printed
+        error = self.miss(lambda: Node("spnie_01"))
+        copy  = pickle.loads(pickle.dumps(error))
+        self.assertIsNone(copy._message)
+        self.assertEqual(str(copy), str(error))
 
 
 class TestGhostTag(_Case):
