@@ -176,8 +176,8 @@ class _AttrSpec:
         self._given: tuple = tuple(kargs)
 
         if name is not None:
-            unknown = sorted(set(kargs) - _SPEC_FLAGS)
-            if unknown:
+            if not _SPEC_FLAGS.issuperset(kargs):
+                unknown = sorted(set(kargs) - _SPEC_FLAGS)
                 raise TypeError(_unknown_flags(type(self).__name__, name, unknown))
             # Normalise short->long flag names; default keyable=True, longName=name.
             self.kargs["keyable"] = self._pop_alias(
@@ -313,10 +313,11 @@ class _AttrSpec:
                     "Failed to delete %s.%s: %s", node_string, long_name, e
                 )
 
-        else:
+        elif not wrap_node._fn_set.findAlias(long_name).isNull():
             # a name the node already answers to another way (an alias, a
             # container's published name): a second attribute would be one
-            # the name no longer reaches
+            # the name no longer reaches (one API call on a new name: has_attr
+            # read the fn set of the live node just before)
             _refuse_other_name(node_string, long_name, wrap_node)
 
         # ---- Compound (Vector / Quat / Color / Euler) ---- #

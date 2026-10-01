@@ -1,4 +1,4 @@
-"""Round 4b follow-up F5: a bounded did-you-mean.
+"""Round 4b follow-up F5: a bounded did-you-mean, and a cheaper first declaration.
 
 * ``TestBoundedHint``: the did-you-mean of a printed NodeNotFoundError reads a
   bounded listing, never the whole scene: a class's reference compares the
@@ -8,13 +8,18 @@
   generic Material, Container, a geometry class (which takes a transform too)
   and an error made directly compare every node (``cmds.ls(head=1000)``). The
   other hints, the door and the message's facts are as they were.
+* ``TestFirstDeclaration``: a new attribute's name is checked against the
+  node's aliases and a container's published names with one API call on the
+  fn set ``has_attr`` just read; the refusals keep their messages, and a free
+  name never builds one. A spec's keywords are checked without building the
+  set of unknown ones when there is none; the messages are as they were.
 """
 
 from unittest import mock
 
 from maya import cmds
 
-from rig import Node
+from rig import List, Node
 from rig.nodetypes import (
     BlendShape,
     Blinn,
@@ -41,6 +46,8 @@ from rig.nodetypes import errors as _errors
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.errors import NodeNotFoundError
 from rig._internal.container import Container
+from rig.spec import Float, Vector
+import rig.spec._base as _spec_base
 from rig._tests._base import MayaTestCase
 
 
@@ -220,3 +227,58 @@ class TestBoundedHint(_Case):
         for call, text in cases:
             with self.subTest(text=text):
                 self.assertEqual(self.miss(call), text)
+
+
+class TestFirstDeclaration(_Case):
+    def setUp(self):
+        super().setUp()
+        self.holder = Node.create("network", name="holder")
+        self.holder << Float("dyn")
+        cmds.aliasAttr("nick", "holder.dyn")
+
+    def test_a_free_name_builds_no_refusal(self):
+        with mock.patch.object(_spec_base, "_refuse_other_name", wraps=_spec_base._refuse_other_name) as refuse:
+            plug = self.holder << Float("free", dv=2)
+            self.holder << Vector("vec")
+            List([self.holder]) << Float("listed")
+        refuse.assert_not_called()
+        self.assertEqual((str(plug), plug.node, cmds.getAttr("holder.free")), ("holder.free", self.holder, 2.0))
+        self.assertLessEqual({"free", "vec", "vecX", "vecY", "vecZ", "listed"},
+                             set(cmds.listAttr("holder", userDefined=True)))
+
+    def test_an_alias_or_a_published_name_still_refuses(self):
+        grp = Node.create("transform", name="grp")
+        cmds.aliasAttr("lift", "grp.translateY")
+        text = r"^'holder\.nick' is an alias of holder\.dyn; re-declare dyn, or pick another name$"
+        for call in (
+            lambda: self.holder << Float("nick"),
+            lambda: self.holder << Vector("nick"),
+            lambda: self.holder.dyn << Float("nick"),
+            lambda: List([grp, self.holder]) << Float("nick"),
+        ):
+            with self.subTest(call=call):
+                before = cmds.listAttr("holder", userDefined=True)
+                with self.assertRaisesRegex(TypeError, text):
+                    call()
+                self.assertEqual(cmds.listAttr("holder", userDefined=True), before)
+        with self.assertRaisesRegex(TypeError, r"^'grp\.lift' is an alias of grp\.translateY; "):
+            grp << Float("lift")
+        with self.assertRaisesRegex(TypeError, r"^'grp\.tx' is a static attribute of the transform"):
+            grp << Float("tx")
+        box = cmds.container(name="box")
+        cmds.container(box, edit=True, addNode=["holder"])
+        cmds.container(box, edit=True, publishName="pub")
+        with self.assertRaisesRegex(TypeError, r"^'box\.pub' is a name the container publishes; "):
+            Node("box") << Float("pub")
+
+    def test_a_spec_keyword_check_keeps_its_messages(self):
+        for kwargs, text in (
+            ({"zeta": 1, "alpha": 2}, r"^Float\('zz'\): alpha=, zeta= are not addAttr flags; nothing was changed$"),
+            ({"bogus": 1}, r"^Float\('zz'\): bogus= is not an addAttr flag; nothing was changed$"),
+            ({"niceNmae": "Z"}, r"\(did you mean niceName=\?\); nothing was changed$"),
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(TypeError, text):
+                    Float("zz", **kwargs)
+        spec = Float("zz", k=False, at="double", min=0, size=2, overwrite=False)
+        self.assertEqual(spec.kargs, {"attributeType": "double", "min": 0, "keyable": False, "longName": "zz"})
