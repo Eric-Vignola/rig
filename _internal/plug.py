@@ -53,10 +53,10 @@ was read from (``node.tx.node is node``; children and elements share it), and
 a plug read through a node with more than one DAG path is named through that
 node's path. A plug built from a string or an MPlug casts its node on first
 access (``Attribute.node``: the typed cast of its MPlug's node), and is named as
-Maya names it (``Plug("|T2|S.v")`` is ``T1|S.visibility``). Until then it checks the API
-1.0 handle of its node it took when it was built (its children and elements
-share it), so once that node is deleted or freed it raises ``already
-deleted!`` as a plug with an owner does.
+Maya names it (``Plug("|T2|S.v")`` is ``T1|S.visibility``). Until then it checks the
+handle of its node it took when it was built (its children and elements share
+it), so once that node is deleted or freed it raises ``already deleted!`` as a
+plug with an owner does.
 
 ``Plug`` overrides ``__hash__`` (a serial of the node, never reused for another
 node, and the attribute with its logical indices) and the truth value of an
@@ -89,7 +89,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
-from maya import cmds, OpenMaya as OpenMaya1
+from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _MISSING,
@@ -255,16 +255,15 @@ def _named_plug(
     name: str, node: Any = None, attr_name: Any = None, known: Any = None
 ) -> "Plug":
     """``Plug(name)``, for a plug of ``node``, a node object the caller holds:
-    checked through that node's API 1.0 handle (see
-    ``_ensure_owner_alive``) instead of one ``Attribute.__init__`` looks up by
-    name. The name resolves as ``Plug.__init__`` resolves it (a component name
-    to its ``controlPoints`` / ``uvpt`` element). Without a node, ``Plug(name)``.
-    ``attr_name`` is the name of its attribute, and ``known`` an Attribute of the
-    same attribute the caller has (the one a spec's ``add_attr`` found), whose
-    attribute handle it takes (see ``_attr_handle``)."""
+    checked through that node's handle (shared, see ``_ensure_owner_alive``)
+    instead of one ``Attribute.__init__`` takes of its MPlug. The name resolves
+    as ``Plug.__init__`` resolves it (a component name to its ``controlPoints``
+    / ``uvpt`` element). Without a node, ``Plug(name)``. ``attr_name`` is the
+    name of its attribute, and ``known`` an Attribute of the same attribute the
+    caller has (the one a spec's ``add_attr`` found), whose attribute handle it
+    takes (see ``_attr_handle``)."""
     held   = None if node is None else node.__dict__
-    # NW6: API 1.0 handle read (the handle is kept, see `_attr_state`)
-    handle = None if held is None else held.get("_objhandle1")
+    handle = None if held is None else held.get("_objhandle")
     if handle is None:
         return Plug(name)
     mplug = _maybe_translate_component(name)
@@ -273,14 +272,14 @@ def _named_plug(
         sel.add(mplug)
         mplug = sel.getPlug(0)
     plug  = str.__new__(Plug, name)
-    attr1 = None if known is None else known.__dict__.get("_attr1")
+    attrh = None if known is None else known.__dict__.get("_attrh")
     if (
-        attr1 is None
-        or not attr1.isAlive()
+        attrh is None
+        or not attrh.isAlive()
         or known.__dict__["_mplug"].attribute() != mplug.attribute()
     ):
-        attr1 = _attr_handle(mplug, handle, held.get("_fn_set1"), attr_name)  # NW6: API 1.0 handle read
-    plug.__dict__.update(_attr_state(mplug, handle, attr1))
+        attrh = _attr_handle(mplug, handle, attr_name)
+    plug.__dict__.update(_attr_state(mplug, handle, attrh))
     return plug
 
 
@@ -317,12 +316,13 @@ class Plug(Attribute):
         if isinstance(name_or_mplug, Attribute):
             # the plug `name_or_mplug` stands for, read through the node object it
             # holds: ``Plug(Node("|T2|S").find_attr("v"))`` is T2's, as the
-            # str buffer ``str.__new__`` took from its name is; with no owner, it
-            # takes the handle of its node `name_or_mplug` took
+            # str buffer ``str.__new__`` took from its name is; it takes the
+            # handle of its node `name_or_mplug` holds (its owner's, or the one
+            # it took)
             _ensure_owner_alive(name_or_mplug)
             source = name_or_mplug.__dict__
             state  = _attr_state(
-                source["_mplug"], source["_handle1"], source.get("_attr1")
+                source["_mplug"], source["_handle"], source.get("_attrh")
             )
             state["_node"] = source["_node"]
             self.__dict__.update(state)
@@ -599,10 +599,19 @@ class Plug(Attribute):
         ``node << Float("x") << 5 << lock``.
         """
         lazy = _lazy()
-        # a freed node's MPlug points at freed memory
-        _ensure_owner_alive(self)
+        # a freed node's MPlug points at freed memory: `_ensure_owner_alive`,
+        # called (and raising) only when a handle it reads is not alive
+        d = self.__dict__
+        h = d.get("_handle")
+        a = d.get("_attrh")
+        if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
+            _ensure_owner_alive(self)
         if isinstance(other, Attribute):
-            _ensure_owner_alive(other)
+            d = other.__dict__
+            h = d.get("_handle")
+            a = d.get("_attrh")
+            if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
+                _ensure_owner_alive(other)
 
         # Disconnect.
         if other is None:
@@ -1303,15 +1312,11 @@ Plug._CHILD_CLASS = Plug
 def _owner_alive(plug: Any) -> bool:
     """False if the node that owns `plug` was freed, or the attribute of a dynamic
     attr (see `_ensure_owner_alive`)."""
-    d     = plug.__dict__
-    owner = d.get("_node")
-    if owner is None:
-        handle = d.get("_handle1")
-    else:
-        handle = owner.__dict__.get("_objhandle1")  # NW6: API 1.0 handle read (hot)
+    d      = plug.__dict__
+    handle = d.get("_handle")
     if handle is not None and not handle.isAlive():
         return False
-    handle = d.get("_attr1")
+    handle = d.get("_attrh")
     return handle is None or handle.isAlive()
 
 
@@ -1329,10 +1334,20 @@ def _checking_operands(method: Any) -> Any:
 
     @functools.wraps(method)
     def checked(self: "Plug", *other: Any) -> Any:
-        _ensure_owner_alive(self)
+        # `_ensure_owner_alive`, called (and raising) only when a handle it
+        # reads is not alive
+        d = self.__dict__
+        h = d.get("_handle")
+        a = d.get("_attrh")
+        if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
+            _ensure_owner_alive(self)
         for operand in other:
             if isinstance(operand, Attribute):
-                _ensure_owner_alive(operand)
+                d = operand.__dict__
+                h = d.get("_handle")
+                a = d.get("_attrh")
+                if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
+                    _ensure_owner_alive(operand)
             elif isinstance(operand, _CAN_HOLD_STR):
                 found = _text_operand(operand)
                 if found is not None:
@@ -1582,8 +1597,10 @@ class ComponentPlug(Plug):
         element   = _component_plug(
             mplug, node_name, self._comp_alias, self._comp_ndims, coords, None
         )
-        # owned by the node object the handle holds (``self.node`` bound it)
-        element.__dict__["_node"] = self.__dict__["_node"]
+        # owned by the node object the handle holds (``self.node`` bound it),
+        # with its handle
+        element.__dict__["_node"]   = self.__dict__["_node"]
+        element.__dict__["_handle"] = self.__dict__["_handle"]
         return element
 
     def _axis_sizes(self) -> tuple:
@@ -1639,9 +1656,9 @@ def _maybe_component_plug(
     ndims, aliases = spec
     if attr_name not in aliases:
         return None
-    # the caller binds ``attr_obj``'s owner; with none, the handle of its node
-    # ``attr_obj`` took checks it
-    handle = attr_obj.__dict__.get("_handle1")
+    # the caller binds ``attr_obj``'s owner; the handle ``attr_obj`` holds (its
+    # owner's, or the one of its node it took) checks it
+    handle = attr_obj.__dict__.get("_handle")
     return _component_plug(attr_obj.plug, node_name, attr_name, ndims, None, handle)
 
 
@@ -1655,9 +1672,9 @@ def _component_plug(
 ) -> "ComponentPlug":
     """``ComponentPlug(mplug, comp_node, comp_alias, comp_ndims, comp_coords)`` of
     a node the caller holds, without the handle of its node ``__init__`` takes of
-    an MPlug (a name lookup): the caller binds its owner, or ``handle`` (the API
-    1.0 handle of that node, see ``_ensure_owner_alive``) checks it. A name the
-    component translation left (not an MPlug) is built by ``__init__``."""
+    an MPlug: ``handle``, the handle of that node (its owner's when the caller
+    binds one, see ``_ensure_owner_alive``), checks it. A name the component
+    translation left (not an MPlug) is built by ``__init__``."""
     if not isinstance(mplug, OpenMaya.MPlug):
         return ComponentPlug(mplug, comp_node, comp_alias, comp_ndims, comp_coords)
     plug = ComponentPlug.__new__(

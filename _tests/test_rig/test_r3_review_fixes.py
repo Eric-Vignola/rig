@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from unittest import mock
 
-from maya import cmds, OpenMaya as om1
+from maya import cmds
 from maya.api import OpenMaya
 from rig import Node, Plug
 from rig.nodetypes import _base
@@ -20,12 +20,11 @@ from rig._tests._base import MayaTestCase
 
 
 def _hash_code(name):
-    """The API 1.0 MObjectHandle hashCode of the node `name`."""
-    sel = om1.MSelectionList()
+    """The MObjectHandle hashCode of the node `name` (re-pinned, round 5 NW6:
+    API 2.0, the same number as API 1.0's)."""
+    sel = OpenMaya.MSelectionList()
     sel.add(name)
-    mobject = om1.MObject()
-    sel.getDependNode(0, mobject)
-    return om1.MObjectHandle(mobject).hashCode()
+    return OpenMaya.MObjectHandle(sel.getDependNode(0)).hashCode()
 
 
 def _instanced_locator():
@@ -211,8 +210,10 @@ class TestPlugKeysOfFreedNodes(MayaTestCase):
             hash(Node(cmds.createNode("transform", name=f"p{i}")).tx)
         cmds.file(new=True, force=True)
         _base._prune_node_serials()
+        # re-pinned (round 5 NW6): an entry keeps the node's MObject too (an
+        # API 2.0 handle gives none for a node deleted to the undo queue)
         for entries in _base._NODE_SERIALS.values():
-            self.assertTrue(all(handle.isAlive() for handle, _ in entries))
+            self.assertTrue(all(handle.isAlive() for handle, _mobject, _serial in entries))
 
 
 class TestTypedAttributeAndPlugKeys(MayaTestCase):

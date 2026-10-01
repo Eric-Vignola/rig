@@ -119,15 +119,15 @@ def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = No
     ``full_name`` is ``T2|S.k`` too).
 
     ``added``, the attr ``add_attr`` returned for it, hands it the handle of its
-    attribute (``_attr1``, which a delete of a dynamic attr frees once it leaves
+    attribute (``_attrh``, which a delete of a dynamic attr frees once it leaves
     the undo queue, see ``_ensure_owner_alive``) when it is alive and names the
     same attribute; otherwise that handle is looked up once (``_attr_handle``).
 
     A node that is not a live node object, or a name ``findPlug`` does not
     resolve (an alias, ``smile`` for ``weight[0]``, or a component name,
     ``vtx[1]``), takes the string path (``_named_plug``): a plug with no owner,
-    checked through the node's API 1.0 handle, whose name resolves as
-    ``Plug(name)`` resolves it."""
+    checked through the node's handle, whose name resolves as ``Plug(name)``
+    resolves it."""
     from rig._internal.plug import Plug, _named_plug  # deferred: plug.py imports rig.spec
 
     if node is not None:
@@ -139,17 +139,18 @@ def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = No
             except RuntimeError:
                 mplug = None
             if mplug is not None:
-                known = None if added is None else added.__dict__
-                attr1 = None if known is None else known.get("_attr1")
+                handle = d["_objhandle"]
+                known  = None if added is None else added.__dict__
+                attrh  = None if known is None else known.get("_attrh")
                 if (
-                    attr1 is None
-                    or not attr1.isAlive()
+                    attrh is None
+                    or not attrh.isAlive()
                     or known["_mplug"].attribute() != mplug.attribute()
                 ):
-                    # NW6: API 1.0 handle read (the node's API 1.0 fn set)
-                    attr1 = _attr_handle(mplug, fn1=d.get("_fn_set1"), name=long_name)
+                    attrh = _attr_handle(mplug, handle, name=long_name)
                 plug  = str.__new__(Plug, f"{node_string}.{long_name}")
-                state = _attr_state(mplug, None, attr1)
+                # owned by the node, with its handle (see `_ensure_owner_alive`)
+                state = _attr_state(mplug, handle, attrh)
                 state["_node"] = node
                 plug.__dict__.update(state)
                 return plug

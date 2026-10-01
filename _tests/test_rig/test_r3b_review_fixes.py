@@ -18,7 +18,7 @@ import tempfile
 from unittest import mock
 
 import numpy as np
-from maya import cmds, OpenMaya as om1
+from maya import cmds
 from maya.api import OpenMaya
 import rig
 from rig import List, Node, Plug
@@ -42,12 +42,11 @@ def _mplug(name):
 
 
 def _hash_code(name):
-    """The API 1.0 MObjectHandle hashCode of the node `name`."""
-    sel = om1.MSelectionList()
+    """The MObjectHandle hashCode of the node `name` (re-pinned, round 5 NW6:
+    API 2.0, the same number as API 1.0's)."""
+    sel = OpenMaya.MSelectionList()
     sel.add(name)
-    mobject = om1.MObject()
-    sel.getDependNode(0, mobject)
-    return om1.MObjectHandle(mobject).hashCode()
+    return OpenMaya.MObjectHandle(sel.getDependNode(0)).hashCode()
 
 
 def _build():
@@ -283,25 +282,33 @@ class TestDSLFunctionsCheckTheirFreedOperands(_HeldAcrossAFree):
 class TestNodeHandlesAreLookedUpOncePerNode(MayaTestCase):
     """A plug with no owner takes the API 1.0 handle of its node from a table
     after the first plug of that node (a name parse each cost about 12 us), and
-    the table never hands a freed node's handle to a later node."""
+    the table never hands a freed node's handle to a later node.
+
+    Re-pinned (round 5, NW6): the handle is API 2.0, made from the plug's MPlug
+    node while it is alive (`_mplug_handle`), so no name is parsed for it at all
+    and there is no table to hand anything on; each plug's handle is of its own
+    node."""
 
     TEST_START_NEW_SCENE = True
 
     def _handle(self, attr):
-        return vars(attr)["_handle1"]
+        return vars(attr)["_handle"]
 
     def test_the_second_plug_of_a_node_makes_no_lookup(self):
         cmds.createNode("transform", name="held")
         first = Plug("held.tx")
-        with mock.patch.object(_base, "_node_handle", wraps=_base._node_handle) as spy:
-            plugs = [
-                Plug("held.ty"), Attribute("held.tz"), _base._cast("held.rx"),
-                Plug(_mplug("held.ry")), Attribute(_mplug("held.rz")),
-                _base._cast(_mplug("held.sx")), List(["held.sy"])[0],
-            ]
-        self.assertEqual(spy.call_count, 0)
+        plugs = [
+            Plug("held.ty"), Attribute("held.tz"), _base._cast("held.rx"),
+            Plug(_mplug("held.ry")), Attribute(_mplug("held.rz")),
+            _base._cast(_mplug("held.sx")), List(["held.sy"])[0],
+        ]
+        # no lookup is left: no name parse, no table
+        self.assertFalse(hasattr(_base, "_node_handle"))
+        self.assertFalse(hasattr(_base, "_NODE_HANDLES"))
         for plug in plugs:
-            self.assertIs(self._handle(plug), self._handle(first))
+            self.assertIsInstance(self._handle(plug), OpenMaya.MObjectHandle)
+            self.assertEqual(self._handle(plug).hashCode(), self._handle(first).hashCode())
+            self.assertTrue(self._handle(plug).isValid())
 
     def test_connection_results_take_their_nodes_handles(self):
         cmds.createNode("transform", name="src")
@@ -330,7 +337,7 @@ class TestNodeHandlesAreLookedUpOncePerNode(MayaTestCase):
     def test_a_freed_nodes_handle_is_never_handed_on(self):
         cmds.createNode("transform", name="held")
         held = Plug("held.tx")
-        self.assertTrue(_base._NODE_HANDLES)
+        self.assertTrue(self._handle(held).isValid())  # re-pinned (NW6): no table
         cmds.file(new=True, force=True)
         fresh = []
         for i in range(300):
@@ -340,18 +347,19 @@ class TestNodeHandlesAreLookedUpOncePerNode(MayaTestCase):
             handle = self._handle(plug)
             self.assertTrue(handle.isValid())
             self.assertEqual(handle.hashCode(), _hash_code(name))
-            self.assertEqual(om1.MFnDependencyNode(handle.objectRef()).name(), name)
+            # re-pinned (round 5 NW6): the API 2.0 handle's MObject
+            self.assertEqual(OpenMaya.MFnDependencyNode(handle.object()).name(), name)
         with self.assertRaisesRegex(RuntimeError, _FREED):
             str(held)
 
     def test_the_table_drops_freed_nodes(self):
+        # re-pinned (round 5 NW6): no table keeps a freed node's handle; the
+        # plug keeps its own, which is not alive once the node was freed
         cmds.createNode("transform", name="held")
-        Plug("held.tx")
+        plug = Plug("held.tx")
         cmds.file(new=True, force=True)
-        _base._prune_node_handles()
-        for entries in _base._NODE_HANDLES.values():
-            for _mobject, handle in entries:
-                self.assertTrue(handle.isAlive())
+        self.assertFalse(hasattr(_base, "_prune_node_handles"))
+        self.assertFalse(self._handle(plug).isAlive())
 
 
 class TestAPlugOfADeletedNodesMPlugRaises(MayaTestCase):
@@ -376,7 +384,7 @@ class TestAPlugOfADeletedNodesMPlugRaises(MayaTestCase):
                 cmds.setAttr("held.dynf", 7.0)
                 mplug = Node("held").dynf.plug  # an MPlug the caller keeps
                 known = _mplug("held.ty")
-                Plug(known)  # the node is in the handle table too
+                Plug(known)  # a plug of the node was built before (once, a table entry)
                 cmds.delete("held")
                 if retaken:
                     cmds.createNode("transform", name="held")
@@ -602,8 +610,8 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         held = _dynamic_plugs()
         for label, (plug, name, attr) in held.items():
             with self.subTest(free=free, plug=label):
-                handle = vars(plug)["_attr1"]
-                self.assertIsInstance(handle, om1.MObjectHandle)
+                handle = vars(plug)["_attrh"]  # re-pinned (round 5 NW6): API 2.0
+                self.assertIsInstance(handle, OpenMaya.MObjectHandle)
                 self.assertTrue(handle.isAlive())
         deleted = sorted({attr for _plug, _name, attr in held.values()})
         if free == "undo off":
@@ -630,7 +638,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
                     cmds.addAttr(node, longName=name, attributeType="double")
         for label, (plug, name, _attr) in held.items():
             with self.subTest(free=free, plug=label, handle="freed"):
-                self.assertFalse(vars(plug)["_attr1"].isAlive())
+                self.assertFalse(vars(plug)["_attrh"].isAlive())
             for op_name, op in _DYNAMIC_OPS.items():
                 with self.subTest(free=free, plug=label, op=op_name):
                     with self.assertRaises(RuntimeError) as ctx:
@@ -666,7 +674,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         plugs = (Node("held").dynf, Plug("held.dynf"), Plug(_mplug("held.dynf")))
         cmds.deleteAttr("held.dynf")
         for plug in plugs:
-            self.assertTrue(vars(plug)["_attr1"].isAlive())
+            self.assertTrue(vars(plug)["_attrh"].isAlive())
         cmds.undo()
         for plug in plugs:
             self.assertEqual(plug.get(), 3.0)
@@ -679,7 +687,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
             Node("held").find_attr("worldMatrix")[0], Node("held").find_attr("ty"),
         ):
             with self.subTest(plug=str(plug)):
-                self.assertIsNone(vars(plug)["_attr1"])
+                self.assertIsNone(vars(plug)["_attrh"])
 
     def test_the_attribute_handle_is_its_attributes(self):
         # found by a long name, a short name, an alias, a path, or handed from a
@@ -699,10 +707,11 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
             ("Plug(str)", Plug("held.wgt"), "weight"),
         ):
             with self.subTest(plug=label):
-                handle = vars(plug)["_attr1"]
+                handle = vars(plug)["_attrh"]
                 code   = OpenMaya.MObjectHandle(plug.plug.attribute()).hashCode()
                 self.assertEqual(handle.hashCode(), code)
-                self.assertEqual(om1.MFnAttribute(handle.objectRef()).name(), long_name)
+                # re-pinned (round 5 NW6): the API 2.0 handle's MObject
+                self.assertEqual(OpenMaya.MFnAttribute(handle.object()).name, long_name)
 
     def test_an_extension_attr_found_through_its_node(self):
         # deleteExtension frees the attribute at once; a plug found through its
@@ -715,7 +724,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
             cmds.createNode("network", name="net")
             held = (Node("net").rigFixExt, Node("net").find_attr("rigFixExt"))
             for plug in held:
-                self.assertTrue(vars(plug)["_attr1"].isAlive())
+                self.assertTrue(vars(plug)["_attrh"].isAlive())
             delete()
             for i in range(300):
                 cmds.addAttr("net", longName=f"fill{i}", attributeType="double")
@@ -733,8 +742,8 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         _build()
         cmds.setAttr("held.dynf", 3.0)
         owned, built = Node("held").dynf, Plug("held.dynf")
-        self.assertIsNotNone(vars(owned)["_attr1"])
-        self.assertIs(vars(owned)["_attr1"], vars(built)["_attr1"])  # one lookup
+        self.assertIsNotNone(vars(owned)["_attrh"])
+        self.assertIs(vars(owned)["_attrh"], vars(built)["_attrh"])  # one lookup
         for plug in (owned, built):
             self.assertEqual(str(plug), "held.dynf")
             self.assertEqual(plug.get(), 3.0)
