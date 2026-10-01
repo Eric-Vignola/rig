@@ -17,12 +17,12 @@ An error keeps its facts as attributes (``name``, the class ``label`` such as
 printed. The hints read the scene then, each in its own ``try``: "did you mean
 'spine_01'?" (the closest leaf names among the first ones ``cmds.ls`` lists,
 about 500: of the class's node type for a class's reference, so
-``Joint('spnie_01')`` compares joints only, else of every node), "'char:root'
-exists" (the same leaf in another namespace) and "'inner_k' exists (the scope
-prefix)" (the name a create inside the active flattened ``with container()``
-scope gives). A node class's miss then names the ``define`` that makes the
-node ("; Joint.define('spnie_01') finds or makes it"), when that makes it from
-the name. A hint that cannot be read (the scene
+``Joint('spnie_01')`` compares joints only, else of every node),
+"'char:root' exists" (the same leaf in another namespace) and "'inner_k' exists
+(the scope prefix)" (the name a create inside the active flattened
+``with container()`` scope gives). A node class's miss then names the
+``define`` that makes the node ("; Joint.define('spnie_01') finds or makes
+it"), when that makes it from the name. A hint that cannot be read (the scene
 was closed or replaced before the print) is left out, so printing an error
 never raises, and a caller that discards the error (``Node.wrap``,
 ``SkinCluster`` influences) never pays for them.
