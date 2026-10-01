@@ -413,6 +413,138 @@ class TestNurbsCurveCreateBSpline(_CurveCreateCase):
 
 
 # ---------------------------------------------------------------------------------------------
+def _closed_form(name="closed"):
+    """A curve of Maya's kClosed form (its ends meet, it is not periodic), made
+    through the API, as imported curves can be."""
+    points = POINTS + [POINTS[0]]
+    knots  = [0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 4.0, 4.0]
+    xform  = cmds.createNode("transform", name=name)
+    sel    = OpenMaya.MSelectionList()
+    sel.add(xform)
+    OpenMaya.MFnNurbsCurve().create(OpenMaya.MPointArray(points), OpenMaya.MDoubleArray(knots), 3,
+                                    OpenMaya.MFnNurbsCurve.kClosed, False, False, sel.getDependNode(0))
+    return xform
+
+
+def _uneven_curves():
+    """``{label: transform}``: Maya curves whose knots are not its default ones."""
+    ep = cmds.curve(editPoint=POINTS, degree=3, name="ep")
+    return {
+        "EP curve": ep,
+        "own knots": cmds.curve(point=POINTS, degree=3, knot=[5, 5, 5, 5.5, 7, 8, 8, 8], name="own"),
+        "uneven periodic": cmds.closeCurve(cmds.curve(editPoint=POINTS, degree=3, name="loop"),
+                                           preserveShape=0, replaceOriginal=True, constructionHistory=False)[0],
+    }
+
+
+def _in_unit_range(knots, degree):
+    knots = np.asarray(knots, dtype=float)
+    return (knots - knots[degree - 1]) / (knots[-degree] - knots[degree - 1])
+
+
+class TestNurbsCurveSerialize(_CurveCreateCase):
+    """``serialize`` holds the curve's own points and form, and its knots when they are not
+    Maya's default ones, so ``create`` rebuilds the same curve."""
+
+    def assert_same_shape(self, curve, other, samples=48):
+        """The two curves trace the same points, each over its own parameter range."""
+        def trace(c):
+            lo, hi = c.fn_set.knotDomain
+            return _on_curve(c, np.linspace(lo, hi, samples + 1))
+
+        self.assertLess(abs(trace(curve) - trace(other)).max(), 1e-9)
+
+    def test_open_curve_with_default_knots(self):
+        for degree in (1, 2, 3, 5):
+            with self.subTest(degree=degree):
+                cmds.file(new=True, force=True)
+                source = cmds.curve(point=POINTS, degree=degree, name="src")
+                data = NurbsCurve(source).serialize(world_space=False)
+                self.assertEqual(_rows(data.points), _rows(POINTS))
+                self.assertEqual((data.degree, data.periodic), (degree, False))
+                self.assertIsNone(getattr(data, "knots", None))  # nothing to carry
+                self.assertEqual(curve_state(NurbsCurve.create(data)), curve_state(source))
+
+    def test_periodic_curve_holds_its_own_points(self):
+        # Maya repeats a periodic curve's first `degree` CVs at its end; BSplineData wraps
+        # its points itself, so they are left out (they used to be wrapped twice)
+        ring = _ring(8)
+        cases = [("circle", 3, lambda: cmds.circle(sections=8, degree=3, constructionHistory=False)[0])]
+        cases += [
+            (f"cmds.curve(periodic=True, degree={d})", d,
+             lambda d=d: cmds.curve(periodic=True, degree=d, point=ring + ring[:d], knot=list(range(1 - d, 8 + d))))
+            for d in (1, 2, 3)
+        ]
+        for label, degree, make in cases:
+            with self.subTest(label):
+                cmds.file(new=True, force=True)
+                periodic = make()
+                source = curve_state(periodic)
+                self.assertEqual((source["form"], source["degree"]), (PERIODIC, degree))
+                data = NurbsCurve(periodic).serialize(world_space=False)
+                self.assertEqual(data.points.shape, (8, 3))
+                self.assertEqual(_rows(data.points), source["cvs"][:8])
+                self.assertTrue(data.periodic)
+                self.assertIsNone(getattr(data, "knots", None))  # Maya's default periodic knots
+                self.assertEqual(curve_state(NurbsCurve.create(data)), source)
+
+    def test_closed_form_is_open(self):
+        closed = _closed_form()
+        self.assertEqual(NurbsCurve(closed).fn_set.form, OpenMaya.MFnNurbsCurve.kClosed)
+        data = NurbsCurve(closed).serialize(world_space=False)
+        self.assertFalse(data.periodic)
+        self.assertEqual(_rows(data.points), _rows(POINTS + [POINTS[0]]))  # every CV
+        rebuilt = curve_state(NurbsCurve.create(data))
+        source = curve_state(closed)
+        self.assertEqual((rebuilt["cvs"], rebuilt["knots"], rebuilt["degree"]),
+                         (source["cvs"], source["knots"], source["degree"]))
+        self.assertEqual(rebuilt["form"], OPEN)  # the same curve; create makes open or periodic ones
+
+    def test_world_space(self):
+        source = cmds.curve(point=POINTS, name="src")
+        cmds.xform(source, translation=(1, 2, 3), rotation=(10, 20, 30))
+        data = NurbsCurve(source).serialize()
+        expected = np.array(NurbsCurve(source).get_points(world_space=True))[:, :3]
+        self.assertEqual(_rows(data.points), _rows(expected))
+
+    @unittest.skipUnless(_takes_knots(), "this cgmath's BSplineData takes no knots")
+    def test_uneven_knots_travel(self):
+        for label, xform in _uneven_curves().items():
+            with self.subTest(label):
+                source = NurbsCurve(xform)
+                state = curve_state(source)
+                data = source.serialize(world_space=False)
+                self.assertEqual(tuple(data.knots), state["knots"])  # Maya's own, as they are
+                rebuilt = NurbsCurve.create(data)
+                got = curve_state(rebuilt)
+                self.assertEqual((got["cvs"], got["degree"], got["form"]),
+                                 (state["cvs"], state["degree"], state["form"]))
+                # the same spacing, so the same shape; this cgmath rescales the range
+                self.assertTrue(np.allclose(_in_unit_range(got["knots"], state["degree"]),
+                                            _in_unit_range(state["knots"], state["degree"]), atol=1e-12))
+                self.assert_same_shape(rebuilt, source)
+
+    def test_evenly_spaced_knots_on_another_range(self):
+        # rebuildCurve -keepRange 0 gives knots from 0 to 1: the same shape as the default ones
+        source = cmds.curve(point=POINTS, degree=3, knot=[0, 0, 0, 1 / 3, 2 / 3, 1, 1, 1], name="unit")
+        rebuilt = NurbsCurve.create(NurbsCurve(source).serialize(world_space=False))
+        self.assertEqual(curve_state(rebuilt)["cvs"], curve_state(source)["cvs"])
+        self.assert_same_shape(rebuilt, NurbsCurve(source))
+        if not _takes_knots():
+            with self.assertNoLogs("rig.nodetypes.nurbs", level="WARNING"):
+                NurbsCurve(source).serialize()
+
+    @unittest.skipIf(_takes_knots(), "this cgmath's BSplineData takes knots")
+    def test_uneven_knots_on_a_cgmath_without_knots_warn(self):
+        for label, xform in _uneven_curves().items():
+            with self.subTest(label):
+                with self.assertLogs("rig.nodetypes.nurbs", level="WARNING") as logs:
+                    data = NurbsCurve(xform).serialize(world_space=False)
+                self.assertIn("uneven knots are dropped", logs.output[0])
+                self.assertEqual(data.degree, 3)
+
+
+# ---------------------------------------------------------------------------------------------
 class TestNurbsCurveCreateUndo(_CurveCreateCase):
     """One undo step named rig.NurbsCurve.create; exact undo / redo walks; the same node on redo."""
 
