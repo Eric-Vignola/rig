@@ -284,7 +284,11 @@ def _absolute_name(name: str) -> str:
 def _reference_of(namespace: str) -> str | None:
     """The file reference whose namespace is `namespace` (absolute, not the
     root) or holds it (``:char:sub`` is in ``:char``), loaded or not, as
-    ``charRN (C:/.../char.ma)``; None when no reference owns it."""
+    ``charRN (C:/.../char.ma)``; None when no reference owns it. A scene with
+    no file reference (``file -q -reference`` lists the top-level ones, loaded
+    or not; a nested one has a top-level parent) reads no reference node."""
+    if not cmds.file(query=True, reference=True):
+        return None
     for node in cmds.ls(type="reference") or ():
         try:
             owned = cmds.referenceQuery(node, namespace=True)
