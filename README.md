@@ -99,6 +99,13 @@ each is also a `TypeError` and a `ValueError`. Math and utility nodes keep
 their makers (`a.t + b.t`, `rn.*`, `rc.*`, `Node.create`), which always
 make new nodes and look no name up.
 
+A plug string (`"drv.tx"`, `List(["drv.tx"])`, `node.attr << "drv.tx"`) is
+a Maya plug name: it resolves as `cmds` resolves it. It can answer
+differently from `Node("drv")` only while a namespace other than the root
+is current, where `Node` also looks in that namespace (and raises
+`AmbiguousNodeError` when both have a `drv`) and the string takes Maya's
+answer. Spell the namespace (`"char:drv.tx"`) to name one for sure.
+
 ```python
 from rig import NodeNotFoundError
 from rig.nodetypes import Joint, Transform
