@@ -296,7 +296,7 @@ class TestDefine(_Case):
         cmds.circle(name="circle", ch=False)
         for cls, creator in (
             (Mesh, r"Mesh\.create\(mesh_data"),
-            (NurbsCurve, r"rc\.curve"),
+            (NurbsCurve, r"NurbsCurve\.create\(points"),
             (NurbsSurface, r"rc\.nurbsPlane"),
             (SkinCluster, r"SkinCluster\.create\(geom, influences\)"),
             (BlendShape, r"BlendShape\.create\(\*targets, base\)"),

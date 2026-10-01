@@ -288,6 +288,49 @@ class TestNurbsCurveCreateNames(_CurveCreateCase):
 
 
 # ---------------------------------------------------------------------------------------------
+class TestNurbsCurveCreateKeywords(_CurveCreateCase):
+    """The typed-create rules: ``name=`` is a keyword, the curve's command places it, and the
+    keywords that are not ``degree`` / ``kv`` are the curve's attributes."""
+
+    def test_name_is_a_keyword(self):
+        self.ready()
+        nodes = sorted(cmds.ls())
+        with self.assertRaises(TypeError):
+            NurbsCurve.create(POINTS, 3, None, "c")
+        self.assertEqual(sorted(cmds.ls()), nodes)
+
+    def test_parent_is_refused(self):
+        cmds.createNode("transform", name="grp")
+        self.ready()
+        nodes = sorted(cmds.ls())
+        with self.assertRaisesRegex(TypeError, r"^NurbsCurve\.create\(\) takes no parent=: its command places"):
+            NurbsCurve.create(POINTS, name="c", parent="grp")
+        with self.assertRaisesRegex(TypeError, r"shared"):
+            NurbsCurve.create(POINTS, name="c", shared=True)
+        self.assertEqual(sorted(cmds.ls()), nodes)
+
+    def test_other_keywords_are_attributes(self):
+        self.ready()
+        curve = NurbsCurve.create(POINTS, degree=2, name="c", lineWidth=3.0, dispCV=True)
+        self.check(curve, "c", "cShape")
+        self.assertEqual(curve_state(curve)["degree"], 2)  # the curve's degree, not the attribute's
+        self.assertEqual(cmds.getAttr("cShape.lineWidth"), 3.0)
+        self.assertTrue(cmds.getAttr("cShape.dispCV"))
+        self.assertEqual(self.undo_name(), CHUNK)
+        self.undo_steps(1)
+        self.assertFalse(cmds.objExists("c"))
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
+    def test_a_misspelled_attribute_makes_nothing(self):
+        self.ready()
+        nodes = sorted(cmds.ls())
+        with self.assertRaisesRegex(AttributeError, r"NurbsCurve\.create\(\)"):
+            NurbsCurve.create(POINTS, name="c", lineWidht=3.0)
+        self.assertEqual(sorted(cmds.ls()), nodes)
+        self.assertEqual(cmds.ls(selection=True), ["selprobe"])
+
+
+# ---------------------------------------------------------------------------------------------
 class TestNurbsCurveCreateBSpline(_CurveCreateCase):
     """A BSplineData gives its points, degree, knots and form; ``uniform`` / ``registered`` are not used."""
 

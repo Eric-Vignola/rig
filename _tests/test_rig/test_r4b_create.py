@@ -39,6 +39,7 @@ from rig.nodetypes import (
     Geometry,
     Joint,
     Mesh,
+    NurbsCurve,
     ObjectSet,
     Reference,
     ShadingEngine,
@@ -298,6 +299,7 @@ class TestCreateFlags(_SceneCase):
         )
         self.assertEqual(ShadingEngine._CREATE_FLAGS, {"name", "n"})
         self.assertEqual(Mesh._CREATE_FLAGS, {"name", "uv_data"})
+        self.assertEqual(NurbsCurve._CREATE_FLAGS, {"name", "degree", "kv"})
         self.assertEqual(Reference._CREATE_FLAGS, {"file_path", "namespace"})
         for cls in (SkinCluster, BlendShape):
             with self.subTest(cls=cls.__name__):

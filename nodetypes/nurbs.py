@@ -29,9 +29,13 @@ class NurbsCurve(Geometry):
     # built from its points (``Node.create("nurbsCurve")`` with none raises, naming them)
     _CREATE_TAKES_INPUTS = "points"
 
+    # the keywords ``_create`` takes; ``create``'s other keywords are the
+    # curve's attributes
+    _CREATE_FLAGS = frozenset({"name", "degree", "kv"})
+
     _DEFINE_REFUSED = (
-        "a nurbsCurve is a shape built from its data: rc.curve(point=..., name='x') makes "
-        "one; NurbsCurve('x') refers to one"
+        "a nurbsCurve is built from its points: NurbsCurve.create(points, name='x') "
+        "makes one; NurbsCurve('x') refers to one"
     )
 
     # --- creation
@@ -56,8 +60,10 @@ class NurbsCurve(Geometry):
         points:    ArrayLike | BSplineData,
         degree:    int       | None = None,
         kv:        ArrayLike | None = None,
+        *,
         name:      str       | None = None,
         container: bool      | None = None,
+        **kwargs,
     ) -> "NurbsCurve":
         """Creates a curve object from its control points, or from a
         BSplineData object.
@@ -78,12 +84,14 @@ class NurbsCurve(Geometry):
                 ``cmds.curve(point=..., degree=...)`` gives (one apart, the
                 end ones repeated ``degree`` times: ``0 0 0 1 2 3 3 3`` for six
                 points of degree 3).
-            name: The name of the curve to create (a trailing ``Shape<digits>``
-                is dropped: ``"cShape2"`` names the transform ``c2`` and the
-                shape ``cShape2``). None: ``curve<N>``.
+            name: The name of the curve to create, a keyword (a trailing
+                ``Shape<digits>`` is dropped: ``"cShape2"`` names the transform
+                ``c2`` and the shape ``cShape2``). None: ``curve<N>``.
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
+            kwargs: attributes of the curve, checked by type before anything
+                is made and set once it exists (see `DGNode.create`).
 
         A BSplineData carries its own degree and knots: ``degree`` or ``kv``
         given with one is a TypeError.
@@ -105,7 +113,9 @@ class NurbsCurve(Geometry):
         propagates.
         """
         with _undo_chunk("rig.NurbsCurve.create"):
-            return super().create(points, degree=degree, kv=kv, name=name, container=container)
+            return super().create(
+                points, degree=degree, kv=kv, name=name, container=container, **kwargs
+            )
 
     # --- curve geometry data methods
 
