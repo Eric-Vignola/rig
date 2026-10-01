@@ -353,7 +353,7 @@ Every `serialize()` returns a `cgmath` data object and every `create` /
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData` | `Transform.create_hierarchy` |
 | `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` |
 | `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` |
-| `NurbsCurve` / `NurbsSurface` | `BSplineData` / `BSplinePatchData` | `NurbsCurve.create` (a curve) |
+| `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create` (a curve) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` |
 | `BlendShape` | `MorphList`; `get_target_data()` a `MorphData` | `set_target_data`, `BlendShape.create` |
 

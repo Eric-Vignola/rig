@@ -4,6 +4,7 @@ Nurbs node class for NurbsCurve and NurbsSurface
 
 from __future__ import annotations
 
+import logging
 from numbers import Integral
 
 import numpy as np
@@ -12,6 +13,8 @@ from maya.api import OpenMaya
 from numpy.typing import ArrayLike
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes.geometry import Geometry, _shape_create_name
+
+LOGGER = logging.getLogger(__name__)
 
 
 class NurbsCurve(Geometry):
@@ -131,23 +134,47 @@ class NurbsCurve(Geometry):
     def serialize(
         self, world_space: bool = True, include_uvs: bool = True
     ) -> BSplineData:
-        """Serialize this nurbsCurve to BSplineData.
+        """Serialize this nurbsCurve to BSplineData, the inverse of `create`.
+
+        The data is periodic when the curve is (Maya's ``kPeriodic`` form; a
+        ``kClosed`` curve, whose ends only meet, is open), and holds the
+        curve's own points: a periodic curve's last ``degree`` CVs repeat its
+        first ones, and BSplineData wraps them back itself. Knots other than
+        Maya's default ones go in its ``knots`` when the installed cgmath's
+        BSplineData takes them. That cgmath keeps their spacing, so the
+        curve's shape, but rescales them to its own parameter range,
+        ``[0, max_param]``. An older one has no such field: the knots are
+        dropped and the data has uniform ones, which is the same curve only
+        when the knots were evenly spaced (a warning says so otherwise).
 
         Args:
             world_space: If True, query points in world space, otherwise object space.
+            include_uvs: Unused; kept for signature parity with `Mesh.serialize`.
 
         Returns:
             BSplineData object.
         """
         from cgmath.geometry import BSplineData
 
-        points = self.get_points(world_space=world_space)
-        degree = self.fn_set.degree
-        closed = self.fn_set.form != OpenMaya.MFnNurbsCurve.kOpen
+        fn       = self.fn_set
+        degree   = fn.degree
+        periodic = fn.form == OpenMaya.MFnNurbsCurve.kPeriodic
+        points   = np.array(self.get_points(world_space=world_space))[:, :3]
+        if periodic:
+            points = points[: len(points) - degree]
 
-        points = np.array(points)[:, :3]
-
-        return BSplineData(points=points, degree=degree, periodic=closed)
+        custom  = {}
+        knots   = np.array(fn.knots())
+        uniform = _default_knots(len(points), degree, periodic)
+        if not np.array_equal(knots, uniform):
+            if "knots" in getattr(BSplineData, "__dataclass_fields__", ()):
+                custom["knots"] = knots
+            elif not _same_spacing(knots, uniform, degree):
+                LOGGER.warning(
+                    f"{self.name}: this cgmath's BSplineData takes no knots, so the "
+                    f"curve's uneven knots are dropped and its data has another shape"
+                )
+        return BSplineData(points=points, degree=degree, periodic=periodic, **custom)
 
 
 class NurbsSurface(Geometry):
@@ -239,6 +266,28 @@ class NurbsSurface(Geometry):
         )
 
 
+def _default_knots(count: int, degree: int, periodic: bool) -> np.ndarray:
+    """Maya's default knots, in its layout, for a curve of `count` points of
+    `degree`: one apart, the end ones of an open curve repeated `degree` times
+    (``cmds.curve``'s knots: ``0 0 0 1 2 3 3 3`` for six points of degree 3),
+    or, on a periodic curve (`count` points before the wrap), running past
+    both ends (``cmds.circle``'s: ``-2 -1 0 ... 9 10`` for eight points)."""
+    if periodic:
+        return np.arange(1.0 - degree, count + degree)
+    return np.clip(np.arange(count + degree - 1) - (degree - 1.0), 0.0, count - degree)
+
+
+def _same_spacing(knots: np.ndarray, other: np.ndarray, degree: int) -> bool:
+    """True when two knot vectors (Maya's layout) of one curve give it the same
+    shape: equal once each is scaled to its own parameter range, from its
+    ``degree``-th knot to its ``degree``-th from the end."""
+
+    def unit(k):
+        return (k - k[degree - 1]) / (k[-degree] - k[degree - 1])
+
+    return bool(np.allclose(unit(knots), unit(other), rtol=0.0, atol=1e-9))
+
+
 def _curve_inputs(
     points: ArrayLike | BSplineData, degree: int | None, kv: ArrayLike | None
 ) -> tuple[np.ndarray, np.ndarray, int, bool]:
@@ -300,8 +349,7 @@ def _curve_inputs(
 
     size = count + degree - 1
     if kv is None:
-        # Maya's default: one apart, the end knots repeated `degree` times
-        return cvs, np.clip(np.arange(size) - (degree - 1.0), 0.0, count - degree), degree, periodic
+        return cvs, _default_knots(count, degree, False), degree, periodic
 
     try:
         knots = np.asarray(kv, dtype=np.float64)

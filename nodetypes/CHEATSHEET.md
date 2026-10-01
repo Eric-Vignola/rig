@@ -812,7 +812,11 @@ when left out), or from a `cgmath` `BSplineData`, whose points, degree,
 knots and form it takes (`uniform` and `registered` have no Maya
 equivalent). Like `Mesh.create` it is one undo step and leaves the
 selection alone; the points are stored as given, in Maya's internal unit
-(`cmds.curve` reads them in the scene's linear unit):
+(`cmds.curve` reads them in the scene's linear unit). `serialize` is its
+inverse: a periodic curve's own points (Maya's repeated CVs left out), and
+its knots when they are not Maya's default ones and the installed `cgmath`'s
+`BSplineData` takes them (it keeps their spacing, so the shape, but not
+their range):
 
 ```python
 points = [(0, 0, 0), (1, 0, 1), (2, 0, 0), (3, 0, 1), (4, 0, 0)]
