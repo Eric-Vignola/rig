@@ -136,7 +136,7 @@ A node class names a node too, and follows the
 
 | | refer `Cls("x")` | define `Cls.define("x", ...)` | create `Cls.create(name="x", ...)` |
 |---|---|---|---|
-| writes the scene | never | only when `x` is missing (`update=True` sets the values of a found node) | always |
+| writes the scene | never | makes `x` when it is missing; sets the values given either way (`update=False`: a found node is left as it is) | always |
 | `x` missing | `NodeNotFoundError` | made, with the attributes | made |
 | `x` exists | that node, most derived class | that node | a new one (`x1`) |
 | `x` only elsewhere, or another type | the node if unique / `NodeTypeError` | refused (pass `parent=` or the namespace) / `NodeTypeError` | — |
@@ -164,8 +164,8 @@ for bad in (lambda: Joint("jnt1"), lambda: Joint("a"), lambda: Transform("a", tx
 # TypeError Transform('a', ...) refers to an existing transform and takes no attributes
 
 hub = Transform.define("hub", tx=2)                           # missing: made, with tx
-print(Transform.define("hub", tx=5) == hub, hub.tx >> None)   # True 2.0 -- found: its attributes are left as they are
-Transform.define("hub", tx=5, update=True)                    # found, and tx set
+print(Transform.define("hub", tx=5) == hub, hub.tx >> None)   # True 5.0 -- found, and tx set: the script is the source of truth
+Transform.define("hub", tx=7, update=False)                   # update=False: a found node is left as it is
 print(hub.tx >> None, repr(Transform.create(name="hub")))     # 5.0 Transform("hub1")
 ```
 
@@ -2469,15 +2469,15 @@ cube  = make(cmds.polyCube, "cube", ch=False)
 other = make(cmds.polyCube, "other", ch=False)
 
 geometry = Layer.define("geometry")                             # found, or made (empty)
-ref      = Layer.define("ref", displayType=2, visibility=False) # the attributes are set when it is made
+ref      = Layer.define("ref", displayType=2, visibility=False) # made, or found: the attributes are set either way
 print(Layer is DisplayLayer, repr(ref))                         # True DisplayLayer("ref")
 cube << geometry                                                # returns cube
 cube << ref                                                     # exclusive: cube leaves 'geometry'
 print(cube in geometry, cube in ref, cube.tx in ref)            # False True True -- in `in`, a plug stands for its node
 print(cube >> Layer(), other >> Layer())                        # ref None -- the one layer, or None
 print(Layer.of(cube), Layer.of(other))                          # [DisplayLayer("ref")] [] -- defaultLayer is no layer
-print(Layer.define("ref", visibility=True) == ref, ref.visibility >> None)   # True False -- found: its attributes are left as they are
-Layer.define("ref", visibility=True, update=True)               # update=True sets them
+print(Layer.define("ref", visibility=True) == ref, ref.visibility >> None)   # True True -- found, and set
+Layer.define("ref", visibility=False, update=False)             # update=False: a found layer is left as it is
 print(ref.visibility >> None)                                   # True
 rig_layer = Layer.define("rig")
 List([cube, other]) << rig_layer                                # one editDisplayLayerMembers call
@@ -2549,8 +2549,8 @@ red = Blinn.define("red", color=(1, 0, 0))      # made now: red + redSG + materi
 print(repr(red), repr(red.engine))              # Blinn("red") ShadingEngine("redSG")
 print(cube << red)                              # cube -- returns the LHS; assigns
 print(cmds.nodeType("red"), members("redSG"))   # blinn ['cubeShape']
-print(Blinn.define("red", color=(0, 0, 1)) == red, cmds.getAttr("red.color")[0])   # True (1.0, 0.0, 0.0) -- found: its attributes are left as they are
-Blinn.define("red", color=(0, 0, 1), update=True)                                   # update=True sets them
+print(Blinn.define("red", color=(0, 0, 1)) == red, cmds.getAttr("red.color")[0])   # True (0.0, 0.0, 1.0) -- found, and its colour set
+Blinn.define("red", color=(1, 0, 0), update=False)                                  # update=False: a found shader is left as it is
 print(cmds.getAttr("red.color")[0])             # (0.0, 0.0, 1.0)
 ```
 
@@ -2809,7 +2809,7 @@ Edit menu. How many steps a statement makes depends on what it runs:
 | What | Undo steps |
 |---|---|
 | a DSL statement (`<<`, an operator network, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | one per Maya command it runs, so an operator network is several |
-| a typed `create` with attributes, a `define` that makes its node or sets values (`update=True`), a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
+| a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
 | `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |

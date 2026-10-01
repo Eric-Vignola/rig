@@ -84,9 +84,9 @@ inside a node (an attribute, a component tag) is declared, with `Float`,
 
 | | **refer** `Cls("x")` | **define** `Cls.define("x", ...)` | **create** `Cls.create(name="x", ...)` |
 |---|---|---|---|
-| writes the scene | never | only when `x` is missing (values on a found node only with `update=True`) | always |
+| writes the scene | never | makes `x` when it is missing; sets the values given either way (`update=False`: a found node is left as it is) | always |
 | `x` missing | `NodeNotFoundError`, with a did-you-mean hint and the `define` that makes it | makes it, with the attributes given | makes it |
-| `x` exists | that node, as its most derived class (`Transform("j1")` is `Joint("j1")`) | that node; its attributes are left as they are | a second one, which Maya names `x1` |
+| `x` exists | that node, as its most derived class (`Transform("j1")` is `Joint("j1")`) | that node, with the values given set on it: the script is the source of truth | a second one, which Maya names `x1` |
 | `x` exists only elsewhere (under another parent, in another namespace) | that node, when it is the only one | refused: pass `parent=` or spell the namespace | — |
 | `x` is another type | `NodeTypeError` | `NodeTypeError` | — |
 | the name is | a lookup: a short name, a path, `ns:name` | a key: the node `create` would make (the namespace, the scope prefix, `parent=`) | a label, `name=` keyword only |

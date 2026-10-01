@@ -447,11 +447,12 @@ class TestConversion(MayaTestCase):
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
         self.assertEqual(cmds.nodeType("red"), "phong")
         self.assertTrue(m.is_valid)
-        # attributes on a material already of that type are skipped
-        self.assertIs(m.astype(Phong, cosinePower=40), m)
+        # attributes on a material already of that type are set, as on a found
+        # material; update=False skips them
+        self.assertIs(m.astype(Phong, cosinePower=40, update=False), m)
         self.assertEqual(cmds.getAttr("red.cosinePower"), 20)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
-        self.assertIs(m.astype(Phong, cosinePower=40, update=True), m)
+        self.assertIs(m.astype(Phong, cosinePower=40), m)
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.material")
 

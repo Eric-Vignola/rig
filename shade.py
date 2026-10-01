@@ -988,7 +988,7 @@ def convert(
     strict:  bool = False,
     dry_run: bool = False,
     park:    bool = True,
-    update:  bool = False,
+    update:  bool = True,
     **attrs: Any,
 ) -> Any:
     """Make the material ``x`` -- a shader node or its name, read by

@@ -377,9 +377,9 @@ class TestShaderCreate(_Case):
         self.assertTrue(cmds.objExists("redSG"))
         cmds.setAttr("red.color", 0, 1, 0, type="double3")
         before = _scene()
-        self.assertEqual(Blinn.define("red", color=(1, 0, 0)), red)
+        self.assertEqual(Blinn.define("red", color=(1, 0, 0), update=False), red)  # the hand edit stays
         self.assertEqual(cmds.getAttr("red.color"), [(0.0, 1.0, 0.0)])
-        self.assertEqual(Blinn.define("red", color=(0, 0, 1), update=True), red)
+        self.assertEqual(Blinn.define("red", color=(0, 0, 1)), red)                # the default: set
         self.assertEqual(cmds.getAttr("red.color"), [(0.0, 0.0, 1.0)])
         self.assertEqual(_scene(), before)
         # the other spellings of the same define

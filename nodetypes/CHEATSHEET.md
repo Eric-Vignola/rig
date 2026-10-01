@@ -207,7 +207,8 @@ except NodeTypeError as e:
 
 `Cls.define("x", ...)` **finds** the node at its key or **makes** it
 there, never a second node under a name `Cls("x")` already refers to; the
-attributes are set when it is made, or with `update=True`.
+attributes given are set either way, so the script is the source of truth
+(`update=False` leaves a found node as it is).
 `Cls.create(name="x", ...)` always makes a new node; `name=` and
 `parent=` are keywords. The key is the node `create` would make: the
 namespace (the name's own, else the current one), the flattened scope's
@@ -218,8 +219,8 @@ does not exist or belongs to a file reference, another type at the key.
 
 ```python
 hub = Transform.define("hub", tx=1)                                   # missing: made at the world, tx set
-print(repr(hub), Transform.define("hub", tx=5) == hub, hub.tx.get())  # Transform("hub") True 1.0
-Transform.define("hub", tx=5, update=True)
+print(repr(hub), Transform.define("hub", tx=5) == hub, hub.tx.get())  # Transform("hub") True 5.0 -- found, and tx set
+Transform.define("hub", tx=7, update=False)                            # update=False: a found node is left as it is
 print(hub.tx.get(), repr(Transform.create(name="hub")))               # 5.0 Transform("hub1")
 print(repr(Joint.define("jnt2", parent="grp")), repr(Node.define("multiplyDivide", "md")))   # Joint("jnt2") DGNode("md")
 try:
