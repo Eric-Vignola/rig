@@ -3274,7 +3274,7 @@ def _node_from_str(name: str, label: str = "node", probe: bool = False) -> Any:
     if name.isidentifier():
         if _current_namespace() != ":" and not _is_uuid(name):
             found = _lookup(name, label, probe)
-            return None if found is None else _cast(found)
+            return None if found is None else _cast(found, not probe)
     elif _PATTERN_CHARS.search(name):
         raise NodeLookupError(name, label)
     elif ":" in name:
