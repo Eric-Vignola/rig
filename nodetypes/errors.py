@@ -172,13 +172,25 @@ class NodeNotFoundError(NodeLookupError):
             self._message = f"{text}; {door} finds or makes it" if door else text
         return self._message
 
+    def __reduce__(self):
+        """A copy (pickle) keeps the facts, and the message and the door as
+        text, without the node class, which may not pickle (a class made in a
+        function)."""
+        state = dict(self.__dict__)
+        if state.pop("node_class", None) is not None:
+            state["_message"] = str(self)
+            state["_door"]    = self.door
+        return type(self), self.args, state
+
     @property
     def door(self) -> str | None:
         """The call that finds or makes the missing node
         (``"Joint.define('spnie_01')"``), read from the scene now: the
         reference's class's ``define`` when it makes the node from the name
         (``DGNode._define_door``); None for a uuid, ``Node(x)``, an error made
-        directly, or a scene that cannot be read."""
+        directly, or a scene that cannot be read. A copy keeps it as text."""
+        if "_door" in self.__dict__:
+            return self._door
         if self.node_class is None or self.uuid:
             return None
         try:
