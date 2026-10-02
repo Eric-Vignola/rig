@@ -22,7 +22,15 @@ class Choice(DGNode):
         """
         # for the output, use get the selected input and use its connected data type
         if attr.name == "output":
-            sel_id = self.find_attr("selector").get()
+            selector = self.find_attr("selector")
+            # the int `selector.get()` reads with cmds.getAttr, read from the plug:
+            # a long is never geometry, and MPlug.asInt evaluates it at the
+            # current time as getAttr does, connected or not. `data_type` named
+            # the attr first, so the node is valid; a direct call on a deleted
+            # or freed node raises the "already deleted!" `get()` raises, and
+            # never reads its plug
+            self.ensure_valid()
+            sel_id = selector.plug.asInt()
             # quiet=True: an unresolvable selection must degrade to the base
             # "Tdata" answer, not raise. ``data_type`` is a property, so an
             # AttributeError escaping here sends Python into Plug.__getattr__,
