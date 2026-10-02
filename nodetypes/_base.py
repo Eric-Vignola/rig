@@ -289,7 +289,8 @@ def _cast(obj: Any, build: bool = True) -> Any:
     if inst is None:
         # a node class is constructed without NodeMeta.__call__'s frame (the
         # reference, which casts): a metaclass derived from NodeMeta may
-        # override ``_wrap``
+        # override ``_wrap``. Its constructor may be a user's
+        _USER_CODE_RUNS[0] += 1
         inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj._wrap(obj)
     _CASTABLE_TYPES.add(key)
     return inst
@@ -340,7 +341,9 @@ def _cast_by_name(obj: str) -> Any:
         cls_obj = _native_node_class(obj)
 
     if cls_obj:
-        # as in `_cast`: no NodeMeta.__call__ frame
+        # as in `_cast`: no NodeMeta.__call__ frame, and a constructor that may
+        # be a user's
+        _USER_CODE_RUNS[0] += 1
         return type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj._wrap(obj)
 
     raise ValueError(f"Failed casting {obj}")
@@ -654,6 +657,18 @@ _NORMAL_ATTR  = OpenMaya.MFnDependencyNode.kNormalAttr
 # hook of attr's node: the answer its getAttr query gave, and the node whose class
 # hook that call runs first (`_hook_node`), see `_queried_data_type`
 _FALLBACK_QUERY = None
+
+# A count of the times code a user may have written ran where a type query can
+# run it: a fallback hook `Attribute.data_type` calls that `_keeps_query` does
+# not vouch for (a node class's own, a class-level patch, a hook set on the
+# node), and a node constructor a cast runs (`_cast`). `shorthand._Facts`
+# reads it around its data type query, so a fact whose query ran such code is
+# queried again where it was before (see `_inject_value`).
+_USER_CODE_RUNS = [0]
+
+# Bound by `rig.nodetypes.dg_node` when it loads (it imports this module):
+# `_keeps_query`, read before any patch of it can exist
+_KEEPS_QUERY = None
 
 
 def _fn_set_name(node: Any) -> str:
@@ -1291,6 +1306,19 @@ def _hook_node(node: Any) -> Any:
         return None if "_attr_data_type_fallback" in vars(node) else node
     except Exception:
         return None
+
+
+def _vouched_hook(node_cls: type) -> bool:
+    """True if the fallback hook of node class `node_cls` is one rig vouches only
+    reads the scene (`dg_node._keeps_query`); False for any other, or before
+    dg_node has loaded (see `_USER_CODE_RUNS`). Never raises."""
+    keeps = _KEEPS_QUERY
+    if keeps is None:
+        return False
+    try:
+        return keeps(node_cls)
+    except Exception:
+        return False
 
 
 def _queried_data_type(attr: Any, node: Any) -> str | None:
@@ -2251,7 +2279,10 @@ class Attribute(str):
             outer = _FALLBACK_QUERY
             try:
                 node            = self.node
-                _FALLBACK_QUERY = (self, typ, _hook_node(node))
+                hook_node       = _hook_node(node)
+                _FALLBACK_QUERY = (self, typ, hook_node)
+                if hook_node is None or not _vouched_hook(type(node)):
+                    _USER_CODE_RUNS[0] += 1
                 return node._attr_data_type_fallback(self)
             finally:
                 _FALLBACK_QUERY = outer

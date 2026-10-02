@@ -34,6 +34,7 @@ from rig.nodetypes._base import (
     Node,
     set_custom_type,
 )
+from rig.nodetypes import _base as _base_module
 from rig.nodetypes.errors import _article, AmbiguousNodeError, NodeNotFoundError, NodeTypeError
 
 
@@ -1832,3 +1833,8 @@ def _keeps_query(node_cls: type) -> bool:
         _QUERY_KEEPING_HOOKS.get(node_cls) is hook
         and DGNode._attr_data_type_fallback is _BASE_FALLBACK_HOOK
     )
+
+
+# `rig.nodetypes._base` reads the hook rule (`_vouched_hook`) through this,
+# bound once DGNode exists, before any patch of it can
+_base_module._KEEPS_QUERY = _keeps_query
