@@ -646,6 +646,9 @@ _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
 # token, not a count: an in-place reload of this module makes a new one, which
 # no memo made before it matches.
 _KIND_EPOCH = [object()]
+# the attribute classes `_fixed_attr_kind` tells apart
+_INVALID_ATTR = OpenMaya.MFnDependencyNode.kInvalidAttr
+_NORMAL_ATTR  = OpenMaya.MFnDependencyNode.kNormalAttr
 
 # (attr, "typed" or "Tdata", node) while `Attribute.data_type` runs the fallback
 # hook of attr's node: the answer its getAttr query gave, and the node whose class
@@ -1488,7 +1491,7 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
         mobject = _attr_mobject(attr)
         # a deleted attr is no longer on the node, even once its name is reused
         klass = fn.attributeClass(mobject)
-        if klass == OpenMaya.MFnDependencyNode.kInvalidAttr:
+        if klass == _INVALID_ATTR:
             return None
         elements = []
         plug     = mplug
@@ -1509,7 +1512,7 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
                 return None
         kind = mobject.apiType()
         if (
-            klass == OpenMaya.MFnDependencyNode.kNormalAttr
+            klass == _NORMAL_ATTR
             and not elements
             and (_PLUGIN_CALLBACKS_READY or _ensure_plugin_callbacks())
         ):
@@ -1558,14 +1561,11 @@ def _names_own_plug(attr: Any) -> bool:
     try:
         mplug   = attr._mplug
         mobject = mplug.node()
+        dag     = mobject.hasFn(OpenMaya.MFn.kDagNode)
         memo    = d.get("_kind")
-        if memo is not None and memo[0] is _KIND_EPOCH[0]:
+        if not dag and memo is not None and memo[0] is _KIND_EPOCH[0]:
             handle = d.get("_handle")  # the owner's, or the plug's own
-            if (
-                handle is not None
-                and handle.isValid()
-                and not mobject.hasFn(OpenMaya.MFn.kDagNode)
-            ):
+            if handle is not None and handle.isValid():
                 plug = mplug
                 while plug.isChild:
                     plug = plug.parent()
@@ -1580,7 +1580,7 @@ def _names_own_plug(attr: Any) -> bool:
         # instance removed while the node lives on in another) is re-resolved by
         # DAGNode.name; an invalid one would name the node "". Kept as a guard.
         path = None
-        if mobject.hasFn(OpenMaya.MFn.kDagNode):
+        if dag:
             path = _naming_dag_path(attr)
             if path is None or not path.isValid():
                 return False
