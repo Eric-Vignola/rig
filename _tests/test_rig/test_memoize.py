@@ -369,7 +369,7 @@ class TestMemoizeNodeKeyHardening(MayaTestCase):
             _node_identity("no_such_node_zzz_12345")
 
     def test_node_identity_falls_back_to_cmds_when_api_uuid_unavailable(self):
-        # Older Maya may lack API 1.0 MUuid; the resolver must fall back to
+        # Should the API not give the uuid, the resolver must fall back to
         # cmds.ls(uuid=True) and still return the correct (uuid, hashCode).
         # Re-pinned (round 5 NW6): the resolver reads API 2.0, whose fn set is
         # the one made to fail
@@ -484,7 +484,8 @@ class TestAttributeKeyFromPlug(MayaTestCase):
     def test_attribute_key_of_a_deleted_node_makes_no_api2_call(self):
         # A node deleted with undo off is freed, and reading it through API 2.0
         # crashes Maya, so a used plug of a deleted node must raise from its
-        # wrapper's API 1.0 handle before any API 2.0 call.
+        # wrapper's handle (`_objhandle`, which its plug holds as `_handle`)
+        # before any other API 2.0 call.
         cmds.undoInfo(state=True, infinity=True)
         for node_type, attr in (("transform", "tx"), ("multiplyDivide", "input1X")):
             node = Node.create(node_type, name="keep")

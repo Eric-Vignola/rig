@@ -2,7 +2,7 @@
 a node of an already-cast type without its type check.
 
 The cast builds a class that keeps the DGNode or DAGNode constructor, type
-check, name property and API 1.0 cache, for a (typeName, typeId) it already
+check and name property, for a (typeName, typeId) it already
 built once, without running ``is_type`` again (``_construct_checked_type``):
 for a name as it did for an MObject, and from the MSelectionList the cast just
 resolved the name in. Such a class's ``is_type`` only depends on the node type
@@ -11,8 +11,8 @@ and the custom type attr, which the type key already decided.
 * ``TestSameNodes``: every class (and ``Node``) x every name of a mixed scene
   x three namespace modes (the root, ``char`` current, ``char`` current with
   ``namespace -relativeNames`` on): the node object a warm cast gives (its
-  whole state: class, names, ``__dict__`` keys in order, fn set, path, API 1.0
-  handle, attr cache) or the error it raises is what the full constructor
+  whole state: class, names, ``__dict__`` keys in order, fn set, path, handle,
+  attr cache) or the error it raises is what the full constructor
   gives, with the cast caches cleared before each call; walked forwards and
   backwards (another node of a type cast first); every MObject and DAG path too.
 * ``TestTheShortcut``: a warm name cast of a transform, joint, camera or DG node
