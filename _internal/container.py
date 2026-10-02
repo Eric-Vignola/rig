@@ -48,6 +48,7 @@ from rig.nodetypes._base import (
     _cast_node,
     _check_attrs,
     _class_attr,
+    _handle_valid,
     _MISSING,
     _PLAIN_NODE_NAME,
     _path_instance_number,
@@ -57,6 +58,7 @@ from rig.nodetypes._base import (
 )
 from rig.nodetypes.dag_node import _parent_path, DAGNode
 from rig.nodetypes.dg_node import _create_template, DGNode
+from rig.nodetypes.plugins import _api_edit_ready, _register_api_edit
 from rig.nodetypes.transform import Transform
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
@@ -398,6 +400,13 @@ class _StackFrame:
     ``subgroups`` records flattened sub-scopes that were promoted into this
     frame on exit. Logical-only -- kept for a future ``Container.tree()``
     debug helper (v3).
+
+    ``hyp``, ``hyp_h``, ``dn`` and ``ctn_fn`` are a real frame's slots for
+    :meth:`_ContainerStack._add_eager`, filled by `_fill_slots` once a member
+    has joined through ``cmds.container`` (the first one makes the container's
+    hyperLayout): the hyperLayout's ``hyperPosition`` plug and handle, its
+    ``dependNode`` child attribute, the container's fn set. ``None`` until
+    then.
     """
 
     __slots__ = (
@@ -411,6 +420,10 @@ class _StackFrame:
         "subgroups",
         "_scope_key",
         "cleanup_on_exit",
+        "hyp",
+        "hyp_h",
+        "dn",
+        "ctn_fn",
     )
 
     def __init__(
@@ -439,6 +452,7 @@ class _StackFrame:
         # after a popped frame is GC'd and would let separate builds sharing
         # ``(name, depth)`` collide on the same scope key.
         self._scope_key = (name, depth, next(_SCOPE_UID_COUNTER))
+        self.hyp = self.hyp_h = self.dn = self.ctn_fn = None
 
 
 # --------------------------------------------------------------------- #
@@ -656,7 +670,7 @@ class _ContainerStack:
 
         # Add to the leaf real container (and record on every frame) by default.
         if container is None or container:
-            self._add(node)
+            self._add(node, new=True)
 
         return node
 
@@ -665,8 +679,11 @@ class _ContainerStack:
         and record its UUID in every frame on the stack."""
         self._add(node)
 
-    def _add(self, node: Any) -> None:
-        """:meth:`add`, for a node just created or one the caller holds."""
+    def _add(self, node: Any, new: bool = False) -> None:
+        """:meth:`add`, for a node just created or one the caller holds. With
+        ``new`` (the nodes the caller's call created: ``createNode``, a typed
+        create, a bridge command), the container add may take
+        :meth:`_add_eager`; any other node joins through ``cmds.container``."""
         if not self._stack:
             return
 
@@ -695,14 +712,98 @@ class _ContainerStack:
                     frame._member_set.add(uuid)
 
         # Add to the leaf real container, if one exists.
-        leaf = self._leaf_real_container()
-        if leaf is not None:
-            try:
-                cmds.container(str(leaf), edit=True, addNode=node_names, force=True)
-            except RuntimeError as e:
-                LOGGER.debug(
-                    "Failed to add %s to container %s: %s", node_names, leaf, e
-                )
+        frame = self._leaf_real_frame()
+        if frame is None or (new and self._add_eager(items, frame)):
+            return
+        leaf = frame.container_node
+        try:
+            cmds.container(str(leaf), edit=True, addNode=node_names, force=True)
+        except RuntimeError as e:
+            LOGGER.debug(
+                "Failed to add %s to container %s: %s", node_names, leaf, e
+            )
+        else:
+            if frame.hyp_h is None or not frame.hyp_h.isValid():
+                _fill_slots(frame)
+
+    def _add_eager(self, items: list, frame: _StackFrame) -> bool:
+        """Make the nodes ``items`` (node objects or names, just created by the
+        caller's call) members of ``frame``'s container through the API: one
+        ``MDGModifier`` connects each node's ``message`` to the next
+        ``hyperPosition`` element of the container's hyperLayout, in order, and
+        `_register_api_edit` applies it as one undo step (a ``cmds.container``
+        call is one too). The same connections, element indices and file as
+        ``cmds.container -addNode``, without the command (C1).
+
+        True when done. False, with nothing changed, when a guard fails, and the
+        caller takes ``cmds.container`` (each guard is under 1 us):
+
+        * the frame's slots are filled (a member has joined through cmds: that
+          made the hyperLayout) and the hyperLayout and the container are valid
+          (not deleted, undone or freed), and the container is not locked
+          (``cmds.container`` refuses a locked asset; a connect would not);
+        * Maya has no current container (it adopts every new node, and a
+          connect would give the node a second container);
+        * the hyperLayout's elements are ``0 .. k-1`` (``k`` of them, ``k`` > 0)
+          and the last one has a member: ``cmds.container`` takes the index
+          after the highest one a member was ever connected at, which is ``k``
+          then. Not so after a user edit of the elements, or when the last
+          member was deleted, removed or undone (its element stays, empty);
+          cmds takes those, and the next add finds its member last again;
+        * no node's ``message`` is connected yet (a member already, of this
+          container or another, or wired by its command): cmds decides;
+        * `_api_edit_ready` (rig's undo plug-in loaded, not undoing or redoing).
+
+        If the modifier fails anyway, what it did is undone and False is
+        returned outside the ``except`` block. ``_EAGER_MEMBERSHIP`` off: always
+        False.
+
+        Not guarded (raw edits of the layout node): a user who connects the
+        container to another hyperLayout, or removes the hyperLayout's highest
+        elements (``removeMultiInstance``), between two statements; cmds would
+        then use that hyperLayout, or an index above ``k``."""
+        if not _EAGER_MEMBERSHIP:
+            return False
+        hyp_h = frame.hyp_h
+        if (
+            hyp_h is None
+            or not hyp_h.isValid()
+            or not _handle_valid(frame.container_node.__dict__)
+            or frame.ctn_fn.isLocked
+            or not OpenMaya.MFnContainerNode.getCurrentAsMObject().isNull()
+        ):
+            return False
+        hyp, dn = frame.hyp, frame.dn
+        k = hyp.numElements()
+        if not k:
+            return False
+        last = hyp.elementByPhysicalIndex(k - 1)
+        if last.logicalIndex() != k - 1 or not last.child(dn).isDestination:
+            return False
+        sources = []
+        for item in items:
+            obj = _new_node_mobject(item)
+            if obj is None:
+                return False
+            message = OpenMaya.MPlug(obj, _MESSAGE[0])
+            if message.isSource:
+                return False
+            sources.append(message)
+        if not sources or not _api_edit_ready():
+            return False
+        modifier = OpenMaya.MDGModifier()
+        for j, message in enumerate(sources):
+            modifier.connect(message, hyp.elementByLogicalIndex(k + j).child(dn))
+        try:
+            _register_api_edit(modifier)
+            return True
+        except Exception:  # noqa: BLE001 (undone below; the cmds route follows, outside this block)
+            pass
+        try:
+            modifier.undoIt()
+        except RuntimeError:
+            pass
+        return False
 
     def absorb_unit_conversions(self, dst: Any) -> None:
         """After connecting to ``dst``, absorb any auto-inserted
@@ -795,9 +896,14 @@ class _ContainerStack:
     # -- internals -- #
 
     def _leaf_real_container(self) -> Optional["Container"]:
+        frame = self._leaf_real_frame()
+        return None if frame is None else frame.container_node
+
+    def _leaf_real_frame(self) -> Optional[_StackFrame]:
+        """The innermost frame with a real container (its nodes' container)."""
         for frame in reversed(self._stack):
             if frame.container_node is not None:
-                return frame.container_node
+                return frame
         return None
 
     def _compute_flatten_prefix(self) -> str:
@@ -1052,6 +1158,59 @@ class _ContainerStack:
 
 # Module-level singleton -- the public ``container`` name.
 container = _ContainerStack()
+
+
+# --------------------------------------------------------------------- #
+#  Eager API membership (round 5, C1)
+# --------------------------------------------------------------------- #
+
+# The A/B switch of `_ContainerStack._add_eager` (private): False sends every
+# member through ``cmds.container``, as before C1.
+_EAGER_MEMBERSHIP = True
+
+# The ``message`` attribute (one MObject every node shares), read by `_fill_slots`
+_MESSAGE: list = []
+
+
+def _fill_slots(frame: _StackFrame) -> None:
+    """Fill ``frame``'s slots for :meth:`_ContainerStack._add_eager` from its
+    container's hyperLayout, after a member joined through ``cmds.container``
+    (the first one makes the hyperLayout). Left as they are when the container
+    or a hyperLayout cannot be read (every later add then takes cmds)."""
+    d = frame.container_node.__dict__
+    if not _handle_valid(d):
+        return
+    try:
+        fn = OpenMaya.MFnDependencyNode(d["_mobject"])
+        layout = fn.findPlug("hyperLayout", False).source()
+        if layout.isNull:
+            return
+        layout_fn = OpenMaya.MFnDependencyNode(layout.node())
+        hyp = layout_fn.findPlug("hyperPosition", False)
+        dn = layout_fn.attribute("dependNode")
+        if not _MESSAGE:
+            _MESSAGE.append(fn.attribute("message"))
+    except RuntimeError:
+        return
+    frame.hyp, frame.dn, frame.ctn_fn = hyp, dn, fn
+    frame.hyp_h = OpenMaya.MObjectHandle(layout.node())
+
+
+def _new_node_mobject(item: Any) -> Optional[OpenMaya.MObject]:
+    """The MObject of a node :meth:`_ContainerStack._add_eager` adds: a valid
+    node object's own, or the one node a name finds; else None (cmds route)."""
+    if isinstance(item, DGNode):
+        d = item.__dict__
+        return d["_mobject"] if _handle_valid(d) else None
+    name = str(item)
+    if "." in name:
+        return None
+    sel = OpenMaya.MSelectionList()
+    try:
+        sel.add(name)
+    except RuntimeError:
+        return None
+    return sel.getDependNode(0) if sel.length() == 1 else None
 
 
 # --------------------------------------------------------------------- #
@@ -1312,10 +1471,11 @@ def _typed_create(
         ):
             _gc_tag(result.name)
         if registers:
+            # what the call made joins as new (a found registry, made by nothing: cmds)
             if created and not _made_only(result, created):
-                container.add(created)
+                container._add(created, new=True)
             elif result is not None:
-                container.add(result)
+                container._add(result, new=created is None or bool(created))
     return result
 
 
