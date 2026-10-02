@@ -667,8 +667,10 @@ _FALLBACK_QUERY = None
 _USER_CODE_RUNS = [0]
 
 # Bound by `rig.nodetypes.dg_node` when it loads (it imports this module):
-# `_keeps_query`, read before any patch of it can exist
+# `_keeps_query`, and DGNode's `name`, `fn_set` and `ensure_valid` (see
+# `_dg_named_owner`), read before any patch of them can exist
 _KEEPS_QUERY = None
+_DG_NAMING   = None
 
 
 def _fn_set_name(node: Any) -> str:
@@ -761,6 +763,55 @@ def _ensure_node_valid(attr: Any) -> None:
     if handle is None or not handle.isValid():
         node.ensure_valid()
     handle = d.get("_attrh")
+    if handle is not None and not handle.isAlive():
+        raise _deleted_error(str.__str__(attr))
+
+
+# Python's own attribute lookup, which `_dg_named_owner` asks a class to keep
+_OBJECT_GETATTRIBUTE = object.__dict__["__getattribute__"]
+
+
+def _dg_named_owner(attr: Any) -> Any:
+    """The owner of `attr` if naming it (`Attribute.full_name`) can raise only
+    through `_ensure_dg_named`'s two checks, else None.
+
+    That holds when `attr`'s class keeps Attribute's `full_name` and its owner's
+    class keeps DGNode's `name`, `fn_set` and `ensure_valid` (and Python's own
+    attribute lookup), with no `ensure_valid` set on the owner itself: the name
+    is then the owner's `ensure_valid()`, the `name()` of its fn set (which a
+    valid node answers), the check of a dynamic attr's attribute handle, and the
+    MPlug's own name, which a valid node's plug answers, a deleted dynamic
+    attribute's too. So a caller that needs only the raise runs the two checks
+    and builds no name. A DAG node's class names it through its path
+    (`DAGNode.name` re-binds a stale one), so it is never such an owner. The
+    classes are read at every call, so a patched method is seen at once."""
+    node = attr.__dict__.get("_node")
+    if node is None or type(attr).full_name is not _ATTRIBUTE_FULL_NAME:
+        return None
+    naming = _DG_NAMING
+    cls    = type(node)
+    try:
+        if (
+            naming is None
+            or cls.name is not naming[0]
+            or cls.fn_set is not naming[1]
+            or cls.ensure_valid is not naming[2]
+            or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
+            or "ensure_valid" in node.__dict__
+        ):
+            return None
+    except AttributeError:
+        return None
+    return node
+
+
+def _ensure_dg_named(attr: Any, owner: Any) -> None:
+    """Raise what naming `attr` raises, `owner` being its `_dg_named_owner`: the
+    owner's ``"... already deleted!"`` (`ensure_valid`), then the freed dynamic
+    attribute's ``"<plug> already deleted!"`` (see `_ensure_owner_alive`), the
+    two checks `Attribute.full_name` makes, in its order and with its texts."""
+    owner.ensure_valid()
+    handle = attr.__dict__.get("_attrh")
     if handle is not None and not handle.isAlive():
         raise _deleted_error(str.__str__(attr))
 
@@ -2255,13 +2306,22 @@ class Attribute(str):
     def data_type(self) -> str:
         """Returns the data type of the value hosted by this attribute."""
         global _FALLBACK_QUERY
-        # the name comes first so a deleted node's plug raises as before
-        full_name = self.full_name
-        key       = self._static_type_key()
+        owner = _dg_named_owner(self)
+        if owner is None:
+            # the name comes first so a deleted node's plug raises as before
+            full_name = self.full_name
+        else:
+            # naming the attr would raise only from these checks (see
+            # `_dg_named_owner`), so the name is built on a miss only
+            _ensure_dg_named(self, owner)
+            full_name = None
+        key = self._static_type_key()
         if key is not None:
             typ = _STATIC_DATA_TYPE.get(key)
             if typ is not None:
                 return typ
+        if full_name is None:
+            full_name = self.full_name
 
         typ = cmds.getAttr(full_name, type=True)
 
@@ -3040,6 +3100,9 @@ class Attribute(str):
 
 
 Attribute._CHILD_CLASS = Attribute
+
+# the naming `_dg_named_owner` finds a plug's class keeps
+_ATTRIBUTE_FULL_NAME = Attribute.__dict__["full_name"]
 
 
 # `Node.create`'s body: ``rig._internal.container`` sets it when it loads, to

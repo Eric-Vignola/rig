@@ -98,6 +98,8 @@ from rig.nodetypes._base import (
     _attr_state,
     _check_enum_names,
     _class_attr,
+    _dg_named_owner,
+    _ensure_dg_named,
     _enum_value,
     _ensure_owner_alive,
     _fixed_attr_kind,
@@ -133,7 +135,9 @@ LOGGER = logging.getLogger(__name__)
 # numbers, None, plugs and the plain sequences, passed by one isinstance call.
 _NOT_RESHAPED = _SCALARS + (Attribute, list, tuple, np.ndarray, str)
 
-# Attribute's own data type, which `_dst_data_type` asks a plug's class to keep
+# Attribute's own members the inject fast paths ask a plug's class to keep:
+# its name (`_named_with_dot`) and its data type (`_dst_data_type`)
+_ATTRIBUTE_STR        = Attribute.__dict__["__str__"]
 _ATTRIBUTE_DATA_TYPE  = Attribute.__dict__["data_type"]
 
 # An attribute name Maya keeps: what ``plug >> "name"`` clones under.
@@ -2579,6 +2583,20 @@ def _fanout_channel(src: Any, dst: Any) -> None:
         _set_or_connect(src, dst)
 
 
+def _named_with_dot(src: Any) -> bool:
+    """``"." in str(src)``, for ``src`` an Attribute. The name Attribute's
+    ``__str__`` gives (its ``full_name``) always has one, so a plug whose naming
+    can raise only through `_ensure_dg_named`'s checks (`_dg_named_owner`) runs
+    those checks instead of building the name: a deleted source still raises
+    its ``"... already deleted!"``, and before the destination is disconnected."""
+    if type(src).__str__ is _ATTRIBUTE_STR:
+        owner = _dg_named_owner(src)
+        if owner is not None:
+            _ensure_dg_named(src, owner)
+            return True
+    return "." in str(src)
+
+
 def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> None:
     """Either ``dst.set(src)`` or ``src.connect(dst, force=True)``.
 
@@ -2616,7 +2634,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
 
     # Plug / Attribute source => connect.
     if isinstance(src, Attribute):
-        if "." in str(src):
+        if _named_with_dot(src):
             _disconnect_incoming(dst_attr if dst_attr is not None else dst)
             try:
                 if dst_attr is not None:
