@@ -1019,8 +1019,7 @@ def _new_attr(
     that binds an owner hands the owner's handle), with the handle of its
     attribute (`attr_handle`, see `_attr_handle`). `cls` is `Attribute` or
     `Plug`, whose `__init__` does nothing else for an MPlug. It builds
-    `_attr_state`'s state inline: it is the owned plugs' hot path (about 26k per
-    rail_spine build)."""
+    `_attr_state`'s state inline: it is the owned plugs' hot path."""
     attr = str.__new__(cls, mplug)
     attr.__dict__.update(
         {
