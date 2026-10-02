@@ -905,35 +905,7 @@ def _mplug_handle(mplug: OpenMaya.MPlug) -> Any:
     return handle
 
 
-# `_attr_handle`: the handle it found for a dynamic or extension attribute,
-# keyed by the attribute's MObjectHandle hashCode, as (the attribute's MObject,
-# that handle) for every attribute that has the code. An entry is the
-# attribute's own while its handle is alive; a plug built later from an MPlug
-# of the attribute takes it again, also once a delete of the attribute is on
-# the undo queue (its name then finds no attribute, or another one). Freed
-# attributes' entries are dropped when their code is seen again, and all of
-# them once the table outgrows `_ATTR_PRUNE_AT`.
-_ATTR_HANDLES   = {}
-_ATTR_PRUNE_AT  = [4096]
-
-
-def _prune_attr_handles() -> None:
-    """Drop the handles of freed attributes from `_ATTR_HANDLES`."""
-    for code in list(_ATTR_HANDLES):
-        live = [entry for entry in _ATTR_HANDLES[code] if entry[1].isAlive()]
-        if live:
-            _ATTR_HANDLES[code] = live
-        else:
-            del _ATTR_HANDLES[code]
-    _ATTR_PRUNE_AT[0] = max(4096, 2 * len(_ATTR_HANDLES))
-
-
-def _attr_handle(
-    mplug:       OpenMaya.MPlug,
-    node_handle: Any  = None,
-    extension:   bool = False,
-    node_fn:     Any  = None,
-) -> Any:
+def _attr_handle(mplug: OpenMaya.MPlug, extension: bool = False) -> Any:
     """The MObjectHandle of the attribute of `mplug`, a live plug, if it is a
     dynamic attribute, or an `extension` one (the caller knows its class:
     `MPlug.isDynamic` is False for it), else None: the one a plug keeps as
@@ -941,44 +913,16 @@ def _attr_handle(
     delete of it leaves the undo queue, while its node lives on, and an extension
     one by `deleteExtension`; a static one lives as long as its node type.
 
-    The handle is taken the first time while the attribute is on its node (so
-    its name finds it: one deleted to the undo queue is not, even once its name
-    is added again), and found in `_ATTR_HANDLES` after that. Its node is read
-    through `node_fn`, the fn set of the plug's valid node the caller holds (and
-    just read), else through a fn set of the node of `mplug`, made only while
-    `node_handle`, the handle of that node the caller holds, is alive. None for
-    an attribute no longer on its node that the table has no handle of."""
+    Every plug takes the handle of its own attribute when it is built, also from
+    the MPlug of an attribute already deleted to the undo queue (whose name finds
+    no attribute, or another one): once that attribute is freed, the plug raises
+    instead of reading it."""
     if not (extension or mplug.isDynamic):
         return None
     try:
-        mobject = mplug.attribute()
-        handle  = OpenMaya.MObjectHandle(mobject)
-        code    = handle.hashCode()
+        return OpenMaya.MObjectHandle(mplug.attribute())
     except Exception:
         return None
-    entries = _ATTR_HANDLES.get(code)
-    if entries is not None:
-        for known, kept in entries:
-            if kept.isAlive() and known == mobject:
-                return kept
-    try:
-        fn = node_fn
-        if fn is None:
-            if node_handle is None or not node_handle.isAlive():
-                return None
-            fn = OpenMaya.MFnDependencyNode(mplug.node())
-        if fn.attributeClass(mobject) == OpenMaya.MFnDependencyNode.kInvalidAttr:
-            return None
-    except Exception:
-        return None
-    if entries is None:
-        if len(_ATTR_HANDLES) >= _ATTR_PRUNE_AT[0]:
-            _prune_attr_handles()
-        entries = _ATTR_HANDLES[code] = []
-    else:
-        entries[:] = [entry for entry in entries if entry[1].isAlive()]
-    entries.append((mobject, handle))
-    return handle
 
 
 def _attr_state(mplug: OpenMaya.MPlug, handle: Any, attr_handle: Any = None) -> dict:
@@ -2037,7 +1981,7 @@ class Attribute(str):
         else:
             raise ValueError(f"{name_or_mplug} is not a string or MPlug.")
         handle = _mplug_handle(mplug)
-        self.__dict__.update(_attr_state(mplug, handle, _attr_handle(mplug, handle)))
+        self.__dict__.update(_attr_state(mplug, handle, _attr_handle(mplug)))
 
     # --- dunders
 

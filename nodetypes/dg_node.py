@@ -1653,7 +1653,7 @@ class DGNode(Node):
                 # frees once it leaves the undo queue, and so does an extension
                 # attr, which deleteExtension frees (see `_ensure_owner_alive`)
                 attr_obj.__dict__["_attrh"] = _attr_handle(
-                    plug, extension=attr_class == _EXTENSION_ATTR, node_fn=self._fn_set
+                    plug, extension=attr_class == _EXTENSION_ATTR
                 )
 
         if not category and not data_type:
@@ -1711,7 +1711,7 @@ class DGNode(Node):
                 # its attribute's, if dynamic
                 plug   = sel.getPlug(0)
                 handle = self.__dict__["_objhandle"]
-                return _new_attr(Attribute, plug, handle, _attr_handle(plug, handle))
+                return _new_attr(Attribute, plug, handle, _attr_handle(plug))
         if not quiet:
             raise RuntimeError(f"Alias not found: {self}.{alias}")
 

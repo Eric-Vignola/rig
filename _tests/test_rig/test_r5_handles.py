@@ -9,9 +9,9 @@ the one it took when it was built from a name or an MPlug (the MPlug's node).
 A dynamic attr's plug holds the handle of its attribute as ``_attrh``.
 
 * ``TestNoApi1Left``: the tripwire (no package line names the API 1.0 handle,
-  fn set or plug slots, the retired node-handle lookup and table, or imports
-  ``maya.OpenMaya``), and no node, plug or memo entry holds an API 1.0 object;
-  the handles are not GC-tracked.
+  fn set or plug slots, the retired node-handle lookup and table, the retired
+  attribute-handle table, or imports ``maya.OpenMaya``), and no node, plug or
+  memo entry holds an API 1.0 object; the handles are not GC-tracked.
 * ``TestTheOutcomesOf45d2c13``: for a DG node, a DAG node, owned plugs, a plug
   with no owner, dynamic attr plugs and memo entries, every outcome (the value,
   or the error type and message) across a delete, its undo and redo, a flush, a
@@ -29,11 +29,13 @@ A dynamic attr's plug holds the handle of its attribute as ``_attrh``.
   namespace and with ``namespace -relativeNames``); 45d2c13 gave every one a
   handle of its node too (``runs\\r5\\A1\\probe_attr_handles_base.txt``). A
   null plug holds none.
-* ``TestAttributeHandles``: the attribute-handle rule is 45d2c13's: a plug
-  rebuilt from the MPlug of a dynamic attribute deleted to the undo queue holds
-  its handle when rig had found that attribute before, else none, whether or
-  not the name was added again; the memo makes no attribute check for an
-  attribute its name no longer finds.
+* ``TestAttributeHandles``: every plug of a dynamic attribute holds the handle
+  of its own attribute, taken when it is built (no table, round 5 AF: lead
+  decision 2026-10-02, option c): a plug rebuilt from the MPlug of a dynamic
+  attribute deleted to the undo queue holds it whether or not rig had found
+  that attribute before (45d2c13 held none when it had not), and raises once
+  the attribute is freed; the memo makes no attribute check for an attribute
+  its name no longer finds.
 * ``TestSerials``: a plug with no owner of a node deleted to the undo queue
   hashes with the serial its node object had (the serial table keeps the
   node's MObject: an API 2.0 handle gives none for a deleted node), and two
@@ -212,10 +214,13 @@ def _outcomes():
 # --------------------------------------------------------------------------- #
 
 # a line of the package that names an API 1.0 handle, its fn set, the retired
-# plug slots, the retired node-handle lookup and table, or imports API 1.0
+# plug slots, the retired node-handle lookup and table, the retired
+# attribute-handle table, or imports API 1.0. re-pinned (round 5 AF, lead
+# decision 2026-10-02, option c): `_ATTR_HANDLES` is no longer allowed
 _TRIPWIRE = re.compile(
     r"OpenMaya1|_objhandle1|_fn_set1|_cache_api1|_handle1|_attr1|_NODE_HANDLES"
     r"|\b_node_handle\b|_prune_node_handles"
+    r"|_ATTR_HANDLES|_ATTR_PRUNE_AT|_prune_attr_handles"
     r"|from maya import [^\n#]*\bOpenMaya\b|import maya\.OpenMaya\b"
 )
 
@@ -443,8 +448,12 @@ class TestAttributeHandles(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_a_plug_rebuilt_from_a_deleted_attributes_mplug(self):
-        # 45d2c13's answers (runs\r5\A1\probe_attr_handles_base.txt, part 3):
-        # the handle when rig found the attribute before, else none
+        # re-pinned (round 5 AF, lead decision 2026-10-02, option c): the plug
+        # holds its own attribute's handle whether or not rig had found the
+        # attribute before, and raises once the delete leaves the undo queue.
+        # 45d2c13 (and A1's table) gave the same where rig had found it, and no
+        # handle where it had not (runs\r5\A1\probe_attr_handles_base.txt, part
+        # 3): such a plug read freed memory after the flush
         for readd in (False, True):
             for seen in (True, False):
                 with self.subTest(readd=readd, seen=seen):
@@ -453,25 +462,33 @@ class TestAttributeHandles(MayaTestCase):
                     cmds.flushUndo()
                     cmds.createNode("multiplyDivide", name="hm")
                     cmds.addAttr("hm", longName="dynf", attributeType="double")
-                    raw = _mplug("hm.dynf")
+                    raw  = _mplug("hm.dynf")
+                    code = OpenMaya.MObjectHandle(raw.attribute()).hashCode()
                     if seen:
                         self.assertIsNotNone(vars(Node("hm").dynf)["_attrh"])
                     cmds.deleteAttr("hm.dynf")
                     if readd:
                         cmds.addAttr("hm", longName="dynf", attributeType="double")
-                    for build in (Attribute, Plug):
-                        handle = vars(build(raw))["_attrh"]
-                        if seen:
-                            self.assertIsInstance(handle, OpenMaya.MObjectHandle)
-                            self.assertTrue(handle.isAlive())
-                            code = OpenMaya.MObjectHandle(raw.attribute()).hashCode()
-                            self.assertEqual(handle.hashCode(), code)
-                        else:
-                            self.assertIsNone(handle)
+                    plugs = [build(raw) for build in (Attribute, Plug)]
+                    names = [str.__str__(plug) for plug in plugs]
+                    for plug in plugs:
+                        handle = vars(plug)["_attrh"]
+                        self.assertIsInstance(handle, OpenMaya.MObjectHandle)
+                        self.assertTrue(handle.isAlive())
+                        self.assertEqual(handle.hashCode(), code)
+                    cmds.flushUndo()  # frees the deleted attribute
+                    for plug, name in zip(plugs, names):
+                        self.assertFalse(vars(plug)["_attrh"].isAlive())
+                        with self.assertRaises(RuntimeError) as ctx:
+                            plug.get()
+                        self.assertEqual(str(ctx.exception), f"{name} already deleted!")
 
     def test_a_handle_is_taken_while_the_name_finds_the_attribute(self):
-        # the rule (the attribute's class on its node) is 45d2c13's by-name rule
-        # (its own name finds that attribute) in every state of the attribute
+        # re-pinned (round 5 AF, lead decision 2026-10-02, option c): no rule
+        # is left to compare with 45d2c13's by-name rule (its own name finds
+        # that attribute): in every state of the attribute, also the ones that
+        # rule answered no for (deleted, its name re-added), a plug takes the
+        # handle of its own attribute, alive while the delete is on the queue
         def by_name(mplug):
             fn = OpenMaya.MFnDependencyNode(mplug.node())
             try:
@@ -480,9 +497,11 @@ class TestAttributeHandles(MayaTestCase):
                 return False
 
         def taken(mplug, extension=False):
-            handle = OpenMaya.MObjectHandle(mplug.node())
-            with mock.patch.dict(_base._ATTR_HANDLES, clear=True):  # no earlier answer
-                return _base._attr_handle(mplug, handle, extension=extension) is not None
+            handle = _base._attr_handle(mplug, extension=extension)
+            if handle is None:
+                return False
+            own = OpenMaya.MObjectHandle(mplug.attribute())
+            return handle.isAlive() and handle.hashCode() == own.hashCode()
 
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("multiplyDivide", name="hm")
@@ -501,13 +520,19 @@ class TestAttributeHandles(MayaTestCase):
             ("undone", lambda: [cmds.undo() for _ in range(6)]),
             ("renamed", lambda: [cmds.renameAttr("hm.dynf", "dynr"), cmds.renameAttr("hm.dynm", "dynn")]),
         )
+        found = {}
         for state, change in states:
             change()
             for name, mplug in plugs.items():
                 with self.subTest(state=state, plug=name):
-                    self.assertEqual(taken(mplug), by_name(mplug))
-        self.assertTrue(all(taken(mplug) for mplug in plugs.values()))  # renamed: live
-        # an extension attribute, on its node and once deleteExtension freed it
+                    self.assertIs(taken(mplug), True)
+                found[state, name] = by_name(mplug)
+        # the states 45d2c13's rule gave no handle in are among them
+        self.assertEqual(
+            sorted({state for (state, _name), finds in found.items() if not finds}),
+            ["deleted", "re-added"],
+        )
+        # an extension attribute, on its node
         try:
             cmds.addExtension(nodeType="network", longName="r5Ext", attributeType="double")
             cmds.createNode("network", name="net")

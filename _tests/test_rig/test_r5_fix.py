@@ -16,9 +16,10 @@
   (``_base._dg_named_owner``, and ``_base._dg_named_node`` for a node object),
   so a class that names its nodes through its own attribute lookup is collected
   by name, as its key is.
-* The scene callbacks' prune drops the freed attributes' handles and the freed
-  nodes' serials (``_base._ATTR_HANDLES``, ``_base._NODE_SERIALS``), which kept
-  every scene's until their size limit.
+* The scene callbacks' prune drops the freed nodes' serials
+  (``_base._NODE_SERIALS``), which kept every scene's until its size limit.
+  (It dropped the freed attributes' handles of ``_base._ATTR_HANDLES`` too,
+  until round 5 AF retired that table: lead decision 2026-10-02, option c.)
 
 Tests:
 
@@ -35,9 +36,9 @@ Tests:
   owner test over classes, patches and instance attributes; a plug of a class
   that answers ``name`` through its own ``__getattribute__`` is collected, and
   keyed, by the name it gives.
-* ``TestFreedTablesArePruned``: a new scene drops the old scene's attribute
-  handles and node serials, a prune keeps the live ones (the same objects), and
-  a lookup answers as before.
+* ``TestFreedTablesArePruned``: a new scene drops the old scene's node serials,
+  a prune keeps the live ones (the same objects), and a plug built again takes
+  its own handle of its attribute.
 """
 
 from collections import Counter
@@ -341,7 +342,11 @@ class TestOneNamingRule(MayaTestCase):
 
 
 class TestFreedTablesArePruned(MayaTestCase):
-    """The scene callbacks' prune drops the freed handles of `_base`'s tables."""
+    """The scene callbacks' prune drops the freed serials of `_base`'s table.
+
+    re-pinned (round 5 AF, lead decision 2026-10-02, option c): the attribute
+    handle table these tests checked too (``_ATTR_HANDLES``) is gone: every plug
+    takes the handle of its own attribute when it is built."""
 
     TEST_START_NEW_SCENE = True
 
@@ -355,37 +360,30 @@ class TestFreedTablesArePruned(MayaTestCase):
         return plug, handle
 
     def _dead(self):
-        attrs = [e for entries in _base._ATTR_HANDLES.values() for e in entries if not e[1].isAlive()]
-        nodes = [e for entries in _base._NODE_SERIALS.values() for e in entries if not e[0].isAlive()]
-        return len(attrs), len(nodes)
+        return len([e for entries in _base._NODE_SERIALS.values() for e in entries if not e[0].isAlive()])
 
     def test_a_new_scene_drops_the_freed_entries(self):
         self.assertTrue(
             memoize_module._SCENE_CALLBACKS_READY or memoize_module._ensure_scene_callbacks()
         )
         plug, handle = self._fill()
-        code = handle.hashCode()
-        self.assertIn(code, _base._ATTR_HANDLES)
         self.assertTrue(_base._NODE_SERIALS)
         cmds.file(new=True, force=True)
-        self.assertEqual(self._dead(), (0, 0))
-        self.assertFalse(
-            any(e[1] is handle for e in _base._ATTR_HANDLES.get(code, []))
-        )
+        self.assertEqual(self._dead(), 0)
+        self.assertFalse(handle.isAlive())  # the plug's own handle tells it
 
     def test_a_prune_keeps_the_live_entries(self):
         plug, handle = self._fill()
-        code    = handle.hashCode()
-        kept    = [id(e[1]) for e in _base._ATTR_HANDLES[code]]
         serials = {c: [(id(e[0]), e[2]) for e in v] for c, v in _base._NODE_SERIALS.items()
                    if all(e[0].isAlive() for e in v)}
         self.assertTrue(serials)
         memoize_module._prune_after_scene_change()
-        self.assertEqual([id(e[1]) for e in _base._ATTR_HANDLES[code]], kept)
         for c, entries in serials.items():
             self.assertEqual([(id(e[0]), e[2]) for e in _base._NODE_SERIALS[c]], entries)
-        # a lookup answers as before: the handle kept for that attribute
+        # a plug built again from the attribute's MPlug takes its own handle of it
         sel = OpenMaya.MSelectionList()
         sel.add("md.dynx")
-        again = Attribute(sel.getPlug(0))
-        self.assertIs(vars(again)["_attrh"], handle)
+        again = vars(Attribute(sel.getPlug(0)))["_attrh"]
+        self.assertIsNot(again, handle)
+        self.assertEqual(again.hashCode(), handle.hashCode())
+        self.assertTrue(again.isAlive())
