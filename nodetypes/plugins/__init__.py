@@ -12,6 +12,11 @@ on the path raises the original Maya error unchanged. Whether the undoable API
 command is loaded is read from ``maya.cmds`` (about 0.1 us, where a
 ``pluginInfo`` query costs about 20 us), so it is loaded once per session, and
 again only after an unload.
+
+rig's own API edits go through the command: `_run_undoable` (an object with
+``doIt`` / ``undoIt`` / ``redoIt``) and `_register_api_edit` (an ``MDGModifier``;
+`_api_edit_ready` says whether it may run, else the caller takes its ``cmds``
+route), each one unnamed undo step.
 """
 
 import os
@@ -19,6 +24,7 @@ from contextlib import contextmanager
 from typing import List, Optional, Union
 
 import maya.cmds as cmds
+from maya.api import OpenMaya
 
 _BUNDLED_DIR       = os.path.dirname(os.path.abspath(__file__))
 _PLUGIN_EXTENSIONS = (".py", ".mll", ".so", ".bundle")
@@ -131,3 +137,54 @@ def _run_undoable(obj):
         _ensure_loaded("undoable_api_command", True)
         command = getattr(cmds, UNDOABLE_API_COMMAND)
     return command.run(obj)
+
+
+class _APIEdit:
+    """[Internal] An ``MDGModifier`` as the object `_run_undoable` takes: ``doIt`` and
+    ``redoIt`` run the modifier's ``doIt``, ``undoIt`` its ``undoIt``."""
+
+    __slots__ = ("m",)
+
+    def __init__(self, modifier):
+        self.m = modifier
+
+    def doIt(self):
+        self.m.doIt()
+
+    def undoIt(self):
+        self.m.undoIt()
+
+    def redoIt(self):
+        self.m.doIt()
+
+
+def _api_edit_ready() -> bool:
+    """[Internal] True when `_register_api_edit` may run now: ``rigUndoableAPICommand``
+    is in ``maya.cmds`` (rig's plug-in is loaded the first time through `_ensure_loaded`,
+    and again after an unload), and Maya is neither undoing nor redoing. False, and the
+    caller takes its ``cmds`` route, when the plug-in does not load (a load that registers
+    nothing, the state a forced unload leaves) or during an undo or a redo. About 0.7 us
+    once loaded.
+
+    The undo state is not read (``undoInfo -q -state`` costs about 6 us): with undo off,
+    the command applies the edit and Maya keeps nothing, neither a step nor the modifier,
+    which is what a ``cmds`` edit leaves too."""
+    if getattr(cmds, UNDOABLE_API_COMMAND, None) is None:
+        try:
+            _ensure_loaded("undoable_api_command", True)
+        except Exception:  # noqa: BLE001 (any load failure: the caller's cmds route)
+            return False
+    return not (OpenMaya.MGlobal.isUndoing() or OpenMaya.MGlobal.isRedoing())
+
+
+def _register_api_edit(modifier) -> None:
+    """[Internal] Applies ``modifier`` (an ``MDGModifier`` holding the edit, not done
+    yet) inside ``rigUndoableAPICommand`` (`_run_undoable`): one unnamed undo step whose
+    undo is the modifier's ``undoIt`` and whose redo its ``doIt``; inside an undo chunk,
+    the step joins the chunk. The caller has checked `_api_edit_ready`.
+
+    An exception out of the modifier's ``doIt`` (or out of the command) registers
+    nothing and propagates; the caller then runs the modifier's ``undoIt`` (what ``doIt``
+    did before it failed) and takes its ``cmds`` route outside its ``except`` block, so
+    no API traceback is chained onto an error of that route."""
+    _run_undoable(_APIEdit(modifier))
