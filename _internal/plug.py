@@ -2273,8 +2273,9 @@ def _inject_value(
     ``dst_facts`` / ``src_facts`` are the operands' `shorthand._Facts` of this
     ``<<`` (`Plug.__lshift__` makes them for ``shorthand`` and hands them on
     for a plug source), else None: their compound-ness and data type answer
-    here while their queries ran no code a user may have written
-    (`_Facts._reusable`), so such code runs as often as before. From their
+    here while their queries ran no code a user may have written and no compute
+    a query runs again (`_Facts._reusable`), so such code runs as often as
+    before. From their
     queries to their last use here the op only queries the scene, apart from
     the queries that create a missing element (the same either way) and the
     decomposeMatrix a matrix-to-transform shorthand that does not apply leaves
