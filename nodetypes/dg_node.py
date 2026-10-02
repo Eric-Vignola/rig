@@ -1835,6 +1835,12 @@ def _keeps_query(node_cls: type) -> bool:
     )
 
 
-# `rig.nodetypes._base` reads the hook rule (`_vouched_hook`) through this,
-# bound once DGNode exists, before any patch of it can
+# `rig.nodetypes._base` reads the hook rule (`_vouched_hook`) and DGNode's naming
+# (`_dg_named_owner`) through these, bound once DGNode exists, before any patch
+# of them can
 _base_module._KEEPS_QUERY = _keeps_query
+_base_module._DG_NAMING   = (
+    DGNode.__dict__["name"],
+    DGNode.__dict__["fn_set"],
+    DGNode.__dict__["ensure_valid"],
+)
