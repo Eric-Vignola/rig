@@ -123,9 +123,12 @@ def load_plugin(
 def _run_undoable(obj):
     """[Internal] Puts the edit of ``obj`` (an object with ``doIt`` / ``undoIt`` /
     ``redoIt``) on the undo queue through ``rigUndoableAPICommand``, without the
-    wrapper's undo chunk: one unnamed undo step, about 3.3 us of overhead (the
-    chunked ``with load_plugin(...): cmds.rigUndoableAPICommand(obj)`` costs
-    about 20 us, and the call sites' former route about 38 us).
+    wrapper's undo chunk: one unnamed undo step. The command alone costs about
+    4.5 us in a wired scene (round U measured 3.3 us, against about 20 us for the
+    chunked ``with load_plugin(...): cmds.rigUndoableAPICommand(obj)`` and about
+    38 us for the call sites' former route). Undoing or redoing the step costs
+    about 37 us, where a ``cmds`` entry costs about 18 us: the command's
+    ``undoIt`` / ``redoIt`` turn undo recording off and on again around ``obj``'s.
 
     For an ``obj`` whose ``doIt`` calls no ``cmds`` (a ``cmds`` call in ``doIt``
     would be its own undo step); inside a user's or rig's undo chunk, the step
@@ -163,7 +166,7 @@ def _api_edit_ready() -> bool:
     is in ``maya.cmds`` (rig's plug-in is loaded the first time through `_ensure_loaded`,
     and again after an unload), and Maya is neither undoing nor redoing. False, and the
     caller takes its ``cmds`` route, when the plug-in does not load (a load that registers
-    nothing, the state a forced unload leaves) or during an undo or a redo. About 0.7 us
+    nothing, the state a forced unload leaves) or during an undo or a redo. About 0.3 us
     once loaded.
 
     The undo state is not read (``undoInfo -q -state`` costs about 6 us): with undo off,
@@ -181,7 +184,9 @@ def _register_api_edit(modifier) -> None:
     """[Internal] Applies ``modifier`` (an ``MDGModifier`` holding the edit, not done
     yet) inside ``rigUndoableAPICommand`` (`_run_undoable`): one unnamed undo step whose
     undo is the modifier's ``undoIt`` and whose redo its ``doIt``; inside an undo chunk,
-    the step joins the chunk. The caller has checked `_api_edit_ready`.
+    the step joins the chunk. The caller has checked `_api_edit_ready`. The
+    registration adds about 8 us to the modifier's own ``doIt`` in a wired scene, and
+    about 18 us inside a rail_spine build.
 
     An exception out of the modifier's ``doIt`` (or out of the command) registers
     nothing and propagates; the caller then runs the modifier's ``undoIt`` (what ``doIt``
