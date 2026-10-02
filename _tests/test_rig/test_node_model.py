@@ -562,8 +562,11 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes.dg_node", "DGNode.__getattr__"),
         # they hand it to a plug (`_handle`, F17) or keep it: the plugs of
         # `find_attr` / `find_alias`, a plug of a held node, the owner a plug
-        # casts, a memo attr check, an owned spec plug (round 4a M10)
-        ("rig.nodetypes.dg_node", "DGNode.find_attr"),
+        # casts, a memo attr check, an owned spec plug (round 4a M10).
+        # Re-pinned in round 5 (A5, H6): `find_attr`'s lookup, which builds its
+        # plugs, is `DGNode._find_attr_fresh` (it also tells `__getattr__`
+        # whether it built the attr just now)
+        ("rig.nodetypes.dg_node", "DGNode._find_attr_fresh"),
         ("rig.nodetypes.dg_node", "DGNode.find_alias"),
         ("rig._internal.plug", "_named_plug"),
         ("rig.nodetypes._base", "Attribute.node"),
