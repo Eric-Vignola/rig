@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from maya.api import OpenMaya
+
 from rig._internal.container import ContainerOptions
 from rig._internal.math_nodes import (
     _compose_matrix,
@@ -110,6 +112,32 @@ def shorthand(src: Any, dst: Any, src_facts: Any = None, dst_facts: Any = None) 
 # marks a `_Facts` query that has not run yet
 _UNSET = object()
 
+# the data types `Attribute.data_type` gives a generic attr that holds no typed
+# data, such as the output of a choice whose selected input is empty
+_UNRESOLVED_TYPES = ("Tdata", "typed")
+
+
+def _query_may_compute(attr: Any) -> bool:
+    """False if a data type query of `attr` (an Attribute whose data type query
+    just answered) reads stored data only: no attribute of its node affects its
+    attribute, and neither its plug nor a parent or array plug above it is a
+    destination. True otherwise, or if that cannot be read."""
+    try:
+        mplug = attr.plug
+        node  = OpenMaya.MFnDependencyNode(mplug.node())
+        if len(node.getAffectingAttributes(mplug.attribute())):
+            return True
+        while not mplug.isDestination:
+            if mplug.isElement:
+                mplug = mplug.array()
+            elif mplug.isChild:
+                mplug = mplug.parent()
+            else:
+                return False
+    except Exception:  # noqa: BLE001 - unknown: as if it may compute
+        pass
+    return True
+
 
 class _Facts:
     """The type facts ``shorthand`` tests on one operand, each queried once.
@@ -123,8 +151,12 @@ class _Facts:
 
     ``_reusable`` turns False once the data type query ran code a user may
     have written (a fallback hook rig does not vouch for, a node constructor:
-    ``_USER_CODE_RUNS``), so a caller that would have queried again does, and
-    that code runs as often as before.
+    ``_USER_CODE_RUNS``), raised, or found no type on a plug whose query may
+    run a compute (`_query_may_compute`), so a caller that would have queried
+    again does, and that code, or that compute, runs as often as before. Maya
+    leaves an output whose compute fails dirty (the output of a choice whose
+    selected input is empty), and every query of it runs the compute again,
+    which changes what a target connected to it afterwards reads.
     """
 
     __slots__ = ("_obj", "_data_type", "_num_children", "_is_compound", "_reusable")
@@ -144,7 +176,12 @@ class _Facts:
                 self._data_type = self._obj.data_type
             except Exception:
                 self._data_type = None
-            if _USER_CODE_RUNS[0] != runs:
+            if (
+                _USER_CODE_RUNS[0] != runs
+                or self._data_type is None
+                or self._data_type in _UNRESOLVED_TYPES
+                and _query_may_compute(self._obj)
+            ):
                 self._reusable = False
         return self._data_type
 
