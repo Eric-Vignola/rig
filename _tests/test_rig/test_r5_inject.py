@@ -29,11 +29,11 @@ Tests:
   deleted, undone, renamed and freed nodes on either side, plugs built from
   names, user fallback hooks (a class's, at the end of a choice chain, on a
   node, a class-level patch) and the hooks' call counts) gives what 619f29f
-  gave (``_ORACLE_619F29F``, written by ``runs\\r5\\A4\\gen_oracle.py`` running
-  ``_inject_outcomes`` on the snapshot of 619f29f): the result or the error
-  (type, message, ``__context__`` / ``__cause__``), what it printed, the nodes,
-  connections, values and multi indices it left, the selection and the undo
-  steps.
+  gave (``r5_inject_oracle_619f29f.json`` beside this file, written by
+  ``runs\\r5\\A4\\gen_oracle.py`` running ``_inject_outcomes`` on the snapshot
+  of 619f29f): the result or the error (type, message, ``__context__`` /
+  ``__cause__``), what it printed, the nodes, connections, values and multi
+  indices it changed, the selection and the undo steps.
 * ``TestTheSentinel``: the sentinel never leaves ``_inject_value`` (no other
   frame ever holds it) and is compared only with "string" and "matrix"; a set
   or a connect into a fixed kind queries no data type; the phantom element of
@@ -45,10 +45,9 @@ Tests:
 * ``TestDgNamedOwner``: the owner test (DG classes only; a DAG node, a plug
   with no owner, a component plug, a class with its own name or a patched
   method, a node with its own ``ensure_valid`` fail it, read at every call);
-  ``data_type`` and ``_named_with_dot`` raise as the
-  name did, for a deleted node, a freed one and a freed dynamic attribute, and
-  build no name for a valid one; a deleted source raises before the
-  destination is disconnected.
+  ``data_type`` and ``_named_with_dot`` raise as the name does, for a deleted
+  node, a freed one and a freed dynamic attribute, and build no name for a
+  valid one; a deleted source raises before the destination is disconnected.
 * ``TestDisconnectIncoming``: over the plug shapes (elements, compound
   parents and children, aliases, array roots, unitConversion-fed plugs, a
   deleted node's and attribute's plugs), ``isDestination`` is False exactly
@@ -70,7 +69,6 @@ from unittest import mock
 from maya import cmds
 from maya.api import OpenMaya
 
-import rig
 from rig import List, Node, Plug, get_options, lock, set_options
 from rig._internal import plug as plugmod
 from rig._internal import shorthand as shorthand_module
@@ -284,7 +282,8 @@ def _build():
 
 
 def _te_child(N):
-    """A child of ``teG.layer[0]`` (a getAttr -type there raises: INJ-4's edge)."""
+    """A child of ``teG.layer[0]``, an element that does not exist (its getAttr
+    -type raises: INJ-4's edge)."""
     kids = cmds.attributeQuery("layer", node="teG", listChildren=True) or []
     element = N["te"].layer[0]
     str(element)
@@ -665,7 +664,10 @@ def _inject_outcomes():
 #  patched, so every fast path's class tests still pass)
 # --------------------------------------------------------------------------- #
 
-_ORACLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "r5_inject_oracle_619f29f.json")
+# 619f29f's outcomes of `_CASES` (runs\r5\A4\gen_oracle.py on its snapshot)
+_ORACLE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "r5_inject_oracle_619f29f.json"
+)
 
 _DATA_TYPE_CODE = Attribute.__dict__["data_type"].fget.__code__
 _FULL_NAME_CODE = Attribute.__dict__["full_name"].fget.__code__
