@@ -640,6 +640,13 @@ _STATIC_DATA_API_TYPES = _NON_MATRIX_ATTR_API_TYPES | {
 _STATIC_DATA_TYPE = {}
 _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
 
+# The epoch of the kind memo a plug keeps (`_fixed_attr_kind`): a new token at
+# every plug-in load and unload (`_clear_static_data_type`), which can redefine
+# a node type's attributes, so a memo of an older token is computed again. A
+# token, not a count: an in-place reload of this module makes a new one, which
+# no memo made before it matches.
+_KIND_EPOCH = [object()]
+
 # (attr, "typed" or "Tdata", node) while `Attribute.data_type` runs the fallback
 # hook of attr's node: the answer its getAttr query gave, and the node whose class
 # hook that call runs first (`_hook_node`), see `_queried_data_type`
@@ -1267,8 +1274,10 @@ def _plug_hash(attr: Any) -> int:
 
 
 def _clear_static_data_type(*args) -> None:
-    """Drops every cached static data type (MSceneMessage callback)."""
+    """Drops every cached static data type, and starts a new epoch of the plugs'
+    kind memos (`_KIND_EPOCH`) (MSceneMessage callback)."""
     _STATIC_DATA_TYPE.clear()
+    _KIND_EPOCH[0] = object()
 
 
 def _hook_node(node: Any) -> Any:
@@ -1454,15 +1463,32 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
     array element that does not exist yet, so neither case uses the kind. Nor
     does a plug whose node was freed: its MPlug points at freed memory, and the
     query raises the node's ``"already deleted!"``.
+
+    The kind of a normal attribute with no array element on the plug's path is
+    kept on the plug (`_kind`: the epoch it was computed in, see `_KIND_EPOCH`,
+    and the kind), and answers while the plug's node is valid (`_handle`): such
+    an attribute is never deleted, renamed or retyped while its node type is
+    registered, and a plug's MPlug never changes, so the computation would give
+    it again. A deleted or freed node, or a new epoch, computes again. Elements
+    (they come and go), dynamic and extension attributes (deleted and re-added
+    under their name) are never kept, nor is anything before the plug-in
+    callbacks that start a new epoch are registered.
     """
     try:
+        d    = attr.__dict__
+        memo = d.get("_kind")
+        if memo is not None and memo[0] is _KIND_EPOCH[0]:
+            handle = d.get("_handle")  # the owner's, or the plug's own
+            if handle is not None and handle.isValid():
+                return memo[1]
         mplug = attr._mplug
         fn    = _plug_node_fn_set(attr, mplug)
         if fn is None:
             return None
         mobject = _attr_mobject(attr)
         # a deleted attr is no longer on the node, even once its name is reused
-        if fn.attributeClass(mobject) == OpenMaya.MFnDependencyNode.kInvalidAttr:
+        klass = fn.attributeClass(mobject)
+        if klass == OpenMaya.MFnDependencyNode.kInvalidAttr:
             return None
         elements = []
         plug     = mplug
@@ -1481,7 +1507,14 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
             indices = element.array().getExistingArrayAttributeIndices()
             if element.logicalIndex() not in indices:
                 return None
-        return mobject.apiType()
+        kind = mobject.apiType()
+        if (
+            klass == OpenMaya.MFnDependencyNode.kNormalAttr
+            and not elements
+            and (_PLUGIN_CALLBACKS_READY or _ensure_plugin_callbacks())
+        ):
+            d["_kind"] = (_KIND_EPOCH[0], kind)
+        return kind
     except Exception:
         return None
 
@@ -1503,6 +1536,11 @@ def _names_own_plug(attr: Any) -> bool:
     A DAG node is named by its owner's DAG path, which must still be valid (the
     instance it runs through can be deleted while the node lives on), and an
     instanced element is named without its index, after that path's instance.
+
+    A plug of a valid DG node that keeps a kind memo of this epoch (see
+    `_fixed_attr_kind`: a normal attribute, so still on its node, with no array
+    element on its path) is answered from its parents alone, as the loop below
+    answers it: only a parent that is an array root fails it.
     """
     cls = type(attr)
     if (
@@ -1513,12 +1551,27 @@ def _names_own_plug(attr: Any) -> bool:
     ):
         return False
     # a freed attribute (see `_ensure_owner_alive`) is not read
-    handle = attr.__dict__.get("_attrh")
+    d      = attr.__dict__
+    handle = d.get("_attrh")
     if handle is not None and not handle.isAlive():
         return False
     try:
         mplug   = attr._mplug
         mobject = mplug.node()
+        memo    = d.get("_kind")
+        if memo is not None and memo[0] is _KIND_EPOCH[0]:
+            handle = d.get("_handle")  # the owner's, or the plug's own
+            if (
+                handle is not None
+                and handle.isValid()
+                and not mobject.hasFn(OpenMaya.MFn.kDagNode)
+            ):
+                plug = mplug
+                while plug.isChild:
+                    plug = plug.parent()
+                    if plug.isArray:
+                        return False
+                return True
         fn      = OpenMaya.MFnDependencyNode(mobject)
         invalid = OpenMaya.MFnDependencyNode.kInvalidAttr
         if fn.attributeClass(mplug.attribute()) == invalid:
