@@ -15,13 +15,12 @@ queries the auto-index makes (``attributeQuery``, ``get_next_available_index``).
   first, a List) and more (a multi root between two plugs, a sequence between two
   plugs, a generic source, an instanced shape's world matrix, a component, a
   namespaced and a renamed node, a deleted dynamic attribute, a deleted and a
-  freed node's plug), each library call gives
-  what the same call gives with the old loops (the rule patched to answer False,
-  so every operand takes ``multi << obj``, the e9287a8 code): the result or the
-  exception (type, message, context, cause), what it prints (Maya's command
-  output, rig's log records, Python warnings, stdout / stderr), every node and
-  connection, the multi indices and values, the selection and the number of
-  undo steps.
+  freed node's plug), each library call gives what the same call gives with the
+  old loops (the rule patched to answer False, so every operand takes
+  ``multi << obj``, the e9287a8 code): the result or the exception (type,
+  message, context, cause), what it prints (Maya's command output, rig's log
+  records, Python warnings, stdout / stderr), every node and connection, the
+  multi indices and values, the selection and the number of undo steps.
 * ``TestTheRootQueriesAreSkipped``: ``functions.choice([a, b, c])`` and the
   legacy ``plusMinusAverage`` of three operands make no ``attributeQuery`` and no
   ``get_next_available_index`` call (the old loops: 3 and 3).
@@ -47,7 +46,6 @@ from maya.api import OpenMaya
 
 import rig
 from rig import List, Node, functions
-from rig import functions as functions_module
 from rig._internal import math_nodes, types
 from rig.nodetypes._base import Attribute
 from rig.nodetypes.choice import Choice
@@ -66,7 +64,7 @@ class _OldLoops:
 
     def __enter__(self):
         self._patches = [
-            mock.patch.object(functions_module, "_fills_one_element", _never),
+            mock.patch.object(functions, "_fills_one_element", _never),
             mock.patch.object(math_nodes, "_fills_one_element", _never),
         ]
         for p in self._patches:
@@ -341,7 +339,7 @@ def _raw_pma1(tokens, anchors):
     return math_nodes._plus_minus_average_legacy(anchors[1], *tokens, operation=2, name="sub1")
 
 
-class TestFillsOneElement(MayaTestCase):
+class TestFillsOneElement(UndoWalk, MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_numbers_and_attributes_that_are_no_multi(self):
@@ -362,7 +360,6 @@ class TestFillsOneElement(MayaTestCase):
                 self.assertIs(types._fills_one_element(obj), False)
 
     def test_a_deleted_and_a_freed_nodes_plug(self):
-        cmds.undoInfo(state=True)
         deleted = Node(cmds.createNode("multiplyDivide", name="del")).outputX
         cmds.delete("del")
         # alive on the undo queue: its `<<` raises "del already deleted!" in both forms
