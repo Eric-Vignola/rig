@@ -335,13 +335,30 @@ _ORACLE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "r5_lookup_oracle_a74d089.json"
 )
 
+# re-pinned (round 5 A6): an attr's caches of its child attributes are made on
+# first use, so a74d089's state keys (written out for a component plug, whose
+# keys are not a fresh Attribute's) lose them; no lookup here makes them
+_LAZY_CACHES = ("_Attribute__child_name_dict", "_Attribute__child_id_dict")
+
+
+def _without_lazy_caches(value):
+    """`value`, an outcome of the oracle, with `_LAZY_CACHES` left out of every
+    list of state keys it holds."""
+    if isinstance(value, list):
+        if any(isinstance(each, str) and each in _LAZY_CACHES for each in value):
+            return [each for each in value if each not in _LAZY_CACHES]
+        return [_without_lazy_caches(each) for each in value]
+    if isinstance(value, dict):
+        return {key: _without_lazy_caches(each) for key, each in value.items()}
+    return value
+
 
 class TestTheOutcomesOfA74d089(MayaTestCase):
     """Every lookup of `_NAMES` gives what a74d089 gave (`_ORACLE_PATH`)."""
 
     def test_every_lookup_as_a74d089(self):
         with open(_ORACLE_PATH) as fh:
-            oracle = json.load(fh)
+            oracle = _without_lazy_caches(json.load(fh))
         table = json.loads(json.dumps(_lookup_outcomes()))
         self.assertEqual(sorted(table), sorted(oracle))
         for case in sorted(oracle):

@@ -964,15 +964,14 @@ def _attr_state(mplug: OpenMaya.MPlug, handle: Any, attr_handle: Any = None) -> 
     handle of its attribute, for a dynamic attr, see `_attr_handle`). A caller
     that binds an owner (`_node`) hands the owner's handle as `handle`. One
     `__dict__` store instead of one `Plug.__setattr__` call per field; a
-    subclass property named like one of these keys would be bypassed."""
+    subclass property named like one of these keys would be bypassed. The
+    caches of queried child attributes are made on first use (see
+    `Attribute.__getattr__` and `Attribute.child`)."""
     return {
         "_mplug":                      mplug,
         "_mobject":                    None,
         "_fn_set":                     None,
         "_node":                       None,
-        # caches of queried child attributes
-        "_Attribute__child_name_dict": {},
-        "_Attribute__child_id_dict":   {},
         # cache componet type str TODO: make a proper Component class
         "_Attribute__component_type":  None,
         # cache for `_is_geometry_typed_attr`; None = not yet computed
@@ -1006,8 +1005,6 @@ def _new_attr(
             "_mobject":                    None,
             "_fn_set":                     None,
             "_node":                       None,
-            "_Attribute__child_name_dict": {},
-            "_Attribute__child_id_dict":   {},
             "_Attribute__component_type":  None,
             "_geometry_attr_cache":        None,
             "_polymorphic_owner_cache":    None,
@@ -2181,17 +2178,24 @@ class Attribute(str):
         attr = mesh.componentTags[1].componentName
         ```
         """
-        if not self.__child_name_dict:
+        # the child caches are made on first use, so they are read from
+        # `__dict__`: reading an absent one as an attribute would come back here
+        d     = self.__dict__
+        names = d.get("_Attribute__child_name_dict")
+        if not names:
             _ensure_owner_alive(self)
-            for i in range(self.num_children):
+            count = self.num_children
+            names = d.setdefault("_Attribute__child_name_dict", {})
+            ids   = d.setdefault("_Attribute__child_id_dict", {})
+            for i in range(count):
                 child_plug = self.plug.child(i)
                 name = child_plug.partialName(False, False, False, False, False, True)
                 name = name.rsplit(".", 1)[-1]
                 attr = _inherit_owner(self, _new_attr(Attribute, child_plug))
-                self.__child_name_dict[name] = attr
-                self.__child_id_dict[i]      = attr
-        if attr_name in self.__child_name_dict:
-            return self.__child_name_dict[attr_name]
+                names[name] = attr
+                ids[i]      = attr
+        if attr_name in names:
+            return names[attr_name]
         raise AttributeError(f"{self.full_name}.{attr_name} not found.")
 
     # --- properties
@@ -2938,11 +2942,16 @@ class Attribute(str):
 
     def child(self, i: int) -> Attribute:
         """Returns the child attribute at the given index."""
-        attr = self.__child_id_dict.get(i)
+        # made on first use, read from `__dict__` (see `__getattr__`)
+        d   = self.__dict__
+        ids = d.get("_Attribute__child_id_dict")
+        if ids is None:
+            ids = d["_Attribute__child_id_dict"] = {}
+        attr = ids.get(i)
         if not attr:
             _ensure_owner_alive(self)
             attr = _inherit_owner(self, _new_attr(Attribute, self.plug.child(i)))
-            self.__child_id_dict[i] = attr
+            ids[i] = attr
         return attr
 
     # --- typed attr methods

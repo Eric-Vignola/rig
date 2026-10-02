@@ -1926,7 +1926,9 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
             with self.subTest(cache=cache):
                 self.assertTrue(vars(comp)[cache])
                 self.assertTrue(all(type(v) is Attribute for v in vars(comp)[cache].values()))
-        self.assertEqual(vars(multi)["_Attribute__child_id_dict"], {})
+        # re-pinned (round 5 A6): the child caches are made on first use, so the
+        # multi's elements, which they never hold, leave it with none
+        self.assertEqual(vars(multi).get("_Attribute__child_id_dict", {}), {})
 
     def test_a_slice_keeps_its_parent_multi(self):
         # the list results are Lists; a multi's slice is tagged with it

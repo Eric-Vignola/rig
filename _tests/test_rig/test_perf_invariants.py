@@ -1217,13 +1217,14 @@ class TestStaticTypedRootCache(MayaTestCase):
 
 
 # The instance state ``Attribute.__init__`` leaves, in the order it is stored.
+# re-pinned (round 5 A6, S4 Q6 / F18): the caches of queried child attributes
+# (``_Attribute__child_name_dict``, ``_Attribute__child_id_dict``) are made on
+# first use, so they left the initial state
 _ATTRIBUTE_STATE_KEYS = (
     "_mplug",
     "_mobject",
     "_fn_set",
     "_node",
-    "_Attribute__child_name_dict",
-    "_Attribute__child_id_dict",
     "_Attribute__component_type",
     "_geometry_attr_cache",
     "_polymorphic_owner_cache",
@@ -1248,14 +1249,11 @@ class TestAttributeInitState(MayaTestCase):
         state = vars(attr)
         self.assertEqual(tuple(state), _ATTRIBUTE_STATE_KEYS)
         self.assertIs(state["_mplug"], mplug)
-        for key in _ATTRIBUTE_STATE_KEYS[1:4] + _ATTRIBUTE_STATE_KEYS[6:9]:
+        # re-pinned (round 5 A6): `_mobject` to `_polymorphic_owner_cache`, the
+        # child caches no longer between them
+        for key in _ATTRIBUTE_STATE_KEYS[1:7]:
             self.assertIsNone(state[key])
         self.assertIs(state["_static_key_cache"], _base._STATIC_KEY_UNSET)
-        self.assertEqual(state["_Attribute__child_name_dict"], {})
-        self.assertEqual(state["_Attribute__child_id_dict"], {})
-        self.assertIsNot(
-            state["_Attribute__child_name_dict"], state["_Attribute__child_id_dict"]
-        )
 
     def test_attribute_init_state_keys(self):
         md    = cmds.createNode("multiplyDivide", name="md")
@@ -1267,10 +1265,17 @@ class TestAttributeInitState(MayaTestCase):
                 self._assert_fresh_state(named, vars(named)["_mplug"])
                 self.assertEqual(named.plug, mplug)
                 self.assertEqual(named.full_name, "md.input1")
-                # every instance gets its own child caches
+                # every instance gets its own child caches (re-pinned (round 5
+                # A6): once made, on first use)
+                first, second = cls(mplug), cls(mplug)
+                for each in (first, second):
+                    each.child(0)
+                    getattr(each, "input1X")
+                for cache in ("_Attribute__child_name_dict", "_Attribute__child_id_dict"):
+                    self.assertIsNot(vars(first)[cache], vars(second)[cache])
                 self.assertIsNot(
-                    vars(cls(mplug))["_Attribute__child_name_dict"],
-                    vars(cls(mplug))["_Attribute__child_name_dict"],
+                    vars(first)["_Attribute__child_name_dict"],
+                    vars(first)["_Attribute__child_id_dict"],
                 )
         surface = cmds.sphere(name="nurbsSphere1", constructionHistory=False)[0]
         handle  = Node(surface).cv
