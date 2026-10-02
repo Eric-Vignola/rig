@@ -41,6 +41,8 @@ from rig.nodetypes._base import (
     _ensure_dg_named,
     _handle_valid,
     _plug_identity_name,
+    _prune_attr_handles,
+    _prune_node_serials,
     Attribute,
 )
 from rig.nodetypes.dg_node import DGNode
@@ -741,6 +743,11 @@ def vectorize(
 #  * kAfterNew / kAfterOpen -> prune, for whatever another tool's kBefore*
 #    callback cached in the old scene after the clear.
 #
+# Each prune also drops the freed attributes' handles and the freed nodes'
+# serials from the tables of rig.nodetypes._base (`_ATTR_HANDLES`,
+# `_NODE_SERIALS`), which otherwise keep every scene's until they outgrow
+# their size limit: a freed entry never answers a lookup.
+#
 # Registered once per Maya session through rig._internal.callbacks: a
 # re-import replaces the callbacks (and clears the purged copy's caches),
 # and an import before Maya is initialised registers on the first entry.
@@ -758,10 +765,15 @@ def _clear_before_new_scene(*args: Any) -> None:
 
 def _prune_after_scene_change(*args: Any) -> None:
     """kAfterUnloadReference / kAfterRemoveReference / kAfterNew / kAfterOpen:
-    drop the entries whose nodes were freed (see above). A callback never raises
-    into Maya."""
+    drop the entries whose nodes were freed, and the freed handles and serials of
+    `rig.nodetypes._base` (see above). A callback never raises into Maya."""
     try:
         prune_memoize_caches()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _prune_attr_handles()
+        _prune_node_serials()
     except Exception:  # noqa: BLE001
         pass
 
