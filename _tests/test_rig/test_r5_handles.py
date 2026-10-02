@@ -519,6 +519,33 @@ class TestAttributeHandles(MayaTestCase):
             if cmds.attributeQuery("r5Ext", type="network", exists=True):
                 cmds.deleteExtension(nodeType="network", attribute="r5Ext", forceDelete=True)
 
+    def test_the_memo_check_answers_as_on_45d2c13(self):
+        # the check's name lookup (findPlug) finds what 45d2c13's API 1.0
+        # attribute(name) found, and fails where it raised: the answers across a
+        # rename, its undo, a delete, a re-add of the name and their undo
+        # (45d2c13 gives the same, runs\r5\A1\r5h_on_base_2.txt)
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("multiplyDivide", name="hm")
+        cmds.addAttr("hm", longName="dynf", shortName="dyf", attributeType="double")
+        cmds.aliasAttr("hoist", "hm.dynf")
+        check = memoize_module._attr_check(Node("hm").dynf)
+
+        def answer():
+            return (check.isAlive(), check.isAlive() and check.isValid())
+
+        steps = (
+            ("live", lambda: None, (True, True)),
+            ("renamed", lambda: cmds.renameAttr("hm.dynf", "dynr"), (True, False)),
+            ("renamed back", lambda: cmds.undo(), (True, True)),
+            ("deleted", lambda: cmds.deleteAttr("hm.dynf"), (True, False)),
+            ("re-added", lambda: cmds.addAttr("hm", longName="dynf", attributeType="double"), (True, False)),
+            ("both undone", lambda: [cmds.undo(), cmds.undo()], (True, True)),
+        )
+        for label, step, expected in steps:
+            step()
+            with self.subTest(step=label):
+                self.assertEqual(answer(), expected)
+
     def test_no_memo_check_for_an_attribute_its_name_no_longer_finds(self):
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("multiplyDivide", name="hm")

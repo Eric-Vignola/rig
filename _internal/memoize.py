@@ -271,7 +271,10 @@ class _AttrCheck:
     attribute are, and valid while the name still finds that attribute on the
     node, so such an entry is rebuilt. The node's fn set (made from its MObject
     while the node was valid) is read only once its handle says the node is
-    valid, and the attribute's MObject only while its handle is alive.
+    valid, and the attribute's MObject only while its handle is alive. The name
+    is looked up with ``findPlug`` (about 1 us; API 2.0's ``attribute(name)``
+    takes 4 us and returns a null MObject for a name it does not find, where
+    ``findPlug`` raises as API 1.0's ``attribute`` did).
     """
 
     __slots__ = ("node", "fn", "name", "attr", "mobject")
@@ -290,7 +293,7 @@ class _AttrCheck:
         if not (self.node.isValid() and self.attr.isAlive()):
             return False
         try:
-            return self.fn.attribute(self.name) == self.mobject
+            return self.fn.findPlug(self.name, False).attribute() == self.mobject
         except RuntimeError:
             return False
 
@@ -310,9 +313,8 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
         mobject = mplug.attribute()
         name    = OpenMaya.MFnAttribute(mobject).name
         fn      = OpenMaya.MFnDependencyNode(node._mobject)
-        found   = fn.attribute(name)
-        if found.isNull():
-            return None  # the name finds no attribute (the plug's was deleted)
+        # the attribute the name finds (none, the plug's was deleted: no check)
+        found   = fn.findPlug(name, False).attribute()
         return _AttrCheck(node._objhandle, fn, name, OpenMaya.MObjectHandle(found), found)
     except Exception:
         return None
