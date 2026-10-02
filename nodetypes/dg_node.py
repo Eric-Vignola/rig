@@ -1494,9 +1494,15 @@ class DGNode(Node):
                 return attr_obj
             return _filtered(attr_obj, category, data_type)
 
-        # find mplug
+        # find mplug: a name with a "[" or a "." is a plug path, which the
+        # selection list resolves. For a name with no newline the two `in` tests
+        # decide as the regex (`.` stops at a newline, `$` matches before a last
+        # one), which decides a name with one.
+        text = str(attr)
         try:
-            if re.match(r"^.*[\[\.].*$", str(attr)):
+            if ("[" in text or "." in text) and (
+                "\n" not in text or re.match(r"^.*[\[\.].*$", text)
+            ):
                 sel = OpenMaya.MSelectionList()
                 sel.add(f"{self.name}.{attr}")
                 plug = sel.getPlug(0)
@@ -1559,13 +1565,16 @@ class DGNode(Node):
         # its short name ``pt``) resolve via the primary ``findPlug`` branch
         # above, skipping the ``cmds.listAttr`` normalization; re-canonicalize
         # so ``Node`` access matches the ``Plug(...)`` path on every geometry
-        # type and Maya version.
-        plug = self._canonicalize_component_alias_plug(attr, plug)
+        # type and Maya version. (Any other name's plug is returned as it is:
+        # the method's own first test.)
+        if isinstance(attr, str) and attr in _COMPONENT_ALIASES:
+            plug = self._canonicalize_component_alias_plug(attr, plug)
 
         # A bare child-of-multi name resolves to a plug whose enclosing array
         # element is unresolved (logicalIndex -1); it is unusable and aborts
-        # Maya when sliced. Reject it like any other missing attribute.
-        if _is_unresolved_multi_child(plug):
+        # Maya when sliced. Reject it like any other missing attribute. (Only an
+        # element or a child plug can be one: the helper's first tests.)
+        if (plug.isElement or plug.isChild) and _is_unresolved_multi_child(plug):
             if quiet:
                 return None
             raise AttributeError(
@@ -1607,6 +1616,8 @@ class DGNode(Node):
                     plug, extension=attr_class == _EXTENSION_ATTR, node_fn=self._fn_set
                 )
 
+        if not category and not data_type:
+            return attr_obj
         return _filtered(attr_obj, category, data_type)
 
     def _canonicalize_component_alias_plug(
