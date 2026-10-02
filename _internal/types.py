@@ -231,6 +231,28 @@ def _is_array(obj: Any) -> bool:
         return False
 
 
+def _fills_one_element(obj: Any) -> bool:
+    """Return ``True`` if ``multi << obj`` on a multi root writes ``obj`` into
+    one new element, the one at the lowest free logical index (the auto-index
+    of ``_inject_value``): a number, or an attribute that is not a multi.
+
+    So a loop that fills the multi of a node it just made may write such
+    operands at their own positions (``multi[i] << obj``) for as long as every
+    operand before them was one too, and skip the root queries of the
+    auto-index. ``False`` for any other operand (``None`` writes no element; a
+    multi root, a List or another sequence one per item; a str, a Node ...), and
+    for an attribute whose ``is_multi`` raises (its ``<<`` raises it too).
+    """
+    if isinstance(obj, numbers.Real):
+        return True
+    if not isinstance(obj, Attribute):
+        return False
+    try:
+        return not obj.is_multi
+    except Exception:
+        return False
+
+
 def _is_matrix(obj: Any) -> bool:
     """Return ``True`` if the input attribute holds a 4x4 matrix."""
     if not _is_attribute(obj):
