@@ -136,7 +136,11 @@ LOGGER = logging.getLogger(__name__)
 _NOT_RESHAPED = _SCALARS + (Attribute, list, tuple, np.ndarray, str)
 
 # Attribute's own members the inject fast paths ask a plug's class to keep:
-# its name (`_named_with_dot`) and its data type (`_dst_data_type`)
+# its connection reads and MPlug (`_disconnect_incoming`), its name
+# (`_named_with_dot`) and its data type (`_dst_data_type`)
+_GET_CONNECTED_ATTRS  = Attribute.__dict__["get_connected_attrs"]
+_ITER_CONNECTED_ATTRS = Attribute.__dict__["iter_connected_attrs"]
+_ATTRIBUTE_PLUG       = Attribute.__dict__["plug"]
 _ATTRIBUTE_STR        = Attribute.__dict__["__str__"]
 _ATTRIBUTE_DATA_TYPE  = Attribute.__dict__["data_type"]
 
@@ -1717,6 +1721,14 @@ def _disconnect_incoming(dst: Any) -> None:
     temporarily unlocked for the disconnect and then re-locked, preserving
     the user's lock intent. A genuine disconnect failure raises
     :class:`InjectionError` instead of being swallowed to ``LOGGER.debug``.
+
+    A plug that is no destination has no driver: ``connectedTo(True, False)``
+    is empty exactly when ``isDestination`` is False (elements, compound
+    parents and children, aliases, array roots, unitConversion-fed plugs, a
+    deleted node's or attribute's plugs alike). So, after the owner check
+    ``get_connected_attrs`` makes first, such a plug returns at once when its
+    class reads its connections with Attribute's own methods (and its MPlug
+    with ``Attribute.plug``).
     """
     if not isinstance(dst, Attribute):
         # Allow raw strings only as a fallback path.
@@ -1727,6 +1739,20 @@ def _disconnect_incoming(dst: Any) -> None:
             return
 
     try:
+        cls   = type(dst)
+        d     = dst.__dict__
+        mplug = d.get("_mplug")
+        if (
+            mplug is not None
+            and cls.get_connected_attrs is _GET_CONNECTED_ATTRS
+            and cls.iter_connected_attrs is _ITER_CONNECTED_ATTRS
+            and cls.plug is _ATTRIBUTE_PLUG
+            and "get_connected_attrs" not in d
+            and "iter_connected_attrs" not in d
+        ):
+            _ensure_owner_alive(dst)
+            if not mplug.isDestination:
+                return
         sources = dst.get_connected_attrs(src=True, dst=False) or []
     except RuntimeError as e:
         raise InjectionError(
