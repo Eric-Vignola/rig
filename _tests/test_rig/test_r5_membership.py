@@ -672,14 +672,15 @@ class TestEagerMembership(_MembershipCase):
             self.assertEqual((routes.api, routes.cmds), (1, 0))
             member = _state()
             self.assertIn("x", member["members"]["one1"])
-            # createNode, the GC tag (addAttr, setAttr), the member: four steps
+            # createNode, the member: two steps (re-pinned, B1: 2 fewer undo steps
+            # per GC tag, approved lever; the tag, written through the API, has none)
             self.undo_steps(1)
             self.assertNotIn("x", cmds.container("one1", query=True, nodeList=True))
             self.assertTrue(cmds.objExists("x"))
-            self.undo_steps(3)
+            self.undo_steps(1)
             self.assertFalse(cmds.objExists("x"))
             self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
-            self.redo_steps(4)
+            self.redo_steps(2)
             self.assertEqual(_state(), member)  # redo restores the membership
             self.assertEqual(cmds.container(query=True, findContainer=[str(node)]), "one1")
 

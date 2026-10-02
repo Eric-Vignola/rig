@@ -666,7 +666,7 @@ class _ContainerStack:
         # shapes / lights / objectSets are deliberately excluded so they're
         # never tagged and never eligible for cleanup().
         if node_type in _GC_ELIGIBLE_TYPES:
-            _gc_tag(node_name)
+            _gc_tag(node_name, node)
 
         # Add to the leaf real container (and record on every frame) by default.
         if container is None or container:
@@ -1338,11 +1338,18 @@ def _returned(result: Any, long_name: str, short_name: str) -> bool:
     )
 
 
-def _gc_tag(node_name: str) -> None:
+def _gc_tag(node_name: str, node: Any = None) -> None:
     """Give ``node_name`` the hidden, locked ``__rig__`` bool that makes it a
     :func:`cleanup` candidate. The caller checks the type against
     ``_GC_ELIGIBLE_TYPES``. Some node types reject addAttr; without the tag
-    the node just won't be GC-eligible, a safe failure mode."""
+    the node just won't be GC-eligible, a safe failure mode.
+
+    ``node`` is the node object of ``node_name``, when the caller has one: the
+    tag is then written through the API (`_api_gc_tag`), unless one of its
+    guards sends it to ``cmds.addAttr`` + ``cmds.setAttr``, the route without
+    one."""
+    if node is not None and _api_gc_tag(node_name, node):
+        return
     try:
         cmds.addAttr(
             node_name,
@@ -1353,6 +1360,69 @@ def _gc_tag(node_name: str) -> None:
         cmds.setAttr(f"{node_name}.{_RIG_TAG}", True, lock=True)
     except RuntimeError:
         pass
+
+
+def _api_gc_tag(node_name: str, node: Any) -> bool:
+    """:func:`_gc_tag` through the API 2.0 (B1): the same attribute
+    (``MFnNumericAttribute`` bool, default False, hidden) added to ``node``'s
+    MObject, set True and locked, with no Maya command: the same scene and
+    file, and the same attribute-added / set / lock messages, as the cmds
+    route, in about a quarter of its time. The attribute is the node's own
+    data, so the undo and redo of the node's creation take it along (no
+    undo entry of its own: the cmds route's addAttr and setAttr are two).
+
+    True when written. False, with nothing changed, when the cmds route
+    decides (it then fails, warns or tags as it does without a node):
+
+    * ``node`` is not a valid node object (deleted, undone, freed, half
+      built);
+    * its name is not ``node_name`` (renamed since);
+    * it has a dynamic attribute already (`_has_dynamic_attribute`; an alias
+      makes one): the tag must be its first. A dynamic attribute a command
+      added before it would come back after it once the node's creation is
+      undone and redone (the tag rides with the creation), where the cmds
+      route keeps their order; and cmds sets and locks a plug aliased
+      ``__rig__``, or warns that a dynamic ``__rig__`` clashes;
+    * the ``addAttribute`` fails: a locked node, or a static or extension
+      attribute of that name (cmds warns that the name clashes), outside its
+      ``except``.
+
+    A failure after the attribute is added (the value or the lock) is
+    skipped, as the cmds route skips a ``setAttr`` that fails."""
+    d = node.__dict__ if isinstance(node, DGNode) else None
+    if d is None or not _handle_valid(d):
+        return False
+    fn = d["_fn_set"]
+    if fn.name() != node_name or _has_dynamic_attribute(fn):
+        return False
+    attr_fn = OpenMaya.MFnNumericAttribute()
+    attr    = attr_fn.create(_RIG_TAG, _RIG_TAG, OpenMaya.MFnNumericData.kBoolean, False)
+    attr_fn.hidden = True
+    try:
+        fn.addAttribute(attr)
+    except RuntimeError:
+        return False  # nothing added (the cmds route's error has no context)
+    plug = OpenMaya.MPlug(d["_mobject"], attr)
+    try:
+        plug.setBool(True)
+        plug.isLocked = True
+    except RuntimeError:
+        pass
+    return True
+
+
+def _has_dynamic_attribute(fn: Any) -> bool:
+    """True if the node of the function set ``fn`` has a dynamic attribute
+    (about 1 us): its last attribute that is not an extension attribute is
+    dynamic. A node's dynamic attributes follow its static ones; an extension
+    attribute (its type's) may come anywhere after them."""
+    index = fn.attributeCount() - 1
+    while index >= 0:
+        attr_fn = OpenMaya.MFnAttribute(fn.attribute(index))
+        if not attr_fn.extension:
+            return attr_fn.dynamic
+        index -= 1
+    return False
 
 
 # The typed creates running now, acting or not: only the outermost one joins
@@ -1469,7 +1539,7 @@ def _typed_create(
             and not cls.CUSTOM_NODE_TYPE
             and isinstance(result, DGNode)
         ):
-            _gc_tag(result.name)
+            _gc_tag(result.name, result)
         if registers:
             # what the call made joins as new (a found registry, made by nothing: cmds)
             if created and not _made_only(result, created):

@@ -722,17 +722,42 @@ def _raised(call):
     return None
 
 
+# Re-pinned (B1: 2 fewer undo steps per GC tag, approved lever): the cases whose op
+# makes one GC-tagged node through ``container.createNode`` (a decomposeMatrix, a
+# composeMatrix, a quatToEuler, a constant's network) hold 2 undo steps fewer than on
+# 619f29f: the tag is written through the API, with no addAttr / setAttr step.
+_B1_FEWER_UNDO_STEPS = dict.fromkeys(
+    (
+        "choice output, a matrix selected",
+        "matrix -> a transform plug no channel",
+        "matrix -> rotate",
+        "matrix -> transform node",
+        "matrix -> translate",
+        "matrix -> vector",
+        "quaternion -> euler",
+        "quaternion -> vector",
+        "rotate -> matrix element",
+        "vector -> matrix element",
+    ),
+    2,
+)
+
+
 class TestTheOutcomesOf619f29f(MayaTestCase):
-    """Every case of `_CASES` gives what 619f29f gave (`_ORACLE_PATH`)."""
+    """Every case of `_CASES` gives what 619f29f gave (`_ORACLE_PATH`), but for
+    the undo steps of the GC tags (`_B1_FEWER_UNDO_STEPS`)."""
 
     def test_every_case_as_619f29f(self):
         with open(_ORACLE_PATH) as fh:
             oracle = json.load(fh)
         table = json.loads(json.dumps(_inject_outcomes()))
         self.assertEqual(sorted(table), sorted(oracle))
+        self.assertLessEqual(set(_B1_FEWER_UNDO_STEPS), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
-                self.assertEqual(table[name], oracle[name])
+                expected = dict(oracle[name])
+                expected["undo_steps"] -= _B1_FEWER_UNDO_STEPS.get(name, 0)
+                self.assertEqual(table[name], expected)
 
     def test_the_user_code_cases_ran_it(self):
         # the cases that list the hooks' calls ran them, on 619f29f too
