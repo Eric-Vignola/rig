@@ -1,4 +1,4 @@
-"""Round 5, B0: API edits registered through rig's undo command.
+"""Round 5, B0, and container membership through ``cmds.container``.
 
 B0 (``rig.nodetypes.plugins``): `_register_api_edit` applies an ``MDGModifier`` inside
 ``rigUndoableAPICommand`` (one unnamed undo step: undo is the modifier's ``undoIt``, redo
@@ -7,22 +7,38 @@ undoing or redoing). With undo off the command applies the edit and Maya keeps n
 
 C1 (eager API membership, 12f6921) is reverted (round 5 BCFIX): every member a scope
 makes joins its container through ``cmds.container -edit -addNode -force``, as in
-v2.0.0a4.
+v2.0.0a4. `TestMembershipThroughCmds` pins what that command decides in the cases where
+the review of C1 found that an API connect to the hyperLayout decides otherwise
+(``runs\\r5\\review_bc_undo_membership``): the node types and the referenced nodes Maya
+refuses in an asset (its warning, no element, a shared solver that survives the
+container's delete); a hyperLayout disconnected between two statements (Maya makes a new
+one); and rig's undo plug-in, which membership neither loads nor uses (an unload after a
+build is not refused). An API route for members (round 5's phase D) must keep these.
 """
 
+import os
+import shutil
+import tempfile
 import weakref
 from unittest import mock
 
 from maya import cmds
 from maya.api import OpenMaya
 
-from rig import container
-from rig.nodetypes import plugins
+from rig import container, Node
+from rig.bridges import commands as rc
+from rig.nodetypes import plugins, Transform
 from rig.nodetypes.plugins import UNDOABLE_API_COMMAND, _api_edit_ready, _register_api_edit
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
 
 PLUGIN = "undoable_api_command"
+
+
+def _mobject(name):
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return sel.getDependNode(0)
 
 
 def _plug(name):
@@ -35,6 +51,72 @@ def _connect_modifier(src, dst):
     modifier = OpenMaya.MDGModifier()
     modifier.connect(_plug(src), _plug(dst))
     return modifier
+
+
+def _layout(ctn):
+    """The hyperLayout of the container ``ctn`` (its name), or None."""
+    found = cmds.listConnections(f"{ctn}.hyperLayout", source=True, destination=False) or []
+    return found[0] if found else None
+
+
+def _elements(ctn):
+    """``(numElements, [(index, member or None), ...])`` of ``ctn``'s hyperLayout."""
+    layout = _layout(ctn)
+    if layout is None:
+        return None
+    fn = OpenMaya.MFnDependencyNode(_mobject(layout))
+    hyp, dn = fn.findPlug("hyperPosition", False), fn.attribute("dependNode")
+    out = []
+    for i in sorted(hyp.getExistingArrayAttributeIndices()):
+        src = hyp.elementByLogicalIndex(i).child(dn).source()
+        out.append((i, None if src.isNull else OpenMaya.MFnDependencyNode(src.node()).name()))
+    return hyp.numElements(), out
+
+
+def _owner(name):
+    """The container of the node ``name`` (``findContainer``), None when it has none."""
+    return cmds.container(query=True, findContainer=[name]) or None
+
+
+class _Warnings:
+    """The warnings Maya's commands print while active (``MCommandMessage``)."""
+
+    def __enter__(self):
+        self.seen = []
+        self._callback = OpenMaya.MCommandMessage.addCommandOutputCallback(self._on_output)
+        return self
+
+    def _on_output(self, message, kind, *args):
+        if kind == OpenMaya.MCommandMessage.kWarning:
+            self.seen.append(message.strip())
+
+    def __exit__(self, *exc):
+        OpenMaya.MMessage.removeCallback(self._callback)
+        return False
+
+
+class _Calls:
+    """Counts the ``cmds.loadPlugin`` / ``cmds.pluginInfo`` calls made while active."""
+
+    def __enter__(self):
+        self.counts = {"loadPlugin": 0, "pluginInfo": 0}
+        self._patches = []
+        for name in self.counts:
+            real = getattr(cmds, name)
+
+            def counted(*args, _name=name, _real=real, **kwargs):
+                self.counts[_name] += 1
+                return _real(*args, **kwargs)
+
+            self._patches.append(mock.patch.object(cmds, name, counted))
+        for patch in self._patches:
+            patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        for patch in reversed(self._patches):
+            patch.stop()
+        return False
 
 
 class _MembershipCase(UndoWalk, MayaTestCase):
@@ -165,3 +247,169 @@ class TestRegisterApiEdit(_MembershipCase):
         self.assertTrue(self.connected())  # what doIt did before it failed ...
         modifier.undoIt()
         self.assertFalse(self.connected())  # ... the caller undoes
+
+
+class TestMembershipThroughCmds(_MembershipCase):
+    """What ``cmds.container -addNode`` decides for a scope's new nodes, where an API
+    connect to the hyperLayout decides otherwise (the round 5 review of C1)."""
+
+    def setUp(self):
+        super().setUp()
+        self.folder = tempfile.mkdtemp(prefix="rig_r5_membership_")
+
+    def tearDown(self):
+        try:
+            super().tearDown()
+        finally:
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+    def two_members(self):
+        container.createNode("multiplyDivide", name="a")
+        container.createNode("multiplyDivide", name="b")
+
+    def assert_only_the_two_members(self, ctn="c"):
+        self.assertEqual(cmds.container(ctn, query=True, nodeList=True), ["a", "b"])
+        self.assertEqual(_elements(ctn), (2, [(0, "a"), (1, "b")]))
+
+    def walk_back_and_forth(self):
+        """Undo to the empty queue and redo it all (the dangling check after each step);
+        True when the redo gives the membership back as it was."""
+        before = {c: cmds.container(c, query=True, nodeList=True) or []
+                  for c in cmds.ls(type="container")}
+        self.undo_all()
+        self.redo_all()
+        after = {c: cmds.container(c, query=True, nodeList=True) or []
+                 for c in cmds.ls(type="container")}
+        return before == after
+
+    def save_reference_source(self, name):
+        cmds.createNode("multiplyDivide", name="refmd")
+        path = os.path.join(self.folder, name).replace("\\", "/")
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        cmds.file(new=True, force=True)
+        cmds.flushUndo()
+        return path
+
+    def test_node_types_maya_refuses_are_not_members(self):
+        makers = [
+            ("container.createNode", "ikRPsolver", "mySolver",
+             lambda t, n: container.createNode(t, name=n)),
+            ("rc.createNode", "ikSplineSolver", "splineSolver",
+             lambda t, n: rc.createNode(t, name=n)),
+            ("Node.create", "ikSCsolver", "scSolver", lambda t, n: Node.create(t, name=n)),
+            ("rc.createNode", "reference", "myRN", lambda t, n: rc.createNode(t, name=n)),
+            ("rc.createNode", "resultCurveTimeToLinear", "rcurve",
+             lambda t, n: rc.createNode(t, name=n)),
+            ("container.createNode", "viewColorManager", "vcm",
+             lambda t, n: container.createNode(t, name=n)),
+        ]
+        for path, node_type, name, make in makers:
+            with self.subTest(path=path, node_type=node_type):
+                cmds.file(new=True, force=True)
+                cmds.flushUndo()
+                with container("c"):
+                    self.two_members()
+                    with _Warnings() as warned:
+                        node = make(node_type, name)
+                self.assertEqual(str(node), name)
+                self.assertIsNone(_owner(name))
+                self.assert_only_the_two_members()
+                self.assertIn(f"Skipping '{name}'. Node cannot be added to assets.", warned.seen)
+                self.assertTrue(self.walk_back_and_forth())
+                self.assertIsNone(_owner(name))
+                self.assert_only_the_two_members()
+
+    def test_a_scene_solver_made_in_a_scope_survives_the_containers_delete(self):
+        cmds.select(clear=True)
+        start = cmds.joint(position=(0, 0, 0))
+        cmds.joint(position=(0, 1, 0))
+        end = cmds.joint(position=(1, 2, 0))
+        cmds.select(clear=True)
+        cmds.flushUndo()
+        with container("c"):
+            self.two_members()
+            if not cmds.ls(type="ikSplineSolver"):  # the usual script: make it if missing
+                rc.createNode("ikSplineSolver")
+            curve = rc.curve(degree=1, point=[(0, 0, 0), (0, 1, 0), (1, 2, 0)])
+            rc.ikHandle(startJoint=start, endEffector=end, solver="ikSplineSolver",
+                        curve=str(curve), createCurve=False)
+        self.assertEqual(cmds.ls(type="ikSplineSolver"), ["ikSplineSolver1"])
+        self.assertIsNone(_owner("ikSplineSolver1"))
+        self.assertIn("ikHandle1", cmds.container("c", query=True, nodeList=True))
+        cmds.flushUndo()
+        cmds.delete("c")
+        self.assertEqual(cmds.ls(type="ikSplineSolver"), ["ikSplineSolver1"])
+
+    def test_a_deferred_reference_is_not_a_member(self):
+        path = self.save_reference_source("deferred_src.ma")
+        with container("c"):
+            self.two_members()
+            with _Warnings() as warned:
+                rc.file(path, reference=True, deferReference=True, namespace="D")
+        self.assertIsNone(_owner("DRN"))
+        self.assert_only_the_two_members()
+        self.assertIn("Skipping 'DRN'. Node cannot be added to assets.", warned.seen)
+
+    def test_a_non_maya_format_reference_is_not_a_member(self):
+        try:
+            cmds.loadPlugin("objExport", quiet=True)
+        except RuntimeError:
+            self.skipTest("the objExport plug-in (the OBJ translator) does not load")
+        path = os.path.join(self.folder, "tri.obj").replace("\\", "/")
+        with open(path, "w") as handle:
+            handle.write("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+        with container("c"):
+            self.two_members()
+            with _Warnings() as warned:
+                result = rc.file(path, reference=True, type="OBJ", namespace="O")
+        referenced = cmds.referenceQuery(str(result), nodes=True) or []
+        self.assertTrue(referenced)
+        for name in referenced + ["ORN"]:
+            self.assertIsNone(_owner(name), name)
+        self.assert_only_the_two_members()
+        self.assertIn("Skipping 'ORN'. Node cannot be added to assets.", warned.seen)
+        for name in referenced:
+            self.assertIn(
+                f"Cannot add node '{name}' to asset because it is in a different file.", warned.seen
+            )
+
+    def test_a_hyperlayout_disconnected_mid_scope_is_replaced(self):
+        with container("c"):
+            self.two_members()
+            old = _layout("c")
+            cmds.disconnectAttr(f"{old}.message", "c.hyperLayout")  # a user's edit
+            container.createNode("multiplyDivide", name="d")
+            container.createNode("multiplyDivide", name="e")
+        new = _layout("c")
+        self.assertNotIn(new, (None, old))
+        self.assertEqual(cmds.container("c", query=True, nodeList=True), ["d", "e"])
+        self.assertEqual(_elements("c"), (2, [(0, "d"), (1, "e")]))
+        self.assertEqual((_owner("d"), _owner("e")), ("c", "c"))
+        self.assertEqual(cmds.getAttr(f"{old}.hyperPosition", multiIndices=True), [0, 1])
+        self.assertTrue(self.walk_back_and_forth())
+        self.assertEqual(_elements("c"), (2, [(0, "d"), (1, "e")]))
+
+    def scope_of_every_creating_path(self):
+        with container("c"):
+            node = container.createNode("multiplyDivide", name="a")
+            Transform.create(name="t")
+            rc.polyCube(name="cube")
+            node.input1X << node.outputX * 2
+        return cmds.container("c", query=True, nodeList=True)
+
+    def test_membership_neither_loads_nor_queries_rigs_plugin(self):
+        cmds.flushUndo()
+        cmds.unloadPlugin(PLUGIN)
+        with _Calls() as calls:
+            members = self.scope_of_every_creating_path()
+        self.assertEqual(len(members), 6)  # a, t, the cube's 3 nodes, the product
+        self.assertEqual(calls.counts, {"loadPlugin": 0, "pluginInfo": 0})
+        self.assertFalse(cmds.pluginInfo(PLUGIN, query=True, loaded=True))
+        self.assertFalse(hasattr(cmds, UNDOABLE_API_COMMAND))
+
+    def test_an_unload_after_a_build_is_not_refused(self):
+        self.assertTrue(cmds.pluginInfo(PLUGIN, query=True, loaded=True))  # setUp loaded it
+        self.scope_of_every_creating_path()
+        cmds.unloadPlugin(PLUGIN)  # nothing of the build's on the queue uses it
+        self.assertFalse(cmds.pluginInfo(PLUGIN, query=True, loaded=True))
