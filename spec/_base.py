@@ -121,7 +121,7 @@ def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = No
     ``added``, the attr ``add_attr`` returned for it, hands it the handle of its
     attribute (``_attrh``, which a delete of a dynamic attr frees once it leaves
     the undo queue, see ``_ensure_owner_alive``) when it is alive and names the
-    same attribute; otherwise that handle is looked up once (``_attr_handle``).
+    same attribute; otherwise the plug takes its own (``_attr_handle``).
 
     A node that is not a live node object, or a name ``findPlug`` does not
     resolve (an alias, ``smile`` for ``weight[0]``, or a component name,
@@ -147,7 +147,7 @@ def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = No
                     or not attrh.isAlive()
                     or known["_mplug"].attribute() != mplug.attribute()
                 ):
-                    attrh = _attr_handle(mplug, node_fn=fn)
+                    attrh = _attr_handle(mplug)
                 plug  = str.__new__(Plug, f"{node_string}.{long_name}")
                 # owned by the node, with its handle (see `_ensure_owner_alive`)
                 state = _attr_state(mplug, handle, attrh)

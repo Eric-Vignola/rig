@@ -289,7 +289,7 @@ def _named_plug(name: str, node: Any = None, known: Any = None) -> "Plug":
         or not attrh.isAlive()
         or known.__dict__["_mplug"].attribute() != mplug.attribute()
     ):
-        attrh = _attr_handle(mplug, handle)
+        attrh = _attr_handle(mplug)
     plug.__dict__.update(_attr_state(mplug, handle, attrh))
     return plug
 

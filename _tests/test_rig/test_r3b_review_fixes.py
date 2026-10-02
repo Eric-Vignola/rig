@@ -743,7 +743,9 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         cmds.setAttr("held.dynf", 3.0)
         owned, built = Node("held").dynf, Plug("held.dynf")
         self.assertIsNotNone(vars(owned)["_attrh"])
-        self.assertIs(vars(owned)["_attrh"], vars(built)["_attrh"])  # one lookup
+        # re-pinned (round 5 AF, lead decision 2026-10-02, option c): each plug
+        # takes its own handle of the attribute (no table, so not one object)
+        self.assertEqual(vars(owned)["_attrh"].hashCode(), vars(built)["_attrh"].hashCode())
         for plug in (owned, built):
             self.assertEqual(str(plug), "held.dynf")
             self.assertEqual(plug.get(), 3.0)

@@ -1457,7 +1457,12 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         self.assertTrue(_same_plug(plug, same))
         self.assertEqual(hash(plug), hash(same))
         self.assertEqual(tuple(vars(plug)), tuple(vars(same)))
-        self.assertIs(vars(plug)["_attrh"], vars(same)["_attrh"])  # re-pinned (NW6)
+        # re-pinned (round 5 AF, lead decision 2026-10-02, option c): each plug
+        # holds its own handle of the attribute (no table, so not one object)
+        handles = (vars(plug)["_attrh"], vars(same)["_attrh"])
+        self.assertEqual([h is None for h in handles], [handles[0] is None] * 2)
+        if handles[0] is not None:
+            self.assertEqual(handles[0].hashCode(), handles[1].hashCode())
 
     def test_every_spec_kind_is_owned(self):
         from rig.spec import Enum, Int, Matrix, Message, String, Vector
