@@ -163,7 +163,7 @@ def _make_wrapper(name: str) -> Callable:
             result, created = _call_tracking_creation(fn, args, kwargs)
             if created:
                 try:
-                    container._add(created, new=True)
+                    container.add(created)
                 except Exception:
                     pass
         else:
