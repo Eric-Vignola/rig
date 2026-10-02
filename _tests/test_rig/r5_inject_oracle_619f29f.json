@@ -1,0 +1,5843 @@
+{
+ "List into a compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ],
+     [
+      "xfC.translateY",
+      "mdA.input1Y"
+     ],
+     [
+      "xfC.translateZ",
+      "mdA.input1Z"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "alias connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(1, Plug(\"mdA.myAlias\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputZ",
+      "mdA.myAlias"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input2": "[(1.0, 1.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "alias rewire": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(1, Plug(\"mdA.myAlias\"), Plug(\"mdA.myAlias\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.myAlias"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input2": "[(1.0, 1.0, 2.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 30
+ },
+ "auto-index compound twice": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"pmaD.input3D\"), Plug(\"pmaD.input3D\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "pmaD.input3D[1]"
+     ],
+     [
+      "xfC.translate",
+      "pmaD.input3D[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input3D": [
+     "indices",
+     [
+      0,
+      1
+     ]
+    ],
+    "pmaD.input3D[0]": "[(1.0, 2.0, 3.0)]",
+    "pmaD.input3D[1]": "[(2.0, 3.0, 4.0)]",
+    "pmaD.output3D": "[(3.0, 5.0, 7.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "auto-index generic << compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "auto-index generic << number": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot set 'chE.input[0]': setAttr: The type 'Tdata' is not the name of a recognized type.\n",
+   [
+    "RuntimeError",
+    "setAttr: The type 'Tdata' is not the name of a recognized type.\n"
+   ],
+   [
+    "RuntimeError",
+    "setAttr: The type 'Tdata' is not the name of a recognized type.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "None"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "auto-index generic << scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "2.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "auto-index generic twice": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input\"), Plug(\"chE.input\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "chE.input[1]"
+     ],
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0,
+      1
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]",
+    "chE.input[1]": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "bool set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfC.visibility"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.visibility": "False"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "child of a missing element connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input3D[4].input3Dy"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputY",
+      "pmaD.input3D[4].input3Dy"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input3D": [
+     "indices",
+     [
+      4
+     ]
+    ],
+    "pmaD.input3D[4]": "[(0.0, 3.0, 0.0)]",
+    "pmaD.output3D": "[(0.0, 3.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "child of a missing element set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input3D[4].input3Dy"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input3D": [
+     "indices",
+     [
+      4
+     ]
+    ],
+    "pmaD.input3D[4]": "[(0.0, 2.0, 0.0)]",
+    "pmaD.output3D": "[(0.0, 2.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "choice chain": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"chJ.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "chJ.input[0]"
+     ],
+     [
+      "chJ.output",
+      "mdA.input1"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]",
+    "chJ.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chJ.input[0]": "[(2.0, 3.0, 4.0)]",
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "choice output (compound) -> scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "TypeError",
+   "Plug is not a compound parent",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "choice output -> compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]",
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "choice output -> generic slot": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"chJ.input[0]\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "chJ.input[0]"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]",
+    "chJ.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chJ.input[0]": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "choice output -> scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"mdA.input1X\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1X"
+     ],
+     [
+      "mdB.outputX",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "2.0",
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "choice output -> translate": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"xfI.translate\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "xfI.translate"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]",
+    "xfI.translate": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "choice output with nothing selected": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1X"
+     ],
+     [
+      "chE.output",
+      "mdA.input1Y"
+     ],
+     [
+      "chE.output",
+      "mdA.input1Z"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "choice output, a matrix selected": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"xfI.translate\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "decomposeMatrix1.inputMatrix"
+     ],
+     [
+      "decomposeMatrix1.outputTranslate",
+      "xfI.translate"
+     ],
+     [
+      "locH.worldMatrix",
+      "chE.input[0]"
+     ],
+     [
+      "xfI.rotateOrder",
+      "decomposeMatrix1.inputRotateOrder"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "decomposeMatrix1",
+      "decomposeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 4.0, 5.0, 6.0, 1.0]",
+    "xfI.translate": "[(4.0, 5.0, 6.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 33
+ },
+ "choice output, selector set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"chE.input[1]\"), Plug(\"chE.selector\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ],
+     [
+      "xfC.translate",
+      "chE.input[1]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0,
+      1
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]",
+    "chE.input[1]": "[(1.0, 2.0, 3.0)]",
+    "chE.selector": "1",
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 30
+ },
+ "choice.selector << plug": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.selector"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "chE.selector"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.selector": "2"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "compound -> scalar fanout": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 0.0, 0.0)]",
+    "mdA.output": "[(1.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "compound broadcast": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(4.0, 4.0, 4.0)]",
+    "mdA.output": "[(4.0, 4.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "compound connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "mdA.input1"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "compound element connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input3D[1]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "pmaD.input3D[1]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input3D": [
+     "indices",
+     [
+      1
+     ]
+    ],
+    "pmaD.input3D[1]": "[(2.0, 3.0, 4.0)]",
+    "pmaD.output3D": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "compound set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "connect into a child of a connected compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"mdA.input1\"), Plug(\"mdA.input1X\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "mdA.input1"
+     ],
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 3.0, 4.0)]",
+    "mdA.output": "[(1.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "connect into a compound with a connected child": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"mdA.input1X\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "mdA.input1"
+     ],
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "data_type live": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "float"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "data_type of a deleted dynamic attr": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "ValueError",
+   "No object matches name: xfC.dyn_d",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "data_type of a deleted node": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdA already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdA",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": null,
+    "mdA.input2": null,
+    "mdA.operation": null,
+    "mdA.output": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "data_type of a freed dynamic attr": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "xfC.dyn_d already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 0
+ },
+ "data_type of a freed node": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "DGNode node (freed by a new scene, a file open or a reference unload) already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "deleted DAG dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "xfC already deleted!",
+   [
+    "RuntimeError",
+    "xfC already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "|xfC",
+      "transform"
+     ]
+    ]
+   ],
+   "values": {
+    "xfC.dyn_d": null,
+    "xfC.dyn_v": null,
+    "xfC.notes_s": null,
+    "xfC.rotate": null,
+    "xfC.translate": null,
+    "xfC.visibility": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted DAG source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "xfC already deleted!",
+   [
+    "RuntimeError",
+    "xfC already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "|xfC",
+      "transform"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]",
+    "xfC.dyn_d": null,
+    "xfC.dyn_v": null,
+    "xfC.notes_s": null,
+    "xfC.rotate": null,
+    "xfC.translate": null,
+    "xfC.visibility": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "deleted compound source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdB already deleted!",
+   [
+    "RuntimeError",
+    "mdB already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "mdA.input1"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "deleted dst compound set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdA already deleted!",
+   [
+    "RuntimeError",
+    "mdA already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdA",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": null,
+    "mdA.input2": null,
+    "mdA.operation": null,
+    "mdA.output": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted dst connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdA already deleted!",
+   [
+    "RuntimeError",
+    "mdA already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdA",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": null,
+    "mdA.input2": null,
+    "mdA.operation": null,
+    "mdA.output": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted dst generic << compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "chE already deleted!",
+   [
+    "RuntimeError",
+    "chE already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "chE",
+      "choice"
+     ]
+    ]
+   ],
+   "values": {
+    "chE.input": null,
+    "chE.selector": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted dst scalar set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdA already deleted!",
+   [
+    "RuntimeError",
+    "mdA already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdA",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": null,
+    "mdA.input2": null,
+    "mdA.operation": null,
+    "mdA.output": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted dynamic dst connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "ValueError",
+   "No object matches name: xfC.dyn_d",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted dynamic dst set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "ValueError",
+   "No object matches name: xfC.dyn_d",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted dynamic source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "ValueError",
+   "No object matches name: xfC.dyn_d",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted source into a generic slot": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdB already deleted!",
+   [
+    "RuntimeError",
+    "mdB already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "deleted source, the dst connected": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdB already deleted!",
+   [
+    "RuntimeError",
+    "mdB already deleted!"
+   ],
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 0.0, 0.0)]",
+    "mdA.output": "[(1.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "disconnect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"mdA.input1X\"), Plug(\"mdA.input1X\"))"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "disconnect a locked dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"mdA.input1X\"), None, Plug(\"mdA.input1X\"))"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 31
+ },
+ "dynamic as a source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "netK.dynm",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "dynamic connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "netK.dynm"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "netK.dynm"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "netK.dynm": "2.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "dynamic double": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfC.dyn_d"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": "0.25"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "dynamic double3 << plug": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfC.dyn_v"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "xfC.dyn_v"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_v": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "dynamic double3 compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfC.dyn_v"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_v": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "element connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input1D[2]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "pmaD.input1D[2]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input1D": [
+     "indices",
+     [
+      2
+     ]
+    ],
+    "pmaD.input1D[2]": "2.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "element rewire": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"pmaD.input1D[2]\"), Plug(\"pmaD.input1D[2]\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputY",
+      "pmaD.input1D[2]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input1D": [
+     "indices",
+     [
+      2
+     ]
+    ],
+    "pmaD.input1D[2]": "3.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "enum name set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.operation"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.operation": "2"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "enum set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.operation"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.operation": "2"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "existing element set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"pmaD.input1D[0]\"), Plug(\"pmaD.input1D[0]\"))"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input1D": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "pmaD.input1D[0]": "7.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "freed DAG source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "Transform node (freed by a new scene, a file open or a reference unload) already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "freed dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "DGNode node (freed by a new scene, a file open or a reference unload) already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "freed dynamic dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "xfC.dyn_d already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 0
+ },
+ "freed dynamic source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "xfC.dyn_d already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.dyn_d": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 0
+ },
+ "freed source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "DGNode node (freed by a new scene, a file open or a reference unload) already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "generic slot << None": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"chE.input[0]\"))"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "generic slot << compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input[0]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "generic slot << number": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot set 'chE.input[2]': setAttr: The type 'Tdata' is not the name of a recognized type.\n",
+   [
+    "RuntimeError",
+    "setAttr: The type 'Tdata' is not the name of a recognized type.\n"
+   ],
+   [
+    "RuntimeError",
+    "setAttr: The type 'Tdata' is not the name of a recognized type.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      2
+     ]
+    ],
+    "chE.input[2]": "None"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "generic slot << scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input[1]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "chE.input[1]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      1
+     ]
+    ],
+    "chE.input[1]": "1.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "generic slot rewire": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"chE.input[0]\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "held DAG source deleted": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "xfC already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "|xfC",
+      "transform"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]",
+    "xfC.dyn_d": null,
+    "xfC.dyn_v": null,
+    "xfC.notes_s": null,
+    "xfC.rotate": null,
+    "xfC.translate": null,
+    "xfC.visibility": null
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "held compound source deleted": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdB already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "mdA.input1"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "held source deleted, into a generic slot": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdB already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "None"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "held source deleted, the dst connected": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdB already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 0.0, 0.0)]",
+    "mdA.output": "[(1.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "held source deleted, undone": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [
+    [
+     2,
+     "Undo: "
+    ]
+   ],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(None, None, Plug(\"mdA.input1X\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "instance hook: generic slot": {
+  "hooks": [
+   [
+    "instance",
+    "chE.input[0]"
+   ],
+   [
+    "instance",
+    "chE.input[0]"
+   ],
+   [
+    "instance",
+    "chE.input[0]"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input[0]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "instance hook: output": {
+  "hooks": [
+   [
+    "instance",
+    "chE.input[0]"
+   ],
+   [
+    "instance",
+    "chE.input[0]"
+   ],
+   [
+    "instance",
+    "chE.input[0]"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]",
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "instanced shape connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfC|ipShape.localPositionX"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "xfC|ipShape.localPositionX"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "|xfC|ipShape",
+      "locator"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "|xfC|ipShape"
+  ],
+  "undo_steps": 29
+ },
+ "instanced shape rewire": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"xfC|ipShape.localPositionX\"), Plug(\"xfI|ipShape.localPositionX\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputY",
+      "xfC|ipShape.localPositionX"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "|xfC|ipShape",
+      "locator"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "|xfC|ipShape"
+  ],
+  "undo_steps": 31
+ },
+ "locked child of compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot set/connect 'mdA.input2': locked attribute(s) mdA.input2Y. Unlock first (e.g. `plug << unlock` or `cmds.setAttr(attr, lock=False)`).",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "locked dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot set/connect 'mdA.input2X': locked attribute(s) mdA.input2X. Unlock first (e.g. `plug << unlock` or `cmds.setAttr(attr, lock=False)`).",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "matrix -> a transform plug no channel": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot connect 'locH.worldMatrix' -> 'xfI.visibility': Connection not made: 'locH.worldMatrix[0]' -> 'xfI.visibility'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'xfI.visibility'.\n",
+   [
+    "RuntimeError",
+    "Connection not made: 'locH.worldMatrix[0]' -> 'xfI.visibility'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'xfI.visibility'.\n"
+   ],
+   [
+    "RuntimeError",
+    "Connection not made: 'locH.worldMatrix[0]' -> 'xfI.visibility'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'xfI.visibility'.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "locH.worldMatrix",
+      "decomposeMatrix1.inputMatrix"
+     ],
+     [
+      "xfI.rotateOrder",
+      "decomposeMatrix1.inputRotateOrder"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "decomposeMatrix1",
+      "decomposeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 31
+ },
+ "matrix -> matrix element": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mmM.matrixIn[0]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "locH.worldMatrix",
+      "mmM.matrixIn[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mmM.matrixIn": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "mmM.matrixIn[0]": "[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 4.0, 5.0, 6.0, 1.0]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "matrix -> rotate": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfI.rotate"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "decomposeMatrix1.outputRotate",
+      "xfI.rotate"
+     ],
+     [
+      "locH.worldMatrix",
+      "decomposeMatrix1.inputMatrix"
+     ],
+     [
+      "xfI.rotateOrder",
+      "decomposeMatrix1.inputRotateOrder"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "decomposeMatrix1",
+      "decomposeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.rotate": "[(0.0, -0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 32
+ },
+ "matrix -> transform node": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfI"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "decomposeMatrix1.outputRotate",
+      "xfI.rotate"
+     ],
+     [
+      "decomposeMatrix1.outputScale",
+      "xfI.scale"
+     ],
+     [
+      "decomposeMatrix1.outputShear",
+      "xfI.shear"
+     ],
+     [
+      "decomposeMatrix1.outputTranslate",
+      "xfI.translate"
+     ],
+     [
+      "locH.worldMatrix",
+      "decomposeMatrix1.inputMatrix"
+     ],
+     [
+      "xfI.rotateOrder",
+      "decomposeMatrix1.inputRotateOrder"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "decomposeMatrix1",
+      "decomposeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.rotate": "[(0.0, -0.0, 0.0)]",
+    "xfI.translate": "[(4.0, 5.0, 6.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 35
+ },
+ "matrix -> translate": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfI.translate"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "decomposeMatrix1.outputTranslate",
+      "xfI.translate"
+     ],
+     [
+      "locH.worldMatrix",
+      "decomposeMatrix1.inputMatrix"
+     ],
+     [
+      "xfI.rotateOrder",
+      "decomposeMatrix1.inputRotateOrder"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "decomposeMatrix1",
+      "decomposeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.translate": "[(4.0, 5.0, 6.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 32
+ },
+ "matrix -> vector": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "decomposeMatrix1.outputTranslate",
+      "mdA.input1"
+     ],
+     [
+      "locH.worldMatrix",
+      "decomposeMatrix1.inputMatrix"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "decomposeMatrix1",
+      "decomposeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(4.0, 5.0, 6.0)]",
+    "mdA.output": "[(4.0, 5.0, 6.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 31
+ },
+ "matrix auto-index": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mmM.matrixIn"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "locH.worldMatrix",
+      "mmM.matrixIn[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mmM.matrixIn": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "mmM.matrixIn[0]": "[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 4.0, 5.0, 6.0, 1.0]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "matrix into a scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot connect 'locH.worldMatrix' -> 'mdA.input1X': Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'mdA.input1X'.\n",
+   [
+    "RuntimeError",
+    "Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'mdA.input1X'.\n"
+   ],
+   [
+    "RuntimeError",
+    "Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'mdA.input1X'.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "matrix set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "cmF.outputMatrix"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "cmF.outputMatrix": "[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "message connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "netK.msgIn"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdA.message",
+      "netK.msgIn"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "message query": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "Message attributes have no data values.\n",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "message rewire": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"netK.msgIn\"), Plug(\"netK.msgIn\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.message",
+      "netK.msgIn"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "multi << List": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input1D"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "pmaD.input1D[0]"
+     ],
+     [
+      "xfC.translateY",
+      "pmaD.input1D[1]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input1D": [
+     "indices",
+     [
+      0,
+      1
+     ]
+    ],
+    "pmaD.input1D[0]": "1.0",
+    "pmaD.input1D[1]": "2.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "multi << list": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input1D"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input1D": [
+     "indices",
+     [
+      0,
+      1,
+      2
+     ]
+    ],
+    "pmaD.input1D[0]": "1.0",
+    "pmaD.input1D[1]": "2.0",
+    "pmaD.input1D[2]": "3.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "multi auto-index compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input3D"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "pmaD.input3D[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input3D": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "pmaD.input3D[0]": "[(1.0, 2.0, 3.0)]",
+    "pmaD.output3D": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "multi auto-index scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input1D"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input1D": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "pmaD.input1D[0]": "1.5"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "name-built dst connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "name-built dst set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(3.0, 0.0, 0.0)]",
+    "mdA.output": "[(3.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "name-built generic dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input[3]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "chE.input[3]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      3
+     ]
+    ],
+    "chE.input[3]": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "name-built source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "namespaced node as a source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "ns:mdP.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "ns:mdP",
+      "multiplyDivide"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "ns:mdP"
+  ],
+  "undo_steps": 29
+ },
+ "namespaced node connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "ns:mdP.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "ns:mdP.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "ns:mdP",
+      "multiplyDivide"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "ns:mdP"
+  ],
+  "undo_steps": 29
+ },
+ "new compound element set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input3D[7]"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input3D": [
+     "indices",
+     [
+      7
+     ]
+    ],
+    "pmaD.input3D[7]": "[(1.0, 2.0, 3.0)]",
+    "pmaD.output3D": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "new compound element, bad size": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "ValueError",
+   "Cannot inject sequence of size 2 into 3-channel compound attribute 'pmaD.input3D[7]'.",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input3D": [
+     "indices",
+     [
+      7
+     ]
+    ],
+    "pmaD.input3D[7]": "[(0.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "new element set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "pmaD.input1D[9]"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "pmaD.input1D": [
+     "indices",
+     [
+      9
+     ]
+    ],
+    "pmaD.input1D[9]": "3.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "none into a compound with a connected child": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"mdA.input1X\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 0.0, 0.0)]",
+    "mdA.output": "[(1.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "patched Choice hook": {
+  "hooks": [
+   [
+    "patched Choice",
+    "chE.input[0]"
+   ],
+   [
+    "patched Choice",
+    "chE.input[0]"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]",
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "patched DGNode hook": {
+  "hooks": [
+   [
+    "patched DGNode",
+    "chE.input[0]"
+   ],
+   [
+    "patched DGNode",
+    "chE.input[0]"
+   ],
+   [
+    "patched DGNode",
+    "chE.input[0]"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]",
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "plugs and numbers into a compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ],
+     [
+      "xfC.translateZ",
+      "mdA.input1Z"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "quaternion -> euler": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfI.rotate"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "qpL.outputQuat",
+      "quatToEuler1.inputQuat"
+     ],
+     [
+      "quatToEuler1.outputRotate",
+      "xfI.rotate"
+     ],
+     [
+      "xfI.rotateOrder",
+      "quatToEuler1.inputRotateOrder"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "quatToEuler1",
+      "quatToEuler"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.rotate": "[(0.0, -0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 32
+ },
+ "quaternion -> vector": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "constant1.value",
+      "mdA.input1"
+     ],
+     [
+      "qpL.outputQuatX",
+      "constant1.valueX"
+     ],
+     [
+      "qpL.outputQuatY",
+      "constant1.valueY"
+     ],
+     [
+      "qpL.outputQuatZ",
+      "constant1.valueZ"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "constant1",
+      "network"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 40
+ },
+ "renamed source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB2.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "mdB2",
+      "multiplyDivide"
+     ]
+    ],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "rewire a locked connected dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot set/connect 'mdA.input1X': locked attribute(s) mdA.input1X. Unlock first (e.g. `plug << unlock` or `cmds.setAttr(attr, lock=False)`).",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "rewire compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"mdA.input1\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "mdA.input1"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "rewire scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"mdA.input1X\"), Plug(\"mdA.input1X\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputY",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(3.0, 0.0, 0.0)]",
+    "mdA.output": "[(3.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "rotate -> matrix element": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mmM.matrixIn[1]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "composeMatrix1.outputMatrix",
+      "mmM.matrixIn[1]"
+     ],
+     [
+      "xfC.rotate",
+      "composeMatrix1.inputRotate"
+     ],
+     [
+      "xfC.rotateOrder",
+      "composeMatrix1.inputRotateOrder"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "composeMatrix1",
+      "composeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "mmM.matrixIn": [
+     "indices",
+     [
+      1
+     ]
+    ],
+    "mmM.matrixIn[1]": "[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 32
+ },
+ "scalar -> compound fanout": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translateX",
+      "mdA.input1X"
+     ],
+     [
+      "xfC.translateX",
+      "mdA.input1Y"
+     ],
+     [
+      "xfC.translateX",
+      "mdA.input1Z"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(1.0, 1.0, 1.0)]",
+    "mdA.output": "[(1.0, 1.0, 1.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "scalar connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "scalar into a matrix element": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot connect 'mdB.outputX' -> 'mmM.matrixIn[0]': Connection not made: 'mdB.outputX' -> 'mmM.matrixIn[0]'.  Data types of source and destination are not compatible.\nThe attribute 'mdB.outputX' cannot be connected to 'mmM.matrixIn[0]'.\n",
+   [
+    "RuntimeError",
+    "Connection not made: 'mdB.outputX' -> 'mmM.matrixIn[0]'.  Data types of source and destination are not compatible.\nThe attribute 'mdB.outputX' cannot be connected to 'mmM.matrixIn[0]'.\n"
+   ],
+   [
+    "RuntimeError",
+    "Connection not made: 'mdB.outputX' -> 'mmM.matrixIn[0]'.  Data types of source and destination are not compatible.\nThe attribute 'mdB.outputX' cannot be connected to 'mmM.matrixIn[0]'.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mmM.matrixIn": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "mmM.matrixIn[0]": "[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "scalar set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.5, 0.0, 0.0)]",
+    "mdA.output": "[(2.5, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "seq size mismatch": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "ValueError",
+   "Cannot inject sequence of size 2 into 3-channel compound attribute 'mdA.input1'.",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "shorthand off: compound connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "mdA.input1"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "shorthand off: generic slot": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "shorthand off: matrix -> vector": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot connect 'locH.worldMatrix' -> 'mdA.input1X': Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'mdA.input1X'.\n",
+   [
+    "RuntimeError",
+    "Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'mdA.input1X'.\n"
+   ],
+   [
+    "RuntimeError",
+    "Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'.  Data types of source and destination are not compatible.\nThe attribute 'locH.worldMatrix[0]' cannot be connected to 'mdA.input1X'.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "spec slots into a compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(0.0, 2.0, 3.0)]",
+    "mdA.output": "[(0.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "src is dst": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot connect 'mdA.input1X' -> 'mdA.input1X': Cannot connect attribute 'mdA.input1X' to itself.\n",
+   [
+    "RuntimeError",
+    "Cannot connect attribute 'mdA.input1X' to itself.\n"
+   ],
+   [
+    "RuntimeError",
+    "Cannot connect attribute 'mdA.input1X' to itself.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "string attr connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfC.notes_s"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.notes_t",
+      "xfC.notes_s"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.notes_s": "from t"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "string attr set": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfC.notes_s"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "xfC.notes_s": "hello"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "timeEditor layer[0] child": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot set 'teG.layer[0].layerName': The value for the attribute could not be retrieved.\n",
+   [
+    "RuntimeError",
+    "The value for the attribute could not be retrieved.\n"
+   ],
+   [
+    "RuntimeError",
+    "The value for the attribute could not be retrieved.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "timeEditor layer[0] child << compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot connect 'xfC.translate' -> 'teG.layer[0].layerName': Connection not made: 'xfC.translate' -> 'teG.layer[0].layerName'.  Data types of source and destination are not compatible.\nThe attribute 'xfC.translate' cannot be connected to 'teG.layer[0].layerName'.\n",
+   [
+    "RuntimeError",
+    "Connection not made: 'xfC.translate' -> 'teG.layer[0].layerName'.  Data types of source and destination are not compatible.\nThe attribute 'xfC.translate' cannot be connected to 'teG.layer[0].layerName'.\n"
+   ],
+   [
+    "RuntimeError",
+    "Connection not made: 'xfC.translate' -> 'teG.layer[0].layerName'.  Data types of source and destination are not compatible.\nThe attribute 'xfC.translate' cannot be connected to 'teG.layer[0].layerName'.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "undone source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [
+    [
+     2,
+     "Undo: "
+    ]
+   ],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mdA.input1X"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "mdA.input1X"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 0.0, 0.0)]",
+    "mdA.output": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "unitConversion compound": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfI.rotate"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "unitConversion1.input"
+     ],
+     [
+      "unitConversion1.output",
+      "xfI.rotate"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "unitConversion1",
+      "unitConversion"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.rotate": "[(1.9999999845072665, 3.0000000834826057, 3.999999969014533)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "unitConversion connect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "xfI.rotateX"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "unitConversion1.input"
+     ],
+     [
+      "unitConversion1.output",
+      "xfI.rotateX"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "unitConversion1",
+      "unitConversion"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.rotate": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "unitConversion disconnect": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"xfI.rotateX\"), Plug(\"xfI.rotateX\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "unitConversion1.input"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "unitConversion1",
+      "unitConversion"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.rotate": "[(2.0, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "unitConversion rewire": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"xfI.rotateX\"), Plug(\"xfI.rotateX\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.outputX",
+      "unitConversion1.input"
+     ],
+     [
+      "mdB.outputY",
+      "unitConversion2.input"
+     ],
+     [
+      "unitConversion2.output",
+      "xfI.rotateX"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "unitConversion1",
+      "unitConversion"
+     ],
+     [
+      "unitConversion2",
+      "unitConversion"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "xfI.rotate": "[(3.0000000000000004, 0.0, 0.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 29
+ },
+ "user choice hook: auto-index": {
+  "hooks": [
+   [
+    "choice",
+    "uchN.input[0]"
+   ],
+   [
+    "choice",
+    "uchN.input[0]"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "uchN.input"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "uchN.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "uchN",
+      "choice"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "uchN"
+  ],
+  "undo_steps": 31
+ },
+ "user choice hook: generic slot": {
+  "hooks": [
+   [
+    "choice",
+    "uchN.input[0]"
+   ],
+   [
+    "choice",
+    "uchN.input[0]"
+   ],
+   [
+    "choice",
+    "uchN.input[0]"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "uchN.input[0]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "uchN.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "uchN",
+      "choice"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "uchN"
+  ],
+  "undo_steps": 31
+ },
+ "user choice hook: output": {
+  "hooks": [
+   [
+    "choice",
+    "uchN.input[0]"
+   ],
+   [
+    "choice",
+    "uchN.input[0]"
+   ],
+   [
+    "choice",
+    "uchN.input[0]"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"uchN.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "uchN.input[0]"
+     ],
+     [
+      "uchN.output",
+      "mdA.input1"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "uchN",
+      "choice"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "uchN"
+  ],
+  "undo_steps": 32
+ },
+ "user hook at a choice chain's end": {
+  "hooks": [
+   [
+    "net",
+    "unetO.generic"
+   ],
+   [
+    "net",
+    "unetO.generic"
+   ]
+  ],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "('Connected unetO.generic to chE.input.', Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1X"
+     ],
+     [
+      "chE.output",
+      "mdA.input1Y"
+     ],
+     [
+      "chE.output",
+      "mdA.input1Z"
+     ],
+     [
+      "unetO.generic",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "unetO",
+      "network"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "None"
+   }
+  },
+  "selection": [
+   "unetO"
+  ],
+  "undo_steps": 35
+ },
+ "vector -> matrix element": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mmM.matrixIn[1]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "composeMatrix1.outputMatrix",
+      "mmM.matrixIn[1]"
+     ],
+     [
+      "xfC.translate",
+      "composeMatrix1.inputTranslate"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "composeMatrix1",
+      "composeMatrix"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "mmM.matrixIn": [
+     "indices",
+     [
+      1
+     ]
+    ],
+    "mmM.matrixIn[1]": "[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 2.0, 3.0, 1.0]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 31
+ },
+ "vector -> quaternion": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "InjectionError",
+   "Cannot connect 'xfC.translate' -> 'qpL.input1Quat': Connection not made: 'xfC.translate' -> 'qpL.input1Quat'.  Data types of source and destination are not compatible.\nThe attribute 'xfC.translate' cannot be connected to 'qpL.input1Quat'.\n",
+   [
+    "RuntimeError",
+    "Connection not made: 'xfC.translate' -> 'qpL.input1Quat'.  Data types of source and destination are not compatible.\nThe attribute 'xfC.translate' cannot be connected to 'qpL.input1Quat'.\n"
+   ],
+   [
+    "RuntimeError",
+    "Connection not made: 'xfC.translate' -> 'qpL.input1Quat'.  Data types of source and destination are not compatible.\nThe attribute 'xfC.translate' cannot be connected to 'qpL.input1Quat'.\n"
+   ],
+   true
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 26
+ },
+ "world matrix root as a source": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "mmM.matrixIn[0]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "locH.worldMatrix",
+      "mmM.matrixIn[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "mmM.matrixIn": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "mmM.matrixIn[0]": "[1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 4.0, 5.0, 6.0, 1.0]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ }
+}
