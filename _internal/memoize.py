@@ -36,6 +36,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
 from rig.nodetypes._base import (
+    _dg_named_node,
     _dg_named_owner,
     _ensure_dg_named,
     _handle_valid,
@@ -185,30 +186,9 @@ def _node_identity(node_name: str) -> Tuple[str, int]:
         ) from exc
 
 
-# The members DGNode names its nodes with: a node whose class keeps them (and
-# whose instance patches no `ensure_valid`) is named by its fn set, and naming
-# it raises exactly when its handle is not valid (`DGNode.ensure_valid`)
-_DG_NAMING = (
-    DGNode.__dict__["name"],
-    DGNode.__dict__["fn_set"],
-    DGNode.__dict__["ensure_valid"],
-    DGNode.__dict__["__str__"],
-)
-_FULL_NAME = Attribute.__dict__["full_name"]
-
-
-def _dg_named(node: Any) -> bool:
-    """True if `node` (a node object) is named as a DGNode is: its class keeps
-    DGNode's `name`, `fn_set` and `ensure_valid` and its instance patches no
-    `ensure_valid`, so its name is its fn set's (a live DG node's name names
-    that node) and naming it raises exactly when its handle is not valid."""
-    cls = type(node)
-    return (
-        cls.name is _DG_NAMING[0]
-        and cls.fn_set is _DG_NAMING[1]
-        and cls.ensure_valid is _DG_NAMING[2]
-        and "ensure_valid" not in node.__dict__
-    )
+# DGNode's `__str__`: the str of a node object named as a DGNode is
+# (`_dg_named_node`) whose class keeps it is the name of its fn set
+_DG_STR = DGNode.__dict__["__str__"]
 
 
 def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
@@ -221,12 +201,13 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
     deleted (naming it raises) adds nothing, nor does one whose dynamic
     attribute was freed.
 
-    A plug owned by a live DG node object named as a DGNode is (see
-    `_dg_named`), and named by `Attribute.full_name`, appends its owner's handle
-    (which it holds): its full name would name that node, and naming it raises
-    exactly when that handle is not valid or the plug's attribute handle is not
-    alive. A node object named so appends its own handle. Any other plug or
-    node is named, and its node found by that name.
+    A plug owned by a live DG node object, whose naming can raise only through
+    its owner's `ensure_valid` and its attribute handle (`_dg_named_owner`, the
+    rule `_attribute_key` follows), appends its owner's handle (which it holds):
+    its full name would name that node, and naming it raises exactly when that
+    handle is not valid or the plug's attribute handle is not alive. A node
+    object named as a DGNode is (`_dg_named_node`) appends its own handle. Any
+    other plug or node is named, and its node found by that name.
     """
     if (
         obj is None
@@ -237,14 +218,9 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
         return
     if isinstance(obj, Attribute):
         d      = obj.__dict__
-        node   = d.get("_node")
+        node   = _dg_named_owner(obj)
         handle = d.get("_handle")
-        if (
-            node is not None
-            and handle is not None
-            and type(obj).full_name is _FULL_NAME
-            and _dg_named(node)
-        ):
+        if node is not None and handle is not None:
             if not handle.isValid():
                 return  # naming it raises "... already deleted!"
             if not node.__dict__["_mobject"].hasFn(OpenMaya.MFn.kDagNode):
@@ -262,7 +238,7 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
         return
     if _is_node(obj):
         handle = obj.__dict__.get("_objhandle")
-        if handle is not None and type(obj).__str__ is _DG_NAMING[3] and _dg_named(obj):
+        if handle is not None and type(obj).__str__ is _DG_STR and _dg_named_node(obj):
             if not handle.isValid():
                 return  # naming it raises "... already deleted!"
             if not obj.__dict__["_mobject"].hasFn(OpenMaya.MFn.kDagNode):

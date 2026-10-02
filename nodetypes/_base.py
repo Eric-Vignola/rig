@@ -784,7 +784,8 @@ def _dg_named_owner(attr: Any) -> Any:
     attribute's too. So a caller that needs only the raise runs the two checks
     and builds no name. A DAG node's class names it through its path
     (`DAGNode.name` re-binds a stale one), so it is never such an owner. The
-    classes are read at every call, so a patched method is seen at once."""
+    classes are read at every call, so a patched method is seen at once. The
+    owner test is `_dg_named_node`'s, written out here (the hot path)."""
     node = attr.__dict__.get("_node")
     if node is None or type(attr).full_name is not _ATTRIBUTE_FULL_NAME:
         return None
@@ -803,6 +804,28 @@ def _dg_named_owner(attr: Any) -> Any:
     except AttributeError:
         return None
     return node
+
+
+def _dg_named_node(node: Any) -> bool:
+    """True if `node` (a node object) is named as a DGNode is, the owner test of
+    `_dg_named_owner`: its class keeps DGNode's `name`, `fn_set` and
+    `ensure_valid` (and Python's own attribute lookup), with no `ensure_valid`
+    set on the node itself. Its name is then its fn set's, which names that node
+    while it is valid, and naming it raises exactly when its handle is not valid
+    (`DGNode.ensure_valid`)."""
+    naming = _DG_NAMING
+    cls    = type(node)
+    try:
+        return not (
+            naming is None
+            or cls.name is not naming[0]
+            or cls.fn_set is not naming[1]
+            or cls.ensure_valid is not naming[2]
+            or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
+            or "ensure_valid" in node.__dict__
+        )
+    except AttributeError:
+        return False
 
 
 def _ensure_dg_named(attr: Any, owner: Any) -> None:
