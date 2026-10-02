@@ -1484,6 +1484,12 @@ class DGNode(Node):
             node is owned by this node object (its ``node`` is ``self``); the
             normal attrs are cached, so the same instance is returned again.
         """
+        # a cached attr named by a plain str with no filter: the lookup's first
+        # answer, read here without the call
+        if type(attr) is str and not category and not data_type:
+            attr_obj = self._attr_dict.get(attr)
+            if attr_obj is not None:
+                return attr_obj
         return DGNode._find_attr_fresh(self, attr, category, data_type, quiet)[0]
 
     def _find_attr_fresh(
