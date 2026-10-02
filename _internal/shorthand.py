@@ -41,16 +41,21 @@ from rig.nodetypes._base import (
     _fixed_attr_kind,
     _NON_MATRIX_ATTR_API_TYPES,
     _SCALAR_ATTR_API_TYPES,
+    _USER_CODE_RUNS,
     Attribute,
 )
 
 
-def shorthand(src: Any, dst: Any) -> bool:
+def shorthand(src: Any, dst: Any, src_facts: Any = None, dst_facts: Any = None) -> bool:
     """Try to wire ``src -> dst`` via type-aware translation.
 
     Returns ``True`` if a translation network was inserted and the connection
     was made; ``False`` if no shorthand pair matched (caller should fall back
     to the standard injection logic).
+
+    ``src_facts`` / ``dst_facts`` are the operands' `_Facts` when the caller
+    reads them again after this call (``Plug.__lshift__`` hands them on to
+    ``_inject_value``); None makes them here.
     """
     if not ContainerOptions.use_shorthand:
         return False
@@ -60,8 +65,10 @@ def shorthand(src: Any, dst: Any) -> bool:
         return False
 
     # src / dst type facts, each queried at most once for this call
-    src_facts = _Facts(src)
-    dst_facts = _Facts(dst)
+    if src_facts is None:
+        src_facts = _Facts(src)
+    if dst_facts is None:
+        dst_facts = _Facts(dst)
 
     if src_facts.is_matrix:
         if _is_transform(dst):
@@ -110,25 +117,35 @@ class _Facts:
     ``is_matrix``, ``is_compound``, ``is_quaternion`` and ``is_vector`` answer
     exactly like the ``rig._internal.types`` predicates of the same names, but
     share one ``data_type`` and one ``num_children`` query between them. Only
-    valid for the duration of one ``shorthand`` call: the type of a generic
-    plug follows its connections.
+    valid for the duration of one ``<<`` (the ``shorthand`` call and the
+    ``_inject_value`` after it): the type of a generic plug follows its
+    connections.
+
+    ``_reusable`` turns False once the data type query ran code a user may
+    have written (a fallback hook rig does not vouch for, a node constructor:
+    ``_USER_CODE_RUNS``), so a caller that would have queried again does, and
+    that code runs as often as before.
     """
 
-    __slots__ = ("_obj", "_data_type", "_num_children", "_is_compound")
+    __slots__ = ("_obj", "_data_type", "_num_children", "_is_compound", "_reusable")
 
     def __init__(self, obj: Any) -> None:
         self._obj          = obj
         self._data_type    = _UNSET
         self._num_children = _UNSET
         self._is_compound  = _UNSET
+        self._reusable     = True
 
     def _get_data_type(self) -> str | None:
         """Returns the operand's ``data_type``, or None if the query raised."""
         if self._data_type is _UNSET:
+            runs = _USER_CODE_RUNS[0]
             try:
                 self._data_type = self._obj.data_type
             except Exception:
                 self._data_type = None
+            if _USER_CODE_RUNS[0] != runs:
+                self._reusable = False
         return self._data_type
 
     def _get_num_children(self) -> int | None:

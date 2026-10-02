@@ -93,12 +93,14 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
     _MISSING,
+    _NON_MATRIX_ATTR_API_TYPES,
     _attr_handle,
     _attr_state,
     _check_enum_names,
     _class_attr,
     _enum_value,
     _ensure_owner_alive,
+    _fixed_attr_kind,
     _holds_text,
     _inherit_owner,
     _is_enum_attr,
@@ -130,6 +132,9 @@ LOGGER = logging.getLogger(__name__)
 # The right-hand sides of ``<<`` that are never reshaped (see `_prepared_operand`):
 # numbers, None, plugs and the plain sequences, passed by one isinstance call.
 _NOT_RESHAPED = _SCALARS + (Attribute, list, tuple, np.ndarray, str)
+
+# Attribute's own data type, which `_dst_data_type` asks a plug's class to keep
+_ATTRIBUTE_DATA_TYPE  = Attribute.__dict__["data_type"]
 
 # An attribute name Maya keeps: what ``plug >> "name"`` clones under.
 _ATTR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -645,12 +650,21 @@ class Plug(Attribute):
         if not isinstance(other, _NOT_RESHAPED) and isinstance(other, _RESHAPED):
             other = _prepared_operand(other, f"{self} << {_render_operand(other)}")
 
-        # Type-shorthand (matrix->transform, quat->euler, ...).
-        if lazy.shorthand.shorthand(other, self):
+        # Type-shorthand (matrix->transform, quat->euler, ...), then the
+        # standard injection. For a plug source both read the two operands'
+        # type facts from one `shorthand._Facts` each, made here (they query
+        # nothing until asked), see `_inject_value`.
+        shorthand = lazy.shorthand
+        if isinstance(other, Attribute):
+            dst_facts = shorthand._Facts(self)
+            src_facts = shorthand._Facts(other)
+        else:
+            dst_facts = src_facts = None
+        if shorthand.shorthand(other, self, src_facts, dst_facts):
             return self
 
         # Standard injection.
-        _inject_value(self, other)
+        _inject_value(self, other, dst_facts, src_facts)
         return self
 
     # -- introspect (numpy-aware `get()` + `>>` operator) -- #
@@ -2152,7 +2166,59 @@ def _attribute_type_or_none(dst: Any) -> str | None:
         return None
 
 
-def _inject_value(dst: Any, src: Any) -> None:
+class _FixedKind:
+    """The data type `_dst_data_type` gives a dst whose attribute kind fixes it:
+    equal only to itself, so it equals no type name."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<fixed-kind data type>"
+
+
+_FIXED_KIND = _FixedKind()
+
+
+def _dst_data_type(dst: Any, facts: Any = None) -> Any:
+    """``dst.data_type`` as :func:`_inject_value` reads it: None if it raises.
+
+    `_inject_value` compares it four ways only: ``== "string"``, ``!=
+    "matrix"``, ``== "matrix"`` and, at the generic-slot test, ``in ("Tdata",
+    "typed", None)``. A numeric, unit, enum, message or compound kind whose
+    array elements all exist (`_fixed_attr_kind`) never has one of those types,
+    so its query is skipped and `_FIXED_KIND` stands in, which equals none of
+    them; the generic-slot test, the one that tells a raised (None) type apart,
+    queries it there (`_resolved_data_type`). An element that does not exist yet
+    has no kind, so its query, which creates it, still runs. A class with its
+    own ``data_type`` is always asked. `facts`, dst's `shorthand._Facts` of this
+    ``<<``, answers the query while its answers can be reused."""
+    if (
+        getattr(type(dst), "data_type", None) is _ATTRIBUTE_DATA_TYPE
+        and _fixed_attr_kind(dst) in _NON_MATRIX_ATTR_API_TYPES
+    ):
+        return _FIXED_KIND
+    if facts is not None and facts._reusable:
+        return facts._get_data_type()
+    try:
+        return dst.data_type
+    except Exception:
+        return None
+
+
+def _resolved_data_type(dst: Any, data_type: Any) -> Any:
+    """`data_type`, a `_dst_data_type` answer, with `_FIXED_KIND` replaced by
+    ``dst.data_type`` (None if it raises)."""
+    if data_type is _FIXED_KIND:
+        try:
+            return dst.data_type
+        except Exception:
+            return None
+    return data_type
+
+
+def _inject_value(
+    dst: Any, src: Any, dst_facts: Any = None, src_facts: Any = None
+) -> None:
     """Inject ``src`` into ``dst`` -- set / connect with compound-aware logic.
 
     Mirrors the original ``Container.inject`` (Eric's _language.py:1158-1294)
@@ -2173,6 +2239,17 @@ def _inject_value(dst: Any, src: Any) -> None:
        (broadcast scalar). Mismatches raise :class:`ValueError`.
     5. Otherwise the existing compound-detection / fan-out logic handles
        the (Plug source) / (heterogeneous list with Plugs) cases.
+
+    ``dst_facts`` / ``src_facts`` are the operands' `shorthand._Facts` of this
+    ``<<`` (`Plug.__lshift__` makes them for ``shorthand`` and hands them on
+    for a plug source), else None: their compound-ness and data type answer
+    here while their queries ran no code a user may have written
+    (`_Facts._reusable`), so such code runs as often as before. From their
+    queries to their last use here the op only queries the scene, apart from
+    the queries that create a missing element (the same either way) and the
+    decomposeMatrix a matrix-to-transform shorthand that does not apply leaves
+    (an outgoing connection of ``src``: no operand's type or kind changes).
+    Every other caller passes none.
     """
     types = _lazy().types
 
@@ -2190,7 +2267,10 @@ def _inject_value(dst: Any, src: Any) -> None:
     # ``dst``'s compound-ness and channels are pure queries, resolved once
     # here and reused by the lock check, the shape validation, the dispatch
     # and the fan-out below (recomputed if ``dst`` is re-indexed).
-    compound_dst = types._is_compound(dst)
+    if dst_facts is not None and dst_facts._reusable:
+        compound_dst = dst_facts.is_compound
+    else:
+        compound_dst = types._is_compound(dst)
     try:
         leaves = (
             [dst.child(i) for i in range(dst.num_children)] if compound_dst else [dst]
@@ -2209,11 +2289,8 @@ def _inject_value(dst: Any, src: Any) -> None:
         if compound_dst or is_array or not isinstance(src, str):
             _check_enum_names(dst.mobject, src, str(dst), element=not is_array)
 
-    # Resolve dst data type once.
-    try:
-        dst_data_type = dst.data_type
-    except Exception:
-        dst_data_type = None
+    # Resolve dst data type once (or `_FIXED_KIND`, see `_dst_data_type`).
+    dst_data_type = _dst_data_type(dst, dst_facts)
 
     # 2. Typed string -- trust the user.
     if dst_data_type == "string":
@@ -2335,12 +2412,17 @@ def _inject_value(dst: Any, src: Any) -> None:
                 except Exception:
                     next_index = 0
             dst = dst[next_index]
-            try:
-                dst_data_type = dst.data_type
-            except Exception:
-                dst_data_type = None
-            compound_dst = types._is_compound(dst)
-            leaves       = None
+            if dst_facts is not None:
+                # the element's own facts, queried in the order above: its data
+                # type first (the query creates the element), then its
+                # compound-ness
+                dst_facts = _lazy().shorthand._Facts(dst)
+            dst_data_type = _dst_data_type(dst, dst_facts)
+            if dst_facts is not None and dst_facts._reusable:
+                compound_dst = dst_facts.is_compound
+            else:
+                compound_dst = types._is_compound(dst)
+            leaves = None
     except (AttributeError, TypeError):
         pass
 
@@ -2428,7 +2510,10 @@ def _inject_value(dst: Any, src: Any) -> None:
         # else: heterogeneous (list-with-Plugs etc.) -- fall through to
         # existing compound-detection logic below.
 
-    compound_src = types._is_compound(src) and isinstance(src, Attribute)
+    if src_facts is not None and src is src_facts._obj and src_facts._reusable:
+        compound_src = src_facts.is_compound and isinstance(src, Attribute)
+    else:
+        compound_src = types._is_compound(src) and isinstance(src, Attribute)
 
     # compound->compound, or attr->attr.
     if (compound_src and compound_dst) or (not compound_src and not compound_dst):
@@ -2444,7 +2529,11 @@ def _inject_value(dst: Any, src: Any) -> None:
     # Used by ``functions.choice`` with compound inputs (matrix.decompose
     # outputScale, etc.) and any other DSL caller routing a compound
     # plug through a generic-typed multi.
-    if compound_src and not compound_dst and dst_data_type in ("Tdata", "typed", None):
+    if (
+        compound_src
+        and not compound_dst
+        and _resolved_data_type(dst, dst_data_type) in ("Tdata", "typed", None)
+    ):
         _set_or_connect(src, dst)
         return
 
