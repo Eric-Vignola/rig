@@ -4,7 +4,7 @@ import functools
 import inspect
 import re
 from functools import total_ordering
-from types import FunctionType
+from types import FunctionType, MethodType
 from typing import Any, Sequence
 
 from maya import cmds
@@ -13,6 +13,7 @@ from rig.nodetypes._base import (
     _MISSING,
     _attr_handle,
     _attr_mobject,
+    _attr_state,
     _cast,
     _check_attrs,
     _class_attr,
@@ -836,10 +837,21 @@ class DGNode(Node):
         cache = d.get("_attr_dict")
         if cache is None:  # half-built (a failed __init__, object.__new__)
             raise AttributeError(attr_name)
-        attr = cache.get(attr_name)
+        attr  = cache.get(attr_name)
+        fresh = False
         if attr is None:
             try:
-                attr = self.find_attr(attr_name)
+                find = self.find_attr
+                if (
+                    type(find) is MethodType
+                    and find.__func__ is _FIND_ATTR
+                    and find.__self__ is self
+                ):
+                    # DGNode's own lookup, which also says whether it built the
+                    # attr from its MPlug just now (see below)
+                    attr, fresh = DGNode._find_attr_fresh(self, attr_name)
+                else:
+                    attr = find(attr_name)
             except AttributeError:
                 if attr_name in _COMPONENT_TOKENS:
                     from rig._internal.node import _component_fallback
@@ -868,19 +880,26 @@ class DGNode(Node):
             if plug is not None:
                 plug.__dict__["_node"] = owner
                 return _named_through_owner(plug)
-        if owner is self:
-            plug = _new_attr(plug_cls, attr_d["_mplug"], d["_objhandle"], attrh)
-            plug.__dict__["_node"] = self
-            # ``find_attr`` named the attr through this node's path if it has
-            # more than one; one it did not is named as the MPlug
-            if not str.__contains__(attr, "|"):  # _named_through_a_path
-                return plug
-            return _named_through_owner(plug)
-        # an attr of another node: its owner and its handle, or none and the
-        # handle of that node the attr took, which checks it until
-        # ``Plug.node`` casts it
-        plug = _new_attr(plug_cls, attr_d["_mplug"], attr_d["_handle"], attrh)
+        # the handle of the plug's node: this node's, or for an attr of another
+        # node its owner's, or with none the one the attr took, which checks it
+        # until ``Plug.node`` casts it
+        handle = d["_objhandle"] if owner is self else attr_d["_handle"]
+        if fresh:
+            # the lookup built `attr` of this MPlug just now, so the plug takes
+            # its str: the MPlug's (a second conversion gives it again: nothing
+            # renames a node within this call), or, on a node of more than one
+            # path, the full name `_named_through_owner` gives the plug anyway.
+            # A copy instead of a conversion.
+            plug = str.__new__(plug_cls, str.__str__(attr))
+            plug.__dict__.update(_attr_state(attr_d["_mplug"], handle, attrh))
+        else:
+            plug = _new_attr(plug_cls, attr_d["_mplug"], handle, attrh)
         plug.__dict__["_node"] = owner
+        # ``find_attr`` named an attr of this node through its path if it has
+        # more than one; one it did not is named as the MPlug. An attr of another
+        # node is named through its owner, if it has one.
+        if owner is self and not str.__contains__(attr, "|"):  # _named_through_a_path
+            return plug
         return _named_through_owner(plug)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -1465,6 +1484,21 @@ class DGNode(Node):
             node is owned by this node object (its ``node`` is ``self``); the
             normal attrs are cached, so the same instance is returned again.
         """
+        return DGNode._find_attr_fresh(self, attr, category, data_type, quiet)[0]
+
+    def _find_attr_fresh(
+        self,
+        attr:      Attribute | str | int,
+        category:  str       | None      = None,
+        data_type: str       | None      = None,
+        quiet:     bool                  = False,
+    ) -> tuple:
+        """The lookup of `find_attr`: its answer, and True if this call built that
+        attribute from the MPlug it found (a lookup the cache missed), else False.
+        Such an attribute's str buffer was made from its MPlug just now (the
+        MPlug's name, or on a node of more than one path its full name), so
+        `__getattr__` gives the plug of it that str instead of converting the
+        MPlug again."""
         # pass through; a DSL Plug (``mesh.skinMask``) gives the Attribute of its
         # MPlug, with its owner and handles, since the typed API reads
         # Attributes (a Plug's `get()` is numpy-shaped, its `==` / `<` build
@@ -1473,7 +1507,7 @@ class DGNode(Node):
             _ensure_owner_alive(attr)
             if attr.plug.node() != self.mobject:
                 if quiet:
-                    return None
+                    return None, False
                 raise AttributeError(f"{attr} doesn't belong to {self}.")
             if type(attr) is not Attribute:
                 attr_d = attr.__dict__
@@ -1484,15 +1518,15 @@ class DGNode(Node):
                 # named through its owner's path, as the plug was
                 if str.__contains__(attr, "|"):  # _named_through_a_path
                     typed = _named_through_owner(typed)
-                return typed
-            return attr
+                return typed, False
+            return attr, False
 
         # return cached attr, filtered like a new lookup
         attr_obj = self._attr_dict.get(attr)
         if attr_obj is not None:
             if not category and not data_type:
-                return attr_obj
-            return _filtered(attr_obj, category, data_type)
+                return attr_obj, False
+            return _filtered(attr_obj, category, data_type), False
 
         # find mplug: a name with a "[" or a "." is a plug path, which the
         # selection list resolves. For a name with no newline the two `in` tests
@@ -1541,7 +1575,7 @@ class DGNode(Node):
                     # the ``quiet`` contract and surface the resolution
                     # mismatch in the error so it's debuggable.
                     if quiet:
-                        return None
+                        return None, False
                     raise AttributeError(
                         f"Attribute not found: {self}.{attr} "
                         f"(alias resolved to {canonical!r}, but findPlug failed)"
@@ -1557,7 +1591,7 @@ class DGNode(Node):
                     plug = sel.getPlug(0)
                 except RuntimeError:
                     if quiet:
-                        return None
+                        return None, False
                     # nicer error message
                     raise AttributeError(f"Attribute not found: {self}.{attr}")
 
@@ -1576,7 +1610,7 @@ class DGNode(Node):
         # element or a child plug can be one: the helper's first tests.)
         if (plug.isElement or plug.isChild) and _is_unresolved_multi_child(plug):
             if quiet:
-                return None
+                return None, False
             raise AttributeError(
                 f"Attribute not found: {self}.{attr} "
                 f"(resolves to {plug.name()!r}, a child of an unindexed multi; "
@@ -1617,8 +1651,9 @@ class DGNode(Node):
                 )
 
         if not category and not data_type:
-            return attr_obj
-        return _filtered(attr_obj, category, data_type)
+            return attr_obj, True
+        attr_obj = _filtered(attr_obj, category, data_type)
+        return attr_obj, attr_obj is not None
 
     def _canonicalize_component_alias_plug(
         self, attr: Attribute | str | int, plug: "OpenMaya.MPlug"
@@ -1824,6 +1859,11 @@ class DGNode(Node):
 
 _PLAIN_CREATES.add(DGNode._create.__func__)
 _DG_POST_CREATE = DGNode.post_create.__func__
+
+# DGNode's own `find_attr`: `DGNode.__getattr__` asks its lookup directly (which
+# says whether it built the attr just now) when `node.find_attr` is this one, read
+# before any patch of it can exist
+_FIND_ATTR = DGNode.__dict__["find_attr"]
 
 # Node classes whose data type fallback hook only reads the scene before it calls
 # DGNode's, mapped to that hook. With DGNode's own hook nothing runs in between.
