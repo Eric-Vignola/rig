@@ -28,6 +28,7 @@ from typing import Any, Sequence
 
 from maya import cmds
 from rig.nodetypes._base import Attribute
+from rig.nodetypes.dg_node import _keeps_query
 from rig._internal.container import container, ContainerOptions
 from rig._internal.list import List
 from rig._internal.math_nodes import (
@@ -40,6 +41,7 @@ from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
 from rig._internal.operands import operands
 from rig._internal.types import (
+    _fills_one_element,
     _is_compound,
     _is_real,
     _is_scalar_value,
@@ -464,7 +466,15 @@ def choice(tokens: Sequence[Any], selector: Any = None) -> Any:
     node = container.createNode("choice")
     if selector is not None:
         node.selector << selector
-    for obj in tokens:
+    # The node is new: while every token so far filled one element of
+    # ``input``, the next free index is the token's position, so the token is
+    # written there, without the root queries of the auto-index (see
+    # `_fills_one_element`); from the first other token on (a multi root), every
+    # token takes the auto-index. A node class with a data type hook of its own
+    # keeps the auto-index throughout: an element's own shorthand facts can
+    # read its data type once more than the root's do.
+    explicit = _keeps_query(type(node))
+    for i, obj in enumerate(tokens):
         obj = _sequence_to_node(obj)
         # Auto-wrap literals (int / float / list / tuple / numpy) in
         # _constant so the polymorphic ``choice.input[i]`` slot gets a
@@ -472,7 +482,11 @@ def choice(tokens: Sequence[Any], selector: Any = None) -> Any:
         # slot's data_type -- undefined for untyped multi inputs).
         if not isinstance(obj, Attribute):
             obj = _constant(obj)
-        node.input << obj
+        explicit = explicit and _fills_one_element(obj)
+        if explicit:
+            node.input[i] << obj
+        else:
+            node.input << obj
     return node.output
 
 

@@ -27,6 +27,7 @@ from rig._internal.memoize import memoize, vectorize
 from rig._internal.operands import operands
 from rig._internal.node_ops import NodeOp, SCOPE_COMPOUND, SCOPE_SCALAR
 from rig._internal.types import (
+    _fills_one_element,
     _get_compound,
     _is_compound,
     _is_list,
@@ -214,8 +215,14 @@ def _plus_minus_average_legacy(
     node = container.createNode("plusMinusAverage", name=name)
     node.operation << operation
 
+    # The node is new: while every operand so far filled one element of the
+    # multi, the next free index is the operand's position, so the operand is
+    # written there, without the root queries of the auto-index (see
+    # `_fills_one_element`); from the first other operand on, every operand
+    # takes the auto-index.
+    explicit = True
     if any(_is_compound(a) for a in args):
-        for obj in args:
+        for i, obj in enumerate(args):
             # A non-scalar literal vector ([x, y, z]) is NOT an Attribute, so
             # _is_compound is False for it; a bare ``input3D << [x, y, z]`` then
             # takes the multi-element write path (one scalar per index) instead
@@ -225,13 +232,22 @@ def _plus_minus_average_legacy(
             # plugs and scalar literals keep the auto-append ``<<`` (a scalar
             # broadcasts across the vec3 child).
             if _is_sequence(obj):
+                explicit = False
                 node.input3D[node.input3D.next_index] << obj
             else:
-                node.input3D << obj
+                explicit = explicit and _fills_one_element(obj)
+                if explicit:
+                    node.input3D[i] << obj
+                else:
+                    node.input3D << obj
         return node.output3D
 
-    for obj in args:
-        node.input1D << obj
+    for i, obj in enumerate(args):
+        explicit = explicit and _fills_one_element(obj)
+        if explicit:
+            node.input1D[i] << obj
+        else:
+            node.input1D << obj
     return node.output1D
 
 
