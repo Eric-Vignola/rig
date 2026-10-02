@@ -35,7 +35,13 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig.nodetypes._base import _handle_valid, _plug_identity_name, Attribute
+from rig.nodetypes._base import (
+    _dg_named_owner,
+    _ensure_dg_named,
+    _handle_valid,
+    _plug_identity_name,
+    Attribute,
+)
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
@@ -93,7 +99,19 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
     (world space) attr without its index. ``worldMatrix[0]`` and
     ``worldMatrix[1]`` get one key each, and a plug read through either
     instance path of a node gets the same key.
+
+    A plug whose owner names it as a DGNode does (`_dg_named_owner`) is not
+    named: naming it would raise only from the two checks it runs instead
+    (`_ensure_dg_named`), and its node part would be its owner's fn set name,
+    which `_named_dg_identity` finds to be the owner's, so the owner's identity
+    is read at once. Any other plug is named, and its node found by that name.
     """
+    owner = _dg_named_owner(attr)
+    if owner is not None:
+        _ensure_dg_named(attr, owner)
+        identity = _named_dg_identity(attr, None)
+        if identity is not None:
+            return (identity, _plug_identity_name(attr))
     node_str = attr.full_name.split(".", 1)[0]  # "node.attr" -> "node"
     identity = _named_dg_identity(attr, node_str)
     if identity is None:
@@ -101,14 +119,16 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
     return (identity, _plug_identity_name(attr))
 
 
-def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, int]]:
+def _named_dg_identity(attr: Attribute, node_str: Optional[str]) -> Optional[Tuple[str, int]]:
     """``_node_identity(node_str)`` read from the handle and fn set of the DG
     node object (``attr``'s owner) ``attr.full_name`` just took ``node_str``
     from, or None.
 
     A DG node's name names no other node, so when the live node object's own
     name is ``node_str``, resolving that name finds its node. A DAG path can go
-    stale (an instance removed), so a DAG node resolves by name.
+    stale (an instance removed), so a DAG node resolves by name. A ``node_str``
+    of None stands for the owner's own name: the caller checked that the owner
+    names the plug as a DGNode does (see `_attribute_key`).
     """
     node = attr._node
     try:
@@ -116,7 +136,7 @@ def _named_dg_identity(attr: Attribute, node_str: str) -> Optional[Tuple[str, in
             isinstance(node, DGNode)
             and node._objhandle.isValid()
             and not node._mobject.hasFn(OpenMaya.MFn.kDagNode)
-            and node._fn_set.name() == node_str
+            and (node_str is None or node._fn_set.name() == node_str)
         ):
             return (node._fn_set.uuid().asString(), node._objhandle.hashCode())
     except Exception:
