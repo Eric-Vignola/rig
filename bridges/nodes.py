@@ -62,6 +62,7 @@ from typing import Any, Callable
 
 from maya import cmds as _mc
 from maya.api import OpenMaya as _om
+from rig._internal.journal import statement
 
 
 # Per-name wrapper cache. Built lazily by ``__getattr__``.
@@ -220,7 +221,7 @@ def _make_factory(node_type: str) -> Callable:
         f"a wrong name raises TypeError and creates nothing.\n\n"
         f"Returns the new ``Node``."
     )
-    return factory
+    return statement(factory)
 
 
 def __getattr__(name: str) -> Callable:

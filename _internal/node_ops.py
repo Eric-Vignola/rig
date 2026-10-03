@@ -41,6 +41,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from maya import cmds
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import sequences
+from rig._internal.journal import statement, user_call
 from rig._internal.maya_version import get_target_version
 from rig._internal.memoize import (
     _ALL_NODEOP_CACHES,
@@ -132,6 +133,7 @@ class NodeOp:
 
     # -- dispatch -- #
 
+    @statement
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         # 1. all-numeric short-circuit (no Maya nodes -- no caching needed).
         #    Gated on ``constant_folding`` so ``force_nodes()`` forces even a
@@ -228,15 +230,17 @@ class NodeOp:
         args:   tuple,
         kwargs: dict,
     ) -> Any:
-        """Call ``fn`` with framework-managed scoping and (optionally) fan-out."""
+        """Call ``fn`` with framework-managed scoping and (optionally) fan-out.
+        An implementation that is not rig's own is code a user wrote
+        (`rig._internal.journal.user_call`)."""
         # Compound impl -> call directly (no compound probe of the args).
         if scope == SCOPE_COMPOUND:
-            return fn(*args, **kwargs)
+            return user_call(fn, *args, **kwargs)
 
         # Scalar / auto impl with non-compound input -> call directly.
         is_compound_input = any(_is_compound(a) for a in args)
         if not is_compound_input:
-            return fn(*args, **kwargs)
+            return user_call(fn, *args, **kwargs)
 
         # Scalar impl + compound input -> framework fan-out per channel.
         # ``_constant`` is a lazy import: ``_math_nodes`` imports ``NodeOp``
@@ -294,7 +298,7 @@ class NodeOp:
 
             output_plugs = []
             for channel_tuple in sequences(*channels_per_arg):
-                output_plugs.append(fn(*channel_tuple, **kwargs))
+                output_plugs.append(user_call(fn, *channel_tuple, **kwargs))
 
             count  = len(output_plugs)
             output = _constant([0] * count, name="output_plug1")

@@ -35,6 +35,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
+from rig._internal.journal import rig_code, statement
 from rig.nodetypes._base import (
     _dg_named_node,
     _dg_named_owner,
@@ -471,7 +472,8 @@ def memoize(
     wrapper._cache    = cache
     wrapper._foldable = foldable
     _ALL_MEMOIZED.append(wrapper)
-    return wrapper
+    # a statement for rig's own functions only: a user's body is code a user wrote
+    return statement(wrapper) if rig_code(func) else wrapper
 
 
 # --------------------------------------------------------------------- #
@@ -714,7 +716,8 @@ def vectorize(
         except Exception:
             return results
 
-    return wrapper
+    # a statement for rig's own functions only (as memoize)
+    return statement(wrapper) if rig_code(func) else wrapper
 
 
 # --------------------------------------------------------------------- #

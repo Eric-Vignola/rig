@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import barrier, cmds_edit
+from rig._internal.journal import barrier, cmds_edit, statement
 from rig.nodetypes import (
     _base as _nodetypes_base,
     dg_node as _dg_node_module,
@@ -491,6 +491,7 @@ class _ContainerStack:
         }
         return self
 
+    @statement
     def __enter__(self) -> Any:
         if self._pending is None:
             raise RuntimeError(
@@ -541,6 +542,7 @@ class _ContainerStack:
         # else None (flattened or disabled).
         return container_node
 
+    @statement
     def __exit__(self, _exc_type, _exc_val, _trace) -> None:
         if not self._stack:
             return
@@ -593,6 +595,7 @@ class _ContainerStack:
 
     # -- node management -- #
 
+    @statement
     def createNode(
         self,
         node_type:  str,
@@ -846,6 +849,7 @@ class _ContainerStack:
 
     # -- Publishing API (v4.G) -- #
 
+    @statement
     def publish_input(
         self,
         source,
@@ -966,6 +970,7 @@ class _ContainerStack:
             add_attr_kwargs = add_attr_kwargs,
         )
 
+    @statement
     def publish_output(
         self,
         source,
