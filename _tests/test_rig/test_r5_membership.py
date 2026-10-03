@@ -1,9 +1,11 @@
 """Round 5, B0, and container membership through ``cmds.container``.
 
-B0 (``rig.nodetypes.plugins``): `_register_api_edit` applies an ``MDGModifier`` inside
-``rigUndoableAPICommand`` (one unnamed undo step: undo is the modifier's ``undoIt``, redo
-its ``doIt``); `_api_edit_ready` says whether it may run (the command loads, Maya is not
-undoing or redoing). With undo off the command applies the edit and Maya keeps nothing.
+B0 (``rig.nodetypes.plugins``): `_register_api_edit` applies an ``MDGModifier`` and puts
+it on the undo queue through ``rigUndoableAPICommand`` (outside a journal statement, one
+unnamed undo step: undo is the modifier's ``undoIt``, redo its ``doIt``; round 5 D1
+journals it, ``rig._internal.journal``); `_api_edit_ready` says whether it may run (the
+command loads, Maya is not undoing or redoing). With undo off the edit is applied and
+Maya keeps nothing.
 
 C1 (eager API membership, 12f6921) is reverted (round 5 BCFIX): every member a scope
 makes joins its container through ``cmds.container -edit -addNode -force``, as in
@@ -26,6 +28,7 @@ from maya import cmds
 from maya.api import OpenMaya
 
 from rig import container, Node
+from rig._internal import journal
 from rig.bridges import commands as rc
 from rig.nodetypes import plugins, Transform
 from rig.nodetypes.plugins import UNDOABLE_API_COMMAND, _api_edit_ready, _register_api_edit
@@ -176,17 +179,18 @@ class TestRegisterApiEdit(_MembershipCase):
     def test_undo_off_applies_and_keeps_nothing(self):
         kept = []
 
-        class Tracked(plugins._APIEdit):
+        # the object registered: the journal of the edit (round 5 D1 retired _APIEdit)
+        class Tracked(journal._Journal):
             __slots__ = ("__weakref__",)
 
-            def __init__(self, modifier):
-                super().__init__(modifier)
+            def __init__(self, ops):
+                super().__init__(ops)
                 kept.append(weakref.ref(self))
 
         cmds.undoInfo(state=False)
         try:
             self.assertTrue(_api_edit_ready())
-            with mock.patch.object(plugins, "_APIEdit", Tracked):
+            with mock.patch.object(journal, "_Journal", Tracked):
                 _register_api_edit(_connect_modifier("a.outputX", "b.input1X"))
         finally:
             cmds.undoInfo(state=True)

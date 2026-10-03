@@ -9,7 +9,7 @@ from typing import Any, Sequence
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, outside, rig_code, statement, user_call
 from rig.nodetypes._base import (
     _MISSING,
     _attr_handle,
@@ -161,8 +161,8 @@ def _create_template(cls, args, kwargs):
     the call made before its error propagates: nothing half-built is left."""
     attrs = kwargs.pop(_CREATE_ATTRS, None)
     if not attrs:
-        new_node = cls._create(*args, **kwargs)
-        return cls.post_create(new_node, *args, **kwargs)
+        new_node = user_call(cls._create, *args, **kwargs)
+        return user_call(cls.post_create, new_node, *args, **kwargs)
     hook = _define_hook()
     with hook.chunk("rig.create"):
         node, _ = hook.track(_create_with_attrs, (cls, args, kwargs, attrs), {}, discard=True)
@@ -201,8 +201,8 @@ def _set_or_delete(node: Any, attrs: dict) -> None:
 
 def _create_with_attrs(cls, args, kwargs, attrs):
     """`_create_template`'s create, then the attribute values."""
-    new_node = cls._create(*args, **kwargs)
-    node     = cls.post_create(new_node, *args, **kwargs)
+    new_node = user_call(cls._create, *args, **kwargs)
+    node     = user_call(cls.post_create, new_node, *args, **kwargs)
     for attr, value in attrs.items():
         getattr(node, attr) << value
     return node
@@ -612,17 +612,17 @@ def _typed_creator(fn):
     name_index = params.index("name") if "name" in params else None
 
     def run(cls, args, kwargs):
-        return fn(cls, *args, **kwargs)
+        return user_call(fn, cls, *args, **kwargs)
 
     @functools.wraps(fn)
     def creator(cls, *args, **kwargs):
         hook = _TYPED_CREATE_HOOK
         if hook is None:
             kwargs.pop("container", None)
-            return fn(cls, *args, **kwargs)
+            return user_call(fn, cls, *args, **kwargs)
         return hook(cls, run, args, kwargs, name_index)
 
-    return creator
+    return statement(creator)
 
 
 # NURBS-surface ``cv`` / lattice ``pt``: the names a ComponentPlug may answer
@@ -903,6 +903,7 @@ class DGNode(Node):
             return plug
         return _named_through_owner(plug)
 
+    @statement
     def __setattr__(self, name: str, value: Any) -> None:
         """``node.tx = 5`` is sugar for ``node.tx << 5``.
 
@@ -931,8 +932,13 @@ class DGNode(Node):
         if found is not _MISSING:
             if name[:1] == "_" or hasattr(type(found), "__set__"):
                 # a property setter runs, a read-only one raises, a private
-                # class default is shadowed on the instance
-                object.__setattr__(self, name, value)
+                # class default is shadowed on the instance; a setter that is
+                # not rig's own is code a user wrote (journal.outside)
+                if rig_code(found.fset if isinstance(found, property) else type(found)):
+                    object.__setattr__(self, name, value)
+                else:
+                    with outside():
+                        object.__setattr__(self, name, value)
                 return
             # a callable shadows a method on this instance (monkeypatching,
             # ``mock.patch.object(node, "get_parent")``)
@@ -968,6 +974,7 @@ class DGNode(Node):
 
     # --- DSL operators
 
+    @statement
     def __lshift__(self, other: Any) -> Any:
         """``node << X`` -- inject: a membership node (a layer, a shader, an
         engine) or ``Tag`` makes the node a member, an
@@ -977,6 +984,7 @@ class DGNode(Node):
 
         return _node_lshift(self, other)
 
+    @statement
     def __rshift__(self, other: Any) -> Any:
         """``node >> None`` returns the node itself (a no-op: the node already is
         the typed node); ``node >> spec`` declares an output attribute and
@@ -1222,6 +1230,7 @@ class DGNode(Node):
         return cmds.createNode(cls.NATIVE_NODE_TYPE, name=name, skipSelect=skip)
 
     @classmethod
+    @statement
     def create(
         cls,
         *inputs:   Any,
@@ -1323,6 +1332,7 @@ class DGNode(Node):
         return hook(cls, _create_template, inputs, kwargs)
 
     @classmethod
+    @statement
     def define(
         cls,
         name:      str,
@@ -1412,7 +1422,9 @@ class DGNode(Node):
             return found if isinstance(found, cls) else cls._coerce(found)
 
         def make(made_name, parent_node):
-            return cls.create(name=made_name, parent=parent_node, container=container, **kwargs, **attrs)
+            return user_call(
+                cls.create, name=made_name, parent=parent_node, container=container, **kwargs, **attrs
+            )
 
         return _define(
             lambda args: f"{cls.__name__}.define({args})", cls.__name__, label, name, parent,

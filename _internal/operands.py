@@ -55,6 +55,7 @@ import inspect
 from typing import Any, Callable, Iterable, Optional, Tuple
 
 import numpy as np
+from rig._internal.journal import outside, statement
 from rig.nodetypes._base import _ensure_owner_alive, _match_enum_field, Attribute
 
 
@@ -161,7 +162,10 @@ def _prepared_operand(value: Any, where: str) -> Any:
     if isinstance(value, _UNORDERED):
         raise unordered_operand_error(where, value)
     if isinstance(value, collections.abc.Iterator):
-        return list(value)
+        # a user's generator runs outside the open statement (its own cmds
+        # edits and rig statements are recorded in their order)
+        with outside():
+            return list(value)
     return value
 
 
@@ -525,4 +529,4 @@ def operands(
         return func(*args, **kwargs)
 
     wrapper._operand_config = config
-    return wrapper
+    return statement(wrapper)

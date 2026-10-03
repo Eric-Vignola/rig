@@ -58,6 +58,7 @@ from rig.nodetypes._base import (
 )
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
+from rig._internal.journal import statement, user_call
 from rig._internal.node import Node
 from rig._internal.operands import (
     _CAN_HOLD_STR,
@@ -179,6 +180,7 @@ class List(list):
             getattr(x, name) if isinstance(x, (Plug, Node)) else x for x in self
         )
 
+    @statement
     def __setattr__(self, name: str, value: Any) -> None:
         if name.startswith("_"):
             object.__setattr__(self, name, value)
@@ -204,6 +206,7 @@ class List(list):
 
     # -- inject broadcast -- #
 
+    @statement
     def __lshift__(self, other: Any) -> Any:
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:
@@ -233,8 +236,8 @@ class List(list):
             # attribute, a setting that cannot apply) leaves every other as it was
             if len(self) > 1:
                 for x in self:
-                    other._precheck(x)
-            return List(other.apply(x) for x in self)
+                    user_call(other._precheck, x)
+            return List(user_call(other.apply, x) for x in self)
 
         # v4.F.b: empty List from ``multi[:]`` slicing on an
         # unpopulated multi + a sequence source -> route the write
@@ -288,6 +291,7 @@ class List(list):
 
     # -- introspect (numpy-aware `get()` + `>>` operator) -- #
 
+    @statement
     def __rshift__(self, other: Any) -> Any:
         """Broadcast ``__rshift__`` across each element.
 
@@ -529,6 +533,18 @@ class List(list):
             return hash(tuple(hash(x) for x in self))
         except TypeError:
             return id(self)
+
+
+# each broadcast operator is one journal statement
+for _operator in (
+    "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
+    "__truediv__", "__rtruediv__", "__pow__", "__rpow__", "__floordiv__",
+    "__rfloordiv__", "__mod__", "__rmod__", "__and__", "__rand__", "__or__",
+    "__ror__", "__xor__", "__rxor__", "__neg__", "__invert__",
+    "__eq__", "__ne__", "__ge__", "__le__", "__gt__", "__lt__",
+):
+    setattr(List, _operator, statement(List.__dict__[_operator]))
+del _operator
 
 
 def _lift_or_pass(obj: Any) -> Any:

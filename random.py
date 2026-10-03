@@ -62,6 +62,7 @@ from random import randint as _python_randint
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from rig._internal.container import container
+from rig._internal.journal import statement
 from rig._internal.math_nodes import condition, constant
 from rig._internal.memoize import (
     _ALL_NODEOP_CACHES,
@@ -164,7 +165,7 @@ def _memoize_on_seed(func: Callable[..., Any]) -> Callable[..., Any]:
         return result
 
     wrapper._cache = cache
-    return wrapper
+    return statement(wrapper)
 
 
 # --------------------------------------------------------------------- #

@@ -17,7 +17,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, outside, rig_code, statement
 from rig.nodetypes.errors import (
     _article,
     AmbiguousNodeError,
@@ -124,8 +124,12 @@ class NodeMeta(type):
         ``listConnections(type=)``) or type-checked. Anything else calls
         ``Cls(x)`` / ``Node(x)``, so no exact-class wrapper of a subtype node (a
         ``Transform`` object of a joint) reaches a user. A metaclass method, so
-        a node never has it."""
-        return type.__call__(cls, obj)
+        a node never has it. The constructor of a class that is not rig's own
+        is code a user wrote, run outside the open journal statement."""
+        if rig_code(cls):
+            return type.__call__(cls, obj)
+        with outside():
+            return type.__call__(cls, obj)
 
     def wrap(cls, value: Any) -> Any:
         """Wrap a ``maya.cmds`` result (str / list-of-str) as a node /
@@ -292,7 +296,7 @@ def _cast(obj: Any, build: bool = True) -> Any:
         # reference, which casts): a metaclass derived from NodeMeta may
         # override ``_wrap``. Its constructor may be a user's
         _USER_CODE_RUNS[0] += 1
-        inst = type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj._wrap(obj)
+        inst = _construct(cls_obj, obj)
     _CASTABLE_TYPES.add(key)
     return inst
 
@@ -345,9 +349,25 @@ def _cast_by_name(obj: str) -> Any:
         # as in `_cast`: no NodeMeta.__call__ frame, and a constructor that may
         # be a user's
         _USER_CODE_RUNS[0] += 1
-        return type.__call__(cls_obj, obj) if type(cls_obj) is NodeMeta else cls_obj._wrap(obj)
+        return _construct(cls_obj, obj)
 
     raise ValueError(f"Failed casting {obj}")
+
+
+def _construct(cls_obj: Any, obj: Any) -> Any:
+    """The node object of ``cls_obj`` for ``obj``, as `_cast` builds it: its
+    constructor (no ``NodeMeta.__call__`` frame), or the ``_wrap`` of a metaclass
+    derived from NodeMeta. Code a user wrote (a class or metaclass that is not
+    rig's own) runs outside the open journal statement."""
+    if type(cls_obj) is NodeMeta:
+        if rig_code(cls_obj):
+            return type.__call__(cls_obj, obj)
+        with outside():
+            return type.__call__(cls_obj, obj)
+    if rig_code(type(cls_obj)):
+        return cls_obj._wrap(obj)
+    with outside():
+        return cls_obj._wrap(obj)
 
 
 def _from_root(name: str) -> str:
@@ -2313,7 +2333,10 @@ class Attribute(str):
                 hook_node       = _hook_node(node)
                 _FALLBACK_QUERY = (self, typ, hook_node)
                 if hook_node is None or not _vouched_hook(type(node)):
+                    # code a user may have written: outside the journal statement
                     _USER_CODE_RUNS[0] += 1
+                    with outside():
+                        return node._attr_data_type_fallback(self)
                 return node._attr_data_type_fallback(self)
             finally:
                 _FALLBACK_QUERY = outer
@@ -3175,6 +3198,7 @@ class Node(metaclass=NodeMeta):
     """
 
     @classmethod
+    @statement
     def create(cls, node_type: str, *args: Any, **kwargs: Any) -> Any:
         """Create a new node of ``node_type`` and return the typed node.
 
@@ -3236,6 +3260,7 @@ class Node(metaclass=NodeMeta):
         return hook(node_type, args, kwargs)
 
     @classmethod
+    @statement
     def define(
         cls,
         node_type: str,

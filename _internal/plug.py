@@ -91,7 +91,7 @@ from typing import Any
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, run_statement, statement, user_call
 from rig.nodetypes._base import (
     _MISSING,
     _NON_MATRIX_ATTR_API_TYPES,
@@ -500,6 +500,7 @@ class Plug(Attribute):
 
     # -- assignment via attribute syntax -- #
 
+    @statement
     def __setattr__(self, name: str, value: Any) -> Any:
         """``plug.x = 5`` is sugar for ``plug.x << 5``.
 
@@ -594,6 +595,7 @@ class Plug(Attribute):
 
     # -- inject (the workhorse `<<` operator) -- #
 
+    @statement
     def __lshift__(self, other: Any) -> Any:
         """``plug << other`` -- set, connect, disconnect, or add an attribute.
 
@@ -648,9 +650,9 @@ class Plug(Attribute):
         if lazy.types._is_membership(other):
             return other._member().inject(self)
 
-        # Attribute spec.
+        # Attribute spec (a user's spec class is code a user wrote).
         if lazy.types._is_attribute_spec(other):
-            return other.apply(self)
+            return user_call(other.apply, self)
 
         # The operand shapes (F14): a set, frozenset or dict raises TypeError
         # (unordered), an iterator is read into a list. The common right-hand
@@ -716,6 +718,7 @@ class Plug(Attribute):
         """
         return _query_connections(self, source=False)
 
+    @statement
     def __rshift__(self, other: Any) -> Any:
         """``plug >> None`` => :meth:`get` (numpy-aware value).
 
@@ -1350,7 +1353,8 @@ def _checking_operands(method: Any) -> Any:
     of building an equal node it cannot set. A set, frozenset or dict operand
     raises TypeError too, and an iterator operand is read into a list, checked
     and passed to `method` as that list (a Plug operator takes one operand at
-    most). This is the one frame that checks a Plug operator's operands."""
+    most). This is the one frame that checks a Plug operator's operands, and
+    `method` runs as a journal statement (`run_statement`) from it."""
     dunder = method.__name__
 
     @functools.wraps(method)
@@ -1378,8 +1382,8 @@ def _checking_operands(method: Any) -> Any:
                 found  = _text_operand(listed)
                 if found is not None:
                     raise _operator_error(dunder, self, listed, found)
-                return method(self, listed)
-        return method(self, *other)
+                return run_statement(method, (self, listed), {})
+        return run_statement(method, (self, *other), {})
 
     return checked
 
@@ -2602,7 +2606,7 @@ def _fanout_channel(src: Any, dst: Any) -> None:
     if src is None:
         _disconnect_incoming(dst)
     elif types._is_attribute_spec(src):
-        src.apply(dst)
+        user_call(src.apply, dst)
     elif types._is_membership(src):
         raise TypeError(
             f"{src!r} names a collection and cannot be fanned into channel "

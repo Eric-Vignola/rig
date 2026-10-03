@@ -203,12 +203,17 @@ _RIG_CODE: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 def _in_rig(fn: Any) -> bool:
     module = getattr(fn, "__module__", None) or ""
-    return (module == "rig" or module.startswith("rig.")) and not module.startswith("rig.examples")
+    return (module == "rig" or module.startswith("rig.")) and not module.startswith(_NOT_RIG_CODE)
+
+
+# the packages of rig the barrier lint does not read: their code is a user's
+_NOT_RIG_CODE = ("rig.examples", "rig._tests")
 
 
 def rig_code(fn: Any) -> bool:
     """True if ``fn`` (a function, a method, a class) is defined in rig's own package, not in
-    ``rig.examples``: code the barrier rule and its lint cover. Cached per function, weakly."""
+    ``rig.examples`` or ``rig._tests``: code the barrier rule and its lint cover. Cached per
+    function, weakly."""
     fn = getattr(fn, "__func__", fn)
     try:
         return _RIG_CODE[fn]

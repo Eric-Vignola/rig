@@ -26,6 +26,7 @@ import numbers
 from typing import Any, Union
 
 import numpy as np
+from rig._internal.journal import user_call
 from rig.nodetypes._base import Attribute, Node
 from rig._internal.plug import Plug
 
@@ -69,7 +70,7 @@ def _node_lshift(node: Any, other: Any) -> Any:
 
     # 1. Attribute-spec injection -- add an attribute on this node.
     if _is_attribute_spec(other):
-        return other.apply(node)
+        return user_call(other.apply, node)
 
     # 2. Live Plug-typed matrix source on a transform -> decomposeMatrix
     #    shorthand. _matrix_to_transform handles the bare-node case

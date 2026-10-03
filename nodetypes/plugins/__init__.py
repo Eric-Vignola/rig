@@ -14,9 +14,10 @@ command is loaded is read from ``maya.cmds`` (about 0.1 us, where a
 again only after an unload.
 
 rig's own API edits go through the command: `_run_undoable` (an object with
-``doIt`` / ``undoIt`` / ``redoIt``) and `_register_api_edit` (an ``MDGModifier``;
-`_api_edit_ready` says whether it may run, else the caller takes its ``cmds``
-route), each one unnamed undo step.
+``doIt`` / ``undoIt`` / ``redoIt``, one unnamed undo step) and `_register_api_edit`
+(an ``MDGModifier``, journaled: one undo step per statement, see
+`rig._internal.journal`; `_api_edit_ready` says whether it may run, else the
+caller takes its ``cmds`` route).
 """
 
 import os
@@ -25,6 +26,7 @@ from typing import List, Optional, Union
 
 import maya.cmds as cmds
 from maya.api import OpenMaya
+from rig._internal import journal
 from rig._internal.journal import barrier, cmds_edit
 
 _BUNDLED_DIR       = os.path.dirname(os.path.abspath(__file__))
@@ -147,24 +149,6 @@ def _run_undoable(obj):
     return command.run(obj)
 
 
-class _APIEdit:
-    """[Internal] An ``MDGModifier`` as the object `_run_undoable` takes: ``doIt`` and
-    ``redoIt`` run the modifier's ``doIt``, ``undoIt`` its ``undoIt``."""
-
-    __slots__ = ("m",)
-
-    def __init__(self, modifier):
-        self.m = modifier
-
-    def doIt(self):
-        self.m.doIt()
-
-    def undoIt(self):
-        self.m.undoIt()
-
-    def redoIt(self):
-        self.m.doIt()
-
 
 def _api_edit_ready() -> bool:
     """[Internal] True when `_register_api_edit` may run now: ``rigUndoableAPICommand``
@@ -187,14 +171,16 @@ def _api_edit_ready() -> bool:
 
 def _register_api_edit(modifier) -> None:
     """[Internal] Applies ``modifier`` (an ``MDGModifier`` holding the edit, not done
-    yet) inside ``rigUndoableAPICommand`` (`_run_undoable`): one unnamed undo step whose
-    undo is the modifier's ``undoIt`` and whose redo its ``doIt``; inside an undo chunk,
-    the step joins the chunk. The caller has checked `_api_edit_ready`. The
-    registration adds about 8 us to the modifier's own ``doIt`` in a wired scene, and
+    yet) and journals it (`rig._internal.journal.add`): inside a statement it joins
+    the statement's one undo step; outside any, it is one unnamed undo step of
+    ``rigUndoableAPICommand`` on its own (inside an undo chunk, the step joins the
+    chunk). Undo is the modifier's ``undoIt``, redo its ``doIt``. The caller has
+    checked `_api_edit_ready`. A registration costs about 8 us in a wired scene, and
     about 18 us inside a rail_spine build.
 
-    An exception out of the modifier's ``doIt`` (or out of the command) registers
-    nothing and propagates; the caller then runs the modifier's ``undoIt`` (what ``doIt``
-    did before it failed) and takes its ``cmds`` route outside its ``except`` block, so
-    no API traceback is chained onto an error of that route."""
-    _run_undoable(_APIEdit(modifier))
+    An exception out of the modifier's ``doIt`` (or out of the registration)
+    registers nothing and propagates; the caller then runs the modifier's ``undoIt``
+    (what ``doIt`` did before it failed) and takes its ``cmds`` route outside its
+    ``except`` block, so no API traceback is chained onto an error of that route."""
+    modifier.doIt()
+    journal.add(modifier)

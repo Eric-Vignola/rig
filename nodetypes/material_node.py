@@ -64,7 +64,7 @@ import re
 from typing import Any, Callable
 
 from maya import cmds
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
 from rig.nodetypes._base import (
@@ -347,6 +347,7 @@ class Material(DGNode):
         return own
 
     @classmethod
+    @statement
     def create(
         cls,
         *inputs:   Any,
@@ -432,6 +433,7 @@ class Material(DGNode):
         return node
 
     @classmethod
+    @statement
     def define(
         cls,
         name:      str,
@@ -541,6 +543,7 @@ class Material(DGNode):
         ``x >> Blinn()`` is the operator spelling."""
         return cls._kind()._enumerate(x)
 
+    @statement
     def astype(
         self,
         to:      Any,
