@@ -11,6 +11,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
+from rig._internal.journal import cmds_edit
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes.geometry import Geometry, _shape_create_name
 
@@ -448,9 +449,9 @@ def _create_curve(
             ) from None
         if name:
             # the shape follows the transform (curveShape<N> -> <name>Shape)
-            xform = cmds.rename(xform, name)
+            xform = cmds_edit.rename(xform, name)
     except BaseException:
         if handle.isValid():
-            cmds.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+            cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
         raise
     return xform

@@ -11,6 +11,7 @@ from typing import Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, Attribute
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _typed_creator
@@ -107,15 +108,15 @@ class Transform(DAGNode):
         nodes = [dup]
         for each in dup.get_children(children=True) or []:
             if each.has_base_type("transform"):
-                cmds.delete(each)
+                cmds_edit.delete(each)
             elif each.find_attr("intermediateObject").get():
-                cmds.delete(each)
+                cmds_edit.delete(each)
             else:
                 nodes.append(each)
 
         if clean_sets:
             # remove geom from all display layers
-            cmds.editDisplayLayerMembers("defaultLayer", *nodes, noRecurse=True)
+            cmds_edit.editDisplayLayerMembers("defaultLayer", *nodes, noRecurse=True)
             # remove geom from all object sets
             for node in nodes:
                 attrs = cmds.listConnections(
@@ -129,7 +130,7 @@ class Transform(DAGNode):
                 )
                 if attrs:
                     for src, dst in zip(*[iter(attrs)] * 2):
-                        cmds.disconnectAttr(src, dst)
+                        cmds_edit.disconnectAttr(src, dst)
 
         # clean xform
         if clean_xform:
@@ -234,7 +235,7 @@ class Transform(DAGNode):
     def freeze(self, *args, **kwargs) -> None:
         """Thin wrapper around cmds.makeIdentity() function."""
         kwargs["apply"] = kwargs.get("apply", kwargs.get("a", True))
-        cmds.makeIdentity(self, *args, **kwargs)
+        cmds_edit.makeIdentity(self, *args, **kwargs)
 
     def get_matrix(
         self, world_space: bool = True, as_transform_matrix: bool = False
@@ -268,7 +269,7 @@ class Transform(DAGNode):
         if isinstance(matrix, OpenMaya.MTransformationMatrix):
             matrix = matrix.asMatrix()
 
-        cmds.xform(
+        cmds_edit.xform(
             self.name,
             worldSpace  = world_space,
             objectSpace = not world_space,
@@ -289,7 +290,7 @@ class Transform(DAGNode):
         self, pivot: OpenMaya.MVector | list[float], world_space: bool = True
     ) -> None:
         """Sets both the scale and rotate pivots."""
-        cmds.xform(self.name, pivots=pivot, worldSpace=world_space)
+        cmds_edit.xform(self.name, pivots=pivot, worldSpace=world_space)
 
     def match_matrix(
         self, target_transform: Transform, world_space: bool = False
@@ -524,16 +525,16 @@ class Transform(DAGNode):
                 if node.node_type == "space_transform":
                     """creates a RTR space_transform box """
                     name = node.name
-                    obj  = _cast(cmds.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
+                    obj  = _cast(cmds_edit.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
                     if parent is not None:
-                        cmds.parent(obj.long_name, parent)
+                        cmds_edit.parent(obj.long_name, parent)
                 else:
                     obj = _create_nested(node.node_type, name=node, parent=parent)
 
             else:
-                obj = _cast(cmds.spaceLocator(name=node.name)[0])
+                obj = _cast(cmds_edit.spaceLocator(name=node.name)[0])
                 if parent is not None:
-                    cmds.parent(obj.long_name, parent)
+                    cmds_edit.parent(obj.long_name, parent)
 
             # rename the node's string name with the node object
             # in case of scene duplicate during parenting.
@@ -554,7 +555,7 @@ class Transform(DAGNode):
 
         # return the created nodes
         created = [str(x.name) for x in hierarchy]
-        cmds.select(created)
+        cmds_edit.select(created)
         return created
 
     @staticmethod

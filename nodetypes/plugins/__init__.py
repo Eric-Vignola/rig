@@ -25,6 +25,7 @@ from typing import List, Optional, Union
 
 import maya.cmds as cmds
 from maya.api import OpenMaya
+from rig._internal.journal import barrier, cmds_edit
 
 _BUNDLED_DIR       = os.path.dirname(os.path.abspath(__file__))
 _PLUGIN_EXTENSIONS = (".py", ".mll", ".so", ".bundle")
@@ -112,7 +113,7 @@ def load_plugin(
         if unload_on_exit:
             for name in reversed(loaded):
                 try:
-                    cmds.unloadPlugin(name)
+                    cmds_edit.unloadPlugin(name)
                 except Exception as error:  # noqa: BLE001 (a refusal is reported, not raised)
                     cmds.warning(f"load_plugin: could not unload {name}: {str(error).strip()}")
                 else:
@@ -134,7 +135,11 @@ def _run_undoable(obj):
     would be its own undo step); inside a user's or rig's undo chunk, the step
     joins that chunk. Loads rig's plug-in the first time (and again after an
     unload); the command is fetched from ``maya.cmds`` on every call, never
-    kept across a reload. Returns what the command returns."""
+    kept across a reload. Returns what the command returns.
+
+    A journal barrier: the statement's pending API edits are registered first
+    (`rig._internal.journal`), so ``obj``'s step comes after them."""
+    barrier()
     command = getattr(cmds, UNDOABLE_API_COMMAND, None)
     if command is None:
         _ensure_loaded("undoable_api_command", True)

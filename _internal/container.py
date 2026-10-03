@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import barrier, cmds_edit
 from rig.nodetypes import (
     _base as _nodetypes_base,
     dg_node as _dg_node_module,
@@ -657,7 +658,7 @@ class _ContainerStack:
 
         # Add to the leaf real container (and record on every frame) by default.
         if container is None or container:
-            self._add(node)
+            self._add(node, made=True)
 
         return node
 
@@ -666,8 +667,15 @@ class _ContainerStack:
         and record its UUID in every frame on the stack."""
         self._add(node)
 
-    def _add(self, node: Any) -> None:
-        """:meth:`add`, for a node just created or one the caller holds."""
+    def _add(self, node: Any, made: bool = False) -> None:
+        """:meth:`add`, for a node just created or one the caller holds.
+
+        ``made``: `createNode` made the node just now. Its member add then
+        stays a raw ``cmds`` edit, not a journal barrier: no pending API edit
+        can reference a node made after it, and membership is state no
+        journaled edit reads or writes. Every other add registers the pending
+        journal first (a node the journal made, such as a unitConversion, is
+        added after it)."""
         if not self._stack:
             return
 
@@ -698,6 +706,8 @@ class _ContainerStack:
         # Add to the leaf real container, if one exists.
         leaf = self._leaf_real_container()
         if leaf is not None:
+            if not made:
+                barrier()
             try:
                 cmds.container(str(leaf), edit=True, addNode=node_names, force=True)
             except RuntimeError as e:
@@ -1136,7 +1146,7 @@ def _discard_made(handles: list) -> None:
     ]
     if alive:
         try:
-            cmds.delete(alive)
+            cmds_edit.delete(alive)
         except RuntimeError as error:
             LOGGER.debug("could not delete %s after a failed create: %s", alive, error)
 
@@ -1193,13 +1203,13 @@ def _gc_tag(node_name: str, node: Any = None) -> None:
     if node is not None and _api_gc_tag(node_name, node):
         return
     try:
-        cmds.addAttr(
+        cmds_edit.addAttr(
             node_name,
             longName      = _RIG_TAG,
             attributeType = "bool",
             hidden        = True,
         )
-        cmds.setAttr(f"{node_name}.{_RIG_TAG}", True, lock=True)
+        cmds_edit.setAttr(f"{node_name}.{_RIG_TAG}", True, lock=True)
     except RuntimeError:
         pass
 
@@ -1751,15 +1761,15 @@ def _get_or_create_attributes_node(container_node) -> "Node":
         "network", name=f"{ctn}_attributes", skipSelect=True
     )
     try:
-        cmds.addAttr(
+        cmds_edit.addAttr(
             node_name, longName=_ATTRIBUTES_MARKER, attributeType="bool",
             hidden=True,
         )
-        cmds.setAttr(f"{node_name}.{_ATTRIBUTES_MARKER}", True, lock=True)
+        cmds_edit.setAttr(f"{node_name}.{_ATTRIBUTES_MARKER}", True, lock=True)
     except RuntimeError as e:
         LOGGER.debug("Failed to tag attributes node %s: %s", node_name, e)
     try:
-        cmds.container(ctn, edit=True, addNode=[node_name], force=True)
+        cmds_edit.container(ctn, edit=True, addNode=[node_name], force=True)
     except RuntimeError as e:
         LOGGER.debug(
             "Failed to add attributes node %s to %s: %s", node_name, ctn, e
@@ -1779,8 +1789,8 @@ def _publish_native(container_node, inner_plug, name: str) -> str:
     raising. Returns the actual published name.
     """
     ctn       = str(container_node)
-    published = cmds.container(ctn, edit=True, publishName=name) or name
-    cmds.container(ctn, edit=True, bindAttr=(str(inner_plug), published))
+    published = cmds_edit.container(ctn, edit=True, publishName=name) or name
+    cmds_edit.container(ctn, edit=True, bindAttr=(str(inner_plug), published))
     return published
 
 
@@ -1980,7 +1990,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
             break
     if bound_plug is not None:
         try:
-            cmds.container(ctn, edit=True, unbindAttr=(bound_plug, name))
+            cmds_edit.container(ctn, edit=True, unbindAttr=(bound_plug, name))
             found = True
         except RuntimeError as e:
             LOGGER.debug("unbindAttr %s.%s failed: %s", ctn, name, e)
@@ -1995,7 +2005,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
         published = []
     if name in published:
         try:
-            cmds.container(ctn, edit=True, unpublishName=name)
+            cmds_edit.container(ctn, edit=True, unpublishName=name)
             found = True
         except (
             RuntimeError,
@@ -2022,7 +2032,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
                 and cmds.objExists(f"{owner}.{attr}")
             ):
                 try:
-                    cmds.deleteAttr(f"{owner}.{attr}")
+                    cmds_edit.deleteAttr(f"{owner}.{attr}")
                 except RuntimeError as e:
                     LOGGER.debug("deleteAttr %s.%s failed: %s", owner, attr, e)
             del reg[name]
@@ -2033,7 +2043,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
         owner_node = bound_plug.split(".", 1)[0]
         if _is_attributes_node(owner_node):
             try:
-                cmds.deleteAttr(bound_plug)
+                cmds_edit.deleteAttr(bound_plug)
             except RuntimeError as e:
                 LOGGER.debug("deleteAttr %s failed: %s", bound_plug, e)
 
@@ -2250,7 +2260,7 @@ def _add_attr_with_compound_children(node_name: str, kwargs: Dict[str, Any]) -> 
     at   = kwargs.get("at")
 
     if at not in _COMPOUND_CHILDREN:
-        cmds.addAttr(node_name, **kwargs)
+        cmds_edit.addAttr(node_name, **kwargs)
         return
 
     child_at, axes = _COMPOUND_CHILDREN[at]
@@ -2258,9 +2268,9 @@ def _add_attr_with_compound_children(node_name: str, kwargs: Dict[str, Any]) -> 
     parent_kwargs = {k: v for k, v in kwargs.items() if k not in _CHILD_ONLY_KWARGS}
     child_extra   = {k: v for k, v in kwargs.items() if k in _CHILD_ONLY_KWARGS}
 
-    cmds.addAttr(node_name, **parent_kwargs)
+    cmds_edit.addAttr(node_name, **parent_kwargs)
     for axis in axes:
-        cmds.addAttr(
+        cmds_edit.addAttr(
             node_name,
             longName      = f"{name}{axis}",
             attributeType = child_at,
@@ -3081,7 +3091,7 @@ def cleanup(
     all_to_delete = obsolete | empty_ctns
     if all_to_delete and not dry_run:
         try:
-            cmds.delete(list(all_to_delete))
+            cmds_edit.delete(list(all_to_delete))
         except RuntimeError as e:
             LOGGER.debug("cmds.delete failed in cleanup: %s", e)
 

@@ -91,6 +91,7 @@ from typing import Any
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import (
     _MISSING,
     _NON_MATRIX_ATTR_API_TYPES,
@@ -1817,7 +1818,7 @@ def _relock_chain(saved: list) -> None:
     for name, was_locked in saved:
         if was_locked:
             try:
-                cmds.setAttr(name, lock=True)
+                cmds_edit.setAttr(name, lock=True)
             except RuntimeError as relock_err:
                 LOGGER.error(
                     "could not re-lock %s after disconnect (left unlocked): %s",
@@ -1846,7 +1847,7 @@ def _unlock_lock_chain(dst: Attribute) -> list:
             own_locked = bool(cmds.getAttr(name, lock=True))
             saved.append((name, own_locked))
             if own_locked:
-                cmds.setAttr(name, lock=False)
+                cmds_edit.setAttr(name, lock=False)
     except RuntimeError as e:
         _relock_chain(saved)  # never leave the chain partially unlocked
         raise InjectionError(
@@ -2182,7 +2183,7 @@ def _do_destroy(
     # container node: ``container_node << destroy("published_name")``.
 
     # Step 6 -- actually delete. Let Maya raise on locked/system attrs.
-    cmds.deleteAttr(plug_str)
+    cmds_edit.deleteAttr(plug_str)
 
 
 def _attribute_type_or_none(dst: Any) -> str | None:
@@ -2670,7 +2671,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
                     container.absorb_unit_conversions(dst_attr)
                 else:
                     # Fallback for raw-string dst we couldn't coerce.
-                    cmds.connectAttr(str(src), str(dst), force=True)
+                    cmds_edit.connectAttr(str(src), str(dst), force=True)
                     container.absorb_unit_conversions(str(dst))
             except RuntimeError as e:
                 raise InjectionError(
@@ -2683,7 +2684,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
         if dst_attr is None:
             # Raw-string dst we couldn't coerce to Attribute.
             try:
-                cmds.setAttr(str(dst), src)
+                cmds_edit.setAttr(str(dst), src)
             except (RuntimeError, TypeError) as e:
                 raise InjectionError(f"Cannot set {str(dst)!r}: {e}") from e
             return
@@ -2713,7 +2714,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
                 _do_set(dst_attr, src, type="string")
         else:
             try:
-                cmds.setAttr(str(dst), src, type="string")
+                cmds_edit.setAttr(str(dst), src, type="string")
             except (RuntimeError, TypeError) as e:
                 raise InjectionError(f"Cannot set {str(dst)!r}: {e}") from e
         return
@@ -2731,7 +2732,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
                 _do_set(dst_attr, *src, type="matrix")
             else:
                 try:
-                    cmds.setAttr(str(dst), *src, type="matrix")
+                    cmds_edit.setAttr(str(dst), *src, type="matrix")
                 except (RuntimeError, TypeError) as e:
                     raise InjectionError(f"Cannot set {str(dst)!r}: {e}") from e
             return

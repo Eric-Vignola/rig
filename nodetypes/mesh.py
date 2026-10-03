@@ -12,8 +12,9 @@ from numbers import Number
 from typing import Generator, List
 
 import numpy as np
-from maya import cmds, mel
+from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit, mel_eval
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
@@ -452,7 +453,7 @@ class Mesh(Geometry):
         """
         map_name = f"{self.name}.{map_name}"
         if cmds.objExists(map_name):
-            cmds.deleteAttr(map_name)
+            cmds_edit.deleteAttr(map_name)
 
     def rename_uv_set(self, new_name: str, uv_set: str | None = None) -> None:
         """Renames the current uv set: one undo step.
@@ -576,8 +577,8 @@ class Mesh(Geometry):
 
         with _undo_chunk("rig.Mesh.bake_deformation"):
             # set to bind pose
-            cmds.select(self.name, replace=True)
-            mel.eval("gotoBindPose;")
+            cmds_edit.select(self.name, replace=True)
+            mel_eval("gotoBindPose;")
 
             # bake delta mush, use a high max inf count to maintain fidelity
             # (None: as many as the skeleton has joints, which is no cap)
@@ -585,7 +586,7 @@ class Mesh(Geometry):
                 bake_cap = len(cmds.ls("root_joint", dag=True, type="joint"))
             else:
                 bake_cap = max(8, max_influences)
-            cmds.bakeDeformer(
+            cmds_edit.bakeDeformer(
                 srcSkeletonName = "root_joint",
                 srcMeshName     = self.name,
                 dstSkeletonName = "root_joint",
@@ -972,8 +973,8 @@ class Mesh(Geometry):
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
         paint_attr = f"{self.NATIVE_NODE_TYPE}.{self.long_name}.{map_attr.name}"
-        cmds.select(map_attr.node, replace=True)
-        mel.eval(
+        cmds_edit.select(map_attr.node, replace=True)
+        mel_eval(
             f'artSetToolAndSelectAttr("artAttrCtx", "{paint_attr}");artAttrInitPaintableAttr;'
         )
 
@@ -1576,17 +1577,17 @@ def _create_mesh(
             else:
                 fn.createUVSet(uv.name)
                 _write_uv_set(fn, uv.name, uv, clear=False)
-        cmds.sets(xform, forceElement="initialShadingGroup")
+        cmds_edit.sets(xform, forceElement="initialShadingGroup")
         if name:
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
-            xform = cmds.rename(xform, name)
+            xform = cmds_edit.rename(xform, name)
         matrix = mesh_data.matrix.ravel()
         if not np.array_equal(matrix, _IDENTITY_16):
             # a new transform is at rest already (world-space data has no matrix)
-            cmds.xform(xform, matrix=matrix)
+            cmds_edit.xform(xform, matrix=matrix)
     except BaseException:
         if handle.isValid():
-            cmds.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+            cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
         raise
     return xform
 

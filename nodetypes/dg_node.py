@@ -9,6 +9,7 @@ from typing import Any, Sequence
 
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import (
     _MISSING,
     _attr_handle,
@@ -192,7 +193,7 @@ def _set_or_delete(node: Any, attrs: dict) -> None:
             getattr(node, attr) << value
     except BaseException:
         try:
-            cmds.delete(node.long_name if isinstance(node.fn_set, OpenMaya.MFnDagNode) else node.name)
+            cmds_edit.delete(node.long_name if isinstance(node.fn_set, OpenMaya.MFnDagNode) else node.name)
         except (RuntimeError, ValueError):
             pass
         raise
@@ -522,7 +523,7 @@ def _define(
             # member: deleting it deletes the container
             alive = [n for n in created if cmds.objExists(n) and cmds.nodeType(n) != "hyperLayout"]
             if alive:
-                cmds.delete(alive)
+                cmds_edit.delete(alive)
             raise NodeTypeError(
                 name, label, label,
                 message=(
@@ -1064,7 +1065,7 @@ class DGNode(Node):
         """Renames the node."""
         new_name = str(new_name)
         if self.short_name != new_name:
-            cmds.rename(self.name, new_name)
+            cmds_edit.rename(self.name, new_name)
 
     @classmethod
     def is_type(cls, node_name, failfast: bool = False, **kwargs) -> bool:
@@ -1431,7 +1432,7 @@ class DGNode(Node):
     def duplicate(self, *args, **kwargs) -> list[DGNode]:
         """Thin wrapper around `cmds.duplicate()`."""
         old_nodes = set(cmds.ls(dagObjects=True, long=True))
-        cmds.duplicate(self.name, *args, **kwargs)
+        cmds_edit.duplicate(self.name, *args, **kwargs)
         if kwargs.get("returnRootsOnly", kwargs.get("rr", False)):
             for node in cmds.ls(dagObjects=True, long=True):
                 if node not in old_nodes:
@@ -1446,7 +1447,7 @@ class DGNode(Node):
     ) -> None:
         """Thin wrapper around `cmds.delete()`.
         If `nodes` is given, delete them. Otherwise delete this node."""
-        cmds.delete(nodes or self.name, **kwargs)
+        cmds_edit.delete(nodes or self.name, **kwargs)
 
     # --- namespace
 
@@ -1458,8 +1459,8 @@ class DGNode(Node):
     @namespace.setter
     def namespace(self, namespace: str) -> None:
         """Sets the namespace of this node."""
-        if not cmds.namespace(exists=namespace):
-            cmds.namespace(add=namespace)
+        if not cmds_edit.namespace(exists=namespace):
+            cmds_edit.namespace(add=namespace)
         self.rename(f"{namespace}:{self.clean_name}")
 
     # --- attribute methods
@@ -1757,7 +1758,7 @@ class DGNode(Node):
             kwargs.pop("ln")
 
         # add attribute
-        cmds.addAttr(self.name, **kwargs)
+        cmds_edit.addAttr(self.name, **kwargs)
 
         # compound attr are not actually created until all child attrs are added
         # there fore quiet is set to True so that find_attr won't fail
@@ -1768,7 +1769,7 @@ class DGNode(Node):
         if self.has_attr(attr):
             if isinstance(attr, Attribute):
                 attr = attr.name
-            cmds.deleteAttr(self.name, attribute=attr)
+            cmds_edit.deleteAttr(self.name, attribute=attr)
             return True
         return False
 
@@ -1786,9 +1787,9 @@ class DGNode(Node):
                     raise RuntimeError(
                         f"Attribute {old_name} does not belong to {self}"
                     )
-                cmds.renameAttr(old_name.full_name, new_name)
+                cmds_edit.renameAttr(old_name.full_name, new_name)
             else:
-                cmds.renameAttr(f"{self.name}.{old_name}", new_name)
+                cmds_edit.renameAttr(f"{self.name}.{old_name}", new_name)
 
         return self.find_attr(new_name)
 
@@ -1860,7 +1861,7 @@ class DGNode(Node):
         )
         if result:
             for i in range(0, len(result), 2):
-                cmds.disconnectAttr(result[i], result[i + 1])
+                cmds_edit.disconnectAttr(result[i], result[i + 1])
 
 
 _PLAIN_CREATES.add(DGNode._create.__func__)

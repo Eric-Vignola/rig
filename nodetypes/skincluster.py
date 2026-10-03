@@ -11,6 +11,7 @@ from typing import Callable, List, Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
+from rig._internal.journal import cmds_edit
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
@@ -165,10 +166,10 @@ class SkinCluster(Deformer):
             # mesh that drives it (listHistory reaches them too)
             skin = [s.name for s in _skinclusters_of(_cast(geom))]
             if skin:
-                cmds.delete(skin)
+                cmds_edit.delete(skin)
 
             # make the skincluster
-            name = cmds.skinCluster(influences, geom, **kwargs)[0]
+            name = cmds_edit.skinCluster(influences, geom, **kwargs)[0]
 
             # weights columns already align with skin_data.influences (creation
             # preserves order), so set them directly without serialize/conform
@@ -234,13 +235,13 @@ class SkinCluster(Deformer):
         # pickers that track selection order read the last one.
         ordered = cmds.ls(orderedSelection=True, long=True) or []
         try:
-            cmds.skinCluster(self.name, edit=True, addInfluence=infs, wt=0.0)
+            cmds_edit.skinCluster(self.name, edit=True, addInfluence=infs, wt=0.0)
         finally:
             if ordered:
-                cmds.select(ordered[:-1], replace=True)
-                cmds.select(ordered[-1], add=True)
+                cmds_edit.select(ordered[:-1], replace=True)
+                cmds_edit.select(ordered[-1], add=True)
             else:
-                cmds.select(clear=True)
+                cmds_edit.select(clear=True)
 
     def remove_influence_objects(self, infs: INF_TYPE) -> None:
         """Removes influence objects from this skincluster.
@@ -248,7 +249,7 @@ class SkinCluster(Deformer):
         Args:
             infs: A list of influence object names.
         """
-        cmds.skinCluster(self.name, edit=True, removeInfluence=infs)
+        cmds_edit.skinCluster(self.name, edit=True, removeInfluence=infs)
 
     def set_influence_objects(self, infs: INF_TYPE) -> None:
         """Sets the influence objects of this skincluster.
@@ -382,20 +383,20 @@ class SkinCluster(Deformer):
 
         skin   = skins[0]
         joints = cmds.skinCluster(skin, query=True, influence=True)
-        cmds.setAttr(skin + ".envelope", 0)
-        cmds.skinCluster(skin, edit=True, unbindKeepHistory=True)
+        cmds_edit.setAttr(skin + ".envelope", 0)
+        cmds_edit.skinCluster(skin, edit=True, unbindKeepHistory=True)
 
         # delete bindPose
         dagPose = cmds.dagPose(transform, query=True, bindPose=True)
         if dagPose:
-            cmds.delete(dagPose)
+            cmds_edit.delete(dagPose)
         dagPose = cmds.listConnections(skin + ".bindPose", d=False, type="dagPose")
         if dagPose:
-            cmds.delete(dagPose)
+            cmds_edit.delete(dagPose)
 
         # rebind
-        cmds.skinCluster(joints, shape, toSelectedBones=True)
-        cmds.setAttr(skin + ".envelope", 1)
+        cmds_edit.skinCluster(joints, shape, toSelectedBones=True)
+        cmds_edit.setAttr(skin + ".envelope", 1)
 
     def get_mesh(self) -> Mesh:
         """Returns the mesh this skincluster is attached to."""

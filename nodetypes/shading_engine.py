@@ -36,6 +36,7 @@ from typing import Any, Iterator, Sequence
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
@@ -154,7 +155,7 @@ class ShadingEngine(ObjectSet):
                 ``empty`` are always set.
         """
         name = kwargs.pop("name", kwargs.pop("n", None)) or cls.NATIVE_NODE_TYPE
-        return cmds.sets(
+        return cmds_edit.sets(
             renderable=True, noSurfaceShader=True, empty=True, name=name, **kwargs
         )
 
@@ -221,7 +222,7 @@ class ShadingEngine(ObjectSet):
         engine = cls.create(name=default_name)
         engine.set_material(material)
         if not _listed(shader):
-            cmds.connectAttr(
+            cmds_edit.connectAttr(
                 f"{material}.message", "defaultShaderList1.shaders", nextAvailable=True
             )
         return engine
@@ -245,7 +246,7 @@ class ShadingEngine(ObjectSet):
         source = str(material)
         if "." not in source:
             source = f"{source}.outColor"
-        cmds.connectAttr(source, f"{self.name}.surfaceShader", force=True)
+        cmds_edit.connectAttr(source, f"{self.name}.surfaceShader", force=True)
 
     def get_material_info(self) -> list[str]:
         """Returns the materialInfo nodes attached to this engine."""
@@ -319,13 +320,13 @@ class ShadingEngine(ObjectSet):
         touched = [_long_name(x) for x in touched]
         before  = self._group_ids(touched)
 
-        cmds.sets(members, edit=True, forceElement=self.name)
+        cmds_edit.sets(members, edit=True, forceElement=self.name)
 
         if normalise:
             self._renormalise(touched)
         for group_id in before | self._group_ids(touched):
             if cmds.objExists(group_id) and not cmds.listConnections(group_id):
-                cmds.delete(group_id)
+                cmds_edit.delete(group_id)
 
     def _renormalise(self, touched: Sequence[str]) -> None:
         """[Internal] Re-assigns at object level the touched, non-instanced meshes
@@ -340,7 +341,7 @@ class ShadingEngine(ObjectSet):
             if path in touched and len(ids) == OpenMaya.MFnMesh(dagpath).numPolygons:
                 paths.append(path)
         if paths:
-            cmds.sets(paths, edit=True, forceElement=self.name)
+            cmds_edit.sets(paths, edit=True, forceElement=self.name)
 
     @staticmethod
     def _group_ids(shapes: Sequence[str]) -> set[str]:

@@ -11,6 +11,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
+from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import _connected_attrs, Attribute
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.geometry import iter_component_ranges
@@ -85,7 +86,7 @@ class BlendShape(Deformer):
         if "foc" in kwargs:
             kwargs.pop("foc")
 
-        name = cmds.blendShape(*geoms, **kwargs)[0]
+        name = cmds_edit.blendShape(*geoms, **kwargs)[0]
 
         if morphs:
             cls._wrap(name).set_targets_data(morphs)
