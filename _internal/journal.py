@@ -244,7 +244,10 @@ class _Edits:
         def command(*args: Any, **kwargs: Any) -> Any:
             if _S.pending:
                 _flush()
-            return getattr(_cmds, name)(*args, **kwargs)
+            if kwargs:
+                return getattr(_cmds, name)(*args, **kwargs)
+            # a maya.cmds function given an empty keyword dict costs about 1 us more
+            return getattr(_cmds, name)(*args)
 
         command.__name__ = command.__qualname__ = name
         setattr(self, name, command)
