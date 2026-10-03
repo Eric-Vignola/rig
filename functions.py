@@ -27,6 +27,7 @@ import numbers
 from typing import Any, Sequence
 
 from maya import cmds
+from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import Attribute
 from rig.nodetypes.dg_node import _keeps_query
 from rig._internal.container import container, ContainerOptions
@@ -124,9 +125,9 @@ def frame() -> Any:
     pre/post infinity set to linear. The output Plug ticks +1.0 per frame.
     """
     node = container.createNode("animCurveTL", name="frame1")
-    cmds.setKeyframe(str(node), t=0, v=0.0)
-    cmds.setKeyframe(str(node), t=1, v=1.0)
-    cmds.keyTangent(str(node), e=True, itt="linear", ott="linear")
+    cmds_edit.setKeyframe(str(node), t=0, v=0.0)
+    cmds_edit.setKeyframe(str(node), t=1, v=1.0)
+    cmds_edit.keyTangent(str(node), e=True, itt="linear", ott="linear")
     node.preInfinity  << 4
     node.postInfinity << 4
     return node.o

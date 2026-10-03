@@ -75,6 +75,7 @@ from typing import Any
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
+from rig._internal.journal import cmds_edit
 from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
@@ -347,9 +348,9 @@ def _copy_value(src: str, dst: str, shape: tuple) -> None:
     """``setAttr`` the value of one plug onto another of the same kind."""
     value = cmds.getAttr(src)
     if shape[2]:
-        cmds.setAttr(dst, *value[0], type=cmds.getAttr(dst, type=True))
+        cmds_edit.setAttr(dst, *value[0], type=cmds.getAttr(dst, type=True))
     else:
-        cmds.setAttr(dst, value)
+        cmds_edit.setAttr(dst, value)
 
 
 # ---------- Cloning ------------------------------------------------------- #
@@ -630,7 +631,7 @@ def _unbind(scan: _Scan) -> None:
     releases its children with it)."""
     for node, leaf, attr, _ in scan.bindings:
         if (f"{scan.old}.{leaf}", attr) in _bound(node):
-            cmds.container(node, edit=True, unbindAttr=[f"{scan.old}.{leaf}", attr])
+            cmds_edit.container(node, edit=True, unbindAttr=[f"{scan.old}.{leaf}", attr])
 
 
 def _rebind(scan: _Scan, name: str) -> None:
@@ -638,7 +639,7 @@ def _rebind(scan: _Scan, name: str) -> None:
     children with it)."""
     for node, leaf, attr, carried in scan.bindings:
         if carried and (f"{name}.{leaf}", attr) not in _bound(node):
-            cmds.container(node, edit=True, bindAttr=[f"{name}.{leaf}", attr])
+            cmds_edit.container(node, edit=True, bindAttr=[f"{name}.{leaf}", attr])
 
 
 def _scan_locks(scan: _Scan) -> None:
@@ -687,7 +688,7 @@ def _prepare(scan: _Scan, park: bool) -> str:
             raise RuntimeError(f"Maya made a {cmds.nodeType(new)} for '{dst}', not a {dst}")
         for names in scan.locks.values():
             for name in names:
-                cmds.setAttr(f"{old}.{name}", lock=False)
+                cmds_edit.setAttr(f"{old}.{name}", lock=False)
         if park:
             for root in scan.park_roots:
                 _park(scan, root)
@@ -700,7 +701,7 @@ def _prepare(scan: _Scan, park: bool) -> str:
             names.add(name)
             names.update(_q(name, "listChildren", node=old) or [])
         if names:
-            cmds.copyAttr(old, new, values=True, attribute=sorted(names))
+            cmds_edit.copyAttr(old, new, values=True, attribute=sorted(names))
         for name in [*scan.values, *scan.dynamic]:
             if not _q(name, "exists", node=new):
                 raise RuntimeError(f"'{name}' did not arrive on the new {dst}")
@@ -711,7 +712,7 @@ def _prepare(scan: _Scan, park: bool) -> str:
                 )
     except Exception:
         if cmds.objExists(new):
-            cmds.delete(new)
+            cmds_edit.delete(new)
         raise
     return new
 
@@ -730,7 +731,7 @@ def _park(scan: _Scan, root: str) -> None:
     for src_plug, leaf in scan.park_wires.get(root, []):
         _disconnect_incoming(Plug(f"{old}.{leaf}"))
         target = str(parked) if leaf == root else f"{old}.{children_dst[children_src.index(leaf)]}"
-        cmds.connectAttr(src_plug, target)
+        cmds_edit.connectAttr(src_plug, target)
     for locked in scan.locks.get(root, []):
         scan.relock.append(
             name if locked == root else children_dst[children_src.index(locked)]
@@ -747,21 +748,21 @@ def _commit(scan: _Scan, new: str, park: bool) -> str:
         names.add(name)
         names.update(_q(name, "listChildren", node=old) or [])
     _unbind(scan)
-    cmds.copyAttr(
+    cmds_edit.copyAttr(
         old, new, inConnections=True, outConnections=True, attribute=sorted(names)
     )
     for name in scan.dynamic:
         if _q(name, "multi", node=old):
             _move_element_wires(old, new, name)
     for name in scan.relock:
-        cmds.setAttr(f"{new}.{name}", lock=True)
+        cmds_edit.setAttr(f"{new}.{name}", lock=True)
     parked = set(scan.park_roots) if park else set()
     for src_plug, leaf in [*[(s, a) for s, a, _ in scan.lost_wires], *scan.lost_animation]:
         if _root_of(old, leaf) not in parked:
             _disconnect_incoming(Plug(f"{old}.{leaf}"))
     for leaf, dst_plug in scan.lost_outputs:
         if not _is_published(dst_plug):
-            cmds.disconnectAttr(f"{old}.{leaf}", dst_plug)
+            cmds_edit.disconnectAttr(f"{old}.{leaf}", dst_plug)
     _verify(scan, new)
     # The old node is deleted LAST: every step that can still raise (the
     # rename, the alias rebind) runs while it exists, so a failure inside a
@@ -771,16 +772,16 @@ def _commit(scan: _Scan, new: str, park: bool) -> str:
     # absolute names: a bare or relative new name would land in the current
     # namespace (Maya renames 'look:red' to 'lib:red' while lib is current)
     absolute   = _absolute(old)
-    aside      = cmds.rename(old, f"{absolute}__rigold")
+    aside      = cmds_edit.rename(old, f"{absolute}__rigold")
     scan.aside = aside
-    got        = cmds.rename(new, absolute)
+    got        = cmds_edit.rename(new, absolute)
     if _absolute(got) != absolute:
         raise RuntimeError(
             f"the new {dst} could not take the name '{old}' back (Maya named it "
             f"'{got}'); the conversion is rolled back"
         )
     _rebind(scan, got)
-    cmds.delete(aside)
+    cmds_edit.delete(aside)
     return got
 
 
@@ -795,15 +796,15 @@ def _move_element_wires(old: str, new: str, name: str) -> None:
             connections=True, skipConversionNodes=False,
         ) or []
         for dst_plug, src_plug in zip(pairs[0::2], pairs[1::2]):
-            cmds.disconnectAttr(src_plug, dst_plug)
-            cmds.connectAttr(src_plug, f"{new}.{dst_plug.split('.', 1)[1]}")
+            cmds_edit.disconnectAttr(src_plug, dst_plug)
+            cmds_edit.connectAttr(src_plug, f"{new}.{dst_plug.split('.', 1)[1]}")
         pairs = cmds.listConnections(
             f"{old}.{element}", source=False, destination=True, plugs=True,
             connections=True,
         ) or []
         for src_plug, dst_plug in zip(pairs[0::2], pairs[1::2]):
-            cmds.disconnectAttr(src_plug, dst_plug)
-            cmds.connectAttr(f"{new}.{src_plug.split('.', 1)[1]}", dst_plug)
+            cmds_edit.disconnectAttr(src_plug, dst_plug)
+            cmds_edit.connectAttr(f"{new}.{src_plug.split('.', 1)[1]}", dst_plug)
 
 
 def _verify(scan: _Scan, new: str) -> None:
@@ -876,7 +877,7 @@ def _restore(node: str, dst: str) -> list:
         ))
         locked = [f"{node}.{c}" for c in _own_locks(node, name)]
         for plug in locked:
-            cmds.setAttr(plug, lock=False)
+            cmds_edit.setAttr(plug, lock=False)
         inputs = {
             p: (cmds.listConnections(
                 p, source=True, destination=False, plugs=True, skipConversionNodes=False,
@@ -889,13 +890,13 @@ def _restore(node: str, dst: str) -> list:
             else:
                 for p, r in pairs[1:]:
                     if inputs[p] is None:
-                        cmds.setAttr(r, cmds.getAttr(p))
+                        cmds_edit.setAttr(r, cmds.getAttr(p))
         for p, r in pairs:
             if inputs[p] is not None:
                 _disconnect_incoming(Plug(p))
-                cmds.connectAttr(inputs[p], r, force=True)
+                cmds_edit.connectAttr(inputs[p], r, force=True)
         for plug in locked:
-            cmds.setAttr(dict(pairs)[plug], lock=True)
+            cmds_edit.setAttr(dict(pairs)[plug], lock=True)
         _do_destroy(parked)
         restored.append(bare)
     return restored
@@ -964,7 +965,7 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> str:
     the chunk and undoes it only when the chunk recorded something."""
     was_on = cmds.undoInfo(query=True, state=True)
     if not was_on:
-        cmds.undoInfo(state=True)
+        cmds_edit.undoInfo(state=True)
     try:
         try:
             with _undo_chunk(CHUNK):
@@ -975,11 +976,11 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> str:
                     Plug(f"{name}.{attr}") << value
         except Exception:
             if cmds.undoInfo(query=True, undoName=True) == CHUNK:
-                cmds.undo()
+                cmds_edit.undo()
             raise
     finally:
         if not was_on:
-            cmds.undoInfo(state=False)
+            cmds_edit.undoInfo(state=False)
     return name
 
 

@@ -17,6 +17,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
+from rig._internal.journal import cmds_edit
 from rig.nodetypes.errors import (
     _article,
     AmbiguousNodeError,
@@ -562,10 +563,10 @@ def set_custom_type(node_name: str, custom_type: str) -> None:
     """Sets the custom type of a given node."""
     attr = f"{node_name}.{CUSTOM_TYPE_ATTR}"
     if cmds.attributeQuery(CUSTOM_TYPE_ATTR, node=node_name, exists=True):
-        cmds.deleteAttr(attr)
-    cmds.addAttr(node_name, ln=CUSTOM_TYPE_ATTR, dt="string")
-    cmds.setAttr(attr, custom_type, type="string")
-    cmds.setAttr(attr, lock=True)
+        cmds_edit.deleteAttr(attr)
+    cmds_edit.addAttr(node_name, ln=CUSTOM_TYPE_ATTR, dt="string")
+    cmds_edit.setAttr(attr, custom_type, type="string")
+    cmds_edit.setAttr(attr, lock=True)
 
 
 # TODO better solutions?
@@ -2263,9 +2264,9 @@ class Attribute(str):
         if cur_alias == alias:
             return
         elif not alias and cur_alias != self.name:
-            cmds.aliasAttr(self.full_name, remove=True)
+            cmds_edit.aliasAttr(self.full_name, remove=True)
         else:
-            cmds.aliasAttr(alias, self.full_name)
+            cmds_edit.aliasAttr(alias, self.full_name)
 
     @property
     def attribute_type(self) -> str:
@@ -2372,7 +2373,7 @@ class Attribute(str):
     @is_locked.setter
     def is_locked(self, state) -> None:
         """Set the locked state."""
-        cmds.setAttr(self.full_name, lock=state)
+        cmds_edit.setAttr(self.full_name, lock=state)
 
     @property
     def is_keyable(self) -> bool:
@@ -2383,7 +2384,7 @@ class Attribute(str):
     @is_keyable.setter
     def is_keyable(self, state) -> None:
         """Set the keyable state."""
-        cmds.setAttr(self.full_name, keyable=state)
+        cmds_edit.setAttr(self.full_name, keyable=state)
 
     @property
     def is_channel_box(self) -> bool:
@@ -2394,7 +2395,7 @@ class Attribute(str):
     @is_channel_box.setter
     def is_channel_box(self, state) -> None:
         """Set the channel box state."""
-        cmds.setAttr(self.full_name, channelBox=state)
+        cmds_edit.setAttr(self.full_name, channelBox=state)
 
     # --- category methods
 
@@ -2417,7 +2418,7 @@ class Attribute(str):
         if isinstance(category, str):
             category = [category]
         for each in category:
-            cmds.addAttr(self.full_name, edit=True, category=each)
+            cmds_edit.addAttr(self.full_name, edit=True, category=each)
 
     # --- connection methods
 
@@ -2451,7 +2452,7 @@ class Attribute(str):
             and not other._mplug.isDestination
             and _names_own_plug(self)
         ) or not cmds.isConnected(src, dst):
-            cmds.connectAttr(src, dst, force=force)
+            cmds_edit.connectAttr(src, dst, force=force)
 
     def disconnect(self, other: str | Attribute) -> None:
         """Disconnects this attr from other.
@@ -2462,7 +2463,7 @@ class Attribute(str):
         _self = self.full_name
         other = str(other)
         if cmds.isConnected(_self, other):
-            cmds.disconnectAttr(_self, other)
+            cmds_edit.disconnectAttr(_self, other)
 
     def iter_connected_attrs(
         self, src: bool = True, dst: bool = True, first_only: bool = False
@@ -2590,7 +2591,7 @@ class Attribute(str):
                     to_delete.append(node)
                     result.pop(i)
             if to_delete:
-                cmds.delete(to_delete)
+                cmds_edit.delete(to_delete)
 
         return result
 
@@ -2617,7 +2618,7 @@ class Attribute(str):
             else:
                 src_name = attr_name
                 dst_name = self.full_name
-            cmds.disconnectAttr(src_name, dst_name)
+            cmds_edit.disconnectAttr(src_name, dst_name)
         return attrs
 
     def __rshift__(self, other):
@@ -2643,7 +2644,7 @@ class Attribute(str):
         """Sets the default value of this attribute."""
         if not self.is_dynamic:
             raise RuntimeError(f"Cannot set default value for native attr: {self}")
-        cmds.addAttr(self.full_name, edit=True, defaultValue=value)
+        cmds_edit.addAttr(self.full_name, edit=True, defaultValue=value)
 
     def get_data_fn_set(self) -> OpenMaya.MFnData | None:
         """Returns the proper data function set for this attr, or None if
@@ -2700,7 +2701,7 @@ class Attribute(str):
             and isinstance(args[0], (list, tuple, np.ndarray))
             and self.data_type in COUNTED_ARRAY_TYPES
         ):
-            cmds.setAttr(self.full_name, len(args[0]), *args[0], **kwargs)
+            cmds_edit.setAttr(self.full_name, len(args[0]), *args[0], **kwargs)
 
         # special handling for compound attrs
         # - use the unpacked first argument if it is a valid iterable
@@ -2710,9 +2711,9 @@ class Attribute(str):
             and isinstance(args[0], (list, tuple, np.ndarray))
             and str(self.data_type)[-1].isdigit()
         ):
-            cmds.setAttr(self.full_name, *args[0], **kwargs)
+            cmds_edit.setAttr(self.full_name, *args[0], **kwargs)
         else:
-            cmds.setAttr(self.full_name, *args, **kwargs)
+            cmds_edit.setAttr(self.full_name, *args, **kwargs)
 
     def _is_fixed_kind_outside_array(self) -> bool:
         """True if this attr's kind never takes the cmds.setAttr() `type` arg.
@@ -3032,7 +3033,7 @@ class Attribute(str):
 
     def delete_logical_index(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""
-        cmds.removeMultiInstance(self.element_by_logical_index(i).full_name, **kwargs)
+        cmds_edit.removeMultiInstance(self.element_by_logical_index(i).full_name, **kwargs)
 
     # --- component type info
     # TODO make a proper Component class

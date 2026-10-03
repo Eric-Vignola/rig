@@ -37,6 +37,7 @@ import re
 from typing import Any
 
 from maya import cmds
+from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import _cast, _lookup
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
@@ -122,7 +123,7 @@ class DisplayLayer(DGNode):
             kwargs["empty"] = True
         elif args and not recurse:
             kwargs["noRecurse"] = True
-        return cmds.createDisplayLayer(*args, **kwargs)
+        return cmds_edit.createDisplayLayer(*args, **kwargs)
 
     # --- properties
 
@@ -194,7 +195,7 @@ class DisplayLayer(DGNode):
         """
         if not isinstance(objects, (list, tuple)):
             objects = [objects]
-        cmds.editDisplayLayerMembers(self.name, *objects, noRecurse=no_recurse)
+        cmds_edit.editDisplayLayerMembers(self.name, *objects, noRecurse=no_recurse)
 
     def remove_members(self, objects: DAGNode | str | list[DAGNode | str]) -> None:
         """Removes object(s) from this layer (they go to ``defaultLayer``);
@@ -203,7 +204,7 @@ class DisplayLayer(DGNode):
             objects = [objects]
         mine = [str(x) for x in objects if self.for_node(x) == self]
         if mine:
-            cmds.editDisplayLayerMembers(_DEFAULT_ABSOLUTE, *mine, noRecurse=True)
+            cmds_edit.editDisplayLayerMembers(_DEFAULT_ABSOLUTE, *mine, noRecurse=True)
 
     def _guard(self, verb: str) -> str:
         """The layer's name, once it is known to take ``verb``: never
@@ -260,6 +261,6 @@ class DisplayLayer(DGNode):
         if taken is not None:
             raise ValueError(f"'{new_name}' already exists")
         with _undo_chunk("rig.layer"):
-            got = cmds.rename(old, new_name)
+            got = cmds_edit.rename(old, new_name)
         if _leaf(got) != _leaf(new_name):
             raise RuntimeError(f"Maya renamed '{old}' to '{got}', not '{new_name}'")

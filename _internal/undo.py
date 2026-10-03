@@ -37,6 +37,7 @@ import functools
 import inspect
 
 from maya import cmds
+from rig._internal.journal import cmds_edit
 
 DEFAULT_NAME = "rig.undo_chunk"
 
@@ -59,10 +60,10 @@ class _Chunk:
         return f"undo_chunk({self.name!r})"
 
     def __enter__(self) -> None:
-        cmds.undoInfo(openChunk=True, chunkName=self.name or DEFAULT_NAME)
+        cmds_edit.undoInfo(openChunk=True, chunkName=self.name or DEFAULT_NAME)
 
     def __exit__(self, exc_type, exc, tb) -> bool:
-        cmds.undoInfo(closeChunk=True)
+        cmds_edit.undoInfo(closeChunk=True)
         return False
 
     def __call__(self, func):

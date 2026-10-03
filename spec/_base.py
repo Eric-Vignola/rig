@@ -40,8 +40,9 @@ from typing import Any, Dict, List, Optional
 
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit
 # rig.nodetypes imports neither rig.spec nor rig._internal.plug
-from rig._internal.undo import _undo_chunk  # a leaf module: maya.cmds only
+from rig._internal.undo import _undo_chunk  # a leaf module: maya.cmds and rig._internal.journal
 from rig.nodetypes._base import (
     Attribute,
     Node,
@@ -906,9 +907,9 @@ def _apply_settings(
     if default is not None:
         _run_undoable(_DefaultEdit(attribute, default))
     if edit:
-        cmds.addAttr(target, edit=True, **edit)
+        cmds_edit.addAttr(target, edit=True, **edit)
     if keyable is not None and bool(cmds.getAttr(target, keyable=True)) != bool(keyable):
-        cmds.setAttr(target, keyable=bool(keyable))
+        cmds_edit.setAttr(target, keyable=bool(keyable))
     if hidden is not None and OpenMaya.MFnAttribute(attribute).hidden != bool(hidden):
         _run_undoable(_HiddenEdit(attribute, bool(hidden)))
 

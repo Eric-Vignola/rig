@@ -34,6 +34,7 @@ from maya import cmds as _mc
 
 # the node-added tracking the typed creators share (it lives with the scope)
 from rig._internal.container import _call_tracking_creation
+from rig._internal.journal import barrier
 from rig._internal.node import Node
 from rig.nodetypes._base import _cast_node, _ensure_node_valid, Attribute
 
@@ -159,6 +160,8 @@ def _make_wrapper(name: str) -> Callable:
         # otherwise.
         from rig._internal.container import container
 
+        # a raw command can be any edit: the pending journal is registered first
+        barrier()
         if add_to_container and container._stack:
             result, created = _call_tracking_creation(fn, args, kwargs)
             if created:

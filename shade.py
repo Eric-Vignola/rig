@@ -112,6 +112,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit
 from rig.nodetypes import material_node as _material_node
 from rig.nodetypes.material_node import (
     _own_type,
@@ -403,17 +404,17 @@ def _make_explicit(path: str) -> None:
         return
     groups = _groups(path)
     if groups.owner is not None:
-        cmds.sets(path, edit=True, remove=groups.owner)
-        cmds.sets(
+        cmds_edit.sets(path, edit=True, remove=groups.owner)
+        cmds_edit.sets(
             _face_names(path, np.arange(groups.num_faces)), edit=True,
             forceElement=groups.owner,
         )
         groups = _groups(path)
     for name, source, destination in groups.remainders:
         remainder = _remainder(_groups(path), name)
-        cmds.disconnectAttr(source, destination)
+        cmds_edit.disconnectAttr(source, destination)
         if remainder.size:
-            cmds.sets(_face_names(path, remainder), edit=True, forceElement=name)
+            cmds_edit.sets(_face_names(path, remainder), edit=True, forceElement=name)
 
 
 # ---------- The left-hand side --------------------------------------------- #
@@ -598,12 +599,12 @@ def _remove_members(engine: ShadingEngine, target: _Target) -> None:
     _make_explicit(target.path)
     held = _held(engine, target.path)
     if target.whole:
-        cmds.sets(target.path, edit=True, remove=engine.name)
+        cmds_edit.sets(target.path, edit=True, remove=engine.name)
     elif held is not _NOT_MEMBER:
         requested = target.face_ids()
         inside    = requested if held is None else np.intersect1d(held, requested)
         if inside.size:
-            cmds.sets(_face_names(target.path, inside), edit=True, remove=engine.name)
+            cmds_edit.sets(_face_names(target.path, inside), edit=True, remove=engine.name)
     _verify(engine, target, present=False)
 
 
@@ -638,7 +639,7 @@ def _adopt(material: str) -> ShadingEngine:
     engine = ShadingEngine.for_material(material, create=True)
     owner  = cmds.container(query=True, findContainer=[material])
     if owner:
-        cmds.container(
+        cmds_edit.container(
             owner, edit=True, force=True,
             addNode=[engine.name, *engine.get_material_info()],
         )
@@ -1107,7 +1108,7 @@ def repair(targets: Any = None) -> List:
         for item in _scene_targets(targets):
             entries = _entries(item)
             if item.whole and not entries:
-                cmds.sets(item.path, edit=True, forceElement=ShadingEngine.DEFAULT)
+                cmds_edit.sets(item.path, edit=True, forceElement=ShadingEngine.DEFAULT)
                 fixed.append(Node(item.path))
                 continue
             if item.node_type != "mesh":
@@ -1122,7 +1123,7 @@ def repair(targets: Any = None) -> List:
                 continue
             missing = np.setdiff1d(item.face_ids(), covered)
             if missing.size:
-                cmds.sets(
+                cmds_edit.sets(
                     _face_names(item.path, missing), edit=True,
                     forceElement=ShadingEngine.DEFAULT,
                 )
@@ -1146,4 +1147,4 @@ def tidy(targets: Any = None) -> None:
                     engine.assign([item.path], touched=[item.path], normalise=True)
         for group_id in cmds.ls(type="groupId") or []:
             if _is_orphan_group_id(group_id):
-                cmds.delete(group_id)
+                cmds_edit.delete(group_id)

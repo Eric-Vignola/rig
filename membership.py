@@ -90,6 +90,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.journal import cmds_edit
 from rig.nodetypes import display_layer as _display_layer
 from rig.nodetypes._base import _cast
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
@@ -270,7 +271,7 @@ def _state_of(geo: Geometry, path: str, name: str, entry: dict, node: str) -> _H
     empty    = entry["affectCount"] == 0
     if entry["procedural"] or not entry["editable"]:
         return _Home(path, geo, name, _PROCEDURAL, node, category, empty)
-    answer = cmds.componentTag(
+    answer = cmds_edit.componentTag(
         f"{path}.{_PROBE_TOKEN[geo.node_type]}",
         queryEdit         = True,
         tagName           = name,
@@ -729,7 +730,7 @@ class Tag(_MemberSpec):
     def _create(
         self, home: _Home, names: list[str], comps: list[_Selection] = ()
     ) -> None:
-        result = cmds.componentTag(
+        result = cmds_edit.componentTag(
             *names, create=True, newTagName=home.name, injectionLocation=home.node
         )
         if result != home.name or not home.holder.has_component_tag(home.name):
@@ -740,7 +741,7 @@ class Tag(_MemberSpec):
         self._verify_members(home, comps, present=True)
 
     def _modify(self, home: _Home, mode: str, names: list[str]) -> None:
-        if not cmds.componentTag(
+        if not cmds_edit.componentTag(
             *names, modify=mode, tagName=home.name, injectionLocation=home.node
         ):
             raise RuntimeError(
@@ -778,7 +779,7 @@ class Tag(_MemberSpec):
     def _delete(self, home: _Home) -> None:
         if home.state == _BAKED:
             home.holder.remove_component_tag(home.name)
-        elif not cmds.componentTag(
+        elif not cmds_edit.componentTag(
             home.path, delete=True, tagName=home.name, injectionLocation=home.node
         ):
             raise RuntimeError(
@@ -1048,7 +1049,7 @@ class Tag(_MemberSpec):
     def _clear(self, home: _Home) -> None:
         if home.state == _BAKED:
             home.holder.set_component_tag_contents(home.name, [], home.category)
-        elif not cmds.componentTag(
+        elif not cmds_edit.componentTag(
             home.path, modify="clear", tagName=home.name, injectionLocation=home.node
         ):
             raise RuntimeError(
@@ -1063,7 +1064,7 @@ class Tag(_MemberSpec):
     def _rename(self, home: _Home, new: str, rewrites: list[tuple[str, str]]) -> None:
         if home.state == _BAKED:
             home.holder.rename_component_tag(home.name, new)
-        elif not cmds.componentTag(
+        elif not cmds_edit.componentTag(
             home.path, rename=True, tagName=home.name, newTagName=new,
             injectionLocation=home.node,
         ):
@@ -1077,7 +1078,7 @@ class Tag(_MemberSpec):
                 f"{home.describe()}; history: {_cth_dump(home.geo)}"
             )
         for plug, expression in rewrites:
-            cmds.setAttr(plug, expression, type="string")
+            cmds_edit.setAttr(plug, expression, type="string")
 
 
 def _no_ids(group: _TagGroup) -> np.ndarray:
@@ -1295,7 +1296,7 @@ class _LayerMember(_MemberSpec):
         if not paths:
             return
         target = _display_layer._DEFAULT_ABSOLUTE if layer is None else layer.name
-        cmds.editDisplayLayerMembers(target, *paths, noRecurse=True)
+        cmds_edit.editDisplayLayerMembers(target, *paths, noRecurse=True)
         for path in paths:
             if _holding_layer(path) != layer:
                 raise RuntimeError(

@@ -64,6 +64,7 @@ import re
 from typing import Any, Callable
 
 from maya import cmds
+from rig._internal.journal import cmds_edit
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
 from rig.nodetypes._base import (
@@ -198,7 +199,7 @@ def _delete_network(material: str) -> None:
     with _undo_chunk("rig.material"):
         for name in [*infos, *engines, material]:
             if cmds.objExists(name):
-                cmds.delete(name)
+                cmds_edit.delete(name)
     if cmds.objExists(material) or any(cmds.objExists(name) for name in engines):
         raise RuntimeError(f"'{material}' survived its deletion")
 
@@ -221,11 +222,11 @@ def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngi
             f"the <mat>SG convention; rename or delete '{new}SG' first"
         )
     with _undo_chunk("rig.material"):
-        got = cmds.rename(material, new)
+        got = cmds_edit.rename(material, new)
         if _leaf(got) != _leaf(new):
             raise RuntimeError(f"Maya renamed '{material}' to '{got}', not '{new}'")
         if follows:
-            got_engine = cmds.rename(engine.name, f"{new}SG")
+            got_engine = cmds_edit.rename(engine.name, f"{new}SG")
             if _leaf(got_engine) != f"{_leaf(new)}SG":
                 raise RuntimeError(
                     f"Maya renamed '{engine.name}' to '{got_engine}', not '{new}SG'"
@@ -405,7 +406,7 @@ class Material(DGNode):
         """`create`'s network: the shader, its ``<shader>SG`` engine and
         materialInfo, the scope registration (``container=True``), then the
         attribute values; the engine is checked to read the shader."""
-        shader = cmds.shadingNode(
+        shader = cmds_edit.shadingNode(
             node_type, asShader=True, name=name or cls.CUSTOM_NODE_TYPE or node_type,
             skipSelect=skip,
         )
