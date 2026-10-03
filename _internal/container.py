@@ -1101,6 +1101,10 @@ def _call_tracking_creation(fn: Any, args: tuple, kwargs: dict, discard: bool = 
     callback_id = OpenMaya.MDGMessage.addNodeAddedCallback(on_added, "dependNode")
     try:
         result = fn(*args, **kwargs)
+        if discard:
+            # what the call journaled is registered inside it: a registration that fails
+            # (the edits reverted) deletes what the call made too
+            barrier()
     except BaseException:
         OpenMaya.MMessage.removeCallback(callback_id)
         if discard:

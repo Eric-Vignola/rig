@@ -149,7 +149,6 @@ def _run_undoable(obj):
     return command.run(obj)
 
 
-
 def _api_edit_ready() -> bool:
     """[Internal] True when `_register_api_edit` may run now: ``rigUndoableAPICommand``
     is in ``maya.cmds`` (rig's plug-in is loaded the first time through `_ensure_loaded`,
@@ -159,8 +158,9 @@ def _api_edit_ready() -> bool:
     once loaded.
 
     The undo state is not read (``undoInfo -q -state`` costs about 6 us): with undo off,
-    the command applies the edit and Maya keeps nothing, neither a step nor the modifier,
-    which is what a ``cmds`` edit leaves too."""
+    `_register_api_edit` applies the edit (the modifier's ``doIt``) and the registration
+    keeps nothing, neither a step nor the modifier, which is what a ``cmds`` edit leaves
+    too."""
     if getattr(cmds, UNDOABLE_API_COMMAND, None) is None:
         try:
             _ensure_loaded("undoable_api_command", True)
@@ -175,8 +175,9 @@ def _register_api_edit(modifier) -> None:
     the statement's one undo step; outside any, it is one unnamed undo step of
     ``rigUndoableAPICommand`` on its own (inside an undo chunk, the step joins the
     chunk). Undo is the modifier's ``undoIt``, redo its ``doIt``. The caller has
-    checked `_api_edit_ready`. A registration costs about 8 us in a wired scene, and
-    about 18 us inside a rail_spine build.
+    checked `_api_edit_ready`. Inside a statement, joining it is a list append (the
+    statement registers once, at its end or at a barrier); outside any, the registration
+    costs about 8 us in a wired scene, and about 18 us inside a rail_spine build.
 
     An exception out of the modifier's ``doIt`` (or out of the registration)
     registers nothing and propagates; the caller then runs the modifier's ``undoIt``

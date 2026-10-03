@@ -152,8 +152,9 @@ class List(list):
         # route writes through the parent when the slice was empty (so
         # callers can do ``empty_multi[:] << values`` and have the indices
         # auto-created to match the source length). Set to ``None`` for
-        # Lists not produced by slicing a multi.
-        self._parent_multi = _parent_multi
+        # Lists not produced by slicing a multi. (Stored directly: __setattr__
+        # is a journal statement, which a private name does not need.)
+        object.__setattr__(self, "_parent_multi", _parent_multi)
         if items:
             for x in items:
                 if isinstance(x, numbers.Real) or x is None:

@@ -36,18 +36,14 @@ from __future__ import annotations
 import functools
 import inspect
 import sys
-import weakref
 from typing import Any, Callable
 
 from maya import cmds as _cmds
 from maya import mel as _mel
 
-# the name of rig's undo command (nodetypes/plugins/undoable_api_command.py COMMAND_NAME)
-_COMMAND = "rigUndoableAPICommand"
-
-# The switch of the API fast paths: False sends every edit through cmds (the scopes,
-# barriers and call-outs stay, and change nothing then). For A/B runs and for the tests
-# that pin the cmds route.
+# Reserved for D2 / D3, the API fast paths (nothing reads it yet): False will send every
+# edit through cmds (the scopes, barriers and call-outs stay, and change nothing then), for
+# A/B runs and for the tests that pin the cmds route.
 API_EDITS = True
 
 
@@ -98,17 +94,12 @@ class _Journal:
 
 
 def _register(ops: list) -> None:
-    """Puts ``ops`` on the undo queue as one step. Raises (the edits are left applied; the
-    caller reverts them) when rig's command cannot be had (a forced unload)."""
-    if not _SCENE_CALLBACKS_READY:
-        _ensure_scene_callbacks()
-    command = getattr(_cmds, _COMMAND, None)
-    if command is None:
-        from rig.nodetypes.plugins import _ensure_loaded
+    """Puts ``ops`` on the undo queue as one step, through `rig.nodetypes.plugins._run_undoable`
+    (its barrier finds nothing pending: `_flush` takes the list first). Raises (the edits are
+    left applied; the caller reverts them) when rig's command cannot be had (a forced unload)."""
+    from rig.nodetypes.plugins import _run_undoable
 
-        _ensure_loaded("undoable_api_command", True)
-        command = getattr(_cmds, _COMMAND)
-    command.run(_Journal(ops))
+    _run_undoable(_Journal(ops))
 
 
 def _flush() -> None:
@@ -129,11 +120,18 @@ def _flush() -> None:
         ) from None
 
 
-def barrier() -> None:
+def barrier(error: BaseException | None = None) -> None:
     """Registers the pending list now, if there is one: before a ``cmds`` edit, an undo
-    chunk's open or close, or a registration of rig's command for another object."""
+    chunk's open or close, or a registration of rig's command for another object. With
+    ``error``, an exception propagating, a failed registration does not replace it: its
+    ``RuntimeError`` (the edits reverted, `_flush`) becomes a note of ``error``."""
     if _S.pending:
-        _flush()
+        try:
+            _flush()
+        except RuntimeError as failure:
+            if error is None:
+                raise
+            error.add_note(str(failure))
 
 
 def add(op: Any) -> None:
@@ -141,6 +139,10 @@ def add(op: Any) -> None:
     at once as its own step (which raises when it cannot be registered: the caller reverts
     ``op`` and takes its ``cmds`` route)."""
     if _S.open:
+        if not _SCENE_CALLBACKS_READY:
+            # an import before Maya was initialised: the new / open discard, before a list
+            # it would drop exists
+            _ensure_scene_callbacks()
         _S.pending.append(op)
     else:
         _register([op])
@@ -149,16 +151,20 @@ def add(op: Any) -> None:
 def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
     """``func(*args, **kwargs)`` as a statement: the outermost call opens the scope, and
     registers what it journaled when ``func`` returns or raises (the exception propagates
-    unchanged)."""
+    unchanged; a registration that fails then is a note of it, see `barrier`)."""
     if _S.open:
         return func(*args, **kwargs)
     _S.open = True
     try:
-        return func(*args, **kwargs)
-    finally:
+        result = func(*args, **kwargs)
+    except BaseException as error:
         _S.open = False
-        if _S.pending:
-            _flush()
+        barrier(error)
+        raise
+    _S.open = False
+    if _S.pending:
+        _flush()
+    return result
 
 
 def statement(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -197,12 +203,11 @@ class outside:
         return False
 
 
-# {function: True if it is rig's own}; weak, so that a user's function is never kept alive
-_RIG_CODE: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+# {module name: True if it is rig's own}: names only, so no user object is kept alive
+_RIG_MODULES: dict = {}
 
 
-def _in_rig(fn: Any) -> bool:
-    module = getattr(fn, "__module__", None) or ""
+def _in_rig(module: str) -> bool:
     return (module == "rig" or module.startswith("rig.")) and not module.startswith(_NOT_RIG_CODE)
 
 
@@ -212,19 +217,17 @@ _NOT_RIG_CODE = ("rig.examples", "rig._tests")
 
 def rig_code(fn: Any) -> bool:
     """True if ``fn`` (a function, a method, a class) is defined in rig's own package, not in
-    ``rig.examples`` or ``rig._tests``: code the barrier rule and its lint cover. Cached per
-    function, weakly."""
-    fn = getattr(fn, "__func__", fn)
+    ``rig.examples`` or ``rig._tests``: code the barrier rule and its lint cover. Answered by
+    its ``__module__`` (a method reads its function's), cached per module name."""
+    module = getattr(fn, "__module__", None) or ""
     try:
-        return _RIG_CODE[fn]
+        return _RIG_MODULES[module]
     except KeyError:
-        known = _RIG_CODE[fn] = _in_rig(fn)
+        known = _RIG_MODULES[module] = _in_rig(module)
         return known
-    except TypeError:  # not weakly referenceable: not cached
-        return _in_rig(fn)
 
 
-def user_call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+def user_call(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
     """``fn(*args, **kwargs)``, outside the open statement unless ``fn`` is rig's own."""
     if not _S.open or rig_code(fn):
         return fn(*args, **kwargs)
