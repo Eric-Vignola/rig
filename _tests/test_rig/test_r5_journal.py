@@ -759,7 +759,10 @@ class TestJournal(_JournalCase):
     def test_cmds_edit_reads_the_command_on_every_call(self):
         with mock.patch.object(cmds, "setAttr") as fake:
             journal.cmds_edit.setAttr("a.d1", 1.0, lock=True)
-        fake.assert_called_once_with("a.d1", 1.0, lock=True)
+            fake.assert_called_once_with("a.d1", 1.0, lock=True)
+            journal.cmds_edit.setAttr("a.d1", 2.0)  # no keywords: a positional call
+            fake.assert_called_with("a.d1", 2.0)
+        self.assertEqual(journal.cmds_edit.getAttr("a.d1"), 0.0)
         self.assertIs(journal.cmds_edit.setAttr, journal.cmds_edit.setAttr)  # built once
         self.assertEqual(journal.cmds_edit.setAttr.__name__, "setAttr")
         with self.assertRaises(AttributeError):
