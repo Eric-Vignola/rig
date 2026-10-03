@@ -4,13 +4,44 @@
 through ``cmds_edit.<command>`` (or ``mel_eval``), which registers the pending journal
 first; only ``createNode``, ``loadPlugin`` and the member add of a node a container scope
 just made stay raw.
+
+The journal tests drive it with test-only edits (an ``MDGModifier`` applied, then
+``journal.add``): nothing in rig journals an edit yet (D2 / D3 will). `TestJournal` is the
+mechanism (nesting, exceptions, generators, call-outs, registration at depth 0, a failed
+registration, undo off, chunks, the new / open discard); `TestBarriers` the barrier sites;
+`TestStatementEntries` that the library's entry points are statements; `TestUserCodeOrder`
+the call-outs (CR-5): code a user wrote runs after what the statement journaled before it,
+in the undo queue too.
 """
 
 import ast
+import gc
 import os
+import tempfile
+import shutil
 import unittest
+import weakref
+from unittest import mock
+
+from maya import cmds, mel
+from maya.api import OpenMaya
 
 import rig
+from rig import container, List, Node
+from rig._internal import callbacks, journal
+from rig._internal import plug as plug_module
+from rig._internal.node_ops import NodeOp
+from rig._internal.plug import Plug
+from rig.bridges import commands as rc
+from rig.bridges import nodes as rn
+from rig.nodetypes import dg_node as dg_node_module
+from rig.nodetypes import plugins, Transform
+from rig.nodetypes._base import Attribute
+from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.material_node import Lambert, Material
+from rig.spec._base import _AttrSpec
+from rig._tests._base import MayaTestCase
+from rig._tests._undo import UndoWalk
 
 # --------------------------------------------------------------------------------------- #
 #  The barrier lint
@@ -242,3 +273,858 @@ class TestBarrierLint(unittest.TestCase):
         self.assertEqual(self.lint("def f():\n    getattr(cmds, 'x')\n", rel="bridges/commands.py"), [])
         self.assertEqual(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/plugins/__init__.py"), [])
         self.assertEqual(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/mesh.py"), [])
+
+
+# --------------------------------------------------------------------------------------- #
+#  The journal
+# --------------------------------------------------------------------------------------- #
+
+PLUGIN = "undoable_api_command"
+
+
+def _plug(name):
+    sel = OpenMaya.MSelectionList()
+    sel.add(name)
+    return sel.getPlug(0)
+
+
+def _set_op(name, value):
+    """A test-only journaled edit: the double ``name`` set to ``value`` by an applied
+    MDGModifier, journaled (pending in a statement, else its own step)."""
+    modifier = OpenMaya.MDGModifier()
+    modifier.newPlugValueDouble(_plug(name), value)
+    modifier.doIt()
+    journal.add(modifier)
+    return modifier
+
+
+def _connect_op(src, dst):
+    """A test-only journaled connect (an applied MDGModifier, journaled)."""
+    modifier = OpenMaya.MDGModifier()
+    modifier.connect(_plug(src), _plug(dst))
+    modifier.doIt()
+    journal.add(modifier)
+    return modifier
+
+
+class _Spy:
+    """A journal op recording its calls into ``log``; ``fail`` raises from both."""
+
+    def __init__(self, name, log, fail=False):
+        self.name, self.log, self.fail = name, log, fail
+
+    def doIt(self):  # noqa: N802
+        self.log.append(f"{self.name}.do")
+        if self.fail:
+            raise ValueError(f"{self.name} do")
+
+    def undoIt(self):  # noqa: N802
+        self.log.append(f"{self.name}.undo")
+        if self.fail:
+            raise ValueError(f"{self.name} undo")
+
+
+class _Tracked:
+    """``with _Tracked() as kept:`` replaces the journal object with one weakly listed in
+    ``kept`` (Maya keeps the journal it registers: with undo off it keeps none)."""
+
+    def __enter__(self):
+        self.kept = kept = []
+
+        class Tracked(journal._Journal):
+            __slots__ = ("__weakref__",)
+
+            def __init__(self, ops):
+                super().__init__(ops)
+                kept.append(weakref.ref(self))
+
+        self._patch = mock.patch.object(journal, "_Journal", Tracked)
+        self._patch.start()
+        return kept
+
+    def __exit__(self, *exc):
+        self._patch.stop()
+        return False
+
+
+class _JournalCase(UndoWalk, MayaTestCase):
+    """A new scene, the undo queue on, infinite and flushed, rig's plug-in loaded; the
+    node ``a`` (a transform) with the doubles ``d1``, ``d2``; the multiplyDivides ``m``
+    and ``k``. The journal is closed and empty before and after every test."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        plugins._ensure_loaded(PLUGIN, True)
+        cmds.createNode("transform", name="a")
+        for attr in ("d1", "d2"):
+            cmds.addAttr("a", longName=attr, attributeType="double")
+        cmds.createNode("multiplyDivide", name="m")
+        cmds.createNode("multiplyDivide", name="k")
+        cmds.flushUndo()
+        self.assert_closed()
+
+    def tearDown(self):
+        try:
+            self.assert_closed()
+        finally:
+            journal._S.open, journal._S.pending = False, []
+            cmds.flushUndo()
+            super().tearDown()
+
+    def assert_closed(self):
+        self.assertEqual((journal._S.open, journal._S.pending), (False, []))
+
+    @staticmethod
+    def values():
+        return cmds.getAttr("a.d1"), cmds.getAttr("a.d2")
+
+    @staticmethod
+    def queue_empty():
+        return cmds.undoInfo(query=True, undoQueueEmpty=True)
+
+
+class TestJournal(_JournalCase):
+    """The mechanism (`rig._internal.journal`)."""
+
+    def test_add_outside_a_statement_is_one_step(self):
+        _set_op("a.d1", 5.0)
+        self.assertEqual(self.values(), (5.0, 0.0))
+        self.assertEqual(self.undo_name(), "")
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+        self.redo_steps(1)
+        self.assertEqual(self.values(), (5.0, 0.0))
+
+    def test_a_statement_is_one_step(self):
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            _set_op("a.d2", 6.0)
+            _set_op("a.d1", 7.0)
+            return "done"
+
+        self.assertEqual(edit(), "done")
+        self.assertEqual(self.values(), (7.0, 6.0))
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))  # undone backwards: d1 7 -> 5 -> 0
+        self.assertTrue(self.queue_empty())
+        self.redo_steps(1)
+        self.assertEqual(self.values(), (7.0, 6.0))  # redone forwards
+
+    def test_nesting(self):
+        seen = []
+
+        @journal.statement
+        def inner():
+            seen.append(("inner", journal._S.open))
+            _set_op("a.d2", 6.0)
+
+        @journal.statement
+        def outer():
+            _set_op("a.d1", 5.0)
+            inner()
+            seen.append(("after inner", journal._S.open, len(journal._S.pending)))
+            journal.run_statement(inner, (), {})
+            return len(journal._S.pending)
+
+        self.assertEqual(outer(), 3)
+        self.assertEqual(seen, [("inner", True), ("after inner", True, 2), ("inner", True)])
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_an_exception_registers_then_propagates_unchanged(self):
+        error = ValueError("the statement's own")
+
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            raise error
+
+        with self.assertRaises(ValueError) as caught:
+            edit()
+        self.assertIs(caught.exception, error)
+        self.assertIsNone(error.__context__)
+        self.assertIsNone(error.__cause__)
+        self.assertFalse(error.__suppress_context__)
+        self.assertEqual(self.values(), (5.0, 0.0))  # what it applied is kept ...
+        self.undo_steps(1)                          # ... as one step
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_an_exception_inside_an_except_keeps_its_context(self):
+        @journal.statement
+        def edit():
+            try:
+                raise KeyError("first")
+            except KeyError:
+                _set_op("a.d1", 5.0)
+                raise ValueError("second")
+
+        with self.assertRaises(ValueError) as caught:
+            edit()
+        self.assertIsInstance(caught.exception.__context__, KeyError)
+        self.assertIsNone(caught.exception.__cause__)
+        self.undo_steps(1)
+        self.assertTrue(self.queue_empty())
+
+    def test_a_generator_or_a_coroutine_is_refused(self):
+        def gen():
+            yield 1
+
+        async def coro():
+            pass
+
+        async def agen():
+            yield 1
+
+        for fn in (gen, coro, agen):
+            with self.subTest(fn.__name__):
+                with self.assertRaisesRegex(TypeError, "a generator or a coroutine"):
+                    journal.statement(fn)
+
+    def test_a_statement_is_marked_and_wraps(self):
+        def edit(x, y=2):
+            """doc"""
+            return x + y
+
+        entry = journal.statement(edit)
+        self.assertIs(entry._rig_statement, True)
+        self.assertIs(entry.__wrapped__, edit)
+        self.assertEqual((entry.__name__, entry.__doc__), ("edit", "doc"))
+        self.assertEqual(entry(1, y=3), 4)
+
+    def test_statement_and_run_statement_share_one_implementation(self):
+        # fix (c): the decorator's outermost call is run_statement; a nested one only tests
+        # the flag
+        @journal.statement
+        def edit(x):
+            return x
+
+        @journal.statement
+        def outer():
+            return edit(2)
+
+        with mock.patch.object(journal, "run_statement", wraps=journal.run_statement) as run:
+            self.assertEqual(edit(1), 1)
+            run.assert_called_once_with(edit.__wrapped__, (1,), {})
+            run.reset_mock()
+            self.assertEqual(outer(), 2)
+            run.assert_called_once_with(outer.__wrapped__, (), {})
+
+    def test_user_call_and_outside(self):
+        seen = []
+
+        def users():
+            # the statement's journal is on the queue already; the scope is closed
+            seen.append(("user", journal._S.open, list(journal._S.pending), self.queue_empty()))
+            cmds.setAttr("a.d2", 9.0)
+            return "user"
+
+        def rigs():
+            seen.append(("rig", journal._S.open, len(journal._S.pending)))
+            return "rig"
+
+        rigs.__module__ = "rig.functions"  # as code of rig's own: run inside the scope
+
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            self.assertEqual(journal.user_call(rigs), "rig")
+            self.assertEqual(journal.user_call(users), "user")
+            seen.append(("back", journal._S.open, len(journal._S.pending)))
+            _set_op("a.d1", 7.0)
+            with journal.outside():
+                seen.append(("outside", journal._S.open, len(journal._S.pending)))
+            seen.append(("back", journal._S.open))
+
+        edit()
+        self.assertEqual(seen, [
+            ("rig", True, 1),
+            ("user", False, [], False),
+            ("back", True, 0),
+            ("outside", False, 0),
+            ("back", True),
+        ])
+        # the queue: [d1 = 5], [the user's d2 = 9], [d1 = 7]
+        self.assertEqual(self.values(), (7.0, 9.0))
+        for expected in ((5.0, 9.0), (5.0, 0.0), (0.0, 0.0)):
+            self.undo_steps(1)
+            self.assertEqual(self.values(), expected)
+        self.assertTrue(self.queue_empty())
+
+    def test_outside_reopens_after_an_exception(self):
+        @journal.statement
+        def edit():
+            with self.assertRaises(KeyError):
+                with journal.outside():
+                    raise KeyError("x")
+            return journal._S.open
+
+        self.assertIs(edit(), True)
+        with journal.outside():  # outside any statement: nothing to close
+            self.assertFalse(journal._S.open)
+        self.assertFalse(journal._S.open)
+
+    def test_user_call_outside_any_statement_just_calls(self):
+        self.assertEqual(journal.user_call(lambda x, y=0: x + y, 1, y=2), 3)
+        self.assertFalse(journal._S.open)
+
+    def test_rig_code(self):
+        def users():
+            pass
+
+        def examples():
+            pass
+
+        examples.__module__ = "rig.examples.rail_spine"
+
+        class Mine(Transform):
+            pass
+
+        self.assertTrue(journal.rig_code(rig.functions.clamp))
+        self.assertTrue(journal.rig_code(Transform))
+        self.assertTrue(journal.rig_code(Transform.create))       # a bound classmethod
+        self.assertTrue(journal.rig_code(DGNode.post_create))
+        self.assertTrue(journal.rig_code(Node("a").get_parent))  # a bound method
+        self.assertFalse(journal.rig_code(users))                # rig._tests: a user's
+        self.assertFalse(journal.rig_code(examples))
+        self.assertFalse(journal.rig_code(Mine))
+        self.assertTrue(journal.rig_code(Mine.create))            # inherited: rig's
+        self.assertFalse(journal.rig_code(len))                   # not weakly referenceable
+        self.assertFalse(journal.rig_code(lambda: None))
+
+    def test_rig_code_keeps_no_function_alive(self):
+        # fix (a): the cache is weak
+        def users():
+            pass
+
+        self.assertFalse(journal.rig_code(users))
+        self.assertIn(users, journal._RIG_CODE)
+        held = weakref.ref(users)
+        del users
+        gc.collect()
+        self.assertIsNone(held())
+
+    def test_a_journal_walks_every_op_when_one_raises(self):
+        # fix (b): never half undone or redone silently
+        log = []
+        ops = [_Spy("A", log), _Spy("B", log, fail=True), _Spy("C", log), _Spy("D", log, fail=True)]
+        entry = journal._Journal(ops)
+        with self.assertRaisesRegex(ValueError, "^D undo$"):
+            entry.undoIt()
+        self.assertEqual(log, ["D.undo", "C.undo", "B.undo", "A.undo"])
+        del log[:]
+        with self.assertRaisesRegex(ValueError, "^B do$"):
+            entry.redoIt()
+        self.assertEqual(log, ["A.do", "B.do", "C.do", "D.do"])
+        del log[:]
+        entry.doIt()  # applied already: does nothing
+        self.assertEqual(log, [])
+
+    def forced_unload_state(self):
+        """The state a forced unload leaves: no maya.cmds command, and a load that
+        fails (`_ensure_loaded` raises then)."""
+        wrapper = getattr(cmds, plugins.UNDOABLE_API_COMMAND)
+        delattr(cmds, plugins.UNDOABLE_API_COMMAND)
+        self.addCleanup(setattr, cmds, plugins.UNDOABLE_API_COMMAND, wrapper)
+        failure = RuntimeError("a plug-in named 'undoable_api_command' is loaded, but maya.cmds has no ...")
+        patch = mock.patch.object(plugins, "_ensure_loaded", side_effect=failure)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_a_failed_registration_reverts_and_says_so(self):
+        # fix (d), the forced-unload flush
+        self.forced_unload_state()
+
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            _set_op("a.d2", 6.0)
+            _set_op("a.d1", 7.0)
+
+        with self.assertRaises(RuntimeError) as caught:
+            edit()
+        text = str(caught.exception)
+        self.assertIn("3 edit(s) of this statement could not be put on the undo queue", text)
+        self.assertTrue(text.endswith("they were reverted"), text)
+        self.assertIn("maya.cmds has no", text)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertTrue(caught.exception.__suppress_context__)
+        self.assertEqual(self.values(), (0.0, 0.0))  # reverted, backwards
+        self.assertTrue(self.queue_empty())
+
+    def test_a_failed_registration_at_a_barrier_reverts_and_says_so(self):
+        self.forced_unload_state()
+
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            journal.cmds_edit.setAttr("a.d2", 6.0)  # the barrier raises: the set never runs
+
+        with self.assertRaisesRegex(RuntimeError, "they were reverted"):
+            edit()
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_a_failed_registration_at_depth_0_leaves_the_op_to_the_caller(self):
+        self.forced_unload_state()
+        modifier = OpenMaya.MDGModifier()
+        modifier.newPlugValueDouble(_plug("a.d1"), 5.0)
+        modifier.doIt()
+        with self.assertRaisesRegex(RuntimeError, "maya.cmds has no"):
+            journal.add(modifier)
+        self.assertEqual(self.values(), (5.0, 0.0))
+        modifier.undoIt()  # the caller reverts (and takes its cmds route)
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_undo_off_keeps_nothing(self):
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            _set_op("a.d2", 6.0)
+
+        cmds.undoInfo(state=False)
+        try:
+            with _Tracked() as kept:
+                edit()
+                _set_op("a.d1", 7.0)  # at depth 0 too
+        finally:
+            cmds.undoInfo(state=True)
+        gc.collect()
+        self.assertEqual(self.values(), (7.0, 6.0))
+        self.assertEqual(len(kept), 2)
+        self.assertEqual([ref() for ref in kept], [None, None])  # Maya kept no journal
+        self.assertTrue(self.queue_empty())
+
+    def test_a_statement_inside_a_chunk_joins_it(self):
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+
+        cmds.undoInfo(openChunk=True)
+        try:
+            cmds.setAttr("a.d2", 3.0)
+            edit()
+            _set_op("a.d1", 7.0)
+        finally:
+            cmds.undoInfo(closeChunk=True)
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_rigs_undo_chunk_is_a_barrier(self):
+        # opening registers what came before it, outside the chunk; closing registers
+        # what was journaled inside it, inside the chunk
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            with rig.undo_chunk("inner"):
+                self.assertEqual(journal._S.pending, [])
+                _set_op("a.d2", 6.0)
+            self.assertEqual(journal._S.pending, [])
+            _set_op("a.d1", 7.0)
+
+        edit()
+        self.assertEqual(self.values(), (7.0, 6.0))
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (5.0, 6.0))
+        self.assertEqual(self.undo_name(), "inner")
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (5.0, 0.0))
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_cmds_edit_and_mel_eval_are_barriers(self):
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            journal.cmds_edit.setAttr("a.d1", 6.0)
+            self.assertEqual(journal._S.pending, [])
+            _set_op("a.d1", 7.0)
+            journal.mel_eval("setAttr a.d1 8;")
+            self.assertEqual(journal._S.pending, [])
+
+        edit()
+        for expected in (7.0, 6.0, 5.0, 0.0):
+            self.undo_steps(1)
+            self.assertEqual(self.values()[0], expected)
+        self.assertTrue(self.queue_empty())
+
+    def test_cmds_edit_reads_the_command_on_every_call(self):
+        with mock.patch.object(cmds, "setAttr") as fake:
+            journal.cmds_edit.setAttr("a.d1", 1.0, lock=True)
+        fake.assert_called_once_with("a.d1", 1.0, lock=True)
+        self.assertIs(journal.cmds_edit.setAttr, journal.cmds_edit.setAttr)  # built once
+        self.assertEqual(journal.cmds_edit.setAttr.__name__, "setAttr")
+        with self.assertRaises(AttributeError):
+            journal.cmds_edit._private  # noqa: B018
+
+    def test_a_new_scene_or_an_open_discards_the_pending_list(self):
+        # reachable only from code that opens a file inside a statement without a barrier
+        # (a user's MMessage callback); here the statement's body itself does
+        self.assertTrue(journal._register_scene_callbacks())
+        self.assertEqual(len(callbacks.registered_ids(journal.__name__)), 2)
+        folder = tempfile.mkdtemp(prefix="rig_r5_journal_")
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        path = os.path.join(folder, "scene.ma").replace("\\", "/")
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaAscii", force=True)
+
+        def raw_new():
+            cmds.file(new=True, force=True)
+
+        def raw_open():
+            cmds.file(path, open=True, force=True)
+
+        for opens in (raw_new, raw_open):
+            with self.subTest(opens.__name__):
+                cmds.flushUndo()
+
+                @journal.statement
+                def edit():
+                    _set_op("a.d1", 5.0)
+                    opens()
+                    return list(journal._S.pending)
+
+                self.assertEqual(edit(), [])
+                self.assertTrue(self.queue_empty())
+                if opens is raw_new:
+                    cmds.file(path, open=True, force=True)
+
+    def test_register_api_edit_joins_the_statement(self):
+        @journal.statement
+        def edit():
+            for name, value in (("a.d1", 5.0), ("a.d2", 6.0)):
+                modifier = OpenMaya.MDGModifier()
+                modifier.newPlugValueDouble(_plug(name), value)
+                plugins._register_api_edit(modifier)
+            return len(journal._S.pending)
+
+        self.assertEqual(edit(), 2)
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_the_api_edits_switch_is_on(self):
+        self.assertIs(journal.API_EDITS, True)
+
+
+class TestBarriers(_JournalCase):
+    """rig's own barrier sites register the pending journal first."""
+
+    def pending_after(self, call):
+        """``call()`` inside a statement that journaled ``a.d1 = 5`` first; the number of
+        edits still pending after it."""
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            call()
+            return len(journal._S.pending)
+
+        return edit()
+
+    def test_the_rc_bridge(self):
+        self.assertEqual(self.pending_after(lambda: rc.setAttr("a.d1", 6.0)), 0)
+        self.undo_steps(1)
+        self.assertEqual(self.values()[0], 5.0)
+
+    def test_run_undoable(self):
+        class SetD2:
+            def doIt(self):  # noqa: N802
+                _plug("a.d2").setDouble(6.0)
+
+            def undoIt(self):  # noqa: N802
+                _plug("a.d2").setDouble(0.0)
+
+            def redoIt(self):  # noqa: N802
+                self.doIt()
+
+        self.assertEqual(self.pending_after(lambda: plugins._run_undoable(SetD2())), 0)
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (5.0, 0.0))
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
+
+    def test_rigs_cmds_edits(self):
+        self.assertEqual(self.pending_after(lambda: Node("a").d2 << Node("m").outputX), 0)
+        self.assertEqual(self.pending_after(lambda: Node("a").rename("b")), 0)
+
+    def test_the_member_add_of_a_node_just_made_is_none(self):
+        counts = []
+
+        def made():
+            container.createNode("transform", name="t")
+            counts.append(len(journal._S.pending))
+
+        def existing():
+            container.add(Node("k"))
+            counts.append(len(journal._S.pending))
+
+        with container("c"):
+            self.pending_after(made)
+            self.pending_after(existing)
+        self.assertEqual(counts, [1, 0])
+
+    def test_the_with_body_of_a_scope_is_at_depth_0(self):
+        with container("c"):
+            self.assertFalse(journal._S.open)
+        self.assertFalse(journal._S.open)
+
+
+# the public functions of these modules that make no node and edit nothing
+_EDITS_NOTHING = frozenset({"rig.functions.inf"})
+_LIBRARIES = (
+    "functions", "matrix", "vector", "interpolate", "trigonometry", "quaternion", "euler",
+    "tween", "random", "_dispatch",
+)
+
+
+class TestStatementEntries(MayaTestCase):
+    """Every entry point of a user's call into rig is a journal statement: a missed one
+    costs registrations (each edit its own step), never order."""
+
+    def test_every_public_library_function(self):
+        import importlib
+
+        missing, seen = [], 0
+        for short in _LIBRARIES:
+            module = importlib.import_module(f"rig.{short}")
+            for name, value in sorted(vars(module).items()):
+                if name.startswith("_") or not callable(value) or isinstance(value, type):
+                    continue
+                if getattr(value, "__module__", None) != module.__name__:
+                    continue  # imported: checked where it is defined
+                seen += 1
+                qualified = f"{module.__name__}.{name}"
+                if not getattr(value, "_rig_statement", False) and qualified not in _EDITS_NOTHING:
+                    missing.append(qualified)
+        self.assertEqual(missing, [])
+        self.assertGreater(seen, 150)
+
+    def test_the_top_level_and_the_factories(self):
+        for fn in (rig.condition, rig.constant, rn.transform, rn.multiplyDivide):
+            with self.subTest(getattr(fn, "__name__", repr(fn))):
+                self.assertIs(getattr(fn, "_rig_statement", False), True)
+
+    def test_the_operators_and_the_typed_creators(self):
+        from rig._internal.container import _ContainerStack
+        from rig.nodetypes.follicle import Follicle
+
+        entries = {
+            "Plug": [Plug.__dict__[n] for n in ("__lshift__", "__rshift__", "__setattr__")],
+            "List": [List.__dict__[n] for n in ("__lshift__", "__rshift__", "__setattr__", "__add__",
+                                                "__rmul__", "__neg__", "__eq__", "__lt__")],
+            "DGNode": [DGNode.__dict__[n] for n in ("__lshift__", "__rshift__", "__setattr__")],
+            "NodeOp": [NodeOp.__call__],
+            "container": [getattr(_ContainerStack, n) for n in
+                          ("__enter__", "__exit__", "createNode", "publish_input", "publish_output")],
+            "create": [DGNode.create.__func__, DGNode.define.__func__, Node.__dict__["create"].__func__,
+                       Node.__dict__["define"].__func__, Material.create.__func__, Material.define.__func__,
+                       Material.astype, Lambert.create.__func__, Transform.create_hierarchy.__func__,
+                       Follicle.create_on_mesh.__func__],
+        }
+        for kind, functions in entries.items():
+            for fn in functions:
+                with self.subTest(f"{kind} {fn.__name__}"):
+                    self.assertIs(getattr(fn, "_rig_statement", False), True)
+
+    def test_a_users_memoized_function_is_no_statement(self):
+        @rig.memoize
+        def users(x):
+            return x
+
+        @rig.vectorize
+        def vectorized(x):
+            return x
+
+        self.assertFalse(hasattr(users, "_rig_statement"))
+        self.assertFalse(hasattr(vectorized, "_rig_statement"))
+
+    def test_a_plug_operator_runs_as_a_statement(self):
+        cmds.file(new=True, force=True)
+        a = Node(cmds.createNode("transform", name="a"))
+        seen = []
+        real = journal.run_statement
+
+        def spy(func, args, kwargs):
+            seen.append(func.__name__)
+            return real(func, args, kwargs)
+
+        with mock.patch.object(plug_module, "run_statement", spy):
+            a.tx + a.ty
+            -a.tx
+        self.assertEqual(seen, ["__add__", "__neg__"])
+
+
+class TestUserCodeOrder(_JournalCase):
+    """CR-5: code a user wrote that rig calls inside a statement (a spec's apply, a
+    post_create, ...) runs after what the statement journaled before it: one undo reverts
+    the user's edit, the next the statement's journal."""
+
+    def journaled_float_sets(self):
+        """``Attribute.set`` of one float through an applied MDGModifier, journaled (the
+        shape of a fast path, test-only); returns the list of plugs it set."""
+        real, done = Attribute.set, []
+
+        def api_set(attr, *args, **kwargs):
+            if len(args) == 1 and not kwargs and type(args[0]) is float:
+                _set_op(str(attr), args[0])
+                done.append(str(attr))
+                return None
+            return real(attr, *args, **kwargs)
+
+        patch = mock.patch.object(Attribute, "set", api_set)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return done
+
+    def spec_case(self, plain_call=False):
+        class UsersSpec(_AttrSpec):
+            def apply(self, target):
+                cmds.setAttr("a.d1", 9.0)
+                return target
+
+        done = self.journaled_float_sets()
+        a = Node("a")
+        if plain_call:
+            # the negative control: the call-out taken away
+            with mock.patch.object(plug_module, "user_call", lambda fn, *x, **k: fn(*x, **k)):
+                List([a.d1, a.d2]) << [5.0, UsersSpec()]
+        else:
+            List([a.d1, a.d2]) << [5.0, UsersSpec()]
+        self.assertEqual(done, ["a.d1"])
+        self.assertEqual(self.values(), (9.0, 0.0))
+        found = []
+        for _ in range(2):
+            self.undo_steps(1)
+            found.append(self.values()[0])
+        self.assertTrue(self.queue_empty())
+        return found
+
+    def test_a_specs_apply_runs_after_the_journal(self):
+        self.assertEqual(self.spec_case(), [5.0, 0.0])
+
+    def test_without_the_call_out_the_order_is_wrong(self):
+        # what the test above would see without journal.user_call: the user's set is
+        # recorded first, and undo leaves 5
+        self.assertEqual(self.spec_case(plain_call=True), [0.0, 5.0])
+
+    def post_create_case(self, plain_call=False):
+        class UsersTransform(Transform):
+            @classmethod
+            def post_create(cls, new_node_name, *args, **kwargs):
+                cmds.disconnectAttr("m.outputX", "k.input1X")
+                return super().post_create(new_node_name, *args, **kwargs)
+
+        def body():
+            _connect_op("m.outputX", "k.input1X")
+            UsersTransform.create(name="x")
+
+        def connected():
+            return cmds.isConnected("m.outputX", "k.input1X")
+
+        if plain_call:
+            with mock.patch.object(dg_node_module, "user_call", lambda fn, *x, **k: fn(*x, **k)):
+                journal.run_statement(body, (), {})
+        else:
+            journal.run_statement(body, (), {})
+        self.assertFalse(connected())
+        found = []
+        for _ in range(3):
+            self.undo_steps(1)  # with the dangling check after each step
+            found.append((connected(), cmds.objExists("x")))
+        self.assertTrue(self.queue_empty())
+        self.redo_all()
+        return found, (connected(), cmds.objExists("x"))
+
+    def test_a_post_create_runs_after_the_journal(self):
+        # the queue: createNode x (made before the call-out: it commutes), the journal, the
+        # user's disconnect
+        found, redone = self.post_create_case()
+        self.assertEqual(found, [(True, True), (False, True), (False, False)])
+        self.assertEqual(redone, (False, True))
+
+    def test_without_the_post_create_call_out_the_order_is_wrong(self):
+        found, redone = self.post_create_case(plain_call=True)
+        self.assertEqual(found[1], (True, True))  # the journal undone first: left connected
+        self.assertEqual(redone, (True, True))    # and redone last
+
+    def test_undo_off_around_a_statement(self):
+        done = self.journaled_float_sets()
+        a = Node("a")
+        cmds.undoInfo(state=False)
+        try:
+            with _Tracked() as kept:
+                List([a.d1, a.d2]) << [5.0, 6.0]
+        finally:
+            cmds.undoInfo(state=True)
+        gc.collect()
+        self.assertEqual(done, ["a.d1", "a.d2"])
+        self.assertEqual(self.values(), (5.0, 6.0))
+        self.assertEqual([ref() for ref in kept], [None])
+        self.assertTrue(self.queue_empty())
+
+    def undo_toggled_case(self, start, inside):
+        class Toggles(Transform):
+            @classmethod
+            def post_create(cls, new_node_name, *args, **kwargs):
+                cmds.undoInfo(state=inside)
+                return super().post_create(new_node_name, *args, **kwargs)
+
+        def body():
+            _set_op("a.d1", 5.0)  # under the start state: registered before the call-out
+            Toggles.create(name="x")
+            _set_op("a.d2", 6.0)  # under the state the post_create left
+
+        cmds.undoInfo(state=start)
+        try:
+            with _Tracked() as kept:
+                journal.run_statement(body, (), {})
+        finally:
+            cmds.undoInfo(state=True)
+        gc.collect()
+        self.assertEqual(self.values(), (5.0, 6.0))
+        return kept
+
+    def test_undo_turned_off_inside_a_post_create(self):
+        kept = self.undo_toggled_case(start=True, inside=False)
+        # turning undo off flushed the queue, the first journal with it; the second was
+        # registered with undo off: Maya keeps neither
+        self.assertEqual([ref() for ref in kept], [None, None])
+        self.assertTrue(self.queue_empty())
+
+    def test_undo_turned_on_inside_a_post_create(self):
+        kept = self.undo_toggled_case(start=False, inside=True)
+        # the first journal was registered with undo off (kept nothing), the second with
+        # undo on: one step, reverting d2 only
+        self.assertEqual(len(kept), 2)
+        self.assertIsNone(kept[0]())
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (5.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def test_an_iterator_operand_is_read_outside_the_statement(self):
+        seen = []
+
+        def values():
+            seen.append(journal._S.open)
+            cmds.setAttr("a.d2", 9.0)
+            yield 1.0
+
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            return rig.functions.sum(values())
+
+        edit()
+        self.assertEqual(seen, [False])
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (5.0, 0.0))  # the user's set: after the journal
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
