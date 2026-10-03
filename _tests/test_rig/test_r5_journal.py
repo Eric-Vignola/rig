@@ -50,10 +50,11 @@ from rig._tests._undo import UndoWalk
 # Every maya.cmds name rig calls is in exactly one of QUERY, DUAL and EDIT; an unknown name
 # fails the lint ("classify it").
 #   QUERY  never edits the scene or the undo queue: always raw ``cmds.<name>``
-#   DUAL   edits unless called with a literal query flag (q / query): raw only for a query
+#   DUAL   edits unless called with a literal true query flag (q / query) or one of its
+#          query-only flags (QUERY_ONLY_FLAGS): raw only for a query
 #   EDIT   always an edit: ``cmds_edit.<name>``, except NON_BARRIER names and RAW_SITES
 QUERY = frozenset({
-    "about", "attributeName", "attributeQuery", "connectionInfo", "currentUnit_q", "deformableShape",
+    "about", "attributeName", "attributeQuery", "connectionInfo", "deformableShape",
     "error", "exactWorldBoundingBox", "filterExpand", "geometryAttrInfo", "getAttr", "getClassification",
     "help", "isConnected", "listAttr", "listConnections", "listHistory", "listNodeTypes", "listRelatives",
     "listSets", "ls", "namespaceInfo", "nodeType", "nodeTypeHierarchy", "objExists", "objectType",
@@ -66,6 +67,12 @@ DUAL = frozenset({
     "deformer", "editDisplayLayerMembers", "file", "lockNode", "namespace", "optionVar",
     "playbackOptions", "sets", "skinCluster", "skinPercent", "undoInfo", "xform",
 })
+
+# the flags that make a DUAL command a query whatever their value (``namespace -exists x``)
+QUERY_ONLY_FLAGS = {
+    "namespace":    frozenset({"exists", "ex"}),
+    "componentTag": frozenset({"queryEdit", "qe"}),
+}
 
 EDIT = frozenset({
     "bakeDeformer", "blendShape", "connectAttr", "copyAttr", "createDisplayLayer", "createNode", "curve",
@@ -80,9 +87,11 @@ EDIT = frozenset({
 NON_BARRIER = frozenset({"createNode", "loadPlugin"})
 
 # (file, enclosing function, command) allowed to call an EDIT / DUAL command raw: the member
-# add of a node container.createNode just made (`_add` registers first for any other node)
+# add of a node container.createNode just made (`_add` registers first for any other node);
+# an undo chunk's close, which runs after its own barrier() whatever that barrier does
 RAW_SITES = frozenset({
     ("_internal/container.py", "_ContainerStack._add", "container"),
+    ("_internal/undo.py", "_Chunk.__exit__", "undoInfo"),
 })
 
 # mel.eval sites that only query (raw); every other one is journal.mel_eval
@@ -98,16 +107,36 @@ EXCLUDED_FILES = frozenset({"_internal/journal.py", "nodetypes/plugins/undoable_
 # where getattr(cmds, ...) may look a command up by name
 GETATTR_ALLOWED = ("bridges/commands.py", "nodetypes/plugins/")
 
-# where an argument-less .doIt() may apply an API edit (anywhere else it would be applied
-# outside the journal and the undo command)
-DOIT_ALLOWED = ("nodetypes/plugins/", "nodetypes/mesh.py")
+# (file, enclosing function) where a .doIt may apply an API edit: the journaled modifier, and
+# the mesh edits' bodies, which run inside the undo command (anywhere else an edit would be
+# applied outside the journal and the undo command)
+DOIT_ALLOWED = frozenset({
+    ("nodetypes/plugins/__init__.py", "_register_api_edit"),
+    ("nodetypes/mesh.py", "_free_elements"),
+    ("nodetypes/mesh.py", "_relink"),
+    ("nodetypes/mesh.py", "_MeshSetsEdit.redoIt"),
+    ("nodetypes/mesh.py", "_MeshRenameUVSetCommand.redoIt"),
+})
+
+# where the classes live, for the "classify it" message
+_TABLES = "QUERY / DUAL / EDIT in rig/_tests/test_rig/test_r5_journal.py"
 
 
-def _query_flag(call):
+def _query_flag(call, name):
+    """True when the DUAL command ``name`` is called as a query: a literal true q / query, or
+    one of its QUERY_ONLY_FLAGS (a q / query that is not a literal counts as an edit)."""
+    only = QUERY_ONLY_FLAGS.get(name, ())
     for kw in call.keywords:
-        if kw.arg in ("q", "query") and not (isinstance(kw.value, ast.Constant) and not kw.value.value):
+        if kw.arg in only:
+            return True
+        if kw.arg in ("q", "query") and isinstance(kw.value, ast.Constant) and kw.value.value:
             return True
     return False
+
+
+def _is_cmds(node):
+    """True for a name rig binds maya.cmds to (CMDS_NAMES)."""
+    return isinstance(node, ast.Name) and node.id in CMDS_NAMES
 
 
 def _enclosing(parents, node):
@@ -148,6 +177,23 @@ def lint_source(rel, source):
                 elif full == "maya.mel" and bound != "mel":
                     out.append((node.lineno, f"maya.mel bound to {bound!r}: bind it as mel"))
             continue
+        if isinstance(node, ast.Attribute):
+            # a command used other than by a call (an alias, a partial, map), maya.cmds /
+            # maya.mel reached through ``maya``, the module's namespace, a MEL / Python string
+            # run by the API, a doIt reached other than where it may be
+            where  = _enclosing(parents, node)
+            called = isinstance(parents.get(node), ast.Call) and parents[node].func is node
+            if isinstance(node.value, ast.Name) and node.value.id == "maya" and node.attr in ("cmds", "mel"):
+                out.append((node.lineno, f"maya.{node.attr} reached through maya in {where}: bind it"))
+            elif _is_cmds(node.value) and node.attr.startswith("_"):
+                out.append((node.lineno, f"cmds.{node.attr} in {where}: a dynamic command"))
+            elif _is_cmds(node.value) and not called and node.attr in (DUAL | EDIT) - NON_BARRIER:
+                out.append((node.lineno, f"uncalled cmds.{node.attr} in {where}: call it (cmds_edit.{node.attr})"))
+            elif node.attr.startswith(("executeCommand", "executePythonCommand")):
+                out.append((node.lineno, f"{node.attr} in {where}: a command run by the API"))
+            elif node.attr == "doIt" and (rel, where) not in DOIT_ALLOWED:
+                out.append((node.lineno, f".doIt in {where}: an API edit outside the journal"))
+            continue
         if not isinstance(node, ast.Call):
             continue
         func_node = node.func
@@ -155,13 +201,13 @@ def lint_source(rel, source):
         if isinstance(func_node, ast.Attribute) and isinstance(func_node.value, ast.Name) \
                 and func_node.value.id in CMDS_NAMES:
             name = func_node.attr
-            if name in QUERY:
+            if name in QUERY or name.startswith("_"):
                 continue
             if name in DUAL:
-                if _query_flag(node):
+                if _query_flag(node, name):
                     continue
             elif name not in EDIT:
-                out.append((node.lineno, f"unclassified cmds.{name} in {where}: classify it"))
+                out.append((node.lineno, f"unclassified cmds.{name} in {where}: classify it ({_TABLES})"))
                 continue
             if name in NON_BARRIER or (rel, where, name) in RAW_SITES:
                 continue
@@ -170,14 +216,10 @@ def lint_source(rel, source):
                 and func_node.value.id == "mel" and func_node.attr == "eval":
             if (rel, where) not in MEL_QUERY_SITES:
                 out.append((node.lineno, f"mel.eval in {where} (use mel_eval)"))
-        elif isinstance(func_node, ast.Name) and func_node.id == "getattr" and node.args \
+        elif isinstance(func_node, ast.Name) and func_node.id in ("getattr", "vars") and node.args \
                 and isinstance(node.args[0], ast.Name) and node.args[0].id in CMDS_NAMES:
             if not rel.startswith(GETATTR_ALLOWED):
-                out.append((node.lineno, f"getattr(cmds, ...) in {where}: a dynamic command"))
-        elif isinstance(func_node, ast.Attribute) and func_node.attr == "doIt" and not node.args \
-                and not node.keywords:
-            if not rel.startswith(DOIT_ALLOWED):
-                out.append((node.lineno, f".doIt() in {where}: an API edit outside the journal"))
+                out.append((node.lineno, f"{func_node.id}(cmds, ...) in {where}: a dynamic command"))
     return out
 
 
@@ -230,10 +272,22 @@ class TestBarrierLint(unittest.TestCase):
         cases = {
             "def f():\n    cmds.setAttr('a.tx', 1)\n": "raw edit cmds.setAttr in f",
             "def f():\n    cmds.sets('a', edit=True, forceElement='s')\n": "raw edit cmds.sets in f",
-            "def f():\n    cmds.fancyNewCommand('a')\n": "unclassified cmds.fancyNewCommand in f",
+            "def f():\n    cmds.fancyNewCommand('a')\n": "unclassified cmds.fancyNewCommand in f: classify it (QUERY / DUAL / EDIT in rig/_tests/test_rig/test_r5_journal.py)",
             "def f():\n    mel.eval('x;')\n": "mel.eval in f",
             "def f():\n    getattr(cmds, 'setAttr')('a.tx', 1)\n": "getattr(cmds, ...) in f",
-            "def f(m):\n    m.doIt()\n": ".doIt() in f",
+            "def f(m):\n    m.doIt()\n": ".doIt in f",
+            # D1FIX: the forms the lint missed
+            "def f():\n    s = cmds.setAttr\n    s('a.tx', 1)\n": "uncalled cmds.setAttr in f",
+            "def f():\n    functools.partial(cmds.delete, 'a')()\n": "uncalled cmds.delete in f",
+            "def f(nodes):\n    list(map(cmds.delete, nodes))\n": "uncalled cmds.delete in f",
+            "import maya\ndef f():\n    maya.cmds.setAttr('a.tx', 1)\n": "maya.cmds reached through maya in f",
+            "import maya\ndef f():\n    maya.mel.eval('x')\n": "maya.mel reached through maya in f",
+            "def f(m):\n    OpenMaya.MDGModifier.doIt(m)\n": ".doIt in f",
+            "def f(m):\n    g = m.doIt\n    g()\n": ".doIt in f",
+            "def f():\n    OpenMaya.MGlobal.executeCommand('setAttr a.tx 1')\n": "executeCommand in f",
+            "def f(q):\n    cmds.sets('s', q=q)\n": "raw edit cmds.sets in f",
+            "def f(n):\n    vars(cmds)[n]('a')\n": "vars(cmds, ...) in f",
+            "def f(n):\n    cmds.__dict__[n]('a')\n": "cmds.__dict__ in f",
             "@statement\ndef f():\n    yield 1\n": "statement on a generator or coroutine f",
             "@journal.statement\nasync def f():\n    pass\n": "statement on a generator or coroutine f",
             "from maya.cmds import setAttr\n": "from maya.cmds import",
@@ -259,6 +313,10 @@ class TestBarrierLint(unittest.TestCase):
             "def f():\n    mel_eval('x;')\n",
             "from maya import cmds\nimport maya.cmds as cmds\nfrom maya import cmds as _mc\n",
             "@statement\ndef f():\n    return 1\n",
+            # the query-only flags of DUAL commands, an uncalled NON_BARRIER command
+            "def f(n):\n    cmds.namespace(exists=n)\n",
+            "def f(p):\n    cmds.componentTag(p, queryEdit=True, tagName='t')\n",
+            "def f():\n    make = cmds.createNode\n",
         ):
             with self.subTest(source=source):
                 self.assertEqual(self.lint(source), [])
@@ -271,8 +329,17 @@ class TestBarrierLint(unittest.TestCase):
         self.assertEqual(self.lint("class DAGNode:\n    def get_deformers(self):\n        mel.eval('x')\n",
                                    rel="nodetypes/dag_node.py"), [])
         self.assertEqual(self.lint("def f():\n    getattr(cmds, 'x')\n", rel="bridges/commands.py"), [])
-        self.assertEqual(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/plugins/__init__.py"), [])
-        self.assertEqual(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/mesh.py"), [])
+        self.assertEqual(self.lint("def _register_api_edit(m):\n    m.doIt()\n",
+                                   rel="nodetypes/plugins/__init__.py"), [])
+        self.assertEqual(self.lint("def _relink(m):\n    m.doIt()\n", rel="nodetypes/mesh.py"), [])
+        self.assertEqual(self.lint("class _ContainerStack:\n    def _add(self):\n"
+                                   "        cmds.container('c', edit=True, addNode=['n'])\n",
+                                   rel="_internal/container.py"), [])
+        self.assertEqual(self.lint("class _Chunk:\n    def __exit__(self, *exc):\n"
+                                   "        cmds.undoInfo(closeChunk=True)\n", rel="_internal/undo.py"), [])
+        # a doIt elsewhere in those files is not
+        self.assertEqual(len(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/plugins/__init__.py")), 1)
+        self.assertEqual(len(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/mesh.py")), 1)
 
 
 # --------------------------------------------------------------------------------------- #
@@ -375,6 +442,23 @@ class _JournalCase(UndoWalk, MayaTestCase):
 
     def assert_closed(self):
         self.assertEqual((journal._S.open, journal._S.pending), (False, []))
+
+    def journaled_float_sets(self):
+        """``Attribute.set`` of one float through an applied MDGModifier, journaled (the
+        shape of a fast path, test-only); returns the list of plugs it set."""
+        real, done = Attribute.set, []
+
+        def api_set(attr, *args, **kwargs):
+            if len(args) == 1 and not kwargs and type(args[0]) is float:
+                _set_op(str(attr), args[0])
+                done.append(str(attr))
+                return None
+            return real(attr, *args, **kwargs)
+
+        patch = mock.patch.object(Attribute, "set", api_set)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return done
 
     @staticmethod
     def values():
@@ -598,12 +682,13 @@ class TestJournal(_JournalCase):
         self.assertFalse(journal.rig_code(lambda: None))
 
     def test_rig_code_keeps_no_function_alive(self):
-        # fix (a): the cache is weak
+        # fix (a): the cache holds module names only (D1FIX: it was a weak dict)
         def users():
             pass
 
         self.assertFalse(journal.rig_code(users))
-        self.assertIn(users, journal._RIG_CODE)
+        self.assertIs(journal._RIG_MODULES[users.__module__], False)
+        self.assertTrue(all(type(key) is str for key in journal._RIG_MODULES))
         held = weakref.ref(users)
         del users
         gc.collect()
@@ -681,6 +766,144 @@ class TestJournal(_JournalCase):
         modifier.undoIt()  # the caller reverts (and takes its cmds route)
         self.assertEqual(self.values(), (0.0, 0.0))
         self.assertTrue(self.queue_empty())
+
+    def test_a_failed_registration_keeps_the_statements_own_error(self):
+        # D1FIX: the body raised, then the end-of-statement registration failed: the body's
+        # error propagates unchanged (the same object), the failure a note of it
+        self.forced_unload_state()
+        error = ValueError("the user's error")
+
+        @journal.statement
+        def edit():
+            _set_op("a.d1", 5.0)
+            raise error
+
+        with self.assertRaises(ValueError) as caught:
+            edit()
+        self.assertIs(caught.exception, error)
+        self.assertIsNone(error.__context__)
+        self.assertIsNone(error.__cause__)
+        self.assertEqual(len(error.__notes__), 1)
+        self.assertIn("1 edit(s) of this statement could not be put on the undo queue", error.__notes__[0])
+        self.assertIn("they were reverted", error.__notes__[0])
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.assertTrue(self.queue_empty())
+
+    def chunk_is_closed(self):
+        """No chunk is left open: two sets after it are two undo steps."""
+        self.assertEqual(cmds.undoInfo(query=True, chunkName=True), "")
+        cmds.setAttr("a.d1", 1.0)
+        cmds.setAttr("a.d2", 2.0)
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (1.0, 0.0))
+
+    def test_a_failed_registration_at_a_chunks_close_closes_it(self):
+        # D1FIX: the close runs whatever the chunk's barrier does
+        self.forced_unload_state()
+
+        @journal.statement
+        def edit():
+            with rig.undo_chunk("x"):
+                _set_op("a.d1", 5.0)
+
+        with self.assertRaisesRegex(RuntimeError, "they were reverted"):
+            edit()
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.chunk_is_closed()
+
+    def test_a_failed_registration_at_a_chunks_close_keeps_the_blocks_error(self):
+        self.forced_unload_state()
+        error = KeyError("the block's error")
+
+        @journal.statement
+        def edit():
+            with rig.undo_chunk("x"):
+                _set_op("a.d1", 5.0)
+                raise error
+
+        with self.assertRaises(KeyError) as caught:
+            edit()
+        self.assertIs(caught.exception, error)
+        self.assertEqual(len(error.__notes__), 1)
+        self.assertIn("could not be put on the undo queue", error.__notes__[0])
+        self.assertEqual(self.values(), (0.0, 0.0))
+        self.chunk_is_closed()
+
+    def test_a_failed_registration_in_a_create_deletes_what_it_made(self):
+        # D1FIX, D3's shape: the create's values journaled and their registration failing:
+        # reverted, the node deleted (a create that raises leaves nothing), the chunk closed
+        done = self.journaled_float_sets()
+        self.forced_unload_state()
+        for label, create in (
+            ("Transform.create", lambda: Transform.create(name="t", tx=1.0)),
+            ("Node.create", lambda: Node.create("transform", name="t", tx=1.0)),
+            ("Transform.define", lambda: Transform.define("t", tx=1.0)),
+            ("Node.define", lambda: Node.define("transform", "t", tx=1.0)),
+        ):
+            with self.subTest(label):
+                del done[:]
+                with self.assertRaisesRegex(RuntimeError, "they were reverted"):
+                    create()
+                self.assertEqual(len(done), 1)  # the value was journaled
+                self.assertFalse(cmds.objExists("t"))
+                self.assertEqual(cmds.undoInfo(query=True, chunkName=True), "")
+
+    def test_a_keyword_named_fn_reaches_the_callee(self):
+        # D1FIX: user_call's own parameter is positional-only
+        def users(fn=None):
+            return ("users", fn)
+
+        self.assertEqual(journal.user_call(users, fn=1), ("users", 1))
+        self.assertEqual(journal.run_statement(lambda: journal.user_call(users, fn=2), (), {}), ("users", 2))
+
+        op = NodeOp("r5_journal_fn_op")
+
+        @op.impl()
+        def _impl(x, fn=None):
+            return fn(x)
+
+        t = Transform.create(name="t")
+        cmds.setAttr("t.tx", 3.0)
+        self.assertEqual(cmds.getAttr(str(op(t.tx, fn=lambda plug: plug * 2))), 6.0)
+
+        seen = []
+
+        class _Rec(DGNode):
+            NATIVE_NODE_TYPE = "network"
+            CUSTOM_NODE_TYPE = "r5JournalRec"
+            _CREATE_FLAGS    = DGNode._CREATE_FLAGS | {"fn"}
+
+            @classmethod
+            def _create(cls, *args, **kwargs):
+                seen.append(kwargs["fn"])
+                return cmds.createNode("network", name=kwargs["name"], skipSelect=True)
+
+        self.assertEqual(str(_Rec.create(name="r", fn=1)), "r")
+        self.assertEqual(str(_Rec.define("r2", fn=2)), "r2")
+        self.assertEqual(seen, [1, 2])
+
+    def test_the_first_journaled_edit_registers_the_scene_callbacks(self):
+        # D1FIX: an import before Maya was initialised registers them before the pending
+        # list exists that they would drop
+        seen = []
+
+        def ensure():
+            seen.append((journal._S.open, list(journal._S.pending)))
+            return True
+
+        with mock.patch.object(journal, "_SCENE_CALLBACKS_READY", False), \
+                mock.patch.object(journal, "_ensure_scene_callbacks", ensure):
+            journal.run_statement(_set_op, ("a.d1", 5.0), {})
+        self.assertEqual(seen, [(True, [])])  # in the statement, before the first op joins it
+        self.undo_steps(1)
+        self.assertEqual(self.values(), (0.0, 0.0))
+
+    def test_a_list_is_made_without_a_statement(self):
+        # D1FIX: List() stores its private state directly (no statement entry)
+        with mock.patch.object(journal, "run_statement", wraps=journal.run_statement) as run:
+            items = List([1.0, 2.0])
+        run.assert_not_called()
+        self.assertIsNone(items._parent_multi)
 
     def test_undo_off_keeps_nothing(self):
         @journal.statement
@@ -970,23 +1193,6 @@ class TestUserCodeOrder(_JournalCase):
     post_create, ...) runs after what the statement journaled before it: one undo reverts
     the user's edit, the next the statement's journal."""
 
-    def journaled_float_sets(self):
-        """``Attribute.set`` of one float through an applied MDGModifier, journaled (the
-        shape of a fast path, test-only); returns the list of plugs it set."""
-        real, done = Attribute.set, []
-
-        def api_set(attr, *args, **kwargs):
-            if len(args) == 1 and not kwargs and type(args[0]) is float:
-                _set_op(str(attr), args[0])
-                done.append(str(attr))
-                return None
-            return real(attr, *args, **kwargs)
-
-        patch = mock.patch.object(Attribute, "set", api_set)
-        patch.start()
-        self.addCleanup(patch.stop)
-        return done
-
     def spec_case(self, plain_call=False):
         class UsersSpec(_AttrSpec):
             def apply(self, target):
@@ -1017,6 +1223,41 @@ class TestUserCodeOrder(_JournalCase):
         # what the test above would see without journal.user_call: the user's set is
         # recorded first, and undo leaves 5
         self.assertEqual(self.spec_case(plain_call=True), [0.0, 5.0])
+
+    def output_spec_case(self, make, plain_call=False):
+        # D1FIX: ``node >> spec`` (and ``List([node]) >> spec``) runs a user's spec's apply
+        # through journal.user_call too (_apply_spec_as_output)
+        from rig._internal import node as node_module
+
+        class UsersSpec(_AttrSpec):
+            def apply(self, target):
+                Node("a").d1 << 5.0          # a rig statement: journaled
+                cmds.setAttr("a.d1", 9.0)    # then the user's raw edit
+                return target
+
+        done = self.journaled_float_sets()
+        if plain_call:
+            with mock.patch.object(node_module, "user_call", lambda fn, *x, **k: fn(*x, **k)):
+                make(UsersSpec())
+        else:
+            make(UsersSpec())
+        self.assertEqual(done, ["a.d1"])
+        self.assertEqual(self.values()[0], 9.0)
+        found = []
+        for _ in range(2):
+            self.undo_steps(1)
+            found.append(self.values()[0])
+        self.assertTrue(self.queue_empty())
+        return found
+
+    def test_a_specs_apply_as_an_output_runs_outside_the_statement(self):
+        for label, make in (("node", lambda spec: Node("a") >> spec),
+                            ("List", lambda spec: List([Node("a")]) >> spec)):
+            with self.subTest(label):
+                self.assertEqual(self.output_spec_case(make), [5.0, 0.0])
+
+    def test_without_the_output_spec_call_out_the_order_is_wrong(self):
+        self.assertEqual(self.output_spec_case(lambda spec: Node("a") >> spec, plain_call=True), [0.0, 5.0])
 
     def post_create_case(self, plain_call=False):
         class UsersTransform(Transform):
