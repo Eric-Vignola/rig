@@ -271,7 +271,7 @@ def _state_of(geo: Geometry, path: str, name: str, entry: dict, node: str) -> _H
     empty    = entry["affectCount"] == 0
     if entry["procedural"] or not entry["editable"]:
         return _Home(path, geo, name, _PROCEDURAL, node, category, empty)
-    answer = cmds_edit.componentTag(
+    answer = cmds.componentTag(
         f"{path}.{_PROBE_TOKEN[geo.node_type]}",
         queryEdit         = True,
         tagName           = name,

@@ -37,7 +37,7 @@ import functools
 import inspect
 
 from maya import cmds
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import barrier, cmds_edit
 
 DEFAULT_NAME = "rig.undo_chunk"
 
@@ -63,7 +63,12 @@ class _Chunk:
         cmds_edit.undoInfo(openChunk=True, chunkName=self.name or DEFAULT_NAME)
 
     def __exit__(self, exc_type, exc, tb) -> bool:
-        cmds_edit.undoInfo(closeChunk=True)
+        # the journal's barrier, then the close, which runs whatever the barrier does (a
+        # registration that fails raises, or is a note of the block's own exception)
+        try:
+            barrier(exc)
+        finally:
+            cmds.undoInfo(closeChunk=True)
         return False
 
     def __call__(self, func):

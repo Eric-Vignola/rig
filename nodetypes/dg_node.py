@@ -9,7 +9,7 @@ from typing import Any, Sequence
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit, outside, rig_code, statement, user_call
+from rig._internal.journal import barrier, cmds_edit, outside, rig_code, statement, user_call
 from rig.nodetypes._base import (
     _MISSING,
     _attr_handle,
@@ -191,6 +191,7 @@ def _set_or_delete(node: Any, attrs: dict) -> None:
     try:
         for attr, value in attrs.items():
             getattr(node, attr) << value
+        barrier()  # the values journaled: a registration that fails deletes the node too
     except BaseException:
         try:
             cmds_edit.delete(node.long_name if isinstance(node.fn_set, OpenMaya.MFnDagNode) else node.name)
@@ -1471,7 +1472,7 @@ class DGNode(Node):
     @namespace.setter
     def namespace(self, namespace: str) -> None:
         """Sets the namespace of this node."""
-        if not cmds_edit.namespace(exists=namespace):
+        if not cmds.namespace(exists=namespace):
             cmds_edit.namespace(add=namespace)
         self.rename(f"{namespace}:{self.clean_name}")
 

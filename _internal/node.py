@@ -210,7 +210,7 @@ def _apply_spec_as_output(spec: Any, target: "Node") -> Any:
     # a setting, as if written: re-declared on an existing attribute, it must
     # be an output already (addAttr cannot edit writable)
     cloned._given            = tuple(getattr(spec, "_given", ())) + ("writable",)
-    return cloned.apply(target)
+    return user_call(cloned.apply, target)
 
 
 def lift(obj: Any) -> Union[Plug, Node]:
