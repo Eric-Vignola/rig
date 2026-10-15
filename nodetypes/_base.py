@@ -17,6 +17,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
+from rig._internal.api_edits import api_connect as _api_connect
 from rig._internal.journal import cmds_edit, outside, rig_code, statement
 from rig.nodetypes.errors import (
     _article,
@@ -2464,7 +2465,13 @@ class Attribute(str):
         Args:
             other: The attribute to connect to this attr.
             force: If True, break existing connection if found.
+
+        A connect into a free destination is made through the API and journaled
+        (`rig._internal.api_edits.api_connect`: one undo step per statement); any
+        other takes the cmds route below, which raises its errors.
         """
+        if _api_connect(self, other):
+            return
         dst = str(other)
         src = self.full_name
         # cmds.isConnected is True only for a direct src -> dst connection, so it

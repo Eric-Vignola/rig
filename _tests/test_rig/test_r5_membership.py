@@ -403,17 +403,38 @@ class TestMembershipThroughCmds(_MembershipCase):
         return cmds.container("c", query=True, nodeList=True)
 
     def test_membership_neither_loads_nor_queries_rigs_plugin(self):
+        # re-pinned (round 5 D2): the scope's connect goes through the API, which loads
+        # rig's plug-in (test_the_connect_loads_rigs_plugin_once); membership, which this
+        # pins, is seen with the API fast paths off
         cmds.flushUndo()
         cmds.unloadPlugin(PLUGIN)
-        with _Calls() as calls:
+        with mock.patch.object(journal, "API_EDITS", False), _Calls() as calls:
             members = self.scope_of_every_creating_path()
         self.assertEqual(len(members), 6)  # a, t, the cube's 3 nodes, the product
         self.assertEqual(calls.counts, {"loadPlugin": 0, "pluginInfo": 0})
         self.assertFalse(cmds.pluginInfo(PLUGIN, query=True, loaded=True))
         self.assertFalse(hasattr(cmds, UNDOABLE_API_COMMAND))
 
+    def test_the_connect_loads_rigs_plugin_once(self):
+        # round 5 D2: the first API connect of the session loads it (by full path), once;
+        # the members are the same
+        cmds.flushUndo()
+        cmds.unloadPlugin(PLUGIN)
+        with _Calls() as calls:
+            members = self.scope_of_every_creating_path()
+        self.assertEqual(len(members), 6)
+        self.assertEqual(calls.counts["loadPlugin"], 1)
+        self.assertTrue(hasattr(cmds, UNDOABLE_API_COMMAND))
+
     def test_an_unload_after_a_build_is_not_refused(self):
+        # re-pinned (round 5 D2, user decision U2): the build's connects are journals on
+        # the undo queue, which use rig's plug-in, so Maya refuses the unload until
+        # flushUndo; then it unloads
         self.assertTrue(cmds.pluginInfo(PLUGIN, query=True, loaded=True))  # setUp loaded it
         self.scope_of_every_creating_path()
-        cmds.unloadPlugin(PLUGIN)  # nothing of the build's on the queue uses it
+        with self.assertRaisesRegex(RuntimeError, "still in use"):
+            cmds.unloadPlugin(PLUGIN)
+        self.assertTrue(cmds.pluginInfo(PLUGIN, query=True, loaded=True))
+        cmds.flushUndo()
+        cmds.unloadPlugin(PLUGIN)
         self.assertFalse(cmds.pluginInfo(PLUGIN, query=True, loaded=True))

@@ -108,11 +108,12 @@ EXCLUDED_FILES = frozenset({"_internal/journal.py", "nodetypes/plugins/undoable_
 # where getattr(cmds, ...) may look a command up by name
 GETATTR_ALLOWED = ("bridges/commands.py", "nodetypes/plugins/")
 
-# (file, enclosing function) where a .doIt may apply an API edit: the journaled modifier, and
-# the mesh edits' bodies, which run inside the undo command (anywhere else an edit would be
-# applied outside the journal and the undo command)
+# (file, enclosing function) where a .doIt may apply an API edit: the journaled modifiers (B0's
+# helper and D2's connect), and the mesh edits' bodies, which run inside the undo command
+# (anywhere else an edit would be applied outside the journal and the undo command)
 DOIT_ALLOWED = frozenset({
     ("nodetypes/plugins/__init__.py", "_register_api_edit"),
+    ("_internal/api_edits.py", "api_connect"),
     ("nodetypes/mesh.py", "_free_elements"),
     ("nodetypes/mesh.py", "_relink"),
     ("nodetypes/mesh.py", "_MeshSetsEdit.redoIt"),
@@ -1079,7 +1080,12 @@ class TestBarriers(_JournalCase):
         self.assertEqual(self.values(), (0.0, 0.0))
 
     def test_rigs_cmds_edits(self):
-        self.assertEqual(self.pending_after(lambda: Node("a").d2 << Node("m").outputX), 0)
+        # re-pinned (round 5 D2): a connect into a free dst is journaled now (2 pending:
+        # the set and the connect); its cmds route, with the fast paths off, is a barrier
+        self.assertEqual(self.pending_after(lambda: Node("a").d2 << Node("m").outputX), 2)
+        self.undo_steps(1)
+        with mock.patch.object(journal, "API_EDITS", False):
+            self.assertEqual(self.pending_after(lambda: Node("a").d2 << Node("m").outputX), 0)
         self.assertEqual(self.pending_after(lambda: Node("a").rename("b")), 0)
 
     def test_the_member_add_of_a_node_just_made_is_none(self):
