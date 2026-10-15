@@ -128,6 +128,50 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(skin.get_influence_objects(), [self.joint1, self.joint2])
         self.assertEqual(skin.serialize(), data)
 
+    # --- copy_skincluster
+
+    def _skin_of(self, node):
+        return node.get_shape().get_deformers(node_type="skinCluster")[0]
+
+    def test_copy_skincluster_adds_the_influences_the_target_lacks(self):
+        """The target's skin gains the source joints; the vertices not copied keep
+        their weights."""
+        extra  = Joint.create(name="extra_joint")
+        target = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
+        SkinCluster.create(target, extra)
+
+        SkinCluster.copy_skincluster(str(self.cube), [f"{target}.vtx[0:3]"])
+
+        skin = self._skin_of(target)
+        self.assertEqual(skin.get_influence_objects(), [extra, self.joint1, self.joint2])
+        np.testing.assert_allclose(
+            skin.get_weights(), [[0, 1, 0]] * 4 + [[1, 0, 0]] * 4, rtol=0, atol=1e-12
+        )
+
+    def test_copy_skincluster_onto_an_unskinned_mesh(self):
+        target = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
+
+        SkinCluster.copy_skincluster([str(self.cube)], [f"{target}.vtx[0:7]"])
+
+        skin = self._skin_of(target)
+        self.assertEqual(skin.get_influence_objects(), [self.joint1, self.joint2])
+        np.testing.assert_allclose(skin.get_weights(), self.skin.get_weights(), rtol=0, atol=1e-12)
+
+    def test_copy_skincluster_onto_a_mesh_by_name_copies_every_vertex(self):
+        """A mesh name without components stands for every vertex (not the first ten)."""
+        source = Node(cmds.polySphere(name="source", ch=False)[0])
+        target = Node(cmds.polySphere(name="target", ch=False)[0])
+        source_skin = SkinCluster.create(source, [self.joint1, self.joint2])
+        weights     = np.random.default_rng(3).random((source_skin.get_weights().shape[0], 2))
+        source_skin.set_weights(weights / weights.sum(axis=1, keepdims=True))
+        SkinCluster.create(target, [self.joint1, self.joint2])
+
+        SkinCluster.copy_skincluster(str(source), [str(target)])
+
+        np.testing.assert_allclose(
+            self._skin_of(target).get_weights(), source_skin.get_weights(), rtol=0, atol=1e-12
+        )
+
 
 # --- undo (round U2, step S3) ------------------------------------------------------------
 
