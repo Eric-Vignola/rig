@@ -58,6 +58,14 @@ def _create_nested(node_type: str, **kwargs) -> DAGNode:
     return _cast(cmds.createNode(node_type, **kwargs))
 
 
+def _set_parent_uuid(node: TransformData, uuid: str | None) -> None:
+    """Sets the uuid of the parent of the TransformData `node` (None: a root):
+    its ``parent_uuid`` since cgmath 2.0.0 (where ``parent_node`` is a
+    deprecated alias that takes a uuid only), its ``parent_node`` before."""
+    field = "parent_uuid" if hasattr(type(node), "parent_uuid") else "parent_node"
+    setattr(node, field, uuid)
+
+
 class Transform(DAGNode):
     """
     Transform node class
@@ -299,7 +307,7 @@ class Transform(DAGNode):
         node   = TransformData(name=self.short_name, uuid=self.uuid)
         parent = self.get_parent()
         if parent is not None:
-            node.parent_node = parent.uuid
+            _set_parent_uuid(node, parent.uuid)
 
         # if there is a locatorShape, set this type as "locator"
         node.node_type = cmds.nodeType(self.name)
@@ -418,8 +426,8 @@ class Transform(DAGNode):
                 _recurse(child)
 
         # serialize the root
-        root             = self.serialize()
-        root.parent_node = None
+        root = self.serialize()
+        _set_parent_uuid(root, None)
 
         # recurse through the hierarchy
         tree    = [root]
@@ -477,6 +485,7 @@ class Transform(DAGNode):
             LOGGER.warning(f"Skipped nodes that can't be created: {counts}")
 
         # if a parent is specified, make set the transforms relative to it
+        under = {}  # id of a root -> the long name of the node outside the data it goes under
         if parent is not None:
             if parent in hierarchy:
                 for node in hierarchy.get_roots():
@@ -484,11 +493,14 @@ class Transform(DAGNode):
 
             # if the parent is not in the hierarchy, add it to compute matrices
             else:
-                obj = _cast(parent).serialize()
+                # (the data keeps the outside node's uuid: a parent is a uuid since
+                # cgmath 2.0.0, so the name it is created under is kept here)
+                outside = _cast(parent)
+                obj     = outside.serialize()
                 hierarchy.list.insert(0, obj)
                 for node in hierarchy.get_roots()[1:]:
                     node.set_parent(obj, world_space=world_space)
-                    node.parent_node = parent
+                    under[id(node)] = outside.long_name
                 hierarchy.list.pop(0)
 
         # create the hierarchy at identity before setting any attributes,
@@ -497,7 +509,9 @@ class Transform(DAGNode):
             # use the parent's long name, the new node is created in world
             # and may shadow the parent's short name.
             parent = node.get_parent()
-            if parent:
+            if id(node) in under:
+                parent = under[id(node)]
+            elif parent:
                 parent = getattr(parent, "name", parent)
                 parent = parent.long_name if isinstance(parent, DAGNode) else str(parent)
 
