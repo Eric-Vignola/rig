@@ -1333,17 +1333,23 @@ def _build_hole_map(mesh_data: MeshData) -> dict[int, list[list[int]]]:
 def _propagate_holes_to_uvs(mesh_data: MeshData, uv_list: UVList) -> None:
     """Copy hole metadata from MeshData to each UVData, remapping vertex indices.
 
-    MeshData.indices and UVData.indices are parallel (same face-vertex order),
-    so for each mesh hole vertex we read the UV vertex at the same position.
+    A mapped face lists its UVs in the order it lists its vertices, so for each
+    mesh hole vertex we read the UV at the same position of the face. A UV set
+    that maps only some faces has fewer UVs than the mesh has face-vertices:
+    each face's UVs start at its own UV offset, and a holed face the set does
+    not map has no hole UVs (the set's hole arrays leave it out; a set that
+    maps no holed face keeps None).
     """
     from cgmath.geometry import MeshData, UVList
 
     face_starts = np.concatenate([[0], np.cumsum(mesh_data.counts[:-1])])
 
     for uv in uv_list:
-        uv.hole_faces   = mesh_data.hole_faces.copy()
-        uv.hole_counts  = mesh_data.hole_counts.copy()
+        uv_counts = np.asarray(uv.counts, dtype=np.int64)
+        uv_starts = np.cumsum(uv_counts) - uv_counts
 
+        hole_faces      = []
+        hole_counts     = []
         uv_hole_indices = []
         offset          = 0
         for i in range(len(mesh_data.hole_faces)):
@@ -1352,16 +1358,24 @@ def _propagate_holes_to_uvs(mesh_data: MeshData, uv_list: UVList) -> None:
             mesh_hole_verts = {
                 int(v) for v in mesh_data.hole_indices[offset : offset + count]
             }
-
-            start      = int(face_starts[face_idx])
-            face_count = int(mesh_data.counts[face_idx])
-            for j in range(face_count):
-                if int(mesh_data.indices[start + j]) in mesh_hole_verts:
-                    uv_hole_indices.append(int(uv.indices[start + j]))
-
             offset += count
 
-        uv.hole_indices = np.array(uv_hole_indices, dtype=int)
+            face_count = int(mesh_data.counts[face_idx])
+            if int(uv_counts[face_idx]) != face_count:
+                continue  # not mapped: no hole UVs
+
+            start    = int(face_starts[face_idx])
+            uv_start = int(uv_starts[face_idx])
+            for j in range(face_count):
+                if int(mesh_data.indices[start + j]) in mesh_hole_verts:
+                    uv_hole_indices.append(int(uv.indices[uv_start + j]))
+            hole_faces.append(face_idx)
+            hole_counts.append(count)
+
+        if hole_faces:
+            uv.hole_faces   = np.array(hole_faces, dtype=mesh_data.hole_faces.dtype)
+            uv.hole_counts  = np.array(hole_counts, dtype=mesh_data.hole_counts.dtype)
+            uv.hole_indices = np.array(uv_hole_indices, dtype=int)
 
 
 # --- rig's undoable mesh edits ------------------------------------------------------------
