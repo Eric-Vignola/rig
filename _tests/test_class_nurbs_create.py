@@ -480,11 +480,6 @@ def _uneven_curves():
     }
 
 
-def _in_unit_range(knots, degree):
-    knots = np.asarray(knots, dtype=float)
-    return (knots - knots[degree - 1]) / (knots[-degree] - knots[degree - 1])
-
-
 class TestNurbsCurveSerialize(_CurveCreateCase):
     """``serialize`` holds the curve's own points and form, and its knots when they are not
     Maya's default ones, so ``create`` rebuilds the same curve."""
@@ -562,9 +557,8 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
                 got = curve_state(rebuilt)
                 self.assertEqual((got["cvs"], got["degree"], got["form"]),
                                  (state["cvs"], state["degree"], state["form"]))
-                # the same spacing, so the same shape; this cgmath rescales the range
-                self.assertTrue(np.allclose(_in_unit_range(got["knots"], state["degree"]),
-                                            _in_unit_range(state["knots"], state["degree"]), atol=1e-12))
+                # as they are, range and all (to rounding: cgmath 2.0.0's kv is lo + t * scale)
+                self.assertTrue(np.allclose(got["knots"], state["knots"], rtol=0.0, atol=1e-12))
                 self.assert_same_shape(rebuilt, source)
 
     def test_evenly_spaced_knots_on_another_range(self):

@@ -156,11 +156,11 @@ class NurbsCurve(Geometry):
         curve's own points: a periodic curve's last ``degree`` CVs repeat its
         first ones, and BSplineData wraps them back itself. Knots other than
         Maya's default ones go in its ``knots`` when the installed cgmath's
-        BSplineData takes them. That cgmath keeps their spacing, so the
-        curve's shape, but rescales them to its own parameter range,
-        ``[0, max_param]``. An older one has no such field: the knots are
-        dropped and the data has uniform ones, which is the same curve only
-        when the knots were evenly spaced (a warning says so otherwise).
+        BSplineData takes them (cgmath 2.0.0), which keeps them as they are
+        (to rounding): the same curve over the same parameter range. An
+        older one (1.0.4) has no such field: the knots are dropped and the
+        data has uniform ones, which is the same curve only when the knots
+        were evenly spaced (a warning says so otherwise).
 
         Args:
             world_space: If True, query points in world space, otherwise object space.
