@@ -2467,6 +2467,30 @@ baked.f[:3] << Tag("top")                       # baked tags edit through the sh
 print(baked >> Tag("top"))                      # [0 1 2]
 ```
 
+`at=` takes any shape of the geometry chain, Maya's
+`deformableShape -tagInjectionList`: the shape, its Orig, and every mesh
+upstream through `inMesh` <- `outMesh` / `worldMesh` or a deformer's
+input geometry, with tags of its own or none. The tag is stored on that
+node, and it and every mesh downstream of it read it. A mesh that feeds
+the shape from the side (a blendShape target, a wrap's driver) is refused:
+Maya would store the tag there, and the shape never reads it.
+
+```python
+cmds.file(new=True, force=True)
+a, b, c = (make(cmds.polySphere, n, ch=False) for n in "abc")
+cmds.connectAttr("aShape.outMesh", "bShape.inMesh")
+cmds.connectAttr("bShape.outMesh", "cShape.inMesh")   # a -> b -> c
+c.vtx[:2] << Tag("mid", at=b)                   # stored on bShape: b and c read it, a does not
+print(b >> Tag("mid"), c >> Tag("mid"))         # [0 1] [0 1]
+print(Tag("mid") in Tag.of(a))                  # False
+tgt = make(cmds.polySphere, "tgt", ch=False)
+cmds.blendShape("tgt", "c")
+try:
+    c.vtx[:2] << Tag("side", at=tgt)
+except TypeError as err:
+    print("not in the geometry chain" in str(err))  # True   c never reads a blendShape target's tags
+```
+
 ---
 
 ## 35. Layer
