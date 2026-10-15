@@ -626,6 +626,11 @@ Verified on Maya 2025; not bugs to work around blindly.
   tag through its vertices and back, one ring wider, and its `MeshData`
   numbers edges differently from Maya.)
   `SkinCluster.transfer_to_mesh` (many influences) is fine.
+- **Several skinClusters on one mesh: the one nearest the shape.**
+  `Mesh.apply_skin_data`, `Mesh.bake_deformation` and
+  `SkinCluster.copy_skincluster` (each source and the target) act on the
+  first skinCluster `get_deformers` lists, which is normally the last one
+  applied. The mesh's other skinClusters are left alone.
 - **`Mesh.add_color_set(name, "RGBA")` is a `ValueError`**: the
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so
   pass `ColorSet.Representation.RGBA` (or `["RGBA"]` on the enum).

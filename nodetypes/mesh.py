@@ -534,16 +534,17 @@ class Mesh(Geometry):
     # --- deformation
 
     def apply_skin_data(self, skin_data: SkinData):
-        """Apply skin data to this mesh."""
+        """Apply skin data to this mesh: to its skinCluster (with several, the
+        one nearest the shape, the first ``get_deformers`` lists), or to a new
+        one made from the data when it has none."""
         from cgmath.geometry import SkinData
 
         # avoid circular import
         from rig.nodetypes import SkinCluster
 
         # reuse an existing skincluster, or create one directly from the data
-        skin = self.get_deformers(node_type="skinCluster")
-        if skin:
-            skin = skin[0]
+        skin = _skincluster_of(self)
+        if skin is not None:
             skin.set_weights(skin_data)
         else:
             skin = SkinCluster.create(self, skin_data)
@@ -573,7 +574,7 @@ class Mesh(Geometry):
 
         # set max inf
         if max_influences is not None:
-            skin = self.get_deformers(node_type="skinCluster")[0]
+            skin = _skincluster_of(self)
             skin.set_max_influences(4)
 
         return skin
@@ -1067,6 +1068,16 @@ class Mesh(Geometry):
                 new_data = _resample_map(resampler, data, **kwargs)
                 other.add_map(m, category=data.categories, force=True)
                 other.set_map_values(m, new_data)
+
+
+def _skincluster_of(mesh):
+    """The skinCluster rig's skin methods act on for `mesh` (a Mesh), or None
+    when it has none: with several, the one nearest the shape, the first
+    ``get_deformers`` lists (normally the last one applied).
+    ``Mesh.apply_skin_data``, ``Mesh.bake_deformation`` and
+    ``SkinCluster.copy_skincluster`` (each source and each target) all take
+    it from here."""
+    return mesh.get_deformers(node_type="skinCluster", first_only=True)
 
 
 def _resampler(src, dst, mode=None):

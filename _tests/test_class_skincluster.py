@@ -172,6 +172,54 @@ class TestSkinCluster(MayaTestCase):
             self._skin_of(target).get_weights(), source_skin.get_weights(), rtol=0, atol=1e-12
         )
 
+    # --- several skinClusters on one mesh: the one nearest the shape (runs/r5/SKIN)
+
+    def _skin_on_top(self, node, joint, name):
+        """A second skinCluster on `node`, bound to `joint` alone: Maya puts it
+        nearest the shape, above the first one."""
+        skin = Node(cmds.skinCluster(str(joint), str(node), multi=True, toSelectedBones=True, name=name)[0])
+        self.assertEqual(node.get_shape().get_deformers(node_type="skinCluster")[0], skin)
+        return skin
+
+    def test_copy_skincluster_reads_the_source_skin_nearest_the_shape(self):
+        top    = Joint.create(name="top_joint")
+        self._skin_on_top(self.cube, top, "top_skin")
+        target = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
+
+        SkinCluster.copy_skincluster(str(self.cube), [f"{target}.vtx[0:7]"])
+
+        skin = self._skin_of(target)
+        self.assertEqual(skin.get_influence_objects(), [top])
+        np.testing.assert_allclose(skin.get_weights(), np.ones((8, 1)), rtol=0, atol=1e-12)
+
+    def test_copy_skincluster_writes_the_target_skin_nearest_the_shape(self):
+        under, over = Joint.create(name="under_joint"), Joint.create(name="over_joint")
+        target      = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
+        first       = SkinCluster.create(target, under)
+        nearest     = self._skin_on_top(target, over, "nearest_skin")
+
+        SkinCluster.copy_skincluster(str(self.cube), [f"{target}.vtx[0:3]"])
+
+        self.assertEqual(nearest.get_influence_objects(), [over, self.joint1, self.joint2])
+        np.testing.assert_allclose(
+            nearest.get_weights(), [[0, 1, 0]] * 4 + [[1, 0, 0]] * 4, rtol=0, atol=1e-12
+        )
+        self.assertEqual(first.get_influence_objects(), [under])
+        np.testing.assert_allclose(first.get_weights(), np.ones((8, 1)), rtol=0, atol=1e-12)
+
+    def test_apply_skin_data_sets_the_skin_nearest_the_shape(self):
+        top     = Joint.create(name="top_joint")
+        nearest = self._skin_on_top(self.cube, top, "top_skin")
+        before  = self.skin.get_weights()
+        data    = self.skin.serialize()
+        data.weights[:] = data.weights[:, ::-1]  # j1 and j2 swapped
+
+        self.assertEqual(self.cube.get_shape().apply_skin_data(data), nearest)
+
+        self.assertEqual(nearest.get_influence_objects(), [self.joint1, self.joint2])
+        np.testing.assert_allclose(nearest.get_weights(), before[:, ::-1], rtol=0, atol=1e-12)
+        np.testing.assert_allclose(self.skin.get_weights(), before, rtol=0, atol=0)
+
     def test_copy_skincluster_needs_the_target_vertices(self):
         """No default: None was a TypeError from sorted(None) (runs/r5/XFER/review/probe_skin.py)."""
         before = cmds.ls()
