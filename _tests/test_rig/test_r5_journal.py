@@ -997,7 +997,8 @@ class TestJournal(_JournalCase):
         # reachable only from code that opens a file inside a statement without a barrier
         # (a user's MMessage callback); here the statement's body itself does
         self.assertTrue(journal._register_scene_callbacks())
-        self.assertEqual(len(callbacks.registered_ids(journal.__name__)), 2)
+        # kBeforeNew, kBeforeOpen, and (R5 D3) the Undo and Redo events (the redo queue, journal.add)
+        self.assertEqual(len(callbacks.registered_ids(journal.__name__)), 4)
         folder = tempfile.mkdtemp(prefix="rig_r5_journal_")
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         path = os.path.join(folder, "scene.ma").replace("\\", "/")

@@ -22,6 +22,13 @@ runs, so its own ``cmds`` edits and rig statements are recorded in the order it 
 An API edit made outside any statement (``attr.set(1.0)`` called directly) is registered at
 once, as its own step: a missed entry point costs registrations, never order.
 
+The redo queue: Maya flushes it at the first command that goes on the undo queue, so a ``cmds``
+edit flushes it at once, and a journaled edit only when its journal is registered. After an
+undo or a redo (an MEventMessage), while Maya's redo queue is not empty, the next API edit is
+registered at once, so the redo queue is flushed where the ``cmds`` edit would have flushed it
+(a node made, then undone, is freed at the same point, and a statement that still names it
+raises the same error).
+
 Undo off: registering through the command with undo off keeps nothing (Maya runs the
 command's ``doIt``, which does nothing, and drops it). Every change of the undo state is a
 ``cmds`` edit (a barrier) or happens outside a statement, so a pending list never holds edits
@@ -48,16 +55,18 @@ API_EDITS = True
 
 
 class _State:
-    """The scope flag, the pending list and the outermost statement's positional arguments
-    while it runs (``entry``: `rig._internal.api_edits.api_set` reads it, None between
-    statements; Maya runs rig on its main thread only)."""
+    """The scope flag, the pending list, the outermost statement's positional arguments while
+    it runs (``entry``: `rig._internal.api_edits.api_set` reads it, None between statements),
+    and ``redo``: True when Maya's redo queue may hold entries (an undo or a redo ran since,
+    or since this import), see `add`. Maya runs rig on its main thread only."""
 
-    __slots__ = ("open", "pending", "entry")
+    __slots__ = ("open", "pending", "entry", "redo")
 
     def __init__(self) -> None:
         self.open    = False
         self.pending = []
         self.entry   = None
+        self.redo    = True
 
 
 _S = _State()
@@ -143,12 +152,22 @@ def barrier(error: BaseException | None = None) -> None:
 def add(op: Any) -> None:
     """Journals ``op``, an edit applied just now: pending inside a statement, else registered
     at once as its own step (which raises when it cannot be registered: the caller reverts
-    ``op`` and takes its ``cmds`` route)."""
+    ``op`` and takes its ``cmds`` route). Also registered at once, after what is pending, when
+    Maya's redo queue is not empty (after an undo or a redo): the ``cmds`` edit would have
+    flushed it here."""
     if _S.open:
         if not _SCENE_CALLBACKS_READY:
             # an import before Maya was initialised: the new / open discard, before a list
             # it would drop exists
             _ensure_scene_callbacks()
+        if _S.redo:
+            if _cmds.undoInfo(query=True, redoQueueEmpty=True):
+                _S.redo = False
+            else:
+                if _S.pending:
+                    _flush()
+                _register([op])
+                return
         _S.pending.append(op)
     else:
         _register([op])
@@ -294,13 +313,21 @@ def _discard(*_args: Any) -> None:
     _S.pending = []
 
 
+def _undone_or_redone(*_args: Any) -> None:
+    """The Undo / Redo events: Maya's redo queue may hold entries now (see `add`)."""
+    _S.redo = True
+
+
 def _scene_callback_specs() -> list:
     from maya.api import OpenMaya
 
-    msg = OpenMaya.MSceneMessage
+    msg   = OpenMaya.MSceneMessage
+    event = OpenMaya.MEventMessage.addEventCallback
     return [
         (msg.addCallback, msg.kBeforeNew,  _discard),
         (msg.addCallback, msg.kBeforeOpen, _discard),
+        (event,           "Undo",          _undone_or_redone),
+        (event,           "Redo",          _undone_or_redone),
     ]
 
 
