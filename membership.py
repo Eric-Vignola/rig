@@ -321,10 +321,20 @@ def _resolve_at(at: Any, path: str) -> str | None:
     full    = node.long_name
     allowed = {path} | _own_history_paths(path)
     if full not in allowed:
+        # the nodes whose tags the shape reads: its tag injection node and
+        # those its componentTagHistory names, so a mesh feeding its inMesh,
+        # where the own history stops (runs/r5/REBIND/review/probe_at_injection_head.txt);
+        # never a blendShape target or a wrap's driver
+        geo      = _cast(path)
+        allowed |= {geo.injection_node.long_name} | {
+            _full_path(e["node"], path) for e in geo.get_component_tag_history() or []
+        }
+    if full not in allowed:
         raise TypeError(
             f"at={at!r}: '{full}' is neither {path} nor in its history; a tag is "
             f"injected on the shape it is read from or a node upstream of it "
-            f"(its Orig, not a blendShape target or a wrap's driver mesh)"
+            f"(its Orig, a mesh feeding its input; not a blendShape target or a "
+            f"wrap's driver mesh)"
         )
     return full
 
@@ -402,8 +412,10 @@ class Tag(_MemberSpec):
     A name with a non-ASCII character is left to Maya.
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
     to shadow a procedural one: the shape or a node of its own history (its
-    ``Orig``), not a mesh that drives it from the side (a blendShape target,
-    a wrap's driver), which ``listHistory`` reaches too; ``force=True`` deletes / purges through
+    ``Orig``) or one whose tags it reads (its tag injection node, a mesh
+    feeding its ``inMesh``), not a mesh that drives it from the side (a
+    blendShape target, a wrap's driver), which ``listHistory`` reaches too;
+    ``force=True`` deletes / purges through
     deformer references.
 
     A deformer input counts as a reference only when its input geometry can
