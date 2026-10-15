@@ -1,4 +1,5 @@
 import unittest
+import warnings
 
 from maya import cmds
 from maya.api import OpenMaya
@@ -265,6 +266,38 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(cmds.nodeType(created[3]),          "transform")
         self.assertEqual([cmds.nodeType(s) for s in shapes], ["locator"])
         self.assertEqual(cmds.getAttr(f"{created[3]}.t")[0], (1, 2, 3))
+
+    def test_hierarchy_under_a_parent_outside_the_data(self):
+        # the data's roots go under a node the data does not hold and keep their world
+        # matrices (on cgmath 2.0.0 it raised: rig wrote that node's name into the data,
+        # where a parent is a uuid now; runs\r5\CG2)
+        self.root.t.set(1, 2, 3)
+        self.root.r.set(10, 20, 30)
+        self.joint2.t.set(0, 2, 0)
+        self.joint3.t.set(0, 0, 3)
+        world     = [cmds.xform(x.long_name, q=True, matrix=True, worldSpace=True)
+                     for x in (self.root, self.joint2, self.joint3)]
+        hierarchy = self.root.serialize_hierarchy()
+
+        self.new_scene()
+        outside = cmds.createNode("transform", name="outside")
+        cmds.xform(outside, translation=(-4, 0, 2), rotation=(0, 45, 0))
+        created = Transform.create_hierarchy(hierarchy, parent="outside")
+        self.assertEqual(cmds.listRelatives(created[0], parent=True), ["outside"])
+        self.assertEqual(len(hierarchy), 3)  # the caller's data is left as it was
+        for name, matrix in zip(created, world):
+            got = cmds.xform(name, q=True, matrix=True, worldSpace=True)
+            for a, b in zip(got, matrix):
+                self.assertAlmostEqual(a, b, places=6)
+
+    def test_serialize_hierarchy_writes_parents_without_deprecation_warnings(self):
+        # cgmath 2.0.0 names a parent parent_uuid; parent_node is its deprecated alias
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            hierarchy = self.root.serialize_hierarchy()
+            self.assertIsNone(hierarchy[0].get_parent())
+            self.assertIs(hierarchy[1].get_parent(), hierarchy[0])
+            self.assertIs(hierarchy[2].get_parent(), hierarchy[1])
 
     def test_hierarchy_compound_user_attrs_round_trip(self):
         root = self.root.name
