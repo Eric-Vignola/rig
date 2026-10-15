@@ -12,8 +12,10 @@ Undo tests check the scene (``rig._tests._undo``), never ``cmds.undo()``'s
 return value.
 """
 
+import contextlib
 import math
 import unittest
+from unittest import mock
 
 import numpy as np
 from maya import cmds
@@ -43,6 +45,15 @@ def _takes_knots() -> bool:
     from cgmath.geometry import BSplineData
 
     return "knots" in BSplineData.__dataclass_fields__
+
+
+class _BSplineDataWithoutKnots:
+    """A BSplineData without a ``knots`` field, as cgmath 1.0.4's: what serialize gives it."""
+
+    __dataclass_fields__ = dict.fromkeys(("points", "degree", "periodic"))
+
+    def __init__(self, points, degree, periodic):
+        self.points, self.degree, self.periodic = points, degree, periodic
 
 
 def _line(count):
@@ -571,11 +582,14 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
             with self.assertNoLogs("rig.nodetypes.nurbs", level="WARNING"):
                 NurbsCurve(source).serialize()
 
-    @unittest.skipIf(_takes_knots(), "this cgmath's BSplineData takes knots")
     def test_uneven_knots_on_a_cgmath_without_knots_warn(self):
+        # on a cgmath whose BSplineData takes knots (2.0.0) a stand-in without them (1.0.4's)
+        # is patched in, so the test runs on both
         for label, xform in _uneven_curves().items():
             with self.subTest(label):
-                with self.assertLogs("rig.nodetypes.nurbs", level="WARNING") as logs:
+                older = (mock.patch("cgmath.geometry.BSplineData", _BSplineDataWithoutKnots)
+                         if _takes_knots() else contextlib.nullcontext())
+                with older, self.assertLogs("rig.nodetypes.nurbs", level="WARNING") as logs:
                     data = NurbsCurve(xform).serialize(world_space=False)
                 self.assertIn("uneven knots are dropped", logs.output[0])
                 self.assertEqual(data.degree, 3)
