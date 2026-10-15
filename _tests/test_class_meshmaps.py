@@ -516,6 +516,34 @@ class TestMeshMapTransfer(MayaTestCase):
             with self.assertRaisesRegex(RuntimeError, "UV data not supplied"):
                 src.transfer_maps("XFER_UV", dst, mode=ResampleMode.UV)
 
+    def test_uv_transfers_onto_and_from_an_empty_uv_set(self):
+        """Maya's mesh with no UVs, an empty map1: by UV every transfer, both
+        ways, is cgmath's refusal (a map or skin was a numpy ValueError or
+        IndexError, a face tag came back empty); by SPATIAL they work."""
+        from cgmath.geometry.resample import ResampleMode
+
+        src, bare = self._plane("src", 4), self._plane("bare", 4)
+        cmds.polyMapDel(f"{bare.name}.f[*]")
+        self.assertEqual(cmds.polyEvaluate(bare.name, uvcoord=True), 0)
+        self._transfer_all(src, bare)
+        skin = src.get_deformers(node_type="skinCluster")[0]
+        bare.add_component_tag("xfer_face")
+        bare.set_component_tag_contents("xfer_face", [5], "f")
+        src.add_component_tag("xfer_face")
+        src.set_component_tag_contents("xfer_face", [5], "f")
+        uv = {"mode": ResampleMode.UV}
+        for label, call in (
+            ("map onto", lambda: src.transfer_maps("XFER_UV", bare, **uv)),
+            ("map from", lambda: bare.transfer_maps("XFER_UV", src, **uv)),
+            ("vertex tag onto", lambda: src.transfer_component_tags("xfer_uv", bare, **uv)),
+            ("face tag onto", lambda: src.transfer_component_tags("xfer_face", bare, **uv)),
+            ("face tag from", lambda: bare.transfer_component_tags("xfer_face", src, **uv)),
+            ("skin onto", lambda: skin.transfer_to_mesh(bare, **uv)),
+        ):
+            with self.subTest(label):
+                with self.assertRaisesRegex(RuntimeError, "UV data not supplied"):
+                    call()
+
 
 class TestMeshTransferUndo(UndoWalk, MayaTestCase):
     """transfer_maps and transfer_component_tags are ONE undo step each

@@ -1072,16 +1072,16 @@ class Mesh(Geometry):
 def _resampler(src, dst, mode=None):
     """A cgmath ``MeshDataResampler`` from the mesh `src` onto the mesh `dst`
     for `mode` (a ``ResampleMode``, SPATIAL by default). Only UV mode reads
-    UVs, the first UV set of each mesh; a mesh without one gives None there,
-    which cgmath refuses (RuntimeError "UV data not supplied.")."""
+    UVs, the first UV set of each mesh; a mesh without one, or whose first
+    set holds no UVs, gives None there, which cgmath refuses (RuntimeError
+    "UV data not supplied.")."""
     from cgmath.geometry.resample import MeshDataResampler, ResampleMode
 
     if mode != ResampleMode.UV:
         return MeshDataResampler(src.serialize(include_uvs=False), dst.serialize(include_uvs=False))
     (src_data, src_uvs), (dst_data, dst_uvs) = src.serialize(), dst.serialize()
-    return MeshDataResampler(
-        src_data, dst_data, src_uvs[0] if src_uvs else None, dst_uvs[0] if dst_uvs else None
-    )
+    src_uv, dst_uv = (uvs[0] if uvs and np.size(uvs[0].points) else None for uvs in (src_uvs, dst_uvs))
+    return MeshDataResampler(src_data, dst_data, src_uv, dst_uv)
 
 
 def _resample_map(resampler, data, mode=None, method="bilinear"):
@@ -1133,6 +1133,8 @@ def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
             src_data, dst_data, kwargs = resampler.src_uv, resampler.dst_uv, {}
         else:
             raise ValueError(f"Unsupported resample mode: {mode}")
+        if src_data is None or dst_data is None:
+            raise RuntimeError("UV data not supplied.")
         counts = np.asarray(dst_data.counts)
         points = _face_points(dst, resampler.dst_mesh.counts, counts, dst_data.points, dst_data.indices)
         landed = src_data.sample(points, **kwargs).indices
