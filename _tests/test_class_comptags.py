@@ -186,6 +186,21 @@ class TestComponentTagNames(MayaTestCase):
                     self.mesh.rename_component_tag("top", key)
                 self.assertEqual(self.mesh.component_tags, names)
 
+    def test_a_missing_dotted_key_does_not_exist(self):
+        """A bare key with a '.' ('ab.ce', one name to Maya) was read as an
+        expression: a missing one gave an empty result, where a missing 'abce'
+        raises (runs/r5/TAGLEFT)."""
+        self.mesh.add_component_tag("ab.cd")
+        self.mesh.set_component_tag_contents("ab.cd", [1, 2], category="v")
+        np.testing.assert_array_equal(self.mesh.get_component_tag_indices("ab.cd"), [1, 2])
+        for key in ("abce", "ab.ce", "a:b.c", "ab.cd.ef"):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(RuntimeError, f"Component tag {re.escape(key)} does not exist"):
+                    self.mesh.get_component_tag_indices(key)
+        # an expression is still an expression: a missing name in one reads nothing
+        np.testing.assert_array_equal(self.mesh.get_component_tag_indices("ab.cd + ab.ce"), [1, 2])
+        np.testing.assert_array_equal(self.mesh.get_component_tag_indices("ab.c*"), [1, 2])
+
     def test_the_name_rule_is_mayas(self):
         """Every name of one to three characters from this alphabet: rig refuses
         exactly what Maya's setAttr refuses."""
