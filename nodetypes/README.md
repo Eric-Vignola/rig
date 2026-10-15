@@ -636,7 +636,9 @@ Verified on Maya 2025; not bugs to work around blindly.
   skinned mesh that drives it through a blendShape or a wrap. A mesh with
   none of its own gets a new one, `SkinCluster.create` deletes only the
   geometry's own skinClusters (not every one `listHistory` reaches), and
-  `SkinCluster.rebind` rebinds only those (a mesh with none is left alone).
+  `SkinCluster.rebind` rebinds only its own skinCluster (a mesh with none is
+  left alone; one with several, layered, is a `RuntimeError` before anything
+  changes: Maya re-binds in place only the skin nearest the shape).
 - **`Mesh.add_color_set(name, "RGBA")` is a `ValueError`**: the
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so
   pass `ColorSet.Representation.RGBA` (or `["RGBA"]` on the enum).
