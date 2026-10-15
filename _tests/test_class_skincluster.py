@@ -228,6 +228,49 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(cmds.ls(), before)
 
 
+class TestBakeDeformation(MayaTestCase):
+    """``Mesh.bake_deformation(max_influences)``: None is no cap, a count is
+    the cap (runs/r5/SKIN: None was an UnboundLocalError, a count gave 4)."""
+
+    TEST_START_NEW_SCENE = True
+    JOINTS = 10
+
+    def setUp(self):
+        super().setUp()
+        self.build()
+
+    def build(self):
+        """A cylinder skinned to a 10-joint chain from root_joint, under a deltaMush."""
+        self.new_scene()
+        body = cmds.polyCylinder(name="body", height=10, subdivisionsY=40, subdivisionsX=12, ch=False)[0]
+        cmds.select(clear=True)
+        joints = [
+            cmds.joint(name="root_joint" if i == 0 else f"j{i}", position=(0, -5 + 10.0 * i / (self.JOINTS - 1), 0))
+            for i in range(self.JOINTS)
+        ]
+        cmds.skinCluster(joints, body, maximumInfluences=6, dropoffRate=0.5, toSelectedBones=True)
+        cmds.deltaMush(body, smoothingIterations=20)
+        self.mesh = Node(body).get_shape()
+
+    def most_influences(self, skin):
+        return int((np.asarray(skin.get_weights()) > 0).sum(axis=1).max())
+
+    def test_bake_deformation_without_a_cap_keeps_every_influence(self):
+        skin = self.mesh.bake_deformation()
+
+        self.assertEqual(skin, self.mesh.get_deformers(node_type="skinCluster")[0])
+        self.assertEqual(self.most_influences(skin), self.JOINTS)
+
+    def test_bake_deformation_caps_at_the_count_given(self):
+        for cap in (2, 6, 9):
+            with self.subTest(cap=cap):
+                self.build()
+                skin = self.mesh.bake_deformation(max_influences=cap)
+
+                self.assertEqual(skin, self.mesh.get_deformers(node_type="skinCluster")[0])
+                self.assertEqual(self.most_influences(skin), cap)
+
+
 # --- undo (round U2, step S3) ------------------------------------------------------------
 
 

@@ -554,28 +554,38 @@ class Mesh(Geometry):
         """Bakes the deformation to a skincluster on this mesh.
 
         Args:
-            max_influences: The maximum number of influences to bake.
+            max_influences: The most influences a vertex keeps. None (the
+                default) is no cap: every joint of the skeleton may weigh on
+                a vertex. A count is the cap: the bake keeps 8 influences
+                (the count, when higher) for fidelity, then
+                ``set_max_influences(max_influences)``.
 
         Returns:
-            The baked skincluster.
+            The baked skincluster (with several, the one nearest the shape:
+            the first ``get_deformers`` lists).
         """
         # set to bind pose
         cmds.select(self.name, replace=True)
         mel.eval("gotoBindPose;")
 
         # bake delta mush, use a high max inf count to maintain fidelity
+        # (None: as many as the skeleton has joints, which is no cap)
+        if max_influences is None:
+            bake_cap = len(cmds.ls("root_joint", dag=True, type="joint"))
+        else:
+            bake_cap = max(8, max_influences)
         cmds.bakeDeformer(
             srcSkeletonName = "root_joint",
             srcMeshName     = self.name,
             dstSkeletonName = "root_joint",
             dstMeshName     = self.name,
-            maxInfluences   = 8,
+            maxInfluences   = bake_cap,
         )
 
         # set max inf
+        skin = _skincluster_of(self)
         if max_influences is not None:
-            skin = _skincluster_of(self)
-            skin.set_max_influences(4)
+            skin.set_max_influences(max_influences)
 
         return skin
 
