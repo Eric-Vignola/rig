@@ -310,7 +310,7 @@ def _resolve(geo: Geometry, path: str, name: str, at: str | None) -> _Home:
 def _resolve_at(at: Any, path: str) -> str | None:
     """The full path of the ``at=`` node: a geometry node of the shape's
     geometry chain, ``deformableShape -tagInjectionList`` (a transform stands
-    for its single shape)."""
+    for its single shape), and not a referenced one."""
     if at is None:
         return None
     node = at if isinstance(at, Node) else Node(at)
@@ -319,21 +319,30 @@ def _resolve_at(at: Any, path: str) -> str | None:
         if shape is None:
             raise TypeError(f"at={at!r}: '{node}' is not a geometry node")
         node = shape
-    full    = node.long_name
-    allowed = {path} | _own_history_paths(path)
-    if full not in allowed:
-        # the geometry chain, as Maya walks it: the shapes it can inject this
-        # shape's tags on, also past a visible mesh feeding its inMesh, where
-        # the own history stops; never a blendShape target, a wrap's driver or
-        # polyTransfer's other mesh (runs/r5/TAGLEFT/probe_chainq2.txt)
-        allowed |= set(cmds.ls(cmds.deformableShape(path, tagInjectionList=True) or [], long=True))
-    if full not in allowed:
+    full = node.long_name
+    # The geometry chain, as Maya walks it: the shape, its Orig and the meshes
+    # upstream through inMesh and a deformer's input geometry, also past a
+    # visible mesh. Not the own history, which goes through every input of a
+    # history node: a polyUnite / polyCBoolOp operand or an intermediate
+    # polyTransfer alternate is in it, never read at those ids
+    # (runs/r5/TAGLEFT/probe_chainq2.txt, review/probe_unite.txt)
+    if full != path and full not in cmds.ls(
+        cmds.deformableShape(path, tagInjectionList=True) or [], long=True
+    ):
         raise TypeError(
             f"at={at!r}: '{full}' is not in the geometry chain of {path}, the "
             f"shapes its geometry comes through (itself, its Orig, a mesh upstream "
             f"through inMesh or a deformer's input geometry), so {path} never "
-            f"reads a tag there: a blendShape target, a wrap's driver or another "
-            f"mesh feeding it from the side is not in it"
+            f"reads a tag there as written: a blendShape target, a wrap's driver, "
+            f"an operand of a polyUnite / polyCBoolOp or another mesh feeding it "
+            f"from the side is not in it"
+        )
+    if cmds.referenceQuery(full, isNodeReferenced=True):
+        # componentTag -create returns '' there (runs/r5/TAGLEFT/fix/probe_injnode.txt)
+        raise TypeError(
+            f"at={at!r}: '{full}' is referenced, and Maya stores no component tag "
+            f"on a referenced node; pick a local node of the chain (a deformer "
+            f"added to a referenced shape makes a local Orig)"
         )
     return full
 
@@ -413,15 +422,24 @@ class Tag(_MemberSpec):
     (``add_component_tag`` leaves it to Maya).
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
     to shadow a procedural one: a shape of its geometry chain
-    (``deformableShape -tagInjectionList``), the shape, its ``Orig`` and every
-    mesh upstream through ``inMesh`` <- ``outMesh`` / ``worldMesh`` and a
-    deformer's input geometry, with tags or none. Maya writes the tag on that
-    node, and it and every mesh downstream of it read it: with ``a -> b -> c``,
-    ``c.vtx[:2] << Tag('t', at=b)`` stores ``t`` on b, b and c read it, a does
-    not. A mesh that feeds it from the side (a blendShape target, a wrap's
-    driver, polyTransfer's other mesh), which ``listHistory`` reaches too, is
-    a ``TypeError``: Maya would store the tag there, and this shape never
-    reads it. ``force=True`` deletes / purges through
+    (``deformableShape -tagInjectionList``): the shape, its ``Orig`` and every
+    mesh upstream along its main geometry input (``inMesh`` <- ``outMesh`` /
+    ``worldMesh``, a deformer's input geometry, a poly modifier's input mesh),
+    with tags or none. Maya writes the tag on that node, at the ids given,
+    which are that node's ids, and it and every mesh downstream of it read
+    it: with ``a -> b -> c``, ``c.vtx[:2] << Tag('t', at=b)`` stores ``t`` on
+    b, b and c read [0 1], a does not. Shapes and deformers keep the ids; a
+    node that changes the topology on the way (polySmooth, polyTriangulate,
+    deleteComponent ...) makes of them what it makes of the components, so
+    the shape may read others: through ``deleteComponent(f[0])``,
+    ``c.f[1] << Tag('t', at=a)`` is a's face 1, c's face 0 (and ``vtx[*]``
+    tags every point of THAT node). A mesh that feeds it from the side (a
+    blendShape target, a wrap's driver, polyTransfer's other mesh, an
+    operand of a polyUnite / polyCBoolOp), which ``listHistory`` and its own
+    history reach too, is a ``TypeError``: Maya would store the tag there,
+    and this shape never reads it at those ids. So is a referenced node:
+    Maya stores no tag on one (a referenced shape with no local deformer
+    takes no tag at all, a ``RuntimeError``). ``force=True`` deletes / purges through
     deformer references.
 
     A deformer input counts as a reference only when its input geometry can

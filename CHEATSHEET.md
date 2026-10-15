@@ -2469,11 +2469,16 @@ print(baked >> Tag("top"))                      # [0 1 2]
 
 `at=` takes any shape of the geometry chain, Maya's
 `deformableShape -tagInjectionList`: the shape, its Orig, and every mesh
-upstream through `inMesh` <- `outMesh` / `worldMesh` or a deformer's
-input geometry, with tags of its own or none. The tag is stored on that
-node, and it and every mesh downstream of it read it. A mesh that feeds
-the shape from the side (a blendShape target, a wrap's driver) is refused:
-Maya would store the tag there, and the shape never reads it.
+upstream along its main geometry input (`inMesh` <- `outMesh` /
+`worldMesh`, a deformer's input geometry, a poly modifier's input mesh),
+with tags of its own or none. The tag is stored on that node at the ids
+given, as that node's ids, and it and every mesh downstream of it read it.
+Shapes and deformers keep the ids; a node that changes the topology on the
+way (polySmooth, polyTriangulate, deleteComponent ...) maps them as it maps
+the components, so the shape may read other ids. A mesh that feeds the
+shape from the side (a blendShape target, a wrap's driver, a polyUnite
+operand) is refused: Maya would store the tag there, and the shape never
+reads it at those ids. So is a referenced node, which holds no tag.
 
 ```python
 cmds.file(new=True, force=True)

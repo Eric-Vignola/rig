@@ -5,7 +5,9 @@ Every error test asserts a zero ``cmds.ls()`` delta: a refused spelling
 writes nothing. Lists are never compared with ``assertEqual``.
 """
 
+import os
 import re
+import tempfile
 from unittest import mock
 
 import numpy as np
@@ -870,6 +872,101 @@ class TestTagOnClusteredMesh(MayaTestCase):
         # the mesh both are fed from is in the chain
         bsd.vtx[:3] << Tag("cap", at=root)
         np.testing.assert_array_equal(bsd >> Tag("cap"), [0, 1, 2])
+
+    def test_at_refuses_an_intermediate_mesh_feeding_from_the_side(self):
+        """at= took every node of the own history, which goes through every
+        input of a history node and only stops at a visible mesh: the
+        operands of a polyUnite / polyCBoolOp with history (intermediate
+        shapes) and an intermediate polyTransfer alternate got the tag. The
+        combined mesh read it at other ids (c2's vertices come after c1's), a
+        second write of faces made a second tag of that name on the operand,
+        and the transfer target read nothing. They are not in Maya's chain
+        (deformableShape -tagInjectionList is the shape alone)
+        (runs/r5/TAGLEFT/review/probe_unite.txt, probe_side_new.txt)."""
+        cases = []
+        for op in ("polyUnite", "polyCBoolOp"):
+            c1 = cmds.polyCube(name=f"{op}_c1")[0]
+            c2 = cmds.polyCube(name=f"{op}_c2")[0]
+            cmds.move(0.5, 0, 0, c2)
+            if op == "polyUnite":
+                out = cmds.polyUnite(c1, c2, ch=True, name=f"{op}_u")[0]
+            else:
+                out = cmds.polyCBoolOp(c1, c2, op=1, ch=True, name=f"{op}_u")[0]
+            side = [
+                s for s in cmds.ls(cmds.listHistory(out), type="mesh", long=True)
+                if s.endswith(f"{op}_c2Shape")
+            ][0]
+            self.assertTrue(cmds.getAttr(f"{side}.intermediateObject"))
+            cases.append((Node(out), side, ("vtx[1:3]", "f[1:2]")))
+        dst = cmds.polySphere(name="ti_dst", ch=True)[0]
+        oth = cmds.polySphere(name="ti_oth", ch=False)[0]
+        cmds.polyTransfer(dst, alternateObject=oth, uvSets=True)
+        cmds.setAttr(f"{_shape(oth)}.intermediateObject", 1)
+        cases.append((Node(dst), _shape(oth), ("vtx[1:3]",)))
+        for mesh, side, comps in cases:
+            for comp in comps:
+                with self.subTest(side=side, comp=comp):
+                    stored  = _written(side)
+                    before  = set(cmds.ls())
+                    message = f"'{side}' is not in the geometry chain of {_shape(mesh)}"
+                    with self.assertRaisesRegex(TypeError, re.escape(message)):
+                        exec(f"mesh.{comp} << Tag('cap', at=side)", {"mesh": mesh, "Tag": Tag, "side": side})
+                    self.assertEqual(set(cmds.ls()), before)
+                    self.assertEqual(_written(side), stored)
+                    self.assertNotIn("cap", _tags(mesh))
+
+    def test_at_upstream_of_a_renumbering_node_stores_that_nodes_ids(self):
+        """Pins what the Tag docstring says of at= upstream of a node that
+        changes topology: the ids are stored as they are, in that node's
+        own numbering, and the shape downstream reads what Maya makes of
+        them: a.outMesh -> deleteComponent(f[0]) -> c.inMesh, c.f[1] at=a is
+        a's face 1, c's face 0 (runs/r5/TAGLEFT/review/probe_at_new.txt)."""
+        a = Node(cmds.polyCube(name="ren_a", ch=False)[0])
+        c = Node(cmds.polyCube(name="ren_c", ch=False)[0])
+        node = cmds.createNode("deleteComponent")
+        cmds.setAttr(f"{node}.deleteComponents", 1, "f[0]", type="componentList")
+        cmds.connectAttr(f"{_shape(a)}.outMesh", f"{node}.inputGeometry")
+        cmds.connectAttr(f"{node}.outputGeometry", f"{_shape(c)}.inMesh")
+        c.f[1:2] << Tag("ff", at=a)
+        np.testing.assert_array_equal(a >> Tag("ff"), [1])
+        np.testing.assert_array_equal(c >> Tag("ff"), [0])
+        c.vtx[1:3] << Tag("vv", at=a)                 # no vertex is deleted
+        np.testing.assert_array_equal(c >> Tag("vv"), [1, 2])
+
+    def test_a_referenced_node_cannot_hold_a_tag(self):
+        """Maya stores no component tag on a referenced node (componentTag
+        returns ''): at= one was taken and failed with an opaque RuntimeError,
+        and a referenced shape with no local deformer raised IndexError in
+        injection_node (tagInjectionNode is ['']). A local deformer on it
+        makes a local Orig, which holds them (runs/r5/TAGLEFT/fix/probe_injnode.txt)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "chain.ma").replace("\\", "/")
+            a, b = (cmds.polySphere(name=n, ch=False)[0] for n in "ab")
+            cmds.connectAttr(f"{_shape(a)}.outMesh", f"{_shape(b)}.inMesh")
+            cmds.file(rename=path)
+            cmds.file(force=True, type="mayaAscii", save=True)
+            cmds.file(new=True, force=True)
+            cmds.file(path, reference=True, namespace="ns")
+            c = Node(cmds.polySphere(name="c", ch=False)[0])
+            cmds.connectAttr(f"{_shape('ns:b')}.outMesh", f"{_shape(c)}.inMesh")
+            for at in (_shape("ns:a"), _shape("ns:b")):
+                with self.subTest(at=at):
+                    before = set(cmds.ls())
+                    with self.assertRaisesRegex(TypeError, re.escape(f"'{at}' is referenced")):
+                        c.vtx[1:3] << Tag("rr", at=at)
+                    self.assertEqual(set(cmds.ls()), before)
+                    self.assertNotIn("rr", _tags(c))
+            nsb    = Node("ns:b")
+            before = set(cmds.ls())
+            with self.assertRaisesRegex(RuntimeError, "referenced"):
+                nsb.vtx[1:3] << Tag("rr")
+            self.assertEqual(set(cmds.ls()), before)
+            c.vtx[1:3] << Tag("rr")                       # c itself is local
+            np.testing.assert_array_equal(c >> Tag("rr"), [1, 2])
+            cmds.cluster("ns:b")                          # a local Orig
+            nsb.vtx[1:3] << Tag("loc")
+            np.testing.assert_array_equal(nsb >> Tag("loc"), [1, 2])
+            cmds.file(new=True, force=True)
 
     def test_node_lhs_refuses_a_procedural_name(self):
         cube   = Node(cmds.polyCube(name="hc", ch=True)[0])
