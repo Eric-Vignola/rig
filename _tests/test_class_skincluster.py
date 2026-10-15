@@ -220,6 +220,82 @@ class TestSkinCluster(MayaTestCase):
         np.testing.assert_allclose(nearest.get_weights(), before[:, ::-1], rtol=0, atol=1e-12)
         np.testing.assert_allclose(self.skin.get_weights(), before, rtol=0, atol=0)
 
+    # --- a mesh with no skinCluster of its own (runs/r5/SKIN/review)
+
+    def _driven(self, how):
+        """A cube driven by the skinned cube through a blendShape or a wrap: it
+        has no skinCluster of its own, but the cube's is in its history."""
+        driven = Node(cmds.polyCube(name=f"driven_{how}", height=2, ch=False)[0])
+        if how == "blendShape":
+            cmds.blendShape(str(self.cube), str(driven), weight=(0, 1))
+        else:
+            cmds.select(str(driven), str(self.cube))
+            cmds.CreateWrap()
+        self.assertIsNone(driven.get_shape().get_deformers(node_type="skinCluster", first_only=True))
+        return driven
+
+    def _assert_own_skin(self, mesh, skin):
+        self.assertEqual(mesh.get_shape().get_deformers(node_type="skinCluster"), [skin])
+
+    def test_apply_skin_data_onto_a_driven_mesh_keeps_the_drivers_skin(self):
+        """SkinCluster.create deleted every skinCluster of listHistory: the
+        skinned mesh's that drives this one too."""
+        data = self.skin.serialize()
+        for how in ("blendShape", "wrap"):
+            with self.subTest(how=how):
+                driven = self._driven(how)
+
+                skin = driven.get_shape().apply_skin_data(data)
+
+                self.assertTrue(cmds.objExists(self.skin.name))
+                self._assert_own_skin(self.cube, self.skin)
+                self._assert_own_skin(driven, skin)
+
+    def test_copy_skincluster_onto_a_driven_mesh_keeps_the_drivers_skin(self):
+        source = Node(cmds.polyCube(name="source", height=2, ch=False)[0])
+        SkinCluster.create(source, self.joint2)
+        for how in ("blendShape", "wrap"):
+            with self.subTest(how=how):
+                driven = self._driven(how)
+
+                SkinCluster.copy_skincluster(str(source), [str(driven)])
+
+                self.assertTrue(cmds.objExists(self.skin.name))
+                self._assert_own_skin(self.cube, self.skin)
+                skin = self._skin_of(driven)
+                self._assert_own_skin(driven, skin)
+                self.assertEqual(skin.get_influence_objects(), [self.joint2])
+
+    def _skinned_intermediate_target(self):
+        """A cube with no skinCluster of its own whose blendShape target is a
+        skinned intermediate shape: get_deformers lists the target's skin."""
+        target      = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
+        target_skin = SkinCluster.create(target, self.joint1)
+        mesh        = Node(cmds.polyCube(name="blended", height=2, ch=False)[0])
+        cmds.blendShape(str(target), str(mesh), weight=(0, 1))
+        target.get_shape().intermediateObject.set(True)
+        self.assertEqual(mesh.get_shape().get_deformers(node_type="skinCluster"), [target_skin])
+        return mesh, target_skin
+
+    def test_apply_skin_data_leaves_the_skin_of_a_blendshape_target_alone(self):
+        """The target's skinCluster was picked and given this mesh's weights."""
+        mesh, target_skin = self._skinned_intermediate_target()
+
+        skin = mesh.get_shape().apply_skin_data(self.skin.serialize())
+
+        self.assertNotEqual(skin, target_skin)
+        self.assertTrue(cmds.objExists(target_skin.name))
+        self.assertEqual(target_skin.get_influence_objects(), [self.joint1])
+        self.assertEqual(skin.get_influence_objects(), [self.joint1, self.joint2])
+        self.assertCountEqual(mesh.get_shape().get_deformers(node_type="skinCluster"), [skin, target_skin])
+
+    def test_copy_skincluster_reads_no_skin_from_a_blendshape_target(self):
+        mesh, _ = self._skinned_intermediate_target()
+        other   = Node(cmds.polyCube(name="other", height=2, ch=False)[0])
+
+        with self.assertRaisesRegex(RuntimeError, "No skinCluster found on"):
+            SkinCluster.copy_skincluster(str(mesh), [str(other)])
+
     def test_copy_skincluster_needs_the_target_vertices(self):
         """No default: None was a TypeError from sorted(None) (runs/r5/XFER/review/probe_skin.py)."""
         before = cmds.ls()

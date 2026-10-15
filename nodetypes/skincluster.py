@@ -18,7 +18,7 @@ from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
 from rig.nodetypes.joint import Joint
-from rig.nodetypes.mesh import Mesh, _resampler, _skincluster_of
+from rig.nodetypes.mesh import Mesh, _resampler, _skincluster_of, _skinclusters_of
 from rig.nodetypes.plugins import _run_undoable
 
 LOGGER = logging.getLogger(__name__)
@@ -161,8 +161,9 @@ class SkinCluster(Deformer):
                 kwargs.pop(sn)
 
         with _undo_chunk("rig.SkinCluster.create"):
-            # delete current skincluster if exists
-            skin = cmds.ls(cmds.listHistory(geom), type="skinCluster")
+            # delete the geometry's own skinclusters, if any: not those of a
+            # mesh that drives it (listHistory reaches them too)
+            skin = [s.name for s in _skinclusters_of(DAGNode(geom))]
             if skin:
                 cmds.delete(skin)
 

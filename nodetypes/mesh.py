@@ -536,7 +536,8 @@ class Mesh(Geometry):
     def apply_skin_data(self, skin_data: SkinData):
         """Apply skin data to this mesh: to its skinCluster (with several, the
         one nearest the shape, the first ``get_deformers`` lists), or to a new
-        one made from the data when it has none."""
+        one made from the data when it has none of its own (the skin of a
+        blendShape target or of a mesh driving this one is not its own)."""
         from cgmath.geometry import SkinData
 
         # avoid circular import
@@ -1082,12 +1083,62 @@ class Mesh(Geometry):
 
 def _skincluster_of(mesh):
     """The skinCluster rig's skin methods act on for `mesh` (a Mesh), or None
-    when it has none: with several, the one nearest the shape, the first
-    ``get_deformers`` lists (normally the last one applied).
-    ``Mesh.apply_skin_data``, ``Mesh.bake_deformation`` and
+    when it has none of its own (``_skinclusters_of``): with several, the one
+    nearest the shape, the first ``get_deformers`` lists (normally the last
+    one applied). ``Mesh.apply_skin_data``, ``Mesh.bake_deformation`` and
     ``SkinCluster.copy_skincluster`` (each source and each target) all take
     it from here."""
-    return mesh.get_deformers(node_type="skinCluster", first_only=True)
+    skins = _skinclusters_of(mesh)
+    return skins[0] if skins else None
+
+
+def _skinclusters_of(node):
+    """The skinClusters of `node` (a DAGNode; of a transform, its first
+    non-intermediate shape, as ``get_deformers`` reads it), nearest the shape
+    first: those ``get_deformers`` lists that deform this shape, whose output
+    reaches it through each deformer's input geometry. The skinCluster of a
+    mesh that feeds a deformer from the side is not this one's: a blendShape's
+    intermediate target (which ``get_deformers`` lists) or a skinned mesh that
+    drives this one through a wrap (which ``listHistory`` reaches).
+    ``SkinCluster.create`` deletes these, and only these."""
+    skins = node.get_deformers(node_type="skinCluster")
+    if not skins:
+        return skins
+    shape = node.mobject
+    if shape.hasFn(OpenMaya.MFn.kTransform):
+        fn    = OpenMaya.MFnDagNode(shape)
+        shape = next(
+            c for c in (fn.child(i) for i in range(fn.childCount()))
+            if c.hasFn(OpenMaya.MFn.kShape) and not OpenMaya.MFnDagNode(c).isIntermediateObject
+        )
+    # walk upstream from the shape; at a deformer, only through the input
+    # geometry that its output geometry deforms
+    chain = []
+    seen  = set()
+    stack = [(shape, None)]
+    while stack:
+        obj, plug = stack.pop()
+        deformer  = obj.hasFn(OpenMaya.MFn.kGeometryFilt)
+        if deformer and (plug is None or OpenMaya.MFnAttribute(plug.attribute()).name != "outputGeometry"):
+            continue
+        key = (OpenMaya.MObjectHandle(obj).hashCode(), plug.logicalIndex() if deformer else -1)
+        if key in seen:
+            continue
+        seen.add(key)
+        fn = OpenMaya.MFnDependencyNode(obj)
+        if deformer:
+            chain.append(obj)
+            element = fn.findPlug("input", False).elementByLogicalIndex(plug.logicalIndex())
+            inputs  = [element.child(fn.attribute("inputGeometry"))]
+        elif obj != shape and obj.hasFn(OpenMaya.MFn.kDagNode) and not OpenMaya.MFnDagNode(obj).isIntermediateObject:
+            continue
+        else:
+            inputs = [p for p in fn.getConnections() if p.isDestination]
+        for p in inputs:
+            source = p.source()
+            if not source.isNull:
+                stack.append((source.node(), source))
+    return [s for s in skins if any(s.mobject == o for o in chain)]
 
 
 def _resampler(src, dst, mode=None):
