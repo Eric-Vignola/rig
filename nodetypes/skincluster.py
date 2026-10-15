@@ -421,7 +421,9 @@ class SkinCluster(Deformer):
                 or mesh names (every vertex). A target without a skinCluster
                 gets one, bound to the first source influence; the source
                 influences its skin lacks are added, and its other vertices
-                keep their weights.
+                keep their weights. The copied rows are the sampled weights
+                as they are: the target's locked influences and its
+                ``maxInfluences`` are not applied to them.
         """
         from cgmath.geometry import SkinData
 
