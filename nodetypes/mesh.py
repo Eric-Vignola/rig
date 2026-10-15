@@ -1110,10 +1110,24 @@ def _skinclusters_of(node):
     mesh that feeds a deformer from the side is not this one's: a blendShape's
     intermediate target (which ``get_deformers`` lists) or a skinned mesh that
     drives this one through a wrap (which ``listHistory`` reaches).
-    ``SkinCluster.create`` deletes these, and only these."""
+    ``SkinCluster.create`` deletes these and ``SkinCluster.rebind`` rebinds
+    these, and only these."""
     skins = node.get_deformers(node_type="skinCluster")
     if not skins:
         return skins
+    chain = _own_history(node)
+    return [s for s in skins if any(s.mobject == o for o in chain)]
+
+
+def _own_history(node):
+    """The nodes upstream of `node` (a DAGNode; of a transform, its first
+    non-intermediate shape) that make its own geometry, as MObjects, the
+    shape first: walking up its input connections, at a deformer only through
+    the input geometry its output geometry deforms, and stopping at another
+    non-intermediate DAG node. So a deformer's other inputs (a blendShape's
+    target, a wrap's driver mesh) and what makes them are not in it, though
+    ``listHistory`` reaches them; the shape's ``Orig`` and the history nodes
+    and deformers between them are."""
     shape = node.mobject
     if shape.hasFn(OpenMaya.MFn.kTransform):
         fn    = OpenMaya.MFnDagNode(shape)
@@ -1137,18 +1151,18 @@ def _skinclusters_of(node):
         seen.add(key)
         fn = OpenMaya.MFnDependencyNode(obj)
         if deformer:
-            chain.append(obj)
             element = fn.findPlug("input", False).elementByLogicalIndex(plug.logicalIndex())
             inputs  = [element.child(fn.attribute("inputGeometry"))]
         elif obj != shape and obj.hasFn(OpenMaya.MFn.kDagNode) and not OpenMaya.MFnDagNode(obj).isIntermediateObject:
             continue
         else:
             inputs = [p for p in fn.getConnections() if p.isDestination]
+        chain.append(obj)
         for p in inputs:
             source = p.source()
             if not source.isNull:
                 stack.append((source.node(), source))
-    return [s for s in skins if any(s.mobject == o for o in chain)]
+    return chain
 
 
 def _resampler(src, dst, mode=None):

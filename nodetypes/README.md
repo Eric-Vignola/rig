@@ -634,8 +634,9 @@ Verified on Maya 2025; not bugs to work around blindly.
   that reaches the mesh only from the side is not the mesh's: that of a
   blendShape's intermediate target (which `get_deformers` lists) or of a
   skinned mesh that drives it through a blendShape or a wrap. A mesh with
-  none of its own gets a new one, and `SkinCluster.create` deletes only the
-  geometry's own skinClusters (not every one `listHistory` reaches).
+  none of its own gets a new one, `SkinCluster.create` deletes only the
+  geometry's own skinClusters (not every one `listHistory` reaches), and
+  `SkinCluster.rebind` rebinds only those (a mesh with none is left alone).
 - **`Mesh.add_color_set(name, "RGBA")` is a `ValueError`**: the
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so
   pass `ColorSet.Representation.RGBA` (or `["RGBA"]` on the enum).

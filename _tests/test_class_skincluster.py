@@ -266,6 +266,30 @@ class TestSkinCluster(MayaTestCase):
                 self._assert_own_skin(driven, skin)
                 self.assertEqual(skin.get_influence_objects(), [self.joint2])
 
+    def test_rebind_of_a_driven_mesh_leaves_the_drivers_skin_alone(self):
+        """rebind walked every skinCluster of listHistory: it unbound the skin
+        of the mesh driving this one and bound this one to its joints
+        (runs/r5/REBIND/probe_rebind.txt)."""
+        weights = self.skin.get_weights()
+        for how in ("blendShape", "wrap"):
+            with self.subTest(how=how):
+                driven = self._driven(how)
+
+                SkinCluster.rebind(str(driven))
+
+                self.assertEqual(driven.get_shape().get_deformers(node_type="skinCluster"), [])
+                self.assertEqual(cmds.ls(type="skinCluster"), [self.skin.name])
+                self._assert_own_skin(self.cube, self.skin)
+                np.testing.assert_allclose(self.skin.get_weights(), weights, rtol=0, atol=0)
+
+    def test_rebind_rebinds_the_meshs_own_skin(self):
+        """A pin: the mesh's own skinCluster is rebound to the same joints."""
+        SkinCluster.rebind(str(self.cube))
+
+        self._assert_own_skin(self.cube, self.skin)
+        self.assertEqual(self.skin.get_influence_objects(), [self.joint1, self.joint2])
+        self.assertEqual(self.skin.envelope.get(), 1)
+
     def _skinned_intermediate_target(self):
         """A cube with no skinCluster of its own whose blendShape target is a
         skinned intermediate shape: get_deformers lists the target's skin."""

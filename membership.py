@@ -96,6 +96,7 @@ from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
 from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
 from rig.nodetypes.material_node import Material
+from rig.nodetypes.mesh import _own_history
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal import types as _types
 from rig._internal.members import (
@@ -155,14 +156,26 @@ def _short(path: str) -> str:
     return path.rsplit("|", 1)[-1]
 
 
+def _own_history_paths(path: str) -> set[str]:
+    """The full paths of the DAG nodes that make the own geometry of the
+    shape at ``path`` (``_own_history``): the shape, its ``Orig`` and the
+    intermediate shapes between them; not a blendShape target or a wrap's
+    driver mesh, which ``listHistory`` reaches too."""
+    return {
+        OpenMaya.MFnDagNode(obj).fullPathName()
+        for obj in _own_history(_cast(path))
+        if obj.hasFn(OpenMaya.MFn.kDagNode)
+    }
+
+
 def _full_path(name: str, near: str) -> str:
     """The full DAG path of ``name`` (as componentTagHistory spells it),
-    preferring the one in the history of ``near`` when the short name is
+    preferring the one in the own history of ``near`` when the short name is
     ambiguous."""
     paths = cmds.ls(name, long=True) or []
     if len(paths) <= 1:
         return paths[0] if paths else name
-    history = set(cmds.ls(cmds.listHistory(near) or [], long=True))
+    history = _own_history_paths(near)
     for path in paths:
         if path in history:
             return path
@@ -306,11 +319,12 @@ def _resolve_at(at: Any, path: str) -> str | None:
             raise TypeError(f"at={at!r}: '{node}' is not a geometry node")
         node = shape
     full    = node.long_name
-    allowed = {path} | set(cmds.ls(cmds.listHistory(path) or [], long=True))
+    allowed = {path} | _own_history_paths(path)
     if full not in allowed:
         raise TypeError(
             f"at={at!r}: '{full}' is neither {path} nor in its history; a tag is "
-            f"injected on the shape it is read from or a node upstream of it"
+            f"injected on the shape it is read from or a node upstream of it "
+            f"(its Orig, not a blendShape target or a wrap's driver mesh)"
         )
     return full
 
@@ -382,7 +396,9 @@ class Tag(_MemberSpec):
     validated at construction: at least two characters of ``[A-Za-z0-9_:]``
     not starting with a digit (Maya stores a one-character name as ``''``).
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
-    to shadow a procedural one; ``force=True`` deletes / purges through
+    to shadow a procedural one: the shape or a node of its own history (its
+    ``Orig``), not a mesh that drives it from the side (a blendShape target,
+    a wrap's driver), which ``listHistory`` reaches too; ``force=True`` deletes / purges through
     deformer references.
 
     A deformer input counts as a reference only when its input geometry can
