@@ -141,6 +141,32 @@ class TestComponentTagNames(MayaTestCase):
                 self.assertEqual(self.mesh.get_component_tag_name(i), stored)
                 self.assertIn(stored, self.mesh.component_tags)
 
+    def test_add_component_tag_finds_a_tag_by_the_name_maya_stores(self):
+        """' ab' is stored 'ab': it was looked up as ' ab', so a second 'ab' was
+        made, and force=True left the first one (runs/r5/SKIN/review)."""
+        self.mesh.add_component_tag("ab")
+        for name in (" ab", "ab\t"):
+            with self.subTest(name=name):
+                before = self.tag_multi()
+                with self.assertRaisesRegex(RuntimeError, "Component tag 'ab' already exists"):
+                    self.mesh.add_component_tag(name)
+                self.assertEqual(self.tag_multi(), before)
+
+                i = self.mesh.add_component_tag(name, force=True)
+                self.assertEqual(self.mesh.get_component_tag_name(i), "ab")
+                self.assertEqual(self.mesh.component_tags.count("ab"), 1)
+
+    def test_rename_component_tag_refuses_a_name_maya_refuses(self):
+        """It failed with a bare "Maya command error" (runs/r5/SKIN/review)."""
+        i = self.mesh.add_component_tag("ab")
+        for name in ("b", "1a", "a-b"):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, f"{name!r} is not a component tag name: Maya takes"):
+                    self.mesh.rename_component_tag("ab", name)
+                self.assertEqual(self.mesh.get_component_tag_name(i), "ab")
+        self.mesh.rename_component_tag("ab", "c d")
+        self.assertEqual(self.mesh.get_component_tag_name(i), "c_d")
+
     def test_the_name_rule_is_mayas(self):
         """Every name of one to three characters from this alphabet: rig refuses
         exactly what Maya's setAttr refuses."""

@@ -45,17 +45,20 @@ _TAG_NAME_RULE = (
 _ASCII_WHITESPACE = " \t\n\v\f\r"
 
 
-def _check_component_tag_name(key: Any) -> None:
-    """Raises a ValueError naming Maya's rule for a name Maya refuses as a
-    component tag name (it refuses ``setAttr`` of one with a bare "Maya
-    command error"). A name with a non-ASCII character is left to Maya: Maya
-    first maps it to the system code page by best fit (on code page 1252,
-    'Ā' becomes 'A' and is taken, 'é' stays non-ASCII and is refused)."""
+def _check_component_tag_name(key: Any) -> Any:
+    """The name Maya stores for `key` as a component tag name ('ab' for
+    ' ab', 'a_b' for 'a b'). Raises a ValueError naming Maya's rule for a
+    name Maya refuses (it refuses ``setAttr`` of one with a bare "Maya
+    command error"). A name with a non-ASCII character is left to Maya, and
+    returned as given: Maya first maps it to the system code page by best fit
+    (on code page 1252, 'Ā' becomes 'A' and is taken, 'é' stays non-ASCII and
+    is refused)."""
     if not isinstance(key, str) or not key.isascii():
-        return
+        return key
     stored = re.sub(r" [ \t\n\v\f\r]*", "_", key.strip(_ASCII_WHITESPACE))
     if len(stored) < 2 or not _TAG_NAME_STORED_RE.fullmatch(stored):
         raise ValueError(f"{key!r} is not a component tag name: {_TAG_NAME_RULE}")
+    return stored
 
 # The component an EMPTY tag resolves to, by geometry data type then tag
 # category: Maya hands back a null MObject for an empty tag, so the reader
@@ -351,18 +354,20 @@ class Geometry(DAGNode):
                 space inside is made '_' ('b', '1a', 'a-b', 'a..b' and '' are
                 refused; 'ab', '_1', 'a.b' and 'a b', stored 'a_b', are
                 taken). A name with a non-ASCII character is left to Maya.
+            RuntimeError: when a tag of the name Maya stores exists ('ab'
+                for ' ab') and `force` is False.
         """
-        _check_component_tag_name(key)
-        if self.has_component_tag(key):
+        stored = _check_component_tag_name(key)
+        if self.has_component_tag(stored):
             if force:
-                self.remove_component_tag(key)
+                self.remove_component_tag(stored)
             else:
-                owner = self._component_tag_owner(key)
+                owner = self._component_tag_owner(stored)
                 if owner and owner[1]:
                     cmds.error(
-                        f"Component tag '{key}' already exists (procedural, owned by {owner[0]})."
+                        f"Component tag '{stored}' already exists (procedural, owned by {owner[0]})."
                     )
-                cmds.error(f"Component tag '{key}' already exists.")
+                cmds.error(f"Component tag '{stored}' already exists.")
 
         # add to first empty component tag name index.
         injection = self.injection_node
@@ -387,7 +392,12 @@ class Geometry(DAGNode):
         Args:
             tag: Component tag key or index.
             new_key: New component tag key name.
+
+        Raises:
+            ValueError: before anything is renamed, for a name Maya refuses
+                (the rule ``add_component_tag`` names).
         """
+        _check_component_tag_name(new_key)
         element = self._editable_component_tag(tag)
         if element is not None:
             element.componentTagName.set(new_key, type="string")
