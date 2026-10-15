@@ -643,6 +643,36 @@ class TestMeshCreateHoles(_MeshCreateCase):
         self.assertEqual(cmds.getAttr(str(mesh) + ".pnts", size=True), 0)  # no tweaks
         self.assert_no_history(mesh)
 
+    def test_uv_sets_that_map_only_some_faces(self):
+        # uv2 leaves the holed face 4 unmapped, uv3 maps it but not the faces before it: a set's
+        # UVs are not parallel to the mesh's face-vertices (serialize raised IndexError on uv2,
+        # and gave uv3 the wrong hole UVs: runs\r5\CG2\verify)
+        t = _grid()
+        for uv_set, faces in (("uv2", "f[0:3]"), ("uv3", "f[4:8]")):
+            cmds.polyUVSet(t, create=True, uvSet=uv_set)
+            cmds.polyProjection(f"{t}.{faces}", type="Planar", mapDirection="y", uvSetName=uv_set)
+        cmds.delete(t, constructionHistory=True)
+        shape = _shape(t)
+        placed = {name: _uv_placement(shape, name) for name in ("map1", "uv2", "uv3")}
+        fn = Mesh(shape).fn_set
+        face4 = list(fn.getPolygonVertices(4))
+        data, uvs = _serialized(t)
+        # the id of the UV at each hole corner, as the mesh lists the holes
+        hole_uvs = {name: [fn.getPolygonUVid(4, face4.index(v), name) for v in np.asarray(data.hole_indices).tolist()]
+                    for name in ("map1", "uv3")}
+        cmds.delete(t)
+        by_name = {uv.name: uv for uv in uvs}
+        self.assertIsNone(by_name["uv2"].hole_faces)  # no hole UVs on an unmapped face
+        for name in ("map1", "uv3"):
+            uv = by_name[name]
+            self.assertEqual(np.asarray(uv.hole_faces).tolist(), [4, 4])
+            self.assertEqual(np.asarray(uv.hole_counts).tolist(), [4, 4])
+            self.assertEqual(np.asarray(uv.hole_indices).tolist(), hole_uvs[name])
+        self.ready()
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        for name in ("map1", "uv2", "uv3"):
+            self.assertEqual(_uv_placement(str(mesh), name), placed[name])
+
     def test_hole_arrays_in_another_order_than_the_face(self):
         # the hole arrays list the grid's second hole first, each from another corner: the
         # face's own vertex list orders the loops, so the mesh and its UVs are the source's
