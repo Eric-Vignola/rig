@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from maya import cmds, mel
+from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type
 from rig.nodetypes.dg_node import _PLAIN_CREATES, DGNode
@@ -309,7 +309,15 @@ class DAGNode(DGNode):
         skip_tweak: bool                   = True,
         first_only: bool                   = False,
     ) -> list[DGNode] | None:
-        """Returns deformers associated with this node.
+        """Returns the deformers of this shape (of a transform: of its first
+        non-intermediate shape), nearest the shape first: the geometry
+        filters its history reaches through their output geometry, walking
+        up through intermediate shapes and stopping at the other DAG nodes.
+        That is the set ``findRelatedDeformer`` gives (a blendShape's
+        intermediate target brings its own deformers, as there), read
+        through the API: a pure query that leaves no undo step, where
+        ``findRelatedDeformer`` (``findDeformers``) is recorded and lists
+        them in no set order.
 
         Args:
             node_type: One or more deformer types to query.
@@ -319,14 +327,42 @@ class DAGNode(DGNode):
         """
         node_types = [node_type] if isinstance(node_type, str) else node_type
         deformers  = []
-        for deformer in mel.eval('findRelatedDeformer "{}"'.format(self)) or []:
-            typ = cmds.nodeType(deformer)
-            if not node_types or typ in node_types:
-                if not skip_tweak or typ != "tweak":
+        shape      = self.mobject
+        if shape.hasFn(OpenMaya.MFn.kTransform):
+            fn    = self.fn_set
+            shape = next(
+                (c for c in (fn.child(i) for i in range(fn.childCount()))
+                 if c.hasFn(OpenMaya.MFn.kShape) and not OpenMaya.MFnDagNode(c).isIntermediateObject),
+                None,
+            )
+            if shape is None:
+                return None if first_only else deformers
+        it = OpenMaya.MItDependencyGraph(
+            shape,
+            OpenMaya.MFn.kInvalid,
+            OpenMaya.MItDependencyGraph.kUpstream,
+            OpenMaya.MItDependencyGraph.kDepthFirst,
+            OpenMaya.MItDependencyGraph.kNodeLevel,
+        )
+        while not it.isDone():
+            node = it.currentNode()
+            if (
+                node != shape
+                and node.hasFn(OpenMaya.MFn.kDagNode)
+                and not OpenMaya.MFnDagNode(node).isIntermediateObject
+            ):
+                it.prune()
+            elif (
+                node.hasFn(OpenMaya.MFn.kGeometryFilt)
+                # reached through its output geometry, not as a driver (an envelope, say)
+                and OpenMaya.MFnAttribute(it.currentPlug().attribute()).name == "outputGeometry"
+            ):
+                typ = OpenMaya.MFnDependencyNode(node).typeName
+                if (not node_types or typ in node_types) and (not skip_tweak or typ != "tweak"):
                     if first_only:
-                        return _cast(deformer)
-                    else:
-                        deformers.append(_cast(deformer))
+                        return _cast(node)
+                    deformers.append(_cast(node))
+            it.next()
         return None if first_only else deformers
 
 

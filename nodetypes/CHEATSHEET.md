@@ -346,8 +346,9 @@ bbox = cube.get_bounding_box()
 print(bbox.min, bbox.max)                                # (-0.5, -0.5, -0.5, 1) (0.5, 0.5, 0.5, 1)
 ```
 
-`get_children` takes every `cmds.listRelatives` flag. `get_deformers` is
-`findRelatedDeformer` with typed results (tweak nodes skipped):
+`get_children` takes every `cmds.listRelatives` flag. `get_deformers` gives
+the deformers `findRelatedDeformer` finds as typed nodes, nearest the shape
+first (tweak nodes skipped), read through the API, so it leaves no undo step:
 
 ```python
 cmds.cluster("cube")
