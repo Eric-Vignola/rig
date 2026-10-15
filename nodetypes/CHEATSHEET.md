@@ -823,8 +823,10 @@ closest point reads, and a map keeps its categories. A tag holds what lands
 on it: a vertex whose sample reads a tagged vertex, a face whose centre (in
 space, or its UV centre by UV) is closest to a tagged face, an edge both of
 whose ends are in the vertex set the tag's vertices transfer to (so a rung
-between two tagged loops is in). Onto the same topology a tag comes back as
-it was, but for those rungs.
+between two tagged loops is in). A flat concave or holed face lands by its
+first triangle's centre, and a centre on a shared corner or edge by the
+lowest-numbered face there. Onto the same topology (by UV: same UVs, not
+overlapping) a tag comes back as it was, but for those rungs.
 
 ```python
 dst = Node(cmds.polyCube(name="dst", ch=False)[0]).get_shape()
