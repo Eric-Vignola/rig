@@ -7,6 +7,7 @@ import rig.nodetypes.mesh as mesh_api
 from rig.nodetypes import Axis
 from cgmath.geometry import MapData
 from rig._tests._base import MayaTestCase
+from rig._tests._undo import UndoWalk
 
 LOGGER = logging.getLogger(__name__)
 
@@ -440,3 +441,66 @@ class TestMeshMapTransfer(MayaTestCase):
         src.transfer_maps("XFER_UNPAINTED", dst)
 
         self.assertFalse(any(cmds.makePaintable("mesh", "XFER_UNPAINTED", query=True) or []))
+
+
+class TestMeshTransferUndo(UndoWalk, MayaTestCase):
+    """transfer_maps and transfer_component_tags are ONE undo step each
+    (runs/r5/XFER/review/probe_undo.py: onto an existing map, transfer_maps was four
+    unnamed steps and one undo left the map recreated at 0.0)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self.src = TestMeshMapTransfer._plane("src", 4)
+        self.dst = TestMeshMapTransfer._plane("dst", 4)
+
+    def one_step(self, name, edit, read):
+        """`edit()` is one undo step named `name`: one undo gives the scene and `read()`
+        back and empties the queue, one redo gives the edit back, twice over."""
+        cmds.flushUndo()
+        before = (self.scene_state(), read())
+        edit()
+        after = (self.scene_state(), read())
+        self.assertNotEqual(before[1], after[1])
+        self.assertEqual(self.undo_name(), name)
+        for cycle in range(2):
+            self.undo_steps(1)
+            self.assertEqual((self.scene_state(), read()), before, f"cycle {cycle} undo")
+            self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True), f"cycle {cycle}: more than one step")
+            self.redo_steps(1)
+            self.assertEqual((self.scene_state(), read()), after, f"cycle {cycle} redo")
+
+    def test_transfer_maps_onto_an_existing_map_is_one_step(self):
+        self.src.add_map("XFER_A", category="catA", values=0.25)
+        self.src.add_map("XFER_B", values=0.5)
+        self.dst.add_map("XFER_A", category="catB", values=0.9)
+
+        def read():
+            return [
+                (self.dst.get_map_values(m), sorted(self.dst.find_map_attr(m).get_categories()))
+                if self.dst.has_attr(m) else None
+                for m in ("XFER_A", "XFER_B")
+            ]
+
+        self.one_step("rig.Mesh.transfer_maps", lambda: self.src.transfer_maps(["XFER_A", "XFER_B"], self.dst), read)
+
+    def test_transfer_component_tags_is_one_step(self):
+        self.src.add_component_tag("xfer_new")
+        self.src.set_component_tag_contents("xfer_new", [0, 1, 2], "v")
+        self.src.add_component_tag("xfer_old")
+        self.src.set_component_tag_contents("xfer_old", [7], "v")
+        self.dst.add_component_tag("xfer_old")
+        self.dst.set_component_tag_contents("xfer_old", [3, 4], "v")
+
+        def read():
+            return [
+                self.dst.get_component_tag_indices(t).tolist() if self.dst.has_component_tag(t) else None
+                for t in ("xfer_new", "xfer_old")
+            ]
+
+        self.one_step(
+            "rig.Mesh.transfer_component_tags",
+            lambda: self.src.transfer_component_tags(["xfer_new", "xfer_old"], self.dst),
+            read,
+        )

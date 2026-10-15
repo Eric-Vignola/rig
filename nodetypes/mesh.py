@@ -990,7 +990,7 @@ class Mesh(Geometry):
 
         Each tag gets the vertices of `other` whose sample on this mesh reads
         one of its vertices, as faces or edges for such a tag (see
-        ``_resample_map``).
+        ``_resample_map``). One undo step (``rig.Mesh.transfer_component_tags``).
 
         Args:
             tags: One or more component tags to transfer.
@@ -1009,24 +1009,26 @@ class Mesh(Geometry):
             mesh_data_a, mesh_data_b, uv_data_a[0], uv_data_b[0]
         )
 
-        for t in tags if isinstance(tags, (list, tuple)) else [tags]:
-            if not other.has_component_tag(t):
-                other.add_component_tag(t)
+        with _undo_chunk("rig.Mesh.transfer_component_tags"):
+            for t in tags if isinstance(tags, (list, tuple)) else [tags]:
+                if not other.has_component_tag(t):
+                    other.add_component_tag(t)
 
-            data = self.get_component_tag_data(t)
+                data = self.get_component_tag_data(t)
 
-            new_data = []
-            if data.indices.size > 0:
-                new_data = _resample_map(resampler, data, **kwargs)
+                new_data = []
+                if data.indices.size > 0:
+                    new_data = _resample_map(resampler, data, **kwargs)
 
-            other.set_component_tag_contents(t, new_data)
+                other.set_component_tag_contents(t, new_data)
 
     def transfer_maps(self, maps: str | list[str], other: Mesh | str, **kwargs) -> None:
         """Transfer a mesh map from this mesh to the other mesh.
 
         Each map is made again on `other` (``add_map(force=True)``) with its
         categories, and each of its values is the blend of this map's values
-        that its sample on this mesh reads (see ``_resample_map``).
+        that its sample on this mesh reads (see ``_resample_map``). One undo
+        step (``rig.Mesh.transfer_maps``).
 
         Args:
             maps: One or more map names to transfer.
@@ -1044,11 +1046,12 @@ class Mesh(Geometry):
             mesh_data_a, mesh_data_b, uv_data_a[0], uv_data_b[0]
         )
 
-        for m in maps if isinstance(maps, (list, tuple)) else [maps]:
-            data     = self.get_map_data(m)
-            new_data = _resample_map(resampler, data, **kwargs)
-            other.add_map(m, category=data.categories, force=True)
-            other.set_map_values(m, new_data)
+        with _undo_chunk("rig.Mesh.transfer_maps"):
+            for m in maps if isinstance(maps, (list, tuple)) else [maps]:
+                data     = self.get_map_data(m)
+                new_data = _resample_map(resampler, data, **kwargs)
+                other.add_map(m, category=data.categories, force=True)
+                other.set_map_values(m, new_data)
 
 
 def _resample_map(resampler, data, mode=None, method="bilinear"):
