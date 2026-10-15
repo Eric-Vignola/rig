@@ -71,16 +71,43 @@ class TestTagConstruction(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
 
     def test_name_validation(self):
-        for bad in ("t", "q", "1bad", "bad name", "bad-name", "a.b"):
-            with self.assertRaises(ValueError):
+        # re-pinned (runs/r5/REBIND, lead decision of 2026-10-15): Tag checks
+        # Maya's rule, the one add_component_tag checks. 'a.b' is taken and
+        # 'bad name' is the tag Maya stores, 'bad_name'; 'a:' and 'a::b', which
+        # the old [A-Za-z0-9_:] rule let through, are refused (Maya refuses them)
+        for bad in ("t", "q", "1bad", "bad-name", "a:", "a::b", "a..b", ":a", "a.", " ", "a\tb"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "not a component tag name: Maya takes"):
                 Tag(bad)
         with self.assertRaises(TypeError):
             Tag("")
         with self.assertRaises(TypeError):
             Tag(5)
-        for good in ("ok", "ns:tag", "_x", "top2", "a_b"):
+        for good in ("ok", "ns:tag", "_x", "top2", "a_b", "a.b", "x:y.z"):
             self.assertEqual(str(Tag(good)), good)
+        for given, stored in ((" ab ", "ab"), ("bad name", "bad_name"), ("a  b", "a_b"), ("lid rim\n", "lid_rim")):
+            with self.subTest(given=given):
+                self.assertEqual(str(Tag(given)), stored)
+                self.assertEqual(Tag(given), Tag(stored))
+                self.assertEqual(-Tag(given), -Tag(stored))
         self.assertEqual(repr(Tag("cap")), "Tag('cap')")
+
+    def test_the_tag_name_rule_is_add_component_tags(self):
+        """One rule: Tag refuses what add_component_tag refuses, and names the
+        tag Maya stores for the rest (its rule is checked against Maya in
+        test_class_comptags.TestComponentTagNames.test_the_name_rule_is_mayas)."""
+        import itertools
+        from rig.nodetypes.geometry import _check_component_tag_name
+
+        for n in (1, 2, 3):
+            for chars in itertools.product("a_1.: -", repeat=n):
+                name = "".join(chars)
+                try:
+                    stored = _check_component_tag_name(name)
+                except ValueError:
+                    with self.assertRaises(ValueError, msg=repr(name)):
+                        Tag(name)
+                else:
+                    self.assertEqual(Tag(name).name, stored, msg=repr(name))
 
     def test_members_never_ride_on_the_spec(self):
         with self.assertRaisesRegex(TypeError, r"Tag\('x'\)\.set\("):
@@ -154,6 +181,23 @@ class TestTagOnSphere(MayaTestCase):
         self.assertEqual(_contents(self.sph, "cap"), ["vtx[0:4]"])
         np.testing.assert_array_equal(self.sph >> Tag("cap"), [0, 1, 2, 3, 4])
         self.assertEqual(_entries(self.sph, "cap"), [("sphShape", True, True)])
+
+    def test_a_name_maya_stores_otherwise_is_the_tag_maya_stores(self):
+        """Tag(' ab ') and Tag('a b') were refused; Maya takes them as 'ab' and
+        'a_b', and so does Tag. A '.' name is taken."""
+        self.sph.vtx[:3] << Tag(" ab ")
+        self.assertEqual(_tags(self.sph), ["ab"])
+        np.testing.assert_array_equal(self.sph >> Tag("ab"), [0, 1, 2])
+        np.testing.assert_array_equal(self.sph >> Tag("ab "), [0, 1, 2])
+        self.sph.vtx[3:5] << Tag("a b")
+        self.sph.vtx[5] << Tag("lid.rim")
+        self.assertEqual(sorted(_tags(self.sph)), ["a_b", "ab", "lid.rim"])
+        np.testing.assert_array_equal(self.sph >> Tag("a_b"), [3, 4])
+        self.assertTrue(self.sph.vtx[5] in Tag("lid.rim"))
+        Tag("a b").rename(self.sph, " cd ")
+        self.assertEqual(sorted(_tags(self.sph)), ["ab", "cd", "lid.rim"])
+        self.sph << -Tag(" ab")
+        self.assertEqual(sorted(_tags(self.sph)), ["cd", "lid.rim"])
 
     def test_first_population_of_an_empty_tag_replaces(self):
         # Maya: ``modify add`` on an EMPTY tag returns False and changes
@@ -779,6 +823,24 @@ class TestTagOnClusteredMesh(MayaTestCase):
             Tag("cap").rename(self.sph, "crown", force=True)
         self.assertEqual(_tags(self.sph), ["cap"])
         self.assertEqual(self.expr >> None, "ca* - lid")
+
+    def test_a_dotted_name_is_one_token_of_an_expression(self):
+        """Maya reads 'cap.lid' in an expression as the tag 'cap.lid'
+        (runs/r5/REBIND/probe_dot.txt): it is no reference to 'cap' or 'lid',
+        and the glob 'cap.l*' references 'cap.lid', not 'lid'."""
+        self.sph.vtx[:2] << Tag("cap")
+        self.sph.vtx[2:4] << Tag("lid")
+        self.sph.vtx[4:6] << Tag("cap.lid")
+        self.expr << "cap.lid"
+        Tag("cap").rename(self.sph, "crown")
+        Tag("lid").rename(self.sph, "rim")
+        self.assertEqual(self.expr >> None, "cap.lid")
+        self.expr << "cap.l*"
+        Tag("rim").rename(self.sph, "lid")
+        self.assertEqual(sorted(_tags(self.sph)), ["cap.lid", "crown", "lid"])
+        with self.assertRaisesRegex(RuntimeError, "force=True"):
+            Tag("cap.lid").delete(self.sph)
+        self.assertEqual(sorted(_tags(self.sph)), ["cap.lid", "crown", "lid"])
 
     def test_a_reference_to_a_same_named_tag_on_another_mesh_does_not_block(self):
         other   = Node(cmds.polySphere(name="other", ch=False)[0])
