@@ -18,7 +18,7 @@ from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
 from rig.nodetypes.joint import Joint
-from rig.nodetypes.mesh import Mesh, _resampler
+from rig.nodetypes.mesh import Mesh, _resampler, _skincluster_of
 from rig.nodetypes.plugins import _run_undoable
 
 LOGGER = logging.getLogger(__name__)
@@ -408,7 +408,10 @@ class SkinCluster(Deformer):
         step (``rig.SkinCluster.copy_skincluster``).
 
         Args:
-            source_meshes: One or more skinned meshes (their last skinCluster).
+            source_meshes: One or more skinned meshes. With several
+                skinClusters on a mesh, source or target, the one used is
+                the one nearest the shape (the first ``get_deformers``
+                lists), as ``Mesh.apply_skin_data`` does.
             target_vertices: Vertex strings (``"m.vtx[3]"``, ``"m.vtx[0:9]"``)
                 or mesh names (every vertex). A target without a skinCluster
                 gets one, bound to the first source influence; the source
@@ -429,10 +432,9 @@ class SkinCluster(Deformer):
             # process source skinclusters
             source_skins = []
             for mesh in source_meshes:
-                skin = mesh.get_deformers(node_type="skinCluster")
-                # use the last found skinCluster if any
-                if skin:
-                    source_skins.append(skin[-1])
+                skin = _skincluster_of(mesh)
+                if skin is not None:
+                    source_skins.append(skin)
                 else:
                     raise RuntimeError(f"No skinCluster found on {mesh}")
 
@@ -451,14 +453,12 @@ class SkinCluster(Deformer):
                 skin_data = source_skin_data.copy()
 
                 # get the target skin
-                target_skin = target_mesh.get_deformers(node_type="skinCluster")
+                target_skin = _skincluster_of(target_mesh)
 
                 # if no skinCluster present, make a default one
-                if not target_skin:
+                if target_skin is None:
                     default     = skin_data.influences[:1]
                     target_skin = SkinCluster.create(target_mesh, default)
-                else:
-                    target_skin = target_skin[-1]
 
                 target_skin_data = target_skin.serialize()
 
