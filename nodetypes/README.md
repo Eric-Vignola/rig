@@ -326,7 +326,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` |
 | `Mesh.create(mesh_data, *, name=, uv_data=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step |
 | `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own |
-| `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, existing skin deleted first, one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
+| `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
 | `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
 | `Blinn.create(name=, ...)`, `Material.create(type=, name=, ...)` | `cmds.shadingNode(asShader=True)`, its `<shader>SG` engine and materialInfo, out of a scope unless `container=True` |
@@ -630,7 +630,12 @@ Verified on Maya 2025; not bugs to work around blindly.
   `Mesh.apply_skin_data`, `Mesh.bake_deformation` and
   `SkinCluster.copy_skincluster` (each source and the target) act on the
   first skinCluster `get_deformers` lists, which is normally the last one
-  applied. The mesh's other skinClusters are left alone.
+  applied. The mesh's other skinClusters are left alone. A skinCluster
+  that reaches the mesh only from the side is not the mesh's: that of a
+  blendShape's intermediate target (which `get_deformers` lists) or of a
+  skinned mesh that drives it through a blendShape or a wrap. A mesh with
+  none of its own gets a new one, and `SkinCluster.create` deletes only the
+  geometry's own skinClusters (not every one `listHistory` reaches).
 - **`Mesh.add_color_set(name, "RGBA")` is a `ValueError`**: the
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so
   pass `ColorSet.Representation.RGBA` (or `["RGBA"]` on the enum).

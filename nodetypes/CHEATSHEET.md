@@ -982,8 +982,9 @@ skin lacks are added, and its other vertices keep their weights. The
 copied rows are the sampled weights as they are: the target's locked
 influences and its `maxInfluences` are not applied to them. On a mesh with
 several skinClusters, `copy_skincluster`, `apply_skin_data` and
-`bake_deformation` use the one nearest the shape, which is
-`get_deformers(node_type="skinCluster")[0]`:
+`bake_deformation` use the one nearest the shape, normally
+`get_deformers(node_type="skinCluster")[0]` (the skin of a blendShape's
+intermediate target, which that lists too, is not the mesh's own):
 
 ```python
 other = Node(cmds.polyCube(name="other", ch=False, height=2)[0]).get_shape()
