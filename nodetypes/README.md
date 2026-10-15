@@ -676,5 +676,5 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **Method names are spelled as they are**: `set_xfrom_attrs_locked`
   (sic), and `BlendShape.set_targets_data` beside `set_target_data`.
 - `Mesh.bake_deformation` hard-codes `root_joint` as the skeleton. Its
-  `max_influences` is the influence cap, and `None` (the default) is no
-  cap. `merge_maps` / `merge_maps_list` raise `NotImplementedError`.
+  `max_influences` is the influence cap (below 1 is a `ValueError`), and
+  `None` (the default) is no cap. It is one undo step. `merge_maps` / `merge_maps_list` raise `NotImplementedError`.
