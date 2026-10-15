@@ -401,25 +401,26 @@ class TestDestroyContainerInteraction(MayaTestCase):
 
     def test_destroy_published_host_knob_deletes_carrier(self):
         """Destroying a created-knob published name unbinds + unpublishes it AND
-        deletes the host carrier attr (the knob has no purpose once unpublished).
+        deletes the attributes-node carrier attr (the knob has no purpose once unpublished).
         """
         from rig._internal.container import _resolve_published
 
         set_options(create_containers=True, flatten_containers=False)
         with container("test_destroy_pub3"):
-            container.publish_input(0.5, "weight", min=0, max=1)  # created host knob
+            # a created knob on the attributes node
+            container.publish_input(0.5, "weight", min=0, max=1)
         ctn       = Node("test_destroy_pub3")
-        host_node = str(_resolve_published(str(ctn), "weight")).split(".")[0]
+        attributes_node = str(_resolve_published(str(ctn), "weight")).split(".")[0]
         set_options(create_containers=False)
         ctn << destroy("weight")
         # Published name gone from the container...
         self.assertFalse(cmds.attributeQuery("weight", node=str(ctn), exists=True))
-        # ...and the host carrier attr is deleted (the knob had no other purpose).
-        self.assertFalse(cmds.attributeQuery("weight", node=host_node, exists=True))
+        # ...and the attributes-node carrier attr is deleted (the knob had no other purpose).
+        self.assertFalse(cmds.attributeQuery("weight", node=attributes_node, exists=True))
 
     def test_destroy_published_multi_clears_registry(self):
         """Destroying a registered (non-published) multi clears the registry
-        entry and deletes the host attr -- even though it has no real
+        entry and deletes the attributes-node attr -- even though it has no real
         ``container.<name>`` alias (resolved via the registry)."""
         from rig._internal.container import _resolve_published
 

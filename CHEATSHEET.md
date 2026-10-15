@@ -820,7 +820,7 @@ print((~a.tx) >> None,   (~(a.tx * 0)) >> None)  # False True
 a.t << [0, 1, 0]
 zero = a.t == 0                                  # three equal nodes in a condition1 container
 print(repr(zero), zero >> None)  # Plug("output_plug1.value") [1. 0. 1.]
-print(repr(zero.input1))         # Plug("condition1_host.input1")  -- the published interface
+print(repr(zero.input1))         # Plug("condition1_attributes.input1")  -- the published interface
 ```
 
 An ordering result (`<`, `<=`, `>`, `>=`) has no truth value, as a numpy
@@ -980,7 +980,7 @@ print(repr(arm.stretch), Container("arm").stretch >> None)   # Plug("arm.stretch
 with container("lerp1") as lerp:
     w   = container.publish_input(0.25, "weight", min=0, max=1)          # a knob with no inner home
     out = container.publish_output((ctrl.tx - outside.tx) * w, "output")
-print(repr(w), repr(lerp.weight), cmds.container("lerp1", query=True, publishName=True))   # Plug("lerp1_host.weight") Plug("lerp1_host.weight") ['weight', 'output']
+print(repr(w), repr(lerp.weight), cmds.container("lerp1", query=True, publishName=True))   # Plug("lerp1_attributes.weight") Plug("lerp1_attributes.weight") ['weight', 'output']
 ```
 
 The math operators register their nodes with the active scope too, so a

@@ -846,7 +846,7 @@ class TestFunctionsPublishedInterface(MayaTestCase):
         for attr in attrs:
             # Native publish: single attrs are real bindAttr aliases that
             # ``attributeQuery`` sees; MULTI attrs are registry-only (they live
-            # on the host node), so resolve them through the container instead.
+            # on the attributes node), so resolve them through the container instead.
             published = cmds.attributeQuery(attr, node=target, exists=True) or (
                 _resolve_published(target, attr) is not None
             )
