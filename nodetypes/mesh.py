@@ -18,7 +18,7 @@ from rig._internal.undo import _undo_chunk
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
-from rig.nodetypes.geometry import Geometry, _shape_create_name
+from rig.nodetypes.geometry import Geometry, _shape_create_name, iter_component_tokens
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.plugins import _run_undoable
@@ -986,15 +986,26 @@ class Mesh(Geometry):
     def transfer_component_tags(
         self, tags: str | list[str], other: Mesh | str, **kwargs
     ) -> None:
-        """Transfer component tags from this mesh to the other mesh.
+        """Transfer component tags from this mesh to the other mesh: a
+        component of `other` is in a transferred tag where it lands on this
+        mesh, in the transfer's `mode`.
 
-        A vertex tag gets the vertices of `other` whose sample on this mesh
-        reads one of its vertices with a nonzero weight: the same vertices onto
-        the same topology, and onto a finer mesh also those on the faces around
-        them. A face or edge tag goes through its vertices (cgmath's
-        ``GeomSubsetData`` rule): it gets every face or edge of `other` that
-        touches such a vertex, so it grows by one ring even onto the same
-        topology (see ``_resample_map``). One undo step
+        - A vertex is in when its sample on this mesh reads one of the tag's
+          vertices with a nonzero weight (see ``_resample_map``): onto a
+          finer mesh that is also the vertices on the faces around them.
+        - A face is in when its centre (SPATIAL: the mean of its corners in
+          space; UV: the mean of its UV corners) lands on a face of the tag:
+          the closest face of this mesh to it, from the sampler the
+          resampler's sample data comes from (``MeshData.sample``,
+          ``UVData.sample``). A face without UVs is never in by UV.
+        - An edge is in when both its end vertices are in the vertex set the
+          tag's vertices transfer to by the vertex rule. So an edge the tag
+          does not hold is in when it joins two tagged vertices (a rung
+          between two tagged parallel loops, say).
+
+        Onto the same topology, in the same place (SPATIAL) or with the same
+        UVs (UV), a vertex or face tag comes back exactly, and an edge tag too
+        unless it holds both ends of an edge it does not hold. One undo step
         (``rig.Mesh.transfer_component_tags``).
 
         Args:
@@ -1023,7 +1034,7 @@ class Mesh(Geometry):
 
                 new_data = []
                 if data.indices.size > 0:
-                    new_data = _resample_map(resampler, data, **kwargs)
+                    new_data = _land_tag(resampler, self, other, data, **kwargs)
 
                 other.set_component_tag_contents(t, new_data)
 
@@ -1064,9 +1075,9 @@ def _resample_map(resampler, data, mode=None, method="bilinear"):
     """`data`, a cgmath MapData or GeomSubsetData of the resampler's source mesh,
     sampled onto its destination mesh in `mode` (a ``ResampleMode``, SPATIAL by
     default) with `method` (a ``SampleMethod``): each value is the weighted sum
-    of the source values its sample reads, and a subset keeps the vertices any
-    nonzero sample reaches, an f or e subset every face or edge touching one of
-    them (``from_skin_data``'s rule: such a subset grows by one ring).
+    of the source values its sample reads, and a vertex subset keeps the
+    vertices any nonzero sample reaches (face and edge tags land by
+    ``_land_tag``).
 
     cgmath's ``MeshDataResampler.resample_map`` (1.0.4, 2.0.0) hands the data
     to ``resample_skin_weights`` as a one-influence SkinData, which normalizes
@@ -1086,6 +1097,52 @@ def _resample_map(resampler, data, mode=None, method="bilinear"):
         name           = data.name,
         component_type = data.component_type,
     )
+
+
+def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
+    """The contents the tag `data` (a cgmath GeomSubsetData of the mesh `src`, the
+    resampler's source) has on the mesh `dst` (its destination), by where they land
+    in `mode` (see ``Mesh.transfer_component_tags``): a GeomSubsetData, or for an
+    edge tag the edge strings ``polyListComponentConversion`` gives.
+
+    Face and edge ids are Maya's: cgmath's ``MeshData`` numbers its edges its own
+    way, so the edges go through ``MFnMesh`` / ``polyListComponentConversion``.
+    """
+    from cgmath.geometry import GeomSubsetData
+    from cgmath.geometry.resample import ResampleMode
+
+    mode = mode or ResampleMode.SPATIAL
+    if data.component_type == "f":
+        # where each face centre of dst lands: the closest face of src
+        if mode == ResampleMode.SPATIAL:
+            src_data, dst_data, kwargs = resampler.src_mesh, resampler.dst_mesh, {"method": method}
+        elif mode == ResampleMode.UV:
+            src_data, dst_data, kwargs = resampler.src_uv, resampler.dst_uv, {}
+        else:
+            raise ValueError(f"Unsupported resample mode: {mode}")
+        counts  = np.asarray(dst_data.counts)
+        points  = np.asarray(dst_data.points)[np.asarray(dst_data.indices)]
+        sums    = np.zeros((counts.size, points.shape[1]))
+        np.add.at(sums, np.repeat(np.arange(counts.size), counts), points)
+        centres = sums / np.maximum(counts, 1)[:, None]
+        landed  = src_data.sample(centres, **kwargs).indices
+        faces   = np.nonzero((counts > 0) & np.isin(landed, data.indices))[0]
+        return GeomSubsetData(name=data.name, indices=faces, component_type="f")
+
+    if data.component_type == "e":
+        fn    = OpenMaya.MFnMesh(src.mdagpath)
+        verts = np.unique([v for e in data.indices.tolist() for v in fn.getEdgeVertices(e)])
+        data  = GeomSubsetData(name=data.name, indices=verts, component_type="v")
+        verts = _resample_map(resampler, data, mode, method).indices
+        if verts.size == 0:
+            return []
+        # the edges of dst both of whose ends landed
+        return cmds.polyListComponentConversion(
+            [f"{dst.name}.{x}" for x in iter_component_tokens("vtx", verts)],
+            fromVertex=True, toEdge=True, internal=True,
+        ) or []
+
+    return _resample_map(resampler, data, mode, method)
 
 
 def _face_hole_loops(face: int, face_verts: list[int], loops: list[list[int]]) -> list[list[int]]:

@@ -309,9 +309,8 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertEqual(dst.get_component_tag_indices("xfer_pts").tolist(), [0, 1, 2, 7])
 
     def test_transfer_component_tags_face_and_edge_tags_are_not_the_whole_mesh(self):
-        """A face or edge tag goes through its vertices (from_skin_data): it comes back
-        holding its own components and the ring around them, not every face or edge
-        (runs/r5/XFER/review/probe_maps.py)."""
+        """A face or edge tag comes back holding its own components, not every face
+        or edge (runs/r5/XFER/review/probe_maps.py; exactly, since TAGS)."""
         try:
             from cgmath.geometry.resample import MeshDataResampler  # noqa: F401
         except ImportError:
@@ -327,3 +326,111 @@ class TestComponentTagLocations(MayaTestCase):
                 got = set(dst.get_component_tag_indices(tag).tolist())
                 self.assertLessEqual(set(indices), got)
                 self.assertLess(len(got), count, sorted(got))
+
+    # --- where a transferred tag lands (TAGS: the user's rule of 2026-10-15)
+
+    def _planes(self, src_divisions=4, dst_divisions=4, **dst_kwargs):
+        try:
+            from cgmath.geometry.resample import MeshDataResampler  # noqa: F401
+        except ImportError:
+            self.skipTest("cgmath.geometry.resample unavailable")
+        src = Node(cmds.polyPlane(ch=False, name="srcP", sx=src_divisions, sy=src_divisions)[0]).get_shape()
+        dst = Node(cmds.polyPlane(ch=False, name="dstP", sx=dst_divisions, sy=dst_divisions, **dst_kwargs)[0]).get_shape()
+        return src, dst
+
+    @staticmethod
+    def _edge_ends(mesh):
+        """Maya's own edge table: {edge id: (vertex, vertex)}."""
+        from maya.api import OpenMaya
+        fn = OpenMaya.MFnMesh(mesh.mdagpath)
+        return {e: tuple(sorted(fn.getEdgeVertices(e))) for e in range(fn.numEdges)}
+
+    def _transfer(self, src, dst, tag, ids, kind, **kwargs):
+        if not src.has_component_tag(tag):
+            src.add_component_tag(tag)
+        src.set_component_tag_contents(tag, ids, kind)
+        src.transfer_component_tags(tag, dst, **kwargs)
+        return dst.get_component_tag_indices(tag).tolist()
+
+    def test_transfer_component_tags_comes_back_exactly_onto_the_same_topology(self):
+        """Every face, edge and vertex alone, and sets of them, come back as they
+        were, by SPATIAL and by UV (the face and edge tags used to grow a ring, and
+        the edges came back in cgmath's numbering, not Maya's)."""
+        from cgmath.geometry.resample import ResampleMode
+
+        try:
+            from cgmath.geometry.resample import MeshDataResampler  # noqa: F401
+        except ImportError:
+            self.skipTest("cgmath.geometry.resample unavailable")
+        for make in ("sphere", "torus"):
+            src = Node(getattr(cmds, "poly" + make.title())(ch=False, name="s" + make)[0]).get_shape()
+            dst = Node(getattr(cmds, "poly" + make.title())(ch=False, name="d" + make)[0]).get_shape()
+            counts = {"f": cmds.polyEvaluate(src.name, face=True), "e": len(self._edge_ends(src)), "v": src.num_vertices}
+            for mode in (ResampleMode.SPATIAL, ResampleMode.UV):
+                for kind, count in counts.items():
+                    with self.subTest(make, mode=mode.name, kind=kind):
+                        for i in range(0, count, 7):
+                            self.assertEqual(self._transfer(src, dst, "t" + kind, [i], kind, mode=mode), [i])
+                        # several faces / vertices at once (edges: see the plane row below)
+                        if kind != "e":
+                            ids = list(range(0, count, 3))
+                            self.assertEqual(self._transfer(src, dst, "t" + kind, ids, kind, mode=mode), ids)
+
+        # an edge loop: a whole row of the plane, no rung between its vertices
+        src, dst = self._planes()
+        ends = self._edge_ends(src)
+        row = sorted(e for e, (a, b) in ends.items() if (a, b) in {(5 + c, 6 + c) for c in range(4)})
+        self.assertEqual(len(row), 4)
+        self.assertEqual(self._transfer(src, dst, "row", row, "e"), row)
+
+    def test_transfer_component_tags_by_uv_lands_where_the_uvs_are(self):
+        """A face tag by UV follows the UVs, wherever the target is in space; by
+        SPATIAL onto a far-away target it lands on the source face closest to each
+        target face centre."""
+        from cgmath.geometry.resample import ResampleMode
+
+        src, dst = self._planes()
+        cmds.move(30, 0, 0, dst.get_parent().name)
+        self.assertEqual(self._transfer(src, dst, "uvf", [5, 6], "f", mode=ResampleMode.UV), [5, 6])
+        # far along +x, every target face centre is closest to the source's +x column
+        self.assertEqual(self._transfer(src, dst, "spf", [3, 7, 11, 15], "f"), list(range(16)))
+        self.assertEqual(self._transfer(src, dst, "spf", [5, 6], "f"), [])
+
+    def test_transfer_component_tags_faces_land_by_their_centres_onto_a_finer_mesh(self):
+        """Onto a plane of twice the divisions, a face tag is the faces whose
+        centres are on the tagged faces: four per face, not a ring more."""
+        from cgmath.geometry.resample import ResampleMode
+        from maya.api import OpenMaya
+
+        src, dst = self._planes(4, 8)
+        fn = OpenMaya.MFnMesh(dst.mdagpath)
+        pts = fn.getPoints(OpenMaya.MSpace.kWorld)
+
+        def centre(f):
+            ids = fn.getPolygonVertices(f)
+            return (sum(pts[i].x for i in ids) / len(ids), sum(pts[i].z for i in ids) / len(ids))
+
+        tagged = [5, 6, 9]
+        for mode in (ResampleMode.SPATIAL, ResampleMode.UV):
+            with self.subTest(mode=mode.name):
+                got = self._transfer(src, dst, "fine_f", tagged, "f", mode=mode)
+                self.assertEqual(len(got), 4 * len(tagged), got)
+                # each landed face's centre is inside one tagged source face
+                for f in got:
+                    p = OpenMaya.MPoint(centre(f)[0], 0, centre(f)[1])
+                    closest = OpenMaya.MFnMesh(src.mdagpath).getClosestPoint(p, OpenMaya.MSpace.kWorld)[1]
+                    self.assertIn(closest, tagged, f)
+
+    def test_transfer_component_tags_edge_joining_two_tagged_loops_is_in(self):
+        """An edge is in when both its ends are: tagging two parallel rows of a
+        plane also tags the rungs between them (the user's accepted case), and
+        nothing else."""
+        src, dst = self._planes()
+        ends = self._edge_ends(src)
+        rows = {(r * 5 + c, r * 5 + c + 1) for r in (1, 2) for c in range(4)}
+        tagged = sorted(e for e, pair in ends.items() if pair in rows)
+        verts = {v for e in tagged for v in ends[e]}
+        expected = sorted(e for e, (a, b) in self._edge_ends(dst).items() if a in verts and b in verts)
+        self.assertEqual(len(tagged), 8)
+        self.assertEqual(len(expected), 8 + 5)  # the two rows and their five rungs
+        self.assertEqual(self._transfer(src, dst, "rows", tagged, "e"), expected)
