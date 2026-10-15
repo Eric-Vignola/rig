@@ -293,9 +293,20 @@ class Geometry(DAGNode):
         itself until a deformer exists, its intermediate "Orig" shape from then
         on. Every tag editor here addresses that node's componentTags multi so
         that editors and readers agree. Not cached: adding a deformer moves it.
+
+        Raises:
+            RuntimeError: for a referenced shape with no local deformer: Maya
+                answers no node (``['']``), as it stores no tag on a referenced
+                node (runs/r5/TAGLEFT/fix/probe_injnode.txt).
         """
         self.ensure_valid()
         nodes = cmds.deformableShape(self.long_name, tagInjectionNode=True)
+        if nodes and not nodes[0]:
+            raise RuntimeError(
+                f"{self} has no node Maya can store component tags on: it is "
+                f"referenced, and so is its geometry chain; a deformer added to it "
+                f"makes a local Orig that holds them"
+            )
         if not nodes or cmds.ls(nodes[0], long=True)[0] == self.long_name:
             return self
         return _cast(nodes[0])
