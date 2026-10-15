@@ -731,7 +731,8 @@ class Mesh(Geometry):
         Args:
             map_name: Name of the map attribute.
             paintable: Whether to make the map paintable.
-            category: One or more categories to assign to this map.
+            category: One or more categories to assign to this map (the
+                caller's list is left as it is).
                 MAP_DEFAULT_CATEGORY is always assigned.
             values: Values to initialize the map with. Can be a list or a single value.
             force: If True, remove existing map if found.
@@ -745,10 +746,10 @@ class Mesh(Geometry):
             else:
                 raise RuntimeError("{} map already exists.".format(map_name))
 
-        # ensure MAP_DEFAULT_CATEGORY is always included
+        # ensure MAP_DEFAULT_CATEGORY is always included, in a list of our own
+        # (never the caller's)
         category = category or MAP_DEFAULT_CATEGORY
-        if isinstance(category, str):
-            category = [category]
+        category = [category] if isinstance(category, str) else list(category)
         if MAP_DEFAULT_CATEGORY not in category:
             category.append(MAP_DEFAULT_CATEGORY)
 

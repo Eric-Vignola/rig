@@ -395,6 +395,21 @@ class TestMeshMaps(MayaTestCase):
             negative_z_mirror_values, self._mirror_negative_dir_z_map_values
         )
 
+    def test_add_map_leaves_the_callers_category_list_alone(self):
+        """add_map used to append PaintableMap to the list it was given."""
+        test_mesh = self.open_scene_and_get_test_mesh(self._scene_test_object_name)
+        categories = [self._map_test_category]
+        test_mesh.add_map(self._map_01_name, category=categories)
+        test_mesh.add_map(self._map_01_name, category=categories, force=True)
+        self.assertEqual(categories, [self._map_test_category])
+        self.assertEqual(
+            sorted(test_mesh.find_map_attr(self._map_01_name).get_categories()),
+            sorted([self._map_test_category, mesh_api.MAP_DEFAULT_CATEGORY]),
+        )
+        # a tuple is taken too
+        test_mesh.add_map(self._map_02_name, category=(self._map_test_category,))
+        self.assertTrue(test_mesh.find_map_attr(self._map_02_name).has_category(self._map_test_category))
+
 class TestMeshMapTransfer(MayaTestCase):
     """transfer_maps: the values (cgmath's resample_map normalizes a map to 1.0),
     the categories, and no paintable registration as a side effect."""
