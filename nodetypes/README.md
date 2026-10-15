@@ -602,11 +602,19 @@ Verified on Maya 2025; not bugs to work around blindly.
   sample data, unnormalised: the values are what `resample_map` gives
   without the normalisation. They take `mode` (`SPATIAL`, `UV`) and
   `method`; `ROBUST_BILINEAR` and the skin `options` are not map options.
-  A tag keeps `GeomSubsetData.from_skin_data`'s rule: it is the vertices
-  any nonzero sample reaches, so a vertex tag onto a finer mesh also gets
-  the vertices on the faces around its own, and a face or edge tag (which
-  goes through its vertices) comes back as every face or edge touching
-  them, one ring wider even onto the same topology.
+  A tag holds where the target's components land on the source, in the
+  transfer's mode. A vertex is in when its sample reads a tagged vertex
+  with a nonzero weight (`GeomSubsetData.from_skin_data`'s rule), so a
+  vertex tag onto a finer mesh also gets the vertices on the faces around
+  its own. A face is in when its centre (`SPATIAL`: the mean of its
+  corners; `UV`: the mean of its UV corners) is closest to a tagged face.
+  An edge is in when both its ends are in the vertex set the tag's
+  vertices transfer to, so an edge joining two tagged vertices is in even
+  if the tag did not hold it (a rung between two tagged parallel loops).
+  Onto the same topology a vertex or face tag comes back exactly, and an
+  edge tag too but for such rungs. (cgmath's own rule sent a face or edge
+  tag through its vertices and back, one ring wider, and its `MeshData`
+  numbers edges differently from Maya.)
   `SkinCluster.transfer_to_mesh` (many influences) is fine.
 - **`Mesh.add_color_set(name, "RGBA")` is a `ValueError`**: the
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so

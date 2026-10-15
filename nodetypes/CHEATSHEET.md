@@ -818,9 +818,12 @@ print(mesh.get_materials(as_pairs=True)[0][0].get_material() in mesh.get_materia
 Transfer maps, tags and skin weights onto another topology (a
 `cgmath` `MeshDataResampler`; `mode=ResampleMode.UV` samples through the
 first UV sets). Each target vertex gets the blend of the source values its
-closest point reads; a map keeps its categories, a tag the vertices any
-nonzero sample reaches (a face or edge tag: every face or edge touching
-them, one ring wider than the source's).
+closest point reads, and a map keeps its categories. A tag holds what lands
+on it: a vertex whose sample reads a tagged vertex, a face whose centre (in
+space, or its UV centre by UV) is closest to a tagged face, an edge both of
+whose ends are in the vertex set the tag's vertices transfer to (so a rung
+between two tagged loops is in). Onto the same topology a tag comes back as
+it was, but for those rungs.
 
 ```python
 dst = Node(cmds.polyCube(name="dst", ch=False)[0]).get_shape()
@@ -832,6 +835,10 @@ mesh.add_component_tag("cap")
 mesh.set_component_tag_contents("cap", [0, 1, 2, 3])
 mesh.transfer_component_tags("cap", dst)                             # written at dst's injection node
 print(dst.component_tags[-1], dst.get_component_tag_indices("cap"))  # cap [0 1 2 3]
+mesh.add_component_tag("lid")
+mesh.set_component_tag_contents("lid", [1], "f")
+mesh.transfer_component_tags("lid", dst)                             # where dst's face centres land
+print(dst.get_component_tag_indices("lid"))                          # [1]
 
 jnt  = Joint.create(name="jnt")
 skin = SkinCluster.create(cube, jnt)
