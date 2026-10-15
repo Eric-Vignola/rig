@@ -290,6 +290,29 @@ class TestXformNodes(MayaTestCase):
             for a, b in zip(got, matrix):
                 self.assertAlmostEqual(a, b, places=6)
 
+    def test_hierarchy_under_a_parent_outside_the_data_below_a_moved_group(self):
+        # the outside node sits under a moved and rotated group: the roots are solved
+        # against its world matrix (they were solved against its local one, and landed
+        # off by the group's move: runs\r5\CG2\verify)
+        self.root.t.set(1, 2, 3)
+        self.root.r.set(10, 20, 30)
+        self.joint2.t.set(0, 2, 0)
+        world     = [cmds.xform(x.long_name, q=True, matrix=True, worldSpace=True)
+                     for x in (self.root, self.joint2, self.joint3)]
+        hierarchy = self.root.serialize_hierarchy()
+
+        self.new_scene()
+        group   = cmds.createNode("transform", name="group")
+        cmds.xform(group, translation=(0, 3, -1), rotation=(0, 45, 15))
+        outside = cmds.createNode("transform", name="outside", parent=group)
+        cmds.xform(outside, translation=(1, 0, 0), rotation=(30, 0, 0))
+        created = Transform.create_hierarchy(hierarchy, parent="outside", world_space=True)
+        self.assertEqual(cmds.listRelatives(created[0], parent=True), ["outside"])
+        for name, matrix in zip(created, world):
+            got = cmds.xform(name, q=True, matrix=True, worldSpace=True)
+            for a, b in zip(got, matrix):
+                self.assertAlmostEqual(a, b, places=6)
+
     def test_serialize_hierarchy_writes_parents_without_deprecation_warnings(self):
         # cgmath 2.0.0 names a parent parent_uuid; parent_node is its deprecated alias
         with warnings.catch_warnings():
