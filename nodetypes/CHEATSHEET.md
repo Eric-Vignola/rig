@@ -953,7 +953,9 @@ print(repr(Node.create("skinCluster", Node(cmds.polyCube(name="c2", ch=False)[0]
 Transfer to another mesh (pass the shape or a name, not a `Transform`).
 `copy_skincluster` copies from one or more skinned meshes onto vertices
 (or whole meshes, by name), by closest point; the joints the target's
-skin lacks are added, and its other vertices keep their weights:
+skin lacks are added, and its other vertices keep their weights. The
+copied rows are the sampled weights as they are: the target's locked
+influences and its `maxInfluences` are not applied to them:
 
 ```python
 other = Node(cmds.polyCube(name="other", ch=False, height=2)[0]).get_shape()
