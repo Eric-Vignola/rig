@@ -5,6 +5,7 @@ Every error test asserts a zero ``cmds.ls()`` delta: a refused spelling
 writes nothing. Lists are never compared with ``assertEqual``.
 """
 
+import re
 from unittest import mock
 
 import numpy as np
@@ -37,6 +38,15 @@ def _entries(node, name):
         (e["node"], e["editable"], e["final"])
         for e in _geo(node).get_component_tag_history() or []
         if e["key"] == name
+    ]
+
+
+def _written(shape):
+    """The tag names stored on ``shape`` itself (its ``componentTags``), not
+    those it reads from upstream."""
+    return [
+        cmds.getAttr(f"{shape}.componentTags[{i}].componentTagName")
+        for i in cmds.getAttr(f"{shape}.componentTags", multiIndices=True) or []
     ]
 
 
@@ -771,7 +781,10 @@ class TestTagOnClusteredMesh(MayaTestCase):
                     cmds.select(str(driven), str(driver))
                     cmds.CreateWrap()
                 self.assertIn(_shape(driver), cmds.ls(cmds.listHistory(str(driven)), long=True))
-                with self.assertRaisesRegex(TypeError, "nor in its history"):
+                # re-pinned (runs/r5/TAGLEFT): the message names the geometry
+                # chain, where it said "nor in its history", which listHistory
+                # (which reaches the driver) contradicts
+                with self.assertRaisesRegex(TypeError, "is not in the geometry chain of"):
                     driven.vtx[:3] << Tag("cap", at=_shape(driver))
                 self.assertNotIn("cap", _tags(driver))
                 self.assertNotIn("cap", _tags(driven))
@@ -798,6 +811,65 @@ class TestTagOnClusteredMesh(MayaTestCase):
                 self.assertIn("cap", _tags(src))
                 np.testing.assert_array_equal(dst >> Tag("cap"), [3, 4])
                 np.testing.assert_array_equal(src >> Tag("cap"), [3, 4])
+
+    def test_at_takes_every_mesh_of_the_geometry_chain(self):
+        """a -> b -> c (b.outMesh or b.worldMesh into c.inMesh): at=b was
+        refused for c when b had no tags (it is neither in c's own history,
+        which stops at a visible mesh, nor its injection node). Maya writes a
+        tag at= any of them on that node, and that node and every mesh
+        downstream of it read it (runs/r5/TAGLEFT/probe_chain.txt)."""
+        cases = (
+            ("polySphere", "outMesh", False),       # no tags of their own
+            ("polyCube", "outMesh", False),         # baked tags on each
+            ("polySphere", "worldMesh[0]", False),
+            ("polySphere", "outMesh", True),        # a cluster on b: b has an Orig
+        )
+        for k, (make, link, clustered) in enumerate(cases):
+            with self.subTest(make=make, link=link, clustered=clustered):
+                a, b, c = (Node(getattr(cmds, make)(name=f"{n}{k}", ch=False)[0]) for n in "abc")
+                cmds.connectAttr(f"{_shape(a)}.{link}", f"{_shape(b)}.inMesh")
+                if clustered:
+                    cmds.cluster(str(b))
+                cmds.connectAttr(f"{_shape(b)}.{link}", f"{_shape(c)}.inMesh")
+                chain = [_shape(a), _shape(b)]
+                if clustered:
+                    chain.insert(1, cmds.ls(cmds.deformableShape(_shape(b), originalGeometry=True)[0].split(".")[0], long=True)[0])
+                for i, at in enumerate(chain):
+                    key = f"t{i}"
+                    c.vtx[1:3] << Tag(key, at=at)
+                    holders = [s for s in chain + [_shape(c)] if key in _written(s)]
+                    self.assertEqual(holders, [at])
+                    np.testing.assert_array_equal(c >> Tag(key), [1, 2])
+                    np.testing.assert_array_equal(b >> Tag(key), [1, 2])
+                    self.assertEqual(key in _tags(a), at == _shape(a))
+
+    def test_at_refuses_a_side_input_of_the_chain(self):
+        """A mesh that feeds this one through a non-geometry input: polyTransfer's
+        other mesh, and a blendShape target fed by the same mesh as this one.
+        Maya writes the tag there, and this mesh never reads it
+        (runs/r5/TAGLEFT/probe_chain.txt, probe_chainq.txt)."""
+        dst = Node(cmds.polySphere(name="pt_dst", ch=True)[0])
+        oth = Node(cmds.polySphere(name="pt_oth", ch=False)[0])
+        cmds.polyTransfer(str(dst), alternateObject=str(oth), uvSets=True)
+        root = Node(cmds.polySphere(name="bs_root", ch=False)[0])
+        tgt  = Node(cmds.polySphere(name="bs_tgt", ch=False)[0])
+        bsd  = Node(cmds.polySphere(name="bs_dst", ch=False)[0])
+        cmds.connectAttr(f"{_shape(root)}.outMesh", f"{_shape(tgt)}.inMesh")
+        cmds.connectAttr(f"{_shape(root)}.outMesh", f"{_shape(bsd)}.inMesh")
+        cmds.blendShape(str(tgt), str(bsd))
+        for mesh, side in ((dst, oth), (bsd, tgt)):
+            with self.subTest(side=str(side)):
+                self.assertIn(_shape(side), cmds.ls(cmds.listHistory(str(mesh)), long=True))
+                before = set(cmds.ls())
+                message = f"'{_shape(side)}' is not in the geometry chain of {_shape(mesh)}"
+                with self.assertRaisesRegex(TypeError, re.escape(message)):
+                    mesh.vtx[:3] << Tag("cap", at=_shape(side))
+                self.assertEqual(set(cmds.ls()), before)
+                self.assertNotIn("cap", _written(_shape(side)))
+                self.assertNotIn("cap", _tags(mesh))
+        # the mesh both are fed from is in the chain
+        bsd.vtx[:3] << Tag("cap", at=root)
+        np.testing.assert_array_equal(bsd >> Tag("cap"), [0, 1, 2])
 
     def test_node_lhs_refuses_a_procedural_name(self):
         cube   = Node(cmds.polyCube(name="hc", ch=True)[0])
