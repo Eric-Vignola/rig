@@ -350,8 +350,12 @@ class SkinCluster(Deformer):
 
     @staticmethod
     def rebind(geo) -> None:
+        """Unbind and rebind each of the geometry's own skinClusters
+        (``_skinclusters_of``, as ``create`` deletes them): not the skin of a
+        mesh that drives it through a blendShape or a wrap, which
+        ``listHistory`` reaches too. A geometry with none is left alone."""
         shape = cmds.listRelatives(geo, shapes=True, pa=True)[0]
-        skins = cmds.ls(cmds.listHistory(shape), type="skinCluster")
+        skins = [s.name for s in _skinclusters_of(_cast(geo))]
         if not skins:
             return
 

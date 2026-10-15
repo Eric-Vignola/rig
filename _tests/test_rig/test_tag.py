@@ -700,6 +700,29 @@ class TestTagOnClusteredMesh(MayaTestCase):
         with self.assertRaisesRegex(TypeError, "at= places a tag"):
             self.sph >> Tag("up", at=self.orig)
 
+    def test_at_refuses_a_mesh_that_drives_this_one_from_the_side(self):
+        """at= took any node of listHistory: the driver of a blendShape or a
+        wrap got the tag, which the driven mesh never reads
+        (runs/r5/REBIND/probe_at.txt)."""
+        for how in ("blendShape", "wrap"):
+            with self.subTest(how=how):
+                driver = Node(cmds.polyCube(name=f"driver_{how}", ch=False)[0])
+                driven = Node(cmds.polyCube(name=f"driven_{how}", ch=False)[0])
+                if how == "blendShape":
+                    cmds.blendShape(str(driver), str(driven), weight=(0, 1))
+                else:
+                    cmds.select(str(driven), str(driver))
+                    cmds.CreateWrap()
+                self.assertIn(_shape(driver), cmds.ls(cmds.listHistory(str(driven)), long=True))
+                with self.assertRaisesRegex(TypeError, "nor in its history"):
+                    driven.vtx[:3] << Tag("cap", at=_shape(driver))
+                self.assertNotIn("cap", _tags(driver))
+                self.assertNotIn("cap", _tags(driven))
+                # its own Orig is still a place for the tag
+                orig = cmds.deformableShape(_shape(driven), tagInjectionNode=True)[0]
+                driven.vtx[:3] << Tag("cap", at=orig)
+                np.testing.assert_array_equal(driven >> Tag("cap"), [0, 1, 2])
+
     def test_node_lhs_refuses_a_procedural_name(self):
         cube   = Node(cmds.polyCube(name="hc", ch=True)[0])
         before = set(cmds.ls())
