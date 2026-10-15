@@ -33,6 +33,30 @@ if TYPE_CHECKING:
 # a bare component tag name, as opposed to an expression ('top + side', '!top')
 _TAG_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_:]*$")
 
+# The names Maya stores as a component tag name (Maya 2025.3, runs/r5/SKIN/probe_tags*.py).
+# Maya trims the whitespace at the ends of the name and makes a space inside, with
+# any whitespace after it, one '_'. What is left must match this rule.
+_TAG_NAME_STORED_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z0-9_]+)*")
+_TAG_NAME_RULE = (
+    "Maya takes a component tag name of at least two characters, letters, digits "
+    "and '_', starting with a letter or '_', with single '.' or ':' between "
+    "characters (whitespace at its ends is trimmed and a space inside becomes '_')"
+)
+_ASCII_WHITESPACE = " \t\n\v\f\r"
+
+
+def _check_component_tag_name(key: Any) -> None:
+    """Raises a ValueError naming Maya's rule for a name Maya refuses as a
+    component tag name (it refuses ``setAttr`` of one with a bare "Maya
+    command error"). A name with a non-ASCII character is left to Maya: Maya
+    first maps it to the system code page by best fit (on code page 1252,
+    'Ā' becomes 'A' and is taken, 'é' stays non-ASCII and is refused)."""
+    if not isinstance(key, str) or not key.isascii():
+        return
+    stored = re.sub(r" [ \t\n\v\f\r]*", "_", key.strip(_ASCII_WHITESPACE))
+    if len(stored) < 2 or not _TAG_NAME_STORED_RE.fullmatch(stored):
+        raise ValueError(f"{key!r} is not a component tag name: {_TAG_NAME_RULE}")
+
 # The component an EMPTY tag resolves to, by geometry data type then tag
 # category: Maya hands back a null MObject for an empty tag, so the reader
 # builds an empty component of the native (fn set, type) instead.
@@ -318,7 +342,17 @@ class Geometry(DAGNode):
 
         Returns:
             The index of the new tag added.
+
+        Raises:
+            ValueError: before anything is made, for a name Maya refuses: Maya
+                takes at least two characters, letters, digits and '_',
+                starting with a letter or '_', with single '.' or ':' between
+                characters, once the whitespace at the ends is trimmed and a
+                space inside is made '_' ('b', '1a', 'a-b', 'a..b' and '' are
+                refused; 'ab', '_1', 'a.b' and 'a b', stored 'a_b', are
+                taken). A name with a non-ASCII character is left to Maya.
         """
+        _check_component_tag_name(key)
         if self.has_component_tag(key):
             if force:
                 self.remove_component_tag(key)

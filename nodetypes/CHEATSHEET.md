@@ -652,6 +652,20 @@ print(cmds.getAttr("ballShapeOrig.componentTags", multiIndices=True), cmds.getAt
 print(ball.get_component_tag_contents("cap", full_name=True))                                                                      # ['ballShape.vtx[0:3]']
 ```
 
+A name Maya refuses is a `ValueError` naming Maya's rule, before anything
+is made. Maya takes at least two characters, letters, digits and `_`,
+starting with a letter or `_`, with single `.` or `:` between characters.
+It trims the whitespace at the ends and makes a space inside `_`:
+
+```python
+try:
+    ball.add_component_tag("b")
+except ValueError as e:
+    print(str(e)[:59])                                        # 'b' is not a component tag name: Maya takes a component tag
+print(ball.get_component_tag_name(ball.add_component_tag("lid rim")))  # lid_rim
+ball.remove_component_tag("lid_rim")
+```
+
 Contents can be ids with a category, component strings, or a
 `GeomSubsetData`; `set_component_tag_contents` renders ranges for you.
 
