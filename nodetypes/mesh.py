@@ -1012,18 +1012,12 @@ class Mesh(Geometry):
             tags: One or more component tags to transfer.
             other: The other mesh to transfer the component tag to.
             kwargs: ``mode`` (a cgmath ``ResampleMode``, SPATIAL by default; UV
-                samples through the first UV sets) and ``method`` (a
+                samples through the first UV sets, the only mode that reads
+                UVs) and ``method`` (a
                 ``SampleMethod``, BILINEAR by default).
         """
-        from cgmath.geometry.resample import MeshDataResampler
-
-        other = Mesh(other)
-
-        mesh_data_a, uv_data_a = self.serialize(include_uvs=True)
-        mesh_data_b, uv_data_b = other.serialize(include_uvs=True)
-        resampler = MeshDataResampler(
-            mesh_data_a, mesh_data_b, uv_data_a[0], uv_data_b[0]
-        )
+        other     = Mesh(other)
+        resampler = _resampler(self, other, kwargs.get("mode"))
 
         with _undo_chunk("rig.Mesh.transfer_component_tags"):
             for t in tags if isinstance(tags, (list, tuple)) else [tags]:
@@ -1051,17 +1045,12 @@ class Mesh(Geometry):
             maps: One or more map names to transfer.
             other: The other mesh to transfer the map to.
             kwargs: ``mode`` (a cgmath ``ResampleMode``, SPATIAL by default; UV
-                samples through the first UV sets) and ``method`` (a
+                samples through the first UV sets, the only mode that reads
+                UVs) and ``method`` (a
                 ``SampleMethod``, BILINEAR by default).
         """
-        from cgmath.geometry.resample import MeshDataResampler
-
-        other = Mesh(other)
-        mesh_data_a, uv_data_a = self.serialize(include_uvs=True)
-        mesh_data_b, uv_data_b = other.serialize(include_uvs=True)
-        resampler = MeshDataResampler(
-            mesh_data_a, mesh_data_b, uv_data_a[0], uv_data_b[0]
-        )
+        other     = Mesh(other)
+        resampler = _resampler(self, other, kwargs.get("mode"))
 
         with _undo_chunk("rig.Mesh.transfer_maps"):
             for m in maps if isinstance(maps, (list, tuple)) else [maps]:
@@ -1069,6 +1058,21 @@ class Mesh(Geometry):
                 new_data = _resample_map(resampler, data, **kwargs)
                 other.add_map(m, category=data.categories, force=True)
                 other.set_map_values(m, new_data)
+
+
+def _resampler(src, dst, mode=None):
+    """A cgmath ``MeshDataResampler`` from the mesh `src` onto the mesh `dst`
+    for `mode` (a ``ResampleMode``, SPATIAL by default). Only UV mode reads
+    UVs, the first UV set of each mesh; a mesh without one gives None there,
+    which cgmath refuses (RuntimeError "UV data not supplied.")."""
+    from cgmath.geometry.resample import MeshDataResampler, ResampleMode
+
+    if mode != ResampleMode.UV:
+        return MeshDataResampler(src.serialize(include_uvs=False), dst.serialize(include_uvs=False))
+    (src_data, src_uvs), (dst_data, dst_uvs) = src.serialize(), dst.serialize()
+    return MeshDataResampler(
+        src_data, dst_data, src_uvs[0] if src_uvs else None, dst_uvs[0] if dst_uvs else None
+    )
 
 
 def _resample_map(resampler, data, mode=None, method="bilinear"):

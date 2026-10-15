@@ -442,6 +442,65 @@ class TestMeshMapTransfer(MayaTestCase):
 
         self.assertFalse(any(cmds.makePaintable("mesh", "XFER_UNPAINTED", query=True) or []))
 
+    def _transfer_all(self, src, dst, **kwargs):
+        """transfer_maps, transfer_component_tags and SkinCluster.transfer_to_mesh
+        from src onto dst: the map values, the tag contents, the skin's influences."""
+        from rig.nodetypes import Joint, SkinCluster
+
+        if not src.has_attr("XFER_UV"):
+            src.add_map("XFER_UV", values=np.linspace(0.0, 1.0, src.num_vertices).tolist())
+            src.add_component_tag("xfer_uv")
+            src.set_component_tag_contents("xfer_uv", [0, 1, 5], "v")
+            skin = SkinCluster.create(src, Joint.create(name="xfer_uv_j"))
+        else:
+            skin = src.get_deformers(node_type="skinCluster")[0]
+        src.transfer_maps("XFER_UV", dst, **kwargs)
+        src.transfer_component_tags("xfer_uv", dst, **kwargs)
+        target = skin.transfer_to_mesh(dst, **kwargs)
+        return (
+            dst.get_map_values("XFER_UV"),
+            dst.get_component_tag_indices("xfer_uv").tolist(),
+            [x.name for x in target.get_influence_objects()],
+        )
+
+    def test_transfers_read_no_uvs_in_spatial_mode(self):
+        """SPATIAL (the default) samples in space: no UV set is read. UV still reads them."""
+        from unittest import mock
+        from cgmath.geometry.resample import ResampleMode
+
+        src, dst = self._plane("src", 4), self._plane("dst", 4)
+        reads = []
+        real  = mesh_api.Mesh.serialize_uv
+
+        def serialize_uv(mesh, uv_set=None):
+            reads.append(mesh.name)
+            return real(mesh, uv_set)
+
+        with mock.patch.object(mesh_api.Mesh, "serialize_uv", serialize_uv):
+            values, tag, influences = self._transfer_all(src, dst)
+            self.assertEqual(reads, [])
+            self.assertEqual(values, src.get_map_values("XFER_UV"))
+            self.assertEqual(tag, [0, 1, 5])
+            self.assertEqual(influences, ["xfer_uv_j"])
+            self._transfer_all(src, dst, mode=ResampleMode.UV)
+            self.assertEqual(sorted(set(reads)), ["dstShape", "srcShape"])
+
+    def test_transfers_onto_a_mesh_without_uv_sets(self):
+        """A mesh reporting no UV set (Maya keeps map1 on every mesh, so it is
+        patched in): SPATIAL transfers work (uv_data[0] was an IndexError), UV
+        is cgmath's refusal."""
+        from unittest import mock
+        from cgmath.geometry.resample import ResampleMode
+
+        src, dst = self._plane("src", 4), self._plane("dst", 4)
+        with mock.patch.object(mesh_api.Mesh, "uv_sets", new_callable=mock.PropertyMock, return_value=()):
+            values, tag, influences = self._transfer_all(src, dst)
+            self.assertEqual(values, src.get_map_values("XFER_UV"))
+            self.assertEqual(tag, [0, 1, 5])
+            self.assertEqual(influences, ["xfer_uv_j"])
+            with self.assertRaisesRegex(RuntimeError, "UV data not supplied"):
+                src.transfer_maps("XFER_UV", dst, mode=ResampleMode.UV)
+
 
 class TestMeshTransferUndo(UndoWalk, MayaTestCase):
     """transfer_maps and transfer_component_tags are ONE undo step each
