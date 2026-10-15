@@ -393,3 +393,50 @@ class TestMeshMaps(MayaTestCase):
         self.assertListEqual(
             negative_z_mirror_values, self._mirror_negative_dir_z_map_values
         )
+
+class TestMeshMapTransfer(MayaTestCase):
+    """transfer_maps: the values (cgmath's resample_map normalizes a map to 1.0),
+    the categories, and no paintable registration as a side effect."""
+
+    TEST_START_NEW_SCENE = True
+
+    @staticmethod
+    def _plane(name, subdivisions):
+        transform = cmds.polyPlane(name=name, sx=subdivisions, sy=subdivisions, w=2, h=2, ch=False)[0]
+        return mesh_api.Mesh(cmds.listRelatives(transform, shapes=True)[0])
+
+    def test_transfer_maps_onto_the_same_plane_keeps_every_value(self):
+        src, dst = self._plane("src", 4), self._plane("dst", 4)
+        ramp       = np.linspace(0.0, 1.0, src.num_vertices)
+        ramp[::3]  = 0.0
+        src.add_map("XFER_RAMP", category="xfer", values=ramp.tolist())
+        src.add_map("XFER_PART", values=[0.0] * 10 + [0.5, 0.25])  # the rest padded with 0
+        src.add_map("XFER_ZERO", values=0.0)
+
+        src.transfer_maps(["XFER_RAMP", "XFER_PART", "XFER_ZERO"], dst)
+
+        for name in ("XFER_RAMP", "XFER_PART", "XFER_ZERO"):
+            self.assertEqual(dst.get_map_values(name), src.get_map_values(name), name)
+        self.assertEqual(dst.get_map_data("XFER_RAMP").categories, ["xfer"])
+        self.assertEqual(dst.get_map_data("XFER_ZERO").categories, [])
+
+    def test_transfer_maps_interpolates_onto_another_topology(self):
+        """A map linear in x and z stays linear on a finer plane (bilinear sampling)."""
+        src, dst = self._plane("src", 4), self._plane("dst", 6)
+
+        def linear(mesh):
+            points = np.array([[p.x, p.y, p.z] for p in mesh.get_points()])
+            return 0.4 + 0.2 * points[:, 0] + 0.1 * points[:, 2]
+
+        src.add_map("XFER_LINEAR", values=linear(src).tolist())
+        src.transfer_maps("XFER_LINEAR", dst)
+        np.testing.assert_allclose(dst.get_map_values("XFER_LINEAR"), linear(dst), rtol=0, atol=1e-12)
+
+    def test_transfer_maps_leaves_the_paintable_state_alone(self):
+        src, dst = self._plane("src", 2), self._plane("dst", 2)
+        src.add_map("XFER_UNPAINTED", values=0.5)
+        self.addCleanup(cmds.makePaintable, "mesh", "XFER_UNPAINTED", remove=True)
+
+        src.transfer_maps("XFER_UNPAINTED", dst)
+
+        self.assertFalse(any(cmds.makePaintable("mesh", "XFER_UNPAINTED", query=True) or []))

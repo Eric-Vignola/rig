@@ -293,3 +293,17 @@ class TestComponentTagLocations(MayaTestCase):
         src.set_component_tag_contents("top", [0, 1], "v")
         with self.assertRaisesRegex(RuntimeError, "procedural"):
             src.transfer_component_tags("top", cube)
+
+    def test_transfer_component_tags_carries_the_tag_contents(self):
+        """The tag's own vertices, not every vertex (cgmath's resample_map
+        normalizes the one-influence data to the whole mesh)."""
+        try:
+            from cgmath.geometry.resample import MeshDataResampler  # noqa: F401
+        except ImportError:
+            self.skipTest("cgmath.geometry.resample unavailable")
+        src = Node(cmds.polyPlane(ch=False, name="srcP", sx=4, sy=4)[0]).get_children(type="mesh")[0]
+        dst = Node(cmds.polyPlane(ch=False, name="dstP", sx=4, sy=4)[0]).get_children(type="mesh")[0]
+        src.add_component_tag("xfer_pts")
+        src.set_component_tag_contents("xfer_pts", [0, 1, 2, 7], "v")
+        src.transfer_component_tags("xfer_pts", dst)
+        self.assertEqual(dst.get_component_tag_indices("xfer_pts").tolist(), [0, 1, 2, 7])
