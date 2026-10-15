@@ -671,7 +671,8 @@ Verified on Maya 2025; not bugs to work around blindly.
   name Maya stores (`" ab"` finds `ab`). `rig.Tag` checks the same rule and
   means the same stored name (`Tag(" ab")` is `Tag("ab")`). A name with a
   non-ASCII character is left to Maya, which first maps it to the system
-  code page.
+  code page; `rig.Tag` refuses it (a `ValueError`), as the name Maya
+  stores is not the one it holds.
 - **`Follicle.create_on_mesh` with a vertex list fails** (`numpy.AxisError`):
   the positions are collected in a generator that `np.array` cannot shape.
   Pass a transform as `ref_object`.

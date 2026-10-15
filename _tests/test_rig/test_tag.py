@@ -109,6 +109,19 @@ class TestTagConstruction(MayaTestCase):
                 else:
                     self.assertEqual(Tag(name).name, stored, msg=repr(name))
 
+    def test_a_non_ascii_name_is_refused(self):
+        """Maya maps a non-ASCII name to the system code page first (U+0100
+        then 'b' is stored 'Ab' on code page 1252) and Tag finds a tag by the
+        name it holds: << Tag of that name made 'Ab' and raised, and every
+        later write found no tag of it (runs/r5/REBIND/review/probe_tag_review_head.txt N1,
+        runs/r5/REBIND/verify/probe_nonascii_head.txt). Tag refuses it, as it
+        did before it took add_component_tag's rule, which leaves it to Maya."""
+        for bad in ("Āb", "éb", "abé", " Āb "):
+            with self.subTest(bad=ascii(bad)), self.assertRaisesRegex(
+                ValueError, "not a component tag name for Tag: a non-ASCII"
+            ):
+                Tag(bad)
+
     def test_members_never_ride_on_the_spec(self):
         with self.assertRaisesRegex(TypeError, r"Tag\('x'\)\.set\("):
             Tag("foo", [0, 1, 2])

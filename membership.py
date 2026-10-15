@@ -409,7 +409,9 @@ class Tag(_MemberSpec):
     once the whitespace at the ends is trimmed and a space inside is made
     ``_``. A name Maya stores otherwise means the tag Maya stores:
     ``Tag(' ab ')`` is ``Tag('ab')`` and ``Tag('a b')`` is ``Tag('a_b')``.
-    A name with a non-ASCII character is left to Maya.
+    A name with a non-ASCII character is a ``ValueError``: Maya first maps it
+    to the system code page and stores another name, which Tag would not find
+    (``add_component_tag`` leaves it to Maya).
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
     to shadow a procedural one: the shape or a node of its own history (its
     ``Orig``) or one whose tags it reads (its tag injection node, a mesh
@@ -470,6 +472,15 @@ class Tag(_MemberSpec):
     def _validate_name(self, name: Any) -> None:
         super()._validate_name(name)
         _check_component_tag_name(name)
+        if not name.isascii():
+            # add_component_tag leaves it to Maya; Tag finds a tag by the name
+            # it holds, which is not the one Maya stores (runs/r5/REBIND/verify/probe_nonascii_head.txt)
+            raise ValueError(
+                f"{name!r} is not a component tag name for Tag: a non-ASCII "
+                f"character is refused, as Maya first maps it to the system code "
+                f"page and stores another name ('\\u0100b' is stored 'Ab' on code "
+                f"page 1252)"
+            )
 
     # -- refusals -- #
 
