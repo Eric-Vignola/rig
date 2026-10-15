@@ -290,6 +290,24 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(self.skin.get_influence_objects(), [self.joint1, self.joint2])
         self.assertEqual(self.skin.envelope.get(), 1)
 
+    def test_rebind_takes_the_shape_as_well_as_its_transform(self):
+        """rebind(<shape>) raised TypeError: listRelatives(shape, shapes=True)
+        is None, and it took [0] of it (runs/r5/TAGLEFT)."""
+        shape = cmds.listRelatives(str(self.cube), shapes=True, noIntermediate=True, fullPath=True)[0]
+        for geo in (shape, Node(shape)):
+            with self.subTest(geo=type(geo).__name__):
+                weights = self.skin.get_weights()
+
+                SkinCluster.rebind(geo)
+
+                self._assert_own_skin(self.cube, self.skin)
+                self.assertEqual(self.skin.get_influence_objects(), [self.joint1, self.joint2])
+                self.assertEqual(self.skin.envelope.get(), 1)
+                np.testing.assert_allclose(self.skin.get_weights(), weights, rtol=0, atol=0)
+        # it deforms: vtx[4] (y=1, weighted to joint2) follows joint2
+        self.joint2.t.set(0, 3, 0)
+        self.assertAlmostEqual(cmds.pointPosition(f"{shape}.vtx[4]", world=True)[1], 3.0)
+
     def test_rebind_binds_the_visible_shape_when_the_orig_is_listed_first(self):
         """rebind bound listRelatives' first shape, the Orig here, while it
         takes the skins of the visible shape: it unbound the skin, Maya raised
