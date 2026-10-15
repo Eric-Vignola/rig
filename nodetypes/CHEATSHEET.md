@@ -655,13 +655,19 @@ print(ball.get_component_tag_contents("cap", full_name=True))                   
 A name Maya refuses is a `ValueError` naming Maya's rule, before anything
 is made. Maya takes at least two characters, letters, digits and `_`,
 starting with a letter or `_`, with single `.` or `:` between characters.
-It trims the whitespace at the ends and makes a space inside `_`:
+It trims the whitespace at the ends and makes a space inside `_`. A name
+that is not a `str` is a `TypeError` (`add_component_tag(5)` is not the
+tag at index 5):
 
 ```python
 try:
     ball.add_component_tag("b")
 except ValueError as e:
     print(str(e)[:59])                                        # 'b' is not a component tag name: Maya takes a component tag
+try:
+    ball.add_component_tag(5)
+except TypeError as e:
+    print(str(e)[:46])                                        # 5 is not a component tag name: a name is a str
 print(ball.get_component_tag_name(ball.add_component_tag("lid rim")))  # lid_rim
 ball.remove_component_tag("lid_rim")
 ```

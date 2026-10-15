@@ -49,11 +49,17 @@ def _check_component_tag_name(key: Any) -> Any:
     """The name Maya stores for `key` as a component tag name ('ab' for
     ' ab', 'a_b' for 'a b'). Raises a ValueError naming Maya's rule for a
     name Maya refuses (it refuses ``setAttr`` of one with a bare "Maya
-    command error"). A name with a non-ASCII character is left to Maya, and
-    returned as given: Maya first maps it to the system code page by best fit
-    (on code page 1252, 'Ā' becomes 'A' and is taken, 'é' stays non-ASCII and
-    is refused)."""
-    if not isinstance(key, str) or not key.isascii():
+    command error"), and a TypeError naming it for a name that is not a str
+    (an int would be read as a tag index). A name with a non-ASCII character
+    is left to Maya, and returned as given: Maya first maps it to the system
+    code page by best fit (on code page 1252, 'Ā' becomes 'A' and is taken,
+    'é' stays non-ASCII and is refused)."""
+    if not isinstance(key, str):
+        raise TypeError(
+            f"{key!r} is not a component tag name: a name is a str, not a "
+            f"{type(key).__name__}; {_TAG_NAME_RULE}"
+        )
+    if not key.isascii():
         return key
     stored = re.sub(r" [ \t\n\v\f\r]*", "_", key.strip(_ASCII_WHITESPACE))
     if len(stored) < 2 or not _TAG_NAME_STORED_RE.fullmatch(stored):
@@ -354,6 +360,8 @@ class Geometry(DAGNode):
                 space inside is made '_' ('b', '1a', 'a-b', 'a..b' and '' are
                 refused; 'ab', '_1', 'a.b' and 'a b', stored 'a_b', are
                 taken). A name with a non-ASCII character is left to Maya.
+            TypeError: before anything else, for a name that is not a str
+                (``add_component_tag(5)`` is not the tag at index 5).
             RuntimeError: when a tag of the name Maya stores exists ('ab'
                 for ' ab') and `force` is False.
         """
@@ -396,6 +404,8 @@ class Geometry(DAGNode):
         Raises:
             ValueError: before anything is renamed, for a name Maya refuses
                 (the rule ``add_component_tag`` names).
+            TypeError: before anything is renamed, for a name that is not a
+                str.
         """
         _check_component_tag_name(new_key)
         element = self._editable_component_tag(tag)

@@ -1,3 +1,4 @@
+import re
 import unittest
 
 import numpy as np
@@ -166,6 +167,24 @@ class TestComponentTagNames(MayaTestCase):
                 self.assertEqual(self.mesh.get_component_tag_name(i), "ab")
         self.mesh.rename_component_tag("ab", "c d")
         self.assertEqual(self.mesh.get_component_tag_name(i), "c_d")
+
+    def test_a_name_that_is_not_a_str_is_refused_before_anything_else(self):
+        """add_component_tag(5) said "Component tag '5' already exists": the int
+        was looked up as the index of the cube's sixth tag, and force=True removed
+        that tag (runs/r5/REBIND)."""
+        names  = list(self.mesh.component_tags)
+        before = self.tag_multi()
+        for key in (5, 0, 1.5, None, b"ab", ["ab"]):
+            for force in (False, True):
+                with self.subTest(key=key, force=force):
+                    with self.assertRaisesRegex(TypeError, f"^{re.escape(repr(key))} is not a component tag name: .*a str"):
+                        self.mesh.add_component_tag(key, force=force)
+                    self.assertEqual(self.tag_multi(), before)
+                    self.assertEqual(self.mesh.component_tags, names)
+            with self.subTest(key=key, rename=True):
+                with self.assertRaisesRegex(TypeError, "is not a component tag name: .*a str"):
+                    self.mesh.rename_component_tag("top", key)
+                self.assertEqual(self.mesh.component_tags, names)
 
     def test_the_name_rule_is_mayas(self):
         """Every name of one to three characters from this alphabet: rig refuses
