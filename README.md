@@ -368,7 +368,8 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   or `:` between characters (`Tag("b")`, `Tag("a:")` and `Tag("a-b")` are a
   `ValueError`). Maya trims the whitespace at the ends of a name and makes a
   space inside `_`, so `Tag(" ab ")` is the tag `ab` and `Tag("a b")` the
-  tag `a_b`.
+  tag `a_b`. A non-ASCII name is a `ValueError`: Maya first maps it to
+  the system code page and stores another name.
 - **A name on the right never creates.** `cube << Blinn("red")`,
   `cube >> Blinn("red")`, `cube << -Layer("L")` and `cube in Layer("L")`
   raise `NodeNotFoundError` (a `ValueError`) at the reference when the
