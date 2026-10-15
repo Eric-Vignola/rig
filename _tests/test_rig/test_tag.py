@@ -767,6 +767,25 @@ class TestTagOnClusteredMesh(MayaTestCase):
                 driven.vtx[:3] << Tag("cap", at=orig)
                 np.testing.assert_array_equal(driven >> Tag("cap"), [0, 1, 2])
 
+    def test_at_takes_a_mesh_whose_output_feeds_this_ones_input(self):
+        """at= a mesh feeding this one's inMesh was refused once at= took the
+        own history only, which stops at a visible mesh, though Maya injects
+        this mesh's tags there (tagInjectionNode), a plain << writes them there
+        and this mesh reads them (runs/r5/REBIND/review/probe_at_injection_head.txt)."""
+        for make in ("polyCube", "polySphere"):  # with tags of its own, and with none
+            with self.subTest(make=make):
+                src = Node(getattr(cmds, make)(name=f"src_{make}", ch=False)[0])
+                dst = Node(getattr(cmds, make)(name=f"dst_{make}", ch=False)[0])
+                cmds.connectAttr(f"{_shape(src)}.outMesh", f"{_shape(dst)}.inMesh", force=True)
+                self.assertEqual(
+                    cmds.ls(cmds.deformableShape(_shape(dst), tagInjectionNode=True), long=True),
+                    [_shape(src)],
+                )
+                dst.vtx[3:5] << Tag("cap", at=_shape(src))
+                self.assertIn("cap", _tags(src))
+                np.testing.assert_array_equal(dst >> Tag("cap"), [3, 4])
+                np.testing.assert_array_equal(src >> Tag("cap"), [3, 4])
+
     def test_node_lhs_refuses_a_procedural_name(self):
         cube   = Node(cmds.polyCube(name="hc", ch=True)[0])
         before = set(cmds.ls())
