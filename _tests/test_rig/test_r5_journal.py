@@ -113,7 +113,7 @@ GETATTR_ALLOWED = ("bridges/commands.py", "nodetypes/plugins/")
 # (anywhere else an edit would be applied outside the journal and the undo command)
 DOIT_ALLOWED = frozenset({
     ("nodetypes/plugins/__init__.py", "_register_api_edit"),
-    ("_internal/api_edits.py", "api_connect"),
+    ("_internal/api_edits.py", "_apply"),
     ("nodetypes/mesh.py", "_free_elements"),
     ("nodetypes/mesh.py", "_relink"),
     ("nodetypes/mesh.py", "_MeshSetsEdit.redoIt"),
