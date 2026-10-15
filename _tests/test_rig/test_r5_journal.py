@@ -94,8 +94,9 @@ RAW_SITES = frozenset({
     ("_internal/undo.py", "_Chunk.__exit__", "undoInfo"),
 })
 
-# mel.eval sites that only query (raw); every other one is journal.mel_eval
-MEL_QUERY_SITES = frozenset({("nodetypes/dag_node.py", "DAGNode.get_deformers")})
+# mel.eval sites that only query (raw); every other one is journal.mel_eval. None: the last,
+# DAGNode.get_deformers (findRelatedDeformer, a recorded command), walks the graph by the API
+MEL_QUERY_SITES = frozenset()
 
 # the names rig binds maya.cmds to
 CMDS_NAMES = frozenset({"cmds", "_mc", "mc"})
@@ -326,8 +327,6 @@ class TestBarrierLint(unittest.TestCase):
         self.assertEqual(self.lint("class _ContainerStack:\n    def _add(self):\n"
                                    "        cmds.container('c', edit=True, addNode=['n'])\n",
                                    rel="_internal/container.py"), [])
-        self.assertEqual(self.lint("class DAGNode:\n    def get_deformers(self):\n        mel.eval('x')\n",
-                                   rel="nodetypes/dag_node.py"), [])
         self.assertEqual(self.lint("def f():\n    getattr(cmds, 'x')\n", rel="bridges/commands.py"), [])
         self.assertEqual(self.lint("def _register_api_edit(m):\n    m.doIt()\n",
                                    rel="nodetypes/plugins/__init__.py"), [])
@@ -337,7 +336,9 @@ class TestBarrierLint(unittest.TestCase):
                                    rel="_internal/container.py"), [])
         self.assertEqual(self.lint("class _Chunk:\n    def __exit__(self, *exc):\n"
                                    "        cmds.undoInfo(closeChunk=True)\n", rel="_internal/undo.py"), [])
-        # a doIt elsewhere in those files is not
+        # a mel.eval in get_deformers is no query site any more; a doIt elsewhere in those files is not
+        self.assertEqual(len(self.lint("class DAGNode:\n    def get_deformers(self):\n        mel.eval('x')\n",
+                                       rel="nodetypes/dag_node.py")), 1)
         self.assertEqual(len(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/plugins/__init__.py")), 1)
         self.assertEqual(len(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/mesh.py")), 1)
 
