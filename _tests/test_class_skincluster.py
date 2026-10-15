@@ -304,7 +304,7 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(cmds.ls(), before)
 
 
-class TestBakeDeformation(MayaTestCase):
+class TestBakeDeformation(UndoWalk, MayaTestCase):
     """``Mesh.bake_deformation(max_influences)``: None is no cap, a count is
     the cap (runs/r5/SKIN: None was an UnboundLocalError, a count gave 4)."""
 
@@ -345,6 +345,32 @@ class TestBakeDeformation(MayaTestCase):
 
                 self.assertEqual(skin, self.mesh.get_deformers(node_type="skinCluster")[0])
                 self.assertEqual(self.most_influences(skin), cap)
+
+    def test_bake_deformation_refuses_a_cap_below_one_before_anything_is_done(self):
+        """0 and -1 baked 9 influences a vertex and capped nothing (runs/r5/SKIN/review)."""
+        before = self.scene_state(meshes=["bodyShape"])
+        for cap in (0, -1):
+            with self.subTest(cap=cap):
+                with self.assertRaisesRegex(ValueError, f"max_influences {cap}: a cap is at least 1"):
+                    self.mesh.bake_deformation(max_influences=cap)
+                self.assert_state_equal(self.scene_state(meshes=["bodyShape"]), before)
+
+    def test_bake_deformation_is_one_undo_step(self):
+        """A capped bake took two: one undo left the uncapped bake (runs/r5/SKIN/review)."""
+        for cap in (None, 3):
+            with self.subTest(cap=cap):
+                self.build()
+                cmds.flushUndo()
+                before = self.scene_state(meshes=["bodyShape"])
+                most   = self.most_influences(self.mesh.bake_deformation(max_influences=cap))
+
+                self.assertEqual(self.undo_name(), "rig.Mesh.bake_deformation")
+                self.undo_steps(1)
+                self.assert_state_equal(self.scene_state(meshes=["bodyShape"]), before)
+                self.redo_steps(1)
+                skin = self.mesh.get_deformers(node_type="skinCluster")[0]
+                self.assertEqual(self.most_influences(skin), most)
+                self.assertEqual(most, self.JOINTS if cap is None else cap)
 
 
 # --- undo (round U2, step S3) ------------------------------------------------------------

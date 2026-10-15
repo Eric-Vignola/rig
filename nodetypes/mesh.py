@@ -557,36 +557,46 @@ class Mesh(Geometry):
         Args:
             max_influences: The most influences a vertex keeps. None (the
                 default) is no cap: every joint of the skeleton may weigh on
-                a vertex. A count is the cap: the bake keeps 8 influences
-                (the count, when higher) for fidelity, then
+                a vertex. A count of at least 1 is the cap: for fidelity the
+                bake runs with ``maxInfluences`` 8 (the count, when higher),
+                which leaves up to one more a vertex, then
                 ``set_max_influences(max_influences)``.
 
         Returns:
             The baked skincluster (with several, the one nearest the shape:
             the first ``get_deformers`` lists).
+
+        Raises:
+            ValueError: before anything is done, for a cap below 1.
+
+        One undo step named ``rig.Mesh.bake_deformation``.
         """
-        # set to bind pose
-        cmds.select(self.name, replace=True)
-        mel.eval("gotoBindPose;")
+        if max_influences is not None and max_influences < 1:
+            raise ValueError(f"bake_deformation: max_influences {max_influences}: a cap is at least 1 (None is no cap)")
 
-        # bake delta mush, use a high max inf count to maintain fidelity
-        # (None: as many as the skeleton has joints, which is no cap)
-        if max_influences is None:
-            bake_cap = len(cmds.ls("root_joint", dag=True, type="joint"))
-        else:
-            bake_cap = max(8, max_influences)
-        cmds.bakeDeformer(
-            srcSkeletonName = "root_joint",
-            srcMeshName     = self.name,
-            dstSkeletonName = "root_joint",
-            dstMeshName     = self.name,
-            maxInfluences   = bake_cap,
-        )
+        with _undo_chunk("rig.Mesh.bake_deformation"):
+            # set to bind pose
+            cmds.select(self.name, replace=True)
+            mel.eval("gotoBindPose;")
 
-        # set max inf
-        skin = _skincluster_of(self)
-        if max_influences is not None:
-            skin.set_max_influences(max_influences)
+            # bake delta mush, use a high max inf count to maintain fidelity
+            # (None: as many as the skeleton has joints, which is no cap)
+            if max_influences is None:
+                bake_cap = len(cmds.ls("root_joint", dag=True, type="joint"))
+            else:
+                bake_cap = max(8, max_influences)
+            cmds.bakeDeformer(
+                srcSkeletonName = "root_joint",
+                srcMeshName     = self.name,
+                dstSkeletonName = "root_joint",
+                dstMeshName     = self.name,
+                maxInfluences   = bake_cap,
+            )
+
+            # set max inf
+            skin = _skincluster_of(self)
+            if max_influences is not None:
+                skin.set_max_influences(max_influences)
 
         return skin
 
