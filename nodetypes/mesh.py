@@ -685,11 +685,12 @@ class Mesh(Geometry):
         categories = set(map_attr.get_categories())
         categories.remove(MAP_DEFAULT_CATEGORY)
 
+        # arrays, as MapData declares them (cgmath 2.0.0 casts to them; 1.0.4 kept a list)
         return MapData(
             name          = map_attr.name,
             categories    = sorted(categories),
-            indices       = ids,
-            values        = values,
+            indices       = np.asarray(ids, dtype=np.int32),
+            values        = np.asarray(values, dtype=np.float64),
             default_value = MAP_DEFAULT_VALUE,
         )
 
