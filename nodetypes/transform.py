@@ -495,9 +495,13 @@ class Transform(DAGNode):
             else:
                 # (the data keeps the outside node's uuid: a parent is a uuid since
                 # cgmath 2.0.0, so the name it is created under is kept here)
+                # its own parent is not in the data, so it stands in as a root that
+                # carries its world matrix: the roots are solved against that
                 outside = _cast(parent)
                 obj     = outside.serialize()
+                _set_parent_uuid(obj, None)
                 hierarchy.list.insert(0, obj)
+                obj.matrix = cmds.xform(outside.long_name, q=True, matrix=True, worldSpace=True)
                 for node in hierarchy.get_roots()[1:]:
                     node.set_parent(obj, world_space=world_space)
                     under[id(node)] = outside.long_name
