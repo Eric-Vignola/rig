@@ -988,10 +988,16 @@ class Mesh(Geometry):
     ) -> None:
         """Transfer component tags from this mesh to the other mesh.
 
+        Each tag gets the vertices of `other` whose sample on this mesh reads
+        one of its vertices, as faces or edges for such a tag (see
+        ``_resample_map``).
+
         Args:
             tags: One or more component tags to transfer.
             other: The other mesh to transfer the component tag to.
-            kwargs: Transfer kwargs supported in MeshDataResampler.resample_map().
+            kwargs: ``mode`` (a cgmath ``ResampleMode``, SPATIAL by default; UV
+                samples through the first UV sets) and ``method`` (a
+                ``SampleMethod``, BILINEAR by default).
         """
         from cgmath.geometry.resample import MeshDataResampler
 
@@ -1011,17 +1017,23 @@ class Mesh(Geometry):
 
             new_data = []
             if data.indices.size > 0:
-                new_data = resampler.resample_map(data, **kwargs)
+                new_data = _resample_map(resampler, data, **kwargs)
 
             other.set_component_tag_contents(t, new_data)
 
     def transfer_maps(self, maps: str | list[str], other: Mesh | str, **kwargs) -> None:
         """Transfer a mesh map from this mesh to the other mesh.
 
+        Each map is made again on `other` (``add_map(force=True)``) with its
+        categories, and each of its values is the blend of this map's values
+        that its sample on this mesh reads (see ``_resample_map``).
+
         Args:
             maps: One or more map names to transfer.
             other: The other mesh to transfer the map to.
-            kwargs: Transfer kwargs supported in MeshDataResampler.resample_map().
+            kwargs: ``mode`` (a cgmath ``ResampleMode``, SPATIAL by default; UV
+                samples through the first UV sets) and ``method`` (a
+                ``SampleMethod``, BILINEAR by default).
         """
         from cgmath.geometry.resample import MeshDataResampler
 
@@ -1034,9 +1046,36 @@ class Mesh(Geometry):
 
         for m in maps if isinstance(maps, (list, tuple)) else [maps]:
             data     = self.get_map_data(m)
-            new_data = resampler.resample_map(data, **kwargs)
-            other.add_map(m, new_data, force=True)
+            new_data = _resample_map(resampler, data, **kwargs)
+            other.add_map(m, category=data.categories, force=True)
             other.set_map_values(m, new_data)
+
+
+def _resample_map(resampler, data, mode=None, method="bilinear"):
+    """`data`, a cgmath MapData or GeomSubsetData of the resampler's source mesh,
+    sampled onto its destination mesh in `mode` (a ``ResampleMode``, SPATIAL by
+    default) with `method` (a ``SampleMethod``): each value is the weighted sum
+    of the source values its sample reads, and a subset keeps the components
+    any nonzero sample reaches (``from_skin_data``).
+
+    cgmath's ``MeshDataResampler.resample_map`` (1.0.4, 2.0.0) hands the data
+    to ``resample_skin_weights`` as a one-influence SkinData, which normalizes
+    it, so every value comes back 1.0 and every subset as the whole mesh. This
+    samples that SkinData's weights with the same sample data, unnormalized.
+    ``get_sample_data`` refuses ``ROBUST_BILINEAR`` (ValueError), and skin
+    ``options`` (max influences) are no map option (TypeError).
+    """
+    from cgmath.geometry import SkinData
+    from cgmath.geometry.resample import ResampleMode
+
+    sample  = resampler.get_sample_data(mode or ResampleMode.SPATIAL, method)
+    weights = sample(data.to_skin_data(resampler.src_mesh).weights)
+    return type(data).from_skin_data(
+        SkinData(weights=weights, influences=["inf"]),
+        mesh_data      = resampler.dst_mesh,
+        name           = data.name,
+        component_type = data.component_type,
+    )
 
 
 def _face_hole_loops(face: int, face_verts: list[int], loops: list[list[int]]) -> list[list[int]]:

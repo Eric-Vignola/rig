@@ -592,12 +592,15 @@ Verified on Maya 2025; not bugs to work around blindly.
   short name anywhere in the scene — a `duplicate_skeleton(include_list=...)`
   copy, say — makes them raise `More than one object matches name`. Orient
   first, duplicate after.
-- **`Mesh.transfer_maps` and `transfer_component_tags` come back all-ones**:
-  the map becomes a one-influence `SkinData` for `resample_map`, and the
-  weight resampler normalises every row to `1.0`, so the target gets the
-  map at `1.0` on every vertex and the tag on every vertex. Verified with
-  `cgmath` 1.0.0 and 1.0.1. `SkinCluster.transfer_to_mesh` (many
-  influences) is fine.
+- **`Mesh.transfer_maps` and `transfer_component_tags` sample the data
+  themselves.** `cgmath`'s `MeshDataResampler.resample_map` (1.0.4 and
+  2.0.0) makes the map a one-influence `SkinData`, and the weight
+  resampler normalises every row, so every map comes back `1.0` and every
+  tag as the whole mesh. rig samples that data with the resampler's own
+  sample data, unnormalised: the values are what `resample_map` gives
+  without the normalisation. They take `mode` (`SPATIAL`, `UV`) and
+  `method`; `ROBUST_BILINEAR` and the skin `options` are not map options.
+  `SkinCluster.transfer_to_mesh` (many influences) is fine.
 - **`Mesh.add_color_set(name, "RGBA")` is a `ValueError`**: the
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so
   pass `ColorSet.Representation.RGBA` (or `["RGBA"]` on the enum).

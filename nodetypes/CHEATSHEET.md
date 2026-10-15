@@ -816,20 +816,21 @@ print(mesh.get_materials(as_pairs=True)[0][0].get_material() in mesh.get_materia
 ```
 
 Transfer maps, tags and skin weights onto another topology (a
-`cgmath` `MeshDataResampler` through the first UV set). The map and tag
-transfers land on the target but currently carry every vertex at `1.0`
-— the map rides through a one-influence `SkinData` whose rows are
-normalised — see *Real behaviour, verified* in [`README.md`](README.md).
+`cgmath` `MeshDataResampler`; `mode=ResampleMode.UV` samples through the
+first UV sets). Each target vertex gets the blend of the source values its
+closest point reads; a map keeps its categories, a tag the vertices any
+nonzero sample reaches.
 
 ```python
 dst = Node(cmds.polyCube(name="dst", ch=False)[0]).get_shape()
 mesh.transfer_maps("mask", dst)
-print(dst.paintable_maps, np.round(dst.get_map_values("mask"), 2))   # ['mask'] [1. 1. 1. 1. 1. 1. 1. 1.] -- every vertex, not the gradient
+print(dst.paintable_maps, np.round(dst.get_map_values("mask"), 2))   # ['mask'] [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
+print(dst.get_map_data("mask").categories)                           # ['weights']
 
 mesh.add_component_tag("cap")
 mesh.set_component_tag_contents("cap", [0, 1, 2, 3])
 mesh.transfer_component_tags("cap", dst)                             # written at dst's injection node
-print(dst.component_tags[-1], dst.get_component_tag_indices("cap"))  # cap [0 1 2 3 4 5 6 7] -- every vertex again
+print(dst.component_tags[-1], dst.get_component_tag_indices("cap"))  # cap [0 1 2 3]
 
 jnt  = Joint.create(name="jnt")
 skin = SkinCluster.create(cube, jnt)
