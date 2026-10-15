@@ -42,7 +42,7 @@ def flatten_vertices(seq):
         # use all vertices as indices
         if m is None:
             name = Mesh(item)
-            rng  = list(range(10))
+            rng  = list(range(name.num_vertices))
         else:
             name, comp = m.group(1).split(".")
             if comp != "vtx":
@@ -409,7 +409,17 @@ class SkinCluster(Deformer):
     def copy_skincluster(
         source_meshes: list[str] | str, target_vertices: list[str] = None
     ) -> None:
-        """Many to One skincluster transfer"""
+        """Many to One skincluster transfer: each target vertex gets the
+        weights sampled at its closest point on the source meshes.
+
+        Args:
+            source_meshes: One or more skinned meshes (their last skinCluster).
+            target_vertices: Vertex strings (``"m.vtx[3]"``, ``"m.vtx[0:9]"``)
+                or mesh names (every vertex). A target without a skinCluster
+                gets one, bound to the first source influence; the source
+                influences its skin lacks are added, and its other vertices
+                keep their weights.
+        """
         from cgmath.geometry import SkinData
 
         # process source_meshes
@@ -461,8 +471,8 @@ class SkinCluster(Deformer):
             samples                           = source_mesh_data.sample(target_mesh_data.points[indices])
             target_skin_data.weights[indices] = samples(skin_data.weights)
 
-            # set the weights
-            target_skin.set_weights(target_skin_data.weights)
+            # set the weights, adding the source influences the target lacks
+            target_skin.set_weights(target_skin_data)
 
     # --- serialization
 

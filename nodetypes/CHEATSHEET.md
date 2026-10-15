@@ -950,12 +950,21 @@ print(skin.get_influence_objects(), skin.serialize() == data)                   
 print(repr(Node.create("skinCluster", Node(cmds.polyCube(name="c2", ch=False)[0]), j1)))      # SkinCluster("c2_skincluster")
 ```
 
-Transfer to another mesh (pass the shape or a name, not a `Transform`):
+Transfer to another mesh (pass the shape or a name, not a `Transform`).
+`copy_skincluster` copies from one or more skinned meshes onto vertices
+(or whole meshes, by name), by closest point; the joints the target's
+skin lacks are added, and its other vertices keep their weights:
 
 ```python
 other = Node(cmds.polyCube(name="other", ch=False, height=2)[0]).get_shape()
 moved = skin.transfer_to_mesh(other)
 print(repr(moved), moved.get_influence_objects(), moved.get_weights().shape)   # SkinCluster("otherShape_skincluster") [Joint("j1"), Joint("j2")] (8, 2)
+
+third = Node(cmds.polyCube(name="third", ch=False, height=2)[0])
+SkinCluster.create(third, j1)
+SkinCluster.copy_skincluster(str(cube), ["third.vtx[4:7]"])
+copied = third.get_shape().get_deformers()[0]
+print(copied.get_influence_objects(), copied.get_weights()[:, 1])              # [Joint("j1"), Joint("j2")] [0. 0. 0. 0. 1. 1. 1. 1.]
 ```
 
 ---
