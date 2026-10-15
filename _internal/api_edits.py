@@ -305,10 +305,23 @@ def api_set(attr: Any, value: Any) -> bool:
     * the kind and the value pass CR-4's table (`_set_plan`);
     * rig's undo command ready (`rig.nodetypes.plugins._fast_path_ready`).
 
+    A set that would be its own undo step either way takes cmds, which is as fast without
+    the journal's registration: one made outside any statement (``attr.set(1.0)`` called
+    directly), and the one set of a statement that is just this set (``attr << 1.0`` at the
+    top level: the outermost statement's operands are ``attr`` and ``value``, and nothing is
+    journaled yet).
+
     Locks, keyable and channelBox flags stay on cmds (plan_D H22)."""
     tv = type(value)
     if tv is not float and tv is not int and tv is not bool:
         return False
+    state = journal._S
+    if not state.open:
+        return False
+    if not state.pending:
+        entry = state.entry
+        if entry is not None and len(entry) == 2 and entry[0] is attr and entry[1] is value:
+            return False
     if not _BOUND:
         _bind()
     if type(attr) not in _API_CLASSES or not journal.API_EDITS:

@@ -48,13 +48,16 @@ API_EDITS = True
 
 
 class _State:
-    """The scope flag and the pending list (Maya runs rig on its main thread only)."""
+    """The scope flag, the pending list and the outermost statement's positional arguments
+    while it runs (``entry``: `rig._internal.api_edits.api_set` reads it, None between
+    statements; Maya runs rig on its main thread only)."""
 
-    __slots__ = ("open", "pending")
+    __slots__ = ("open", "pending", "entry")
 
     def __init__(self) -> None:
         self.open    = False
         self.pending = []
+        self.entry   = None
 
 
 _S = _State()
@@ -157,14 +160,17 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
     unchanged; a registration that fails then is a note of it, see `barrier`)."""
     if _S.open:
         return func(*args, **kwargs)
-    _S.open = True
+    _S.open  = True
+    _S.entry = args
     try:
         result = func(*args, **kwargs)
     except BaseException as error:
-        _S.open = False
+        _S.open  = False
+        _S.entry = None
         barrier(error)
         raise
-    _S.open = False
+    _S.open  = False
+    _S.entry = None
     if _S.pending:
         _flush()
     return result

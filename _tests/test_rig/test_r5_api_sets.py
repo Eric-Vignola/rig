@@ -11,8 +11,9 @@ Locks, keyable and channelBox flags stay on cmds (plan_D H22). The approved diff
   the unit kinds, enums with gaps and a negative field, hard limits, numpy scalars, a bool
   into a double, ints past 32 bits), and the units: the API on and off give the same value or
   the same error and printed lines, and a ``cmds.setAttr`` spy counts the cmds-routed ones.
-* `TestTheRoute`: which sets take the API, and every guard case gives the cmds route's
-  outcome (a connected dst, locked plugs and parents, a proxy, an output, deleted and freed
+* `TestTheRoute`: which sets take the API (a set that is its own undo step either way, outside
+  any statement or a top-level ``attr << value``, takes cmds), and every guard case gives the
+  cmds route's outcome (a connected dst, locked plugs and parents, a proxy, an output, deleted and freed
   nodes, an array element with today's type query, typed kinds, flags, a user's classes ...).
 * `TestStatementGranularity` (V6, the dangling check after every undo / redo step): a
   statement's sets are one step; sets and connects in one statement; user cmds interleaved;
@@ -33,6 +34,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 
+import rig
 from rig import List, Node
 from rig._internal import api_edits, journal
 from rig._internal.plug import Plug
@@ -112,6 +114,13 @@ class _SetCase(UndoWalk, MayaTestCase):
                 yield record
         finally:
             OpenMaya.MMessage.removeCallback(callback)
+
+
+def _statement(fn):
+    """``fn()`` as a statement whose operands are not the set's (`journal.run_statement`): its
+    sets are journaled, as in a build's statements (a top-level ``attr << value``, or a set
+    outside any statement, takes cmds, `rig._internal.api_edits.api_set`)."""
+    return journal.run_statement(fn, (), {})
 
 
 def _brief(error, depth=0):
@@ -220,7 +229,7 @@ class TestTheCoercionMatrix(_SetCase):
         attr = Node(plug.split(".")[0]).find_attr(plug.split(".")[1])
         with self.watch(api) as record:
             try:
-                attr.set(value)
+                _statement(lambda: attr.set(value))
                 result = ("value", cmds.getAttr(plug))
             except Exception as error:  # noqa: BLE001 (the error is what is compared)
                 result = ("error", _brief(error))
@@ -270,7 +279,7 @@ class TestTheCoercionMatrix(_SetCase):
             _attrs(node, _SIX)
             with self.subTest(api=api), self.watch(api) as record:
                 with self.assertRaisesRegex(RuntimeError, "past its maximum") as raised:
-                    Node("V").qen.set(3)
+                    _statement(lambda: Node("V").qen.set(3))
                 self.assertEqual(record["routes"], [False] if api else [])
                 self.assertIsNone(raised.exception.__context__)
                 self.assertEqual(cmds.getAttr("V.qen"), 0)
@@ -481,13 +490,44 @@ class TestTheRoute(_SetCase):
     """Which sets take the API, and that the guard cases give the cmds route's outcome."""
 
     def test_a_set_runs_no_cmds_set_attr(self):
-        with mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
+        def body():
             Node("a").tx << 2.5
             Node("a").ry.set(45)
+
+        with mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
+            _statement(body)
         self.assertEqual(set_attr.call_count, 0)
         self.assertEqual((cmds.getAttr("a.tx"), cmds.getAttr("a.ry")), (2.5, 45.0))
-        self.assertEqual(self.count_steps(), 2)
+        self.assertEqual(self.count_steps(), 1)
         self.assertEqual((cmds.getAttr("a.tx"), cmds.getAttr("a.ry")), (2.5, 45.0))
+
+    def test_a_set_that_is_its_own_step_either_way_takes_cmds(self):
+        # outside any statement, and a top-level attr << value (the statement is this set):
+        # one undo step on either route, the cmds one without the journal's registration
+        a = Node("a")
+        cases = [
+            ("a set outside any statement", lambda: a.tx.set(2.5), [False], 1, 1),
+            ("a top-level attr << value", lambda: a.ty << 3.5, [False], 1, 1),
+            ("an enum field name at the top level", lambda: a.ro << "zxy", [True], 0, 1),
+            ("a top-level compound << values", lambda: a.s << (2, 3, 4), [True] * 3, 0, 1),
+            ("a top-level List << value", lambda: List([a.rx, a.rz]) << 4.0, [True] * 2, 0, 1),
+            ("a scalar broadcast into a compound", lambda: a.sh << 0.5, [True] * 3, 0, 1),
+            ("a declaration chain", lambda: a << rig.Float("w", k=False) << 0.5 << rig.lock, [False], 2, 3),
+        ]
+        for label, case, routes, cmds_sets, steps in cases:
+            with self.subTest(case=label):
+                cmds.flushUndo()
+                with self.watch(True) as record:
+                    case()
+                self.assertEqual(record["routes"], routes)
+                self.assertEqual(record["cmds"].call_count, cmds_sets)
+                self.assertEqual(self.count_steps(), steps)
+        self.assertEqual((cmds.getAttr("a.tx"), cmds.getAttr("a.ty"), cmds.getAttr("a.ro")), (2.5, 3.5, 2))
+        self.assertEqual(cmds.getAttr("a.s"), [(2.0, 3.0, 4.0)])
+        self.assertEqual((cmds.getAttr("a.rx"), cmds.getAttr("a.rz"), cmds.getAttr("a.w")), (4.0, 4.0, 0.5))
+        self.assertEqual(cmds.getAttr("a.sh"), [(0.5, 0.5, 0.5)])
+        self.assertTrue(cmds.getAttr("a.w", lock=True))
+        self.assertIsNone(journal._S.entry)
 
     def test_the_switch_off_takes_cmds(self):
         with mock.patch.object(journal, "API_EDITS", False), \
@@ -516,7 +556,7 @@ class TestTheRoute(_SetCase):
         cmds.flushUndo()
         with self.watch(api) as record:
             try:
-                case()
+                _statement(case)
                 error = None
             except Exception as exc:  # noqa: BLE001 (the error is what is compared)
                 error = _brief(exc)
@@ -542,7 +582,7 @@ class TestTheRoute(_SetCase):
         counts = []
         for api in (True, False):
             with self.watch(api) as record, mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as get:
-                Node("p").input1D[2].set(1.5)
+                _statement(lambda: Node("p").input1D[2].set(1.5))
             counts.append((len([c for c in get.call_args_list if c.kwargs.get("type")]), record["routes"]))
         self.assertEqual(counts[0][0], counts[1][0])
         self.assertGreater(counts[0][0], 0)
@@ -556,7 +596,7 @@ class TestTheRoute(_SetCase):
 
         with mock.patch.object(api_edits, "_add", refuse), \
                 mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
-            Node("a").tx.set(2.5)
+            _statement(lambda: Node("a").tx.set(2.5))
         self.assertEqual(set_attr.call_count, 1)
         self.assertEqual(cmds.getAttr("a.tx"), 2.5)
         self.assertEqual(self.count_steps(), 1)
@@ -571,7 +611,7 @@ class TestTheRoute(_SetCase):
 
         with mock.patch.object(api_edits, "_MDGModifier", Refusing), \
                 mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
-            Node("a").sx.set(2.5)
+            _statement(lambda: Node("a").sx.set(2.5))
         self.assertEqual(set_attr.call_count, 1)
         self.assertEqual(cmds.getAttr("a.sx"), 2.5)
 
@@ -676,10 +716,15 @@ class TestStatementGranularity(_SetCase):
             cmds.connectAttr("a.tx", "m.input1X")
 
         def overwrite():
-            Node("m").input1X << 2.5
+            List([Node("m").input1X, Node("m").input2X]) << 2.5
 
         on, off = self.run_both([setup, overwrite])
-        self.assertEqual(on, off)  # the disconnect is a cmds step, the retried set one more
+        # the same states after each statement and after redo; the disconnect is a cmds step,
+        # the retried sets join one journal (fewer steps), and undo goes back to the start
+        self.assertEqual((on[0], on[2]), (off[0], off[2]))
+        self.assertLess(len(on[1]), len(off[1]))
+        self.assertEqual(on[1][-1], off[1][-1])
+        self.assertEqual(off[0][-1][1], None)  # the connection is gone
 
     def test_a_post_create_set_of_a_journaled_plug(self):
         # CR-5: a user's post_create (run outside the statement) sets the plug the statement
@@ -728,7 +773,7 @@ class TestStatementGranularity(_SetCase):
             cmds.undoInfo(stateWithoutFlush=False)
             try:
                 with mock.patch.object(journal, "API_EDITS", api):
-                    Node("a").tx << 2.5
+                    _statement(lambda: Node("a").tx << 2.5)
                     Node("a").t << (1, 2, 3)
             finally:
                 cmds.undoInfo(stateWithoutFlush=True)
@@ -763,14 +808,19 @@ class TestReferenceEdits(_SetCase):
         self.make_nodes()
         cmds.file(self.path, reference=True, namespace="R")
         cmds.flushUndo()
-        with mock.patch.object(journal, "API_EDITS", api):
+        refused = []
+
+        def body():
             Node("R:rl").tx << 2.5
             Node("R:rl").ro << 3
             Node("R:rl").t << (4, 5, 6)
             try:
                 Node("R:rl").lk << 1.0  # locked in the file: refused on both routes
             except Exception as error:  # noqa: BLE001
-                refused = _brief(error)
+                refused.append(_brief(error))
+
+        with mock.patch.object(journal, "API_EDITS", api):
+            _statement(body)
         node = cmds.referenceQuery(self.path, referenceNode=True)
         after = sorted(cmds.referenceQuery(node, editStrings=True))
         values = cmds.getAttr("R:rl.t") + [cmds.getAttr("R:rl.ro")]
@@ -803,8 +853,8 @@ class TestPluginLoading(_SetCase):
                 mock.patch.object(plugins, "_LOAD_FAILED", None), \
                 mock.patch.object(cmds, "warning") as warning, \
                 mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
-            Node("a").tx << 2.5
-            Node("a").ty << 3.5
+            _statement(lambda: Node("a").tx << 2.5)
+            _statement(lambda: Node("a").ty << 3.5)
             Node("a").tz << Node("b").tx
         self.assertEqual(load.call_count, 1)
         self.assertEqual(set_attr.call_count, 2)
@@ -819,7 +869,7 @@ class TestPluginLoading(_SetCase):
             cmds.unloadPlugin(PLUGIN)
         with mock.patch.object(cmds, "loadPlugin", wraps=cmds.loadPlugin) as load, \
                 mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
-            Node("a").tx << 2.5
+            _statement(lambda: Node("a").tx << 2.5)
         self.assertEqual(load.call_count, 1)
         self.assertEqual(set_attr.call_count, 0)
         self.assertEqual(self.count_steps(), 1)
