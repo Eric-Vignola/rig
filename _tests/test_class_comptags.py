@@ -421,6 +421,73 @@ class TestComponentTagLocations(MayaTestCase):
                     closest = OpenMaya.MFnMesh(src.mdagpath).getClosestPoint(p, OpenMaya.MSpace.kWorld)[1]
                     self.assertIn(closest, tagged, f)
 
+    @staticmethod
+    def _create(name, points, faces):
+        """A mesh of `faces` on `points`, its UVs the points' (x, z) / 4."""
+        from maya.api import OpenMaya
+
+        fn     = OpenMaya.MFnMesh()
+        counts = [len(f) for f in faces]
+        ids    = [i for f in faces for i in f]
+        node   = fn.create([OpenMaya.MPoint(*p) for p in points], counts, ids)
+        fn.setUVs([p[0] / 4.0 for p in points], [p[2] / 4.0 for p in points])
+        fn.assignUVs(counts, ids)
+        return Node(cmds.rename(OpenMaya.MFnDependencyNode(node).name(), name)).get_shape()
+
+    def test_transfer_component_tags_concave_quad_comes_back_exactly(self):
+        """A flat dart quad and the triangle under its corner mean, in either face
+        order: the dart lands by its first triangle's centre, so each face comes
+        back alone (by its corner mean the dart landed on the triangle when the
+        triangle came first). Lifting the dart's reflex corner off the plane keeps
+        its corner mean, the middle of the bilinear patch cgmath samples."""
+        from cgmath.geometry.resample import ResampleMode
+
+        for lift in (0.0, 0.5):
+            points = [(0, 0, 0), (2, lift, 2), (4, 0, 0), (2, 0, 3)]
+            for order in ([[0, 3, 2, 1], [0, 1, 2]], [[0, 1, 2], [0, 3, 2, 1]]):
+                src = self._create("dart_src", points, order)
+                dst = self._create("dart_dst", points, order)
+                for mode in (ResampleMode.SPATIAL, ResampleMode.UV):
+                    for f in (0, 1):
+                        with self.subTest(lift=lift, order=order, mode=mode.name, face=f):
+                            self.assertEqual(self._transfer(src, dst, "dart", [f], "f", mode=mode), [f])
+                cmds.delete(src.get_parent().name, dst.get_parent().name)
+
+    def test_transfer_component_tags_bent_concave_quads_keep_their_centre(self):
+        """A sphere with jittered points (seeded): faces 806, 807, 835 and 837 sit
+        by concave quads that are not flat, whose first triangle's centre is off
+        the bilinear patch cgmath samples. They came back wrong when every concave
+        face used its triangle; by their corner mean, the patch's middle, they
+        come back alone."""
+        from maya.api import OpenMaya
+
+        shapes = []
+        for name in ("bent_src", "bent_dst"):
+            shape = Node(cmds.polySphere(ch=False, name=name, sx=30, sy=30)[0]).get_shape()
+            fn    = OpenMaya.MFnMesh(shape.mdagpath)
+            pts   = np.array([[p.x, p.y, p.z] for p in fn.getPoints()])
+            pts  += np.random.default_rng(3).normal(scale=0.03, size=pts.shape)
+            fn.setPoints([OpenMaya.MPoint(*p) for p in pts])
+            shapes.append(shape)
+        src, dst = shapes
+        for f in [806, 807, 835, 837] + list(range(0, 900, 37)):
+            with self.subTest(face=f):
+                self.assertEqual(self._transfer(src, dst, "bent", [f], "f"), [f])
+
+    def test_transfer_component_tags_holed_face_lands_by_a_point_on_it(self):
+        """A 3x3 face with a 1x1 hole in the middle, under a 3x3 plane: its corner
+        mean is the hole's centre, so it used to be in by the face under the hole
+        and out by the ring of faces it covers."""
+        from maya.api import OpenMaya
+
+        src = Node(cmds.polyPlane(ch=False, name="ring_src", sx=3, sy=3, w=3, h=3)[0]).get_shape()
+        dst = Node(cmds.polyPlane(ch=False, name="ring_dst", sx=1, sy=1, w=3, h=3)[0]).get_shape()
+        hole = [OpenMaya.MPoint(x, 0, z) for x, z in ((-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5))]
+        OpenMaya.MFnMesh(dst.mdagpath).addHoles(0, hole, [4])
+        self.assertEqual(len(OpenMaya.MFnMesh(dst.mdagpath).getHoles()), 1)
+        self.assertEqual(self._transfer(src, dst, "ring", [0, 1, 2, 3, 5, 6, 7, 8], "f"), [0])
+        self.assertEqual(self._transfer(src, dst, "ring", [4], "f"), [])
+
     def test_transfer_component_tags_edge_joining_two_tagged_loops_is_in(self):
         """An edge is in when both its ends are: tagging two parallel rows of a
         plane also tags the rungs between them (the user's accepted case), and

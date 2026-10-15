@@ -998,15 +998,23 @@ class Mesh(Geometry):
           space; UV: the mean of its UV corners) lands on a face of the tag:
           the closest face of this mesh to it, from the sampler the
           resampler's sample data comes from (``MeshData.sample``,
-          ``UVData.sample``). A face without UVs is never in by UV.
+          ``UVData.sample``). A flat face whose centre is off it (a concave
+          face, or a holed one: its centre is in the hole) lands by the
+          centre of its first triangle in Maya's triangulation instead. A
+          face without UVs is never in by UV. A centre as close to several
+          faces as to one (on a corner or edge they share, as each face
+          centre of a mesh is on a vertex of its subdivision) lands on one of
+          them, the lowest-numbered with cgmath 2.0.0.
         - An edge is in when both its end vertices are in the vertex set the
           tag's vertices transfer to by the vertex rule. So an edge the tag
           does not hold is in when it joins two tagged vertices (a rung
           between two tagged parallel loops, say).
 
         Onto the same topology, in the same place (SPATIAL) or with the same
-        UVs (UV), a vertex or face tag comes back exactly, and an edge tag too
-        unless it holds both ends of an edge it does not hold. One undo step
+        UVs that do not overlap (UV), a vertex or face tag comes back exactly,
+        and an edge tag too unless it holds both ends of an edge it does not
+        hold. Where UVs overlap (stacked or mirrored shells) a component lands
+        on one of the faces there, as above. One undo step
         (``rig.Mesh.transfer_component_tags``).
 
         Args:
@@ -1125,13 +1133,10 @@ def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
             src_data, dst_data, kwargs = resampler.src_uv, resampler.dst_uv, {}
         else:
             raise ValueError(f"Unsupported resample mode: {mode}")
-        counts  = np.asarray(dst_data.counts)
-        points  = np.asarray(dst_data.points)[np.asarray(dst_data.indices)]
-        sums    = np.zeros((counts.size, points.shape[1]))
-        np.add.at(sums, np.repeat(np.arange(counts.size), counts), points)
-        centres = sums / np.maximum(counts, 1)[:, None]
-        landed  = src_data.sample(centres, **kwargs).indices
-        faces   = np.nonzero((counts > 0) & np.isin(landed, data.indices))[0]
+        counts = np.asarray(dst_data.counts)
+        points = _face_points(dst, resampler.dst_mesh.counts, counts, dst_data.points, dst_data.indices)
+        landed = src_data.sample(points, **kwargs).indices
+        faces  = np.nonzero((counts > 0) & np.isin(landed, data.indices))[0]
         return GeomSubsetData(name=data.name, indices=faces, component_type="f")
 
     if data.component_type == "e":
@@ -1148,6 +1153,65 @@ def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
         ) or []
 
     return _resample_map(resampler, data, mode, method)
+
+
+def _face_points(mesh, vert_counts, counts, points, indices):
+    """The point each face of `mesh` lands by: its centre, the mean of its
+    corners `points[indices]` (`counts` per face, in space or in UV), or where
+    the face is flat and that centre is off it (a concave or holed face) the
+    centre of its first triangle in Maya's triangulation
+    (``MFnMesh.getTriangleOffsets``). A face that is not flat keeps its
+    centre: on a quad that is the middle of the bilinear patch cgmath samples.
+    `vert_counts` are the face vertex counts of ``MFnMesh.getVertices``, which
+    the triangle offsets index; a face with no corners in `counts` (no UVs)
+    keeps a centre of 0."""
+    counts, indices = np.asarray(counts), np.asarray(indices)
+    points  = np.asarray(points, dtype=float)
+    dim     = points.shape[1]
+    corners = np.pad(points, ((0, 0), (0, 3 - dim)))[indices]
+    face    = np.repeat(np.arange(counts.size), counts)
+    centres = np.zeros((counts.size, 3))
+    np.add.at(centres, face, corners)
+    centres /= np.maximum(counts, 1)[:, None]
+
+    # each triangle's corners, offsets into getVertices moved to `indices`
+    tri_counts, offsets = OpenMaya.MFnMesh(mesh.mdagpath).getTriangleOffsets()
+    tri_face = np.repeat(np.arange(counts.size), np.asarray(tri_counts))
+    keep     = counts[tri_face] > 0
+    vcounts  = np.asarray(vert_counts)
+    starts   = (np.cumsum(counts) - counts) - (np.cumsum(vcounts) - vcounts)
+    offsets  = np.asarray(offsets).reshape(-1, 3)[keep] + starts[tri_face[keep]][:, None]
+    tri_face = tri_face[keep]
+    a, b, c  = corners[offsets].transpose(1, 0, 2)
+
+    # is the centre on one of its face's triangles, seen along the face normal
+    area   = np.cross(b - a, c - a)
+    normal = np.zeros((counts.size, 3))
+    np.add.at(normal, tri_face, area)
+    n, p   = normal[tri_face], centres[tri_face]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        bary = np.stack([
+            np.einsum("ij,ij->i", n, np.cross(c - b, p - b)),
+            np.einsum("ij,ij->i", n, np.cross(a - c, p - c)),
+            np.einsum("ij,ij->i", n, np.cross(b - a, p - a)),
+        ]) / np.einsum("ij,ij->i", n, area)
+    centred = np.zeros(counts.size, dtype=bool)
+    np.logical_or.at(centred, tri_face, np.all(bary >= -1e-6, axis=0))
+
+    # a face is flat when its corners are within a millionth of its size of its plane
+    with np.errstate(divide="ignore", invalid="ignore"):
+        unit = normal / np.linalg.norm(normal, axis=1)[:, None]
+    arm    = corners - centres[face]
+    height = np.zeros(counts.size)
+    size   = np.zeros(counts.size)
+    np.maximum.at(height, face, np.abs(np.einsum("ij,ij->i", arm, unit[face])))
+    np.maximum.at(size, face, np.linalg.norm(arm, axis=1))
+    centred |= ~(height <= 1e-6 * size)
+
+    faces, first = np.unique(tri_face, return_index=True)
+    moved = ~centred[faces]
+    centres[faces[moved]] = ((a + b + c) / 3.0)[first[moved]]
+    return centres[:, :dim]
 
 
 def _face_hole_loops(face: int, face_verts: list[int], loops: list[list[int]]) -> list[list[int]]:

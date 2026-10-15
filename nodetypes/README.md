@@ -609,12 +609,19 @@ Verified on Maya 2025; not bugs to work around blindly.
   with a nonzero weight (`GeomSubsetData.from_skin_data`'s rule), so a
   vertex tag onto a finer mesh also gets the vertices on the faces around
   its own. A face is in when its centre (`SPATIAL`: the mean of its
-  corners; `UV`: the mean of its UV corners) is closest to a tagged face.
+  corners; `UV`: the mean of its UV corners) is closest to a tagged face;
+  a flat face whose centre is off it (concave, or holed: the centre is in
+  the hole) uses the centre of its first triangle in Maya's triangulation.
+  A centre on a corner or edge several source faces share (each face
+  centre of a mesh is on a vertex of its subdivision) lands on one of
+  them, the lowest-numbered with cgmath 2.0.0.
   An edge is in when both its ends are in the vertex set the tag's
   vertices transfer to, so an edge joining two tagged vertices is in even
   if the tag did not hold it (a rung between two tagged parallel loops).
-  Onto the same topology a vertex or face tag comes back exactly, and an
-  edge tag too but for such rungs. (cgmath's own rule sent a face or edge
+  Onto the same topology (by `UV`: with the same UVs, not overlapping) a
+  vertex or face tag comes back exactly, and an edge tag too but for such
+  rungs. Where UVs overlap (stacked or mirrored shells), what lands there
+  lands on one of the overlapping faces. (cgmath's own rule sent a face or edge
   tag through its vertices and back, one ring wider, and its `MeshData`
   numbers edges differently from Maya.)
   `SkinCluster.transfer_to_mesh` (many influences) is fine.
