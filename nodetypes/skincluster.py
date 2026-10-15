@@ -350,33 +350,46 @@ class SkinCluster(Deformer):
 
     @staticmethod
     def rebind(geo) -> None:
-        """Unbind and rebind each of the geometry's own skinClusters
-        (``_skinclusters_of``, as ``create`` deletes them): not the skin of a
-        mesh that drives it through a blendShape or a wrap, which
-        ``listHistory`` reaches too. A geometry with none is left alone. The
-        shape bound is the visible one, whose skins these are, also when Maya
-        lists the ``Orig`` first."""
+        """Unbind and rebind the geometry's own skinCluster
+        (``_skinclusters_of``, as ``create`` deletes them) to its influences:
+        not the skin of a mesh that drives it through a blendShape or a wrap,
+        which ``listHistory`` reaches too. A geometry with none is left alone.
+        The shape bound is the visible one, whose skin this is, also when Maya
+        lists the ``Orig`` first.
+
+        Raises:
+            RuntimeError: before anything is changed, for a geometry with
+                several skinClusters of its own (layered skins): Maya re-binds
+                in place only the one nearest the shape, and binds a new
+                skinCluster over the stack for another.
+        """
         shape = cmds.listRelatives(geo, shapes=True, noIntermediate=True, pa=True)[0]
         skins = [s.name for s in _skinclusters_of(_cast(geo))]
         if not skins:
             return
+        if len(skins) > 1:
+            raise RuntimeError(
+                f"SkinCluster.rebind: {geo} has {len(skins)} skinClusters of its own "
+                f"({', '.join(skins)}); rebind takes one, as Maya re-binds only the "
+                f"one nearest the shape in place. Nothing was changed"
+            )
 
-        for skin in skins:
-            joints = cmds.skinCluster(skin, query=True, influence=True)
-            cmds.setAttr(skin + ".envelope", 0)
-            cmds.skinCluster(skin, edit=True, unbindKeepHistory=True)
+        skin   = skins[0]
+        joints = cmds.skinCluster(skin, query=True, influence=True)
+        cmds.setAttr(skin + ".envelope", 0)
+        cmds.skinCluster(skin, edit=True, unbindKeepHistory=True)
 
-            # delete bindPose
-            dagPose = cmds.dagPose(geo, query=True, bindPose=True)
-            if dagPose:
-                cmds.delete(dagPose)
-            dagPose = cmds.listConnections(skin + ".bindPose", d=False, type="dagPose")
-            if dagPose:
-                cmds.delete(dagPose)
+        # delete bindPose
+        dagPose = cmds.dagPose(geo, query=True, bindPose=True)
+        if dagPose:
+            cmds.delete(dagPose)
+        dagPose = cmds.listConnections(skin + ".bindPose", d=False, type="dagPose")
+        if dagPose:
+            cmds.delete(dagPose)
 
-            # rebind
-            cmds.skinCluster(joints, shape, toSelectedBones=True)
-            cmds.setAttr(skin + ".envelope", 1)
+        # rebind
+        cmds.skinCluster(joints, shape, toSelectedBones=True)
+        cmds.setAttr(skin + ".envelope", 1)
 
     def get_mesh(self) -> Mesh:
         """Returns the mesh this skincluster is attached to."""

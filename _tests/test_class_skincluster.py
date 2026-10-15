@@ -312,6 +312,31 @@ class TestSkinCluster(MayaTestCase):
         self.joint2.t.set(0, 3, 0)
         self.assertAlmostEqual(cmds.pointPosition(f"{shape}.vtx[4]", world=True)[1], 3.0)
 
+    def test_rebind_refuses_layered_skins_before_touching_them(self):
+        """With two skinClusters of its own, rebind unbound one, Maya refused
+        its re-bind ('already connected to a skinCluster') and the skin stayed
+        at envelope 0 (runs/r5/REBIND/review/probe_rebind_review_head.txt, R2).
+        multi=True is no fix: Maya re-binds in place only the skin nearest the
+        shape, and binds a new skinCluster over the stack for another
+        (runs/r5/REBIND/verify/probe_verify_head.txt, P2)."""
+        extra   = Joint.create(name="extra_joint")
+        layer   = Node(cmds.skinCluster(
+            [str(extra)], str(self.cube), toSelectedBones=True, multi=True, name="layer2"
+        )[0])
+        weights = self.skin.get_weights()
+        before  = set(cmds.ls())
+
+        with self.assertRaisesRegex(RuntimeError, "2 skinClusters of its own"):
+            SkinCluster.rebind(str(self.cube))
+
+        self.assertEqual(set(cmds.ls()), before)
+        self.assertCountEqual(self.cube.get_shape().get_deformers(node_type="skinCluster"), [self.skin, layer])
+        for skin in (self.skin, layer):
+            self.assertEqual(skin.envelope.get(), 1)
+        self.assertEqual(self.skin.get_influence_objects(), [self.joint1, self.joint2])
+        self.assertEqual(layer.get_influence_objects(), [extra])
+        np.testing.assert_allclose(self.skin.get_weights(), weights, rtol=0, atol=0)
+
     def _skinned_intermediate_target(self):
         """A cube with no skinCluster of its own whose blendShape target is a
         skinned intermediate shape: get_deformers lists the target's skin."""
