@@ -427,10 +427,10 @@ class TestMeshCreateUndo(_MeshCreateCase):
 class TestMeshCreateErrors(_MeshCreateCase):
     """Invalid data raises RuntimeError before anything is made; the next undo is the user's."""
 
-    def _bad(self, data, uvs=None, name="m"):
+    def _bad(self, data, uvs=None, name="m", message=""):
         cmds.setAttr("selprobe.translateX", 7.0)  # the user's previous step
         nodes = sorted(cmds.ls())
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(RuntimeError, message):
             Mesh.create(data, uv_data=uvs, name=name)
         self.assertEqual(sorted(cmds.ls()), nodes)
         self.assertEqual(cmds.ls(selection=True), ["selprobe"])
@@ -493,6 +493,28 @@ class TestMeshCreateErrors(_MeshCreateCase):
         self._bad(data, uvs)
         self.undo_steps(1)
         self.assertEqual(cmds.getAttr("selprobe.translateX"), 0.0)
+
+    def test_hole_with_fewer_than_three_corners(self):
+        # MFnMesh.addHoles failed on it with a bare kFailure, after the transform was made
+        from cgmath.geometry import MeshData
+
+        for hole in ([4, 5], [4]):
+            with self.subTest(hole):
+                cmds.file(new=True, force=True)
+                data = MeshData(
+                    indices      = np.arange(6),
+                    counts       = np.array([6]),
+                    points       = np.array([(0, 0, 0), (4, 0, 0), (4, 0, 4), (0, 0, 4), (1, 0, 1), (3, 0, 1)], float),
+                    name         = "m",
+                    hole_faces   = np.array([0]),
+                    hole_counts  = np.array([len(hole)]),
+                    hole_indices = np.array(hole),
+                )
+                self.ready()
+                self._bad(data, message=r"^MeshData: a hole of face 0 has fewer than 3 corners$")
+                self.undo_steps(1)
+                self.assertEqual(cmds.getAttr("selprobe.translateX"), 0.0)
+                self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
 
     def test_error_after_the_transform_leaves_no_node(self):
         # a UV write failing after the transform is made (duplicate UV set names, the

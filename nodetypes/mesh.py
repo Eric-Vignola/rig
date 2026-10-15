@@ -1107,8 +1107,8 @@ def _mesh_topology(
     orders them (`_holed_mesh` adds them back).
 
     Raises RuntimeError, before anything is made, when the face counts do not
-    add up to the indices, an index is not a point, or the hole arrays do not
-    match each other, the faces or the points.
+    add up to the indices, an index is not a point, a hole has fewer than 3
+    corners, or the hole arrays do not match each other, the faces or the points.
     """
     counts   = np.asarray(mesh_data.counts, dtype=np.int64).ravel()
     indices  = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
@@ -1141,6 +1141,9 @@ def _mesh_topology(
         )
     if int(hole_faces.min()) < 0 or int(hole_faces.max()) >= len(counts):
         raise RuntimeError(f"MeshData: a hole face is not one of the {len(counts)} faces")
+    if int(hole_counts.min()) < 3:
+        fi = int(hole_faces[int(np.argmin(hole_counts))])
+        raise RuntimeError(f"MeshData: a hole of face {fi} has fewer than 3 corners")
     if len(hole_indices) and (
         int(hole_indices.min()) < 0 or int(hole_indices.max()) >= n_points
     ):
