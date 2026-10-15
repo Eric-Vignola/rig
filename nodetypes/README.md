@@ -666,7 +666,8 @@ Verified on Maya 2025; not bugs to work around blindly.
   and `a.b` are taken; `a b` is stored as `a_b`. `add_component_tag` and
   `rename_component_tag` raise a `ValueError` naming this rule before
   anything is made, and `add_component_tag` looks an existing tag up by the
-  name Maya stores (`" ab"` finds `ab`). A name with a
+  name Maya stores (`" ab"` finds `ab`). `rig.Tag` checks the same rule and
+  means the same stored name (`Tag(" ab")` is `Tag("ab")`). A name with a
   non-ASCII character is left to Maya, which first maps it to the system
   code page.
 - **`Follicle.create_on_mesh` with a vertex list fails** (`numpy.AxisError`):

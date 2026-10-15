@@ -94,7 +94,7 @@ from rig.nodetypes import display_layer as _display_layer
 from rig.nodetypes._base import _cast
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
-from rig.nodetypes.geometry import _TAG_NAME_RE, Geometry
+from rig.nodetypes.geometry import _check_component_tag_name, Geometry
 from rig.nodetypes.material_node import Material
 from rig.nodetypes.mesh import _own_history
 from rig.nodetypes.shading_engine import ShadingEngine
@@ -149,7 +149,7 @@ _PROCEDURAL = "procedural"  # output of a history node; nothing edits it
 
 def _exact_token(name: str) -> re.Pattern:
     """The regex matching ``name`` as a whole token of a tag expression."""
-    return re.compile(rf"(?<![A-Za-z0-9_:*]){re.escape(name)}(?![A-Za-z0-9_:*])")
+    return re.compile(rf"(?<![A-Za-z0-9_.:*]){re.escape(name)}(?![A-Za-z0-9_.:*])")
 
 
 def _short(path: str) -> str:
@@ -393,8 +393,13 @@ class Tag(_MemberSpec):
     or components of another kind, answer False; an attribute plug stands
     for its node there. ``Tag()`` is the kind token; ``Tag(None)`` is a
     ``TypeError`` (a failed lookup must not mean every tag). Names are
-    validated at construction: at least two characters of ``[A-Za-z0-9_:]``
-    not starting with a digit (Maya stores a one-character name as ``''``).
+    validated at construction by Maya's rule, the one ``add_component_tag``
+    checks: at least two characters, letters, digits and ``_``, starting
+    with a letter or ``_``, with single ``.`` or ``:`` between characters,
+    once the whitespace at the ends is trimmed and a space inside is made
+    ``_``. A name Maya stores otherwise means the tag Maya stores:
+    ``Tag(' ab ')`` is ``Tag('ab')`` and ``Tag('a b')`` is ``Tag('a_b')``.
+    A name with a non-ASCII character is left to Maya.
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
     to shadow a procedural one: the shape or a node of its own history (its
     ``Orig``), not a mesh that drives it from the side (a blendShape target,
@@ -430,6 +435,9 @@ class Tag(_MemberSpec):
         if name is None:
             raise TypeError("None is not a tag name; Tag() means every tag")
         super().__init__(None if name is _KIND else name, at=at, force=force)
+        if self._name is not None:
+            # the name Maya stores: ' ab ' is the tag 'ab', 'a b' the tag 'a_b'
+            self._name = _check_component_tag_name(self._name)
 
     def __repr__(self) -> str:
         return "Tag()" if self._name is None else super().__repr__()
@@ -449,12 +457,7 @@ class Tag(_MemberSpec):
 
     def _validate_name(self, name: Any) -> None:
         super()._validate_name(name)
-        if len(name) < 2 or not _TAG_NAME_RE.match(name):
-            raise ValueError(
-                f"{name!r} is not a component tag name: at least two characters of "
-                f"[A-Za-z0-9_:] not starting with a digit (Maya stores a "
-                f"one-character name as '' and rejects spaces and dashes)"
-            )
+        _check_component_tag_name(name)
 
     # -- refusals -- #
 
@@ -949,7 +952,7 @@ class Tag(_MemberSpec):
         (``cap``, ``!cap``, ``cap + lid``); a glob reference (``ca*``) refuses
         even then."""
         self._verb("rename")
-        Tag(new)
+        new   = Tag(new).name
         force = force or self._options["force"]
         steps = []
         for home in self._homes(node, "rename"):

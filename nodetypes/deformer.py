@@ -19,8 +19,9 @@ from rig.nodetypes._base import _cast
 from rig.nodetypes.dg_node import DGNode
 
 
-# a tag-name token carrying at least one glob wildcard ('to*', '*top', 'a*b')
-_GLOB_TOKEN_RE = re.compile(r"[A-Za-z0-9_:*]*\*[A-Za-z0-9_:*]*")
+# a tag-name token carrying at least one glob wildcard ('to*', '*top', 'a*b', 'ab.c*'):
+# Maya reads '.' and ':' as part of a name in an expression (runs/r5/REBIND/probe_dot.txt)
+_GLOB_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:*]*\*[A-Za-z0-9_.:*]*")
 
 
 def tag_references(name: str) -> list[tuple[str, int]]:
@@ -29,8 +30,9 @@ def tag_references(name: str) -> list[tuple[str, int]]:
     Deformers read component tags by name through a plain string, so renaming
     or deleting a referenced tag silently makes the deformer move nothing.
     An expression references `name` when it holds it as a whole token
-    (``top``, ``!top``, ``top + side``; never ``topside`` or ``ns:top``) or a
-    glob that matches it (``to*``). The bare ``*`` means every point whatever
+    (``top``, ``!top``, ``top + side``; never ``topside``, ``ns:top`` or
+    ``top.lid``, since Maya reads ``.`` as part of a name there) or a glob
+    that matches it (``to*``). The bare ``*`` means every point whatever
     the tags are called and never counts as a reference.
 
     Args:
@@ -39,7 +41,7 @@ def tag_references(name: str) -> list[tuple[str, int]]:
     Returns:
         A list of (deformer, input index) pairs.
     """
-    exact = re.compile(rf"(?<![A-Za-z0-9_:*]){re.escape(name)}(?![A-Za-z0-9_:*])")
+    exact = re.compile(rf"(?<![A-Za-z0-9_.:*]){re.escape(name)}(?![A-Za-z0-9_.:*])")
     found = []
     for deformer in cmds.ls(type="geometryFilter") or []:
         for i in cmds.getAttr(f"{deformer}.input", multiIndices=True) or []:

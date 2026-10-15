@@ -362,9 +362,13 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   the first one stored: faces into a vertex tag that holds vertices is a
   `TypeError` with nothing written; `Tag("x").set(cube.f[:2])` replaces
   and may flip the category. A query answers by contents: faces are not
-  in a vertex tag (`cube.f[:2] in Tag("x")` is `False`). A tag name needs
-  at least two characters (Maya stores a one-character name as an empty
-  string).
+  in a vertex tag (`cube.f[:2] in Tag("x")` is `False`). A tag name follows
+  Maya's rule, the one `add_component_tag` checks: at least two characters,
+  letters, digits and `_`, starting with a letter or `_`, with single `.`
+  or `:` between characters (`Tag("b")`, `Tag("a:")` and `Tag("a-b")` are a
+  `ValueError`). Maya trims the whitespace at the ends of a name and makes a
+  space inside `_`, so `Tag(" ab ")` is the tag `ab` and `Tag("a b")` the
+  tag `a_b`.
 - **A name on the right never creates.** `cube << Blinn("red")`,
   `cube >> Blinn("red")`, `cube << -Layer("L")` and `cube in Layer("L")`
   raise `NodeNotFoundError` (a `ValueError`) at the reference when the

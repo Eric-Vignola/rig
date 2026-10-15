@@ -2362,6 +2362,21 @@ print(sph >> Tag("cap"))                        # [0 1]
 Tag("cap").set(sph.vtx[:8])                     # and back
 ```
 
+A name follows Maya's rule (the one `add_component_tag` checks): at least
+two characters, letters, digits and `_`, starting with a letter or `_`,
+with single `.` or `:` between characters. A name Maya stores otherwise is
+the tag Maya stores: the ends trimmed, a space inside made `_`.
+
+```python
+sph.vtx[:2] << Tag("lid rim")                   # the tag 'lid_rim'
+print(sph >> Tag("lid_rim"), Tag(" lid rim ") == Tag("lid_rim"))   # [0 1] True
+sph << -Tag("lid_rim")
+try:
+    Tag("a:")                                   # ValueError: Maya refuses it ('b', '1a', 'a-b', 'a..b' too)
+except ValueError as err:
+    print("Maya takes" in str(err))             # True
+```
+
 Remove members, empty, delete, purge. An empty tag is a legal state (it
 deforms nothing and silences a deformer's "Missing componentTags").
 
