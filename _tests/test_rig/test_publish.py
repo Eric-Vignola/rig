@@ -10,12 +10,12 @@ from rig._tests._base import MayaTestCase
 
 
 def _bound_plug(ctn, name):
-    """Return the real inner/host plug bound to the published ``name`` on
+    """Return the real inner/attributes-node plug bound to the published ``name`` on
     container ``ctn``.
 
     Native publishing makes ``ctn.<name>`` a ``publishName`` / ``bindAttr``
     ALIAS, so topology / value / range queries must target the real bound plug
-    (an inner-node attr for member publishes, or ``<ctn>_host.<name>`` for
+    (an inner-node attr for member publishes, or ``<ctn>_attributes.<name>`` for
     created knobs / multis). Returns ``None`` if ``name`` is not published.
     """
     from rig._internal.container import _resolve_published
@@ -194,7 +194,7 @@ class TestPublishOutput(MayaTestCase):
         Maya's ``bindAttr`` binds a given plug only ONCE -- a naive second
         bind is silently skipped, leaving a dangling (unbound) published
         name. The publish path must instead route the second publish through
-        a distinct host carrier attr. This mirrors the ``in_linear`` ease,
+        a distinct attributes-node carrier attr. This mirrors the ``in_linear`` ease,
         whose output IS its input.
         """
         with container("ident") as c:
@@ -378,14 +378,14 @@ class TestPublishInputExternalSource(MayaTestCase):
         # min / max / dv / keyable kwargs reach cmds.addAttr.
         with container("outer"):
             container.publish_input(0.5, "weight", min=0, max=1, dv=0.25)
-            # A created knob (scalar source) lives on the host node; min/max are
+            # A created knob (scalar source) lives on the attributes node; min/max are
             # NOT visible through the published alias, so query the real plug.
-            host_node = _bound_plug("outer", "weight").split(".")[0]
+            attributes_node = _bound_plug("outer", "weight").split(".")[0]
             self.assertEqual(
-                cmds.attributeQuery("weight", node=host_node, min=True), [0.0]
+                cmds.attributeQuery("weight", node=attributes_node, min=True), [0.0]
             )
             self.assertEqual(
-                cmds.attributeQuery("weight", node=host_node, max=True), [1.0]
+                cmds.attributeQuery("weight", node=attributes_node, max=True), [1.0]
             )
             # Default for the new branch is keyable=True (channel-box visible).
             self.assertTrue(cmds.getAttr("outer.weight", keyable=True))
@@ -411,11 +411,11 @@ class TestPublishInputExternalSource(MayaTestCase):
         with container("outer"):
             container.publish_input([0, 0, 1], "vec")
         real = _bound_plug("outer", "vec")
-        host = real.split(".")[0]
+        attributes_node = real.split(".")[0]
         self.assertEqual(
-            cmds.attributeQuery("vec", node=host, attributeType=True), "double3"
+            cmds.attributeQuery("vec", node=attributes_node, attributeType=True), "double3"
         )
-        self.assertFalse(cmds.attributeQuery("vec", node=host, multi=True))
+        self.assertFalse(cmds.attributeQuery("vec", node=attributes_node, multi=True))
         actual = cmds.getAttr(real)[0]
         for a, e in zip(actual, (0.0, 0.0, 1.0)):
             self.assertAlmostEqual(a, e)
@@ -426,11 +426,11 @@ class TestPublishInputExternalSource(MayaTestCase):
         with container("outer"):
             container.publish_input([0.0, 0.0, 1.0, 0.0], "quat")
         real = _bound_plug("outer", "quat")
-        host = real.split(".")[0]
+        attributes_node = real.split(".")[0]
         self.assertEqual(
-            cmds.attributeQuery("quat", node=host, attributeType=True), "double4"
+            cmds.attributeQuery("quat", node=attributes_node, attributeType=True), "double4"
         )
-        self.assertFalse(cmds.attributeQuery("quat", node=host, multi=True))
+        self.assertFalse(cmds.attributeQuery("quat", node=attributes_node, multi=True))
 
     def test_none_source_with_explicit_attr_type(self):
         # None source -> attr created; nothing wired or set.
@@ -731,15 +731,15 @@ class TestPublishMultiCompound(MayaTestCase):
             )
             self.assertIsNotNone(pub)
             # Multi attrs are NOT published on the container -- they live on the
-            # per-container host node and resolve through the registry. Resolve
-            # the real plug and assert against the host.
+            # per-container attributes node and resolve through the registry. Resolve
+            # the real plug and assert against the attributes node.
             real = _bound_plug("outer", "vectors")
-            host = real.split(".")[0]
-            # Parent + X/Y/Z children created on the host.
+            attributes_node = real.split(".")[0]
+            # Parent + X/Y/Z children created on the attributes node.
             for child in ("vectors", "vectorsX", "vectorsY", "vectorsZ"):
                 self.assertTrue(
-                    cmds.attributeQuery(child, node=host, exists=True),
-                    f"{host}.{child} should exist",
+                    cmds.attributeQuery(child, node=attributes_node, exists=True),
+                    f"{attributes_node}.{child} should exist",
                 )
             # 3 indices populated with values.
             for i, expected in enumerate([[1, 2, 3], [4, 5, 6], [7, 8, 9]]):
@@ -751,22 +751,22 @@ class TestPublishMultiCompound(MayaTestCase):
         # No kwargs -- type inference detects 2D list-of-3 -> double3 multi.
         with container("outer"):
             container.publish_input([[1, 2, 3], [4, 5, 6]], "vectors")
-            # Multi attrs live on the host node (registry-resolved), not the
+            # Multi attrs live on the attributes node (registry-resolved), not the
             # container. Maya reports multi-of-compound parent's getAttr type as
             # "TdataCompound"; check via attributeQuery (which gives the
-            # element type) and verify children exist on the host.
+            # element type) and verify children exist on the attributes node.
             real = _bound_plug("outer", "vectors")
-            host = real.split(".")[0]
+            attributes_node = real.split(".")[0]
             self.assertEqual(
-                cmds.attributeQuery("vectors", node=host, attributeType=True),
+                cmds.attributeQuery("vectors", node=attributes_node, attributeType=True),
                 "double3",
             )
             indices = cmds.getAttr(real, multiIndices=True) or []
             self.assertEqual(sorted(indices), [0, 1])
             for axis in "XYZ":
                 self.assertTrue(
-                    cmds.attributeQuery(f"vectors{axis}", node=host, exists=True),
-                    f"{host}.vectors{axis} should exist",
+                    cmds.attributeQuery(f"vectors{axis}", node=attributes_node, exists=True),
+                    f"{attributes_node}.vectors{axis} should exist",
                 )
 
     def test_publish_input_compound_multi_pluglist_source(self):
@@ -782,7 +782,7 @@ class TestPublishMultiCompound(MayaTestCase):
                 at    = "double3",
                 multi = True,
             )
-            # Multi attrs live on the host (registry-resolved). Verify per-
+            # Multi attrs live on the attributes node (registry-resolved). Verify per-
             # element connection there (Maya stores compound-to-compound
             # connections at the parent vector level).
             real = _bound_plug("outer", "input_vectors")
@@ -815,15 +815,15 @@ class TestPublishMultiCompound(MayaTestCase):
                 max   = 1,
                 dv    = 0.5,
             )
-            # Children (on the host) should have the min/max applied.
-            host = _bound_plug("outer", "weights").split(".")[0]
+            # Children (on the attributes node) should have the min/max applied.
+            attributes_node = _bound_plug("outer", "weights").split(".")[0]
             for axis in "XYZ":
                 self.assertEqual(
-                    cmds.attributeQuery(f"weights{axis}", node=host, min=True),
+                    cmds.attributeQuery(f"weights{axis}", node=attributes_node, min=True),
                     [0.0],
                 )
                 self.assertEqual(
-                    cmds.attributeQuery(f"weights{axis}", node=host, max=True),
+                    cmds.attributeQuery(f"weights{axis}", node=attributes_node, max=True),
                     [1.0],
                 )
 
@@ -840,7 +840,7 @@ class TestPublishMultiCompound(MayaTestCase):
                 at    = "double",
                 multi = True,
             )
-            # Multi output lives on the host (registry-resolved).
+            # Multi output lives on the attributes node (registry-resolved).
             real = _bound_plug("outer", "results")
             for i, expected in enumerate([2.0, 4.0, 6.0]):
                 self.assertAlmostEqual(cmds.getAttr(f"{real}[{i}]"), expected)
@@ -857,13 +857,13 @@ class TestPublishMultiCompound(MayaTestCase):
                 at    = "double3",
                 multi = True,
             )
-            # Multi output lives on the host (registry-resolved).
+            # Multi output lives on the attributes node (registry-resolved).
             real = _bound_plug("outer", "vec_out")
-            host = real.split(".")[0]
-            # X/Y/Z children created on the host.
+            attributes_node = real.split(".")[0]
+            # X/Y/Z children created on the attributes node.
             for axis in "XYZ":
                 self.assertTrue(
-                    cmds.attributeQuery(f"vec_out{axis}", node=host, exists=True)
+                    cmds.attributeQuery(f"vec_out{axis}", node=attributes_node, exists=True)
                 )
             # 2 indices live-driven.
             for i in range(2):
@@ -913,7 +913,7 @@ class TestPublishMultiCompound(MayaTestCase):
                 multi = True,
             )
 
-        # All three are multi attrs -- published via the registry on the host,
+        # All three are multi attrs -- published via the registry on the attributes node,
         # so resolve them through the container rather than ``attributeQuery``.
         for attr in ("input1", "input2", "output"):
             self.assertIsNotNone(
@@ -956,10 +956,10 @@ class TestPublishMultiParentResolution(MayaTestCase):
             container.publish_input(a.wm, "matrix0")
         self.assertTrue(cmds.attributeQuery("matrix0", node="outer", exists=True))
         # A published alias ALWAYS reports multi=True (Maya quirk); the real
-        # resolved matrix [0] lives on the host and is a single, not a multi.
-        host = _bound_plug("outer", "matrix0").split(".")[0]
+        # resolved matrix [0] lives on the attributes node and is a single, not a multi.
+        attributes_node = _bound_plug("outer", "matrix0").split(".")[0]
         self.assertFalse(
-            cmds.attributeQuery("matrix0", node=host, multi=True),
+            cmds.attributeQuery("matrix0", node=attributes_node, multi=True),
             "multi-parent worldMatrix must resolve to [0]; published attr "
             "should be a single matrix, not a multi",
         )
@@ -978,8 +978,8 @@ class TestPublishMultiParentResolution(MayaTestCase):
             )
             or []
         )
-        # ``pub`` is the real host plug (the published name is an alias), so the
-        # consumer's source is the host plug, not ``outer.matrix0``.
+        # ``pub`` is the real attributes-node plug (the published name is an alias), so the
+        # consumer's source is the attributes-node plug, not ``outer.matrix0``.
         self.assertIn(_bound_plug("outer", "matrix0"), srcs)
 
     def test_worldmatrix_input_is_driven_by_an_element(self):
@@ -1008,10 +1008,10 @@ class TestPublishMultiParentResolution(MayaTestCase):
         b.t << [4, 5, 6]
         with container("outer"):
             container.publish_input([a.t, b.t], "vectors", at="double3", multi=True)
-        # multi attrs live on the host (registry-resolved); query it directly.
-        host = _bound_plug("outer", "vectors").split(".")[0]
+        # multi attrs live on the attributes node (registry-resolved); query it directly.
+        attributes_node = _bound_plug("outer", "vectors").split(".")[0]
         self.assertTrue(
-            cmds.attributeQuery("vectors", node=host, multi=True),
+            cmds.attributeQuery("vectors", node=attributes_node, multi=True),
             "explicit multi=True must still create a multi attr",
         )
 
@@ -1029,11 +1029,11 @@ class TestPublishMultiParentResolution(MayaTestCase):
             cmds.attributeQuery("worldMatrix", node="outer", exists=True),
             "the >> shortcut should publish a 'worldMatrix' attr",
         )
-        # Alias reports multi=True (quirk); the resolved [0] on the host is a
+        # Alias reports multi=True (quirk); the resolved [0] on the attributes node is a
         # single matrix.
-        host = _bound_plug("outer", "worldMatrix").split(".")[0]
+        attributes_node = _bound_plug("outer", "worldMatrix").split(".")[0]
         self.assertFalse(
-            cmds.attributeQuery("worldMatrix", node=host, multi=True),
+            cmds.attributeQuery("worldMatrix", node=attributes_node, multi=True),
             "multi-parent published via >> must be a single matrix, not a multi",
         )
 
@@ -1209,7 +1209,7 @@ class TestNodeOpFanOutPublishing(MayaTestCase):
             )
             or []
         )
-        # ``input1`` is a created knob on the host; its per-channel children
+        # ``input1`` is a created knob on the attributes node; its per-channel children
         # (``input1X`` ...) drive the internal modulo nodes.
         real_in1 = _bound_plug("modulo1", "input1")
         self.assertTrue(
@@ -1229,13 +1229,13 @@ class TestNodeOpFanOutPublishing(MayaTestCase):
         input1_plug = node.input1
         self.assertIsNotNone(input1_plug)
         # ``node.input1`` resolves through the container to the real bound plug
-        # (the created knob on the host); ``modulo1.input1`` is its alias.
+        # (the created knob on the attributes node); ``modulo1.input1`` is its alias.
         self.assertEqual(_bound_plug("modulo1", "input1"), str(input1_plug))
 
 
 class TestNativePublishCapabilities(MayaTestCase):
     """New native-publish hybrid capabilities: removeContainer-safety,
-    ``Container.__getattr__`` resolution, host-node lifecycle, the
+    ``Container.__getattr__`` resolution, attributes-node lifecycle, the
     ``native_multi_publish`` flag, and assorted ``publish_output`` forms."""
 
     TEST_START_NEW_SCENE = True
@@ -1254,11 +1254,11 @@ class TestNativePublishCapabilities(MayaTestCase):
         with container("box"):
             m = Node.create("multiplyDivide", name="inner_mul")
             m.input2X << 5.0
-            knob = container.publish_input(0.0, "weight")  # created host knob
+            knob = container.publish_input(0.0, "weight")  # created knob on the attributes node
             m.input1X << knob  # knob drives internal math
             out = container.publish_output(m.outputX, "result")
         consumer.tx << out  # external consumer reads the published output
-        host_weight = _bound_plug("box", "weight")  # box_host.weight
+        attributes_weight = _bound_plug("box", "weight")  # box_attributes.weight
         cmds.setAttr("box.weight", 2.0)
         self.assertAlmostEqual(cmds.getAttr("consumer.tx"), 10.0)
         # Dissolve the container -- internals are REVEALED, not destroyed.
@@ -1266,10 +1266,10 @@ class TestNativePublishCapabilities(MayaTestCase):
         self.assertFalse(cmds.objExists("box"))
         self.assertTrue(cmds.objExists("inner_mul"))
         # Data still flows through the revealed network: weight 2 -> 3 lifts the
-        # consumer 10 -> 15. The host survives because it is transitively
+        # consumer 10 -> 15. The attributes node survives because it is transitively
         # reachable to the external consumer.
-        self.assertTrue(cmds.objExists(host_weight))
-        cmds.setAttr(host_weight, 3.0)
+        self.assertTrue(cmds.objExists(attributes_weight))
+        cmds.setAttr(attributes_weight, 3.0)
         self.assertAlmostEqual(cmds.getAttr("consumer.tx"), 15.0)
 
     # -- Container.__getattr__ resolution -- #
@@ -1290,30 +1290,33 @@ class TestNativePublishCapabilities(MayaTestCase):
         with self.assertRaises(AttributeError):
             _ = c._not_a_real_private
 
-    # -- host-node lifecycle -- #
+    # -- attributes-node lifecycle -- #
     def test_host_node_created_once_reused_and_tagged(self):
         from rig._internal import container as _C
 
         with container("hh"):
-            container.publish_input(1.0, "knobA")  # creates the host
+            container.publish_input(1.0, "knobA")  # creates the attributes node
             # Force a cache miss so the second publish exercises the member-scan
-            # fallback that re-discovers the existing host.
-            _C._HOST_CACHE.clear()
-            container.publish_input(2.0, "knobB")  # reuses host via scan
+            # fallback that re-discovers the existing attributes node.
+            _C._ATTRIBUTES_NODE_CACHE.clear()
+            container.publish_input(2.0, "knobB")  # reuses the attributes node via scan
         members = cmds.container("hh", q=True, nodeList=True) or []
-        hosts = [
+        attributes_nodes = [
             m
             for m in members
-            if cmds.attributeQuery("__rl_host__", node=m, exists=True)
+            if cmds.attributeQuery("__container_attributes__", node=m, exists=True)
         ]
-        self.assertEqual(len(hosts), 1, f"exactly one host expected, got {hosts}")
-        host = hosts[0]
-        self.assertTrue(cmds.getAttr(f"{host}.__rl_host__"))
-        # Host must NOT carry the rig GC-ownership tag (or cleanup could sweep it).
-        self.assertFalse(cmds.attributeQuery("__rig__", node=host, exists=True))
-        # Both created knobs live on the one host.
-        self.assertTrue(cmds.attributeQuery("knobA", node=host, exists=True))
-        self.assertTrue(cmds.attributeQuery("knobB", node=host, exists=True))
+        self.assertEqual(
+            len(attributes_nodes), 1,
+            f"exactly one attributes node expected, got {attributes_nodes}",
+        )
+        attributes_node = attributes_nodes[0]
+        self.assertTrue(cmds.getAttr(f"{attributes_node}.__container_attributes__"))
+        # The attributes node must NOT carry the rig GC-ownership tag (or cleanup could sweep it).
+        self.assertFalse(cmds.attributeQuery("__rig__", node=attributes_node, exists=True))
+        # Both created knobs live on the one attributes node.
+        self.assertTrue(cmds.attributeQuery("knobA", node=attributes_node, exists=True))
+        self.assertTrue(cmds.attributeQuery("knobB", node=attributes_node, exists=True))
 
     # -- native_multi_publish capability flag -- #
     def test_native_multi_publish_flag_publishes_input_multi_on_container(self):
@@ -1363,14 +1366,14 @@ class TestNativePublishCapabilities(MayaTestCase):
         self.assertIsNotNone(real)
         self.assertTrue(real.startswith("imm_pma."))  # the REAL inner plug
 
-    # -- >> shortcut, external writable plug routes to a host input -- #
+    # -- >> shortcut, external writable plug routes to an attributes-node input -- #
     def test_rshift_external_writable_plug_routes_to_host_input(self):
         ext = Node.create("transform", name="ext_src")  # external (pre-container)
         with container("ee"):
-            ext.tx >> container  # external + writable -> host input knob
+            ext.tx >> container  # external + writable -> attributes-node input knob
         real = _bound_plug("ee", "translateX")
         self.assertIsNotNone(real)
-        self.assertIn("_host.", real)
+        self.assertIn("_attributes.", real)
 
     # -- identity / passthrough: same member plug published as two inputs -- #
     def test_publish_same_member_plug_as_two_inputs(self):
@@ -1378,7 +1381,7 @@ class TestNativePublishCapabilities(MayaTestCase):
             n = Node.create("transform", name="inode")
             n << Float("val", dv=0.0) << 0.3
             container.publish_input(n.val, "knobA")  # binds inode.val directly
-            container.publish_input(n.val, "knobB")  # already bound -> host carrier
+            container.publish_input(n.val, "knobB")  # already bound -> attributes-node carrier
         pairs = _bind_pairs("ii")
         self.assertEqual(pairs.get("knobA"), "inode.val")
         self.assertIsNotNone(_bound_plug("ii", "knobB"))
@@ -1397,14 +1400,14 @@ class TestNativePublishCapabilities(MayaTestCase):
             # 3 scalar Plugs, NO kwargs -> inferred double3 compound (not multi).
             container.publish_output([m.outputX, m.outputY, m.outputZ], "vec")
         real = _bound_plug("ic", "vec")
-        host = real.split(".")[0]
+        attributes_node = real.split(".")[0]
         # Inferred as a 3-element compound (double3 / float3 by element type) --
         # crucially NOT a multi (the v4.R scalar-list -> compound heuristic).
         self.assertIn(
-            cmds.attributeQuery("vec", node=host, attributeType=True),
+            cmds.attributeQuery("vec", node=attributes_node, attributeType=True),
             ("double3", "float3"),
         )
-        self.assertFalse(cmds.attributeQuery("vec", node=host, multi=True))
+        self.assertFalse(cmds.attributeQuery("vec", node=attributes_node, multi=True))
         self.assertAlmostEqual(cmds.getAttr(real)[0][0], 2.0)
 
     # -- publish_output: external single Plug with explicit kwargs -- #
@@ -1441,9 +1444,9 @@ class TestNativePublishHelpers(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_is_host_false_on_invalid_node(self):
-        from rig._internal.container import _is_host
+        from rig._internal.container import _is_attributes_node
 
-        self.assertFalse(_is_host("does_not_exist"))
+        self.assertFalse(_is_attributes_node("does_not_exist"))
 
     def test_plug_is_multi_false_on_non_plug(self):
         from rig._internal.container import _plug_is_multi
@@ -1624,8 +1627,8 @@ class TestPublishMembership(MayaTestCase):
         self.assertEqual(pairs.get("outputX"), "p_md.outputX")
         # bound directly on the member (bindAttr lists it by short name)
         self.assertEqual(pairs.get("blend"), "dup.blend")
-        self.assertIn("_host.", _bound_plug("p_outer", "ext_blend"))
-        self.assertIn("_host.", _bound_plug("p_outer", "nested_blend"))
+        self.assertIn("_attributes.", _bound_plug("p_outer", "ext_blend"))
+        self.assertIn("_attributes.", _bound_plug("p_outer", "nested_blend"))
 
     def test_publish_does_not_scan_nodelist(self):
         from unittest import mock
@@ -1670,8 +1673,8 @@ class TestPublishMembership(MayaTestCase):
                 )
             self.assertFalse(_C._is_container_member(str(ctn), node.translateX))
             result = node.translateX >> container
-        self.assertEqual(str(result), "ctnP_host.translateX")
-        self.assertEqual(_bind_pairs("ctnP").get("translateX"), "ctnP_host.translateX")
+        self.assertEqual(str(result), "ctnP_attributes.translateX")
+        self.assertEqual(_bind_pairs("ctnP").get("translateX"), "ctnP_attributes.translateX")
 
     def test_other_reference_of_the_same_file_is_not_a_member(self):
         import os

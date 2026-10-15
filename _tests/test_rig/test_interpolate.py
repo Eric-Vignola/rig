@@ -155,7 +155,7 @@ class TestInterpolatePublishedInterface(MayaTestCase):
 
         for attr in ("x", "xp", "yp", "output"):
             # ``xp`` / ``yp`` are MULTI (array) attrs -- registry-only on the
-            # host under native publish, so resolve them through the container
+            # attributes node under native publish, so resolve them through the container
             # rather than ``attributeQuery`` (which only sees real aliases).
             published = cmds.attributeQuery(attr, node=target, exists=True) or (
                 _resolve_published(target, attr) is not None

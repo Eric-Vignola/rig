@@ -2103,12 +2103,13 @@ def _do_destroy(
 
     # Step 0 -- native published-name teardown. With native container publishing,
     # ``container.<name>`` is a ``publishName`` / ``bindAttr`` ALIAS (single) or
-    # a registry-resolved attr on the host (multi), NOT a plain attr on the
-    # container. A plain ``cmds.deleteAttr`` on the alias clears the binding but
-    # leaves the published NAME dangling, and a registry multi has no real
-    # ``container.<name>`` at all (so the existence check below would wrongly
-    # reject it). Detect a published name on a container FIRST and tear it down
-    # via ``unbindAttr`` / ``unpublishName`` (+ registry/host-carrier cleanup).
+    # a registry-resolved attr on the container's attributes node (multi), NOT
+    # a plain attr on the container. A plain ``cmds.deleteAttr`` on the alias
+    # clears the binding but leaves the published NAME dangling, and a
+    # registry multi has no real ``container.<name>`` at all (so the existence
+    # check below would wrongly reject it). Detect a published name on a
+    # container FIRST and tear it down via ``unbindAttr`` / ``unpublishName``
+    # (+ registry / attributes-node carrier cleanup).
     # Genuine attrs added with ``ctn << Float(...)`` are not published, so
     # ``_destroy_published_name`` returns False and they fall through below.
     node_str, sep, attr_name = plug_str.partition(".")

@@ -160,7 +160,7 @@ class ContainerOptions:
     flatten_containers:      bool = True           # if False, nested `with container():` create real Maya sub-containers AND publish_input/publish_output activate
     publish_attributes:      bool = True           # if False, publish_input/publish_output passthrough -- return source unchanged (no addAttr / no wiring)
     absorb_unit_conversions: bool = False          # if True, auto-inserted unitConversion nodes are pulled into the active container. Default is False because Maya's Node Editor "Hide Unit Conversion Nodes" view option (recently added) makes any container-member node that connects to a unitConversion render OUTSIDE its container -- so absorbing the conversion makes the rest of the container appear to leak. Set True if you want the conversions inside (closer to v3.A behavior) at the cost of the visual leak.
-    native_multi_publish:    bool = False          # if False (default), MULTI/array attrs are NOT natively published on the container -- they stay on the real functional / host node and ``ctn.<name>`` resolves via ``Container.__getattr__`` + the multi registry. Maya's Node Editor renders a published array alias WITHOUT indices and rejects interactive (bare-parent) fan-in connects, so publishing arrays degrades the surface. Set True once Autodesk fixes array publishing to flip multis to native publishName/bindAttr like single plugs.
+    native_multi_publish:    bool = False          # if False (default), MULTI/array attrs are NOT natively published on the container -- they stay on the real functional / attributes node and ``ctn.<name>`` resolves via ``Container.__getattr__`` + the multi registry. Maya's Node Editor renders a published array alias WITHOUT indices and rejects interactive (bare-parent) fan-in connects, so publishing arrays degrades the surface. Set True once Autodesk fixes array publishing to flip multis to native publishName/bindAttr like single plugs.
     constant_folding:        bool = True           # if True (default), math ops given only literal numbers return a Python value instead of building a Maya node (``abs(-5)`` -> ``5``). Set False (or use ``with force_nodes():``) so EVERY rig command materializes its node network even for all-literal inputs -- a debug/demo aid for inspecting the graph a literal call would build. Folds are never cached, so a node built under ``constant_folding=False`` and a folded scalar never collide, and dedupe of node-building calls is preserved in both modes.
 
 
@@ -1649,25 +1649,26 @@ def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -
 #   * inner-plug publishes (outputs, internal inputs) bind the REAL inner
 #     member plug directly (no extra node).
 #   * created knobs / external-source inputs have no inner home, so they
-#     live on a per-container HOST ``network`` node (one per materialized
-#     container, lazily created).
+#     live on a per-container ATTRIBUTES ``network`` node
+#     (``<ctn>_attributes``, one per materialized container, lazily created)
+#     that holds the attributes belonging to the container itself.
 #
 # MULTI / array attrs are NOT published (Maya renders a published array
 # alias without indices and rejects interactive fan-in). They stay on the
-# functional / host node and ``Container.__getattr__`` resolves
+# functional / attributes node and ``Container.__getattr__`` resolves
 # ``ctn.<name>`` through the multi registry. Flip ``native_multi_publish``
 # to publish them natively once Autodesk fixes array publishing.
 
-# Hidden bool tag identifying a per-container host network node. Distinct
-# from ``__rig__`` (the GC-ownership tag) -- the host must NOT carry
+# Hidden bool tag identifying a per-container attributes network node.
+# Distinct from ``__rig__`` (the GC-ownership tag) -- the node must NOT carry
 # ``__rig__`` or ``cleanup`` could sweep it; it is created via raw
 # ``cmds.createNode`` (never ``container.createNode``) so it never gets one.
-_HOST_MARKER = "__rl_host__"
+_ATTRIBUTES_MARKER = "__container_attributes__"
 
-# ``{container_uuid: host_node_name}`` -- build-time reuse of the single host
-# per container. Self-healing: a miss falls back to scanning the container's
-# members for a ``__rl_host__`` node.
-_HOST_CACHE: Dict[str, str] = {}
+# ``{container_uuid: attributes_node_name}`` -- build-time reuse of the single
+# attributes node per container. Self-healing: a miss falls back to scanning
+# the container's members for a ``__container_attributes__`` node.
+_ATTRIBUTES_NODE_CACHE: Dict[str, str] = {}
 
 # ``{container_uuid: {published_name: (owner_node_uuid, real_attr_name)}}`` --
 # resolution table for non-published MULTI attrs. Single plugs resolve via the
@@ -1699,24 +1700,27 @@ def _has_attr_or_alias(node: str, attr: str) -> bool:
     return bool(cmds.attributeQuery(attr, node=node, exists=True))
 
 
-def _is_host(node: str) -> bool:
-    """True iff ``node`` carries the ``__rl_host__`` host-node marker.
+def _is_attributes_node(node: str) -> bool:
+    """True iff ``node`` carries the ``__container_attributes__`` marker.
 
     ``attributeQuery`` raises an assortment of exception types
     (``RuntimeError`` / ``ValueError`` / ``TypeError``) for an invalid node, so
-    swallow broadly and report "not a host" for anything unqueryable.
+    swallow broadly and report "not an attributes node" for anything
+    unqueryable.
     """
     try:
-        return _has_attr_or_alias(node, _HOST_MARKER)
+        return _has_attr_or_alias(node, _ATTRIBUTES_MARKER)
     except Exception:
         return False
 
 
-def _get_or_create_host(container_node) -> "Node":
-    """Return the per-container host ``network`` node, creating it lazily.
+def _get_or_create_attributes_node(container_node) -> "Node":
+    """Return the per-container ``<ctn>_attributes`` ``network`` node, creating
+    it lazily.
 
-    The host holds created-knob / external-source input attrs that have no
-    real inner home. Created via raw ``cmds.createNode`` (NOT
+    It holds the attributes that belong to the container itself (created
+    knobs, external-source inputs, unpublished multis) -- they have no real
+    inner home. Created via raw ``cmds.createNode`` (NOT
     ``container.createNode``) so it never gets the ``__rig__`` GC tag, then
     added as a member so ``bindAttr`` can bind its attrs to the container.
     """
@@ -1729,33 +1733,40 @@ def _get_or_create_host(container_node) -> "Node":
         uuid = None
 
     if uuid is not None:
-        cached = _HOST_CACHE.get(uuid)
-        if cached and cmds.objExists(cached) and _is_host(cached):
+        cached = _ATTRIBUTES_NODE_CACHE.get(uuid)
+        if cached and cmds.objExists(cached) and _is_attributes_node(cached):
             return _cast_node(cached)
 
-    # Fall back to scanning the container's members for an existing host.
+    # Fall back to scanning the container's members for an existing
+    # attributes node.
     for member in cmds.container(ctn, query=True, nodeList=True) or []:
-        if _is_host(member):
+        if _is_attributes_node(member):
             if uuid is not None:
-                _HOST_CACHE[uuid] = member
+                _ATTRIBUTES_NODE_CACHE[uuid] = member
             return _cast_node(member)
 
-    # Create a fresh host. Raw createNode => no ``__rig__`` tag => GC-safe.
-    host_name = cmds.createNode("network", name=f"{ctn}_host", skipSelect=True)
+    # Create a fresh attributes node. Raw createNode => no ``__rig__`` tag =>
+    # GC-safe.
+    node_name = cmds.createNode(
+        "network", name=f"{ctn}_attributes", skipSelect=True
+    )
     try:
         cmds.addAttr(
-            host_name, longName=_HOST_MARKER, attributeType="bool", hidden=True
+            node_name, longName=_ATTRIBUTES_MARKER, attributeType="bool",
+            hidden=True,
         )
-        cmds.setAttr(f"{host_name}.{_HOST_MARKER}", True, lock=True)
+        cmds.setAttr(f"{node_name}.{_ATTRIBUTES_MARKER}", True, lock=True)
     except RuntimeError as e:
-        LOGGER.debug("Failed to tag host %s: %s", host_name, e)
+        LOGGER.debug("Failed to tag attributes node %s: %s", node_name, e)
     try:
-        cmds.container(ctn, edit=True, addNode=[host_name], force=True)
+        cmds.container(ctn, edit=True, addNode=[node_name], force=True)
     except RuntimeError as e:
-        LOGGER.debug("Failed to add host %s to %s: %s", host_name, ctn, e)
+        LOGGER.debug(
+            "Failed to add attributes node %s to %s: %s", node_name, ctn, e
+        )
     if uuid is not None:
-        _HOST_CACHE[uuid] = host_name
-    return _cast_node(host_name)
+        _ATTRIBUTES_NODE_CACHE[uuid] = node_name
+    return _cast_node(node_name)
 
 
 def _publish_native(container_node, inner_plug, name: str) -> str:
@@ -1795,8 +1806,8 @@ def _register_multi(container_node, name: str, owner) -> None:
     :meth:`Container.__getattr__` can resolve it.
 
     ``owner`` may be the real inner Plug (``node.attr``, whose attr can differ
-    from ``name`` for an internal member multi) or a host Node (no attr, in
-    which case the attr defaults to ``name``). Stores
+    from ``name`` for an internal member multi) or the attributes Node (no
+    attr, in which case the attr defaults to ``name``). Stores
     ``(owner_node_uuid, real_attr_name)`` so :func:`_resolve_published` can
     rebuild the real plug rename-safely.
     """
@@ -1814,8 +1825,8 @@ def _resolve_published(container_node, name: str):
 
     Tries the native ``bindAttr`` table first (single plugs; survives scene
     save/reopen), then the multi registry (session-scoped). Returns the real
-    inner / host Plug -- NEVER the published alias, whose ``findPlug`` lookup
-    the DSL relies on RAISES.
+    inner / attributes-node Plug -- NEVER the published alias, whose
+    ``findPlug`` lookup the DSL relies on RAISES.
     """
     from rig._internal.plug import Plug
 
@@ -1847,8 +1858,8 @@ def _is_container_member(container_node, plug) -> bool:
 
     Native ``bindAttr`` only binds attrs that live on a container member, so
     a source whose node is NOT a member (e.g. the ``Plug >> container``
-    shortcut handed an external plug) must be routed through the host path
-    instead of bound directly.
+    shortcut handed an external plug) must be routed through the
+    attributes-node path instead of bound directly.
     """
     try:
         owner = plug.node.name
@@ -1925,8 +1936,8 @@ def _plug_is_bound(container_node, plug) -> bool:
     the same plug under a new name is silently SKIPPED (``Warning: Skipping
     <plug>. It is already published.``), leaving a dangling published name. The
     publish path detects this so it can route the second publish through a
-    DISTINCT host carrier attr instead (identity / passthrough -- e.g. an ease
-    whose output IS its input).
+    DISTINCT attributes-node carrier attr instead (identity / passthrough --
+    e.g. an ease whose output IS its input).
     """
     ctn = str(container_node)
     try:
@@ -1950,7 +1961,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
     alias deletes the bound attr and clears the bind table but leaves the
     published NAME dangling (``attributeQuery`` still reports it). The correct
     teardown is ``unbindAttr`` -> ``unpublishName``. The underlying carrier
-    attr is deleted ONLY when it lives on the per-container host node (a
+    attr is deleted ONLY when it lives on the per-container attributes node (a
     purpose-built knob); attrs on real inner nodes are left intact so
     destroying the public API never mutates internal compute.
     """
@@ -2002,9 +2013,14 @@ def _destroy_published_name(container_node, name: str) -> bool:
         if reg and name in reg:
             owner_uuid, attr = reg[name]
             owner = _name_from_uuid(owner_uuid)
-            # Only delete the carrier when it lives on the host; an internal
-            # member multi's real attr must NOT be deleted on unpublish.
-            if owner and _is_host(owner) and cmds.objExists(f"{owner}.{attr}"):
+            # Only delete the carrier when it lives on the attributes node;
+            # an internal member multi's real attr must NOT be deleted on
+            # unpublish.
+            if (
+                owner
+                and _is_attributes_node(owner)
+                and cmds.objExists(f"{owner}.{attr}")
+            ):
                 try:
                     cmds.deleteAttr(f"{owner}.{attr}")
                 except RuntimeError as e:
@@ -2012,10 +2028,10 @@ def _destroy_published_name(container_node, name: str) -> bool:
             del reg[name]
             found = True
 
-    # Delete the underlying carrier ONLY when it lives on the host node.
+    # Delete the underlying carrier ONLY when it lives on the attributes node.
     if bound_plug is not None and cmds.objExists(bound_plug):
         owner_node = bound_plug.split(".", 1)[0]
-        if _is_host(owner_node):
+        if _is_attributes_node(owner_node):
             try:
                 cmds.deleteAttr(bound_plug)
             except RuntimeError as e:
@@ -2119,9 +2135,10 @@ def _publish_to_container(
     # The ``>>`` shortcut (``Plug.__rshift__``) routes here for ANY source,
     # including EXTERNAL plugs whose node is not a member of this container.
     # ``bindAttr`` requires the bound plug to live on a container member, so
-    # an external source goes through the host path (create the attr on the
-    # per-container host node, wire the source in) -- exactly like the
-    # external-source forms of ``publish_input`` / ``publish_output``.
+    # an external source goes through the attributes-node path (create the
+    # attr on the per-container attributes node, wire the source in) --
+    # exactly like the external-source forms of ``publish_input`` /
+    # ``publish_output``.
     if not _is_container_member(container_target, plug):
         if direction == "input":
             return _create_external_input(
@@ -2144,9 +2161,10 @@ def _publish_to_container(
     # silently skips a second bind of the same plug, leaving a dangling
     # published name. This happens for identity / passthrough publishes where
     # the same plug is exposed under two names (e.g. ``in_linear``, whose
-    # output IS its input). Route the second publish through the host path so
-    # it gets a DISTINCT carrier attr (``host.<name>``) wired to the
-    # already-bound plug -- restoring the pre-native two-attr passthrough.
+    # output IS its input). Route the second publish through the
+    # attributes-node path so it gets a DISTINCT carrier attr
+    # (``<ctn>_attributes.<name>``) wired to the already-bound plug --
+    # restoring the pre-native two-attr passthrough.
     if _plug_is_bound(container_target, plug):
         if direction == "input":
             return _create_external_input(
@@ -2368,16 +2386,17 @@ def _create_external_input(
     value:           bool,
     add_attr_kwargs: Dict[str, Any],
 ):
-    """Create the input attr on the per-container HOST node, publish it, and
-    wire/set ``source`` IN.
+    """Create the input attr on the per-container ATTRIBUTES node, publish it,
+    and wire/set ``source`` IN.
 
     Used by :meth:`_ContainerStack.publish_input` for the v4.G
     external-source form (source is external Plug / scalar / sequence /
     ``None``). The created knob has no real inner home, so it lives on the
-    host ``network`` node; ``container.<name>`` is a native publishName /
-    bindAttr alias for ``host.<name>`` (or, for a multi, the host attr resolved
-    through the multi registry). Returns the real ``host.<name>`` Plug so the
-    DSL can read it (the alias's ``findPlug`` would raise).
+    attributes ``network`` node; ``container.<name>`` is a native
+    publishName / bindAttr alias for ``<ctn>_attributes.<name>`` (or, for a
+    multi, the attributes-node attr resolved through the multi registry).
+    Returns the real ``<ctn>_attributes.<name>`` Plug so the DSL can read it
+    (the alias's ``findPlug`` would raise).
     """
     from rig._internal.plug import Plug
     from rig.spec._base import _clone_attribute
@@ -2393,12 +2412,12 @@ def _create_external_input(
             f"{container_target}.{name} already exists; choose a different name."
         )
 
-    host = _get_or_create_host(container_target)
+    attributes_node = _get_or_create_attributes_node(container_target)
 
-    # 1. Create the attribute on the HOST node.
+    # 1. Create the attribute on the ATTRIBUTES node.
     if isinstance(source, Attribute) and not add_attr_kwargs:
         # External Plug, no kwargs override -- clone its spec.
-        _clone_attribute(source, host, attr_name=name)
+        _clone_attribute(source, attributes_node, attr_name=name)
     else:
         # Scalar / sequence / None / external-Plug-with-kwargs -- addAttr.
         kwargs             = dict(add_attr_kwargs)
@@ -2408,13 +2427,14 @@ def _create_external_input(
         # Default to keyable=True so published knobs land in the channel
         # box (matches user expectations for an exposed input).
         kwargs.setdefault("keyable", True)
-        _add_attr_with_compound_children(str(host), kwargs)
+        _add_attr_with_compound_children(str(attributes_node), kwargs)
 
-    new_plug = Plug(f"{host}.{name}")
+    new_plug = Plug(f"{attributes_node}.{name}")
 
-    # 2. Publish the host attr natively (single) or register it (multi).
+    # 2. Publish the attributes-node attr natively (single) or register it
+    #    (multi).
     if _plug_is_multi(new_plug) and not ContainerOptions.native_multi_publish:
-        _register_multi(container_target, name, host)
+        _register_multi(container_target, name, attributes_node)
     else:
         _publish_native(container_target, new_plug, name)
 
@@ -2435,19 +2455,19 @@ def _create_external_output(
     value:           bool,
     add_attr_kwargs: Dict[str, Any],
 ):
-    """Create the output attr on the per-container HOST node, publish it, and
-    wire ``source`` INTO it.
+    """Create the output attr on the per-container ATTRIBUTES node, publish
+    it, and wire ``source`` INTO it.
 
     Used by :meth:`_ContainerStack.publish_output` for the external-source
     and sequence-source forms (source is external Plug, sequence /
     List of values or Plugs, scalar, or ``None``). The attr is created on
-    the host ``network`` node; ``container.<name>`` is a native publishName /
-    bindAttr alias for ``host.<name>`` (single / compound) or resolves through
-    the multi registry (sequence / multi). Returns the real ``host.<name>``
-    Plug.
+    the attributes ``network`` node; ``container.<name>`` is a native
+    publishName / bindAttr alias for ``<ctn>_attributes.<name>`` (single /
+    compound) or resolves through the multi registry (sequence / multi).
+    Returns the real ``<ctn>_attributes.<name>`` Plug.
 
     Sequence sources create a multi attribute and connect each
-    ``source[i]`` -> ``host.<name>[i]``. Compound element types
+    ``source[i]`` -> ``<ctn>_attributes.<name>[i]``. Compound element types
     (``double3`` etc.) automatically get their X/Y/Z child attrs.
     """
     from rig._internal.plug import Plug
@@ -2464,9 +2484,10 @@ def _create_external_output(
             f"{container_target}.{name} already exists; choose a different name."
         )
 
-    host = _get_or_create_host(container_target)
+    attributes_node = _get_or_create_attributes_node(container_target)
 
-    # Sequence / List -> multi attribute on the host, per-index connect.
+    # Sequence / List -> multi attribute on the attributes node, per-index
+    # connect.
     is_sequence_source = _is_list(source) or (
         not isinstance(source, Attribute)
         and not isinstance(source, str)
@@ -2498,8 +2519,8 @@ def _create_external_output(
             if inferred_compound:
                 kwargs.update(inferred)
                 kwargs.setdefault("keyable", False)
-                _add_attr_with_compound_children(str(host), kwargs)
-                new_plug = Plug(f"{host}.{name}")
+                _add_attr_with_compound_children(str(attributes_node), kwargs)
+                new_plug = Plug(f"{attributes_node}.{name}")
                 # Compound single (double3 etc.) -- native-publishable.
                 _publish_native(container_target, new_plug, name)
                 if value:
@@ -2520,8 +2541,8 @@ def _create_external_output(
         # but still channel-box visible would require explicit cb=True.
         kwargs.setdefault("keyable", False)
 
-        _add_attr_with_compound_children(str(host), kwargs)
-        new_plug = Plug(f"{host}.{name}")
+        _add_attr_with_compound_children(str(attributes_node), kwargs)
+        new_plug = Plug(f"{attributes_node}.{name}")
 
         # MULTI attrs are not natively published (see module header) unless the
         # ``native_multi_publish`` flag is set -- they resolve through the
@@ -2529,11 +2550,11 @@ def _create_external_output(
         if ContainerOptions.native_multi_publish:
             _publish_native(container_target, new_plug, name)
         else:
-            _register_multi(container_target, name, host)
+            _register_multi(container_target, name, attributes_node)
 
         if value:
             for i, elem in enumerate(source):
-                # Each iteration: source[i] drives host.<name>[i].
+                # Each iteration: source[i] drives attributes_node.<name>[i].
                 # ``<<`` on a single-index multi destination handles
                 # both Plug (connect) and value (setAttr) sources via
                 # the existing dispatch.
@@ -2541,7 +2562,8 @@ def _create_external_output(
 
         return new_plug
 
-    # External single Plug -> single-attribute clone + connect on the host.
+    # External single Plug -> single-attribute clone + connect on the
+    # attributes node.
     if isinstance(source, Attribute):
         if add_attr_kwargs:
             kwargs             = dict(add_attr_kwargs)
@@ -2549,32 +2571,33 @@ def _create_external_output(
             if "at" not in kwargs and "dt" not in kwargs:
                 kwargs.update(_infer_attr_type(source))
             kwargs.setdefault("keyable", False)
-            _add_attr_with_compound_children(str(host), kwargs)
+            _add_attr_with_compound_children(str(attributes_node), kwargs)
         else:
-            _clone_attribute(source, host, attr_name=name)
-        new_plug = Plug(f"{host}.{name}")
+            _clone_attribute(source, attributes_node, attr_name=name)
+        new_plug = Plug(f"{attributes_node}.{name}")
 
         if _plug_is_multi(new_plug) and not ContainerOptions.native_multi_publish:
-            _register_multi(container_target, name, host)
+            _register_multi(container_target, name, attributes_node)
         else:
             _publish_native(container_target, new_plug, name)
 
         if value:
-            # Output direction: source drives the new host attr.
+            # Output direction: source drives the new attributes-node attr.
             try:
                 source.connect(new_plug, force=True)
             except Exception:
                 pass
         return new_plug
 
-    # Scalar / None / opaque value -> create attr on host, publish, seed.
+    # Scalar / None / opaque value -> create attr on the attributes node,
+    # publish, seed.
     kwargs             = dict(add_attr_kwargs)
     kwargs["longName"] = name
     if "at" not in kwargs and "dt" not in kwargs:
         kwargs.update(_infer_attr_type(source))
     kwargs.setdefault("keyable", False)
-    _add_attr_with_compound_children(str(host), kwargs)
-    new_plug = Plug(f"{host}.{name}")
+    _add_attr_with_compound_children(str(attributes_node), kwargs)
+    new_plug = Plug(f"{attributes_node}.{name}")
     _publish_native(container_target, new_plug, name)
     if value and source is not None:
         new_plug << source
@@ -2646,10 +2669,10 @@ class Container(DGNode):
         ``MFnDependencyNode.findPlug`` lookup (which ``DGNode.__getattr__``
         relies on) RAISES. So published / registered names must be resolved
         via the bindAttr table + multi registry FIRST, returning the real
-        inner / host Plug. Genuine container attrs (``ctn << Float("blend")``
-        adds a real attr ON the container) are not in those tables and fall
-        through to the inherited ``DGNode.__getattr__`` (``findPlug`` works on
-        them), whose ``_`` rule applies: a ``_`` name resolves only to a Maya
+        inner / attributes-node Plug. Genuine container attrs
+        (``ctn << Float("blend")`` adds a real attr ON the container) are not
+        in those tables and fall through to the inherited
+        ``DGNode.__getattr__`` (``findPlug`` works on them), whose ``_`` rule applies: a ``_`` name resolves only to a Maya
         attr of the live container. Python members (``name``, ``cleanup``, ...)
         win over published names, which the publish guard refuses.
         """
