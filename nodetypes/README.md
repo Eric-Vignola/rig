@@ -652,6 +652,15 @@ Verified on Maya 2025; not bugs to work around blindly.
   hands the visible shape to Maya's converter while the tag lives on the
   `Orig`. Use `set_component_tag_contents(tag, ids, category=...)`, which
   rewrites the contents in the new category.
+- **Maya refuses some component tag names**, with a bare "Maya command
+  error". Maya trims the whitespace at the ends of a name and makes a space
+  inside `_`. It then takes at least two characters, letters, digits and
+  `_`, starting with a letter or `_`, with single `.` or `:` between
+  characters. So `b`, `1a`, `a-b` and `a..b` are refused, and `ab`, `_1`
+  and `a.b` are taken; `a b` is stored as `a_b`. `add_component_tag` raises
+  a `ValueError` naming this rule before anything is made. A name with a
+  non-ASCII character is left to Maya, which first maps it to the system
+  code page.
 - **`Follicle.create_on_mesh` with a vertex list fails** (`numpy.AxisError`):
   the positions are collected in a generator that `np.array` cannot shape.
   Pass a transform as `ref_object`.

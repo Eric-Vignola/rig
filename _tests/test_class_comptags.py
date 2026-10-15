@@ -110,6 +110,66 @@ class TestComponentTags(MayaTestCase):
     (maya_major < 2022 or (maya_major == 2022 and maya_minor < 5)),
     "Skip maya versions without component tags or containt bugs.",
 )
+class TestComponentTagNames(MayaTestCase):
+    """``add_component_tag`` refuses, before anything is made, the names Maya
+    refuses with a bare "Maya command error", and only those (runs/r5/SKIN)."""
+
+    TEST_START_NEW_SCENE = True
+
+    REFUSED = ["b", "h", "x", "B", "_", "1", "", "  ", " a ", "1a", "a-b", "a..b", "a.:b", "a.", ":a", "a\tb", "a*", "f[0]"]
+    TAKEN   = {"ab": "ab", "_1": "_1", "a.b": "a.b", "a:b": "a:b", "a.1": "a.1", " cd\t": "cd", "a b": "a_b", "c \td": "c_d"}
+
+    def setUp(self):
+        super().setUp()
+        self.mesh = Node(cmds.polyCube(ch=False)[0]).get_shape()
+
+    def tag_multi(self):
+        return cmds.getAttr(f"{self.mesh}.componentTags", multiIndices=True)
+
+    def test_add_component_tag_refuses_a_name_maya_refuses_before_anything_is_made(self):
+        before = self.tag_multi()
+        for name in self.REFUSED:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, "not a component tag name: Maya takes .* at least two characters"):
+                    self.mesh.add_component_tag(name)
+                self.assertEqual(self.tag_multi(), before)
+
+    def test_add_component_tag_takes_the_names_maya_takes(self):
+        for name, stored in self.TAKEN.items():
+            with self.subTest(name=name):
+                i = self.mesh.add_component_tag(name)
+                self.assertEqual(self.mesh.get_component_tag_name(i), stored)
+                self.assertIn(stored, self.mesh.component_tags)
+
+    def test_the_name_rule_is_mayas(self):
+        """Every name of one to three characters from this alphabet: rig refuses
+        exactly what Maya's setAttr refuses."""
+        from itertools import product
+        from rig.nodetypes.geometry import _check_component_tag_name
+
+        plug  = f"{self.mesh}.componentTags[100].componentTagName"
+        wrong = []
+        for size in (1, 2, 3):
+            for name in map("".join, product("aB_1.: -\t\n*", repeat=size)):
+                try:
+                    cmds.setAttr(plug, name, type="string")
+                    maya_takes = True
+                except RuntimeError:
+                    maya_takes = False
+                try:
+                    _check_component_tag_name(name)
+                    rig_takes = True
+                except ValueError:
+                    rig_takes = False
+                if maya_takes != rig_takes:
+                    wrong.append((name, maya_takes))
+        self.assertEqual(wrong, [])
+
+
+@unittest.skipIf(
+    (maya_major < 2022 or (maya_major == 2022 and maya_minor < 5)),
+    "Skip maya versions without component tags or containt bugs.",
+)
 class TestComponentTagLocations(MayaTestCase):
     """
     Test component tags where Maya really stores them: on the injection node
