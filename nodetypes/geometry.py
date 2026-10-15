@@ -30,8 +30,10 @@ if TYPE_CHECKING:
     from cgmath.geometry import GeomSubsetData
 
 
-# a bare component tag name, as opposed to an expression ('top + side', '!top')
-_TAG_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_:]*$")
+# a bare component tag name, as opposed to an expression ('top + side', '!top');
+# '.' is a name character, as ':' is: Maya reads 'ab.cd' as one name, also inside
+# an expression (runs/r5/REBIND/probe_dot.txt)
+_TAG_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_:.]*$")
 
 # The names Maya stores as a component tag name (Maya 2025.3, runs/r5/SKIN/probe_tags*.py).
 # Maya trims the whitespace at the ends of the name and makes a space inside, with
@@ -698,8 +700,9 @@ class Geometry(DAGNode):
 
         Args:
             expr: Component tag key, or an expression ('top + side', '!top').
-                A bare key that does not exist raises; unknown names inside an
-                expression are left to Maya, which ignores them.
+                A bare key that does not exist raises, a dotted one too ('ab.cd'
+                is one name); unknown names inside an expression are left to
+                Maya, which ignores them.
         """
         data_fn = self.local_shape_attr.get_data_fn_set()
         if _TAG_NAME_RE.match(expr) and not data_fn.hasComponentTag(expr):
