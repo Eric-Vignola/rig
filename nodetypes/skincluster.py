@@ -354,8 +354,8 @@ class SkinCluster(Deformer):
         (``_skinclusters_of``, as ``create`` deletes them) to its influences:
         not the skin of a mesh that drives it through a blendShape or a wrap,
         which ``listHistory`` reaches too. A geometry with none is left alone.
-        The shape bound is the visible one, whose skin this is, also when Maya
-        lists the ``Orig`` first.
+        `geo` is a transform or its shape. The shape bound is the visible one,
+        whose skin this is, also when Maya lists the ``Orig`` first.
 
         Raises:
             RuntimeError: before anything is changed, for a geometry with
@@ -363,7 +363,13 @@ class SkinCluster(Deformer):
                 in place only the one nearest the shape, and binds a new
                 skinCluster over the stack for another.
         """
-        shape = cmds.listRelatives(geo, shapes=True, noIntermediate=True, pa=True)[0]
+        if cmds.objectType(geo, isAType="shape"):
+            # dagPose queries a transform ("Hierarchy must be specified" on a shape)
+            shape     = str(geo)
+            transform = cmds.listRelatives(shape, parent=True, pa=True)[0]
+        else:
+            shape     = cmds.listRelatives(geo, shapes=True, noIntermediate=True, pa=True)[0]
+            transform = geo
         skins = [s.name for s in _skinclusters_of(_cast(geo))]
         if not skins:
             return
@@ -380,7 +386,7 @@ class SkinCluster(Deformer):
         cmds.skinCluster(skin, edit=True, unbindKeepHistory=True)
 
         # delete bindPose
-        dagPose = cmds.dagPose(geo, query=True, bindPose=True)
+        dagPose = cmds.dagPose(transform, query=True, bindPose=True)
         if dagPose:
             cmds.delete(dagPose)
         dagPose = cmds.listConnections(skin + ".bindPose", d=False, type="dagPose")
