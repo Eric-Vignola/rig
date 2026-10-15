@@ -603,7 +603,8 @@ Verified on Maya 2025; not bugs to work around blindly.
   without the normalisation. They take `mode` (`SPATIAL`, `UV`) and
   `method`; `ROBUST_BILINEAR` and the skin `options` are not map options.
   They, and `SkinCluster.transfer_to_mesh`, read UVs only for `UV` (the
-  first UV sets).
+  first UV sets); a mesh whose first set holds no UVs is then cgmath's
+  `RuntimeError: UV data not supplied.`
   A tag holds where the target's components land on the source, in the
   transfer's mode. A vertex is in when its sample reads a tagged vertex
   with a nonzero weight (`GeomSubsetData.from_skin_data`'s rule), so a
