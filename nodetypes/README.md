@@ -602,6 +602,11 @@ Verified on Maya 2025; not bugs to work around blindly.
   sample data, unnormalised: the values are what `resample_map` gives
   without the normalisation. They take `mode` (`SPATIAL`, `UV`) and
   `method`; `ROBUST_BILINEAR` and the skin `options` are not map options.
+  A tag keeps `GeomSubsetData.from_skin_data`'s rule: it is the vertices
+  any nonzero sample reaches, so a vertex tag onto a finer mesh also gets
+  the vertices on the faces around its own, and a face or edge tag (which
+  goes through its vertices) comes back as every face or edge touching
+  them, one ring wider even onto the same topology.
   `SkinCluster.transfer_to_mesh` (many influences) is fine.
 - **`Mesh.add_color_set(name, "RGBA")` is a `ValueError`**: the
   representation is looked up by enum *value* (Maya's `kRGBA` integer), so

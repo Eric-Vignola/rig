@@ -988,9 +988,14 @@ class Mesh(Geometry):
     ) -> None:
         """Transfer component tags from this mesh to the other mesh.
 
-        Each tag gets the vertices of `other` whose sample on this mesh reads
-        one of its vertices, as faces or edges for such a tag (see
-        ``_resample_map``). One undo step (``rig.Mesh.transfer_component_tags``).
+        A vertex tag gets the vertices of `other` whose sample on this mesh
+        reads one of its vertices with a nonzero weight: the same vertices onto
+        the same topology, and onto a finer mesh also those on the faces around
+        them. A face or edge tag goes through its vertices (cgmath's
+        ``GeomSubsetData`` rule): it gets every face or edge of `other` that
+        touches such a vertex, so it grows by one ring even onto the same
+        topology (see ``_resample_map``). One undo step
+        (``rig.Mesh.transfer_component_tags``).
 
         Args:
             tags: One or more component tags to transfer.
@@ -1026,9 +1031,10 @@ class Mesh(Geometry):
         """Transfer a mesh map from this mesh to the other mesh.
 
         Each map is made again on `other` (``add_map(force=True)``) with its
-        categories, and each of its values is the blend of this map's values
-        that its sample on this mesh reads (see ``_resample_map``). One undo
-        step (``rig.Mesh.transfer_maps``).
+        categories: a map of that name already there is deleted first, and
+        its connections with it. Each of its values is the blend of this
+        map's values that its sample on this mesh reads (see
+        ``_resample_map``). One undo step (``rig.Mesh.transfer_maps``).
 
         Args:
             maps: One or more map names to transfer.
@@ -1058,8 +1064,9 @@ def _resample_map(resampler, data, mode=None, method="bilinear"):
     """`data`, a cgmath MapData or GeomSubsetData of the resampler's source mesh,
     sampled onto its destination mesh in `mode` (a ``ResampleMode``, SPATIAL by
     default) with `method` (a ``SampleMethod``): each value is the weighted sum
-    of the source values its sample reads, and a subset keeps the components
-    any nonzero sample reaches (``from_skin_data``).
+    of the source values its sample reads, and a subset keeps the vertices any
+    nonzero sample reaches, an f or e subset every face or edge touching one of
+    them (``from_skin_data``'s rule: such a subset grows by one ring).
 
     cgmath's ``MeshDataResampler.resample_map`` (1.0.4, 2.0.0) hands the data
     to ``resample_skin_weights`` as a one-influence SkinData, which normalizes
