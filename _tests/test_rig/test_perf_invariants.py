@@ -659,7 +659,8 @@ class TestSetTypeArgument(MayaTestCase):
             (net.str, ["text"], {"type": "string"}),
             (net.dbl, [1.5], {}),
         ):
-            with self.subTest(attr=str(attr)):
+            # the cmds route's kwargs (R5 D3: a double's set takes the API, journaled)
+            with self.subTest(attr=str(attr)), mock.patch.object(journal, "API_EDITS", False):
                 self.assertEqual(self._set_kwargs(attr, *args), expected)
         self.assertEqual(cmds.getAttr("net.dtm")[12:15], [2.0, 3.0, 4.0])
 

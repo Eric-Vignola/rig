@@ -368,8 +368,10 @@ class TestStatementGranularity(_ApiCase):
         self.assertEqual(self.count_steps(), 1)
 
     def test_value_sets_stay_cmds_steps(self):
-        # D2 journals connects only: node.t << (1, 2, 3) is three cmds steps (D3's)
-        Node("a").t << (1, 2, 3)
+        # with the API off, node.t << (1, 2, 3) is three cmds steps (R5 D3 journals them:
+        # test_r5_api_sets.TestStatementGranularity, one step)
+        with mock.patch.object(journal, "API_EDITS", False):
+            Node("a").t << (1, 2, 3)
         self.assertEqual(self.count_steps(), 3)
 
     def network(self, api):
@@ -735,9 +737,8 @@ class TestTheBuild(_ApiCase):
                 mock.patch.object(cmds, "connectAttr", wraps=cmds.connectAttr) as cmds_connect:
             rs.create_rail(pcs, u, scale_controls=pcs, orient_controls=pcs, degree=3, periodic=False,
                            aim_axis=1, up_axis=0, debug=True)
-        # 860 at the D exit (plan_D V10); at D2 the value sets are still cmds, each a barrier
-        # that registers the statement's connects so far (about 720 per build; D3 takes them)
+        # plan_D V10: at most 860 (R5 D3 journals the value sets, so few set barriers are left)
+        self.assertLessEqual(counts["register"], 860)
         self.assertLessEqual(counts["register"] - counts["set barriers"], 860)
-        self.assertLessEqual(counts["register"], 1500)
         self.assertGreater(counts["api"], 4500)
         self.assertLess(cmds_connect.call_count, 100)

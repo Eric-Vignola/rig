@@ -17,7 +17,9 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
+from rig._internal import journal as _journal
 from rig._internal.api_edits import api_connect as _api_connect
+from rig._internal.api_edits import api_set as _api_set
 from rig._internal.journal import cmds_edit, outside, rig_code, statement
 from rig.nodetypes.errors import (
     _article,
@@ -2703,6 +2705,11 @@ class Attribute(str):
               raises TypeError naming the fields, and the value is left as it
               was (see `_enum_value`).
 
+        One int, float or bool value (no flag) into a free numeric, unit, enum or bool
+        attr is set through the API and journaled when cmds.setAttr() would set the same
+        value (`rig._internal.api_edits.api_set`: one undo step per statement); any other
+        set takes cmds.setAttr(), which raises its errors.
+
         Args:
             args, kwargs: args supported by cmds.setAttr()
         """
@@ -2716,7 +2723,17 @@ class Attribute(str):
             and _attr_mobject(self).hasFn(OpenMaya.MFn.kEnumAttribute)
         ):
             args = (_enum_value(_attr_mobject(self), args[0], self.full_name),)
-        if "type" not in kwargs and not self._is_fixed_kind_outside_array():
+        # one numeric value into a plug of a fixed kind outside any array (today's route
+        # makes no type query there): through the API and journaled when its guards hold
+        # (`rig._internal.api_edits.api_set`), else the cmds route below
+        fixed = None
+        if len(args) == 1 and not kwargs and _journal.API_EDITS:
+            fixed = self._is_fixed_kind_outside_array()
+            if fixed and _api_set(self, args[0]):
+                return
+        if "type" not in kwargs and not (
+            fixed if fixed is not None else self._is_fixed_kind_outside_array()
+        ):
             # typed attr requires the `type` arg to be specified.
             # the only weird one-off is `fltMatrix`, which is not typed but still
             # requires the `type` arg.

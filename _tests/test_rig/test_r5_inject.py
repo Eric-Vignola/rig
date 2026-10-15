@@ -765,6 +765,17 @@ _D2_FEWER_UNDO_STEPS = {
     "user hook at a choice chain's end": 2,
     "vector -> matrix element": 1,
 }
+# Re-pinned (D3: single numeric value sets through the API, journaled; the same approved
+# difference): these cases' value sets join their statement's journal (the steps on top of
+# B1's and D2's).
+_D3_FEWER_UNDO_STEPS = {
+    "compound broadcast": 2,
+    "compound set": 2,
+    "dynamic double3 compound": 2,
+    "plugs and numbers into a compound": 2,
+    "quaternion -> vector": 3,
+    "spec slots into a compound": 1,
+}
 _D2_ERROR_LINES = {
     "matrix -> a transform plug no channel": (
         "Connection not made: 'locH.worldMatrix[0]' -> 'xfI.visibility'."
@@ -797,7 +808,7 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
     """Every case of `_CASES` gives what 619f29f gave (`_ORACLE_PATH`), but for
     the undo steps of the GC tags (`_B1_FEWER_UNDO_STEPS`), and of the journaled
     connects and the incompatible-type connect's ``Error:`` line (`_D2_FEWER_UNDO_STEPS`,
-    `_D2_ERROR_LINES`)."""
+    `_D2_ERROR_LINES`), and of the journaled value sets (`_D3_FEWER_UNDO_STEPS`)."""
 
     def test_every_case_as_619f29f(self):
         with open(_ORACLE_PATH) as fh:
@@ -806,11 +817,13 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
         self.assertEqual(sorted(table), sorted(oracle))
         self.assertLessEqual(set(_B1_FEWER_UNDO_STEPS), set(oracle))
         self.assertLessEqual(set(_D2_FEWER_UNDO_STEPS) | set(_D2_ERROR_LINES), set(oracle))
+        self.assertLessEqual(set(_D3_FEWER_UNDO_STEPS), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
                 expected = dict(oracle[name])
                 expected["undo_steps"] -= _B1_FEWER_UNDO_STEPS.get(name, 0)
                 expected["undo_steps"] -= _D2_FEWER_UNDO_STEPS.get(name, 0)
+                expected["undo_steps"] -= _D3_FEWER_UNDO_STEPS.get(name, 0)
                 if name in _D2_ERROR_LINES:
                     self.assertEqual(expected["output"]["maya"], [])
                     expected["output"] = dict(expected["output"], maya=[[4, _D2_ERROR_LINES[name]]])

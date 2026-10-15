@@ -240,8 +240,8 @@ def _load_for_fast_paths() -> bool:
             _WARNED = True
             cmds.warning(
                 "rig: its undo plug-in 'undoable_api_command' could not be loaded "
-                f"({_plugin_whereabouts()}: {str(error).strip()}); rig's connections take "
-                "the cmds route while it is missing, so builds run slower"
+                f"({_plugin_whereabouts()}: {str(error).strip()}); rig's connections and "
+                "value sets take the cmds route while it is missing, so builds run slower"
             )
         return False
     _LOAD_FAILED = None
