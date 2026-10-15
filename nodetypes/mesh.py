@@ -1798,6 +1798,8 @@ class _MeshSetPointsCommand(_MeshEdit):
     """`Mesh.set_points`: every point of the mesh, in one space. It edits no
     set, so it skips `_sync_sets` (setPoints keeps the sets either way)."""
 
+    UNDO_EDIT = "Mesh.set_points"
+
     def __init__(self, mesh: Mesh, points: OpenMaya.MPointArray, space: int) -> None:
         super().__init__(mesh)
         self._points = points
@@ -1906,6 +1908,8 @@ class _MeshAddUVSetCommand(_MeshSetsEdit):
     """`Mesh.add_uv_set`: an empty UV set. Undo frees its element, so a redo
     makes it in the same one."""
 
+    UNDO_EDIT = "Mesh.add_uv_set"
+
     def __init__(self, mesh: Mesh, name: str) -> None:
         self._name = name
         super().__init__(mesh)
@@ -1923,6 +1927,8 @@ class _MeshRenameUVSetCommand(_MeshEdit):
     """`Mesh.rename_uv_set`. A rename adds no node, with or without history,
     so it takes no modifier (whose undo would re-evaluate the history and drop
     the UVs written into the set through the API)."""
+
+    UNDO_EDIT = "Mesh.rename_uv_set"
 
     def __init__(self, mesh: Mesh, name: str, new_name: str) -> None:
         super().__init__(mesh)
@@ -1947,6 +1953,8 @@ class _MeshDeleteUVSetCommand(_MeshSetsEdit):
     is current again. With history the modifier's undo brings the set back from
     the history, without the UVs written into it through the API: they are
     written again."""
+
+    UNDO_EDIT = "Mesh.delete_uv_set"
 
     def __init__(self, mesh: Mesh, name: str) -> None:
         self._name    = name
@@ -1989,6 +1997,8 @@ class _MeshSetUVDataCommand(_MeshEdit):
     """`Mesh.set_uv_data`: the UVs of one set, and its rename to the data's
     name. The UVs are data, written through the API with or without history
     (see `_put_uvs`)."""
+
+    UNDO_EDIT = "Mesh.set_uv_data"
 
     def __init__(self, mesh: Mesh, uv_set: str, uv_data: UVData) -> None:
         super().__init__(mesh)
@@ -2120,6 +2130,8 @@ class _MeshAddColorSetCommand(_MeshSetsEdit):
     """`Mesh.add_color_set`: an empty, unclamped colour set. Undo frees its
     element, so a redo makes it in the same one."""
 
+    UNDO_EDIT = "Mesh.add_color_set"
+
     def __init__(self, mesh: Mesh, name: str, rep: int) -> None:
         self._name = name
         self._rep  = rep
@@ -2137,6 +2149,8 @@ class _MeshAddColorSetCommand(_MeshSetsEdit):
 class _ColorSetDataCommand(_MeshSetsEdit):
     """`ColorSet.data`: one colour per vertex. Undo puts the set's colours back
     face-vertex by face-vertex; the current colour set stays current."""
+
+    UNDO_EDIT = "ColorSet.data"
 
     def __init__(self, mesh: Mesh, name: str, rep: int, colors: OpenMaya.MColorArray) -> None:
         self._name    = name
@@ -2194,6 +2208,8 @@ class _ColorSetDeleteCommand(_MeshSetsEdit):
     clamping and colours, in its place (the API adds a set last, so the sets
     after it are made again after it), each in its colorSet[] element with its
     connections, and the current set is current again."""
+
+    UNDO_EDIT = "ColorSet.delete"
 
     def __init__(self, mesh: Mesh, name: str) -> None:
         self._name    = name

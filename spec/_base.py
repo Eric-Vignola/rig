@@ -919,6 +919,8 @@ class _HiddenEdit:
     undo step): ``addAttr -edit`` cannot change it. API only, as the command
     requires."""
 
+    UNDO_EDIT = "an attribute's hidden flag"
+
     def __init__(self, attribute: Any, state: bool) -> None:
         self.attribute = attribute
         self.state     = state
@@ -951,6 +953,8 @@ class _DefaultEdit:
     """An attribute's default, set through rig's undoable command (one undo
     step whose undo restores the previous default: Maya's undo of an
     ``addAttr -edit -defaultValue`` sets it to 0). API only."""
+
+    UNDO_EDIT = "an attribute's default"
 
     def __init__(self, attribute: Any, value: Any) -> None:
         self.attribute = attribute

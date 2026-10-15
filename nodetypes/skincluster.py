@@ -612,6 +612,8 @@ class SetSkinWeightsCommand:
     not one per point per influence.
     """
 
+    UNDO_EDIT = "SkinCluster.set_weights"
+
     def __init__(
         self,
         skincluster: SkinCluster,
