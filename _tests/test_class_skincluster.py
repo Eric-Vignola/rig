@@ -370,3 +370,53 @@ class TestSkinClusterUndo(UndoWalk, MayaTestCase):
         j = cmds.joint(name="j1")
         skin = SkinCluster.create(cube, [j])
         self.assertTrue(np.allclose(skin.get_weights(), 1.0))
+    # --- copy / transfer: one step each (runs\r5\XFER\review\probe_undo.py: copy_skincluster
+    # onto an unskinned mesh was two rig steps and three findRelatedDeformer entries, and
+    # one undo left the new skin bound to the first joint only)
+
+    def one_step(self, name, edit, meshes, skins):
+        """`edit()` is ONE undo step named `name`: one undo gives the scene back and
+        empties the queue, one redo gives the edit back, twice over."""
+        cmds.flushUndo()
+        before = self.scene_state(meshes=meshes, skins=skins)
+        edit()
+        after = self.scene_state(meshes=meshes, skins=skins)
+        self.assertNotEqual(before["skins"], after["skins"])
+        self.assertEqual(self.undo_name(), name)
+        for cycle in range(2):
+            self.undo_steps(1)
+            self.assert_state_equal(self.scene_state(meshes=meshes, skins=skins), before, f"cycle {cycle} undo")
+            self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True), f"cycle {cycle}: more than one step")
+            self.redo_steps(1)
+            self.assert_state_equal(self.scene_state(meshes=meshes, skins=skins), after, f"cycle {cycle} redo")
+
+    def source(self):
+        skin = self.skin()
+        skin.set_weights(np.tile([0.25, 0.75], (8, 1)))
+        target = cmds.polyCube(name="t", height=2, constructionHistory=False)[0]
+        return skin, target
+
+    def test_copy_skincluster_onto_an_unskinned_mesh_is_one_step(self):
+        _, target = self.source()
+        self.one_step(
+            "rig.SkinCluster.copy_skincluster",
+            lambda: SkinCluster.copy_skincluster(self.cube, [f"{target}.vtx[0:7]"]),
+            meshes=["tShape"], skins=["tShape_skincluster"],
+        )
+
+    def test_copy_skincluster_adding_influences_is_one_step(self):
+        _, target = self.source()
+        SkinCluster.create(target, [self.j3])
+        self.one_step(
+            "rig.SkinCluster.copy_skincluster",
+            lambda: SkinCluster.copy_skincluster(self.cube, [f"{target}.vtx[0:3]"]),
+            meshes=["tShape"], skins=["t_skincluster"],
+        )
+
+    def test_transfer_to_mesh_is_one_step(self):
+        skin, target = self.source()
+        self.one_step(
+            "rig.SkinCluster.transfer_to_mesh",
+            lambda: skin.transfer_to_mesh(f"{target}Shape"),
+            meshes=["tShape"], skins=["tShape_skincluster"],
+        )

@@ -389,28 +389,31 @@ class SkinCluster(Deformer):
             kwargs: Transfer kwargs supported in MeshDataResampler.resample_skin_weights().
 
         Returns:
-            The new skincluster node on the other mesh.
+            The new skincluster node on the other mesh (its current one, when
+            it has one), in one undo step (``rig.SkinCluster.transfer_to_mesh``).
         """
         from cgmath.geometry.resample import MeshDataResampler
 
-        this  = self.get_mesh()
-        other = Mesh(other)
+        with _undo_chunk("rig.SkinCluster.transfer_to_mesh"):
+            this  = self.get_mesh()
+            other = Mesh(other)
 
-        mesh_data_a, uv_data_a = this.serialize(include_uvs=True)
-        mesh_data_b, uv_data_b = other.serialize(include_uvs=True)
+            mesh_data_a, uv_data_a = this.serialize(include_uvs=True)
+            mesh_data_b, uv_data_b = other.serialize(include_uvs=True)
 
-        resampler = MeshDataResampler(
-            mesh_data_a, mesh_data_b, uv_data_a[0], uv_data_b[0]
-        )
-        skin_data_b = resampler.resample_skin_weights(self.serialize(), **kwargs)
-        return other.apply_skin_data(skin_data_b)
+            resampler = MeshDataResampler(
+                mesh_data_a, mesh_data_b, uv_data_a[0], uv_data_b[0]
+            )
+            skin_data_b = resampler.resample_skin_weights(self.serialize(), **kwargs)
+            return other.apply_skin_data(skin_data_b)
 
     @staticmethod
     def copy_skincluster(
         source_meshes: list[str] | str, target_vertices: list[str] = None
     ) -> None:
         """Many to One skincluster transfer: each target vertex gets the
-        weights sampled at its closest point on the source meshes.
+        weights sampled at its closest point on the source meshes. One undo
+        step (``rig.SkinCluster.copy_skincluster``).
 
         Args:
             source_meshes: One or more skinned meshes (their last skinCluster).
@@ -422,57 +425,58 @@ class SkinCluster(Deformer):
         """
         from cgmath.geometry import SkinData
 
-        # process source_meshes
-        if isinstance(source_meshes, str):
-            source_meshes = [Mesh(source_meshes)]
-        else:
-            source_meshes = [Mesh(x) for x in source_meshes]
-
-        # process source skinclusters
-        source_skins = []
-        for mesh in source_meshes:
-            skin = mesh.get_deformers(node_type="skinCluster")
-            # use the last found skinCluster if any
-            if skin:
-                source_skins.append(skin[-1])
+        with _undo_chunk("rig.SkinCluster.copy_skincluster"):
+            # process source_meshes
+            if isinstance(source_meshes, str):
+                source_meshes = [Mesh(source_meshes)]
             else:
-                raise RuntimeError(f"No skinCluster found on {mesh}")
+                source_meshes = [Mesh(x) for x in source_meshes]
 
-        # serialize + combined the source data
-        source_mesh_data = sum([x.serialize()[0] for x in source_meshes])
-        source_skin_data = sum([x.serialize() for x in source_skins])
-        source_skin_data.remove_unused()
+            # process source skinclusters
+            source_skins = []
+            for mesh in source_meshes:
+                skin = mesh.get_deformers(node_type="skinCluster")
+                # use the last found skinCluster if any
+                if skin:
+                    source_skins.append(skin[-1])
+                else:
+                    raise RuntimeError(f"No skinCluster found on {mesh}")
 
-        # process each target
-        target_data = flatten_vertices(target_vertices)
-        for target_mesh, indices in target_data.items():
-            # serialize target_mesh
-            target_mesh_data = target_mesh.serialize()[0]
+            # serialize + combined the source data
+            source_mesh_data = sum([x.serialize()[0] for x in source_meshes])
+            source_skin_data = sum([x.serialize() for x in source_skins])
+            source_skin_data.remove_unused()
 
-            # make a copy of the source_skin_data before it gets conformed
-            skin_data = source_skin_data.copy()
+            # process each target
+            target_data = flatten_vertices(target_vertices)
+            for target_mesh, indices in target_data.items():
+                # serialize target_mesh
+                target_mesh_data = target_mesh.serialize()[0]
 
-            # get the target skin
-            target_skin = target_mesh.get_deformers(node_type="skinCluster")
+                # make a copy of the source_skin_data before it gets conformed
+                skin_data = source_skin_data.copy()
 
-            # if no skinCluster present, make a default one
-            if not target_skin:
-                default     = skin_data.influences[:1]
-                target_skin = SkinCluster.create(target_mesh, default)
-            else:
-                target_skin = target_skin[-1]
+                # get the target skin
+                target_skin = target_mesh.get_deformers(node_type="skinCluster")
 
-            target_skin_data = target_skin.serialize()
+                # if no skinCluster present, make a default one
+                if not target_skin:
+                    default     = skin_data.influences[:1]
+                    target_skin = SkinCluster.create(target_mesh, default)
+                else:
+                    target_skin = target_skin[-1]
 
-            # conform the SkinData before sampling
-            SkinData.conform(target_skin_data, skin_data)
+                target_skin_data = target_skin.serialize()
 
-            # spatially sample the target points
-            samples                           = source_mesh_data.sample(target_mesh_data.points[indices])
-            target_skin_data.weights[indices] = samples(skin_data.weights)
+                # conform the SkinData before sampling
+                SkinData.conform(target_skin_data, skin_data)
 
-            # set the weights, adding the source influences the target lacks
-            target_skin.set_weights(target_skin_data)
+                # spatially sample the target points
+                samples                           = source_mesh_data.sample(target_mesh_data.points[indices])
+                target_skin_data.weights[indices] = samples(skin_data.weights)
+
+                # set the weights, adding the source influences the target lacks
+                target_skin.set_weights(target_skin_data)
 
     # --- serialization
 

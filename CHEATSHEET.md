@@ -2812,6 +2812,7 @@ Edit menu. How many steps a statement makes depends on what it runs:
 | a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
 | `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
+| the transfers: `Mesh.transfer_maps`, `Mesh.transfer_component_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.copy_skincluster` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.copy_skincluster` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |
 
 `rig.undo_chunk` makes any run of statements one named step:

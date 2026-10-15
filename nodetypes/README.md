@@ -494,7 +494,9 @@ vertex edits restores broken sets. `Mesh.create` and `NurbsCurve.create`
 need no command (the shape rides a recorded `createNode` transform); they,
 `SkinCluster.create` and `set_weights(SkinData)` are one step each, named
 `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`,
-`rig.SkinCluster.set_weights`.
+`rig.SkinCluster.set_weights`. The transfers (`Mesh.transfer_maps`, `transfer_component_tags`,
+`SkinCluster.transfer_to_mesh`, `copy_skincluster`) are one step each too,
+named after the method (`rig.Mesh.transfer_maps` ...).
 
 Your own API edits take the same command: [CHEATSHEET section 21](CHEATSHEET.md#21-plugins--load_plugin-and-undo)
 has the recipe and the object's rules (apply the change first, in `doIt`;
