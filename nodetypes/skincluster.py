@@ -163,7 +163,7 @@ class SkinCluster(Deformer):
         with _undo_chunk("rig.SkinCluster.create"):
             # delete the geometry's own skinclusters, if any: not those of a
             # mesh that drives it (listHistory reaches them too)
-            skin = [s.name for s in _skinclusters_of(DAGNode(geom))]
+            skin = [s.name for s in _skinclusters_of(_cast(geom))]
             if skin:
                 cmds.delete(skin)
 
