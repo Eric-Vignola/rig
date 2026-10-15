@@ -172,6 +172,13 @@ class TestSkinCluster(MayaTestCase):
             self._skin_of(target).get_weights(), source_skin.get_weights(), rtol=0, atol=1e-12
         )
 
+    def test_copy_skincluster_needs_the_target_vertices(self):
+        """No default: None was a TypeError from sorted(None) (runs/r5/XFER/review/probe_skin.py)."""
+        before = cmds.ls()
+        with self.assertRaisesRegex(TypeError, "target_vertices"):
+            SkinCluster.copy_skincluster(str(self.cube))
+        self.assertEqual(cmds.ls(), before)
+
 
 # --- undo (round U2, step S3) ------------------------------------------------------------
 

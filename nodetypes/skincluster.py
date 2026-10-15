@@ -409,7 +409,7 @@ class SkinCluster(Deformer):
 
     @staticmethod
     def copy_skincluster(
-        source_meshes: list[str] | str, target_vertices: list[str] = None
+        source_meshes: list[str] | str, target_vertices: list[str]
     ) -> None:
         """Many to One skincluster transfer: each target vertex gets the
         weights sampled at its closest point on the source meshes. One undo
