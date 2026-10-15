@@ -290,6 +290,28 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(self.skin.get_influence_objects(), [self.joint1, self.joint2])
         self.assertEqual(self.skin.envelope.get(), 1)
 
+    def test_rebind_binds_the_visible_shape_when_the_orig_is_listed_first(self):
+        """rebind bound listRelatives' first shape, the Orig here, while it
+        takes the skins of the visible shape: it unbound the skin, Maya raised
+        'No deformable objects selected.' and the skin stayed at envelope 0
+        (runs/r5/REBIND/review/probe_rebind_review_head.txt, R1)."""
+        shapes = cmds.listRelatives(str(self.cube), shapes=True, pa=True)
+        orig   = [s for s in shapes if cmds.getAttr(f"{s}.intermediateObject")][0]
+        cmds.reorder(orig, front=True)
+        self.assertEqual(cmds.listRelatives(str(self.cube), shapes=True, pa=True)[0], orig)
+        shape   = cmds.listRelatives(str(self.cube), shapes=True, noIntermediate=True, pa=True)[0]
+        weights = self.skin.get_weights()
+
+        SkinCluster.rebind(str(self.cube))
+
+        self._assert_own_skin(self.cube, self.skin)
+        self.assertEqual(self.skin.get_influence_objects(), [self.joint1, self.joint2])
+        self.assertEqual(self.skin.envelope.get(), 1)
+        np.testing.assert_allclose(self.skin.get_weights(), weights, rtol=0, atol=0)
+        # it deforms: vtx[4] (y=1, weighted to joint2) follows joint2
+        self.joint2.t.set(0, 3, 0)
+        self.assertAlmostEqual(cmds.pointPosition(f"{shape}.vtx[4]", world=True)[1], 3.0)
+
     def _skinned_intermediate_target(self):
         """A cube with no skinCluster of its own whose blendShape target is a
         skinned intermediate shape: get_deformers lists the target's skin."""
