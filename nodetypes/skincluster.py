@@ -353,8 +353,10 @@ class SkinCluster(Deformer):
         """Unbind and rebind each of the geometry's own skinClusters
         (``_skinclusters_of``, as ``create`` deletes them): not the skin of a
         mesh that drives it through a blendShape or a wrap, which
-        ``listHistory`` reaches too. A geometry with none is left alone."""
-        shape = cmds.listRelatives(geo, shapes=True, pa=True)[0]
+        ``listHistory`` reaches too. A geometry with none is left alone. The
+        shape bound is the visible one, whose skins these are, also when Maya
+        lists the ``Orig`` first."""
+        shape = cmds.listRelatives(geo, shapes=True, noIntermediate=True, pa=True)[0]
         skins = [s.name for s in _skinclusters_of(_cast(geo))]
         if not skins:
             return
