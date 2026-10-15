@@ -41,9 +41,9 @@ from typing import Any, Callable
 from maya import cmds as _cmds
 from maya import mel as _mel
 
-# Reserved for D2 / D3, the API fast paths (nothing reads it yet): False will send every
-# edit through cmds (the scopes, barriers and call-outs stay, and change nothing then), for
-# A/B runs and for the tests that pin the cmds route.
+# The API fast paths (`rig._internal.api_edits`: the connects) read it at every edit: False
+# sends every edit through cmds (the scopes, barriers and call-outs stay, and change nothing
+# then), for A/B runs and for the tests that pin the cmds route.
 API_EDITS = True
 
 
@@ -79,6 +79,9 @@ class _Journal:
     in the order they were made. Its ``doIt`` does nothing: the edits are applied already."""
 
     __slots__ = ("ops",)
+
+    # what a failed load of rig's plug-in names (`rig.nodetypes.plugins._run_undoable`)
+    UNDO_EDIT = "the API edits of a statement"
 
     def __init__(self, ops: list) -> None:
         self.ops = ops

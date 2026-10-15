@@ -743,9 +743,61 @@ _B1_FEWER_UNDO_STEPS = dict.fromkeys(
 )
 
 
+# Re-pinned (D2: connects through the API, journaled; approved differences, user 2026-10-02):
+# * one undo step per statement for its API edits: these cases' ops hold fewer undo steps (their
+#   connects join one journal, on top of B1's GC tags);
+# * one extra Maya ``Error:`` line on an incompatible-type connect: the API connect's ``doIt``
+#   prints it before the cmds route runs and raises (the rest of the output is unchanged).
+_D2_FEWER_UNDO_STEPS = {
+    "List into a compound": 2,
+    "choice output with nothing selected": 2,
+    "choice output, a matrix selected": 2,
+    "matrix -> a transform plug no channel": 1,
+    "matrix -> rotate": 2,
+    "matrix -> transform node": 5,
+    "matrix -> translate": 2,
+    "matrix -> vector": 1,
+    "multi << List": 1,
+    "quaternion -> euler": 2,
+    "quaternion -> vector": 3,
+    "rotate -> matrix element": 2,
+    "scalar -> compound fanout": 2,
+    "user hook at a choice chain's end": 2,
+    "vector -> matrix element": 1,
+}
+_D2_ERROR_LINES = {
+    "matrix -> a transform plug no channel": (
+        "Connection not made: 'locH.worldMatrix[0]' -> 'xfI.visibility'."
+        "  Data types of source and destination are not compatible."
+    ),
+    "matrix into a scalar": (
+        "Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'."
+        "  Data types of source and destination are not compatible."
+    ),
+    "scalar into a matrix element": (
+        "Connection not made: 'mdB.outputX' -> 'mmM.matrixIn[0]'."
+        "  Data types of source and destination are not compatible."
+    ),
+    "shorthand off: matrix -> vector": (
+        "Connection not made: 'locH.worldMatrix[0]' -> 'mdA.input1X'."
+        "  Data types of source and destination are not compatible."
+    ),
+    "timeEditor layer[0] child << compound": (
+        "Connection not made: 'xfC.translate' -> 'teG.layer[0].layerName'."
+        "  Data types of source and destination are not compatible."
+    ),
+    "vector -> quaternion": (
+        "Connection not made: 'xfC.translate' -> 'qpL.input1Quat'."
+        "  Data types of source and destination are not compatible."
+    ),
+}
+
+
 class TestTheOutcomesOf619f29f(MayaTestCase):
     """Every case of `_CASES` gives what 619f29f gave (`_ORACLE_PATH`), but for
-    the undo steps of the GC tags (`_B1_FEWER_UNDO_STEPS`)."""
+    the undo steps of the GC tags (`_B1_FEWER_UNDO_STEPS`), and of the journaled
+    connects and the incompatible-type connect's ``Error:`` line (`_D2_FEWER_UNDO_STEPS`,
+    `_D2_ERROR_LINES`)."""
 
     def test_every_case_as_619f29f(self):
         with open(_ORACLE_PATH) as fh:
@@ -753,10 +805,15 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
         table = json.loads(json.dumps(_inject_outcomes()))
         self.assertEqual(sorted(table), sorted(oracle))
         self.assertLessEqual(set(_B1_FEWER_UNDO_STEPS), set(oracle))
+        self.assertLessEqual(set(_D2_FEWER_UNDO_STEPS) | set(_D2_ERROR_LINES), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
                 expected = dict(oracle[name])
                 expected["undo_steps"] -= _B1_FEWER_UNDO_STEPS.get(name, 0)
+                expected["undo_steps"] -= _D2_FEWER_UNDO_STEPS.get(name, 0)
+                if name in _D2_ERROR_LINES:
+                    self.assertEqual(expected["output"]["maya"], [])
+                    expected["output"] = dict(expected["output"], maya=[[4, _D2_ERROR_LINES[name]]])
                 self.assertEqual(table[name], expected)
 
     def test_the_user_code_cases_ran_it(self):

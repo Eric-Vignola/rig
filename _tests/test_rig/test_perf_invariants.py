@@ -38,6 +38,7 @@ from rig import (
     lock,
 )
 from rig.nodetypes import Choice, DAGNode, DGNode, Joint, Transform
+from rig._internal import journal
 from rig.nodetypes import _base
 from rig.nodetypes import dg_node as dg_node_module
 from rig.nodetypes._base import (
@@ -1939,6 +1940,8 @@ class TestConnectQuery(MayaTestCase):
         self.assertIn(("a.translateX", "b.translateX"), state[2])
 
     def test_connect_names_each_plug_once(self):
+        # re-pinned (round 5 D2): the cmds route, which this pins, is the one with the
+        # API fast paths off (a free dst's connect goes through the API, unnamed)
         self._scene()
         names    = []
         original = _base.Attribute.full_name
@@ -1949,7 +1952,7 @@ class TestConnectQuery(MayaTestCase):
 
         source      = Node("a").tx
         destination = Node("b").tx
-        with mock.patch.object(_base.Attribute, "full_name", property(full_name)):
+        with mock.patch.object(journal, "API_EDITS", False),                 mock.patch.object(_base.Attribute, "full_name", property(full_name)):
             with mock.patch.object(cmds, "connectAttr") as connect:
                 source.connect(destination)
                 self.assertEqual(names, ["b.translateX", "a.translateX"])
