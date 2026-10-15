@@ -662,8 +662,10 @@ Verified on Maya 2025; not bugs to work around blindly.
   inside `_`. It then takes at least two characters, letters, digits and
   `_`, starting with a letter or `_`, with single `.` or `:` between
   characters. So `b`, `1a`, `a-b` and `a..b` are refused, and `ab`, `_1`
-  and `a.b` are taken; `a b` is stored as `a_b`. `add_component_tag` raises
-  a `ValueError` naming this rule before anything is made. A name with a
+  and `a.b` are taken; `a b` is stored as `a_b`. `add_component_tag` and
+  `rename_component_tag` raise a `ValueError` naming this rule before
+  anything is made, and `add_component_tag` looks an existing tag up by the
+  name Maya stores (`" ab"` finds `ab`). A name with a
   non-ASCII character is left to Maya, which first maps it to the system
   code page.
 - **`Follicle.create_on_mesh` with a vertex list fails** (`numpy.AxisError`):
