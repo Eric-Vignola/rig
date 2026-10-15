@@ -777,7 +777,7 @@ mesh.set_map_values("mask", np.linspace(0, 1, 8))
 print(np.round(mesh.get_map_values("mask"), 2))                                # [0.   0.14 0.29 0.43 0.57 0.71 0.86 1.  ]
 
 map_data = mesh.get_map_data("mask")                             # a cgmath MapData, sparse: zeros dropped
-print(map_data.name, map_data.categories, map_data.indices)                                # mask ['weights'] [1, 2, 3, 4, 5, 6, 7]
+print(map_data.name, map_data.categories, map_data.indices.tolist())                       # mask ['weights'] [1, 2, 3, 4, 5, 6, 7]
 print(repr(mesh.duplicate_map("mask", "mask2")), [m.name for m in mesh.serialize_maps()])  # Attribute("cubeShape.mask2") ['mask', 'mask2']
 print(mesh.get_map_attrs(category="weights"), mesh.find_map_attr("visibility"))            # [Attribute("cubeShape.mask")] None
 mesh.mirror_map("mask", Axis.X)                                                            # +X values onto their -X partners
