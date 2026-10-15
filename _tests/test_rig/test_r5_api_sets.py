@@ -18,6 +18,8 @@ Locks, keyable and channelBox flags stay on cmds (plan_D H22). The approved diff
 * `TestStatementGranularity` (V6, the dangling check after every undo / redo step): a
   statement's sets are one step; sets and connects in one statement; user cmds interleaved;
   a disconnect-and-retry; CR-5 with a user's ``post_create``; undo off.
+* `TestTheRedoQueue`: after an undo, the next API edit flushes Maya's redo queue where a cmds
+  edit would (a node made, then undone, raises the cmds route's error).
 * `TestReferenceEdits`: a set on a referenced node records the same reference edits on both
   routes, and its undo removes them.
 * `TestPluginLoading` (U1): without rig's plug-in, sets take cmds, with the one warning.
@@ -780,6 +782,62 @@ class TestStatementGranularity(_SetCase):
             with self.subTest(api=api):
                 self.assertEqual(cmds.getAttr("a.t"), [(1.0, 2.0, 3.0)])
                 self.assertTrue(self.queue_empty())
+
+
+class TestTheRedoQueue(_SetCase):
+    """After an undo, while Maya's redo queue is not empty, the next API edit is registered at
+    once: the redo queue is flushed where a cmds edit would flush it (`journal.add`), so a
+    statement naming a node that was made, then undone, raises what the cmds route raises."""
+
+    def undone_plug(self):
+        node = Node.create("multiplyDivide", name="un")
+        plug = node.input1X
+        cmds.undo()
+        return plug
+
+    def test_a_node_made_then_undone(self):
+        for label, edit in (("a set", lambda p: List([Node("m").input2X, p]) << 2.0),
+                            ("a connect", lambda p: List([Node("m").input2X, p]) << Node("b").ty)):
+            outcomes = []
+            for api in (True, False):
+                cmds.file(new=True, force=True)
+                self.make_nodes()
+                cmds.flushUndo()
+                with mock.patch.object(journal, "API_EDITS", api):
+                    plug = self.undone_plug()
+                    with self.assertRaises(RuntimeError) as raised:
+                        edit(plug)
+                outcomes.append((_brief(raised.exception), cmds.getAttr("m.input2X"),
+                                 cmds.listConnections("m.input2X", source=True, destination=False)))
+            with self.subTest(edit=label):
+                self.assertEqual(outcomes[0], outcomes[1])
+                self.assertIn("freed by a new scene", outcomes[0][0][1])
+
+    def test_an_empty_redo_queue_keeps_one_journal(self):
+        Node("a").tx << 1.0
+        self.undo_all()
+        self.redo_all()  # the redo queue is empty again
+        self.assertTrue(journal._S.redo)
+        register = journal._register
+        with mock.patch.object(journal, "_register", wraps=register) as registered:
+            List([Node("a").ty, Node("b").ty, Node("m").input1X]) << 2.5
+        self.assertEqual(registered.call_count, 1)
+        self.assertFalse(journal._S.redo)
+        self.assertEqual(self.count_steps(), 2)
+
+    def test_a_partial_undo_registers_the_next_edit_at_once(self):
+        _statement(lambda: Node("a").tx << 1.0)
+        Node("a").ty << 2.0  # its own step (a lone set: cmds)
+        cmds.undo()
+        self.assertFalse(cmds.undoInfo(query=True, redoQueueEmpty=True))
+        register = journal._register
+        with mock.patch.object(journal, "_register", wraps=register) as registered:
+            List([Node("a").tz, Node("b").tz, Node("m").input1X]) << 3.0
+        # the first set registered at once (flushing the redo queue), the other two at the end
+        self.assertEqual([len(c.args[0]) for c in registered.call_args_list], [1, 2])
+        self.assertTrue(cmds.undoInfo(query=True, redoQueueEmpty=True))
+        self.assertEqual((cmds.getAttr("a.ty"), cmds.getAttr("a.tz"), cmds.getAttr("m.input1X")), (0.0, 3.0, 3.0))
+        self.assertEqual(self.count_steps(), 3)
 
 
 class TestReferenceEdits(_SetCase):
