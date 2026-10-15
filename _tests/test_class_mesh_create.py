@@ -5,14 +5,18 @@ The whole create is one undo step named ``rig.Mesh.create``: a
 (``MFnMesh.create(parent=)``), the UV sets through the API, then ``sets`` /
 ``rename`` / ``xform``. Undoing a named create used to segfault Maya (the old
 ``runUndoableAPICommand`` wrapper); redo used to make a new node. A holed face
-is rebuilt from its triangulation by one ``polyDelEdge`` without construction
-history, after the UVs, so each UV stays on its vertex.
+is built as its outer loop, its holes added through the API (``addHoles``),
+before the UVs: it comes back as its source lists it, each UV on its vertex.
+(It was rebuilt from a triangulation by one ``polyDelEdge``, whose result
+followed the triangulation: cgmath 2.0.0's merged the grid's two holes.)
 
 The names, the selection and the topology are pinned to what the create made
-before the ride (runs\\rU\\U0\\mesh_reference.json). Undo tests check the scene
+before the ride (runs\\rU\\U0\\mesh_reference.json), the holed faces to their
+source (runs\\r5\\CG2). Undo tests check the scene
 (``rig._tests._undo``), never ``cmds.undo()``'s return value.
 """
 
+import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig import container
@@ -22,16 +26,11 @@ from rig._tests._undo import UndoWalk, mesh_state
 
 CHUNK = "rig.Mesh.create"
 
-# the holed face of each fixture as today's create (polyDelEdge) orders it:
-# every loop starts at another vertex than the source's (U0 reference)
+# the holed face of each fixture: the create gives it back as its source lists it
 FACET_SOURCE_VERTICES = ((8,), (0, 1, 2, 3, 4, 7, 6, 5))
 FACET_SOURCE_HOLES    = ((0, (4, 7, 6, 5)),)
-FACET_VERTICES        = ((8,), (3, 0, 1, 2, 7, 6, 5, 4))
-FACET_HOLES           = ((0, (7, 6, 5, 4)),)
 GRID_FACE4_SOURCE     = (5, 6, 10, 9, 16, 17, 18, 19, 20, 21, 22, 23)
-# the grid's holed face (face 4) is compared up to rotation (`_loops`): the
-# vertex each of its loops starts at follows cgmath's serialisation (it moved
-# with cgmath 1.0.4), not rig
+GRID_SOURCE_HOLES     = ((4, (16, 17, 18, 19)), (4, (20, 21, 22, 23)))
 
 
 # -- sources
@@ -108,24 +107,6 @@ def _uv_placement(name, uv_set="map1"):
         off += count
         uv_off += uv_counts[face]
     return out
-
-
-def _loops(state):
-    """Each face's loops (outer loop, then each hole loop) as sets of cyclic
-    rotations: two meshes whose loops start at other vertices compare equal."""
-    counts, ids = state["vertices"]
-    holes = {}
-    for face, loop in state["holes"]:
-        holes.setdefault(face, []).append(loop)
-    faces, off = [], 0
-    for face, count in enumerate(counts):
-        verts = ids[off : off + count]
-        off += count
-        hole_verts = {v for loop in holes.get(face, ()) for v in loop}
-        outer = tuple(v for v in verts if v not in hole_verts)
-        loops = [outer] + list(holes.get(face, ()))
-        faces.append(tuple(frozenset(loop[i:] + loop[:i] for i in range(len(loop))) for loop in loops))
-    return faces
 
 
 class _MeshCreateCase(UndoWalk, MayaTestCase):
@@ -502,6 +483,17 @@ class TestMeshCreateErrors(_MeshCreateCase):
         self.undo_steps(1)
         self.assertEqual(cmds.getAttr("selprobe.translateX"), 0.0)
 
+    def test_hole_corner_not_on_its_face(self):
+        t = _grid()
+        data, uvs = _serialized(t)
+        cmds.delete(t)
+        data.hole_indices = np.asarray(data.hole_indices).copy()
+        data.hole_indices[0] = 0  # a corner of face 0, not of the holed face 4
+        self.ready()
+        self._bad(data, uvs)
+        self.undo_steps(1)
+        self.assertEqual(cmds.getAttr("selprobe.translateX"), 0.0)
+
     def test_error_after_the_transform_leaves_no_node(self):
         # a UV write failing after the transform is made (duplicate UV set names, the
         # case this test first used, are refused before it since round U2's FIX)
@@ -552,9 +544,9 @@ class TestMeshCreateErrors(_MeshCreateCase):
 
 # ---------------------------------------------------------------------------------------------
 class TestMeshCreateHoles(_MeshCreateCase):
-    """A holed face comes back with its loops, its points and each UV on its vertex, with no
-    polyDelEdge node and no Orig shape. The facet's loops start where today's create starts them;
-    the grid's holed face is compared up to rotation (its start vertices follow cgmath)."""
+    """A holed face comes back as its source lists it (its outer loop, then each hole loop, from
+    the same corners), with its points and each UV on its vertex, with no polyDelEdge node, no
+    Orig shape and no tweaks."""
 
     def test_facet_hole_round_trip(self):
         t = _facet()
@@ -568,9 +560,8 @@ class TestMeshCreateHoles(_MeshCreateCase):
         mesh = Mesh.create(data, uv_data=uvs, name="copy")
         got = mesh_state(str(mesh))
         self.assertEqual(got["points"], source["points"])
-        self.assertEqual(_loops(got), _loops(source))
-        self.assertEqual(got["vertices"], FACET_VERTICES)  # today's order (U0 reference)
-        self.assertEqual(got["holes"], FACET_HOLES)
+        self.assertEqual(got["vertices"], FACET_SOURCE_VERTICES)  # as the source lists it
+        self.assertEqual(got["holes"], FACET_SOURCE_HOLES)
         self.assertEqual(_uv_placement(str(mesh)), placed)  # each UV on its vertex
         self.assert_no_history(mesh)
         self.assertEqual(cmds.ls(selection=True), ["selprobe"])
@@ -582,16 +573,15 @@ class TestMeshCreateHoles(_MeshCreateCase):
         data, uvs = _serialized(t)
         cmds.delete(t)
         self.assertEqual(source["vertices"][1][16:28], GRID_FACE4_SOURCE)
+        self.assertEqual(source["holes"], GRID_SOURCE_HOLES)
         self.ready()
         mesh = Mesh.create(data, uv_data=uvs)
         self.assertEqual(str(mesh), "gridShape")
         got = mesh_state(str(mesh))
         self.assertEqual(got["points"], source["points"])
-        self.assertEqual(got["vertices"][0], source["vertices"][0])
-        self.assertEqual(_loops(got), _loops(source))  # face 4's outer loop and both holes, any start vertex
-        self.assertEqual(got["vertices"][1][:16], source["vertices"][1][:16])
-        self.assertEqual(got["vertices"][1][28:], source["vertices"][1][28:])
-        self.assertEqual([face for face, _ in got["holes"]], [face for face, _ in source["holes"]])
+        self.assertEqual(got["vertices"], source["vertices"])  # nine faces, face 4 as listed
+        self.assertEqual(got["holes"], GRID_SOURCE_HOLES)  # two holes, not one merged hole
+        self.assertEqual(got["uvs"], source["uvs"])
         self.assertEqual(_uv_placement(str(mesh)), placed)
         self.assert_no_history(mesh)
 
@@ -601,15 +591,15 @@ class TestMeshCreateHoles(_MeshCreateCase):
         cmds.delete(t)
         mesh = Mesh.create(data, name="copy")
         got = mesh_state(str(mesh))
-        self.assertEqual(got["vertices"], FACET_VERTICES)
-        self.assertEqual(got["holes"], FACET_HOLES)
+        self.assertEqual(got["vertices"], FACET_SOURCE_VERTICES)
+        self.assertEqual(got["holes"], FACET_SOURCE_HOLES)
         self.assertEqual(got["uvs"]["map1"][:2], ((), ()))
         self.assert_no_history(mesh)
 
     def test_holed_undo_redo_keeps_the_uvs_on_their_vertices(self):
         t = _grid()
         placed = _uv_placement(_shape(t))
-        source_loops = _loops(mesh_state(_shape(t)))
+        source = mesh_state(_shape(t))
         data, uvs = _serialized(t)
         cmds.delete(t)
         self.ready()
@@ -621,5 +611,50 @@ class TestMeshCreateHoles(_MeshCreateCase):
             self.redo_steps(1)
             self.assertTrue(handle.isValid())
             self.assertEqual(_uv_placement("mShape"), placed)
-            self.assertEqual(_loops(mesh_state("mShape")), source_loops)  # holes up to rotation
+            got = mesh_state("mShape")
+            self.assertEqual((got["vertices"], got["holes"]), (source["vertices"], source["holes"]))
         self.assertEqual(cmds.ls(type="polyDelEdge"), [])
+
+    def test_hole_corners_on_the_points_of_other_vertices(self):
+        # an unwelded face fills the facet's hole with four vertices of its own (0-3) at the
+        # hole's corners: addHoles merges a corner into the lowest-numbered vertex at its point,
+        # so each corner is parked away while the holes are added (runs\r5\CG2)
+        from cgmath.geometry import MeshData
+
+        t = _facet()
+        data, _ = _serialized(t)
+        cmds.delete(t)
+        hole = np.asarray(data.hole_indices)
+        plugged = MeshData(
+            indices      = np.concatenate([np.arange(4), np.asarray(data.indices) + 4]),
+            counts       = np.array([4, 8]),
+            points       = np.vstack([np.asarray(data.points)[hole], data.points]),
+            name         = "plugged",
+            hole_faces   = np.array([1]),
+            hole_counts  = np.asarray(data.hole_counts).copy(),
+            hole_indices = hole + 4,
+        )
+        self.ready()
+        mesh = Mesh.create(plugged)
+        got = mesh_state(str(mesh))
+        self.assertEqual(got["vertices"], ((4, 8), (0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 10, 9)))
+        self.assertEqual(got["holes"], ((1, (8, 11, 10, 9)),))
+        self.assertEqual(got["points"][:4], tuple(got["points"][v] for v in (8, 11, 10, 9)))
+        self.assertEqual(cmds.getAttr(str(mesh) + ".pnts", size=True), 0)  # no tweaks
+        self.assert_no_history(mesh)
+
+    def test_hole_arrays_in_another_order_than_the_face(self):
+        # the hole arrays list the grid's second hole first, each from another corner: the
+        # face's own vertex list orders the loops, so the mesh and its UVs are the source's
+        t = _grid()
+        source = mesh_state(_shape(t))
+        placed = _uv_placement(_shape(t))
+        data, uvs = _serialized(t)
+        cmds.delete(t)
+        data.hole_indices = np.array([22, 23, 20, 21, 17, 18, 19, 16])
+        self.ready()
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        got = mesh_state(str(mesh))
+        self.assertEqual(got["vertices"], source["vertices"])
+        self.assertEqual(got["holes"], GRID_SOURCE_HOLES)
+        self.assertEqual(_uv_placement(str(mesh)), placed)
