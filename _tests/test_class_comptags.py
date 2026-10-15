@@ -307,3 +307,23 @@ class TestComponentTagLocations(MayaTestCase):
         src.set_component_tag_contents("xfer_pts", [0, 1, 2, 7], "v")
         src.transfer_component_tags("xfer_pts", dst)
         self.assertEqual(dst.get_component_tag_indices("xfer_pts").tolist(), [0, 1, 2, 7])
+
+    def test_transfer_component_tags_face_and_edge_tags_are_not_the_whole_mesh(self):
+        """A face or edge tag goes through its vertices (from_skin_data): it comes back
+        holding its own components and the ring around them, not every face or edge
+        (runs/r5/XFER/review/probe_maps.py)."""
+        try:
+            from cgmath.geometry.resample import MeshDataResampler  # noqa: F401
+        except ImportError:
+            self.skipTest("cgmath.geometry.resample unavailable")
+        src = Node(cmds.polyPlane(ch=False, name="srcP", sx=4, sy=4)[0]).get_children(type="mesh")[0]
+        dst = Node(cmds.polyPlane(ch=False, name="dstP", sx=4, sy=4)[0]).get_children(type="mesh")[0]
+        for kind, indices, count in (("f", [5], 16), ("e", [7, 20], 40)):
+            with self.subTest(kind):
+                tag = f"xfer_{kind}"
+                src.add_component_tag(tag)
+                src.set_component_tag_contents(tag, indices, kind)
+                src.transfer_component_tags(tag, dst)
+                got = set(dst.get_component_tag_indices(tag).tolist())
+                self.assertLessEqual(set(indices), got)
+                self.assertLess(len(got), count, sorted(got))

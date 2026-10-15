@@ -819,7 +819,8 @@ Transfer maps, tags and skin weights onto another topology (a
 `cgmath` `MeshDataResampler`; `mode=ResampleMode.UV` samples through the
 first UV sets). Each target vertex gets the blend of the source values its
 closest point reads; a map keeps its categories, a tag the vertices any
-nonzero sample reaches.
+nonzero sample reaches (a face or edge tag: every face or edge touching
+them, one ring wider than the source's).
 
 ```python
 dst = Node(cmds.polyCube(name="dst", ch=False)[0]).get_shape()
