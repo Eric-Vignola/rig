@@ -18,7 +18,7 @@ from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
 from rig.nodetypes.joint import Joint
-from rig.nodetypes.mesh import Mesh
+from rig.nodetypes.mesh import Mesh, _resampler
 from rig.nodetypes.plugins import _run_undoable
 
 LOGGER = logging.getLogger(__name__)
@@ -386,24 +386,16 @@ class SkinCluster(Deformer):
 
         Args:
             other: A mesh to transfer skin weights to.
-            kwargs: Transfer kwargs supported in MeshDataResampler.resample_skin_weights().
+            kwargs: Transfer kwargs supported in MeshDataResampler.resample_skin_weights()
+                (UVs are read only for ``mode=ResampleMode.UV``: the first UV sets).
 
         Returns:
             The new skincluster node on the other mesh (its current one, when
             it has one), in one undo step (``rig.SkinCluster.transfer_to_mesh``).
         """
-        from cgmath.geometry.resample import MeshDataResampler
-
         with _undo_chunk("rig.SkinCluster.transfer_to_mesh"):
-            this  = self.get_mesh()
-            other = Mesh(other)
-
-            mesh_data_a, uv_data_a = this.serialize(include_uvs=True)
-            mesh_data_b, uv_data_b = other.serialize(include_uvs=True)
-
-            resampler = MeshDataResampler(
-                mesh_data_a, mesh_data_b, uv_data_a[0], uv_data_b[0]
-            )
+            other       = Mesh(other)
+            resampler   = _resampler(self.get_mesh(), other, kwargs.get("mode"))
             skin_data_b = resampler.resample_skin_weights(self.serialize(), **kwargs)
             return other.apply_skin_data(skin_data_b)
 
