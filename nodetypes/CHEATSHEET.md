@@ -911,7 +911,12 @@ extension). `Mesh.load(...)` from the class creates, as `create` does;
 `Mesh("x").load(...)` from a mesh updates it in place, the inverse of its
 `save`: the same topology, then its points, its hard edges and locked normals,
 and the file's UV sets by name. Each is one undo step and keeps the selection;
-every file is read, and checked, before anything changes.
+every file is read, and checked, before anything changes. `normals=False` (a
+*restore flag*, the same on `create` and both `load` forms; True by default)
+skips the hard edges and locked normals, for speed: a new mesh is all smooth,
+an updated one keeps its own. Restoring them costs within 1.5x of a create
+without normals for a mostly smooth mesh, 1.75x to 2.6x for a faceted or
+heavily locked one.
 
 ```python
 import os
@@ -925,6 +930,8 @@ print(repr(copy), copy.uv_sets)                              # Mesh("copyShape")
 cmds.polySoftEdge("copy", angle=180, constructionHistory=False)   # softened ...
 copy.load(*paths)                                            # ... and updated in place from the files
 print(sum(not copy.fn_set.isEdgeSmooth(e) for e in range(12)))    # 12
+fast = Mesh.load(*paths, name="fast", normals=False)         # creates, the shading skipped
+print(sum(not fast.fn_set.isEdgeSmooth(e) for e in range(12)))    # 0
 try:
     Mesh.load(paths[1], paths[0])                            # the two files swapped
 except TypeError as e:

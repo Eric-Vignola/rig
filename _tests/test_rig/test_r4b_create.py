@@ -298,7 +298,7 @@ class TestCreateFlags(_SceneCase):
             {"name", "n", "empty", "e", "noRecurse", "nr", "number", "num", "makeCurrent", "mc"},
         )
         self.assertEqual(ShadingEngine._CREATE_FLAGS, {"name", "n"})
-        self.assertEqual(Mesh._CREATE_FLAGS, {"name", "uv_data"})
+        self.assertEqual(Mesh._CREATE_FLAGS, {"name", "uv_data", "normals"})  # normals: a restore flag (FU 1)
         self.assertEqual(NurbsCurve._CREATE_FLAGS, {"name", "degree", "kv"})
         self.assertEqual(Reference._CREATE_FLAGS, {"file_path", "namespace"})
         for cls in (SkinCluster, BlendShape):
