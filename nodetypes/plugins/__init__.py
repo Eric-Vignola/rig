@@ -3,7 +3,10 @@
 This directory holds rig's plug-in ``undoable_api_command.py``. It registers
 ``rigUndoableAPICommand``, which puts a Python object's API edits on Maya's
 undo queue (see that file). A plugin that ships here is always loaded by full
-path, never searched for by name first, so it needs no environment setup.
+path, never searched for by name first, so it needs no environment setup to be
+found. Loading it from a folder that is not on ``MAYA_PLUG_IN_PATH`` costs about
+160-200 ms (Maya's plug-in path check), against about 7 ms from a folder on it;
+rig pays that once per session, at its first API edit.
 
 :func:`load_plugin` is a context manager that makes sure a plugin is loaded
 before the block runs: a plugin bundled here by full path, any other name by
@@ -14,18 +17,21 @@ command is loaded is read from ``maya.cmds`` (about 0.1 us, where a
 again only after an unload.
 
 rig's own API edits go through the command: `_run_undoable` (an object with
-``doIt`` / ``undoIt`` / ``redoIt``, one unnamed undo step) and `_register_api_edit`
-(an ``MDGModifier``, journaled: one undo step per statement, see
-`rig._internal.journal`; `_api_edit_ready` says whether it may run, else the
-caller takes its ``cmds`` route). The connects of a build are such journaled
-edits (`rig._internal.api_edits`), so rig loads its plug-in at the first one of
-a session.
+``doIt`` / ``undoIt`` / ``redoIt``, one unnamed undo step), and the journals of
+the API fast paths (`rig._internal.api_edits`: the connects and the single
+numeric value sets of a build, each an ``MDGModifier`` applied by
+``api_edits._apply`` and journaled by ``journal.add``: one undo step per
+statement, see `rig._internal.journal`; `_fast_path_ready` says whether they may
+run, else the caller takes its ``cmds`` route). rig loads its plug-in at the
+first such edit of a session.
 
 If rig's plug-in cannot be loaded (neither from this folder nor by name), the
 edits that have no other undoable route (`_run_undoable`: the mesh point, UV and
 colour set edits, skin weights, an attribute's default or hidden flag
-re-declared) raise a clear ``RuntimeError``; the connects take their ``cmds``
-route, with one warning per session that builds run slower.
+re-declared) raise a clear ``RuntimeError``; the connects and value sets take
+their ``cmds`` route, with one warning per session that builds run slower. When
+Maya refuses to initialise the file, the fast paths do not try it again in that
+session (each try prints Maya's error again).
 
 While a build's journals are on the undo queue, Maya refuses
 ``unloadPlugin('undoable_api_command')``: ``cmds.flushUndo()`` first. An unload
@@ -38,7 +44,6 @@ from typing import List, Optional, Union
 
 import maya.cmds as cmds
 from maya.api import OpenMaya
-from rig._internal import journal
 from rig._internal.journal import barrier, cmds_edit
 
 _BUNDLED_DIR       = os.path.dirname(os.path.abspath(__file__))
@@ -77,15 +82,46 @@ def _ensure_loaded(name: str, quiet: bool) -> List[str]:
             )
     elif cmds.pluginInfo(name, query=True, loaded=True):
         return []
-    path   = bundled_plugin_path(name)
-    loaded = cmds.loadPlugin(path or name, quiet=quiet) or []  # by name: MAYA_PLUG_IN_PATH
-    if command is not None and not hasattr(cmds, command):
+    path = bundled_plugin_path(name)
+    if command is None:
+        return cmds.loadPlugin(path or name, quiet=quiet) or []  # by name: MAYA_PLUG_IN_PATH
+    errors = []
+
+    def heard(message, kind, *_args):
+        if kind == OpenMaya.MCommandMessage.kError:
+            errors.append(message)
+
+    listening = OpenMaya.MCommandMessage.addCommandOutputCallback(heard)
+    try:
+        loaded = cmds.loadPlugin(path or name, quiet=quiet) or []  # by name: MAYA_PLUG_IN_PATH
+    finally:
+        OpenMaya.MMessage.removeCallback(listening)
+    if not hasattr(cmds, command):
         # Maya prints an initializePlugin error and returns: loadPlugin does not raise
-        raise RuntimeError(
+        error = RuntimeError(
             f"rig's plug-in {path} did not register {command} (see Maya's error above): "
             + _RECOVERY.format(name=name)
         )
+        if not cmds.pluginInfo(name, query=True, loaded=True):
+            # Maya refused to initialise the file (it is not loaded): Maya's first error line,
+            # for the messages of the fast paths and of `_run_undoable` (`_refusal`)
+            lines = [line.strip() for text in errors for line in text.splitlines() if line.strip()]
+            error._rig_refused = lines[0] if lines else ""
+        raise error
     return loaded
+
+
+def _refusal(error: BaseException) -> Optional[str]:
+    """What Maya said when it refused to initialise rig's plug-in, if ``error`` (from
+    `_ensure_loaded`) is that refusal: the file exists, Maya printed its initializePlugin
+    error and left the plug-in unloaded. None for any other load failure."""
+    reason = getattr(error, "_rig_refused", None)
+    if reason is None:
+        return None
+    return (
+        f"Maya refused to initialise it ({reason or 'no error text'}; its error is printed "
+        "above), so it is not loaded"
+    )
 
 
 # how to get a bundled plug-in's command back without a restart
@@ -167,10 +203,16 @@ def _run_undoable(obj):
             edit = getattr(type(obj), "UNDO_EDIT", None) or type(obj).__name__
             raise RuntimeError(
                 f"rig needs its undo plug-in 'undoable_api_command' for {edit}, and it "
-                f"could not be loaded ({_plugin_whereabouts()}): {str(error).strip()}"
+                f"could not be loaded ({_plugin_whereabouts()}): {_load_failure(error)}"
             ) from None
         command = getattr(cmds, UNDOABLE_API_COMMAND)
     return command.run(obj)
+
+
+def _load_failure(error: BaseException) -> str:
+    """Why rig's plug-in could not be loaded, for the messages of a failed load: Maya's
+    refusal and its reason (`_refusal`), else the text of ``error``."""
+    return _refusal(error) or str(error).strip()
 
 
 def _plugin_whereabouts() -> str:
@@ -185,40 +227,32 @@ def _plugin_whereabouts() -> str:
     )
 
 
-def _api_edit_ready() -> bool:
-    """[Internal] True when `_register_api_edit` may run now: ``rigUndoableAPICommand``
-    is in ``maya.cmds`` (rig's plug-in is loaded the first time through `_ensure_loaded`,
-    and again after an unload), and Maya is neither undoing nor redoing. False, and the
-    caller takes its ``cmds`` route, when the plug-in does not load (a load that registers
-    nothing, the state a forced unload leaves) or during an undo or a redo. About 0.3 us
-    once loaded.
-
-    The undo state is not read (``undoInfo -q -state`` costs about 6 us): with undo off,
-    `_register_api_edit` applies the edit (the modifier's ``doIt``) and the registration
-    keeps nothing, neither a step nor the modifier, which is what a ``cmds`` edit leaves
-    too."""
-    if getattr(cmds, UNDOABLE_API_COMMAND, None) is None:
-        try:
-            _ensure_loaded("undoable_api_command", True)
-        except Exception:  # noqa: BLE001 (any load failure: the caller's cmds route)
-            return False
-    return not (OpenMaya.MGlobal.isUndoing() or OpenMaya.MGlobal.isRedoing())
 
 
 # the kind epoch (`rig.nodetypes._base._KIND_EPOCH`) in which a load for the fast paths
-# failed, None when none is kept; and whether this session warned of it
+# failed, `_SESSION` when Maya refused the file (not retried), None when none is kept; and
+# whether this session warned of it
 _LOAD_FAILED = None
+_SESSION     = "session"
 _WARNED      = False
 
 
 def _fast_path_ready() -> bool:
-    """[Internal] `_api_edit_ready` for rig's API fast paths (`rig._internal.api_edits`),
-    which take their ``cmds`` route on False: rig's command is in ``maya.cmds`` (loaded
-    here the first time), and Maya is neither undoing nor redoing.
+    """[Internal] Whether rig's API fast paths (`rig._internal.api_edits`) may journal an
+    edit now; they take their ``cmds`` route on False. True when rig's command is in
+    ``maya.cmds`` (rig's plug-in is loaded here the first time, through `_ensure_loaded`,
+    and again after an unload), and Maya is neither undoing nor redoing. About 0.3 us once
+    loaded.
 
-    A load that fails warns once per session that builds run slower, and is not tried
+    A load that fails warns once per session that builds run slower. It is not tried
     again until a plug-in is loaded or unloaded (a new kind epoch: a failed load by name
-    can cost a search of ``MAYA_PLUG_IN_PATH``, and prints Maya's error)."""
+    can cost a search of ``MAYA_PLUG_IN_PATH``), and never again in the session when Maya
+    refused to initialise rig's file (each try would print Maya's initializePlugin error
+    again). A plug-in a user loads is found in ``maya.cmds`` either way.
+
+    The undo state is not read (``undoInfo -q -state`` costs about 6 us): with undo off,
+    the edit is applied and its registration keeps nothing, neither a step nor the
+    modifier, which is what a ``cmds`` edit leaves too."""
     if getattr(cmds, UNDOABLE_API_COMMAND, None) is None and not _load_for_fast_paths():
         return False
     return not (OpenMaya.MGlobal.isUndoing() or OpenMaya.MGlobal.isRedoing())
@@ -228,39 +262,24 @@ def _load_for_fast_paths() -> bool:
     global _LOAD_FAILED, _WARNED
     from rig.nodetypes import _base
 
-    if _LOAD_FAILED is not None and _LOAD_FAILED is _base._KIND_EPOCH[0]:
+    failed = _LOAD_FAILED
+    if failed is not None and (failed is _SESSION or failed is _base._KIND_EPOCH[0]):
         return False
     try:
         _ensure_loaded("undoable_api_command", True)
     except Exception as error:  # noqa: BLE001 (any load failure: the cmds route)
+        if _refusal(error) is not None:
+            _LOAD_FAILED = _SESSION
         # kept only while the plug-in callbacks start a new epoch at a load or an unload
-        if _base._PLUGIN_CALLBACKS_READY or _base._ensure_plugin_callbacks():
+        elif _base._PLUGIN_CALLBACKS_READY or _base._ensure_plugin_callbacks():
             _LOAD_FAILED = _base._KIND_EPOCH[0]
         if not _WARNED:
             _WARNED = True
             cmds.warning(
                 "rig: its undo plug-in 'undoable_api_command' could not be loaded "
-                f"({_plugin_whereabouts()}: {str(error).strip()}); rig's connections and "
+                f"({_plugin_whereabouts()}: {_load_failure(error)}); rig's connections and "
                 "value sets take the cmds route while it is missing, so builds run slower"
             )
         return False
     _LOAD_FAILED = None
     return True
-
-
-def _register_api_edit(modifier) -> None:
-    """[Internal] Applies ``modifier`` (an ``MDGModifier`` holding the edit, not done
-    yet) and journals it (`rig._internal.journal.add`): inside a statement it joins
-    the statement's one undo step; outside any, it is one unnamed undo step of
-    ``rigUndoableAPICommand`` on its own (inside an undo chunk, the step joins the
-    chunk). Undo is the modifier's ``undoIt``, redo its ``doIt``. The caller has
-    checked `_api_edit_ready`. Inside a statement, joining it is a list append (the
-    statement registers once, at its end or at a barrier); outside any, the registration
-    costs about 8 us in a wired scene, and about 18 us inside a rail_spine build.
-
-    An exception out of the modifier's ``doIt`` (or out of the registration)
-    registers nothing and propagates; the caller then runs the modifier's ``undoIt``
-    (what ``doIt`` did before it failed) and takes its ``cmds`` route outside its
-    ``except`` block, so no API traceback is chained onto an error of that route."""
-    modifier.doIt()
-    journal.add(modifier)

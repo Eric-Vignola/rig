@@ -92,14 +92,25 @@ class UndoableAPICommand(OpenMaya.MPxCommand):
             self.setResult(result)
 
     def redoIt(self):
-        self._unrecorded(self.py_class.redoIt)
+        py_class = self.py_class
+        if getattr(py_class, "RECORDS_NO_CMDS", False):
+            py_class.redoIt()
+        else:
+            self._unrecorded(py_class.redoIt)
 
     def undoIt(self):
-        self._unrecorded(self.py_class.undoIt)
+        py_class = self.py_class
+        if getattr(py_class, "RECORDS_NO_CMDS", False):
+            py_class.undoIt()
+        else:
+            self._unrecorded(py_class.undoIt)
 
     def _unrecorded(self, method):
         """Calls ``method`` with undo recording off, so that the ``cmds`` calls it makes
-        are not recorded (a recorded command would flush the redo queue)."""
+        are not recorded (a recorded command would flush the redo queue). An object whose
+        ``undoIt`` / ``redoIt`` make no ``cmds`` call says so with a true
+        ``RECORDS_NO_CMDS`` (rig's statement journals: applied ``MDGModifier`` objects
+        only), and is called directly: the toggle costs about 18 us per undo or redo."""
         state = cmds.undoInfo(query=True, state=True)
         if state:
             cmds.undoInfo(stateWithoutFlush=False)
