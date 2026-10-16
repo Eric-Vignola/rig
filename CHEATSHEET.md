@@ -434,6 +434,9 @@ Multi attributes: a bare multi `<< scalar` appends at the next free index,
 and a bounded slice or `[i]` addresses indices that are created on write.
 A world space array read through a node's path (`worldMatrix`, section 2)
 is that instance's element, so `<<` writes there instead of appending.
+Rewiring an element replaces its input, also on a multi that is not
+keyable; a plug object held across a disconnect made outside rig can
+dangle, so take it again (README, "Real behaviour, verified").
 
 ```python
 from rig.spec import Float, Vector
@@ -452,6 +455,12 @@ print(str(net.w.append(50.0)), net.w[[1, 4]] >> None)  # net.w[4] [200.  50.]  -
 net         << Vector("offsets", multi=True)
 net.offsets << [[1, 2, 3], [4, 5, 6]]
 print(net.offsets[:] >> None)                # [[1. 2. 3.] [4. 5. 6.]]
+
+src = Node.create("transform", name="src")
+net        << Float("drv", multi=True, keyable=False)
+net.drv[0] << src.tx
+net.drv[0] << src.ty                         # a rewire: the input is replaced
+print(net.drv[0].get_inputs())               # List([Plug("src.translateY")])
 ```
 
 A blendShape aliases every `weight[i]` to its target name, and the DSL

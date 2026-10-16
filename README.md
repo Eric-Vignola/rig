@@ -406,6 +406,16 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   otherwise draw the container as leaking.
 - **`//` is floor division**, not PyMEL's disconnect. `plug << None`
   disconnects.
+- **Rewiring a multi element is safe through rig.** `net.w[0] << a.tx`
+  then `net.w[0] << a.ty` replaces the input, also on a multi that is not
+  keyable (`Float("w", multi=True, keyable=False)`, `Matrix`, `Message`,
+  or after `net.w << hide`), where Maya frees an element's MPlug along with
+  its connection. rig finds the element again after every disconnect it
+  makes (`<<`, `<< None`, `disconnect`, `break_connections`), for the plug
+  object it was handed. A plug object held across a disconnect made
+  outside rig (`cmds.disconnectAttr`, Maya's editors), or a second object
+  for the same element taken while it was connected, can dangle: take the
+  plug again (`net.w[0]`) after such a disconnect.
 
 ```python
 cmds.file(new=True, force=True)
