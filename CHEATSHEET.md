@@ -456,11 +456,11 @@ net         << Vector("offsets", multi=True)
 net.offsets << [[1, 2, 3], [4, 5, 6]]
 print(net.offsets[:] >> None)                # [[1. 2. 3.] [4. 5. 6.]]
 
-src = Node.create("transform", name="src")
+feed = Node.create("transform", name="feed")
 net        << Float("drv", multi=True, keyable=False)
-net.drv[0] << src.tx
-net.drv[0] << src.ty                         # a rewire: the input is replaced
-print(net.drv[0].get_inputs())               # List([Plug("src.translateY")])
+net.drv[0] << feed.tx
+net.drv[0] << feed.ty                        # a rewire: the input is replaced
+print(net.drv[0].get_inputs())               # List([Plug("feed.translateY")])
 ```
 
 A blendShape aliases every `weight[i]` to its target name, and the DSL
