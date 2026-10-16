@@ -562,17 +562,17 @@ class TestNoneDrop(_Case):
         mix[0] << None
         dropped = self.scene_state()
         self.assertEqual(cmds.getAttr("net.mix[0]", type=True), "Tdata")
-        # the drop (a journaled API edit) is undone first, then the disconnect (cmds)
-        self.undo_steps(1)
-        self.assertEqual(cmds.getAttr("net.mix[0]", type=True), "matrix")
-        self.assertEqual(_inputs("net.mix[0]"), [])
+        # re-pinned by the review fix (two steps at s4): the disconnect and the drop are
+        # one step, so one undo never leaves the slot disconnected with the stale data
         self.undo_steps(1)
         self.assert_state_equal(self.scene_state(), connected)
+        self.assertEqual(cmds.getAttr("net.mix[0]", type=True), "matrix")
         self.assertEqual(_inputs("net.mix[0]"), ["objA.worldMatrix"])
         self.assertTrue(_empty_queue())
-        self.redo_steps(2)
+        self.redo_steps(1)
         self.assert_state_equal(self.scene_state(), dropped)
         self.assertEqual(cmds.getAttr("net.mix[0]", type=True), "Tdata")
+        self.assertEqual(_inputs("net.mix[0]"), [])
 
     def test_a_locked_slot_is_disconnected_and_dropped_and_stays_locked(self):
         mix = self.net << Typed("mix", multi=True)

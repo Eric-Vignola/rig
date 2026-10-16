@@ -297,16 +297,29 @@ class TestTheGuards(_Case):
             self.assert_state_equal(self.scene_state(), state0, "locked")
         self.each_route(body)
 
-    def test_a_child_of_a_connected_compound_raises_as_before(self):
-        """guard: ``g.tx`` is no destination when ``g.t`` is connected whole; the set
-        raises InjectionError and the compound's connection stays."""
+    def test_a_child_of_a_connected_compound_splits_its_input(self):
+        """Re-pinned by the review fix (it raised InjectionError at s2): ``g.tx`` has no
+        input of its own when ``g.t`` is connected whole; ``g.tx << 5`` gives each child
+        its own input from ``c.t``'s children, then replaces ``g.tx``'s, as ``g.tx <<
+        c.ty`` and ``g.tx << AnimCurve(...)`` do: ty and tz keep following c. One undo
+        brings the whole connection back."""
         def body():
-            _cube("c")
+            c = _cube("c")
             g = _cube("g")
+            cmds.setAttr("c.t", 4, 5, 6)
             cmds.connectAttr("c.t", "g.t")
-            with self.assertRaises(InjectionError):
-                g.tx << 5
-            self.assertEqual(_inputs("g.t"), ["c.translate"])
+            cmds.flushUndo()
+            state0 = self.scene_state()
+            g.tx << 5
+            self.assertEqual(_inputs("g.t"), [])
+            self.assertEqual(_inputs("g.tx"), [])
+            self.assertEqual(_inputs("g.ty"), ["c.translateY"])
+            self.assertEqual(_inputs("g.tz"), ["c.translateZ"])
+            self.assertEqual(cmds.getAttr("g.t")[0], (5.0, 5.0, 6.0))
+            c.ty << 9
+            self.assertEqual(cmds.getAttr("g.ty"), 9.0)
+            self.undo_steps(2)
+            self.assert_state_equal(self.scene_state(), state0, "one undo per statement")
         self.each_route(body)
 
     def test_attribute_set_still_refuses_a_driven_plug(self):
