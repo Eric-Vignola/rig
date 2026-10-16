@@ -533,7 +533,7 @@ class TestMesh(_Case):
         self.assert_refused(
             ValueError,
             "^Mesh\\('liveShape'\\).load: 'liveShape' has history \\(its inMesh is connected: construction "
-            "history or a deformer\\), which would compute over the points it sets; delete the history, or "
+            "history\\), which would compute over the points it sets; delete the history, or "
             "Mesh.load\\(path\\) makes a new mesh$",
             lambda: Mesh(cube).load(path),
         )

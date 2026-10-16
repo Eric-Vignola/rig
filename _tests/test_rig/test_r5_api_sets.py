@@ -462,7 +462,10 @@ def _guard_cases():
         ("a namespace", namespaced, [True]),
         ("a connected dst, <<: disconnect, then set", connected_dst_shift, [True]),
         ("a connected dst, set", connected_dst_set, [False]),
-        ("a connected parent, <<", connected_parent, [False]),
+        # re-pinned (review fix, features run): the compound's whole input is split per child
+        # first, then the child's own removed, so the set takes the API ([False] before: the
+        # set was refused, "locked or connected")
+        ("a connected parent, <<", connected_parent, [True]),
         ("locked", lambda: (cmds.setAttr("b.tx", lock=True), Node("b").tx.set(2.5)), [False]),
         ("locked parent", locked_parent, [False]),
         ("a proxy", proxy, [False]),
@@ -721,10 +724,13 @@ class TestStatementGranularity(_SetCase):
             List([Node("m").input1X, Node("m").input2X]) << 2.5
 
         on, off = self.run_both([setup, overwrite])
-        # the same states after each statement and after redo; the disconnect is a cmds step,
-        # the retried sets join one journal (fewer steps), and undo goes back to the start
+        # the same states after each statement and after redo, and undo goes back to the start.
+        # Re-pinned (review fix, features run): a statement that removes an input and then sets
+        # is one undo step on both routes (the disconnect opens the statement's chunk,
+        # `journal.one_step`); the API route made fewer steps than the cmds one before (the
+        # disconnect a cmds step, the sets one journal)
         self.assertEqual((on[0], on[2]), (off[0], off[2]))
-        self.assertLess(len(on[1]), len(off[1]))
+        self.assertEqual(len(on[1]), len(off[1]))
         self.assertEqual(on[1][-1], off[1][-1])
         self.assertEqual(off[0][-1][1], None)  # the connection is gone
 

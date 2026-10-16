@@ -776,6 +776,32 @@ _D3_FEWER_UNDO_STEPS = {
     "quaternion -> vector": 3,
     "spec slots into a compound": 1,
 }
+# Re-pinned (review fix, features run): a statement that removes a plug's input and then
+# writes it is one undo step (the disconnect and the write share the statement's chunk,
+# `journal.one_step`): these rewires make one step fewer.
+_FIX_FEWER_UNDO_STEPS = {
+    "alias rewire":           1,
+    "element rewire":         1,
+    "generic slot rewire":    1,
+    "instanced shape rewire": 1,
+    "message rewire":         1,
+    "rewire compound":        1,
+    "rewire scalar":          1,
+    "unitConversion rewire":  1,
+}
+# Re-pinned (review fix, features run): a connect into a child of a compound connected whole
+# splits the compound's input into one per child first, then connects the child (619f29f left
+# both, ``mdB.output -> mdA.input1`` and ``xfC.translateX -> mdA.input1X``: two drivers on one
+# channel); the INFO line names the split. The values and the undo steps are unchanged.
+_FIX_SPLIT = {
+    "connect into a child of a connected compound": (
+        [[["mdB.outputY", "mdA.input1Y"], ["mdB.outputZ", "mdA.input1Z"],
+          ["xfC.translateX", "mdA.input1X"]], []],
+        [["rig._internal.plug", "INFO",
+          "connect mdA.input1X: splitting the input mdB.output of mdA.input1 into one per child"]],
+    ),
+}
+
 # Re-pinned (features step 3, lock): the locked-plug refusal names the unlock rig spells,
 # ``Plug('<plug>').unlock()``, and no cmds call (the text 619f29f gave ended "Unlock first (e.g.
 # `plug << unlock` or `cmds.setAttr(attr, lock=False)`)."); the error, the scene, the output
@@ -860,7 +886,8 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
     connects and the incompatible-type connect's ``Error:`` line (`_D2_FEWER_UNDO_STEPS`,
     `_D2_ERROR_LINES`), and of the journaled value sets (`_D3_FEWER_UNDO_STEPS`), and the
     locked-plug refusal's unlock hint (`_FS3_LOCK_HINT`), and the generic-slot rows
-    regenerated for Typed (`_FS4_GENERIC_ROWS`)."""
+    regenerated for Typed (`_FS4_GENERIC_ROWS`), and the review fix's one-step rewires
+    (`_FIX_FEWER_UNDO_STEPS`) and its split of a whole connection (`_FIX_SPLIT`)."""
 
     def test_every_case_as_619f29f(self):
         with open(_ORACLE_PATH) as fh:
@@ -879,6 +906,7 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
         self.assertLessEqual(set(_D2_FEWER_UNDO_STEPS) | set(_D2_ERROR_LINES), set(oracle))
         self.assertLessEqual(set(_D3_FEWER_UNDO_STEPS), set(oracle))
         self.assertLessEqual(set(_FS3_LOCK_HINT), set(oracle))
+        self.assertLessEqual(set(_FIX_FEWER_UNDO_STEPS) | set(_FIX_SPLIT), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
                 if name in _FS4_GENERIC_ROWS:
@@ -888,6 +916,12 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
                 expected["undo_steps"] -= _B1_FEWER_UNDO_STEPS.get(name, 0)
                 expected["undo_steps"] -= _D2_FEWER_UNDO_STEPS.get(name, 0)
                 expected["undo_steps"] -= _D3_FEWER_UNDO_STEPS.get(name, 0)
+                expected["undo_steps"] -= _FIX_FEWER_UNDO_STEPS.get(name, 0)
+                if name in _FIX_SPLIT:
+                    connections, logs = _FIX_SPLIT[name]
+                    self.assertEqual(expected["output"]["logs"], [])
+                    expected["scene"] = dict(expected["scene"], connections=connections)
+                    expected["output"] = dict(expected["output"], logs=logs)
                 if name in _D2_ERROR_LINES:
                     self.assertEqual(expected["output"]["maya"], [])
                     expected["output"] = dict(expected["output"], maya=[[4, _D2_ERROR_LINES[name]]])
@@ -1422,15 +1456,22 @@ class TestDisconnectIncoming(MayaTestCase):
             cmds.file(new=True, force=True)
             label, plug = _shapes()[1][index]
             destination = bool(plug.plug.isDestination)
+            # re-pinned (review fix, features run): a child below a compound connected
+            # whole has no input of its own, but the compound's input is split into one
+            # per child first (`_free_of_whole_wire`), then the child's own is listed and
+            # removed; both paths make that same scene, each listing more than once
+            whole = not destination and plugmod._below_a_wire(plug.plug)
             with self.subTest(shape=label):
                 new, listed = self._disconnect(plug)
-                self.assertEqual(listed, int(destination))
+                if not whole:
+                    self.assertEqual(listed, int(destination))
                 # the old path (the class test fails): the connections listed
                 cmds.file(new=True, force=True)
                 plug = _shapes()[1][index][1]
                 with mock.patch.object(plugmod, "_GET_CONNECTED_ATTRS", None):
                     old, listed = self._disconnect(plug)
-                self.assertEqual(listed, 1)
+                if not whole:
+                    self.assertEqual(listed, 1)
                 self.assertEqual(new, old)
 
     def test_deleted_and_freed_dsts_as_the_old_path(self):
