@@ -552,8 +552,9 @@ From a node it updates that node in place, the inverse of its `save`:
   round-trips either way, `world_space=True` its default), and a file saved
   with `world_space=False` loaded as world space would put its object-space
   CVs in the world, moved by the transform, silently. A load without it, or
-  with anything but a `bool`, is a `TypeError` naming it before the file is
-  read: `NurbsCurve('x').load(path, world_space=True)`;
+  with anything but a `bool`, or with the space given by position
+  (`load(path, True)`), is a `TypeError` naming it before the file is read:
+  `NurbsCurve('x').load(path, world_space=True)`;
 - a `SkinCluster` gets the file's weights as `set_weights(SkinData)` sets
   them (influences by name, the missing ones added, the ones the file does
   not name removed); the influences and the weights it holds already (within
@@ -568,7 +569,8 @@ naming `Cls.load(path)` for a new node. A deformed shape (a skin, a
 blendShape, a cluster) names the shape under its deformers instead, its
 intermediate `...Orig` shape: `Mesh('bodyShapeOrig').load(path)` updates the
 mesh a skin deforms, and the deformed shape follows (deleting the history
-would delete the deformers). The class form takes no `world_space=`: it is a
+would delete the deformers); a deformed curve or surface names
+`NurbsCurve('crvShapeOrig').load(path, world_space=...)`, the space it requires. The class form takes no `world_space=`: it is a
 `TypeError` naming `Mesh('x').load(path, world_space=...)`. A hierarchy is never updated in place
 (its transforms are what the rig hangs off: constraints, skins, children):
 `Transform('root').load_hierarchy(...)` is a `TypeError` before anything is

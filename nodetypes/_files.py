@@ -123,6 +123,22 @@ def required_space(method: str, data: str, world_space) -> bool:
     return bool(world_space)
 
 
+def space_by_keyword(method: str, args: tuple) -> None:
+    """A curve's or a surface's update in place (`method`) takes the file, then
+    ``world_space=`` by keyword only: a positional argument after the file (`args`,
+    ``load(path, True)``, a likely first try of the required space) is a TypeError
+    naming the keyword, before any file is read."""
+    if args:
+        shown = ", ".join(
+            repr(arg) if isinstance(arg, (bool, int, float, str)) else f"a {type(arg).__name__}"
+            for arg in args
+        )
+        raise TypeError(
+            f"{method} takes the file, then world_space= by keyword: "
+            f"load(path, world_space=...), not load(path, {shown})"
+        )
+
+
 def _shown(value) -> str:
     if _is_node(value):
         return f"the node {str(value)!r}"

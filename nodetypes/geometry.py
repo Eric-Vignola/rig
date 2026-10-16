@@ -785,7 +785,7 @@ class Geometry(DAGNode):
 
 def deformed_refusal(
     method: str, name: str, node: OpenMaya.MObject, kind: int, cls_name: str,
-    connected: str, what: str, door: str,
+    connected: str, what: str, door: str, load_args: str = "path",
 ) -> str:
     """Why a node's ``load`` refuses shape ``name`` (MObject ``node``) with history,
     which would compute over the ``what`` it sets. A deformed shape (a skin, a
@@ -793,7 +793,9 @@ def deformed_refusal(
     intermediate ``...Orig`` shape of the kind ``kind`` (``cls_name('x').load``:
     the deformed shape follows its load), since deleting the history would delete
     the deformers; construction history names the delete. `door` names the
-    creating form. Read only."""
+    creating form, `load_args` the arguments of the named load as its caller must
+    give them (``path, world_space=...`` for a NURBS shape, whose instance load
+    requires the space). Read only."""
     upstream = OpenMaya.MItDependencyGraph(
         node,
         OpenMaya.MFn.kInvalid,
@@ -813,7 +815,7 @@ def deformed_refusal(
         upstream.next()
     if deformers:
         under = (
-            f"{cls_name}({orig!r}).load(path) updates the shape under them (the deformed one "
+            f"{cls_name}({orig!r}).load({load_args}) updates the shape under them (the deformed one "
             f"follows)"
             if orig is not None
             else "load the shape under them"
