@@ -2585,3 +2585,58 @@ class TestFullNameReadsTheOwner(MayaTestCase):
         # the one property on Plug; ComponentPlug names itself
         self.assertIs(Plug.full_name, _base.Attribute.full_name)
         self.assertIsNot(ComponentPlug.full_name, _base.Attribute.full_name)
+
+class TestAnimCurveCost(MayaTestCase):
+    """Features step 5: keys (``AnimCurve([...])``) cost the plain ``<<`` nothing measurable,
+    and a big keying statement stays fast. ``Plug.__lshift__`` reaches the keys code through
+    one identity test (``type(other) is _Keys``, after the spec branch): a value, a plug or a
+    list runs no code of `rig._internal.anim_keys`. 100 transforms keyed on ``t`` (300 curves
+    of 240 keys) in one statement took about 290 ms in the prototype and about 140 ms here."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_a_value_a_plug_or_a_list_runs_no_keys_code(self):
+        from rig import List
+        from rig._internal import anim_keys
+
+        a = Node.create("transform", name="a")
+        b = Node.create("transform", name="b")
+        refuse = mock.Mock(side_effect=AssertionError("keys code ran"))
+        with mock.patch.multiple(anim_keys, inject=refuse, inject_rows=refuse, fanout=refuse, _plan_plug=refuse):
+            a.tx << 5
+            a.ty << b.tx
+            a.t << [1, 2, 3]
+            a.r << b.r
+            a.tz << None
+            List([a, b]).sx << 2
+            List([a, b]).sy << [1, 2]
+        self.assertEqual((cmds.getAttr("a.tx"), cmds.getAttr("b.sy")), (1, 2))
+
+    def test_the_keys_branch_is_one_identity_test(self):
+        import inspect
+
+        from rig._internal import plug as plug_module
+
+        source = inspect.getsource(plug_module.Plug.__lshift__.__wrapped__)
+        self.assertEqual(source.count("_Keys"), 1)
+        self.assertIn("if type(other) is _Keys:", source)
+        # after the spec branch: a spec keeps its place on the hot path
+        self.assertLess(source.index("_is_attribute_spec(other)"), source.index("type(other) is _Keys"))
+
+    def test_a_three_hundred_curve_build_under_its_budget(self):
+        import time
+
+        import numpy as np
+        from rig import AnimCurve, List
+
+        nodes = List(Node.create("transform", name=f"n{i}") for i in range(100))
+        data = np.random.default_rng(5).random((240, 3))
+        start = time.perf_counter()
+        nodes.t << AnimCurve(data)
+        built = time.perf_counter() - start
+        self.assertEqual(len(cmds.ls(type="animCurveTL")), 300)
+        self.assertLess(built, 1.0, f"300 curves x 240 keys took {built * 1e3:.0f} ms")
+        start = time.perf_counter()
+        nodes.t << AnimCurve(data)  # unchanged: read and compared, nothing written
+        same = time.perf_counter() - start
+        self.assertLess(same, 1.0, f"the unchanged re-run took {same * 1e3:.0f} ms")
