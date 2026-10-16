@@ -16,7 +16,8 @@ Examples::
 
 A ``_`` name broadcasts only when the List is not empty and every element is
 a node or plug that has a Maya attr of that name (see `_private_plugs`); any
-other is AttributeError, as Python's probes (``__deepcopy__``) expect.
+other read is AttributeError, as Python's probes (``__deepcopy__``) expect
+(an assignment: see `List.__setattr__`).
 
 Asymmetric operators use :func:`sequences` to broadcast (the shorter operand
 caps to its last element).
@@ -58,6 +59,7 @@ from rig.nodetypes._base import (
     _ensure_node_valid,
     _ensure_owner_alive,
     _enum_value,
+    _handle_valid,
     _holds_text,
     _is_enum_attr,
     _is_text,
@@ -210,10 +212,14 @@ class List(list):
         A ``_`` name is the list's own Python state when it is (``_parent_multi``,
         a name already stored on this instance, one ``List`` or ``_Methods``
         declares), else a broadcast inject when every element is a node or plug
-        that has a Maya attr of that name (``nodes.__tag__ = 5``), else Python
-        state, as on a node (``node.__parked__ = 4.0``). A name the first element
-        has and a later one does not raises AttributeError and sets nothing, and
-        a later element deleted raises its ``already deleted!``.
+        that has a Maya attr of that name (``nodes.__tag__ = 5``). A name only
+        some elements have raises AttributeError naming the first that lacks it,
+        or its ``already deleted!`` when that one was deleted or freed, in any
+        order, and sets nothing. A name no element has is Python state, as on a
+        node (``node.__parked__ = 4.0``). A ``List`` subclass keeps private state
+        under a ``_`` name by declaring it in its class body (``_extra = None``),
+        as a node class does: else, should every element have a Maya attr of
+        that name, ``self._extra = x`` sets those attrs.
         """
         if name.startswith("_"):
             if (
@@ -226,8 +232,11 @@ class List(list):
                 return
             plugs = _private_plugs(self, name)
             if plugs is None:
-                # Node's rule (`DGNode.__setattr__`): a `_` name no Maya attr
-                # has is Python state
+                # the first element lacks it: a later one that has it raises
+                # (no partial broadcast); else Node's rule (`DGNode.__setattr__`,
+                # its ``_`` branch): a `_` name no element has is Python state.
+                # Should such a typo raise, these two branches change together.
+                _refuse_partial(self, name)
                 object.__setattr__(self, name, value)
                 return
             plugs.__lshift__(value)
@@ -701,14 +710,11 @@ _LIST_STATE = frozenset(("_parent_multi", "_method"))
 
 def _private_plugs(items: "List", name: str) -> Optional["List"]:
     """``items.<name>`` for a ``_`` name (``nodes.__tag__``): the List of each
-    element's Maya attr of that name, or None (the caller's AttributeError, or
-    Python state for an assignment) when the list is empty or its first element
-    is no node or plug with such an attr. Each element resolves it as it does
-    on its own, never through its Python members: a node through
-    `DGNode.__getattr__` (a Maya attr of the live node), a plug through
-    `Plug.__getattr__` (a compound child, else a Maya attr of its node). A
-    Python probe (``__deepcopy__``, ``__array__``) costs one lookup, on the
-    first element.
+    element's Maya attr of that name, or None (the caller's AttributeError, or,
+    for an assignment, `_refuse_partial` then Python state) when the list is
+    empty or its first element is no node or plug with such an attr (see
+    `_private_plug`). A Python probe (``__deepcopy__``, ``__array__``) costs
+    one lookup, on the first element.
 
     Once an element has it, every other must: a later element without it
     raises AttributeError naming it, and one deleted or freed raises its
@@ -716,40 +722,99 @@ def _private_plugs(items: "List", name: str) -> Optional["List"]:
     broadcast)."""
     found = []
     for x in list.__iter__(items):
-        if isinstance(x, (Plug, Node)) and (not isinstance(x, Plug) or _plug_valid(x)):
-            try:
-                found.append(type(x).__getattr__(x, name))
-                continue
-            except AttributeError:
-                pass
+        plug = _private_plug(x, name)
+        if plug is not None:
+            found.append(plug)
+            continue
         if not found:
             return None
-        if isinstance(x, Plug):
-            _ensure_node_valid(x)
-        elif isinstance(x, Node):
-            ensure = getattr(type(x), "ensure_valid", None)
-            if ensure is not None:
-                ensure(x)
-        raise AttributeError(
-            f"List element [{len(found)}] ({x!r}) has no attribute {name!r}, which "
-            f"element [0] has: a '_' name broadcasts only when every element has it "
-            f"(nothing was read or set)"
-        )
+        _raise_partial(x, len(found), name, 0)
     return List(found) if found else None
 
 
-def _plug_valid(plug: Plug) -> bool:
-    """False if the node of `plug` was deleted (to the undo queue too) or freed,
-    or the attribute of a dynamic attr freed: read from the handles only, which
-    is safe then. `Plug.__getattr__` raises ``already deleted!`` for a ``_``
-    name on a node deleted to the undo queue, where a node's own lookup raises
-    AttributeError, as a probe expects (see `_private_plugs`)."""
-    d      = plug.__dict__
-    handle = d.get("_handle")
-    if handle is not None and not handle.isValid():
-        return False
-    handle = d.get("_attrh")
-    return handle is None or handle.isAlive()
+def _refuse_partial(items: "List", name: str) -> None:
+    """For an assignment `_private_plugs` found no broadcast for (its first
+    element lacks `name`): raise as `_private_plugs` does for a later element
+    when any element has `name`, naming the first element, which lacks it (its
+    ``already deleted!`` when deleted or freed), and return when none has it,
+    which leaves `name` Python state (Node's rule). So ``List([d, a]).__tag__ =
+    5`` raises as ``List([a, d]).__tag__ = 5`` does, whatever the order. Every
+    element is read: an assignment is no Python probe."""
+    for i, x in enumerate(list.__iter__(items)):
+        if i and _private_plug(x, name) is not None:
+            _raise_partial(list.__getitem__(items, 0), 0, name, i)
+
+
+def _raise_partial(x: Any, index: int, name: str, has: int) -> None:
+    """Raise for element `index` (`x`), which lacks the ``_`` name `name`
+    element `has` has: its ``already deleted!`` when it is a node or plug that
+    was deleted or freed, else AttributeError naming it."""
+    if isinstance(x, Plug):
+        _ensure_node_valid(x)
+    elif isinstance(x, Node):
+        ensure = getattr(type(x), "ensure_valid", None)
+        if ensure is not None:
+            ensure(x)
+    raise AttributeError(
+        f"List element [{index}] ({x!r}) has no attribute {name!r}, which "
+        f"element [{has}] has: a '_' name broadcasts only when every element has it "
+        f"(nothing was read or set)"
+    )
+
+
+def _private_plug(x: Any, name: str) -> Any:
+    """Element `x`'s Maya attr of the ``_`` name `name`, as `x` resolves it on
+    its own, or None: a node through `DGNode.__getattr__` (a Maya attr of the
+    live node), a plug through `Plug.__getattr__` (a compound child, else a
+    Maya attr of its node), never through their Python members. Anything else
+    is None.
+
+    A plug is read from its handles first, which is safe on a node deleted or
+    freed (None then: `Plug.__getattr__` would raise ``already deleted!`` for
+    a node deleted to the undo queue, where a probe expects AttributeError).
+    Then the ``hasAttribute`` of the node (of a plug's node) must answer True
+    before the lookup: a compound child, of a multi too, is an attr of the
+    node, and every node class resolves a ``_`` name only through that check
+    (`DGNode.__getattr__`, which `Container.__getattr__` defers to), so a probe
+    costs one ``hasAttribute``, with no raise, no child-name table, no node
+    cast."""
+    if isinstance(x, Plug):
+        d      = x.__dict__
+        handle = d.get("_handle")
+        if handle is not None:
+            if not handle.isValid():
+                return None
+            attrh = d.get("_attrh")
+            if attrh is not None and not attrh.isAlive():
+                return None
+            # the owner's fn set when the plug shares its handle (it is the
+            # plug's node), else one of the node the handle holds
+            node = d.get("_node")
+            fn   = None
+            if node is not None:
+                nd = node.__dict__
+                if nd.get("_objhandle") is handle:
+                    fn = nd.get("_fn_set")
+            if fn is None:
+                fn = OpenMaya.MFnDependencyNode(handle.object())
+            if not fn.hasAttribute(name):
+                return None
+        else:
+            attrh = d.get("_attrh")
+            if attrh is not None and not attrh.isAlive():
+                return None
+    elif isinstance(x, Node):
+        # `DGNode.__getattr__`'s own ``_`` check, without its raise
+        d  = x.__dict__
+        fn = d.get("_fn_set")
+        if fn is None or not _handle_valid(d) or not fn.hasAttribute(name):
+            return None
+    else:
+        return None
+    try:
+        return type(x).__getattr__(x, name)
+    except AttributeError:
+        return None
 
 
 class _Methods(List):

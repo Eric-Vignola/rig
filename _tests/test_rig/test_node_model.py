@@ -572,6 +572,9 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes._base", "Attribute.node"),
         ("rig._internal.memoize", "_attr_check"),
         ("rig.spec._base", "_plug_of"),
+        # a List's '_' name lookup (LU FIX): the fn set of a plug's owner when
+        # the plug shares its handle, compared by identity only
+        ("rig._internal.list", "_private_plug"),
     }
 )
 
