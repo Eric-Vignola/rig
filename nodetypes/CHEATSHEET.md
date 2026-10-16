@@ -586,8 +586,9 @@ print(type(skeleton).__name__, skeleton.name, [x.node_type for x in skeleton])  
 `SUPPORTED_NODE_TYPES`) and returns the new nodes as a `List`, typed as
 `Transform.create` types its node (`Joint`, `Transform`; a locator's
 transform and a space_transform box are `Transform`s), parents first.
-(`List(skeleton)`, without a create, is the nodes the data's names name in
-the scene, a name that names several nodes a `TypeError`.)
+One undo step. (`List(skeleton)`, without a create, is the nodes the data
+was serialized from, found by their uuids; in another scene, by their names,
+a name that names several nodes a `TypeError`.)
 
 <!-- notest -->
 ```python

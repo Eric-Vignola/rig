@@ -5,17 +5,19 @@ A ``List`` is a regular ``list`` whose attribute access propagates to
 each element. It is ``rig.List``, not ``typing.List``.
 
 What a List holds (`_user_items`): numbers (``numbers.Real``, bool, numpy
-scalars), ``None``, a numeric value (a tuple, list or array of numbers: a
-vector, a matrix), and rig objects (nodes, plugs, components, Lists, the
-membership tokens, attribute specs and AnimCurve keys); a str is cast to the
-node or plug it names (a component range flattens); an OpenMaya ``MObject``
-/ ``MDagPath`` / ``MPlug`` to its node or plug; any other object through its
-``str`` (``str(TransformData)`` is its node's name). An element that is none
-of these is a TypeError naming it, and nothing is added. The rule applies to
-``List(items)``, ``append``, ``extend``, ``insert``, ``+=`` and item / slice
-assignment. The Lists rig builds from what it computed (a broadcast, an
-operator, a slice, a ``multi[:]``, a command's result) keep their elements
-(`_values_list`).
+scalars), ``None``, a value (a tuple, list or array of numbers and plugs: a
+vector, a matrix, an operand row; an OpenMaya ``MVector`` / ``MMatrix`` ...),
+and rig objects (nodes, plugs, components, Lists, the membership tokens,
+attribute specs and AnimCurve keys); a str is cast to the node or plug it
+names (a component range flattens); an OpenMaya ``MObject`` / ``MDagPath`` /
+``MPlug`` to its node or plug; any other object through its ``uuid`` (cgmath
+data: the node it was serialized from) or its ``str`` (``str(TransformData)``
+is its node's name). An element that is none of these is a TypeError naming
+it, and nothing is added. The rule applies to ``List(items)``, ``append``,
+``extend``, ``insert``, ``+=`` and item / slice assignment; a List given to
+them gives its elements as they are. The Lists rig builds from what it
+computed (a broadcast, an operator, a slice, a ``multi[:]``, a command's
+result) keep their elements (`_values_list`), and so does a copy.
 
 Examples::
 
@@ -77,6 +79,7 @@ from rig.nodetypes._base import (
     _holds_text,
     _is_enum_attr,
     _is_text,
+    _is_uuid,
     _MISSING,
     _plug_identity_name,
     _same_plug,
@@ -101,6 +104,7 @@ from rig._internal.operands import (
 )
 from rig._internal.plug import Plug
 from rig._internal.types import _is_attribute_spec, _is_components, _is_membership
+from rig.nodetypes.errors import AmbiguousNodeError
 from rig._internal.undo import _undo_chunk
 
 
@@ -190,13 +194,13 @@ class List(list):
         # Lists not produced by slicing a multi. (Stored directly: __setattr__
         # is a journal statement, which a private name does not need.)
         object.__setattr__(self, "_parent_multi", _parent_multi)
-        if items:
+        if items is not None:  # (an array has no truth value)
             list.extend(self, _user_items(items, 0))
 
     # -- adding elements: each one cast as List(items) casts it -- #
 
     def append(self, value: Any) -> None:
-        if isinstance(value, _KEPT) or value is None:
+        if type(value) in _PLAIN or isinstance(value, _KEPT):
             list.append(self, value)
             return
         list.extend(self, _user_items((value,), len(self)))
@@ -205,7 +209,7 @@ class List(list):
         list.extend(self, _user_items(values, len(self)))
 
     def insert(self, index: Any, value: Any) -> None:
-        if isinstance(value, _KEPT) or value is None:
+        if type(value) in _PLAIN or isinstance(value, _KEPT):
             list.insert(self, index, value)
             return
         items = _user_items((value,), index)
@@ -232,11 +236,20 @@ class List(list):
             return
         items = _user_items((value,), key)
         if len(items) != 1:
+            index = operator.index(key)
+            if -len(self) <= index < 0:
+                index += len(self)  # the slice of a negative index (lst[-1:0] is empty)
             raise TypeError(
                 f"List element [{key}]: {value!r} names {len(items)} elements; assign "
-                f"them to a slice (lst[{key}:{key} + 1] = ...)"
+                f"them to a slice (lst[{index}:{index + 1}] = ...)"
             )
         list.__setitem__(self, key, items[0])
+
+    def __reduce_ex__(self, protocol: Any) -> tuple:
+        # copy.copy / deepcopy / pickle rebuild a list subclass through append,
+        # which casts: a copy keeps the elements as they are (`_rebuild`), and
+        # its state (`_parent_multi`, a `_Methods`' `_method`)
+        return _rebuild, (type(self), list(self), dict(self.__dict__))
 
     def __repr__(self) -> str:
         return f"List({list.__repr__(self)})"
@@ -880,7 +893,7 @@ class _Methods(List):
     def __init__(self, items: Iterable[Any], name: str) -> None:
         # the bound methods are kept as they are (`_values_list`), never cast
         object.__setattr__(self, "_parent_multi", None)
-        if items:
+        if items is not None:
             _fill_values(self, items)
         object.__setattr__(self, "_method", name)
 
@@ -913,8 +926,18 @@ def _values_list(items: Optional[Iterable[Any]] = None, parent_multi: Any = None
     (a vector tuple, a matrix, a bound method) stays a value."""
     out = list.__new__(List)
     object.__setattr__(out, "_parent_multi", parent_multi)
-    if items:
+    if items is not None:  # (an array has no truth value)
         _fill_values(out, items)
+    return out
+
+
+def _rebuild(cls: type, items: list, state: dict) -> "List":
+    """[Internal] `List.__reduce_ex__`'s rebuild (a copy, a deepcopy, an
+    unpickle): a `cls` holding `items` as they are, with `state`."""
+    out = list.__new__(cls)
+    for name, value in state.items():
+        object.__setattr__(out, name, value)
+    list.extend(out, items)
     return out
 
 
@@ -938,19 +961,38 @@ def _fill_values(out: "List", items: Iterable[Any]) -> None:
             append(_lift_or_pass(x))
 
 
-# the elements a List takes as they are: plain numbers and the rig objects
-# every List holds (`_user_items` checks the rest)
-_KEPT = (float, int, Plug, Node, List)
+# the elements a List takes as they are: the rig objects every List holds and
+# numbers (the numpy ones too: np.int32 is no int on Windows); `_user_items`
+# checks the rest. `_PLAIN` is the exact types of the common ones, one set
+# lookup (an isinstance miss costs a ``__class__`` read, and one on Node an
+# ``__instancecheck__`` call: its class has a metaclass).
+_PLAIN = frozenset((
+    float, int, bool, type(None), np.float64, np.float32, np.int64, np.int32, np.bool_,
+))
+_KEPT = (Plug, Node, List, np.integer, np.floating, np.bool_, float, int)
 
-# the numpy scalar that is no numbers.Real (numpy registers its integers and
-# floats; np.str_ is a str, a complex is no number a plug holds)
-_NUMPY_NUMBERS = (np.bool_,)
-
-# the containers a numeric value comes in (a vector, a matrix)
+# the containers a value comes in (a vector, a matrix, an operand row)
 _SEQUENCES = (tuple, list, np.ndarray)
 
 # the OpenMaya objects Node() / Plug() take
 _API_NODES = (OpenMaya.MObject, OpenMaya.MDagPath)
+
+# the OpenMaya values a plug takes or rig's API reads (a vector, a point, a
+# matrix, a rotation, a colour, their arrays): kept as values, as a tuple is
+_API_VALUES = tuple(
+    getattr(OpenMaya, name) for name in (
+        "MVector", "MFloatVector", "MPoint", "MFloatPoint", "MMatrix", "MFloatMatrix",
+        "MTransformationMatrix", "MEulerRotation", "MQuaternion", "MColor", "MAngle",
+        "MDistance", "MTime", "MBoundingBox",
+        "MDoubleArray", "MFloatArray", "MIntArray", "MInt64Array", "MUintArray",
+        "MUint64Array", "MPointArray", "MFloatPointArray", "MVectorArray",
+        "MFloatVectorArray", "MMatrixArray", "MColorArray", "MTimeArray",
+    ) if hasattr(OpenMaya, name)
+)
+
+# the leaves of a value (`_value`): a number, a plug (an operand row such as
+# ``(c.tx, 1, 2)``), an OpenMaya value
+_LEAVES = (numbers.Real, np.bool_, Plug) + _API_VALUES
 
 
 def _user_items(items: Iterable[Any], start: Any) -> list:
@@ -959,47 +1001,57 @@ def _user_items(items: Iterable[Any], start: Any) -> list:
     checked before any is added. `start` is the index the first one takes,
     named by an error.
 
+    * a List: its elements as they are (a List holds what it was given or
+      what rig computed);
     * a number (``numbers.Real``, bool, a numpy scalar), ``None``, a rig
       object (a node, a plug, components, a List, a membership token, an
-      attribute spec, AnimCurve keys): as it is;
-    * a numeric value, a tuple, list or array of numbers (nested too: a
-      matrix): as it is;
+      attribute spec, AnimCurve keys), an OpenMaya value (``MVector``,
+      ``MMatrix`` ...): as it is;
+    * a value, a tuple, list or array of numbers, plugs and OpenMaya values
+      (nested too: a matrix; an operand row ``(c.tx, 1, 2)``): as it is;
     * a str: the plug (``"a.tx"``) or node it names, a component range
       (``"pCube1.vtx[0:5]"``) its elements; a name that names nothing raises
-      as ``Node(name)`` / ``Plug(name)`` do;
+      as ``Node(name)`` / ``Plug(name)`` do, a range that names nothing is a
+      TypeError;
     * an OpenMaya ``MPlug``: its Plug; an ``MObject`` / ``MDagPath``: its node;
-    * any other object: what its ``str`` names, read as a str is
-      (``str(TransformData)`` is its node's name).
+    * any other object: the node of its ``uuid`` if it has one that names one
+      node (cgmath data: a ``TransformData``), else what its ``str`` names,
+      read as a str is (``str(TransformData)`` is its node's name).
 
     Anything else is a TypeError naming its index, its type and its str: a
-    sequence holding anything but numbers (a nested List is
-    ``List([List([...]), ...])``), a set or a dict, an object whose ``str``
-    names no node or plug."""
+    sequence holding anything else (a nested List is
+    ``List([List([...]), ...])``), a set or a dict, a class or a function, an
+    object whose ``str`` names no node or plug."""
+    if isinstance(items, List):
+        return list(items)
     out    = []
     append = out.append
     for i, x in enumerate(items):
-        if isinstance(x, _KEPT) or x is None:
+        if type(x) in _PLAIN or isinstance(x, _KEPT):
             append(x)
         elif isinstance(x, str):
             if "." in x and ":" in x.split(".")[-1]:
                 # Component / range selector (e.g. ``pCube1.vtx[0:5]``)
                 # -- flatten via cmds.ls.
-                for resolved in cmds.ls(x, fl=True) or []:
+                found = cmds.ls(x, fl=True)
+                if not found:
+                    raise _element_error(x, _index(start, i), "it names nothing")
+                for resolved in found:
                     append(_lift_or_pass(resolved))
             else:
                 append(_lift_or_pass(x))
+        elif isinstance(x, _SEQUENCES):
+            if not _value(x):
+                raise _element_error(x, _index(start, i), "a sequence holds numbers and plugs "
+                                     "only (a nested List is List([List([...]), ...]))")
+            append(x)
         elif (
-            isinstance(x, (numbers.Real, _NUMPY_NUMBERS))
+            isinstance(x, (numbers.Real, _API_VALUES))
             or _is_components(x)
             or _is_membership(x)
             or _is_attribute_spec(x)
             or type(x) is _Keys
         ):
-            append(x)
-        elif isinstance(x, _SEQUENCES):
-            if not _numeric(x):
-                raise _element_error(x, _index(start, i), "a sequence holds numbers only "
-                                     "(a nested List is List([List([...]), ...]))")
             append(x)
         else:
             out.extend(_cast_other(x, _index(start, i)))
@@ -1012,15 +1064,16 @@ def _index(start: Any, i: int) -> Any:
     return start + i if i else start
 
 
-def _numeric(value: Any) -> bool:
-    """True for a numeric value: an array of numbers or bools, a tuple or
-    list of numbers (nested too)."""
+def _value(value: Any) -> bool:
+    """True for a value a List keeps: an array of numbers or bools, a tuple
+    or list of numbers, plugs and OpenMaya values (nested too: a matrix, an
+    operand row ``(c.tx, 1, 2)``)."""
     if isinstance(value, np.ndarray):
         return value.dtype.kind in "biuf"
     for v in value:
-        if isinstance(v, (numbers.Real, _NUMPY_NUMBERS)):
+        if type(v) is float or type(v) is int or isinstance(v, _LEAVES):
             continue
-        if isinstance(v, _SEQUENCES) and not isinstance(v, List) and _numeric(v):
+        if isinstance(v, _SEQUENCES) and not isinstance(v, List) and _value(v):
             continue
         return False
     return True
@@ -1029,17 +1082,27 @@ def _numeric(value: Any) -> bool:
 def _cast_other(x: Any, index: Any) -> list:
     """The elements an object that is no number, rig object or str gives a
     List (`_user_items`): an OpenMaya plug or node object through ``Plug()`` /
-    ``Node()``, else what its ``str`` names, read as a str is. A TypeError
+    ``Node()``; else the node of its ``uuid`` when that names one node (cgmath
+    data: the node it was serialized from, renamed or not, whatever else has
+    its name); else what its ``str`` names, read as a str is. A TypeError
     names it when nothing resolves."""
-    try:
-        if isinstance(x, OpenMaya.MPlug):
+    if isinstance(x, OpenMaya.MPlug):
+        if x.isNull:
+            raise _element_error(x, index, "a null MPlug", "MPlug()")
+        try:
             return [Plug(x)]
-        if isinstance(x, _API_NODES):
+        except Exception as e:
+            raise _element_error(x, index, _first_line(e)) from e
+    if isinstance(x, _API_NODES):
+        try:
             return [Node(x)]
-    except Exception as e:
-        raise _element_error(x, index, _first_line(e)) from e
-    if isinstance(x, (set, frozenset, dict)):
+        except Exception as e:
+            raise _element_error(x, index, _first_line(e)) from e
+    if isinstance(x, (set, frozenset, dict, type)) or callable(x):
         raise _element_error(x, index, "it has no node or plug")
+    node = _node_of_uuid(x)
+    if node is not None:
+        return [node]
     try:
         text = str(x)
     except Exception as e:
@@ -1049,11 +1112,31 @@ def _cast_other(x: Any, index: Any) -> list:
             found = [_lift_or_pass(r) for r in cmds.ls(text, fl=True) or []]
         else:
             found = [_lift_or_pass(text)]
-    except Exception as e:
+    except AmbiguousNodeError as e:
+        # (a name more than one node has: the error names them)
         raise _element_error(x, index, _first_line(e), text) from e
+    except Exception as e:
+        raise _element_error(x, index, "its str names no node or plug", text) from e
     if not found:
-        raise _element_error(x, index, "it names nothing", text)
+        raise _element_error(x, index, "its str names no node or plug", text)
     return found
+
+
+def _node_of_uuid(x: Any) -> Any:
+    """The node of `x`'s ``uuid`` attribute (cgmath data carry the uuid of the
+    node they were serialized from) when it is a uuid exactly one node of the
+    scene has; else None (no uuid, or data from another scene: the name
+    decides)."""
+    try:
+        uuid = getattr(x, "uuid", None)
+    except Exception:
+        return None
+    if type(uuid) is not str or not _is_uuid(uuid):
+        return None
+    found = cmds.ls(uuid, long=True)
+    if not found or len(found) != 1:
+        return None
+    return Node(found[0])
 
 
 def _first_line(error: Exception) -> str:

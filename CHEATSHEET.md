@@ -727,18 +727,19 @@ and rig objects:
 | an element | in the List |
 |---|---|
 | a number (`int`, `float`, `bool`, a numpy scalar), `None` | as it is |
-| a numeric value: a tuple, list or array of numbers (a vector, a matrix) | as it is |
-| a node, a plug, components, a `List`, a `Tag` / `Layer` / material token, an attribute spec, `AnimCurve` keys | as it is |
-| a str | the `Plug` (`"c0.tx"`) or node it names; a component range (`"pCube1.vtx[0:5]"`) its elements; a name that names nothing raises, as `Node(name)` does |
+| a value: a tuple, list or array of numbers (a vector, a matrix), an operand row (`(c0.tx, 1, 2)`), an OpenMaya value (`MVector`, `MPoint`, `MMatrix`, `MEulerRotation`, `MQuaternion`, `MColor`, their arrays) | as it is |
+| a node, a plug, components, a `Tag` / `Layer` / material token, an attribute spec, `AnimCurve` keys | as it is |
+| a `List` (`List(other)`, `extend(other)`) | its elements, as they are |
+| a str | the `Plug` (`"c0.tx"`) or node it names; a component range (`"pCube1.vtx[0:5]"`) its elements; a name that names nothing raises, as `Node(name)` does, and so does a range |
 | an OpenMaya `MPlug` / `MObject` / `MDagPath` | its `Plug` / node |
-| any other object | what its `str` names: a `TransformData` (its str is its node's name), so a `HierarchyData` gives its nodes |
+| any other object | the node of its `uuid` when one node of the scene has it, else what its `str` names: a `TransformData` is the node it was serialized from (renamed or not, whatever else is named like it), so a `HierarchyData` gives its nodes; in another scene its name decides |
 | anything else | a `TypeError` naming its index, its type and its str; nothing is added |
 
 The rule is the same for `List(items)`, `append`, `extend`, `insert`, `+=`
-and item / slice assignment. A sequence of anything but numbers is no
-element (nest a `List`: `List([List([a, b]), List([c])])`). The Lists rig
-returns (a broadcast, an operator's results, a slice, `multi[:]`) keep their
-values.
+and item / slice assignment. A sequence of nodes, names or other objects
+is no element (nest a `List`: `List([List([a, b]), List([c])])`). The Lists
+rig returns (a broadcast, an operator's results, a slice, `multi[:]`) keep
+their values, and so does a copy (`copy.copy`, `copy.deepcopy`, `pickle`).
 
 ```python
 cmds.file(new=True, force=True)

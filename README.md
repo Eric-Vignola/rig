@@ -181,12 +181,13 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   or a sequence of them: a generator is read into a list first
   (`f.sum(c.tx for c in ctrls)`), and a `set`, `frozenset` or `dict` is a
   `TypeError`, since it has no order. `rig.List` is not `typing.List`.
-- **A `List` holds numbers and rig objects.** A number, `None`, a numeric
-  value (a vector tuple, a matrix) and a node, plug, components or `List`
-  go in as they are; a name becomes the node or plug it names, and so does
-  any other object through its `str` (`List(Node("root").serialize_hierarchy())`
-  is the hierarchy's nodes, typed: a `TransformData`'s str is its node's
-  name). An element that names nothing is a `TypeError` naming its index,
+- **A `List` holds numbers and rig objects.** A number, `None`, a value
+  (a vector tuple, a matrix, an OpenMaya `MVector` / `MMatrix`, an operand
+  row `(c.tx, 1, 2)`) and a node, plug, components or `List` go in as they
+  are; a name becomes the node or plug it names, and so does any other
+  object, through its `uuid` (cgmath data) or its `str`
+  (`List(Node("root").serialize_hierarchy())` is the hierarchy's nodes,
+  typed: each `TransformData` is the node it was serialized from). An element that names nothing is a `TypeError` naming its index,
   and nothing is added; `append`, `extend`, `insert`, `+=` and slice
   assignment cast the same way.
 - **Components live on the shape.** `cube.f` and `cube.e` are

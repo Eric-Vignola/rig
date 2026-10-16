@@ -598,10 +598,11 @@ class Transform(DAGNode):
         hierarchy's names (the creates inside this one are nested, so they add
         no prefix).
 
-        It selects the nodes it made; `load_hierarchy` (from a file or the
-        data, one undo step, the selection kept) returns the same List.
+        One undo step; it selects the nodes it made. `load_hierarchy` (from a
+        file or the data, the selection kept) returns the same List.
         """
-        return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True))
+        with _undo_chunk(f"rig.{cls.__name__}.create_hierarchy"):
+            return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True))
 
     @classmethod
     @_typed_creator
