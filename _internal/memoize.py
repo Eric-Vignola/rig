@@ -48,7 +48,7 @@ from rig.nodetypes._base import (
 from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
-from rig._internal.list import List
+from rig._internal.list import List, _values_list
 from rig._internal.types import (
     _is_list,
     _is_node,
@@ -712,7 +712,7 @@ def vectorize(
 
         # Lazy import to avoid circular dep
         try:
-            return List(results)
+            return _values_list(results)
         except Exception:
             return results
 

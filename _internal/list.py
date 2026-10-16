@@ -2,8 +2,20 @@
 :class:`List` -- vectorised broadcast for the rig DSL.
 
 A ``List`` is a regular ``list`` whose attribute access propagates to
-each element. Numeric / non-Plug elements pass through unchanged. It is
-``rig.List``, not ``typing.List``.
+each element. It is ``rig.List``, not ``typing.List``.
+
+What a List holds (`_user_items`): numbers (``numbers.Real``, bool, numpy
+scalars), ``None``, a numeric value (a tuple, list or array of numbers: a
+vector, a matrix), and rig objects (nodes, plugs, components, Lists, the
+membership tokens, attribute specs and AnimCurve keys); a str is cast to the
+node or plug it names (a component range flattens); an OpenMaya ``MObject``
+/ ``MDagPath`` / ``MPlug`` to its node or plug; any other object through its
+``str`` (``str(TransformData)`` is its node's name). An element that is none
+of these is a TypeError naming it, and nothing is added. The rule applies to
+``List(items)``, ``append``, ``extend``, ``insert``, ``+=`` and item / slice
+assignment. The Lists rig builds from what it computed (a broadcast, an
+operator, a slice, a ``multi[:]``, a command's result) keep their elements
+(`_values_list`).
 
 Examples::
 
@@ -48,9 +60,11 @@ from __future__ import annotations
 import contextlib
 import functools
 import numbers
+import operator
 from types import MethodType
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
+import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
@@ -148,6 +162,13 @@ def _enum_rows(rows: Iterable) -> list:
 class List(list):
     """List-of-Plug-or-Node that propagates attribute access and arithmetic.
 
+    It holds numbers, numeric values and rig objects; a name, an OpenMaya
+    object or an object whose ``str`` names a node or plug is cast to that node
+    or plug (``List(Node("root").serialize_hierarchy())`` is a List of the
+    hierarchy's nodes), and anything else is a TypeError naming its index:
+    see `_user_items`, which ``List(items)``, ``append``, ``extend``,
+    ``insert``, ``+=`` and item / slice assignment run.
+
     ``nodes.ro << "zxy"`` and ``nodes.ro << ["xzy", "yxz"]`` set enum plugs by
     field name; every name is read before the first set, so one wrong name
     raises TypeError and sets nothing (see :meth:`Plug.__lshift__`).
@@ -170,18 +191,52 @@ class List(list):
         # is a journal statement, which a private name does not need.)
         object.__setattr__(self, "_parent_multi", _parent_multi)
         if items:
-            for x in items:
-                if isinstance(x, numbers.Real) or x is None:
-                    self.append(x)
-                elif isinstance(x, (Plug, Node)):
-                    self.append(x)
-                elif isinstance(x, str) and "." in x and ":" in x.split(".")[-1]:
-                    # Component / range selector (e.g. ``pCube1.vtx[0:5]``)
-                    # -- flatten via cmds.ls.
-                    for resolved in cmds.ls(x, fl=True) or []:
-                        self.append(_lift_or_pass(resolved))
-                else:
-                    self.append(_lift_or_pass(x))
+            list.extend(self, _user_items(items, 0))
+
+    # -- adding elements: each one cast as List(items) casts it -- #
+
+    def append(self, value: Any) -> None:
+        if isinstance(value, _KEPT) or value is None:
+            list.append(self, value)
+            return
+        list.extend(self, _user_items((value,), len(self)))
+
+    def extend(self, values: Iterable[Any]) -> None:
+        list.extend(self, _user_items(values, len(self)))
+
+    def insert(self, index: Any, value: Any) -> None:
+        if isinstance(value, _KEPT) or value is None:
+            list.insert(self, index, value)
+            return
+        items = _user_items((value,), index)
+        if len(items) == 1:
+            list.insert(self, index, items[0])
+            return
+        # a component range: its elements in its place
+        start, _, _ = slice(index, index).indices(len(self))
+        list.__setitem__(self, slice(start, start), items)
+
+    def __iadd__(self, values: Iterable[Any]) -> "List":
+        list.extend(self, _user_items(values, len(self)))
+        return self
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        if isinstance(key, slice):
+            start = key.indices(len(self))[0]
+            list.__setitem__(self, key, _user_items(value, start))
+            return
+        try:
+            operator.index(key)
+        except TypeError:
+            list.__setitem__(self, key, value)  # list's own error
+            return
+        items = _user_items((value,), key)
+        if len(items) != 1:
+            raise TypeError(
+                f"List element [{key}]: {value!r} names {len(items)} elements; assign "
+                f"them to a slice (lst[{key}:{key} + 1] = ...)"
+            )
+        list.__setitem__(self, key, items[0])
 
     def __repr__(self) -> str:
         return f"List({list.__repr__(self)})"
@@ -196,7 +251,7 @@ class List(list):
             if found is None:
                 raise AttributeError(name)
             return found
-        found = List(
+        found = _values_list(
             getattr(x, name) if isinstance(x, (Plug, Node)) else x for x in self
         )
         if found and all(type(x) is MethodType for x in found):
@@ -248,16 +303,16 @@ class List(list):
         # Slice / int / list of int -- preserve normal list behaviour but
         # wrap in List where appropriate.
         if isinstance(key, slice):
-            return List(super().__getitem__(key))
+            return _values_list(super().__getitem__(key))
         if isinstance(key, str):
-            return List(
+            return _values_list(
                 getattr(x, key) if isinstance(x, (Plug, Node)) else x for x in self
             )
         if isinstance(key, (list, tuple)):
             # ``list.__getitem__`` explicitly: a zero-argument ``super()``
             # inside a generator expression loses its ``__class__`` cell and
             # raises ``TypeError: super(type, obj)`` instead of indexing.
-            return List([list.__getitem__(self, k) for k in key])
+            return _values_list([list.__getitem__(self, k) for k in key])
         return super().__getitem__(key)
 
     # -- inject broadcast -- #
@@ -306,7 +361,7 @@ class List(list):
             if len(self) > 1:
                 for x in self:
                     user_call(other._precheck, x)
-            return List(user_call(other.apply, x) for x in self)
+            return _values_list(user_call(other.apply, x) for x in self)
 
         # v4.F.b: empty List from ``multi[:]`` slicing on an
         # unpopulated multi + a sequence source -> route the write
@@ -401,12 +456,12 @@ class List(list):
                 results.append(x >> y)
             else:
                 results.append(x)
-        return List(results)
+        return _values_list(results)
 
     # -- connection queries -- #
 
     def _query_each(self, method: str) -> "List":
-        out = List()
+        out = _values_list()
         for x in self:
             if not isinstance(x, Plug):
                 raise TypeError(
@@ -414,7 +469,7 @@ class List(list):
                     f"{type(x).__name__} ({x!r}). Did you mean "
                     f"'<list>.<attr>.{method}()'?"
                 )
-            out.append(getattr(x, method)())
+            list.append(out, getattr(x, method)())
         return out
 
     # -- lock / unlock -- #
@@ -486,90 +541,90 @@ class List(list):
     # -- arithmetic broadcast -- #
 
     def __add__(self, other: Any) -> "List":
-        return List(s + o for s, o in _operand_rows("__add__", self, other))
+        return _values_list(s + o for s, o in _operand_rows("__add__", self, other))
 
     def __radd__(self, other: Any) -> "List":
-        return List(o + s for s, o in _operand_rows("__radd__", self, other))
+        return _values_list(o + s for s, o in _operand_rows("__radd__", self, other))
 
     def __sub__(self, other: Any) -> "List":
-        return List(s - o for s, o in _operand_rows("__sub__", self, other))
+        return _values_list(s - o for s, o in _operand_rows("__sub__", self, other))
 
     def __rsub__(self, other: Any) -> "List":
-        return List(o - s for s, o in _operand_rows("__rsub__", self, other))
+        return _values_list(o - s for s, o in _operand_rows("__rsub__", self, other))
 
     def __mul__(self, other: Any) -> "List":
-        return List(s * o for s, o in _operand_rows("__mul__", self, other))
+        return _values_list(s * o for s, o in _operand_rows("__mul__", self, other))
 
     def __rmul__(self, other: Any) -> "List":
-        return List(o * s for s, o in _operand_rows("__rmul__", self, other))
+        return _values_list(o * s for s, o in _operand_rows("__rmul__", self, other))
 
     def __truediv__(self, other: Any) -> "List":
-        return List(s / o for s, o in _operand_rows("__truediv__", self, other))
+        return _values_list(s / o for s, o in _operand_rows("__truediv__", self, other))
 
     def __rtruediv__(self, other: Any) -> "List":
-        return List(o / s for s, o in _operand_rows("__rtruediv__", self, other))
+        return _values_list(o / s for s, o in _operand_rows("__rtruediv__", self, other))
 
     def __pow__(self, other: Any) -> "List":
-        return List(s**o for s, o in _operand_rows("__pow__", self, other))
+        return _values_list(s**o for s, o in _operand_rows("__pow__", self, other))
 
     def __rpow__(self, other: Any) -> "List":
-        return List(o**s for s, o in _operand_rows("__rpow__", self, other))
+        return _values_list(o**s for s, o in _operand_rows("__rpow__", self, other))
 
     def __floordiv__(self, other: Any) -> "List":
-        return List(s // o for s, o in _operand_rows("__floordiv__", self, other))
+        return _values_list(s // o for s, o in _operand_rows("__floordiv__", self, other))
 
     def __rfloordiv__(self, other: Any) -> "List":
-        return List(o // s for s, o in _operand_rows("__rfloordiv__", self, other))
+        return _values_list(o // s for s, o in _operand_rows("__rfloordiv__", self, other))
 
     def __mod__(self, other: Any) -> "List":
-        return List(s % o for s, o in _operand_rows("__mod__", self, other))
+        return _values_list(s % o for s, o in _operand_rows("__mod__", self, other))
 
     def __rmod__(self, other: Any) -> "List":
-        return List(o % s for s, o in _operand_rows("__rmod__", self, other))
+        return _values_list(o % s for s, o in _operand_rows("__rmod__", self, other))
 
     def __and__(self, other: Any) -> "List":
-        return List(s & o for s, o in _operand_rows("__and__", self, other))
+        return _values_list(s & o for s, o in _operand_rows("__and__", self, other))
 
     def __rand__(self, other: Any) -> "List":
-        return List(o & s for s, o in _operand_rows("__rand__", self, other))
+        return _values_list(o & s for s, o in _operand_rows("__rand__", self, other))
 
     def __or__(self, other: Any) -> "List":
-        return List(s | o for s, o in _operand_rows("__or__", self, other))
+        return _values_list(s | o for s, o in _operand_rows("__or__", self, other))
 
     def __ror__(self, other: Any) -> "List":
-        return List(o | s for s, o in _operand_rows("__ror__", self, other))
+        return _values_list(o | s for s, o in _operand_rows("__ror__", self, other))
 
     def __xor__(self, other: Any) -> "List":
-        return List(s ^ o for s, o in _operand_rows("__xor__", self, other))
+        return _values_list(s ^ o for s, o in _operand_rows("__xor__", self, other))
 
     def __rxor__(self, other: Any) -> "List":
-        return List(o ^ s for s, o in _operand_rows("__rxor__", self, other))
+        return _values_list(o ^ s for s, o in _operand_rows("__rxor__", self, other))
 
     def __neg__(self) -> "List":
-        return List(-x for x in self)
+        return _values_list(-x for x in self)
 
     def __invert__(self) -> "List":
-        return List(~x for x in self)
+        return _values_list(~x for x in self)
 
     # -- comparison broadcast -- #
 
     def __eq__(self, other: Any) -> "List":
-        return List(s == o for s, o in _operand_rows("__eq__", self, other))
+        return _values_list(s == o for s, o in _operand_rows("__eq__", self, other))
 
     def __ne__(self, other: Any) -> "List":
-        return List(s != o for s, o in _operand_rows("__ne__", self, other))
+        return _values_list(s != o for s, o in _operand_rows("__ne__", self, other))
 
     def __ge__(self, other: Any) -> "List":
-        return List(s >= o for s, o in _operand_rows("__ge__", self, other))
+        return _values_list(s >= o for s, o in _operand_rows("__ge__", self, other))
 
     def __le__(self, other: Any) -> "List":
-        return List(s <= o for s, o in _operand_rows("__le__", self, other))
+        return _values_list(s <= o for s, o in _operand_rows("__le__", self, other))
 
     def __gt__(self, other: Any) -> "List":
-        return List(s > o for s, o in _operand_rows("__gt__", self, other))
+        return _values_list(s > o for s, o in _operand_rows("__gt__", self, other))
 
     def __lt__(self, other: Any) -> "List":
-        return List(s < o for s, o in _operand_rows("__lt__", self, other))
+        return _values_list(s < o for s, o in _operand_rows("__lt__", self, other))
 
     # -- list protocol (must not route through __eq__) -- #
 
@@ -729,7 +784,7 @@ def _private_plugs(items: "List", name: str) -> Optional["List"]:
         if not found:
             return None
         _raise_partial(x, len(found), name, 0)
-    return List(found) if found else None
+    return _values_list(found) if found else None
 
 
 def _refuse_partial(items: "List", name: str) -> None:
@@ -823,7 +878,10 @@ class _Methods(List):
     that names the loop. Iterating it, or indexing it, gives the methods."""
 
     def __init__(self, items: Iterable[Any], name: str) -> None:
-        super().__init__(items)
+        # the bound methods are kept as they are (`_values_list`), never cast
+        object.__setattr__(self, "_parent_multi", None)
+        if items:
+            _fill_values(self, items)
         object.__setattr__(self, "_method", name)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -844,6 +902,178 @@ def _lift_or_pass(obj: Any) -> Any:
             return Plug(obj)
         return Node(obj)
     return obj
+
+
+def _values_list(items: Optional[Iterable[Any]] = None, parent_multi: Any = None) -> "List":
+    """[Internal] A List rig builds from what it computed: a broadcast
+    (``nodes.tx``, ``nodes.is_locked``), an operator's results, a slice, a
+    ``multi[:]`` (with `parent_multi`), a vectorized call's or a command's
+    results. Its elements are kept as they come (`_fill_values`: a str is
+    still read as a name), never refused by `_user_items`' rule: a value
+    (a vector tuple, a matrix, a bound method) stays a value."""
+    out = list.__new__(List)
+    object.__setattr__(out, "_parent_multi", parent_multi)
+    if items:
+        _fill_values(out, items)
+    return out
+
+
+def _fill_values(out: "List", items: Iterable[Any]) -> None:
+    """Fill `out` with `items` as a List always did before the casting rule:
+    numbers, None, plugs and nodes as they are, a component range str
+    flattened with ``cmds.ls``, any other str lifted to its plug or node, and
+    anything else kept."""
+    append = list.append.__get__(out)  # list's own append: no cast
+    for x in items:
+        if isinstance(x, numbers.Real) or x is None:
+            append(x)
+        elif isinstance(x, (Plug, Node)):
+            append(x)
+        elif isinstance(x, str) and "." in x and ":" in x.split(".")[-1]:
+            # Component / range selector (e.g. ``pCube1.vtx[0:5]``)
+            # -- flatten via cmds.ls.
+            for resolved in cmds.ls(x, fl=True) or []:
+                append(_lift_or_pass(resolved))
+        else:
+            append(_lift_or_pass(x))
+
+
+# the elements a List takes as they are: plain numbers and the rig objects
+# every List holds (`_user_items` checks the rest)
+_KEPT = (float, int, Plug, Node, List)
+
+# the numpy scalar that is no numbers.Real (numpy registers its integers and
+# floats; np.str_ is a str, a complex is no number a plug holds)
+_NUMPY_NUMBERS = (np.bool_,)
+
+# the containers a numeric value comes in (a vector, a matrix)
+_SEQUENCES = (tuple, list, np.ndarray)
+
+# the OpenMaya objects Node() / Plug() take
+_API_NODES = (OpenMaya.MObject, OpenMaya.MDagPath)
+
+
+def _user_items(items: Iterable[Any], start: Any) -> list:
+    """The elements `items` gives a List (``List(items)``, ``append``,
+    ``extend``, ``insert``, ``+=``, item and slice assignment), every one
+    checked before any is added. `start` is the index the first one takes,
+    named by an error.
+
+    * a number (``numbers.Real``, bool, a numpy scalar), ``None``, a rig
+      object (a node, a plug, components, a List, a membership token, an
+      attribute spec, AnimCurve keys): as it is;
+    * a numeric value, a tuple, list or array of numbers (nested too: a
+      matrix): as it is;
+    * a str: the plug (``"a.tx"``) or node it names, a component range
+      (``"pCube1.vtx[0:5]"``) its elements; a name that names nothing raises
+      as ``Node(name)`` / ``Plug(name)`` do;
+    * an OpenMaya ``MPlug``: its Plug; an ``MObject`` / ``MDagPath``: its node;
+    * any other object: what its ``str`` names, read as a str is
+      (``str(TransformData)`` is its node's name).
+
+    Anything else is a TypeError naming its index, its type and its str: a
+    sequence holding anything but numbers (a nested List is
+    ``List([List([...]), ...])``), a set or a dict, an object whose ``str``
+    names no node or plug."""
+    out    = []
+    append = out.append
+    for i, x in enumerate(items):
+        if isinstance(x, _KEPT) or x is None:
+            append(x)
+        elif isinstance(x, str):
+            if "." in x and ":" in x.split(".")[-1]:
+                # Component / range selector (e.g. ``pCube1.vtx[0:5]``)
+                # -- flatten via cmds.ls.
+                for resolved in cmds.ls(x, fl=True) or []:
+                    append(_lift_or_pass(resolved))
+            else:
+                append(_lift_or_pass(x))
+        elif (
+            isinstance(x, (numbers.Real, _NUMPY_NUMBERS))
+            or _is_components(x)
+            or _is_membership(x)
+            or _is_attribute_spec(x)
+            or type(x) is _Keys
+        ):
+            append(x)
+        elif isinstance(x, _SEQUENCES):
+            if not _numeric(x):
+                raise _element_error(x, _index(start, i), "a sequence holds numbers only "
+                                     "(a nested List is List([List([...]), ...]))")
+            append(x)
+        else:
+            out.extend(_cast_other(x, _index(start, i)))
+    return out
+
+
+def _index(start: Any, i: int) -> Any:
+    """The index an error names: `start` plus `i` (`start` as given, for a
+    one-element call such as ``insert(-1, x)``)."""
+    return start + i if i else start
+
+
+def _numeric(value: Any) -> bool:
+    """True for a numeric value: an array of numbers or bools, a tuple or
+    list of numbers (nested too)."""
+    if isinstance(value, np.ndarray):
+        return value.dtype.kind in "biuf"
+    for v in value:
+        if isinstance(v, (numbers.Real, _NUMPY_NUMBERS)):
+            continue
+        if isinstance(v, _SEQUENCES) and not isinstance(v, List) and _numeric(v):
+            continue
+        return False
+    return True
+
+
+def _cast_other(x: Any, index: Any) -> list:
+    """The elements an object that is no number, rig object or str gives a
+    List (`_user_items`): an OpenMaya plug or node object through ``Plug()`` /
+    ``Node()``, else what its ``str`` names, read as a str is. A TypeError
+    names it when nothing resolves."""
+    try:
+        if isinstance(x, OpenMaya.MPlug):
+            return [Plug(x)]
+        if isinstance(x, _API_NODES):
+            return [Node(x)]
+    except Exception as e:
+        raise _element_error(x, index, _first_line(e)) from e
+    if isinstance(x, (set, frozenset, dict)):
+        raise _element_error(x, index, "it has no node or plug")
+    try:
+        text = str(x)
+    except Exception as e:
+        raise _element_error(x, index, f"its str raised {type(e).__name__}") from e
+    try:
+        if "." in text and ":" in text.split(".")[-1]:
+            found = [_lift_or_pass(r) for r in cmds.ls(text, fl=True) or []]
+        else:
+            found = [_lift_or_pass(text)]
+    except Exception as e:
+        raise _element_error(x, index, _first_line(e), text) from e
+    if not found:
+        raise _element_error(x, index, "it names nothing", text)
+    return found
+
+
+def _first_line(error: Exception) -> str:
+    return (str(error).strip().splitlines() or [type(error).__name__])[0]
+
+
+def _element_error(x: Any, index: Any, why: str, text: Optional[str] = None) -> TypeError:
+    """The TypeError of an element a List does not take (`_user_items`)."""
+    if text is None:
+        try:
+            text = str(x)
+        except Exception:
+            text = object.__repr__(x)
+    if len(text) > 80:
+        text = text[:77] + "..."
+    return TypeError(
+        f"List element [{index}] ({type(x).__name__} {text!r}) is no node or plug ({why}): "
+        f"a List holds numbers and rig nodes / plugs, and casts a name (or an object whose "
+        f"str is one) to its node or plug; nothing was added"
+    )
 
 
 def _matcher(probe: Any) -> Callable[[Any], bool]:

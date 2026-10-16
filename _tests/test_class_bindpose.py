@@ -565,7 +565,8 @@ class TestRoundTrip(_Case):
     def _rebuilt(self, data):
         cmds.file(new=True, force=True)
         created = Transform.create_hierarchy(data)
-        self.assertEqual([n.split("|")[-1] for n in created], list(self.NAMES))
+        # a List of the typed nodes (their partial paths name them)
+        self.assertEqual([str(n).split("|")[-1] for n in created], list(self.NAMES))
         return {n: cmds.xform(n, query=True, matrix=True, worldSpace=True) for n in self.NAMES}
 
     def test_create_hierarchy_round_trip(self):

@@ -116,7 +116,7 @@ def _wrap_result(result: Any) -> Any:
         except Exception:
             return result
     if isinstance(result, (list, tuple)):
-        from rig._internal.list import List
+        from rig._internal.list import _values_list
 
         wrapped = []
         for r in result:
@@ -128,7 +128,7 @@ def _wrap_result(result: Any) -> Any:
             else:
                 wrapped.append(r)
         try:
-            return List(wrapped)
+            return _values_list(wrapped)
         except Exception:
             return wrapped
     return result

@@ -103,6 +103,14 @@ def _create_nested(node_type: str, **kwargs) -> DAGNode:
     return _cast(cmds.createNode(node_type, **kwargs))
 
 
+def _typed_nodes(names: list[str]) -> List:
+    """The List of the typed nodes `names` name (`_build_hierarchy`'s, parents
+    first): `create_hierarchy`'s and `load_hierarchy`'s result."""
+    from rig._internal.list import List
+
+    return List([_cast(name) for name in names])
+
+
 def _set_parent_uuid(node: TransformData, uuid: str | None) -> None:
     """Sets the uuid of the parent of the TransformData `node` (None: a root):
     its ``parent_uuid`` since cgmath 2.0.0 (where ``parent_node`` is a
@@ -565,14 +573,25 @@ class Transform(DAGNode):
         hierarchy:  HierarchyData,
         parent:     Union[str, None] = None,
         world_space                  = True,
-    ) -> HierarchyData:
+    ) -> List:
         """Creates a hierarchy from a HierarchyData object.
 
         Args:
-            hierarchy: A HierarchyData object.
+            hierarchy: A HierarchyData object (`serialize_hierarchy`); it is
+                left as it was.
+            parent: An existing node to make the roots under. None: the world.
+            world_space: With `parent`: True keeps the roots' world matrices
+                from the data, False their local values.
 
         Returns:
-            A Skeleton object with updated node names (in case of duplication)
+            A List of the new nodes, typed as ``Transform.create`` types its
+            node (``Joint`` for a joint, ``Transform`` for a transform, a
+            locator's transform and a space_transform box), parents first:
+            ``nodes[0]`` is the first root. Maya renames a node whose name is
+            taken (``root1``)::
+
+                skel = Transform.create_hierarchy(Node("root").serialize_hierarchy())
+                skel[1].tx.get()
 
         Inside ``with container()`` every node the call made joins the scope
         (``container=False`` leaves them unregistered); the nodes keep the
@@ -580,9 +599,9 @@ class Transform(DAGNode):
         no prefix).
 
         It selects the nodes it made; `load_hierarchy` (from a file or the
-        data, one undo step, the selection kept) returns them as a List.
+        data, one undo step, the selection kept) returns the same List.
         """
-        return cls._build_hierarchy(hierarchy, parent, world_space, select=True)
+        return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True))
 
     @classmethod
     @_typed_creator
@@ -595,9 +614,7 @@ class Transform(DAGNode):
         """[Internal] `load_hierarchy`'s create, a typed creator (so it joins the
         container scope as `create_hierarchy` does): the new nodes, typed,
         parents first; the selection is put back as it was."""
-        from rig._internal.list import List
-
-        return List([_cast(name) for name in cls._build_hierarchy(hierarchy, parent, world_space, select=False)])
+        return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=False))
 
     @classmethod
     def _build_hierarchy(

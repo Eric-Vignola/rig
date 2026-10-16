@@ -721,8 +721,24 @@ flattened (nested under the default `flatten_containers=True`), when
 ## 6. List
 
 A `List` is a `list` whose attribute access and operators broadcast
-over its elements. Strings lift to nodes and `Plug`s; numbers and `None`
-pass through. It is `rig.List`, not `typing.List`.
+over its elements. It is `rig.List`, not `typing.List`. It holds numbers
+and rig objects:
+
+| an element | in the List |
+|---|---|
+| a number (`int`, `float`, `bool`, a numpy scalar), `None` | as it is |
+| a numeric value: a tuple, list or array of numbers (a vector, a matrix) | as it is |
+| a node, a plug, components, a `List`, a `Tag` / `Layer` / material token, an attribute spec, `AnimCurve` keys | as it is |
+| a str | the `Plug` (`"c0.tx"`) or node it names; a component range (`"pCube1.vtx[0:5]"`) its elements; a name that names nothing raises, as `Node(name)` does |
+| an OpenMaya `MPlug` / `MObject` / `MDagPath` | its `Plug` / node |
+| any other object | what its `str` names: a `TransformData` (its str is its node's name), so a `HierarchyData` gives its nodes |
+| anything else | a `TypeError` naming its index, its type and its str; nothing is added |
+
+The rule is the same for `List(items)`, `append`, `extend`, `insert`, `+=`
+and item / slice assignment. A sequence of anything but numbers is no
+element (nest a `List`: `List([List([a, b]), List([c])])`). The Lists rig
+returns (a broadcast, an operator's results, a slice, `multi[:]`) keep their
+values.
 
 ```python
 cmds.file(new=True, force=True)
@@ -732,6 +748,14 @@ for name in ("c0", "c1", "c2"):
 nodes = List(["c0", "c1", "c2"])
 print(repr(nodes.tx))                               # List([Plug("c0.translateX"), Plug("c1.translateX"), Plug("c2.translateX")])
 print(repr(List([Node("c0"), 3.14, None]).ty))      # List([Plug("c0.translateY"), 3.14, None])
+
+hier = Node("c0").serialize_hierarchy()             # a HierarchyData of TransformData
+print(repr(List(hier)), List(hier)[0].tx.get())     # List([Transform("c0")]) 0.0
+print(repr(List([(1, 2, 3)])))                      # List([(1, 2, 3)])
+try:
+    nodes.append({"c1": 1})
+except TypeError as err:
+    print(type(err).__name__, len(nodes))           # TypeError 3
 ```
 
 `<<` broadcasts a scalar to every element and pairs a sequence element by

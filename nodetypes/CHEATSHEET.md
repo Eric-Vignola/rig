@@ -583,14 +583,18 @@ print(type(skeleton).__name__, skeleton.name, [x.node_type for x in skeleton])  
 ```
 
 `create_hierarchy` rebuilds it (needs `cgmath` 1.0.1 or later, for
-`SUPPORTED_NODE_TYPES`) and returns the created names, parents first:
+`SUPPORTED_NODE_TYPES`) and returns the new nodes as a `List`, typed as
+`Transform.create` types its node (`Joint`, `Transform`; a locator's
+transform and a space_transform box are `Transform`s), parents first.
+(`List(skeleton)`, without a create, is the nodes the data's names name in
+the scene, a name that names several nodes a `TypeError`.)
 
 <!-- notest -->
 ```python
 cmds.file(new=True, force=True)
 made = Transform.create_hierarchy(skeleton)
-print(made, cmds.getAttr("child.ty"), cmds.listRelatives("probe", shapes=True))   # ['root', 'child', 'probe'] 5.0 ['probeShape']
-print(Transform.create_hierarchy(skeleton, parent=Transform.create(name="rig")))  # ['rig|root', 'rig|root|child', 'rig|root|child|probe']
+print(repr(made), made[1].ty.get(), cmds.listRelatives("probe", shapes=True))   # List([Joint("root"), Joint("child"), Transform("probe")]) 5.0 ['probeShape']
+print(repr(Transform.create_hierarchy(skeleton, parent=Transform.create(name="rig"))))  # List([Joint("rig|root"), Joint("rig|root|child"), Transform("rig|root|child|probe")])
 ```
 
 `save_hierarchy` / `load_hierarchy` put that data in a `cgmath` file
