@@ -440,11 +440,22 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   next evaluation overrides it; `cube.tx << 5` first disconnects whatever
   drives `cube.tx` (logged at INFO, `breaking incoming connection(s)`),
   then sets 5, as `cube.tx << other.ty` replaces it. A constraint or a
-  pairBlend keeps its other channels. One undo brings the driver back. A
-  locked plug still raises `InjectionError` with nothing changed, and
-  `cube.tx.set(5)` is Maya's `setAttr`, which refuses a wired plug. A child
-  whose compound is connected whole (`c.t` into `cube.t`) has no input of
-  its own: `cube.tx << 5` raises, `cube.t << None` frees it.
+  pairBlend keeps its other channels. The statement is one undo step
+  (`rig.replace`): one undo brings the driver back. A locked plug still
+  raises `InjectionError` with nothing changed, and `cube.tx.set(5)` is
+  Maya's `setAttr`, which refuses a wired plug.
+- **A child of a compound connected whole gets an input of its own first.**
+  With `c.t` into `cube.t`, `cube.tx` has no input of its own, and Maya's
+  `connectAttr -f` (or a curve) into it leaves the channel two drivers: the
+  evaluation and a reopened file disagree. A value, a plug, keys or `None`
+  on `cube.tx` first split that input into one per child (`c.tx` into
+  `cube.tx` ..., logged at INFO), then replace `cube.tx`'s: `cube.ty` and
+  `cube.tz` keep following `c`. A value on the compound itself
+  (`cube.t << [1, 2, 3]`, `cube.t << 1`) replaces the whole input, as
+  `cube.t << d.t` does; a list with a `skip` or a `None` splits instead. An
+  input with no matching children to split (a `unitConversion` between
+  unit kinds feeds the compound whole), or a locked sibling, raises
+  `InjectionError` naming `cube.t << None`, with nothing changed.
 - **A lock is Maya's, with rig's checks in front.** A locked container
   locks its members, and its unlock unlocks every member, also one that was
   locked on its own; `member.unlock()` is refused, naming the container. A
@@ -473,7 +484,10 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   deleted. On a channel Maya already keyed through a pairBlend, the curve
   takes the pairBlend's place there and the pairBlend's own curve is kept,
   unused on it. A locked plug raises `InjectionError`, even with the keys
-  its curve holds: unlock before running again.
+  its curve holds: unlock before running again. The curve's own routes
+  follow the same rule: `curve.set_keys(...)` and `AnimCurveTL.define(...)`
+  on a curve that keys a locked plug raise too, and their default out
+  tangent is a step when the curve keys a bool or an enum, as `<<` gives.
 - **A curve's keys go through the API, never `cutKey`.** Maya's `addKeys`
   merges keys (a time given twice is silently one key) and `cutKey -clear`
   deletes a curve it empties; rig checks the times itself (strictly
@@ -484,13 +498,17 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
 - **Rewiring a multi element is safe through rig.** `net.w[0] << a.tx`
   then `net.w[0] << a.ty` replaces the input, also on a multi that is not
   keyable (`Float("w", multi=True, keyable=False)`, `Matrix`, `Message`,
-  or after `net.w << hide`), where Maya frees an element's MPlug along with
-  its connection. rig finds the element again after every disconnect it
-  makes (`<<`, `<< None`, `disconnect`, `break_connections`), for the plug
-  object it was handed. A plug object held across a disconnect made
-  outside rig (`cmds.disconnectAttr`, Maya's editors), or a second object
-  for the same element taken while it was connected, can dangle: take the
-  plug again (`net.w[0]`) after such a disconnect.
+  a `Typed` multi, or after `net.w << hide`), where Maya frees an element's
+  MPlug along with its connection. rig finds the element again after every
+  disconnect it makes (`<<`, `<< None`, `disconnect`, `break_connections`),
+  for the plug object it was handed, and after every undo and redo for
+  every element plug it handed out (`p = net.w[0]; p << a.tx;
+  cmds.undo(); p << a.ty` works). An element plug of a node deleted to the
+  undo queue raises `already deleted!` until an undo brings the node back.
+  A plug object held across a disconnect made outside rig
+  (`cmds.disconnectAttr`, Maya's editors), or a second object for the same
+  element taken while it was connected, can dangle: take the plug again
+  (`net.w[0]`) after such a disconnect.
 
 ```python
 cmds.file(new=True, force=True)

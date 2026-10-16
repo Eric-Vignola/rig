@@ -545,15 +545,27 @@ From a node it updates that node in place, the inverse of its `save`:
   has none of that name; its other sets stay);
 - a `NurbsCurve` of the same CV count, degree, form and knots, a
   `NurbsSurface` of the same CV counts, degrees and forms (it keeps its own
-  knots: the data holds none), with no history, gets its CVs;
+  knots: the data holds none), with no history, gets its CVs. Load with the
+  `world_space` the file was saved with: a `BSplineData` holds no space (a
+  `MeshData` holds its matrix, so a mesh round-trips either way), and a file
+  saved with `world_space=False` loaded with the default `True` puts its
+  object-space CVs in the world, moved by the transform;
 - a `SkinCluster` gets the file's weights as `set_weights(SkinData)` sets
   them (influences by name, the missing ones added, the ones the file does
-  not name removed);
+  not name removed); the influences and the weights it holds already (within
+  1e-9) write nothing and make no undo step;
 - a `BlendShape` gets each target of the file by name (added when missing;
-  its other targets stay).
+  its other targets stay); a target the file replaces gives up its live
+  target mesh (its `inputGeomTarget` input, logged at INFO), whose offsets
+  would replace the file's at the next evaluation.
 
 Another topology or CV layout, or a shape with history, is a `ValueError`
-naming `Cls.load(path)` for a new node. A hierarchy is never updated in place
+naming `Cls.load(path)` for a new node. A deformed shape (a skin, a
+blendShape, a cluster) names the shape under its deformers instead, its
+intermediate `...Orig` shape: `Mesh('bodyShapeOrig').load(path)` updates the
+mesh a skin deforms, and the deformed shape follows (deleting the history
+would delete the deformers). The class form takes no `world_space=`: it is a
+`TypeError` naming `Mesh('x').load(path, world_space=...)`. A hierarchy is never updated in place
 (its transforms are what the rig hangs off: constraints, skins, children):
 `Transform('root').load_hierarchy(...)` is a `TypeError` before anything is
 read, naming `Transform.load_hierarchy(path, parent='root')`.
@@ -576,7 +588,12 @@ replaced whole.
 two faces' normals in the data differ at one of its ends, and a normal Maya
 then computes away from the data's was locked in the source, so it is set and
 locked; data without normals (an `.obj`, a `MeshData` built by hand) is all
-smooth, as before. A `cgmath.render.scene.Object` stands for a mesh and its
+smooth, as before. Its cost over a create without normals (a 20k-face sphere,
+best of 7, against 2.0.0a5's create of the same data, about 25 ms): all
+smooth 1.3x, 800 hard edges 1.45x, 30% of the edges hard 1.75x, every edge
+hard (faceted) 2.6x, 2000 vertices of locked normals 2.1x. Maya's normals and
+each locked normal cross from API 2.0's arrays one value at a time, which
+bounds a faceted or heavily locked mesh. A `cgmath.render.scene.Object` stands for a mesh and its
 UVs: `Mesh.create(obj)` builds its `mesh` with its `uv` (a `UVData` is one set,
 a `UVList` every set), takes its name when `name=` is not given and puts the
 new transform where it is (scale, rotate, translate, rotate order, rotate axis,
@@ -871,6 +888,10 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **Undoing a target a blendShape load added keeps its weight element**: the
   blendShape keeps an unnamed `weight[i]` at 0 (as the undo of
   `set_target_data` on a new target always has).
+- **Undoing `Mesh('x').load` brings back the points, the hard edges and the
+  locked normals, and the mesh's stored normal array may come back longer**:
+  a `.ma` saved after the undo lists more `.n` entries (unset ones), with the
+  same shading.
 - **`create_hierarchy` (so `load_hierarchy`) does not connect a joint's
   `inverseScale`** to its parent's `scale`: a joint with segment scale
   compensate under a scaled parent comes back at another world matrix.

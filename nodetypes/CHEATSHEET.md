@@ -1715,6 +1715,26 @@ print(AnimCurve.of(cube.t))                              # List([AnimCurveTL("cu
 print(len(AnimCurve.of(cube)), AnimCurveTU.of(cube))     # 4 List([AnimCurveTU("blink")])
 ```
 
+`set_keys` and a `define` that updates follow the rules of `plug <<
+AnimCurve(...)` for the plugs the curve keys: a curve that keys a locked
+plug refuses with `InjectionError` (even with the keys it holds; unlock
+first), and the default out tangent is a step when every plug it keys is a
+bool or an enum, so keys it holds write nothing.
+
+```python
+from rig import InjectionError
+from rig.spec import lock
+
+cube.tx << lock
+try:
+    AnimCurve.of(cube.tx)[0].set_keys([5, 6])
+except InjectionError as err:
+    print(str(err).split("Unlock first: ")[1].split(" (")[0])   # Plug('cube.translateX').unlock()
+cube.tx.unlock()
+blink.set_keys([1, 0, 1])                                # it keys cube.v, a bool: a step
+print(cmds.keyTangent("blink", query=True, outTangentType=True))   # ['step', 'step', 'step']
+```
+
 ---
 
 ## Where to go next

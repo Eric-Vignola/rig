@@ -293,8 +293,9 @@ A value over any connection (a constraint, a curve, a pairBlend, a wire)
 replaces it, as a plug does: `<<` disconnects the driver, logs it at INFO,
 then sets. Maya's own `setAttr` takes a value on a keyed or constrained plug
 and loses it at the next evaluation. A constraint or a pairBlend keeps its
-other channels, and one undo brings the driver back. A locked plug still
-raises `InjectionError` (section 16).
+other channels, and the statement is one undo step (`rig.replace`): one undo
+brings the driver back. A locked plug still raises `InjectionError` (section
+16).
 
 ```python
 k = Node.create("transform", name="k")
@@ -309,13 +310,36 @@ print(p.tx >> None, repr(p.ty.get_inputs()))   # 2.0 List([Plug("p_parentConstra
 cmds.currentTime(0)
 ```
 
+A child of a compound connected whole (`c.t` into `g.t`) has no input of
+its own; a value, a plug, keys or `None` on it first split the compound's
+input into one per child (logged at INFO), then replace the child's, so the
+other children keep following. A value on the compound itself replaces the
+whole input; a list with a `skip` or a `None` splits it.
+
+```python
+c = Node.create("transform", name="c")
+g = Node.create("transform", name="g")
+c.t << [4, 5, 6]
+g.t << c.t                                     # connected whole
+g.tx << 9                                      # split per child, then tx replaced
+print(repr(g.t.get_inputs()), repr(g.ty.get_inputs()))   # List([]) List([Plug("c.translateY")])
+print(g.t >> None)                             # [9. 5. 6.]
+```
+
 Short and long names both work, and `node.tx = 5` is sugar for `node.tx << 5`.
 Python's own names keep their meaning: a property setter runs
 (`a.namespace = "ns"`), a method or class member is an `AttributeError` that
 names `Plug(a.find_attr(name)) << value` for a Maya attribute it shadows,
 and a `_` name, or a default the class body declares (`side = None` in a
 subclass), is Python state on the object. Any other name is
-`Attribute not found`, never a new Python attribute.
+`Attribute not found`, never a new Python attribute. A new attribute named
+like a member (`ctl << Bool("lock")`) is made, with a warning naming
+`Plug(ctl.find_attr("lock"))`: `ctl.lock` is the method. New after 2.0.0a5, the
+names `lock`, `unlock` and `is_locked` (every node and plug), `save` and
+`load` (a mesh, a curve, a surface, a skinCluster, a blendShape), and
+`save_hierarchy` / `load_hierarchy` (a transform, a joint) are members; an
+attribute of such a name a5 reached as `ctl.lock` is reached through
+`find_attr` now.
 
 ```python
 a.translateY = 2
@@ -747,7 +771,8 @@ print(nodes.tx.get_inputs().get())  # [[], array([1.]), []]  -- a query result r
 ```
 
 `lock()` / `unlock()` are the List's own (methods do not broadcast; `<<
-lock` routes to them): every element, nodes and plugs, checked first, so a
+lock` routes to them; a method of each element, `List(shapes).save(path)`,
+raises `TypeError` naming the loop, `[x.save(...) for x in items]`): every element, nodes and plugs, checked first, so a
 refused one changes nothing. `lock()` locks the plugs, then the nodes in
 one `lockNode`; `unlock()` the nodes, then the plugs. It is one undo step,
 `rig.lock` / `rig.unlock`, and returns the List. `nodes.is_locked` maps,
@@ -1408,7 +1433,10 @@ that is in the way, whatever drives it (a wire, a curve, a constraint, a
 pairBlend). The one barrier it respects is a lock: setting or
 connecting into a locked attribute raises `InjectionError` (a
 `RuntimeError`), and a compound with a single locked child mutates nothing.
-Disconnecting is still allowed. A locked plug refuses even the value it
+Disconnecting is still allowed. The other refusal is a child whose compound
+is connected whole by an input that cannot be split per child (a
+`unitConversion` between unit kinds feeds it, or a sibling is locked,
+section 2): the error names `g.t << None`. A locked plug refuses even the value it
 already holds, so a build that ends with `<< lock` unlocks before it runs
 again; the error names the unlock (`Plug('b.translateY').unlock()`, with
 `Node('b').unlock()` first when the node is locked too). The lock verbs
@@ -3008,7 +3036,8 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
 | `node.lock()`, `plug.lock()` and their `unlock()` (`x << lock`) | one, Maya's own (`lockNode`, `setAttr -lock`); **none** when the object already is in that state |
-| `slot << None` on a `Typed` slot (any typed attribute that holds any data) that held a matrix, a double3, geometry ... | two: the disconnect, then the drop of the data its input left (an API edit, journaled with the statement); a slot that held a number or nothing has no drop |
+| `slot << None` on a `Typed` slot (any typed attribute that holds any data) that held a matrix, a double3, geometry ... | one, named `rig.replace`: the disconnect and the drop of the data its input left (an API edit, journaled with the statement); one undo brings back the connection and the data together. A slot that held a number or nothing has no drop |
+| a statement that removes a plug's input and then writes it: a value over a keyed, constrained or wired plug, a rewire (`x << b` over `x << a`), a child of a compound connected whole (its input split per child) | one, named `rig.replace`: the disconnects, the connects and the sets of the whole statement (a `List` broadcast included) |
 | `List.lock()` / `List.unlock()` (`List << lock`) over more than one command | one, named `rig.lock` / `rig.unlock` |
 | `plug << AnimCurve(...)`, a compound, a `List` broadcast or pairs of keys, a per-channel list holding keys (section 39) | one, named `rig.animcurve`: the new curves, their keys and their connects; **none** when every curve holds those keys already. `AnimCurveTL.create(keys)` is one `rig.create`, a `define` that makes or updates a curve one `rig.define`, `curve.set_keys(...)` one `rig.AnimCurve.set_keys` |
 | `Mesh.create`, `NurbsCurve.create`, `NurbsSurface.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.NurbsSurface.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
@@ -3251,7 +3280,8 @@ translate and rotate, and keys nothing on any other connected attribute.
 | any of them on `s`, `v` or a user attribute | nothing keyed: "attribute already connected" | the curve replaces the input |
 | a pairBlend Maya made | adds to its curve | the curve replaces the pairBlend's output on that channel; the pairBlend's curve is kept, unused there |
 | its own curve | adds the key | the curve's keys are replaced in place |
-| a locked plug | nothing keyed, no warning | `InjectionError`, even with the keys it holds: unlock before running again |
+| a locked plug | nothing keyed, no warning | `InjectionError`, even with the keys it holds: unlock before running again; `curve.set_keys(...)` and `AnimCurveTL.define(...)` on its curve raise the same |
+| a child of a compound connected whole (`c.t` into `cube.t`) | keys the child next to the whole input (two drivers) | the compound's input is split per child, then the curve replaces the child's |
 
 ```python
 from rig import InjectionError
@@ -3280,7 +3310,11 @@ when they differ (`update=False` leaves it); a curve's Maya attributes go
 in as keywords, set after the keys. `AnimCurve.of(x)` lists the curves
 directly driving a plug, a compound's children, a node or a `List`.
 `get_keys()` reads a curve back as keys (UI units), so `other.tx <<
-curve.get_keys()` copies it.
+curve.get_keys()` copies it. `set_keys` and a `define` that updates follow
+the plug's rules: a curve that keys a locked plug refuses (D3), and the
+default out tangent is a step when every plug the curve keys is a bool or
+an enum. One plug in two rows of a `List` (`List([a, a]).tx << ...`) is
+keyed once, by the last row.
 
 ```python
 print(repr(AnimCurve("pCube1_translateX")), repr(Node("pCube1_rotateX")))   # AnimCurveTL("pCube1_translateX") AnimCurveTA("pCube1_rotateX")
@@ -3324,7 +3358,7 @@ for spelling in (lambda: cube << AnimCurve([1]), lambda: AnimCurve(5), lambda: A
 # TypeError Cannot inject AnimCurve keys into the node 'pCub
 # TypeError AnimCurve(5) is no keys and names no curve: Anim
 # TypeError AnimCurveTL([...]) refers to a curve by name: An
-# TypeError pCube1.worldMatrix << AnimCurve(...): an animati
+# TypeError pCube1.worldMatrix[0] << AnimCurve(...): an anim
 # ValueError AnimCurve times must be strictly increasing (May
 ```
 
