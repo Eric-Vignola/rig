@@ -219,12 +219,18 @@ class TestNodeCreateTypedDispatch(_SceneCase):
                 self.assertEqual(set(cmds.ls(long=True)), before)
 
     def test_a_node_that_takes_no_input_takes_no_positional_argument(self):
+        # re-pinned (round features s7, F4): a nurbsSurface is built from its data now
+        # (NurbsSurface.create(data)): a str is refused as no BSplinePatchData, nothing made
         before = set(cmds.ls(long=True))
-        for node_type in ("transform", "joint", "choice", "nurbsSurface", "multiplyDivide"):
+        for node_type in ("transform", "joint", "choice", "multiplyDivide"):
             with self.subTest(node_type=node_type):
                 with self.assertRaisesRegex(TypeError, r"keyword arguments only"):
                     Node.create(node_type, "grp")
                 self.assertEqual(set(cmds.ls(long=True)), before)
+        with self.subTest(node_type="nurbsSurface"):
+            with self.assertRaisesRegex(TypeError, r"^NurbsSurface\.create\(\) takes a BSplinePatchData, got str"):
+                Node.create("nurbsSurface", "grp")
+            self.assertEqual(set(cmds.ls(long=True)), before)
 
     def test_a_node_built_from_inputs_needs_them(self):
         cube = cmds.polyCube(name="cube", ch=False)[0]
@@ -235,6 +241,7 @@ class TestNodeCreateTypedDispatch(_SceneCase):
             ("skinCluster", "geom, influences"),
             ("mesh", "mesh_data"),
             ("nurbsCurve", "points"),
+            ("nurbsSurface", "data"),  # round features s7, F4
             ("reference", "file_path, namespace"),
         ):
             with self.subTest(node_type=node_type):

@@ -18,12 +18,14 @@ source (runs\\r5\\CG2). Undo tests check the scene
 
 import re
 import time
+from unittest import mock
 
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig import container
 from rig.nodetypes import Mesh
+from rig.nodetypes import mesh as mesh_module
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk, mesh_state
 
@@ -850,6 +852,28 @@ class TestMeshCreateShading(_MeshCreateCase):
         self.assert_shading(Mesh("mShape"), normals, hard, locked)
         self.assertIs(mesh.is_valid, True)
 
+    def test_data_numbered_another_way(self):
+        # the same normals listed in another order (data another tool wrote): compared face-vertex
+        # by face-vertex, the locked normal is found, and the normals' ids are read for it
+        data, uvs, normals, hard, locked = self.source(_shaded_sphere())
+        order = np.random.default_rng(3).permutation(len(data.normals))
+        renumber = np.empty_like(order)
+        renumber[order] = np.arange(len(order))
+        data.normals = np.asarray(data.normals)[order]
+        data.normal_indices = renumber[np.asarray(data.normal_indices)]
+        with mock.patch.object(mesh_module, "_normal_ids_now", wraps=mesh_module._normal_ids_now) as read:
+            mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self.assertEqual(read.call_count, 1)
+        self.assert_shading(mesh, normals, hard, locked)
+
+    def test_nothing_locked_reads_no_normal_ids(self):
+        # Maya numbers the normals of data a Maya mesh was serialized to as the data does: when
+        # every one matches, the 80k ids of a 20k-face mesh are never read
+        data, uvs, normals, hard, locked = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
+        with mock.patch.object(mesh_module, "_normal_ids_now", wraps=mesh_module._normal_ids_now) as read:
+            mesh = Mesh.create(data, uv_data=uvs, name="m")
+        read.assert_not_called()
+        self.assert_shading(mesh, normals, hard, locked)
     def test_normals_that_do_not_fit_raise_with_nothing_made(self):
         data, uvs, *_ = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
         good_n, good_i = np.asarray(data.normals), np.asarray(data.normal_indices)

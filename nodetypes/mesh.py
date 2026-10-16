@@ -1864,48 +1864,20 @@ def _edge_ids(fn: OpenMaya.MFnMesh, hard: tuple) -> list[int]:
     return ids
 
 
-def _normals_now(fn: OpenMaya.MFnMesh) -> tuple:
-    """Maya's normals of the mesh `fn` and the normal of each of its face-vertices,
-    in its face-vertex order, object space: ``(normals (N, 3), ids)``."""
-    ids     = fn.getNormalIds()[1]
-    ids     = np.fromiter(ids, dtype=np.int64, count=len(ids))
-    normals = _raw_normals(fn)
-    if normals is None:
-        normals = fn.getNormals(OpenMaya.MSpace.kObject)
-        flat    = np.fromiter(itertools.chain.from_iterable(normals), dtype=np.float64, count=3 * len(normals))
-        normals = flat.reshape(-1, 3)
-    return normals, ids
+def _normals_now(fn: OpenMaya.MFnMesh) -> np.ndarray:
+    """Maya's normals of the mesh `fn`, ``(N, 3)``, object space. API 2.0's arrays
+    have no buffer: each value crosses into numpy on its own (about 4 ms for the
+    20k normals of a 20k-face mesh)."""
+    normals = fn.getNormals(OpenMaya.MSpace.kObject)
+    flat    = np.fromiter(itertools.chain.from_iterable(normals), dtype=np.float64, count=3 * len(normals))
+    return flat.reshape(-1, 3)
 
 
-def _raw_normals(fn: OpenMaya.MFnMesh) -> np.ndarray | None:
-    """The normals of the mesh `fn`, ``(N, 3)``, copied from Maya's own array
-    (API 1.0 ``MFnMesh.getRawNormals``, object space), or None when that cannot
-    be read (then the caller reads them through API 2.0). Read only, and at
-    once, while nothing edits the mesh. Why: API 2.0's MFloatVectorArray has no
-    buffer, so its normals cross into numpy one float at a time (about 4 ms for
-    20k normals, a sixth of a 20k-face create); the raw array takes 0.1 ms."""
-    count = fn.numNormals
-    if not count:
-        return np.empty((0, 3), dtype=np.float64)
-    try:
-        import ctypes
-
-        from maya import OpenMaya as api1
-
-        sel = api1.MSelectionList()
-        sel.add(fn.fullPathName())
-        path = api1.MDagPath()
-        sel.getDagPath(0, path)
-        mesh = api1.MFnMesh(path)
-        if mesh.numNormals() != count:
-            return None
-        address = int(mesh.getRawNormals())
-        if not address:
-            return None
-        values = (ctypes.c_float * (3 * count)).from_address(address)
-        return np.frombuffer(values, dtype=np.float32).astype(np.float64).reshape(-1, 3)
-    except Exception:  # noqa: BLE001 (any failure takes the API 2.0 read)
-        return None
+def _normal_ids_now(fn: OpenMaya.MFnMesh) -> np.ndarray:
+    """The normal of each face-vertex of the mesh `fn`, in its face-vertex order
+    (about 3 ms for the 80k face-vertices of a 20k-face mesh)."""
+    ids = fn.getNormalIds()[1]
+    return np.fromiter(ids, dtype=np.int64, count=len(ids))
 
 
 def _rows_now(fn: OpenMaya.MFnMesh, indices: np.ndarray, counts: np.ndarray) -> np.ndarray | None:
@@ -1962,32 +1934,39 @@ def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) ->
     (its locked normals), the mesh's edges `hard` (ids) being its hard ones.
     Returns them as ``(faces, vertices)``.
 
-    Compared per Maya normal: each takes the data's normal of its face-vertices
-    when they all have one (Maya splits a vertex's normal where the data does),
-    else each face-vertex is compared on its own. When Maya numbers the normals
-    as the data does (data a Maya mesh was serialized to), normal by normal."""
-    now, now_ids = _normals_now(fn)
-    rows = _rows_now(fn, shading.indices, shading.counts) if shading.holes else None
-    want = shading.ids if rows is None else shading.ids[rows]
-    if len(now) == len(shading.normals) and np.array_equal(now_ids, want):
-        d    = now - shading.normals
-        far  = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
-        diff = np.flatnonzero(far[now_ids]) if far.any() else ()
-    else:
-        link  = np.full(len(now), -1, dtype=np.int64)
-        link[now_ids] = want
-        one   = link[now_ids] == want
-        far   = np.zeros(len(now), dtype=bool)
-        known = np.flatnonzero(link >= 0)
-        if len(known):
-            d = now[known] - shading.normals[link[known]]
-            far[known] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
-        differs = far[now_ids] & one
-        if not one.all():
-            other = np.flatnonzero(~one)
-            d = now[now_ids[other]] - shading.normals[want[other]]
-            differs[other] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
-        diff = np.flatnonzero(differs)
+    First normal by normal: Maya numbers a mesh's normals by its topology and its
+    smooth fans, so on data a Maya mesh was serialized to (the same faces, the
+    same hard edges) its normals are the data's, one for one, unless the data
+    locks some. When all of them match, nothing is locked and the face-vertices'
+    normal ids are never read (they cost as much again). Data numbered another
+    way can only match normal for normal through normals of equal value, which
+    leaves each face-vertex its own (a match through two locked normals that
+    each hold the other's computed value, in data numbered another way, is the
+    one case it cannot tell). Otherwise each Maya normal is compared with the
+    data's normal of its face-vertices when they all have one, and each
+    face-vertex on its own when they have several."""
+    now = _normals_now(fn)
+    if len(now) == len(shading.normals):
+        d = now - shading.normals
+        if not (np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL).any():
+            return (), ()
+    now_ids = _normal_ids_now(fn)
+    rows    = _rows_now(fn, shading.indices, shading.counts) if shading.holes else None
+    want    = shading.ids if rows is None else shading.ids[rows]
+    link    = np.full(len(now), -1, dtype=np.int64)
+    link[now_ids] = want
+    one     = link[now_ids] == want
+    far     = np.zeros(len(now), dtype=bool)
+    known   = np.flatnonzero(link >= 0)
+    if len(known):
+        d = now[known] - shading.normals[link[known]]
+        far[known] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
+    differs = far[now_ids] & one
+    if not one.all():
+        other = np.flatnonzero(~one)
+        d = now[now_ids[other]] - shading.normals[want[other]]
+        differs[other] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
+    diff = np.flatnonzero(differs)
     if not len(diff):
         return (), ()
     faces, verts = _face_vertices(fn, diff)
@@ -2523,7 +2502,7 @@ def _shading_now(fn: OpenMaya.MFnMesh) -> tuple:
     locked = np.array([fn.isNormalLocked(i) for i in range(fn.numNormals)], dtype=bool)
     if not locked.any():
         return hard, ((), (), ())
-    normals, ids = _normals_now(fn)
+    normals, ids = _normals_now(fn), _normal_ids_now(fn)
     rows = np.flatnonzero(locked[ids])
     faces, verts = _face_vertices(fn, rows)
     return hard, (faces, verts, normals[ids[rows]])
