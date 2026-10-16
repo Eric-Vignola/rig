@@ -360,6 +360,14 @@ disconnects, `connect(other, force=False)` refuses an occupied input. The
 DSL spelling, `node.tx`, is a `Plug`: the same methods, the DSL's
 operators, a numpy-shaped `get()`.
 
+An `Attribute` holds its `MPlug`. After a disconnect, Maya can free the
+`MPlug` of an array element (one of a multi that is not keyable, connected
+and holding no value of its own), so `disconnect()`, `break_connections()`
+and the DSL's `<<` find the element's `MPlug` again for the objects they
+were handed (and the ones `break_connections()` returns). Another object
+for the same element taken while it was connected, or one held across a
+disconnect made outside rig, can dangle: take the attribute again.
+
 Because it is a `str`, `cmds.setAttr(attr, 1)` just works, and `f"{attr}"`
 is the full name. Equality and hashing are not the string's, though: two
 attributes are equal, and hash alike, when they are the same Maya plug
