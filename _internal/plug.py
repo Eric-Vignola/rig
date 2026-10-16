@@ -2374,7 +2374,15 @@ def _inject_value(
 
     Source-shape rules (NumPy-style strict, plus matrix-source routing):
 
-    1. ``src is None`` => disconnect any incoming connection on ``dst``.
+    1. ``src is None`` => disconnect any incoming connection on ``dst`` (a
+       generic slot also drops the data its old input left,
+       `_clear_generic_data`).
+    2a. ``dst`` a generic slot (`_is_generic_slot`: a typed attr that holds any
+       data, a ``Typed``'s, ``choice.input``) that is an element or a single
+       attr => `_inject_generic`: a plug is one whole connect, a number sets,
+       anything else is a TypeError before any edit; its data type is never
+       read. Its multi root keeps the multi rules below, every item of a
+       sequence checked first.
     2. ``dst.data_type == "string"`` => ``cmds.setAttr(..., type="string")``.
     3. Sequence/array ``src`` (numpy, list, tuple) -- try matrix-source
        routing first via :mod:`rig._internal.decompose` (handles

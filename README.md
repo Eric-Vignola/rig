@@ -61,6 +61,7 @@ Two operators carry the language:
 | `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
 | `node << Float("x")` | declare an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide`; declaring it again applies the settings given and keeps the value | the new plug, so its value goes next |
 | `node >> Float("x")` | add an output-only (non-writable) attribute | the new plug |
+| `slot << b` on a `Typed` (a typed attribute that holds any data, as a choice node's input) | a plug connects whole, whatever the slot held (no shorthand node, no split into channels); a number sets; any other value is a `TypeError`; `<< None` also drops the data the old input left | `slot`, so it chains |
 | `x.lock()`, `x << lock`; `x.unlock()`, `x << unlock` | lock a node (`lockNode`), a plug (`setAttr -lock`) or a `List` (its plugs, then its nodes, in one undo step); nothing is written when `x` already is; a refusal is an `InjectionError` that names the way out | `x`, so it chains |
 | `x << red`, `x << layer`, `x << Tag("cap")` | **membership**: `x` (a node, components, a `List`) joins a material, a display layer or a component tag; `x << -red` leaves it, `x << Material()` / `Layer()` / `Tag()` leaves every one of that kind | `x`, so it chains |
 | `x in red`, `x not in layer` | yes or no: every member of `x` is in it | `bool` |
@@ -287,8 +288,8 @@ rig/
 │                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant,
 │                        undo_chunk
 ├── spec/                attribute specs: Float Int Bool Angle Time, Vector Color Euler Quat, Enum,
-│                        Matrix MeshAttr Message NurbsCurveAttr NurbsSurfaceAttr String; modifiers
-│                        lock unlock hide unhide skip destroy Note
+│                        Matrix MeshAttr Message NurbsCurveAttr NurbsSurfaceAttr String, Typed (any
+│                        data); modifiers lock unlock hide unhide skip destroy Note
 ├── bridges/
 │   ├── commands.py      maya.cmds returning nodes / List instead of strings   (rc)
 │   └── nodes.py         one factory per Maya node type, kwargs are injections     (rn)
@@ -439,6 +440,15 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   container, even an empty one. A reference node (`xRN`) stays locked. A
   locked node's `delete` with a list (`node.delete([...])`) is Maya's: a
   locked node in it is skipped with a printed `Error:`.
+- **A typed attribute that holds any data keeps only numbers.** A `Typed`
+  slot (`addAttr -attributeType typed`, the kind a choice node's input is)
+  takes any plug, but Maya's `setAttr` puts nothing but a number in it, and
+  data set through the API is refused, with an `Error:` line, when a `.ma`
+  is opened again. A disconnect keeps the last data the input gave: rig's
+  `slot << None` drops it (a number stays); one made outside rig leaves it,
+  and a `.ma` saved then errors on open (a `.mb` keeps it). The rule is
+  for every such attribute: a choice node's inputs rewire whole and take
+  numbers too.
 - **Rewiring a multi element is safe through rig.** `net.w[0] << a.tx`
   then `net.w[0] << a.ty` replaces the input, also on a multi that is not
   keyable (`Float("w", multi=True, keyable=False)`, `Matrix`, `Message`,

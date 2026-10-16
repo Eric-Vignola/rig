@@ -121,7 +121,7 @@ from rig.nodetypes.plugins import load_plugin
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
 | `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete`; the DSL's `Layer` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `namespace`, `file_path`, `get_nodes`, `delete` |
-| `Choice` | `choice` | `data_type` of `input[i]` / `output` follows the wiring and the selector |
+| `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `data_type` of both follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
 
 Each class inherits everything above it in its column, so a `Mesh` has
@@ -504,7 +504,10 @@ Every `serialize()` returns a `cgmath` data object and every `create` /
 `serialize_hierarchy` captures `transform` and `joint` nodes (a transform
 holding a locator becomes a `locator`) and skips constraints and other
 transform-derived types with a warning; `create_hierarchy` does the same
-on the way back and creates parents first.
+on the way back and creates parents first. A user attribute that holds any
+data (a `rig.Typed`) is written as `attributeType: "typed"`, its value
+only the numbers it holds (`[[index, value], ...]` for a multi): what a
+connection fed it is not saved, as no connection is.
 
 ### Undo for API edits
 

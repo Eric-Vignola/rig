@@ -22,7 +22,7 @@ for the node classes and their typed methods.
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
 | 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node, `lock()` / `unlock()` / `is_locked` |
 | 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.node`, instance paths |
-| 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, blendShape targets |
+| 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, a `Typed` slot that holds any data, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, a taken name refused, `plug >> container` |
 | 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes, `lock()` / `unlock()` |
@@ -509,6 +509,27 @@ net        << Float("drv", multi=True, keyable=False)
 net.drv[0] << feed.tx
 net.drv[0] << feed.ty                        # a rewire: the input is replaced
 print(net.drv[0].get_inputs())               # List([Plug("feed.translateY")])
+```
+
+A `Typed` attribute holds any data (`addAttr -attributeType typed`, the
+kind a choice node's input is; not keyable unless `keyable=True`). It
+takes a plug whole, whatever it held before (no shorthand node, no split
+into channels), a number as a value, and refuses anything else with a
+`TypeError` before any edit. `<< None` also drops the data the old input
+left, unless it is a number; the root reads as one value per element
+([`spec` section 4](spec/CHEATSHEET.md#4-typed--string-matrix-message-meshattr-nurbscurveattr-nurbssurfaceattr-typed)).
+
+```python
+from rig.spec import Typed
+
+mix = net << Typed("mix", multi=True)
+mix[0] << feed.wm                            # a matrix
+mix[1] << feed.t                             # a double3, connected whole
+mix[0] << feed.r                             # rewired across kinds: no composeMatrix
+mix << 2.5                                   # the root appends; a number is a value
+print(mix[0].get_inputs(), mix >> None)      # List([Plug("feed.rotate")]) [array([0., 0., 0.]), array([0., 0., 0.]), 2.5]
+mix[1] << None                               # disconnects, and drops the double3 it held
+print(mix[1].data_type)                      # Tdata
 ```
 
 A blendShape aliases every `weight[i]` to its target name, and the DSL
@@ -2986,6 +3007,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
 | `node.lock()`, `plug.lock()` and their `unlock()` (`x << lock`) | one, Maya's own (`lockNode`, `setAttr -lock`); **none** when the object already is in that state |
+| `slot << None` on a `Typed` slot (any typed attribute that holds any data) that held a matrix, a double3, geometry ... | two: the disconnect, then the drop of the data its input left (an API edit, journaled with the statement); a slot that held a number or nothing has no drop |
 | `List.lock()` / `List.unlock()` (`List << lock`) over more than one command | one, named `rig.lock` / `rig.unlock` |
 | `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | the transfers: `Mesh.transfer_maps`, `Mesh.transfer_component_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.copy_skincluster` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.copy_skincluster` |

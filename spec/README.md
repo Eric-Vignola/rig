@@ -59,11 +59,11 @@ happened until each spec reached `<<`.
 
 | File | Contents |
 |---|---|
-| `__init__.py` | re-exports the 23 public names below |
+| `__init__.py` | re-exports the 24 public names below |
 | `_base.py` | `_AttrSpec` — the base class; `apply()`, the compound builder, multi pre-sizing, and `_clone_attribute` behind `plug >> Node` |
 | `numeric.py` | `Float`, `Int`, `Bool`, `Angle`, `Time` |
 | `compound.py` | `Vector`, `Quat`, `Color`, `Euler` — 3- and 4-channel compounds |
-| `typed.py` | `String`, `Matrix`, `MeshAttr`, `NurbsCurveAttr`, `NurbsSurfaceAttr`, `Message` |
+| `typed.py` | `String`, `Matrix`, `MeshAttr`, `NurbsCurveAttr`, `NurbsSurfaceAttr`, `Message`, and `Typed`, the attribute that holds any data |
 | `enum_attr.py` | `Enum` (the file avoids shadowing the stdlib `enum`) |
 | `modifiers.py` | `lock`, `unlock`, `hide`, `unhide`, `skip`, `destroy`, `Note` |
 
@@ -77,11 +77,12 @@ from rig.spec import (
     Angle, Bool, Float, Int, Time,                    # numeric
     Color, Euler, Quat, Vector,                       # compound
     Matrix, MeshAttr, Message, NurbsCurveAttr, NurbsSurfaceAttr, String,   # typed
+    Typed,                                            # holds any data
     Enum,
     Note, destroy, hide, lock, skip, unhide, unlock,  # modifiers
 )
 print(rig.Float is Float, rig.lock is lock, rig.destroy is destroy)  # True True True
-print(len(rig.spec.__all__))                                         # 23
+print(len(rig.spec.__all__))                                         # 24
 ```
 
 ### Names to keep apart
@@ -96,6 +97,7 @@ name is both a node class and a declaration.
 | `rig.MeshAttr`, `rig.NurbsCurveAttr`, `rig.NurbsSurfaceAttr` | `mesh` / `nurbsCurve` / `nurbsSurface` data attribute specs | `rig.nodetypes.Mesh` / `NurbsCurve` / `NurbsSurface`, the shape node classes, and `cgmath.geometry.MeshData`, the data |
 | `rig.Matrix` | a `matrix` attribute spec | `rig.matrix`, the matrix function library |
 | `rig.Vector`, `rig.Euler`, `rig.Quat` | compound attribute specs | `rig.vector`, `rig.euler`, `rig.quaternion`, the function libraries |
+| `rig.Typed` | the attribute that holds **any** data (`addAttr -attributeType typed`, as a choice node's input) | the "typed node" / "typed create" of `rig.nodetypes` (a node's own class), and `String` / `Matrix` / `MeshAttr`, typed attributes of **one** data type each |
 
 A node's `repr` names its node class, so `Mesh("cubeShape")` in an output
 is a `rig.nodetypes.Mesh`, and `ctrl << Mesh("shapeIn")` names a mesh
@@ -334,6 +336,68 @@ print(repr(gains), gains >> None)   # List([Plug("a.gain"), Plug("b.gain")]) [0.
 print(repr(nodes >> Float("out")))  # List([Plug("a.out"), Plug("b.out")])
 ```
 
+### `Typed` holds any data
+
+`Typed("x")` is `addAttr -attributeType typed`: Maya's attribute of kAny
+data, the kind a choice node's input is. It is a passthrough slot. It is **not
+keyable** unless `keyable=True` is given, and `dv`, `min` / `max`, the soft
+range, every `has*Value`, `en`, `uac`, `dt` and `at` are a `TypeError` when
+the spec is made: it has no default, range or data type of its own.
+
+```python
+from rig import Typed
+
+nodeA = Node.create("network", name="nodeA")
+objA  = Node.create("transform", name="objA")
+objA.t << [1, 2, 3]
+mix = nodeA << Typed("mixedInputArray", multi=True)   # -> Plug("nodeA.mixedInputArray")
+mix[0] << objA.wm            # matrix
+mix[1] << objA.message       # message
+mix[2] << objA.tx            # a number
+mix[3] << objA.t             # double3, connected whole, never per channel
+print([mix[i].data_type for i in range(4)])          # ['matrix', 'Tdata', 'typed', 'double3']
+print(mix[3].get_inputs(), mix[2] >> None)           # List([Plug("objA.translate")]) 1.0
+```
+
+The rule holds for every attribute of that kind, the user's and Maya's
+(a choice node's input and output, an objectSet's member slots): **as a
+destination, a slot never looks at what it holds.**
+
+- `slot << plug` is one whole connect, the old input disconnected first:
+  no shorthand node (a matrix slot rewired to a `translate` builds no
+  `composeMatrix`) and no per-channel split.
+- `slot << number` sets a number (an `int`, a `float`, a `bool`, a numpy
+  scalar; it reads back as a `float`). A connected slot gives up its input
+  first, as every `<<` value does.
+- Any other value (a `str`, a plug's name too: write `Plug("a.b")`; a
+  list, an ndarray, a node) is a `TypeError` before any edit.
+- The multi root keeps the multi rules: `mix << [1, None, objA.tx]` puts
+  item `i` into `[i]` (every item is checked before the first edit),
+  `mix << objA.wm` appends at the next free index, and a multi into a
+  multi goes index by index.
+- `slot << None` disconnects it, then drops the data the old input left,
+  unless that is a number: Maya keeps a matrix or a double3 after a
+  disconnect, and a `.ma` file refuses it when it is opened again. The
+  drop is its own undo step, after the disconnect's.
+- `mix >> None` is one value per element, in index order (Maya's `getAttr`
+  refuses that root); an element gives what it holds: a `(4, 4)` ndarray,
+  `None` (empty, or a message), a `float`, a `(3,)` ndarray, or a geometry
+  read as `Attribute.get` gives it.
+- As a **source** a slot reads as what it holds, at that moment: one that
+  holds a matrix into `objC.r` builds the `decomposeMatrix`, one that holds
+  a double3 is connected whole.
+
+```python
+mix[0] << objA.t                                     # rewired across kinds: a plain connect
+mix[4] << 2.5
+try:
+    mix[5] << "objA.tx"
+except TypeError as e:
+    print(str(e)[:73])                               # 'nodeA.mixedInputArray[5]' is a typed attribute that holds any data: it
+mix[3] << None                                       # disconnected, and the double3 dropped
+print(mix[3].data_type, len(mix >> None))            # Tdata 5
+```
+
 ### Leading underscores are fine
 
 `node << Float("__parked__")` adds it and `node.__parked__` reads it:
@@ -352,7 +416,8 @@ print(repr(parked), ctrl.__parked__ >> None)   # Plug("ctrl.__parked__") 3.5
 
 - **The positional argument is the long name.** `sn=` / `nn=` and every
   other `addAttr` flag pass straight through. `keyable=True` is the
-  default; `k=False` makes a hidden-from-channel-box attribute, `hidden=True`
+  default (`Typed`'s is `keyable=False`: a passthrough is not animated);
+  `k=False` makes a hidden-from-channel-box attribute, `hidden=True`
   hides it from the UI entirely.
 - **`min` / `max` / `dv` (or `defaultValue`)** are `addAttr`'s own. On a
   compound they land on the children; a per-child default is a sequence,
@@ -417,6 +482,28 @@ Verified on Maya 2025; not bugs to work around blindly.
   and incoming connections severed, a lock removed first. A locked node
   takes neither a new attribute nor `overwrite=True` (`InjectionError`,
   nothing changed); a re-declaration and a value still work on one.
+- **A typed attribute that holds any data takes numbers only as values.**
+  Maya's `setAttr` refuses a string, a matrix, a double3 there ("does not
+  accept data of type"), and one set through the API is written to a `.ma`
+  and refused, with an `Error:` line, when the file is opened again: the
+  slot comes back empty. So `Typed` takes a plug or a number and nothing
+  else.
+- **A disconnect made outside rig keeps the data** (the Node Editor,
+  Maya's disconnectAttr, a deleted source node): a matrix stays a matrix,
+  a `.ma` saved then errors on open, and a `.mb` keeps it. rig's own
+  `slot << None` drops it; run it on such a slot to clean it.
+- **A message slot and an empty one both read "Tdata"** (`data_type`), and
+  `>> None` is `None` for both.
+- **A keyable `Typed` takes keys.** Maya lists it as animatable, and
+  `setKeyframe node` keys every keyable empty or number slot with an
+  `animCurveTU` (a connected slot is skipped): the reason the default is
+  `keyable=False`.
+- **Reading an element that does not exist creates it**, as for every
+  multi; it is not saved. `slot << None` on one makes nothing.
+- **A clone of a `Typed` is a `Typed`**: `mix >> other` is a Typed multi
+  with the numbers mirrored, `mix[3] >> "other.slot"` a single Typed.
+- **`size=n` writes `0.0`** into `[0 .. n-1]`, a number being the one
+  value such a slot keeps.
 - **A locked plug takes no value, not even the one it holds.**
   `ctrl << Float("w") << 0.5 << lock` raises at `<< 0.5` when it runs a
   second time: unlock first (`ctrl.w.unlock()`), as the error says. Code that may
