@@ -1079,7 +1079,9 @@ degrees and forms (a `kClosed` direction serializes open, keeping its CVs). A
 warns when they were not. Both classes save and load `cgmath` files: from the
 class `load` creates, from a shape it updates the CVs in place (the same CV
 layout; a surface keeps its own knots). A `BSplineData` holds no name and no
-matrix: save in world space (the default) to keep where the shape is.
+matrix: save in world space (the default) to keep where the shape is. The
+update takes `world_space=` with no default, the space the file was saved in
+(the wrong one would move the CVs): without it, a `TypeError` naming it.
 
 ```python
 import os
@@ -1092,8 +1094,12 @@ folder = tempfile.mkdtemp()
 saved  = crv.save(os.path.join(folder, "crv.json"))
 again = NurbsCurve.load(saved, name="again")                     # creates
 cmds.xform("again.cv[0]", translation=(0, 3, 0))
-again.load(saved)                                                # the CVs back from the file
+again.load(saved, world_space=True)                              # the CVs back from the file
 print(repr(again), np.array(again.get_points())[0, :3])          # NurbsCurve("againShape") [0. 0. 0.]
+try:
+    again.load(saved)                                            # no world_space=
+except TypeError as e:
+    print(str(e).split(":")[0])                                  # NurbsCurve('againShape').load needs world_space=
 patch = NurbsSurface.load(ball.save(os.path.join(folder, "ball.npz")), name="patch")
 print(repr(patch), patch.num_cvs)                                # NurbsSurface("patchShape") 77
 try:

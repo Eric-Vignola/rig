@@ -515,7 +515,7 @@ data to a `cgmath` file and `load` reads it back.
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=True, container=None)` creates, a typed `List`, parents first |
 | `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, **attrs)` creates; `Mesh('x').load(path, uvs=None, *, world_space=True, normals=True)` updates |
 | `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` | | |
-| `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=True)` | `NurbsCurve.load(path, *, name=, container=, **attrs)` creates; `NurbsCurve('x').load(path, *, world_space=True)` updates its CVs (the same for `NurbsSurface`) |
+| `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=True)` | `NurbsCurve.load(path, *, name=, container=, **attrs)` creates; `NurbsCurve('x').load(path, *, world_space)` updates its CVs, `world_space=` required (the same for `NurbsSurface`) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` | `skin.save(path, *, full_path=False, optimize=False)` | `SkinCluster.load(path, geo, **flags)` creates; `SkinCluster('x').load(path)` sets its weights |
 | `BlendShape` | `MorphList`; `get_target_data()` a `MorphData` | `set_target_data`, `BlendShape.create` | `bs.save(path, *, match_name=None)` | `BlendShape.load(path, base, **flags)` creates; `BlendShape('x').load(path)` sets its targets by name |
 
@@ -546,11 +546,14 @@ From a node it updates that node in place, the inverse of its `save`:
   stay);
 - a `NurbsCurve` of the same CV count, degree, form and knots, a
   `NurbsSurface` of the same CV counts, degrees and forms (it keeps its own
-  knots: the data holds none), with no history, gets its CVs. Load with the
-  `world_space` the file was saved with: a `BSplineData` holds no space (a
-  `MeshData` holds its matrix, so a mesh round-trips either way), and a file
-  saved with `world_space=False` loaded with the default `True` puts its
-  object-space CVs in the world, moved by the transform;
+  knots: the data holds none), with no history, gets its CVs. **`world_space=`
+  is required** (no default), the space the file was saved with: a
+  `BSplineData` holds no space (a `MeshData` holds its matrix, so a mesh
+  round-trips either way, `world_space=True` its default), and a file saved
+  with `world_space=False` loaded as world space would put its object-space
+  CVs in the world, moved by the transform, silently. A load without it, or
+  with anything but a `bool`, is a `TypeError` naming it before the file is
+  read: `NurbsCurve('x').load(path, world_space=True)`;
 - a `SkinCluster` gets the file's weights as `set_weights(SkinData)` sets
   them (influences by name, the missing ones added, the ones the file does
   not name removed); the influences and the weights it holds already (within
