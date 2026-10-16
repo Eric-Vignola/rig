@@ -220,7 +220,9 @@ class TestNames(_Case):
                 self.assertIs(getattr(rig, new), getattr(rig.spec, new))
                 self.assertTrue(issubclass(getattr(rig, new), _AttrSpec))
                 self.assertTrue(_is_node_class(getattr(rig.nodetypes, old)))
-        self.assertEqual(len(rig.spec.__all__), 23)
+        # re-pinned (features step 4): Typed, the attribute that holds any data, is the
+        # 24th spec name (23 before it)
+        self.assertEqual(len(rig.spec.__all__), 24)
 
     def test_three_things_three_names(self):
         """``Mesh`` the shape node, ``MeshData`` its data, ``MeshAttr`` a

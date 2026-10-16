@@ -1,0 +1,470 @@
+{
+ "auto-index generic << number": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "3.0"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "choice output (compound) -> scalar": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"mdA.input1X\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1X"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "generic slot << number": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input[2]"
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      2
+     ]
+    ],
+    "chE.input[2]": "1.5"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "held source deleted, into a generic slot": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "raises",
+   "RuntimeError",
+   "mdB already deleted!",
+   null,
+   null,
+   false
+  ],
+  "scene": {
+   "connections": [
+    [],
+    []
+   ],
+   "nodes": [
+    [],
+    [
+     [
+      "mdB",
+      "multiplyDivide"
+     ]
+    ]
+   ],
+   "values": {}
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "instance hook: generic slot": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "chE.input[0]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 27
+ },
+ "instance hook: output": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "mdB.output",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(2.0, 3.0, 4.0)]",
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "patched Choice hook": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]",
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "patched DGNode hook": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"chE.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "chE.output",
+      "mdA.input1"
+     ],
+     [
+      "xfC.translate",
+      "chE.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [],
+    []
+   ],
+   "values": {
+    "chE.input": [
+     "indices",
+     [
+      0
+     ]
+    ],
+    "chE.input[0]": "[(1.0, 2.0, 3.0)]",
+    "mdA.input1": "[(1.0, 2.0, 3.0)]",
+    "mdA.output": "[(1.0, 2.0, 3.0)]"
+   }
+  },
+  "selection": [
+   "mmM"
+  ],
+  "undo_steps": 28
+ },
+ "user choice hook: auto-index": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "uchN.input"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "uchN.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "uchN",
+      "choice"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "uchN"
+  ],
+  "undo_steps": 31
+ },
+ "user choice hook: generic slot": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "uchN.input[0]"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "xfC.translate",
+      "uchN.input[0]"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "uchN",
+      "choice"
+     ]
+    ],
+    []
+   ],
+   "values": {}
+  },
+  "selection": [
+   "uchN"
+  ],
+  "undo_steps": 31
+ },
+ "user choice hook: output": {
+  "hooks": [],
+  "output": {
+   "logs": [],
+   "maya": [],
+   "stderr": "",
+   "stdout": "",
+   "warnings": []
+  },
+  "result": [
+   "returns",
+   "(Plug(\"uchN.input[0]\"), Plug(\"mdA.input1\"))"
+  ],
+  "scene": {
+   "connections": [
+    [
+     [
+      "mdB.output",
+      "uchN.input[0]"
+     ],
+     [
+      "uchN.output",
+      "mdA.input1"
+     ]
+    ],
+    []
+   ],
+   "nodes": [
+    [
+     [
+      "uchN",
+      "choice"
+     ]
+    ],
+    []
+   ],
+   "values": {
+    "mdA.input1": "[(2.0, 3.0, 4.0)]",
+    "mdA.output": "[(2.0, 3.0, 4.0)]"
+   }
+  },
+  "selection": [
+   "uchN"
+  ],
+  "undo_steps": 32
+ }
+}
