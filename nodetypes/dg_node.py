@@ -23,10 +23,13 @@ from rig.nodetypes._base import (
     _ensure_owner_alive,
     _full_name_buffer,
     _handle_valid,
+    _injection_error,
     _lookup,
     _named_through_owner,
     _new_attr,
     _node_from_str,
+    _node_lock_refusal,
+    _refuse_locked_node,
     _queried_data_type,
     _shared_refused,
     _type_label,
@@ -1071,10 +1074,63 @@ class DGNode(Node):
         return get_clean_name(self.name)
 
     def rename(self, new_name: Any) -> None:
-        """Renames the node."""
+        """Renames the node. A locked node is refused (InjectionError, nothing
+        changed)."""
         new_name = str(new_name)
         if self.short_name != new_name:
+            self._refuse_if_locked("rename")
             cmds_edit.rename(self.name, new_name)
+
+    # --- lockNode
+
+    @property
+    def is_locked(self) -> bool:
+        """True when the node is locked (read only; ``lock()`` / ``unlock()``
+        change it): its own ``lockNode``, or a locked container it is in (Maya
+        tells them apart nowhere). Maya then refuses to rename, delete or
+        reparent it, to add, delete or rename its attributes, and to lock or
+        unlock its plugs; values and connections still change."""
+        return self.fn_set.isLocked
+
+    def lock(self) -> "DGNode":
+        """Locks the node (``lockNode -lock on``) and returns it: ``node.lock()``
+        is ``node << lock``. A locked node is left as it is (no command, no undo
+        step). Lock its plugs first: a locked node's plugs never lock.
+
+        Refused (InjectionError, nothing changed): a referenced node (Maya
+        saves no lockNode edit for one), a container whose ``with container()``
+        block is open."""
+        fn = self.fn_set
+        if not fn.isLocked:
+            why = _node_lock_refusal(fn, self.name, True)
+            if why:
+                raise _injection_error(why)
+            cmds_edit.lockNode(self.name, lock=True)
+        return self
+
+    def unlock(self) -> "DGNode":
+        """Unlocks the node (``lockNode -lock off``) and returns it:
+        ``node.unlock()`` is ``node << unlock``. An unlocked node is left as it
+        is (no command, no undo step).
+
+        Refused (InjectionError, nothing changed): a referenced node, a
+        reference node (``xRN``, which Maya keeps locked), a member of a locked
+        container (unlock the container: Maya unlocks every member with it)."""
+        fn = self.fn_set
+        if fn.isLocked:
+            why = _node_lock_refusal(fn, self.name, False)
+            if why:
+                raise _injection_error(why)
+            cmds_edit.lockNode(self.name, lock=False)
+        return self
+
+    def _refuse_if_locked(self, verb: str) -> None:
+        """InjectionError ``cannot <verb> 'x': it is locked; Node('x').unlock()
+        unlocks it. Nothing was changed`` when this node is locked, before
+        Maya's own error (an ``MFn.isLocked`` read, 0.1 us)."""
+        fn = self.fn_set
+        if fn.isLocked:
+            _refuse_locked_node(fn, verb, self.name)
 
     @classmethod
     def is_type(cls, node_name, failfast: bool = False, **kwargs) -> bool:
@@ -1459,7 +1515,10 @@ class DGNode(Node):
         self, nodes: str | DGNode | Sequence[str | DGNode] | None = None, **kwargs
     ) -> None:
         """Thin wrapper around `cmds.delete()`.
-        If `nodes` is given, delete them. Otherwise delete this node."""
+        If `nodes` is given, delete them. Otherwise delete this node; a locked
+        one is refused (InjectionError, nothing changed)."""
+        if not nodes:
+            self._refuse_if_locked("delete")
         cmds_edit.delete(nodes or self.name, **kwargs)
 
     # --- namespace
@@ -1770,6 +1829,9 @@ class DGNode(Node):
         if "ln" in kwargs:
             kwargs.pop("ln")
 
+        # a locked node takes no new attribute (refused before Maya's error)
+        self._refuse_if_locked(f"add the attribute {long_name!r} to")
+
         # add attribute
         cmds_edit.addAttr(self.name, **kwargs)
 
@@ -1782,6 +1844,7 @@ class DGNode(Node):
         if self.has_attr(attr):
             if isinstance(attr, Attribute):
                 attr = attr.name
+            self._refuse_if_locked(f"delete the attribute {str(attr)!r} of")
             cmds_edit.deleteAttr(self.name, attribute=attr)
             return True
         return False
@@ -1795,6 +1858,8 @@ class DGNode(Node):
 
         # an attr is renamed whatever its name (a Plug's `!=` builds a node)
         if isinstance(old_name, Attribute) or old_name != new_name:
+            old_text = old_name.name if isinstance(old_name, Attribute) else old_name
+            self._refuse_if_locked(f"rename the attribute {str(old_text)!r} of")
             if isinstance(old_name, Attribute):
                 if old_name.node != self:
                     raise RuntimeError(

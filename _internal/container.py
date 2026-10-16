@@ -50,10 +50,12 @@ from rig.nodetypes._base import (
     _check_attrs,
     _class_attr,
     _handle_valid,
+    _locked_node_text,
     _MISSING,
     _PLAIN_NODE_NAME,
     _path_instance_number,
     _shared_refused,
+    _injection_error,
     Attribute,
     is_valid_maya_uid,
 )
@@ -514,6 +516,8 @@ class _ContainerStack:
 
         container_node = None
         if wants_real_container:
+            # a locked outer container takes no new member (before the create)
+            self._refuse_locked_leaf()
             ctn_name       = cmds.createNode("container", name=args["name"], skipSelect=True)
             container_node = Container._wrap(ctn_name)
             # If we're nested under an outer real container, register this
@@ -644,6 +648,11 @@ class _ContainerStack:
         elif skipSelect is not None:
             create_kwargs["skipSelect"] = skipSelect
 
+        # a locked leaf container takes no new member: refused before the
+        # node is made (one MFn.isLocked read, inside a real container only)
+        if container is None or container:
+            self._refuse_locked_leaf()
+
         # Lazily load the Maya plugin (matrixNodes / quatNodes) that owns
         # this node type, if any. No-op if already loaded or if the type
         # is built-in.
@@ -709,6 +718,8 @@ class _ContainerStack:
         # Add to the leaf real container, if one exists.
         leaf = self._leaf_real_container()
         if leaf is not None:
+            # a locked container takes no member: a refusal, not a debug line
+            self._refuse_locked_leaf(leaf)
             if not made:
                 barrier()
             try:
@@ -717,6 +728,31 @@ class _ContainerStack:
                 LOGGER.debug(
                     "Failed to add %s to container %s: %s", node_names, leaf, e
                 )
+
+    def _refuse_locked_leaf(self, leaf: Any = None) -> None:
+        """InjectionError (``cannot add a node to 'arm': it is locked; ...``)
+        when the leaf real container (``leaf``, else looked up) is locked: a
+        locked container takes no new member, and Maya would leave the node
+        outside it. One ``MFn.isLocked`` read."""
+        if leaf is None:
+            if not self._stack:
+                return
+            leaf = self._leaf_real_container()
+            if leaf is None:
+                return
+        fn = leaf.__dict__.get("_fn_set")
+        if fn is not None and _handle_valid(leaf.__dict__) and fn.isLocked:
+            raise _injection_error(_locked_node_text("add a node to", leaf.name))
+
+    def _is_open(self, uuid: str) -> bool:
+        """True while the container of ``uuid`` has its ``with`` block open
+        (``_base._OPEN_CONTAINER_HOOK``: such a container is locked after its
+        block)."""
+        for frame in self._stack:
+            node = frame.container_node
+            if node is not None and _handle_valid(node.__dict__) and node.uuid == uuid:
+                return True
+        return False
 
     def absorb_unit_conversions(self, dst: Any) -> None:
         """After connecting to ``dst``, absorb any auto-inserted
@@ -1363,6 +1399,9 @@ def _typed_create(
         finally:
             _TYPED_DEPTH -= 1
 
+    if registers:
+        # a locked leaf container takes no new member (before the create)
+        container._refuse_locked_leaf()
     if aware:
         prefix = container._compute_flatten_prefix()
         if prefix:
@@ -1602,6 +1641,7 @@ _dg_node_module._TYPED_CREATE_HOOK = _typed_create
 _dg_node_module._DEFINE_HOOK = _DefineScope
 _nodetypes_base._NODE_CREATE_HOOK = _node_create
 _nodetypes_errors._SCOPE_HINT_HOOK = _scope_name
+_nodetypes_base._OPEN_CONTAINER_HOOK = container._is_open
 
 
 def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -> Any:
@@ -2900,6 +2940,17 @@ def _is_rig_owned(node: str) -> bool:
         return False
 
 
+def _is_locked_node(name: str) -> bool:
+    """``lockNode -q`` through the fn set (0.1 us): the node's own lock or a
+    locked container's."""
+    sel = OpenMaya.MSelectionList()
+    try:
+        sel.add(name)
+    except RuntimeError:
+        return False
+    return OpenMaya.MFnDependencyNode(sel.getDependNode(0)).isLocked
+
+
 def _is_gc_eligible(
     node:        str,
     extra_types: frozenset = frozenset(),
@@ -3078,6 +3129,8 @@ def cleanup(
     for ctn in ctn_iter:
         if not cmds.objExists(ctn):
             continue
+        if _is_locked_node(ctn):
+            continue  # a locked container is never deleted, nor reported
         members = set(cmds.container(ctn, q=True, nodeList=True) or [])
         if members and members.issubset(obsolete):
             empty_ctns.add(ctn)

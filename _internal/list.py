@@ -39,6 +39,7 @@ and a plain str given for a plug is read as the Maya plug it names, so ``"a.tx"`
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import numbers
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
@@ -223,6 +224,13 @@ class List(list):
         if _is_membership(other):
             return other._member().inject(self)
 
+        # lock / unlock: the List's own verbs (every element checked first, the
+        # plugs and the nodes in one undo step), not a fan-out per element
+        if _is_attribute_spec(other):
+            kargs = getattr(other, "kargs", None)
+            if isinstance(kargs, dict) and kargs.keys() == {"lock"}:
+                return self.lock() if kargs["lock"] else self.unlock()
+
         # Spec broadcast -- apply the same spec to every element node. An
         # element that cannot take an attribute is a TypeError naming it,
         # raised before anything is applied; nothing is silently dropped.
@@ -343,6 +351,28 @@ class List(list):
                 )
             out.append(getattr(x, method)())
         return out
+
+    # -- lock / unlock -- #
+
+    def lock(self) -> "List":
+        """Locks every element, nodes and plugs, and returns this List:
+        ``lst.lock()`` is ``lst << lock``. All or nothing: every element is
+        checked first (a refused one raises InjectionError and changes
+        nothing, an element that is no node or plug a TypeError); the plugs
+        are locked first, then the nodes in one ``lockNode`` (a locked node's
+        plugs never lock), in one undo step (``rig.lock``). An element locked
+        already is left as it is; nothing to change writes nothing and adds no
+        undo step.
+
+        Defined explicitly because methods do not broadcast through
+        :meth:`__getattr__` (``lst.is_locked`` does: one bool per element)."""
+        return _set_locks(self, True)
+
+    def unlock(self) -> "List":
+        """Unlocks every element and returns this List: ``lst.unlock()`` is
+        ``lst << unlock``. The nodes first (one ``lockNode``), then the plugs;
+        all or nothing, one undo step (``rig.unlock``), as :meth:`lock`."""
+        return _set_locks(self, False)
 
     def get_inputs(self) -> "List":
         """N-aligned incoming connections -- one ``List`` per element.
@@ -546,6 +576,66 @@ for _operator in (
 ):
     setattr(List, _operator, statement(List.__dict__[_operator]))
 del _operator
+
+
+def _set_locks(items: "List", state: bool) -> "List":
+    """`List.lock` (``state`` True) / `List.unlock`: every check first, then the
+    edits (lock: the plugs, then the nodes in one ``lockNode``; unlock: the
+    nodes, then the plugs), in one undo step when there is more than one
+    command. An element already in that state, and a node or plug met again,
+    is left out. Returns ``items``."""
+    from rig._internal.journal import cmds_edit
+    from rig.nodetypes._base import _injection_error, _node_lock_refusal, _plug_lock_refusal
+
+    nodes: list = []
+    plugs: list = []
+    seen_nodes: set = set()
+    seen_plugs: dict = {}
+    for i, x in enumerate(items):
+        if isinstance(x, Attribute) and not _is_components(x):
+            _ensure_owner_alive(x)
+            if x.plug.isLocked == state:
+                continue
+            same = seen_plugs.setdefault(hash(x), [])
+            if any(_same_plug(x, other) for other in same):
+                continue
+            same.append(x)
+            plugs.append(x)
+        elif isinstance(x, Node):
+            fn = x.fn_set
+            if fn.isLocked == state:
+                continue
+            uuid = str(fn.uuid())
+            if uuid not in seen_nodes:
+                seen_nodes.add(uuid)
+                nodes.append((x, fn))
+        else:
+            raise TypeError(f"element [{i}] ({x!r}) is not a node or a plug: it has no lock")
+
+    # the checks, in the order of the edits
+    for x, fn in nodes:
+        why = _node_lock_refusal(fn, x.name, state)
+        if why:
+            raise _injection_error(why)
+    for x in plugs:
+        owner = OpenMaya.MFnDependencyNode(x.plug.node())
+        # a plug of a node this List unlocks first: only a parent's lock refuses it
+        first = not state and owner.isLocked and str(owner.uuid()) in seen_nodes
+        why   = _plug_lock_refusal(x, state, node=not first)
+        if why:
+            raise _injection_error(why)
+
+    commands = (1 if nodes else 0) + len(plugs)
+    if commands == 0:
+        return items
+    with _undo_chunk("rig.lock" if state else "rig.unlock") if commands > 1 else contextlib.nullcontext():
+        if not state and nodes:
+            cmds_edit.lockNode([x.name for x, _ in nodes], lock=False)
+        for x in plugs:
+            cmds_edit.setAttr(x.full_name, lock=state)
+        if state and nodes:
+            cmds_edit.lockNode([x.name for x, _ in nodes], lock=True)
+    return items
 
 
 def _lift_or_pass(obj: Any) -> Any:

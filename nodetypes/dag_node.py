@@ -276,7 +276,8 @@ class DAGNode(DGNode):
         return list(self.iter_parents(node_type=node_type))
 
     def set_parent(self, parent: DAGNode | str | None = None, **kwargs) -> None:
-        """Sets the parent of the current object.
+        """Sets the parent of the current object. A locked node is refused
+        (InjectionError, nothing changed).
 
         Args:
             parent: The new parent object.
@@ -286,6 +287,8 @@ class DAGNode(DGNode):
         parent = parent or None
         cur    = self.get_parent()
         if str(cur) != str(parent):
+            # a locked node is never reparented (refused before Maya's error)
+            self._refuse_if_locked("reparent")
             if self.is_shape:
                 if not parent:
                     raise RuntimeError("Cannot parent shapes to world.")

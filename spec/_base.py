@@ -51,6 +51,7 @@ from rig.nodetypes._base import (
     _enum_fields,
     _handle_valid,
     _parse_enum_names,
+    _refuse_locked_node,
 )
 
 
@@ -260,10 +261,26 @@ class _AttrSpec:
 
         ``target`` is a :class:`Plug` (which subclasses :class:`Attribute`),
         so ``target.set(**kargs)`` routes through the rename-safe API.
+
+        ``lock`` / ``unlock`` are the target's own verbs: ``x << lock`` is
+        ``x.lock()`` for a plug and for a node (the same object returned, the
+        same refusals, nothing written when it is locked already). Any other
+        modifier on a node is a TypeError naming ``node.<attr> << it``.
         """
         from rig._internal.types import _get_compound, _is_compound
 
         kargs = dict(self.kargs)
+        if kargs.keys() == {"lock"}:
+            if isinstance(target, (Attribute, Node)):
+                return target.lock() if kargs["lock"] else target.unlock()
+            raise TypeError(
+                f"lock / unlock take a node or a plug, not {type(target).__name__} ({target!r})"
+            )
+        if isinstance(target, Node):
+            raise TypeError(
+                f"this modifier is for attributes: write node.<attr> << it "
+                f"(a node takes lock / unlock); got the node {target!r}"
+            )
 
         # If only keyable/channelBox flags AND target is compound, fan out.
         if (
@@ -299,6 +316,7 @@ class _AttrSpec:
             _refuse_static(node_string, long_name, wrap_node)
             if not self.overwrite:
                 return self._redeclare(node_string, long_name, wrap_node)
+            _refuse_locked(wrap_node, f"replace the attribute {long_name!r} of", node_string)
             # every value addAttr would refuse, before the attribute is deleted
             self._check_values(f"{node_string}.{long_name}")
             # Use DGNode-level API: find_attr + Attribute.set + delete_attr.
@@ -315,12 +333,15 @@ class _AttrSpec:
                     "Failed to delete %s.%s: %s", node_string, long_name, e
                 )
 
-        elif not wrap_node._fn_set.findAlias(long_name).isNull():
-            # a name the node already answers to another way (an alias, a
-            # container's published name): a second attribute would be one
-            # the name no longer reaches (one API call on a new name: has_attr
-            # read the fn set of the live node just before)
-            _refuse_other_name(node_string, long_name, wrap_node)
+        else:
+            # a locked node takes no new attribute (before the first addAttr)
+            _refuse_locked(wrap_node, f"add the attribute {long_name!r} to", node_string)
+            if not wrap_node._fn_set.findAlias(long_name).isNull():
+                # a name the node already answers to another way (an alias, a
+                # container's published name): a second attribute would be one
+                # the name no longer reaches (one API call on a new name: has_attr
+                # read the fn set of the live node just before)
+                _refuse_other_name(node_string, long_name, wrap_node)
 
         # ---- Compound (Vector / Quat / Color / Euler) ---- #
         added = None
@@ -493,10 +514,12 @@ class _AttrSpec:
         if wrap_node.has_attr(long_name):
             _refuse_static(node_string, long_name, wrap_node)
             if self.overwrite:
+                _refuse_locked(wrap_node, f"replace the attribute {long_name!r} of", node_string)
                 self._check_values(f"{node_string}.{long_name}")
             else:
                 self._redeclare_plan(node_string, long_name, wrap_node)
         else:
+            _refuse_locked(wrap_node, f"add the attribute {long_name!r} to", node_string)
             _refuse_other_name(node_string, long_name, wrap_node)
 
     def _existing_settings(self, plug_name: str, attribute: Any) -> Dict[str, Any]:
@@ -726,6 +749,14 @@ def _unknown_flags(kind: str, name: str, unknown: List[str]) -> str:
     if close:
         text += f" (did you mean {', '.join(f'{c}=' for c in close)}?)"
     return text + "; nothing was changed"
+
+
+def _refuse_locked(wrap_node: Any, verb: str, node_string: str) -> None:
+    """InjectionError naming ``Node('x').unlock()`` when ``wrap_node`` is
+    locked: Maya adds or deletes no attribute of a locked node (a
+    re-declaration, ``addAttr -edit``, and values still work). One
+    ``MFn.isLocked`` read."""
+    _refuse_locked_node(wrap_node._fn_set, verb, node_string)
 
 
 def _refuse_static(node_string: str, long_name: str, wrap_node: Any) -> None:

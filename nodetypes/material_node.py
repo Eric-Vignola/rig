@@ -64,6 +64,7 @@ import re
 from typing import Any, Callable
 
 from maya import cmds
+from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit, statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
@@ -71,6 +72,8 @@ from rig.nodetypes._base import (
     _NODE_CLASS_DICT,
     _cast,
     _lookup,
+    _node_by_name,
+    _refuse_locked_node,
     _shared_refused,
     set_custom_type,
 )
@@ -190,10 +193,19 @@ def _guard_owned(material: str, verb: str) -> None:
         raise RuntimeError(f"'{material}' is referenced and cannot be {verb}; edit the source file")
 
 
+def _refuse_locked_material(material: str, verb: str) -> None:
+    """InjectionError when the shader ``material`` is locked (see
+    `_refuse_locked_node`), before any write."""
+    mobject = _node_by_name(material)
+    if mobject is not None:
+        _refuse_locked_node(OpenMaya.MFnDependencyNode(mobject), verb, material)
+
+
 def _delete_network(material: str) -> None:
     """Delete the shader ``material``, the engines it feeds (not a Maya
     default one) and their materialInfos, in one undo step."""
     _guard_owned(material, "deleted")
+    _refuse_locked_material(material, "delete")
     engines = [name for name in _engines_fed_by(material) if not cmds.ls(name, defaultNodes=True)]
     infos   = [info for name in engines for info in ShadingEngine._wrap(name).get_material_info()]
     with _undo_chunk("rig.material"):
@@ -211,6 +223,8 @@ def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngi
     before any write: a Maya default or referenced shader, a name that
     exists, a taken ``<new>SG``."""
     _guard_owned(material, "renamed")
+    if _leaf(material) != _leaf(new):
+        _refuse_locked_material(material, "rename")
     if _exists(new):
         raise ValueError(f"'{new}' already exists")
     engine  = engine_of()
@@ -602,9 +616,9 @@ class Material(DGNode):
         their materialInfos, in one undo step (the members are left in no
         engine: green; ``rig.shade.repair()`` re-homes them). ``nodes``, when
         given, are deleted as :meth:`DGNode.delete` does. Refuses a Maya
-        default (``lambert1``, ``standardSurface1``: TypeError) or a
-        referenced shader (RuntimeError). ``cmds.delete(name)`` deletes the
-        shader alone."""
+        default (``lambert1``, ``standardSurface1``: TypeError), a
+        referenced shader (RuntimeError) or a locked one (InjectionError).
+        ``cmds.delete(name)`` deletes the shader alone."""
         if nodes is not None:
             super().delete(nodes, **kwargs)
             return
@@ -614,7 +628,8 @@ class Material(DGNode):
         """Renames the shader, and its engine when the engine follows the
         ``<mat>SG`` convention (``red``, ``redSG`` -> ``blue``, ``blueSG``),
         in one undo step. Refused before any write: a Maya default
-        (TypeError) or referenced shader (RuntimeError), a name that exists or a taken
+        (TypeError), a referenced shader (RuntimeError) or a locked one
+        (InjectionError), a name that exists or a taken
         ``<new>SG`` (ValueError), a name Maya would not keep. ``cmds.rename``
         renames the shader alone."""
         if not isinstance(new_name, str) or not new_name:

@@ -723,6 +723,146 @@ def _handle_valid(d: dict) -> bool:
     return handle is not None and handle.isValid()
 
 
+# --- lock / unlock (lockNode on a node, setAttr -lock on a plug)
+
+# ``rig._internal.container`` sets it when it loads (the D31 pattern, as
+# ``errors._SCOPE_HINT_HOOK``): ``uuid -> bool``, True while the container of
+# that uuid has its ``with container(...)`` block open (a locked container
+# takes no new member, so it is locked after its block)
+_OPEN_CONTAINER_HOOK = None
+
+
+def _injection_error(text: str) -> RuntimeError:
+    """The InjectionError of ``text``: the one error class of a ``<<`` refusal,
+    raised by ``x.lock()`` / ``x.unlock()`` (``x << lock``) and by rig's verbs
+    on a locked node."""
+    from rig._internal.plug import InjectionError  # plug imports this module
+
+    return InjectionError(text)
+
+
+def _node_by_name(name: str) -> Any:
+    """The MObject of the node ``name``, or None."""
+    try:
+        sel = OpenMaya.MSelectionList()
+        sel.add(name)
+        return sel.getDependNode(0)
+    except (RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _locking_container(name: str) -> "str | None":
+    """The outermost locked container that holds node ``name`` (a container
+    locks its members, and the members of its sub-containers), or None. Read on
+    a refusal's path only (``container -q``, about 13 us)."""
+    holder  = None
+    current = cmds.container(query=True, findContainer=name)
+    seen    = set()
+    while current and current not in seen:
+        seen.add(current)
+        mobject = _node_by_name(current)
+        if mobject is not None and OpenMaya.MFnDependencyNode(mobject).isLocked:
+            holder = current
+        parents = cmds.container(current, query=True, parentContainer=True)
+        current = parents[0] if isinstance(parents, list) and parents else parents or None
+    return holder
+
+
+def _unlock_way(name: str) -> tuple:
+    """``(why, way)`` of the locked node ``name`` for a refusal: ``("it is
+    locked", "Node('x').unlock() unlocks it")``, or, when a locked container
+    holds it, that container's (whose unlock unlocks every member)."""
+    holder = _locking_container(name)
+    if holder is not None and holder != name:
+        return f"it is locked by its container '{holder}'", f"Node({holder!r}).unlock() unlocks it"
+    return "it is locked", f"Node({name!r}).unlock() unlocks it"
+
+
+def _locked_node_text(verb: str, name: str) -> str:
+    """The one refusal text of rig's own verbs on a locked node: ``cannot
+    <verb> 'x': it is locked; Node('x').unlock() unlocks it. Nothing was
+    changed``."""
+    why, way = _unlock_way(name)
+    return f"cannot {verb} '{name}': {why}; {way}. Nothing was changed"
+
+
+def _refuse_locked_node(fn: Any, verb: str, name: "str | None" = None) -> None:
+    """InjectionError (`_locked_node_text`) when the node of fn set ``fn``
+    (named ``name``, else by the fn set) is locked
+    (``MFnDependencyNode.isLocked``, 0.1 us: its own lock or its container's),
+    before Maya's own error."""
+    if fn.isLocked:
+        raise _injection_error(_locked_node_text(verb, name or fn.name()))
+
+
+def _node_lock_refusal(fn: Any, name: str, state: bool) -> "str | None":
+    """Why ``lockNode`` must not lock (``state``) or unlock node ``name`` (fn set
+    ``fn``), or None. Read only when the state changes."""
+    if fn.isFromReferencedFile:
+        return (
+            f"'{name}' is referenced: Maya saves no lockNode edit for a referenced "
+            f"node, so the {'lock' if state else 'unlock'} would be gone at the next "
+            f"open; change it in its own file. Nothing was changed"
+        )
+    type_name = fn.typeName
+    if type_name == "reference" and not state:
+        return (
+            f"'{name}' is a reference node, which Maya keeps locked: unlocked, it "
+            f"can be deleted under its reference. Nothing was changed"
+        )
+    if state:
+        hook = _OPEN_CONTAINER_HOOK
+        if type_name == "container" and hook is not None and hook(str(fn.uuid())):
+            return (
+                f"lock '{name}' after its with block: a locked container takes no "
+                f"new member. Nothing was changed"
+            )
+        return None
+    holder = _locking_container(name)
+    if holder is not None and holder != name:
+        return (
+            f"'{name}' is locked by its container '{holder}' (a locked container "
+            f"locks its members): Node({holder!r}).unlock() unlocks it, and every "
+            f"member with it. Nothing was changed"
+        )
+    return None
+
+
+def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None":
+    """Why ``setAttr -lock`` must not lock (``state``) or unlock plug ``attr``,
+    or None: its node is locked (Maya refuses both: "is from a locked node, so
+    it cannot be locked"; ``node=False`` skips that check, for a List that
+    unlocks the node first), or, for an unlock, a locked parent holds the lock
+    (Maya would leave the child locked)."""
+    mplug = attr.plug
+    if node:
+        fn = OpenMaya.MFnDependencyNode(mplug.node())
+        if fn.isLocked:
+            name = attr.full_name.partition(".")[0]
+            return (
+                f"'{attr.full_name}' is on the locked node '{name}', whose plugs Maya "
+                f"never {'locks' if state else 'unlocks'}: {_unlock_way(name)[1]}. "
+                f"Nothing was changed"
+            )
+    if state or not mplug.isLocked:
+        return None
+    # a compound parent's lock locks its children, a multi root's its elements
+    # (Maya then leaves the child locked through an unlock of its own flag)
+    holder = None
+    cur    = mplug
+    while cur.isChild or cur.isElement:
+        cur = cur.parent() if cur.isChild else cur.array()
+        if cur.isLocked:
+            holder = cur
+    if holder is None:
+        return None
+    held = _new_attr(Attribute, holder).full_name
+    return (
+        f"'{attr.full_name}' is locked by its parent '{held}' (a locked parent locks "
+        f"its children): Plug({held!r}).unlock() unlocks it. Nothing was changed"
+    )
+
+
 def _ensure_owner_alive(attr: Any) -> None:
     """Raise ``"... already deleted!"`` if the node that owns `attr` was freed (a
     new scene, a file open, a reference unload): `attr`'s MPlug then points at
@@ -2435,14 +2575,53 @@ class Attribute(str):
 
     @property
     def is_locked(self) -> bool:
-        """Attribute locked state."""
+        """True when the plug is locked: its own lock, or a locked parent's (a
+        compound's for its children, a multi root's for its elements)."""
         _ensure_owner_alive(self)
         return self.plug.isLocked
 
     @is_locked.setter
     def is_locked(self, state) -> None:
-        """Set the locked state."""
-        cmds_edit.setAttr(self.full_name, lock=state)
+        """A compatibility path (``Transform.set_xfrom_attrs_locked`` uses it):
+        ``plug.is_locked = True`` is ``plug.lock()``, ``= False`` is
+        ``plug.unlock()``, with their rule and refusals. Write ``plug.lock()`` /
+        ``plug << lock``."""
+        if state:
+            self.lock()
+        else:
+            self.unlock()
+
+    def lock(self) -> "Attribute":
+        """Locks this plug (``setAttr -lock on``) and returns it: ``plug.lock()``
+        is ``plug << lock``. A locked plug (its own lock or a locked parent's)
+        is left as it is: no command, no undo step.
+
+        Refused (InjectionError, nothing changed) on a locked node, whose plugs
+        Maya never locks: lock the plugs first, then the node. Values and
+        connections into a locked plug raise (``<<``) until it is unlocked."""
+        _ensure_owner_alive(self)
+        if not self.plug.isLocked:
+            why = _plug_lock_refusal(self, True)
+            if why:
+                raise _injection_error(why)
+            cmds_edit.setAttr(self.full_name, lock=True)
+        return self
+
+    def unlock(self) -> "Attribute":
+        """Unlocks this plug (``setAttr -lock off``) and returns it:
+        ``plug.unlock()`` is ``plug << unlock``. An unlocked plug is left as it
+        is: no command, no undo step.
+
+        Refused (InjectionError, nothing changed) on a locked node (unlock the
+        node first), and when a locked compound parent holds the lock (unlock
+        the parent)."""
+        _ensure_owner_alive(self)
+        if self.plug.isLocked:
+            why = _plug_lock_refusal(self, False)
+            if why:
+                raise _injection_error(why)
+            cmds_edit.setAttr(self.full_name, lock=False)
+        return self
 
     @property
     def is_keyable(self) -> bool:

@@ -80,7 +80,7 @@ from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
-from rig.nodetypes._base import _cast, _cast_node, _check_attrs
+from rig.nodetypes._base import _cast, _cast_node, _check_attrs, _refuse_locked_node
 from rig.nodetypes.material_node import _gate_type, _leaf
 from rig.spec._base import _spec_from_attribute
 
@@ -934,8 +934,9 @@ def convert(
             f"'{old}' is referenced and cannot be deleted or replaced; convert it "
             f"in the source file"
         )
-    if cmds.lockNode(old, query=True)[0]:
-        raise RuntimeError(f"'{old}' is locked (lockNode); unlock it first")
+    # a conversion deletes the old node, which a lock forbids (the template of
+    # rig's verbs on a locked node: InjectionError, a RuntimeError)
+    _refuse_locked_node(node.fn_set, "convert", old)
     _check_attrs(attrs, node_type=dst)
     if src == dst:
         if dry_run:
