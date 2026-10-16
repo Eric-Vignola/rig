@@ -484,7 +484,9 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **`overwrite=True` is destructive by design**: value reset, outgoing
   and incoming connections severed, a lock removed first. A locked node
   takes neither a new attribute nor `overwrite=True` (`InjectionError`,
-  nothing changed); a re-declaration and a value still work on one.
+  nothing changed); a re-declaration and a value still work on one. Code
+  that may run twice needs no flag: the default re-declaration keeps what
+  is there.
 - **A typed attribute that holds any data takes numbers only as values.**
   Maya's `setAttr` refuses a string, a matrix, a double3 there ("does not
   accept data of type"), and one set through the API is written to a `.ma`
@@ -509,5 +511,5 @@ Verified on Maya 2025; not bugs to work around blindly.
   value such a slot keeps.
 - **A locked plug takes no value, not even the one it holds.**
   `ctrl << Float("w") << 0.5 << lock` raises at `<< 0.5` when it runs a
-  second time: unlock first (`ctrl.w.unlock()`), as the error says. Code that may
-  run twice needs no flag: the default re-declaration keeps what is there.
+  second time: unlock first (`ctrl.w.unlock()`), as the error says. Code
+  that ends with `<< lock` and runs twice unlocks before it runs again.
