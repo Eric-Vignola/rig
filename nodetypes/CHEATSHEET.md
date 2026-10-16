@@ -18,7 +18,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, `lock()` / `unlock()` / `is_locked`, equality |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
 | 5 | [`Attribute`](#5-attribute) | get / set, `lock()` / `unlock()`, `>>` and `//` on `find_attr` results, typed arrays, multis, slicing with list keys, components |
-| 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies |
+| 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `serialize_hierarchy(bindpose=True)` |
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `injection_node`, add / set / query / serialize, `tag_references` |
 | 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create`, paintable maps, colour sets, materials, transfer |
@@ -591,6 +591,52 @@ cmds.file(new=True, force=True)
 made = Transform.create_hierarchy(skeleton)
 print(made, cmds.getAttr("child.ty"), cmds.listRelatives("probe", shapes=True))   # ['root', 'child', 'probe'] 5.0 ['probeShape']
 print(Transform.create_hierarchy(skeleton, parent=Transform.create(name="rig")))  # ['rig|root', 'rig|root|child', 'rig|root|child|probe']
+```
+
+At its bind pose: `serialize_hierarchy(bindpose=True)` is what a serialize
+would give after Maya's Go to Bind Pose (`dagPose -restore -global`), and
+nothing moves. A pose member takes scale, rotate, translate, rotate axis and
+joint orient from the pose; a non-member (here `tip`, bound with `tsb=True`
+and no influence) keeps the scene's values:
+
+```python
+cmds.file(new=True, force=True)
+root = Joint.create(name="root")
+arm  = Joint.create(name="arm", parent=root)
+tip  = Joint.create(name="tip", parent=arm)
+arm.t.set(0, 5, 0)
+tip.t.set(0, 3, 0)
+body = Node(cmds.polyCube(name="body", ch=False)[0])
+skin = SkinCluster.create(body, [root, arm])   # bindPose1 holds root and arm, not tip
+root.r.set(0, 0, 45)                           # posed away
+arm.r.set(30, 0, 0)
+tip.t.set(0, 4, 0)
+
+bind = root.serialize_hierarchy(bindpose=True)
+print([x.name for x in bind], bind[0].rotate, bind[1].rotate)  # ['root', 'arm', 'tip'] [0. 0. 0.] [0. 0. 0.]
+print(bind[2].translate, root.r.get())                         # [0. 4. 0.] [ 0.  0. 45.]
+print(root.serialize_hierarchy(bindpose="bindPose1")[0].rotate)  # [0. 0. 0.]
+
+cape = Node(cmds.polyCube(name="cape", ch=False)[0])
+SkinCluster.create(cape, [root, arm])          # bound while posed: a second bind pose, which disagrees
+try:
+    root.serialize_hierarchy(bindpose=True)
+except ValueError as e:
+    print(e)  # 'root' is in bind poses that disagree (bindPose1, bindPose2): 'root' differs between 'bindPose1' and 'bindPose2'; name one: bindpose='bindPose1'
+```
+
+Agreeing bind poses (another influence set bound at the same pose) are
+merged. A name or a node reads one dagPose, any dagPose (a saved `tPose`
+too); a member reparented since the pose was saved raises:
+
+<!-- notest -->
+```python
+bind = root.serialize_hierarchy(bindpose="bindPose5")             # that dagPose
+bind = root.serialize_hierarchy(bindpose=Node("char:bindPose1"))  # a node, a namespace with it
+root.serialize_hierarchy(bindpose="grp")   # NodeTypeError: 'grp' is a transform, not a dagPose
+root.serialize_hierarchy(bindpose=None)    # TypeError: bindpose= takes False, True or a dagPose name, not None
+# a member moved: ValueError: 'bindPose1' holds 'arm' (posed under 'root', now under 'grp'): a pose member
+# is stored relative to the parent it had when the pose was saved, restore the parent or save a new pose
 ```
 
 ---

@@ -60,6 +60,7 @@ rig/nodetypes/
 ├── dg_node.py         DGNode                 entity          refer / define / create; get_short_name(), get_clean_name()
 ├── dag_node.py        DAGNode                dagNode
 ├── transform.py       Transform              transform
+├── _bindpose.py       (private) the dagPose read of serialize_hierarchy(bindpose=...)
 ├── joint.py           Joint                  joint           replace_suffix()
 ├── geometry.py        Geometry               geometryShape   (component tags); iter_component_ranges() / _tokens()
 ├── mesh.py            Mesh, ColorSet, Axis   mesh
@@ -500,7 +501,7 @@ Every `serialize()` returns a `cgmath` data object and every `create` /
 
 | Node | `serialize()` | Back in |
 |---|---|---|
-| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData` | `Transform.create_hierarchy` |
+| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create_hierarchy` |
 | `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` |
 | `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` |
 | `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create` (a curve) |
@@ -514,6 +515,31 @@ on the way back and creates parents first. A user attribute that holds any
 data (a `rig.Typed`) is written as `attributeType: "typed"`, its value
 only the numbers it holds (`[[index, value], ...]` for a multi): what a
 connection fed it is not saved, as no connection is.
+
+`serialize_hierarchy(bindpose=True)` reads the hierarchy at its bind pose:
+the result is what `serialize_hierarchy()` would return after Maya's own
+Go to Bind Pose (`dagPose -restore -global`), and nothing is restored (the
+scene, the selection and the undo queue are unchanged). A pose member takes
+its scale, rotate, translate, rotate axis and joint orient from the pose, its
+rotation re-expressed in the node's current rotate order, as the restore
+does; everything a pose does not hold (segment scale compensate, radius,
+visibility, user attributes, names, parents) comes from the scene. Which
+nodes are members is Maya's: a skinCluster's bind pose holds its influences
+and every ancestor up to the world (a group above the root joint too), not
+the end joints below them when the bind used `tsb=True`, nor a helper added
+after the bind; those non-members keep the scene's values. At the bind pose
+the result is bit-identical to `bindpose=False`. `True` takes every dagPose
+with `bindPose` on that holds one of its nodes and merges them (binding
+another influence set makes another bind pose, even at the same pose); poses
+that disagree on a node raise a `ValueError` naming them, and naming one
+reads that pose alone: `bindpose="bindPose1"`, or a node,
+`Node("bindPose1")`. Any dagPose can be named (a saved `tPose` too, a
+namespace with it: `"char:bindPose1"`); a name that is no dagPose is a
+`NodeTypeError`. A member is stored relative to the parent it had when the
+pose was saved, so a member reparented since (a group inserted above it,
+its pose parent deleted) is a `ValueError` naming the member, its parent
+then and its parent now: restore the parent or save a new pose. Every check
+runs before anything is read into the result.
 
 ### Undo for API edits
 
