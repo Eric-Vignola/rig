@@ -292,21 +292,27 @@ class TestAnExistingDouble(_OneDriver):
         self.each_route(body)
 
     def test_a_split_that_cannot_be_made_changes_nothing(self):
-        """``c.r`` into ``g.t`` (a unitConversion) and a double on g.tx: a value, a plug or
-        None on g.tx raises naming ``g.t << None`` before any edit (3e34727 removed d.ty
-        first, then raised for a value, and left the double for a plug or None)."""
+        """``c.r`` into ``g.t`` (a unitConversion) and a double on g.tx: a value or a plug on
+        g.tx raises naming ``g.t << None`` before any edit (3e34727 removed d.ty first, then
+        raised for a value, and left the double for a plug). ``g.tx << None`` removes d.ty
+        only: the whole wire is then g.tx's one driver (OD_FIX: 773641c refused it too)."""
         def body():
             c, g, d = _cube("c"), _cube("g"), _cube("d")
             cmds.connectAttr("c.r", "g.t")
             cmds.connectAttr("d.ty", "g.tx")
             cmds.flushUndo()
             state0 = self.scene_state()
-            for rhs in (5, d.tz, None):
+            wire = _inputs("g.t")
+            for rhs in (5, d.tz):
                 with self.subTest(rhs=repr(rhs)):
                     with self.assertRaises(InjectionError) as caught:
                         g.tx << rhs
                     self.assertIn("g.translate << None", str(caught.exception))
                     self.assert_state_equal(self.scene_state(), state0, "refused")
+            g.tx << None
+            self.assertEqual(_inputs("g.tx"), [])
+            self.assertEqual(_inputs("g.t"), wire)
+            self.check_one_step(state0)
             g.t << None
             self.assertEqual(_connections("g"), [])
         self.each_route(body)

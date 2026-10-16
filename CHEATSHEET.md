@@ -319,9 +319,12 @@ has an input of its own under that wire (two drivers, as Maya's
 compound's) keeps it, and the INFO line names it. A value on the compound
 itself replaces the whole input, and each child's; a list with a `skip` or
 a `None` splits it. A plug or `None` on the compound also removes the
-inputs its children have of their own (logged at INFO): `g.t << None`
-frees every channel. Each statement is one undo step, whose undo brings
-back what was there.
+inputs its children have of their own (logged at INFO), down through a
+nested compound: `g.t << None` frees every channel. Each statement is one
+undo step, whose undo brings back what was there. Under a whole wire that
+cannot be split (a `unitConversion` between unit kinds, section 16),
+`None` on a child with an input of its own removes that input only
+(logged at INFO), and the wire is the channel's one driver.
 
 ```python
 c = Node.create("transform", name="c")
@@ -1448,8 +1451,10 @@ connecting into a locked attribute raises `InjectionError` (a
 `RuntimeError`), and a compound with a single locked child mutates nothing.
 Disconnecting is still allowed. The other refusal is a child whose compound
 is connected whole by an input that cannot be split per child (a
-`unitConversion` between unit kinds feeds it, or a sibling with no input of
-its own is locked, section 2): the error names `g.t << None`. A locked plug refuses even the value it
+`unitConversion` between unit kinds feeds it, or a plug the split would
+connect into is locked: a sibling with no input of its own, or a plug below
+a nested compound the split goes into, section 2): the error names
+`g.t << None`, and nothing is changed. A locked plug refuses even the value it
 already holds, so a build that ends with `<< lock` unlocks before it runs
 again; the error names the unlock (`Plug('b.translateY').unlock()`, with
 `Node('b').unlock()` first when the node is locked too). The lock verbs

@@ -461,12 +461,18 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   the inputs its children have of their own (each logged at INFO), as a
   value on it (`cube.t << [1, 2, 3]`, `cube.t << 1`) replaces each one:
   `cube.t << None` frees every channel, the per-child wires of a split
-  included; a list with a `skip` or a `None` splits instead. Each statement
-  is one undo step (`rig.replace`, `rig.animcurve` for keys), and one undo
-  brings back what was there, a double drive included. An input with no
-  matching children to split (a `unitConversion` between unit kinds feeds
-  the compound whole), or a locked sibling that has no input of its own,
-  raises `InjectionError` naming `cube.t << None`, with nothing changed. A split inside a
+  and the plugs below a nested compound included; a list with a `skip` or
+  a `None` splits instead. Each statement is one undo step (`rig.replace`,
+  `rig.animcurve` for keys), and one undo brings back what was there, a
+  double drive included. An input with no matching children to split (a
+  `unitConversion` between unit kinds feeds the compound whole), or a
+  locked plug the split would connect into (a sibling that has no input of
+  its own, or a plug below a nested compound the split goes into), raises
+  `InjectionError` naming `cube.t << None`, with nothing changed. One
+  exception: `cube.rx << None` on a child that has an input of its own
+  under such a `unitConversion` wire (Maya's `setKeyframe` on `cube.rx`
+  with `b.t` into `cube.r`) removes that input only, logged at INFO; the
+  compound's wire is then the channel's one driver. A split inside a
   referenced compound is saved as reference edits (the whole input
   disconnected, one connect per child) that pin the sibling channels to
   their driver at the time of the split: a later rewire of that compound
