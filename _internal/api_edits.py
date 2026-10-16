@@ -1,7 +1,9 @@
 """
 The API fast paths of rig's edits (round 5, phase D): a connect (`api_connect`) and a
 single numeric value set (`api_set`), each made through an ``MDGModifier`` and journaled
-(`rig._internal.journal.add`), so that a statement's API edits are one undo step. Locks,
+(`rig._internal.journal.add`), so that a statement's API edits are one undo step. The
+data drop of a typed plug that holds any data (`api_clear_data`, after ``slot << None``)
+is journaled the same way; it has no cmds route. Locks,
 keyable and channelBox flags, disconnects and every other edit stay on ``cmds``.
 
 Each fast path takes the API route only where its guards prove the edit is the one the
@@ -364,3 +366,71 @@ def api_set(attr: Any, value: Any) -> bool:
     except Exception:  # noqa: BLE001 (nothing done: the cmds route)
         return False
     return _apply(modifier)
+
+
+# --------------------------------------------------------------------------- typed data
+
+
+class _DataClear:
+    """Drops the data of a plug of a typed attribute that holds any data (what its
+    disconnected input left in it: a matrix, a double3, geometry ...), as an applied
+    edit of the journal: ``doIt`` (and redo) sets no data (``setMObject(kNullObj)``),
+    ``undoIt`` puts the saved data back. ``asMObject`` raises for a plug that holds no
+    data or a number (nothing to drop: the op is never made). A locked plug (``<< None``
+    disconnects one) is unlocked for the set and locked again, along its parent chain
+    (a locked array root locks its elements), so the lock is as it was."""
+
+    __slots__ = ("mplug", "saved", "done")
+
+    def __init__(self, mplug: Any) -> None:
+        self.mplug = mplug
+        self.saved = mplug.asMObject()
+        self.done  = False
+
+    def _set(self, data: Any) -> None:
+        chain = [self.mplug]
+        while True:
+            cur = chain[-1]
+            if cur.isElement:
+                chain.append(cur.array())
+            elif cur.isChild:
+                chain.append(cur.parent())
+            else:
+                break
+        unlocked = []
+        try:
+            # the root first: a plug still locked once its parents are unlocked
+            # holds a lock of its own (an inherited one is never made its own)
+            for plug in reversed(chain):
+                if plug.isLocked:
+                    plug.isLocked = False
+                    unlocked.append(plug)
+            self.mplug.setMObject(data)
+        finally:
+            for plug in reversed(unlocked):
+                plug.isLocked = True
+
+    def doIt(self) -> None:  # noqa: N802 (the journal's object protocol)
+        self._set(OpenMaya.MObject.kNullObj)
+        self.done = True
+
+    def undoIt(self) -> None:  # noqa: N802
+        if self.done:  # a doIt that raised set nothing
+            self._set(self.saved)
+            self.done = False
+
+
+def api_clear_data(mplug: Any) -> bool:
+    """Drops the data of ``mplug`` (`_DataClear`), applied and journaled through `_apply`
+    (one undo step with its statement). True if it was done; False, with the data kept as
+    Maya keeps it, when rig's undo command is not ready (the drop has no cmds route: Maya's
+    setAttr takes no empty data) or the edit fails."""
+    if not _BOUND:
+        _bind()
+    if not _ready():
+        return False
+    try:
+        op = _DataClear(mplug)
+    except Exception:  # noqa: BLE001 (no data to read: nothing to drop)
+        return False
+    return _apply(op)

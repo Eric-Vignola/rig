@@ -703,6 +703,8 @@ def _describe(at: Optional[str], dt: Optional[str], multi: bool, children: tuple
     (wX, wY, wZ)``: a kind as ``_existing_kind`` / ``_AttrSpec._kind`` give it."""
     if at == "typed" and dt == "matrix":
         kind = "matrix data"  # not the attributeType matrix
+    elif at == "typed" and dt == "Tdata":
+        kind = "typed (any data)"  # a Typed spec's attribute (Maya's kAny data)
     elif at in (None, "typed") and dt:
         kind = dt
     else:
@@ -1139,11 +1141,18 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
         NurbsCurveAttr,
         NurbsSurfaceAttr,
         String,
+        Typed,
     )
+    from rig.nodetypes._base import _is_generic_slot
 
     if not isinstance(src_plug, Plug):
         # Bare plug-like -- wrap.
         src_plug = Plug(str(src_plug))
+
+    # a typed attr that holds any data clones as one, whatever it holds now (an
+    # element as a single one): tested before the data type, which follows its input
+    if _is_generic_slot(src_plug):
+        return Typed(attr_name, multi=multi)
 
     data_type = _safe_type_probe(src_plug, "data_type")
     attr_type = _safe_type_probe(src_plug, "attribute_type")

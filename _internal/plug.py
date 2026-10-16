@@ -108,6 +108,7 @@ from rig.nodetypes._base import (
     _holds_text,
     _inherit_owner,
     _is_enum_attr,
+    _is_generic_slot,
     _new_attr,
     _node_by_name,
     _path_instance_number,
@@ -613,6 +614,18 @@ class Plug(Attribute):
         (every name is read before the first set); to connect a plug named by a
         str, write ``Plug("a.b")``.
 
+        A *generic slot*, a plug of a typed attribute that holds any data (a
+        ``Typed`` spec's, ``choice.input`` / ``output``, an objectSet's
+        ``dnSetMembers`` ...), never looks at what it holds: ``slot << plug`` is
+        one whole connect (no shorthand node, no per-channel fan-out, so a
+        double3 is never split), ``slot << number`` sets a number (an int, a
+        float, a bool, a numpy scalar), and any other value is a TypeError
+        before any edit. ``slot << None`` disconnects it and drops the data the
+        old input left (a matrix, a double3, geometry ...: a saved file refuses
+        it when opened again), unless that is a number; one undo brings it
+        back. A multi root of one keeps the multi rules (an item per element,
+        an append, multi to multi), every item checked before the first edit.
+
         Returns ``self`` so chaining works:
         ``node << Float("x") << 5 << lock``.
         """
@@ -631,9 +644,10 @@ class Plug(Attribute):
             if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
                 _ensure_owner_alive(other)
 
-        # Disconnect.
+        # Disconnect (a generic slot also drops the data its old input left).
         if other is None:
             _disconnect_incoming(self)
+            _clear_generic_data(self)
             return self
 
         # Retired connection-query sentinels (the List class or Plug itself
@@ -693,7 +707,14 @@ class Plug(Attribute):
 
         For the raw ``cmds.getAttr`` shape, call
         ``cmds.getAttr(self.full_name)`` directly.
+
+        The multi root of a typed attribute that holds any data (a ``Typed``
+        multi, ``choice.input``) gives a list, one value per element in index
+        order (getAttr refuses that root: "compound with mixed type elements").
         """
+        mplug = self.__dict__.get("_mplug")
+        if mplug is not None and mplug.isArray and _is_generic_slot(self):
+            return [self[i].get() for i in self.get_logical_indices()]
         try:
             dt = self.data_type
         except Exception:
@@ -2380,9 +2401,29 @@ def _inject_value(
     """
     types = _lazy().types
 
-    # 1. Disconnect.
+    # 1. Disconnect (a generic slot also drops the data its old input left).
     if src is None:
         _disconnect_incoming(dst)
+        _clear_generic_data(dst)
+        return
+
+    # 2a. A generic slot (`_is_generic_slot`: a typed attr that holds any data)
+    #     that is an element or a single attr takes its source as it is
+    #     (`_inject_generic`), whatever it holds now: its data type and
+    #     compound-ness are never read (it has no channels). A plug source's own
+    #     checks run first (a deleted node or attribute raises its "already
+    #     deleted"), before a query of the destination makes its element; a
+    #     value it keeps no other way is refused before any query or edit. A
+    #     multi root keeps the multi rules below, and each of its elements comes
+    #     back here (``dst[i] << ...``, the auto-index step).
+    generic = isinstance(dst, Attribute) and _is_generic_slot(dst)
+    if generic and not dst.plug.isArray:
+        if isinstance(src, Attribute):
+            _named_with_dot(src)
+        elif not _is_generic_number(src):
+            _refuse_generic(str(dst), src)
+        _assert_settable(dst, leaves=[dst])
+        _inject_generic(dst, src)
         return
 
     # Locked attributes are the one inviolable barrier for value-set /
@@ -2494,6 +2535,11 @@ def _inject_value(
         if isinstance(src, Attribute):
             try:
                 src_is_multi = src.is_multi and not str(src).endswith("]")
+                if src_is_multi and generic and _path_instance_number(src) is not None:
+                    # an array of per-instance elements read without an index
+                    # (``obj.wm``) is the element of its path's instance, one
+                    # plug: a generic root appends it
+                    src_is_multi = False
             except (AttributeError, TypeError):
                 src_is_multi = False
             if src_is_multi:
@@ -2506,6 +2552,8 @@ def _inject_value(
                 return
 
         if isinstance(src, List):
+            if generic:
+                _check_generic_items(dst, src)
             for i, elem in enumerate(src):
                 dst[i] << elem
             return
@@ -2516,6 +2564,9 @@ def _inject_value(
             and not isinstance(src, numbers.Real)
             and types._is_sequence(src)
         ):
+            if generic:
+                # every item is read before the first edit (all or nothing)
+                _check_generic_items(dst, src)
             for i, elem in enumerate(src):
                 dst[i] << elem
             return
@@ -2539,6 +2590,10 @@ def _inject_value(
                 except Exception:
                     next_index = 0
             dst = dst[next_index]
+            if generic:
+                # the element path, as ``dst[i] << src`` takes it (the same edits)
+                _inject_value(dst, src)
+                return
             if dst_facts is not None:
                 # the element's own facts, queried in the order above: its data
                 # type first (the query creates the element), then its
@@ -2642,6 +2697,13 @@ def _inject_value(
     else:
         compound_src = types._is_compound(src) and isinstance(src, Attribute)
 
+    # a generic slot as the source reads as what it holds (a number broadcasts
+    # into a compound's children as a scalar does), but compound data (a double3)
+    # has no child plugs: it is connected whole, never split, and Maya decides
+    if compound_src and _is_generic_slot(src):
+        _set_or_connect(src, dst, _dst_compound=compound_dst)
+        return
+
     # compound->compound, or attr->attr.
     if (compound_src and compound_dst) or (not compound_src and not compound_dst):
         _set_or_connect(src, dst, _dst_compound=compound_dst)
@@ -2680,6 +2742,102 @@ def _inject_value(
 
     for s, d in sequences(src_channels, dst_channels):
         _fanout_channel(s, d)
+
+
+def _inject_generic(dst: Any, src: Any) -> None:
+    """``dst << src`` for ``dst`` a generic slot (`_is_generic_slot`) that is an
+    element or a single attr, its lock already checked: a plug source is one
+    whole connect (the old input disconnected), never a shorthand network or a
+    per-channel fan-out, whatever ``dst`` holds now; a number (an int, a float,
+    a bool, a numpy scalar) is set as numeric data (a driven slot gives up its
+    input first, `_do_set`); anything else is a TypeError before any edit:
+    Maya keeps no other value in such an attr (setAttr refuses a string, a
+    matrix, a double3; one set through the API is dropped, with an error, when
+    the file is opened again)."""
+    if isinstance(src, Attribute):
+        try:
+            index = _path_instance_number(src)
+        except (AttributeError, KeyError):
+            index = None
+        if index is not None:
+            # an array of per-instance elements read without an index (``obj.wm``)
+            # is its path's element, as cmds resolves the name: that element is
+            # connected (an API connect, journaled with the statement)
+            src = src[index]
+        _set_or_connect(src, dst, _dst_compound=False)
+        return
+    if _is_generic_number(src):
+        _do_set(dst, float(src))
+        return
+    _refuse_generic(str(dst), src)
+
+
+def _is_generic_number(value: Any) -> bool:
+    """An int, a float, a bool or a numpy scalar number: the values a generic
+    slot keeps."""
+    return isinstance(value, (numbers.Real, np.number, np.bool_)) and not isinstance(
+        value, (str, np.complexfloating)
+    )
+
+
+def _check_generic_items(dst: Any, items: Any) -> None:
+    """Every item of ``items`` (going to ``dst[i]``, ``dst`` a generic multi
+    root) checked before the first edit: a plug, a number, None (a disconnect)
+    or a spec (a modifier); anything else is `_refuse_generic`'s TypeError."""
+    types = _lazy().types
+    for i, item in enumerate(items):
+        if not (
+            item is None
+            or isinstance(item, Attribute)
+            or _is_generic_number(item)
+            or types._is_attribute_spec(item)
+        ):
+            _refuse_generic(f"{dst}[{i}]", item)
+
+
+def _refuse_generic(name: str, src: Any) -> None:
+    """The TypeError of a value a generic slot keeps no other way."""
+    hint = ""
+    if isinstance(src, str):
+        hint = f"; to connect a plug named by a str, write Plug({src!r})"
+    text = repr(src)
+    if len(text) > 40:
+        text = text[:37] + "..."
+    raise TypeError(
+        f"{name!r} is a typed attribute that holds any data: it takes a plug "
+        f"({name} << node.attr) or a number, not {type(src).__name__} {text} "
+        f"(Maya keeps no other value in it){hint}. Nothing was changed"
+    )
+
+
+def _clear_generic_data(dst: Any) -> None:
+    """After ``dst << None`` disconnected ``dst``, a generic slot (an element or a
+    single attr) drops the data its old input left in it, unless that is a
+    number: Maya keeps a matrix, a double3, geometry ... after a disconnect,
+    writes it into a saved file and refuses it when the file is opened again
+    (an ``Error:`` line, "Errors have occurred while reading this scene"). An
+    element that does not exist is not made. The drop is an API edit journaled
+    with the statement (`rig._internal.api_edits.api_clear_data`): one undo puts
+    the data back."""
+    if not (isinstance(dst, Attribute) and _is_generic_slot(dst)):
+        return
+    mplug = dst.plug
+    if mplug.isArray or mplug.isDestination:
+        return
+    cur = mplug
+    while True:
+        if cur.isElement:
+            array = cur.array()
+            if cur.logicalIndex() not in array.getExistingArrayAttributeIndices():
+                return  # never made: no data, and none is made
+            cur = array
+        elif cur.isChild:
+            cur = cur.parent()
+        else:
+            break
+    from rig._internal.api_edits import api_clear_data
+
+    api_clear_data(mplug)
 
 
 def _fanout_channel(src: Any, dst: Any) -> None:

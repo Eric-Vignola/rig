@@ -5,7 +5,7 @@ for the rig DSL.
 Usage::
 
     from rig import Node
-    from rig.spec import Float, Vector, Enum, lock, hide
+    from rig.spec import Float, Vector, Enum, Typed, lock, hide
 
     node = Node("ctrl")
     node << Float("weight", min=0, max=1) << 0.5 << lock
@@ -14,6 +14,7 @@ Usage::
     node << Float("blend", multi=True)
     node << Float("weight", max=2)      # declared again: max applied, value 0.5 and the lock kept
     node << Float("weight", overwrite=True)            # deleted and added again
+    mix = node << Typed("mix", multi=True)             # holds any data: mix[0] << other.wm
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from rig.spec.typed import (
     NurbsCurveAttr,
     NurbsSurfaceAttr,
     String,
+    Typed,
 )
 
 
@@ -51,6 +53,7 @@ __all__ = [
     "NurbsCurveAttr",
     "NurbsSurfaceAttr",
     "String",
+    "Typed",
     # Enum
     "Enum",
     # Modifiers
