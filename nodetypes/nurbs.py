@@ -15,7 +15,7 @@ from numpy.typing import ArrayLike
 from rig._internal.journal import cmds_edit, statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
-from rig.nodetypes.geometry import Geometry, _shape_create_name
+from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal
 from rig.nodetypes.plugins import _run_undoable
 
 LOGGER = logging.getLogger(__name__)
@@ -40,8 +40,11 @@ _CURVE_LOAD_DOC = """Loads a curve from a cgmath file (a BSplineData): one name,
         name, container, attrs: (creating) as `create` takes them. A
             BSplineData carries no name: None gives Maya's ``curve<N>``.
         world_space: (updating) True: the CVs are world-space positions;
-            False: object space (as the file was saved). A BSplineData has no
-            matrix, so the transform is never moved.
+            False: object space. Load with the world_space the file was saved
+            with: a BSplineData holds no space (a MeshData holds its matrix, a
+            BSplineData nothing), so a file saved with ``world_space=False``
+            and loaded with the default True puts its object-space CVs in the
+            world, moved by the transform. The transform is never moved.
 
     Returns:
         The new NurbsCurve (creating), or this NurbsCurve (updating).
@@ -76,7 +79,9 @@ _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a BSplinePatchData): 
         name, container, attrs: (creating) as `create` takes them. A
             BSplinePatchData carries no name: None gives ``surface<N>``.
         world_space: (updating) True: the CVs are world-space positions;
-            False: object space. The transform is never moved.
+            False: object space. Load with the world_space the file was saved
+            with: a BSplinePatchData holds no space (see `NurbsCurve.load`).
+            The transform is never moved.
 
     Returns:
         The new NurbsSurface (creating), or this NurbsSurface (updating).
@@ -295,6 +300,7 @@ class NurbsCurve(Geometry):
 
     @statement
     def _load_new(cls, curve, *, name=None, container=None, **kwargs):
+        _files.creating_takes_no_space(cls.__name__, "curve", kwargs)
         from cgmath.geometry import BSplineData
 
         data = _files.read(curve, (BSplineData,), "NurbsCurve.load", "the curve")
@@ -518,6 +524,7 @@ class NurbsSurface(Geometry):
 
     @statement
     def _load_new(cls, surface, *, name=None, container=None, **kwargs):
+        _files.creating_takes_no_space(cls.__name__, "surface", kwargs)
         from cgmath.geometry import BSplinePatchData
 
         data = _files.read(surface, (BSplinePatchData,), "NurbsSurface.load", "the surface")
@@ -553,10 +560,14 @@ def _updates_only(method: str, kwargs: dict, door: str) -> None:
 def _no_history(node, method: str, door: str) -> None:
     """Raises ValueError when the shape `node` has history (its ``create`` input
     connected), which would compute over the CVs an update sets."""
-    if node.fn_set.findPlug("create", False).isDestination:
+    fn = node.fn_set
+    if fn.findPlug("create", False).isDestination:
+        kind = OpenMaya.MFn.kNurbsCurve if isinstance(node, NurbsCurve) else OpenMaya.MFn.kNurbsSurface
         raise ValueError(
-            f"{method}: {node.name!r} has history (its create input is connected), which "
-            f"would compute over the CVs it sets; delete the history, or {door}"
+            deformed_refusal(
+                method, node.name, fn.object(), kind, type(node).__name__,
+                "its create input is connected", "CVs", door,
+            )
         )
 
 

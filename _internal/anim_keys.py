@@ -637,9 +637,11 @@ class _Leaf:
 
 
 class _Plan:
-    """A plug's edits: its leaves, and the compound input to disconnect first."""
+    """A plug's edits: its leaves, the compound input to disconnect first, and whether a
+    compound above the plug is connected whole (its input split into one per child
+    first, `rig._internal.plug._free_of_whole_wire`)."""
 
-    __slots__ = ("dst", "leaves", "compound_input")
+    __slots__ = ("dst", "leaves", "compound_input", "whole_above")
 
 
 def _kind_text(leaf: Any) -> str:
@@ -800,19 +802,29 @@ def require_plugin(what: str = "keys") -> None:
         )
 
 
+def _indexed_name(attr: Any, mplug: Any) -> str:
+    """``attr``'s name for a message, with its element index: Maya names an element of a
+    per-instance array without it (``a.worldMatrix`` for ``a.wm[0]``)."""
+    name = str(attr)
+    if mplug.isElement and not name.endswith("]"):
+        node = name.split(".", 1)[0]
+        return f"{node}.{mplug.partialName(False, False, True, False, False, True)}"
+    return name
+
+
 def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     """Every check of ``dst << keys``, with no write: the plug's channels, their kind and
     curve type, its locks (D3: a locked plug refuses, even when the keys equal its curve's),
     the shapes, the enum names, each channel's curve (its own, updated in place; else a new
     one) and whether it holds these keys already."""
     from rig.nodetypes._base import Attribute, _ensure_owner_alive, _is_generic_slot
-    from rig._internal.plug import InjectionError, _assert_settable
+    from rig._internal.plug import InjectionError, _assert_settable, _check_whole_wire
 
     if not isinstance(dst, Attribute):
         raise TypeError(f"an AnimCurve keys a plug: node.<attr> << AnimCurve(...); got {dst!r}")
     _ensure_owner_alive(dst)
-    where = where or f"{dst} << AnimCurve(...)"
     mplug = dst.plug
+    where = where or f"{_indexed_name(dst, mplug)} << AnimCurve(...)"
     if mplug.isArray:
         raise TypeError(
             f"{where}: {str(dst)!r} is a multi attribute: key an element ({dst}[i]) or every "
@@ -837,17 +849,22 @@ def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     for leaf in leaves:
         if _leaf_refusal(leaf.plug, str(leaf)) is not None:
             raise TypeError(
-                f"{where}: an animation curve keys a numeric attribute; {str(leaf)!r} is "
-                f"{_kind_text(leaf)} (Maya keys numbers, angles, distances and times)"
+                f"{where}: an animation curve keys a numeric attribute; "
+                f"{_indexed_name(leaf, leaf.plug)!r} is {_kind_text(leaf)} (Maya keys numbers, "
+                f"angles, distances and times)"
             )
         if not OpenMaya.MFnAttribute(leaf.plug.attribute()).writable:
             raise InjectionError(
-                f"Cannot key {str(leaf)!r}: it is an output (not writable), which no curve "
-                f"can drive. Nothing was changed"
+                f"Cannot key {_indexed_name(leaf, leaf.plug)!r}: it is an output (not "
+                f"writable), which no curve can drive. Nothing was changed"
             )
     _columns(keys, len(leaves), dst)
     # D3: a locked plug refuses, as a value does, whatever its curve holds
     _assert_settable(dst, leaves=leaves)
+    # a compound above the plug connected whole (``c.t`` into ``cube.t`` for ``cube.tx``):
+    # its input is split into one per child before the curve replaces this one's (a curve
+    # next to the whole input would leave the channel two drivers); checked here
+    plan.whole_above = _check_whole_wire(dst, "key")
     entries = []
     for column, leaf in enumerate(leaves):
         lp = leaf.plug
@@ -999,10 +1016,13 @@ def _apply(plans: list) -> None:
     curve holds its keys already. A compound connected whole gives up that input first."""
     if not any(not e.same for plan in plans for e in plan.leaves):
         return
-    from rig._internal.plug import Plug, _disconnect_incoming, _set_or_connect
+    from rig._internal.plug import Plug, _disconnect_incoming, _free_of_whole_wire, _set_or_connect
 
     with _undo_chunk(STEP):
         for plan in plans:
+            if plan.whole_above:
+                _free_of_whole_wire(plan.dst, "key")
+                plan.compound_input = plan.dst.plug.isCompound and plan.dst.plug.isDestination
             if plan.compound_input:
                 LOGGER.info("key %s: replacing its input %s", plan.dst, plan.dst.plug.source().name())
                 _disconnect_incoming(plan.dst)
@@ -1051,6 +1071,16 @@ def inject_rows(rows: list) -> None:
                 f"List(nodes).<attr> << AnimCurve(...)"
             )
         plans.append(_plan_plug(rhs, lhs, f"List row {i}, {lhs} << AnimCurve(...)"))
+    # a plug named by two rows (``List([a, a]).tx << ...``) is keyed once, by the last row,
+    # as the last of two values stays: each row was planned against the scene before any
+    # edit, so both would otherwise make a new curve and leave the first one unconnected
+    last: dict = {}
+    for plan in plans:
+        for e in plan.leaves:
+            earlier = last.get(e.leaf)
+            if earlier is not None:
+                earlier.same = True  # written by the later row instead
+            last[e.leaf] = e
     _apply(plans)
 
 

@@ -9,6 +9,7 @@ import math
 import re
 import sys
 import uuid
+import weakref
 from functools import total_ordering
 from numbers import Number, Real
 from typing import Any, Iterator
@@ -1200,18 +1201,23 @@ def _connected_attrs(
     return found
 
 
-def _inherit_owner(parent: Any, attr: Any) -> Any:
+def _inherit_owner(parent: Any, attr: Any, index: Any = None) -> Any:
     """`attr`, a fresh child, element or parent plug of `parent` (on its node),
     owned by the node object `parent` holds, if any, and named through that
     owner's path (see `_named_through_owner`, which may hand back a copy). It
     takes the handle of that node `parent` holds: its owner's, or with no owner
-    the one `parent` took (see `_ensure_owner_alive`)."""
+    the one `parent` took (see `_ensure_owner_alive`). `index` is the logical
+    index of an element of `parent` (None for a child): an element, and a child
+    of a held element, is held for undo and redo (`_HELD_ELEMENTS`)."""
     d     = attr.__dict__
     pd    = parent.__dict__
     owner = pd["_node"]
     # a child, an element or the parent of a dynamic attr is freed with it
     d["_attrh"]  = pd.get("_attrh")
     d["_handle"] = pd["_handle"]
+    path = _HELD_ELEMENTS.get(id(parent)) if _HELD_ELEMENTS else None
+    if index is not None or path is not None:
+        _hold_below(parent, attr, index, None if path is None else path.path)
     if owner is None:
         return attr
     d["_node"] = owner
@@ -1258,7 +1264,7 @@ def _full_name_buffer(attr: Any) -> Any:
         return attr
     copy = str.__new__(type(attr), name)
     copy.__dict__.update(attr.__dict__)
-    return copy
+    return _hold_like(copy, attr)
 
 
 def _point_count(attr: Any) -> int:
@@ -1408,6 +1414,172 @@ def _rebind_element(attr: Any, path: Any) -> None:
     for is_element, key in steps:
         cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
     attr.__dict__["_mplug"] = cur
+
+
+# The element plugs rig hands out, found again after an undo or a redo. An
+# element MPlug (or one below an element) can dangle once Maya removes the
+# element's connection, and Maya's undo and redo remove connections rig does not
+# see: ``p = n.w[0]; p << a.tx; cmds.undo(); p << b.tx`` used a freed MPlug (an
+# access violation) on a non-keyable dynamic multi or a Typed one. Every
+# Attribute at or below an element that holds a handle of its node is kept here
+# by a weak reference (`_HeldRef`), keyed by its id, with the path (top
+# attribute, steps) that finds its MPlug again; the Undo / Redo event callbacks
+# (`_rebind_held_elements`) give each one a fresh MPlug. The top plug is above
+# every element, so it never dangles. Nothing is added to the Attribute itself.
+# The table lives on ``sys`` (as the callbacks' registry), so a copy of this
+# module imported after a purge of the rig modules rebinds the plugs of every
+# copy. Building a held element costs a weak reference and a dict entry; a plug
+# that is no element costs nothing.
+_HELD_ELEMENTS: dict = sys.__dict__.setdefault("_rig_held_elements", {})
+
+
+class _HeldRef(weakref.ref):
+    """A weak reference to a held element Attribute: its key and its path."""
+
+    __slots__ = ("key", "path")
+
+
+def _drop_held(ref: Any) -> None:
+    """The weak reference's callback: its Attribute is gone."""
+    held = sys.__dict__.get("_rig_held_elements")
+    if held is not None and held.get(ref.key) is ref:
+        del held[ref.key]
+
+
+def _held_path(attr: Any) -> Any:
+    """The path `_hold_path` keeps for Attribute `attr`, or None (not held)."""
+    ref = _HELD_ELEMENTS.get(id(attr))
+    return None if ref is None else ref.path
+
+
+def _hold_path(attr: Any, path: Any) -> Any:
+    """Keep Attribute `attr`, whose MPlug `path` (top attribute, steps) finds,
+    among the element plugs an undo or a redo finds again. Returns `attr`."""
+    ref      = _HeldRef(attr, _drop_held)
+    ref.key  = key = id(attr)
+    ref.path = path
+    _HELD_ELEMENTS[key] = ref
+    if not _HELD_CALLBACKS_READY:
+        _ensure_held_callbacks()
+    return attr
+
+
+def _top_path(mplug: OpenMaya.MPlug) -> Any:
+    """``(top attribute, steps)`` for `mplug`, a valid MPlug: the steps (element
+    indices and child attributes) that find it from the plug of the first
+    attribute above it that is no element and below no element (its own
+    attribute, steps ``()``, when it is none), and whether a step is an element.
+    The path holds attribute MObjects only: an MPlug of the array kept alive
+    changes what Maya frees when the node is deleted (an element MPlug of a
+    deleted node then dangles), so the top plug is made again when it is used."""
+    steps, cur, element = [], mplug, False
+    while True:
+        if cur.isElement:
+            steps.append((True, cur.logicalIndex()))
+            cur, element = cur.array(), True
+        elif cur.isChild:
+            steps.append((False, cur.attribute()))
+            cur = cur.parent()
+        else:
+            break
+    if not element:
+        return (mplug.attribute(), ()), False
+    return (cur.attribute(), tuple(steps[::-1])), True
+
+
+def _hold_if_element(attr: Any) -> Any:
+    """`_hold_path` for `attr`, a fresh Attribute that holds a handle of its node,
+    when its MPlug is an element or below one (walked up once). Returns `attr`."""
+    d = attr.__dict__
+    if d["_handle"] is None:
+        return attr
+    mplug = d["_mplug"]
+    if not (mplug.isElement or mplug.isChild):
+        return attr
+    path, element = _top_path(mplug)
+    if element:
+        _hold_path(attr, path)
+    return attr
+
+
+def _hold_like(attr: Any, source: Any) -> Any:
+    """`attr`, a new Attribute of the plug of Attribute `source` (a copy, or a
+    Plug made of it), held as `source` is. Returns `attr`."""
+    ref = _HELD_ELEMENTS.get(id(source))
+    if ref is not None and attr.__dict__.get("_handle") is not None:
+        _hold_path(attr, ref.path)
+    return attr
+
+
+def _hold_below(parent: Any, attr: Any, index: Any, path: Any) -> None:
+    """Hold `attr`, a fresh element (``index``, its logical index) or child (index
+    None) of Attribute `parent` (held with `path`, or None), when it is an element
+    or below one."""
+    if attr.__dict__["_handle"] is None:
+        return
+    if path is None:
+        if index is None:
+            return
+        path, _element = _top_path(parent.__dict__["_mplug"])
+    top, steps = path
+    step = (True, index) if index is not None else (False, _attr_mobject(attr))
+    _hold_path(attr, (top, steps + (step,)))
+
+
+def _rebind_held_elements(*_args: Any) -> None:
+    """The Undo / Redo event callback: give every held element Attribute a fresh
+    MPlug, found from its top attribute's plug. One whose node is deleted (to the
+    undo queue) or freed, or whose dynamic attribute is, is left: the undo that
+    brings it back rebinds it. Never raises (a Maya callback)."""
+    held = sys.__dict__.get("_rig_held_elements") or {}
+    for ref in list(held.values()):
+        attr = ref()
+        if attr is None:
+            continue
+        d = attr.__dict__
+        try:
+            handle = d.get("_handle")
+            if handle is None or not handle.isValid():
+                continue
+            attrh = d.get("_attrh")
+            if attrh is not None and not attrh.isValid():
+                continue
+            top, steps = ref.path
+            cur = OpenMaya.MPlug(handle.object(), top)
+            for is_element, key in steps:
+                cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
+            d["_mplug"] = cur
+        except Exception:  # noqa: BLE001 -- a callback never raises
+            continue
+
+
+def _held_callback_specs() -> list:
+    event = OpenMaya.MEventMessage.addEventCallback
+    return [
+        (event, "Undo", _rebind_held_elements),
+        (event, "Redo", _rebind_held_elements),
+    ]
+
+
+# the registration's owner (the callbacks' registry key): one of its own, beside
+# this module's plug-in callbacks
+_HELD_OWNER = __name__ + ".held_elements"
+
+
+def _register_held_callbacks() -> bool:
+    """Register the Undo / Redo callbacks in place of an earlier import's (see
+    `rig._internal.callbacks`). False, with nothing registered, while Maya is not
+    initialised (`_ensure_held_callbacks` makes it at the first held plug)."""
+    global _HELD_CALLBACKS_READY
+    _HELD_CALLBACKS_READY = _callbacks.register(_HELD_OWNER, _THIS_MODULE, _held_callback_specs())
+    return _HELD_CALLBACKS_READY
+
+
+def _ensure_held_callbacks() -> bool:
+    """Make the registration an import before Maya was initialised left pending."""
+    global _HELD_CALLBACKS_READY
+    _HELD_CALLBACKS_READY = _callbacks.ensure(_HELD_OWNER, _THIS_MODULE, _held_callback_specs())
+    return _HELD_CALLBACKS_READY
 
 
 # `_node_serial`: a number per Maya node for as long as the node lives, keyed by
@@ -1610,6 +1782,8 @@ def _ensure_plugin_callbacks() -> bool:
 _THIS_MODULE            = sys.modules.get(__name__)
 _PLUGIN_CALLBACKS_READY = False
 _register_plugin_callbacks()
+_HELD_CALLBACKS_READY   = False
+_register_held_callbacks()
 
 # typed array attrs cmds.setAttr() sets as (count, *items) instead of a list
 COUNTED_ARRAY_TYPES = ("stringArray", "vectorArray", "pointArray")
@@ -2215,6 +2389,7 @@ class Attribute(str):
             raise ValueError(f"{name_or_mplug} is not a string or MPlug.")
         handle = _mplug_handle(mplug)
         self.__dict__.update(_attr_state(mplug, handle, _attr_handle(mplug)))
+        _hold_if_element(self)
 
     # --- dunders
 
@@ -3335,7 +3510,9 @@ class Attribute(str):
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
         element = self.plug.elementByPhysicalIndex(i)
-        return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element))
+        return _inherit_owner(
+            self, _new_attr(self._CHILD_CLASS, element), element.logicalIndex()
+        )
 
     def element_by_logical_index(self, i: int) -> Attribute:
         """Returns the element attribute at the given logical index: an
@@ -3345,7 +3522,7 @@ class Attribute(str):
         if not self.is_multi:
             raise RuntimeError(f"{self} is not an multi attr.")
         element = self.plug.elementByLogicalIndex(i)
-        return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element))
+        return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element), i)
 
     def delete_logical_index(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""

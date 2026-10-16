@@ -26,6 +26,8 @@ from rig.nodetypes._base import (
     _injection_error,
     _lookup,
     _named_through_owner,
+    _hold_if_element,
+    _hold_like,
     _new_attr,
     _node_from_str,
     _node_lock_refusal,
@@ -942,6 +944,7 @@ class DGNode(Node):
         else:
             plug = _new_attr(plug_cls, attr_d["_mplug"], handle, attrh)
         plug.__dict__["_node"] = owner
+        _hold_like(plug, attr)
         # ``find_attr`` named an attr of this node through its path if it has
         # more than one; one it did not is named as the MPlug. An attr of another
         # node is named through its owner, if it has one.
@@ -1636,6 +1639,7 @@ class DGNode(Node):
                     Attribute, attr_d["_mplug"], attr_d["_handle"], attr_d.get("_attrh")
                 )
                 typed.__dict__["_node"] = attr_d["_node"]
+                _hold_like(typed, attr)
                 # named through its owner's path, as the plug was
                 if str.__contains__(attr, "|"):  # _named_through_a_path
                     typed = _named_through_owner(typed)
@@ -1747,7 +1751,9 @@ class DGNode(Node):
         if plug.node() != self._mobject:
             attr_obj = Attribute(plug)
         else:
-            attr_obj = _new_attr(Attribute, plug, self.__dict__["_objhandle"])
+            attr_obj = _hold_if_element(
+                _new_attr(Attribute, plug, self.__dict__["_objhandle"])
+            )
             attr_obj.__dict__["_node"] = self
             # named through this node's path in the str buffer cmds reads, if
             # the node has more than one (see `_named_through_owner`); the fn
@@ -1826,7 +1832,9 @@ class DGNode(Node):
                 # its attribute's, if dynamic
                 plug   = sel.getPlug(0)
                 handle = self.__dict__["_objhandle"]
-                return _new_attr(Attribute, plug, handle, _attr_handle(plug))
+                return _hold_if_element(
+                    _new_attr(Attribute, plug, handle, _attr_handle(plug))
+                )
         if not quiet:
             raise RuntimeError(f"Alias not found: {self}.{alias}")
 

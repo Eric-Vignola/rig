@@ -44,10 +44,12 @@ from rig._internal.journal import cmds_edit
 # rig.nodetypes imports neither rig.spec nor rig._internal.plug
 from rig._internal.undo import _undo_chunk  # a leaf module: maya.cmds and rig._internal.journal
 from rig.nodetypes._base import (
+    _MISSING,
     Attribute,
     Node,
     _attr_handle,
     _attr_state,
+    _class_attr,
     _enum_fields,
     _handle_valid,
     _parse_enum_names,
@@ -102,6 +104,34 @@ _PER_CHILD  = frozenset((
     "defaultValue", "minValue", "maxValue", "softMinValue", "softMaxValue", "hasMinValue",
     "hasMaxValue", "hasSoftMinValue", "hasSoftMaxValue",
 ))
+
+
+# {(node class, name): True if a Python member of the class has the name}
+_SHADOWED: Dict[tuple, bool] = {}
+
+
+def _warn_shadowed(node_string: str, node: Any, long_name: str, short_name: Any) -> None:
+    """A new attribute whose long or short name is a Python member of the node's class
+    (``lock``, ``save``, ``name``, ``parent`` ...): ``node.<name>`` is that member, never
+    the plug, so the attribute is made and a warning names the way to reach it
+    (``Plug(node.find_attr(name))``). One class lookup per name, for a new attribute
+    only (a re-declaration says nothing)."""
+    cls = type(node)
+    for name in (long_name, short_name):
+        if not isinstance(name, str):
+            continue
+        key   = (cls, name)
+        known = _SHADOWED.get(key)
+        if known is None:
+            known = _SHADOWED[key] = _class_attr(cls, name) is not _MISSING
+        if not known:
+            continue
+        LOGGER.warning(
+            "%s.%s is made, but %r is a Python member of %s: %s.%s is that member, not the "
+            "plug; reach the attribute with Plug(%s.find_attr(%r)), or give it another name",
+            node_string, long_name, name, cls.__name__, node_string, name, node_string, name,
+        )
+        return
 
 
 def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = None) -> Any:
@@ -365,6 +395,8 @@ class _AttrSpec:
         # ---- Multi pre-sizing ---- #
         if multi and self.size is not None:
             self._presize_multi(node_string, long_name, default_value, wrap_node)
+
+        _warn_shadowed(node_string, wrap_node, long_name, kargs.get("shortName", kargs.get("sn")))
 
         # ---- Note string set ---- #
         new_plug = _plug_of(node_string, long_name, wrap_node, added)

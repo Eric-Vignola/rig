@@ -781,3 +781,49 @@ class Geometry(DAGNode):
                 data.append(self.get_component_tag_data(name, category=category))
 
         return data
+
+
+def deformed_refusal(
+    method: str, name: str, node: OpenMaya.MObject, kind: int, cls_name: str,
+    connected: str, what: str, door: str,
+) -> str:
+    """Why a node's ``load`` refuses shape ``name`` (MObject ``node``) with history,
+    which would compute over the ``what`` it sets. A deformed shape (a skin, a
+    blendShape, a cluster ... upstream) names the shape under its deformers, the
+    intermediate ``...Orig`` shape of the kind ``kind`` (``cls_name('x').load``:
+    the deformed shape follows its load), since deleting the history would delete
+    the deformers; construction history names the delete. `door` names the
+    creating form. Read only."""
+    upstream = OpenMaya.MItDependencyGraph(
+        node,
+        OpenMaya.MFn.kInvalid,
+        OpenMaya.MItDependencyGraph.kUpstream,
+        OpenMaya.MItDependencyGraph.kDepthFirst,
+        OpenMaya.MItDependencyGraph.kNodeLevel,
+    )
+    deformers, orig = set(), None
+    while not upstream.isDone():
+        found = upstream.currentNode()
+        if found.hasFn(OpenMaya.MFn.kGeometryFilt):
+            deformers.add(OpenMaya.MFnDependencyNode(found).name())
+        elif orig is None and found.hasFn(kind) and found != node:
+            dag = OpenMaya.MFnDagNode(found)
+            if dag.isIntermediateObject:
+                orig = dag.partialPathName()
+        upstream.next()
+    if deformers:
+        under = (
+            f"{cls_name}({orig!r}).load(path) updates the shape under them (the deformed one "
+            f"follows)"
+            if orig is not None
+            else "load the shape under them"
+        )
+        return (
+            f"{method}: {name!r} is deformed ({', '.join(sorted(deformers))}), which would "
+            f"compute over the {what} it sets: {under}. Deleting its history would delete the "
+            f"deformers; {door}"
+        )
+    return (
+        f"{method}: {name!r} has history ({connected}: construction history), which would "
+        f"compute over the {what} it sets; delete the history, or {door}"
+    )

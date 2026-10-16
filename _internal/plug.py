@@ -93,7 +93,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
-from rig._internal.journal import cmds_edit, run_statement, statement, user_call
+from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
     _MISSING,
     _NON_MATRIX_ATTR_API_TYPES,
@@ -107,6 +107,8 @@ from rig.nodetypes._base import (
     _enum_value,
     _ensure_owner_alive,
     _fixed_attr_kind,
+    _hold_if_element,
+    _hold_like,
     _holds_text,
     _inherit_owner,
     _is_enum_attr,
@@ -299,7 +301,7 @@ def _named_plug(name: str, node: Any = None, known: Any = None) -> "Plug":
     ):
         attrh = _attr_handle(mplug)
     plug.__dict__.update(_attr_state(mplug, handle, attrh))
-    return plug
+    return _hold_if_element(plug)
 
 
 class Plug(Attribute):
@@ -345,6 +347,7 @@ class Plug(Attribute):
             )
             state["_node"] = source["_node"]
             self.__dict__.update(state)
+            _hold_like(self, name_or_mplug)
             return
         if isinstance(name_or_mplug, str):
             name_or_mplug = _maybe_translate_component(name_or_mplug)
@@ -655,8 +658,7 @@ class Plug(Attribute):
 
         # Disconnect (a generic slot also drops the data its old input left).
         if other is None:
-            _disconnect_incoming(self)
-            _clear_generic_data(self)
+            _disconnect_and_drop(self)
             return self
 
         # Retired connection-query sentinels (the List class or Plug itself
@@ -1748,7 +1750,7 @@ def _component_plug(
     )
     plug.__dict__.update(_attr_state(mplug, handle))
     plug._set_component(comp_node, comp_alias, comp_ndims, comp_coords)
-    return plug
+    return _hold_if_element(plug)
 
 
 # --------------------------------------------------------------------- #
@@ -1756,7 +1758,9 @@ def _component_plug(
 # --------------------------------------------------------------------- #
 
 
-def _disconnect_incoming(dst: Any) -> None:
+def _disconnect_incoming(
+    dst: Any, what: str = "disconnect", write_follows: bool = False
+) -> None:
     """Disconnect any source plug currently driving ``dst``.
 
     Uses :meth:`Attribute.get_connected_attrs` (MPlug-based, rename-safe)
@@ -1774,7 +1778,14 @@ def _disconnect_incoming(dst: Any) -> None:
     deleted node's or attribute's plugs alike). So, after the owner check
     ``get_connected_attrs`` makes first, such a plug returns at once when its
     class reads its connections with Attribute's own methods (and its MPlug
-    with ``Attribute.plug``).
+    with ``Attribute.plug``) -- unless a compound above it is connected whole
+    (``c.t`` into ``cube.t``: ``cube.tx`` is driven, with no input of its own).
+    That input is then split into one per child first (`_free_of_whole_wire`),
+    so the other children keep their driver, and ``dst``'s own is removed.
+
+    ``what`` names the edit in a refusal (``"connect"``, ``"set"``, ...).
+    ``write_follows`` is True when the statement writes ``dst`` next (a connect,
+    a set): the disconnect and that write are one undo step (`journal.one_step`).
     """
     if not isinstance(dst, Attribute):
         # Allow raw strings only as a fallback path.
@@ -1798,17 +1809,149 @@ def _disconnect_incoming(dst: Any) -> None:
         ):
             _ensure_owner_alive(dst)
             if not mplug.isDestination:
-                return
-        sources = dst.get_connected_attrs(src=True, dst=False) or []
+                if not _below_a_wire(mplug):
+                    return
+                sources = []
+            else:
+                sources = dst.get_connected_attrs(src=True, dst=False) or []
+        else:
+            sources = dst.get_connected_attrs(src=True, dst=False) or []
     except RuntimeError as e:
         raise InjectionError(
             f"Cannot inspect incoming connections on {str(dst)!r}: {e}"
         ) from e
 
     if not sources:
-        return
+        if not _free_of_whole_wire(dst, what):
+            return
+        sources = dst.get_connected_attrs(src=True, dst=False) or []
+        if not sources:
+            return
 
+    if write_follows:
+        one_step()
     _disconnect_sources_respecting_lock(dst, sources)
+
+
+_FREE_TO_CHANGE = OpenMaya.MPlug.kFreeToChange
+
+
+def _below_a_wire(mplug: Any) -> bool:
+    """True if a compound above ``mplug`` (no destination itself) is connected whole
+    (`_wired_ancestor`). A plug that is no child or element, or that Maya calls free
+    to change with its parents (not locked, no parent connected: one API call),
+    answers at once."""
+    return (
+        (mplug.isChild or mplug.isElement)
+        and mplug.isFreeToChange(True, False) != _FREE_TO_CHANGE
+        and _wired_ancestor(mplug) is not None
+    )
+
+
+def _wired_ancestor(mplug: Any) -> Any:
+    """The nearest compound above ``mplug`` (its parent, an element's array's
+    parent ...) that has an input of its own, connected whole (``c.t`` into
+    ``cube.t`` for ``cube.tx``), or None. A multi root connected whole is left to
+    Maya (None)."""
+    cur = mplug
+    while True:
+        if cur.isChild:
+            cur = cur.parent()
+        elif cur.isElement:
+            cur = cur.array()
+        else:
+            return None
+        if cur.isDestination:
+            return None if cur.isArray else cur
+
+
+def _split_refusal(anc: Any, dst: Any, what: str) -> "str | None":
+    """Why the whole input of ``anc`` (an MPlug, `_wired_ancestor` of ``dst``)
+    cannot be split into one per child, or None: its source has no matching
+    children (a unitConversion between unit kinds feeds the compound whole), or a
+    child is locked (a locked plug takes no connection)."""
+    src  = anc.sourceWithConversion()
+    name = _new_attr(Attribute, anc).full_name
+    free = f"free the compound first: {name} << None"
+    if (
+        src.isNull
+        or src.node().hasFn(OpenMaya.MFn.kUnitConversion)
+        or not src.isCompound
+        or src.numChildren() != anc.numChildren()
+    ):
+        source = "nothing" if src.isNull else _new_attr(Attribute, src).full_name
+        return (
+            f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
+            f"from {source!r}, which has no matching children to give each child of "
+            f"{name!r} its own input; {free}. Nothing was changed"
+        )
+    for i in range(anc.numChildren()):
+        child = anc.child(i)
+        if child.isLocked:
+            locked = _new_attr(Attribute, child).full_name
+            return (
+                f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
+                f"from {_new_attr(Attribute, src).full_name!r}, and giving each child its own "
+                f"input needs {locked!r} unlocked (a locked plug takes no connection): "
+                f"Plug({locked!r}).unlock(), or {free}. Nothing was changed"
+            )
+    return None
+
+
+def _check_whole_wire(dst: Any, what: str) -> bool:
+    """True if a compound above ``dst`` (an Attribute) is connected whole and that
+    input can be split (`_free_of_whole_wire` will split it); False if none is.
+    Raises :class:`InjectionError` (nothing changed) when one cannot be split.
+    For a check made before any edit (keys)."""
+    anc = _wired_ancestor(dst.plug)
+    if anc is None:
+        return False
+    refusal = _split_refusal(anc, dst, what)
+    if refusal is not None:
+        raise InjectionError(refusal)
+    return True
+
+
+def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
+    """Give ``dst`` (an Attribute) a driver of its own when a compound above it
+    is connected whole: that compound's input (``c.t`` into ``cube.t``) is
+    replaced by one per child (``c.tx`` into ``cube.tx`` ...), so ``dst`` can be
+    set, connected, keyed or freed while its siblings keep their driver, as for
+    a plug driven on its own. Nested compounds are split down to ``dst``.
+    Logged at INFO. The split and the rest of the statement are one undo step
+    (`journal.one_step`). Returns True if anything was split. Raises
+    :class:`InjectionError`, with nothing changed, when the input cannot be split
+    (`_split_refusal`)."""
+    split = False
+    while True:
+        anc = _wired_ancestor(dst.plug)
+        if anc is None:
+            return split
+        refusal = _split_refusal(anc, dst, what)
+        if refusal is not None:
+            raise InjectionError(refusal)
+        one_step()
+        whole  = Plug(anc)
+        source = Plug(anc.sourceWithConversion())
+        LOGGER.info(
+            "%s %s: splitting the input %s of %s into one per child",
+            what, str(dst), str(source), str(whole),
+        )
+        path = _element_path(dst)
+        try:
+            _disconnect_sources_respecting_lock(whole, [source])
+        finally:
+            _rebind_element(dst, path)
+        if whole.plug.isDestination:
+            raise InjectionError(
+                f"Cannot {what} {str(dst)!r}: the input {str(source)!r} of its compound "
+                f"{str(whole)!r} could not be removed; {whole} << None frees it"
+            )
+        for i in range(whole.plug.numChildren()):
+            _set_or_connect(
+                Plug(source.plug.child(i)), Plug(whole.plug.child(i)), _dst_compound=None
+            )
+        split = True
 
 
 def _query_connections(plug: Any, source: bool) -> Any:
@@ -2083,20 +2226,29 @@ def _unlock_hint(dst: Any, locked: list) -> str:
     return plugs
 
 
-def _is_driven(dst_attr: Any) -> bool:
-    """True if ``dst_attr`` is an Attribute whose MPlug has an input of its own
-    (``isDestination``): a plain connection, an animCurve, a constraint, a
-    pairBlend, an expression. A plug driven only through a connected compound
-    parent is no destination (see `_disconnect_incoming`). A plug whose owner is
-    gone, or that cannot be read, answers False, and its set raises what it
+_FREE, _DRIVEN, _BELOW_WHOLE = 0, 1, 2
+
+
+def _driver(dst_attr: Any) -> int:
+    """How ``dst_attr`` is driven: ``_DRIVEN`` for an Attribute whose MPlug has an
+    input of its own (``isDestination``: a plain connection, an animCurve, a
+    constraint, a pairBlend, an expression); ``_BELOW_WHOLE`` for a child below a
+    compound connected whole (``c.t`` into ``cube.t``: ``cube.tx`` has no input
+    of its own, `_wired_ancestor`); ``_FREE`` otherwise. A plug whose owner is
+    gone, or that cannot be read, answers ``_FREE``, and its set raises what it
     raised before."""
     if not isinstance(dst_attr, Attribute):
-        return False
+        return _FREE
     try:
         _ensure_owner_alive(dst_attr)
-        return dst_attr.plug.isDestination
+        mplug = dst_attr.plug
+        if mplug.isDestination:
+            return _DRIVEN
+        if _below_a_wire(mplug):
+            return _BELOW_WHOLE
+        return _FREE
     except Exception:  # noqa: BLE001 (the set below raises the real error)
-        return False
+        return _FREE
 
 
 def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
@@ -2107,19 +2259,21 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
     a plain connection, an animCurve, a constraint, a pairBlend or an
     expression. Maya's setAttr accepts a value on a plug driven by a curve, a
     constraint or a pairBlend, and the DG overrides it at its next evaluation,
-    so the input of a destination (`_is_driven`) is removed before the set
-    (surfaced at ``LOGGER.info``), and the plug then keeps the value. The same
-    statement holds the disconnect and the set: one undo step brings the
-    driver back.
+    so the input of a destination (`_driver`) is removed before the set
+    (surfaced at ``LOGGER.info``), and the plug then keeps the value. The
+    disconnect and the set are one undo step (`journal.one_step`, with the
+    rest of the statement): one undo brings the driver back.
 
     A set that still fails because the plug is connected, though it read as no
-    destination (a class with its own connection reads), disconnects and
-    retries, as before. Lock is assumed pre-checked by
-    :func:`_assert_settable`, so a failure that is *not* a connection is a
-    genuine error and raises :class:`InjectionError` rather than being
-    swallowed.
+    destination (a class with its own connection reads), or because a compound
+    above it is connected whole (``c.t`` into ``cube.t``: that input is split
+    into one per child first, `_free_of_whole_wire`), disconnects and retries.
+    Lock is assumed pre-checked by :func:`_assert_settable`, so a failure that
+    is *not* a connection is a genuine error and raises :class:`InjectionError`
+    rather than being swallowed.
     """
-    if _is_driven(dst_attr):
+    driver = _driver(dst_attr)
+    if driver == _DRIVEN:
         try:
             incoming = dst_attr.get_connected_attrs(src=True, dst=False) or []
         except RuntimeError as e:
@@ -2132,7 +2286,10 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
                 str(dst_attr),
                 [str(i) for i in incoming],
             )
+            one_step()
             _disconnect_sources_respecting_lock(dst_attr, incoming)
+    elif driver == _BELOW_WHOLE:
+        _disconnect_incoming(dst_attr, "set", write_follows=True)
     try:
         dst_attr.set(*set_args, **set_kwargs)
         return
@@ -2147,7 +2304,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
                 str(dst_attr),
                 [str(i) for i in incoming],
             )
-            _disconnect_incoming(dst_attr)
+            _disconnect_incoming(dst_attr, "set", write_follows=True)
             try:
                 dst_attr.set(*set_args, **set_kwargs)
                 return
@@ -2427,8 +2584,7 @@ def _inject_value(
 
     # 1. Disconnect (a generic slot also drops the data its old input left).
     if src is None:
-        _disconnect_incoming(dst)
-        _clear_generic_data(dst)
+        _disconnect_and_drop(dst)
         return
 
     # 2a. A generic slot (`_is_generic_slot`: a typed attr that holds any data)
@@ -2764,6 +2920,27 @@ def _inject_value(
     if len(dst_channels) < len(src_channels):
         src_channels = src_channels[: len(dst_channels)]
 
+    # a compound connected whole (``c.t`` into ``cube.t``) that every channel is
+    # written into (a value or a plug each) gives up that input first, as a plug
+    # or keys on the compound do; a skip, a None or keys in a slot leave the
+    # other channels their driver (each written channel splits the input,
+    # `_free_of_whole_wire`)
+    if (
+        compound_dst
+        and isinstance(dst, Attribute)
+        and len(src_channels) in (1, len(dst_channels))
+        and dst.plug.isDestination
+        and not any(
+            s is None or type(s) is _Keys or types._is_attribute_spec(s)
+            for s in src_channels
+        )
+    ):
+        LOGGER.info(
+            "set %s: replacing its input %s (every channel is written)",
+            str(dst), str(Plug(dst.plug.source())),
+        )
+        _disconnect_incoming(dst, "set", write_follows=True)
+
     if any(type(s) is _Keys for s in src_channels):
         # keys slots (``t << [AnimCurve(xs), skip, 0]``): planned first, then every
         # slot in one undo step
@@ -2839,7 +3016,24 @@ def _refuse_generic(name: str, src: Any) -> None:
     )
 
 
-def _clear_generic_data(dst: Any) -> None:
+def _disconnect_and_drop(dst: Any) -> None:
+    """``dst << None``: `_disconnect_incoming`, then, on a generic slot, the drop of
+    the data its old input left (`_clear_generic_data`). A generic slot with an
+    input makes the two one undo step (`journal.one_step`): one undo brings back
+    the connection and the data together (an undo of the drop alone would leave
+    the slot disconnected with the data a saved file refuses)."""
+    if isinstance(dst, Attribute) and _is_generic_slot(dst):
+        _ensure_owner_alive(dst)
+        mplug = dst.plug
+        if not mplug.isArray and mplug.isDestination:
+            one_step()
+        _disconnect_incoming(dst)
+        _clear_generic_data(dst, generic=True)
+        return
+    _disconnect_incoming(dst)
+
+
+def _clear_generic_data(dst: Any, generic: bool = False) -> None:
     """After ``dst << None`` disconnected ``dst``, a generic slot (an element or a
     single attr) drops the data its old input left in it, unless that is a
     number: Maya keeps a matrix, a double3, geometry ... after a disconnect,
@@ -2848,7 +3042,7 @@ def _clear_generic_data(dst: Any) -> None:
     element that does not exist is not made. The drop is an API edit journaled
     with the statement (`rig._internal.api_edits.api_clear_data`): one undo puts
     the data back."""
-    if not (isinstance(dst, Attribute) and _is_generic_slot(dst)):
+    if not (generic or (isinstance(dst, Attribute) and _is_generic_slot(dst))):
         return
     mplug = dst.plug
     if mplug.isArray or mplug.isDestination:
@@ -2947,7 +3141,9 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     # Plug / Attribute source => connect.
     if isinstance(src, Attribute):
         if _named_with_dot(src):
-            _disconnect_incoming(dst_attr if dst_attr is not None else dst)
+            _disconnect_incoming(
+                dst_attr if dst_attr is not None else dst, "connect", write_follows=True
+            )
             try:
                 if dst_attr is not None:
                     src.connect(dst_attr, force=True)

@@ -68,7 +68,9 @@ _SKIN_LOAD_DOC = """Loads skin weights from a cgmath file (a SkinData): one name
 
     Each call is ONE undo step named ``rig.SkinCluster.load`` and leaves the
     selection as it was (``cmds.skinCluster`` selects the influences it binds:
-    the load puts the selection back).
+    the load puts the selection back). An update with the influences and the
+    weights the skin holds already (within 1e-9) writes nothing and makes no
+    undo step, so a re-run of a build adds no empty step.
     """
 
 
@@ -620,9 +622,31 @@ class SkinCluster(Deformer):
                 f"too); SkinCluster.load(path, geometry, ...) makes a new skinCluster"
             )
         data = _files.read(skin, (SkinData,), method, "the skin")
+        if self._holds(data):
+            return self  # a re-run: nothing to write, no undo step
         with _undo_chunk("rig.SkinCluster.load"):
             self.set_weights(data)
         return self
+
+    def _holds(self, data) -> bool:
+        """True when this skin holds the influences of SkinData ``data`` (by name, each
+        once) and its weights (within 1e-9): ``load`` of what ``save`` wrote writes
+        nothing then. False whenever that cannot be told (an influence not in the scene:
+        `set_weights` raises its own error)."""
+        try:
+            names = [x.long_name for x in self._sanitize_influences(data.influences)]
+        except Exception:  # noqa: BLE001 -- set_weights reports it
+            return False
+        current = self.serialize(full_path=True)
+        have    = list(current.influences)
+        if len(set(names)) != len(names) or sorted(names) != sorted(have):
+            return False
+        weights = np.asarray(data.weights, dtype=np.float64)
+        held    = np.asarray(current.weights, dtype=np.float64)
+        if weights.shape != held.shape or weights.ndim != 2:
+            return False
+        order = [names.index(name) for name in have]
+        return bool(np.allclose(weights[:, order], held, rtol=0.0, atol=1e-9))
 
     load = _files.creates_or_updates(_load_new, _load_into, _SKIN_LOAD_DOC)
     del _load_new, _load_into
