@@ -18,13 +18,13 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, `lock()` / `unlock()` / `is_locked`, equality |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
 | 5 | [`Attribute`](#5-attribute) | get / set, `lock()` / `unlock()`, `>>` and `//` on `find_attr` results, typed arrays, multis, slicing with list keys, components |
-| 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `serialize_hierarchy(bindpose=True)` |
+| 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `save_hierarchy` / `load_hierarchy` (files), `serialize_hierarchy(bindpose=True)` |
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `injection_node`, add / set / query / serialize, `tag_references` |
-| 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create`, paintable maps, colour sets, materials, transfer |
-| 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create` |
-| 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips |
-| 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild |
+| 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back; a `cgmath` `Object`), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
+| 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create`, `NurbsSurface.create`, `save` / `load` (files) |
+| 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips, `save` / `load` (files) |
+| 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild, `save` / `load` (files) |
 | 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
 | 14 | [`ShadingEngine` and the shaders](#14-shadingengine-and-the-shaders) | `for_material`, `assign`, `get_face_members`; `Blinn` / `Lambert` / ... / `Material`, the network verbs |
 | 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership, `Layer is DisplayLayer` |
@@ -593,6 +593,34 @@ print(made, cmds.getAttr("child.ty"), cmds.listRelatives("probe", shapes=True)) 
 print(Transform.create_hierarchy(skeleton, parent=Transform.create(name="rig")))  # ['rig|root', 'rig|root|child', 'rig|root|child|probe']
 ```
 
+`save_hierarchy` / `load_hierarchy` put that data in a `cgmath` file
+(`.npz`, `.json` or `.pkl`, by its extension; never load a `.pkl` you did not
+write). `Joint.load_hierarchy(path)` (or `Transform.load_hierarchy`) creates,
+as `create_hierarchy` does, and returns the new nodes as a typed `List`,
+parents first; it is one undo step and keeps the selection. A hierarchy is
+never updated in place: from a node, `load_hierarchy` is a `TypeError`.
+
+```python
+import os
+import tempfile
+
+folder = tempfile.mkdtemp()                                   # the files of this page go here
+path   = root.save_hierarchy(os.path.join(folder, "skeleton.npz"))
+print(os.path.basename(path))                                 # skeleton.npz
+cmds.select("grp")
+made = Joint.load_hierarchy(path)                             # creates: root is taken, so root1
+print(made[0], [x.short_name for x in made], cmds.ls(selection=True))  # root1 ['root1', 'child', 'probe'] ['grp']
+try:
+    root.load_hierarchy(path)                                 # from a node: never an update in place
+except TypeError as e:
+    print(str(e).split(";")[1].strip())                       # Joint.load_hierarchy(path, parent='root') makes a new one under it
+print(Transform.load_hierarchy(path, parent="grp")[0].long_name)       # |grp|root
+try:
+    Joint.load_hierarchy(cube.get_shape().save(os.path.join(folder, "cube.npz")))   # a mesh's file
+except TypeError as e:
+    print(str(e).split(" holds ")[1])                         # a MeshData; the hierarchy is a HierarchyData
+```
+
 At its bind pose: `serialize_hierarchy(bindpose=True)` is what a serialize
 would give after Maya's Go to Bind Pose (`dagPose -restore -global`), and
 nothing moves. A pose member takes scale, rotate, translate, rotate axis and
@@ -623,6 +651,9 @@ try:
     root.serialize_hierarchy(bindpose=True)
 except ValueError as e:
     print(e)  # 'root' is in bind poses that disagree (bindPose1, bindPose2): 'root' differs between 'bindPose1' and 'bindPose2'; name one: bindpose='bindPose1'
+
+saved = root.save_hierarchy(os.path.join(folder, "bind.npz"), bindpose="bindPose1")   # bindpose= as serialize_hierarchy takes it
+print(Joint.load_hierarchy(saved)[1].r.get(), arm.r.get())  # [0. 0. 0.] [30.  0.  0.] -- a new arm at the bind rotation
 ```
 
 Agreeing bind poses (another influence set bound at the same pose) are
@@ -860,6 +891,44 @@ print(mesh.serialize(include_uvs=False, world_space=False).matrix.shape)        
 rebuilt = Mesh.create(data, uv_data=uv_list, name="rebuilt")
 print(repr(rebuilt), rebuilt.num_vertices, rebuilt.get_parent(), rebuilt.uv_sets)  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
 print(rebuilt.get_shading_engines())                                               # [ShadingEngine("initialShadingGroup")]
+print(sum(not rebuilt.fn_set.isEdgeSmooth(e) for e in range(12)))                  # 12 -- the data's normals bring back the cube's hard edges
+```
+
+`create` also takes a `cgmath.render.scene.Object`, for the mesh and its UVs:
+its `mesh`, its `uv` (a `UVData` is one set, a `UVList` every set), its name and
+its transform; its render settings are not used.
+
+```python
+from cgmath.render.scene import Object
+
+hero = Mesh.create(Object(name="hero", mesh=data, uv=uv_list[0], translate=(5, 0, 0)))
+print(repr(hero), hero.get_parent().t.get(), hero.uv_sets)   # Mesh("heroShape") [5. 0. 0.] ('map1',)
+```
+
+To and from files: `save` writes the `MeshData` to one `cgmath` file and, with
+`uvs=`, the UV sets to a second (`.npz` recommended, `.json`, `.pkl`; by the
+extension). `Mesh.load(...)` from the class creates, as `create` does;
+`Mesh("x").load(...)` from a mesh updates it in place, the inverse of its
+`save`: the same topology, then its points, its hard edges and locked normals,
+and the file's UV sets by name. Each is one undo step and keeps the selection;
+every file is read, and checked, before anything changes.
+
+```python
+import os
+import tempfile
+
+folder = tempfile.mkdtemp()
+paths  = mesh.save(os.path.join(folder, "cube.npz"), uvs=os.path.join(folder, "cube_uv.npz"))
+print([os.path.basename(p) for p in paths])                  # ['cube.npz', 'cube_uv.npz']
+copy = Mesh.load(*paths, name="copy")                        # creates
+print(repr(copy), copy.uv_sets)                              # Mesh("copyShape") ('map1',)
+cmds.polySoftEdge("copy", angle=180, constructionHistory=False)   # softened ...
+copy.load(*paths)                                            # ... and updated in place from the files
+print(sum(not copy.fn_set.isEdgeSmooth(e) for e in range(12)))    # 12
+try:
+    Mesh.load(paths[1], paths[0])                            # the two files swapped
+except TypeError as e:
+    print(str(e).split(" holds ")[1])                        # a UVList; the mesh is a MeshData or an Object (the UVs go in uvs=)
 ```
 
 Paintable maps are `doubleArray` attributes in the `PaintableMap`
@@ -996,6 +1065,36 @@ twin = NurbsCurve.create(crv.serialize(), name="twin")                          
 print(repr(twin), twin.num_cvs, twin.fn_set.degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
 ```
 
+`NurbsSurface.create` builds a surface from a `BSplinePatchData`: its points,
+degrees and forms (a `kClosed` direction serializes open, keeping its CVs). A
+`BSplinePatchData` holds no knots, so they come back evenly spaced, over
+`0..spans`: the same surface when they were evenly spaced, and `serialize`
+warns when they were not. Both classes save and load `cgmath` files: from the
+class `load` creates, from a shape it updates the CVs in place (the same CV
+layout; a surface keeps its own knots). A `BSplineData` holds no name and no
+matrix: save in world space (the default) to keep where the shape is.
+
+```python
+import os
+import tempfile
+
+sheet = NurbsSurface.create(ball.serialize(), name="sheet")
+print(repr(sheet), sheet.num_cvs, sheet.fn_set.knotDomainInU)    # NurbsSurface("sheetShape") 77 (0.0, 4.0)
+
+folder = tempfile.mkdtemp()
+saved  = crv.save(os.path.join(folder, "crv.json"))
+again = NurbsCurve.load(saved, name="again")                     # creates
+cmds.xform("again.cv[0]", translation=(0, 3, 0))
+again.load(saved)                                                # the CVs back from the file
+print(repr(again), np.array(again.get_points())[0, :3])          # NurbsCurve("againShape") [0. 0. 0.]
+patch = NurbsSurface.load(ball.save(os.path.join(folder, "ball.npz")), name="patch")
+print(repr(patch), patch.num_cvs)                                # NurbsSurface("patchShape") 77
+try:
+    NurbsSurface.load(saved)                                     # a curve's file
+except TypeError as e:
+    print(str(e).split(" holds ")[1])                            # a BSplineData; the surface is a BSplinePatchData
+```
+
 ---
 
 ## 11. `Deformer` and `SkinCluster`
@@ -1055,6 +1154,29 @@ skin.delete()
 skin = SkinCluster.create(cube, data)                             # influences and weights from the data
 print(skin.get_influence_objects(), skin.serialize() == data)                                 # [Joint("j1"), Joint("j2")] True
 print(repr(Node.create("skinCluster", Node(cmds.polyCube(name="c2", ch=False)[0]), j1)))      # SkinCluster("c2_skincluster")
+```
+
+To and from a `cgmath` file: `save` writes the `SkinData` (the weights and the
+influences, by name; not the skin's settings nor its bind pose).
+`SkinCluster.load(path, geo, ...)` from the class creates, as `create` does
+(the geometry's own skin replaced, bound at the joints' current pose); a
+skin's own `load(path)` sets its weights in place, as `set_weights(SkinData)`
+does. The file comes first, then the geometry:
+
+```python
+import os
+import tempfile
+
+saved = skin.save(os.path.join(tempfile.mkdtemp(), "cube_skin.npz"))
+skin.set_weights(np.full((8, 2), 0.5))
+skin.load(saved)                                                # updated in place
+print(skin.get_weights()[7])                                    # [0. 1.]
+skin = SkinCluster.load(saved, cube)                            # creates: the cube's own skin replaced
+print(repr(skin), skin.get_weights()[7])                        # SkinCluster("cube_skincluster") [0. 1.]
+try:
+    SkinCluster.load(cube, saved)                               # the geometry first
+except TypeError as e:
+    print(str(e).split(":")[0])                                 # SkinCluster.load(skin, geometry) takes the file first, then the geometry
 ```
 
 Transfer to another mesh (pass the shape or a name, not a `Transform`).
@@ -1124,6 +1246,29 @@ morph.delete()
 morph = BlendShape.create(base, morphs, name="morph2")            # targets built from the data
 print(morph.get_targets(), morph.serialize() == morphs)  # ['smile', 'sad'] True
 print(morph.find_attr("weight")[:], morph.weight[:])     # [Attribute("morph2.smile"), Attribute("morph2.sad")] List([Plug("morph2.smile"), Plug("morph2.sad")])
+```
+
+To and from a `cgmath` file: `save` writes the `MorphList` (each target's
+sparse offsets and its name; not its weight nor its in-betweens).
+`BlendShape.load(path, base, ...)` from the class creates, as `create` does (a
+second load stacks a second blendShape); a blendShape's own `load(path)` sets
+the file's targets by name in place (a missing one added, its others kept).
+The file comes first, then the geometry:
+
+```python
+import os
+import tempfile
+
+saved = morph.save(os.path.join(tempfile.mkdtemp(), "base_morph.npz"))
+morph.set_target_data("sad", (np.array([0]), np.array([[0, 5, 0]])))
+morph.load(saved)                                                 # the file's targets, in place
+print(morph.get_target_data("sad").indices)                       # [0 1]
+again = BlendShape.load(saved, base, name="morph3")               # creates: a second blendShape on base
+print(again.get_targets(), sorted(cmds.ls(type="blendShape")))    # ['smile', 'sad'] ['morph2', 'morph3']
+try:
+    BlendShape.load(base, saved)                                  # the geometry first
+except TypeError as e:
+    print(str(e).split(":")[0])                                   # BlendShape.load(targets, geometry) takes the file first, then the geometry
 ```
 
 ---
