@@ -100,6 +100,7 @@ from rig.nodetypes._base import (
     _check_enum_names,
     _class_attr,
     _dg_named_owner,
+    _element_path,
     _ensure_dg_named,
     _enum_value,
     _ensure_owner_alive,
@@ -110,6 +111,7 @@ from rig.nodetypes._base import (
     _new_attr,
     _path_instance_number,
     _plug_hash,
+    _rebind_element,
     _same_plug,
     Attribute,
     Node,
@@ -1893,7 +1895,22 @@ def _disconnect_sources_respecting_lock(dst: Attribute, sources: list) -> None:
     toggles are guarded so a lock-toggle failure becomes a clean
     ``InjectionError`` (unlock) or a logged warning (re-lock) that never masks
     an in-flight error.
+
+    ``dst``'s MPlug is found again from its top plug after the disconnect when
+    it is an array element or below one (`_element_path`): an element MPlug
+    taken while the element was connected can dangle once its input is gone,
+    and the rest of the ``<<`` connects on it.
     """
+    path = _element_path(dst)
+    try:
+        _disconnect_sources(dst, sources)
+    finally:
+        _rebind_element(dst, path)
+
+
+def _disconnect_sources(dst: Attribute, sources: list) -> None:
+    """`_disconnect_sources_respecting_lock`'s disconnects, before ``dst``'s
+    MPlug is found again."""
     if _lock_chain_is_unlocked(dst):
         # nothing to unlock / relock: skip the by-name chain walk
         try:

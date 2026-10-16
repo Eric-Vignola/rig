@@ -1201,6 +1201,49 @@ def _same_plug(attr: Any, other: Any) -> bool:
     )
 
 
+def _element_path(attr: Any) -> Any:
+    """``(top plug, steps)`` that find Attribute `attr`'s MPlug again from its top
+    plug, when it is an element of an array or a plug below one; else None.
+
+    A disconnect can leave such an MPlug dangling: an element MPlug taken while
+    the element is connected and holding no value of its own (an element of a
+    dynamic array that is not keyable: ``Float('w', multi=True,
+    keyable=False)``, ``Matrix``, ``Message``, or after ``<< hide``) points at
+    freed memory once rig removes that connection, and every later call of it
+    (``node()``, ``logicalIndex()``, a connect) is an access violation in Maya.
+    The top plug, taken before the disconnect, stays valid. Taken before the
+    disconnect, handed to `_rebind_element` after it. A plug that is not held
+    by rig (`attr` has no MPlug) gives None."""
+    mplug = attr.__dict__.get("_mplug") if isinstance(attr, Attribute) else None
+    if mplug is None:
+        return None
+    steps, cur, element = [], mplug, False
+    while True:
+        if cur.isElement:
+            steps.append((True, cur.logicalIndex()))
+            cur, element = cur.array(), True
+        elif cur.isChild:
+            steps.append((False, cur.attribute()))
+            cur = cur.parent()
+        else:
+            break
+    return (cur, steps[::-1]) if element else None
+
+
+def _rebind_element(attr: Any, path: Any) -> None:
+    """Gives Attribute `attr` its element's MPlug again, found from the top plug
+    `_element_path` recorded before a disconnect (None: nothing to do). The rest
+    of the statement, and any later one on the same object, then uses the fresh
+    MPlug. Only `attr` itself is rebound: another Attribute object held for the
+    same element, or a disconnect made outside rig, is the known limit."""
+    if path is None:
+        return
+    cur, steps = path
+    for is_element, key in steps:
+        cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
+    attr.__dict__["_mplug"] = cur
+
+
 # `_node_serial`: a number per Maya node for as long as the node lives, keyed by
 # its MObjectHandle hashCode: the (handle, MObject, serial) of every live node
 # that has the code (the MObject compares the nodes: a handle gives none for a
@@ -2491,11 +2534,17 @@ class Attribute(str):
 
         Args:
             other: The attribute to disconnect from this attr.
+
+        An Attribute `other` that is an array element (or below one) gets its
+        element's MPlug again after the disconnect (see `_element_path`), so it
+        stays usable.
         """
         _self = self.full_name
-        other = str(other)
-        if cmds.isConnected(_self, other):
-            cmds_edit.disconnectAttr(_self, other)
+        name  = str(other)
+        if cmds.isConnected(_self, name):
+            path = _element_path(other)
+            cmds_edit.disconnectAttr(_self, name)
+            _rebind_element(other, path)
 
     def iter_connected_attrs(
         self, src: bool = True, dst: bool = True, first_only: bool = False
@@ -2640,6 +2689,11 @@ class Attribute(str):
 
         Returns:
             The disconnected attrs.
+
+        The destination of each disconnect (this attr, or an attr it drove)
+        that is an array element (or below one) gets its element's MPlug again
+        after it (see `_element_path`), so this attr and the attrs returned
+        stay usable.
         """
         attrs = self.get_connected_attrs(src=src, dst=dst)
         for attr in attrs:
@@ -2647,10 +2701,14 @@ class Attribute(str):
             if cmds.isConnected(self.full_name, attr_name):
                 src_name = self.full_name
                 dst_name = attr_name
+                dst_attr = attr
             else:
                 src_name = attr_name
                 dst_name = self.full_name
+                dst_attr = self
+            path = _element_path(dst_attr)
             cmds_edit.disconnectAttr(src_name, dst_name)
+            _rebind_element(dst_attr, path)
         return attrs
 
     def __rshift__(self, other):
