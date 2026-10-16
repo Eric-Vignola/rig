@@ -28,7 +28,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
 | 14 | [`ShadingEngine` and the shaders](#14-shadingengine-and-the-shaders) | `for_material`, `assign`, `get_face_members`; `Blinn` / `Lambert` / ... / `Material`, the network verbs |
 | 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership, `Layer is DisplayLayer` |
-| 16 | [`Choice`](#16-choice) | data types that follow the selector |
+| 16 | [`Choice`](#16-choice) | data types that follow the selector; inputs that take any plug whole, and a number |
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
 | 18 | [`Reference`](#18-reference) | file references and their namespaces, locks on reference and referenced nodes |
 | 19 | [Name helpers](#19-name-helpers) | short / clean names, suffixes, component range strings |
@@ -565,6 +565,13 @@ and the like are skipped with a warning.
 cube.add_attr("weight", attributeType="double").set(0.5)
 data = cube.serialize()
 print(type(data).__name__, data.name, data.node_type, data.user_defined_attributes)   # TransformData cube transform {'weight': {'attributeType': 'double', 'value': 0.5, 'keyable': False, 'channel_box': False}}
+
+from rig.spec import Typed                     # an attribute that holds any data: only its numbers are written
+slotted = Transform.create(name="slotted")
+slots   = slotted << Typed("slots", multi=True)
+slots[0] << 2.0
+slots[1] << cube.worldMatrix
+print(slotted.serialize().user_defined_attributes)   # {'slots': {'attributeType': 'typed', 'multi': True, 'value': [[0, 2.0]], 'keyable': False, 'channel_box': False}}
 
 root  = Joint.create(name="root")
 child = Joint.create(name="child", parent=root)
@@ -1242,6 +1249,18 @@ pick.selector.set(1)
 print(pick.output.data_type, len(pick.find_attr("output").get()))               # matrix 16
 pick.selector.set(2)
 print(pick.output.data_type, type(pick.output.get()[0]).__name__)               # mesh MeshData -- traced back to the source shape
+```
+
+Its inputs are typed attributes that hold any data, as a `rig.Typed` one:
+an input takes a plug whole, whatever it held (no shorthand node, no split
+into channels), and a number as a value.
+
+```python
+before = set(cmds.ls())
+pick.input[3] << cube.t                                                         # a double3, connected whole
+pick.input[3] << cube.worldMatrix                                               # rewired across kinds
+pick.input[4] << 2.0
+print(set(cmds.ls()) - before, cmds.listConnections("pick.input[3]", plugs=True), pick.input[4].get())   # set() ['cube.worldMatrix'] 2.0
 ```
 
 ---

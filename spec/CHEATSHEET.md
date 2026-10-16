@@ -12,10 +12,10 @@ Concepts, conventions and the verified behaviour live in [`README.md`](README.md
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | Maya standalone, a clean scene, two transforms |
-| 1 | [Import surface](#1-import-surface) | the 23 names, the `rig.*` re-exports, the names to keep apart |
+| 1 | [Import surface](#1-import-surface) | the 24 names, the `rig.*` re-exports, the names to keep apart |
 | 2 | [Anatomy of a spec](#2-anatomy-of-a-spec) | `.kargs`, laziness, reuse, the return value |
 | 3 | [Numeric — `Float` `Int` `Bool` `Angle` `Time`](#3-numeric--float-int-bool-angle-time) | |
-| 4 | [Typed — `String` `Matrix` `Message` `MeshAttr` `NurbsCurveAttr` `NurbsSurfaceAttr`](#4-typed--string-matrix-message-meshattr-nurbscurveattr-nurbssurfaceattr) | |
+| 4 | [Typed — `String` `Matrix` `Message` `MeshAttr` `NurbsCurveAttr` `NurbsSurfaceAttr` `Typed`](#4-typed--string-matrix-message-meshattr-nurbscurveattr-nurbssurfaceattr-typed) | `Typed` holds any data: a plug whole, a number, `<< None`, the root's forms |
 | 5 | [`Enum`](#5-enum) | the `en=` forms (string, list, dict, pairs), default, set by index or by field name |
 | 6 | [Compounds — `Vector` `Color` `Euler` `Quat`](#6-compounds--vector-color-euler-quat) | children, per-child defaults, ranges |
 | 7 | [The kwargs](#7-the-kwargs) | `min` `max` `dv` `keyable` `k` `hidden` `sn` `nn` `multi` `size` `overwrite`; a static name refused |
@@ -48,7 +48,7 @@ from rig import Node, List
 from rig.spec import (
     Angle, Bool, Float, Int, Time,
     Color, Euler, Quat, Vector,
-    Matrix, MeshAttr, Message, NurbsCurveAttr, NurbsSurfaceAttr, String,
+    Matrix, MeshAttr, Message, NurbsCurveAttr, NurbsSurfaceAttr, String, Typed,
     Enum,
     Note, destroy, hide, lock, skip, unhide, unlock,
 )
@@ -75,7 +75,7 @@ print(repr(ctrl), cmds.ls(type="container"))   # Transform("ctrl") [] -- no cont
 
 ## 1. Import surface
 
-Twenty-three names. `rig.spec` is the home and every one is re-exported
+Twenty-four names. `rig.spec` is the home and every one is re-exported
 at the top of the package, as the same object.
 
 ```python
@@ -84,12 +84,13 @@ from rig.spec import (
     Angle, Bool, Float, Int, Time,                    # numeric
     Color, Euler, Quat, Vector,                       # compound
     Matrix, MeshAttr, Message, NurbsCurveAttr, NurbsSurfaceAttr, String,   # typed
+    Typed,                                            # holds any data
     Enum,
     Note, destroy, hide, lock, skip, unhide, unlock,  # modifiers
 )
 
 print(rig.spec.__all__ == [n for n in rig.spec.__all__ if getattr(rig, n) is getattr(rig.spec, n)])  # True
-print(rig.Float is Float, rig.lock is lock)                                                          # True True
+print(rig.Float is Float, rig.lock is lock, len(rig.spec.__all__))                                   # True True 24
 ```
 
 Names to keep apart — the capitalised name is always the attribute spec,
@@ -101,6 +102,7 @@ from rig.nodetypes import Mesh as MeshNode
 print(rig.MeshAttr is MeshNode, hasattr(rig, "Mesh"))  # False False -- rig.MeshAttr is the `mesh` data attribute; MeshNode is the shape
 print(rig.Matrix, rig.matrix)         # <class 'rig.spec.typed.Matrix'> <module 'rig.matrix' ...>
 print(rig.Color.__mro__[1].__name__)  # Float -- an RGB double3, not a colour value
+print(Typed("t").kargs["attributeType"], String("s").kargs["dataType"])   # typed string -- Typed holds any data, String one kind
 ```
 
 ---
@@ -175,10 +177,11 @@ print(at("ctrl.when"), ctrl.when >> None)                           # time 24.0
 
 ---
 
-## 4. Typed — `String` `Matrix` `Message` `MeshAttr` `NurbsCurveAttr` `NurbsSurfaceAttr`
+## 4. Typed — `String` `Matrix` `Message` `MeshAttr` `NurbsCurveAttr` `NurbsSurfaceAttr` `Typed`
 
-`Matrix` and `Message` are attribute types; the other four are data
+`Matrix` and `Message` are attribute types; the next four are data
 types, which `attributeQuery` reports as `typed` and `getAttr` by name.
+`Typed` is the typed attribute of **any** data (below).
 
 ```python
 ctrl << String("label") << "hello"
@@ -208,6 +211,67 @@ print(dt("ctrl.shapeIn"), ctrl.shapeIn.get_inputs())                # mesh List(
 ctrl << NurbsCurveAttr("crvIn")
 ctrl << NurbsSurfaceAttr("srfIn")
 print(dt("ctrl.crvIn"), dt("ctrl.srfIn"), at("ctrl.crvIn"))         # nurbsCurve nurbsSurface typed
+```
+
+### `Typed`: a slot that holds any data
+
+`Typed("x")` is `addAttr -attributeType typed` (Maya's kAny data, the
+kind a choice node's input is), **not keyable** unless `keyable=True`. As a
+destination it never looks at what it holds: a plug is one whole connect
+(no shorthand node, no split into channels), a number sets, anything else
+is a `TypeError` before any edit.
+
+```python
+nodeA = Node.create("network", name="nodeA")
+objA  = Node.create("transform", name="objA")
+objA.t << [1, 2, 3]
+mix = nodeA << Typed("mixedInputArray", multi=True)   # -> Plug("nodeA.mixedInputArray")
+mix[0] << objA.wm            # matrix
+mix[1] << objA.message       # message
+mix[2] << objA.tx            # a number
+mix[3] << objA.t             # double3, connected whole, never per channel
+print(repr(mix), cmds.getAttr("nodeA.mixedInputArray", multiIndices=True))   # Plug("nodeA.mixedInputArray") [0, 1, 2, 3]
+print([mix[i].data_type for i in range(4)], mix.data_type)                   # ['matrix', 'Tdata', 'typed', 'double3'] compound
+print(cmds.getAttr("nodeA.mixedInputArray", keyable=True))                   # False
+
+before = set(cmds.ls())
+mix[0] << objA.t                                     # rewired across kinds: a plain connect
+mix[3] << objA.wm
+print(set(cmds.ls()) - before, mix[0].get_inputs())  # set() List([Plug("objA.translate")])
+mix[4] << 2.5                                        # a number is a value (an int, a bool, a numpy scalar too)
+print(mix[4] >> None, mix[2] >> None)                # 2.5 1.0
+try:
+    mix[5] << "objA.tx"                              # a str is no value Maya keeps there
+except TypeError as e:
+    print(str(e)[-76:])                              # to connect a plug named by a str, write Plug('objA.tx'). Nothing was changed
+try:
+    Typed("bad", dv=1)
+except TypeError as e:
+    print(str(e)[:42])                               # Typed('bad'): dv= is no setting of a typed
+```
+
+The multi root keeps the multi rules, every item checked first; `<< None`
+disconnects and drops the data the old input left (a number stays);
+`>> None` on the root is one value per element, in index order.
+
+```python
+mix << objA.message                                  # appends: the next free index
+mix << [1, None, objA.tx]                            # item i into [i]
+print(mix[1].get_inputs(), mix[1].data_type, mix[5].get_inputs())   # List([]) Tdata List([Plug("objA.message")])
+try:
+    mix << [1, "x"]
+except TypeError as e:
+    print(str(e)[:36])                               # 'nodeA.mixedInputArray[1]' is a typed
+values = mix >> None
+print(len(values), values[0], values[1], values[2])  # 6 1.0 None 1.0
+mix[3] << None
+print(mix[3].data_type)                              # Tdata -- the matrix the input left is dropped
+
+objC = Node.create("transform", name="objC")
+one  = nodeA << Typed("one")
+one << objA.wm
+objC.r << one                                        # as a source it reads as what it holds: a matrix
+print(cmds.nodeType(objC.r.get_inputs()[0].node.name))   # decomposeMatrix
 ```
 
 ---
@@ -558,6 +622,12 @@ for bad in (lambda: ctrl << String("mix"),
 # 'ctrl.mix': the default 2.0 is above max=1; pass dv=
 # 'ctrl.mix': shortName cannot be changed on an existing attribute (it is 'mix', the spec gives 'mx'); overwrite=True replaces it
 
+ctrl << Typed("anyIn")
+try:
+    ctrl << String("anyIn")                    # a String is one kind of data, Typed holds any
+except TypeError as e:
+    print(e)                                   # 'ctrl.anyIn' exists as a typed (any data), not a string; overwrite=True replaces it
+
 cmds.undoInfo(state=True, infinity=True)
 ctrl << Float("mix", dv=0.5)
 cmds.undo()
@@ -668,6 +738,18 @@ src.tint >> dst
 print(cmds.attributeQuery("tint", node="dst", listChildren=True))                                    # ['tintX', 'tintY', 'tintZ']
 ```
 
+A `Typed` clones as a `Typed`, whatever it holds (an element as a single
+one); the numbers are mirrored, a connection never is:
+
+```python
+src << Typed("anyIn", multi=True)
+src.anyIn[0] << src.t
+src.anyIn[2] << 4.0
+src.anyIn >> dst
+src.anyIn[0] >> "dst.anyOne"
+print(at("dst.anyIn"), cmds.getAttr("dst.anyIn[2]"), dst.anyIn[0].get_inputs(), at("dst.anyOne"))   # typed 4.0 List([]) typed
+```
+
 ---
 
 ## 13. Multis and pre-sizing
@@ -704,6 +786,8 @@ ctrl << Matrix("mats", multi=True, size=2)
 ctrl << String("names", multi=True, size=2)
 print(ctrl.dvm[:] >> None, cmds.getAttr("ctrl.offsets", multiIndices=True))  # [7. 7.] [0, 1]
 print((ctrl.mats[:] >> None).shape, cmds.getAttr("ctrl.names[0]"))           # (2, 4, 4) 0
+ctrl << Typed("slots", multi=True, size=2)                                     # a number, the one value it keeps
+print(ctrl.slots >> None)                                                      # [0.0, 0.0]
 ```
 
 ---
