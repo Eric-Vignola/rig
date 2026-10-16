@@ -34,8 +34,13 @@ command's ``doIt``, which does nothing, and drops it). Every change of the undo 
 ``cmds`` edit (a barrier) or happens outside a statement, so a pending list never holds edits
 made under another undo state, and nothing reads ``undoInfo -q -state``.
 
-A leaf module: ``maya.cmds``, ``maya.mel`` and `rig._internal.callbacks`; rig's plug-in is
-reached when a journal is registered.
+A user's callback that deletes a node or unloads a reference inside a statement registers the
+pending list first (`_before_removal`), and a journal's undo or redo passes over an
+``MDGModifier`` the scene no longer lets it undo or redo, as Maya passes over a ``cmds``
+edit's (`_walk`).
+
+A leaf module: ``maya.cmds``, ``maya.mel``, ``OpenMaya`` and `rig._internal.callbacks`; rig's
+plug-in is reached when a journal is registered.
 """
 
 from __future__ import annotations
@@ -47,8 +52,10 @@ from typing import Any, Callable
 
 from maya import cmds as _cmds
 from maya import mel as _mel
+from maya.api.OpenMaya import MDGModifier as _MDGModifier
 
-# The API fast paths (`rig._internal.api_edits`: the connects) read it at every edit: False
+# The API fast paths (`rig._internal.api_edits`: the connects and the single numeric value
+# sets) read it at every edit: False
 # sends every edit through cmds (the scopes, barriers and call-outs stay, and change nothing
 # then), for A/B runs and for the tests that pin the cmds route.
 API_EDITS = True
@@ -74,13 +81,19 @@ _S = _State()
 
 def _walk(ops: Any, method: str) -> None:
     """Calls ``method`` on every op of ``ops`` in order, also after one raises; then
-    re-raises the first error, so that a journal is never half undone or redone silently."""
+    re-raises the first error, so that a journal is never half undone or redone silently.
+
+    An ``MDGModifier`` that fails is passed over silently, as Maya passes over the undo or
+    redo of a ``cmds`` edit the scene no longer has: an edit made with undo recording off
+    (``undoInfo -stateWithoutFlush off``) between the journal and its undo can replace the
+    connection a modifier would remove (``TconnectAttributeCmd::undoIt`` says nothing then;
+    ``MDGModifier.undoIt`` raises ``kFailure``)."""
     first = None
     for op in ops:
         try:
             getattr(op, method)()
         except Exception as error:  # noqa: BLE001 (re-raised below)
-            if first is None:
+            if first is None and type(op) is not _MDGModifier:
                 first = error
     if first is not None:
         raise first
@@ -94,6 +107,9 @@ class _Journal:
 
     # what a failed load of rig's plug-in names (`rig.nodetypes.plugins._run_undoable`)
     UNDO_EDIT = "the API edits of a statement"
+    # its undoIt / redoIt make no cmds call (MDGModifier undoIt / doIt only): rig's command
+    # calls them without turning undo recording off and on around them
+    RECORDS_NO_CMDS = True
 
     def __init__(self, ops: list) -> None:
         self.ops = ops
@@ -129,10 +145,12 @@ def _flush() -> None:
             _walk(reversed(ops), "undoIt")
         except Exception:  # noqa: BLE001 (reverting is all that can be done)
             pass
-        raise RuntimeError(
+        failure = RuntimeError(
             f"rig: {len(ops)} edit(s) of this statement could not be put on the undo queue "
             f"({error}); they were reverted"
-        ) from None
+        )
+        failure._rig_reverted = True  # `add`'s callers never pass over it (`api_edits._apply`)
+        raise failure from None
 
 
 def barrier(error: BaseException | None = None) -> None:
@@ -154,7 +172,9 @@ def add(op: Any) -> None:
     at once as its own step (which raises when it cannot be registered: the caller reverts
     ``op`` and takes its ``cmds`` route). Also registered at once, after what is pending, when
     Maya's redo queue is not empty (after an undo or a redo): the ``cmds`` edit would have
-    flushed it here."""
+    flushed it here. If what is pending cannot be registered then, `_flush` reverts it and
+    its ``RuntimeError`` (marked ``_rig_reverted``) must propagate: the caller reverts
+    ``op`` too and re-raises it, never taking its ``cmds`` route past the lost edits."""
     if _S.open:
         if not _SCENE_CALLBACKS_READY:
             # an import before Maya was initialised: the new / open discard, before a list
@@ -231,6 +251,24 @@ class outside:
         return False
 
 
+class cmds_route:
+    """``with cmds_route():`` sends rig's edits in its block through ``cmds`` (`API_EDITS`
+    off, then back as it was): for a rig site that swallows a failed edit, where the API
+    route's ``MDGModifier`` would print Maya's ``Error:`` line for a call that then
+    succeeds (`rig._internal.container`'s external output connect)."""
+
+    __slots__ = ("was",)
+
+    def __enter__(self) -> None:
+        global API_EDITS
+        self.was, API_EDITS = API_EDITS, False
+
+    def __exit__(self, *exc: Any) -> bool:
+        global API_EDITS
+        API_EDITS = self.was
+        return False
+
+
 # {module name: True if it is rig's own}: names only, so no user object is kept alive
 _RIG_MODULES: dict = {}
 
@@ -302,9 +340,10 @@ def mel_eval(script: str) -> Any:
 # kBeforeNew / kBeforeOpen drop a pending list: it belongs to the scene going away. The list
 # is empty whenever control is outside a statement, and rig itself opens no file inside one
 # (`cmds_edit.file` registers first), so only a user's MMessage callback run inside a
-# statement can get here. Registered once per Maya session through rig._internal.callbacks
-# (a re-import replaces them; an import before Maya is initialised registers at the first
-# journal).
+# statement can get here. A node removal and a reference unload / remove / load / import
+# register a pending list first (`_before_removal`, the same case). Registered once per
+# Maya session through rig._internal.callbacks (a re-import replaces them; an import before
+# Maya is initialised registers at the first journal).
 # --------------------------------------------------------------------- #
 
 
@@ -318,16 +357,38 @@ def _undone_or_redone(*_args: Any) -> None:
     _S.redo = True
 
 
+def _before_removal(*_args: Any) -> None:
+    """A node is about to be removed, or a reference unloaded, removed, loaded or imported,
+    while a statement has edits pending: only a user's callback run inside the statement
+    gets here (rig's own deletes and file edits are ``cmds_edit`` barriers). The pending
+    list is registered first, as the ``cmds`` route would have recorded it: the removal
+    goes on the undo queue after the edits made before it (an undo then never meets a
+    journal whose node is deleted to the undo queue or freed by the unload)."""
+    if _S.pending:
+        barrier()
+
+
+def _add_node_removed(node_type: str, callback: Callable[..., Any]) -> int:
+    from maya.api import OpenMaya
+
+    return OpenMaya.MDGMessage.addNodeRemovedCallback(callback, node_type)
+
+
 def _scene_callback_specs() -> list:
     from maya.api import OpenMaya
 
     msg   = OpenMaya.MSceneMessage
     event = OpenMaya.MEventMessage.addEventCallback
     return [
-        (msg.addCallback, msg.kBeforeNew,  _discard),
-        (msg.addCallback, msg.kBeforeOpen, _discard),
-        (event,           "Undo",          _undone_or_redone),
-        (event,           "Redo",          _undone_or_redone),
+        (msg.addCallback,   msg.kBeforeNew,               _discard),
+        (msg.addCallback,   msg.kBeforeOpen,              _discard),
+        (event,             "Undo",                       _undone_or_redone),
+        (event,             "Redo",                       _undone_or_redone),
+        (_add_node_removed, "dependNode",                 _before_removal),
+        (msg.addCallback,   msg.kBeforeUnloadReference,   _before_removal),
+        (msg.addCallback,   msg.kBeforeRemoveReference,   _before_removal),
+        (msg.addCallback,   msg.kBeforeLoadReference,     _before_removal),
+        (msg.addCallback,   msg.kBeforeImportReference,   _before_removal),
     ]
 
 

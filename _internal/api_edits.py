@@ -172,7 +172,10 @@ def _apply(modifier: Any) -> bool:
     """Applies ``modifier`` (one edit, queued) and journals it (`rig._internal.journal.add`).
     True if both were done; False, with the edit undone, when either fails: the caller then
     takes its ``cmds`` route, outside this ``except`` block, which raises today's error
-    (CR-6: no API exception is chained onto it)."""
+    (CR-6: no API exception is chained onto it). The one exception: when the statement's
+    earlier edits could not be registered (`journal.add` after an undo; `journal._flush`
+    reverted them), the edit is undone and that error propagates, so the statement never
+    goes on without them."""
     try:
         modifier.doIt()
     except Exception:  # noqa: BLE001 (the cmds route raises today's error)
@@ -180,8 +183,10 @@ def _apply(modifier: Any) -> bool:
         return False
     try:
         _add(modifier)
-    except Exception:  # noqa: BLE001 (registered nothing: the cmds route makes the edit)
+    except Exception as error:  # noqa: BLE001 (registered nothing: the cmds route makes the edit)
         modifier.undoIt()
+        if getattr(error, "_rig_reverted", False):
+            raise
         return False
     return True
 
