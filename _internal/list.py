@@ -42,6 +42,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import numbers
+from types import MethodType
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
 from maya import cmds
@@ -180,9 +181,14 @@ class List(list):
     def __getattr__(self, name: str) -> "List":
         if name.startswith("_"):
             raise AttributeError(name)
-        return List(
+        found = List(
             getattr(x, name) if isinstance(x, (Plug, Node)) else x for x in self
         )
+        if found and all(type(x) is MethodType for x in found):
+            # a method of every element (``List(shapes).save``): a List of bound
+            # methods, which a call refuses with the loop to write
+            return _Methods(found, name)
+        return found
 
     @statement
     def __setattr__(self, name: str, value: Any) -> None:
@@ -649,6 +655,24 @@ def _set_locks(items: "List", state: bool) -> "List":
         if state and nodes:
             cmds_edit.lockNode([x.name for x, _ in nodes], lock=True)
     return items
+
+
+class _Methods(List):
+    """``List(items).<method>``: the bound method of each element. A method does not
+    broadcast over a List (only plugs and values do): calling it raises a TypeError
+    that names the loop. Iterating it, or indexing it, gives the methods."""
+
+    def __init__(self, items: Iterable[Any], name: str) -> None:
+        super().__init__(items)
+        object.__setattr__(self, "_method", name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        name = self._method
+        raise TypeError(
+            f"List(...).{name}(...): {name} is a method of each element, and a method does "
+            f"not broadcast over a List (plugs and values do); call it on each one: "
+            f"[x.{name}(...) for x in items]"
+        )
 
 
 def _lift_or_pass(obj: Any) -> Any:

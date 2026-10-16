@@ -312,8 +312,29 @@ class AnimCurve(DGNode):
             )
         return curve_type
 
+    def _refuse_locked_plugs(self, driven: Any) -> None:
+        """D3: InjectionError, nothing changed, when this curve keys a locked plug (``driven``,
+        the MPlugs its output drives): new keys are a write to that plug, refused as
+        ``plug << AnimCurve(...)`` refuses it, even when the curve holds those keys."""
+        if not driven:
+            return
+        from rig._internal.plug import Plug, _locked_channels, _unlock_hint
+        from rig.nodetypes._base import _injection_error
+
+        for mplug in driven:
+            plug   = Plug(mplug)
+            locked = _locked_channels(plug, [plug])
+            if locked:
+                raise _injection_error(
+                    f"Cannot set the keys of {self.name!r}: it keys the locked plug "
+                    f"{locked[0]!r}. Unlock first: {_unlock_hint(plug, locked)} (a locked plug "
+                    f"takes no new keys, even the ones its curve holds). Nothing was changed"
+                )
+
     def _plan_set(self, value: Any, call: str) -> Any:
-        """The checked write of ``value`` into this curve (``entry.same``: it holds them)."""
+        """The checked write of ``value`` into this curve (``entry.same``: it holds them).
+        A curve that keys a locked plug refuses (D3, `_refuse_locked_plugs`); the default out
+        tangent is a step when every plug it keys is a bool or an enum."""
         anim_keys  = _anim_keys()
         curve_type = self._timed_type(call)
         fn = self.fn_set
@@ -328,7 +349,12 @@ class AnimCurve(DGNode):
         if value._names is not None:
             raise TypeError(f"{call}: field names key an enum plug; a curve takes numbers")
         anim_keys._columns(value, 1, call)
-        entry = anim_keys._plan_values(value, curve_type, 0, False, call)
+        driven = fn.findPlug("output", False).destinations()
+        self._refuse_locked_plugs(driven)
+        # the default out tangent follows the plugs the curve keys, as for
+        # ``plug << AnimCurve(...)``: a step when every one is a bool or an enum
+        stepped = bool(driven) and all(anim_keys._stepped(mp) for mp in driven)
+        entry = anim_keys._plan_values(value, curve_type, 0, stepped, call)
         entry.same = anim_keys._same(anim_keys._read(fn, curve_type), entry)
         if not entry.same:
             anim_keys.require_plugin(call)

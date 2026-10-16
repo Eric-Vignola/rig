@@ -22,7 +22,7 @@ from rig.nodetypes import _files
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
-from rig.nodetypes.geometry import Geometry, _shape_create_name, iter_component_tokens
+from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal, iter_component_tokens
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.plugins import _run_undoable
@@ -71,7 +71,11 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
     and locked normals. Updating needs the same topology (the vertex count, the
     face counts and every face's vertex list, the holes) and a mesh without
     history (construction history or a deformer would compute over its
-    points), else a ValueError naming ``Mesh.load(...)`` for a new mesh. It
+    points), else a ValueError naming ``Mesh.load(...)`` for a new mesh; for a
+    deformed mesh (a skin, a blendShape ...) it names the mesh under its
+    deformers, ``Mesh('bodyShapeOrig').load(...)``, whose load the deformed
+    mesh follows. The class form takes no ``world_space=`` (a TypeError
+    naming this form). It
     sets every point, then, from data with normals, the hard edges and locked
     normals, then each UV set of the file by name (made when the mesh has
     none of that name; its other sets, and the current set, stay).
@@ -801,6 +805,7 @@ class Mesh(Geometry):
 
     @statement
     def _load_new(cls, mesh, uvs=None, *, name=None, container=None, **kwargs):
+        _files.creating_takes_no_space(cls.__name__, "mesh", kwargs)
         data, uv_data = _read_mesh_files("Mesh.load", mesh, uvs)
         with _undo_chunk("rig.Mesh.load"):
             return cls.create(data, uv_data, name=name, container=container, **kwargs)
@@ -1768,15 +1773,21 @@ def _hard_edges(
 ) -> tuple:
     """The hard edges of the data: each edge two faces share whose normals
     (`normals[ids]`, per face-vertex) differ at one of its ends, as
-    ``(pairs (H, 2), faces (H,), corners (H,))``: its two vertices, and a face of
-    it with the corner the edge starts at in the face's list (-1 in a holed
-    face). An edge of one face (a border) or of more than two (non-manifold) is
-    left smooth, as Maya makes it.
+    ``(pairs (H, 2), faces (H,), corners (H,), guess (H,) or None)``: its two
+    vertices, a face of it with the corner the edge starts at in the face's list
+    (-1 in a holed face), and the id the edge has when a mesh numbers its edges in
+    the order its faces first list them (`_first_seen_edges`; None for holed data,
+    whose mesh lists its faces another way), a guess `_edge_ids` checks. An edge of
+    one face (a border) or of more than two (non-manifold) is left smooth, as Maya
+    makes it.
 
-    Only the half-edges at a split vertex (one whose face-vertices hold more than
-    one normal id) are paired: a hard edge has its normals split at an end, and a
-    mostly smooth mesh has few such vertices."""
-    none = (np.empty((0, 2), dtype=np.int64), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64))
+    Only the edges at a split vertex (one whose face-vertices hold more than one
+    normal id) are tested: a hard edge has its normals split at an end, and a
+    mostly smooth mesh has few such vertices; with none, nothing is sorted."""
+    none = (
+        np.empty((0, 2), dtype=np.int64), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.int64),
+    )
     if not len(indices):
         return none
     first_id = np.empty(n_points, dtype=np.int64)
@@ -1786,30 +1797,78 @@ def _hard_edges(
         return none
     split_vertex = np.zeros(n_points, dtype=bool)
     split_vertex[indices[split_rows]] = True
-    starts = np.cumsum(counts) - counts
     if holes:
-        a, b = _face_loops(counts, indices, holes)
-        near = np.flatnonzero(split_vertex[indices[a]] | split_vertex[indices[b]])
-        a, b = a[near], b[near]
-    else:
-        # the half-edges from and to the corners at a split vertex (once each: one
-        # from a split corner's previous corner is listed when that is no split corner)
-        at_split = split_vertex[indices]
-        rows  = np.flatnonzero(at_split)
-        face  = np.searchsorted(starts, rows, side="right") - 1
-        first = starts[face]
-        last  = first + counts[face] - 1
-        nxt   = np.where(rows == last, first, rows + 1)
-        prv   = np.where(rows == first, last, rows - 1)
-        lone  = ~at_split[prv]
-        a = np.concatenate((rows, prv[lone]))
-        b = np.concatenate((nxt, rows[lone]))
+        return _hard_edges_holed(counts, indices, holes, normals, ids, n_points, split_vertex) + (None,)
+    if 8 * int(np.count_nonzero(split_vertex[indices])) < len(indices):
+        # a mostly smooth mesh: only the half-edges at its few split vertices are
+        # paired (no sort of every half-edge), and `_edge_ids` finds the few ids
+        # face by face
+        return _hard_edges_near(counts, indices, normals, ids, n_points, split_vertex) + (None,)
+    # every half-edge (face-vertex row r, from its corner to the next one), in one
+    # stable sort by its edge: the two half-edges of an edge two faces share sit
+    # side by side, the first one the first row that lists the edge
+    n_rows = len(indices)
+    starts = np.cumsum(counts) - counts
+    nxt    = np.arange(1, n_rows + 1, dtype=np.int64)
+    keep   = counts > 0
+    nxt[(starts + counts - 1)[keep]] = starts[keep]
+    va, vb = indices, indices[nxt]
+    n      = np.int64(n_points)
+    keys   = np.minimum(va, vb) * n + np.maximum(va, vb)
+    order  = np.argsort(keys, kind="stable")
+    sk     = keys[order]
+    same   = sk[1:] == sk[:-1]
+    # the first of exactly two half-edges with one key
+    pair = same.copy()
+    pair[1:] &= ~same[:-1]
+    pair[:-1] &= ~same[1:]
+    first  = np.flatnonzero(pair)
+    h1, h2 = order[first], order[first + 1]
+    near   = split_vertex[va[h1]] | split_vertex[vb[h1]]
+    first, h1, h2 = first[near], h1[near], h2[near]
+    face_of = np.repeat(np.arange(len(counts), dtype=np.int64), counts)
+    face1, face2 = face_of[h1], face_of[h2]
+    shared = face1 != face2
+    if not shared.all():
+        first, h1, h2, face1 = first[shared], h1[shared], h2[shared], face1[shared]
+    # the other face's rows of h1's two ends (its half-edge usually runs the other way)
+    forward = va[h2] == va[h1]
+    at_a    = np.where(forward, h2, nxt[h2])
+    at_b    = np.where(forward, nxt[h2], h2)
+    split   = _apart(normals, ids[h1], ids[at_a], _SPLIT_TOL)
+    split  |= _apart(normals, ids[nxt[h1]], ids[at_b], _SPLIT_TOL)
+    hard    = np.flatnonzero(split)
+    first, h1, face1 = first[hard], h1[hard], face1[hard]
+    corners = h1 - starts[face1]
+    # each unique edge's first-seen rank (its id in a mesh built from these lists)
+    group   = np.flatnonzero(np.concatenate(([True], ~same)))
+    rank    = np.empty(len(group), dtype=np.int64)
+    rank[np.argsort(order[group], kind="stable")] = np.arange(len(group), dtype=np.int64)
+    guess   = rank[np.searchsorted(group, first, side="right") - 1]
+    return np.stack((va[h1], vb[h1]), axis=1), face1, corners, guess
+
+
+def _hard_edges_near(counts, indices, normals, ids, n_points, split_vertex) -> tuple:
+    """`_hard_edges` for data with no holed face and few split vertices:
+    ``(pairs, faces, corners)``, from the half-edges from and to the corners at a
+    split vertex only (once each: one from a split corner's previous corner is
+    listed when that is no split corner)."""
+    starts = np.cumsum(counts) - counts
+    at_split = split_vertex[indices]
+    rows  = np.flatnonzero(at_split)
+    face  = np.searchsorted(starts, rows, side="right") - 1
+    first = starts[face]
+    last  = first + counts[face] - 1
+    nxt   = np.where(rows == last, first, rows + 1)
+    prv   = np.where(rows == first, last, rows - 1)
+    lone  = ~at_split[prv]
+    a = np.concatenate((rows, prv[lone]))
+    b = np.concatenate((nxt, rows[lone]))
     va, vb = indices[a], indices[b]
     keys   = np.minimum(va, vb) * np.int64(n_points) + np.maximum(va, vb)
     order  = np.argsort(keys, kind="stable")
     sk     = keys[order]
     same   = sk[1:] == sk[:-1]
-    # the first of exactly two half-edges with one key
     pair = same.copy()
     pair[1:] &= ~same[:-1]
     pair[:-1] &= ~same[1:]
@@ -1820,7 +1879,38 @@ def _hard_edges(
     shared = face1 != face2
     if not shared.all():
         h1, h2, face1 = h1[shared], h2[shared], face1[shared]
-    # the other face's rows of h1's two ends (its half-edge usually runs the other way)
+    forward = va[h2] == va[h1]
+    at_a    = np.where(forward, a[h2], b[h2])
+    at_b    = np.where(forward, b[h2], a[h2])
+    split   = _apart(normals, ids[a[h1]], ids[at_a], _SPLIT_TOL)
+    split  |= _apart(normals, ids[b[h1]], ids[at_b], _SPLIT_TOL)
+    hard    = np.flatnonzero(split)
+    h1, face1 = h1[hard], face1[hard]
+    return np.stack((va[h1], vb[h1]), axis=1), face1, a[h1] - starts[face1]
+
+
+def _hard_edges_holed(counts, indices, holes, normals, ids, n_points, split_vertex) -> tuple:
+    """`_hard_edges` for data with holed faces: ``(pairs, faces, corners)``, the
+    corner -1 in a holed face."""
+    starts = np.cumsum(counts) - counts
+    a, b = _face_loops(counts, indices, holes)
+    near = np.flatnonzero(split_vertex[indices[a]] | split_vertex[indices[b]])
+    a, b = a[near], b[near]
+    va, vb = indices[a], indices[b]
+    keys   = np.minimum(va, vb) * np.int64(n_points) + np.maximum(va, vb)
+    order  = np.argsort(keys, kind="stable")
+    sk     = keys[order]
+    same   = sk[1:] == sk[:-1]
+    pair = same.copy()
+    pair[1:] &= ~same[:-1]
+    pair[:-1] &= ~same[1:]
+    first  = np.flatnonzero(pair)
+    h1, h2 = order[first], order[first + 1]
+    face1  = np.searchsorted(starts, a[h1], side="right") - 1
+    face2  = np.searchsorted(starts, a[h2], side="right") - 1
+    shared = face1 != face2
+    if not shared.all():
+        h1, h2, face1 = h1[shared], h2[shared], face1[shared]
     forward = va[h2] == va[h1]
     at_a    = np.where(forward, a[h2], b[h2])
     at_b    = np.where(forward, b[h2], a[h2])
@@ -1829,29 +1919,62 @@ def _hard_edges(
     hard    = np.flatnonzero(split)
     h1, face1 = h1[hard], face1[hard]
     corners = a[h1] - starts[face1]
-    if holes:
-        corners[np.isin(face1, list(holes))] = -1
+    corners[np.isin(face1, list(holes))] = -1
     return np.stack((va[h1], vb[h1]), axis=1), face1, corners
 
 
-def _edge_ids(fn: OpenMaya.MFnMesh, hard: tuple) -> list[int]:
-    """Maya's edge id of each hard edge of `hard` (`_hard_edges`) of the mesh `fn`:
-    the edge at its corner of its face (``MItMeshPolygon.getEdges``, whose edge
-    ``k`` runs from the face's corner ``k``), checked by its two vertices, else
-    looked up among the edges of its first vertex."""
-    pairs, faces, corners = hard
+def _edge_ids(fn: OpenMaya.MFnMesh, hard: tuple, shading: "_Shading | None" = None) -> list[int]:
+    """Maya's edge id of each hard edge of `hard` (`_hard_edges`) of the mesh `fn`.
+
+    First from the mesh's face lists, in numpy (`_first_seen_edges`: Maya numbers
+    the edges of a mesh it builds in the order its faces first list them), each
+    id then checked by its two vertices (one ``getEdgeVertices`` per hard edge,
+    through ``map``); an edge that does not check (a mesh numbered another way:
+    one edited since it was built) is found as before, at its corner of its face
+    (``MItMeshPolygon.getEdges``, whose edge ``k`` runs from the face's corner
+    ``k``), checked by its vertices, else among the edges of its first vertex. A
+    faceted 20k-face mesh: about 15 ms for its 40k hard edges, where the corner
+    walk took about 100 ms. `shading` (the data's, `_Shading`) gives the face
+    lists when the mesh has no hole (they are the mesh's then); else they are
+    read from `fn`."""
+    pairs, faces, corners, guess = hard
     if not len(pairs):
         return []
+    n_edges = fn.numEdges
+    if guess is not None:
+        derived = guess
+    elif 16 * len(pairs) < n_edges:
+        derived = np.full(len(pairs), -1, dtype=np.int64)  # few: found face by face below
+    else:
+        lists   = (shading.counts, shading.indices) if shading is not None and not shading.holes else None
+        derived = _first_seen_edges(fn, pairs, lists)
+    ids     = derived.tolist()
+    ok      = (derived >= 0) & (derived < n_edges)
+    checked = np.flatnonzero(ok)
+    if len(checked):
+        ends = np.fromiter(
+            itertools.chain.from_iterable(map(fn.getEdgeVertices, derived[checked].tolist())),
+            dtype=np.int64, count=2 * len(checked),
+        ).reshape(-1, 2)
+        want = pairs[checked]
+        good = ((ends[:, 0] == want[:, 0]) & (ends[:, 1] == want[:, 1])) | (
+            (ends[:, 0] == want[:, 1]) & (ends[:, 1] == want[:, 0])
+        )
+        ok[checked[~good]] = False
+    missing = np.flatnonzero(~ok)
+    if not len(missing):
+        return ids
     poly = OpenMaya.MItMeshPolygon(fn.object())
     vert = None
-    ids  = []
-    for (v0, v1), face, corner in zip(pairs.tolist(), faces.tolist(), corners.tolist()):
+    for k in missing.tolist():
+        (v0, v1), face, corner = pairs[k].tolist(), int(faces[k]), int(corners[k])
+        ids[k] = -1
         if corner >= 0:
             poly.setIndex(face)
             edge = poly.getEdges()[corner]
             ends = fn.getEdgeVertices(edge)
             if (ends[0] == v0 and ends[1] == v1) or (ends[0] == v1 and ends[1] == v0):
-                ids.append(edge)
+                ids[k] = edge
                 continue
         if vert is None:
             vert = OpenMaya.MItMeshVertex(fn.object())
@@ -1859,9 +1982,39 @@ def _edge_ids(fn: OpenMaya.MFnMesh, hard: tuple) -> list[int]:
         for edge in vert.getConnectedEdges():
             ends = fn.getEdgeVertices(edge)
             if ends[0] == v1 or ends[1] == v1:
-                ids.append(edge)
+                ids[k] = edge
                 break
-    return ids
+    return [i for i in ids if i >= 0]
+
+
+def _first_seen_edges(fn: OpenMaya.MFnMesh, pairs: np.ndarray, lists: tuple | None = None) -> np.ndarray:
+    """For each vertex pair of `pairs` (H, 2), the id its edge has when the mesh
+    `fn`'s edges are numbered in the order its faces first list them (face by
+    face, corner ``k`` to ``k + 1``), or -1 for a pair no face lists. A guess
+    `_edge_ids` checks edge by edge. `lists` is the mesh's ``(counts, indices)``
+    when the caller has them (read from `fn` otherwise)."""
+    if lists is None:
+        counts, verts = fn.getVertices()
+        counts = np.fromiter(counts, dtype=np.int64, count=len(counts))
+        verts  = np.fromiter(verts, dtype=np.int64, count=len(verts))
+    else:
+        counts, verts = (np.asarray(x, dtype=np.int64) for x in lists)
+    if not len(verts):
+        return np.full(len(pairs), -1, dtype=np.int64)
+    starts = np.cumsum(counts) - counts
+    nxt    = np.arange(1, len(verts) + 1, dtype=np.int64)
+    keep   = counts > 0
+    nxt[(starts + counts - 1)[keep]] = starts[keep]
+    a, b   = verts, verts[nxt]
+    n      = np.int64(max(int(verts.max()), int(pairs.max())) + 1)
+    keys   = np.minimum(a, b) * n + np.maximum(a, b)
+    uniq, first = np.unique(keys, return_index=True)
+    rank   = np.empty(len(uniq), dtype=np.int64)
+    rank[np.argsort(first, kind="stable")] = np.arange(len(uniq), dtype=np.int64)
+    want   = np.minimum(pairs[:, 0], pairs[:, 1]) * n + np.maximum(pairs[:, 0], pairs[:, 1])
+    at     = np.searchsorted(uniq, want)
+    at     = np.minimum(at, len(uniq) - 1)
+    return np.where(uniq[at] == want, rank[at], -1)
 
 
 def _normals_now(fn: OpenMaya.MFnMesh) -> np.ndarray:
@@ -1896,8 +2049,12 @@ def _rows_now(fn: OpenMaya.MFnMesh, indices: np.ndarray, counts: np.ndarray) -> 
     return order[np.searchsorted(keys[order], now)]
 
 
-def _face_vertices(fn: OpenMaya.MFnMesh, rows: np.ndarray) -> tuple:
-    """The face and the vertex of each face-vertex row `rows` of the mesh `fn`."""
+def _face_vertices(fn: OpenMaya.MFnMesh, rows: np.ndarray, lists: tuple | None = None) -> tuple:
+    """The face and the vertex of each face-vertex row `rows` of the mesh `fn`;
+    `lists`, the mesh's ``(counts, indices)`` when the caller has them."""
+    if lists is not None:
+        counts, ids = (np.asarray(x, dtype=np.int64) for x in lists)
+        return np.repeat(np.arange(len(counts), dtype=np.int64), counts)[rows], ids[rows]
     counts, ids = fn.getVertices()
     faces = np.repeat(np.arange(len(counts), dtype=np.int64), list(counts))[rows]
     verts = np.fromiter(ids, dtype=np.int64, count=len(ids))[rows]
@@ -1918,16 +2075,15 @@ def _set_normals(fn: OpenMaya.MFnMesh, faces, vertices, normals, hard) -> None:
         OpenMaya.MSpace.kObject,
     )
     fn    = OpenMaya.MFnMesh(fn.object())  # a new one after the edit (see _MeshUpdateCommand)
-    hard  = set(hard)
-    it    = OpenMaya.MItMeshVertex(fn.object())
-    edges = set()
-    for vertex in set(np.asarray(vertices).tolist()):
-        it.setIndex(vertex)
-        edges.update(edge for edge in it.getConnectedEdges() if edge not in hard)
-    if edges:
-        fn.setEdgeSmoothings(sorted(edges), [True] * len(edges))
-        fn.cleanupEdgeSmoothing()
-        fn.updateSurface()
+    # every edge's smoothing again, in one call (about 1 ms for 40k edges, where a
+    # walk over the edges of the set vertices cost about 2.5 us a vertex): the
+    # edges `hard` hard, every other one smooth
+    flags = np.ones(fn.numEdges, dtype=bool)
+    if len(hard):
+        flags[np.asarray(hard, dtype=np.int64)] = False
+    fn.setEdgeSmoothings(list(range(fn.numEdges)), flags.tolist())
+    fn.cleanupEdgeSmoothing()
+    fn.updateSurface()
 
 
 def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) -> tuple:
@@ -1970,7 +2126,7 @@ def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) ->
     diff = np.flatnonzero(differs)
     if not len(diff):
         return (), ()
-    faces, verts = _face_vertices(fn, diff)
+    faces, verts = _face_vertices(fn, diff, None if shading.holes else (shading.counts, shading.indices))
     _set_normals(fn, faces, verts, shading.normals[want[diff]], hard)
     return faces, verts
 
@@ -2003,7 +2159,7 @@ def _restore_shading(fn: OpenMaya.MFnMesh, shading: _Shading) -> None:
     """The data's `shading` on the new mesh `fn` (all its edges smooth, no normal
     locked): its hard edges, then its locked normals. Pure API: `Mesh.create`
     calls it while it builds the shape, before any recorded command touches it."""
-    hard = _edge_ids(fn, shading.hard)
+    hard = _edge_ids(fn, shading.hard, shading)
     if hard:
         fn.setEdgeSmoothings(hard, [False] * len(hard))
         fn.cleanupEdgeSmoothing()
@@ -2137,11 +2293,7 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool) -> 
         obj, data, uvs = data, data.mesh, data.uv
     fn = OpenMaya.MFnMesh(mesh.mdagpath)
     if _has_history(fn):
-        raise ValueError(
-            f"{method}: {mesh.name!r} has history (its inMesh is connected: construction history "
-            f"or a deformer), which would compute over the points it sets; delete the history, "
-            f"or Mesh.load(path) makes a new mesh"
-        )
+        raise ValueError(_history_refusal(method, mesh, fn))
     _, _, holes = _mesh_topology(data)
     counts_now, ids_now = fn.getVertices()
     counts = np.asarray(data.counts, dtype=np.int64).ravel()
@@ -2368,6 +2520,14 @@ def _has_history(fn: OpenMaya.MFnMesh) -> bool:
     return fn.findPlug("inMesh", False).isDestination
 
 
+def _history_refusal(method: str, mesh: Mesh, fn: OpenMaya.MFnMesh) -> str:
+    """Why `Mesh('x').load` refuses a mesh with history (`deformed_refusal`)."""
+    return deformed_refusal(
+        method, mesh.name, fn.object(), OpenMaya.MFn.kMesh, "Mesh", "its inMesh is connected",
+        "points", "Mesh.load(path) makes a new mesh",
+    )
+
+
 def _put_points(fn: OpenMaya.MFnMesh, points: OpenMaya.MPointArray, space: int) -> None:
     fn.setPoints(points, space)
     fn.updateSurface()
@@ -2553,7 +2713,7 @@ class _MeshUpdateCommand(_MeshEdit):
         _put_points(OpenMaya.MFnMesh(self._path), self._points, self._space)
         if self._shading is not None:
             fn   = OpenMaya.MFnMesh(self._path)
-            hard = _edge_ids(fn, self._shading.hard)
+            hard = _edge_ids(fn, self._shading.hard, self._shading)
             _put_shading(fn, hard, self._old[1][1])
             self._locked = _lock_differing(OpenMaya.MFnMesh(self._path), self._shading, hard)
 

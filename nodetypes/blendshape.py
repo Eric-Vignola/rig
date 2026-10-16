@@ -36,7 +36,10 @@ _BLENDSHAPE_LOAD_DOC = """Loads blendShape targets from a cgmath file (a MorphLi
     blendShape's targets in place by name, the inverse of
     ``BlendShape('face_bs').save(...)``: each target of the file replaces the
     offsets of its target of that name, or is added when there is none; the
-    blendShape's other targets stay::
+    blendShape's other targets stay. A target the file replaces gives up its
+    live target mesh (its ``inputGeomTarget`` input, logged at INFO), as a
+    value replaces a plug's driver: a live mesh would write its own offsets
+    over the file's at the next evaluation::
 
         BlendShape("face_bs").load("body_face.npz")
 
@@ -531,8 +534,36 @@ class BlendShape(Deformer):
             )
         data = _read_targets(method, targets)
         with _undo_chunk("rig.BlendShape.load"):
+            self._free_live_targets(method, [t.name for t in data])
             self.set_targets_data(data)
         return self
+
+    def _free_live_targets(self, method: str, names: list) -> None:
+        """Disconnects the live target meshes of the targets ``names`` (each
+        ``inputGeomTarget`` of their items, in-betweens included, on every base) that
+        a load replaces: a live mesh would write its own offsets over the file's at the
+        next evaluation. Logged at INFO; the load's chunk holds the disconnects."""
+        from rig._internal.plug import Plug, _disconnect_incoming
+
+        fn      = OpenMaya.MFnDependencyNode(self.mobject)
+        inputs  = fn.findPlug("inputTarget", False)
+        indices = [i for i in (self.get_target_index(n) for n in names) if i >= 0]
+        if not indices:
+            return
+        for g in inputs.getExistingArrayAttributeIndices():
+            groups = inputs.elementByLogicalIndex(g).child(fn.attribute("inputTargetGroup"))
+            for t in indices:
+                items = groups.elementByLogicalIndex(t).child(fn.attribute("inputTargetItem"))
+                for i in items.getExistingArrayAttributeIndices():
+                    live = items.elementByLogicalIndex(i).child(fn.attribute("inputGeomTarget"))
+                    if not live.isDestination:
+                        continue
+                    plug = Plug(live)
+                    LOGGER.info(
+                        "%s: target %r: disconnecting its live mesh %s (the file's offsets "
+                        "replace it)", method, self.get_target_name(t), live.source().name(),
+                    )
+                    _disconnect_incoming(plug)
 
     load = _files.creates_or_updates(_load_new, _load_into, _BLENDSHAPE_LOAD_DOC)
     del _load_new, _load_into

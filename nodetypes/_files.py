@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
-from types import MethodType
+from types import FunctionType, MethodType
 
 from rig.nodetypes._base import Attribute
 
@@ -60,12 +60,30 @@ def looks_like_file(src) -> bool:
 def check_order(call: str, first, second) -> None:
     """A deformer's load takes the file first, then the geometry: raises
     TypeError naming the order (`call`, ``"SkinCluster.load(skin, geometry)"``)
-    when the geometry came first (a node, or a file in the geometry's place).
-    Nothing is read."""
-    if _is_node(first) or (looks_like_file(second) and not looks_like_file(first)):
+    when the geometry came first (a node, or a file in the geometry's place, or
+    the data object itself in the geometry's place: a geometry is a node or its
+    name). Nothing is read."""
+    data_second = second is not None and not is_path(second) and not _is_node(second)
+    if (
+        _is_node(first)
+        or (looks_like_file(second) and not looks_like_file(first))
+        or (data_second and is_path(first) and not looks_like_file(first))
+    ):
         raise TypeError(
             f"{call} takes the file first, then the geometry: got {_shown(first)} first "
             f"and {_shown(second)} second"
+        )
+
+
+def creating_takes_no_space(cls_name: str, what: str, kwargs: dict) -> None:
+    """The class form of ``load`` creates: ``world_space=`` (the update's keyword,
+    ``Mesh('x').load(path, world_space=False)``) is a TypeError naming the
+    instance form, before any file is read."""
+    if "world_space" in kwargs:
+        raise TypeError(
+            f"{cls_name}.load(...) creates a new {what}, and takes no world_space=; "
+            f"{cls_name}('x').load(path, world_space=...) updates an existing {what} "
+            f"in place"
         )
 
 
@@ -175,16 +193,37 @@ class creates_or_updates:
     def __init__(self, create, update, doc: str) -> None:
         self.create  = create
         self.update  = update
+        self.owner   = None
+        self.copies  = {}
         self.__doc__ = doc
         for fn in (create, update):
             fn.__doc__ = doc
 
     def __set_name__(self, owner, name: str) -> None:
+        self.owner = owner
         for fn in (self.create, self.update):
             fn.__name__     = name
             fn.__qualname__ = f"{owner.__name__}.{name}"
 
+    def _named_for(self, cls, fn):
+        """``fn``, or for a subclass of the class that defines it a copy named after
+        that subclass (``Joint.load_hierarchy``, not ``Transform.load_hierarchy``),
+        made once: help() and a traceback name the class the call was made on."""
+        if cls is self.owner or cls is None:
+            return fn
+        key  = (cls, fn)
+        copy = self.copies.get(key)
+        if copy is None:
+            copy = FunctionType(fn.__code__, fn.__globals__, fn.__name__, fn.__defaults__, fn.__closure__)
+            copy.__kwdefaults__ = fn.__kwdefaults__
+            copy.__dict__.update(fn.__dict__)
+            copy.__doc__        = fn.__doc__
+            copy.__module__     = fn.__module__
+            copy.__qualname__   = f"{cls.__name__}.{fn.__name__}"
+            self.copies[key]    = copy
+        return copy
+
     def __get__(self, obj, cls=None):
         if obj is None:
-            return MethodType(self.create, cls)
-        return MethodType(self.update, obj)
+            return MethodType(self._named_for(cls, self.create), cls)
+        return MethodType(self._named_for(type(obj), self.update), obj)

@@ -67,13 +67,15 @@ class _State:
     and ``redo``: True when Maya's redo queue may hold entries (an undo or a redo ran since,
     or since this import), see `add`. Maya runs rig on its main thread only."""
 
-    __slots__ = ("open", "pending", "entry", "redo")
+    __slots__ = ("open", "pending", "entry", "redo", "chunk")
 
     def __init__(self) -> None:
         self.open    = False
         self.pending = []
         self.entry   = None
         self.redo    = True
+        # True while the open statement holds an undo chunk (`one_step`)
+        self.chunk   = False
 
 
 _S = _State()
@@ -193,25 +195,65 @@ def add(op: Any) -> None:
         _register([op])
 
 
+STEP = "rig.replace"
+
+
+def one_step() -> None:
+    """Make the open statement ONE undo step from here on, with what it journaled so far:
+    an undo chunk (``rig.replace``) opened now, without a barrier (the pending list is
+    registered inside it), and closed when the outermost statement ends. Called before a
+    ``cmds`` edit that a statement's other edits follow, so that one undo takes back the
+    whole statement: a disconnect, then a set or a connect (`rig._internal.plug._do_set`,
+    ``plug << value`` over a driven plug), or the data drop of ``slot << None``. Opening a
+    chunk records nothing on the undo queue. Outside a statement, while Maya undoes or
+    redoes, or once the statement holds its chunk, it does nothing."""
+    if not _S.open or _S.chunk:
+        return
+    from maya.api.OpenMaya import MGlobal
+
+    if MGlobal.isUndoing() or MGlobal.isRedoing():
+        return
+    _cmds.undoInfo(openChunk=True, chunkName=STEP)
+    _S.chunk = True
+
+
+def _close_chunk(outer: bool) -> None:
+    """Closes the chunk `one_step` opened for the statement ending, and gives back the
+    state of the statement it ran inside (`outside`), ``outer``."""
+    try:
+        if _S.chunk:
+            _cmds.undoInfo(closeChunk=True)
+    finally:
+        _S.chunk = outer
+
+
 def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
     """``func(*args, **kwargs)`` as a statement: the outermost call opens the scope, and
     registers what it journaled when ``func`` returns or raises (the exception propagates
-    unchanged; a registration that fails then is a note of it, see `barrier`)."""
+    unchanged; a registration that fails then is a note of it, see `barrier`). A chunk
+    `one_step` opened is closed after that registration."""
     if _S.open:
         return func(*args, **kwargs)
     _S.open  = True
     _S.entry = args
+    outer, _S.chunk = _S.chunk, False
     try:
         result = func(*args, **kwargs)
     except BaseException as error:
         _S.open  = False
         _S.entry = None
-        barrier(error)
+        try:
+            barrier(error)
+        finally:
+            _close_chunk(outer)
         raise
     _S.open  = False
     _S.entry = None
-    if _S.pending:
-        _flush()
+    try:
+        if _S.pending:
+            _flush()
+    finally:
+        _close_chunk(outer)
     return result
 
 
