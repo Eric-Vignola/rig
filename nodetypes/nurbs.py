@@ -44,7 +44,8 @@ _CURVE_LOAD_DOC = """Loads a curve from a cgmath file (a BSplineData): one name,
             default); False: object space (``save(world_space=False)``). A
             BSplineData holds no space (a MeshData holds its matrix, a
             BSplineData nothing), so the wrong one would move the CVs
-            silently: a load without it, or with anything but a bool, is a
+            silently: a load without it, or with anything but a bool, or
+            with the space given by position (``load(path, True)``), is a
             TypeError naming it, before the file is read. The transform is
             never moved.
 
@@ -56,7 +57,10 @@ _CURVE_LOAD_DOC = """Loads a curve from a cgmath file (a BSplineData): one name,
     TypeError naming what it holds, a file from an older cgmath cgmath's
     LegacyFileError. Updating needs the same CV layout (the CV count, the
     degree, the form and the knots) and a curve without history, else a
-    ValueError naming ``NurbsCurve.load(...)`` for a new curve.
+    ValueError naming ``NurbsCurve.load(...)`` for a new curve; a deformed
+    curve (a cluster, a wire ... upstream) names the curve under its
+    deformers instead, ``NurbsCurve('ctlShapeOrig').load(path,
+    world_space=...)``, whose update the deformed curve follows.
 
     Each call is ONE undo step named ``rig.NurbsCurve.load`` and leaves the
     selection as it was.
@@ -84,8 +88,8 @@ _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a BSplinePatchData): 
             saved in. True: the CVs are world-space positions (``save()``'s
             default); False: object space. A BSplinePatchData holds no space
             (see `NurbsCurve.load`): a load without it, or with anything but
-            a bool, is a TypeError naming it, before the file is read. The
-            transform is never moved.
+            a bool, or by position, is a TypeError naming it, before the file
+            is read. The transform is never moved.
 
     Returns:
         The new NurbsSurface (creating), or this NurbsSurface (updating).
@@ -96,7 +100,8 @@ _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a BSplinePatchData): 
     direction), and an updated one keeps its own. Updating needs the same CV
     layout (the CV counts, the degrees and the forms in U and V) and a surface
     without history, else a ValueError naming ``NurbsSurface.load(...)`` for a
-    new surface.
+    new surface (a deformed one names its ``...Orig`` shape's load, with
+    ``world_space=``).
 
     Each call is ONE undo step named ``rig.NurbsSurface.load`` and leaves the
     selection as it was.
@@ -314,10 +319,11 @@ class NurbsCurve(Geometry):
             return cls.create(data, name=name, container=container, **kwargs)
 
     @statement
-    def _load_into(self, curve, *, world_space=_files.REQUIRED, **kwargs):
+    def _load_into(self, curve, *args, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplineData
 
         method = f"NurbsCurve({self.name!r}).load"
+        _files.space_by_keyword(method, args)
         _updates_only(method, kwargs, "NurbsCurve.load(path, ...) makes a new curve")
         world_space = _files.required_space(method, "BSplineData", world_space)
         data   = _files.read(curve, (BSplineData,), method, "the curve")
@@ -541,10 +547,11 @@ class NurbsSurface(Geometry):
             return cls.create(data, name=name, container=container, **kwargs)
 
     @statement
-    def _load_into(self, surface, *, world_space=_files.REQUIRED, **kwargs):
+    def _load_into(self, surface, *args, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplinePatchData
 
         method = f"NurbsSurface({self.name!r}).load"
+        _files.space_by_keyword(method, args)
         _updates_only(method, kwargs, "NurbsSurface.load(path, ...) makes a new surface")
         world_space = _files.required_space(method, "BSplinePatchData", world_space)
         data   = _files.read(surface, (BSplinePatchData,), method, "the surface")
@@ -577,6 +584,7 @@ def _no_history(node, method: str, door: str) -> None:
             deformed_refusal(
                 method, node.name, fn.object(), kind, type(node).__name__,
                 "its create input is connected", "CVs", door,
+                load_args="path, world_space=...",
             )
         )
 

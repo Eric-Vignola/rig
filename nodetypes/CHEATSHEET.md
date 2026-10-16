@@ -1081,7 +1081,8 @@ class `load` creates, from a shape it updates the CVs in place (the same CV
 layout; a surface keeps its own knots). A `BSplineData` holds no name and no
 matrix: save in world space (the default) to keep where the shape is. The
 update takes `world_space=` with no default, the space the file was saved in
-(the wrong one would move the CVs): without it, a `TypeError` naming it.
+(the wrong one would move the CVs), by keyword: without it, or given by
+position (`load(path, True)`), a `TypeError` naming it.
 
 ```python
 import os
