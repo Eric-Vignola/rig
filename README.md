@@ -61,6 +61,7 @@ Two operators carry the language:
 | `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
 | `node << Float("x")` | declare an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide`; declaring it again applies the settings given and keeps the value | the new plug, so its value goes next |
 | `node >> Float("x")` | add an output-only (non-writable) attribute | the new plug |
+| `x.lock()`, `x << lock`; `x.unlock()`, `x << unlock` | lock a node (`lockNode`), a plug (`setAttr -lock`) or a `List` (its plugs, then its nodes, in one undo step); nothing is written when `x` already is; a refusal is an `InjectionError` that names the way out | `x`, so it chains |
 | `x << red`, `x << layer`, `x << Tag("cap")` | **membership**: `x` (a node, components, a `List`) joins a material, a display layer or a component tag; `x << -red` leaves it, `x << Material()` / `Layer()` / `Tag()` leaves every one of that kind | `x`, so it chains |
 | `x in red`, `x not in layer` | yes or no: every member of `x` is in it | `bool` |
 | `x >> red`, `x >> Tag("cap")` | the ids of `x` that are in it (`cube >> red`: face ids); `x >> Material()` lists the collections holding `x` | an ndarray; a list |
@@ -213,6 +214,19 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   or freed by a new scene, a file open or a reference unload, it raises
   `already deleted!` instead of reaching a new node of the same name. So
   does a plug built from a string (`Plug("a.tx")`) or an MPlug.
+- **Locks: plugs first, then the node.** `ctl.tx.lock()` locks a plug
+  and `ctl.lock()` the node (`lockNode`); `x << lock` is the same call, and
+  `ctl.is_locked` reads either (a member of a locked container reads
+  locked). An object already locked or unlocked is left as it is, with no
+  undo step. Maya locks no plug of a locked node, so lock the plugs first
+  (`List([ctl.tx, ctl]).lock()` does it in that order). A locked node still
+  takes values and connections; rig refuses to rename, delete or reparent
+  it, or to add, replace or destroy its attributes, with one message:
+  `cannot rename 'ctl': it is locked; Node('ctl').unlock() unlocks it`.
+  A locked plug refuses any value or connection, even the one it already
+  holds, so a build that locks plugs unlocks them before it runs again. A
+  referenced node is refused either way (Maya saves no `lockNode` edit for
+  it), and so is a container locked inside its own `with` block.
 - **Sibling fallback.** `plug.foo` looks for a child attribute first,
   then a sibling Maya attribute on the same node, so `(a.tx + 5).input`
   reaches the `sum` node behind the output. It never reaches the node's
@@ -220,7 +234,8 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
 - **Undo.** Every edit is undoable. A statement's connects and plain
   value sets are one step together (`List(ctrls).t << [0, 1, 0]` is one),
   and every other Maya command it runs (`createNode`, a container's
-  member add, a lock) is a step of its own. A statement that raises keeps
+  member add, a lock) is a step of its own; a `List` lock is one step
+  (`rig.lock` / `rig.unlock`). A statement that raises keeps
   what it did before the error, with the same steps, so undo still walks
   the build back step by step. A membership edit (`<< Tag("x")`, `<< red`...),
   a `define` that makes its node, `Mesh.create`, `NurbsCurve.create` and
@@ -416,6 +431,14 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   `cube.tx.set(5)` is Maya's `setAttr`, which refuses a wired plug. A child
   whose compound is connected whole (`c.t` into `cube.t`) has no input of
   its own: `cube.tx << 5` raises, `cube.t << None` frees it.
+- **A lock is Maya's, with rig's checks in front.** A locked container
+  locks its members, and its unlock unlocks every member, also one that was
+  locked on its own; `member.unlock()` is refused, naming the container. A
+  container takes no new member while it is locked: a node a scope would
+  make inside it is refused before it is made. `cleanup()` keeps a locked
+  container, even an empty one. A reference node (`xRN`) stays locked. A
+  locked node's `delete` with a list (`node.delete([...])`) is Maya's: a
+  locked node in it is skipped with a printed `Error:`.
 - **Rewiring a multi element is safe through rig.** `net.w[0] << a.tx`
   then `net.w[0] << a.ty` replaces the input, also on a multi that is not
   keyable (`Float("w", multi=True, keyable=False)`, `Matrix`, `Message`,

@@ -15,9 +15,9 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | — | [Setup](#setup) | mayapy / Maya bootstrap, the imports |
 | 1 | [One node, two attribute spellings](#1-one-node-two-attribute-spellings) | `Node(x)` is the typed node, `node.<attr>` (`Plug`) vs `find_attr` (`Attribute`), `.node`, keys |
 | 2 | [`Node` — resolution and registration](#2-node--resolution-and-registration) | what a name resolves to, `create`, `find_all`, the three verbs (refer / define / create), `exists`, the errors, a custom node type |
-| 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, equality |
+| 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, `lock()` / `unlock()` / `is_locked`, equality |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
-| 5 | [`Attribute`](#5-attribute) | get / set, `>>` and `//` on `find_attr` results, typed arrays, multis, slicing with list keys, components |
+| 5 | [`Attribute`](#5-attribute) | get / set, `lock()` / `unlock()`, `>>` and `//` on `find_attr` results, typed arrays, multis, slicing with list keys, components |
 | 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies |
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `injection_node`, add / set / query / serialize, `tag_references` |
@@ -30,7 +30,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership, `Layer is DisplayLayer` |
 | 16 | [`Choice`](#16-choice) | data types that follow the selector |
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
-| 18 | [`Reference`](#18-reference) | file references and their namespaces |
+| 18 | [`Reference`](#18-reference) | file references and their namespaces, locks on reference and referenced nodes |
 | 19 | [Name helpers](#19-name-helpers) | short / clean names, suffixes, component range strings |
 | 20 | [`cmds` results as typed nodes, and `Axis`](#20-cmds-results-as-typed-nodes-and-axis) | casting `maya.cmds` results with `Node`; the mirror axis |
 | 21 | [`plugins` — `load_plugin` and undo](#21-plugins--load_plugin-and-undo) | `rigUndoableAPICommand`: your own API edit as one undo step, and its rules |
@@ -313,6 +313,28 @@ print(s.get_members())                                      # []
 print(sorted([md, box]), {box: 1}[Transform("asset:box")])  # [Transform("asset:box"), DGNode("md")] 1
 ```
 
+Locks: `lock()` / `unlock()` run `lockNode` and return the node (the DSL's
+`node << lock` is the same call); `is_locked` reads it, read only, and is
+True for a member of a locked container too. A node already in that state
+is left as it is, with no undo step. A locked node takes values and
+connections; `rename`, `delete`, `set_parent`, `add_attr`, `delete_attr`,
+`rename_attr`, a new attribute spec and `destroy` refuse it with one
+`InjectionError` (a `RuntimeError`), before Maya's own error. Maya locks no
+plug of a locked node: lock the plugs first. A referenced node is refused
+either way (Maya saves no `lockNode` edit for it), and so is a container
+locked inside its own `with` block.
+
+```python
+box.lock()
+print(box.is_locked, box.lock() is box)       # True True -- locked already: nothing written
+try:
+    box.rename("crate")
+except RuntimeError as e:
+    print(e)                                  # cannot rename 'asset:box': it is locked; Node('asset:box').unlock() unlocks it. Nothing was changed
+box.tx.set(4)                                 # values still change
+print(box.unlock().is_locked, box.tx.get())   # False 4.0
+```
+
 Equality is by name between node objects of the node's class, hashing by
 long name. Every spelling of one node gives that class — `Node("x")`,
 `Transform("x")` and `DGNode("x")` all return the most derived one — so
@@ -386,9 +408,9 @@ print(t.num_children, repr(t.translateX), repr(t.child(1)), a.get_parent())     
 print(cube.tx.default_value, cube.t.default_value)                                                # 0.0 [0.0, 0.0, 0.0]
 
 print(cube.tx.is_locked, cube.tx.is_keyable, cube.tx.is_channel_box, cube.tx.is_dynamic)          # False True False False
-cube.tx.is_locked = True
+cube.tx.lock()                             # setAttr -lock; returns the attribute, as plug << lock
 print(cube.tx.is_locked)                   # True
-cube.tx.is_locked = False
+cube.tx.unlock()
 
 cmds.setAttr(cube.ty, 9)                                                                   # it is a str
 ty, tz = cube.find_attr("ty"), cube.find_attr("tz")
@@ -1253,7 +1275,11 @@ print(rivet.parameterU.get(), rivet.parameterV.get())   # 0.1 0.2
 
 `Reference.create(path, namespace)` references a file and returns the
 reference node; the properties read `cmds.referenceQuery`. Needs a scene
-on disk, so this block is not run by the vetter.
+on disk, so this block is not run by the vetter. Maya keeps a reference
+node locked (`ref.unlock()` is refused: unlocked, it could be deleted under
+its reference). A referenced node's `lock()` / `unlock()` is refused too:
+Maya records no reference edit for a `lockNode`, so the change would be
+gone at the next open; a plug lock on it is a reference edit, and works.
 
 <!-- notest -->
 ```python
@@ -1272,6 +1298,13 @@ print(ref.get_nodes()[:2], Reference.find_by_path(path))  # [Transform("hero:cub
 
 again = Reference.create(path, namespace="hero")                  # Maya makes it hero1, path {1}
 print(again.namespace, again.file_path_with_copy_number.endswith("{1}"), again.file_path == path)  # hero1 True True
+
+print(ref.is_locked, ref.lock() is ref)                           # True True -- a reference node stays locked
+try:
+    Node("hero:cube").lock()
+except RuntimeError as e:
+    print(str(e).split(" Maya")[0])                               # 'hero:cube' is referenced:
+Node("hero:cube").tx.lock()                                       # a plug lock is a reference edit
 
 ref.delete()                                                                                       # cmds.file(removeReference=True)
 print(cmds.objExists("hero:cube"), Reference.find_by_path(path))                                   # False [Reference("heroRN1")]
