@@ -217,12 +217,20 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   then a sibling Maya attribute on the same node, so `(a.tx + 5).input`
   reaches the `sum` node behind the output. It never reaches the node's
   Python methods: `a.tx.rename` is an `AttributeError`.
-- **Undo.** Every edit is undoable, one step per Maya command a statement
-  runs. A membership edit (`<< Tag("x")`, `<< red`...), a `define` that
-  makes its node, `Mesh.create`, `NurbsCurve.create` and `SkinCluster.create`
-  are one named step each (`rig.tag`, `rig.define`, `rig.Mesh.create`), and
-  an API edit (`Mesh.set_points`, the UV and colour set edits, skin weights)
-  is one step through rig's plug-in command `rigUndoableAPICommand`.
+- **Undo.** Every edit is undoable. A statement's connects and plain
+  value sets are one step together (`List(ctrls).t << [0, 1, 0]` is one),
+  and every other Maya command it runs (`createNode`, a container's
+  member add, a lock) is a step of its own. A statement that raises keeps
+  what it did before the error, with the same steps, so undo still walks
+  the build back step by step. A membership edit (`<< Tag("x")`, `<< red`...),
+  a `define` that makes its node, `Mesh.create`, `NurbsCurve.create` and
+  `SkinCluster.create` are one named step each (`rig.tag`, `rig.define`,
+  `rig.Mesh.create`), and an API edit (`Mesh.set_points`, the UV and colour
+  set edits, skin weights) is one step. A statement's step and the API
+  edits go through rig's plug-in command `rigUndoableAPICommand`, which
+  rig loads from its own folder at its first such edit of a session
+  ([CHEATSHEET section 38](CHEATSHEET.md#38-undo): unloading it, and what
+  works without it).
   `with rig.undo_chunk("build arm"):`, or `@rig.undo_chunk` on a function,
   makes a whole build one named step.
 

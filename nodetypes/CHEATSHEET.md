@@ -1368,7 +1368,14 @@ each: `Mesh.set_points`, the UV set edits (`add_uv_set`, `rename_uv_set`,
 `delete_uv_set`, `set_uv_data`), the colour set edits (`add_color_set`,
 `ColorSet.data`, `ColorSet.delete`) and `SkinCluster.set_weights`.
 `Mesh.create` and `NurbsCurve.create` need no command: their shape rides a
-recorded `createNode` transform.
+recorded `createNode` transform. The DSL's connects and value sets use the
+command too, one step per statement ([root CHEATSHEET section 38](../CHEATSHEET.md#38-undo)),
+and rig loads the plug-in itself at its first edit of a session. Without
+it, the edits above raise a `RuntimeError` that names the missing plug-in,
+where rig looked and Maya's reason; the connects and sets take `cmds`.
+While those steps are on the undo queue, Maya refuses to unload the
+plug-in (a `load_plugin(..., unload_on_exit=True)` that loaded it warns) until
+`cmds.flushUndo()`.
 
 ```python
 from maya.api import OpenMaya as om

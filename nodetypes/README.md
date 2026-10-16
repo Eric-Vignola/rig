@@ -502,7 +502,19 @@ Your own API edits take the same command: [CHEATSHEET section 21](CHEATSHEET.md#
 has the recipe and the object's rules (apply the change first, in `doIt`;
 API only; no `cmds` in `undoIt` / `redoIt`), and `rig.undo_chunk` makes
 several edits one named step. `load_plugin` loads the plug-in by full path
-from `rig/nodetypes/plugins`, once per session, so nothing needs configuring.
+from `rig/nodetypes/plugins` (by name from `MAYA_PLUG_IN_PATH` if the file
+is not there), once per session, so nothing needs configuring; rig loads
+it itself at its first edit that needs it. The DSL's connects and value
+sets use it too: a statement's are one step together ([root CHEATSHEET
+section 38](../CHEATSHEET.md#38-undo)). With `rig/nodetypes/plugins` on
+`MAYA_PLUG_IN_PATH`, the first load costs about 8 ms instead of about
+165 ms. If it cannot be loaded, the edits above (and an attribute's
+default or hidden flag re-declared) raise a `RuntimeError` that says rig
+needs its undo plug-in, where it looked and why Maya did not load it,
+while connects and value sets take the `cmds` route with one warning per
+session. While a build's steps are on the undo queue, Maya refuses
+`unloadPlugin("undoable_api_command")` until `cmds.flushUndo()`; an
+unload forced anyway leaves those steps inert (undoing them does nothing).
 
 ---
 

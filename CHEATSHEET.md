@@ -57,7 +57,7 @@ for the node classes and their typed methods.
 | 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `shade.repair` / `tidy`, the network verbs |
 | 37 | [Shader conversion](#37-shader-conversion) | `mat = mat.astype(Phong)`, `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, the held old node, undo |
-| 38 | [Undo](#38-undo) | what one undo step is, `rig.undo_chunk` as a context manager and a decorator, rig's plug-in command |
+| 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
 
 ---
 
@@ -309,6 +309,13 @@ print(a.t >> None, type(a.t >> None).__name__)  # [1. 2. 3.] ndarray
 print((a.matrix >> None).shape)                 # (4, 4)
 print(a.label >> None, a.tx.get())              # hero 1.0
 ```
+
+A read gives Maya's evaluated value. rig's own queries (an attribute's
+type, a plug's lookup) may make Maya evaluate dirty upstream nodes; how
+often is not part of rig's behaviour, so an expression or scripted node
+whose compute prints, counts or sets attributes can run a different
+number of times than in 2.0.0a4. Values, connections and saved files are
+the same.
 
 Chaining: an attribute spec returns the new plug, so the value and the
 modifier go next.
@@ -1069,7 +1076,9 @@ has emptied. Three filters keep it safe: only nodes carrying the hidden
 `__rig__` tag that `Node.create` / the operators stamp, only DG utility
 types (never a transform, joint, shape, light, set, layer or shading node),
 and only when every consumer is also going. User-made nodes, locked nodes
-and referenced nodes are never touched.
+and referenced nodes are never touched. The tag is written through the
+API and has no undo step of its own: undoing the node's creation removes
+it with the node.
 
 ```python
 from rig import cleanup
@@ -2848,11 +2857,13 @@ print(cmds.nodeType("lossy"), repr(old))         # blinn Blinn("lossy")
 ## 38. Undo
 
 Everything rig does to the scene is undoable, with `cmds.undo()` or the
-Edit menu. How many steps a statement makes depends on what it runs:
+Edit menu. How many steps a statement makes depends on what it runs. A
+*statement* is one call from your code into rig: `b.t << [1, 2, 3]`,
+`hand.ty << arm.tx * 2 + 1`, `rf.clamp(x, 0, 1)`, `rn.multiplyDivide(input1X=2)`.
 
 | What | Undo steps |
 |---|---|
-| a DSL statement (`<<`, an operator network, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | one per Maya command it runs, so an operator network is several |
+| a DSL statement (`<<`, an operator network, a `List` broadcast, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | its connects and plain value sets together are **one** step, made through the API and rig's plug-in command; every Maya command it runs (`createNode`, a container's member add, a lock or keyable flag, `addAttr`, a set the API does not take) is a step of its own, so an operator network is still several. A set or a connect that is the whole statement is one step either way. The hidden `__rig__` tag of a node rig creates is no step of its own: undoing the creation removes it with the node |
 | a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
 | `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
@@ -2901,6 +2912,93 @@ box = rc.polyCube(name="box", constructionHistory=False)[0]
 box.f[:2] << Tag("lid")
 print(cmds.undoInfo(query=True, undoName=True))  # rig.tag
 ```
+
+A statement that raises keeps what it did before the error, as Maya's
+own commands do, and the connects and sets it made are still its one
+step: one `cmds.undo()` takes them back, and undo and redo walk the rest
+of the build step by step as usual, bare or inside a `rig.undo_chunk`. A typo between two statements leaves the
+statements before it, each with its steps.
+
+```python
+from rig import InjectionError
+from rig.spec import lock
+
+cmds.file(new=True, force=True)
+cmds.undoInfo(state=True, infinity=True)
+riders = List([Node.create("transform", name=n) for n in ("r1", "r2", "r3")])
+
+riders.t << [[1, 1, 1], [2, 2, 2], [3, 3, 3]]    # nine value sets, one statement
+cmds.undo()                                      # one step takes the nine back
+print(riders.tx >> None)                         # [0. 0. 0.]
+
+riders[2].tz << lock
+try:
+    riders.t << [[1, 1, 1], [2, 2, 2], [3, 3, 3]]  # r3.tz is locked: raises at r3
+except InjectionError:
+    print(riders.tx >> None)                     # [1. 2. 0.]  -- r1 and r2 were set before the error
+cmds.undo()                                      # one step: those six sets
+print(riders.tx >> None, cmds.getAttr("r3.tz", lock=True))   # [0. 0. 0.] True
+```
+
+**rig's undo plug-in.** A statement's step goes on the queue through
+`rigUndoableAPICommand`, from the plug-in `undoable_api_command` that
+ships in `rig/nodetypes/plugins`. rig loads it itself at the first such
+edit of a session: by full path from its own folder, else by name from
+`MAYA_PLUG_IN_PATH`. Nothing needs configuring; with
+`rig/nodetypes/plugins` on `MAYA_PLUG_IN_PATH` (a module file's
+`MAYA_PLUG_IN_PATH+:=` line), that first load costs about 8 ms instead of
+about 165 ms. If it cannot be loaded:
+
+* `Mesh.set_points`, the UV and colour set edits, skin weights and an
+  attribute's default or hidden flag re-declared raise a `RuntimeError`:
+  rig needs its undo plug-in for that edit, where it looked, and Maya's
+  reason. Nothing is changed.
+* Connects and value sets take the `cmds` route, one step per command as
+  before, with one warning per session that builds run slower.
+* When Maya refuses to initialise the file, rig does not try it again in
+  that session: once it is fixed, load it yourself
+  (`load_plugin("undoable_api_command")`, section 21 of the
+  [`nodetypes` cheatsheet](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo)).
+
+While a build's steps are on the undo queue, Maya refuses
+`cmds.unloadPlugin("undoable_api_command")` (the plug-in is still in
+use): run `cmds.flushUndo()` first, and rig loads it again at its next
+edit. An unload forced anyway (`force=True`) leaves those steps inert:
+undoing them does nothing, which is not an error; rig's plug-in edits
+then raise with the way back (`cmds.flushUndo()`, then
+`cmds.unloadPlugin("undoable_api_command")`).
+
+```python
+riders.ty << 5                                   # a step through rig's plug-in
+try:
+    cmds.unloadPlugin("undoable_api_command")
+except RuntimeError as e:
+    print(str(e).strip())                        # Plug-in, "undoable_api_command", cannot be unloaded because it is still in use
+```
+
+Where the per-statement step meets the rest of Maya:
+
+* A callback of yours (a `scriptJob`, an `MMessage` callback) that
+  deletes a node or unloads, removes, loads or imports a reference while
+  a statement runs splits the statement's step there, so the queue keeps
+  the order of the edits. Any other `cmds` edit such a callback makes
+  lands before the statement's step: the scene after a full undo or redo
+  is the same, the states in between can differ.
+* An edit made with undo off (`undoInfo(stateWithoutFlush=False)`) that
+  replaced or removed a connection a statement made is passed over
+  silently when that statement is undone.
+* After an undo or a redo, while Maya's redo queue is not empty, the next
+  statement's first API edit is a step of its own: it clears the redo
+  queue where a `cmds` edit would.
+* A connect Maya refuses for its types (a string into a double) prints
+  one more `Error:` line than before (Maya's line for the API attempt),
+  then raises as before.
+* Echo All Commands in the Script Editor shows no `connectAttr` /
+  `setAttr` line for the edits that went through the API, and no
+  `addAttr` / `setAttr` for the `__rig__` tag.
+* `rig.undo_chunk` and container membership are unchanged: a chunk still
+  makes its block one step, and a member add is still a `cmds.container`
+  edit.
 
 ---
 

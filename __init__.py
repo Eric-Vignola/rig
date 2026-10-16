@@ -96,6 +96,11 @@ Undo:
       named after the operation in the Edit menu (``rig.Mesh.create``,
       ``rig.tag``); each of rig's API edits (``Mesh.set_points``, the UV and
       colour set edits, ``SkinCluster.set_weights``, ...) is one undo step.
+    * A statement's connects and plain value sets are one undo step
+      together (``List(ctrls).t << [0, 1, 0]`` is one); every other Maya
+      command it runs is a step of its own. They go through rig's undo
+      plug-in (``rig/nodetypes/plugins``), which rig loads itself; see the
+      root CHEATSHEET's section 38.
     * :func:`undo_chunk` makes several statements one named step:
       ``with rig.undo_chunk("build arm"):``, or ``@rig.undo_chunk`` on a
       function (the step is named after its ``__qualname__``), or
