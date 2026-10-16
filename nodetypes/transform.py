@@ -5,18 +5,62 @@ Transform node class
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Union
 
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, statement
+from rig._internal.undo import _undo_chunk
+from rig.nodetypes import _files
 from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, _is_generic_slot, Attribute
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode, _typed_creator
 
 LOGGER = logging.getLogger(__name__)
+
+
+_HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData): it CREATES the nodes.
+
+    ``Transform.load_hierarchy(hierarchy, *, parent=None, world_space=True,
+    container=None)`` (and ``Joint.load_hierarchy``, the same), from the class,
+    makes the file's transforms, joints and locators, as `create_hierarchy`
+    does, always (a second load of one file makes ``root1``)::
+
+        skel = Joint.load_hierarchy("skeleton.npz")        # List: the new nodes, typed, parents first
+        arm  = Transform.load_hierarchy("arm.npz", parent="rig_grp")
+
+    Args:
+        hierarchy: The file (a str or os.PathLike, ``~`` expanded; a cgmath
+            ``.npz`` / ``.json`` / ``.pkl``), or the HierarchyData itself (a
+            ClipData too: its frames are not used).
+        parent: An existing node to make the roots under (`create_hierarchy`'s
+            ``parent``). None: the world.
+        world_space: With `parent`: True keeps the roots' world matrices from
+            the file, False their local values (`create_hierarchy`'s).
+        container: Inside ``with container()``, whether the new nodes join the
+            scope (None: yes), as for every typed create.
+
+    Returns:
+        A List of the new nodes, typed (``Joint`` / ``Transform``), parents first:
+        ``nodes[0]`` is the first root. Maya renames a node whose name is taken.
+
+    The file is read, and what it holds checked, before anything is made: a
+    missing file is a FileNotFoundError, a file of another class a TypeError
+    naming what it holds, a file from an older cgmath cgmath's
+    LegacyFileError. Constraints and other types derived from transform are
+    skipped with a warning (`create_hierarchy`'s).
+
+    From a node, ``Transform('root').load_hierarchy(...)`` is a TypeError: rig
+    does not update a hierarchy in place (its transforms hold the rig's
+    constraints, skins and children); ``Transform.load_hierarchy(path,
+    parent='root')`` makes one under it.
+
+    Each call is ONE undo step named ``rig.Transform.load_hierarchy`` (or
+    ``rig.Joint.load_hierarchy``) and leaves the selection as it was.
+    """
 
 # the exact Maya node types serialize_hierarchy() captures,
 # a locator is a "transform" holding a locator shape.
@@ -534,8 +578,42 @@ class Transform(DAGNode):
         (``container=False`` leaves them unregistered); the nodes keep the
         hierarchy's names (the creates inside this one are nested, so they add
         no prefix).
+
+        It selects the nodes it made; `load_hierarchy` (from a file or the
+        data, one undo step, the selection kept) returns them as a List.
         """
+        return cls._build_hierarchy(hierarchy, parent, world_space, select=True)
+
+    @classmethod
+    @_typed_creator
+    def _load_built(
+        cls,
+        hierarchy:   HierarchyData,
+        parent:      Union[str, None] = None,
+        world_space: bool             = True,
+    ) -> list:
+        """[Internal] `load_hierarchy`'s create, a typed creator (so it joins the
+        container scope as `create_hierarchy` does): the new nodes, typed,
+        parents first; the selection is put back as it was."""
+        from rig._internal.list import List
+
+        return List([_cast(name) for name in cls._build_hierarchy(hierarchy, parent, world_space, select=False)])
+
+    @classmethod
+    def _build_hierarchy(
+        cls,
+        hierarchy:   HierarchyData,
+        parent:      Union[str, None],
+        world_space: bool,
+        select:      bool,
+    ) -> list[str]:
+        """[Internal] The body of `create_hierarchy` and `load_hierarchy`: makes
+        the nodes of `hierarchy` and returns their names, parents first. With
+        `select` they end selected; without, the selection is put back as it was
+        before (in its order)."""
         from cgmath.hierarchy import SUPPORTED_NODE_TYPES, HierarchyData
+
+        before = None if select else (cmds.ls(orderedSelection=True, long=True) or [])
 
         # make a copy of the hierarchy to handle new names
         # without affecting source data and set the desired parent.
@@ -628,8 +706,70 @@ class Transform(DAGNode):
 
         # return the created nodes
         created = [str(x.name) for x in hierarchy]
-        cmds_edit.select(created)
+        if select:
+            cmds_edit.select(created)
+        elif before:
+            cmds_edit.select(before[:-1], replace=True)
+            cmds_edit.select(before[-1], add=True)
+        elif cmds.ls(selection=True):
+            cmds_edit.select(clear=True)
         return created
+
+    # --- files
+
+    def save_hierarchy(self, path: str | os.PathLike, *, bindpose: bool | str | DGNode = False) -> str:
+        """Saves this node's hierarchy to a cgmath file: its HierarchyData
+        (`serialize_hierarchy`), the inverse of `load_hierarchy`.
+
+        Args:
+            path: A str or os.PathLike (``~`` expanded). The extension sets the
+                format: ``.npz`` (recommended), ``.json`` or ``.pkl`` (never
+                load a ``.pkl`` you did not write).
+            bindpose: as `serialize_hierarchy` takes it: False (the scene as it
+                is), True (at its bind pose(s)), or a dagPose's name or node.
+
+        Returns:
+            `path`, as written (``~`` expanded).
+
+        A read of the scene: no undo step, the selection unchanged. The path
+        and `bindpose` are checked before anything is serialized (an extension
+        cgmath does not save: ValueError; a missing folder: FileNotFoundError;
+        a wrong `bindpose`: `serialize_hierarchy`'s TypeError).
+        """
+        path = _files.check_save_path(path, f"{type(self).__name__}.save_hierarchy")
+        self.serialize_hierarchy(bindpose=bindpose).save(path)
+        return path
+
+    @statement
+    def _load_hierarchy_new(
+        cls,
+        hierarchy,
+        *,
+        parent:      Union[str, DAGNode, None] = None,
+        world_space: bool                      = True,
+        container:   bool | None               = None,
+    ):
+        from cgmath.hierarchy import HierarchyData
+
+        method = f"{cls.__name__}.load_hierarchy"
+        data = _files.read(hierarchy, (HierarchyData,), method, "the hierarchy")
+        kwargs = {} if container is None else {"container": container}
+        if isinstance(parent, DAGNode):
+            parent = parent.long_name
+        with _undo_chunk(f"rig.{cls.__name__}.load_hierarchy"):
+            return cls._load_built(data, parent, world_space, **kwargs)
+
+    def _load_hierarchy_refused(self, *args, **kwargs):
+        name = type(self).__name__
+        raise TypeError(
+            f"{name}({self.name!r}).load_hierarchy(...) would update the hierarchy at {self.name!r} "
+            f"in place, which rig does not do (its transforms hold the rig's constraints, skins "
+            f"and children); {name}.load_hierarchy(path, parent={self.name!r}) makes a new one "
+            f"under it"
+        )
+
+    load_hierarchy = _files.creates_or_updates(_load_hierarchy_new, _load_hierarchy_refused, _HIERARCHY_LOAD_DOC)
+    del _load_hierarchy_new, _load_hierarchy_refused
 
     @staticmethod
     def _create_user_attrs(node: DAGNode, specs: dict) -> None:
