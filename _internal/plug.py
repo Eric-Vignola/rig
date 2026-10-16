@@ -163,8 +163,9 @@ _LAZY_MODULES: SimpleNamespace | None = None
 
 
 def _lazy() -> SimpleNamespace:
-    """Return the ``container`` / ``list`` / ``node`` / ``shorthand`` /
-    ``types`` modules of :mod:`rig._internal`, imported on first use.
+    """Return the ``container`` / ``list`` / ``math_nodes`` / ``node`` /
+    ``shorthand`` / ``types`` modules of :mod:`rig._internal`, imported on
+    first use.
 
     They all import this module at load, so they cannot be imported at the
     top. Binding them once saves a per-call ``from ... import`` in the hot
@@ -173,14 +174,15 @@ def _lazy() -> SimpleNamespace:
     """
     global _LAZY_MODULES
     if _LAZY_MODULES is None:
-        from rig._internal import container, list, node, shorthand, types
+        from rig._internal import container, list, math_nodes, node, shorthand, types
 
         _LAZY_MODULES = SimpleNamespace(
-            container = container,
-            list      = list,
-            node      = node,
-            shorthand = shorthand,
-            types     = types,
+            container  = container,
+            list       = list,
+            math_nodes = math_nodes,
+            node       = node,
+            shorthand  = shorthand,
+            types      = types,
         )
     return _LAZY_MODULES
 
@@ -957,12 +959,14 @@ class Plug(Attribute):
     # -- arithmetic operators (each delegates to a NodeOp in _math_nodes) -- #
 
     def __add__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import (
-            _matrix_add_op,
-            _plus_minus_average_op,
-            _quaternion_add_op,
-        )
-        from rig._internal.types import _is_matrix, _is_quaternion
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        tp   = lazy.types
+        _matrix_add_op         = mn._matrix_add_op
+        _plus_minus_average_op = mn._plus_minus_average_op
+        _quaternion_add_op     = mn._quaternion_add_op
+        _is_matrix             = tp._is_matrix
+        _is_quaternion         = tp._is_quaternion
 
         if _is_matrix(self):
             return _matrix_add_op(self, other)
@@ -971,12 +975,14 @@ class Plug(Attribute):
         return _plus_minus_average_op(self, other, operation=1, name="add1")
 
     def __radd__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import (
-            _matrix_add_op,
-            _plus_minus_average_op,
-            _quaternion_add_op,
-        )
-        from rig._internal.types import _is_matrix, _is_quaternion
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        tp   = lazy.types
+        _matrix_add_op         = mn._matrix_add_op
+        _plus_minus_average_op = mn._plus_minus_average_op
+        _quaternion_add_op     = mn._quaternion_add_op
+        _is_matrix             = tp._is_matrix
+        _is_quaternion         = tp._is_quaternion
 
         if _is_matrix(self):
             return _matrix_add_op(other, self)
@@ -985,13 +991,15 @@ class Plug(Attribute):
         return _plus_minus_average_op(other, self, operation=1, name="add1")
 
     def __sub__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import (
-            _matrix_inverse_op,
-            _matrix_multiply_op,
-            _plus_minus_average_op,
-            _quaternion_subtract_op,
-        )
-        from rig._internal.types import _is_matrix, _is_quaternion
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        tp   = lazy.types
+        _matrix_inverse_op      = mn._matrix_inverse_op
+        _matrix_multiply_op     = mn._matrix_multiply_op
+        _plus_minus_average_op  = mn._plus_minus_average_op
+        _quaternion_subtract_op = mn._quaternion_subtract_op
+        _is_matrix              = tp._is_matrix
+        _is_quaternion          = tp._is_quaternion
 
         if _is_matrix(self):
             return _matrix_multiply_op(self, _matrix_inverse_op(other))
@@ -1000,13 +1008,15 @@ class Plug(Attribute):
         return _plus_minus_average_op(self, other, operation=2, name="sub1")
 
     def __rsub__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import (
-            _matrix_inverse_op,
-            _matrix_multiply_op,
-            _plus_minus_average_op,
-            _quaternion_subtract_op,
-        )
-        from rig._internal.types import _is_matrix, _is_quaternion
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        tp   = lazy.types
+        _matrix_inverse_op      = mn._matrix_inverse_op
+        _matrix_multiply_op     = mn._matrix_multiply_op
+        _plus_minus_average_op  = mn._plus_minus_average_op
+        _quaternion_subtract_op = mn._quaternion_subtract_op
+        _is_matrix              = tp._is_matrix
+        _is_quaternion          = tp._is_quaternion
 
         if _is_matrix(self):
             return _matrix_multiply_op(_matrix_inverse_op(other), self)
@@ -1015,16 +1025,15 @@ class Plug(Attribute):
         return _plus_minus_average_op(other, self, operation=2, name="sub1")
 
     def __mul__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import (
-            _matrix_multiply_op,
-            _multiply_divide_op,
-            _quaternion_multiply_op,
-        )
-        from rig._internal.types import (
-            _is_matrix,
-            _is_quaternion,
-            _is_scalar_value,
-        )
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        tp   = lazy.types
+        _matrix_multiply_op     = mn._matrix_multiply_op
+        _multiply_divide_op     = mn._multiply_divide_op
+        _quaternion_multiply_op = mn._quaternion_multiply_op
+        _is_matrix              = tp._is_matrix
+        _is_quaternion          = tp._is_quaternion
+        _is_scalar_value        = tp._is_scalar_value
 
         # ``_is_scalar_value`` is True for matrix plugs too (matrix is a
         # typed-atomic, neither compound nor sequence), so the "is this a
@@ -1062,16 +1071,15 @@ class Plug(Attribute):
         return _multiply_divide_op(self, other, operation=1, name="mul1")
 
     def __rmul__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import (
-            _matrix_multiply_op,
-            _multiply_divide_op,
-            _quaternion_multiply_op,
-        )
-        from rig._internal.types import (
-            _is_matrix,
-            _is_quaternion,
-            _is_scalar_value,
-        )
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        tp   = lazy.types
+        _matrix_multiply_op     = mn._matrix_multiply_op
+        _multiply_divide_op     = mn._multiply_divide_op
+        _quaternion_multiply_op = mn._quaternion_multiply_op
+        _is_matrix              = tp._is_matrix
+        _is_quaternion          = tp._is_quaternion
+        _is_scalar_value        = tp._is_scalar_value
 
         def _is_plain_scalar(obj: Any) -> bool:
             return (
@@ -1101,12 +1109,16 @@ class Plug(Attribute):
         return _multiply_divide_op(other, self, operation=1, name="mul1")
 
     def __truediv__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import _multiply_divide_op
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        _multiply_divide_op = mn._multiply_divide_op
 
         return _multiply_divide_op(self, other, operation=2, name="div1")
 
     def __rtruediv__(self, other: Any) -> "Plug":
-        from rig._internal.math_nodes import _multiply_divide_op
+        lazy = _lazy()
+        mn   = lazy.math_nodes
+        _multiply_divide_op = mn._multiply_divide_op
 
         return _multiply_divide_op(other, self, operation=2, name="div1")
 

@@ -26,14 +26,17 @@ from rig.nodetypes._base import (
     _injection_error,
     _lookup,
     _named_through_owner,
+    _HELD_ELEMENTS,
     _hold_if_element,
     _hold_like,
+    _hold_path,
     _new_attr,
     _node_from_str,
     _node_lock_refusal,
     _refuse_locked_node,
     _queried_data_type,
     _shared_refused,
+    _top_path,
     _type_label,
     _typed,
     Attribute,
@@ -109,7 +112,8 @@ def _multi_child_walk(plug: OpenMaya.MPlug) -> tuple:
     when ``plug`` or a plug above it is an element, `_top_path`'s answer (whose
     walk visits the same elements: an array plug, which only this walk may skip,
     is never an element). `DGNode.find_attr` holds the attr it builds for an
-    element only (`_hold_if_element`), without a second walk for any other."""
+    element only (`_hold_path` of its `_top_path`), without a second walk for any
+    other."""
     cur, element = plug, False
     while True:
         if cur.isElement:
@@ -132,6 +136,22 @@ _EXTENSION_ATTR = OpenMaya.MFnDependencyNode.kExtensionAttr
 # ``DGNode.__getattr__`` returns Attributes, a state that only exists mid-import.
 _PLUG_CLASS     = None  # rig._internal.plug.Plug
 _COMPONENT_PLUG = None  # rig._internal.plug._maybe_component_plug
+
+# rig._internal.node, the DSL's node verbs (``node << x``), bound on the first
+# `DGNode.__lshift__` (`_dsl_node`; it imports this module): the module, read at
+# each call, without the per-call ``from ... import`` (1.2 us under Maya's import
+# hook). The D31 pattern: nodetypes imports no rig._internal module at load.
+_DSL_NODE = None
+
+
+def _dsl_node():
+    """Binds and returns `_DSL_NODE`."""
+    global _DSL_NODE
+    from rig._internal import node
+
+    _DSL_NODE = node
+    return node
+
 
 # The container scope's typed-create hook (D13; the D31 pattern keeps nodetypes
 # free of ``rig._internal`` imports). ``rig._internal.container`` sets it when it
@@ -957,7 +977,11 @@ class DGNode(Node):
         else:
             plug = _new_attr(plug_cls, attr_d["_mplug"], handle, attrh)
         plug.__dict__["_node"] = owner
-        _hold_like(plug, attr)
+        # held as `attr` is (`_hold_like` inline: for a plug that is no element,
+        # one dict miss)
+        ref = _HELD_ELEMENTS.get(id(attr))
+        if ref is not None and handle is not None:
+            _hold_path(plug, ref.path)
         # ``find_attr`` named an attr of this node through its path if it has
         # more than one; one it did not is named as the MPlug. An attr of another
         # node is named through its owner, if it has one.
@@ -1042,9 +1066,7 @@ class DGNode(Node):
         engine) or ``Tag`` makes the node a member, an
         attribute spec adds an attribute, a matrix source on a transform drives
         its channels. See :func:`rig._internal.node._node_lshift`."""
-        from rig._internal.node import _node_lshift
-
-        return _node_lshift(self, other)
+        return (_DSL_NODE or _dsl_node())._node_lshift(self, other)
 
     @statement
     def __rshift__(self, other: Any) -> Any:
@@ -1747,7 +1769,7 @@ class DGNode(Node):
         # Maya when sliced. Reject it like any other missing attribute. (Only an
         # element or a child plug can be one: the helper's first tests.) The
         # same walk says whether the plug is an element or below one, which the
-        # attr built below is held for (`_hold_if_element`); any other plug
+        # attr built below is held for (its `_top_path`); any other plug
         # (``tx``, a compound's child) needs no second walk.
         below = False
         if plug.isElement or plug.isChild:
@@ -1772,7 +1794,9 @@ class DGNode(Node):
         else:
             attr_obj = _new_attr(Attribute, plug, self.__dict__["_objhandle"])
             if below:
-                _hold_if_element(attr_obj)
+                # an element or below one (the walk above said so, as `_top_path`
+                # would): held with its path, without `_hold_if_element`'s walk
+                _hold_path(attr_obj, _top_path(plug)[0])
             attr_obj.__dict__["_node"] = self
             # named through this node's path in the str buffer cmds reads, if
             # the node has more than one (see `_named_through_owner`); the fn
