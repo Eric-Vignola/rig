@@ -28,7 +28,7 @@ from maya.api import OpenMaya
 
 import rig
 from rig import container, List, Node
-from rig._internal import callbacks, journal
+from rig._internal import api_edits, callbacks, journal
 from rig._internal import plug as plug_module
 from rig._internal.node_ops import NodeOp
 from rig._internal.plug import Plug
@@ -108,11 +108,10 @@ EXCLUDED_FILES = frozenset({"_internal/journal.py", "nodetypes/plugins/undoable_
 # where getattr(cmds, ...) may look a command up by name
 GETATTR_ALLOWED = ("bridges/commands.py", "nodetypes/plugins/")
 
-# (file, enclosing function) where a .doIt may apply an API edit: the journaled modifiers (B0's
-# helper and D2's connect), and the mesh edits' bodies, which run inside the undo command
-# (anywhere else an edit would be applied outside the journal and the undo command)
+# (file, enclosing function) where a .doIt may apply an API edit: the journaled modifiers (the
+# fast paths' _apply; R5 DFIX removed B0's unused helper), and the mesh edits' bodies, which
+# run inside the undo command (anywhere else an edit would be applied outside the journal and the undo command)
 DOIT_ALLOWED = frozenset({
-    ("nodetypes/plugins/__init__.py", "_register_api_edit"),
     ("_internal/api_edits.py", "_apply"),
     ("nodetypes/mesh.py", "_free_elements"),
     ("nodetypes/mesh.py", "_relink"),
@@ -329,8 +328,7 @@ class TestBarrierLint(unittest.TestCase):
                                    "        cmds.container('c', edit=True, addNode=['n'])\n",
                                    rel="_internal/container.py"), [])
         self.assertEqual(self.lint("def f():\n    getattr(cmds, 'x')\n", rel="bridges/commands.py"), [])
-        self.assertEqual(self.lint("def _register_api_edit(m):\n    m.doIt()\n",
-                                   rel="nodetypes/plugins/__init__.py"), [])
+        self.assertEqual(self.lint("def _apply(m):\n    m.doIt()\n", rel="_internal/api_edits.py"), [])
         self.assertEqual(self.lint("def _relink(m):\n    m.doIt()\n", rel="nodetypes/mesh.py"), [])
         self.assertEqual(self.lint("class _ContainerStack:\n    def _add(self):\n"
                                    "        cmds.container('c', edit=True, addNode=['n'])\n",
@@ -997,8 +995,10 @@ class TestJournal(_JournalCase):
         # reachable only from code that opens a file inside a statement without a barrier
         # (a user's MMessage callback); here the statement's body itself does
         self.assertTrue(journal._register_scene_callbacks())
-        # kBeforeNew, kBeforeOpen, and (R5 D3) the Undo and Redo events (the redo queue, journal.add)
-        self.assertEqual(len(callbacks.registered_ids(journal.__name__)), 4)
+        # kBeforeNew, kBeforeOpen, (R5 D3) the Undo and Redo events (the redo queue, journal.add),
+        # and (R5 DFIX) a node removal and the reference unload / remove / load / import (a user's
+        # callback inside a statement: journal._before_removal)
+        self.assertEqual(len(callbacks.registered_ids(journal.__name__)), 9)
         folder = tempfile.mkdtemp(prefix="rig_r5_journal_")
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         path = os.path.join(folder, "scene.ma").replace("\\", "/")
@@ -1027,12 +1027,14 @@ class TestJournal(_JournalCase):
                     cmds.file(path, open=True, force=True)
 
     def test_register_api_edit_joins_the_statement(self):
+        # R5 DFIX: B0's _register_api_edit had no caller left; its successor is the fast paths'
+        # api_edits._apply (the modifier applied, then journal.add)
         @journal.statement
         def edit():
             for name, value in (("a.d1", 5.0), ("a.d2", 6.0)):
                 modifier = OpenMaya.MDGModifier()
                 modifier.newPlugValueDouble(_plug(name), value)
-                plugins._register_api_edit(modifier)
+                self.assertIs(api_edits._apply(modifier), True)
             return len(journal._S.pending)
 
         self.assertEqual(edit(), 2)
