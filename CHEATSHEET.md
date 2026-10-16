@@ -260,6 +260,26 @@ b.tx << None                               # disconnect
 print(cmds.listConnections("b.tx", source=True))               # None
 ```
 
+A value over any connection (a constraint, a curve, a pairBlend, a wire)
+replaces it, as a plug does: `<<` disconnects the driver, logs it at INFO,
+then sets. Maya's own `setAttr` takes a value on a keyed or constrained plug
+and loses it at the next evaluation. A constraint or a pairBlend keeps its
+other channels, and one undo brings the driver back. A locked plug still
+raises `InjectionError` (section 16).
+
+```python
+k = Node.create("transform", name="k")
+p = Node.create("transform", name="p")
+cmds.setKeyframe("k.ty", time=0, value=1); cmds.setKeyframe("k.ty", time=10, value=11)
+cmds.parentConstraint("k", "p")
+k.ty << 5                                  # replaces the curve
+p.tx << 2                                  # replaces the constraint on p.tx only
+cmds.currentTime(4)
+print(k.ty >> None, repr(k.ty.get_inputs()))   # 5.0 List([])
+print(p.tx >> None, repr(p.ty.get_inputs()))   # 2.0 List([Plug("p_parentConstraint1.constraintTranslateY")])
+cmds.currentTime(0)
+```
+
 Short and long names both work, and `node.tx = 5` is sugar for `node.tx << 5`.
 Python's own names keep their meaning: a property setter runs
 (`a.namespace = "ns"`), a method or class member is an `AttributeError` that
@@ -1281,7 +1301,8 @@ raise `RuntimeError` when the target is below 2024.
 ## 16. `InjectionError`
 
 `<<` asserts the desired state of a plug and breaks an incoming connection
-that is in the way. The one barrier it respects is a lock: setting or
+that is in the way, whatever drives it (a wire, a curve, a constraint, a
+pairBlend). The one barrier it respects is a lock: setting or
 connecting into a locked attribute raises `InjectionError` (a
 `RuntimeError`), and a compound with a single locked child mutates nothing.
 Disconnecting is still allowed.

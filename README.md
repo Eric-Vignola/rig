@@ -56,7 +56,7 @@ Two operators carry the language:
 
 | Spelling | Meaning | Returns |
 |---|---|---|
-| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects | `a`, so it chains |
+| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects. A value or a plug over any connection (a constraint, a curve, a pairBlend, a wire) replaces it | `a`, so it chains |
 | `a >> None` | **introspect**: read the value (`getAttr`); on a node, the node itself | a float, a NumPy array, a string... |
 | `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
 | `node << Float("x")` | declare an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide`; declaring it again applies the settings given and keeps the value | the new plug, so its value goes next |
@@ -406,6 +406,16 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   otherwise draw the container as leaking.
 - **`//` is floor division**, not PyMEL's disconnect. `plug << None`
   disconnects.
+- **A value over a driven plug replaces the driver.** Maya's `setAttr`
+  takes a value on a keyed, constrained or pairBlend-driven plug and the
+  next evaluation overrides it; `cube.tx << 5` first disconnects whatever
+  drives `cube.tx` (logged at INFO, `breaking incoming connection(s)`),
+  then sets 5, as `cube.tx << other.ty` replaces it. A constraint or a
+  pairBlend keeps its other channels. One undo brings the driver back. A
+  locked plug still raises `InjectionError` with nothing changed, and
+  `cube.tx.set(5)` is Maya's `setAttr`, which refuses a wired plug. A child
+  whose compound is connected whole (`c.t` into `cube.t`) has no input of
+  its own: `cube.tx << 5` raises, `cube.t << None` frees it.
 - **Rewiring a multi element is safe through rig.** `net.w[0] << a.tx`
   then `net.w[0] << a.ty` replaces the input, also on a multi that is not
   keyable (`Float("w", multi=True, keyable=False)`, `Matrix`, `Message`,
