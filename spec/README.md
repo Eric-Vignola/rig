@@ -89,7 +89,8 @@ print(len(rig.spec.__all__))                                         # 24
 
 The top-level re-export puts a few spec names next to things that sound
 alike. The capitalised name is always the attribute spec, and no public
-name is both a node class and a declaration.
+name is both a node class and a declaration. One node class also makes a
+value: `AnimCurve` (below), whose keys are no declaration either.
 
 | Name | Is | Not to be confused with |
 |---|---|---|
@@ -97,6 +98,7 @@ name is both a node class and a declaration.
 | `rig.MeshAttr`, `rig.NurbsCurveAttr`, `rig.NurbsSurfaceAttr` | `mesh` / `nurbsCurve` / `nurbsSurface` data attribute specs | `rig.nodetypes.Mesh` / `NurbsCurve` / `NurbsSurface`, the shape node classes, and `cgmath.geometry.MeshData`, the data |
 | `rig.Matrix` | a `matrix` attribute spec | `rig.matrix`, the matrix function library |
 | `rig.Vector`, `rig.Euler`, `rig.Quat` | compound attribute specs | `rig.vector`, `rig.euler`, `rig.quaternion`, the function libraries |
+| `rig.AnimCurve([0, 1, 0])` | **keys**, a value for `plug << ...` (`rig._internal.anim_keys._Keys`): the curve type follows the plug, so `isinstance(AnimCurve([0]), AnimCurve)` is `False` | `rig.AnimCurve("x")`, the node class called with a name: it refers to the curve node `x` (any type, as `Material("red")` refers to any shader); `rig.AnimCurveTL` / `TA` / `TU` / `TT`, one curve type each, whose call with values is a `TypeError` (`AnimCurveTL.create([...])` makes one); `rig.Time` / `rig.Float`, the attribute specs a curve may key |
 | `rig.Typed` | the attribute that holds **any** data (`addAttr -attributeType typed`, as a choice node's input) | the "typed node" / "typed create" of `rig.nodetypes` (a node's own class), and `String` / `Matrix` / `MeshAttr`, typed attributes of **one** data type each |
 
 A node's `repr` names its node class, so `Mesh("cubeShape")` in an output
@@ -107,6 +109,7 @@ runs. The data attribute is `ctrl << MeshAttr("shapeIn")`.
 ```python
 from rig.nodetypes import Mesh as MeshNode
 print(hasattr(rig, "Mesh"), rig.MeshAttr is MeshNode, rig.Matrix is rig.matrix)   # False False False
+print(type(rig.AnimCurve([0, 1])).__name__, isinstance(rig.AnimCurve([0, 1]), rig.AnimCurve))   # _Keys False
 ```
 
 ---

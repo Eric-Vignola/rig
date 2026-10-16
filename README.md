@@ -62,6 +62,7 @@ Two operators carry the language:
 | `node << Float("x")` | declare an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide`; declaring it again applies the settings given and keeps the value | the new plug, so its value goes next |
 | `node >> Float("x")` | add an output-only (non-writable) attribute | the new plug |
 | `slot << b` on a `Typed` (a typed attribute that holds any data, as a choice node's input) | a plug connects whole, whatever the slot held (no shorthand node, no split into channels); a number sets; any other value is a `TypeError`; `<< None` also drops the data the old input left | `slot`, so it chains |
+| `plug << AnimCurve([0, 90], times=[0, 24])` | **keys** the plug: one animation curve per channel, of the type the plug takes (`animCurveTL` / `TA` / `TU` / `TT`, Maya's rule), the values in the UI's units; an input the plug has is replaced (no pairBlend); a re-run updates the plug's own curve in place, and keys it holds already write nothing; one undo step | `plug`, so it chains |
 | `x.lock()`, `x << lock`; `x.unlock()`, `x << unlock` | lock a node (`lockNode`), a plug (`setAttr -lock`) or a `List` (its plugs, then its nodes, in one undo step); nothing is written when `x` already is; a refusal is an `InjectionError` that names the way out | `x`, so it chains |
 | `x << red`, `x << layer`, `x << Tag("cap")` | **membership**: `x` (a node, components, a `List`) joins a material, a display layer or a component tag; `x << -red` leaves it, `x << Material()` / `Layer()` / `Tag()` leaves every one of that kind | `x`, so it chains |
 | `x in red`, `x not in layer` | yes or no: every member of `x` is in it | `bool` |
@@ -94,7 +95,11 @@ inside a node (an attribute, a component tag) is declared, with `Float`,
 | the name is | a lookup: a short name, a path, `ns:name` | a key: the node `create` would make (the namespace, the scope prefix, `parent=`) | a label, `name=` keyword only |
 
 The three verbs are on every node class: `Transform`, `Joint`, `Blinn`,
-`Material`, `Layer` (the `DisplayLayer` class), `ObjectSet`, ... Every
+`Material`, `Layer` (the `DisplayLayer` class), `ObjectSet`, `AnimCurveTL`
+(and `TA`, `TU`, `TT`, whose `define` / `create` take the keys:
+`AnimCurveTU.define("blink", [0, 1, 0])`) ... Like `Material`,
+`AnimCurve("x")` refers to any curve, but `AnimCurve([0, 1, 0])`, called
+with values, makes keys for `plug << ...`, not a node. Every
 refusal writes nothing. The errors are one family, `NodeNotFoundError`
 and `AmbiguousNodeError` (both `NodeLookupError`) and `NodeTypeError`, and
 each is also a `TypeError` and a `ValueError`. Math and utility nodes keep
@@ -236,7 +241,9 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   value sets are one step together (`List(ctrls).t << [0, 1, 0]` is one),
   and every other Maya command it runs (`createNode`, a container's
   member add, a lock) is a step of its own; a `List` lock is one step
-  (`rig.lock` / `rig.unlock`). A statement that raises keeps
+  (`rig.lock` / `rig.unlock`), and a keying statement (`plug <<
+  AnimCurve(...)`, a compound, a `List`) is one step, `rig.animcurve`,
+  or none when every curve holds those keys already. A statement that raises keeps
   what it did before the error, with the same steps, so undo still walks
   the build back step by step. A membership edit (`<< Tag("x")`, `<< red`...),
   a `define` that makes its node, `Mesh.create`, `NurbsCurve.create` and
@@ -312,14 +319,14 @@ rig/
 │                        convert / repair / tidy / materials / bindings
 │
 ├── nodetypes/           the node classes every node is: Node (the root), DGNode, Transform,
-│                        Mesh, the shaders ...; Attribute, the MPlug wrapper; the lookup errors;
-│                        plugins/ (the undo plug-in)
+│                        Mesh, the shaders, AnimCurve and AnimCurveTL TA TU TT ...; Attribute,
+│                        the MPlug wrapper; the lookup errors; plugins/ (the undo plug-in)
 ├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
 │                        perspective_image_planes.py, ye_olde_lerp.gif
 ├── utils.py             run_tests()
 ├── _defaults.toml       team-wide container option defaults
 ├── _internal/           private: node.py plug.py list.py container.py members.py memoize.py
-│                        node_ops.py shorthand.py maya_version.py ...
+│                        node_ops.py shorthand.py maya_version.py anim_keys.py (AnimCurve's keys) ...
 └── _tests/              the suite, run with rig.utils.run_tests()
 ```
 
@@ -327,6 +334,7 @@ The names most scripts start from:
 
 ```python
 from rig import Node, Plug, List, Container, container, Components, Tag, Layer, undo_chunk
+from rig import AnimCurve, AnimCurveTL, AnimCurveTA, AnimCurveTU, AnimCurveTT
 from rig import NodeNotFoundError, AmbiguousNodeError, NodeTypeError
 from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
 from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
@@ -449,6 +457,25 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   and a `.ma` saved then errors on open (a `.mb` keeps it). The rule is
   for every such attribute: a choice node's inputs rewire whole and take
   numbers too.
+- **Keying a driven plug replaces its driver; rig makes no pairBlend.**
+  Maya's `setKeyframe` on a constrained, wired or expression-driven
+  translate or rotate channel inserts a pairBlend that drives all six
+  channels and adds `blendParent1` (at 0) to the control, and on any other
+  connected attribute keys nothing ("attribute already connected").
+  `ctl.tx << AnimCurve([...])` replaces that channel's input with the
+  curve, as `ctl.tx << other.ty` would (logged at INFO), on every kind of
+  attribute; the constraint keeps its other channels and no node is
+  deleted. On a channel Maya already keyed through a pairBlend, the curve
+  takes the pairBlend's place there and the pairBlend's own curve is kept,
+  unused on it. A locked plug raises `InjectionError`, even with the keys
+  its curve holds: unlock before running again.
+- **A curve's keys go through the API, never `cutKey`.** Maya's `addKeys`
+  merges keys (a time given twice is silently one key) and `cutKey -clear`
+  deletes a curve it empties; rig checks the times itself (strictly
+  increasing) and replaces a curve's keys with the API in one undo step, so
+  a re-run keeps the node, its UUID and its name. A curve goes in the
+  current namespace, as `setKeyframe` puts it (`char:ctl` keyed from the
+  root gives `ctl_translateX`).
 - **Rewiring a multi element is safe through rig.** `net.w[0] << a.tx`
   then `net.w[0] << a.ty` replaces the input, also on a multi that is not
   keyable (`Float("w", multi=True, keyable=False)`, `Matrix`, `Message`,
@@ -485,6 +512,14 @@ xf = rc.createNode("transform", name="xf")
 with container("c1"):
     xf.rx << cube.tx
 print(cmds.ls(type="unitConversion"), cmds.container("c1", q=True, nodeList=True))   # ['unitConversion1'] None
+
+from rig import AnimCurve
+drv = rc.createNode("transform", name="drv")
+ctl = rc.createNode("transform", name="ctl")
+cmds.parentConstraint("drv", "ctl")
+ctl.tx << AnimCurve([0, 10], times=[0, 10])          # the constraint's tx input is replaced
+print(cmds.listConnections("ctl.tx", source=True), cmds.ls(type="pairBlend"))   # ['ctl_translateX'] []
+print(cmds.listConnections("ctl.ty", source=True))   # ['ctl_parentConstraint1']
 ```
 
 ---

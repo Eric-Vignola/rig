@@ -57,7 +57,8 @@ for the node classes and their typed methods.
 | 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `shade.repair` / `tidy`, the network verbs |
 | 37 | [Shader conversion](#37-shader-conversion) | `mat = mat.astype(Phong)`, `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, the held old node, undo |
-| 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
+| 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
+| 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `num_keys` / `evaluate` |
 
 ---
 
@@ -3009,6 +3010,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | `node.lock()`, `plug.lock()` and their `unlock()` (`x << lock`) | one, Maya's own (`lockNode`, `setAttr -lock`); **none** when the object already is in that state |
 | `slot << None` on a `Typed` slot (any typed attribute that holds any data) that held a matrix, a double3, geometry ... | two: the disconnect, then the drop of the data its input left (an API edit, journaled with the statement); a slot that held a number or nothing has no drop |
 | `List.lock()` / `List.unlock()` (`List << lock`) over more than one command | one, named `rig.lock` / `rig.unlock` |
+| `plug << AnimCurve(...)`, a compound, a `List` broadcast or pairs of keys, a per-channel list holding keys (section 39) | one, named `rig.animcurve`: the new curves, their keys and their connects; **none** when every curve holds those keys already. `AnimCurveTL.create(keys)` is one `rig.create`, a `define` that makes or updates a curve one `rig.define`, `curve.set_keys(...)` one `rig.AnimCurve.set_keys` |
 | `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | the transfers: `Mesh.transfer_maps`, `Mesh.transfer_component_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.copy_skincluster` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.copy_skincluster` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |
@@ -3142,6 +3144,188 @@ Where the per-statement step meets the rest of Maya:
 * `rig.undo_chunk` and container membership are unchanged: a chunk still
   makes its block one step, and a member add is still a `cmds.container`
   edit.
+
+## 39. Animation curves
+
+`plug << AnimCurve(values, times=None, ...)` keys the plug: one animation
+curve per channel, of the type the plug takes by Maya's own rule
+(`animCurveTL` for a distance, `TA` for an angle, `TT` for a time, `TU` for
+every other number, a `Typed` slot included). Values are in the UI's units,
+as `plug << 90` is (degrees, the scene's linear unit, frames for a time
+curve); times are frames of the scene's time unit, `0, 1, 2 ...` when none
+are given. Tangents are linear, with a step out tangent on a bool or an enum
+(as Maya keys them; an int is linear). The statement returns its left-hand
+side and is one undo step, `rig.animcurve`.
+
+`AnimCurve(...)` called with a sequence makes **keys**, a value that writes
+nothing until `<<` (`isinstance(AnimCurve([0]), AnimCurve)` is `False`);
+called with a name it refers to a curve node, as `Material("red")` does.
+
+```python
+from rig import AnimCurve, AnimCurveTL, AnimCurveTU, Enum, Float, skip
+from rig.bridges import commands as rc
+
+cmds.file(new=True, force=True)
+cmds.undoInfo(state=True, infinity=True)
+cube = rc.polyCube(name="pCube1", constructionHistory=False)[0]
+
+test = Node("pCube1") << Float("foo") << AnimCurve([1, 2, 3, 4])   # frames 0 .. 3
+print(repr(test), cmds.nodeType("pCube1_foo"))           # Plug("pCube1.foo") animCurveTU
+cube.rx << AnimCurve([0, 90], times=[0, 24])             # an animCurveTA, in degrees
+print(cmds.getAttr("pCube1.rx", time=12))                # 45.0
+t = cube.t << AnimCurve(np.arange(6.0).reshape(2, 3))    # (N, 3): one column per channel
+print(repr(t), len(AnimCurve.of(t)))                     # Plug("pCube1.translate") 3
+cube.s << AnimCurve([1, 2, 1])                           # (N,): the same keys on sx, sy, sz
+cube.t << [AnimCurve([5, 6]), skip, 0]                   # per channel: keys tx, keeps ty, sets tz
+print(cmds.getAttr("pCube1.tz"), AnimCurve.of(cube.tz))  # 0.0 List([])
+cube << Enum("mode", en="off:on")
+cube.mode << AnimCurve(["off", "on", "off"])             # field names; an enum steps
+print(cmds.keyTangent("pCube1_mode", query=True, outTangentType=True))   # ['step', 'step', 'step']
+ctrls = List([Node.create("transform", name=n) for n in ("c1", "c2")])
+ctrls.ry << AnimCurve([0, 45, 0])                        # one curve per plug
+print(cmds.undoInfo(query=True, undoName=True))          # rig.animcurve
+ctrls.rz << [AnimCurve([0, 10]), AnimCurve([0, 20])]     # pairs: a curve each, one step
+print(cmds.getAttr("c2.rz", time=1))                     # 20.0
+```
+
+**The options.** Tangent names are `keyTangent`'s (`linear`, `step`,
+`stepnext`, `flat`, `spline`, `clamped`, `plateau`, `auto`, `fixed`,
+`autoease`, `automix` ...) and infinities `setInfinity`'s (`constant`,
+`linear`, `cycle`, `cycleRelative`, `oscillate`), both read with the enum
+tolerance (`"cycle_relative"`). `tangents=` sets both sides,
+`in_tangents=` / `out_tangents=` one. A slope (value units per frame:
+degrees per frame on an angle curve) makes its side `fixed`, and a key
+whose two sides differ has its tangents unlocked; a NaN is "no slope for
+this key". Weights need `weighted=True` and fix their side too.
+`infinity=` sets both ends, `pre_infinity=` / `post_infinity=` one. Every
+per-key option is one value, `(N,)` or `(N, C)`.
+
+```python
+cube.sx << AnimCurve([0, 1, 0], times=[0, 5, 10], in_slopes=[np.nan, 0.5, np.nan],
+                     out_slopes=[np.nan, -0.25, np.nan], infinity="cycle")
+print(cmds.keyTangent("pCube1_scaleX", query=True, inTangentType=True))   # ['linear', 'fixed', 'linear']
+print(cmds.keyTangent("pCube1_scaleX", query=True, index=(1, 1), lock=True))   # [False]
+print(cmds.getAttr("pCube1.sx", time=25))                # 1.0  -- cycled: frame 5
+ctrls[0].sz << AnimCurve([0, 1], weighted=True, out_weights=[3, np.nan])
+print(round(cmds.keyTangent("c1_scaleZ", query=True, outWeight=True)[0], 6))   # 3.0
+```
+
+**A re-run updates.** When a plug's input is the output of a curve of the
+type it takes, that drives nothing else, whose own input is free and that
+is not from a referenced file, `<<` rewrites that curve's keys in place: the
+same node and UUID, its name, colour and container kept. Keys it holds
+already write nothing and add no undo step. A curve shared with other plugs
+is left alone, and this plug gets a new one, which the next run finds.
+
+```python
+uuid = cmds.ls("pCube1_translateX", uuid=True)
+cube.tx << AnimCurve([7, 8], times=[0, 10])
+print(cmds.ls("pCube1_translateX", uuid=True) == uuid)   # True
+cmds.flushUndo()
+cube.tx << AnimCurve([7, 8], times=[0, 10])              # unchanged: nothing written
+print(cmds.undoInfo(query=True, undoQueueEmpty=True))    # True
+```
+
+**What `<<` returns.** Always its left-hand side, so `test` above is the
+plug and `<< lock` chains; the curves are reached by asking,
+`AnimCurve.of(test)`. A result never depends on the scene: no pairBlend is
+ever returned (none is made).
+
+| Statement | Returns |
+|---|---|
+| `Node("pCube1") << Float("foo") << AnimCurve([1, 2])` | `Plug("pCube1.foo")`, the plug the spec made |
+| `cube.tx << AnimCurve(...)` | `cube.tx` |
+| `cube.t << AnimCurve(...)`, `cube.t << [AnimCurve(xs), skip, 0]` | `cube.t`, the compound plug (not its children) |
+| `List(ctrls).ry << AnimCurve(...)`, `<< [AnimCurve(a), AnimCurve(b)]` | the `List` |
+
+**A plug that is driven.** `<<` replaces its input, as `plug << plug` does:
+the input on that channel is disconnected and the curve connected (logged at
+INFO); a constraint or a pairBlend keeps driving its other channels, and
+nothing is deleted. Maya's `setKeyframe` instead inserts a pairBlend on
+translate and rotate, and keys nothing on any other connected attribute.
+
+| The plug's input | Maya's `setKeyframe` | rig's `plug << AnimCurve(...)` |
+|---|---|---|
+| a constraint, a wire, an expression, a unitConversion on `t` / `r` | a pairBlend driving all six channels, a `blendParent1` attribute at 0 on the node | the curve replaces that channel's input; no pairBlend, no `blendParent1` |
+| any of them on `s`, `v` or a user attribute | nothing keyed: "attribute already connected" | the curve replaces the input |
+| a pairBlend Maya made | adds to its curve | the curve replaces the pairBlend's output on that channel; the pairBlend's curve is kept, unused there |
+| its own curve | adds the key | the curve's keys are replaced in place |
+| a locked plug | nothing keyed, no warning | `InjectionError`, even with the keys it holds: unlock before running again |
+
+```python
+from rig import InjectionError
+from rig.spec import lock, unlock
+
+drv = Node.create("transform", name="drv")
+ctl = Node.create("transform", name="ctl")
+cmds.parentConstraint("drv", "ctl")
+ctl.tx << AnimCurve([0, 10], times=[0, 10])
+print(AnimCurve.of(ctl.tx), cmds.ls(type="pairBlend"))   # List([AnimCurveTL("ctl_translateX")]) []
+print(cmds.listConnections("ctl.ty", source=True, destination=False))   # ['ctl_parentConstraint1']
+cube.tx << lock
+try:
+    cube.tx << AnimCurve([7, 8], times=[0, 10])
+except InjectionError as err:
+    print(str(err).split("Unlock first: ")[1].split(" (")[0])   # Plug('pCube1.translateX').unlock()
+cube.tx << unlock
+```
+
+**The curve classes.** `AnimCurve("x")` refers to any curve, and is the
+class of a driven key's `animCurveU*` curve; `AnimCurveTL` / `TA` / `TU` /
+`TT` refer to exactly that type (`Node("pCube1_translateX")` is an
+`AnimCurveTL`). `Cls.create(keys, ...)` always makes a new unconnected
+curve, `Cls.define("x", keys, ...)` finds or makes it and replaces its keys
+when they differ (`update=False` leaves it); a curve's Maya attributes go
+in as keywords, set after the keys. `AnimCurve.of(x)` lists the curves
+directly driving a plug, a compound's children, a node or a `List`.
+`get_keys()` reads a curve back as keys (UI units), so `other.tx <<
+curve.get_keys()` copies it.
+
+```python
+print(repr(AnimCurve("pCube1_translateX")), repr(Node("pCube1_rotateX")))   # AnimCurveTL("pCube1_translateX") AnimCurveTA("pCube1_rotateX")
+blink = AnimCurveTU.define("blink", [0, 1, 0], times=[0, 2, 4], tangents="step")
+ctrls[1].v << blink.output                               # share one curve: a plain connect
+print(AnimCurveTU.define("blink", [0, 1, 0], times=[0, 2, 4], tangents="step") == blink)   # True
+spin = AnimCurveTL.create([0, 5], name="spin", postInfinity=1)   # unconnected; postInfinity linear
+keys = AnimCurve("pCube1_translateX").get_keys()
+print(keys)                                              # AnimCurve([7.0, 8.0], times=[0.0, 10.0], in_tangents=[...], out_tangents=[...])
+ctrls[1].tx << keys                                      # copies the animation
+curve = AnimCurve.of(ctrls[1].tx)[0]
+curve.set_keys([0, 3], times=[0, 10])
+print(curve.num_keys, curve.evaluate([0, 5, 10]))        # 2 [0.  1.5 3. ]
+```
+
+**Refused, with nothing written:**
+
+| Spelling | Error |
+|---|---|
+| `node << AnimCurve(...)` | `TypeError`: a curve keys a plug, `node.<attr> << AnimCurve(...)` |
+| `node.arr << AnimCurve(...)` on a multi | `TypeError`: key `node.arr[i]` or `node.arr[:]`; an appended curve would be a new one on every run |
+| a matrix, string, message or mesh plug, a compound of compounds | `TypeError`: a curve keys a numeric attribute |
+| an output plug | `InjectionError` |
+| a locked plug or child | `InjectionError`, naming the unlock |
+| `(N, C)` keys with C not 1 and not the channel count | `ValueError` |
+| times not increasing, a NaN, weights without `weighted=True`, a slope with a tangent that is not `fixed` | `ValueError` when the keys are made |
+| `AnimCurve(5)`, `AnimCurve()` | `TypeError` naming `AnimCurve([5])` and `AnimCurve('x')` |
+| `AnimCurveTL([1, 2])` | `TypeError`: `AnimCurve([...])` makes keys, `AnimCurveTL.create([...])` a curve |
+| `AnimCurve.create(...)`, `AnimCurve.define(...)` | `TypeError`: `animCurve` is abstract |
+| `List(c).ry << [AnimCurve(a), 5]` | `TypeError`: one `<<` per kind |
+| `plug >> AnimCurve(...)` | `TypeError`: keys go on the right of `<<` |
+| without rig's undo plug-in | `RuntimeError`, before any curve is made |
+
+```python
+for spelling in (lambda: cube << AnimCurve([1]), lambda: AnimCurve(5), lambda: AnimCurveTL([1, 2]),
+                 lambda: cube.wm[0] << AnimCurve([1]), lambda: AnimCurve([1, 2], times=[1, 1])):
+    try:
+        spelling()
+    except (TypeError, ValueError) as err:
+        print(type(err).__name__, str(err)[:48])
+# TypeError Cannot inject AnimCurve keys into the node 'pCub
+# TypeError AnimCurve(5) is no keys and names no curve: Anim
+# TypeError AnimCurveTL([...]) refers to a curve by name: An
+# TypeError pCube1.worldMatrix << AnimCurve(...): an animati
+# ValueError AnimCurve times must be strictly increasing (May
+```
 
 ---
 
