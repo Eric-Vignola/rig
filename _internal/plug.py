@@ -1843,7 +1843,10 @@ def _disconnect_incoming(
                     refusal = _split_refusal(anc, dst, what)
                     if refusal is not None:
                         raise InjectionError(refusal)
-            _free_children(dst, what)
+            if not top.isArray and top.numConnectedChildren():
+                # (`_free_children`'s own cheap test, made here: most compounds have
+                # nothing connected below)
+                _free_children(dst, what)
 
     try:
         cls   = type(dst)
@@ -2016,14 +2019,15 @@ def _wired_ancestor(mplug: Any) -> Any:
             return None if cur.isArray else cur
 
 
-def _split_refusal(anc: Any, dst: Any, what: str) -> "str | None":
+def _split_refusal(anc: Any, dst: Any, what: str, plan_out: "list | None" = None) -> "str | None":
     """Why the whole input of ``anc`` (an MPlug, `_wired_ancestor` of ``dst``)
     cannot be split into one per child, or None: its source has no matching
     children (a unitConversion between unit kinds feeds the compound whole), or a
     plug the split connects into is locked (a locked plug takes no connection): a
     child, or a plug below a nested compound child the split walks into, on this
     round or on the next ones down to ``dst`` (`_split_plan`), so a refusal comes
-    before any edit."""
+    before any edit. With no refusal, ``plan_out`` (a list) is given this round's
+    plan when the check's plan is it (no walk made for a later round only)."""
     src  = anc.sourceWithConversion()
     name = _new_attr(Attribute, anc).full_name
     free = f"free the compound first: {name} << None"
@@ -2035,7 +2039,7 @@ def _split_refusal(anc: Any, dst: Any, what: str) -> "str | None":
             f"{name!r} its own input; {free}. Nothing was changed"
         )
     plan = []
-    _split_plan(src, anc, plan, _plugs_above(dst.plug))
+    by_chain = _split_plan(src, anc, plan, _plugs_above(dst.plug))
     for _source, target in plan:
         # a child with an input of its own keeps it (`_split_into`): not in the plan
         if target.isLocked:
@@ -2046,6 +2050,8 @@ def _split_refusal(anc: Any, dst: Any, what: str) -> "str | None":
                 f"input needs {locked!r} unlocked (a locked plug takes no connection): "
                 f"Plug({locked!r}).unlock(), or {free}. Nothing was changed"
             )
+    if plan_out is not None and not by_chain:
+        plan_out.extend(plan)
     return None
 
 
@@ -2074,7 +2080,7 @@ def _plugs_above(mplug: Any) -> list:
         above.append(cur)
 
 
-def _split_plan(source: Any, whole: Any, plan: list, chain: "list | None" = None) -> None:
+def _split_plan(source: Any, whole: Any, plan: list, chain: "list | None" = None) -> bool:
     """Append to ``plan``, in order, the ``(source, target)`` MPlug pairs a split of
     ``whole``'s input from ``source`` connects (`_split_into`), and ``(None, compound)``
     for each compound child it walks into (it takes no connect, but its lock is
@@ -2082,7 +2088,9 @@ def _split_plan(source: Any, whole: Any, plan: list, chain: "list | None" = None
     left out (one driver per channel: the leaf one). A compound child with such a
     plug below it (`_driven_below`) is walked into when its source child has matching
     children; with ``chain`` (`_plugs_above` the written plug, for the refusal check)
-    a compound child on it is walked into too, as the split's next round splits it."""
+    a compound child on it is walked into too, as the split's next round splits it.
+    Returns True if ``chain`` alone made a walk (the plan is then not this round's)."""
+    by_chain = False
     for i in range(whole.numChildren()):
         child = whole.child(i)
         if child.isDestination:
@@ -2094,16 +2102,17 @@ def _split_plan(source: Any, whole: Any, plan: list, chain: "list | None" = None
             and src_child.isCompound
             and src_child.numChildren() == child.numChildren()
         ):
-            walk = chain is not None and any(child == plug for plug in chain)
-            if not walk:
-                below = []
-                _driven_below(child, below)
-                walk = bool(below)
+            below = []
+            _driven_below(child, below)
+            walk = bool(below)
+            if not walk and chain is not None and any(child == plug for plug in chain):
+                walk = by_chain = True
             if walk:
                 plan.append((None, child))
-                _split_plan(src_child, child, plan, chain)
+                by_chain = _split_plan(src_child, child, plan, chain) or by_chain
                 continue
         plan.append((src_child, child))
+    return by_chain
 
 
 def _plug_path(mplug: Any) -> tuple:
@@ -2165,7 +2174,8 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
         anc = _wired_ancestor(dst.plug)
         if anc is None:
             return split
-        refusal = _split_refusal(anc, dst, what)
+        plan    = []
+        refusal = _split_refusal(anc, dst, what, plan)
         if refusal is not None:
             raise InjectionError(refusal)
         one_step()
@@ -2175,8 +2185,9 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
         # access violation): the split uses fresh, non-networked plugs, named
         # before the disconnect and found again after it (`_plug_path`)
         source = Plug(_plug_at(_plug_path(anc.sourceWithConversion())))
-        plan   = []
-        _split_plan(source.plug, anc, plan)
+        if not plan:
+            # the check's plan walked for a later round too: this round's own
+            _split_plan(source.plug, anc, plan)
         pairs  = [(_plug_path(s), _plug_path(t)) for s, t in plan if s is not None]
         whole_path = _plug_path(anc)
         kept   = [
