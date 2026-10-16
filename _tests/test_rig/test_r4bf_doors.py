@@ -141,6 +141,30 @@ class TestDefineDoor(_Case):
                     cls.define("nosuch_x")
                 self.assertEqual(_scene(), before)
 
+    def test_the_refusals_of_the_classes_built_from_files_name_their_load(self):
+        # round features s7: each class a cgmath file builds names its load beside its create
+        for cls, text in (
+            (Mesh, "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
+                   "Mesh.load(path, name='x') makes one; Mesh('x') refers to one"),
+            (NurbsCurve, "a nurbsCurve is built from its points: NurbsCurve.create(points, name='x') "
+                         "or NurbsCurve.load(path, name='x') makes one; NurbsCurve('x') refers to one"),
+            (NurbsSurface, "a nurbsSurface is built from its data: NurbsSurface.create(data, name='x') or "
+                           "NurbsSurface.load(path, name='x') makes one (rc.nurbsPlane(name='x') a primitive); "
+                           "NurbsSurface('x') refers to one"),
+            (SkinCluster, "a skinCluster is keyed by its geometry: SkinCluster.create(geom, influences) "
+                          "or SkinCluster.load(path, geom) makes one; SkinCluster('x') refers to one"),
+            (BlendShape, "a blendShape is keyed by its geometry: BlendShape.create(*targets, base) or "
+                         "BlendShape.load(path, base) makes one; BlendShape('x') refers to one"),
+        ):
+            with self.subTest(cls=cls.__name__):
+                self.assertEqual(cls._DEFINE_REFUSED, text)
+                before = _scene()
+                with self.assertRaises(TypeError) as caught:
+                    cls.define("nosuch_x")
+                self.assertEqual(str(caught.exception), f"{cls.__name__}.define() is refused: {text}")
+                self.assertEqual(_scene(), before)
+                self.assertIsNone(self.miss(lambda: cls("nosuch_x")).door)
+
     def test_the_door_follows_the_hints(self):
         cmds.createNode("joint", name="spine_01")
         cmds.namespace(add="char")

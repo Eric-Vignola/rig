@@ -95,3 +95,38 @@ class TestBlendShape(MayaTestCase):
         rebuilt_mesh = self.bls.rebuild_target(0)
         new_points   = rebuilt_mesh.get_children(type="mesh")[0].get_points()
         self.assertTrue(np.allclose(org_points, new_points, rtol=0.001))
+
+
+class TestBlendShapeMovedBase(MayaTestCase):
+    """``serialize`` reads the Orig mesh in its object space, as ``get_target_data`` reads a
+    live target (round features s7, F2): on v2.0.0a5 a base moved to x=5 offset every target
+    by -5 (runs\\features\\saveload\\probes\\p4_deformers.py)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self.base = Node(cmds.polyCube(name="base", ch=False)[0])
+        self.base.t << [5, 0, 0]
+        self.smile = Node(cmds.polyCube(name="smile", ch=False)[0])
+        cmds.xform("smile.vtx[3]", objectSpace=True, translation=(1, 1, 1), relative=True)
+
+    def test_a_moved_base_round_trips(self):
+        bls = BlendShape.create(self.smile, self.base, name="face")
+        cmds.delete("smile")  # the target's offsets, no live mesh
+        data = bls.serialize()
+        self.assertEqual(np.asarray(data[0].indices).tolist(), [3])
+        np.testing.assert_allclose(data[0].offsets, [[1.0, 1.0, 1.0]], atol=1e-6)
+        bls.delete()
+        again = BlendShape.create(data, self.base)
+        again.set_target_weight("smile", 1)
+        np.testing.assert_allclose(
+            np.array(self.base.get_shape().get_points(world_space=False))[3, :3], (1.5, 1.5, 1.5), atol=1e-6
+        )
+
+    def test_a_live_target_on_a_moved_base(self):
+        bls = BlendShape.create(self.smile, self.base, name="face")
+        self.assertTrue(self.smile.get_shape().world_shape_attr.is_connected)
+        data = bls.serialize()
+        self.assertEqual(np.asarray(data[0].indices).tolist(), [3])
+        np.testing.assert_allclose(data[0].offsets, [[1.0, 1.0, 1.0]], atol=1e-6)

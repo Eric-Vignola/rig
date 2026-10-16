@@ -1150,6 +1150,7 @@ class TestStatementEntries(MayaTestCase):
 
     def test_the_operators_and_the_typed_creators(self):
         from rig._internal.container import _ContainerStack
+        from rig.nodetypes import BlendShape, Joint, Mesh, NurbsCurve, NurbsSurface, SkinCluster
         from rig.nodetypes.follicle import Follicle
 
         entries = {
@@ -1164,6 +1165,17 @@ class TestStatementEntries(MayaTestCase):
                        Node.__dict__["define"].__func__, Material.create.__func__, Material.define.__func__,
                        Material.astype, Lambert.create.__func__, Transform.create_hierarchy.__func__,
                        Follicle.create_on_mesh.__func__],
+            # round features s7: each load, from the class (it creates) and from a node (it
+            # updates), and the hierarchy's typed create
+            "load": [getattr(cls, name).__func__ for cls, name in (
+                (Mesh, "load"), (NurbsCurve, "load"), (NurbsSurface, "load"), (SkinCluster, "load"),
+                (BlendShape, "load"), (Transform, "load_hierarchy"), (Joint, "load_hierarchy"),
+            )] + [Transform._load_built.__func__] + [
+                cls.__dict__[name].update for cls, name in (
+                    (Mesh, "load"), (NurbsCurve, "load"), (NurbsSurface, "load"), (SkinCluster, "load"),
+                    (BlendShape, "load"),
+                )
+            ],
         }
         for kind, functions in entries.items():
             for fn in functions:

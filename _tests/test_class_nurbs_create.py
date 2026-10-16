@@ -21,7 +21,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig import Node, container
-from rig.nodetypes import NurbsCurve
+from rig.nodetypes import NurbsCurve, NurbsSurface
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
 
@@ -840,3 +840,196 @@ class TestNurbsCurveCreateErrors(_CurveCreateCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------------------------
+#  NurbsSurface.create (round features s7, F4), its serialize (F3, F5)
+# ---------------------------------------------------------------------------------------------
+
+SURFACE_CHUNK = "rig.NurbsSurface.create"
+S_OPEN, S_CLOSED, S_PERIODIC = (OpenMaya.MFnNurbsSurface.kOpen, OpenMaya.MFnNurbsSurface.kClosed,
+                                OpenMaya.MFnNurbsSurface.kPeriodic)
+
+
+def _surface_shape(t):
+    return cmds.listRelatives(t, shapes=True)[0]
+
+
+def _surface_layout(shape):
+    fn = NurbsSurface(shape).fn_set
+    return (fn.numCVsInU, fn.numCVsInV, fn.degreeInU, fn.degreeInV, fn.formInU, fn.formInV)
+
+
+def _surface_at(shape, steps=7):
+    """World-space points of `shape` over a grid of its normalised parameters."""
+    fn = NurbsSurface(shape).fn_set
+    (u0, u1), (v0, v1) = fn.knotDomainInU, fn.knotDomainInV
+    return np.array([
+        list(fn.getPointAtParam(u0 + s * (u1 - u0), v0 + t * (v1 - v0), OpenMaya.MSpace.kWorld))[:3]
+        for s in np.linspace(0, 1, steps) for t in np.linspace(0, 1, steps)
+    ])
+
+
+def _closed_surface():
+    """A loft of two closed (kClosed, not periodic) degree-1 curves: closed in one direction."""
+    pts = [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1), (0, 0, 0)]
+    a = cmds.curve(point=pts, degree=1)
+    b = cmds.curve(point=[(x, 1, z) for x, _, z in pts], degree=1)
+    t = cmds.loft(a, b, constructionHistory=False, degree=1, name="closed")[0]
+    cmds.delete(a, b)
+    return _surface_shape(t)
+
+
+def _periodic_loft():
+    """A uniform loft of three circles, closed along the loft: periodic in both directions,
+    evenly spaced knots."""
+    rings = [cmds.circle(constructionHistory=False, radius=r)[0] for r in (1, 2, 1)]
+    for i, ring in enumerate(rings):
+        cmds.move(0, 0, i, ring)
+    t = cmds.loft(*rings, constructionHistory=False, close=True, uniform=True, name="loft")[0]
+    cmds.delete(rings)
+    return _surface_shape(t)
+
+
+class TestNurbsSurfaceCreate(_CurveCreateCase):
+    """``NurbsSurface.create(data)``: the ride of ``NurbsCurve.create``, from a BSplinePatchData."""
+
+    def sources(self):
+        return {
+            "plane": _surface_shape(cmds.nurbsPlane(name="plane", constructionHistory=False, u=3, v=2)[0]),
+            "sphere": _surface_shape(cmds.sphere(name="ball", constructionHistory=False)[0]),
+            "cylinder": _surface_shape(cmds.cylinder(name="cyl", constructionHistory=False)[0]),
+            "loft": _periodic_loft(),
+        }
+
+    def test_the_serialize_round_trip(self):
+        for label, shape in self.sources().items():
+            with self.subTest(label):
+                data = NurbsSurface(shape).serialize()
+                self.ready()
+                surface = NurbsSurface.create(data)
+                self.assertIs(type(surface), NurbsSurface)
+                self.assertEqual(_surface_layout(str(surface)), _surface_layout(shape))
+                np.testing.assert_allclose(
+                    np.array(surface.get_points())[:, :3], np.array(NurbsSurface(shape).get_points())[:, :3], atol=1e-9
+                )
+                np.testing.assert_allclose(_surface_at(str(surface)), _surface_at(shape), atol=1e-9)
+                self.assertEqual(cmds.listSets(object=str(surface)), ["initialShadingGroup"])
+                self.assertEqual(cmds.ls(selection=True), ["selprobe"])
+                self.assertEqual(cmds.listHistory(str(surface)), [str(surface)])
+                self.assertEqual(self.undo_name(), SURFACE_CHUNK)
+
+    def test_evenly_spaced_knots_come_back_on_0_to_spans(self):
+        # a nurbsPlane's 0..1 comes back as 0..3: the same surface, another parameter range
+        shape = self.sources()["plane"]
+        surface = NurbsSurface.create(NurbsSurface(shape).serialize())
+        self.assertEqual(tuple(surface.fn_set.knotDomainInU), (0.0, 3.0))
+        self.assertEqual(tuple(NurbsSurface(shape).fn_set.knotDomainInU), (0.0, 1.0))
+
+    def test_names_and_attributes(self):
+        data = NurbsSurface(self.sources()["plane"]).serialize()
+        self.assertEqual(str(NurbsSurface.create(data).get_parent()), "surface1")
+        self.assertEqual(str(NurbsSurface.create(data, name="patch")), "patchShape")
+        self.assertEqual(str(NurbsSurface.create(data, name="patchShape3").get_parent()), "patch3")
+        hidden = NurbsSurface.create(data, name="h", visibility=False)
+        self.assertFalse(cmds.getAttr(f"{hidden}.visibility"))
+        with container("outer"):
+            with container("inner"):
+                self.assertEqual(str(NurbsSurface.create(data, name="s").get_parent()), "inner_s")
+        made = Node.create("nurbsSurface", data, name="by_node")
+        self.assertIs(type(made), NurbsSurface)
+
+    def test_one_undo_step(self):
+        data = NurbsSurface(self.sources()["sphere"]).serialize()
+        self.ready()
+        before = self.state()
+        surface = NurbsSurface.create(data, name="s")
+        after = self.state()
+        uuid = cmds.ls("s", uuid=True)
+        self.assertEqual(self.undo_name(), SURFACE_CHUNK)
+        self.undo_steps(1)
+        self.assert_same(self.state(), before)
+        self.redo_steps(1)
+        self.assert_same(self.state(), after)
+        self.assertEqual(cmds.ls("s", uuid=True), uuid)
+        self.assertIs(surface.is_valid, True)
+
+    def test_input_that_is_no_surface(self):
+        data = NurbsSurface(self.sources()["plane"]).serialize()
+        from cgmath.geometry import BSplinePatchData
+
+        few = BSplinePatchData(points=np.zeros((2, 5, 3)), degree_u=3, degree_v=3, periodic_u=False, periodic_v=False)
+        flat = BSplinePatchData(points=np.zeros((4, 4, 2)), degree_u=3, degree_v=3, periodic_u=False, periodic_v=False)
+        curve_data = NurbsCurve.create(POINTS).serialize()
+        self.ready()
+        for label, call, error, text in (
+            ("points", lambda: NurbsSurface.create([[0, 0, 0]]), TypeError,
+             "^NurbsSurface.create\\(\\) takes a BSplinePatchData, got list \\(NurbsSurface.load\\(path\\) reads one from a file\\)$"),
+            ("a curve's data", lambda: NurbsSurface.create(curve_data), TypeError, "got BSplineData"),
+            ("too few", lambda: NurbsSurface.create(few), ValueError,
+             "^a surface of degree 3 in U takes 4 rows of points or more there, got 2$"),
+            ("2D points", lambda: NurbsSurface.create(flat), ValueError, "points must be \\(Nu, Nv, 3\\), got \\(4, 4, 2\\)"),
+            ("a node", lambda: NurbsSurface.create(Node("plane")), TypeError, "takes a BSplinePatchData, got Transform"),
+            ("no input", lambda: Node.create("nurbsSurface"), TypeError,
+             "needs the inputs a NurbsSurface is built from, after the type: Node.create\\('nurbsSurface', data, ...\\)"),
+            ("a parent", lambda: NurbsSurface.create(data, parent="plane"), TypeError, "takes no parent="),
+        ):
+            with self.subTest(label):
+                before = cmds.ls()
+                with self.assertRaisesRegex(error, text):
+                    call()
+                self.assertEqual(cmds.ls(), before)
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
+    def test_define_names_create_and_load(self):
+        with self.assertRaisesRegex(
+            TypeError,
+            "^NurbsSurface.define\\(\\) is refused: a nurbsSurface is built from its data: "
+            "NurbsSurface.create\\(data, name='x'\\) or NurbsSurface.load\\(path, name='x'\\) makes one "
+            "\\(rc.nurbsPlane\\(name='x'\\) a primitive\\); NurbsSurface\\('x'\\) refers to one$",
+        ):
+            NurbsSurface.define("x")
+
+
+class TestNurbsSurfaceSerialize(_CurveCreateCase):
+    """F3: a direction is periodic only in Maya's kPeriodic form (a kClosed one is open and
+    keeps every CV; v2.0.0a5 read it periodic and trimmed its CVs). F5: uneven knots warn."""
+
+    def test_a_closed_direction_is_open(self):
+        shape = _closed_surface()
+        fn = NurbsSurface(shape).fn_set
+        self.assertIn(S_CLOSED, (fn.formInU, fn.formInV))
+        data = NurbsSurface(shape).serialize()
+        self.assertEqual((bool(data.periodic_u), bool(data.periodic_v)), (False, False))
+        self.assertEqual(tuple(data.points.shape[:2]), (fn.numCVsInU, fn.numCVsInV))
+        surface = NurbsSurface.create(data)
+        np.testing.assert_allclose(_surface_at(str(surface)), _surface_at(shape), atol=1e-9)
+
+    def test_a_periodic_direction_trims_its_wrap(self):
+        shape = _periodic_loft()
+        fn = NurbsSurface(shape).fn_set
+        data = NurbsSurface(shape).serialize()
+        periodic = (fn.formInU == S_PERIODIC, fn.formInV == S_PERIODIC)
+        self.assertEqual((bool(data.periodic_u), bool(data.periodic_v)), periodic)
+        self.assertTrue(any(periodic))
+        wraps = (fn.degreeInU if periodic[0] else 0, fn.degreeInV if periodic[1] else 0)
+        self.assertEqual(tuple(data.points.shape[:2]), (fn.numCVsInU - wraps[0], fn.numCVsInV - wraps[1]))
+
+    def test_uneven_knots_warn(self):
+        rows = [cmds.curve(point=[(0, y, 0), (1, y, 0), (2, y, 0), (3, y, 0)]) for y in (0, 1, 5)]
+        shape = _surface_shape(cmds.loft(*rows, constructionHistory=False, uniform=False, name="uneven")[0])
+        with self.assertLogs("rig.nodetypes.nurbs", level="WARNING") as logs:
+            NurbsSurface(shape).serialize()
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn(
+            f"{shape}: this cgmath's BSplinePatchData takes no knots, so the surface's uneven knots in", logs.output[0]
+        )
+
+    def test_even_knots_do_not_warn(self):
+        for shape in (_surface_shape(cmds.nurbsPlane(name="p", constructionHistory=False, u=3, v=2)[0]),
+                      _surface_shape(cmds.sphere(name="s", constructionHistory=False)[0]),
+                      _closed_surface(), _periodic_loft()):
+            with self.subTest(shape):
+                with mock.patch("rig.nodetypes.nurbs.LOGGER") as logger:
+                    NurbsSurface(shape).serialize()
+                logger.warning.assert_not_called()
