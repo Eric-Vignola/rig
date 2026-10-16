@@ -776,6 +776,25 @@ _D3_FEWER_UNDO_STEPS = {
     "quaternion -> vector": 3,
     "spec slots into a compound": 1,
 }
+# Re-pinned (features step 3, lock): the locked-plug refusal names the unlock rig spells,
+# ``Plug('<plug>').unlock()``, and no cmds call (the text 619f29f gave ended "Unlock first (e.g.
+# `plug << unlock` or `cmds.setAttr(attr, lock=False)`)."); the error, the scene, the output
+# and the undo steps are unchanged. The case -> the locked plug the text names.
+_FS3_LOCK_HINT_OLD = "Unlock first (e.g. `plug << unlock` or `cmds.setAttr(attr, lock=False)`)."
+_FS3_LOCK_HINT = {
+    "locked child of compound":      "mdA.input2Y",
+    "locked dst":                    "mdA.input2X",
+    "rewire a locked connected dst": "mdA.input1X",
+}
+
+
+def _fs3_lock_hint(plug):
+    return (
+        f"Unlock first: Plug({plug!r}).unlock() (a locked plug takes no value or "
+        f"connection, even the one it holds)."
+    )
+
+
 _D2_ERROR_LINES = {
     "matrix -> a transform plug no channel": (
         "Connection not made: 'locH.worldMatrix[0]' -> 'xfI.visibility'."
@@ -808,7 +827,8 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
     """Every case of `_CASES` gives what 619f29f gave (`_ORACLE_PATH`), but for
     the undo steps of the GC tags (`_B1_FEWER_UNDO_STEPS`), and of the journaled
     connects and the incompatible-type connect's ``Error:`` line (`_D2_FEWER_UNDO_STEPS`,
-    `_D2_ERROR_LINES`), and of the journaled value sets (`_D3_FEWER_UNDO_STEPS`)."""
+    `_D2_ERROR_LINES`), and of the journaled value sets (`_D3_FEWER_UNDO_STEPS`), and the
+    locked-plug refusal's unlock hint (`_FS3_LOCK_HINT`)."""
 
     def test_every_case_as_619f29f(self):
         with open(_ORACLE_PATH) as fh:
@@ -818,6 +838,7 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
         self.assertLessEqual(set(_B1_FEWER_UNDO_STEPS), set(oracle))
         self.assertLessEqual(set(_D2_FEWER_UNDO_STEPS) | set(_D2_ERROR_LINES), set(oracle))
         self.assertLessEqual(set(_D3_FEWER_UNDO_STEPS), set(oracle))
+        self.assertLessEqual(set(_FS3_LOCK_HINT), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
                 expected = dict(oracle[name])
@@ -827,6 +848,11 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
                 if name in _D2_ERROR_LINES:
                     self.assertEqual(expected["output"]["maya"], [])
                     expected["output"] = dict(expected["output"], maya=[[4, _D2_ERROR_LINES[name]]])
+                if name in _FS3_LOCK_HINT:
+                    result = list(expected["result"])
+                    self.assertTrue(result[2].endswith(_FS3_LOCK_HINT_OLD), result[2])
+                    result[2] = result[2][: -len(_FS3_LOCK_HINT_OLD)] + _fs3_lock_hint(_FS3_LOCK_HINT[name])
+                    expected["result"] = result
                 self.assertEqual(table[name], expected)
 
     def test_the_user_code_cases_ran_it(self):

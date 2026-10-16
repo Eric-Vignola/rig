@@ -591,7 +591,12 @@ class TestConversion(MayaTestCase):
             red.astype(Material)
         cmds.lockNode("red", lock=True)
         try:
-            with self.assertRaisesRegex(RuntimeError, "lockNode"):
+            # re-pinned (features step 3, lock): the template of rig's verbs on a
+            # locked node (an InjectionError, a RuntimeError), was "'red' is locked
+            # (lockNode); unlock it first"
+            with self.assertRaisesRegex(
+                RuntimeError, r"^cannot convert 'red': it is locked; Node\('red'\)\.unlock\(\) unlocks it"
+            ):
                 red.astype(Phong)
         finally:
             cmds.lockNode("red", lock=False)
