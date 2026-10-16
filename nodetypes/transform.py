@@ -14,7 +14,7 @@ from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, _is_generic_slot, Attribute
 from rig.nodetypes.dag_node import DAGNode
-from rig.nodetypes.dg_node import _typed_creator
+from rig.nodetypes.dg_node import DGNode, _typed_creator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -416,13 +416,57 @@ class Transform(DAGNode):
         data["channel_box"] = att.is_channel_box
         return data
 
-    def serialize_hierarchy(self) -> HierarchyData:
-        """Serialize a whole hierarchy.
+    def serialize_hierarchy(self, bindpose: bool | str | DGNode = False) -> HierarchyData:
+        """Serialize a whole hierarchy: this node and the transforms and joints
+        below it, parents first.
+
+        Args:
+            bindpose: ``False`` (the default) reads the scene as it is.
+                ``True`` reads the hierarchy at its bind pose: every dagPose
+                with ``bindPose`` on that holds one of its nodes (a skinCluster
+                makes one; binding another influence set makes another). Poses
+                that hold the same node must agree on it.
+                A dagPose name (``"bindPose5"``, ``"char:bindPose1"``) or node
+                (``Node("bindPose5")``) reads it at that one pose; any dagPose
+                qualifies, a saved ``tPose`` too.
+
+        The result is what ``serialize_hierarchy()`` would return after Maya's
+        own Go to Bind Pose (``dagPose -restore -global``), and nothing is
+        restored: the scene, the selection and the undo queue are unchanged.
+        A pose member takes its scale, rotate, translate, rotate axis and joint
+        orient from the pose, its rotation re-expressed in the node's current
+        rotate order (as the restore does); everything else (segment scale
+        compensate, radius, visibility, user attributes, names, parents) and
+        every node the pose does not hold (an end joint that is no influence,
+        a helper added after the bind) keep the scene's values. At the bind
+        pose the result is bit-identical to ``bindpose=False``.
+
+        Raises (every check runs before anything is read into the result):
+            TypeError: ``bindpose`` is not False, True, a str or a node.
+            NodeNotFoundError / AmbiguousNodeError: the name names no node,
+                or several.
+            NodeTypeError: the name is not a dagPose.
+            ValueError: ``True`` and no bind pose holds a node of the
+                hierarchy; the named pose holds none of its nodes; ``True``
+                and the bind poses disagree on a node (name one); a member's
+                DAG parent is not the parent it was posed under (a member is
+                stored relative to it: restore the parent or save a new pose).
 
         Returns:
             A HierarchyData object.
         """
         from cgmath.hierarchy import HierarchyData
+
+        # the argument is checked before the walk; bool before int (True is an int)
+        if bindpose is not False:
+            if isinstance(bindpose, bool):
+                pass
+            elif isinstance(bindpose, DGNode):
+                bindpose = bindpose.name
+            elif not isinstance(bindpose, str) or isinstance(bindpose, Attribute):
+                raise TypeError(
+                    f"bindpose= takes False, True or a dagPose name, not {bindpose!r}"
+                )
 
         def _recurse(leaf):
             # this function returns a hierarchy the way it should be
@@ -445,6 +489,7 @@ class Transform(DAGNode):
                     continue
 
                 tree.append(child.serialize())
+                objs.append(child.mobject)
                 _recurse(child)
 
         # serialize the root
@@ -453,8 +498,15 @@ class Transform(DAGNode):
 
         # recurse through the hierarchy
         tree    = [root]
+        objs    = [self.mobject]  # the serialized nodes' MObjects, for the bind pose
         skipped = {}
         _recurse(self)
+
+        if bindpose is not False:
+            from rig.nodetypes import _bindpose
+
+            for index, entry in _bindpose.resolve(self.short_name, objs, bindpose).items():
+                _bindpose.apply(tree[index], entry, objs[index])
 
         if skipped:
             counts = ", ".join(f"{v} {k}" for k, v in sorted(skipped.items()))
