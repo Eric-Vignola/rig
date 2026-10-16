@@ -460,7 +460,7 @@ def _guard_cases():
         ("lockNode", lock_node, [True]),
         ("an instanced node", instanced, [True]),
         ("a namespace", namespaced, [True]),
-        ("a connected dst, <<: disconnect and retry", connected_dst_shift, [False, True]),
+        ("a connected dst, <<: disconnect, then set", connected_dst_shift, [True]),
         ("a connected dst, set", connected_dst_set, [False]),
         ("a connected parent, <<", connected_parent, [False]),
         ("locked", lambda: (cmds.setAttr("b.tx", lock=True), Node("b").tx.set(2.5)), [False]),
