@@ -61,6 +61,8 @@ rig/nodetypes/
 ├── dag_node.py        DAGNode                dagNode
 ├── transform.py       Transform              transform
 ├── _bindpose.py       (private) the dagPose read of serialize_hierarchy(bindpose=...)
+├── _files.py          (private) the file side of save / load: read and check a cgmath file, the
+│                      two-form load (from the class it creates, from a node it updates)
 ├── joint.py           Joint                  joint           replace_suffix()
 ├── geometry.py        Geometry               geometryShape   (component tags); iter_component_ranges() / _tokens()
 ├── mesh.py            Mesh, ColorSet, Axis   mesh
@@ -111,14 +113,14 @@ from rig.nodetypes.plugins import load_plugin
 | `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.define(type, name, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
 | `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `mdagpath`, `get_bounding_box`, `get_deformers` |
-| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy` |
+| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
 | `Geometry` | `geometryShape` | component tags: `injection_node`, `component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `local_shape_attr` / `world_shape_attr`, `get_component_mobject`, paintable attrs |
-| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
-| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `num_cvs`, `num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`) |
+| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
+| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `num_cvs`, `num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`), `save` / `load` (files: the class creates, a node updates its CVs) |
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
-| `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
-| `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `add_empty_target`, `rebuild_target` |
+| `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
+| `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
 | `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members` |
 | `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `engine`, `of`, `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
@@ -330,8 +332,9 @@ Subclasses override `_create`, and that is where the signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` |
-| `Mesh.create(mesh_data, *, name=, uv_data=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step |
+| `Mesh.create(mesh_data, *, name=, uv_data=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's normals bring back its hard edges and locked normals; a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform |
 | `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own |
+| `NurbsSurface.create(data, *, name=)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees and forms; it holds no knots, so they are evenly spaced) |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
 | `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
@@ -339,6 +342,13 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | `DisplayLayer.create(*objects, name=, empty= / noRecurse= / number= / makeCurrent=)` | `cmds.createDisplayLayer`, empty unless objects are given, which join as themselves (`noRecurse`) |
 | `Reference.create(file_path, namespace)` | `cmds.file(reference=True)`; no `name=` |
 | `AnimCurveTL.create(keys=None, times=None, *, <key options>, name=, **attrs)`, `TA` / `TU` / `TT` | `cmds.createNode` (the selection kept), then the keys through the API (`MFnAnimCurve`), then the attributes, one `rig.create` step; `keys` is values or an `AnimCurve(...)` value (then no times or options); `define(name, keys, ...)` replaces a found curve's keys when they differ (`update=True`) |
+
+A class built from a `cgmath` file has a `load` beside its `create`:
+`Mesh.load(path, ...)`, `NurbsCurve.load`, `NurbsSurface.load`,
+`SkinCluster.load(path, geo, ...)`, `BlendShape.load(path, base, ...)` and
+`Transform.load_hierarchy(path, ...)`, from the class, are the class's
+`create` from a file: a new node on every call
+([Serialisation and files](#serialisation-and-files)).
 
 Inside `with container()` a typed create joins the scope as `Node.create`
 does: an explicit `name=` takes the flattened scope's prefix, every node the
@@ -493,20 +503,85 @@ class (`rig.Layer is DisplayLayer`): a layer node on the right of `<<`,
 `in` or `-` is the membership collection, and `DisplayLayer()` (`Layer()`)
 the kind, which means `defaultLayer` on `<<`.
 
-### Serialisation goes to `cgmath`
+### Serialisation and files
 
 Every `serialize()` returns a `cgmath` data object and every `create` /
 `set_*` that takes one is its inverse; `cgmath` is imported lazily, so
-`rig` loads without it and only these paths need it.
+`rig` loads without it and only these paths need it. `save` writes that
+data to a `cgmath` file and `load` reads it back.
 
-| Node | `serialize()` | Back in |
-|---|---|---|
-| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create_hierarchy` |
-| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` |
-| `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` |
-| `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create` (a curve) |
-| `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` |
-| `BlendShape` | `MorphList`; `get_target_data()` a `MorphData` | `set_target_data`, `BlendShape.create` |
+| Node | `serialize()` | Back in | Save | Load |
+|---|---|---|---|---|
+| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=True, container=None)` creates, a typed `List`, parents first |
+| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, **attrs)` creates; `Mesh('x').load(path, uvs=None, *, world_space=True)` updates |
+| `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` | | |
+| `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=True)` | `NurbsCurve.load(path, *, name=, container=, **attrs)` creates; `NurbsCurve('x').load(path, *, world_space=True)` updates its CVs (the same for `NurbsSurface`) |
+| `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` | `skin.save(path, *, full_path=False, optimize=False)` | `SkinCluster.load(path, geo, **flags)` creates; `SkinCluster('x').load(path)` sets its weights |
+| `BlendShape` | `MorphList`; `get_target_data()` a `MorphData` | `set_target_data`, `BlendShape.create` | `bs.save(path, *, match_name=None)` | `BlendShape.load(path, base, **flags)` creates; `BlendShape('x').load(path)` sets its targets by name |
+
+**One file per data object, its format by its extension.** `.npz`
+(compressed, recommended), `.json` (to read or diff; the slowest) or `.pkl`.
+Never load a `.pkl` you did not write: a pickle runs code when it is read. A
+mesh is two files, its `MeshData` and, with `uvs=`, its `UVList` (`save`
+without `uvs=` writes no UVs: a `MeshData` holds none). `load` reads a
+`cgmath` file whatever its extension (by its header), and for a mesh the
+assets `cgmath`'s `MeshData` reads (`.obj`, `.fbx`, `.glb`, `.usd`); in place
+of a path (a `str` or an `os.PathLike`, `~` expanded) it takes the data
+object itself, which it never changes. A file holding a
+`cgmath.render.scene.Object` is a mesh and its UVs, as `Mesh.create` takes
+one (its `uvs=` then a `TypeError`).
+
+**`load` has two forms, told apart by where it is called.** From the class
+it creates, always, as `create` does: `Mesh.load(...)` a second time makes
+`body1`, `BlendShape.load(...)` stacks a second blendShape, and
+`SkinCluster.load(...)` replaces the geometry's own skin (`create`'s rule).
+From a node it updates that node in place, the inverse of its `save`:
+
+- a `Mesh` of the same topology (vertex count, face counts, every face's
+  vertex list, the holes) and no history gets every point (`world_space=True`:
+  where the file puts them in the world, through the data's matrix or an
+  `Object`'s transform; the transform is not moved), the file's hard edges
+  and locked normals, and each UV set of the file by name (made when the mesh
+  has none of that name; its other sets stay);
+- a `NurbsCurve` of the same CV count, degree, form and knots, a
+  `NurbsSurface` of the same CV counts, degrees and forms (it keeps its own
+  knots: the data holds none), with no history, gets its CVs;
+- a `SkinCluster` gets the file's weights as `set_weights(SkinData)` sets
+  them (influences by name, the missing ones added, the ones the file does
+  not name removed);
+- a `BlendShape` gets each target of the file by name (added when missing;
+  its other targets stay).
+
+Another topology or CV layout, or a shape with history, is a `ValueError`
+naming `Cls.load(path)` for a new node. A hierarchy is never updated in place
+(its transforms are what the rig hangs off: constraints, skins, children):
+`Transform('root').load_hierarchy(...)` is a `TypeError` before anything is
+read, naming `Transform.load_hierarchy(path, parent='root')`.
+
+**Every file is read, and what it holds checked, before anything is made or
+changed.** A file of another class (the UVs' file as the mesh, two files
+swapped, a curve's file as a surface) is a `TypeError` naming the file, what
+it holds and what the slot takes, with a hint when they look swapped; a
+missing file a `FileNotFoundError`; a file of an older `cgmath` `cgmath`'s own
+`LegacyFileError`. A deformer's load takes the file first, then the geometry:
+the other order is a `TypeError` naming it. **Each load is one undo step**
+(`rig.Mesh.load` ... `rig.Joint.load_hierarchy`), redo brings it back, and the
+selection is left as it was. **`save` is a read of the scene**: no undo step,
+the selection unchanged, and its path checked before anything is serialized
+(an extension `cgmath` does not save, or `Mesh.save`'s two paths one file: a
+`ValueError`; a missing folder: a `FileNotFoundError`). An existing file is
+replaced whole.
+
+**`Mesh.create` brings the data's shading back.** An edge is hard where its
+two faces' normals in the data differ at one of its ends, and a normal Maya
+then computes away from the data's was locked in the source, so it is set and
+locked; data without normals (an `.obj`, a `MeshData` built by hand) is all
+smooth, as before. A `cgmath.render.scene.Object` stands for a mesh and its
+UVs: `Mesh.create(obj)` builds its `mesh` with its `uv` (a `UVData` is one set,
+a `UVList` every set), takes its name when `name=` is not given and puts the
+new transform where it is (scale, rotate, translate, rotate order, rotate axis,
+visibility; an `Object` under a parent: its world matrix); the mesh's own
+matrix, the render settings and the skin are not used.
 
 `serialize_hierarchy` captures `transform` and `joint` nodes (a transform
 holding a locator becomes a `locator`) and skips constraints and other
@@ -552,11 +627,15 @@ rig's mesh edits (points, UV sets and their UVs, colour sets and their
 colours) and skin weights go through it, one step each, API only: a UV or
 colour set is made, renamed and deleted through `MFnMesh` too, never
 `polyUVSet` / `polyColorSet`, whose undo beside API data edits and later
-vertex edits restores broken sets. `Mesh.create` and `NurbsCurve.create`
-need no command (the shape rides a recorded `createNode` transform); they,
-`SkinCluster.create` and `set_weights(SkinData)` are one step each, named
-`rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`,
-`rig.SkinCluster.set_weights`. The transfers (`Mesh.transfer_maps`, `transfer_component_tags`,
+vertex edits restores broken sets. `Mesh.create`, `NurbsCurve.create` and
+`NurbsSurface.create` need no command (the shape rides a recorded `createNode`
+transform, and the mesh's shading is set on it before any recorded command
+touches it); they, `SkinCluster.create` and `set_weights(SkinData)` are one
+step each, named `rig.Mesh.create`, `rig.NurbsCurve.create`,
+`rig.NurbsSurface.create`, `rig.SkinCluster.create`,
+`rig.SkinCluster.set_weights`. A node's `load` puts its points, shading or
+CVs through the command too; every `load` is one step, `rig.Mesh.load` ...
+`rig.Joint.load_hierarchy`. The transfers (`Mesh.transfer_maps`, `transfer_component_tags`,
 `SkinCluster.transfer_to_mesh`, `copy_skincluster`) are one step each too,
 named after the method (`rig.Mesh.transfer_maps` ...).
 
@@ -766,6 +845,35 @@ Verified on Maya 2025; not bugs to work around blindly.
   overrides it at the next evaluation; `plug << value` and `plug <<
   AnimCurve(...)` replace the input first. A tangent slope reads back in
   single precision (`5.0` set, `4.99999994` read).
+- **What a `cgmath` file does not carry** (its data class has no field for
+  it), so a `save` / `load` round trip loses it: a mesh's current UV set (the
+  first set comes back current), its colour sets, paintable maps and component
+  tags (a `polyCube(ch=False)`'s six face tags too), its materials, history and
+  deformers, and its transform's pivots and parent; a curve's or surface's
+  name and transform (save in world space, the default, to keep where it is:
+  `world_space=False` loads it at the origin); a surface's uneven knots (a
+  `BSplinePatchData` holds no knots: they come back evenly spaced, over
+  `0..spans`, which is another surface when they were not; `save` warns); a
+  skinCluster's settings (`skinningMethod`, `maximumInfluences`,
+  `normalizeWeights`, `bindPreMatrix` connections: pass them to `load` again)
+  and its bind pose (a load binds at the joints' current pose, as
+  `cmds.skinCluster` does); a blendShape's weights (they come back 0), its
+  in-betweens and its live target meshes (they come back as offsets); a
+  hierarchy's constraints (skipped with a warning), connections, and shapes
+  other than locators.
+- **A mesh's shading comes back as normals, and an edge's smoothing flag where
+  it shades nothing may not.** A border edge reads hard in Maya and comes back
+  smooth; a hard edge whose two faces' normals agree anyway comes back smooth.
+  The face-vertex normals are the source's (to 1e-5) either way.
+  `setFaceVertexNormals` hardens every edge at the vertices it sets: after it
+  rig makes the data's smooth edges there smooth again, which keeps the locked
+  normals.
+- **Undoing a target a blendShape load added keeps its weight element**: the
+  blendShape keeps an unnamed `weight[i]` at 0 (as the undo of
+  `set_target_data` on a new target always has).
+- **`create_hierarchy` (so `load_hierarchy`) does not connect a joint's
+  `inverseScale`** to its parent's `scale`: a joint with segment scale
+  compensate under a scaled parent comes back at another world matrix.
 - **Method names are spelled as they are**: `set_xfrom_attrs_locked`
   (sic), and `BlendShape.set_targets_data` beside `set_target_data`.
 - `Mesh.bake_deformation` hard-codes `root_joint` as the skeleton. Its

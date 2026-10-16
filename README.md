@@ -246,9 +246,13 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   or none when every curve holds those keys already. A statement that raises keeps
   what it did before the error, with the same steps, so undo still walks
   the build back step by step. A membership edit (`<< Tag("x")`, `<< red`...),
-  a `define` that makes its node, `Mesh.create`, `NurbsCurve.create` and
-  `SkinCluster.create` are one named step each (`rig.tag`, `rig.define`,
-  `rig.Mesh.create`), and an API edit (`Mesh.set_points`, the UV and colour
+  a `define` that makes its node, `Mesh.create`, `NurbsCurve.create`,
+  `NurbsSurface.create` and `SkinCluster.create` are one named step each
+  (`rig.tag`, `rig.define`, `rig.Mesh.create`), each load of a cgmath file
+  too, the class's that creates and a node's that updates
+  (`Mesh.load`, `NurbsCurve.load`, `NurbsSurface.load`, `SkinCluster.load`,
+  `BlendShape.load`, `Joint.load_hierarchy`: `rig.Mesh.load` ...,
+  `rig.Joint.load_hierarchy`), and an API edit (`Mesh.set_points`, the UV and colour
   set edits, skin weights) is one step. A statement's step and the API
   edits go through rig's plug-in command `rigUndoableAPICommand`, which
   rig loads from its own folder at its first such edit of a session
@@ -320,7 +324,8 @@ rig/
 │
 ├── nodetypes/           the node classes every node is: Node (the root), DGNode, Transform,
 │                        Mesh, the shaders, AnimCurve and AnimCurveTL TA TU TT ...; Attribute,
-│                        the MPlug wrapper; the lookup errors; plugins/ (the undo plug-in)
+│                        the MPlug wrapper; save / load of cgmath files; the lookup errors;
+│                        plugins/ (the undo plug-in)
 ├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
 │                        perspective_image_planes.py, ye_olde_lerp.gif
 ├── utils.py             run_tests()
