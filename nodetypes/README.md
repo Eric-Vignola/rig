@@ -355,7 +355,10 @@ otherwise, as every class's `define` does.
 `set()` mirrors `cmds.setAttr` and fills in `type=` for typed data (a single
 list also stands for the `(count, *items)` form of `stringArray` /
 `vectorArray` / `pointArray`), and on an enum takes a field name as well
-as the int (`find_attr("ro").set("zyx")`). `a >> b` connects with force, `a // b`
+as the int (`find_attr("ro").set("zyx")`). Like `cmds.setAttr`, `set()` leaves
+the input alone: a wired plug refuses it, and a keyed or constrained one
+takes it until the next evaluation. The DSL's `plug << value` replaces
+whatever drives the plug, then sets. `a >> b` connects with force, `a // b`
 disconnects, `connect(other, force=False)` refuses an occupied input. The
 DSL spelling, `node.tx`, is a `Plug`: the same methods, the DSL's
 operators, a numpy-shaped `get()`.
