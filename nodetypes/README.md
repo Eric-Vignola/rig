@@ -332,7 +332,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` |
-| `Mesh.create(mesh_data, *, name=, uv_data=)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's normals bring back its hard edges and locked normals; a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform |
+| `Mesh.create(mesh_data, *, name=, uv_data=, normals=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed); a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform |
 | `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own |
 | `NurbsSurface.create(data, *, name=)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees and forms; it holds no knots, so they are evenly spaced) |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
@@ -513,7 +513,7 @@ data to a `cgmath` file and `load` reads it back.
 | Node | `serialize()` | Back in | Save | Load |
 |---|---|---|---|---|
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=True, container=None)` creates, a typed `List`, parents first |
-| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, **attrs)` creates; `Mesh('x').load(path, uvs=None, *, world_space=True)` updates |
+| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, **attrs)` creates; `Mesh('x').load(path, uvs=None, *, world_space=True, normals=True)` updates |
 | `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` | | |
 | `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=True)` | `NurbsCurve.load(path, *, name=, container=, **attrs)` creates; `NurbsCurve('x').load(path, *, world_space=True)` updates its CVs (the same for `NurbsSurface`) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` | `skin.save(path, *, full_path=False, optimize=False)` | `SkinCluster.load(path, geo, **flags)` creates; `SkinCluster('x').load(path)` sets its weights |
@@ -541,8 +541,9 @@ From a node it updates that node in place, the inverse of its `save`:
   vertex list, the holes) and no history gets every point (`world_space=True`:
   where the file puts them in the world, through the data's matrix or an
   `Object`'s transform; the transform is not moved), the file's hard edges
-  and locked normals, and each UV set of the file by name (made when the mesh
-  has none of that name; its other sets stay);
+  and locked normals (`normals=False`: its own stay), and each UV set of the
+  file by name (made when the mesh has none of that name; its other sets
+  stay);
 - a `NurbsCurve` of the same CV count, degree, form and knots, a
   `NurbsSurface` of the same CV counts, degrees and forms (it keeps its own
   knots: the data holds none), with no history, gets its CVs. Load with the
@@ -593,7 +594,22 @@ best of 7, against 2.0.0a5's create of the same data, about 25 ms): all
 smooth 1.3x, 800 hard edges 1.45x, 30% of the edges hard 1.75x, every edge
 hard (faceted) 2.6x, 2000 vertices of locked normals 2.1x. Maya's normals and
 each locked normal cross from API 2.0's arrays one value at a time, which
-bounds a faceted or heavily locked mesh. A `cgmath.render.scene.Object` stands for a mesh and its
+bounds a faceted or heavily locked mesh.
+
+**`normals=False` skips it, for speed: a restore flag.** A part of the data
+that a create or a load brings back at a cost of its own has one keyword,
+named after the part, on every door that builds or updates a mesh from data:
+`Mesh.create(data, normals=False)`, `Mesh.load(path, normals=False)` and
+`Mesh('x').load(path, normals=False)`. True, the default, brings the part
+back; False skips it: the data's normals are not read, a new mesh is all
+smooth (2.0.0a5's create, its cost) and an updated mesh keeps its own hard
+edges and locked normals. A flag is a `bool` (anything else is a `TypeError`
+before anything is read or made), and it wins over a mesh attribute of the
+same name (the mesh's internal `normals` array is never set through
+`create`). `normals` is the first restore flag; a vertex-colour flag would be
+the next, `colors=`, on the same three doors (`mesh._RESTORE_FLAGS`).
+
+A `cgmath.render.scene.Object` stands for a mesh and its
 UVs: `Mesh.create(obj)` builds its `mesh` with its `uv` (a `UVData` is one set,
 a `UVList` every set), takes its name when `name=` is not given and puts the
 new transform where it is (scale, rotate, translate, rotate order, rotate axis,

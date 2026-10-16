@@ -31,14 +31,15 @@ from scipy.spatial import cKDTree
 
 _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
-    ``Mesh.load(mesh, uvs=None, *, name=None, container=None, **attrs)``, from the
-    class, CREATES a new mesh, always (as `create` does: a second load of one
-    file makes ``body1``)::
+    ``Mesh.load(mesh, uvs=None, *, name=None, container=None, normals=True, **attrs)``,
+    from the class, CREATES a new mesh, always (as `create` does: a second load of
+    one file makes ``body1``)::
 
         body = Mesh.load("body_mesh.npz", "body_uv.npz", name="body")
 
-    ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=True)``, from a mesh,
-    UPDATES that mesh in place, the inverse of ``Mesh('bodyShape').save(...)``::
+    ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=True, normals=True)``,
+    from a mesh, UPDATES that mesh in place, the inverse of
+    ``Mesh('bodyShape').save(...)``::
 
         Mesh("bodyShape").load("body_mesh.npz", "body_uv.npz")
 
@@ -58,6 +59,10 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             in the world (through its matrix, or an Object's transform); the
             transform is not moved. False: the data's points become the mesh's
             own, object space (the inverse of ``save(world_space=False)``).
+        normals: (both forms) a restore flag, as `create` takes it. True: the
+            data's normals bring back the hard edges and locked normals.
+            False: skipped, for speed: a new mesh is all smooth, an updated
+            one keeps its own hard edges and locked normals.
 
     Returns:
         The new Mesh (creating), or this Mesh (updating).
@@ -76,13 +81,42 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
     deformers, ``Mesh('bodyShapeOrig').load(...)``, whose load the deformed
     mesh follows. The class form takes no ``world_space=`` (a TypeError
     naming this form). It
-    sets every point, then, from data with normals, the hard edges and locked
-    normals, then each UV set of the file by name (made when the mesh has
-    none of that name; its other sets, and the current set, stay).
+    sets every point, then, from data with normals (and ``normals=True``), the
+    hard edges and locked normals, then each UV set of the file by name (made
+    when the mesh has none of that name; its other sets, and the current set,
+    stay).
 
     Each call is ONE undo step named ``rig.Mesh.load`` (redo brings it back)
     and leaves the selection as it was.
     """
+
+# --- the restore flags ----------------------------------------------------------------------
+#
+# A part of a MeshData that a create or a load brings back on the shape, at a cost of its own,
+# has a *restore flag*: one keyword named after the part, taken by every door that builds or
+# updates a mesh from data (``Mesh.create``, ``Mesh.load`` from the class, ``Mesh('x').load``
+# from a mesh). True, the default, brings the part back; False skips it, for speed: its data
+# is not read, a new mesh gets Maya's default for it and an updated mesh keeps its own. A flag
+# is a bool (anything else is a TypeError before anything is read or made), and it wins over
+# a mesh attribute of the same name (``create``'s other keywords are attributes; the mesh's
+# internal ``normals`` / ``colors`` arrays are never set that way).
+#
+# ``normals`` is the first: the hard / soft edges and the locked normals (`_shading_of`,
+# `_restore_shading`). A vertex-colour flag would follow it as ``colors=``: its name added
+# here, its keyword on the three doors, and its restore step run behind it in
+# `_create_mesh` and `_mesh_update` (`_restore_flag` checks each).
+_RESTORE_FLAGS = ("normals",)
+
+
+def _restore_flag(method: str, name: str, value) -> bool:
+    """The restore flag `name` of `method` (``"Mesh.create()"``), checked: a bool."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise TypeError(
+        f"{method}: {name}= is a restore flag, True (the default: the data's {name} come back) "
+        f"or False (skipped), not {value!r}"
+    )
+
 
 MAP_DATATYPE         = "doubleArray"
 MAP_DEFAULT_VALUE    = 0.0
@@ -107,9 +141,9 @@ class Mesh(Geometry):
     # built from its mesh data (``Node.create("mesh")`` with none raises, naming it)
     _CREATE_TAKES_INPUTS = "mesh_data"
 
-    # the keywords ``_create`` takes; ``create``'s other keywords are the
-    # mesh's attributes
-    _CREATE_FLAGS = frozenset({"name", "uv_data"})
+    # the keywords ``_create`` takes (the restore flags among them); ``create``'s
+    # other keywords are the mesh's attributes
+    _CREATE_FLAGS = frozenset({"name", "uv_data", *_RESTORE_FLAGS})
 
     _DEFINE_REFUSED = (
         "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
@@ -138,12 +172,13 @@ class Mesh(Geometry):
         mesh_data: MeshData,
         name:      str | None          = None,
         uv_data:   list[UVData] | None = None,
+        normals:   bool                = True,
         **kwargs,
     ) -> str:
         """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uv_data`
-        (a list, or None) and returns the transform's name. `Mesh.create` wraps
-        it in its undo chunk; see there."""
-        return _create_mesh(mesh_data, name, uv_data)
+        (a list, or None), its shading when `normals`, and returns the
+        transform's name. `Mesh.create` wraps it in its undo chunk; see there."""
+        return _create_mesh(mesh_data, name, uv_data, normals)
 
     @classmethod
     def create(
@@ -153,6 +188,7 @@ class Mesh(Geometry):
         *,
         name:      str      | None                         = None,
         container: bool     | None                         = None,
+        normals:   bool                                    = True,
         **kwargs,
     ) -> "Mesh":
         """Creates a mesh object from a mesh data object.
@@ -176,6 +212,10 @@ class Mesh(Geometry):
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
+            normals: A restore flag (see below). True: the data's normals
+                bring back its hard / soft edges and locked normals. False:
+                they are skipped, for speed (not read: every edge smooth,
+                none locked, as for data without normals).
             kwargs: attributes of the mesh, checked by type before anything
                 is made and set once it exists (see `DGNode.create`).
 
@@ -201,14 +241,24 @@ class Mesh(Geometry):
         the data's is set and locked (a locked normal of the source). So
         ``Mesh.create(*m.serialize())`` gives back ``m``'s hard edges and
         locked normals. Data without normals (an ``.obj``, a MeshData built by
-        hand) is all smooth.
+        hand) is all smooth. The restore costs, over a create without it
+        (2.0.0a5's): within 1.5x for a mostly smooth mesh, 1.75x to 2.6x for
+        a faceted or heavily locked one; ``normals=False`` skips it.
 
-        Invalid mesh data (normals that do not fit the faces too) raises
-        RuntimeError before anything is made; an error after the transform is
-        made deletes it again before it propagates.
+        ``normals`` is a *restore flag*: one keyword per part of the data a
+        create or a load brings back at a cost of its own, the same on
+        ``Mesh.create``, ``Mesh.load`` and ``Mesh('x').load``, True by default
+        and a bool (anything else is a TypeError before anything is made). A
+        vertex-colour flag would be the next one (``colors=``).
+
+        Invalid mesh data (normals that do not fit the faces too, unless
+        ``normals=False``) raises RuntimeError before anything is made; an
+        error after the transform is made deletes it again before it
+        propagates.
         """
         from cgmath.geometry import UVData
 
+        normals = _restore_flag("Mesh.create()", "normals", normals)
         if _files.is_object(mesh_data):
             uv_data = _object_uvs(mesh_data, uv_data)
         if uv_data:
@@ -218,7 +268,7 @@ class Mesh(Geometry):
             uv_data = None
         with _undo_chunk("rig.Mesh.create"):
             return super().create(
-                mesh_data, uv_data=uv_data, name=name, container=container, **kwargs
+                mesh_data, uv_data=uv_data, name=name, container=container, normals=normals, **kwargs
             )
 
     # --- mesh geometry data methods
@@ -804,22 +854,24 @@ class Mesh(Geometry):
         return path
 
     @statement
-    def _load_new(cls, mesh, uvs=None, *, name=None, container=None, **kwargs):
+    def _load_new(cls, mesh, uvs=None, *, name=None, container=None, normals=True, **kwargs):
         _files.creating_takes_no_space(cls.__name__, "mesh", kwargs)
+        normals = _restore_flag("Mesh.load", "normals", normals)
         data, uv_data = _read_mesh_files("Mesh.load", mesh, uvs)
         with _undo_chunk("rig.Mesh.load"):
-            return cls.create(data, uv_data, name=name, container=container, **kwargs)
+            return cls.create(data, uv_data, name=name, container=container, normals=normals, **kwargs)
 
     @statement
-    def _load_into(self, mesh, uvs=None, *, world_space=True, **kwargs):
+    def _load_into(self, mesh, uvs=None, *, world_space=True, normals=True, **kwargs):
         method = f"Mesh({self.name!r}).load"
         if kwargs:
             raise TypeError(
-                f"{method} updates the mesh in place: it takes the files and world_space= "
+                f"{method} updates the mesh in place: it takes the files, world_space= and normals= "
                 f"(got {', '.join(f'{k}=' for k in kwargs)}); Mesh.load(path, ...) makes a new mesh"
             )
+        normals = _restore_flag(method, "normals", normals)
         data, uv_data = _read_mesh_files(method, mesh, uvs)
-        update = _mesh_update(self, method, mesh, data, uv_data, world_space)
+        update = _mesh_update(self, method, mesh, data, uv_data, world_space, normals)
         with _undo_chunk("rig.Mesh.load"):
             _MeshUpdateCommand(self, *update[:3])
             names = set(self.uv_sets)
@@ -2168,7 +2220,7 @@ def _restore_shading(fn: OpenMaya.MFnMesh, shading: _Shading) -> None:
 
 
 def _create_mesh(
-    mesh_data: MeshData, name: str | None, uv_data: list[UVData] | None
+    mesh_data: MeshData, name: str | None, uv_data: list[UVData] | None, normals: bool = True
 ) -> str:
     """`Mesh._create`'s body: the ride. Returns the transform's name.
 
@@ -2193,8 +2245,9 @@ def _create_mesh(
 
     Any error after step 2 deletes the transform before it propagates.
 
-    The data's normals (when it has them) give the shape its hard edges and
-    locked normals in step 4, after the UV sets (`_restore_shading`). A
+    The data's normals (when it has them, and with `normals`, the restore flag)
+    give the shape its hard edges and locked normals in step 4, after the UV
+    sets (`_restore_shading`). A
     ``cgmath.render.scene.Object`` in place of `mesh_data` is built from its
     mesh, its name (when `name` is None) and its transform (`_place_object`,
     in place of the mesh's matrix); `Mesh.create` passes its UVs in `uv_data`.
@@ -2203,7 +2256,7 @@ def _create_mesh(
     if _files.is_object(mesh_data):
         obj, mesh_data = mesh_data, mesh_data.mesh
     counts, indices, holes = _mesh_topology(mesh_data)
-    shading = _shading_of(mesh_data, holes)
+    shading = _shading_of(mesh_data, holes) if normals else None
     uv_sets = list(uv_data or ())
     names   = [uv.name for uv in uv_sets]
     for i, uv_name in enumerate(names):
@@ -2283,11 +2336,12 @@ def _source_label(src) -> str:
     return repr(os.fspath(src)) if _files.is_path(src) else f"the {type(src).__name__}"
 
 
-def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool) -> tuple:
+def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, normals: bool = True) -> tuple:
     """`Mesh('x').load`'s edit, checked before anything changes: ``(points, space,
-    shading, uv_sets)`` for `_MeshUpdateCommand` and the UV sets. Raises ValueError
-    for a mesh with history or data of another topology, and the errors of
-    `_mesh_topology` / `_shading_of` / `_check_uv_fit`."""
+    shading, uv_sets)`` for `_MeshUpdateCommand` and the UV sets (the shading None
+    without `normals`: the mesh keeps its own). Raises ValueError for a mesh with
+    history or data of another topology, and the errors of `_mesh_topology` /
+    `_shading_of` / `_check_uv_fit`."""
     obj = None
     if _files.is_object(data):
         obj, data, uvs = data, data.mesh, data.uv
@@ -2332,7 +2386,7 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool) -> 
         space = OpenMaya.MSpace.kObject
     if not np.isfinite(points).all():
         raise ValueError(f"{method}: the points must be finite (got nan or inf)")
-    shading = _shading_of(data, holes, linear)
+    shading = _shading_of(data, holes, linear) if normals else None
     uv_sets = [] if uvs is None else [uvs] if _is_uv_data(uvs) else list(uvs)
     names   = [uv.name for uv in uv_sets]
     for i, uv in enumerate(uv_sets):

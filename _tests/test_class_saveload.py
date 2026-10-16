@@ -542,8 +542,8 @@ class TestMesh(_Case):
         _, path, _ = self.saved()
         self.assert_refused(
             TypeError,
-            "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files and world_space= "
-            "\\(got name=, container=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
+            "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files, world_space= and "
+            "normals= \\(got name=, container=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
             lambda: Mesh("body").load(path, name="x", container=False),
         )
 
