@@ -3,6 +3,7 @@ Move all node types into the same namespace
 """
 
 from rig.nodetypes._base import Attribute, Node
+from rig.nodetypes.anim_curve import AnimCurve, AnimCurveTA, AnimCurveTL, AnimCurveTT, AnimCurveTU
 from rig.nodetypes.blendshape import BlendShape
 from rig.nodetypes.choice import Choice
 from rig.nodetypes.dag_node import DAGNode

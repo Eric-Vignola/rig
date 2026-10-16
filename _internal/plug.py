@@ -91,6 +91,8 @@ from typing import Any
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal import anim_keys as _anim_keys
+from rig._internal.anim_keys import _Keys
 from rig._internal.journal import cmds_edit, run_statement, statement, user_call
 from rig.nodetypes._base import (
     _MISSING,
@@ -626,6 +628,13 @@ class Plug(Attribute):
         back. A multi root of one keeps the multi rules (an item per element,
         an append, multi to multi), every item checked before the first edit.
 
+        Keys (``plug << AnimCurve([0, 1, 0], times=[0, 12, 24])``) key the
+        plug with one animation curve per channel, of the type the plug takes
+        (Maya's rule: TL, TA, TU or TT), in one undo step (``rig.animcurve``);
+        an input the plug has is replaced, as by a plug (no pairBlend), and a
+        re-run updates the plug's own curve in place (see
+        `rig._internal.anim_keys`).
+
         Returns ``self`` so chaining works:
         ``node << Float("x") << 5 << lock``.
         """
@@ -671,6 +680,11 @@ class Plug(Attribute):
         # Attribute spec (a user's spec class is code a user wrote).
         if lazy.types._is_attribute_spec(other):
             return user_call(other.apply, self)
+
+        # Keys (``AnimCurve([...])``): a curve per channel, one undo step; the plug
+        # comes back (one identity test on the hot path)
+        if type(other) is _Keys:
+            return _anim_keys.inject(self, other)
 
         # The operand shapes (F14): a set, frozenset or dict raises TypeError
         # (unordered), an iterator is read into a list. The common right-hand
@@ -793,6 +807,8 @@ class Plug(Attribute):
         _ensure_owner_alive(self)
         if other is None:
             return self.get()
+        if type(other) is _Keys:
+            raise _anim_keys.rshift_error(self)
 
         # membership, before the clone onto a node: a layer node on the
         # right is a collection, not a clone target
@@ -2748,6 +2764,11 @@ def _inject_value(
     if len(dst_channels) < len(src_channels):
         src_channels = src_channels[: len(dst_channels)]
 
+    if any(type(s) is _Keys for s in src_channels):
+        # keys slots (``t << [AnimCurve(xs), skip, 0]``): planned first, then every
+        # slot in one undo step
+        _anim_keys.fanout(list(sequences(src_channels, dst_channels)), _fanout_channel)
+        return
     for s, d in sequences(src_channels, dst_channels):
         _fanout_channel(s, d)
 
@@ -2853,14 +2874,16 @@ def _fanout_channel(src: Any, dst: Any) -> None:
 
     Gives a per-channel slot the same vocabulary a whole plug has: ``None``
     disconnects (as ``plug << None`` does), an ``_AttrSpec`` applies itself
-    (``lock`` / ``hide`` / ``skip``), everything else is a set-or-connect.
-    A membership right-hand side (a tag, a layer or material node) has no
-    per-channel meaning and raises.
+    (``lock`` / ``hide`` / ``skip``), keys (``AnimCurve([...])``) key the
+    channel, everything else is a set-or-connect. A membership right-hand side
+    (a tag, a layer or material node) has no per-channel meaning and raises.
     """
     types = _lazy().types
 
     if src is None:
         _disconnect_incoming(dst)
+    elif type(src) is _Keys:
+        _anim_keys.inject(dst, src)
     elif types._is_attribute_spec(src):
         user_call(src.apply, dst)
     elif types._is_membership(src):

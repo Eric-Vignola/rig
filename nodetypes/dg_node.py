@@ -131,9 +131,9 @@ _TYPED_CREATE_HOOK = None
 _CREATE_ATTRS = "<attributes>"
 
 # The abstract Maya types rig's base classes stand for (DGNode, DAGNode,
-# Geometry): ``cmds.createNode`` cannot make one (``DGNode.create()`` would
-# ask for an ``entity``).
-_ABSTRACT_TYPES = frozenset({"entity", "dagNode", "geometryShape"})
+# Geometry, AnimCurve): ``cmds.createNode`` cannot make one (``DGNode.create()``
+# would ask for an ``entity``).
+_ABSTRACT_TYPES = frozenset({"entity", "dagNode", "geometryShape", "animCurve"})
 
 # The ``_create``s that make just the class's node by ``cmds.createNode``
 # (DGNode's; dag_node adds DAGNode's): their class's create takes no
@@ -739,6 +739,11 @@ class DGNode(Node):
     # name").
     _MEMBER_KIND = False
     _NONE_TEXT   = None
+
+    # A class whose call also makes a value (``AnimCurve([0, 1])``: keys) sets a
+    # classmethod ``_KEYS_CALL(args, kwargs)``, which the reference asks first:
+    # what it returns, or None for a name (the reference then runs)
+    _KEYS_CALL = None
 
     # A membership class that is no kind (``ShadingEngine``) names the kind
     # token of its collections in its ``Cls()`` / ``Cls(None)`` refusals

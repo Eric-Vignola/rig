@@ -49,6 +49,8 @@ def _node_lshift(node: Any, other: Any) -> Any:
       this node; ``lock`` / ``unlock`` are ``node.lock()`` /
       ``node.unlock()`` (``lockNode``) and return the node; another modifier
       (``hide``, ``unhide``) is a TypeError naming ``node.<attr> << it``.
+    - Keys (``AnimCurve([...])``) -- a TypeError naming
+      ``node.<attr> << AnimCurve(...)``: a curve keys a plug.
     - **Matrix-shaped source on a transform** -- applies the matrix to
       the transform's t/r/s/shear channels:
         * Plug-typed matrix source => inserts a live ``decomposeMatrix``
@@ -73,6 +75,12 @@ def _node_lshift(node: Any, other: Any) -> Any:
     # 1. Attribute-spec injection -- add an attribute on this node.
     if _is_attribute_spec(other):
         return user_call(other.apply, node)
+
+    # Keys (``AnimCurve([...])``) key a plug, never a node.
+    from rig._internal.anim_keys import _Keys, node_error
+
+    if type(other) is _Keys:
+        raise node_error(node)
 
     # 2. Live Plug-typed matrix source on a transform -> decomposeMatrix
     #    shorthand. _matrix_to_transform handles the bare-node case
@@ -140,6 +148,10 @@ def _node_rshift(node: Any, other: Any) -> Any:
 
     if _is_membership(other):
         return other._member().query(node)
+    from rig._internal.anim_keys import _Keys, rshift_error
+
+    if type(other) is _Keys:
+        raise rshift_error(node)
     if _is_attribute_spec(other):
         # Stamp writable=False onto a fresh copy of the spec so the
         # caller's instance is untouched (specs may be reused).
