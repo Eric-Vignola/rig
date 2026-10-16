@@ -1,11 +1,12 @@
 """Round 5, B0, and container membership through ``cmds.container``.
 
-B0 (``rig.nodetypes.plugins``): `_register_api_edit` applies an ``MDGModifier`` and puts
-it on the undo queue through ``rigUndoableAPICommand`` (outside a journal statement, one
-unnamed undo step: undo is the modifier's ``undoIt``, redo its ``doIt``; round 5 D1
-journals it, ``rig._internal.journal``); `_api_edit_ready` says whether it may run (the
-command loads, Maya is not undoing or redoing). With undo off the edit is applied and
-Maya keeps nothing.
+B0: an ``MDGModifier`` applied and put on the undo queue through ``rigUndoableAPICommand``
+(outside a journal statement, one unnamed undo step: undo is the modifier's ``undoIt``, redo
+its ``doIt``; round 5 D1 journals it, ``rig._internal.journal``); whether it may run (the
+command loads, Maya is not undoing or redoing). With undo off the edit is applied and Maya
+keeps nothing. B0's helpers ``_register_api_edit`` / ``_api_edit_ready`` had no caller after
+phase D and were removed (R5 DFIX): the tests drive their successors, ``api_edits._apply``
+and ``plugins._fast_path_ready``.
 
 C1 (eager API membership, 12f6921) is reverted (round 5 BCFIX): every member a scope
 makes joins its container through ``cmds.container -edit -addNode -force``, as in
@@ -28,10 +29,10 @@ from maya import cmds
 from maya.api import OpenMaya
 
 from rig import container, Node
-from rig._internal import journal
+from rig._internal import api_edits, journal
 from rig.bridges import commands as rc
 from rig.nodetypes import plugins, Transform
-from rig.nodetypes.plugins import UNDOABLE_API_COMMAND, _api_edit_ready, _register_api_edit
+from rig.nodetypes.plugins import UNDOABLE_API_COMMAND, _fast_path_ready
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
 
@@ -143,20 +144,29 @@ class _MembershipCase(UndoWalk, MayaTestCase):
 
 class TestRegisterApiEdit(_MembershipCase):
     """B0: one unnamed step; the readiness invariants (the command unloaded, a load
-    failure, undo off, during undo and during redo); a failing doIt registers nothing."""
+    failure, undo off, during undo and during redo); a failing doIt registers nothing.
+
+    R5 DFIX re-pin: B0's `_register_api_edit` / `_api_edit_ready` had no caller left (the
+    fast paths of phase D use their successors), so these tests drive the successors:
+    ``api_edits._apply`` (the modifier applied, then ``journal.add``) and
+    ``plugins._fast_path_ready``."""
 
     def setUp(self):
         super().setUp()
         cmds.createNode("multiplyDivide", name="a")
         cmds.createNode("multiplyDivide", name="b")
         cmds.flushUndo()
+        for name, value in (("_LOAD_FAILED", None), ("_WARNED", True)):
+            patch = mock.patch.object(plugins, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def connected(self):
         return cmds.isConnected("a.outputX", "b.input1X")
 
     def test_one_unnamed_step_undone_and_redone(self):
-        self.assertTrue(_api_edit_ready())
-        _register_api_edit(_connect_modifier("a.outputX", "b.input1X"))
+        self.assertTrue(_fast_path_ready())
+        self.assertIs(api_edits._apply(_connect_modifier("a.outputX", "b.input1X")), True)
         self.assertTrue(self.connected())
         self.assertEqual(self.undo_name(), "")
         self.undo_steps(1)
@@ -169,7 +179,7 @@ class TestRegisterApiEdit(_MembershipCase):
         cmds.undoInfo(openChunk=True)
         try:
             cmds.setAttr("a.input1X", 3.0)
-            _register_api_edit(_connect_modifier("a.outputX", "b.input1X"))
+            self.assertIs(api_edits._apply(_connect_modifier("a.outputX", "b.input1X")), True)
         finally:
             cmds.undoInfo(closeChunk=True)
         self.undo_steps(1)
@@ -189,9 +199,9 @@ class TestRegisterApiEdit(_MembershipCase):
 
         cmds.undoInfo(state=False)
         try:
-            self.assertTrue(_api_edit_ready())
+            self.assertTrue(_fast_path_ready())
             with mock.patch.object(journal, "_Journal", Tracked):
-                _register_api_edit(_connect_modifier("a.outputX", "b.input1X"))
+                self.assertIs(api_edits._apply(_connect_modifier("a.outputX", "b.input1X")), True)
         finally:
             cmds.undoInfo(state=True)
         self.assertTrue(self.connected())
@@ -203,21 +213,23 @@ class TestRegisterApiEdit(_MembershipCase):
         cmds.flushUndo()
         cmds.unloadPlugin(PLUGIN)
         self.assertFalse(hasattr(cmds, UNDOABLE_API_COMMAND))
-        self.assertTrue(_api_edit_ready())
+        self.assertTrue(_fast_path_ready())
         self.assertTrue(hasattr(cmds, UNDOABLE_API_COMMAND))
 
     def test_a_load_failure_is_not_ready(self):
         cmds.flushUndo()
         cmds.unloadPlugin(PLUGIN)
         with mock.patch.object(cmds, "loadPlugin", return_value=None):
-            self.assertFalse(_api_edit_ready())  # "did not register": no exception
+            self.assertFalse(_fast_path_ready())  # "did not register": no exception
+        # (a load that registered nothing is not tried again in this session)
+        plugins._LOAD_FAILED = None
         # the state a forced unload leaves: loaded, no maya.cmds function
-        self.assertTrue(_api_edit_ready())
+        self.assertTrue(_fast_path_ready())
         wrapper = getattr(cmds, UNDOABLE_API_COMMAND)
         delattr(cmds, UNDOABLE_API_COMMAND)
         try:
             with mock.patch.object(cmds, "loadPlugin") as load:
-                self.assertFalse(_api_edit_ready())
+                self.assertFalse(_fast_path_ready())
             load.assert_not_called()
         finally:
             setattr(cmds, UNDOABLE_API_COMMAND, wrapper)
@@ -227,13 +239,13 @@ class TestRegisterApiEdit(_MembershipCase):
 
         class Spy:
             def doIt(self):
-                seen.append(("doIt", _api_edit_ready()))
+                seen.append(("doIt", _fast_path_ready()))
 
             def undoIt(self):
-                seen.append(("undoIt", _api_edit_ready()))
+                seen.append(("undoIt", _fast_path_ready()))
 
             def redoIt(self):
-                seen.append(("redoIt", _api_edit_ready()))
+                seen.append(("redoIt", _fast_path_ready()))
 
         plugins._run_undoable(Spy())
         cmds.undo()
@@ -245,12 +257,10 @@ class TestRegisterApiEdit(_MembershipCase):
         cmds.flushUndo()
         modifier = _connect_modifier("a.outputX", "b.input1X")
         modifier.connect(_plug("a.outputY"), _plug("b.input1Y"))  # refused: locked
-        with self.assertRaises(RuntimeError):
-            _register_api_edit(modifier)
+        # what doIt did before it failed is undone by _apply, and the caller takes cmds
+        self.assertIs(api_edits._apply(modifier), False)
         self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
-        self.assertTrue(self.connected())  # what doIt did before it failed ...
-        modifier.undoIt()
-        self.assertFalse(self.connected())  # ... the caller undoes
+        self.assertFalse(self.connected())
 
 
 class TestMembershipThroughCmds(_MembershipCase):
