@@ -126,13 +126,23 @@ class _Journal:
         _walk(self.ops, "doIt")
 
 
+# rig.nodetypes.plugins, bound on the first `_register` (it imports this module): the
+# module, read at each call, so a rebinding or a mock.patch of its function holds, without
+# the per-call ``from ... import`` (1.2 us under Maya's import hook, once per statement)
+_PLUGINS = None
+
+
 def _register(ops: list) -> None:
     """Puts ``ops`` on the undo queue as one step, through `rig.nodetypes.plugins._run_undoable`
     (its barrier finds nothing pending: `_flush` takes the list first). Raises (the edits are
     left applied; the caller reverts them) when rig's command cannot be had (a forced unload)."""
-    from rig.nodetypes.plugins import _run_undoable
+    global _PLUGINS
+    plugins = _PLUGINS
+    if plugins is None:
+        from rig.nodetypes import plugins
 
-    _run_undoable(_Journal(ops))
+        _PLUGINS = plugins
+    plugins._run_undoable(_Journal(ops))
 
 
 def _flush() -> None:

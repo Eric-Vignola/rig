@@ -28,7 +28,7 @@ from typing import Any, Union
 import numpy as np
 from rig._internal.journal import user_call
 from rig.nodetypes._base import Attribute, Node
-from rig._internal.plug import Plug
+from rig._internal.plug import Plug, _lazy
 
 
 # --------------------------------------------------------------------- #
@@ -62,11 +62,11 @@ def _node_lshift(node: Any, other: Any) -> Any:
     - Anything else => ``TypeError`` (use ``node.<attr> << value`` to
       target a specific channel).
     """
-    from rig._internal.types import (
-        _is_attribute_spec,
-        _is_matrix,
-        _is_membership,
-    )
+    # the types module, bound once (`_lazy`), not imported per call
+    types              = _lazy().types
+    _is_attribute_spec = types._is_attribute_spec
+    _is_matrix         = types._is_matrix
+    _is_membership     = types._is_membership
 
     # 0. Membership -- returns the node.
     if _is_membership(other):

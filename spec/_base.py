@@ -134,6 +134,12 @@ def _warn_shadowed(node_string: str, node: Any, long_name: str, short_name: Any)
         return
 
 
+# rig._internal.plug, bound on the first `_plug_of` (plug.py imports rig.spec): the module,
+# read at each call, without the per-call ``from ... import`` (1.2 us under Maya's import
+# hook, once per added attribute)
+_PLUG_MODULE = None
+
+
 def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = None) -> Any:
     """The :class:`Plug` of the attribute ``long_name`` of ``node``, the node
     object the spec was applied to, **owned by** it:
@@ -160,7 +166,13 @@ def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = No
     ``vtx[1]``), takes the string path (``_named_plug``): a plug with no owner,
     checked through the node's handle, whose name resolves as ``Plug(name)``
     resolves it."""
-    from rig._internal.plug import Plug, _named_plug  # deferred: plug.py imports rig.spec
+    global _PLUG_MODULE
+    plug_module = _PLUG_MODULE
+    if plug_module is None:
+        from rig._internal import plug as plug_module  # deferred: plug.py imports rig.spec
+
+        _PLUG_MODULE = plug_module
+    Plug, _named_plug = plug_module.Plug, plug_module._named_plug
 
     if node is not None:
         d  = node.__dict__
@@ -297,8 +309,6 @@ class _AttrSpec:
         same refusals, nothing written when it is locked already). Any other
         modifier on a node is a TypeError naming ``node.<attr> << it``.
         """
-        from rig._internal.types import _get_compound, _is_compound
-
         kargs = dict(self.kargs)
         if kargs.keys() == {"lock"}:
             if isinstance(target, (Attribute, Node)):
@@ -313,6 +323,9 @@ class _AttrSpec:
             )
 
         # If only keyable/channelBox flags AND target is compound, fan out.
+        # (imported here: ``lock`` / ``unlock`` above need neither)
+        from rig._internal.types import _get_compound, _is_compound
+
         if (
             len(kargs) == 2
             and "keyable" in kargs

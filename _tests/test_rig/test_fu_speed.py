@@ -136,7 +136,8 @@ class TestNoWalkForAChild(MayaTestCase):
 
     def test_find_attr_of_a_child(self):
         cmds.createNode("transform", name="a")
-        with mock.patch.object(_base, "_top_path", wraps=_base._top_path) as top, \
+        # find_attr calls its module's binding of `_top_path` (dg_node imports it)
+        with mock.patch.object(dg_node, "_top_path", wraps=_base._top_path) as top, \
                 mock.patch.object(dg_node, "_hold_if_element", wraps=dg_node._hold_if_element) as hold:
             for name in ("translateX", "ry", "sz", "rotatePivotX"):
                 str(getattr(Node("a"), name))
@@ -156,7 +157,7 @@ class TestNoWalkForAChild(MayaTestCase):
 
     def test_an_element_is_walked_once_for_its_path(self):
         cmds.createNode("plusMinusAverage", name="pma")
-        with mock.patch.object(_base, "_top_path", wraps=_base._top_path) as top:
+        with mock.patch.object(dg_node, "_top_path", wraps=_base._top_path) as top:
             attr = Node("pma").find_attr("input3D[1].input3Dx")
         self.assertEqual(top.call_count, 1)
         top_attr, steps = _base._held_path(attr)
