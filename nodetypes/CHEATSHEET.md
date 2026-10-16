@@ -34,6 +34,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 19 | [Name helpers](#19-name-helpers) | short / clean names, suffixes, component range strings |
 | 20 | [`cmds` results as typed nodes, and `Axis`](#20-cmds-results-as-typed-nodes-and-axis) | casting `maya.cmds` results with `Node`; the mirror axis |
 | 21 | [`plugins` — `load_plugin` and undo](#21-plugins--load_plugin-and-undo) | `rigUndoableAPICommand`: your own API edit as one undo step, and its rules |
+| 22 | [`AnimCurve` and the curve classes](#22-animcurve-and-the-curve-classes) | refer, the cast, `create` / `define` with keys, `get_keys` / `set_keys` / `num_keys` / `evaluate`, `AnimCurve.of`, keys from the class call |
 
 ---
 
@@ -1463,6 +1464,64 @@ print(cmds.getAttr("loc.tx"))  # 5.0
 cmds.undo()
 cmds.redo()
 print(cmds.getAttr("loc.tx"))  # 5.0
+```
+
+## 22. `AnimCurve` and the curve classes
+
+`AnimCurve` is the class of every animation curve (`animCurve`, abstract)
+and of the types with no class of their own (a driven key's
+`animCurveU*`); `AnimCurveTL` / `TA` / `TU` / `TT` are one timed type each.
+`AnimCurve("x")` refers to any curve, a typed class to its type only.
+Called with values, `AnimCurve([...])` returns **keys**, the value
+`plug << AnimCurve(...)` keys a plug with (the root
+[CHEATSHEET, section 39](../CHEATSHEET.md#39-animation-curves)); a typed
+class called with values is a `TypeError`, and `Cls.create(keys)` is the
+spelling for "a curve of this type with these keys". Values and times are
+in the UI's units, the curve's Maya attributes are keywords set after the
+keys (so `postInfinity=` is set on every run of a `define`; the keys'
+`post_infinity=` is compared, and keys a curve holds already write
+nothing), and the selection is kept.
+
+```python
+from rig import AnimCurve, AnimCurveTL, AnimCurveTU, NodeTypeError
+
+cmds.file(new=True, force=True)
+cmds.undoInfo(state=True, infinity=True)
+blink = AnimCurveTU.create([0, 1, 0], times=[0, 2, 4], name="blink")   # new, unconnected
+print(repr(blink), blink.num_keys)                       # AnimCurveTU("blink") 3
+print(repr(Node("blink")), repr(AnimCurve("blink")))     # AnimCurveTU("blink") AnimCurveTU("blink")
+try:
+    AnimCurveTL("blink")
+except NodeTypeError as err:
+    print(str(err).split("; ")[-1])                      # AnimCurve('blink') takes any curve
+try:
+    AnimCurveTU([0, 1])
+except TypeError as err:
+    print(str(err)[:44])                                 # AnimCurveTU([...]) refers to a curve by name
+print(type(AnimCurve([0, 1])).__name__)                  # _Keys
+
+lid = AnimCurveTU.define("lid", [0, 1], tangents="step", post_infinity="cycle_relative")   # made
+print(cmds.keyTangent("lid", query=True, outTangentType=True), cmds.getAttr("lid.postInfinity"))   # ['step', 'step'] 4
+cmds.flushUndo()
+again = AnimCurveTU.define("lid", [0, 1], tangents="step", post_infinity="cycle_relative")   # found, the same keys
+print(again == lid, cmds.undoInfo(query=True, undoQueueEmpty=True))   # True True
+AnimCurveTU.define("lid", [0, 1, 0], tangents="step")    # found: its keys replaced in place
+print(lid.num_keys, cmds.undoInfo(query=True, undoName=True))   # 3 rig.define
+```
+
+```python
+spin = AnimCurveTL.create([0, 10], times=[0, 24], name="spin")
+keys = spin.get_keys()                                   # the keys as a value, UI units
+print(keys.values, keys.times, keys.out_tangents)        # [ 0. 10.] [ 0. 24.] ['linear' 'linear']
+print(spin.evaluate([0, 12, 24]), spin.evaluate(6))      # [ 0.  5. 10.] 2.5
+spin.set_keys([0, 3], times=[0, 10], out_slopes=[0.5, np.nan])   # one step
+print(cmds.undoInfo(query=True, undoName=True), round(spin.get_keys().out_slopes[0], 4))   # rig.AnimCurve.set_keys 0.5
+
+cube = rc.polyCube(name="cube", constructionHistory=False)[0]
+cube.t << AnimCurve([0, 1])                              # three animCurveTL
+cube.v << blink.output                                   # share one curve: a plain connect
+print(AnimCurve.of(cube.t))                              # List([AnimCurveTL("cube_translateX"), AnimCurveTL("cube_translateY"), AnimCurveTL("cube_translateZ")])
+print(len(AnimCurve.of(cube)), AnimCurveTU.of(cube))     # 4 List([AnimCurveTU("blink")])
 ```
 
 ---

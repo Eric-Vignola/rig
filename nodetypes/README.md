@@ -74,6 +74,8 @@ rig/nodetypes/
 ├── display_layer.py   DisplayLayer           displayLayer
 ├── reference.py       Reference              reference
 ├── choice.py          Choice                 choice
+├── anim_curve.py      AnimCurve (any curve; its call with values makes keys), AnimCurveTL,
+│                      AnimCurveTA, AnimCurveTU, AnimCurveTT     animCurve, animCurveTL ...
 ├── follicle.py        Follicle               follicle
 └── plugins/
     ├── __init__.py    load_plugin() context manager, bundled_plugin_path()
@@ -88,6 +90,7 @@ from rig.nodetypes import (
     NurbsSurface, SkinCluster, BlendShape, ObjectSet, ShadingEngine, DisplayLayer,
     Reference, Choice, Follicle, Axis,
     Material, Lambert, Blinn, Phong, PhongE, SurfaceShader, StandardSurface, OpenPBRSurface,
+    AnimCurve, AnimCurveTL, AnimCurveTA, AnimCurveTU, AnimCurveTT,
     NodeLookupError, NodeNotFoundError, AmbiguousNodeError, NodeTypeError,
 )
 from rig.nodetypes.deformer import Deformer, tag_references
@@ -123,6 +126,8 @@ from rig.nodetypes.plugins import load_plugin
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `namespace`, `file_path`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `data_type` of both follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
+| `AnimCurve` | any animation curve (the abstract `animCurve`), and the types with no class below (a driven key's `animCurveU*`) | `AnimCurve.of(x)` (the curves driving a plug, a node, a `List`), `get_keys` / `set_keys`, `num_keys`, `evaluate`; called with values, `AnimCurve([...])` makes the keys `plug << ...` takes (a value, not a node); `create` / `define` are refused (abstract) |
+| `AnimCurveTL`, `AnimCurveTA`, `AnimCurveTU`, `AnimCurveTT` | exactly `animCurveTL`, `animCurveTA`, `animCurveTU`, `animCurveTT` | everything `AnimCurve` has; `create(keys, ...)` / `define(name, keys, ...)`; called with values a `TypeError` naming `AnimCurve([...])` |
 
 Each class inherits everything above it in its column, so a `Mesh` has
 every `Geometry`, `DAGNode` and `DGNode` method, and a `ShadingEngine` is an
@@ -332,6 +337,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | `Blinn.create(name=, ...)`, `Material.create(type=, name=, ...)` | `cmds.shadingNode(asShader=True)`, its `<shader>SG` engine and materialInfo, out of a scope unless `container=True` |
 | `DisplayLayer.create(*objects, name=, empty= / noRecurse= / number= / makeCurrent=)` | `cmds.createDisplayLayer`, empty unless objects are given, which join as themselves (`noRecurse`) |
 | `Reference.create(file_path, namespace)` | `cmds.file(reference=True)`; no `name=` |
+| `AnimCurveTL.create(keys=None, times=None, *, <key options>, name=, **attrs)`, `TA` / `TU` / `TT` | `cmds.createNode` (the selection kept), then the keys through the API (`MFnAnimCurve`), then the attributes, one `rig.create` step; `keys` is values or an `AnimCurve(...)` value (then no times or options); `define(name, keys, ...)` replaces a found curve's keys when they differ (`update=True`) |
 
 Inside `with container()` a typed create joins the scope as `Node.create`
 does: an explicit `name=` takes the flattened scope's prefix, every node the
@@ -722,6 +728,18 @@ Verified on Maya 2025; not bugs to work around blindly.
   (`SUPPORTED_NODE_TYPES`); `serialize_hierarchy` works with older ones.
   Watch which `cgmath` your `mayapy` imports: a site-packages copy wins
   over a `PYTHONPATH` checkout.
+- **An animation curve's keys: what Maya's own tools do.** `cutKey
+  -clear` deletes a curve it empties, so an update that clears the keys
+  first loses the node: rig replaces keys through `MFnAnimCurve.remove`, last
+  key first. `MFnAnimCurve.addKeys` merges (it never replaces, even with
+  `keepExistingKeys=False`), sorts unsorted times and silently merges
+  duplicate ones, takes internal units (radians, centimetres) and does
+  not take a time curve (`animCurveTT`: one `addKey` per key); rig refuses
+  times that are not strictly increasing and converts from the UI's units.
+  Maya's `setAttr` takes a value on a keyed or constrained plug and the DG
+  overrides it at the next evaluation; `plug << value` and `plug <<
+  AnimCurve(...)` replace the input first. A tangent slope reads back in
+  single precision (`5.0` set, `4.99999994` read).
 - **Method names are spelled as they are**: `set_xfrom_attrs_locked`
   (sic), and `BlendShape.set_targets_data` beside `set_target_data`.
 - `Mesh.bake_deformation` hard-codes `root_joint` as the skeleton. Its
