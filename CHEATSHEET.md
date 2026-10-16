@@ -310,11 +310,18 @@ print(p.tx >> None, repr(p.ty.get_inputs()))   # 2.0 List([Plug("p_parentConstra
 cmds.currentTime(0)
 ```
 
-A child of a compound connected whole (`c.t` into `g.t`) has no input of
-its own; a value, a plug, keys or `None` on it first split the compound's
-input into one per child (logged at INFO), then replace the child's, so the
-other children keep following. A value on the compound itself replaces the
-whole input; a list with a `skip` or a `None` splits it.
+One driver per channel. A child of a compound connected whole (`c.t` into
+`g.t`) has no input of its own; a value, a plug, keys or `None` on it first
+split the compound's input into one per child (logged at INFO), then
+replace the child's, so the other children keep following. A child that
+has an input of its own under that wire (two drivers, as Maya's
+`setKeyframe` leaves them: the viewport reads the child's, `getAttr` the
+compound's) keeps it, and the INFO line names it. A value on the compound
+itself replaces the whole input, and each child's; a list with a `skip` or
+a `None` splits it. A plug or `None` on the compound also removes the
+inputs its children have of their own (logged at INFO): `g.t << None`
+frees every channel. Each statement is one undo step, whose undo brings
+back what was there.
 
 ```python
 c = Node.create("transform", name="c")
@@ -324,6 +331,12 @@ g.t << c.t                                     # connected whole
 g.tx << 9                                      # split per child, then tx replaced
 print(repr(g.t.get_inputs()), repr(g.ty.get_inputs()))   # List([]) List([Plug("c.translateY")])
 print(g.t >> None)                             # [9. 5. 6.]
+g.t << None                                    # ty and tz freed too
+print(repr(g.ty.get_inputs()), g.t >> None)    # List([]) [9. 5. 6.]
+cmds.connectAttr("c.t", "g.t")
+cmds.setKeyframe("g.tx", time=0, value=1)      # Maya keys tx next to the whole wire
+g.ty << 2                                      # split: tx keeps its curve, tz follows c
+print(repr(g.tx.get_inputs()), repr(g.tz.get_inputs()))   # List([Plug("g_translateX.output")]) List([Plug("c.translateZ")])
 ```
 
 Short and long names both work, and `node.tx = 5` is sugar for `node.tx << 5`.
@@ -1435,8 +1448,8 @@ connecting into a locked attribute raises `InjectionError` (a
 `RuntimeError`), and a compound with a single locked child mutates nothing.
 Disconnecting is still allowed. The other refusal is a child whose compound
 is connected whole by an input that cannot be split per child (a
-`unitConversion` between unit kinds feeds it, or a sibling is locked,
-section 2): the error names `g.t << None`. A locked plug refuses even the value it
+`unitConversion` between unit kinds feeds it, or a sibling with no input of
+its own is locked, section 2): the error names `g.t << None`. A locked plug refuses even the value it
 already holds, so a build that ends with `<< lock` unlocks before it runs
 again; the error names the unlock (`Plug('b.translateY').unlock()`, with
 `Node('b').unlock()` first when the node is locked too). The lock verbs
@@ -3037,7 +3050,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
 | `node.lock()`, `plug.lock()` and their `unlock()` (`x << lock`) | one, Maya's own (`lockNode`, `setAttr -lock`); **none** when the object already is in that state |
 | `slot << None` on a `Typed` slot (any typed attribute that holds any data) that held a matrix, a double3, geometry ... | one, named `rig.replace`: the disconnect and the drop of the data its input left (an API edit, journaled with the statement); one undo brings back the connection and the data together. A slot that held a number or nothing has no drop |
-| a statement that removes a plug's input and then writes it: a value over a keyed, constrained or wired plug, a rewire (`x << b` over `x << a`), a child of a compound connected whole (its input split per child) | one, named `rig.replace`: the disconnects, the connects and the sets of the whole statement (a `List` broadcast included) |
+| a statement that removes a plug's input and then writes it: a value over a keyed, constrained or wired plug, a rewire (`x << b` over `x << a`), a child of a compound connected whole (its input split per child), a plug or `None` on a compound whose children have inputs of their own (one driver per channel: those go too) | one, named `rig.replace`: the disconnects, the connects and the sets of the whole statement (a `List` broadcast included); its undo brings back a double drive that was there |
 | `List.lock()` / `List.unlock()` (`List << lock`) over more than one command | one, named `rig.lock` / `rig.unlock` |
 | `plug << AnimCurve(...)`, a compound, a `List` broadcast or pairs of keys, a per-channel list holding keys (section 39) | one, named `rig.animcurve`: the new curves, their keys and their connects; **none** when every curve holds those keys already. `AnimCurveTL.create(keys)` is one `rig.create`, a `define` that makes or updates a curve one `rig.define`, `curve.set_keys(...)` one `rig.AnimCurve.set_keys` |
 | `Mesh.create`, `NurbsCurve.create`, `NurbsSurface.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.NurbsSurface.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
@@ -3281,7 +3294,7 @@ translate and rotate, and keys nothing on any other connected attribute.
 | a pairBlend Maya made | adds to its curve | the curve replaces the pairBlend's output on that channel; the pairBlend's curve is kept, unused there |
 | its own curve | adds the key | the curve's keys are replaced in place |
 | a locked plug | nothing keyed, no warning | `InjectionError`, even with the keys it holds: unlock before running again; `curve.set_keys(...)` and `AnimCurveTL.define(...)` on its curve raise the same |
-| a child of a compound connected whole (`c.t` into `cube.t`) | keys the child next to the whole input (two drivers) | the compound's input is split per child, then the curve replaces the child's |
+| a child of a compound connected whole (`c.t` into `cube.t`) | keys the child next to the whole input (two drivers: the viewport reads the curve, `getAttr` the compound) | the compound's input is split per child, then the curve replaces the child's; over Maya's curve there, keys it holds already keep it and the split is still made (one driver per channel) |
 
 ```python
 from rig import InjectionError

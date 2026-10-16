@@ -56,7 +56,7 @@ Two operators carry the language:
 
 | Spelling | Meaning | Returns |
 |---|---|---|
-| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects. A value or a plug over any connection (a constraint, a curve, a pairBlend, a wire) replaces it | `a`, so it chains |
+| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects. A value or a plug over any connection (a constraint, a curve, a pairBlend, a wire) replaces it; one driver per channel: on a compound, the inputs its children have of their own go too | `a`, so it chains |
 | `a >> None` | **introspect**: read the value (`getAttr`); on a node, the node itself | a float, a NumPy array, a string... |
 | `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
 | `node << Float("x")` | declare an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide`; declaring it again applies the settings given and keeps the value | the new plug, so its value goes next |
@@ -444,18 +444,35 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   (`rig.replace`): one undo brings the driver back. A locked plug still
   raises `InjectionError` with nothing changed, and `cube.tx.set(5)` is
   Maya's `setAttr`, which refuses a wired plug.
-- **A child of a compound connected whole gets an input of its own first.**
-  With `c.t` into `cube.t`, `cube.tx` has no input of its own, and Maya's
-  `connectAttr -f` (or a curve) into it leaves the channel two drivers: the
-  evaluation and a reopened file disagree. A value, a plug, keys or `None`
-  on `cube.tx` first split that input into one per child (`c.tx` into
-  `cube.tx` ..., logged at INFO), then replace `cube.tx`'s: `cube.ty` and
-  `cube.tz` keep following `c`. A value on the compound itself
-  (`cube.t << [1, 2, 3]`, `cube.t << 1`) replaces the whole input, as
-  `cube.t << d.t` does; a list with a `skip` or a `None` splits instead. An
-  input with no matching children to split (a `unitConversion` between
-  unit kinds feeds the compound whole), or a locked sibling, raises
-  `InjectionError` naming `cube.t << None`, with nothing changed.
+- **One driver per channel.** Maya takes a compound connected whole and an
+  input on one of its children at once (`c.t` into `cube.t`, and a wire or
+  a curve on `cube.tx`: Maya's `setKeyframe` on `cube.tx` makes one, so do
+  older scenes and raw `cmds`), and then answers by who reads: the viewport
+  and the evaluation manager read the child's input; `getAttr`, `MPlug`,
+  rig's `get()` and `bakeResults` read the compound's. rig keeps one driver
+  per channel, so every reader sees the channel's one input. A value, a
+  plug, keys or `None` on `cube.tx` first split the compound's input into
+  one per child (`c.tx` into `cube.tx` ..., logged at INFO), then replace
+  `cube.tx`'s: `cube.ty` and `cube.tz` keep following `c`. A child that
+  already has an input of its own under that wire keeps it (the leaf one;
+  the INFO line names it) and takes no part of the compound's, so a write
+  to any leaf of such a double drive, a value included, leaves one driver
+  on each channel. A plug or `None` on the compound itself also removes
+  the inputs its children have of their own (each logged at INFO), as a
+  value on it (`cube.t << [1, 2, 3]`, `cube.t << 1`) replaces each one:
+  `cube.t << None` frees every channel, the per-child wires of a split
+  included; a list with a `skip` or a `None` splits instead. Each statement
+  is one undo step (`rig.replace`, `rig.animcurve` for keys), and one undo
+  brings back what was there, a double drive included. An input with no
+  matching children to split (a `unitConversion` between unit kinds feeds
+  the compound whole), or a locked sibling that has no input of its own,
+  raises `InjectionError` naming `cube.t << None`, with nothing changed. A split inside a
+  referenced compound is saved as reference edits (the whole input
+  disconnected, one connect per child) that pin the sibling channels to
+  their driver at the time of the split: a later rewire of that compound
+  inside the asset is not picked up for those channels. To follow the
+  asset again, remove those edits (`referenceEdit` on the unloaded
+  reference).
 - **A lock is Maya's, with rig's checks in front.** A locked container
   locks its members, and its unlock unlocks every member, also one that was
   locked on its own; `member.unlock()` is refused, naming the container. A
