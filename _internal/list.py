@@ -57,6 +57,8 @@ from rig.nodetypes._base import (
     _same_plug,
     Attribute,
 )
+from rig._internal import anim_keys as _anim_keys
+from rig._internal.anim_keys import _Keys
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal.journal import statement, user_call
@@ -231,6 +233,12 @@ class List(list):
             if isinstance(kargs, dict) and kargs.keys() == {"lock"}:
                 return self.lock() if kargs["lock"] else self.unlock()
 
+        # Keys: one curve per plug (``List(ctrls).ry << AnimCurve([...])``), every
+        # row planned first, then one undo step (``rig.animcurve``)
+        if type(other) is _Keys:
+            _anim_keys.inject_rows(list(sequences(list(self), other)))
+            return self
+
         # Spec broadcast -- apply the same spec to every element node. An
         # element that cannot take an attribute is a TypeError naming it,
         # raised before anything is applied; nothing is silently dropped.
@@ -272,6 +280,11 @@ class List(list):
         rows = sequences(list(self), other)
         if isinstance(other, (list, tuple)) and any(_is_membership(o) for o in other):
             return self._membership_rows(list(rows))
+        if isinstance(other, (list, tuple)) and any(type(o) is _Keys for o in other):
+            # pairs of keys: every pair planned first (a row of another kind is a
+            # TypeError: one '<<' per kind), then one undo step
+            _anim_keys.inject_rows(list(rows))
+            return self
         if _holds_text(other):
             rows = _enum_rows(rows)
         for s, o in rows:

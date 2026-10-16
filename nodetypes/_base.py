@@ -3712,7 +3712,14 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
     raises TypeError: a class call names one node that exists; except that a
     membership class (``_MEMBER_KIND``: ``DisplayLayer``) called with no
     argument is its kind token (``Layer()``), and its ``None`` refusal names
-    it (``_NONE_TEXT``)."""
+    it (``_NONE_TEXT``); and that a class whose call also makes a value
+    (``_KEYS_CALL``: ``AnimCurve([0, 1, 0])`` returns keys) answers first."""
+    keys_call = getattr(cls, "_KEYS_CALL", None)
+    if keys_call is not None:
+        # a class whose call also makes a value (``AnimCurve([0, 1])``: keys)
+        made = keys_call(args, kwargs)
+        if made is not None:
+            return made
     label = _type_label(cls)
     if kwargs or len(args) != 1:
         if not args and not kwargs and cls._MEMBER_KIND:

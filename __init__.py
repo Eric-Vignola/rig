@@ -42,6 +42,15 @@ Operator conventions:
     * ``>>`` (left-to-right) -- introspect: ``plug >> None`` reads the value;
       ``plug >> Node`` clones the attr-spec onto another node (a name the
       node already has is refused).
+    * ``plug << AnimCurve([0, 90], times=[0, 24])`` keys the plug: one
+      animation curve per channel, of the type the plug takes (TL / TA / TU /
+      TT, Maya's rule), values in UI units, linear tangents (a bool or an enum
+      steps); an input the plug has is replaced (no pairBlend); a re-run
+      updates the plug's own curve in place, and unchanged keys write nothing;
+      one undo step (``rig.animcurve``); it returns the plug. ``AnimCurve("x")``
+      refers to a curve node, ``AnimCurveTL.create([...])`` /
+      ``.define("x", [...])`` make one, ``AnimCurve.of(plug)`` lists the curves
+      driving it, ``curve.get_keys()`` reads its keys back.
     * ``x.lock()`` / ``x.unlock()`` (``x << lock`` / ``x << unlock``) lock a
       plug (setAttr -lock), a node (lockNode) or a ``List`` (its plugs, then
       its nodes, one undo step ``rig.lock``) and return ``x``; ``is_locked``
@@ -200,6 +209,7 @@ from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
 from rig._internal.undo import undo_chunk
 from rig.membership import Components, Layer, Tag
+from rig.nodetypes.anim_curve import AnimCurve, AnimCurveTA, AnimCurveTL, AnimCurveTT, AnimCurveTU
 from rig.nodetypes.errors import (
     AmbiguousNodeError,
     NodeLookupError,
@@ -256,6 +266,12 @@ __all__ = [
     "Components",
     "Layer",
     "Tag",
+    # Animation curves (the keys value and the curve node classes)
+    "AnimCurve",
+    "AnimCurveTL",
+    "AnimCurveTA",
+    "AnimCurveTU",
+    "AnimCurveTT",
     # Container management
     "container",
     "set_options",
