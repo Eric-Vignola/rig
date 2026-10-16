@@ -476,6 +476,20 @@ class TestMesh(_Case):
         self.redo_steps(1)
         self.assertEqual((mesh_state("copyShape"), _hard_edges("copyShape"), _locked_rows("copyShape")), after)
 
+    def test_the_node_form_brings_back_the_hard_edges(self):
+        # nothing locked, the mesh only softened: the edges come back hard (the update once kept
+        # one MFnMesh across its setPoints and lost the edge flags)
+        _, path, uvs = self.saved()
+        copy = Mesh.load(path, uvs, name="copy")
+        cmds.polySoftEdge("copy", angle=180, constructionHistory=False)
+        self.assertEqual(_hard_edges("copyShape"), set())
+        copy.load(path, uvs)
+        self.assertEqual(_hard_edges("copyShape"), _hard_edges("bodyShape"))
+        self.undo_steps(1)
+        self.assertEqual(_hard_edges("copyShape"), set())
+        self.redo_steps(1)
+        self.assertEqual(_hard_edges("copyShape"), _hard_edges("bodyShape"))
+
     def test_the_node_form_world_space(self):
         t, path, uvs = self.saved()
         world = _world_points("bodyShape")

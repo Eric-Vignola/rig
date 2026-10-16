@@ -1917,6 +1917,7 @@ def _set_normals(fn: OpenMaya.MFnMesh, faces, vertices, normals, hard) -> None:
         np.asarray(vertices).tolist(),
         OpenMaya.MSpace.kObject,
     )
+    fn    = OpenMaya.MFnMesh(fn.object())  # a new one after the edit (see _MeshUpdateCommand)
     hard  = set(hard)
     it    = OpenMaya.MItMeshVertex(fn.object())
     edges = set()
@@ -2545,22 +2546,24 @@ class _MeshUpdateCommand(_MeshEdit):
         self._old = (old_points, old_shading)
         self.redoIt()
 
+    # A new MFnMesh after each edit that updates the surface: one kept across setPoints
+    # writes the shading into geometry the mesh no longer uses (the edge flags were lost)
+
     def redoIt(self) -> None:
-        fn = OpenMaya.MFnMesh(self._path)
-        _put_points(fn, self._points, self._space)
+        _put_points(OpenMaya.MFnMesh(self._path), self._points, self._space)
         if self._shading is not None:
+            fn   = OpenMaya.MFnMesh(self._path)
             hard = _edge_ids(fn, self._shading.hard)
             _put_shading(fn, hard, self._old[1][1])
-            self._locked = _lock_differing(fn, self._shading, hard)
+            self._locked = _lock_differing(OpenMaya.MFnMesh(self._path), self._shading, hard)
 
     def undoIt(self) -> None:
-        fn = OpenMaya.MFnMesh(self._path)
         points, shading = self._old
-        _put_points(fn, points, self._space)
+        _put_points(OpenMaya.MFnMesh(self._path), points, self._space)
         if shading is not None:
             hard, (faces, verts, normals) = shading
-            _put_shading(fn, hard, self._locked)
-            _set_normals(fn, faces, verts, normals, hard)
+            _put_shading(OpenMaya.MFnMesh(self._path), hard, self._locked)
+            _set_normals(OpenMaya.MFnMesh(self._path), faces, verts, normals, hard)
 
 
 class _MeshSetsEdit(_MeshEdit):
