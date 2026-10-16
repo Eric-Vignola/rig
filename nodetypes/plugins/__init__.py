@@ -105,23 +105,22 @@ def _ensure_loaded(name: str, quiet: bool) -> List[str]:
         if not cmds.pluginInfo(name, query=True, loaded=True):
             # Maya refused to initialise the file (it is not loaded): Maya's first error line,
             # for the messages of the fast paths and of `_run_undoable` (`_refusal`)
-            lines = [line.strip() for text in errors for line in text.splitlines() if line.strip()]
-            error._rig_refused = lines[0] if lines else ""
+            lines  = [line.strip() for text in errors for line in text.splitlines() if line.strip()]
+            reason = lines[0] if lines else "no error text"
+            error._rig_refused = (
+                f"rig's plug-in {path} did not register {command}: Maya refused to initialise "
+                f"it ({reason}; its error is printed above), so it is not loaded"
+            )
         raise error
     return loaded
 
 
 def _refusal(error: BaseException) -> Optional[str]:
-    """What Maya said when it refused to initialise rig's plug-in, if ``error`` (from
-    `_ensure_loaded`) is that refusal: the file exists, Maya printed its initializePlugin
-    error and left the plug-in unloaded. None for any other load failure."""
-    reason = getattr(error, "_rig_refused", None)
-    if reason is None:
-        return None
-    return (
-        f"Maya refused to initialise it ({reason or 'no error text'}; its error is printed "
-        "above), so it is not loaded"
-    )
+    """Why rig's plug-in is not loaded, with Maya's first error line, if ``error`` (from
+    `_ensure_loaded`) is Maya's refusal of the file: the file exists, Maya printed its
+    initializePlugin error and left the plug-in unloaded (so the unload advice of
+    ``error``'s own text does not apply). None for any other load failure."""
+    return getattr(error, "_rig_refused", None)
 
 
 # how to get a bundled plug-in's command back without a restart
