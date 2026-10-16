@@ -9,18 +9,23 @@ Maya, though ``Node`` and ``Plug`` resolve such a name (``persp.__is_camera__``)
   attr, a compound child), a mix, element plugs, a ``multi[:]`` slice.
 * `TestWrite`: ``nodes.__tag__ = 5`` sets every element (one undo step, both edit routes) and
   leaves ``vars(nodes)`` as it was; the list's own state stays Python state.
-* `TestNotEveryElement`: a name the first element lacks is AttributeError (Python state for an
-  assignment, as on a node); a name only the first has raises naming the element, and sets
-  nothing.
+* `TestNotEveryElement`: a name the first element lacks is AttributeError; a name only some
+  elements have raises naming the first that lacks it, in any order, and sets nothing; an
+  assignment of a name no element has is Python state, as on a node; a List subclass keeps the
+  private state its class body declares.
 * `TestProbes`: Python's probes (``__deepcopy__``, ``copy.copy``, an empty List, numpy, a
   Python member of the node such as ``_fn_set``) get what they got before, and a probe on a
   long list costs one lookup.
-* `TestDeleted`: an element deleted to the undo queue or freed by a new scene: AttributeError
-  when it is the first, its ``already deleted!`` after an element that has the attr.
+* `TestDeleted`: an element deleted to the undo queue or freed by a new scene: a read
+  AttributeError when it is the first, its ``already deleted!`` after an element that has the
+  attr; an assignment its ``already deleted!`` in either place.
 
-Negative control: on 818c24f (runs\\features\\listunderscore\\negctl.txt) 13 of the 20 tests
-fail; the seven guards (the probes, a Python member of an element, the list's own state, a
-name the first element lacks, a child only one plug has, the public names) pass there too.
+Negative control: on 818c24f (runs\\features\\listunderscore\\negctl3.json) 15 of the 23 tests
+fail; the eight guards (the probes, a Python member of an element, the list's own state, a
+name the first element lacks, a child only one plug has, the public names, an assignment no
+element has, a subclass's declared state) pass there too. On 317d9eb (negctl2.json, the first
+LU commit) the five LU FIX tests fail: an assignment the first element lacks, a deleted first
+element (both), and the two probe costs.
 """
 
 import copy
@@ -31,6 +36,8 @@ from maya import cmds
 
 from rig import Float, InjectionError, List, Node
 from rig._internal import journal
+from rig._internal import list as list_module
+from rig._internal.plug import Plug
 from rig.nodetypes.dg_node import DGNode
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
@@ -210,19 +217,52 @@ class TestNotEveryElement(_Case):
                 self.assertEqual(str(caught.exception), "__tag__")  # as before
                 self.assertEqual(getattr(List(items), "__tag__", "raised"), "raised")
 
-    def test_an_assignment_the_first_lacks_is_python_state_as_on_a_node(self):
+    def test_an_assignment_the_first_lacks_raises_when_another_has_it(self):
+        # in any order: [d, a] raises as [a, d] does, and sets nothing (LU FIX)
+        a, = _tagged("a")
+        d = Node.create("transform", name="d")
+        for items in ([d, a], [None, a], [3.0, a], [d, d.t, a.t]):
+            with self.subTest(items=_names(items)):
+                nodes = List(items)
+                state = dict(vars(nodes))
+                with self.assertRaisesRegex(
+                    AttributeError, r"element \[0\] .*'__tag__', which element \[\d\] has"
+                ):
+                    nodes.__tag__ = 7
+                self.assertEqual(vars(nodes), state)
+                self.assertEqual(cmds.getAttr("a.__tag__"), 1)  # no partial broadcast
+                with self.assertRaises(AttributeError):  # a read still raises
+                    nodes.__tag__
+
+    def test_an_assignment_no_element_has_is_python_state_as_on_a_node(self):
         a, = _tagged("a")
         d = Node.create("transform", name="d")
         nodes = List([d, a])
         nodes.__tga__ = 5
         self.assertEqual(vars(nodes)["__tga__"], 5)
         self.assertEqual(nodes.__tga__, 5)
-        nodes.__tag__ = 7
-        self.assertEqual(vars(nodes)["__tag__"], 7)
-        self.assertEqual(cmds.getAttr("a.__tag__"), 1)  # no partial broadcast
         # as a node does (DGNode.__setattr__; whether a typo should raise is pending)
         d.__tga__ = 5
         self.assertEqual(vars(d)["__tga__"], 5)
+
+    def test_a_subclass_keeps_the_private_state_its_class_declares(self):
+        # a '_' name a List subclass writes in its __init__ is Python state when
+        # its class body declares it, as on a node class (undeclared, it is a
+        # broadcast when every element has a Maya attr of that name: documented)
+        class Sub(List):
+            _extra = None
+
+            def __init__(self, items, extra):
+                super().__init__(items)
+                self._extra = extra
+
+        a, b = _tagged("a", "b")
+        cmds.addAttr("a", ln="_extra", at="double")
+        cmds.addAttr("b", ln="_extra", at="double")
+        nodes = Sub([a, b], 7)
+        self.assertEqual(vars(nodes)["_extra"], 7)
+        self.assertEqual(cmds.getAttr("a._extra"), 0)
+        self.assertEqual(copy.copy(nodes)._extra, 7)
 
     def test_only_the_first_has_it(self):
         a, b = _tagged("a", "b")
@@ -272,17 +312,51 @@ class TestProbes(_Case):
         self.assertEqual(getattr(List([a.t]), "_mplug", "raised"), "raised")
 
     def test_a_probe_costs_one_lookup(self):
+        # one element read, by its node's hasAttribute (the node's own '_' check,
+        # without the raise of DGNode.__getattr__)
         nodes = List(Node.create("transform", name=f"n{i}") for i in range(50))
+        reads = []
         calls = []
+        read  = list_module._private_plug
         real  = DGNode.__getattr__
+
+        def reading(x, name):
+            reads.append(name)
+            return read(x, name)
 
         def counting(self, name):
             calls.append(name)
             return real(self, name)
 
-        with mock.patch.object(DGNode, "__getattr__", counting):
+        with mock.patch.object(list_module, "_private_plug", reading), \
+                mock.patch.object(DGNode, "__getattr__", counting):
             self.assertIsNone(getattr(nodes, "__deepcopy__", None))
-        self.assertEqual(calls, ["__deepcopy__"])
+        self.assertEqual(reads, ["__deepcopy__"])
+        self.assertEqual(calls, [])
+
+    def test_a_probe_on_plugs_never_runs_the_plug_lookup(self):
+        # a name the node lacks is refused by its hasAttribute, as on a node: no
+        # child-name table, no node cast (LU FIX); one it has still resolves
+        a, b = _tagged("a", "b")
+        _pair("a")
+        _pair("b")
+        plugs = List([a.t, b.t, a.__pair__])
+        calls = []
+        real  = Plug.__getattr__
+
+        def counting(self, name):
+            calls.append(name)
+            return real(self, name)
+
+        with mock.patch.object(Plug, "__getattr__", counting):
+            self.assertIsNone(getattr(plugs, "__deepcopy__", None))
+            self.assertEqual(_names(np.asarray(List([a.t]), dtype=object)), ["a.translate"])
+            self.assertEqual(_names(plugs.__tag__), ["a.__tag__", "b.__tag__", "a.__tag__"])
+            self.assertEqual(_names(List([a.__pair__, b.__pair__]).__pairY__),
+                             ["a.__pairY__", "b.__pairY__"])
+        self.assertNotIn("__deepcopy__", calls)
+        self.assertNotIn("__array__", calls)
+        self.assertIn("__tag__", calls)
 
 
 class TestDeleted(_Case):
@@ -294,6 +368,12 @@ class TestDeleted(_Case):
             with self.subTest(first=str(items[1])):
                 self.assertEqual(getattr(List(items), "__tag__", "raised"), "raised")
                 self.assertIsNone(getattr(List(items), "__deepcopy__", None))
+                # an assignment raises, as with the deleted element second (LU FIX)
+                nodes = List(items)
+                with self.assertRaisesRegex(RuntimeError, "already deleted"):
+                    nodes.__tag__ = 5
+                self.assertNotIn("__tag__", vars(nodes))
+                self.assertEqual(cmds.getAttr("a.__tag__"), 1)
         for items in ([a, b], [a.t, bt]):
             with self.subTest(second=str(items[0])):
                 with self.assertRaisesRegex(RuntimeError, "already deleted"):
@@ -316,6 +396,11 @@ class TestDeleted(_Case):
             with self.subTest(first=type(items[0]).__name__):
                 self.assertEqual(getattr(List(items), "__tag__", "raised"), "raised")
                 self.assertIsNone(getattr(List(items), "__deepcopy__", None))
+                nodes = List(items)
+                with self.assertRaisesRegex(RuntimeError, "already deleted"):
+                    nodes.__tag__ = 5
+                self.assertNotIn("__tag__", vars(nodes))
+                self.assertEqual(cmds.getAttr("a.__tag__"), 1)
         for items in ([a2, b], [a2.t, bt]):
             with self.subTest(second=type(items[1]).__name__):
                 with self.assertRaisesRegex(RuntimeError, "already deleted"):

@@ -747,8 +747,11 @@ print(nodes.tz >> None)                      # [5. 5. 5.]
 ```
 
 A `_` name (`nodes.__tag__`, `nodes.__tag__ = 5`) broadcasts like any
-Maya attr when every element has it; otherwise it is an `AttributeError`,
-as Python's own probes (`__deepcopy__`) expect.
+Maya attr when every element has it, and one only some elements have
+raises, setting nothing. Reading one no element has is an
+`AttributeError` (Python's own probes, `__deepcopy__`, expect that);
+assigning one is Python state on the list, as on a node (a `List`
+subclass declares its private state in its class body, as a node class does).
 
 Slicing keeps the type; a list, tuple or array key picks slots (fancy
 indexing); an `int` returns the element.
