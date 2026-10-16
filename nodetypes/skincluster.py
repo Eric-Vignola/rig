@@ -5,14 +5,16 @@ Skincluster class
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Callable, List, Union
 
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, statement
 from rig._internal.undo import _undo_chunk
+from rig.nodetypes import _files
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.deformer import Deformer
@@ -26,6 +28,46 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
 INF_TYPE = Union[str, DAGNode, List[Union[str, DAGNode]]]
+
+
+_SKIN_LOAD_DOC = """Loads skin weights from a cgmath file (a SkinData): one name, two forms.
+
+    ``SkinCluster.load(skin, geometry, **flags_and_attrs)``, from the class,
+    CREATES a new skinCluster on `geometry`, always, as `create` does: the
+    geometry's own skinCluster (and its bind pose) is deleted first, so a
+    second load replaces the first::
+
+        skin = SkinCluster.load("body_skin.npz", body)
+
+    ``SkinCluster('body_skincluster').load(skin)``, from a skinCluster, UPDATES
+    that skinCluster's weights in place, the inverse of
+    ``SkinCluster('body_skincluster').save(...)``: as ``set_weights(SkinData)``,
+    the influences are matched by name, the file's missing ones added and the
+    ones it does not name removed::
+
+        SkinCluster("body_skincluster").load("body_skin.npz")
+
+    Args:
+        skin: The file (a str or os.PathLike, ``~`` expanded; a cgmath
+            ``.npz`` / ``.json`` / ``.pkl``), or the SkinData itself. The file
+            comes first, the geometry second: the other order is a TypeError.
+        geometry: (creating) The geometry, as `create` takes it.
+        flags_and_attrs: (creating) as `create` takes them (``name=``,
+            ``skinMethod=``, ``maximumInfluences=`` ...).
+
+    Returns:
+        The new SkinCluster (creating), or this SkinCluster (updating).
+
+    The file is read, and what it holds checked, before anything is made or
+    changed: a missing file is a FileNotFoundError, a file of another class a
+    TypeError naming what it holds, a file from an older cgmath cgmath's
+    LegacyFileError; weights that do not fit the points, and a missing or
+    ambiguous joint, raise before any edit too. A SkinData holds the weights
+    and the influences only: a new skin binds at the joints' current pose,
+    with Maya's default settings (pass them again).
+
+    Each call is ONE undo step named ``rig.SkinCluster.load``.
+    """
 
 
 def flatten_vertices(seq):
@@ -100,7 +142,7 @@ class SkinCluster(Deformer):
 
     _DEFINE_REFUSED = (
         "a skinCluster is keyed by its geometry: SkinCluster.create(geom, influences) "
-        "makes one; SkinCluster('x') refers to one"
+        "or SkinCluster.load(path, geom) makes one; SkinCluster('x') refers to one"
     )
 
     # --- creation
@@ -525,6 +567,63 @@ class SkinCluster(Deformer):
             data.prune(min_value=0.0001)
             data.remove_unused()
         return data
+
+    # --- files
+
+    def save(self, path: str | os.PathLike, *, full_path: bool = False, optimize: bool = False) -> str:
+        """Saves this skinCluster's weights to a cgmath file: its SkinData
+        (`serialize`), the inverse of `load`.
+
+        Args:
+            path: A str or os.PathLike (``~`` expanded). The extension sets the
+                format: ``.npz`` (recommended), ``.json`` or ``.pkl`` (never
+                load a ``.pkl`` you did not write).
+            full_path, optimize: as `serialize` takes them. Short influence
+                names (the default) load into any hierarchy that has the
+                joints once each; full paths only into the same hierarchy.
+
+        Returns:
+            `path`, as written (``~`` expanded).
+
+        The weights and the influences (by name, in order) are saved; the
+        skin's settings (skinningMethod, maximumInfluences, normalizeWeights,
+        bindPreMatrix connections) and its bind pose are not (a SkinData holds
+        none of them). A read of the scene: no undo step, the selection
+        unchanged. The path is checked before anything is serialized (an
+        extension cgmath does not save: ValueError; a missing folder:
+        FileNotFoundError).
+        """
+        path = _files.check_save_path(path, "SkinCluster.save")
+        self.serialize(full_path=full_path, optimize=optimize).save(path)
+        return path
+
+    @statement
+    def _load_new(cls, skin, geometry, **kwargs):
+        from cgmath.geometry import SkinData
+
+        _files.check_order("SkinCluster.load(skin, geometry)", skin, geometry)
+        data = _files.read(skin, (SkinData,), "SkinCluster.load", "the skin")
+        with _undo_chunk("rig.SkinCluster.load"):
+            return cls.create(geometry, data, **kwargs)
+
+    @statement
+    def _load_into(self, skin, *args, **kwargs):
+        from cgmath.geometry import SkinData
+
+        method = f"SkinCluster({self.name!r}).load"
+        if args or kwargs:
+            got = [type(a).__name__ for a in args] + [f"{k}=" for k in kwargs]
+            raise TypeError(
+                f"{method} updates its weights in place from the file alone (got {', '.join(got)} "
+                f"too); SkinCluster.load(path, geometry, ...) makes a new skinCluster"
+            )
+        data = _files.read(skin, (SkinData,), method, "the skin")
+        with _undo_chunk("rig.SkinCluster.load"):
+            self.set_weights(data)
+        return self
+
+    load = _files.creates_or_updates(_load_new, _load_into, _SKIN_LOAD_DOC)
+    del _load_new, _load_into
 
     def normalize_weights(self) -> None:
         """Normalize the skin weights."""

@@ -629,6 +629,39 @@ def _typed_creator(fn):
     return statement(creator)
 
 
+# the file methods a transform has not (its shape and its branch have them), named by
+# the attribute miss's hint (`_file_method_hint`)
+_FILE_METHODS = frozenset({"save", "load"})
+
+
+def _file_method_hint(node, name: str) -> str | None:
+    """The hint of ``node.save`` / ``node.load`` missed on a transform: its
+    shape's class saves and loads the shape, ``save_hierarchy`` /
+    ``load_hierarchy`` the branch. None on any other node."""
+    from rig.nodetypes.transform import Transform
+
+    if not isinstance(node, Transform):
+        return None
+    short = node.short_name
+    kind  = "joint" if type(node).__name__ == "Joint" else "transform"
+    shape = None
+    try:
+        shape = node.get_shape()
+    except (RuntimeError, ValueError):
+        pass
+    if shape is not None and hasattr(type(shape), name):
+        cls  = type(shape).__name__
+        what = "mesh" if cls == "Mesh" else "curve" if cls == "NurbsCurve" else "surface"
+        own  = f"{cls}({short!r}).{name}(...) {'saves' if name == 'save' else 'updates'} its {what}, "
+    else:
+        own = ""
+    if name == "save":
+        branch = "save_hierarchy(...) its branch" if own else "save_hierarchy(...) saves its branch"
+    else:
+        branch = f"{type(node).__name__}.load_hierarchy(path) makes a branch"
+    return f"{short!r} is a {kind}: {own}{branch}"
+
+
 # NURBS-surface ``cv`` / lattice ``pt``: the names a ComponentPlug may answer
 _MULTIDIM = frozenset({"cv", "pt"})
 
@@ -862,13 +895,17 @@ class DGNode(Node):
                     attr, fresh = DGNode._find_attr_fresh(self, attr_name)
                 else:
                     attr = find(attr_name)
-            except AttributeError:
+            except AttributeError as error:
                 if attr_name in _COMPONENT_TOKENS:
                     from rig._internal.node import _component_fallback
 
                     found = _component_fallback(self, attr_name)
                     if found is not None:
                         return found
+                if attr_name in _FILE_METHODS:
+                    hint = _file_method_hint(self, attr_name)
+                    if hint:
+                        raise AttributeError(f"{error}; {hint}") from None
                 raise
         elif not d["_objhandle"].isAlive():
             # a node a new scene freed: its cached MPlug points at freed memory

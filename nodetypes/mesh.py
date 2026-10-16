@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import contextlib
 import enum
+import itertools
+import os
 import re
 from collections import namedtuple
 from numbers import Number
@@ -14,8 +16,9 @@ from typing import Generator, List
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit, mel_eval
+from rig._internal.journal import cmds_edit, mel_eval, statement
 from rig._internal.undo import _undo_chunk
+from rig.nodetypes import _files
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
@@ -25,6 +28,57 @@ from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.plugins import _run_undoable
 from scipy.spatial import cKDTree
 
+
+_MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
+
+    ``Mesh.load(mesh, uvs=None, *, name=None, container=None, **attrs)``, from the
+    class, CREATES a new mesh, always (as `create` does: a second load of one
+    file makes ``body1``)::
+
+        body = Mesh.load("body_mesh.npz", "body_uv.npz", name="body")
+
+    ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=True)``, from a mesh,
+    UPDATES that mesh in place, the inverse of ``Mesh('bodyShape').save(...)``::
+
+        Mesh("bodyShape").load("body_mesh.npz", "body_uv.npz")
+
+    Args:
+        mesh: The mesh's file (a str or os.PathLike, ``~`` expanded; a cgmath
+            ``.npz`` / ``.json`` / ``.pkl``, or an asset cgmath's MeshData
+            reads, ``.obj`` / ``.fbx`` / ``.glb`` / ``.usd``), or the MeshData
+            itself. A file (or object) holding a ``cgmath.render.scene.Object``
+            stands for the mesh and its UVs, as in `create`.
+        uvs: The UVs' file, or the UVList / UVData itself. None: no UVs (a
+            new mesh has none; an updated one keeps its own). An Object
+            carries its UVs: `uvs` with one is a TypeError.
+        name, container, attrs: (creating) as `create` takes them. None: the
+            data's name (``cubeShape`` names the transform ``cube``), else
+            ``polySurface<N>``.
+        world_space: (updating) True: the points land where the data puts them
+            in the world (through its matrix, or an Object's transform); the
+            transform is not moved. False: the data's points become the mesh's
+            own, object space (the inverse of ``save(world_space=False)``).
+
+    Returns:
+        The new Mesh (creating), or this Mesh (updating).
+
+    Every file is read, and what it holds checked, before anything is made or
+    changed: a missing file is a FileNotFoundError, a file of another class (a
+    UV file as the mesh, two files swapped) a TypeError naming what it holds,
+    a file from an older cgmath cgmath's LegacyFileError.
+
+    Creating is ``create`` with the data: its normals bring back the hard edges
+    and locked normals. Updating needs the same topology (the vertex count, the
+    face counts and every face's vertex list, the holes) and a mesh without
+    history (construction history or a deformer would compute over its
+    points), else a ValueError naming ``Mesh.load(...)`` for a new mesh. It
+    sets every point, then, from data with normals, the hard edges and locked
+    normals, then each UV set of the file by name (made when the mesh has
+    none of that name; its other sets, and the current set, stay).
+
+    Each call is ONE undo step named ``rig.Mesh.load`` (redo brings it back)
+    and leaves the selection as it was.
+    """
 
 MAP_DATATYPE         = "doubleArray"
 MAP_DEFAULT_VALUE    = 0.0
@@ -54,8 +108,8 @@ class Mesh(Geometry):
     _CREATE_FLAGS = frozenset({"name", "uv_data"})
 
     _DEFINE_REFUSED = (
-        "a mesh is built from its data: Mesh.create(mesh_data, name='x') makes one; "
-        "Mesh('x') refers to one"
+        "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
+        "Mesh.load(path, name='x') makes one; Mesh('x') refers to one"
     )
 
     @property
@@ -100,14 +154,21 @@ class Mesh(Geometry):
         """Creates a mesh object from a mesh data object.
 
         Args:
-            mesh_data: A MeshData object.
+            mesh_data: A MeshData object. Or a ``cgmath.render.scene.Object``,
+                which stands for the mesh and its UVs: the mesh is built from
+                its ``mesh``, with its ``uv`` (a UVData is one UV set, a UVList
+                every set), named after it, and its transform (scale, rotate,
+                translate, rotate order, rotate axis, visibility) goes on the
+                new transform node. Its render settings (texture, colours,
+                wireframe ...) and its skin are not used.
             uv_data: One or more UVData objects. The first one fills the default
                 set (``map1``, renamed to its name when that differs); each
-                other one becomes a new set of its name, in order.
+                other one becomes a new set of its name, in order. Given with
+                an Object (which carries its UVs) it is a TypeError.
             name: The name of the mesh to create, a keyword (a trailing
                 ``Shape<digits>`` is dropped: ``"mShape2"`` names the transform
-                ``m2`` and the shape ``mShape2``). None: ``mesh_data.name``,
-                else ``polySurface<N>``.
+                ``m2`` and the shape ``mShape2``). None: ``mesh_data.name``
+                (an Object's own name), else ``polySurface<N>``.
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
@@ -128,12 +189,24 @@ class Mesh(Geometry):
         through the API (``MFnMesh.addHoles``, before any recorded command):
         every vertex keeps its number, the face lists its outer loop, then
         each hole loop, as ``mesh_data`` does, and each UV stays on its vertex.
-        Invalid mesh data raises RuntimeError before anything is made; an
-        error after the transform is made deletes it again before it
-        propagates.
+
+        The data's normals (``normals`` / ``normal_indices``, which
+        `serialize` writes) bring back its shading, through the API before
+        any recorded command: an edge is hard where the two faces' normals
+        differ at one of its ends, and a normal Maya then computes away from
+        the data's is set and locked (a locked normal of the source). So
+        ``Mesh.create(*m.serialize())`` gives back ``m``'s hard edges and
+        locked normals. Data without normals (an ``.obj``, a MeshData built by
+        hand) is all smooth.
+
+        Invalid mesh data (normals that do not fit the faces too) raises
+        RuntimeError before anything is made; an error after the transform is
+        made deletes it again before it propagates.
         """
         from cgmath.geometry import UVData
 
+        if _files.is_object(mesh_data):
+            uv_data = _object_uvs(mesh_data, uv_data)
         if uv_data:
             if isinstance(uv_data, UVData):
                 uv_data = [uv_data]
@@ -679,6 +752,80 @@ class Mesh(Geometry):
                 _propagate_holes_to_uvs(mesh_data, uv_list)
             return mesh_data, uv_list
         return mesh_data
+
+    # --- files
+
+    def save(
+        self,
+        path:        str | os.PathLike,
+        uvs:         str | os.PathLike | None = None,
+        *,
+        world_space: bool                     = True,
+    ) -> str | tuple[str, str]:
+        """Saves this mesh to a cgmath file: its MeshData (`serialize`), and with
+        `uvs` its UV sets (a UVList) to a second file. The inverse of `load`.
+
+        Args:
+            path: The mesh's file, a str or os.PathLike (``~`` expanded). The
+                extension sets the format: ``.npz`` (recommended), ``.json`` or
+                ``.pkl`` (never load a ``.pkl`` you did not write: a pickle
+                runs code when it is read).
+            uvs: The UVs' file (same rules), another path than `path`. None:
+                the UVs are not saved (a MeshData holds none).
+            world_space: True: world-space points; False: object-space points
+                and the transform's world matrix (as `serialize`).
+
+        Returns:
+            `path`, or ``(path, uvs)``, each as written (``~`` expanded).
+
+        A read of the scene: no undo step, the selection unchanged. Both paths
+        are checked before anything is serialized: an extension cgmath does not
+        save or the same path twice is a ValueError, a missing folder a
+        FileNotFoundError, and nothing is written. An existing file is
+        replaced; cgmath writes a file whole, so a save that fails leaves the
+        old one as it was.
+        """
+        path = _files.check_save_path(path, "Mesh.save")
+        if uvs is not None:
+            uvs = _files.check_save_path(uvs, "Mesh.save")
+            if _files.same_file(path, uvs):
+                raise ValueError(
+                    f"Mesh.save: the mesh and its UVs are two files: give uvs= another path than {path!r}"
+                )
+            mesh_data, uv_list = self.serialize(world_space=world_space)
+            mesh_data.save(path)
+            uv_list.save(uvs)
+            return path, uvs
+        self.serialize(world_space=world_space, include_uvs=False).save(path)
+        return path
+
+    @statement
+    def _load_new(cls, mesh, uvs=None, *, name=None, container=None, **kwargs):
+        data, uv_data = _read_mesh_files("Mesh.load", mesh, uvs)
+        with _undo_chunk("rig.Mesh.load"):
+            return cls.create(data, uv_data, name=name, container=container, **kwargs)
+
+    @statement
+    def _load_into(self, mesh, uvs=None, *, world_space=True, **kwargs):
+        method = f"Mesh({self.name!r}).load"
+        if kwargs:
+            raise TypeError(
+                f"{method} updates the mesh in place: it takes the files and world_space= "
+                f"(got {', '.join(f'{k}=' for k in kwargs)}); Mesh.load(path, ...) makes a new mesh"
+            )
+        data, uv_data = _read_mesh_files(method, mesh, uvs)
+        update = _mesh_update(self, method, mesh, data, uv_data, world_space)
+        with _undo_chunk("rig.Mesh.load"):
+            _MeshUpdateCommand(self, *update[:3])
+            names = set(self.uv_sets)
+            for uv in update[3]:
+                if uv.name not in names:
+                    self.add_uv_set(uv.name)
+                self.set_uv_data(uv, uv.name)
+        return self
+
+    load = _files.creates_or_updates(_load_new, _load_into, _MESH_LOAD_DOC)
+    del _load_new, _load_into
 
     # --- paintable map methods
 
@@ -1517,6 +1664,373 @@ def _write_uv_set(
 _IDENTITY_16 = np.eye(4).ravel()
 
 
+# --- the data's shading: hard / soft edges and locked normals ------------------------------
+#
+# A MeshData's normals are one per face-vertex (``normals[normal_indices]``). Its shading
+# comes back from them in two parts, through the API on the shape:
+#
+# * the edges: an edge between two faces is smooth when the two faces' normals agree at both
+#   its ends (to _SPLIT_TOL), else hard (``setEdgeSmoothings``);
+# * the locked normals: once the edges are set, a normal Maya computes that still differs
+#   from the data's (by more than _LOCK_TOL) was a locked normal in the source, and is set
+#   (``setFaceVertexNormals``, which locks it).
+#
+# The edges are paired in numpy from the faces' loops, and Maya's edge ids are looked up only
+# for the hard edges, so a mostly smooth mesh costs little more than its create.
+
+# two normals of one vertex further apart than this split the edge between their faces
+_SPLIT_TOL = 1e-5
+# a normal Maya computes this far from the data's is a locked normal of the data
+_LOCK_TOL = 1e-4
+
+
+def _data_normals(mesh_data: MeshData, n_rows: int) -> tuple | None:
+    """The data's normals and the normal of each of its `n_rows` face-vertices:
+    ``(normals (N, 3), ids (n_rows,))``, or None when the data holds no normals.
+    Raises RuntimeError (nothing is made) when they do not fit the faces."""
+    normals = getattr(mesh_data, "normals", None)
+    ids     = getattr(mesh_data, "normal_indices", None)
+    if normals is None or ids is None:
+        return None
+    normals = np.asarray(normals, dtype=np.float64)
+    ids     = np.asarray(ids, dtype=np.int64).ravel()
+    if not len(ids) and not normals.size:
+        return None
+    if normals.ndim != 2 or normals.shape[1] != 3:
+        raise RuntimeError(f"MeshData: the normals are {normals.shape}, not (N, 3)")
+    if len(ids) != n_rows:
+        raise RuntimeError(
+            f"MeshData: {len(ids)} normal indices for {n_rows} face-vertices (one each)"
+        )
+    if len(ids) and (int(ids.min()) < 0 or int(ids.max()) >= len(normals)):
+        raise RuntimeError(
+            f"MeshData: a normal index is not one of the {len(normals)} normals "
+            f"(indices range {int(ids.min())}..{int(ids.max())})"
+        )
+    if not np.isfinite(normals).all():
+        raise RuntimeError("MeshData: the normals must be finite (got nan or inf)")
+    return normals, ids
+
+
+def _apart(normals: np.ndarray, i: np.ndarray, j: np.ndarray, tol: float) -> np.ndarray:
+    """For each pair of normal ids ``(i[k], j[k])`` of `normals`, True when the
+    two normals are further apart than `tol` (the same id never is)."""
+    out = i != j
+    sel = np.flatnonzero(out)
+    if len(sel):
+        d = normals[i[sel]] - normals[j[sel]]
+        out[sel] = np.einsum("ij,ij->i", d, d) > tol * tol
+    return out
+
+
+def _face_loops(counts: np.ndarray, indices: np.ndarray, holes: dict) -> tuple:
+    """The half-edges of the faces `counts` / `indices` (the data's lists: a holed
+    face lists its outer loop's corners and its holes' corners) as two row arrays
+    ``(start, end)``: each half-edge runs from the face-vertex row ``start`` to the
+    row ``end`` of the next corner of its loop. A holed face has a loop for its
+    outer corners and one for each of its `holes` (``{face: [hole loop, ...]}``,
+    as `_mesh_topology` gives them)."""
+    n_rows = len(indices)
+    starts = np.cumsum(counts) - counts
+    end    = np.arange(1, n_rows + 1, dtype=np.int64)
+    last   = starts + counts - 1
+    keep   = counts > 0
+    end[last[keep]] = starts[keep]
+    start = np.arange(n_rows, dtype=np.int64)
+    if not holes:
+        return start, end
+    drop, extra_a, extra_b = [], [], []
+    for face, loops in holes.items():
+        first  = int(starts[face])
+        rows   = range(first, first + int(counts[face]))
+        row_of = {int(indices[r]): r for r in rows}
+        on     = {v for loop in loops for v in loop}
+        outer  = [r for r in rows if int(indices[r]) not in on]
+        drop.extend(rows)
+        for loop_rows in [outer] + [[row_of[v] for v in loop] for loop in loops]:
+            extra_a.extend(loop_rows)
+            extra_b.extend(loop_rows[1:] + loop_rows[:1])
+    mask = np.ones(n_rows, dtype=bool)
+    mask[drop] = False
+    return (
+        np.concatenate((start[mask], np.asarray(extra_a, dtype=np.int64))),
+        np.concatenate((end[mask], np.asarray(extra_b, dtype=np.int64))),
+    )
+
+
+def _hard_edges(
+    counts:   np.ndarray,
+    indices:  np.ndarray,
+    holes:    dict,
+    normals:  np.ndarray,
+    ids:      np.ndarray,
+    n_points: int,
+) -> tuple:
+    """The hard edges of the data: each edge two faces share whose normals
+    (`normals[ids]`, per face-vertex) differ at one of its ends, as
+    ``(pairs (H, 2), faces (H,), corners (H,))``: its two vertices, and a face of
+    it with the corner the edge starts at in the face's list (-1 in a holed
+    face). An edge of one face (a border) or of more than two (non-manifold) is
+    left smooth, as Maya makes it.
+
+    Only the half-edges at a split vertex (one whose face-vertices hold more than
+    one normal id) are paired: a hard edge has its normals split at an end, and a
+    mostly smooth mesh has few such vertices."""
+    none = (np.empty((0, 2), dtype=np.int64), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64))
+    if not len(indices):
+        return none
+    first_id = np.empty(n_points, dtype=np.int64)
+    first_id[indices] = ids
+    split_rows = first_id[indices] != ids
+    if not split_rows.any():
+        return none
+    split_vertex = np.zeros(n_points, dtype=bool)
+    split_vertex[indices[split_rows]] = True
+    starts = np.cumsum(counts) - counts
+    if holes:
+        a, b = _face_loops(counts, indices, holes)
+        near = np.flatnonzero(split_vertex[indices[a]] | split_vertex[indices[b]])
+        a, b = a[near], b[near]
+    else:
+        # the half-edges from and to the corners at a split vertex (once each: one
+        # from a split corner's previous corner is listed when that is no split corner)
+        at_split = split_vertex[indices]
+        rows  = np.flatnonzero(at_split)
+        face  = np.searchsorted(starts, rows, side="right") - 1
+        first = starts[face]
+        last  = first + counts[face] - 1
+        nxt   = np.where(rows == last, first, rows + 1)
+        prv   = np.where(rows == first, last, rows - 1)
+        lone  = ~at_split[prv]
+        a = np.concatenate((rows, prv[lone]))
+        b = np.concatenate((nxt, rows[lone]))
+    va, vb = indices[a], indices[b]
+    keys   = np.minimum(va, vb) * np.int64(n_points) + np.maximum(va, vb)
+    order  = np.argsort(keys, kind="stable")
+    sk     = keys[order]
+    same   = sk[1:] == sk[:-1]
+    # the first of exactly two half-edges with one key
+    pair = same.copy()
+    pair[1:] &= ~same[:-1]
+    pair[:-1] &= ~same[1:]
+    first  = np.flatnonzero(pair)
+    h1, h2 = order[first], order[first + 1]
+    face1  = np.searchsorted(starts, a[h1], side="right") - 1
+    face2  = np.searchsorted(starts, a[h2], side="right") - 1
+    shared = face1 != face2
+    if not shared.all():
+        h1, h2, face1 = h1[shared], h2[shared], face1[shared]
+    # the other face's rows of h1's two ends (its half-edge usually runs the other way)
+    forward = va[h2] == va[h1]
+    at_a    = np.where(forward, a[h2], b[h2])
+    at_b    = np.where(forward, b[h2], a[h2])
+    split   = _apart(normals, ids[a[h1]], ids[at_a], _SPLIT_TOL)
+    split  |= _apart(normals, ids[b[h1]], ids[at_b], _SPLIT_TOL)
+    hard    = np.flatnonzero(split)
+    h1, face1 = h1[hard], face1[hard]
+    corners = a[h1] - starts[face1]
+    if holes:
+        corners[np.isin(face1, list(holes))] = -1
+    return np.stack((va[h1], vb[h1]), axis=1), face1, corners
+
+
+def _edge_ids(fn: OpenMaya.MFnMesh, hard: tuple) -> list[int]:
+    """Maya's edge id of each hard edge of `hard` (`_hard_edges`) of the mesh `fn`:
+    the edge at its corner of its face (``MItMeshPolygon.getEdges``, whose edge
+    ``k`` runs from the face's corner ``k``), checked by its two vertices, else
+    looked up among the edges of its first vertex."""
+    pairs, faces, corners = hard
+    if not len(pairs):
+        return []
+    poly = OpenMaya.MItMeshPolygon(fn.object())
+    vert = None
+    ids  = []
+    for (v0, v1), face, corner in zip(pairs.tolist(), faces.tolist(), corners.tolist()):
+        if corner >= 0:
+            poly.setIndex(face)
+            edge = poly.getEdges()[corner]
+            ends = fn.getEdgeVertices(edge)
+            if (ends[0] == v0 and ends[1] == v1) or (ends[0] == v1 and ends[1] == v0):
+                ids.append(edge)
+                continue
+        if vert is None:
+            vert = OpenMaya.MItMeshVertex(fn.object())
+        vert.setIndex(v0)
+        for edge in vert.getConnectedEdges():
+            ends = fn.getEdgeVertices(edge)
+            if ends[0] == v1 or ends[1] == v1:
+                ids.append(edge)
+                break
+    return ids
+
+
+def _normals_now(fn: OpenMaya.MFnMesh) -> tuple:
+    """Maya's normals of the mesh `fn` and the normal of each of its face-vertices,
+    in its face-vertex order, object space: ``(normals (N, 3), ids)``."""
+    ids     = fn.getNormalIds()[1]
+    ids     = np.fromiter(ids, dtype=np.int64, count=len(ids))
+    normals = _raw_normals(fn)
+    if normals is None:
+        normals = fn.getNormals(OpenMaya.MSpace.kObject)
+        flat    = np.fromiter(itertools.chain.from_iterable(normals), dtype=np.float64, count=3 * len(normals))
+        normals = flat.reshape(-1, 3)
+    return normals, ids
+
+
+def _raw_normals(fn: OpenMaya.MFnMesh) -> np.ndarray | None:
+    """The normals of the mesh `fn`, ``(N, 3)``, copied from Maya's own array
+    (API 1.0 ``MFnMesh.getRawNormals``, object space), or None when that cannot
+    be read (then the caller reads them through API 2.0). Read only, and at
+    once, while nothing edits the mesh. Why: API 2.0's MFloatVectorArray has no
+    buffer, so its normals cross into numpy one float at a time (about 4 ms for
+    20k normals, a sixth of a 20k-face create); the raw array takes 0.1 ms."""
+    count = fn.numNormals
+    if not count:
+        return np.empty((0, 3), dtype=np.float64)
+    try:
+        import ctypes
+
+        from maya import OpenMaya as api1
+
+        sel = api1.MSelectionList()
+        sel.add(fn.fullPathName())
+        path = api1.MDagPath()
+        sel.getDagPath(0, path)
+        mesh = api1.MFnMesh(path)
+        if mesh.numNormals() != count:
+            return None
+        address = int(mesh.getRawNormals())
+        if not address:
+            return None
+        values = (ctypes.c_float * (3 * count)).from_address(address)
+        return np.frombuffer(values, dtype=np.float32).astype(np.float64).reshape(-1, 3)
+    except Exception:  # noqa: BLE001 (any failure takes the API 2.0 read)
+        return None
+
+
+def _rows_now(fn: OpenMaya.MFnMesh, indices: np.ndarray, counts: np.ndarray) -> np.ndarray | None:
+    """For each face-vertex of the mesh `fn` (its order), the row of the data's lists
+    `counts` / `indices` with its face and vertex; None when the two list them in
+    one order. Only a holed face can list them in another."""
+    counts_now, ids_now = fn.getVertices()
+    ids_now = np.fromiter(ids_now, dtype=np.int64, count=len(ids_now))
+    if np.array_equal(ids_now, indices):
+        return None
+    nv    = np.int64(max(int(indices.max(initial=0)), int(ids_now.max(initial=0))) + 1)
+    faces = np.repeat(np.arange(len(counts), dtype=np.int64), counts)
+    keys  = faces * nv + indices
+    order = np.argsort(keys)
+    now   = np.repeat(np.arange(len(counts_now), dtype=np.int64), list(counts_now)) * nv + ids_now
+    return order[np.searchsorted(keys[order], now)]
+
+
+def _face_vertices(fn: OpenMaya.MFnMesh, rows: np.ndarray) -> tuple:
+    """The face and the vertex of each face-vertex row `rows` of the mesh `fn`."""
+    counts, ids = fn.getVertices()
+    faces = np.repeat(np.arange(len(counts), dtype=np.int64), list(counts))[rows]
+    verts = np.fromiter(ids, dtype=np.int64, count=len(ids))[rows]
+    return faces, verts
+
+
+def _set_normals(fn: OpenMaya.MFnMesh, faces, vertices, normals, hard) -> None:
+    """Sets (and locks) the normal of each face-vertex ``(faces[i], vertices[i])``,
+    object space. ``setFaceVertexNormals`` hardens the edges at the vertices it
+    sets: those not in `hard` (edge ids) are made smooth again, which keeps the
+    locked normals."""
+    if not len(faces):
+        return
+    fn.setFaceVertexNormals(
+        OpenMaya.MVectorArray(np.asarray(normals, dtype=np.float64).tolist()),
+        np.asarray(faces).tolist(),
+        np.asarray(vertices).tolist(),
+        OpenMaya.MSpace.kObject,
+    )
+    hard  = set(hard)
+    it    = OpenMaya.MItMeshVertex(fn.object())
+    edges = set()
+    for vertex in set(np.asarray(vertices).tolist()):
+        it.setIndex(vertex)
+        edges.update(edge for edge in it.getConnectedEdges() if edge not in hard)
+    if edges:
+        fn.setEdgeSmoothings(sorted(edges), [True] * len(edges))
+        fn.cleanupEdgeSmoothing()
+        fn.updateSurface()
+
+
+def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) -> tuple:
+    """Sets the face-vertex normals Maya computes away from the data's `shading`
+    (its locked normals), the mesh's edges `hard` (ids) being its hard ones.
+    Returns them as ``(faces, vertices)``.
+
+    Compared per Maya normal: each takes the data's normal of its face-vertices
+    when they all have one (Maya splits a vertex's normal where the data does),
+    else each face-vertex is compared on its own. When Maya numbers the normals
+    as the data does (data a Maya mesh was serialized to), normal by normal."""
+    now, now_ids = _normals_now(fn)
+    rows = _rows_now(fn, shading.indices, shading.counts) if shading.holes else None
+    want = shading.ids if rows is None else shading.ids[rows]
+    if len(now) == len(shading.normals) and np.array_equal(now_ids, want):
+        d    = now - shading.normals
+        far  = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
+        diff = np.flatnonzero(far[now_ids]) if far.any() else ()
+    else:
+        link  = np.full(len(now), -1, dtype=np.int64)
+        link[now_ids] = want
+        one   = link[now_ids] == want
+        far   = np.zeros(len(now), dtype=bool)
+        known = np.flatnonzero(link >= 0)
+        if len(known):
+            d = now[known] - shading.normals[link[known]]
+            far[known] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
+        differs = far[now_ids] & one
+        if not one.all():
+            other = np.flatnonzero(~one)
+            d = now[now_ids[other]] - shading.normals[want[other]]
+            differs[other] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
+        diff = np.flatnonzero(differs)
+    if not len(diff):
+        return (), ()
+    faces, verts = _face_vertices(fn, diff)
+    _set_normals(fn, faces, verts, shading.normals[want[diff]], hard)
+    return faces, verts
+
+
+# the data's shading, checked: its lists, its normals and the normal of each face-vertex,
+# and its hard edges as vertex pairs
+_Shading = namedtuple("_Shading", "counts indices holes normals ids hard")
+
+
+def _shading_of(mesh_data: MeshData, holes: dict, linear: np.ndarray | None = None) -> _Shading | None:
+    """The data's shading (`_Shading`), or None for data with no normals. Raises
+    RuntimeError, before anything is made, when its normals do not fit its faces.
+    With `linear` (3x3, row vectors), the normals are taken through it (as normals
+    are: its inverse transpose, normalised): into another mesh's object space."""
+    counts  = np.asarray(mesh_data.counts, dtype=np.int64).ravel()
+    indices = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
+    found   = _data_normals(mesh_data, len(indices))
+    if found is None:
+        return None
+    normals, ids = found
+    hard = _hard_edges(counts, indices, holes, normals, ids, len(mesh_data.points))
+    if linear is not None:
+        normals = normals @ np.linalg.inv(linear).T
+        length  = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals = np.divide(normals, length, out=np.zeros_like(normals), where=length > 0)
+    return _Shading(counts, indices, holes, normals, ids, hard)
+
+
+def _restore_shading(fn: OpenMaya.MFnMesh, shading: _Shading) -> None:
+    """The data's `shading` on the new mesh `fn` (all its edges smooth, no normal
+    locked): its hard edges, then its locked normals. Pure API: `Mesh.create`
+    calls it while it builds the shape, before any recorded command touches it."""
+    hard = _edge_ids(fn, shading.hard)
+    if hard:
+        fn.setEdgeSmoothings(hard, [False] * len(hard))
+        fn.cleanupEdgeSmoothing()
+    fn.updateSurface()
+    _lock_differing(fn, shading, hard)
+
+
 def _create_mesh(
     mesh_data: MeshData, name: str | None, uv_data: list[UVData] | None
 ) -> str:
@@ -1542,8 +2056,18 @@ def _create_mesh(
        the new transform already has).
 
     Any error after step 2 deletes the transform before it propagates.
+
+    The data's normals (when it has them) give the shape its hard edges and
+    locked normals in step 4, after the UV sets (`_restore_shading`). A
+    ``cgmath.render.scene.Object`` in place of `mesh_data` is built from its
+    mesh, its name (when `name` is None) and its transform (`_place_object`,
+    in place of the mesh's matrix); `Mesh.create` passes its UVs in `uv_data`.
     """
+    obj = None
+    if _files.is_object(mesh_data):
+        obj, mesh_data = mesh_data, mesh_data.mesh
     counts, indices, holes = _mesh_topology(mesh_data)
+    shading = _shading_of(mesh_data, holes)
     uv_sets = list(uv_data or ())
     names   = [uv.name for uv in uv_sets]
     for i, uv_name in enumerate(names):
@@ -1551,7 +2075,7 @@ def _create_mesh(
             raise RuntimeError(f"UV set {uv_name} already exists.")
     if holes:
         uv_sets = [_holed_uvs(mesh_data, uv, holes) for uv in uv_sets]
-    name = _shape_create_name(name or mesh_data.name)
+    name = _shape_create_name(name or (obj.name if obj is not None else mesh_data.name))
 
     xform  = cmds.createNode("transform", name="polySurface#", skipSelect=True)
     sel    = OpenMaya.MSelectionList()
@@ -1577,19 +2101,192 @@ def _create_mesh(
             else:
                 fn.createUVSet(uv.name)
                 _write_uv_set(fn, uv.name, uv, clear=False)
+        if shading is not None:
+            _restore_shading(fn, shading)
         cmds_edit.sets(xform, forceElement="initialShadingGroup")
         if name:
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
             xform = cmds_edit.rename(xform, name)
-        matrix = mesh_data.matrix.ravel()
-        if not np.array_equal(matrix, _IDENTITY_16):
-            # a new transform is at rest already (world-space data has no matrix)
-            cmds_edit.xform(xform, matrix=matrix)
+        if obj is not None:
+            _place_object(xform, obj)
+        else:
+            matrix = mesh_data.matrix.ravel()
+            if not np.array_equal(matrix, _IDENTITY_16):
+                # a new transform is at rest already (world-space data has no matrix)
+                cmds_edit.xform(xform, matrix=matrix)
     except BaseException:
         if handle.isValid():
             cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
         raise
     return xform
+
+
+def _read_mesh_files(method: str, mesh, uvs) -> tuple:
+    """`Mesh.load`'s inputs, read and checked (`_files.read`): ``(data, uvs)``, the
+    MeshData (or ``cgmath.render.scene.Object``) and the UVList / UVData or None.
+    An Object carries its UVs: it comes back with None, and `uvs` with it is a
+    TypeError (before the UVs' file is read)."""
+    from cgmath.geometry import MeshData, UVData, UVList
+
+    data = _files.read(
+        mesh, (MeshData,), method, "the mesh", refused=(UVData,),
+        hints=(((UVData, UVList), "the UVs go in uvs="),), objects=True,
+    )
+    if _files.is_object(data):
+        _object_uvs(data, uvs, method, "uvs=")
+        return data, None
+    if uvs is None:
+        return data, None
+    return data, _files.read(
+        uvs, (UVList, UVData), method, "uvs", hints=((MeshData, "the mesh goes first"),)
+    )
+
+
+def _source_label(src) -> str:
+    """How a load's error names its input: the path, or the data object's class."""
+    return repr(os.fspath(src)) if _files.is_path(src) else f"the {type(src).__name__}"
+
+
+def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool) -> tuple:
+    """`Mesh('x').load`'s edit, checked before anything changes: ``(points, space,
+    shading, uv_sets)`` for `_MeshUpdateCommand` and the UV sets. Raises ValueError
+    for a mesh with history or data of another topology, and the errors of
+    `_mesh_topology` / `_shading_of` / `_check_uv_fit`."""
+    obj = None
+    if _files.is_object(data):
+        obj, data, uvs = data, data.mesh, data.uv
+    fn = OpenMaya.MFnMesh(mesh.mdagpath)
+    if _has_history(fn):
+        raise ValueError(
+            f"{method}: {mesh.name!r} has history (its inMesh is connected: construction history "
+            f"or a deformer), which would compute over the points it sets; delete the history, "
+            f"or Mesh.load(path) makes a new mesh"
+        )
+    _, _, holes = _mesh_topology(data)
+    counts_now, ids_now = fn.getVertices()
+    counts = np.asarray(data.counts, dtype=np.int64).ravel()
+    indices = np.asarray(data.indices, dtype=np.int64).ravel()
+    holes_now = [(int(face), [int(v) for v in verts]) for face, verts in fn.getHoles()]
+    holes_data = []
+    if data.hole_faces is not None and len(data.hole_faces):
+        offset = 0
+        for face, count in zip(np.asarray(data.hole_faces).tolist(), np.asarray(data.hole_counts).tolist()):
+            holes_data.append((int(face), [int(v) for v in np.asarray(data.hole_indices)[offset : offset + count]]))
+            offset += count
+    same = (
+        len(data.points) == fn.numVertices
+        and np.array_equal(counts, np.fromiter(counts_now, dtype=np.int64, count=len(counts_now)))
+        and np.array_equal(indices, np.fromiter(ids_now, dtype=np.int64, count=len(ids_now)))
+        and sorted((f, sorted(v)) for f, v in holes_data) == sorted((f, sorted(v)) for f, v in holes_now)
+    )
+    if not same:
+        raise ValueError(
+            f"{method}: {_source_label(src)} holds another topology than {mesh.name!r} "
+            f"({len(data.points)} vertices and {len(counts)} faces against its {fn.numVertices} and "
+            f"{fn.numPolygons}, or other face lists or holes); a load updates the points, the shading "
+            f"and the UVs of the same topology: Mesh.load({_source_label(src)}) makes a new mesh"
+        )
+    points = np.asarray(data.points, dtype=np.float64).reshape(-1, 3)
+    linear = None
+    if world_space:
+        matrix = np.asarray(obj.world_matrix if obj is not None else data.matrix, dtype=np.float64).reshape(4, 4)
+        points = points @ matrix[:3, :3] + matrix[3, :3]
+        world  = np.array(mesh.mdagpath.inclusiveMatrix()).reshape(4, 4)
+        linear = matrix[:3, :3] @ np.linalg.inv(world[:3, :3])
+        if np.allclose(linear, np.eye(3), rtol=0.0, atol=1e-12):
+            linear = None
+        space = OpenMaya.MSpace.kWorld
+    else:
+        space = OpenMaya.MSpace.kObject
+    if not np.isfinite(points).all():
+        raise ValueError(f"{method}: the points must be finite (got nan or inf)")
+    shading = _shading_of(data, holes, linear)
+    uv_sets = [] if uvs is None else [uvs] if _is_uv_data(uvs) else list(uvs)
+    names   = [uv.name for uv in uv_sets]
+    for i, uv in enumerate(uv_sets):
+        if uv.name in names[:i]:
+            raise ValueError(f"{method}: two UV sets of the file are named {uv.name!r}")
+        _check_uv_fit(fn, uv)
+    return OpenMaya.MPointArray(points.tolist()), space, shading, uv_sets
+
+
+def _is_uv_data(uvs) -> bool:
+    from cgmath.geometry import UVData
+
+    return isinstance(uvs, UVData)
+
+
+def _check_uv_fit(fn: OpenMaya.MFnMesh, uv_data: UVData) -> None:
+    """Raises RuntimeError / TypeError, before any edit, when `uv_data` does not fit
+    the faces of the mesh `fn` (what `Mesh.set_uv_data` checks of its data)."""
+    name = uv_data.name
+    if not isinstance(name, str) or not name:
+        raise TypeError(f"UVData.name must be a non-empty str, not {name!r}")
+    n_uvs   = len(np.asarray(uv_data.points, dtype=float).reshape(-1, 2))
+    counts  = np.asarray(uv_data.counts, dtype=np.int64).ravel()
+    indices = np.asarray(uv_data.indices, dtype=np.int64).ravel()
+    if not n_uvs and not len(indices):
+        return
+    if len(counts) != fn.numPolygons:
+        raise RuntimeError(f"UVData {name!r}: {len(counts)} face counts for {fn.numPolygons} faces")
+    if int(counts.sum()) != len(indices):
+        raise RuntimeError(
+            f"UVData {name!r}: the face counts add up to {int(counts.sum())}, "
+            f"but there are {len(indices)} indices"
+        )
+    if len(indices) and (int(indices.min()) < 0 or int(indices.max()) >= n_uvs):
+        raise RuntimeError(
+            f"UVData {name!r}: an index is not one of the {n_uvs} UVs "
+            f"(indices range {int(indices.min())}..{int(indices.max())})"
+        )
+
+
+def _object_uvs(obj, uv_data, method: str = "Mesh.create()", slot: str = "uv_data="):
+    """The UVs of the ``cgmath.render.scene.Object`` `obj` (its ``uv``: a UVData,
+    a UVList or None), checked: TypeError when `uv_data` is given too (an Object
+    carries its UVs) or the Object holds no mesh."""
+    if uv_data is not None:
+        raise TypeError(
+            f"{method}: an Object carries its mesh and its UVs, so it takes no {slot} "
+            f"({slot} goes with a MeshData)"
+        )
+    from cgmath.geometry import MeshData
+
+    if not isinstance(obj.mesh, MeshData):
+        raise TypeError(f"{method}: the Object {obj.name!r} holds no mesh (its mesh is {obj.mesh!r})")
+    return obj.uv
+
+
+# an Object's transform values a new transform takes, with their rest values (left unset)
+_OBJECT_PLACEMENT = (
+    ("rotateOrder", "rotate_order", 0),
+    ("rotateAxis",  "rotate_axis",  (0.0, 0.0, 0.0)),
+    ("scale",       "scale",        (1.0, 1.0, 1.0)),
+    ("rotate",      "rotate",       (0.0, 0.0, 0.0)),
+    ("translate",   "translate",    (0.0, 0.0, 0.0)),
+    ("visibility",  "visibility",   True),
+)
+
+
+def _place_object(xform: str, obj) -> None:
+    """Puts the new transform `xform` where the ``cgmath.render.scene.Object``
+    `obj` is: its scale, rotate (in its rotate order), translate, rotate axis
+    and visibility, as a lone Object holds them (the mesh's own matrix is not
+    used: cgmath's renderer places the mesh by the Object). An Object under a
+    parent (in a Scene) gives its world matrix instead."""
+    node = _cast(xform)
+    if obj.get_parent() is not None:
+        node.find_attr("rotateOrder").set(int(obj.rotate_order))
+        cmds_edit.xform(xform, matrix=np.asarray(obj.world_matrix, dtype=float).ravel().tolist())
+        return
+    for attr, field, rest in _OBJECT_PLACEMENT:
+        value = getattr(obj, field)
+        if isinstance(rest, tuple):
+            value = [float(x) for x in np.asarray(value, dtype=float).ravel()]
+            if value != list(rest):
+                node.find_attr(attr).set(*value)
+        elif value != rest:
+            node.find_attr(attr).set(type(rest)(value))
 
 
 def _build_hole_map(mesh_data: MeshData) -> dict[int, list[list[int]]]:
@@ -1817,6 +2514,74 @@ class _MeshSetPointsCommand(_MeshEdit):
 
     def redoIt(self) -> None:
         _put_points(OpenMaya.MFnMesh(self._path), self._points, self._space)
+
+
+def _shading_now(fn: OpenMaya.MFnMesh) -> tuple:
+    """The shading of the mesh `fn` as `_put_shading` puts it back: ``(hard edge
+    ids, (faces, vertices, normals) of its locked face-vertex normals)``."""
+    hard   = [edge for edge in range(fn.numEdges) if not fn.isEdgeSmooth(edge)]
+    locked = np.array([fn.isNormalLocked(i) for i in range(fn.numNormals)], dtype=bool)
+    if not locked.any():
+        return hard, ((), (), ())
+    normals, ids = _normals_now(fn)
+    rows = np.flatnonzero(locked[ids])
+    faces, verts = _face_vertices(fn, rows)
+    return hard, (faces, verts, normals[ids[rows]])
+
+
+def _put_shading(fn: OpenMaya.MFnMesh, hard: list[int], unlock: tuple) -> None:
+    """Unlocks the face-vertex normals ``unlock`` (``(faces, vertices)``), then makes
+    the edges `hard` hard and every other edge smooth, and updates the mesh."""
+    faces, verts = unlock[:2]
+    if len(faces):
+        fn.unlockFaceVertexNormals(np.asarray(faces).tolist(), np.asarray(verts).tolist())
+    flags = np.ones(fn.numEdges, dtype=bool)
+    flags[np.asarray(hard, dtype=np.int64)] = False
+    fn.setEdgeSmoothings(list(range(fn.numEdges)), flags.tolist())
+    fn.cleanupEdgeSmoothing()
+    fn.updateSurface()
+
+
+class _MeshUpdateCommand(_MeshEdit):
+    """`Mesh('x').load`: every point of the mesh, in one space, then, with the
+    data's `shading` (`_shading_of`), its hard edges and locked normals in place
+    of the mesh's own. Undo puts back the points, then the old shading (its hard
+    edges and its locked normals); redo makes the edit again."""
+
+    UNDO_EDIT = "Mesh.load"
+
+    def __init__(self, mesh: Mesh, points: OpenMaya.MPointArray, space: int, shading) -> None:
+        super().__init__(mesh)
+        self._points  = points
+        self._space   = space
+        self._shading = shading
+        self._old     = None
+        self._locked  = ((), ())
+        _run_undoable(self)
+
+    def doIt(self) -> None:
+        fn = OpenMaya.MFnMesh(self._path)
+        old_points = fn.getPoints(self._space)
+        old_shading = _shading_now(fn) if self._shading is not None else None
+        self._old = (old_points, old_shading)
+        self.redoIt()
+
+    def redoIt(self) -> None:
+        fn = OpenMaya.MFnMesh(self._path)
+        _put_points(fn, self._points, self._space)
+        if self._shading is not None:
+            hard = _edge_ids(fn, self._shading.hard)
+            _put_shading(fn, hard, self._old[1][1])
+            self._locked = _lock_differing(fn, self._shading, hard)
+
+    def undoIt(self) -> None:
+        fn = OpenMaya.MFnMesh(self._path)
+        points, shading = self._old
+        _put_points(fn, points, self._space)
+        if shading is not None:
+            hard, (faces, verts, normals) = shading
+            _put_shading(fn, hard, self._locked)
+            _set_normals(fn, faces, verts, normals, hard)
 
 
 class _MeshSetsEdit(_MeshEdit):

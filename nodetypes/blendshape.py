@@ -5,13 +5,16 @@ Blendshape class
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, statement
+from rig._internal.undo import _undo_chunk
+from rig.nodetypes import _files
 from rig.nodetypes._base import _connected_attrs, Attribute
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.geometry import iter_component_ranges
@@ -19,6 +22,44 @@ from rig.nodetypes.transform import Transform
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
+
+
+_BLENDSHAPE_LOAD_DOC = """Loads blendShape targets from a cgmath file (a MorphList): one name, two forms.
+
+    ``BlendShape.load(targets, geometry, **flags_and_attrs)``, from the class,
+    CREATES a new blendShape on `geometry`, always (as `create` does: a second
+    load stacks a second blendShape)::
+
+        face = BlendShape.load("body_face.npz", body, name="face_bs")
+
+    ``BlendShape('face_bs').load(targets)``, from a blendShape, UPDATES that
+    blendShape's targets in place by name, the inverse of
+    ``BlendShape('face_bs').save(...)``: each target of the file replaces the
+    offsets of its target of that name, or is added when there is none; the
+    blendShape's other targets stay::
+
+        BlendShape("face_bs").load("body_face.npz")
+
+    Args:
+        targets: The file (a str or os.PathLike, ``~`` expanded; a cgmath
+            ``.npz`` / ``.json`` / ``.pkl``), or the MorphList / MorphData
+            itself (never changed: the load works on a copy). The file comes
+            first, the geometry second: the other order is a TypeError.
+        geometry: (creating) The base, as `create` takes it.
+        flags_and_attrs: (creating) as `create` takes them (``name=`` ...).
+
+    Returns:
+        The new BlendShape (creating), or this BlendShape (updating).
+
+    The file is read, and what it holds checked, before anything is made or
+    changed: a missing file is a FileNotFoundError, a file of another class a
+    TypeError naming what it holds, a file from an older cgmath cgmath's
+    LegacyFileError. A MorphData holds a target's sparse offsets and its name
+    only: the weights come back 0, and in-betweens are not carried.
+
+    Each call is ONE undo step named ``rig.BlendShape.load`` and leaves the
+    selection as it was.
+    """
 
 
 class BlendShape(Deformer):
@@ -51,8 +92,8 @@ class BlendShape(Deformer):
     )
 
     _DEFINE_REFUSED = (
-        "a blendShape is keyed by its geometry: BlendShape.create(*targets, base) makes "
-        "one; BlendShape('x') refers to one"
+        "a blendShape is keyed by its geometry: BlendShape.create(*targets, base) or "
+        "BlendShape.load(path, base) makes one; BlendShape('x') refers to one"
     )
 
     @classmethod
@@ -403,9 +444,11 @@ class BlendShape(Deformer):
         weight_attr = self.find_attr("weight")
         org_mesh    = self.get_original_geometries()
 
-        # if there is an original mesh, use it to compute target data
+        # if there is an original mesh, use it to compute target data, in its
+        # object space, as get_target_data reads a live target (a moved base
+        # would otherwise offset every target by its move)
         if org_mesh:
-            org_mesh = org_mesh[0].serialize(include_uvs=False)
+            org_mesh = org_mesh[0].serialize(include_uvs=False, world_space=False)
 
         target_data_list = []
         for i in self.get_target_indices():
@@ -442,3 +485,64 @@ class BlendShape(Deformer):
             self.set_target_data(
                 target=target.name, data=target, tolerance=tolerance, force=force
             )
+
+    # --- files
+
+    def save(self, path: str | os.PathLike, *, match_name: list[str] | str | None = None) -> str:
+        """Saves this blendShape's targets to a cgmath file: its MorphList
+        (`serialize`), the inverse of `load`.
+
+        Args:
+            path: A str or os.PathLike (``~`` expanded). The extension sets the
+                format: ``.npz`` (recommended), ``.json`` or ``.pkl`` (never
+                load a ``.pkl`` you did not write).
+            match_name: The targets to save, as `serialize` takes them. None:
+                every target.
+
+        Returns:
+            `path`, as written (``~`` expanded).
+
+        Each target's sparse offsets, its name and the order are saved; its
+        weight, its in-betweens and a live target mesh's connection are not (a
+        MorphData holds none of them). A read of the scene: no undo step, the
+        selection unchanged. The path is checked before anything is serialized
+        (an extension cgmath does not save: ValueError; a missing folder:
+        FileNotFoundError).
+        """
+        path = _files.check_save_path(path, "BlendShape.save")
+        self.serialize(match_name=match_name).save(path)
+        return path
+
+    @statement
+    def _load_new(cls, targets, geometry, **kwargs):
+        _files.check_order("BlendShape.load(targets, geometry)", targets, geometry)
+        data = _read_targets("BlendShape.load", targets)
+        with _undo_chunk("rig.BlendShape.load"):
+            return cls.create(data, geometry, **kwargs)
+
+    @statement
+    def _load_into(self, targets, *args, **kwargs):
+        method = f"BlendShape({self.name!r}).load"
+        if args or kwargs:
+            got = [type(a).__name__ for a in args] + [f"{k}=" for k in kwargs]
+            raise TypeError(
+                f"{method} updates its targets in place from the file alone (got {', '.join(got)} "
+                f"too); BlendShape.load(path, geometry, ...) makes a new blendShape"
+            )
+        data = _read_targets(method, targets)
+        with _undo_chunk("rig.BlendShape.load"):
+            self.set_targets_data(data)
+        return self
+
+    load = _files.creates_or_updates(_load_new, _load_into, _BLENDSHAPE_LOAD_DOC)
+    del _load_new, _load_into
+
+
+def _read_targets(method: str, targets):
+    """`BlendShape.load`'s targets, read and checked (`_files.read`): a MorphList,
+    a copy (a set prunes the offsets in place, and the caller's object is never
+    changed)."""
+    from cgmath.geometry import MorphData, MorphList
+
+    data = _files.read(targets, (MorphList, MorphData), method, "the targets")
+    return MorphList([data.copy()]) if isinstance(data, MorphData) else MorphList([t.copy() for t in data])
