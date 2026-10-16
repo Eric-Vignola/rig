@@ -889,6 +889,7 @@ class TestSkinCluster(_Case):
         self.ready()
         again = SkinCluster.load(self.path("skin.npz"), geo)
         new = cmds.ls("geo_skincluster", uuid=True)
+        self.assert_kept_selection()
         self.assertEqual(cmds.ls(type="skinCluster"), ["geo_skincluster"])
         self.assertNotEqual(new, old)
         np.testing.assert_array_equal(again.get_weights(), weights)
