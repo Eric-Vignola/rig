@@ -16,6 +16,9 @@ source (runs\\r5\\CG2). Undo tests check the scene
 (``rig._tests._undo``), never ``cmds.undo()``'s return value.
 """
 
+import re
+import time
+
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
@@ -710,3 +713,266 @@ class TestMeshCreateHoles(_MeshCreateCase):
         self.assertEqual(got["vertices"], source["vertices"])
         self.assertEqual(got["holes"], GRID_SOURCE_HOLES)
         self.assertEqual(_uv_placement(str(mesh)), placed)
+
+
+# ---------------------------------------------------------------------------------------------
+#  The data's shading (round features s7, F1, and the user's addition A of 2026-10-15): the
+#  normals bring back the hard edges and locked normals. On v2.0.0a5 a created cube was all
+#  smooth (runs\features\saveload\probes P2).
+# ---------------------------------------------------------------------------------------------
+
+
+def _fv_normals(shape):
+    """Maya's normal of each face-vertex of `shape`, in its order, object space."""
+    fn = Mesh(shape).fn_set
+    normals = np.array([tuple(v) for v in fn.getNormals()])
+    return normals[np.array(list(fn.getNormalIds()[1]), dtype=int)]
+
+
+def _hard_edges(shape):
+    """The hard edges of `shape` as vertex pairs (edge ids differ between meshes)."""
+    fn = Mesh(shape).fn_set
+    return {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
+
+
+def _locked_rows(shape):
+    """The face-vertices of `shape` whose normal is locked, as (face, vertex) pairs."""
+    fn = Mesh(shape).fn_set
+    counts, ids = fn.getNormalIds()
+    _, verts = fn.getVertices()
+    faces = np.repeat(np.arange(len(counts)), list(counts))
+    return {(int(f), int(v)) for f, v, n in zip(faces, verts, ids) if fn.isNormalLocked(n)}
+
+
+def _shaded_sphere(name="ball"):
+    """A polySphere (8 x 6), all smooth, its first 8 edges hard and vertex 0's normal
+    locked: the transform."""
+    t = cmds.polySphere(name=name, sx=8, sy=6, constructionHistory=False)[0]
+    cmds.polySoftEdge(t, angle=180)
+    cmds.polySoftEdge(f"{t}.e[0:7]", angle=0)
+    cmds.polyNormalPerVertex(f"{t}.vtx[0]", xyz=(0.0, 1.0, 0.0))
+    cmds.delete(t, constructionHistory=True)
+    return t
+
+
+class TestMeshCreateShading(_MeshCreateCase):
+    """The hard / soft edges and the locked normals come back from the data's normals."""
+
+    def source(self, t, world_space=False):
+        """``(data, uvs, normals, hard edges, locked face-vertices)`` of the transform `t`,
+        then `t` deleted."""
+        shape = _shape(t)
+        state = (_fv_normals(shape), _hard_edges(shape), _locked_rows(shape))
+        data, uvs = Mesh(t).serialize(world_space=world_space)
+        cmds.delete(t)
+        return (data, list(uvs)) + state
+
+    def assert_shading(self, mesh, normals, hard, locked):
+        shape = str(mesh)
+        np.testing.assert_allclose(_fv_normals(shape), normals, rtol=0.0, atol=1e-5)
+        self.assertEqual(_hard_edges(shape), hard)
+        self.assertEqual(_locked_rows(shape), locked)
+
+    def test_a_cube_keeps_its_hard_edges(self):
+        data, uvs, normals, hard, locked = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
+        self.assertEqual(len(hard), 12)
+        self.ready()
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self.assert_shading(mesh, normals, hard, locked)
+        self.assertEqual(locked, set())
+
+    def test_a_sphere_with_hard_edges_and_a_locked_normal(self):
+        data, uvs, normals, hard, locked = self.source(_shaded_sphere())
+        self.assertEqual(len(hard), 8)
+        self.assertTrue(locked)  # vertex 0's face-vertices
+        self.ready()
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self.assert_shading(mesh, normals, hard, locked)
+
+    def test_a_smooth_mesh_stays_smooth(self):
+        t = cmds.polySphere(name="src", sx=12, sy=8, constructionHistory=False)[0]
+        cmds.polySoftEdge(t, angle=180)
+        cmds.delete(t, constructionHistory=True)
+        data, uvs, normals, hard, locked = self.source(t)
+        self.assertEqual((hard, locked), (set(), set()))
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self.assert_shading(mesh, normals, hard, locked)
+
+    def test_data_without_normals_is_all_smooth(self):
+        # an .obj or a MeshData built by hand: today's result, every edge smooth, none locked
+        data, uvs, _, _, _ = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
+        data.normals = None
+        data.normal_indices = None
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self.assertEqual(_hard_edges(str(mesh)), set())
+        self.assertEqual(_locked_rows(str(mesh)), set())
+
+    def test_world_space_data(self):
+        # world-space normals of a moved, rotated, scaled source on a transform at rest
+        t = cmds.polyCube(name="src", constructionHistory=False)[0]
+        cmds.xform(t, translation=(3, 1, 2), rotation=(20, 40, 10), scale=(1, 2, 0.5))
+        shape = _shape(t)
+        fn = Mesh(shape).fn_set
+        world = np.array([tuple(v) for v in fn.getNormals(OpenMaya.MSpace.kWorld)])[
+            np.array(list(fn.getNormalIds()[1]))
+        ]
+        hard = _hard_edges(shape)
+        data, uvs = Mesh(t).serialize(world_space=True)
+        cmds.delete(t)
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self.assert_shading(mesh, world, hard, set())
+
+    def test_a_holed_face(self):
+        data, uvs, normals, _, locked = self.source(_facet())
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        # a border edge reads hard in the source, smooth when made: it shades nothing
+        np.testing.assert_allclose(_fv_normals(str(mesh)), normals, rtol=0.0, atol=1e-5)
+        self.assertEqual(_locked_rows(str(mesh)), locked)
+
+    def test_the_round_trip_is_exact(self):
+        data, uvs, *_ = self.source(_shaded_sphere())
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        again = mesh.serialize(world_space=False, include_uvs=False)
+        np.testing.assert_allclose(
+            np.asarray(again.normals)[np.asarray(again.normal_indices)],
+            np.asarray(data.normals)[np.asarray(data.normal_indices)],
+            rtol=0.0, atol=1e-6,
+        )
+
+    def test_undo_and_redo_keep_the_shading(self):
+        data, uvs, normals, hard, locked = self.source(_shaded_sphere())
+        self.ready()
+        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        self.assertEqual(self.undo_name(), CHUNK)
+        self.undo_steps(1)
+        self.assertFalse(cmds.objExists("m"))
+        self.redo_steps(1)
+        self.assert_shading(Mesh("mShape"), normals, hard, locked)
+        self.assertIs(mesh.is_valid, True)
+
+    def test_normals_that_do_not_fit_raise_with_nothing_made(self):
+        data, uvs, *_ = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
+        good_n, good_i = np.asarray(data.normals), np.asarray(data.normal_indices)
+        for label, normals, ids, text in (
+            ("ids short", good_n, good_i[:-1], "normal indices for 24 face-vertices"),
+            ("id out of range", good_n, np.where(good_i == 0, 99, good_i), "a normal index is not one of the 24 normals"),
+            ("not 3D", good_n[:, :2], good_i, "the normals are (24, 2), not (N, 3)"),
+            ("nan", np.where(good_n == 0, np.nan, good_n), good_i, "the normals must be finite"),
+        ):
+            with self.subTest(label):
+                # past cgmath's own checks (a MeshData built by other means)
+                object.__setattr__(data, "normals", normals)
+                object.__setattr__(data, "normal_indices", ids)
+                before = cmds.ls()
+                with self.assertRaisesRegex(RuntimeError, re.escape(text)):
+                    Mesh.create(data, uv_data=uvs, name="m")
+                self.assertEqual(cmds.ls(), before)
+
+
+class TestMeshCreateShadingCost(MayaTestCase):
+    """The budget of the shading restore: at most 1.5x the create of the same data without
+    normals (v2.0.0a5's create, which used no normals), on a mostly smooth 20k-face mesh
+    (runs\\features\\saveload\\probes\\p7_perf.py's: 800 hard edges of 39,800)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_a_mostly_smooth_20k_face_mesh(self):
+        t = cmds.polySphere(name="src", sx=200, sy=100, constructionHistory=False)[0]
+        cmds.polySoftEdge(t, angle=180)
+        cmds.polySoftEdge(f"{t}.e[0:800]", angle=0)
+        cmds.delete(t, constructionHistory=True)
+        data, uvs = Mesh(t).serialize(world_space=False)
+        cmds.delete(t)
+        plain = data.copy()
+        plain.normals = None
+        plain.normal_indices = None
+
+        def best(source, runs=9):
+            times = []
+            for _ in range(runs):
+                start = time.perf_counter()
+                mesh = Mesh.create(source, uv_data=uvs)
+                times.append(time.perf_counter() - start)
+                cmds.delete(mesh.get_parent().long_name)
+            return min(times)
+
+        best(data, 2)  # warm up
+        with_normals, without = best(data), best(plain)
+        self.assertLess(with_normals, 1.5 * without, f"{with_normals * 1000:.1f} ms against {without * 1000:.1f} ms")
+
+
+# ---------------------------------------------------------------------------------------------
+#  A cgmath.render.scene.Object as the mesh and its UVs (the user's addition B, 2026-10-15)
+# ---------------------------------------------------------------------------------------------
+
+
+class TestMeshCreateObject(_MeshCreateCase):
+    """``Mesh.create(obj)``: the Object's mesh, its UVs (a UVData, or a UVList: every set), its
+    name and its transform; its render settings and its skin are not used."""
+
+    def object(self, **kwargs):
+        from cgmath.render.scene import Object
+
+        t = cmds.polyCube(name="src", constructionHistory=False)[0]
+        cmds.polyUVSet(t, create=True, uvSet="second")
+        cmds.delete(t, constructionHistory=True)
+        self.normals = _fv_normals(_shape(t))
+        data, uvs = Mesh(t).serialize(world_space=False)
+        cmds.delete(t)
+        kwargs.setdefault("uv", uvs[0])
+        return Object(mesh=data, **kwargs), list(uvs)
+
+    def test_the_mesh_its_uvs_its_name_and_its_transform(self):
+        obj, (map1, _) = self.object(
+            name="hero", translate=(5, 1, 2), rotate=(10, 45, 0), scale=(2, 2, 2), rotate_order=3,
+            texture=np.zeros((4, 4, 3), dtype=np.uint8), base_color=(1, 0, 0), wireframe=True,
+        )
+        self.ready()
+        mesh = Mesh.create(obj)
+        self.assertEqual((str(mesh), str(mesh.get_parent())), ("heroShape", "hero"))
+        self.assertEqual(list(mesh.uv_sets), ["map1"])
+        np.testing.assert_allclose(mesh.serialize_uv("map1").points, map1.points, atol=1e-6)
+        for attr, want in (("t", (5, 1, 2)), ("r", (10, 45, 0)), ("s", (2, 2, 2))):
+            np.testing.assert_allclose(cmds.getAttr(f"hero.{attr}")[0], want, atol=1e-9)
+        self.assertEqual(cmds.getAttr("hero.rotateOrder"), 3)
+        np.testing.assert_allclose(_fv_normals("heroShape"), self.normals, atol=1e-5)
+        self.assertEqual(cmds.ls(selection=True), ["selprobe"])
+        self.assertEqual(self.undo_name(), CHUNK)
+        self.undo_steps(1)
+        self.assertFalse(cmds.objExists("hero"))
+
+    def test_a_uvlist_is_every_set(self):
+        # the UVList the next cgmath's Object holds (an Object takes one today, as a stand-in)
+        obj, uvs = self.object(name="hero")
+        from cgmath.geometry import UVList
+
+        obj.uv = UVList(uvs)
+        mesh = Mesh.create(obj)
+        self.assertEqual(list(mesh.uv_sets), ["map1", "second"])
+
+    def test_name_and_no_uvs(self):
+        obj, _ = self.object(name="hero", uv=None)
+        mesh = Mesh.create(obj, name="other")
+        self.assertEqual(str(mesh.get_parent()), "other")
+        self.assertEqual(len(mesh.get_uv_coords("map1")), 0)
+
+    def test_the_mesh_s_own_matrix_is_not_used(self):
+        # cgmath's renderer places the mesh by the Object: its MeshData's matrix is ignored
+        obj, _ = self.object(name="hero", translate=(1, 0, 0))
+        obj.mesh.matrix = np.diag([1.0, 1.0, 1.0, 1.0])
+        obj.mesh.matrix[3, :3] = (0, 7, 0)
+        mesh = Mesh.create(obj)
+        self.assertEqual(cmds.getAttr("hero.t")[0], (1.0, 0.0, 0.0))
+
+    def test_refusals(self):
+        obj, uvs = self.object(name="hero")
+        before = cmds.ls()
+        with self.assertRaisesRegex(TypeError, r"^Mesh\.create\(\): an Object carries its mesh and its UVs, so it takes no uv_data="):
+            Mesh.create(obj, uvs)
+        self.assertEqual(cmds.ls(), before)
+        empty, _ = self.object(name="empty")
+        empty.mesh = None
+        before = cmds.ls()
+        with self.assertRaisesRegex(TypeError, r"^Mesh\.create\(\): the Object 'empty' holds no mesh"):
+            Mesh.create(empty)
+        self.assertEqual(cmds.ls(), before)
