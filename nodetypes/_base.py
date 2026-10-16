@@ -837,7 +837,12 @@ def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None
     (Maya would leave the child locked)."""
     mplug = attr.plug
     if node:
-        fn = OpenMaya.MFnDependencyNode(mplug.node())
+        # the fn set of the node object that owns the plug (its node: the callers
+        # checked it alive, `_ensure_owner_alive`), else one of the plug's node
+        owner = attr.__dict__.get("_node")
+        fn    = owner.__dict__.get("_fn_set") if owner is not None else None
+        if fn is None:
+            fn = OpenMaya.MFnDependencyNode(mplug.node())
         if fn.isLocked:
             name = attr.full_name.partition(".")[0]
             return (
@@ -1472,6 +1477,9 @@ def _top_path(mplug: OpenMaya.MPlug) -> Any:
     The path holds attribute MObjects only: an MPlug of the array kept alive
     changes what Maya frees when the node is deleted (an element MPlug of a
     deleted node then dangles), so the top plug is made again when it is used."""
+    if not (mplug.isElement or mplug.isChild):
+        # a top plug (an array root's, ``mul.input`` of ``mul.input[0]``): no walk
+        return (mplug.attribute(), ()), False
     steps, cur, element = [], mplug, False
     while True:
         if cur.isElement:
@@ -1489,13 +1497,26 @@ def _top_path(mplug: OpenMaya.MPlug) -> Any:
 
 def _hold_if_element(attr: Any) -> Any:
     """`_hold_path` for `attr`, a fresh Attribute that holds a handle of its node,
-    when its MPlug is an element or below one (walked up once). Returns `attr`."""
+    when its MPlug is an element or below one. Returns `attr`.
+
+    A plug below no element (``tx``, a compound's child) answers through its
+    parents' ``isElement`` / ``isChild`` alone: no path is built (`_top_path`, the
+    same walk, runs for an element only). A caller that walked the plug already
+    (`DGNode.find_attr`, `_multi_child_walk`) calls this for an element only."""
     d = attr.__dict__
     if d["_handle"] is None:
         return attr
     mplug = d["_mplug"]
-    if not (mplug.isElement or mplug.isChild):
-        return attr
+    if not mplug.isElement:
+        if not mplug.isChild:
+            return attr
+        # `_top_path`'s walk up to its first element (a plug that is no element goes
+        # to its parent there too), without its steps
+        cur = mplug.parent()
+        while not cur.isElement:
+            if not cur.isChild:
+                return attr
+            cur = cur.parent()
     path, element = _top_path(mplug)
     if element:
         _hold_path(attr, path)
