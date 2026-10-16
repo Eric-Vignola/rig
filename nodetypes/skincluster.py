@@ -66,7 +66,9 @@ _SKIN_LOAD_DOC = """Loads skin weights from a cgmath file (a SkinData): one name
     and the influences only: a new skin binds at the joints' current pose,
     with Maya's default settings (pass them again).
 
-    Each call is ONE undo step named ``rig.SkinCluster.load``.
+    Each call is ONE undo step named ``rig.SkinCluster.load`` and leaves the
+    selection as it was (``cmds.skinCluster`` selects the influences it binds:
+    the load puts the selection back).
     """
 
 
@@ -603,7 +605,7 @@ class SkinCluster(Deformer):
 
         _files.check_order("SkinCluster.load(skin, geometry)", skin, geometry)
         data = _files.read(skin, (SkinData,), "SkinCluster.load", "the skin")
-        with _undo_chunk("rig.SkinCluster.load"):
+        with _undo_chunk("rig.SkinCluster.load"), _files.kept_selection():
             return cls.create(geometry, data, **kwargs)
 
     @statement

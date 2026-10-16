@@ -14,6 +14,7 @@ inverse of ``Mesh('body').save(path)``).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from types import MethodType
@@ -137,6 +138,27 @@ def check_save_path(path, method: str) -> str:
     if not os.path.isdir(folder):
         raise FileNotFoundError(f"{method}: {path!r}: no folder {folder!r}")
     return path
+
+
+@contextlib.contextmanager
+def kept_selection():
+    """The selection in its order, put back when the block changed it (a load keeps
+    the selection, where ``cmds.skinCluster`` selects the influences it bound)."""
+    from maya import cmds
+
+    from rig._internal.journal import cmds_edit
+
+    ordered = cmds.ls(orderedSelection=True, long=True) or []
+    try:
+        yield
+    finally:
+        if (cmds.ls(orderedSelection=True, long=True) or []) != ordered:
+            if ordered:
+                # cmds.select sorts a batch: the last one goes back last
+                cmds_edit.select(ordered[:-1], replace=True)
+                cmds_edit.select(ordered[-1], add=True)
+            else:
+                cmds_edit.select(clear=True)
 
 
 def same_file(a: str, b: str) -> bool:
