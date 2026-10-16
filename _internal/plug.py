@@ -109,9 +109,11 @@ from rig.nodetypes._base import (
     _inherit_owner,
     _is_enum_attr,
     _new_attr,
+    _node_by_name,
     _path_instance_number,
     _plug_hash,
     _rebind_element,
+    _refuse_locked_node,
     _same_plug,
     Attribute,
     Node,
@@ -2024,9 +2026,24 @@ def _assert_settable(
         names = locked[0] if len(locked) == 1 else locked
         raise InjectionError(
             f"Cannot set/connect {str(dst)!r}: locked attribute(s) {names}. "
-            f"Unlock first (e.g. `plug << unlock` or "
-            f"`cmds.setAttr(attr, lock=False)`)."
+            f"Unlock first: {_unlock_hint(dst, locked)} (a locked plug takes no "
+            f"value or connection, even the one it holds)."
         )
+
+
+def _unlock_hint(dst: Any, locked: list) -> str:
+    """The unlock a locked-plug refusal names: ``Plug('a.tx').unlock()`` (a
+    ``List([...]).unlock()`` for several plugs), with ``Node('a').unlock()``
+    first when the plug's node is locked too (Maya unlocks no plug of a locked
+    node). Read on the refusal's path only."""
+    plugs = f"Plug({locked[0]!r}).unlock()" if len(locked) == 1 else f"List({locked!r}).unlock()"
+    try:
+        fn = OpenMaya.MFnDependencyNode(dst.plug.node())
+        if fn.isLocked:
+            return f"Node({str(dst).partition('.')[0]!r}).unlock(), then {plugs}"
+    except Exception:  # noqa: BLE001 -- a hint never hides the refusal
+        pass
+    return plugs
 
 
 def _is_driven(dst_attr: Any) -> bool:
@@ -2179,6 +2196,7 @@ def _do_destroy(
         if cmds.nodeType(node_str) == "container":
             from rig._internal.container import _destroy_published_name
 
+            _refuse_destroy_on_locked(node_str, attr_name)
             if _destroy_published_name(node_str, attr_name):
                 return
 
@@ -2190,6 +2208,10 @@ def _do_destroy(
             f"Cannot destroy nonexistent attribute {plug_str!r} "
             f"(use destroy(..., silent=True) to skip missing attrs)"
         )
+
+    # Step 1.5 -- a locked node deletes no attribute (before Maya's "is locked
+    # and may not have attributes deleted", and before any disconnect)
+    _refuse_destroy_on_locked(node_str, attr_name)
 
     # Step 2 -- query connections (used by both strict and verbose paths).
     incoming = (
@@ -2245,6 +2267,17 @@ def _do_destroy(
 
     # Step 6 -- actually delete. Let Maya raise on locked/system attrs.
     cmds_edit.deleteAttr(plug_str)
+
+
+def _refuse_destroy_on_locked(node_str: str, attr_name: str) -> None:
+    """``destroy``'s refusal on a locked node: the template of rig's verbs
+    (``cannot destroy the attribute 'w' of 'x': it is locked; ...``), raised
+    before anything is disconnected or deleted."""
+    mobject = _node_by_name(node_str)
+    if mobject is not None:
+        _refuse_locked_node(
+            OpenMaya.MFnDependencyNode(mobject), f"destroy the attribute {attr_name!r} of", node_str
+        )
 
 
 def _attribute_type_or_none(dst: Any) -> str | None:

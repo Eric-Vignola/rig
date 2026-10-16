@@ -227,11 +227,12 @@ class DisplayLayer(DGNode):
     def delete(self, nodes: Any = None, **kwargs) -> None:
         """Deletes this layer (its members go to ``defaultLayer``), in one undo
         step, or ``nodes`` when given, as :meth:`DGNode.delete` does. Refuses
-        ``defaultLayer`` and a referenced layer."""
+        ``defaultLayer``, a referenced layer and a locked one."""
         if nodes is not None:
             super().delete(nodes, **kwargs)
             return
         name = self._guard("deleted")
+        self._refuse_if_locked("delete")
         with _undo_chunk("rig.layer"):
             self.remove_members(self.get_members(no_recurse=True))
             super().delete(**kwargs)
@@ -241,8 +242,9 @@ class DisplayLayer(DGNode):
     def rename(self, new_name: Any) -> None:
         """Renames this layer (the node object follows), in one undo step.
         Refused before any write: ``defaultLayer`` (TypeError), a referenced
-        layer (RuntimeError), a name that is no str (TypeError), a name Maya
-        would not keep or one a node already has (ValueError). Verifies Maya
+        layer (RuntimeError), a locked layer (InjectionError), a name that is no
+        str (TypeError), a name Maya would not keep or one a node already has
+        (ValueError). Verifies Maya
         kept the name."""
         if not isinstance(new_name, str) or not new_name:
             raise TypeError(f"a layer's new name is a non-empty str, not {new_name!r}")
@@ -254,6 +256,7 @@ class DisplayLayer(DGNode):
         old = self._guard("renamed")
         if new_name in (old, self.short_name):
             return
+        self._refuse_if_locked("rename")
         try:
             taken = _lookup(new_name)
         except NodeNotFoundError:

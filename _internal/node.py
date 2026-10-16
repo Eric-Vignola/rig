@@ -45,8 +45,10 @@ def _node_lshift(node: Any, other: Any) -> Any:
       << Tag("x")`` on a per-node kind means the collection itself) and
       returns the node. A membership class without its parentheses
       (``node << Blinn``) is a TypeError naming ``Blinn()`` / ``Blinn('x')``.
-    - ``_AttrSpec`` (``Float``, ``Vector``, ``lock``, ...) -- adds an
-      attribute on this node.
+    - ``_AttrSpec`` (``Float``, ``Vector``, ...) -- adds an attribute on
+      this node; ``lock`` / ``unlock`` are ``node.lock()`` /
+      ``node.unlock()`` (``lockNode``) and return the node; another modifier
+      (``hide``, ``unhide``) is a TypeError naming ``node.<attr> << it``.
     - **Matrix-shaped source on a transform** -- applies the matrix to
       the transform's t/r/s/shear channels:
         * Plug-typed matrix source => inserts a live ``decomposeMatrix``

@@ -2,8 +2,11 @@
 
 Examples::
 
-    plug << lock                 # cmds.setAttr(plug, lock=True)
-    plug << unlock               # cmds.setAttr(plug, lock=False)
+    plug << lock                 # plug.lock():   setAttr -lock on;  returns the plug
+    plug << unlock               # plug.unlock(): setAttr -lock off; returns the plug
+    node << lock                 # node.lock():   lockNode -lock on; returns the node
+    node << unlock               # node.unlock(): lockNode -lock off
+    List(xs) << lock             # List(xs).lock(): plugs, then nodes; one undo step
     plug << hide                 # keyable=False, channelBox=False
     plug << unhide               # keyable=True, channelBox=False
     plug << skip                 # no-op -- leave this plug exactly as it is
@@ -18,6 +21,16 @@ Examples::
 
 These modifiers can appear anywhere in a ``<<`` chain because injection
 returns the LHS, e.g. ``node << Float("blend") << 0.5 << lock``.
+
+``lock`` / ``unlock`` are the target's own verbs (``x << lock`` is
+``x.lock()``): an object already in that state is left as it is (no command,
+no undo step), and a refusal raises ``InjectionError`` with nothing changed --
+a plug of a locked node (lock the plugs first, then the node), a child held by
+a locked parent, a referenced node, a container member while its container is
+locked. ``hide`` / ``unhide`` are for plugs: ``node << hide`` is a TypeError
+naming ``node.<attr> << hide``. A locked plug takes no value or connection,
+even the one it holds, so a build that ends with ``<< lock`` unlocks before it
+runs again.
 """
 
 from __future__ import annotations
