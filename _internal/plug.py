@@ -2029,16 +2029,56 @@ def _assert_settable(
         )
 
 
+def _is_driven(dst_attr: Any) -> bool:
+    """True if ``dst_attr`` is an Attribute whose MPlug has an input of its own
+    (``isDestination``): a plain connection, an animCurve, a constraint, a
+    pairBlend, an expression. A plug driven only through a connected compound
+    parent is no destination (see `_disconnect_incoming`). A plug whose owner is
+    gone, or that cannot be read, answers False, and its set raises what it
+    raised before."""
+    if not isinstance(dst_attr, Attribute):
+        return False
+    try:
+        _ensure_owner_alive(dst_attr)
+        return dst_attr.plug.isDestination
+    except Exception:  # noqa: BLE001 (the set below raises the real error)
+        return False
+
+
 def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
-    """Set a value on ``dst_attr``, breaking an incoming connection if needed.
+    """Set a value on ``dst_attr``, replacing its input first.
 
     ``<<`` asserts the destination's desired value, so an existing incoming
-    connection is overwritten: the first set attempt that fails because the
-    plug is connected triggers a disconnect (surfaced at ``LOGGER.info``) and
-    a retry. Lock is assumed pre-checked by :func:`_assert_settable`, so a
-    failure that is *not* a connection is a genuine error and raises
-    :class:`InjectionError` rather than being swallowed.
+    connection is replaced whatever drives it, as ``plug << plug`` replaces it:
+    a plain connection, an animCurve, a constraint, a pairBlend or an
+    expression. Maya's setAttr accepts a value on a plug driven by a curve, a
+    constraint or a pairBlend, and the DG overrides it at its next evaluation,
+    so the input of a destination (`_is_driven`) is removed before the set
+    (surfaced at ``LOGGER.info``), and the plug then keeps the value. The same
+    statement holds the disconnect and the set: one undo step brings the
+    driver back.
+
+    A set that still fails because the plug is connected, though it read as no
+    destination (a class with its own connection reads), disconnects and
+    retries, as before. Lock is assumed pre-checked by
+    :func:`_assert_settable`, so a failure that is *not* a connection is a
+    genuine error and raises :class:`InjectionError` rather than being
+    swallowed.
     """
+    if _is_driven(dst_attr):
+        try:
+            incoming = dst_attr.get_connected_attrs(src=True, dst=False) or []
+        except RuntimeError as e:
+            raise InjectionError(
+                f"Cannot inspect incoming connections on {str(dst_attr)!r}: {e}"
+            ) from e
+        if incoming:
+            LOGGER.info(
+                "set %s: breaking incoming connection(s) %s to assign value",
+                str(dst_attr),
+                [str(i) for i in incoming],
+            )
+            _disconnect_sources_respecting_lock(dst_attr, incoming)
     try:
         dst_attr.set(*set_args, **set_kwargs)
         return
