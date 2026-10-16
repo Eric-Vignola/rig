@@ -76,11 +76,15 @@ class TestPlugListSpecBroadcast(MayaTestCase):
         # filtered with ``isinstance(x, (Plug, Node))``, so a foreign element
         # was dropped from the result with no error -- 3 in, 2 out (this
         # test pinned that as ``..._TODAY``). The fan-out now refuses the
-        # element by index BEFORE applying the spec to anything.
-        pl = List([self.n1, self.n2, _Opaque()])
+        # element by index BEFORE applying the spec to anything. (A List no
+        # longer takes a foreign object at all, a TypeError naming it; a
+        # number is the element that is no node or plug.)
+        with self.assertRaisesRegex(TypeError, r"^List element \[2\] \(_Opaque '_Opaque\(\)'\) is no node or plug"):
+            List([self.n1, self.n2, _Opaque()])
+        pl = List([self.n1, self.n2, 3.0])
         self.assertEqual(len(pl), 3)
         before = set(cmds.ls())
-        with self.assertRaisesRegex(TypeError, r"element \[2\] \(_Opaque\(\)\)"):
+        with self.assertRaisesRegex(TypeError, r"element \[2\] \(3\.0\)"):
             pl << Float("bcast")
         self.assertEqual(set(cmds.ls()), before)
         for node in ("n1", "n2"):

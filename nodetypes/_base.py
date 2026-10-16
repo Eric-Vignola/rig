@@ -170,11 +170,11 @@ class NodeMeta(type):
             except Exception:
                 return value
         if isinstance(value, (list, tuple)):
-            from rig._internal.list import List
+            from rig._internal.list import _values_list
 
             wrapped = [Node.wrap(v) for v in value]
             try:
-                return List(wrapped)
+                return _values_list(wrapped)
             except Exception:
                 return wrapped
         return value

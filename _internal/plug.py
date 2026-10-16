@@ -442,7 +442,7 @@ class Plug(Attribute):
                 # Wrap in List so chained DSL operations work on the slice
                 # (e.g. ``node.input[:].t << src``).  Lazy-bound to avoid the
                 # circular dep with ``_list`` at module load.
-                List = _lazy().list.List
+                values_list = _lazy().list._values_list
 
                 # Tag the returned List with a back-reference to this
                 # multi attr -- enables the ``empty_multi[:] << values``
@@ -450,7 +450,7 @@ class Plug(Attribute):
                 # through the parent when the slice was empty (auto-create
                 # indices to match the source length).
                 parent = self if self.is_multi and isinstance(key, slice) else None
-                return List(result, _parent_multi=parent)
+                return values_list(result, parent)
             return result
 
         # Compound non-multi (e.g. ``transform.translate``, ``.rotate``,
@@ -472,14 +472,14 @@ class Plug(Attribute):
                     )
                 return _inherit_owner(self, _new_attr(Plug, self.plug.child(key)))
             if isinstance(key, slice):
-                List = _lazy().list.List
+                values_list = _lazy().list._values_list
 
                 mplug    = self.plug
                 indices  = range(*key.indices(n))
                 children = [
                     _inherit_owner(self, _new_attr(Plug, mplug.child(i))) for i in indices
                 ]
-                return List(children)
+                return values_list(children)
 
         # Not multi, not component, not compound -- let Attribute raise the
         # canonical "is not an multi attr" error message.
@@ -1645,9 +1645,9 @@ class ComponentPlug(Plug):
         elements = [self._element(c) for c in itertools.product(*per_axis)]
         if not has_slice:
             return elements[0]  # fully specified single coordinate -> element
-        from rig._internal.list import List
+        from rig._internal.list import _values_list
 
-        return List(elements)
+        return _values_list(elements)
 
     def _partial_key_hint(self, specs: tuple) -> str:
         """The :class:`IndexError` text for an int key leaving 2+ axes, e.g.
