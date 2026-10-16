@@ -1825,9 +1825,11 @@ def _disconnect_incoming(
 
     if one_driver:
         try:
-            # the owner check the reads below make first, raising as they do
+            # the owner check the reads below make first, raising as they do (made
+            # once: the fast path below does not repeat it)
             _ensure_owner_alive(dst)
-            compound = dst.plug.isCompound
+            top = dst.plug
+            compound = top.isCompound
         except RuntimeError as e:
             raise InjectionError(
                 f"Cannot inspect incoming connections on {str(dst)!r}: {e}"
@@ -1835,11 +1837,12 @@ def _disconnect_incoming(
         if compound:
             # a compound below a whole wire it cannot be split from refuses before
             # its children are freed (nothing changed)
-            anc = _wired_ancestor(dst.plug)
-            if anc is not None:
-                refusal = _split_refusal(anc, dst, what)
-                if refusal is not None:
-                    raise InjectionError(refusal)
+            if top.isChild or top.isElement:
+                anc = _wired_ancestor(top)
+                if anc is not None:
+                    refusal = _split_refusal(anc, dst, what)
+                    if refusal is not None:
+                        raise InjectionError(refusal)
             _free_children(dst, what)
 
     try:
@@ -1854,7 +1857,8 @@ def _disconnect_incoming(
             and "get_connected_attrs" not in d
             and "iter_connected_attrs" not in d
         ):
-            _ensure_owner_alive(dst)
+            if not one_driver:
+                _ensure_owner_alive(dst)
             if not mplug.isDestination:
                 if not _below_a_wire(mplug):
                     return
@@ -1874,10 +1878,26 @@ def _disconnect_incoming(
         sources = dst.get_connected_attrs(src=True, dst=False) or []
         if not sources:
             return
-    elif one_driver and _double_driven(dst.plug):
-        # its own input and a whole wire above: the whole wire is split, ``dst``
-        # keeping its own input (removed next), its siblings their driver
-        _free_of_whole_wire(dst, what)
+    elif one_driver:
+        mplug = dst.plug
+        anc = _wired_ancestor(mplug) if mplug.isChild or mplug.isElement else None
+        if anc is not None:
+            # its own input and a whole wire above (two drivers): the whole wire is
+            # split, ``dst`` keeping its own input (removed next), its siblings their
+            # driver. ``dst << None`` (nothing written next) under a whole wire with
+            # no matching children to split (a unitConversion between unit kinds)
+            # removes only its own input: that wire is then its one driver
+            src = anc.sourceWithConversion()
+            if not write_follows and _no_matching_children(src, anc):
+                LOGGER.info(
+                    "%s %s: removing its own input %s; the input %s of its compound %s "
+                    "has no matching children to split and stays its one driver "
+                    "(one driver per channel)",
+                    what, str(dst), ", ".join(str(s) for s in sources),
+                    _new_attr(Attribute, src).full_name, _new_attr(Attribute, anc).full_name,
+                )
+            else:
+                _free_of_whole_wire(dst, what)
 
     if write_follows:
         one_step()
@@ -1907,6 +1927,11 @@ def _free_children(dst: Any, what: str) -> bool:
     mplug = dst.plug
     if not mplug.isCompound or mplug.isArray:
         return False
+    if not mplug.numConnectedChildren():
+        # nothing below is connected, either way (one API call: a child counts when
+        # a plug below it, or an element of a multi child, is connected).
+        # ``isFreeToChange`` would not do: it calls a keyed or constrained child free
+        return False
     driven = []
     _driven_below(mplug, driven)
     if not driven:
@@ -1914,10 +1939,13 @@ def _free_children(dst: Any, what: str) -> bool:
     children = [Plug(child) for child in driven]
     one_step()
     # an element (or a plug below one) can dangle once the last input below it is
-    # gone: ``dst`` finds its MPlug again after (each child does in its disconnect)
-    path = _element_path(dst)
+    # gone: ``dst`` and each child find their MPlug again (the paths are taken
+    # before the first disconnect, from top plugs, which stay valid)
+    path  = _element_path(dst)
+    paths = [_element_path(child) for child in children]
     try:
-        for child in children:
+        for child, child_path in zip(children, paths):
+            _rebind_element(child, child_path)
             sources = child.get_connected_attrs(src=True, dst=False) or []
             if not sources:
                 continue
@@ -1934,21 +1962,26 @@ def _free_children(dst: Any, what: str) -> bool:
 def _driven_below(mplug: Any, found: list) -> None:
     """Append to ``found``, in order, every plug below the compound ``mplug`` (its
     children, theirs, the existing elements of a multi child) that has an input of
-    its own. A child with an input is not walked further: its own input feeds the
-    plugs below it."""
+    its own. A compound child with an input of its own is walked too, after it: a
+    plug below it can have one as well (a double below that child's wire)."""
     for i in range(mplug.numChildren()):
         child = mplug.child(i)
-        if child.isDestination:
-            found.append(child)
-        elif child.isArray:
+        if child.isArray:
+            if child.isDestination:
+                # a multi child connected whole: left to Maya, as a multi root
+                found.append(child)
+                continue
             for index in child.getExistingArrayAttributeIndices():
                 element = child.elementByLogicalIndex(index)
                 if element.isDestination:
                     found.append(element)
-                elif element.isCompound:
+                if element.isCompound:
                     _driven_below(element, found)
-        elif child.isCompound:
-            _driven_below(child, found)
+        else:
+            if child.isDestination:
+                found.append(child)
+            if child.isCompound:
+                _driven_below(child, found)
 
 
 _FREE_TO_CHANGE = OpenMaya.MPlug.kFreeToChange
@@ -1987,27 +2020,26 @@ def _split_refusal(anc: Any, dst: Any, what: str) -> "str | None":
     """Why the whole input of ``anc`` (an MPlug, `_wired_ancestor` of ``dst``)
     cannot be split into one per child, or None: its source has no matching
     children (a unitConversion between unit kinds feeds the compound whole), or a
-    child is locked (a locked plug takes no connection)."""
+    plug the split connects into is locked (a locked plug takes no connection): a
+    child, or a plug below a nested compound child the split walks into, on this
+    round or on the next ones down to ``dst`` (`_split_plan`), so a refusal comes
+    before any edit."""
     src  = anc.sourceWithConversion()
     name = _new_attr(Attribute, anc).full_name
     free = f"free the compound first: {name} << None"
-    if (
-        src.isNull
-        or src.node().hasFn(OpenMaya.MFn.kUnitConversion)
-        or not src.isCompound
-        or src.numChildren() != anc.numChildren()
-    ):
+    if _no_matching_children(src, anc):
         source = "nothing" if src.isNull else _new_attr(Attribute, src).full_name
         return (
             f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
             f"from {source!r}, which has no matching children to give each child of "
             f"{name!r} its own input; {free}. Nothing was changed"
         )
-    for i in range(anc.numChildren()):
-        child = anc.child(i)
-        if child.isLocked and not child.isDestination:
-            # a child with an input of its own keeps it (`_split_into`): no connect
-            locked = _new_attr(Attribute, child).full_name
+    plan = []
+    _split_plan(src, anc, plan, _plugs_above(dst.plug))
+    for _source, target in plan:
+        # a child with an input of its own keeps it (`_split_into`): not in the plan
+        if target.isLocked:
+            locked = _new_attr(Attribute, target).full_name
             return (
                 f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
                 f"from {_new_attr(Attribute, src).full_name!r}, and giving each child its own "
@@ -2015,6 +2047,88 @@ def _split_refusal(anc: Any, dst: Any, what: str) -> "str | None":
                 f"Plug({locked!r}).unlock(), or {free}. Nothing was changed"
             )
     return None
+
+
+def _no_matching_children(src: Any, anc: Any) -> bool:
+    """True if ``src`` (the MPlug feeding the compound ``anc`` whole) has no children
+    to give each child of ``anc`` its own input: nothing, a unitConversion between
+    unit kinds, or a plug with no matching children."""
+    return (
+        src.isNull
+        or src.node().hasFn(OpenMaya.MFn.kUnitConversion)
+        or not src.isCompound
+        or src.numChildren() != anc.numChildren()
+    )
+
+
+def _plugs_above(mplug: Any) -> list:
+    """The plugs above ``mplug`` (its parent, an element's array ...), nearest first."""
+    above, cur = [], mplug
+    while True:
+        if cur.isChild:
+            cur = cur.parent()
+        elif cur.isElement:
+            cur = cur.array()
+        else:
+            return above
+        above.append(cur)
+
+
+def _split_plan(source: Any, whole: Any, plan: list, chain: "list | None" = None) -> None:
+    """Append to ``plan``, in order, the ``(source, target)`` MPlug pairs a split of
+    ``whole``'s input from ``source`` connects (`_split_into`), and ``(None, compound)``
+    for each compound child it walks into (it takes no connect, but its lock is
+    checked too). A child of ``whole`` that has an input of its own keeps it and is
+    left out (one driver per channel: the leaf one). A compound child with such a
+    plug below it (`_driven_below`) is walked into when its source child has matching
+    children; with ``chain`` (`_plugs_above` the written plug, for the refusal check)
+    a compound child on it is walked into too, as the split's next round splits it."""
+    for i in range(whole.numChildren()):
+        child = whole.child(i)
+        if child.isDestination:
+            continue
+        src_child = source.child(i)
+        if (
+            child.isCompound
+            and not child.isArray
+            and src_child.isCompound
+            and src_child.numChildren() == child.numChildren()
+        ):
+            walk = chain is not None and any(child == plug for plug in chain)
+            if not walk:
+                below = []
+                _driven_below(child, below)
+                walk = bool(below)
+            if walk:
+                plan.append((None, child))
+                _split_plan(src_child, child, plan, chain)
+                continue
+        plan.append((src_child, child))
+
+
+def _plug_path(mplug: Any) -> tuple:
+    """``(node, top attribute, steps)`` naming the plug ``mplug``: its node, the
+    attribute at its top and each step down (an element's logical index, a child's
+    attribute). `_plug_at` makes a fresh, non-networked MPlug of it."""
+    steps, cur = [], mplug
+    while True:
+        if cur.isElement:
+            steps.append((True, cur.logicalIndex()))
+            cur = cur.array()
+        elif cur.isChild:
+            steps.append((False, cur.attribute()))
+            cur = cur.parent()
+        else:
+            return cur.node(), cur.attribute(), steps[::-1]
+
+
+def _plug_at(path: tuple) -> Any:
+    """A fresh, non-networked MPlug for a `_plug_path`."""
+    node, attribute, steps = path
+    cur = OpenMaya.MPlug(node, attribute)
+    for is_element, key in steps:
+        cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
+    return cur
 
 
 def _check_whole_wire(dst: Any, what: str) -> bool:
@@ -2056,7 +2170,15 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
             raise InjectionError(refusal)
         one_step()
         whole  = Plug(anc)
-        source = Plug(anc.sourceWithConversion())
+        # ``sourceWithConversion`` is a networked MPlug, which the disconnect below
+        # can free (a dynamic compound's: its children then read freed memory, an
+        # access violation): the split uses fresh, non-networked plugs, named
+        # before the disconnect and found again after it (`_plug_path`)
+        source = Plug(_plug_at(_plug_path(anc.sourceWithConversion())))
+        plan   = []
+        _split_plan(source.plug, anc, plan)
+        pairs  = [(_plug_path(s), _plug_path(t)) for s, t in plan if s is not None]
+        whole_path = _plug_path(anc)
         kept   = [
             str(Plug(anc.child(i))) for i in range(anc.numChildren())
             if anc.child(i).isDestination
@@ -2074,37 +2196,24 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
             _disconnect_sources_respecting_lock(whole, [source])
         finally:
             _rebind_element(dst, path)
-        if whole.plug.isDestination:
+        if _plug_at(whole_path).isDestination:
             raise InjectionError(
                 f"Cannot {what} {str(dst)!r}: the input {str(source)!r} of its compound "
                 f"{str(whole)!r} could not be removed; {whole} << None frees it"
             )
-        _split_into(source.plug, whole.plug)
+        _split_into(pairs)
         split = True
 
 
-def _split_into(source: Any, whole: Any) -> None:
-    """Connect each child of ``source`` (an MPlug, the compound that fed ``whole`` whole)
-    into the matching child of ``whole``, but a child of ``whole`` that has an input of its
-    own keeps it (one driver per channel: the leaf one), and a compound child with such a
-    plug below it is split in turn when its source child has matching children."""
-    for i in range(whole.numChildren()):
-        child = whole.child(i)
-        if child.isDestination:
-            continue
-        src_child = source.child(i)
-        if (
-            child.isCompound
-            and not child.isArray
-            and src_child.isCompound
-            and src_child.numChildren() == child.numChildren()
-        ):
-            below = []
-            _driven_below(child, below)
-            if below:
-                _split_into(src_child, child)
-                continue
-        _set_or_connect(Plug(src_child), Plug(child), _dst_compound=None)
+def _split_into(pairs: list) -> None:
+    """Connect each ``(source, target)`` pair of `_plug_path`s (`_split_plan`, taken
+    before the whole input was removed): each child of the compound that fed the
+    whole wire into the matching child, but a child that has an input of its own
+    keeps it (one driver per channel: the leaf one), and a compound child with such
+    a plug below it is split in turn. Each plug is found again from its node
+    (`_plug_at`), so no plug the disconnect freed is read."""
+    for source, target in pairs:
+        _set_or_connect(Plug(_plug_at(source)), Plug(_plug_at(target)), _dst_compound=None)
 
 
 def _query_connections(plug: Any, source: bool) -> Any:
