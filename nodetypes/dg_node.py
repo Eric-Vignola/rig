@@ -99,16 +99,29 @@ def _is_unresolved_multi_child(plug: OpenMaya.MPlug) -> bool:
     and slicing it calls ``MPlug.getExistingArrayAttributeIndices()`` which
     aborts Maya with a ``TDEbadMultiIndex`` C++ exception.
     """
-    cur = plug
+    return _multi_child_walk(plug)[0]
+
+
+def _multi_child_walk(plug: OpenMaya.MPlug) -> tuple:
+    """``(unresolved, element)`` of ``plug`` in one walk up its parents (an element
+    goes to its array, a child to its compound): ``unresolved`` is
+    `_is_unresolved_multi_child`'s answer (the walk stops there), ``element`` True
+    when ``plug`` or a plug above it is an element, `_top_path`'s answer (whose
+    walk visits the same elements: an array plug, which only this walk may skip,
+    is never an element). `DGNode.find_attr` holds the attr it builds for an
+    element only (`_hold_if_element`), without a second walk for any other."""
+    cur, element = plug, False
     while True:
-        if cur.isElement and cur.logicalIndex() < 0:
-            return True
+        if cur.isElement:
+            if cur.logicalIndex() < 0:
+                return True, True
+            element = True
         if cur.isChild:
             cur = cur.parent()
         elif cur.isElement:
             cur = cur.array()
         else:
-            return False
+            return False, element
 
 
 _NORMAL_ATTR = OpenMaya.MFnDependencyNode.kNormalAttr
@@ -1732,15 +1745,21 @@ class DGNode(Node):
         # A bare child-of-multi name resolves to a plug whose enclosing array
         # element is unresolved (logicalIndex -1); it is unusable and aborts
         # Maya when sliced. Reject it like any other missing attribute. (Only an
-        # element or a child plug can be one: the helper's first tests.)
-        if (plug.isElement or plug.isChild) and _is_unresolved_multi_child(plug):
-            if quiet:
-                return None, False
-            raise AttributeError(
-                f"Attribute not found: {self}.{attr} "
-                f"(resolves to {plug.name()!r}, a child of an unindexed multi; "
-                f"index the parent multi element first)"
-            )
+        # element or a child plug can be one: the helper's first tests.) The
+        # same walk says whether the plug is an element or below one, which the
+        # attr built below is held for (`_hold_if_element`); any other plug
+        # (``tx``, a compound's child) needs no second walk.
+        below = False
+        if plug.isElement or plug.isChild:
+            unresolved, below = _multi_child_walk(plug)
+            if unresolved:
+                if quiet:
+                    return None, False
+                raise AttributeError(
+                    f"Attribute not found: {self}.{attr} "
+                    f"(resolves to {plug.name()!r}, a child of an unindexed multi; "
+                    f"index the parent multi element first)"
+                )
 
         # An attr of this node is owned by this node object. One found on
         # another node (a transform's shape) finds its own node when asked (it
@@ -1751,9 +1770,9 @@ class DGNode(Node):
         if plug.node() != self._mobject:
             attr_obj = Attribute(plug)
         else:
-            attr_obj = _hold_if_element(
-                _new_attr(Attribute, plug, self.__dict__["_objhandle"])
-            )
+            attr_obj = _new_attr(Attribute, plug, self.__dict__["_objhandle"])
+            if below:
+                _hold_if_element(attr_obj)
             attr_obj.__dict__["_node"] = self
             # named through this node's path in the str buffer cmds reads, if
             # the node has more than one (see `_named_through_owner`); the fn

@@ -492,7 +492,9 @@ class TestTheSkippedHelpers(MayaTestCase):
         with mock.patch.object(
             DGNode, "_canonicalize_component_alias_plug", autospec=True, side_effect=canonicalize
         ) as aliased, mock.patch.object(
-            dg_node, "_is_unresolved_multi_child", wraps=dg_node._is_unresolved_multi_child
+            # the walk `_is_unresolved_multi_child` answers through, which `find_attr`
+            # asks itself (it also says whether to hold the attr: follow-up FU 3)
+            dg_node, "_multi_child_walk", wraps=dg_node._multi_child_walk
         ) as unresolved:
             for node, name, alias, element in (
                 (md, "operation", False, False),
