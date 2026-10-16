@@ -36,6 +36,7 @@ from rig import (
     NodeNotFoundError,
     Plug,
     lock,
+    unlock,
 )
 from rig.nodetypes import Choice, DAGNode, DGNode, Joint, Transform
 from rig._internal import journal
@@ -596,17 +597,16 @@ class TestSetTypeArgument(MayaTestCase):
                     plug.set(0.25)
                 self.assertNotIsInstance(ctx.exception, InjectionError)
                 self.assertEqual(str(ctx.exception), message)
-                # A modifier swallows that error, as v2.0.0a2 does: it logs it
-                # and leaves the plug unlocked, although the plug can be locked.
-                with self.assertLogs("rig.spec._base", level="DEBUG") as logs:
+                # Re-pinned (features step 3, lock): ``plug << lock`` is
+                # ``plug.lock()``, ``setAttr -lock`` with no type query, so it
+                # locks the plug the type query cannot read (v2.0.0a2's modifier
+                # went through Attribute.set, logged that error at DEBUG and left
+                # the plug unlocked)
+                with self.assertNoLogs("rig.spec._base", level="DEBUG"):
                     self.assertIs(plug << lock, plug)
-                self.assertEqual(
-                    logs.output,
-                    [f"DEBUG:rig.spec._base:set modifier on {name} failed: {message}"],
-                )
-                self.assertFalse(cmds.getAttr(name, lock=True))
-                cmds.setAttr(name, lock=True)
                 self.assertTrue(cmds.getAttr(name, lock=True))
+                self.assertIs(plug << unlock, plug)
+                self.assertFalse(cmds.getAttr(name, lock=True))
 
     def test_lock_modifier_on_array_element_child(self):
         net = cmds.createNode("network", name="net")
@@ -615,7 +615,9 @@ class TestSetTypeArgument(MayaTestCase):
         plug = Plug("net.items[3].weight")
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
             self.assertIs(plug << lock, plug)
-        self.assertEqual(len(_type_queries(probe)), 1)
+        # re-pinned (features step 3, lock): 1 -> 0, ``plug.lock()`` reads no
+        # attribute type (it was Attribute.set's type query)
+        self.assertEqual(len(_type_queries(probe)), 0)
         self.assertTrue(cmds.getAttr("net.items[3].weight", lock=True))
         self.assertEqual(cmds.getAttr("net.items", multiIndices=True), [3])
 
