@@ -30,6 +30,7 @@ reports fail; the value-List tests pass there too (they pin what is kept).
 
 import numbers
 import time
+from unittest import mock
 
 import numpy as np
 from maya import cmds
@@ -125,6 +126,36 @@ class TestCreateHierarchyReturn(_Case):
         self.assertEqual(made[0].get_parent(), group)
         self.assertEqual(made.tx.get().tolist(), [0.0, 3.5, -3.5, 0.0])
 
+    def test_one_undo_step(self):
+        # (HL_FIX F9) one undo step; undone and redone, the List's nodes live
+        data = _skeleton_after_new_scene(self)
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.flushUndo()
+        before = set(cmds.ls(long=True))
+        made   = Transform.create_hierarchy(data)
+        self.assertEqual(cmds.undoInfo(q=True, undoName=True), "rig.Transform.create_hierarchy")
+        cmds.undo()
+        self.assertEqual(set(cmds.ls(long=True)), before)
+        cmds.redo()
+        self.assertEqual([x.long_name for x in made],
+                         ["|root", "|root|pelvis", "|root|pelvis|probe", "|root|pelvis|box"])
+        self.assertEqual(made[1].tx.get(), 3.5)
+
+    def test_an_error_mid_create_undoes_as_one_step(self):
+        data = _skeleton_after_new_scene(self)
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.flushUndo()
+        before = set(cmds.ls(long=True))
+        with mock.patch.object(Transform, "set_attrs", side_effect=RuntimeError("boom")):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                Transform.create_hierarchy(data)
+        self.assertNotEqual(set(cmds.ls(long=True)), before)  # the nodes were made
+        cmds.undo()
+        self.assertEqual(set(cmds.ls(long=True)), before)
+        cmds.redo()
+        cmds.undo()
+        self.assertEqual(set(cmds.ls(long=True)), before)
+
     def test_inside_a_container(self):
         data = _skeleton_after_new_scene(self)
         with container("box_ctn") as ctn:
@@ -182,8 +213,8 @@ class TestUserCasting(_Case):
         items = List([Node("root")])
         with self.assertRaisesRegex(
             TypeError,
-            r"^List element \[1\] \(Thing 'no_such_thing'\) is no node or plug \(no node named "
-            r"'no_such_thing'.*\): a List holds numbers and rig nodes / plugs",
+            r"^List element \[1\] \(Thing 'no_such_thing'\) is no node or plug \(its str names no "
+            r"node or plug\): a List holds numbers and rig nodes / plugs",
         ):
             items.append(Thing())
         with self.assertRaisesRegex(TypeError, r"^List element \[2\] \(Thing"):
@@ -202,20 +233,55 @@ class TestUserCasting(_Case):
         for i, (value, why) in enumerate((
             ({"a": 1}, "it has no node or plug"),
             ({1, 2}, "it has no node or plug"),
-            (("root", "pelvis"), "a sequence holds numbers only"),
-            ([Node("root")], "a sequence holds numbers only"),
-            (np.array(["a"]), "a sequence holds numbers only"),
-            (3 + 4j, "no node named"),
-            (np.complex128(1), "no node named"),
+            (("root", "pelvis"), "a sequence holds numbers and plugs only"),
+            ([Node("root")], "a sequence holds numbers and plugs only"),
+            (np.array(["a"]), "a sequence holds numbers and plugs only"),
+            ((Node("root").tx, {"a": 1}), "a sequence holds numbers and plugs only"),
+            (3 + 4j, "its str names no node or plug"),
+            (np.complex128(1), "its str names no node or plug"),
         )):
             with self.subTest(i=i, kind=type(value).__name__):
                 with self.assertRaisesRegex(TypeError, rf"^List element \[0\] \({type(value).__name__} .*{why}"):
                     List([value])
 
     def test_a_name_more_than_one_node_has(self):
+        # (HL_FIX F1) each TransformData is found by its uuid: the node it was serialized from
         Transform.create_hierarchy(self.data)  # a second pelvis
+        self.assertEqual([x.long_name for x in List(self.data)],
+                         ["|root", "|root|pelvis", "|root|pelvis|probe", "|root|pelvis|box"])
+        # in another scene (no node has the uuid) the name decides, an ambiguous one raises
+        self.new_scene()
+        data = _skeleton_after_new_scene(self)
+        self.assertFalse(any(cmds.ls(x.uuid) for x in data))
+        Transform.create_hierarchy(data)
+        self.assertEqual([x.long_name for x in List(data[:1])], ["|root"])
+        Transform.create_hierarchy(data)
         with self.assertRaisesRegex(TypeError, r"^List element \[1\] \(TransformData 'pelvis'\) .*ambiguous"):
-            List(self.data)
+            List(data)
+
+    def test_left_and_right_joints_of_the_same_name(self):
+        self.new_scene()
+        root = Joint.create(name="root")
+        for side in ("L_leg", "R_leg"):
+            Joint.create(name="end", parent=Joint.create(name=side, parent=root))
+        cmds.setAttr("root|R_leg|end.tx", 7)
+        hier = root.serialize_hierarchy()
+        self.assertEqual([str(x) for x in hier], ["root", "L_leg", "end", "R_leg", "end"])
+        items = List(hier)
+        self.assertEqual([x.long_name for x in items],
+                         ["|root", "|root|L_leg", "|root|L_leg|end", "|root|R_leg", "|root|R_leg|end"])
+        self.assertEqual(items[4].tx.get(), 7.0)
+
+    def test_a_decoy_name_and_a_renamed_node(self):
+        self.new_scene()
+        root = Joint.create(name="root")
+        Joint.create(name="pelvis", parent=root)
+        hier = root.serialize_hierarchy()
+        cmds.createNode("transform", name="pelvis")  # a world node named like it
+        self.assertEqual([x.long_name for x in List(hier)], ["|root", "|root|pelvis"])
+        cmds.rename("root|pelvis", "hip")             # the original renamed: still that node
+        self.assertEqual([x.long_name for x in List(hier)], ["|root", "|root|hip"])
+        self.assertIs(type(List(hier)[1]), Joint)
 
     def test_a_plain_name_raises_as_before(self):
         with self.assertRaises(NodeNotFoundError):
@@ -225,6 +291,43 @@ class TestUserCasting(_Case):
         items = List()
         items.append(f"{cube}.vtx[0:3]")
         self.assertEqual(len(items), 4)
+        # (HL_FIX F5) a range that names nothing raises, wherever it is added
+        why = r"\(str 'nope.vtx\[0:2\]'\) is no node or plug \(it names nothing\)"
+        for add in (lambda: List(["nope.vtx[0:2]"]), lambda: items.append("nope.vtx[0:2]"),
+                    lambda: items.insert(0, "nope.vtx[0:2]"), lambda: items.extend(["nope.vtx[0:2]"])):
+            with self.assertRaisesRegex(TypeError, why):
+                add()
+        with self.assertRaisesRegex(TypeError, why):
+            items[1:2] = ["nope.vtx[0:2]"]
+        self.assertEqual(len(items), 4)
+
+    def test_the_slice_hint_of_a_negative_index(self):
+        cube  = cmds.polyCube(name="cube")[0]
+        items = List(["root", "pelvis"])
+        with self.assertRaisesRegex(TypeError, r"names 2 elements; assign them to a slice \(lst\[1:2\] = \.\.\.\)"):
+            items[-1] = f"{cube}.vtx[0:1]"
+        with self.assertRaisesRegex(TypeError, r"\(lst\[0:1\] = \.\.\.\)"):
+            items[0] = f"{cube}.vtx[0:1]"
+        items[1:2] = [f"{cube}.vtx[0:1]"]
+        self.assertEqual(len(items), 3)
+
+    def test_the_reasons_name_no_api_text(self):
+        # (HL_FIX F6) a class, a function, a data object, a null MPlug / MObject
+        for value, why in (
+            (Transform, "it has no node or plug"),
+            (Node("root").get_parent, "it has no node or plug"),
+            (len, "it has no node or plug"),
+            (self.data, "its str names no node or plug"),
+            (OpenMaya.MPlug(), "a null MPlug"),
+            (OpenMaya.MObject(), "MObject is null"),
+        ):
+            with self.subTest(type(value).__name__):
+                with self.assertRaises(TypeError) as caught:
+                    List([value])
+                message = str(caught.exception)
+                self.assertIn(why, message)
+                self.assertNotIn("kInvalidParameter", message)
+                self.assertNotIn("is a pattern", message)
 
     def test_a_mix(self):
         sel = OpenMaya.MSelectionList()
@@ -248,6 +351,91 @@ class TestUserCasting(_Case):
         nodes = List(["root", "pelvis"])
         nodes.t << List([(1, 2, 3), (4, 5, 6)])
         self.assertEqual(nodes.t.get().tolist(), [[1, 2, 3], [4, 5, 6]])
+
+    def test_an_array(self):
+        # (HL_FIX F8) an array has no truth value: List(array) was a ValueError
+        self.assertEqual(list(List(np.arange(3))), [0, 1, 2])
+        rows = List(np.zeros((3, 3)))
+        self.assertEqual([type(x) for x in rows], [np.ndarray] * 3)
+        nodes = List(["root", "pelvis"])
+        self.assertEqual(list(List(nodes.tx.get())), [0.0, 3.5])
+        self.assertEqual(len(List(np.zeros(0))), 0)
+        self.assertEqual([type(x) for x in List([np.int32(1), np.uint8(2)])], [np.int32, np.uint8])
+
+    def test_openmaya_values_are_values(self):
+        # (HL_FIX F2) a vector, a point, a matrix ... as it is, as a tuple is
+        values = [
+            OpenMaya.MVector(1, 2, 3), OpenMaya.MFloatVector(1, 2, 3), OpenMaya.MPoint(1, 2, 3),
+            OpenMaya.MFloatPoint(1, 2, 3), OpenMaya.MMatrix(), OpenMaya.MFloatMatrix(),
+            OpenMaya.MTransformationMatrix(), OpenMaya.MEulerRotation(1, 2, 3), OpenMaya.MQuaternion(),
+            OpenMaya.MColor((1, 0, 0)), OpenMaya.MDoubleArray([1, 2]), OpenMaya.MPointArray(),
+            OpenMaya.MVectorArray(), OpenMaya.MMatrixArray(),
+        ]
+        items = List(values)
+        self.assertEqual([type(x) for x in items], [type(x) for x in values])
+        nodes = List(["root", "pelvis"])
+        nodes.t << List([OpenMaya.MVector(1, 2, 3)] * 2)
+        self.assertEqual(nodes.t.get().tolist(), [[1, 2, 3], [1, 2, 3]])
+        matrix = OpenMaya.MMatrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1])
+        nodes.offsetParentMatrix << List([matrix] * 2)
+        self.assertEqual(cmds.getAttr("pelvis.offsetParentMatrix")[12:15], [5.0, 6.0, 7.0])
+        items = List()
+        items.append(OpenMaya.MVector(1, 2, 3))
+        items += [(OpenMaya.MPoint(), 1.0)]
+        self.assertEqual([type(x) for x in items], [OpenMaya.MVector, tuple])
+
+    def test_an_operand_row_of_plugs_and_numbers(self):
+        # (HL_FIX F3) a row mixing plugs and numbers is a value, as in a plain list
+        a, b, c = (Transform.create(name=n) for n in "abc")
+        c.tx << 4
+        nodes = List([a, b])
+        nodes.t << List([(c.tx, 1, 2), (3, c.tx, 4)])
+        self.assertEqual(nodes.t.get().tolist(), [[4, 1, 2], [3, 4, 4]])
+        self.assertEqual(cmds.listConnections("a.tx", s=True, p=True), ["c.translateX"])
+        self.assertEqual(cmds.listConnections("b.ty", s=True, p=True), ["c.translateX"])
+        nodes.t << List([[c.tx, c.ty, c.tz]] * 2)
+        self.assertEqual(cmds.listConnections("b.tz", s=True, p=True), ["c.translateZ"])
+        row = (c.tx, 1, 2)
+        self.assertIs(List([row])[0], row)
+
+    def test_a_list_gives_its_elements_as_they_are(self):
+        # (HL_FIX F4) List(other), extend(other), += other: a List's elements are kept
+        nodes   = List(["root", "pelvis"])
+        objects = nodes.mobject
+        self.assertEqual([type(x) for x in List(objects)], [OpenMaya.MObject] * 2)
+        methods = nodes.get_parent
+        self.assertEqual(len(List(methods)), 2)
+        items = List()
+        items.extend(objects)
+        items += methods
+        self.assertEqual([type(x).__name__ for x in items], ["MObject", "MObject", "method", "method"])
+        with self.assertRaisesRegex(TypeError, r"^List element \[0\] \(method .*it has no node or plug"):
+            List(list(methods))  # a plain list of them is a user's: refused
+
+    def test_a_copy_keeps_the_elements_and_the_state(self):
+        # (HL_FIX F4) copy / deepcopy / pickle rebuilt the List through the casting append
+        import copy
+        import pickle
+
+        nodes   = List(["root", "pelvis"])
+        objects = nodes.mobject
+        for copied in (copy.copy(objects), copy.copy(List(objects))):
+            self.assertIs(type(copied), List)
+            self.assertEqual([type(x) for x in copied], [OpenMaya.MObject] * 2)
+        methods = copy.copy(nodes.get_parent)
+        self.assertIs(type(methods), list_module._Methods)
+        self.assertEqual(methods._method, "get_parent")
+        values = List([(1, 2), 3.0, None, [[1, 0], [0, 1]]])
+        for copied in (copy.deepcopy(values), pickle.loads(pickle.dumps(values))):
+            self.assertIs(type(copied), List)
+            self.assertEqual(list(copied), list(values))
+        deep = copy.deepcopy(values)
+        self.assertIsNot(deep[3], values[3])
+        cmds.addAttr("root", ln="arr", at="double", multi=True)
+        node = Node("root")
+        node.arr[:] << [1.0, 2.0]
+        self.assertEqual(copy.copy(node.arr[:])._parent_multi, node.arr)
+        self.assertEqual([str(x) for x in copy.copy(nodes)], ["root", "pelvis"])
 
 
 class TestValueLists(_Case):
@@ -356,3 +544,37 @@ class TestCost(_Case):
                 now    = self._best(List, items)
                 before = self._best(_before, items)
                 self.assertLess(now, before * 1.3, (now, before))
+
+    def test_numpy_numbers_and_vector_tuples_cost_no_more(self):
+        # (HL_FIX F7) np.int32 is no int on Windows; a tuple of floats is checked flat
+        for items in ([np.int32(i) for i in range(1000)], [(1.0, 2.0, 3.0)] * 300):
+            with self.subTest(items=type(items[0]).__name__):
+                now    = self._best(List, items)
+                before = self._best(_before, items)
+                self.assertLess(now, before * 1.5, (now, before))
+
+    def test_append_costs_a_python_call(self):
+        # (HL_FIX F7) append is a Python method now (it casts): about 3x list.append,
+        # the cost of a Python call. A loose bound against the bare Python override
+        # (its one type check costs little more)
+        class Override(list):
+            def append(self, value):
+                list.append(self, value)
+
+        plugs = [Plug("persp.tx")] * 300
+
+        def appended(items):
+            out = List()
+            for x in items:
+                out.append(x)
+
+        def overridden(items):
+            out = Override()
+            for x in items:
+                out.append(x)
+
+        for items in (plugs, [float(i) for i in range(1000)]):
+            with self.subTest(items=type(items[0]).__name__):
+                now    = self._best(appended, items)
+                before = self._best(overridden, items)
+                self.assertLess(now, before * 2.5, (now, before))
