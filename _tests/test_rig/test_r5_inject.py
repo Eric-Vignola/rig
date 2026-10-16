@@ -795,6 +795,37 @@ def _fs3_lock_hint(plug):
     )
 
 
+# Re-pinned (features step 4, Typed: the generic-slot rule, the user's default "every kAny
+# attribute, choice included"): a choice.input element (a typed attribute that holds any data,
+# as a Typed one) never reads its data type as a destination, so these rows were regenerated
+# on that step's tree (`_FS4_GENERIC_PATH`, beside this file); every other row is 619f29f's:
+# * "generic slot << number", "auto-index generic << number": the number is set (619f29f: the
+#   setAttr's type flag 'Tdata' was refused), one setAttr step more;
+# * "choice output (compound) -> scalar": a generic source holding compound data is connected
+#   whole (619f29f: 'Plug is not a compound parent' from the per-channel split), one step more;
+# * "held source deleted, into a generic slot": the source's "already deleted" is raised
+#   before the destination is queried, so no element is made (619f29f: chE.input[0] made);
+# * the choice-hook rows ("instance hook: ...", "patched ... hook", "user choice hook: ..."):
+#   a slot as the destination asks no fallback hook (619f29f: 1 to 3 calls), the result, the
+#   scene and the undo steps unchanged.
+_FS4_GENERIC_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "r5_inject_fs4_generic_slots.json"
+)
+_FS4_GENERIC_ROWS = frozenset((
+    "auto-index generic << number",
+    "choice output (compound) -> scalar",
+    "generic slot << number",
+    "held source deleted, into a generic slot",
+    "instance hook: generic slot",
+    "instance hook: output",
+    "patched Choice hook",
+    "patched DGNode hook",
+    "user choice hook: auto-index",
+    "user choice hook: generic slot",
+    "user choice hook: output",
+))
+
+
 _D2_ERROR_LINES = {
     "matrix -> a transform plug no channel": (
         "Connection not made: 'locH.worldMatrix[0]' -> 'xfI.visibility'."
@@ -828,11 +859,20 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
     the undo steps of the GC tags (`_B1_FEWER_UNDO_STEPS`), and of the journaled
     connects and the incompatible-type connect's ``Error:`` line (`_D2_FEWER_UNDO_STEPS`,
     `_D2_ERROR_LINES`), and of the journaled value sets (`_D3_FEWER_UNDO_STEPS`), and the
-    locked-plug refusal's unlock hint (`_FS3_LOCK_HINT`)."""
+    locked-plug refusal's unlock hint (`_FS3_LOCK_HINT`), and the generic-slot rows
+    regenerated for Typed (`_FS4_GENERIC_ROWS`)."""
 
     def test_every_case_as_619f29f(self):
         with open(_ORACLE_PATH) as fh:
             oracle = json.load(fh)
+        with open(_FS4_GENERIC_PATH) as fh:
+            regenerated = json.load(fh)
+        self.assertEqual(set(regenerated), _FS4_GENERIC_ROWS)
+        self.assertLessEqual(_FS4_GENERIC_ROWS, set(oracle))
+        for name in _FS4_GENERIC_ROWS:
+            # each row differs from 619f29f's
+            self.assertNotEqual(regenerated[name], oracle[name], name)
+        oracle.update(regenerated)
         table = json.loads(json.dumps(_inject_outcomes()))
         self.assertEqual(sorted(table), sorted(oracle))
         self.assertLessEqual(set(_B1_FEWER_UNDO_STEPS), set(oracle))
@@ -841,6 +881,9 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
         self.assertLessEqual(set(_FS3_LOCK_HINT), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
+                if name in _FS4_GENERIC_ROWS:
+                    self.assertEqual(table[name], oracle[name])
+                    continue
                 expected = dict(oracle[name])
                 expected["undo_steps"] -= _B1_FEWER_UNDO_STEPS.get(name, 0)
                 expected["undo_steps"] -= _D2_FEWER_UNDO_STEPS.get(name, 0)
@@ -1028,12 +1071,14 @@ class TestOneSetOfFacts(MayaTestCase):
         return calls
 
     def test_a_generic_slot_is_queried_once(self):
+        # re-pinned (features step 4, Typed): a generic slot as the destination never
+        # reads its data type, and asks no hook (R5: once; 619f29f: 3 / 2 times)
         N     = _build()
         calls = self._count(lambda: N["ch"].input[0] << N["xf"].t)
-        self.assertEqual(calls.by_arg["data_type"]["chE.input[0]"], 1)  # 619f29f: 3
-        self.assertEqual(calls.counts["choice hook"], 1)                # 619f29f: 3
+        self.assertEqual(calls.by_arg["data_type"]["chE.input[0]"], 0)  # 619f29f: 3
+        self.assertEqual(calls.counts["choice hook"], 0)                # 619f29f: 3
         calls = self._count(lambda: N["ch"].input[1] << N["md2"].outputX)
-        self.assertEqual(calls.by_arg["data_type"]["chE.input[1]"], 1)  # 619f29f: 2
+        self.assertEqual(calls.by_arg["data_type"]["chE.input[1]"], 0)  # 619f29f: 2
         self.assertIn(("xfC.translate", "chE.input[0]"), scene_connections())
         self.assertIn(("mdB.outputX", "chE.input[1]"), scene_connections())
 
@@ -1043,16 +1088,20 @@ class TestOneSetOfFacts(MayaTestCase):
         calls = self._count(lambda: N["md"].input1 << N["ch"].output)
         self.assertEqual(calls.by_arg["data_type"]["chE.output"], 1)    # 619f29f: 2
         self.assertIn(("chE.output", "mdA.input1"), scene_connections())
+        # re-pinned (features step 4, Typed): into a generic slot no shorthand runs, so
+        # neither operand's data type is read (R5: once each)
         calls = self._count(lambda: N["ch2"].input[0] << N["ch"].output)
-        self.assertEqual(calls.by_arg["data_type"]["chE.output"], 1)    # 619f29f: 2
-        self.assertEqual(calls.by_arg["data_type"]["chJ.input[0]"], 1)  # 619f29f: 2
+        self.assertEqual(calls.by_arg["data_type"]["chE.output"], 0)    # 619f29f: 2
+        self.assertEqual(calls.by_arg["data_type"]["chJ.input[0]"], 0)  # 619f29f: 2
 
     def test_an_auto_indexed_element_gets_its_own_facts(self):
         N     = _build()
         calls = self._count(lambda: N["ch"].input << N["xf"].t)
         self.assertEqual(calls.by_arg["data_type"]["chE.input"], 1)     # 619f29f: 3
-        self.assertEqual(calls.by_arg["data_type"]["chE.input[0]"], 1)  # 619f29f: 2
-        # the element's own data type decided: the whole compound is connected
+        # re-pinned (features step 4, Typed): the element is a generic slot, whose data
+        # type is never read (R5: once)
+        self.assertEqual(calls.by_arg["data_type"]["chE.input[0]"], 0)  # 619f29f: 2
+        # the whole compound is connected
         self.assertIn(("xfC.translate", "chE.input[0]"), scene_connections())
 
     def test_facts_are_reused_while_no_user_code_ran(self):
@@ -1086,10 +1135,12 @@ class TestOneSetOfFacts(MayaTestCase):
     def test_a_users_hook_runs_as_often_as_before(self):
         N    = _build()
         user = _user_choice(N)
+        # re-pinned (features step 4, Typed): a generic slot as the destination asks no
+        # hook (619f29f and R5: 3, 2, 2 and 0 runs)
         for label, op, runs in (
-            ("a generic slot", lambda: user.input[0] << N["xf"].t, 3),         # 619f29f: 3
-            ("an auto-index", lambda: user.input << N["md2"].output, 2),       # 619f29f: 2
-            ("a scalar into a slot", lambda: user.input[4] << N["md2"].outputX, 2),
+            ("a generic slot", lambda: user.input[0] << N["xf"].t, 0),         # 619f29f: 3
+            ("an auto-index", lambda: user.input << N["md2"].output, 0),       # 619f29f: 2
+            ("a scalar into a slot", lambda: user.input[4] << N["md2"].outputX, 0),  # 619f29f: 2
             ("a rewire (the slot is typed now)", lambda: user.input[0] << N["md2"].output, 0),
         ):
             with self.subTest(case=label):

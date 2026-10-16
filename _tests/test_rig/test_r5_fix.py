@@ -103,7 +103,10 @@ class TestAnEmptyChoiceOutput(MayaTestCase):
              {"xf.tx": 7.0}),
             ("an auto-indexed multi", lambda: Node("pma").input1D << Node("ch").output, 2,
              {"pma.input1D[0]": 0.0}),
-            ("a new choice slot", lambda: Node("ch2").input[0] << Node("ch").output, 2, {}),
+            # re-pinned (features step 4, Typed): into a generic slot no shorthand runs,
+            # so the output's type is not queried (45d2c13: 2; an even count either way,
+            # so a later target reads the same)
+            ("a new choice slot", lambda: Node("ch2").input[0] << Node("ch").output, 0, {}),
         )
         for label, op, queries, reads in cases:
             with self.subTest(case=label):
