@@ -41,6 +41,7 @@ from rig._internal.types import (
 )
 from rig.nodetypes._base import (
     _fixed_attr_kind,
+    _is_generic_slot,
     _NON_MATRIX_ATTR_API_TYPES,
     _SCALAR_ATTR_API_TYPES,
     _USER_CODE_RUNS,
@@ -53,7 +54,8 @@ def shorthand(src: Any, dst: Any, src_facts: Any = None, dst_facts: Any = None) 
 
     Returns ``True`` if a translation network was inserted and the connection
     was made; ``False`` if no shorthand pair matched (caller should fall back
-    to the standard injection logic).
+    to the standard injection logic), and always for a destination that is a
+    generic slot (`rig.nodetypes._base._is_generic_slot`).
 
     ``src_facts`` / ``dst_facts`` are the operands' `_Facts` when the caller
     reads them again after this call (``Plug.__lshift__`` hands them on to
@@ -64,6 +66,10 @@ def shorthand(src: Any, dst: Any, src_facts: Any = None, dst_facts: Any = None) 
 
     # every source test below is False for a non-attribute
     if not isinstance(src, Attribute):
+        return False
+    # a typed attr that holds any data (`Typed`, choice.input ...) takes its source as
+    # it is: no translation network, whatever it holds now (its data type is not read)
+    if isinstance(dst, Attribute) and _is_generic_slot(dst):
         return False
 
     # src / dst type facts, each queried at most once for this call

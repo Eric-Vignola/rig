@@ -12,7 +12,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit
-from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, Attribute
+from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, _is_generic_slot, Attribute
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _typed_creator
 
@@ -356,6 +356,27 @@ class Transform(DAGNode):
         children do. Multi values are [logical index, value] pairs.
         """
         data = {}
+
+        # a typed attr that holds any data (a Typed spec's): addAttr(attributeType=
+        # "typed"), and as its value only the numbers it holds (what a connection
+        # fed it is not saved: serialization carries no connections)
+        if _is_generic_slot(att):
+            data["attributeType"] = "typed"
+            if att.is_multi:
+                data["multi"] = True
+                data["value"] = [
+                    [int(i), att[i].get()]
+                    for i in att.get_logical_indices()
+                    if cmds.getAttr(att[i].full_name, type=True) == "typed"
+                ]
+            elif cmds.getAttr(att.full_name, type=True) == "typed":
+                data["value"] = att.get()
+            parent = att.get_parent()
+            if parent is not None:
+                data["parent"] = parent.name
+            data["keyable"]     = att.is_keyable
+            data["channel_box"] = att.is_channel_box
+            return data
 
         # a multi's own plug reports "compound", addAttr() wants the element
         # type. it is read off the attribute, a getAttr on an element would

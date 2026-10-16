@@ -35,7 +35,10 @@ Operator conventions:
     * ``<<`` (right-to-left) -- inject: setAttr / connectAttr / disconnect /
       addAttr-spec / type-shorthand. Chains because it returns the LHS. An
       enum plug takes a field name as well as its int (``t.ro << "zxy"``,
-      ``md.operation << "divide"``); a wrong name raises TypeError.
+      ``md.operation << "divide"``); a wrong name raises TypeError. A
+      ``Typed`` attribute holds any data (as ``choice.input``): ``slot <<
+      plug`` connects the plug whole (no shorthand node, no per-channel
+      split), ``slot << number`` sets it, any other value is a TypeError.
     * ``>>`` (left-to-right) -- introspect: ``plug >> None`` reads the value;
       ``plug >> Node`` clones the attr-spec onto another node (a name the
       node already has is refused).
@@ -231,6 +234,7 @@ from rig.spec import (
     skip,
     String,
     Time,
+    Typed,
     unhide,
     unlock,
     Vector,
@@ -319,6 +323,7 @@ __all__ = [
     "Quat",
     "String",
     "Time",
+    "Typed",
     "Vector",
     # Spec modifiers (v4.T)
     "destroy",

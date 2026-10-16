@@ -10,7 +10,7 @@ import re
 import sys
 import uuid
 from functools import total_ordering
-from numbers import Number
+from numbers import Number, Real
 from typing import Any, Iterator
 
 import numpy as np
@@ -1154,6 +1154,32 @@ def _attr_mobject(attr: Any) -> OpenMaya.MObject:
     if not mobject:
         mobject = d["_mobject"] = d["_mplug"].attribute()
     return mobject
+
+
+_K_TYPED_ATTR = OpenMaya.MFn.kTypedAttribute
+_K_ANY_DATA   = OpenMaya.MFnData.kAny
+
+
+def _is_generic_slot(attr: Any) -> bool:
+    """True if ``attr`` (an Attribute) is a plug of a typed attribute that holds any
+    data, a *generic slot*: ``addAttr -attributeType typed`` (a ``Typed`` spec),
+    ``choice.input`` / ``output``, an objectSet's ``dnSetMembers`` ... (Maya's kAny
+    data, `MFnTypedAttribute.attrType`). Its kind is fixed, its data type follows
+    what feeds it. Read on the cached attribute MObject (about 1 us, no by-name
+    query); False for anything else, and for a plug whose attribute cannot be read
+    (its owner check raises elsewhere).
+
+    Keys: a generic slot has no unit and takes numbers, so the curve that keys it is
+    an animCurveTU (Maya's ``setKeyframe`` makes one); a curve type chosen from a
+    plug maps a generic slot to TU through this test."""
+    try:
+        mobject = _attr_mobject(attr)
+        return (
+            mobject.hasFn(_K_TYPED_ATTR)
+            and OpenMaya.MFnTypedAttribute(mobject).attrType() == _K_ANY_DATA
+        )
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _connected_attrs(
@@ -2941,6 +2967,9 @@ class Attribute(str):
               leading ``-`` is a sign); any other str, an empty one included,
               raises TypeError naming the fields, and the value is left as it
               was (see `_enum_value`).
+            - a typed attr that holds any data (a ``Typed`` spec's, ``choice.input``,
+              `_is_generic_slot`) takes one number as numeric data, with no `type`
+              flag; Maya's setAttr refuses any other value there.
 
         One int, float or bool value (no flag) into a free numeric, unit, enum or bool
         attr is set through the API and journaled when cmds.setAttr() would set the same
@@ -2973,10 +3002,13 @@ class Attribute(str):
         ):
             # typed attr requires the `type` arg to be specified.
             # the only weird one-off is `fltMatrix`, which is not typed but still
-            # requires the `type` arg.
-            typ = self.data_type
-            if self.is_typed or typ == "matrix":
-                kwargs["type"] = typ
+            # requires the `type` arg. A generic slot (`_is_generic_slot`) takes one
+            # number as numeric data, which a type flag (its data type, "Tdata"
+            # when it is empty) refuses: no flag, and no type query.
+            if not (len(args) == 1 and isinstance(args[0], Real) and _is_generic_slot(self)):
+                typ = self.data_type
+                if self.is_typed or typ == "matrix":
+                    kwargs["type"] = typ
 
         # special handling for counted array attrs
         # - cmds.setAttr() wants the item count first, then the unpacked items
