@@ -746,6 +746,10 @@ nodes.tz = 5                                 # assignment sugar broadcasts too
 print(nodes.tz >> None)                      # [5. 5. 5.]
 ```
 
+A `_` name (`nodes.__tag__`, `nodes.__tag__ = 5`) broadcasts like any
+Maya attr when every element has it; otherwise it is an `AttributeError`,
+as Python's own probes (`__deepcopy__`) expect.
+
 Slicing keeps the type; a list, tuple or array key picks slots (fancy
 indexing); an `int` returns the element.
 

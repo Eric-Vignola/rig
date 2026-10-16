@@ -171,7 +171,8 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   members. `cube.tx << red` is a `TypeError` that names `cube << red`
   (with `in`, a plug stands for its node: `cube.tx in layer`).
 - **`List` vectorizes, under two broadcast rules.** Attribute access
-  maps over the list (`cubes.t` is a `List` of plugs). The
+  maps over the list (`cubes.t` is a `List` of plugs, and so is
+  `cubes.__tag__` when every element has that attr). The
   **operators** (`<<`, `+`, `==`...) pair elements and cap the shorter
   operand to its last element: `cubes.ty << [1, 2]` sets 1, 2, 2. The
   **function libraries** (`rig.functions`, `lerp`, `dist`...) are
