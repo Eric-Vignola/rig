@@ -20,22 +20,22 @@ for the node classes and their typed methods.
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
-| 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node |
+| 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node, `lock()` / `unlock()` / `is_locked` |
 | 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.node`, instance paths |
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, a taken name refused, `plug >> container` |
-| 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes |
+| 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes, `lock()` / `unlock()` |
 | 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
 | 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, no truth value for an ordering, per-channel fan-out, `condition(...)`, `constant(...)` |
 | 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `.indices` / `.count` / `.names`, `>> None`, a lattice `pt[s]` refused |
-| 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container` |
-| 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection |
+| 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container`, locking a container |
+| 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection, a locked container kept |
 | 13 | [`memoize`, `vectorize`, `prune_memoize_caches`](#13-memoize-vectorize-prune_memoize_caches) | the two decorators and the cache sweep |
 | 14 | [`sequences` and `arguments`](#14-sequences-and-arguments) | the asymmetric generators behind every broadcast |
 | 15 | [`NodeOp` and the target Maya version](#15-nodeop-and-the-target-maya-version) | version-keyed impls, `set_options(maya_version=...)`, `set_target_version` |
-| 16 | [`InjectionError`](#16-injectionerror) | the one thing `<<` refuses |
+| 16 | [`InjectionError`](#16-injectionerror) | the one thing `<<` refuses, re-running over a locked plug |
 | 17 | [Function libraries: the map](#17-function-libraries-the-map) | the nine modules and twelve verbs, folding, memoisation, `List` broadcast, the seven rules |
 | 18 | [`functions` — scalar math](#18-functions--scalar-math) | `abs` `int` `trunc` `floor` `ceil` `sign` `round` `clamp` `sqrt` `pow` `exp` `log` `rev` |
 | 19 | [`functions` — lists: reduce, pick, search](#19-functions--lists-reduce-pick-search) | `sum` `avg` `max` `min` `argmax` `argmin` `all` `any` `diff` `cumsum` `choice` `searchsorted` |
@@ -57,7 +57,7 @@ for the node classes and their typed methods.
 | 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `shade.repair` / `tidy`, the network verbs |
 | 37 | [Shader conversion](#37-shader-conversion) | `mat = mat.astype(Phong)`, `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, the held old node, undo |
-| 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
+| 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
 
 ---
 
@@ -237,6 +237,34 @@ for probe in (lambda: a.tx, lambda: tz >> None):
         print(err)
 # Transform node (freed by a new scene, a file open or a reference unload) already deleted!
 # held node (freed by a new scene, a file open or a reference unload) already deleted!
+```
+
+`node.lock()` locks the node (`lockNode`) and `node.unlock()` unlocks it;
+`node << lock` / `<< unlock` are the same calls, and each returns the node.
+`node.is_locked` reads it (read only; a member of a locked container reads
+locked). A node already in the asked state is left as it is, with no undo
+step. A locked node still takes values and connections. rig refuses to
+rename, delete or reparent it, or to add, replace or destroy its
+attributes, before Maya's own error, with one message and nothing changed.
+Lock the plugs first, then the node: Maya locks no plug of a locked node.
+
+```python
+from rig import InjectionError
+from rig.spec import lock
+
+ctl = Transform.define("ctl")
+ctl.tx.lock()                                   # the plugs first
+print(ctl.lock() is ctl, ctl.is_locked)         # True True
+print((ctl << lock) is ctl)                     # True  -- locked already: nothing written
+ctl.ty << 2                                     # a locked node takes values
+for edit in (lambda: ctl.rename("hand"), lambda: ctl.tz.lock()):
+    try:
+        edit()
+    except InjectionError as err:
+        print(err)
+# cannot rename 'ctl': it is locked; Node('ctl').unlock() unlocks it. Nothing was changed
+# 'ctl.translateZ' is on the locked node 'ctl', whose plugs Maya never locks: Node('ctl').unlock() unlocks it. Nothing was changed
+print(ctl.unlock().is_locked, ctl.tx.is_locked, ctl.ty >> None)   # False True 2.0
 ```
 
 ---
@@ -696,6 +724,26 @@ print(repr(nodes.tx.get_inputs()))  # List([List([]), List([Plug("c0.translateX"
 print(nodes.tx.get_inputs().get())  # [[], array([1.]), []]  -- a query result reads as values
 ```
 
+`lock()` / `unlock()` are the List's own (methods do not broadcast; `<<
+lock` routes to them): every element, nodes and plugs, checked first, so a
+refused one changes nothing. `lock()` locks the plugs, then the nodes in
+one `lockNode`; `unlock()` the nodes, then the plugs. It is one undo step,
+`rig.lock` / `rig.unlock`, and returns the List. `nodes.is_locked` maps,
+one bool per element.
+
+```python
+from rig.spec import unlock
+
+both = List([Node("c0"), Node("c0").tx, Node("c1")])
+print(both.lock() is both, cmds.undoInfo(query=True, undoName=True))   # True rig.lock
+print(list(nodes.is_locked), Node("c0").tx.is_locked)                  # [True, True, False] True
+print((both << unlock) is both, list(nodes.is_locked))                 # True [False, False, False]
+try:
+    List([Node("c2"), 3]).lock()
+except TypeError as err:
+    print(err)                                                         # element [1] (3) is not a node or a plug: it has no lock
+```
+
 ---
 
 ## 7. Arithmetic
@@ -1050,6 +1098,31 @@ with container("leg"):
 print(str(knee), knee.get_parent(), sorted(cmds.container("leg", query=True, nodeList=True)))   # lower_knee hip ['hip', 'lower_knee']
 ```
 
+Lock a container after its block: a locked container takes no new member,
+so `hand.lock()` inside its own `with` block is refused, and so is a node a
+scope would make inside a locked container (before it is made). Its lock
+locks every member, and its unlock unlocks every member, also one locked on
+its own; a member's `unlock()` is refused, naming the container.
+
+```python
+from rig import InjectionError
+
+with container("hand") as hand:
+    palm = Node.create("multiplyDivide", name="palm")
+    try:
+        hand.lock()
+    except InjectionError as err:
+        print(err)                                # lock 'hand' after its with block: a locked container takes no new member. Nothing was changed
+hand.lock()
+print(palm.is_locked)                             # True
+try:
+    palm.unlock()
+except InjectionError as err:
+    print(str(err).split(":")[0])                 # 'palm' is locked by its container 'hand' (a locked container locks its members)
+hand.unlock()
+print(palm.is_locked)                             # False
+```
+
 ---
 
 ## 12. Options, `force_nodes`, `cleanup`
@@ -1105,7 +1178,8 @@ has emptied. Three filters keep it safe: only nodes carrying the hidden
 `__rig__` tag that `Node.create` / the operators stamp, only DG utility
 types (never a transform, joint, shape, light, set, layer or shading node),
 and only when every consumer is also going. User-made nodes, locked nodes
-and referenced nodes are never touched. The tag is written through the
+and referenced nodes are never touched, and a locked container is kept,
+even an empty one. The tag is written through the
 API and has no undo step of its own: undoing the node's creation removes
 it with the node.
 
@@ -1127,6 +1201,13 @@ report = cleanup(container="gc")
 print(sorted(report["by_owner"]["gc"]), report["memoize_entries_pruned"] > 0)   # ['dead', 'mul1'] True
 print([cmds.objExists(n) for n in ("keep", "live", "dead", "user_mul", "gc")])  # [True, True, False, True, True]
 print(repr(gc.cleanup()["by_owner"]))                                           # {}  -- the Container method, same call scoped to itself
+```
+
+```python
+cmds.container(name="shelf")                                   # an empty container, locked
+Node("shelf").lock()
+print(cleanup()["deleted_containers"], cmds.objExists("shelf"))  # [] True
+Node("shelf").unlock()
 ```
 
 `cleanup_on_exit=True` (per block or globally) runs it as the block exits,
@@ -1305,7 +1386,11 @@ that is in the way, whatever drives it (a wire, a curve, a constraint, a
 pairBlend). The one barrier it respects is a lock: setting or
 connecting into a locked attribute raises `InjectionError` (a
 `RuntimeError`), and a compound with a single locked child mutates nothing.
-Disconnecting is still allowed.
+Disconnecting is still allowed. A locked plug refuses even the value it
+already holds, so a build that ends with `<< lock` unlocks before it runs
+again; the error names the unlock (`Plug('b.translateY').unlock()`, with
+`Node('b').unlock()` first when the node is locked too). The lock verbs
+refuse with `InjectionError` too (section 1).
 
 ```python
 from rig import InjectionError
@@ -1326,6 +1411,10 @@ try:
     b.t << [7, 7, 7]
 except InjectionError:
     print(b.t >> None)                       # [0. 1. 0.]  -- all or nothing
+try:
+    b.ty << 1                                # the value it holds: refused all the same
+except InjectionError as err:
+    print(str(err).split("Unlock first: ")[1].split(" (")[0])   # Plug('b.translateY').unlock()
 b.ty << None                                 # a disconnect is fine on a locked plug
 b.ty << unlock << 5
 print(b.ty >> None)                          # 5.0
@@ -2896,6 +2985,8 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | a DSL statement (`<<`, an operator network, a `List` broadcast, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | its connects and plain value sets together are **one** step, made through the API and rig's plug-in command; every Maya command it runs (`createNode`, a container's member add, a lock or keyable flag, `addAttr`, a set the API does not take) is a step of its own, so an operator network is still several. A set or a connect that is the whole statement is one step either way. The hidden `__rig__` tag of a node rig creates is no step of its own: undoing the creation removes it with the node |
 | a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
+| `node.lock()`, `plug.lock()` and their `unlock()` (`x << lock`) | one, Maya's own (`lockNode`, `setAttr -lock`); **none** when the object already is in that state |
+| `List.lock()` / `List.unlock()` (`List << lock`) over more than one command | one, named `rig.lock` / `rig.unlock` |
 | `Mesh.create`, `NurbsCurve.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | the transfers: `Mesh.transfer_maps`, `Mesh.transfer_component_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.copy_skincluster` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.copy_skincluster` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |

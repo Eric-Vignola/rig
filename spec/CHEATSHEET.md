@@ -19,7 +19,7 @@ Concepts, conventions and the verified behaviour live in [`README.md`](README.md
 | 5 | [`Enum`](#5-enum) | the `en=` forms (string, list, dict, pairs), default, set by index or by field name |
 | 6 | [Compounds — `Vector` `Color` `Euler` `Quat`](#6-compounds--vector-color-euler-quat) | children, per-child defaults, ranges |
 | 7 | [The kwargs](#7-the-kwargs) | `min` `max` `dv` `keyable` `k` `hidden` `sn` `nn` `multi` `size` `overwrite`; a static name refused |
-| 8 | [Modifiers — `lock` `unlock` `hide` `unhide` `skip`](#8-modifiers--lock-unlock-hide-unhide-skip) | on plugs, on compounds, inside a fan-out |
+| 8 | [Modifiers — `lock` `unlock` `hide` `unhide` `skip`](#8-modifiers--lock-unlock-hide-unhide-skip) | on plugs, `lock` / `unlock` on a node and a `List`, on compounds, inside a fan-out |
 | 9 | [`destroy`](#9-destroy) | both forms, variadic, `strict` `silent` `verbose`, refusals |
 | 10 | [Declaring again, and `overwrite=`](#10-declaring-again-and-overwrite) | the settings apply and the value stays; another kind raises; `overwrite=True` replaces |
 | 11 | [`node >> spec` declares an output](#11-node--spec-declares-an-output) | `writable=False` |
@@ -366,7 +366,8 @@ except TypeError as e:
 ## 8. Modifiers — `lock` `unlock` `hide` `unhide` `skip`
 
 Specs with no name: their kwargs are `setAttr` flags, they edit the plug
-on the left and return it.
+on the left and return it. `lock` / `unlock` also take a node and a
+`List`.
 
 ```python
 print(lock.kargs, unlock.kargs, hide.kargs, unhide.kargs, skip.kargs)  # {'lock': True} {'lock': False} {'keyable': False, 'channelBox': False} {'keyable': True, 'channelBox': False} {}
@@ -399,6 +400,31 @@ ctrl.t << unhide
 ctrl.r << lock
 print(cmds.getAttr("ctrl.r", lock=True), cmds.getAttr("ctrl.rx", lock=True))   # True True
 ctrl.r << unlock
+```
+
+`x << lock` is `x.lock()`: on a plug, a node (`lockNode`) and a `List`,
+returning the same object, with nothing written when it already is locked
+(and no undo step). Maya locks no plug of a locked node, so a plug lock
+after the node's is an `InjectionError` naming the way out: lock the plugs
+first. `hide` / `unhide` are for plugs.
+
+```python
+from rig import InjectionError
+
+print(repr(ctrl.rz << lock), repr(ctrl << lock), Node("ctrl").is_locked)   # Plug("ctrl.rotateZ") Transform("ctrl") True
+cmds.flushUndo()
+ctrl << lock                                    # locked already
+print(cmds.undoInfo(query=True, undoQueueEmpty=True))   # True
+try:
+    ctrl.ry << lock
+except InjectionError as e:
+    print(str(e).split(":")[0])                 # 'ctrl.rotateY' is on the locked node 'ctrl', whose plugs Maya never locks
+try:
+    ctrl << hide
+except TypeError as e:
+    print(str(e).split(";")[0])                 # this modifier is for attributes: write node.<attr> << it (a node takes lock / unlock)
+ctrl << unlock
+ctrl.rz << unlock
 ```
 
 Inside a per-channel list a modifier applies to its channel, `skip`
@@ -686,7 +712,10 @@ print((ctrl.mats[:] >> None).shape, cmds.getAttr("ctrl.names[0]"))           # (
 
 A spec injected into a `List` is applied to every element's node
 (a plug element means its node); the result is a `List` of the new
-plugs, so values, modifiers and `>> None` broadcast next.
+plugs, so values, modifiers and `>> None` broadcast next. `<< lock` /
+`<< unlock` is the List's own `lock()` / `unlock()`: every element is
+checked first, the plugs go before the nodes, in one undo step
+(`rig.lock`), and the List comes back.
 
 ```python
 a     = Node.create("transform", name="a")

@@ -203,10 +203,17 @@ print(ctrl.mix >> None, ctrl.mix.get_inputs())           # 0.0 List([])
 `lock`, `unlock`, `hide`, `unhide` are plain `_AttrSpec` instances whose
 kwargs are `setAttr` flags instead of `addAttr` flags; injected into a
 plug they edit it and return it. `skip` and `destroy` are sentinels.
+`x << lock` / `x << unlock` are `x.lock()` / `x.unlock()`, for a plug, a
+node (`lockNode`) and a `List` alike: the same object comes back, nothing
+is written when `x` already is in that state, and a refusal is an
+`InjectionError` with nothing changed (a plug of a locked node: lock the
+plugs first, then the node; a child held by a locked parent). `hide` and
+`unhide` are for plugs: `node << hide` is a `TypeError` naming
+`node.<attr> << hide`.
 
 | Modifier | Does | On a compound |
 |---|---|---|
-| `lock` / `unlock` | `setAttr(lock=True / False)` | the parent; children inherit the lock |
+| `lock` / `unlock` | `plug.lock()` / `unlock()`: `setAttr(lock=True / False)`; on a node `lockNode`, on a `List` both, in one undo step | the parent; children inherit the lock |
 | `hide` | `keyable=False, channelBox=False` | fans out to every child |
 | `unhide` | `keyable=True, channelBox=False` | fans out to every child |
 | `skip` | nothing — leave the target as it is | |
@@ -229,7 +236,8 @@ print(ctrl.tx.get_inputs())                     # List([])
 INFO line on the `rig._internal.plug` logger, one per connection with
 `verbose=True`), `strict=True` refuses to delete a connected attribute,
 `silent=True` makes a missing name a no-op. A locked attribute and a
-static one (`translate`) are refused by Maya either way.
+static one (`translate`) are refused by Maya either way, and an attribute
+of a locked node by rig, before anything is disconnected.
 
 ```python
 from rig.spec import destroy
@@ -406,5 +414,10 @@ Verified on Maya 2025; not bugs to work around blindly.
   is what shows the attribute again; a non-keyable-but-displayed state
   needs `plug.set(channelBox=True)` by hand.
 - **`overwrite=True` is destructive by design**: value reset, outgoing
-  and incoming connections severed, a lock removed first. Code that may
+  and incoming connections severed, a lock removed first. A locked node
+  takes neither a new attribute nor `overwrite=True` (`InjectionError`,
+  nothing changed); a re-declaration and a value still work on one.
+- **A locked plug takes no value, not even the one it holds.**
+  `ctrl << Float("w") << 0.5 << lock` raises at `<< 0.5` when it runs a
+  second time: unlock first (`ctrl.w.unlock()`), as the error says. Code that may
   run twice needs no flag: the default re-declaration keeps what is there.

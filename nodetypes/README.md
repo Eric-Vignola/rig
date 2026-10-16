@@ -105,7 +105,7 @@ from rig.nodetypes.plugins import load_plugin
 | Class | Wraps | What it adds |
 |---|---|---|
 | `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.define(type, name, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
-| `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets` |
+| `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `mdagpath`, `get_bounding_box`, `get_deformers` |
 | `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy` |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
@@ -362,6 +362,22 @@ whatever drives the plug, then sets. `a >> b` connects with force, `a // b`
 disconnects, `connect(other, force=False)` refuses an occupied input. The
 DSL spelling, `node.tx`, is a `Plug`: the same methods, the DSL's
 operators, a numpy-shaped `get()`.
+
+`lock()` / `unlock()` run `setAttr -lock` and return the attribute (the
+DSL's `plug << lock` is the same call); `is_locked` is True for the plug's
+own lock and for a locked parent's (a compound's for its children, a multi
+root's for its elements). An attribute already in that state is left as it
+is, with no undo step. Both refuse a plug of a locked node (Maya locks no
+plug there: lock the plugs first, then the node), and `unlock()` a child
+whose locked parent holds the lock. `attr.is_locked = x` still works, as
+`lock()` / `unlock()`; write those. `DGNode.lock()` / `unlock()` /
+`is_locked` are the node's (`lockNode`; `is_locked` has no setter), and a
+locked node refuses `rename`, `delete`, `set_parent`, `add_attr`,
+`delete_attr`, `rename_attr` and a new attribute spec with one
+`InjectionError`: `cannot rename 'x': it is locked; Node('x').unlock()
+unlocks it. Nothing was changed`. A node's Python members win over a Maya
+attribute of the same name, so `Node("animLayer1").lock` is the method:
+`Plug(node.find_attr("lock"))` reaches the attribute.
 
 An `Attribute` holds its `MPlug`. After a disconnect, Maya can free the
 `MPlug` of an array element (one of a multi that is not keyable, connected

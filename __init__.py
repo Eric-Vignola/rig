@@ -39,6 +39,16 @@ Operator conventions:
     * ``>>`` (left-to-right) -- introspect: ``plug >> None`` reads the value;
       ``plug >> Node`` clones the attr-spec onto another node (a name the
       node already has is refused).
+    * ``x.lock()`` / ``x.unlock()`` (``x << lock`` / ``x << unlock``) lock a
+      plug (setAttr -lock), a node (lockNode) or a ``List`` (its plugs, then
+      its nodes, one undo step ``rig.lock``) and return ``x``; ``is_locked``
+      reads it. Nothing is written when ``x`` already is in that state. Lock
+      the plugs first, then the node (Maya locks no plug of a locked node).
+      A refusal is an InjectionError with nothing changed: a referenced
+      node, a plug of a locked node, a child held by a locked parent, rig's
+      rename / delete / set_parent / new attribute / destroy on a locked
+      node. A locked plug takes no value, even the one it holds: unlock
+      before re-running a build that locks plugs.
     * ``<<`` with a collection (``Tag("x")``, a layer or material node) makes the LHS a
       member and returns the LHS, so collections chain: ``cube.f[:3] <<
       Tag("a") << Tag("b")``. An attribute spec returns the new plug instead
