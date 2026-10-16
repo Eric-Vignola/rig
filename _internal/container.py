@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import barrier, cmds_edit, statement
+from rig._internal.journal import barrier, cmds_edit, cmds_route, statement
 from rig.nodetypes import (
     _base as _nodetypes_base,
     dg_node as _dg_node_module,
@@ -2601,9 +2601,12 @@ def _create_external_output(
             _publish_native(container_target, new_plug, name)
 
         if value:
-            # Output direction: source drives the new attributes-node attr.
+            # Output direction: source drives the new attributes-node attr. A connect
+            # Maya refuses (incompatible types) is passed over: on the cmds route, which
+            # prints nothing for it (the API route would print Maya's Error: line)
             try:
-                source.connect(new_plug, force=True)
+                with cmds_route():
+                    source.connect(new_plug, force=True)
             except Exception:
                 pass
         return new_plug
