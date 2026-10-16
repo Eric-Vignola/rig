@@ -87,6 +87,42 @@ def creating_takes_no_space(cls_name: str, what: str, kwargs: dict) -> None:
         )
 
 
+class _Required:
+    """The default of a keyword the call must give (`REQUIRED`), shown as
+    ``<required>`` in a signature: the method raises its own TypeError, naming
+    the keyword and why, when it is missing."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<required>"
+
+
+REQUIRED = _Required()
+
+
+def required_space(method: str, data: str, world_space) -> bool:
+    """``world_space=`` of a curve's or a surface's update in place (`method`,
+    ``"NurbsCurve('ctlShape').load"``), which has no default: its file (`data`, a
+    ``BSplineData``) holds no space, so an object-space file loaded as world space
+    (or the reverse) would move the CVs silently. A TypeError naming the keyword
+    when it is missing or not a bool, before any file is read."""
+    if world_space is REQUIRED:
+        raise TypeError(
+            f"{method} needs world_space=: a {data} holds no space, so give the one the "
+            f"file was saved in (world_space=True for save()'s default, world_space=False for "
+            f"save(world_space=False)); the other one moves the CVs"
+        )
+    import numpy as np
+
+    if not isinstance(world_space, (bool, np.bool_)):
+        raise TypeError(
+            f"{method}: world_space= takes True or False (the space the file was saved in), "
+            f"not {world_space!r}"
+        )
+    return bool(world_space)
+
+
 def _shown(value) -> str:
     if _is_node(value):
         return f"the node {str(value)!r}"

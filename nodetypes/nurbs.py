@@ -28,23 +28,25 @@ _CURVE_LOAD_DOC = """Loads a curve from a cgmath file (a BSplineData): one name,
 
         ctl = NurbsCurve.load("ctl.npz", name="ctl")
 
-    ``NurbsCurve('ctlShape').load(curve, *, world_space=True)``, from a curve,
+    ``NurbsCurve('ctlShape').load(curve, *, world_space)``, from a curve,
     UPDATES that curve's CVs in place, the inverse of
     ``NurbsCurve('ctlShape').save(...)``::
 
-        NurbsCurve("ctlShape").load("ctl.npz")
+        NurbsCurve("ctlShape").load("ctl.npz", world_space=True)
 
     Args:
         curve: The file (a str or os.PathLike, ``~`` expanded; a cgmath
             ``.npz`` / ``.json`` / ``.pkl``), or the BSplineData itself.
         name, container, attrs: (creating) as `create` takes them. A
             BSplineData carries no name: None gives Maya's ``curve<N>``.
-        world_space: (updating) True: the CVs are world-space positions;
-            False: object space. Load with the world_space the file was saved
-            with: a BSplineData holds no space (a MeshData holds its matrix, a
-            BSplineData nothing), so a file saved with ``world_space=False``
-            and loaded with the default True puts its object-space CVs in the
-            world, moved by the transform. The transform is never moved.
+        world_space: (updating, REQUIRED: no default) the space the file was
+            saved in. True: the CVs are world-space positions (``save()``'s
+            default); False: object space (``save(world_space=False)``). A
+            BSplineData holds no space (a MeshData holds its matrix, a
+            BSplineData nothing), so the wrong one would move the CVs
+            silently: a load without it, or with anything but a bool, is a
+            TypeError naming it, before the file is read. The transform is
+            never moved.
 
     Returns:
         The new NurbsCurve (creating), or this NurbsCurve (updating).
@@ -67,21 +69,23 @@ _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a BSplinePatchData): 
 
         patch = NurbsSurface.load("patch.npz", name="patch")
 
-    ``NurbsSurface('patchShape').load(surface, *, world_space=True)``, from a
+    ``NurbsSurface('patchShape').load(surface, *, world_space)``, from a
     surface, UPDATES that surface's CVs in place, the inverse of
     ``NurbsSurface('patchShape').save(...)``::
 
-        NurbsSurface("patchShape").load("patch.npz")
+        NurbsSurface("patchShape").load("patch.npz", world_space=True)
 
     Args:
         surface: The file (a str or os.PathLike, ``~`` expanded; a cgmath
             ``.npz`` / ``.json`` / ``.pkl``), or the BSplinePatchData itself.
         name, container, attrs: (creating) as `create` takes them. A
             BSplinePatchData carries no name: None gives ``surface<N>``.
-        world_space: (updating) True: the CVs are world-space positions;
-            False: object space. Load with the world_space the file was saved
-            with: a BSplinePatchData holds no space (see `NurbsCurve.load`).
-            The transform is never moved.
+        world_space: (updating, REQUIRED: no default) the space the file was
+            saved in. True: the CVs are world-space positions (``save()``'s
+            default); False: object space. A BSplinePatchData holds no space
+            (see `NurbsCurve.load`): a load without it, or with anything but
+            a bool, is a TypeError naming it, before the file is read. The
+            transform is never moved.
 
     Returns:
         The new NurbsSurface (creating), or this NurbsSurface (updating).
@@ -285,7 +289,9 @@ class NurbsCurve(Geometry):
                 load a ``.pkl`` you did not write).
             world_space: True: world-space CVs; False: object space. A
                 BSplineData has no name and no matrix: save in world space to
-                keep where the curve is.
+                keep where the curve is. The update in place,
+                ``NurbsCurve('x').load(path, world_space=...)``, takes the same
+                one (it has no default).
 
         Returns:
             `path`, as written (``~`` expanded).
@@ -308,11 +314,12 @@ class NurbsCurve(Geometry):
             return cls.create(data, name=name, container=container, **kwargs)
 
     @statement
-    def _load_into(self, curve, *, world_space=True, **kwargs):
+    def _load_into(self, curve, *, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplineData
 
         method = f"NurbsCurve({self.name!r}).load"
         _updates_only(method, kwargs, "NurbsCurve.load(path, ...) makes a new curve")
+        world_space = _files.required_space(method, "BSplineData", world_space)
         data   = _files.read(curve, (BSplineData,), method, "the curve")
         points = _curve_update(self, method, curve, data)
         with _undo_chunk("rig.NurbsCurve.load"):
@@ -509,7 +516,9 @@ class NurbsSurface(Geometry):
                 load a ``.pkl`` you did not write).
             world_space: True: world-space CVs; False: object space. A
                 BSplinePatchData has no name, no matrix and no knots (uneven
-                knots are dropped, with a warning: `serialize`).
+                knots are dropped, with a warning: `serialize`). The update in
+                place, ``NurbsSurface('x').load(path, world_space=...)``, takes
+                the same one (it has no default).
 
         Returns:
             `path`, as written (``~`` expanded).
@@ -532,11 +541,12 @@ class NurbsSurface(Geometry):
             return cls.create(data, name=name, container=container, **kwargs)
 
     @statement
-    def _load_into(self, surface, *, world_space=True, **kwargs):
+    def _load_into(self, surface, *, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplinePatchData
 
         method = f"NurbsSurface({self.name!r}).load"
         _updates_only(method, kwargs, "NurbsSurface.load(path, ...) makes a new surface")
+        world_space = _files.required_space(method, "BSplinePatchData", world_space)
         data   = _files.read(surface, (BSplinePatchData,), method, "the surface")
         points = _surface_update(self, method, surface, data)
         with _undo_chunk("rig.NurbsSurface.load"):

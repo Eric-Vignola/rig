@@ -718,7 +718,7 @@ class TestNurbsCurve(_Case):
         edited = _cvs(str(copy))
         uuid = cmds.ls(str(copy), uuid=True)
         self.ready()
-        self.assertIs(copy.load(self.path("c.npz")), copy)
+        self.assertIs(copy.load(self.path("c.npz"), world_space=True), copy)
         np.testing.assert_allclose(_cvs(str(copy)), source, atol=1e-9)
         self.assertEqual(cmds.ls(str(copy), uuid=True), uuid)
         self.assertEqual(cmds.getAttr("copy.t")[0], (0.0, 0.0, 3.0))
@@ -747,14 +747,14 @@ class TestNurbsCurve(_Case):
         ):
             with self.subTest(label):
                 before = _cvs(target)
-                self.assert_refused(ValueError, text, lambda: NurbsCurve(target).load(path))
+                self.assert_refused(ValueError, text, lambda: NurbsCurve(target).load(path, world_space=True))
                 np.testing.assert_array_equal(_cvs(target), before)
 
     def test_the_node_form_refuses_history_and_create_keywords(self):
         live = cmds.circle(name="live", constructionHistory=True)[0]
         NurbsCurve(cmds.listRelatives(live, shapes=True)[0]).save(self.path("c.npz"))
         self.assert_refused(ValueError, "^NurbsCurve\\('liveShape'\\).load: 'liveShape' has history",
-                            lambda: NurbsCurve("liveShape").load(self.path("c.npz")))
+                            lambda: NurbsCurve("liveShape").load(self.path("c.npz"), world_space=True))
         self.assert_refused(TypeError, "^NurbsCurve\\('liveShape'\\).load updates it in place: it takes the file "
                             "and world_space= \\(got name=\\); NurbsCurve.load\\(path, ...\\) makes a new curve$",
                             lambda: NurbsCurve("liveShape").load(self.path("c.npz"), name="x"))
@@ -820,7 +820,7 @@ class TestNurbsSurface(_Case):
         cmds.xform("copy.cv[0][0:3]", translation=(0, 2, 0), relative=True)
         edited = _cvs(str(copy))
         self.ready()
-        self.assertIs(copy.load(self.path("s.npz")), copy)
+        self.assertIs(copy.load(self.path("s.npz"), world_space=True), copy)
         np.testing.assert_allclose(_cvs(str(copy)), source, atol=1e-9)
         self.assertEqual(self.undo_name(), "rig.NurbsSurface.load")
         self.undo_steps(1)
@@ -833,7 +833,7 @@ class TestNurbsSurface(_Case):
         shape = self.sources()["plane"]
         knots = np.array(NurbsSurface(shape).fn_set.knotsInU())
         NurbsSurface(shape).save(self.path("p.npz"))
-        NurbsSurface(shape).load(self.path("p.npz"))
+        NurbsSurface(shape).load(self.path("p.npz"), world_space=True)
         np.testing.assert_array_equal(np.array(NurbsSurface(shape).fn_set.knotsInU()), knots)
 
     def test_the_node_form_refuses_another_layout(self):
@@ -845,7 +845,7 @@ class TestNurbsSurface(_Case):
             f"^NurbsSurface\\('planeShape'\\).load: {q} holds another CV layout than 'planeShape' \\(7 x 11 CVs of "
             f"degrees 3 x 3 against its 6 x 5 of degrees 3 x 3, or other forms\\); a load updates the CVs of the "
             f"same layout: NurbsSurface.load\\({q}\\) makes a new surface$",
-            lambda: NurbsSurface(shapes["plane"]).load(self.path("s.npz")),
+            lambda: NurbsSurface(shapes["plane"]).load(self.path("s.npz"), world_space=True),
         )
 
 

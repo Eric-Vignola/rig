@@ -110,7 +110,7 @@ class TestADeformedShape(_Case):
         self.assert_refused(
             ValueError, r"^NurbsCurve\('crvShape'\).load: 'crvShape' is deformed \(cluHandleCluster\).*"
             r"NurbsCurve\('crvShapeOrig'\).load\(path\) updates the shape under them",
-            lambda: NurbsCurve("crvShape").load(self.path("crv.npz")),
+            lambda: NurbsCurve("crvShape").load(self.path("crv.npz"), world_space=True),
         )
 
 
