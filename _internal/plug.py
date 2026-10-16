@@ -633,6 +633,12 @@ class Plug(Attribute):
         back. A multi root of one keeps the multi rules (an item per element,
         an append, multi to multi), every item checked before the first edit.
 
+        One driver per channel: a child below a compound connected whole has
+        that input split into one per child before it is written (a child
+        with an input of its own there keeps it), and a plug or ``None`` on a
+        compound also removes the inputs its children have of their own; each
+        logged at INFO, in the statement's one undo step.
+
         Keys (``plug << AnimCurve([0, 1, 0], times=[0, 12, 24])``) key the
         plug with one animation curve per channel, of the type the plug takes
         (Maya's rule: TL, TA, TU or TT), in one undo step (``rig.animcurve``);
@@ -1771,7 +1777,7 @@ def _component_plug(
 
 
 def _disconnect_incoming(
-    dst: Any, what: str = "disconnect", write_follows: bool = False
+    dst: Any, what: str = "disconnect", write_follows: bool = False, one_driver: bool = False
 ) -> None:
     """Disconnect any source plug currently driving ``dst``.
 
@@ -1798,6 +1804,16 @@ def _disconnect_incoming(
     ``what`` names the edit in a refusal (``"connect"``, ``"set"``, ...).
     ``write_follows`` is True when the statement writes ``dst`` next (a connect,
     a set): the disconnect and that write are one undo step (`journal.one_step`).
+
+    ``one_driver`` is True for ``<<`` (``dst << plug``, ``dst << None``): one
+    driver per channel. A compound also loses the inputs its children have of
+    their own (`_free_children`, logged at INFO), so its new wire, or none, is
+    the only driver of every channel; and a plug with an input of its own below
+    a compound connected whole (two drivers on one channel, as Maya's
+    setKeyframe, an older scene or raw cmds leave it) has that whole input split
+    first (`_free_of_whole_wire`: its siblings keep their driver). Without it
+    (rig's own moves of a wire: a shader conversion, a blendShape load) only
+    ``dst``'s own input is removed, as before.
     """
     if not isinstance(dst, Attribute):
         # Allow raw strings only as a fallback path.
@@ -1806,6 +1822,25 @@ def _disconnect_incoming(
         except Exception as e:
             LOGGER.debug("could not coerce %s to Attribute: %s", dst, e)
             return
+
+    if one_driver:
+        try:
+            # the owner check the reads below make first, raising as they do
+            _ensure_owner_alive(dst)
+            compound = dst.plug.isCompound
+        except RuntimeError as e:
+            raise InjectionError(
+                f"Cannot inspect incoming connections on {str(dst)!r}: {e}"
+            ) from e
+        if compound:
+            # a compound below a whole wire it cannot be split from refuses before
+            # its children are freed (nothing changed)
+            anc = _wired_ancestor(dst.plug)
+            if anc is not None:
+                refusal = _split_refusal(anc, dst, what)
+                if refusal is not None:
+                    raise InjectionError(refusal)
+            _free_children(dst, what)
 
     try:
         cls   = type(dst)
@@ -1839,10 +1874,81 @@ def _disconnect_incoming(
         sources = dst.get_connected_attrs(src=True, dst=False) or []
         if not sources:
             return
+    elif one_driver and _double_driven(dst.plug):
+        # its own input and a whole wire above: the whole wire is split, ``dst``
+        # keeping its own input (removed next), its siblings their driver
+        _free_of_whole_wire(dst, what)
 
     if write_follows:
         one_step()
     _disconnect_sources_respecting_lock(dst, sources)
+
+
+def _double_driven(mplug: Any) -> bool:
+    """True if ``mplug``, a plug with an input of its own, is a child or an element
+    below a compound connected whole (`_wired_ancestor`): two drivers on one channel
+    (Maya's setKeyframe on ``cube.tx`` under ``c.t`` into ``cube.t``, an older scene,
+    raw cmds). A plug that is no child or element answers at once."""
+    return (mplug.isChild or mplug.isElement) and _wired_ancestor(mplug) is not None
+
+
+def _free_children(dst: Any, what: str) -> bool:
+    """Remove the inputs ``dst``'s channels have of their own when ``dst`` is a
+    compound (not a multi root): the per-child wires a split left, a key Maya's
+    setKeyframe put on one channel, a constraint's channel ... Each removal is
+    logged at INFO; they and the rest of the statement are one undo step
+    (`journal.one_step`). Done by ``compound << plug`` and ``compound << None``
+    (``compound << [values]`` replaces each channel's input itself), so the
+    compound's new wire, or none, is the only driver of each channel: one driver
+    per channel. A nested compound's children and the existing elements of a
+    multi child are freed too. Returns True if any input was removed. A plug
+    that is no compound (or a multi root) returns at once. ``dst``'s owner is
+    checked by the caller (`_disconnect_incoming`)."""
+    mplug = dst.plug
+    if not mplug.isCompound or mplug.isArray:
+        return False
+    driven = []
+    _driven_below(mplug, driven)
+    if not driven:
+        return False
+    children = [Plug(child) for child in driven]
+    one_step()
+    # an element (or a plug below one) can dangle once the last input below it is
+    # gone: ``dst`` finds its MPlug again after (each child does in its disconnect)
+    path = _element_path(dst)
+    try:
+        for child in children:
+            sources = child.get_connected_attrs(src=True, dst=False) or []
+            if not sources:
+                continue
+            LOGGER.info(
+                "%s %s: removing the input %s of its child %s (one driver per channel)",
+                what, str(dst), ", ".join(str(s) for s in sources), str(child),
+            )
+            _disconnect_sources_respecting_lock(child, sources)
+    finally:
+        _rebind_element(dst, path)
+    return True
+
+
+def _driven_below(mplug: Any, found: list) -> None:
+    """Append to ``found``, in order, every plug below the compound ``mplug`` (its
+    children, theirs, the existing elements of a multi child) that has an input of
+    its own. A child with an input is not walked further: its own input feeds the
+    plugs below it."""
+    for i in range(mplug.numChildren()):
+        child = mplug.child(i)
+        if child.isDestination:
+            found.append(child)
+        elif child.isArray:
+            for index in child.getExistingArrayAttributeIndices():
+                element = child.elementByLogicalIndex(index)
+                if element.isDestination:
+                    found.append(element)
+                elif element.isCompound:
+                    _driven_below(element, found)
+        elif child.isCompound:
+            _driven_below(child, found)
 
 
 _FREE_TO_CHANGE = OpenMaya.MPlug.kFreeToChange
@@ -1899,7 +2005,8 @@ def _split_refusal(anc: Any, dst: Any, what: str) -> "str | None":
         )
     for i in range(anc.numChildren()):
         child = anc.child(i)
-        if child.isLocked:
+        if child.isLocked and not child.isDestination:
+            # a child with an input of its own keeps it (`_split_into`): no connect
             locked = _new_attr(Attribute, child).full_name
             return (
                 f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
@@ -1933,7 +2040,12 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
     Logged at INFO. The split and the rest of the statement are one undo step
     (`journal.one_step`). Returns True if anything was split. Raises
     :class:`InjectionError`, with nothing changed, when the input cannot be split
-    (`_split_refusal`)."""
+    (`_split_refusal`).
+
+    One driver per channel: a child that has an input of its own under that
+    whole wire (two drivers: Maya's setKeyframe, an older scene, raw cmds) keeps
+    its own input, the leaf one, and takes no part of the whole one (`_split_into`);
+    ``dst`` itself keeps its own for the caller to replace."""
     split = False
     while True:
         anc = _wired_ancestor(dst.plug)
@@ -1945,9 +2057,17 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
         one_step()
         whole  = Plug(anc)
         source = Plug(anc.sourceWithConversion())
+        kept   = [
+            str(Plug(anc.child(i))) for i in range(anc.numChildren())
+            if anc.child(i).isDestination
+        ]
+        own    = str(dst)
+        kept   = [name for name in kept if name != own]
         LOGGER.info(
-            "%s %s: splitting the input %s of %s into one per child",
-            what, str(dst), str(source), str(whole),
+            "%s %s: splitting the input %s of %s into one per child%s",
+            what, own, str(source), str(whole),
+            f" ({', '.join(kept)} {'keeps its' if len(kept) == 1 else 'keep their'} own input)"
+            if kept else "",
         )
         path = _element_path(dst)
         try:
@@ -1959,11 +2079,32 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
                 f"Cannot {what} {str(dst)!r}: the input {str(source)!r} of its compound "
                 f"{str(whole)!r} could not be removed; {whole} << None frees it"
             )
-        for i in range(whole.plug.numChildren()):
-            _set_or_connect(
-                Plug(source.plug.child(i)), Plug(whole.plug.child(i)), _dst_compound=None
-            )
+        _split_into(source.plug, whole.plug)
         split = True
+
+
+def _split_into(source: Any, whole: Any) -> None:
+    """Connect each child of ``source`` (an MPlug, the compound that fed ``whole`` whole)
+    into the matching child of ``whole``, but a child of ``whole`` that has an input of its
+    own keeps it (one driver per channel: the leaf one), and a compound child with such a
+    plug below it is split in turn when its source child has matching children."""
+    for i in range(whole.numChildren()):
+        child = whole.child(i)
+        if child.isDestination:
+            continue
+        src_child = source.child(i)
+        if (
+            child.isCompound
+            and not child.isArray
+            and src_child.isCompound
+            and src_child.numChildren() == child.numChildren()
+        ):
+            below = []
+            _driven_below(child, below)
+            if below:
+                _split_into(src_child, child)
+                continue
+        _set_or_connect(Plug(src_child), Plug(child), _dst_compound=None)
 
 
 def _query_connections(plug: Any, source: bool) -> Any:
@@ -2293,6 +2434,11 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
                 f"Cannot inspect incoming connections on {str(dst_attr)!r}: {e}"
             ) from e
         if incoming:
+            if _double_driven(dst_attr.plug):
+                # its own input and a whole wire above (two drivers): the whole wire
+                # is split first, so the set below meets no wire (it raised "locked
+                # or connected" with the own input already gone)
+                _free_of_whole_wire(dst_attr, "set")
             LOGGER.info(
                 "set %s: breaking incoming connection(s) %s to assign value",
                 str(dst_attr),
@@ -2316,7 +2462,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
                 str(dst_attr),
                 [str(i) for i in incoming],
             )
-            _disconnect_incoming(dst_attr, "set", write_follows=True)
+            _disconnect_incoming(dst_attr, "set", write_follows=True, one_driver=True)
             try:
                 dst_attr.set(*set_args, **set_kwargs)
                 return
@@ -3029,7 +3175,9 @@ def _refuse_generic(name: str, src: Any) -> None:
 
 
 def _disconnect_and_drop(dst: Any) -> None:
-    """``dst << None``: `_disconnect_incoming`, then, on a generic slot, the drop of
+    """``dst << None``: `_disconnect_incoming` (one driver per channel: a compound's
+    children lose the inputs they have of their own too, and a channel below a
+    compound connected whole is split from it), then, on a generic slot, the drop of
     the data its old input left (`_clear_generic_data`). A generic slot with an
     input makes the two one undo step (`journal.one_step`): one undo brings back
     the connection and the data together (an undo of the drop alone would leave
@@ -3039,10 +3187,10 @@ def _disconnect_and_drop(dst: Any) -> None:
         mplug = dst.plug
         if not mplug.isArray and mplug.isDestination:
             one_step()
-        _disconnect_incoming(dst)
+        _disconnect_incoming(dst, one_driver=True)
         _clear_generic_data(dst, generic=True)
         return
-    _disconnect_incoming(dst)
+    _disconnect_incoming(dst, one_driver=True)
 
 
 def _clear_generic_data(dst: Any, generic: bool = False) -> None:
@@ -3087,7 +3235,7 @@ def _fanout_channel(src: Any, dst: Any) -> None:
     types = _lazy().types
 
     if src is None:
-        _disconnect_incoming(dst)
+        _disconnect_incoming(dst, one_driver=True)
     elif type(src) is _Keys:
         _anim_keys.inject(dst, src)
     elif types._is_attribute_spec(src):
@@ -3154,7 +3302,10 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     if isinstance(src, Attribute):
         if _named_with_dot(src):
             _disconnect_incoming(
-                dst_attr if dst_attr is not None else dst, "connect", write_follows=True
+                dst_attr if dst_attr is not None else dst,
+                "connect",
+                write_follows=True,
+                one_driver=True,
             )
             try:
                 if dst_attr is not None:

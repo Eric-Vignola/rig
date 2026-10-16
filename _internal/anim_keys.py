@@ -1013,8 +1013,14 @@ def _new_curve(curve_type: str, name: str) -> Any:
 
 def _apply(plans: list) -> None:
     """Every plan's edits in one undo step (``rig.animcurve``); nothing at all when every
-    curve holds its keys already. A compound connected whole gives up that input first."""
-    if not any(not e.same for plan in plans for e in plan.leaves):
+    curve holds its keys already and no compound above or at a keyed plug is connected
+    whole. A compound connected whole gives up that input first: one driver per channel,
+    so a curve that holds its keys under such a wire (two drivers, as Maya's setKeyframe
+    leaves them) is kept, and the whole wire is split (above the plug) or removed (on it)."""
+    if not any(
+        plan.whole_above or plan.compound_input or any(not e.same for e in plan.leaves)
+        for plan in plans
+    ):
         return
     from rig._internal.plug import Plug, _disconnect_incoming, _free_of_whole_wire, _set_or_connect
 

@@ -802,6 +802,32 @@ _FIX_SPLIT = {
     ),
 }
 
+# Re-pinned (one driver per channel, user decision 2026-10-16): a plug or None into a compound
+# also removes the inputs its children have of their own, logged at INFO, in the statement's
+# one undo step. 619f29f left ``xfC.translateX -> mdA.input1X`` under the compound's new wire
+# (two drivers on one channel: the viewport read the leaf, getAttr the compound), and
+# ``mdA.input1 << None`` changed nothing. Each case -> (connections, values, logs, undo steps
+# more): the None case is one step more (its disconnect; 619f29f made no edit), and the child's
+# value is no longer held by the wire it read.
+_OD_ONE_DRIVER = {
+    "connect into a compound with a connected child": (
+        [[["mdB.output", "mdA.input1"]], []],
+        None,
+        [["rig._internal.plug", "INFO",
+          "connect mdA.input1: removing the input xfC.translateX of its child mdA.input1X "
+          "(one driver per channel)"]],
+        0,
+    ),
+    "none into a compound with a connected child": (
+        [[], []],
+        {},
+        [["rig._internal.plug", "INFO",
+          "disconnect mdA.input1: removing the input xfC.translateX of its child mdA.input1X "
+          "(one driver per channel)"]],
+        1,
+    ),
+}
+
 # Re-pinned (features step 3, lock): the locked-plug refusal names the unlock rig spells,
 # ``Plug('<plug>').unlock()``, and no cmds call (the text 619f29f gave ended "Unlock first (e.g.
 # `plug << unlock` or `cmds.setAttr(attr, lock=False)`)."); the error, the scene, the output
@@ -887,7 +913,8 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
     `_D2_ERROR_LINES`), and of the journaled value sets (`_D3_FEWER_UNDO_STEPS`), and the
     locked-plug refusal's unlock hint (`_FS3_LOCK_HINT`), and the generic-slot rows
     regenerated for Typed (`_FS4_GENERIC_ROWS`), and the review fix's one-step rewires
-    (`_FIX_FEWER_UNDO_STEPS`) and its split of a whole connection (`_FIX_SPLIT`)."""
+    (`_FIX_FEWER_UNDO_STEPS`) and its split of a whole connection (`_FIX_SPLIT`), and one
+    driver per channel on a compound (`_OD_ONE_DRIVER`)."""
 
     def test_every_case_as_619f29f(self):
         with open(_ORACLE_PATH) as fh:
@@ -907,6 +934,7 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
         self.assertLessEqual(set(_D3_FEWER_UNDO_STEPS), set(oracle))
         self.assertLessEqual(set(_FS3_LOCK_HINT), set(oracle))
         self.assertLessEqual(set(_FIX_FEWER_UNDO_STEPS) | set(_FIX_SPLIT), set(oracle))
+        self.assertLessEqual(set(_OD_ONE_DRIVER), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
                 if name in _FS4_GENERIC_ROWS:
@@ -922,6 +950,16 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
                     self.assertEqual(expected["output"]["logs"], [])
                     expected["scene"] = dict(expected["scene"], connections=connections)
                     expected["output"] = dict(expected["output"], logs=logs)
+                if name in _OD_ONE_DRIVER:
+                    connections, values, logs, more = _OD_ONE_DRIVER[name]
+                    self.assertEqual(expected["output"]["logs"], [])
+                    # 619f29f: the child's own wire under the compound's (or no) wire
+                    self.assertIn(["xfC.translateX", "mdA.input1X"], expected["scene"]["connections"][0])
+                    expected["scene"] = dict(expected["scene"], connections=connections)
+                    if values is not None:
+                        expected["scene"]["values"] = values
+                    expected["output"] = dict(expected["output"], logs=logs)
+                    expected["undo_steps"] += more
                 if name in _D2_ERROR_LINES:
                     self.assertEqual(expected["output"]["maya"], [])
                     expected["output"] = dict(expected["output"], maya=[[4, _D2_ERROR_LINES[name]]])
@@ -1461,6 +1499,12 @@ class TestDisconnectIncoming(MayaTestCase):
             # per child first (`_free_of_whole_wire`), then the child's own is listed and
             # removed; both paths make that same scene, each listing more than once
             whole = not destination and plugmod._below_a_wire(plug.plug)
+            # one driver per channel (user decision 2026-10-16) is `<<`'s (``one_driver=True``:
+            # a compound's children lose their own inputs too, `test_od_one_driver`); this
+            # default call, rig's own moves of a wire (a shader conversion, a blendShape
+            # load, keys), removes the plug's own input only, so the compound shapes with a
+            # connected child ("a compound with a connected child", "a compound element with
+            # a connected child", "the parent of a unitConversion-fed plug") are unchanged
             with self.subTest(shape=label):
                 new, listed = self._disconnect(plug)
                 if not whole:
