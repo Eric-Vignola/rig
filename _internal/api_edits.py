@@ -304,8 +304,8 @@ def api_set(attr: Any, value: Any) -> bool:
     * its node valid (``_handle.isValid()``), its dynamic attribute alive;
     * the plug no array root, no destination, free to change (``isFreeToChange(True,
       True)``: not locked, nor a locked or connected parent); a destination takes the
-      cmds route, whose disconnect-and-retry (``<<``, `rig._internal.plug._do_set`)
-      retries here;
+      cmds route (``attr.set`` on a wired plug raises as setAttr does; ``<<``,
+      `rig._internal.plug._do_set`, disconnects a destination first and sets here);
     * its name resolves to its own MPlug (`_names_own_plug`);
     * the kind and the value pass CR-4's table (`_set_plan`);
     * rig's undo command ready (`rig.nodetypes.plugins._fast_path_ready`).
