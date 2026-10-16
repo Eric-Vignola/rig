@@ -177,7 +177,9 @@ print(ctrl.mix >> None, cmds.attributeQuery("mix", node="ctrl", range=True), ctr
 ```
 
 Everything is checked before the first edit, and a re-declaration is
-one undo step that restores what it changed. Another kind of attribute
+one undo step that restores what it changed (a new default or hidden
+flag goes through rig's undo plug-in, and is a `RuntimeError` naming it
+if that cannot be loaded: [root CHEATSHEET section 38](../CHEATSHEET.md#38-undo)). Another kind of attribute
 under the name is a `TypeError`, and so are a setting that cannot change
 in place (`sn=`, `multi=`), a range that would exclude the attribute's
 default (pass `dv=` with it) and a static attribute's name
