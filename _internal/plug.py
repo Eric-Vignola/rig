@@ -103,6 +103,7 @@ from rig.nodetypes._base import (
     _ChildOrMethod,
     _clash_child,
     _class_attr,
+    _class_data_hint,
     _dg_named_owner,
     _element_path,
     _ensure_dg_named,
@@ -433,7 +434,7 @@ class Plug(Attribute):
 
         raise AttributeError(
             f"{str(self)!r} has no child or sibling attribute {attr_name!r}"
-            + _old_name_hint(attr_name)
+            + (_class_data_hint(self, attr_name) or _old_name_hint(attr_name))
         )
 
     def __getitem__(self, key: Any) -> "Plug":
@@ -3554,6 +3555,9 @@ from rig.nodetypes import dg_node as _dg_node_module  # noqa: E402
 
 _dg_node_module._PLUG_CLASS     = Plug
 _dg_node_module._COMPONENT_PLUG = _maybe_component_plug
+# a class assignment of a str-method route (``mock.patch.object(Plug, "center",
+# ...)``'s restore) keeps it, as a plug method is kept
+_base_module._KEPT_ON_PLUGS += (_StrRoute,)
 
 
 class _MethodPlug(Plug):

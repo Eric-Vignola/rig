@@ -279,24 +279,26 @@ class TestTheShortcut(MayaTestCase):
     def test_a_class_with_its_own_constructor_or_type_check_runs_them_for_a_name(self):
         class _Network(DGNode):
             NATIVE_NODE_TYPE = "network"
-            inits            = 0
+            # re-pinned (user decision 2026-10-16, class data): a node class keeps
+            # Python state under a '_' name
+            _inits           = 0
 
             def __init__(self, node):
-                type(self).inits += 1
+                type(self)._inits += 1
                 super().__init__(node)
 
         class _Condition(DGNode):
             NATIVE_NODE_TYPE = "condition"
-            checks           = 0
+            _checks          = 0
 
             @classmethod
             def is_type(cls, node_name, failfast=False, **kwargs):
-                cls.checks += 1
+                cls._checks += 1
                 return super().is_type(node_name, failfast=failfast, **kwargs)
 
         for node_type, cls, counter in (
-            ("network", _Network, "inits"),
-            ("condition", _Condition, "checks"),
+            ("network", _Network, "_inits"),
+            ("condition", _Condition, "_checks"),
         ):
             with self.subTest(node_type=node_type):
                 nodes = [cmds.createNode(node_type) for _ in range(2)]

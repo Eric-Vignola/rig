@@ -1169,7 +1169,7 @@ class Mesh(Geometry):
         """Enable painting mode on the given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
-        paint_attr = f"{self.NATIVE_NODE_TYPE}.{type(self).get_long_name(self)}.{type(map_attr).get_name(map_attr)}"
+        paint_attr = f"{type(self).NATIVE_NODE_TYPE}.{type(self).get_long_name(self)}.{type(map_attr).get_name(map_attr)}"
         cmds_edit.select(type(map_attr).get_node(map_attr), replace=True)
         mel_eval(
             f'artSetToolAndSelectAttr("artAttrCtx", "{paint_attr}");artAttrInitPaintableAttr;'

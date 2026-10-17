@@ -18,6 +18,9 @@ from rig.nodetypes._base import (
     _cast,
     _check_attrs,
     _class_attr,
+    _class_data_hint,
+    _ClassData,
+    _own_class_data,
     _current_namespace,
     _deleted_error,
     _ensure_owner_alive,
@@ -901,7 +904,7 @@ class DGNode(Node):
                     # current namespace's)
                     sel.add(_lookup(str(node), _type_label(type(self))))
                 d["_mobject"] = sel.getDependNode(0)
-            d["_fn_set"]    = self.FN_SET(d["_mobject"])
+            d["_fn_set"]    = type(self).FN_SET(d["_mobject"])
             d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
         type(self).is_type(self._name(), exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
@@ -1006,6 +1009,9 @@ class DGNode(Node):
                         raise AttributeError(f"{error}; {hint}") from None
                 if attr_name in _OLD_NODE_NAMES:
                     raise AttributeError(f"{error}{_old_node_hint(attr_name)}") from None
+                hint = _class_data_hint(self, attr_name)
+                if hint:
+                    raise AttributeError(f"{error}{hint}") from None
                 raise
         elif not d["_objhandle"].isAlive():
             # a node a new scene freed: its cached MPlug points at freed memory
@@ -1061,19 +1067,20 @@ class DGNode(Node):
         The node's own state (``_mobject``, ``_attr_dict`` ...) and a Python
         attribute already stored on this instance (``vars(node)["tag"] = 1``)
         are stored. A node has no settable public member (the property ban, user
-        decision 2026-10-16: ``node.set_namespace(ns)``, ``node.rename(x)``). A
-        data default declared on the class (``side = None`` in a subclass body)
-        is shadowed on the instance, so a node class keeps Python state under the
-        names it declares (``self.side = "L"``), and a private class member's
-        setter runs. A public method's name follows the plug-method rule: with a
-        Maya attr of that name (or an alias), ``node.lock = 1`` is
-        ``node.lock << 1``; without one it raises, as assignment is strict: a
-        method is never replaced on one node (patch the class, or write
-        ``vars(node)``). A
-        ``_`` name is Python state unless the live node has a Maya attr of that
-        name (``node.__parked__ = 4.0``). Any other name must be a Maya attr: a
-        typo raises "Attribute not found" instead of adding a Python attribute,
-        and a deleted node raises ``already deleted!``.
+        decision 2026-10-16: ``node.set_namespace(ns)``, ``node.rename(x)``), and
+        no public Python state: a node class keeps its state under the ``_``
+        names its body declares (``_side = None``, then ``self._side = "L"``; a
+        private class member's setter runs). Class data (an UPPER_CASE
+        declaration, ``DEFAULT``) is the class's, never an instance's:
+        ``node.DEFAULT = x`` is the Maya attr's sugar. A public method's name
+        follows the plug-method rule: with a Maya attr of that name (or an
+        alias), ``node.lock = 1`` is ``node.lock << 1``; without one it raises,
+        as assignment is strict: a method is never replaced on one node (patch
+        the class, or write ``vars(node)``). A ``_`` name is Python state unless
+        the live node has a Maya attr of that name (``node.__parked__ = 4.0``).
+        Any other name must be a Maya attr: a typo raises "Attribute not found"
+        instead of adding a Python attribute, and a deleted node raises
+        ``already deleted!``.
         """
         d = self.__dict__
         # the node state, and a Python attribute already stored on this instance
@@ -1097,7 +1104,7 @@ class DGNode(Node):
                 f"attr {name!r}: {self}.{name} = value sets that attr once it exists; "
                 f"a method is not replaced on a node" + (f"; {hint}" if hint else "")
             )
-        if found is not _MISSING:
+        if found is not _MISSING and type(found) is not _ClassData:
             if name[:1] == "_":
                 # a private member: a property setter runs, a read-only one
                 # raises, a private class default is shadowed on the instance;
@@ -1109,15 +1116,12 @@ class DGNode(Node):
                     with outside():
                         object.__setattr__(self, name, value)
                 return
-            # a data default the class declares (not callable, not a
-            # descriptor): Python state of the instance
-            if not callable(found) and not hasattr(type(found), "__get__"):
-                d[name] = value
-                return
+            # a public member that is no plug method: a callable a class
+            # assignment kept (a mock). Class data (`_ClassData`) is never an
+            # instance's: ``node.DEFAULT = x`` is the Maya attr's sugar, below
             raise AttributeError(
-                f"{type(self).__name__}.{name} is a method or class attribute, "
-                f"not a plug; use Plug(node.find_attr({name!r})) << value for a "
-                f"Maya attr of that name"
+                f"{type(self).__name__}.{name} is a method, not a plug; use "
+                f"Plug(node.find_attr({name!r})) << value for a Maya attr of that name"
             )
         if name[:1] == "_":
             fn = d.get("_fn_set")
@@ -1131,9 +1135,11 @@ class DGNode(Node):
             hint = _OLD_NODE_SETTERS.get(name)
             if hint:
                 raise AttributeError(f"{str(error).split(';')[0]}; {hint}") from error
+            if _class_data_hint(self, name):
+                raise  # names the class data
             raise AttributeError(
-                f"{error} (to keep Python state on a node object, declare a "
-                f"default in its class body, {name} = None, or use a '_' name)"
+                f"{error} (a node object keeps Python state under a '_' name its "
+                f"class body declares: _{name} = None)"
             ) from error
         plug << value
 
@@ -1162,6 +1168,12 @@ class DGNode(Node):
     def __fspath__(self) -> str:
         return self._name()
 
+    def __dir__(self) -> list:
+        # without the class data, which an instance never reads (`_ClassData`):
+        # ``inspect.getmembers(node)`` reads every name ``dir`` lists
+        cls = type(self)
+        return [n for n in object.__dir__(self) if type(_class_attr(cls, n)) is not _ClassData]
+
     # --- the node's own naming (private: the dunders and rig's internals read
     # it; a DAG node overrides both readers)
 
@@ -1187,8 +1199,8 @@ class DGNode(Node):
 
     def get_node_type(self) -> str:
         """Returns the node type."""
-        if self.CUSTOM_NODE_TYPE:
-            return self.CUSTOM_NODE_TYPE
+        if type(self).CUSTOM_NODE_TYPE:
+            return type(self).CUSTOM_NODE_TYPE
         return cmds.nodeType(str(self))
 
     def has_base_type(self, base_type: str) -> bool:
@@ -1368,8 +1380,7 @@ class DGNode(Node):
         ``CUSTOM_NODE_TYPE`` in its body: a user's wrapper subclass, which is
         not registered for a type) wraps a node its ``is_type`` accepts, as
         its constructor does. A registered class takes nothing else."""
-        own = cls.__dict__
-        if own.get("CUSTOM_NODE_TYPE") or own.get("NATIVE_NODE_TYPE"):
+        if _own_class_data(cls, "CUSTOM_NODE_TYPE") or _own_class_data(cls, "NATIVE_NODE_TYPE"):
             return None
         name = str(node)
         if not cls.is_type(name, exact_type=False):

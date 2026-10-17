@@ -44,14 +44,11 @@ from rig._internal.journal import cmds_edit
 # rig.nodetypes imports neither rig.spec nor rig._internal.plug
 from rig._internal.undo import _undo_chunk  # a leaf module: maya.cmds and rig._internal.journal
 from rig.nodetypes._base import (
-    _MISSING,
     Attribute,
     Node,
     _attr_handle,
     _attr_state,
-    _class_attr,
     _enum_fields,
-    is_plug_method,
     _handle_valid,
     _parse_enum_names,
     _refuse_locked_node,
@@ -105,39 +102,6 @@ _PER_CHILD  = frozenset((
     "defaultValue", "minValue", "maxValue", "softMinValue", "softMaxValue", "hasMinValue",
     "hasMaxValue", "hasSoftMinValue", "hasSoftMaxValue",
 ))
-
-
-# {(node class, name): True if a Python member of the class hides an attr of the name}
-_SHADOWED: Dict[tuple, bool] = {}
-
-
-def _warn_shadowed(node_string: str, node: Any, long_name: str, short_name: Any) -> None:
-    """A new attribute whose long or short name is a Python member of the node's class
-    that hides it (class data: ``side = None`` in a subclass, ``NATIVE_NODE_TYPE``):
-    ``node.<name>`` is that member, never the plug, so the attribute is made and a
-    warning names the way to reach it (``Plug(node.find_attr(name))``). A node has no
-    public property (the property ban). A public method's name hides nothing
-    (``lock``, ``save``: ``node.lock`` is then the plug and ``node.lock()`` the method,
-    see `rig.nodetypes._base._PlugMethod`). One class lookup per name, for a new
-    attribute only (a re-declaration says nothing)."""
-    cls = type(node)
-    for name in (long_name, short_name):
-        if not isinstance(name, str):
-            continue
-        key   = (cls, name)
-        known = _SHADOWED.get(key)
-        if known is None:
-            known = _SHADOWED[key] = (
-                _class_attr(cls, name) is not _MISSING and not is_plug_method(cls, name)
-            )
-        if not known:
-            continue
-        LOGGER.warning(
-            "%s.%s is made, but %r is a Python member of %s: %s.%s is that member, not the "
-            "plug; reach the attribute with Plug(%s.find_attr(%r)), or give it another name",
-            node_string, long_name, name, cls.__name__, node_string, name, node_string, name,
-        )
-        return
 
 
 # rig._internal.plug, bound on the first `_plug_of` (plug.py imports rig.spec): the module,
@@ -414,8 +378,6 @@ class _AttrSpec:
         # ---- Multi pre-sizing ---- #
         if multi and self.size is not None:
             self._presize_multi(node_string, long_name, default_value, wrap_node)
-
-        _warn_shadowed(node_string, wrap_node, long_name, kargs.get("shortName", kargs.get("sn")))
 
         # ---- Note string set ---- #
         new_plug = _plug_of(node_string, long_name, wrap_node, added)

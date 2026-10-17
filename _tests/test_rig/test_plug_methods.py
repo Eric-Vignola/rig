@@ -61,6 +61,15 @@ _ABSENT           = type("_Absent", (), {})
 _MethodPlug       = getattr(_plug_module, "_MethodPlug", _ABSENT)
 _MethodAttribute  = getattr(_base, "_MethodAttribute", _ABSENT)
 
+def _is_plug_method(cls, name):
+    """True if ``name`` on node class or plug class `cls` is a plug method. Re-pinned
+    (user decision 2026-10-16, class data: ``rig.nodetypes._base.is_plug_method`` was
+    deleted with ``spec._warn_shadowed``, its one user): read off the class dicts."""
+    return isinstance(
+        _base._class_attr(cls, name), _base._PLUG_DESCRIPTORS + (_base._ChildOrMethod,)
+    )
+
+
 
 def _is_plug(x):
     return isinstance(x, Attribute)
@@ -126,8 +135,8 @@ class TestNodeMembers(_Case):
         self.assertTrue(inspect.isfunction(type(self.t).ensure_valid))
         # the class dict entry still runs as the function
         self.assertEqual(type(Transform.__dict__["serialize"](self.t)).__name__, "TransformData")
-        self.assertTrue(_base.is_plug_method(Transform, "serialize"))
-        self.assertFalse(_base.is_plug_method(Transform, "name"))  # a property
+        self.assertTrue(_is_plug_method(Transform, "serialize"))
+        self.assertFalse(_is_plug_method(Transform, "name"))  # a property
 
     def test_a_short_name(self):
         cmds.addAttr("T", ln="renameWeight", sn="rename", at="double")
@@ -215,8 +224,8 @@ class TestNodeMembers(_Case):
             def mine(self):
                 return super().get_parent()
 
-        self.assertTrue(_base.is_plug_method(_MyTransform, "serialize"))
-        self.assertTrue(_base.is_plug_method(_MyTransform, "mine"))
+        self.assertTrue(_is_plug_method(_MyTransform, "serialize"))
+        self.assertTrue(_is_plug_method(_MyTransform, "mine"))
         node = _MyTransform._wrap("T")
         self.assertEqual(type(node.serialize()).__name__, "TransformData")
         self.assertEqual(calls, ["mine"])
@@ -261,7 +270,7 @@ class TestAssignment(_Case):
         with mock.patch.object(Transform, "get_parent", return_value="P"):
             self.assertEqual(t.get_parent(), "P")
         self.assertIsNone(t.get_parent())
-        self.assertTrue(_base.is_plug_method(Transform, "get_parent"))
+        self.assertTrue(_is_plug_method(Transform, "get_parent"))
         with mock.patch.dict(vars(t), get_parent=lambda: "Q"):
             self.assertEqual(t.get_parent(), "Q")
         self.assertIsNone(t.get_parent())
@@ -320,7 +329,7 @@ class TestPlugMembers(_Case):
     def test_class_access(self):
         self.assertTrue(inspect.isfunction(Plug.get))
         self.assertTrue(inspect.isfunction(Attribute.get_connected_attrs))
-        self.assertTrue(_base.is_plug_method(Plug, "get"))
+        self.assertTrue(_is_plug_method(Plug, "get"))
 
     def test_a_freed_node(self):
         """guard: a freed node's MPlug is never read."""

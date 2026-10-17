@@ -72,7 +72,7 @@ class DAGNode(DGNode):
                     sel.add(_lookup(str(node), _type_label(type(self))))
                 d["_mdagpath"] = sel.getDagPath(0)
                 d["_mobject"]  = d["_mdagpath"].node()
-            d["_fn_set"]    = self.FN_SET(d["_mdagpath"])
+            d["_fn_set"]    = type(self).FN_SET(d["_mdagpath"])
             d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
         type(self).is_type(self._name(), exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
@@ -145,7 +145,7 @@ class DAGNode(DGNode):
         d = self.__dict__
         d.setdefault("_taken_mdagpath", d["_mdagpath"])
         d["_mdagpath"]  = OpenMaya.MDagPath.getAPathTo(d["_mobject"])
-        fn = d["_fn_set"] = self.FN_SET(d["_mdagpath"])
+        fn = d["_fn_set"] = type(self).FN_SET(d["_mdagpath"])
         return fn
 
     def _retake_path(self) -> None:
@@ -157,7 +157,7 @@ class DAGNode(DGNode):
         if _handle_valid(d) and taken.isValid():
             del d["_taken_mdagpath"]
             d["_mdagpath"] = taken
-            d["_fn_set"]   = self.FN_SET(taken)
+            d["_fn_set"]   = type(self).FN_SET(taken)
 
     def is_shape(self) -> bool:
         """Returns whether this node is a shape node."""

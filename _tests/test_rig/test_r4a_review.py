@@ -434,46 +434,57 @@ class TestTypedAttributeAndPlugAreOneKey(_PlugCase):
 
 class TestSetattrSugarState(_SceneCase):
     def test_a_declared_default_is_python_state(self):
+        # re-pinned (user decision 2026-10-16, class data and the '_' rule): a
+        # node class declares its Python state under '_' names (``side = None``
+        # is refused when the class is made)
         class _Ctl(Transform):
             CUSTOM_NODE_TYPE = "r4aReviewCtl"
-            side  = None
-            cache = ()
+            _side  = None
+            _cache = ()
 
             def __init__(self, node):
                 super().__init__(node)
-                self.side = "L"
+                self._side = "L"
 
             def remember(self, value):
-                self.cache = (value,)
+                self._cache = (value,)
 
         ctl = _Ctl.create(name="hand_ctl")
-        self.assertEqual(ctl.side, "L")
-        self.assertEqual(vars(ctl)["side"], "L")
-        self.assertIsNone(_Ctl.side)
-        ctl.side = "R"
-        self.assertEqual(ctl.side, "R")
+        self.assertEqual(ctl._side, "L")
+        self.assertEqual(vars(ctl)["_side"], "L")
+        self.assertIsNone(_Ctl._side)
+        ctl._side = "R"
+        self.assertEqual(ctl._side, "R")
         ctl.remember(3)
-        self.assertEqual(ctl.cache, (3,))
+        self.assertEqual(ctl._cache, (3,))
         # the node casts again (its __init__ runs), and a Maya attr is no state
         again = Node("hand_ctl")
         self.assertIs(type(again), _Ctl)
-        self.assertEqual(again.side, "L")
-        self.assertFalse(cmds.attributeQuery("side", node="hand_ctl", exists=True))
+        self.assertEqual(again._side, "L")
+        self.assertFalse(cmds.attributeQuery("_side", node="hand_ctl", exists=True))
         ctl.tx = 2
         self.assertEqual(cmds.getAttr("hand_ctl.tx"), 2.0)
         self.assertNotIn("tx", vars(ctl))
+        with self.assertRaisesRegex(TypeError, r"_Bad\.side: a node class has no public data"):
+            type(_Ctl)("_Bad", (Transform,), {"side": None})
 
     def test_an_undeclared_name_says_how_to_keep_state(self):
         node = Node(cmds.createNode("transform", name="x"))
+        # re-pinned (user decision 2026-10-16, class data): the hint names the '_'
+        # spelling a class body declares
         with self.assertRaisesRegex(
-            AttributeError, r"^Attribute not found: .*declare a default in its class body, "
-            r"label = None, or use a '_' name"
+            AttributeError, r"^Attribute not found: .*keeps Python state under a '_' "
+            r"name its class body declares: _label = None"
         ):
             node.label = 1
         self.assertNotIn("label", vars(node))
-        # the constants of the rig classes stay constants of the class
+        # the constants of the rig classes stay constants of the class. Re-pinned
+        # (user decision 2026-10-16, class data): an instance never reads class
+        # data, so ``layer.DEFAULT = x`` is the Maya attr's sugar, which misses
         layer = DisplayLayer.create(name="L")
-        layer.DEFAULT = "other"
+        with self.assertRaisesRegex(AttributeError, r"DEFAULT is class data: DisplayLayer\.DEFAULT"):
+            layer.DEFAULT = "other"
+        self.assertNotIn("DEFAULT", vars(layer))
         self.assertEqual(DisplayLayer.DEFAULT, "defaultLayer")
 
     def test_the_advice_for_a_shadowed_maya_attr_works(self):

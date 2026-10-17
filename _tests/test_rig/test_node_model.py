@@ -3052,9 +3052,12 @@ class TestNoWrapperLeft(MayaTestCase):
             for name in _REMOVED_NAMES:
                 with self.subTest(module=module.__name__, name=name):
                     self.assertFalse(hasattr(module, name))
-        # NodeMeta no longer hooks class attribute writes (the hooks only
-        # cleared the deleted canonical-kind cache)
-        self.assertNotIn("__setattr__", vars(_base.NodeMeta))
+        # NodeMeta no longer hooks class attribute writes for the deleted
+        # canonical-kind cache. Re-pinned (user decision 2026-10-16, class data):
+        # its __setattr__ is the class-body rule for a late class assignment
+        # (a function made a plug method, lowercase data refused), and touches
+        # no cache; deletion is not hooked
+        self.assertEqual(vars(_base.NodeMeta)["__setattr__"].__qualname__, "NodeMeta.__setattr__")
         self.assertNotIn("__delattr__", vars(_base.NodeMeta))
 
     def test_stack_values_treats_typed_nodes_as_nodes(self):
