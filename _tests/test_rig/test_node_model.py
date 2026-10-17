@@ -329,8 +329,11 @@ class TestPackageTypedDottedSites(MayaTestCase):
 # re-pinned (round 5 NW6): one node handle, `_objhandle` (API 2.0, built from
 # the MObject the constructor resolved), in place of the API 1.0 `_fn_set1` /
 # `_objhandle1`, written in their place
-_DG_KEYS  = ["_mobject", "_fn_set", "_objhandle", "_attr_dict"]
-_DAG_KEYS = ["_mdagpath", "_mobject", "_fn_set", "_objhandle", "_attr_dict"]
+# re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+# List"): the last known name (`_last_name`) follows the handle, for a deleted
+# or freed node's marked str
+_DG_KEYS  = ["_mobject", "_fn_set", "_objhandle", "_last_name", "_attr_dict"]
+_DAG_KEYS = ["_mdagpath", "_mobject", "_fn_set", "_objhandle", "_last_name", "_attr_dict"]
 _GEO_KEYS = ["_Geometry__local_shape_attr", "_Geometry__world_shape_attr"]
 
 
@@ -583,6 +586,15 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes._base", "_node_has_attr"),
         ("rig.nodetypes._base", "_PlugMethod.__get__"),
         ("rig.nodetypes.dg_node", "_ensure_valid"),
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in
+        # a List"): a deleted or freed node's str and repr (its last known name,
+        # marked), and a List's test of a deleted or freed element (skipped)
+        ("rig.nodetypes.dg_node", "DGNode.__repr__"),
+        ("rig.nodetypes.dg_node", "DGNode.__str__"),
+        ("rig.nodetypes.dg_node", "_deleted_name"),
+        ("rig.nodetypes.dg_node", "_is_deleted_node"),
+        ("rig._internal.list", "_gone"),
+        ("rig._internal.list", "_gone_indices"),
     }
 )
 
@@ -1185,7 +1197,6 @@ class TestTypedDslEdges(MayaTestCase):
             "node.ty":           lambda n, p, t, w, a: n.ty,
             "node.tx = 1":       lambda n, p, t, w, a: setattr(n, "tx", 1),
             "node << spec":      lambda n, p, t, w, a: n << Float("k"),
-            "str(node)":         lambda n, p, t, w, a: str(n),
             "str(plug)":         lambda n, p, t, w, a: str(p),
             "plug.get()":        lambda n, p, t, w, a: p.get(),
             "plug << 1":         lambda n, p, t, w, a: p << 1,
@@ -1203,6 +1214,12 @@ class TestTypedDslEdges(MayaTestCase):
                 for entry in held:
                     with self.assertRaisesRegex(RuntimeError, self._FREED):
                         op(*entry)
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+        # List"): a deleted or freed node's str and repr answer, its last known
+        # name marked; every operation on it still raises
+        with self.subTest(op="str(node)"):
+            for node, *_ in held:
+                self.assertRegex(str(node), r"^:?(ref:)?held\d \(deleted\)$")
         for node, plug, *_ in held:
             self.assertFalse(node.is_valid())
             self.assertIsInstance(hash(plug), int)
@@ -1720,14 +1737,19 @@ class TestOneNodeHierarchy(MayaTestCase):
         self.assertIsInstance(hash(plug), int)
         for label, op in (
             ("node.tx", lambda: node.tx),
-            ("str(node)", lambda: str(node)),
-            ("repr(node)", lambda: repr(node)),
             ("plug.get()", lambda: plug.get()),
             ("lift(plug.node)", lambda: str(Node(plug.get_node()).ty)),
         ):
             with self.subTest(op=label):
                 with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
                     op()
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+        # List"): a deleted or freed node's str and repr answer, its last known
+        # name marked; every operation on it still raises
+        with self.subTest(op="str(node)"):
+            self.assertEqual(str(node), "held (deleted)")
+        with self.subTest(op="repr(node)"):
+            self.assertEqual(repr(node), 'Transform("held", deleted)')
 
     def test_container_held_across_a_new_scene(self):
         # E5: a Container held across a new scene raises the freed error on a
@@ -1748,13 +1770,17 @@ class TestOneNodeHierarchy(MayaTestCase):
             ("genuine", lambda: box.blackBox),
             ("sugar", lambda: setattr(box, "slide", 1.0)),
             ("name", lambda: box.get_name()),
-            ("repr", lambda: repr(box)),
         ):
             with self.subTest(op=label):
                 with self.assertRaisesRegex(
                     RuntimeError, r"^Container node \(freed by a new scene.*already deleted!$"
                 ):
                     op()
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+        # List"): a deleted or freed node's str and repr answer, its last known
+        # name marked; every operation on it still raises
+        with self.subTest(op="repr"):
+            self.assertEqual(repr(box), 'Container("box", deleted)')
 
 
 def _oracle(parent, mplug, cls):
@@ -2454,8 +2480,6 @@ class TestReviewFixes(MayaTestCase):
         ops = {
             "node.tx (cached)":  lambda n, p, t, w, a, d: n.tx,
             "node.ty":           lambda n, p, t, w, a, d: n.ty,
-            "str(node)":         lambda n, p, t, w, a, d: str(n),
-            "repr(node)":        lambda n, p, t, w, a, d: repr(n),
             "node == node":      lambda n, p, t, w, a, d: n == n,
             "hash(node)":        lambda n, p, t, w, a, d: hash(n),
             "node.tx = 1":       lambda n, p, t, w, a, d: setattr(n, "tx", 1),
@@ -2481,7 +2505,6 @@ class TestReviewFixes(MayaTestCase):
             "attribute parent":  lambda n, p, t, w, a, d: a.get_parent(),
             "persp.tx << plug":  lambda n, p, t, w, a, d: persp.tx << p,
             "memo key":          lambda n, p, t, w, a, d: _attribute_key(p),
-            "str(typed)":        lambda n, p, t, w, a, d: str(d),
             "str(typed.tx)":     lambda n, p, t, w, a, d: str(d.tx),
             "typed.tx.get()":    lambda n, p, t, w, a, d: d.tx.get(),
             "typed.rx":          lambda n, p, t, w, a, d: d.rx,
@@ -2491,6 +2514,21 @@ class TestReviewFixes(MayaTestCase):
                 for entry in held:
                     with self.assertRaisesRegex(RuntimeError, self._FREED):
                         op(*entry)
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+        # List"): a deleted or freed node's str and repr answer, its last known
+        # name marked; every operation on it still raises
+        for label, op in (
+            ("str(node)", lambda n, d: (str(n), None)),
+            ("repr(node)", lambda n, d: (repr(n), "Transform")),
+            ("str(typed)", lambda n, d: (str(d), None)),
+        ):
+            with self.subTest(op=label):
+                for entry in held:
+                    text, cls = op(entry[0], entry[5])
+                    if cls:
+                        self.assertRegex(text, r'^Transform\(":?(ref:)?held\d", deleted\)$')
+                    else:
+                        self.assertRegex(text, r"^:?(ref:)?held\d \(deleted\)$")
         for node, plug, *_ in held:
             self.assertFalse(node.is_valid())
             self.assertIsInstance(hash(plug), int)
@@ -2555,10 +2593,14 @@ class TestReviewFixes(MayaTestCase):
             lambda: str(node.tx),
             lambda: node.ty,
             lambda: plug.get(),
-            lambda: str(typed),
         ):
             with self.assertRaisesRegex(RuntimeError, "^gone already deleted!$"):
                 op()
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+        # List"): a deleted or freed node's str and repr answer, its last known
+        # name marked; every operation on it still raises
+        self.assertEqual(str(typed), "gone (deleted)")
+        self.assertEqual(repr(typed), 'Transform("gone", deleted)')
         cmds.undo()
         self.assertEqual(str(plug), "gone.translateX")
 

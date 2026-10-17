@@ -1663,10 +1663,13 @@ class TestCachedAttributeOwner(MayaTestCase):
 
                 cmds.delete(name)
                 cmds.createNode(node_type, name=name)
-                for func in (str, repr, lambda a: a.get(), lambda a: a.set(3.0)):
+                for func in (str, lambda a: a.get(), lambda a: a.set(3.0)):
                     with self.assertRaises(RuntimeError) as ctx:
                         func(cached)
                     self.assertEqual(str(ctx.exception), f"{name} already deleted!")
+                # re-pinned (robustness run, user decision 2026-10-16 "Deleted
+                # nodes in a List"): the repr answers, marked
+                self.assertEqual(repr(cached), f'Attribute("{str.__str__(cached)}", deleted)')
                 self.assertFalse(cached.get_node().is_valid())
                 self.assertEqual(cmds.getAttr(f"{name}.{attr}"), 0.0)
 

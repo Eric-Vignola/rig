@@ -42,6 +42,7 @@ import itertools
 import os
 import shutil
 import tempfile
+from unittest import mock
 
 from maya import cmds
 
@@ -1349,8 +1350,11 @@ class TestListStrProbe(_SceneCase):
         self._assert_misses("a.tx", items)
 
     def test_a_deleted_element(self):
-        # E1: a plug of a node deleted to the undo queue raises, as its name
-        # does; the undo brings it back; a new node of its name is another plug
+        # E1: a plug of a node deleted to the undo queue matches nothing, read
+        # nowhere; the undo brings it back; a new node of its name is another
+        # plug. Re-pinned (robustness run, user decision 2026-10-16 "Deleted
+        # nodes in a List"): the deleted element is skipped, with one warning
+        # naming it (it raised "already deleted!")
         cmds.undoInfo(state=True, infinity=True)
         try:
             cmds.createNode("transform", name="gone")
@@ -1358,15 +1362,21 @@ class TestListStrProbe(_SceneCase):
             live = List([self.t.tx])
             cmds.delete("gone")
             before = _scene()
-            for label, call in (
-                ("in", lambda: "gone.tx" in items),
-                ("index", lambda: items.index("t.tx")),
-                ("count", lambda: items.count("gone.tx")),
-                ("remove", lambda: items.remove("gone.tx")),
+            for label, call, answer in (
+                ("in", lambda: "gone.tx" in items, False),
+                ("index", lambda: items.index("t.tx"), ValueError),
+                ("count", lambda: items.count("gone.tx"), 0),
+                ("remove", lambda: items.remove("gone.tx"), ValueError),
             ):
                 with self.subTest(label):
-                    with self.assertRaisesRegex(RuntimeError, r"^gone already deleted!$"):
-                        call()
+                    with mock.patch.object(cmds, "warning") as warn:
+                        if answer is ValueError:
+                            with self.assertRaisesRegex(ValueError, r" is not in List$"):
+                                call()
+                        else:
+                            self.assertEqual(call(), answer)
+                    warn.assert_called_once_with("List element [0] gone.translateX was deleted; skipped")
+            self.assertEqual(len(items), 1)
             # a str that names the plug of the deleted node names no plug
             self._assert_misses("gone.tx", live)
             self.assertEqual(_new(before), [])
@@ -1374,8 +1384,8 @@ class TestListStrProbe(_SceneCase):
             self._assert_finds("gone.tx", items[0])
             cmds.delete("gone")
             cmds.createNode("transform", name="gone")
-            with self.assertRaisesRegex(RuntimeError, r"^gone already deleted!$"):
-                "gone.tx" in items
+            with mock.patch.object(cmds, "warning"):
+                self.assertIs("gone.tx" in items, False)
             self._assert_misses("gone.tx", List([self.u.tx]))
         finally:
             cmds.undoInfo(state=False)
@@ -1407,11 +1417,16 @@ class TestListStrProbe(_SceneCase):
                     items = List([Node("t").tx, Node("u").tx])
                     free()
                     before = _scene()
+                    # re-pinned (robustness run, user decision 2026-10-16 "Deleted
+                    # nodes in a List"): a freed element is skipped unread (one
+                    # warning), so nothing matches, the new nodes of its names
+                    # neither (it raised the freed error)
                     for probe in ("t.tx", "nope.tx", "u.translateX"):
-                        with self.assertRaisesRegex(RuntimeError, _FREED):
-                            probe in items
-                        with self.assertRaisesRegex(RuntimeError, _FREED):
-                            items.index(probe)
+                        with mock.patch.object(cmds, "warning") as warn:
+                            self.assertIs(probe in items, False)
+                            with self.assertRaisesRegex(ValueError, r" is not in List$"):
+                                items.index(probe)
+                        self.assertEqual(warn.call_count, 2)
                     self.assertEqual(_new(before), [])
         finally:
             cmds.file(new=True, force=True)

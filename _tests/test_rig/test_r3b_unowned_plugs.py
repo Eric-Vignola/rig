@@ -236,7 +236,6 @@ class TestUnownedPlugsHeldAcrossAFreeRaise(MayaTestCase):
     def _assert_freed(self, held):
         ops = {
             "str":        str,
-            "repr":       repr,
             "full_name":  lambda p: p.get_full_name(),
             "get":        lambda p: p.get(),
             "node":       lambda p: p.get_node(),
@@ -270,6 +269,13 @@ class TestUnownedPlugsHeldAcrossAFreeRaise(MayaTestCase):
                         op(attr)
             with self.subTest(path=label, op="hash"):
                 self.assertIsInstance(hash(attr), int)
+            # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes
+            # in a List"): the repr answers, the name the plug was built with,
+            # marked (a List of such plugs repr()s), reading nothing of the node
+            with self.subTest(path=label, op="repr"):
+                self.assertEqual(
+                    repr(attr), f'{type(attr).__name__}("{str.__str__(attr)}", deleted)'
+                )
             if dsl:
                 # a Python probe finds nothing (a typed attr raises, as an
                 # owned one does)

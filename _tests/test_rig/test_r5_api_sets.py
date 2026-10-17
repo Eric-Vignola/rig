@@ -812,13 +812,16 @@ class TestTheRedoQueue(_SetCase):
                 cmds.flushUndo()
                 with mock.patch.object(journal, "API_EDITS", api):
                     plug = self.undone_plug()
-                    with self.assertRaises(RuntimeError) as raised:
+                    # re-pinned (robustness run, user decision 2026-10-16 "Deleted
+                    # nodes in a List"): the freed element is skipped with one
+                    # warning, the live one is edited (it raised the freed error)
+                    with mock.patch.object(cmds, "warning") as warn:
                         edit(plug)
-                outcomes.append((_brief(raised.exception), cmds.getAttr("m.input2X"),
+                outcomes.append((warn.call_count, cmds.getAttr("m.input2X"),
                                  cmds.listConnections("m.input2X", source=True, destination=False)))
             with self.subTest(edit=label):
                 self.assertEqual(outcomes[0], outcomes[1])
-                self.assertIn("freed by a new scene", outcomes[0][0][1])
+                self.assertEqual(outcomes[0][0], 1)
 
     def test_an_empty_redo_queue_keeps_one_journal(self):
         Node("a").tx << 1.0
