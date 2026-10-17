@@ -48,11 +48,11 @@ reports nothing, so slice it (``a[:].get_inputs()``) to query per-child.
 
 A node's attribute lookup gives Plugs (``Node("a").tx``, a typed node's
 too: every node class is a :class:`Node`); its typed API (``find_attr`` ...)
-reads :class:`Attribute` instances. ``plug.node`` is the node object the plug
-was read from (``node.tx.node is node``; children and elements share it), and
+reads :class:`Attribute` instances. ``plug.get_node()`` is the node object the plug
+was read from (``node.tx.get_node() is node``; children and elements share it), and
 a plug read through a node with more than one DAG path is named through that
 node's path. A plug built from a string or an MPlug casts its node on first
-access (``Attribute.node``: the typed cast of its MPlug's node), and is named as
+access (``Attribute.get_node``: the typed cast of its MPlug's node), and is named as
 Maya names it (``Plug("|T2|S.v")`` is ``T1|S.visibility``). Until then it checks the
 handle of its node it took when it was built (its children and elements share
 it), so once that node is deleted or freed it raises ``already deleted!`` as a
@@ -95,8 +95,8 @@ from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
-    _MISSING,
     _NON_MATRIX_ATTR_API_TYPES,
+    _OLD_PLUG_SETTERS,
     _attr_handle,
     _attr_state,
     _check_enum_names,
@@ -117,6 +117,7 @@ from rig.nodetypes._base import (
     _is_generic_slot,
     _new_attr,
     _node_by_name,
+    _old_name_hint,
     _path_instance_number,
     _plug_hash,
     _rebind_element,
@@ -148,13 +149,13 @@ LOGGER = logging.getLogger(__name__)
 _NOT_RESHAPED = _SCALARS + (Attribute, list, tuple, np.ndarray, str)
 
 # Attribute's own members the inject fast paths ask a plug's class to keep:
-# its connection reads and MPlug (`_disconnect_incoming`), its name
-# (`_named_with_dot`) and its data type (`_dst_data_type`)
-_GET_CONNECTED_ATTRS  = Attribute.get_connected_attrs  # class access: the function
+# its connection reads (`_disconnect_incoming`), its name (`_named_with_dot`)
+# and its data type (`_dst_data_type`). Class access gives the function
+_GET_CONNECTED_ATTRS  = Attribute.get_connected_attrs
 _ITER_CONNECTED_ATTRS = Attribute.iter_connected_attrs
-_ATTRIBUTE_PLUG       = Attribute.__dict__["plug"]
 _ATTRIBUTE_STR        = Attribute.__dict__["__str__"]
-_ATTRIBUTE_DATA_TYPE  = Attribute.__dict__["data_type"]
+_GET_DATA_TYPE        = Attribute.get_data_type
+
 
 # An attribute name Maya keeps: what ``plug >> "name"`` clones under.
 _ATTR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -368,11 +369,11 @@ class Plug(Attribute):
                 raise AttributeError(attr_name)
             try:
                 child = super().__getattr__(attr_name)
-                return _inherit_owner(self, _new_attr(Plug, child.plug))
+                return _inherit_owner(self, _new_attr(Plug, child._mplug))
             except (AttributeError, TypeError):
                 pass
             try:
-                node = self.node
+                node = type(self).get_node(self)
             except RuntimeError:
                 # a node deleted to the undo queue (``already deleted!``): a
                 # probe gets the AttributeError it expects
@@ -385,7 +386,7 @@ class Plug(Attribute):
         #    (plugs are never cached), owned as its parent is (`_inherit_owner`)
         try:
             child = super().__getattr__(attr_name)
-            return _inherit_owner(self, _new_attr(Plug, child.plug))
+            return _inherit_owner(self, _new_attr(Plug, child._mplug))
         except (AttributeError, TypeError):
             # AttributeError -> no such child.
             # TypeError -> MPlug.numChildren() raised because the plug isn't
@@ -399,7 +400,7 @@ class Plug(Attribute):
         #    A Maya attribute (or component) of the node only, through the node
         #    class's ``__getattr__``: never the node's Python members, so
         #    ``node.tx.delete()`` / ``.rename()`` / ``.uuid`` do not reach the node.
-        node = self.node
+        node = type(self).get_node(self)
         try:
             return type(node).__getattr__(node, attr_name)
         except AttributeError:
@@ -414,7 +415,7 @@ class Plug(Attribute):
         #    (which ``findPlug`` cannot resolve directly) and genuine
         #    on-container attrs.
         try:
-            owner = cmds.container(query=True, findContainer=str(self.node))
+            owner = cmds.container(query=True, findContainer=str(type(self).get_node(self)))
         except (
             RuntimeError,
             ValueError,
@@ -431,7 +432,8 @@ class Plug(Attribute):
                 pass
 
         raise AttributeError(
-            f"{self.full_name!r} has no child or sibling attribute {attr_name!r}."
+            f"{str(self)!r} has no child or sibling attribute {attr_name!r}"
+            + _old_name_hint(attr_name)
         )
 
     def __getitem__(self, key: Any) -> "Plug":
@@ -442,7 +444,7 @@ class Plug(Attribute):
         # (``_CHILD_CLASS``) owned as this plug is, built once (D29). A list
         # result becomes a List.
         _ensure_owner_alive(self)
-        is_indexable_via_attribute = self.is_multi or self._component_type != "unknown"
+        is_indexable_via_attribute = type(self).is_multi(self) or self._component_type != "unknown"
         if is_indexable_via_attribute:
             result = super().__getitem__(key)
             if isinstance(result, list):
@@ -456,7 +458,7 @@ class Plug(Attribute):
                 # idiom by letting :meth:`List.__lshift__` route writes
                 # through the parent when the slice was empty (auto-create
                 # indices to match the source length).
-                parent = self if self.is_multi and isinstance(key, slice) else None
+                parent = self if type(self).is_multi(self) and isinstance(key, slice) else None
                 return values_list(result, parent)
             return result
 
@@ -465,7 +467,7 @@ class Plug(Attribute):
         # canonical :meth:`MPlug.child` API. NumPy-style: ``int`` returns
         # a single Plug, ``slice`` returns a List of children.
         try:
-            n = self.num_children
+            n = type(self).get_num_children(self)
         except (RuntimeError, TypeError):
             n = 0
 
@@ -477,11 +479,11 @@ class Plug(Attribute):
                     raise IndexError(
                         f"{self} child index {key} out of range (num_children={n})"
                     )
-                return _inherit_owner(self, _new_attr(Plug, self.plug.child(key)))
+                return _inherit_owner(self, _new_attr(Plug, self._mplug.child(key)))
             if isinstance(key, slice):
                 values_list = _lazy().list._values_list
 
-                mplug    = self.plug
+                mplug    = self._mplug
                 indices  = range(*key.indices(n))
                 children = [
                     _inherit_owner(self, _new_attr(Plug, mplug.child(i))) for i in indices
@@ -515,46 +517,37 @@ class Plug(Attribute):
         _ensure_owner_alive(self)
         # the cached child Attribute names the MPlug; the Plug is a new one
         # each time (plugs are never cached), owned as this plug is
-        return _inherit_owner(self, _new_attr(Plug, Attribute.child(self, i).plug))
+        return _inherit_owner(self, _new_attr(Plug, Attribute.child(self, i)._mplug))
 
     # -- assignment via attribute syntax -- #
 
     @statement
     def __setattr__(self, name: str, value: Any) -> Any:
-        """``plug.x = 5`` is sugar for ``plug.x << 5``.
+        """``plug.x = 5`` is sugar for ``plug.x << 5``; a ``_`` name is plug state.
 
-        Internal state (names starting with ``_``) bypasses to normal
-        ``__setattr__``, and so does a class attribute that can be set: a
-        property with a setter (``plug.alias = ...``, ``plug.is_locked = ...``)
-        or another descriptor with ``__set__``. A property without one (such as
-        the ``str`` method names routed to plugs, ``plug.center``) stays sugar.
-
-        A plug method's name (``plug.get = v``) follows the plug-method rule: the
-        compound child of that name takes it (``plug.get << v``); a plug with no
-        such child raises, as assignment is strict (user decision 2026-10-16): a
-        method is never replaced on one plug, and no sibling of that name is
-        reached.
+        A plug has no settable Python members (the property ban, user decision
+        2026-10-16: ``plug.set_alias(x)``, ``plug.set_keyable(b)``,
+        ``plug.lock()``). A plug method's name (``plug.get = v``) follows the
+        plug-method rule: the compound child of that name takes it
+        (``plug.get << v``); a plug with no such child raises, as assignment is
+        strict: a method is never replaced on one plug, and no sibling of that
+        name is reached. Any other name is the child, sibling or
+        container-published plug ``plug.x`` reads (``Plug.__getattr__``).
         """
-        if name.startswith("_"):
+        if name[:1] == "_":
             object.__setattr__(self, name, value)
             return
-        found = _class_attr(type(self), name)
-        if isinstance(found, _ChildOrMethod):
+        if isinstance(_class_attr(type(self), name), _ChildOrMethod):
             _ensure_owner_alive(self)
             child = _clash_child(self, name)
             if child is None:
+                hint = _OLD_PLUG_SETTERS.get(name)
                 raise AttributeError(
-                    f"{type(self).__name__}.{name} is a method and {self.full_name!r} "
+                    f"{type(self).__name__}.{name} is a method and {str(self)!r} "
                     f"has no child attribute {name!r}: a method is not replaced on a plug"
+                    + (f"; {hint}" if hint else "")
                 )
-            _inherit_owner(self, _new_attr(Plug, child.plug)).__lshift__(value)
-            return
-        if isinstance(found, property):
-            settable = found.fset is not None
-        else:
-            settable = found is not _MISSING and hasattr(type(found), "__set__")
-        if settable:
-            object.__setattr__(self, name, value)
+            _inherit_owner(self, _new_attr(Plug, child._mplug)).__lshift__(value)
             return
         # Sugar for inject.
         self.__getattr__(name).__lshift__(value)
@@ -591,39 +584,22 @@ class Plug(Attribute):
         """
         if isinstance(other, Attribute):
             return _same_plug(self, other)
-        return self.full_name == str(other)
+        return str(self) == str(other)
 
     # -- multi-attribute helpers (v4.F.b) -- #
-
-    @property
-    def next_index(self) -> int:
-        """Return the next available logical index for this multi attribute.
-
-        Raises :class:`ValueError` if this plug is not a multi.
-
-        Useful as the explicit form of the implicit auto-index that
-        happens when you do ``multi << scalar`` (which appends to
-        ``multi[next_index]``)::
-
-            multi[multi.next_index] << value      # explicit append
-            multi.append(value)                   # equivalent helper
-        """
-        if not self.is_multi:
-            raise ValueError(f"{self} is not a multi attribute")
-        return self.get_next_available_index()
 
     def append(self, value: Any) -> "Plug":
         """Append ``value`` at the next available index of this multi attribute.
 
-        Equivalent to ``multi[multi.next_index] << value`` -- explicit
-        form of the implicit auto-append that happens when you do
+        Equivalent to ``multi[multi.get_next_available_index()] << value`` --
+        explicit form of the implicit auto-append that happens when you do
         ``multi << scalar``. Returns the new element :class:`Plug`.
 
         Raises :class:`ValueError` if this plug is not a multi.
         """
-        if not self.is_multi:
+        if not type(self).is_multi(self):
             raise ValueError(f"{self} is not a multi attribute")
-        idx  = self.get_next_available_index()
+        idx  = type(self).get_next_available_index(self)
         elem = self[idx]
         elem << value
         return elem
@@ -763,7 +739,7 @@ class Plug(Attribute):
         if mplug is not None and mplug.isArray and _is_generic_slot(self):
             return [self[i].get() for i in self.get_logical_indices()]
         try:
-            dt = self.data_type
+            dt = type(self).get_data_type(self)
         except Exception:
             dt = None
         return _to_numpy(Attribute.get(self), data_type=dt)
@@ -886,20 +862,20 @@ class Plug(Attribute):
                 try:
                     import maya.api.OpenMaya as om
 
-                    fn_attr     = om.MFnAttribute(self.plug.attribute())
+                    fn_attr     = om.MFnAttribute(self._mplug.attribute())
                     is_writable = bool(fn_attr.writable)
                 except Exception:
                     is_writable = True  # default to input on inspection failure
 
                 direction = "input" if is_writable else "output"
                 # Auto-name from source's leaf alias (camelCase per Maya convention).
-                auto_name = self.alias
+                auto_name = type(self).get_alias(self)
                 return _publish_to_container(
                     self, other, direction=direction, name=auto_name
                 )
             # one rule for both clone spellings: '>>' never overwrites, and
             # never re-declares (plug >> 'name' refuses a taken name too)
-            name = self.alias
+            name = type(self).get_alias(self)
             if other.has_attr(name):
                 raise TypeError(
                     f"'{other}' already has an attribute '{name}': '>>' clones, it never "
@@ -962,7 +938,7 @@ class Plug(Attribute):
         if not sep:
             # the plug's own node: never looked up again by its name (which
             # the lookup rule could find ambiguous while a namespace is current)
-            dst_node  = self.node
+            dst_node  = type(self).get_node(self)
             node_name = str(dst_node)
         else:
             if not node_name or not cmds.objExists(node_name):
@@ -979,7 +955,7 @@ class Plug(Attribute):
             )
         new_plug = _clone_attribute(self, dst_node, attr_name=attr_name)
         try:
-            if not self.is_multi:
+            if not type(self).is_multi(self):
                 new_plug << self.get()
         except Exception as e:
             LOGGER.debug("could not copy the value of %s onto %s: %s", self, new_plug, e)
@@ -1358,7 +1334,7 @@ class Plug(Attribute):
         identity = getattr(self, "_identity", True)
         if identity is None:
             raise TypeError(
-                f"the truth value of {self.full_name!r}, the output of an ordering "
+                f"the truth value of {str(self)!r}, the output of an ordering "
                 f"comparison (<, <=, >, >=), is only known when Maya evaluates it; "
                 f"read it with .get(), pick with rig.condition(...), or order plugs "
                 f"by name with sorted(plugs, key=str)"
@@ -1401,17 +1377,29 @@ def _ordering(result: Any) -> Any:
 # ``center`` and ``translate`` alone exist on 289 and 222 built-in node types,
 # and user attrs and blendShape aliases can use any of them -- so route them all
 # to the attribute lookup. Use ``str(plug).upper()`` for the string method.
-def _attr_over_str_method(name: str) -> property:
-    def getter(self: "Plug") -> Any:
-        return Plug.__getattr__(self, name)
+class _StrRoute:
+    """A ``str`` method name on a Plug (``center``, ``translate``, ``index`` ...):
+    on an instance, the attribute lookup ``Plug.__getattr__`` makes (a compound
+    child, a sibling, a container-published plug), never the str method; on the
+    class, the route itself. A non-data descriptor: nothing to set
+    (``plug.center = v`` is ``plug.center << v``, see ``Plug.__setattr__``)."""
 
-    getter.__name__     = name
-    getter.__qualname__ = f"Plug.{name}"
-    return property(getter)
+    __slots__ = ("name",)
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        if inst is None:
+            return self
+        return Plug.__getattr__(inst, self.name)
+
+    def __repr__(self) -> str:
+        return f"<attribute route Plug.{self.name}>"
 
 
 for _str_method in (n for n in vars(str) if not n.startswith("_")):
-    setattr(Plug, _str_method, _attr_over_str_method(_str_method))
+    type.__setattr__(Plug, _str_method, _StrRoute(_str_method))
 del _str_method
 
 Plug._CHILD_CLASS = Plug
@@ -1605,12 +1593,13 @@ class ComponentPlug(Plug):
 
     # -- display: element plugs render in component (cv[u][v]) form -- #
 
-    @property
-    def full_name(self) -> str:
+    def get_full_name(self) -> str:
+        """The name in the component form (``cv[u][v]`` / ``pt[s][t][u]``) for an
+        element, ``controlPoints`` for the bare handle; ``str(plug)``."""
         if self._comp_coords is None:
-            return super().full_name  # bare handle -> controlPoints
+            return Attribute.get_full_name(self)  # bare handle -> controlPoints
         coords = "".join(f"[{c}]" for c in self._comp_coords)
-        return f"{self.node.name}.{self._comp_alias}{coords}"
+        return f"{type(self).get_node(self).name}.{self._comp_alias}{coords}"
 
     # -- indexing -- #
 
@@ -1683,7 +1672,7 @@ class ComponentPlug(Plug):
         missing = _AXIS_NAMES[ndims][len(specs):]
         left    = len(missing)
         return (
-            f"{self.node.name}.{alias}[{given}] leaves {left} of {ndims} axes "
+            f"{type(self).get_node(self).name}.{alias}[{given}] leaves {left} of {ndims} axes "
             "unspecified, and a chained index would pick from the flattened "
             f"selection: write {alias}[{given}, {', '.join(missing)}] for one "
             f"point or {alias}[{given}, {', '.join(':' * left)}] for the slab"
@@ -1700,7 +1689,7 @@ class ComponentPlug(Plug):
         a rename still resolves (MObjectHandle-based identity, the same source
         :attr:`full_name` uses).
         """
-        node_name = self.node.name
+        node_name = type(self).get_node(self).name
         name      = f"{node_name}.{self._comp_alias}" + "".join(f"[{c}]" for c in coords)
         mplug     = _maybe_translate_component(name)
         element   = _component_plug(
@@ -1723,7 +1712,7 @@ class ComponentPlug(Plug):
         Reads the *live* node name from the MPlug (rename-safe) -- not the
         cached ``_comp_node``.
         """
-        node_name = self.node.name
+        node_name = type(self).get_node(self).name
         if cmds.nodeType(node_name) == "lattice":
             return (
                 cmds.getAttr(f"{node_name}.sDivisions"),
@@ -1755,7 +1744,7 @@ def _maybe_component_plug(
     if attr_name not in _MULTIDIM_ALIASES:
         return None
     try:
-        node_name = attr_obj.node.name
+        node_name = type(attr_obj).get_node(attr_obj).name
         node_type = cmds.nodeType(node_name)
     except (RuntimeError, AttributeError):
         return None
@@ -1768,7 +1757,7 @@ def _maybe_component_plug(
     # the caller binds ``attr_obj``'s owner; the handle ``attr_obj`` holds (its
     # owner's, or the one of its node it took) checks it
     handle = attr_obj.__dict__.get("_handle")
-    return _component_plug(attr_obj.plug, node_name, attr_name, ndims, None, handle)
+    return _component_plug(attr_obj._mplug, node_name, attr_name, ndims, None, handle)
 
 
 def _component_plug(
@@ -1818,8 +1807,7 @@ def _disconnect_incoming(
     parents and children, aliases, array roots, unitConversion-fed plugs, a
     deleted node's or attribute's plugs alike). So, after the owner check
     ``get_connected_attrs`` makes first, such a plug returns at once when its
-    class reads its connections with Attribute's own methods (and its MPlug
-    with ``Attribute.plug``) -- unless a compound above it is connected whole
+    class reads its connections with Attribute's own methods -- unless a compound above it is connected whole
     (``c.t`` into ``cube.t``: ``cube.tx`` is driven, with no input of its own).
     That input is then split into one per child first (`_free_of_whole_wire`),
     so the other children keep their driver, and ``dst``'s own is removed.
@@ -1851,7 +1839,7 @@ def _disconnect_incoming(
             # the owner check the reads below make first, raising as they do (made
             # once: the fast path below does not repeat it)
             _ensure_owner_alive(dst)
-            top = dst.plug
+            top = dst._mplug
             compound = top.isCompound
         except RuntimeError as e:
             raise InjectionError(
@@ -1879,7 +1867,6 @@ def _disconnect_incoming(
             mplug is not None
             and cls.get_connected_attrs is _GET_CONNECTED_ATTRS
             and cls.iter_connected_attrs is _ITER_CONNECTED_ATTRS
-            and cls.plug is _ATTRIBUTE_PLUG
             and "get_connected_attrs" not in d
             and "iter_connected_attrs" not in d
         ):
@@ -1905,7 +1892,7 @@ def _disconnect_incoming(
         if not sources:
             return
     elif one_driver:
-        mplug = dst.plug
+        mplug = dst._mplug
         anc = _wired_ancestor(mplug) if mplug.isChild or mplug.isElement else None
         if anc is not None:
             # its own input and a whole wire above (two drivers): the whole wire is
@@ -1920,7 +1907,7 @@ def _disconnect_incoming(
                     "has no matching children to split and stays its one driver "
                     "(one driver per channel)",
                     what, str(dst), ", ".join(str(s) for s in sources),
-                    _new_attr(Attribute, src).full_name, _new_attr(Attribute, anc).full_name,
+                    str(_new_attr(Attribute, src)), str(_new_attr(Attribute, anc)),
                 )
             else:
                 _free_of_whole_wire(dst, what)
@@ -1950,7 +1937,7 @@ def _free_children(dst: Any, what: str) -> bool:
     multi child are freed too. Returns True if any input was removed. A plug
     that is no compound (or a multi root) returns at once. ``dst``'s owner is
     checked by the caller (`_disconnect_incoming`)."""
-    mplug = dst.plug
+    mplug = dst._mplug
     if not mplug.isCompound or mplug.isArray:
         return False
     if not mplug.numConnectedChildren():
@@ -2052,24 +2039,24 @@ def _split_refusal(anc: Any, dst: Any, what: str, plan_out: "list | None" = None
     before any edit. With no refusal, ``plan_out`` (a list) is given this round's
     plan when the check's plan is it (no walk made for a later round only)."""
     src  = anc.sourceWithConversion()
-    name = _new_attr(Attribute, anc).full_name
+    name = str(_new_attr(Attribute, anc))
     free = f"free the compound first: {name} << None"
     if _no_matching_children(src, anc):
-        source = "nothing" if src.isNull else _new_attr(Attribute, src).full_name
+        source = "nothing" if src.isNull else str(_new_attr(Attribute, src))
         return (
             f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
             f"from {source!r}, which has no matching children to give each child of "
             f"{name!r} its own input; {free}. Nothing was changed"
         )
     plan = []
-    by_chain = _split_plan(src, anc, plan, _plugs_above(dst.plug))
+    by_chain = _split_plan(src, anc, plan, _plugs_above(dst._mplug))
     for _source, target in plan:
         # a child with an input of its own keeps it (`_split_into`): not in the plan
         if target.isLocked:
-            locked = _new_attr(Attribute, target).full_name
+            locked = str(_new_attr(Attribute, target))
             return (
                 f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
-                f"from {_new_attr(Attribute, src).full_name!r}, and giving each child its own "
+                f"from {str(_new_attr(Attribute, src))!r}, and giving each child its own "
                 f"input needs {locked!r} unlocked (a locked plug takes no connection): "
                 f"Plug({locked!r}).unlock(), or {free}. Nothing was changed"
             )
@@ -2168,7 +2155,7 @@ def _check_whole_wire(dst: Any, what: str) -> bool:
     input can be split (`_free_of_whole_wire` will split it); False if none is.
     Raises :class:`InjectionError` (nothing changed) when one cannot be split.
     For a check made before any edit (keys)."""
-    anc = _wired_ancestor(dst.plug)
+    anc = _wired_ancestor(dst._mplug)
     if anc is None:
         return False
     refusal = _split_refusal(anc, dst, what)
@@ -2194,7 +2181,7 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
     ``dst`` itself keeps its own for the caller to replace."""
     split = False
     while True:
-        anc = _wired_ancestor(dst.plug)
+        anc = _wired_ancestor(dst._mplug)
         if anc is None:
             return split
         plan    = []
@@ -2210,7 +2197,7 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
         source = Plug(_plug_at(_plug_path(anc.sourceWithConversion())))
         if not plan:
             # the check's plan walked for a later round too: this round's own
-            _split_plan(source.plug, anc, plan)
+            _split_plan(source._mplug, anc, plan)
         pairs  = [(_plug_path(s), _plug_path(t)) for s, t in plan if s is not None]
         whole_path = _plug_path(anc)
         kept   = [
@@ -2262,7 +2249,7 @@ def _query_connections(plug: Any, source: bool) -> Any:
 
     # a freed node's MPlug points at freed memory
     _ensure_owner_alive(plug)
-    return List([Plug(mp) for mp in plug.plug.connectedTo(source, not source)])
+    return List([Plug(mp) for mp in plug._mplug.connectedTo(source, not source)])
 
 
 def _lock_chain_names(dst: Attribute) -> list:
@@ -2276,8 +2263,8 @@ def _lock_chain_names(dst: Attribute) -> list:
     already-resolved Attribute whose connections the caller just inspected, so
     its plug chain is valid.
     """
-    names = [dst.full_name]
-    cur   = dst.plug
+    names = [str(dst)]
+    cur   = dst._mplug
     while True:
         parent = None
         if cur.isChild:
@@ -2287,7 +2274,7 @@ def _lock_chain_names(dst: Attribute) -> list:
         if parent is None:
             break
         # named at once (``dst``'s node was just read), never held: no handle
-        names.append(_new_attr(Attribute, parent).full_name)
+        names.append(str(_new_attr(Attribute, parent)))
         cur = parent
     return names
 
@@ -2348,7 +2335,7 @@ def _lock_chain_is_unlocked(dst: Attribute) -> bool:
     plug). The leaf alone is not enough: a locked array root blocks the
     disconnect of its elements, which do not always report it themselves.
     """
-    cur = dst.plug
+    cur = dst._mplug
     while True:
         if cur.isLocked:
             return False
@@ -2442,7 +2429,7 @@ def _locked_channels(dst: Any, leaves: list | None = None) -> list:
             except Exception:
                 continue
         try:
-            if leaf_attr.is_locked:
+            if type(leaf_attr).is_locked(leaf_attr):
                 locked.append(str(leaf_attr))
         except Exception:
             pass
@@ -2514,7 +2501,7 @@ def _unlock_hint(dst: Any, locked: list) -> str:
     node). Read on the refusal's path only."""
     plugs = f"Plug({locked[0]!r}).unlock()" if len(locked) == 1 else f"List({locked!r}).unlock()"
     try:
-        fn = OpenMaya.MFnDependencyNode(dst.plug.node())
+        fn = OpenMaya.MFnDependencyNode(dst._mplug.node())
         if fn.isLocked:
             return f"Node({str(dst).partition('.')[0]!r}).unlock(), then {plugs}"
     except Exception:  # noqa: BLE001 -- a hint never hides the refusal
@@ -2537,7 +2524,7 @@ def _driver(dst_attr: Any) -> int:
         return _FREE
     try:
         _ensure_owner_alive(dst_attr)
-        mplug = dst_attr.plug
+        mplug = dst_attr._mplug
         if mplug.isDestination:
             return _DRIVEN
         if _below_a_wire(mplug):
@@ -2577,7 +2564,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
                 f"Cannot inspect incoming connections on {str(dst_attr)!r}: {e}"
             ) from e
         if incoming:
-            if _double_driven(dst_attr.plug):
+            if _double_driven(dst_attr._mplug):
                 # its own input and a whole wire above (two drivers): the whole wire
                 # is split first, so the set below meets no wire (it raised "locked
                 # or connected" with the own input already gone)
@@ -2776,13 +2763,13 @@ def _refuse_destroy_on_locked(node_str: str, attr_name: str) -> None:
 
 
 def _attribute_type_or_none(dst: Any) -> str | None:
-    """``dst.attribute_type``, or None when the query raises.
+    """``dst.get_attribute_type()``, or None when the query raises.
 
     Read as the last test of :func:`_inject_value`'s bare-multi-root check,
     so the ``cmds.attributeQuery`` runs for multi roots only.
     """
     try:
-        return dst.attribute_type
+        return type(dst).get_attribute_type(dst)
     except (AttributeError, RuntimeError, TypeError):
         return None
 
@@ -2801,7 +2788,7 @@ _FIXED_KIND = _FixedKind()
 
 
 def _dst_data_type(dst: Any, facts: Any = None) -> Any:
-    """``dst.data_type`` as :func:`_inject_value` reads it: None if it raises.
+    """``dst.get_data_type()`` as :func:`_inject_value` reads it: None if it raises.
 
     `_inject_value` compares it four ways only: ``== "string"``, ``!=
     "matrix"``, ``== "matrix"`` and, at the generic-slot test, ``in ("Tdata",
@@ -2811,27 +2798,27 @@ def _dst_data_type(dst: Any, facts: Any = None) -> Any:
     them; the generic-slot test, the one that tells a raised (None) type apart,
     queries it there (`_resolved_data_type`). An element that does not exist yet
     has no kind, so its query, which creates it, still runs. A class with its
-    own ``data_type`` is always asked. `facts`, dst's `shorthand._Facts` of this
+    own ``get_data_type`` is always asked. `facts`, dst's `shorthand._Facts` of this
     ``<<``, answers the query while its answers can be reused."""
     if (
-        getattr(type(dst), "data_type", None) is _ATTRIBUTE_DATA_TYPE
+        getattr(type(dst), "get_data_type", None) is _GET_DATA_TYPE
         and _fixed_attr_kind(dst) in _NON_MATRIX_ATTR_API_TYPES
     ):
         return _FIXED_KIND
     if facts is not None and facts._reusable:
         return facts._get_data_type()
     try:
-        return dst.data_type
+        return type(dst).get_data_type(dst)
     except Exception:
         return None
 
 
 def _resolved_data_type(dst: Any, data_type: Any) -> Any:
     """`data_type`, a `_dst_data_type` answer, with `_FIXED_KIND` replaced by
-    ``dst.data_type`` (None if it raises)."""
+    ``dst.get_data_type()`` (None if it raises)."""
     if data_type is _FIXED_KIND:
         try:
-            return dst.data_type
+            return type(dst).get_data_type(dst)
         except Exception:
             return None
     return data_type
@@ -2843,8 +2830,8 @@ def _inject_value(
     """Inject ``src`` into ``dst`` -- set / connect with compound-aware logic.
 
     Mirrors the original ``Container.inject`` (Eric's _language.py:1158-1294)
-    but adapted to use ``Attribute.is_multi`` / ``num_children`` /
-    ``data_type`` instead of his ``__data__`` namespace.
+    but adapted to use ``Attribute.is_multi()`` / ``get_num_children()`` /
+    ``get_data_type()`` instead of his ``__data__`` namespace.
 
     Source-shape rules (NumPy-style strict, plus matrix-source routing):
 
@@ -2857,7 +2844,7 @@ def _inject_value(
        anything else is a TypeError before any edit; its data type is never
        read. Its multi root keeps the multi rules below, every item of a
        sequence checked first.
-    2. ``dst.data_type == "string"`` => ``cmds.setAttr(..., type="string")``.
+    2. ``dst.get_data_type() == "string"`` => ``cmds.setAttr(..., type="string")``.
     3. Sequence/array ``src`` (numpy, list, tuple) -- try matrix-source
        routing first via :mod:`rig._internal.decompose` (handles
        ``transform.matrix`` / ``.worldMatrix`` / ``.t`` / ``.r`` / ``.s``
@@ -2898,7 +2885,7 @@ def _inject_value(
     #     multi root keeps the multi rules below, and each of its elements comes
     #     back here (``dst[i] << ...``, the auto-index step).
     generic = isinstance(dst, Attribute) and _is_generic_slot(dst)
-    if generic and not dst.plug.isArray:
+    if generic and not dst._mplug.isArray:
         if isinstance(src, Attribute):
             _named_with_dot(src)
         elif not _is_generic_number(src):
@@ -2922,7 +2909,7 @@ def _inject_value(
         compound_dst = types._is_compound(dst)
     try:
         leaves = (
-            [type(dst).child(dst, i) for i in range(dst.num_children)] if compound_dst else [dst]
+            [type(dst).child(dst, i) for i in range(type(dst).get_num_children(dst))] if compound_dst else [dst]
         )
     except Exception:
         leaves = None
@@ -2934,9 +2921,9 @@ def _inject_value(
     # a wrong one raises TypeError and changes nothing (a plain str into one
     # enum leaf is read by _set_or_connect, before its set).
     if _holds_text(src) and isinstance(dst, Attribute):
-        is_array = dst.plug.isArray
+        is_array = dst._mplug.isArray
         if compound_dst or is_array or not isinstance(src, str):
-            _check_enum_names(dst.mobject, src, str(dst), element=not is_array)
+            _check_enum_names(type(dst).get_mobject(dst), src, str(dst), element=not is_array)
 
     # Resolve dst data type once (or `_FIXED_KIND`, see `_dst_data_type`).
     dst_data_type = _dst_data_type(dst, dst_facts)
@@ -2977,23 +2964,23 @@ def _inject_value(
     # child count): we treat as multi-index write (per-index broadcast,
     # so each index gets the scalar broadcast as a vec3). Users who want
     # the old "append one compound value" semantic call ``multi.append(
-    # [x, y, z])`` or ``multi[multi.next_index] << [x, y, z]``.
+    # [x, y, z])`` or ``multi[multi.get_next_available_index()] << [x, y, z]``.
     #
-    # Outside the query, reading ``attribute_type`` only builds the owning
+    # Outside the query, ``get_attribute_type()`` only builds the owning
     # node (and raises what a failed cast raises), so an Attribute dst builds
     # its node here and runs ``cmds.attributeQuery`` for a multi root only.
     lazy_attr_type = isinstance(dst, Attribute)
     dst_attr_type  = None
     try:
         if lazy_attr_type:
-            dst.node
+            type(dst).get_node(dst)
         else:
-            dst_attr_type = dst.attribute_type
+            dst_attr_type = type(dst).get_attribute_type(dst)
     except (AttributeError, RuntimeError, TypeError):
         lazy_attr_type = False
     try:
         is_bare_multi_root = (
-            dst.is_multi
+            type(dst).is_multi(dst)
             and not str(dst).endswith("]")
             and dst_data_type != "matrix"
             and (_attribute_type_or_none(dst) if lazy_attr_type else dst_attr_type)
@@ -3015,7 +3002,7 @@ def _inject_value(
         # for the regression).
         if isinstance(src, Attribute):
             try:
-                src_is_multi = src.is_multi and not str(src).endswith("]")
+                src_is_multi = type(src).is_multi(src) and not str(src).endswith("]")
                 if src_is_multi and generic and _path_instance_number(src) is not None:
                     # an array of per-instance elements read without an index
                     # (``obj.wm``) is the element of its path's instance, one
@@ -3063,7 +3050,7 @@ def _inject_value(
     # read without an index it is the element of its path's instance, as cmds
     # resolves its name (``T2|S.worldMatrix`` is ``worldMatrix[1]``).
     try:
-        if dst.is_multi and not str(dst).endswith("]"):
+        if type(dst).is_multi(dst) and not str(dst).endswith("]"):
             next_index = _path_instance_number(dst)
             if next_index is None:
                 try:
@@ -3149,7 +3136,7 @@ def _inject_value(
             # 4. Compound dst (vector / quat / euler) -- must match channel
             #    count exactly OR be a 1-element broadcast.
             if compound_dst:
-                n = dst.num_children
+                n = type(dst).get_num_children(dst)
                 if flat.size == n:
                     src = flat.tolist()
                 elif flat.size == 1:
@@ -3230,7 +3217,7 @@ def _inject_value(
         compound_dst
         and isinstance(dst, Attribute)
         and len(src_channels) in (1, len(dst_channels))
-        and dst.plug.isDestination
+        and dst._mplug.isDestination
         and not any(
             s is None or type(s) is _Keys or types._is_attribute_spec(s)
             for s in src_channels
@@ -3238,7 +3225,7 @@ def _inject_value(
     ):
         LOGGER.info(
             "set %s: replacing its input %s (every channel is written)",
-            str(dst), str(Plug(dst.plug.source())),
+            str(dst), str(Plug(dst._mplug.source())),
         )
         _disconnect_incoming(dst, "set", write_follows=True)
 
@@ -3327,7 +3314,7 @@ def _disconnect_and_drop(dst: Any) -> None:
     the slot disconnected with the data a saved file refuses)."""
     if isinstance(dst, Attribute) and _is_generic_slot(dst):
         _ensure_owner_alive(dst)
-        mplug = dst.plug
+        mplug = dst._mplug
         if not mplug.isArray and mplug.isDestination:
             one_step()
         _disconnect_incoming(dst, one_driver=True)
@@ -3347,7 +3334,7 @@ def _clear_generic_data(dst: Any, generic: bool = False) -> None:
     the data back."""
     if not (generic or (isinstance(dst, Attribute) and _is_generic_slot(dst))):
         return
-    mplug = dst.plug
+    mplug = dst._mplug
     if mplug.isArray or mplug.isDestination:
         return
     cur = mplug
@@ -3494,7 +3481,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     if isinstance(src, str):
         if dst_attr is not None:
             if _is_enum_attr(dst_attr):
-                _do_set(dst_attr, _enum_value(dst_attr.plug, src, str(dst_attr)))
+                _do_set(dst_attr, _enum_value(dst_attr._mplug, src, str(dst_attr)))
             else:
                 _do_set(dst_attr, src, type="string")
         else:
@@ -3506,9 +3493,14 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
 
     # Sequence (list / tuple).
     if lazy.types._is_sequence(src):
-        # Matrix special-case.
+        # Matrix special-case. A dst that is no Attribute answers its own
+        # get_data_type() (a str has none: no data type)
         try:
-            dt = dst.data_type
+            dt = (
+                type(dst).get_data_type(dst)
+                if isinstance(dst, Attribute)
+                else dst.get_data_type()
+            )
         except Exception:
             dt = None
 
@@ -3539,7 +3531,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     # the choice explicit.
     if isinstance(src, lazy.node.Node):
         try:
-            dt = dst_attr.data_type if dst_attr is not None else None
+            dt = type(dst_attr).get_data_type(dst_attr) if dst_attr is not None else None
         except Exception:
             dt = None
         if dt == "matrix":
@@ -3577,7 +3569,7 @@ class _MethodPlug(Plug):
         return self.__dict__["_method"](*args, **kwargs)
 
     def __repr__(self) -> str:
-        return f'Plug("{self.full_name}")'
+        return f'Plug("{str(self)}")'
 
 
 _dg_node_module._METHOD_PLUG_CLASS       = _MethodPlug

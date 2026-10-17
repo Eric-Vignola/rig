@@ -502,7 +502,7 @@ def _skipped_siblings(selections: list[_Selection]) -> set[str]:
         # An attribute plug on the left stands for its node, so the plug's
         # node is the transform that was expanded, exactly like a Node source.
         if isinstance(source, Plug):
-            source = Node(source.node)
+            source = Node(type(source).get_node(source))
         if isinstance(source, Node) and source.long_name != selection.path:
             return source
         return None
@@ -934,7 +934,7 @@ class _MaterialMember(_MemberSpec):
             x,
             want_shapes  = True,
             refuse_plugs = lambda plug: TypeError(
-                f"'{plug}' is a plug; membership takes the node: {kind}.of({plug.node})"
+                f"'{plug}' is a plug; membership takes the node: {kind}.of({type(plug).get_node(plug)})"
             ),
         )
         try:

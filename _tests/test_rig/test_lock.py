@@ -103,9 +103,9 @@ class TestSpellings(_Case):
         ctl = Transform.create(name="ctl")
         tx  = ctl.tx
         self.assertIs(tx.lock(), tx)
-        self.assertTrue(tx.is_locked)
+        self.assertTrue(tx.is_locked())
         self.assertIs(tx.unlock(), tx)
-        self.assertFalse(tx.is_locked)
+        self.assertFalse(tx.is_locked())
         self.assertIs(tx << lock, tx)
         self.assertEqual(_plug_locks("ctl.tx"), [True])
         self.assertIs(tx << unlock, tx)
@@ -145,14 +145,20 @@ class TestSpellings(_Case):
         self.assertFalse(ctl.is_locked)
 
     def test_the_plug_setter_is_lock_and_unlock(self):
+        # re-pinned (user decision 2026-10-16, the property ban): a plug has no
+        # is_locked setter; ``plug.is_locked = state`` raises naming lock() /
+        # unlock() and changes nothing, and lock() / unlock() keep their rule
         ctl = Transform.create(name="ctl")
-        ctl.tx.is_locked = True
+        with self.assertRaisesRegex(AttributeError, r"plug\.lock\(\) / plug\.unlock\(\)"):
+            ctl.tx.is_locked = True
+        self.assertFalse(cmds.getAttr("ctl.tx", lock=True))
+        ctl.tx.lock()
         self.assertTrue(cmds.getAttr("ctl.tx", lock=True))
-        ctl.tx.is_locked = False
+        ctl.tx.unlock()
         self.assertFalse(cmds.getAttr("ctl.tx", lock=True))
         ctl.lock()
         with self.assertRaises(InjectionError):
-            ctl.ty.is_locked = True
+            ctl.ty.lock()
         self.assertFalse(cmds.getAttr("ctl.ty", lock=True))
 
     def test_a_maya_attribute_named_lock(self):
@@ -435,7 +441,11 @@ class TestList(_Case):
         a, b = Transform.create(name="a"), Transform.create(name="b")
         List([a, b]).tx << lock
         self.assertEqual(_plug_locks("a.tx", "b.tx"), [True, True])
-        self.assertEqual(list(List([a, b]).tx.is_locked), [True, True])
+        # re-pinned (user decision 2026-10-16, the property ban): is_locked is a
+        # method, which does not broadcast; a bare predicate has no truth value
+        with self.assertRaisesRegex(TypeError, r"is_locked\(\) for x in items"):
+            bool(List([a, b]).tx.is_locked)
+        self.assertEqual([x.is_locked() for x in List([a, b]).tx], [True, True])
         a.s << [lock, skip, hide]
         self.assertEqual(_plug_locks("a.sx", "a.sy"), [True, False])
         self.assertFalse(cmds.getAttr("a.sz", keyable=True))
@@ -636,7 +646,7 @@ class TestDefaultNodesAndFiles(_Case):
             cmds.file(new=True, force=True)
             cmds.file(path, open=True, force=True)
             self.assertTrue(Node("ctl").is_locked)
-            self.assertTrue(Node("free").tx.is_locked)
+            self.assertTrue(Node("free").tx.is_locked())
             self.assertFalse(Node("free").is_locked)
         finally:
             cmds.file(new=True, force=True)

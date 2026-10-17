@@ -13,7 +13,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | mayapy / Maya bootstrap, the imports |
-| 1 | [One node, two attribute spellings](#1-one-node-two-attribute-spellings) | `Node(x)` is the typed node, `node.<attr>` (`Plug`) vs `find_attr` (`Attribute`), `.node`, keys |
+| 1 | [One node, two attribute spellings](#1-one-node-two-attribute-spellings) | `Node(x)` is the typed node, `node.<attr>` (`Plug`) vs `find_attr` (`Attribute`), `get_node()`, keys |
 | 2 | [`Node` — resolution and registration](#2-node--resolution-and-registration) | what a name resolves to, `create`, `find_all`, the three verbs (refer / define / create), `exists`, the errors, a custom node type |
 | 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, `lock()` / `unlock()` / `is_locked`, equality |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
@@ -107,7 +107,7 @@ and one dict or set key.
 print(repr(cube.t), repr(cube.find_attr("t")))  # Plug("cube.translate") Attribute("cube.translate")
 print(cube.t.get(), cube.find_attr("t").get())  # [0. 0. 0.] [(0.0, 0.0, 0.0)]
 print(Transform("cube") == cube, isinstance(cube.tx, Attribute))  # True True
-print(cube.tx.node is cube, cube.find_attr("tx").node is cube, cube.tx == cube.find_attr("tx"), {cube.tx: 1}.get(cube.find_attr("tx")))  # True True True 1
+print(cube.tx.get_node() is cube, cube.find_attr("tx").get_node() is cube, cube.tx == cube.find_attr("tx"), {cube.tx: 1}.get(cube.find_attr("tx")))  # True True True 1
 ```
 
 ---
@@ -279,7 +279,7 @@ DSL `Plug` of the same plug); `add_attr` / `rename_attr` / `delete_attr` wrap
 ```python
 print(repr(box.find_attr("tx")), box.find_attr("nope", quiet=True), box.has_attr("tx"))   # Attribute("asset:box.translateX") None True
 w = box.add_attr("weight", attributeType="double", keyable=True, min=0, max=1)
-print(repr(w), w.data_type, w.is_dynamic, w.default_value)                        # Attribute("asset:box.weight") double True 0.0
+print(repr(w), w.get_data_type(), w.is_dynamic(), w.get_default_value())         # Attribute("asset:box.weight") double True 0.0
 print(repr(box.rename_attr("weight", "blend")), box.list_attr(userDefined=True))  # Attribute("asset:box.blend") [Attribute("asset:box.blend")]
 print(box.delete_attr("blend"), box.has_attr("blend"))                            # True False
 
@@ -396,21 +396,21 @@ cube = Node(cmds.polyCube(name="cube", ch=False)[0])
 mesh = cube.get_shape()
 
 a = cube.find_attr("tx")
-print(a, repr(a), a.name, a.full_name, a.node, isinstance(a, str))                                # cube.translateX Attribute("cube.translateX") translateX cube.translateX cube True
+print(a, repr(a), a.get_name(), a.get_full_name(), a.get_node(), isinstance(a, str))              # cube.translateX Attribute("cube.translateX") translateX cube.translateX cube True
 print(repr(cube.tx), isinstance(cube.tx, Attribute))                                              # Plug("cube.translateX") True -- the DSL spelling
-print(a.attribute_type, a.data_type, cube.t.data_type, cube.matrix.data_type)                     # doubleLinear doubleLinear double3 matrix
+print(a.get_attribute_type(), a.get_data_type(), cube.t.get_data_type(), cube.matrix.get_data_type())  # doubleLinear doubleLinear double3 matrix
 
 cube.t.set(1, 2, 3)
 cube.t.set([4, 5, 6])                                                                             # a single sequence is unpacked for double3 & co
 cube.tx.set(7)
 t = cube.find_attr("t")
 print(t.get(), cube.t.get(), cube.tx.get())                                                       # [(7.0, 5.0, 6.0)] [7. 5. 6.] 7.0 -- the cmds.getAttr shape, the Plug's numpy
-print(t.num_children, repr(t.translateX), repr(t.child(1)), a.get_parent())                       # 3 Attribute("cube.translateX") Attribute("cube.translateY") cube.translate
-print(cube.tx.default_value, cube.t.default_value)                                                # 0.0 [0.0, 0.0, 0.0]
+print(t.get_num_children(), repr(t.translateX), repr(t.child(1)), a.get_parent())                 # 3 Attribute("cube.translateX") Attribute("cube.translateY") cube.translate
+print(cube.tx.get_default_value(), cube.t.get_default_value())                                    # 0.0 [0.0, 0.0, 0.0]
 
-print(cube.tx.is_locked, cube.tx.is_keyable, cube.tx.is_channel_box, cube.tx.is_dynamic)          # False True False False
+print(cube.tx.is_locked(), cube.tx.is_keyable(), cube.tx.is_channel_box(), cube.tx.is_dynamic())  # False True False False
 cube.tx.lock()                             # setAttr -lock; returns the attribute, as plug << lock
-print(cube.tx.is_locked)                   # True
+print(cube.tx.is_locked())                 # True
 cube.tx.unlock()
 
 cmds.setAttr(cube.ty, 9)                                                                   # it is a str
@@ -423,7 +423,7 @@ Connections:
 
 ```python
 a >> ty                                    # force-connect (the Plug spelling: cube.ty << cube.tx)
-print(ty.get(), ty.is_connected, ty.is_free_to_change)                                          # 7.0 True False
+print(ty.get(), ty.is_connected(), ty.is_free_to_change())                                      # 7.0 True False
 print(ty.get_connected_attrs(src=True, dst=False), a.get_connected_attrs(src=False, dst=True))  # [Attribute("cube.translateX")] [Attribute("cube.translateY")]
 print(a.list_connections(plugs=True), a.find_connected_nodes())                                 # [Attribute("cube.translateY")] [Transform("cube")]
 
@@ -433,11 +433,11 @@ except RuntimeError as e:
     print(str(e)[:52])                     # 'cube.translateY' already has an incoming connection
 tz.connect(ty, force=True)
 tz // ty                                   # disconnect (the Plug spelling: cube.tz.disconnect(cube.ty))
-print(ty.is_connected)                     # False
+print(ty.is_connected())                   # False
 
 a >> ty
 a >> tz
-print(a.break_connections(), a.is_connected)               # [Attribute("cube.translateZ"), Attribute("cube.translateY")] False
+print(a.break_connections(), a.is_connected())             # [Attribute("cube.translateZ"), Attribute("cube.translateY")] False
 ```
 
 Typed data: `set()` fills in `type=` for you, and a `stringArray` /
@@ -446,7 +446,7 @@ Typed data: `set()` fills in `type=` for you, and a `stringArray` /
 ```python
 weights = cube.add_attr("weights", dataType="doubleArray")
 weights.set([0, 1, 0, 0, 4])
-print(weights.get(), weights.is_typed, weights.data_type)  # [0.0, 1.0, 0.0, 0.0, 4.0] True doubleArray
+print(weights.get(), weights.is_typed(), weights.get_data_type())  # [0.0, 1.0, 0.0, 0.0, 4.0] True doubleArray
 print(weights.filter_array_values(0.0))                    # ([1, 4], [1.0, 4.0]) -- sparse ids and values
 
 pts = cube.add_attr("pts", dataType="pointArray")
@@ -458,10 +458,10 @@ print(names.get())                                         # ['a', 'b']
 
 mode = cube.add_attr("mode", attributeType="enum", enumName="off:on:auto")
 mode.set("auto")                                           # or 2: an enum takes a field name too
-mode.default_value = 1                                     # dynamic attrs only
+mode.set_default_value(1)                                  # dynamic attrs only
 mode.add_category("rigging")
-print(mode.get(), mode.enums, mode.default_value, mode.get_categories(), mode.has_category("rigging"))  # 2 ['off', 'on', 'auto'] 1.0 ['rigging'] True
-print(cube.message.data_type, cube.worldMatrix.is_multi, cube.worldMatrix[0].data_type)                 # message True matrix
+print(mode.get(), mode.get_enums(), mode.get_default_value(), mode.get_categories(), mode.has_category("rigging"))  # 2 ['off', 'on', 'auto'] 1.0 ['rigging'] True
+print(cube.message.get_data_type(), cube.worldMatrix.is_multi(), cube.worldMatrix[0].get_data_type())             # message True matrix
 ```
 
 Multis: `[i]` is a logical index (created on access), a slice or a list of
@@ -471,7 +471,7 @@ ints gives a list of elements, `del attr[i]` removes one.
 multi = cube.add_attr("multi", attributeType="double", multi=True)
 multi[0].set(1)
 multi[3].set(3)
-print(multi.is_multi, multi.num_elements, list(multi.get_logical_indices()), multi.get_next_available_index())  # True 2 [0, 3] 1
+print(multi.is_multi(), multi.get_num_elements(), list(multi.get_logical_indices()), multi.get_next_available_index())  # True 2 [0, 3] 1
 print(multi[[0, 3]])                                                                                            # [Attribute("cube.multi[0]"), Attribute("cube.multi[3]")]
 print(len(multi[:]), multi[3].logical_index(), multi.element_by_physical_index(1))                              # 4 3 cube.multi[3] -- [:] creates the gaps
 print([x.get() for x in multi[:]])                                                                              # [1.0, 0.0, 0.0, 3.0]
@@ -505,7 +505,7 @@ OpenMaya fn set.
 
 ```python
 data, uv_list = mesh.outMesh.get()                             # a Mesh's outMesh -> (MeshData, UVList)
-print(type(data).__name__, data.point_count, mesh.outMesh.data_type)  # MeshData 8 mesh
+print(type(data).__name__, data.point_count, mesh.outMesh.get_data_type())  # MeshData 8 mesh
 print(type(mesh.inMesh.get_data_fn_set()).__name__)                   # MFnMeshData
 ```
 
@@ -522,9 +522,9 @@ grp.t.set(1, 2, 3)
 cube.t.set(1, 0, 0)
 cube.r.set(0, 90, 0)
 
-print([a.name for a in cube.iter_xform_attrs(axis_only=True)])  # ['translateX', 'translateY', 'translateZ', 'rotateX', 'rotateY', 'rotateZ', 'scaleX', 'scaleY', 'scaleZ']
+print([a.get_name() for a in cube.iter_xform_attrs(axis_only=True)])  # ['translateX', 'translateY', 'translateZ', 'rotateX', 'rotateY', 'rotateZ', 'scaleX', 'scaleY', 'scaleZ']
 cube.set_xfrom_attrs_locked(True)                               # sic -- the method is spelled xfrom
-print(cube.tx.is_locked)                                        # True
+print(cube.tx.is_locked())                                      # True
 cube.set_xfrom_attrs_locked(False)
 
 world = cube.get_matrix()                                        # MMatrix, world space by default
@@ -948,7 +948,7 @@ category, one value per vertex, padded or trimmed to the vertex count:
 
 ```python
 mask = mesh.add_map("mask", values=0.5, category="weights")
-print(repr(mask), mask.data_type, mask.get_categories(), mesh.paintable_maps)  # Attribute("cubeShape.mask") doubleArray ['weights', 'PaintableMap'] ['mask']
+print(repr(mask), mask.get_data_type(), mask.get_categories(), mesh.paintable_maps)  # Attribute("cubeShape.mask") doubleArray ['weights', 'PaintableMap'] ['mask']
 mesh.set_map_values("mask", [1, 0, 1])                                         # short lists are padded with 0.0
 print(mesh.get_map_values("mask"))                                             # [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 mesh.set_map_values("mask", np.linspace(0, 1, 8))
@@ -1444,22 +1444,22 @@ except TypeError as e:
 ## 16. `Choice`
 
 A `choice` node's plugs have no fixed type; `Choice` resolves
-`Attribute.data_type` from whatever is wired to the selected input.
+`Attribute.get_data_type()` from whatever is wired to the selected input.
 
 ```python
 cmds.file(new=True, force=True)
 cube = Node(cmds.polyCube(name="cube", ch=False)[0])
 pick = Node.create("choice", name="pick")
-print(type(pick).__name__, pick.output.data_type, pick.input[0].data_type)   # Choice Tdata Tdata
+print(type(pick).__name__, pick.output.get_data_type(), pick.input[0].get_data_type())   # Choice Tdata Tdata
 
 pick.input[0] << cube.tx
 pick.input[1] << cube.matrix
 pick.input[2] << cube.get_shape().outMesh
-print(pick.input[0].data_type, pick.input[1].data_type, pick.output.data_type)  # doubleLinear matrix doubleLinear
+print(pick.input[0].get_data_type(), pick.input[1].get_data_type(), pick.output.get_data_type())  # doubleLinear matrix doubleLinear
 pick.selector.set(1)
-print(pick.output.data_type, len(pick.find_attr("output").get()))               # matrix 16
+print(pick.output.get_data_type(), len(pick.find_attr("output").get()))         # matrix 16
 pick.selector.set(2)
-print(pick.output.data_type, type(pick.output.get()[0]).__name__)               # mesh MeshData -- traced back to the source shape
+print(pick.output.get_data_type(), type(pick.output.get()[0]).__name__)         # mesh MeshData -- traced back to the source shape
 ```
 
 Its inputs are typed attributes that hold any data, as a `rig.Typed` one:

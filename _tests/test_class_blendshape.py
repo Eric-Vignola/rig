@@ -43,11 +43,11 @@ class TestBlendShape(MayaTestCase):
 
     def test_serialize(self):
         target_shape = self.target.get_children(type="mesh")[0]
-        self.assertTrue(target_shape.world_shape_attr.is_connected)
+        self.assertTrue(target_shape.world_shape_attr.is_connected())
         org_data = self.bls.get_target_data(self.target_name)
         self.assertTrue(np.allclose(org_data.indices, self.indices))
         self.assertTrue(np.allclose(org_data.offsets, self.offsets))
-        self.assertTrue(target_shape.world_shape_attr.is_connected)
+        self.assertTrue(target_shape.world_shape_attr.is_connected())
 
         new_target = "new_target"
         i          = self.bls.add_empty_target(new_target)
@@ -126,7 +126,7 @@ class TestBlendShapeMovedBase(MayaTestCase):
 
     def test_a_live_target_on_a_moved_base(self):
         bls = BlendShape.create(self.smile, self.base, name="face")
-        self.assertTrue(self.smile.get_shape().world_shape_attr.is_connected)
+        self.assertTrue(self.smile.get_shape().world_shape_attr.is_connected())
         data = bls.serialize()
         self.assertEqual(np.asarray(data[0].indices).tolist(), [3])
         np.testing.assert_allclose(data[0].offsets, [[1.0, 1.0, 1.0]], atol=1e-6)

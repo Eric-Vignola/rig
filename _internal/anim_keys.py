@@ -680,7 +680,7 @@ def _channels(arr: Any, column: int, n: int) -> Any:
 
 def _curve_type_of(leaf: Any) -> str:
     """Maya's curve type for the plug ``leaf`` (``timedAnimCurveTypeForPlug``)."""
-    return _CURVE_TYPES[_TYPE_RULE.timedAnimCurveTypeForPlug(leaf.plug)]
+    return _CURVE_TYPES[_TYPE_RULE.timedAnimCurveTypeForPlug(leaf._mplug)]
 
 
 def _stepped(mplug: Any) -> bool:
@@ -823,7 +823,7 @@ def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     if not isinstance(dst, Attribute):
         raise TypeError(f"an AnimCurve keys a plug: node.<attr> << AnimCurve(...); got {dst!r}")
     _ensure_owner_alive(dst)
-    mplug = dst.plug
+    mplug = dst._mplug
     where = where or f"{_indexed_name(dst, mplug)} << AnimCurve(...)"
     if mplug.isArray:
         raise TypeError(
@@ -837,7 +837,7 @@ def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     if mplug.isCompound:
         leaves = [dst.child(i) for i in range(mplug.numChildren())]
         for leaf in leaves:
-            child = leaf.plug
+            child = leaf._mplug
             if child.isCompound or child.isArray:
                 raise TypeError(
                     f"{where}: an animation curve keys a numeric attribute or a compound of "
@@ -847,15 +847,15 @@ def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     else:
         leaves = [dst]
     for leaf in leaves:
-        if _leaf_refusal(leaf.plug, str(leaf)) is not None:
+        if _leaf_refusal(leaf._mplug, str(leaf)) is not None:
             raise TypeError(
                 f"{where}: an animation curve keys a numeric attribute; "
-                f"{_indexed_name(leaf, leaf.plug)!r} is {_kind_text(leaf)} (Maya keys numbers, "
+                f"{_indexed_name(leaf, leaf._mplug)!r} is {_kind_text(leaf)} (Maya keys numbers, "
                 f"angles, distances and times)"
             )
-        if not OpenMaya.MFnAttribute(leaf.plug.attribute()).writable:
+        if not OpenMaya.MFnAttribute(leaf._mplug.attribute()).writable:
             raise InjectionError(
-                f"Cannot key {_indexed_name(leaf, leaf.plug)!r}: it is an output (not "
+                f"Cannot key {_indexed_name(leaf, leaf._mplug)!r}: it is an output (not "
                 f"writable), which no curve can drive. Nothing was changed"
             )
     _columns(keys, len(leaves), dst)
@@ -867,7 +867,7 @@ def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     plan.whole_above = _check_whole_wire(dst, "key")
     entries = []
     for column, leaf in enumerate(leaves):
-        lp = leaf.plug
+        lp = leaf._mplug
         curve_type = "animCurveTU" if _is_generic_slot(leaf) else _curve_type_of(leaf)
         enum_plug = lp if lp.attribute().hasFn(OpenMaya.MFn.kEnumAttribute) else None
         e = _plan_values(keys, curve_type, column, _stepped(lp), where, enum_plug)
@@ -1028,9 +1028,9 @@ def _apply(plans: list) -> None:
         for plan in plans:
             if plan.whole_above:
                 _free_of_whole_wire(plan.dst, "key")
-                plan.compound_input = plan.dst.plug.isCompound and plan.dst.plug.isDestination
+                plan.compound_input = plan.dst._mplug.isCompound and plan.dst._mplug.isDestination
             if plan.compound_input:
-                LOGGER.info("key %s: replacing its input %s", plan.dst, plan.dst.plug.source().name())
+                LOGGER.info("key %s: replacing its input %s", plan.dst, plan.dst._mplug.source().name())
                 _disconnect_incoming(plan.dst)
             for e in plan.leaves:
                 if e.same:
@@ -1155,7 +1155,7 @@ def curves_of(x: Any) -> list:
 
     def visit(item):
         if isinstance(item, Attribute):
-            walk(item.plug)
+            walk(item._mplug)
         elif isinstance(item, Node):
             fn = OpenMaya.MFnDependencyNode(item.mobject)
             for mp in fn.getConnections():

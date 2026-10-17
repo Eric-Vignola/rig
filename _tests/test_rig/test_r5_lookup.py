@@ -637,7 +637,7 @@ class TestAFreshLookup(MayaTestCase):
                     plug = node.visibility
                 self.assertEqual(builds.counts, (1, 1))
                 self.assertEqual(str.__str__(plug), expected)
-                self.assertEqual(plug.full_name, expected)
+                self.assertEqual(plug.get_full_name(), expected)
                 self.assertEqual(cmds.getAttr(plug), True)
 
     def test_a_shapes_attr_through_its_transform(self):
@@ -649,7 +649,7 @@ class TestAFreshLookup(MayaTestCase):
         self.assertEqual(str.__str__(plug), str(vars(plug)["_mplug"]))
         self.assertEqual(str.__str__(plug), "cubeShape.outMesh")
         self.assertIsNone(vars(plug)["_node"])
-        self.assertEqual(type(plug.node).__name__, "Mesh")
+        self.assertEqual(type(plug.get_node()).__name__, "Mesh")
 
 
 class TestALookupOfItsOwn(MayaTestCase):
@@ -742,7 +742,7 @@ class TestALookupOfItsOwn(MayaTestCase):
 #  H8: memo keys
 # --------------------------------------------------------------------------- #
 
-_FULL_NAME_CODE = Attribute.__dict__["full_name"].fget.__code__
+_FULL_NAME_CODE = Attribute.get_full_name.__code__
 
 
 class _Names:
@@ -766,7 +766,7 @@ class _Names:
 
 def _named_key(plug):
     """The key `_attribute_key` gave at a74d089: through the plug's name."""
-    node_str = plug.full_name.split(".", 1)[0]
+    node_str = plug.get_full_name().split(".", 1)[0]
     identity = memoize._named_dg_identity(plug, node_str)
     if identity is None:
         identity = memoize._node_identity(node_str)
@@ -845,7 +845,7 @@ class TestMemoKeys(MayaTestCase):
 
     @staticmethod
     def _cast(plug):
-        plug.node
+        plug.get_node()
         return plug
 
     def _other_plugs(self):
@@ -915,7 +915,7 @@ class TestMemoKeys(MayaTestCase):
             raised = _outcome(lambda: memoize._attribute_key(plug))
         self.assertEqual(api2.mock_calls, [])
         self.assertEqual(raised, ("raises", "RuntimeError", "md already deleted!", []))
-        self.assertEqual(raised, _outcome(lambda: plug.full_name))
+        self.assertEqual(raised, _outcome(lambda: plug.get_full_name()))
         cmds.undo()
         self.assertEqual(memoize._attribute_key(plug), before)
         self.assertEqual(before, _named_key(plug))
@@ -931,7 +931,7 @@ class TestMemoKeys(MayaTestCase):
         cmds.flushUndo()  # the attribute is freed, its node lives on
         raised = _outcome(lambda: memoize._attribute_key(dyn))
         self.assertEqual(raised, ("raises", "RuntimeError", "md.dyn already deleted!", []))
-        self.assertEqual(raised, _outcome(lambda: dyn.full_name))
+        self.assertEqual(raised, _outcome(lambda: dyn.get_full_name()))
         held = Node("pma").output1D
         str(held)
         cmds.file(new=True, force=True)
@@ -940,7 +940,7 @@ class TestMemoKeys(MayaTestCase):
         self.assertTrue(raised[2].endswith(
             "(freed by a new scene, a file open or a reference unload) already deleted!"
         ))
-        self.assertEqual(raised, _outcome(lambda: held.full_name))
+        self.assertEqual(raised, _outcome(lambda: held.get_full_name()))
 
     def test_a_patched_class_is_keyed_through_its_name(self):
         self._scene()
@@ -957,7 +957,7 @@ class TestMemoKeys(MayaTestCase):
             (DGNode, "ensure_valid", ensure_valid),
             (DGNode, "name", property(lambda node: node.fn_set.name())),
             (DGNode, "fn_set", property(lambda node: node._fn_set)),
-            (Attribute, "full_name", property(Attribute.__dict__["full_name"].fget)),
+            (Attribute, "get_full_name", lambda attr, f=Attribute.get_full_name: f(attr)),
         ):
             with self.subTest(patched=f"{owner.__name__}.{name}"):
                 with mock.patch.object(owner, name, value):
@@ -1007,8 +1007,8 @@ class TestMemoKeys(MayaTestCase):
         cmds.createNode("transform", name="solo", parent="grp2")  # not unique now
         for path, plug in plugs.items():
             with self.subTest(path=path):
-                self.assertIsInstance(plug.node, _DgOnDag)
-                self.assertIs(_base._dg_named_owner(plug), plug.node)
+                self.assertIsInstance(plug.get_node(), _DgOnDag)
+                self.assertIs(_base._dg_named_owner(plug), plug.get_node())
                 self.assertEqual(
                     _outcome(lambda: memoize._attribute_key(plug)), _outcome(lambda: _named_key(plug))
                 )

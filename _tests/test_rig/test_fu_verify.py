@@ -54,7 +54,7 @@ class TestAChildBelowAnElement(MayaTestCase):
                 cur = _base.OpenMaya.MPlug(Node("pma").mobject, top)
                 for is_element, key in steps:
                     cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
-                self.assertEqual(cur.name(), attr.plug.name())
+                self.assertEqual(cur.name(), attr.get_mplug().name())
 
     def test_getattr_holds_without_a_call(self):
         cmds.createNode("plusMinusAverage", name="pma")

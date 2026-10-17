@@ -187,10 +187,10 @@ class TestPlugOperators(_OperandCase):
         self.assertEqual(cmds.container("box2", query=True, nodeList=True) or [], [])
 
     def test_plugs_and_typed_attributes_are_operands(self):
-        self.assertEqual(cmds.nodeType((self.t.tx == Plug(S)).node), "equal")
-        self.assertEqual(cmds.nodeType((self.t.tx + Node("cube").find_attr("ty")).node), "sum")
-        self.assertEqual(cmds.nodeType((self.t.t + [1, self.u.tx, 2]).node), "plusMinusAverage")
-        self.assertEqual(cmds.nodeType((List([self.t.tx]) + [Plug(S)])[0].node), "sum")
+        self.assertEqual(cmds.nodeType((self.t.tx == Plug(S)).get_node()), "equal")
+        self.assertEqual(cmds.nodeType((self.t.tx + Node("cube").find_attr("ty")).get_node()), "sum")
+        self.assertEqual(cmds.nodeType((self.t.t + [1, self.u.tx, 2]).get_node()), "plusMinusAverage")
+        self.assertEqual(cmds.nodeType((List([self.t.tx]) + [Plug(S)])[0].get_node()), "sum")
 
     def test_text_through_str_and_fstrings(self):
         plug = self.t.tx
@@ -259,7 +259,7 @@ class TestListOperators(_OperandCase):
         self.assertEqual(List([self.t.tx]).count("t.translateX"), 1)
         self.assertEqual(_scene(), before)
         # List() lifts a "node.attr" str to a Plug
-        self.assertEqual(cmds.nodeType((List([S]) + 1)[0].node), "sum")
+        self.assertEqual(cmds.nodeType((List([S]) + 1)[0].get_node()), "sum")
 
 
 class TestPublicFunctions(_OperandCase):
@@ -417,7 +417,7 @@ class TestPublicFunctions(_OperandCase):
         self.assertEqual((len(F.abs._cache), len(V.lerp._cache), len(condition._cache)), sizes)
         first = F.abs(self.t.tx)
         self.assertIs(F.abs(self.t.tx), first)
-        self.assertEqual(cmds.nodeType(first.node), "absolute")
+        self.assertEqual(cmds.nodeType(first.get_node()), "absolute")
 
 
 class TestConfigStrings(_OperandCase):
@@ -425,8 +425,8 @@ class TestConfigStrings(_OperandCase):
 
     def test_config_parameters(self):
         t = self.t
-        self.assertEqual(cmds.nodeType(_condition_op(t.tx, "<", t.ty).node), "lessThan")
-        self.assertEqual(cmds.nodeType(M.axis(t.worldMatrix[0], axis="z").node), "axisFromMatrix")
+        self.assertEqual(cmds.nodeType(_condition_op(t.tx, "<", t.ty).get_node()), "lessThan")
+        self.assertEqual(cmds.nodeType(M.axis(t.worldMatrix[0], axis="z").get_node()), "axisFromMatrix")
         with self.assertRaisesRegex(ValueError, "axis must be 0/1/2"):
             M.axis(t.worldMatrix[0], axis="w")
         self.assertEqual(str(constant([1, 2], name="cfg1", dtype="long")), "cfg1.value")
@@ -466,8 +466,8 @@ class TestConfigStrings(_OperandCase):
         self.assertIs(M.decompose(wm, rotate_order=0), by_name)
         self.assertEqual([cmds.nodeType(n) for n in _scene() - before], ["decomposeMatrix"])
         zxy = M.decompose(wm, rotate_order="zxy")
-        self.assertEqual(cmds.getAttr(f"{zxy.node}.inputRotateOrder"), 2)
-        self.assertEqual(cmds.nodeType(E.reorder(self.t.r, "xyz", "zxy").node), "quatToEuler")
+        self.assertEqual(cmds.getAttr(f"{zxy.get_node()}.inputRotateOrder"), 2)
+        self.assertEqual(cmds.nodeType(E.reorder(self.t.r, "xyz", "zxy").get_node()), "quatToEuler")
         before = _scene()
         with self.assertRaisesRegex(TypeError, "'abc' is not a rotate order"):
             M.decompose(wm, rotate_order="abc")
@@ -537,7 +537,7 @@ class TestEdgeCases(_OperandCase):
             self.assertEqual(_scene(), before)
             cmds.undo()
             self.assertRejects(lambda: held + S, "t.translateX + 'cube.ty': ")
-            self.assertEqual(cmds.nodeType((held + 1).node), "sum")
+            self.assertEqual(cmds.nodeType((held + 1).get_node()), "sum")
         finally:
             cmds.undoInfo(state=False)
 
@@ -547,7 +547,7 @@ class TestEdgeCases(_OperandCase):
         cmds.namespace(add="ns")
         cmds.createNode("transform", name="ns:cube")
         self.assertRejects(lambda: self.u.tx * "ns:cube.ty", "Write Plug('ns:cube.ty')")
-        self.assertEqual(cmds.nodeType((self.u.tx * Plug("ns:cube.ty")).node), "multiply")
+        self.assertEqual(cmds.nodeType((self.u.tx * Plug("ns:cube.ty")).get_node()), "multiply")
 
     def test_a_rejected_call_records_no_undo_step(self):
         cmds.undoInfo(state=True, infinity=True)
@@ -564,7 +564,7 @@ class TestEdgeCases(_OperandCase):
         cmds.addExtension(nodeType="transform", longName="extKnob", attributeType="double")
         try:
             result = self.t.extKnob + self.u.tx
-            self.assertEqual(cmds.nodeType(result.node), "sum")
+            self.assertEqual(cmds.nodeType(result.get_node()), "sum")
             self.assertRejects(lambda: self.t.extKnob + "t.extKnob")
         finally:
             cmds.file(new=True, force=True)

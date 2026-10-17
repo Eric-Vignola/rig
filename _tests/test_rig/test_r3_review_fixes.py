@@ -301,16 +301,16 @@ class TestFindAttrCacheOfInstancedElements(MayaTestCase):
             with self.subTest(path=path):
                 node = Node(path)
                 element = node.find_attr("worldMatrix[1]")
-                self.assertTrue(element.plug.isElement)
-                self.assertEqual(element.plug.logicalIndex(), 1)
+                self.assertTrue(element.get_mplug().isElement)
+                self.assertEqual(element.get_mplug().logicalIndex(), 1)
                 whole = node.find_attr("worldMatrix")
-                self.assertTrue(whole.plug.isArray)
+                self.assertTrue(whole.get_mplug().isArray)
                 self.assertIs(node.find_attr("worldMatrix[1]"), element)
-                self.assertTrue(node.find_attr("iog[1]").plug.isElement)
-                self.assertTrue(node.find_attr("instObjGroups").plug.isArray)
+                self.assertTrue(node.find_attr("iog[1]").get_mplug().isElement)
+                self.assertTrue(node.find_attr("instObjGroups").get_mplug().isArray)
         node = Node(Node("|T1|S"))
         node.find_attr("worldMatrix[1]")
-        self.assertTrue(node.worldMatrix.plug.isArray)
+        self.assertTrue(node.worldMatrix.get_mplug().isArray)
         self.assertEqual(str(node.worldMatrix), "T1|S.worldMatrix")
 
     def test_single_instance_element_lookup_then_index(self):
@@ -336,16 +336,16 @@ class TestComponentPlugOwner(MayaTestCase):
 
     def test_handle_rows_elements_and_children_share_the_node(self):
         node = Node(_surface())
-        self.assertIs(node.cv.node, node)
-        self.assertIs(node.cv[1, 2].node, node)
-        self.assertIs(node.cv[1][2].node, node)
-        self.assertTrue(all(p.node is node for p in node.cv[1]))
-        self.assertIs(node.cv[1, 2].xValue.node, node)
-        self.assertIs(node.cv[1, 2].child(0).node, node)
+        self.assertIs(node.cv.get_node(), node)
+        self.assertIs(node.cv[1, 2].get_node(), node)
+        self.assertIs(node.cv[1][2].get_node(), node)
+        self.assertTrue(all(p.get_node() is node for p in node.cv[1]))
+        self.assertIs(node.cv[1, 2].xValue.get_node(), node)
+        self.assertIs(node.cv[1, 2].child(0).get_node(), node)
         lattice = cmds.lattice(cmds.polyCube(name="box", ch=False)[0], name="ffd")[1]
         pts = Node(cmds.listRelatives(lattice, shapes=True)[0])
-        self.assertIs(pts.pt.node, pts)
-        self.assertIs(pts.pt[1, 0, 1].node, pts)
+        self.assertIs(pts.pt.get_node(), pts)
+        self.assertIs(pts.pt[1, 0, 1].get_node(), pts)
 
     def test_an_instanced_surface_is_named_through_the_held_path(self):
         shape = _surface()
@@ -355,7 +355,7 @@ class TestComponentPlugOwner(MayaTestCase):
         self.assertEqual(str(second.visibility), f"G2|{shape}.visibility")
         self.assertEqual(str(second.cv), f"G2|{shape}.controlPoints")
         self.assertEqual(str(second.cv[1, 2]), f"G2|{shape}.cv[1][2]")
-        self.assertEqual(second.cv[1, 2].node.long_name, f"|G2|{shape}")
+        self.assertEqual(second.cv[1, 2].get_node().long_name, f"|G2|{shape}")
         first = Node(f"|ball|{shape}")
         self.assertEqual(str(first.cv[1, 2]), f"ball|{shape}.cv[1][2]")
         # one Maya plug all the same
@@ -387,7 +387,7 @@ class TestTypedChildrenShareTheOwner(MayaTestCase):
             ("index", node.find_attr("instObjGroups")[1], "T2|S.instObjGroups"),
         ):
             with self.subTest(attr=label):
-                self.assertIs(attr.node, node)
+                self.assertIs(attr.get_node(), node)
                 self.assertEqual(str(attr), name)
         # a node with one path, and an attr of another node, as before
         cmds.createNode("plusMinusAverage", name="pma")
@@ -423,7 +423,7 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
                 self.assertIs(type(plug), Plug)
                 self.assertEqual(str(plug), "T2|S.worldMatrix")
                 self.assertTrue(plug.equals(typed))
-                self.assertIs(plug.node, typed.node)
+                self.assertIs(plug.get_node(), typed.get_node())
                 dst = cmds.createNode("multMatrix")
                 Node(dst).matrixIn[0] << plug
                 sel = OpenMaya.MSelectionList()
@@ -432,7 +432,7 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
                 self.assertEqual(cmds.getAttr(f"{dst}.matrixSum")[12], 7.0)
         visibility = Node("|T2|S").find_attr("v")
         self.assertEqual(str(lift(visibility)), "T2|S.visibility")
-        self.assertEqual(lift(visibility).node.long_name, "|T2|S")
+        self.assertEqual(lift(visibility).get_node().long_name, "|T2|S")
 
     def test_a_node_of_a_plug_is_its_owner(self):
         from rig.nodetypes import Transform
@@ -570,7 +570,7 @@ class TestCmdsReadsTheHeldInstance(MayaTestCase):
         cmds.createNode("transform", name="ctrl", parent="A")
         for plug in (Node("ctrl").tx, Node("A|ctrl").t[0], Node("ctrl").find_attr("ty")):
             with self.subTest(plug=str(plug)):
-                self.assertEqual(str.__str__(plug), plug.plug.name())
+                self.assertEqual(str.__str__(plug), plug.get_mplug().name())
 
 
 class TestComponentSliceOnAChosenClass(MayaTestCase):
@@ -592,7 +592,7 @@ class TestComponentSliceOnAChosenClass(MayaTestCase):
                 # re-pinned (round 4b NC2): cls("pcShape") is the reference,
                 # which returns Mesh; the class-chosen wrapper is cls._wrap
                 node = Node(cls._wrap("pcShape"))
-                self.assertIs(type(node.vtx.node), cls)
+                self.assertIs(type(node.vtx.get_node()), cls)
                 self.assertEqual([str(p) for p in node.vtx[0:2]], expected)
                 self.assertEqual([str(p) for p in node.vtx[[0, 1]]], expected)
                 self.assertEqual([str(p) for p in node.controlPoints[0:2]], expected)
@@ -738,15 +738,15 @@ class TestCheapCommonPaths(MayaTestCase):
     def test_fixed_attr_kind_reads_the_owners_fn_set(self):
         node  = Node(cmds.createNode("transform", name="a"))
         owned = node.tx
-        self.assertIs(_base._plug_node_fn_set(owned, owned.plug), node._fn_set)
+        self.assertIs(_base._plug_node_fn_set(owned, owned.get_mplug()), node._fn_set)
         self.assertEqual(_base._fixed_attr_kind(owned), OpenMaya.MFn.kDoubleLinearAttribute)
         loose = Plug("a.tx")
-        self.assertIsNot(_base._plug_node_fn_set(loose, loose.plug), node._fn_set)
+        self.assertIsNot(_base._plug_node_fn_set(loose, loose.get_mplug()), node._fn_set)
         self.assertEqual(_base._fixed_attr_kind(loose), OpenMaya.MFn.kDoubleLinearAttribute)
         # a deleted owner's fn set is not read
         cmds.undoInfo(state=True, infinity=True)
         cmds.delete("a")
-        self.assertIsNot(_base._plug_node_fn_set(owned, owned.plug), node._fn_set)
+        self.assertIsNot(_base._plug_node_fn_set(owned, owned.get_mplug()), node._fn_set)
         cmds.undo()
 
     def test_only_a_path_named_parent_is_checked_for_instancing(self):

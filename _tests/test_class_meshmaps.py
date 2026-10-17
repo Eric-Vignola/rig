@@ -177,7 +177,7 @@ class TestMeshMaps(MayaTestCase):
             )
         )
         self.assertTrue(test_mesh.has_attr(self._map_01_rename_name))
-        self.assertTrue(new_map_plug.name == self._map_01_rename_name)
+        self.assertTrue(new_map_plug.get_name() == self._map_01_rename_name)
 
         self.assertTrue(len(test_mesh.get_map_attrs()) == 1)
         self.assertTrue(test_mesh.delete_attr(new_map_plug))

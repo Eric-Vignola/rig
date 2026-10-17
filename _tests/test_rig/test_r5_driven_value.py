@@ -260,7 +260,7 @@ class TestOtherValues(_Case):
             _settle()
             self.assertEqual(cmds.getAttr("net.w[1]"), 5)
             self.assertEqual(_inputs("net.w[1]"), [])
-            self.assertEqual(slot.plug.name(), "net.w[1]")
+            self.assertEqual(slot.get_mplug().name(), "net.w[1]")
             self.undo_steps(1)
             self.assertEqual(_inputs("net.w[1]"), ["crv.output"])
             self.redo_steps(1)

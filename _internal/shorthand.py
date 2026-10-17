@@ -118,7 +118,7 @@ def shorthand(src: Any, dst: Any, src_facts: Any = None, dst_facts: Any = None) 
 # marks a `_Facts` query that has not run yet
 _UNSET = object()
 
-# the data types `Attribute.data_type` gives a generic attr that holds no typed
+# the data types `Attribute.get_data_type` gives a generic attr that holds no typed
 # data, such as the output of a choice whose selected input is empty
 _UNRESOLVED_TYPES = ("Tdata", "typed")
 
@@ -129,7 +129,7 @@ def _query_may_compute(attr: Any) -> bool:
     attribute, and neither its plug nor a parent or array plug above it is a
     destination. True otherwise, or if that cannot be read."""
     try:
-        mplug = attr.plug
+        mplug = attr._mplug
         node  = OpenMaya.MFnDependencyNode(mplug.node())
         if len(node.getAffectingAttributes(mplug.attribute())):
             return True
@@ -179,7 +179,7 @@ class _Facts:
         if self._data_type is _UNSET:
             runs = _USER_CODE_RUNS[0]
             try:
-                self._data_type = self._obj.data_type
+                self._data_type = type(self._obj).get_data_type(self._obj)
             except Exception:
                 self._data_type = None
             if (
@@ -195,7 +195,7 @@ class _Facts:
         """Returns the operand's ``num_children``, or None if the query raised."""
         if self._num_children is _UNSET:
             try:
-                self._num_children = self._obj.num_children
+                self._num_children = type(self._obj).get_num_children(self._obj)
             except Exception:
                 self._num_children = None
         return self._num_children
@@ -237,7 +237,7 @@ class _Facts:
         if not isinstance(obj, Attribute):
             return False
         try:
-            if obj.plug.isCompound:
+            if obj._mplug.isCompound:
                 return True
             # a numeric / unit / enum / message kind is never a compound
             if _fixed_attr_kind(obj) in _SCALAR_ATTR_API_TYPES:
@@ -261,7 +261,7 @@ def _matrix_to_transform(src: Any, dst: Any) -> bool:
     # otherwise has no `.ro`, fall back to the owning node's rotateOrder.
     rotate_order    = _safe_attr(dst, "ro") or _safe_attr(_node_of(dst), "ro")
     decomposed      = _decompose_matrix(src, rotate_order=rotate_order)
-    decomposed_node = decomposed.node
+    decomposed_node = type(decomposed).get_node(decomposed)
 
     # Bare transform (no `.attr`) OR `.matrix` plug on a transform --
     # wire all four channels via the decomposeMatrix outputs. The sibling
@@ -292,7 +292,7 @@ def _matrix_to_transform(src: Any, dst: Any) -> bool:
 
 def _matrix_to_quaternion(src: Any, dst: Any) -> bool:
     decomposed = _decompose_matrix(src)
-    _bare_inject(decomposed.node.outputQuat, dst)
+    _bare_inject(type(decomposed).get_node(decomposed).outputQuat, dst)
     return True
 
 
@@ -305,7 +305,7 @@ def _matrix_to_vector(src: Any, dst: Any) -> bool:
 def _matrix_to_point(src: Any, dst: Any) -> bool:
     """Matrix -> control-point (vtx, cv, ...).
 
-    Uses :attr:`Attribute.node` to obtain the owning shape node and
+    Uses :meth:`Attribute.get_node` to obtain the owning shape node and
     :meth:`DAGNode.get_parent` (canonical API) to walk to the transform
     -- no ``str.split('.')`` parsing, no ``cmds.listRelatives``.
     """
@@ -389,7 +389,7 @@ def _transform_to_quaternion(src: Any, dst: Any) -> bool:
     attr = _attr_path(src)
     if not attr:
         decomposed = _decompose_matrix(src.matrix)
-        _bare_inject(decomposed.node.outputQuat, dst)
+        _bare_inject(type(decomposed).get_node(decomposed).outputQuat, dst)
         return True
     if attr in ("rotate", "rotateX", "rotateY", "rotateZ"):
         node = _euler_to_quaternion(src)
@@ -442,8 +442,8 @@ def _attr_path(plug: Any) -> str:
     to the node's standard transform channels (``t``/``r``/``s``)
     directly.
 
-    Uses :attr:`Attribute.name` (canonical API) when ``plug`` exposes it,
-    falling back to string parsing only for raw strings.
+    Uses :meth:`Attribute.get_name` (canonical API) for a plug, falling back
+    to string parsing only for raw strings.
     """
     # Bare Node: no attribute path. Pre-v3.R, this branch was missing and
     # ``plug.name`` returned the NODE name (e.g. ``"b_xform"``), causing
@@ -454,11 +454,11 @@ def _attr_path(plug: Any) -> str:
     if isinstance(plug, Node):
         return ""
 
-    # Prefer the canonical Attribute.name (rename-safe).
-    if hasattr(plug, "name") and not isinstance(plug, str):
+    # Prefer the canonical attribute name (rename-safe).
+    if isinstance(plug, Attribute):
         try:
-            return plug.name
-        except (RuntimeError, AttributeError):
+            return type(plug).get_name(plug)
+        except RuntimeError:
             pass
     s = str(plug)
     return ".".join(s.split(".")[1:])
@@ -467,15 +467,15 @@ def _attr_path(plug: Any) -> str:
 def _node_of(plug: Any) -> Any:
     """Return the :class:`Node` of a plug-like input.
 
-    Uses :attr:`Attribute.node` (canonical API) when available, falling
+    Uses :meth:`Attribute.get_node` (canonical API) for a plug, falling
     back to ``str.split('.')`` parsing only for raw strings.
     """
 
-    # Prefer the canonical Attribute.node (rename-safe).
-    if hasattr(plug, "node") and not isinstance(plug, str):
+    # Prefer the canonical Attribute.get_node (rename-safe).
+    if isinstance(plug, Attribute):
         try:
-            return plug.node
-        except (RuntimeError, AttributeError):
+            return type(plug).get_node(plug)
+        except RuntimeError:
             pass
     return Node(str(plug).split(".")[0])
 

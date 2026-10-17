@@ -27,10 +27,10 @@ class TestXformNodes(MayaTestCase):
     def test_attr(self):
         self.root.set_xfrom_attrs_locked(True)
         for attr in self.root.iter_xform_attrs():
-            self.assertTrue(attr.is_locked)
+            self.assertTrue(attr.is_locked())
         self.root.set_xfrom_attrs_locked(False)
         for attr in self.root.iter_xform_attrs():
-            self.assertFalse(attr.is_locked)
+            self.assertFalse(attr.is_locked())
 
     def test_matrix(self):
         t = OpenMaya.MVector(1, 1, 1)

@@ -386,7 +386,7 @@ class TestMemoizeNodeKeyHardening(MayaTestCase):
 
 def _name_based_key(attr):
     """The attribute key as built from the node name (the pre-MPlug path)."""
-    return (_node_identity(attr.full_name.split(".", 1)[0]), attr.alias)
+    return (_node_identity(attr.get_full_name().split(".", 1)[0]), attr.get_alias())
 
 
 def _outcome(fn, *args):
@@ -441,7 +441,7 @@ class TestAttributeKeyFromPlug(MayaTestCase):
             with self.subTest(plug=str(plug)):
                 self.assertEqual(_attribute_key(plug), _name_based_key(plug))
                 self.assertEqual(_stable_key(plug),    _name_based_key(plug))
-        self.assertEqual(thing.nick.alias, "nick")
+        self.assertEqual(thing.nick.get_alias(), "nick")
         # A live DG node's key never goes through the by-name resolution; a
         # DAG path can go stale, so a DAG node's key still does.
         with mock.patch(

@@ -197,7 +197,7 @@ def _disconnect_compound(plug_str: str) -> None:
     doesn't immediately overwrite the value (or block the setAttr outright).
     Uses ``_connected_attrs`` (``Attribute.get_connected_attrs`` for sources
     read at once) + :meth:`Attribute.disconnect`
-    + :meth:`Attribute.num_children`/:meth:`Attribute.child` for compound
+    + :meth:`Attribute.get_num_children`/:meth:`Attribute.child` for compound
     enumeration (no string-parsing, no ``cmds.attributeQuery``).
     """
     try:
@@ -208,8 +208,8 @@ def _disconnect_compound(plug_str: str) -> None:
     targets = [root_attr]
     # Walk compound children via the canonical Attribute API.
     try:
-        if not root_attr.is_multi:
-            for i in range(root_attr.num_children):
+        if not type(root_attr).is_multi(root_attr):
+            for i in range(type(root_attr).get_num_children(root_attr)):
                 targets.append(root_attr.child(i))
     except (RuntimeError, AttributeError, TypeError):
         pass  # Non-compound attr (e.g. matrix data) -- no children to enumerate.
@@ -267,7 +267,7 @@ def _apply_full_decomposition(
             channel = None
         if channel is None:
             return
-        _disconnect_compound(channel.full_name)
+        _disconnect_compound(str(channel))
         try:
             type(channel).set(channel, *values)
         except (RuntimeError, Exception):
@@ -304,17 +304,17 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
         return False
     m4x4, had_translation = coerced
 
-    attr     = dst.alias
+    attr     = type(dst).get_alias(dst)
     plug_str = str(dst)
     try:
-        node = dst.node
+        node = type(dst).get_node(dst)
     except Exception:
         return False
     node_str = str(node)
 
     is_transform = _node_is_transform(node)
     try:
-        dst_data_type = dst.data_type
+        dst_data_type = type(dst).get_data_type(dst)
     except Exception:
         dst_data_type = None
 
@@ -358,7 +358,7 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
         # resolves its name; 0 otherwise.
         index = 0
         try:
-            mplug = dst.plug
+            mplug = dst._mplug
             if mplug.isElement:
                 index = mplug.logicalIndex()
             else:

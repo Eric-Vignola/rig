@@ -184,7 +184,7 @@ def _is_compound(obj: Any) -> bool:
     if not _is_attribute(obj):
         return False
     try:
-        if obj.plug.isCompound:
+        if obj._mplug.isCompound:
             return True
         # a numeric / unit / enum / message kind is never a compound
         if _fixed_attr_kind(obj) in _SCALAR_ATTR_API_TYPES:
@@ -192,13 +192,13 @@ def _is_compound(obj: Any) -> bool:
         # ``num_children`` raises TypeError on non-compound plugs (incl.
         # generic / kGeneric attributes like choice.output). Guard.
         try:
-            if obj.num_children > 0:
+            if type(obj).get_num_children(obj) > 0:
                 return True
         except Exception:
             pass
         # Generic-typed compound (e.g. choice.output after being typed
         # to double3 by a compound input connection).
-        return obj.data_type in _COMPOUND_DATA_TYPES
+        return type(obj).get_data_type(obj) in _COMPOUND_DATA_TYPES
     except Exception:
         return False
 
@@ -226,7 +226,7 @@ def _is_array(obj: Any) -> bool:
     if not _is_attribute(obj):
         return False
     try:
-        return obj.is_multi
+        return type(obj).is_multi(obj)
     except Exception:
         return False
 
@@ -248,7 +248,7 @@ def _fills_one_element(obj: Any) -> bool:
     if not isinstance(obj, Attribute):
         return False
     try:
-        return not obj.is_multi
+        return not type(obj).is_multi(obj)
     except Exception:
         return False
 
@@ -261,7 +261,7 @@ def _is_matrix(obj: Any) -> bool:
         # a scalar or numeric compound kind never holds a matrix
         if _fixed_attr_kind(obj) in _NON_MATRIX_ATTR_API_TYPES:
             return False
-        return obj.data_type == "matrix"
+        return type(obj).get_data_type(obj) == "matrix"
     except Exception:
         return False
 
@@ -298,7 +298,7 @@ def _is_quaternion(obj: Any) -> bool:
     if not _is_compound(obj):
         return False
     try:
-        return obj.num_children == 4
+        return type(obj).get_num_children(obj) == 4
     except Exception:
         return False
 
@@ -310,7 +310,7 @@ def _is_vector(obj: Any) -> bool:
     if not _is_compound(obj):
         return False
     try:
-        return obj.num_children == 3
+        return type(obj).get_num_children(obj) == 3
     except Exception:
         return False
 
@@ -320,7 +320,7 @@ def _is_transform(obj: Any) -> bool:
     if not _is_attribute(obj):
         return False
     try:
-        return obj.plug.node().hasFn(OpenMaya.MFn.kTransform)
+        return obj._mplug.node().hasFn(OpenMaya.MFn.kTransform)
     except Exception:
         return False
 
@@ -347,7 +347,7 @@ def _get_compound(obj: Any) -> list:
     not a compound (or ``obj`` itself if it's already a sequence).
     """
     if _is_compound(obj):
-        return [obj.child(i) for i in range(obj.num_children)]
+        return [obj.child(i) for i in range(type(obj).get_num_children(obj))]
     if _is_sequence(obj):
         return list(obj)
     return [obj]
@@ -416,7 +416,7 @@ def _selected_choice_source(obj: Any) -> Attribute | None:
     """
     if not _is_attribute(obj):
         return None
-    src_plug = _trace_choice_source(obj.plug)
+    src_plug = _trace_choice_source(obj._mplug)
     # read at once by the type predicates, never held: no handle of its node
     return _new_attr(Attribute, src_plug) if src_plug is not None else None
 
@@ -425,24 +425,24 @@ def _arity_of(obj: Any) -> int | None:
     """Return the channel count of an attribute (3 / 4 / ...), or ``None``.
 
     Resolution order, all structural:
-      1. well-typed ``data_type`` fast path (``double4`` => 4, ``double3`` => 3);
-      2. the plug's own ``num_children`` -- handles ``TdataCompound`` outputs
-         whose ``data_type`` is the useless ``"compound"``;
-      3. the ``num_children`` of the selected ``choice`` source -- handles a
+      1. well-typed ``get_data_type()`` fast path (``double4`` => 4, ``double3`` => 3);
+      2. the plug's own ``get_num_children()`` -- handles ``TdataCompound``
+         outputs whose data type is the useless ``"compound"``;
+      3. the ``get_num_children()`` of the selected ``choice`` source -- handles a
          compound hidden behind a ``choice`` node, whose own generic output
          reports no children.
 
-    ``num_children`` is a property that raises ``TypeError`` on non-compound
-    plugs (and ``RuntimeError`` on some generic plugs); both are swallowed so
-    scalars and unresolved generics fall through to ``None``.
+    ``get_num_children()`` raises ``TypeError`` on non-compound plugs (and
+    ``RuntimeError`` on some generic plugs); both are swallowed so scalars and
+    unresolved generics fall through to ``None``.
     """
     if not _is_attribute(obj):
         return None
-    arity = _ARITY_BY_DATA_TYPE.get(obj.data_type)
+    arity = _ARITY_BY_DATA_TYPE.get(type(obj).get_data_type(obj))
     if arity:
         return arity
     try:
-        arity = obj.num_children
+        arity = type(obj).get_num_children(obj)
     except (TypeError, RuntimeError):
         arity = None
     if arity:
@@ -451,7 +451,7 @@ def _arity_of(obj: Any) -> int | None:
     if src is None:
         return None
     try:
-        arity = src.num_children
+        arity = type(src).get_num_children(src)
     except (TypeError, RuntimeError):
         arity = None
     if arity:
@@ -473,7 +473,8 @@ def _is_euler(obj: Any) -> bool:
         if probe is None:
             continue
         try:
-            if type(probe).child(probe, 0).attribute_type == "doubleAngle":
+            child = type(probe).child(probe, 0)
+            if type(child).get_attribute_type(child) == "doubleAngle":
                 return True
         except Exception:
             pass
@@ -518,7 +519,7 @@ def math_type(obj: Any) -> str:
             return "quaternion"
         if arity == 3:
             return "euler" if _is_euler(obj) else "vector"
-        if obj.data_type in _SCALAR_DATA_TYPES:
+        if type(obj).get_data_type(obj) in _SCALAR_DATA_TYPES:
             return "scalar"
         return "unknown"
     if _is_sequence(obj):

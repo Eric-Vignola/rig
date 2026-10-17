@@ -942,7 +942,7 @@ _NON_MATRIX_ATTR_API_TYPES = _SCALAR_ATTR_API_TYPES | {
 }
 
 # Attribute kinds whose `cmds.getAttr(..., type=True)` string is a property of
-# the node class, so `Attribute.data_type` shares it across instances in
+# the node class, so `Attribute.get_data_type` shares it across instances in
 # `_STATIC_DATA_TYPE`, keyed by (typeName, typeId, attr long name, isArray).
 # Typed attrs are shared only as a top-level array root (`_is_static_typed_root`).
 # Dynamic and extension attrs and plugs under an array element are never
@@ -965,13 +965,13 @@ _KIND_EPOCH = [object()]
 _INVALID_ATTR = OpenMaya.MFnDependencyNode.kInvalidAttr
 _NORMAL_ATTR  = OpenMaya.MFnDependencyNode.kNormalAttr
 
-# (attr, "typed" or "Tdata", node) while `Attribute.data_type` runs the fallback
+# (attr, "typed" or "Tdata", node) while `Attribute.get_data_type` runs the fallback
 # hook of attr's node: the answer its getAttr query gave, and the node whose class
 # hook that call runs first (`_hook_node`), see `_queried_data_type`
 _FALLBACK_QUERY = None
 
 # A count of the times code a user may have written ran where a type query can
-# run it: a fallback hook `Attribute.data_type` calls that `_keeps_query` does
+# run it: a fallback hook `Attribute.get_data_type` calls that `_keeps_query` does
 # not vouch for (a node class's own, a class-level patch, a hook set on the
 # node), and a node constructor a cast runs (`_cast`). `shorthand._Facts`
 # reads it around its data type query, so a fact whose query ran such code is
@@ -1122,7 +1122,7 @@ def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None
     it cannot be locked"; ``node=False`` skips that check, for a List that
     unlocks the node first), or, for an unlock, a locked parent holds the lock
     (Maya would leave the child locked)."""
-    mplug = attr.plug
+    mplug = attr._mplug
     if node:
         # the fn set of the node object that owns the plug (its node: the callers
         # checked it alive, `_ensure_owner_alive`), else one of the plug's node
@@ -1131,9 +1131,9 @@ def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None
         if fn is None:
             fn = OpenMaya.MFnDependencyNode(mplug.node())
         if fn.isLocked:
-            name = attr.full_name.partition(".")[0]
+            name = str(attr).partition(".")[0]
             return (
-                f"'{attr.full_name}' is on the locked node '{name}', whose plugs Maya "
+                f"'{str(attr)}' is on the locked node '{name}', whose plugs Maya "
                 f"never {'locks' if state else 'unlocks'}: {_unlock_way(name)[1]}. "
                 f"Nothing was changed"
             )
@@ -1149,9 +1149,9 @@ def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None
             holder = cur
     if holder is None:
         return None
-    held = _new_attr(Attribute, holder).full_name
+    held = str(_new_attr(Attribute, holder))
     return (
-        f"'{attr.full_name}' is locked by its parent '{held}' (a locked parent locks "
+        f"'{str(attr)}' is locked by its parent '{held}' (a locked parent locks "
         f"its children): Plug({held!r}).unlock() unlocks it. Nothing was changed"
     )
 
@@ -1229,10 +1229,10 @@ _OBJECT_GETATTRIBUTE = object.__dict__["__getattribute__"]
 
 
 def _dg_named_owner(attr: Any) -> Any:
-    """The owner of `attr` if naming it (`Attribute.full_name`) can raise only
+    """The owner of `attr` if naming it (`Attribute.get_full_name`) can raise only
     through `_ensure_dg_named`'s two checks, else None.
 
-    That holds when `attr`'s class keeps Attribute's `full_name` and its owner's
+    That holds when `attr`'s class keeps Attribute's `get_full_name` and its owner's
     class keeps DGNode's `name`, `fn_set` and `ensure_valid` (and Python's own
     attribute lookup), with no `ensure_valid` set on the owner itself: the name
     is then the owner's `ensure_valid()`, the `name()` of its fn set (which a
@@ -1244,7 +1244,7 @@ def _dg_named_owner(attr: Any) -> Any:
     classes are read at every call, so a patched method is seen at once. The
     owner test is `_dg_named_node`'s, written out here (the hot path)."""
     node = attr.__dict__.get("_node")
-    if node is None or type(attr).full_name is not _ATTRIBUTE_FULL_NAME:
+    if node is None or type(attr).get_full_name is not _ATTRIBUTE_FULL_NAME:
         return None
     naming = _DG_NAMING
     cls    = type(node)
@@ -1289,7 +1289,7 @@ def _ensure_dg_named(attr: Any, owner: Any) -> None:
     """Raise what naming `attr` raises, `owner` being its `_dg_named_owner`: the
     owner's ``"... already deleted!"`` (`ensure_valid`), then the freed dynamic
     attribute's ``"<plug> already deleted!"`` (see `_ensure_owner_alive`), the
-    two checks `Attribute.full_name` makes, in its order and with its texts."""
+    two checks `Attribute.get_full_name` makes, in its order and with its texts."""
     _DG_NAMING[2](owner)  # its class keeps DGNode's ensure_valid (`_dg_named_owner`)
     handle = attr.__dict__.get("_attrh")
     if handle is not None and not handle.isAlive():
@@ -1484,7 +1484,7 @@ def _connected_attrs(
     plug needs (see `_ensure_owner_alive`)."""
     _ensure_owner_alive(attr)
     found = []
-    for each in attr.plug.connectedTo(src, dst):
+    for each in attr._mplug.connectedTo(src, dst):
         found.append(_new_attr(Attribute, each))
         if first_only:
             break
@@ -1551,7 +1551,7 @@ def _owner_is_instanced(owner: Any) -> bool:
 def _full_name_buffer(attr: Any) -> Any:
     """`attr`, or a copy of it (sharing its state) whose str buffer is its full
     name, if the two differ. For a fresh attr only: the copy stands in for it."""
-    name = attr.full_name
+    name = str(attr)
     if name == str.__str__(attr):
         return attr
     copy = str.__new__(type(attr), name)
@@ -1563,14 +1563,14 @@ def _point_count(attr: Any) -> int:
     """The point count of the geometry node of `attr`, a component plug (it bounds
     a component slice). Read through the node's own class: the owner can be a
     class the user chose (``DAGNode(mesh).vtx[0:2]``), which has none."""
-    node = attr.node
+    node = type(attr).get_node(attr)
     if not hasattr(type(node), "num_weight_points"):
-        node = _cast(attr.plug.node())
+        node = _cast(attr._mplug.node())
     return node.num_weight_points
 
 
 def _node_name(node: Any) -> str:
-    """The name `Attribute.full_name` gives `node`, a plug's owner. Anything but a
+    """The name `Attribute.get_full_name` gives `node`, a plug's owner. Anything but a
     str from the `name` property is the node's Maya attr of that name (a class
     whose `name` property raises), so the node is named by its fn set instead.
     Raises if the node is deleted."""
@@ -1581,7 +1581,7 @@ def _node_name(node: Any) -> str:
 
 
 def _instanced_element_alias(mplug: OpenMaya.MPlug, node: Any, alias: str) -> str:
-    """The attr part of `Attribute.full_name` for `mplug`, an element whose alias
+    """The attr part of `Attribute.get_full_name` for `mplug`, an element whose alias
     (`alias`) has no index: an element of an instanced (world space) attr, or an
     aliased element. cmds resolves an instanced element named without its index
     to the element of the instance the node name's path runs through, so another
@@ -1618,7 +1618,7 @@ def _path_instance_number(attr: Any, node: Any = None) -> int | None:
     if not mplug.isArray:
         return None
     if node is None:
-        node = attr.node
+        node = type(attr).get_node(attr)
     fn = node.__dict__.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode) or not _is_instanced_array(mplug):
         return None
@@ -1656,8 +1656,8 @@ def _same_plug(attr: Any, other: Any) -> bool:
     through (``Node("|T1|S").v`` and ``Node("|T2|S").v``). World space elements of
     different instances are different plugs. Both are named first, so a deleted
     or freed node raises as the names did."""
-    attr.full_name
-    other.full_name
+    str(attr)
+    str(other)
     if attr is other:
         return True
     return attr.__dict__["_mplug"].node() == other.__dict__["_mplug"].node() and (
@@ -1994,7 +1994,7 @@ def _plug_hash(attr: Any) -> int:
             name   = mplug.partialName(False, False, True, False, False, True)
             serial = _handle_serial(handle, mplug.node())
             return hash((serial, name + _deleted_instance_index(mplug)))
-        node = attr.node
+        node = type(attr).get_node(attr)
     handle = node.__dict__.get("_objhandle")
     if handle is None:
         # not a DGNode: named as the node's name property names it
@@ -2049,7 +2049,7 @@ def _vouched_hook(node_cls: type) -> bool:
 
 
 def _queried_data_type(attr: Any, node: Any) -> str | None:
-    """The type `Attribute.data_type` just queried for `attr` before calling the
+    """The type `Attribute.get_data_type` just queried for `attr` before calling the
     fallback hook that is running for it, if that call runs the class hook of
     `node` first, or None outside such a call."""
     query = _FALLBACK_QUERY
@@ -2280,7 +2280,7 @@ def _fixed_attr_kind(attr: Attribute) -> int | None:
 
 
 def _naming_dag_path(attr: Any) -> OpenMaya.MDagPath | None:
-    """The DAG path whose name `Attribute.full_name` gives `attr`'s node: its
+    """The DAG path whose name `Attribute.get_full_name` gives `attr`'s node: its
     owner's fn set path."""
     return attr.__dict__["_node"]._fn_set.getPath()
 
@@ -2306,8 +2306,8 @@ def _names_own_plug(attr: Any) -> bool:
     if (
         not isinstance(attr, Attribute)
         or cls.__str__ is not Attribute.__str__
-        or cls.full_name is not Attribute.full_name
-        or cls.alias is not Attribute.alias
+        or cls.get_full_name is not Attribute.get_full_name
+        or cls.get_alias is not Attribute.get_alias
     ):
         return False
     # a freed attribute (see `_ensure_owner_alive`) is not read
@@ -2387,7 +2387,7 @@ GEOMETRY_ROUTING_TRACERS = {
 POLYMORPHIC_OUTPUT_NODE_TYPES = frozenset({"choice"})
 
 
-# --- enum field names (see `Attribute.enums`)
+# --- enum field names (see `Attribute.get_enums`)
 
 
 def _is_text(value: Any) -> bool:
@@ -2398,7 +2398,7 @@ def _is_text(value: Any) -> bool:
 
 def _is_enum_attr(attr: Any) -> bool:
     """True if the Maya attribute of `attr` (an `Attribute`) is an enum.
-    Raises ``"... already deleted!"`` as `Attribute.mobject` does."""
+    Raises ``"... already deleted!"`` as `Attribute.get_mobject` does."""
     _ensure_owner_alive(attr)
     return _attr_mobject(attr).hasFn(OpenMaya.MFn.kEnumAttribute)
 
@@ -2705,23 +2705,34 @@ class Attribute(str):
         _wrap_plug_methods(cls)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        # assignment is strict (user decision 2026-10-16): a method is never
-        # replaced on one plug, and a bare Attribute has no ``=`` sugar
-        if name[:1] != "_" and isinstance(_class_attr(type(self), name), _ChildOrMethod):
+        # assignment is strict (user decisions 2026-10-16): a method is never
+        # replaced on one plug, a bare Attribute has no ``=`` sugar, and a plug
+        # has no settable members (the property ban: ``set_alias(x)``,
+        # ``set_keyable(b)``, ``lock()``); a ``_`` name is its state
+        if name[:1] != "_":
+            hint = _OLD_PLUG_SETTERS.get(name)
+            if hint is None and name in _OLD_PLUG_NAMES:
+                hint = f"plug.{name} is now {_OLD_PLUG_NAMES[name]}"
+            what = (
+                "is a method: a method is not replaced on an attribute, and"
+                if isinstance(_class_attr(type(self), name), _ChildOrMethod)
+                else "cannot be set:"
+            )
             raise AttributeError(
-                f"{type(self).__name__}.{name} is a method: a method is not replaced on "
-                f"an attribute, and a bare Attribute has no '=' sugar "
-                f"(Plug({str.__str__(self)}).{name} << value sets a child of that name)"
+                f"{type(self).__name__}.{name} {what} a bare Attribute has no '=' "
+                f"sugar (Plug({str.__str__(self)!r}).{name} << value sets the plug "
+                f"of that name)" + (f"; {hint}" if hint else "")
             )
         object.__setattr__(self, name, value)
 
     # --- dunders
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}("{self.full_name}")'
+        return f'{self.__class__.__name__}("{str(self)}")'
 
     def __str__(self) -> str:
-        return self.full_name
+        # the name `get_full_name` gives (a subclass's own, ComponentPlug's)
+        return type(self).get_full_name(self)
 
     def __hash__(self) -> int:
         # the Maya plug's identity, not the name: one key through every instance
@@ -2743,7 +2754,7 @@ class Attribute(str):
         return not self.__eq__(other)
 
     def __gt__(self, other: Any) -> bool:
-        return self.full_name > str(other)
+        return str(self) > str(other)
 
     def __getitem__(
         self, key: int | slice | list | tuple | np.ndarray
@@ -2881,12 +2892,24 @@ class Attribute(str):
         d     = self.__dict__
         names = d.get("_Attribute__child_name_dict")
         if not names:
+            if "_mplug" not in d:
+                # a half-built attribute (``copy``) has no state to read
+                raise AttributeError(attr_name)
             _ensure_owner_alive(self)
-            count = self.num_children
+            mplug = d["_mplug"]
+            if not mplug.isCompound:
+                # no child to look up: AttributeError, so ``hasattr`` answers
+                # (named by the str it was built with: no node read, which a
+                # deleted node's plug raises from)
+                raise AttributeError(
+                    f"{str.__str__(self)} is not a compound: it has no child "
+                    f"{attr_name!r}" + _old_name_hint(attr_name)
+                )
+            count = mplug.numChildren()
             names = d.setdefault("_Attribute__child_name_dict", {})
             ids   = d.setdefault("_Attribute__child_id_dict", {})
             for i in range(count):
-                child_plug = self.plug.child(i)
+                child_plug = self._mplug.child(i)
                 name = child_plug.partialName(False, False, False, False, False, True)
                 name = name.rsplit(".", 1)[-1]
                 attr = _inherit_owner(self, _new_attr(Attribute, child_plug))
@@ -2894,17 +2917,19 @@ class Attribute(str):
                 ids[i]      = attr
         if attr_name in names:
             return names[attr_name]
-        raise AttributeError(f"{self.full_name}.{attr_name} not found.")
+        raise AttributeError(f"{str(self)}.{attr_name} not found" + _old_name_hint(attr_name))
 
-    # --- properties
+    # --- queries: every public member is a method (the property ban, user
+    # decision 2026-10-16). Bare, a name is the compound child of that name when
+    # the plug has one, else the method; with brackets it is the method (see
+    # `_ChildOrMethod`). rig's own code reads them through the class
+    # (``type(plug).get_node(plug)``) or private state (``plug._mplug``).
 
-    @property
-    def plug(self) -> OpenMaya.MPlug:
-        """Returns the mplug."""
+    def get_mplug(self) -> OpenMaya.MPlug:
+        """Returns the OpenMaya.MPlug this attribute wraps."""
         return self._mplug
 
-    @property
-    def fn_set(self) -> OpenMaya.MFnBase:
+    def get_fn_set(self) -> OpenMaya.MFnBase:
         """Returns the attribute function set. Raises ``"... already deleted!"``
         once the node was freed: the attribute of a dynamic attr is freed with it
         (see `_ensure_owner_alive`)."""
@@ -2917,18 +2942,16 @@ class Attribute(str):
             self.__dict__["_fn_set"] = data_fn(mobject)
         return self._fn_set
 
-    @property
-    def mobject(self) -> OpenMaya.MObject:
+    def get_mobject(self) -> OpenMaya.MObject:
         """Returns the mobject. Raises ``"... already deleted!"`` once the node
         was freed: the attribute of a dynamic attr is freed with it, a cached
         one too (see `_ensure_owner_alive`)."""
         _ensure_owner_alive(self)
         return _attr_mobject(self)
 
-    @property
-    def node(self) -> Any:
+    def get_node(self) -> Any:
         """Returns the node object of this attr: the node object it was read from
-        (``node.tx.node is node``; children and elements share it). An attr built
+        (``node.tx.get_node() is node``; children and elements share it). An attr built
         from a name or an MPlug casts its node on first use (the typed cast of its
         MPlug's node), and raises ``already deleted!`` if that node was deleted
         or freed since it was built (see `_ensure_node_castable`)."""
@@ -2942,16 +2965,14 @@ class Attribute(str):
             d["_handle"] = node.__dict__.get("_objhandle")
         return node
 
-    @property
-    def name(self) -> str:
+    def get_name(self) -> str:
         """Returns the attribute name (without node name). Raises ``"... already
         deleted!"`` once the node was freed (see `_ensure_owner_alive`): the name
         of a dynamic attr is read from its attribute, which is freed with it."""
         _ensure_owner_alive(self)
         return self._mplug.partialName(False, False, False, False, False, True)
 
-    @property
-    def full_name(self) -> str:
+    def get_full_name(self) -> str:
         """Returns the full attribute name (with node name), use alias if exists.
 
         Note. Can't use MPlug.name() directly because it doesn't use the partial node name.
@@ -2964,7 +2985,7 @@ class Attribute(str):
         """
         node = self.__dict__["_node"]
         if node is None:
-            node = self.node
+            node = type(self).get_node(self)
         name = node.name
         # anything but a str is the node's Maya attr of that name (a class whose
         # `name` property raises), so the node is named by its fn set instead
@@ -2982,36 +3003,33 @@ class Attribute(str):
             alias = _instanced_element_alias(mplug, node, alias)
         return f"{name}.{alias}"
 
-    @property
-    def alias(self) -> str:
+    def get_alias(self) -> str:
         """Returns the attribute alias, or the attribute name if no alias applied."""
         _ensure_owner_alive(self)
         return self._mplug.partialName(False, False, False, True, False, True)
 
-    @alias.setter
-    def alias(self, alias: str) -> None:
-        """Sets the alias for this attribute. Can be set to None."""
-        cur_alias = self.alias
+    def set_alias(self, alias: str | None) -> None:
+        """Sets the alias of this attribute (``aliasAttr``); None or ``""``
+        removes it. The same alias is left as it is (no command)."""
+        cur_alias = type(self).get_alias(self)
         if cur_alias == alias:
             return
-        elif not alias and cur_alias != self.name:
-            cmds_edit.aliasAttr(self.full_name, remove=True)
+        elif not alias and cur_alias != type(self).get_name(self):
+            cmds_edit.aliasAttr(str(self), remove=True)
         else:
-            cmds_edit.aliasAttr(alias, self.full_name)
+            cmds_edit.aliasAttr(alias, str(self))
 
-    @property
-    def attribute_type(self) -> str:
+    def get_attribute_type(self) -> str:
         """Returns the type of this attribute."""
-        return cmds.attributeQuery(self.name, node=self.node.name, attributeType=True)
+        return cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self).name, attributeType=True)
 
-    @property
-    def data_type(self) -> str:
+    def get_data_type(self) -> str:
         """Returns the data type of the value hosted by this attribute."""
         global _FALLBACK_QUERY
         owner = _dg_named_owner(self)
         if owner is None:
             # the name comes first so a deleted node's plug raises as before
-            full_name = self.full_name
+            full_name = str(self)
         else:
             # naming the attr would raise only from these checks (see
             # `_dg_named_owner`), so the name is built on a miss only
@@ -3023,7 +3041,7 @@ class Attribute(str):
             if typ is not None:
                 return typ
         if full_name is None:
-            full_name = self.full_name
+            full_name = str(self)
 
         typ = cmds.getAttr(full_name, type=True)
 
@@ -3040,7 +3058,7 @@ class Attribute(str):
             # override or patch is ruled out by the hook, see `_keeps_query`)
             outer = _FALLBACK_QUERY
             try:
-                node            = self.node
+                node            = type(self).get_node(self)
                 hook_node       = _hook_node(node)
                 _FALLBACK_QUERY = (self, typ, hook_node)
                 if hook_node is None or not _vouched_hook(type(node)):
@@ -3092,29 +3110,16 @@ class Attribute(str):
             self.__dict__["_static_key_cache"] = key
         return key
 
-    @property
     def is_dynamic(self) -> bool:
         """Attribute dynamic state."""
         _ensure_owner_alive(self)
-        return self.plug.isDynamic
+        return self._mplug.isDynamic
 
-    @property
     def is_locked(self) -> bool:
         """True when the plug is locked: its own lock, or a locked parent's (a
         compound's for its children, a multi root's for its elements)."""
         _ensure_owner_alive(self)
-        return self.plug.isLocked
-
-    @is_locked.setter
-    def is_locked(self, state) -> None:
-        """A compatibility path (``Transform.set_xfrom_attrs_locked`` uses it):
-        ``plug.is_locked = True`` is ``plug.lock()``, ``= False`` is
-        ``plug.unlock()``, with their rule and refusals. Write ``plug.lock()`` /
-        ``plug << lock``."""
-        if state:
-            self.lock()
-        else:
-            self.unlock()
+        return self._mplug.isLocked
 
     def lock(self) -> "Attribute":
         """Locks this plug (``setAttr -lock on``) and returns it: ``plug.lock()``
@@ -3125,11 +3130,11 @@ class Attribute(str):
         Maya never locks: lock the plugs first, then the node. Values and
         connections into a locked plug raise (``<<``) until it is unlocked."""
         _ensure_owner_alive(self)
-        if not self.plug.isLocked:
+        if not self._mplug.isLocked:
             why = _plug_lock_refusal(self, True)
             if why:
                 raise _injection_error(why)
-            cmds_edit.setAttr(self.full_name, lock=True)
+            cmds_edit.setAttr(str(self), lock=True)
         return self
 
     def unlock(self) -> "Attribute":
@@ -3141,41 +3146,37 @@ class Attribute(str):
         node first), and when a locked compound parent holds the lock (unlock
         the parent)."""
         _ensure_owner_alive(self)
-        if self.plug.isLocked:
+        if self._mplug.isLocked:
             why = _plug_lock_refusal(self, False)
             if why:
                 raise _injection_error(why)
-            cmds_edit.setAttr(self.full_name, lock=False)
+            cmds_edit.setAttr(str(self), lock=False)
         return self
 
-    @property
     def is_keyable(self) -> bool:
         """Attribute keyable state."""
         _ensure_owner_alive(self)
-        return self.plug.isKeyable
+        return self._mplug.isKeyable
 
-    @is_keyable.setter
-    def is_keyable(self, state) -> None:
-        """Set the keyable state."""
-        cmds_edit.setAttr(self.full_name, keyable=state)
+    def set_keyable(self, state: bool) -> None:
+        """Sets the keyable state (``setAttr -keyable``)."""
+        cmds_edit.setAttr(str(self), keyable=state)
 
-    @property
     def is_channel_box(self) -> bool:
         """Attribute channel box state."""
         _ensure_owner_alive(self)
-        return self.plug.isChannelBox
+        return self._mplug.isChannelBox
 
-    @is_channel_box.setter
-    def is_channel_box(self, state) -> None:
-        """Set the channel box state."""
-        cmds_edit.setAttr(self.full_name, channelBox=state)
+    def set_channel_box(self, state: bool) -> None:
+        """Sets the channel box state (``setAttr -channelBox``)."""
+        cmds_edit.setAttr(str(self), channelBox=state)
 
     # --- category methods
 
     def get_categories(self) -> list[str]:
         """Returns a list of categories this attribute belongs to."""
         return (
-            cmds.attributeQuery(self.name, node=self.node.name, categories=True) or []
+            cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self).name, categories=True) or []
         )
 
     def has_category(self, category: str | list[str]) -> bool:
@@ -3191,22 +3192,20 @@ class Attribute(str):
         if isinstance(category, str):
             category = [category]
         for each in category:
-            cmds_edit.addAttr(self.full_name, edit=True, category=each)
+            cmds_edit.addAttr(str(self), edit=True, category=each)
 
     # --- connection methods
 
-    @property
     def is_connected(self) -> bool:
         """Attribute connected state. Both input and output connections counts."""
         _ensure_owner_alive(self)
-        return self.plug.isConnected
+        return self._mplug.isConnected
 
-    @property
     def is_free_to_change(self) -> bool:
         """Attribute free_to_change state. True if this attr and all its parents are
         free to change."""
         _ensure_owner_alive(self)
-        return self.plug.isFreeToChange(True, False) == OpenMaya.MPlug.kFreeToChange
+        return self._mplug.isFreeToChange(True, False) == OpenMaya.MPlug.kFreeToChange
 
     def connect(self, other: str | Attribute, force: bool = False) -> None:
         """Connects this attr to other.
@@ -3222,7 +3221,7 @@ class Attribute(str):
         if _api_connect(self, other):
             return
         dst = str(other)
-        src = self.full_name
+        src = str(self)
         # cmds.isConnected is True only for a direct src -> dst connection, so it
         # is False for a dst plug that is not a destination; a name that may not
         # resolve to its plug keeps the query, and so its errors
@@ -3243,7 +3242,7 @@ class Attribute(str):
         element's MPlug again after the disconnect (see `_element_path`), so it
         stays usable.
         """
-        _self = self.full_name
+        _self = str(self)
         name  = str(other)
         if cmds.isConnected(_self, name):
             path = _element_path(other)
@@ -3264,7 +3263,7 @@ class Attribute(str):
             The connected attrs.
         """
         _ensure_owner_alive(self)
-        for each in self.plug.connectedTo(src, dst):
+        for each in self._mplug.connectedTo(src, dst):
             yield Attribute(each)
             if first_only:
                 break
@@ -3292,7 +3291,7 @@ class Attribute(str):
         cmds.listConnections()."""
         casted = {}
         result = []
-        for each in cmds.listConnections(self.full_name, **kwargs) or []:
+        for each in cmds.listConnections(str(self), **kwargs) or []:
             obj = casted.get(each)
             if not obj:
                 obj          = _cast(each)
@@ -3402,13 +3401,13 @@ class Attribute(str):
         attrs = self.get_connected_attrs(src=src, dst=dst)
         for attr in attrs:
             attr_name = str(attr)
-            if cmds.isConnected(self.full_name, attr_name):
-                src_name = self.full_name
+            if cmds.isConnected(str(self), attr_name):
+                src_name = str(self)
                 dst_name = attr_name
                 dst_attr = attr
             else:
                 src_name = attr_name
-                dst_name = self.full_name
+                dst_name = str(self)
                 dst_attr = self
             path = _element_path(dst_attr)
             cmds_edit.disconnectAttr(src_name, dst_name)
@@ -3425,26 +3424,25 @@ class Attribute(str):
 
     # --- value methods
 
-    @property
-    def default_value(self) -> Any:
+    def get_default_value(self) -> Any:
         """Returns the default value of this attr, if any."""
-        val = cmds.attributeQuery(self.name, node=self.node, listDefault=True)
+        val = cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self), listDefault=True)
         if val is not None and len(val) == 1:
             return val[0]
         return val
 
-    @default_value.setter
-    def default_value(self, value):
-        """Sets the default value of this attribute."""
-        if not self.is_dynamic:
+    def set_default_value(self, value: Any) -> None:
+        """Sets the default value of this dynamic attribute (``addAttr -edit
+        -defaultValue``); a native attribute's raises RuntimeError."""
+        if not type(self).is_dynamic(self):
             raise RuntimeError(f"Cannot set default value for native attr: {self}")
-        cmds_edit.addAttr(self.full_name, edit=True, defaultValue=value)
+        cmds_edit.addAttr(str(self), edit=True, defaultValue=value)
 
     def get_data_fn_set(self) -> OpenMaya.MFnData | None:
         """Returns the proper data function set for this attr, or None if
         this attribute holds no data, or plug.asMObject() causes internal failure."""
         _ensure_owner_alive(self)
-        data_mobject = self.plug.asMDataHandle().data()
+        data_mobject = self._mplug.asMDataHandle().data()
         api_type     = data_mobject.apiType()
         if api_type != OpenMaya.MFn.kInvalid:
             data_fn = DATA_TYPE_TO_FN.get(api_type, OpenMaya.MFnData)
@@ -3487,7 +3485,7 @@ class Attribute(str):
             and "type" not in kwargs
             and _attr_mobject(self).hasFn(OpenMaya.MFn.kEnumAttribute)
         ):
-            args = (_enum_value(_attr_mobject(self), args[0], self.full_name),)
+            args = (_enum_value(_attr_mobject(self), args[0], str(self)),)
         # one numeric value into a plug of a fixed kind outside any array (today's route
         # makes no type query there): through the API and journaled when its guards hold
         # (`rig._internal.api_edits.api_set`), else the cmds route below
@@ -3505,8 +3503,8 @@ class Attribute(str):
             # number as numeric data, which a type flag (its data type, "Tdata"
             # when it is empty) refuses: no flag, and no type query.
             if not (len(args) == 1 and isinstance(args[0], Real) and _is_generic_slot(self)):
-                typ = self.data_type
-                if self.is_typed or typ == "matrix":
+                typ = type(self).get_data_type(self)
+                if type(self).is_typed(self) or typ == "matrix":
                     kwargs["type"] = typ
 
         # special handling for counted array attrs
@@ -3514,9 +3512,9 @@ class Attribute(str):
         if (
             len(args) == 1
             and isinstance(args[0], (list, tuple, np.ndarray))
-            and self.data_type in COUNTED_ARRAY_TYPES
+            and type(self).get_data_type(self) in COUNTED_ARRAY_TYPES
         ):
-            cmds_edit.setAttr(self.full_name, len(args[0]), *args[0], **kwargs)
+            cmds_edit.setAttr(str(self), len(args[0]), *args[0], **kwargs)
 
         # special handling for compound attrs
         # - use the unpacked first argument if it is a valid iterable
@@ -3524,11 +3522,11 @@ class Attribute(str):
         elif (
             len(args) == 1
             and isinstance(args[0], (list, tuple, np.ndarray))
-            and str(self.data_type)[-1].isdigit()
+            and str(type(self).get_data_type(self))[-1].isdigit()
         ):
-            cmds_edit.setAttr(self.full_name, *args[0], **kwargs)
+            cmds_edit.setAttr(str(self), *args[0], **kwargs)
         else:
-            cmds_edit.setAttr(self.full_name, *args, **kwargs)
+            cmds_edit.setAttr(str(self), *args, **kwargs)
 
     def _is_fixed_kind_outside_array(self) -> bool:
         """True if this attr's kind never takes the cmds.setAttr() `type` arg.
@@ -3586,7 +3584,7 @@ class Attribute(str):
         if self._is_geometry_typed_attr:
             return self._get_geometry_value()
 
-        return cmds.getAttr(self.full_name)
+        return cmds.getAttr(str(self))
 
     @property
     def _is_geometry_typed_attr(self) -> bool:
@@ -3611,7 +3609,7 @@ class Attribute(str):
             return self._geometry_attr_cache
 
         try:
-            typ = cmds.getAttr(self.full_name, type=True)
+            typ = cmds.getAttr(str(self), type=True)
         except RuntimeError:
             result = False
         else:
@@ -3630,7 +3628,7 @@ class Attribute(str):
         """
         if self._polymorphic_owner_cache is None:
             try:
-                type_name = OpenMaya.MFnDependencyNode(self.plug.node()).typeName
+                type_name = OpenMaya.MFnDependencyNode(self._mplug.node()).typeName
                 self.__dict__["_polymorphic_owner_cache"] = (
                     type_name in POLYMORPHIC_OUTPUT_NODE_TYPES
                 )
@@ -3643,13 +3641,13 @@ class Attribute(str):
 
         See `get()` for the four-tier resolution order.
         """
-        owner_obj = self.plug.node()
+        owner_obj = self._mplug.node()
         is_shape  = owner_obj.hasFn(OpenMaya.MFn.kShape)
 
         # Eagerly fetch the data once -- used both for the shape-match check
         # below and for the final MFn wrap if we fall through.
         try:
-            data = self.plug.asMObject()
+            data = self._mplug.asMObject()
         except RuntimeError:
             data = None
 
@@ -3665,7 +3663,7 @@ class Attribute(str):
             return _cast(owner_obj).serialize()
 
         # 2. Prefer a real downstream node consumer.
-        dests = self.plug.destinations()
+        dests = self._mplug.destinations()
         if dests:
             return _cast(dests[0].node()).serialize()
 
@@ -3675,7 +3673,7 @@ class Attribute(str):
             owner_type = OpenMaya.MFnDependencyNode(owner_obj).typeName
             tracer     = GEOMETRY_ROUTING_TRACERS.get(owner_type)
             if tracer is not None:
-                src_plug = tracer(self.plug)
+                src_plug = tracer(self._mplug)
                 if src_plug is not None and src_plug.node().hasFn(expected_shape_fn):
                     return _cast(src_plug.node()).serialize()
 
@@ -3693,32 +3691,30 @@ class Attribute(str):
         except (ValueError, RuntimeError):
             return None
 
-    @property
-    def enums(self) -> list[str]:
+    def get_enums(self) -> list[str]:
         """Returns a list of enum values if this attr is an enum attr.
 
         Each field is written as `cmds.attributeQuery(listEnum=True)` writes it
         (``"b=10"`` once the values are sparse). A field name set on an enum
         attr (``plug << "zxy"``, `set`) is read by `_enum_value`."""
-        enums = cmds.attributeQuery(self.name, node=self.node, listEnum=True)
+        enums = cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self), listEnum=True)
         if enums:
             return enums[0].split(":")
         return []
 
     # --- compound attr methods
 
-    @property
-    def num_children(self):
+    def get_num_children(self) -> int:
         """Returns this number of children of this compound attr."""
         _ensure_owner_alive(self)
-        return self.plug.numChildren()
+        return self._mplug.numChildren()
 
     def get_parent(self) -> Attribute | None:
         """Returns the parent attribute, if any."""
         _ensure_owner_alive(self)
-        if not self.plug.isChild:
+        if not self._mplug.isChild:
             return None
-        plug = self.plug.parent()
+        plug = self._mplug.parent()
         if plug and not plug.attribute().isNull():
             return _inherit_owner(self, _new_attr(Attribute, plug))
 
@@ -3732,16 +3728,15 @@ class Attribute(str):
         attr = ids.get(i)
         if not attr:
             _ensure_owner_alive(self)
-            attr = _inherit_owner(self, _new_attr(Attribute, self.plug.child(i)))
+            attr = _inherit_owner(self, _new_attr(Attribute, self._mplug.child(i)))
             ids[i] = attr
         return attr
 
     # --- typed attr methods
 
-    @property
-    def is_typed(self):
+    def is_typed(self) -> bool:
         """Checks if this attribute is typed (raises as `mobject` does)."""
-        return self.mobject.hasFn(OpenMaya.MFn.kTypedAttribute)
+        return type(self).get_mobject(self).hasFn(OpenMaya.MFn.kTypedAttribute)
 
     def filter_array_values(
         self, filter_value: Any, sparse: bool = True, cap_count: int | None = None
@@ -3755,9 +3750,9 @@ class Attribute(str):
         Returns:
             [sparse_ids, sparse_values]
         """
-        if not self.is_typed:
+        if not type(self).is_typed(self):
             raise RuntimeError(f"{self} is not a typed attribute.")
-        if not self.data_type.lower().endswith("array"):
+        if not type(self).get_data_type(self).lower().endswith("array"):
             raise RuntimeError(f"{self} is not a typed array attribute.")
 
         spase_ids    = []
@@ -3796,29 +3791,27 @@ class Attribute(str):
     # are also typed array attrs such as `doubleArray`. We use the term `multi`
     # here to for clarity.
 
-    @property
     def is_multi(self) -> bool:
         """Checks if this attr is a multi/array attribute."""
         _ensure_owner_alive(self)
-        return self.plug.isArray
+        return self._mplug.isArray
 
-    @property
-    def num_elements(self) -> int:
+    def get_num_elements(self) -> int:
         """Number of elements / physical indices in the multi attr."""
-        if not self.is_multi:
+        if not type(self).is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
-        return self.plug.numElements()
+        return self._mplug.numElements()
 
     def logical_index(self) -> int:
         """Returns the logical index if this attr is a child of a multi attr."""
         _ensure_owner_alive(self)
-        return self.plug.logicalIndex()
+        return self._mplug.logicalIndex()
 
     def get_logical_indices(self) -> OpenMaya.MIntArray:
         """Returns existing logical indices (sparse)."""
-        if not self.is_multi:
+        if not type(self).is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
-        return self.plug.getExistingArrayAttributeIndices()
+        return self._mplug.getExistingArrayAttributeIndices()
 
     def get_next_available_index(self) -> int:
         """Returns the next available logical index."""
@@ -3831,9 +3824,9 @@ class Attribute(str):
         """Returns the element attribute at the given physical index: an
         instance of `_CHILD_CLASS` (a Plug's element is a Plug), owned by the
         node object this attr holds (see `_inherit_owner`)."""
-        if not self.is_multi:
+        if not type(self).is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
-        element = self.plug.elementByPhysicalIndex(i)
+        element = self._mplug.elementByPhysicalIndex(i)
         return _inherit_owner(
             self, _new_attr(self._CHILD_CLASS, element), element.logicalIndex()
         )
@@ -3843,14 +3836,14 @@ class Attribute(str):
         instance of `_CHILD_CLASS` (a Plug's element is a Plug, which
         ``plug[i]`` returns as built), owned by the node object this attr holds
         (see `_inherit_owner`)."""
-        if not self.is_multi:
+        if not type(self).is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
-        element = self.plug.elementByLogicalIndex(i)
+        element = self._mplug.elementByLogicalIndex(i)
         return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element), i)
 
     def delete_logical_index(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""
-        cmds_edit.removeMultiInstance(self.element_by_logical_index(i).full_name, **kwargs)
+        cmds_edit.removeMultiInstance(str(self.element_by_logical_index(i)), **kwargs)
 
     # --- component type info
     # TODO make a proper Component class
@@ -3903,11 +3896,48 @@ Attribute._CHILD_CLASS = Attribute
 # (``_MethodPlug``, `_MethodAttribute` for a bare Attribute): a real child plug
 # whose call runs the method it shadows. Every public function of Attribute and
 # of each subclass (Plug, ComponentPlug, a user's) is a `_ChildOrMethod`
-# (`Attribute.__init_subclass__`). Children match by long name, as
-# ``plug.<child>`` resolves them; an array root keeps its methods (its
-# unindexed children are no plugs to read or write); properties are untouched;
-# the str method names already resolve to plugs on a Plug
-# (``_attr_over_str_method``).
+# (`Attribute.__init_subclass__`); a plug has no public properties (the
+# property ban, user decision 2026-10-16: ``plug.get_node()``,
+# ``plug.is_locked()``). Children match by long name, as ``plug.<child>``
+# resolves them; an array root keeps its methods (its unindexed children are no
+# plugs to read or write); the str method names already resolve to plugs on a
+# Plug (``rig._internal.plug._StrRoute``).
+
+
+# The plug properties rig had before the property ban (user decision
+# 2026-10-16), and their spelling now: the miss path of ``Plug.__getattr__`` and
+# ``Attribute.__getattr__`` names it (``plug.get_node()`` is a plug lookup, which
+# misses unless the node has an attr ``node``); the hot path never reads it
+_OLD_PLUG_NAMES = {
+    "plug":           "plug.get_mplug()",
+    "full_name":      "str(plug) or plug.get_full_name()",
+    "node":           "plug.get_node()",
+    "name":           "plug.get_name()",
+    "alias":          "plug.get_alias() / plug.set_alias(name)",
+    "attribute_type": "plug.get_attribute_type()",
+    "data_type":      "plug.get_data_type()",
+    "default_value":  "plug.get_default_value() / plug.set_default_value(value)",
+    "enums":          "plug.get_enums()",
+    "fn_set":         "plug.get_fn_set()",
+    "mobject":        "plug.get_mobject()",
+    "num_children":   "plug.get_num_children()",
+    "num_elements":   "plug.get_num_elements()",
+    "next_index":     "plug.get_next_available_index()",
+}
+
+# ``plug.<predicate> = state``, a setter before the ban: its spelling now
+_OLD_PLUG_SETTERS = {
+    "is_locked":      "plug.is_locked = state is now plug.lock() / plug.unlock()",
+    "is_keyable":     "plug.is_keyable = state is now plug.set_keyable(state)",
+    "is_channel_box": "plug.is_channel_box = state is now plug.set_channel_box(state)",
+}
+
+
+def _old_name_hint(name: str) -> str:
+    """The end of a lookup miss's AttributeError: ``"; plug.node is now
+    plug.get_node()"`` for an old plug property name, else ``"."``."""
+    new = _OLD_PLUG_NAMES.get(name)
+    return f"; plug.{name} is now {new}" if new else "."
 
 
 def _clash_child(inst: Any, name: str) -> Any:
@@ -3955,16 +3985,59 @@ _PLUG_FOR_METHODS        = None
 _METHOD_PLUG_FOR_METHODS = None
 
 
+def _is_predicate_name(name: str) -> bool:
+    """True for a predicate's name (``is_locked``, ``has_category``): its bare
+    access is guarded (`_BarePredicate`)."""
+    return name.startswith(("is_", "has_"))
+
+
+class _BarePredicate:
+    """A predicate named without brackets where no Maya attr of that name answers
+    (``plug.is_locked``): the bound method, whose truth value raises, so ``if
+    plug.is_locked:`` cannot pass silently (user decision 2026-10-16: a bare
+    predicate is guarded). A call runs the method; ``__name__``, ``__func__``,
+    ``__self__``, ``__doc__`` and ``__wrapped__`` (``inspect.signature``) are the
+    method's."""
+
+    __slots__ = ("_bound",)
+
+    def __init__(self, bound: Any) -> None:
+        object.__setattr__(self, "_bound", bound)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bound(*args, **kwargs)
+
+    def __bool__(self) -> bool:
+        name = self._bound.__name__
+        raise TypeError(f"{name} is a method: call it ({name}())")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._bound, name)
+
+    @property
+    def __doc__(self) -> Any:  # noqa: D105 (the method's)
+        return self._bound.__doc__
+
+    @property
+    def __wrapped__(self) -> Any:
+        return self._bound
+
+    def __repr__(self) -> str:
+        return f"<predicate {self._bound!r}: call it>"
+
+
 class _ChildOrMethod:
     """A public function of an Attribute class: on an instance, the compound child
     of the same name if there is one (a method plug, whose call runs the
-    method), else the bound method; on the class, the function."""
+    method), else the bound method (a predicate's guarded when named without
+    brackets, `_BarePredicate`); on the class, the function."""
 
-    __slots__ = ("func", "name", "__dict__")
+    __slots__ = ("func", "name", "guard", "__dict__")
 
     def __init__(self, func: Any, name: str) -> None:
-        self.func = func
-        self.name = name
+        self.func  = func
+        self.name  = name
+        self.guard = _is_predicate_name(name)
         self.__dict__.update(getattr(func, "__dict__", {}))
         for key in ("__module__", "__name__", "__qualname__", "__doc__"):
             try:
@@ -3990,17 +4063,17 @@ class _ChildOrMethod:
         try:
             child = _clash_child(inst, self.name)
             if child is None:
-                return bound
+                return _BarePredicate(bound) if self.guard else bound
             plug_cls = _PLUG_FOR_METHODS
             if plug_cls is not None and isinstance(inst, plug_cls):
-                plug = _inherit_owner(inst, _new_attr(plug_cls, child.plug))
+                plug = _inherit_owner(inst, _new_attr(plug_cls, child._mplug))
                 return _as_method_plug(plug, _METHOD_PLUG_FOR_METHODS, bound)
-            plug = _inherit_owner(inst, _new_attr(Attribute, child.plug))
+            plug = _inherit_owner(inst, _new_attr(Attribute, child._mplug))
             return _as_method_plug(plug, _MethodAttribute, bound)
         except Exception:
             # no plug to build (a freed attribute, an MPlug that refuses):
             # the method, never an error
-            return bound
+            return _BarePredicate(bound) if self.guard else bound
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         # ``Cls.__dict__[name](plug, ...)`` calls the function, as it did
@@ -4027,13 +4100,14 @@ class _MethodAttribute(Attribute):
         return self.__dict__["_method"](*args, **kwargs)
 
     def __repr__(self) -> str:
-        return f'Attribute("{self.full_name}")'
+        return f'Attribute("{str(self)}")'
 
 
 _wrap_plug_methods(Attribute)
 
-# the naming `_dg_named_owner` finds a plug's class keeps
-_ATTRIBUTE_FULL_NAME = Attribute.__dict__["full_name"]
+# the naming `_dg_named_owner` finds a plug's class keeps (class access gives
+# the function)
+_ATTRIBUTE_FULL_NAME = Attribute.get_full_name
 
 
 # `Node.create`'s body: ``rig._internal.container`` sets it when it loads, to
@@ -4098,7 +4172,7 @@ class Node(metaclass=NodeMeta):
     string names is ``Attribute("a.tx")`` (typed) or ``Plug("a.tx")`` (DSL).
     ``isinstance(x, Node)`` is True for every node object. :class:`DGNode` and
     its subclasses carry the typed API and the DSL: attribute access returns
-    :class:`Plug` instances owned by the node (``node.tx.node is node``),
+    :class:`Plug` instances owned by the node (``node.tx.get_node() is node``),
     ``<<`` / ``>>`` inject and introspect, ``node.tx = 5`` is ``node.tx << 5``.
 
     Every other node class is a reference to a node that already exists
@@ -4260,7 +4334,7 @@ def _node_factory(obj: Any) -> Any:
         return obj
     if isinstance(obj, Attribute):
         # ``Node(plug)`` strips the attribute: the node object the plug holds
-        return obj.node
+        return type(obj).get_node(obj)
     if isinstance(obj, str):
         # "pCube.tx", "pCube.translate", "pCubeShape.vtx[0]": the node, split on
         # the FIRST "." so paths and namespaces are kept (Maya node names have
@@ -4273,7 +4347,7 @@ def _node_factory(obj: Any) -> Any:
     # the cast core itself (D12)
     result = _cast(obj)
     # defensive: an exotic input the cast resolves to an attribute gives its node
-    return result.node if isinstance(result, Attribute) else result
+    return type(result).get_node(result) if isinstance(result, Attribute) else result
 
 
 def _node_from_str(name: str, label: str = "node", probe: bool = False) -> Any:

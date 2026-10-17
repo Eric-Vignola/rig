@@ -398,9 +398,9 @@ class TestPendingRegistration(MayaTestCase):
         with mock.patch.object(callbacks, "maya_is_initialised", return_value=False):
             self.assertFalse(_base._register_plugin_callbacks())
             # answered, but not shared, while no plug-in callback can clear it
-            self.assertEqual(Plug("md.input1X").data_type, expected)
+            self.assertEqual(Plug("md.input1X").get_data_type(), expected)
             self.assertEqual(_base._STATIC_DATA_TYPE, {})
-        self.assertEqual(Plug("md.input1X").data_type, expected)
+        self.assertEqual(Plug("md.input1X").get_data_type(), expected)
         self.assertTrue(_base._PLUGIN_CALLBACKS_READY)
         self.assertEqual(len(callbacks.registered_ids(BASE)), 2)
         self.assertTrue(_base._STATIC_DATA_TYPE)

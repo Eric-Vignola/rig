@@ -89,12 +89,12 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
         def body(n, s1, s2, name1, name2):
             n.w[0] << s1
             held = n.w[0]
-            held.plug.isDestination
+            held.get_mplug().isDestination
             cmds.undo()
             self.assertEqual(_input(), [])
             held << s2
             self.assertEqual(_input(), [name2])
-            self.assertEqual(held.plug.logicalIndex(), 0)
+            self.assertEqual(held.get_mplug().logicalIndex(), 0)
         self.each_kind(body)
 
     def test_undo_then_none_and_get(self):
@@ -102,12 +102,12 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
         def body(n, s1, s2, name1, name2):
             n.w[0] << s1
             held = n.w[0]
-            held.plug.isDestination
+            held.get_mplug().isDestination
             cmds.undo()
             if name1 != "a.message":  # a message plug has no value to read
                 held >> None
-            self.assertFalse(held.plug.isDestination)
-            self.assertEqual(held.plug.name(), "n.w[0]")
+            self.assertFalse(held.get_mplug().isDestination)
+            self.assertEqual(held.get_mplug().name(), "n.w[0]")
             held << None
             held << s1
             self.assertEqual(_input(), [name1])
@@ -119,7 +119,7 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
             n, s1, _s2, _n1, _n2 = _setup(kind)
             n.w[0] << (s1 if kind == "Float" else Node("a").tx)
             held = n.w[0]
-            held.plug.isDestination
+            held.get_mplug().isDestination
             cmds.undo()
             held << 3.0
             self.assertEqual(cmds.getAttr("n.w[0]"), 3.0)
@@ -134,7 +134,7 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
             n.w[0] << s1
             n.w[0] << s2
             held = n.w[0]
-            held.plug.isDestination
+            held.get_mplug().isDestination
             cmds.undo()
             cmds.undo()
             cmds.redo()
@@ -155,7 +155,7 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
             a = Node("a")
             n.w[0].wX << a.tx
             held = n.w[0].wX
-            held.plug.isDestination
+            held.get_mplug().isDestination
             cmds.undo()
             held << a.ty
             self.assertEqual(_input("n.w[0].wX"), ["a.translateY"])
@@ -171,10 +171,10 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
             found = n.find_attr("w[2]")  # an Attribute
             s1.connect(found)
             for x in list(items) + [found]:
-                x.plug.isDestination
+                x.get_mplug().isDestination
             cmds.undo()
             cmds.undo()
-            self.assertFalse(found.plug.isDestination)
+            self.assertFalse(found.get_mplug().isDestination)
             items << [s2, s1]
             Plug(found) << s2
             self.assertEqual(_input("n.w[0]"), [name2])
@@ -191,7 +191,7 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
             cmds.flushUndo()
             ch.input[0] << a.wm
             held = ch.input[0]
-            held.plug.isDestination
+            held.get_mplug().isDestination
             cmds.undo()
             held << b.wm
             self.assertEqual(_input("ch.input[0]"), ["b.worldMatrix"])
@@ -204,7 +204,7 @@ class TestHeldAcrossUndo(UndoWalk, MayaTestCase):
             n, s1, s2, name1, name2 = _setup("Float")
             n.w[0] << s1
             held = n.w[0]
-            held.plug.isDestination
+            held.get_mplug().isDestination
             cmds.delete("n")
             cmds.undo()
             self.assertEqual(_input(), [name1])

@@ -14,8 +14,8 @@ Direction:
 The spec returns the new (or modified) ``Plug`` so chaining works:
 ``... << 5 << lock`` first sets the value, then locks. A new attribute's
 ``Plug`` is owned by the node object the spec went to
-(``(node << Float("x")).node is node``; ``plug << Float("x")`` adds ``x`` to
-``plug.node``).
+(``(node << Float("x")).get_node() is node``; ``plug << Float("x")`` adds ``x`` to
+``plug.get_node()``).
 
 Re-declaring an attribute the node has already keeps it, with its value and
 its connections, and applies the settings the spec was given (the keywords
@@ -27,7 +27,7 @@ attribute raises TypeError; ``overwrite=True`` deletes it and adds it again
 (see ``_AttrSpec._redeclare``).
 
 Ported from Eric Vignola's BSD-3 ``rig.attributes._Attribute``, slimmed to
-use ``rig.nodetypes.Attribute.data_type`` instead of regex-parsing
+use ``rig.nodetypes.Attribute.get_data_type`` instead of regex-parsing
 ``getAddAttrCmd()`` output.
 """
 
@@ -148,7 +148,7 @@ _PLUG_MODULE = None
 def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = None) -> Any:
     """The :class:`Plug` of the attribute ``long_name`` of ``node``, the node
     object the spec was applied to, **owned by** it:
-    ``(node << Float("x")).node is node``, as ``node.x.node`` is. Its MPlug is
+    ``(node << Float("x")).get_node() is node``, as ``node.x.node`` is. Its MPlug is
     found by name on the node's fn set (``findPlug``), not through
     ``Node.__getattr__``, so a Python member's name (``rename``) and a leading
     underscore (``__parked__``) resolve too. A compound spec gives its parent
@@ -277,10 +277,10 @@ class _AttrSpec:
         Returns the resulting :class:`Plug` (the new attribute, or the
         modified one for modifier-only specs). A named spec's plug is owned by
         the node object the spec went to (see ``_plug_of``): ``target`` itself
-        for a node (``(node << Float("x")).node is node``), and, for a
+        for a node (``(node << Float("x")).get_node() is node``), and, for a
         :class:`Plug` (or an :class:`Attribute`), the node object it holds
-        (``plug.node``, never a cast of its node's name): ``plug << Float("x")``
-        adds ``x`` to ``plug.node`` and returns a plug owned by it. Anything
+        (``plug.get_node()``, never a cast of its node's name): ``plug << Float("x")``
+        adds ``x`` to ``plug.get_node()`` and returns a plug owned by it. Anything
         else is read as a name (``Node(str(target))``).
         """
         # Modifier-only spec (no longName) -- ``cmds.setAttr`` edit on whatever
@@ -291,7 +291,7 @@ class _AttrSpec:
 
         if isinstance(target, Attribute):
             # its owner (a plug built from a name casts its node once)
-            wrap_node = target.node
+            wrap_node = type(target).get_node(target)
         elif isinstance(target, Node):
             wrap_node = target
         else:
@@ -559,7 +559,7 @@ class _AttrSpec:
         long_name = self.kargs.get("longName")
         if long_name is None:
             return
-        wrap_node   = target.node if isinstance(target, Attribute) else target
+        wrap_node   = type(target).get_node(target) if isinstance(target, Attribute) else target
         node_string = str(wrap_node)
         if wrap_node.has_attr(long_name):
             _refuse_static(node_string, long_name, wrap_node)
@@ -1118,7 +1118,7 @@ def _clone_attribute(
     # Default attr name from source.
     if attr_name is None:
         attr_name = (
-            src_plug.alias
+            type(src_plug).get_alias(src_plug)
             if isinstance(src_plug, Plug)
             else str(src_plug).rsplit(".", 1)[-1]
         )
@@ -1126,7 +1126,7 @@ def _clone_attribute(
     # Auto-detect multi from src.
     if multi is None and isinstance(src_plug, Plug):
         try:
-            multi = src_plug.is_multi
+            multi = type(src_plug).is_multi(src_plug)
         except Exception:
             multi = False
 
@@ -1162,17 +1162,20 @@ def _clone_attribute(
     return new_plug
 
 
-def _safe_type_probe(src_plug: Any, prop: str) -> Optional[str]:
-    """Read type property ``prop`` off ``src_plug``, ``None`` if unresolvable.
+def _safe_type_probe(src_plug: Any, query: str) -> Optional[str]:
+    """Run type query ``query`` (``"get_data_type"``, ``"get_attribute_type"``)
+    of ``src_plug``, ``None`` if unresolvable.
 
     Polymorphic plugs (``kGenericAttribute`` -- ``choice.output`` and
     friends) carry no type until an input is wired, and report that by
-    raising rather than by returning a sentinel.
+    raising rather than by returning a sentinel. The method is looked up
+    outside the handler: a name the plug class lacks raises.
     """
+    method = getattr(type(src_plug), query)
     try:
-        return getattr(src_plug, prop)
+        return method(src_plug)
     except Exception:
-        LOGGER.debug("could not resolve %s of %s", prop, src_plug, exc_info=True)
+        LOGGER.debug("could not resolve %s of %s", query, src_plug, exc_info=True)
         return None
 
 
@@ -1204,19 +1207,20 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
     if _is_generic_slot(src_plug):
         return Typed(attr_name, multi=multi)
 
-    data_type = _safe_type_probe(src_plug, "data_type")
-    attr_type = _safe_type_probe(src_plug, "attribute_type")
+    data_type = _safe_type_probe(src_plug, "get_data_type")
+    attr_type = _safe_type_probe(src_plug, "get_attribute_type")
 
     # Compound first (Vector / Color / Euler / Quat).
     try:
-        nchildren = src_plug.num_children
+        nchildren = type(src_plug).get_num_children(src_plug)
     except Exception:
         nchildren = 0
 
     if nchildren == 3:
         # Distinguish doubleAngle (Euler) from double (Vector).
         try:
-            child_type = src_plug.child(0).attribute_type
+            child      = src_plug.child(0)
+            child_type = type(child).get_attribute_type(child)
         except Exception:
             child_type = None
         if child_type == "doubleAngle":
@@ -1225,11 +1229,11 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
     if nchildren == 4:
         return Quat(attr_name, multi=multi)
 
-    # Enum: needs to copy the enum names. Use Attribute.enums (canonical
+    # Enum: needs to copy the enum names. Use Attribute.get_enums (canonical
     # API) instead of cmds.attributeQuery(... listEnum=True).
     if attr_type == "enum":
         try:
-            enum_names = src_plug.enums or ["off", "on"]
+            enum_names = type(src_plug).get_enums(src_plug) or ["off", "on"]
         except (RuntimeError, IndexError, AttributeError):
             enum_names = ["off", "on"]
         return Enum(attr_name, en=enum_names, multi=multi)

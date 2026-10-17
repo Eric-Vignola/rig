@@ -625,7 +625,7 @@ class TestTheRoute(_SetCase):
             Node("a").tx.set(lock=True)
             Node("a").ty.set(keyable=False)
             Node("a").tz.set(channelBox=True)
-            Node("a").tx.is_locked = False
+            Node("a").tx.unlock()
         self.assertEqual(record["routes"], [])
         self.assertEqual(record["cmds"].call_count, 4)
 

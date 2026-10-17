@@ -255,7 +255,7 @@ class TestDetection(_Case):
                 plug << AnimCurve([0, 1])
                 kinds = {cmds.nodeType(c) for c in AnimCurve.of(plug)}
                 self.assertEqual(kinds, {kind})
-                self.assertEqual(len(AnimCurve.of(plug)), plug.num_children)
+                self.assertEqual(len(AnimCurve.of(plug)), plug.get_num_children())
         self.assertEqual(n.arr[2] << AnimCurve([0, 1]), Plug("n.arr[2]"))
         self.assertEqual(cmds.nodeType(_curve_of("n.arr[2]")), "animCurveTU")
         self.assertEqual(_curve_of("n.arr[2]"), "n_arr_2_")

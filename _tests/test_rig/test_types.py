@@ -147,14 +147,14 @@ def _legacy_is_compound(obj):
     """The runtime ``data_type`` rule ``_is_compound`` answered with before the
     attribute-kind fast path."""
     try:
-        if obj.plug.isCompound:
+        if obj.get_mplug().isCompound:
             return True
         try:
-            if obj.num_children > 0:
+            if obj.get_num_children() > 0:
                 return True
         except Exception:
             pass
-        return obj.data_type in ("double3", "float3", "long3", "short3", "double4", "float4")
+        return obj.get_data_type() in ("double3", "float3", "long3", "short3", "double4", "float4")
     except Exception:
         return False
 
@@ -163,7 +163,7 @@ def _legacy_is_matrix(obj):
     """The runtime ``data_type`` rule ``_is_matrix`` answered with before the
     attribute-kind fast path."""
     try:
-        return obj.data_type == "matrix"
+        return obj.get_data_type() == "matrix"
     except Exception:
         return False
 
@@ -422,7 +422,7 @@ class TestMathTypeResolver(MayaTestCase):
         quat = self._quat_output()
         # The data_type string is the useless 'compound' -- only structure
         # (num_children == 4) reveals it is a quaternion.
-        self.assertEqual(quat.data_type, "compound")
+        self.assertEqual(quat.get_data_type(), "compound")
         self.assertEqual(math_type(quat), "quaternion")
 
     def test_decompose_output_quat_is_quaternion(self):
@@ -501,7 +501,7 @@ class TestArityHelpers(MayaTestCase):
         cmds.setAttr(f"{ch}.selector", 1)
         src = _selected_choice_source(Node(ch).output)
         self.assertIsNotNone(src)
-        self.assertEqual(src.num_children, 3)
+        self.assertEqual(src.get_num_children(), 3)
 
     def test_selected_choice_source_none_for_non_choice(self):
         node = Node.create("transform", name="t1")

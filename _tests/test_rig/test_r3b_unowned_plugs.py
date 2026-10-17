@@ -71,7 +71,7 @@ def _unowned(prefix):
     component type), which casts its node first, so the result has an owner."""
     held = f"{prefix}held"
     pma  = f"{prefix}pma"
-    cv   = Node(f"{prefix}npShape").cv.plug
+    cv   = Node(f"{prefix}npShape").cv.get_mplug()
     return {
         "Plug(str)":                  (Plug(f"{held}.ty"), held),
         "Plug(MPlug)":                (Plug(_mplug(f"{held}.ty")), held),
@@ -150,7 +150,7 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
         self.assertEqual(plug.get(), 3.0)
         self.assertEqual(hash(plug), hash(Node("held").ty))
         # re-pinned (round 4a M4, C8): the cast is the typed node, typed repr
-        self.assertEqual(repr(plug.node), 'Transform("held")')
+        self.assertEqual(repr(plug.get_node()), 'Transform("held")')
         component = Plug("pcShape.vtx[1]")
         self.assertEqual(str.__str__(component), "pcShape.vtx[1]")
         self.assertEqual(str(component), "pcShape.controlPoints[1]")
@@ -193,7 +193,7 @@ class TestUnownedPlugsTakeANodeHandle(MayaTestCase):
         ):
             with self.subTest(constructor=label):
                 self.assertEqual(tuple(vars(attr)), tuple(reference))
-                self.assertEqual(attr.plug, mplug)
+                self.assertEqual(attr.get_mplug(), mplug)
 
     def test_a_spec_hands_the_handle_of_its_node(self):
         # re-pinned (round 4a M10, spec S5): a spec's plug is owned by the node
@@ -237,14 +237,14 @@ class TestUnownedPlugsHeldAcrossAFreeRaise(MayaTestCase):
         ops = {
             "str":        str,
             "repr":       repr,
-            "full_name":  lambda p: p.full_name,
+            "full_name":  lambda p: p.get_full_name(),
             "get":        lambda p: p.get(),
-            "node":       lambda p: p.node,
+            "node":       lambda p: p.get_node(),
             "Node(plug)": Node,
             "Plug(plug)": Plug,
             "==":         lambda p: p == p,
-            "data_type":  lambda p: p.data_type,
-            "is_locked":  lambda p: p.is_locked,
+            "data_type":  lambda p: p.get_data_type(),
+            "is_locked":  lambda p: p.is_locked(),
             "set":        lambda p: p.set(1),
         }
         dsl_ops = {
@@ -381,7 +381,7 @@ class TestUnownedPlugsOfADeletedNodeRaise(MayaTestCase):
                 cmds.setAttr(f"{name}.{attr}", 7)
                 for label, plug in plugs.items():
                     with self.subTest(plug=label):
-                        for op in (str, lambda p: p.get(), lambda p: p.node):
+                        for op in (str, lambda p: p.get(), lambda p: p.get_node()):
                             with self.assertRaises(RuntimeError) as ctx:
                                 op(plug)
                             self.assertEqual(str(ctx.exception), f"{name} already deleted!")

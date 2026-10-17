@@ -243,15 +243,15 @@ class TestShorthandFacts(MayaTestCase):
                 self.assertIs(facts.is_vector, _is_vector(operand))
 
     def test_shorthand_facts_query_data_type_once(self):
-        data_type = Attribute.data_type
+        data_type = Attribute.get_data_type
         queries   = Counter()
 
         def counted(attr):
             queries[id(attr)] += 1
-            return data_type.fget(attr)
+            return data_type(attr)
 
         operands = [op for op in self._operands() if isinstance(op, Attribute)]
-        with mock.patch.object(Attribute, "data_type", property(counted)):
+        with mock.patch.object(Attribute, "get_data_type", counted):
             for operand in operands:
                 queries.clear()
                 facts = _Facts(operand)

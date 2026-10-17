@@ -462,7 +462,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
         b    = cmds.createNode("transform", name="B")
         c    = cmds.createNode("transform", name="C", parent=a)
         plug = Node(c).tx
-        held = Plug(plug.plug)
+        held = Plug(plug.get_mplug())
         self.assertEqual(str(plug), "C.translateX")
 
         steps = (
@@ -481,14 +481,14 @@ class TestCheckedTypeConstruction(MayaTestCase):
             with self.subTest(expected=expected):
                 self.assertEqual(str(plug), expected)
                 self.assertEqual(str(held), expected)
-                self.assertEqual(str(Plug(plug.plug)), expected)
+                self.assertEqual(str(Plug(plug.get_mplug())), expected)
 
         top = cmds.createNode("transform", name="T1")
         cmds.createNode("transform", name="S", parent=top)
         other = cmds.createNode("transform", name="T2")
         cmds.parent("T1|S", other, add=True, relative=True)
         self.assertEqual(str(Node("|T2|S").visibility), "T2|S.visibility")
-        self.assertEqual(Node("|T2|S").visibility.node.long_name, "|T2|S")
+        self.assertEqual(Node("|T2|S").visibility.get_node().long_name, "|T2|S")
 
     def test_named_plug_keeps_its_node_after_delete(self):
         cmds.undoInfo(state=True, infinity=True)
@@ -497,15 +497,15 @@ class TestCheckedTypeConstruction(MayaTestCase):
                 Node(_mobject(cmds.createNode(node_type)))
                 name  = cmds.createNode(node_type, name=f"gone_{node_type}")
                 named = Plug(f"{name}.{attr}")
-                fresh = Plug(named.plug)
+                fresh = Plug(named.get_mplug())
                 str(named)
-                owner = named.node
+                owner = named.get_node()
                 cmds.delete(name)
 
                 with self.assertRaises(RuntimeError) as ctx:
                     str(named)
                 self.assertEqual(str(ctx.exception), f"{name} already deleted!")
-                self.assertIs(named.node, owner)
+                self.assertIs(named.get_node(), owner)
                 self.assertFalse(owner.is_valid)
                 # re-pinned (round 3b): a plug built from an MPlug, never asked
                 # for its node, checks the handle of its node it took and raises
@@ -517,7 +517,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
 
                 cmds.undo()
                 self.assertTrue(str(named).startswith(f"{name}."))
-                self.assertIs(named.node, owner)
+                self.assertIs(named.get_node(), owner)
 
     def test_uncastable_owner_still_raises(self):
         cube  = cmds.polyCube(name="cube")[0]
@@ -552,7 +552,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
         for plug, node_name, alias in (
             (Plug(f"{md}.input1X"), "md1", "input1X"),
             (Node("grp|dup").tx, "grp|dup", "translateX"),
-            (Plug(Node("grp|dup").ty.plug), "grp|dup", "translateY"),
+            (Plug(Node("grp|dup").ty.get_mplug()), "grp|dup", "translateY"),
         ):
             with self.subTest(plug=node_name):
                 self.assertEqual(hash(plug), hash((hash_code(node_name), alias)))
@@ -784,7 +784,7 @@ class TestStaticDataTypeCache(MayaTestCase):
     def _data_type(self, name):
         """The data type of a fresh ``Plug(name)`` and the type queries it made."""
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
-            typ = Plug(name).data_type
+            typ = Plug(name).get_data_type()
         return typ, len(_type_queries(probe))
 
     def test_static_data_type_cache_hit(self):
@@ -813,22 +813,22 @@ class TestStaticDataTypeCache(MayaTestCase):
         for selector, expected in ((0, "double3"), (1, "matrix"), (0, "double3")):
             with self.subTest(selector=selector):
                 pick.selector.set(selector)
-                self.assertEqual(pick.output.data_type, expected)
+                self.assertEqual(pick.output.get_data_type(), expected)
                 typ, queries = self._data_type("pick.output")
                 self.assertEqual(typ, expected)
                 self.assertGreaterEqual(queries, 1)
         cmds.disconnectAttr("loc.translate", "pick.input[0]")
         cmds.connectAttr("loc.worldMatrix[0]", "pick.input[0]", force=True)
         pick.selector.set(0)
-        self.assertEqual(pick.output.data_type, "matrix")
-        self.assertEqual(loc.worldMatrix.data_type, "matrix")
+        self.assertEqual(pick.output.get_data_type(), "matrix")
+        self.assertEqual(loc.worldMatrix.get_data_type(), "matrix")
 
     def test_dynamic_attr_readd_new_type(self):
         net = cmds.createNode("network", name="net")
         cmds.addAttr(net, ln="foo", at="double")
         held = Plug("net.foo")
         self.assertIsNone(held._static_type_key())
-        self.assertEqual(held.data_type, "double")
+        self.assertEqual(held.get_data_type(), "double")
         cmds.deleteAttr("net.foo")
         cmds.addAttr(net, ln="foo", dt="string")
         self.assertEqual(self._data_type("net.foo"), ("string", 1))
@@ -844,7 +844,7 @@ class TestStaticDataTypeCache(MayaTestCase):
             cmds.addExtension(nodeType="network", longName="perfExt", at="double")
             cmds.createNode("network", name="netA")
             self.assertIsNone(Plug("netA.perfExt")._static_type_key())
-            self.assertEqual(Plug("netA.perfExt").data_type, "double")
+            self.assertEqual(Plug("netA.perfExt").get_data_type(), "double")
             delete_extension()
             cmds.addExtension(nodeType="network", longName="perfExt", at="enum", en="a:b")
             cmds.createNode("network", name="netB")
@@ -872,7 +872,7 @@ class TestStaticDataTypeCache(MayaTestCase):
     def test_deleted_plug_raises_despite_cache(self):
         def outcome(plug):
             try:
-                typ = plug.data_type
+                typ = plug.get_data_type()
             except Exception as exc:
                 return (type(exc), str(exc))
             return typ
@@ -882,7 +882,7 @@ class TestStaticDataTypeCache(MayaTestCase):
         self.assertEqual(self._data_type("warm.input1X"), ("float", 1))
         name  = cmds.createNode("multiplyDivide", name="gone")
         named = Plug(f"{name}.input1X")
-        fresh = Plug(named.plug)
+        fresh = Plug(named.get_mplug())
         str(named)
         cmds.delete(name)
         for plug in (named, fresh):
@@ -904,11 +904,11 @@ class TestStaticDataTypeCache(MayaTestCase):
             self.skipTest("no unloaded plug-in to load")
         cmds.createNode("multiplyDivide", name="md")
         try:
-            Plug("md.input1X").data_type
+            Plug("md.input1X").get_data_type()
             self.assertTrue(_base._STATIC_DATA_TYPE)
             cmds.loadPlugin(plugin, quiet=True)
             self.assertEqual(_base._STATIC_DATA_TYPE, {})
-            Plug("md.input1X").data_type
+            Plug("md.input1X").get_data_type()
             self.assertTrue(_base._STATIC_DATA_TYPE)
         finally:
             cmds.unloadPlugin(plugin)
@@ -918,7 +918,7 @@ class TestStaticDataTypeCache(MayaTestCase):
 def _data_type_outcome(plug):
     """The data type of `plug`, or the type and message it raises."""
     try:
-        return plug.data_type
+        return plug.get_data_type()
     except Exception as exc:
         return (type(exc), str(exc))
 
@@ -987,7 +987,7 @@ class TestStaticTypedRootCache(MayaTestCase):
     def _data_type(self, plug):
         """The data type of `plug` and the type queries it made."""
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
-            typ = plug.data_type
+            typ = plug.get_data_type()
         return typ, len(_type_queries(probe))
 
     def test_typed_array_root_cache_hit(self):
@@ -1005,7 +1005,7 @@ class TestStaticTypedRootCache(MayaTestCase):
             "parentInverseMatrix",
         ):
             with self.subTest(attr=attr):
-                self.assertTrue(getattr(one, attr).plug.isArray)
+                self.assertTrue(getattr(one, attr).get_mplug().isArray)
                 self.assertEqual(self._data_type(getattr(one, attr)), ("matrix", 1))
                 self.assertEqual(self._data_type(getattr(two, attr)), ("matrix", 0))
                 # an element is still queried every time
@@ -1036,7 +1036,7 @@ class TestStaticTypedRootCache(MayaTestCase):
         pick.selector.set(1)
         self.assertEqual(self._data_type(info[0].inputCurve), ("matrix", 1))
         self.assertEqual(self._data_type(info[1].inputCurve), ("nurbsCurve", 1))
-        self.assertEqual(loc.worldMatrix.data_type, "matrix")
+        self.assertEqual(loc.worldMatrix.get_data_type(), "matrix")
 
     def test_roots_that_report_their_data_are_not_shared(self):
         cmds.polyCube(name="cube")
@@ -1094,13 +1094,13 @@ class TestStaticTypedRootCache(MayaTestCase):
     def test_held_typed_root_across_delete_rename_and_reuse(self):
         cmds.undoInfo(state=True, infinity=True)
         warm = Node.create("joint", name="warm")
-        self.assertEqual(warm.worldMatrix.data_type, "matrix")
+        self.assertEqual(warm.worldMatrix.get_data_type(), "matrix")
         warm_pick = Node.create("choice", name="warmPick")
-        self.assertEqual(warm_pick.input.data_type, "compound")
+        self.assertEqual(warm_pick.input.get_data_type(), "compound")
         joint = Node.create("joint", name="jnt")
         pick  = Node.create("choice", name="pick")
         held  = [joint.worldMatrix, joint.worldInverseMatrix, pick.input]
-        fresh = [Plug(plug.plug) for plug in held]
+        fresh = [Plug(plug.get_mplug()) for plug in held]
         for plug in held:
             str(plug)
 
@@ -1201,8 +1201,8 @@ class TestStaticTypedRootCache(MayaTestCase):
                     )
                     for plug in plugs:
                         self.assertIsNone(plug._static_type_key())
-                    self.assertEqual(Node("locA").wsMatIn.data_type, "matrix")
-                    self.assertEqual(Node("locB").wsMatIn.data_type, "double3")
+                    self.assertEqual(Node("locA").wsMatIn.get_data_type(), "matrix")
+                    self.assertEqual(Node("locB").wsMatIn.get_data_type(), "double3")
                     self.assertEqual(
                         cmds.getAttr("locB.wsMatIn", type=True), "double3"
                     )
@@ -1261,14 +1261,14 @@ class TestAttributeInitState(MayaTestCase):
 
     def test_attribute_init_state_keys(self):
         md    = cmds.createNode("multiplyDivide", name="md")
-        mplug = Plug(f"{md}.input1").plug
+        mplug = Plug(f"{md}.input1").get_mplug()
         for cls in (_base.Attribute, Plug):
             with self.subTest(cls=cls.__name__):
                 self._assert_fresh_state(cls(mplug), mplug)
                 named = cls(f"{md}.input1")
                 self._assert_fresh_state(named, vars(named)["_mplug"])
-                self.assertEqual(named.plug, mplug)
-                self.assertEqual(named.full_name, "md.input1")
+                self.assertEqual(named.get_mplug(), mplug)
+                self.assertEqual(named.get_full_name(), "md.input1")
                 # every instance gets its own child caches (re-pinned (round 5
                 # A6): once made, on first use)
                 first, second = cls(mplug), cls(mplug)
@@ -1304,11 +1304,11 @@ class TestAttributeInitState(MayaTestCase):
 
         with mock.patch.object(Plug, "__setattr__", counting):
             plug = Plug("md.input1X")
-            Plug(plug.plug)
+            Plug(plug.get_mplug())
         self.assertEqual(names, [])
         # later state writes still go through ``Plug.__setattr__``
         with mock.patch.object(Plug, "__setattr__", counting):
-            plug.node
+            plug.get_node()
         self.assertIn("_node", names)
 
     def test_bad_source_error_unchanged(self):
@@ -1325,11 +1325,11 @@ def _owner(plug):
     """The name, owner classes and owner path a plug reports, or what it raises."""
     try:
         name = str(plug)
-        node = plug.node
+        node = plug.get_node()
         path = node._mdagpath.fullPathName() if "_mdagpath" in vars(node) else None
     except Exception as exc:
         return ("error", type(exc), str(exc))
-    return ("ok", name, type(plug.node), type(node), node.long_name, path)
+    return ("ok", name, type(plug.get_node()), type(node), node.long_name, path)
 
 
 class TestPlugNodeReuse(MayaTestCase):
@@ -1381,13 +1381,13 @@ class TestPlugNodeReuse(MayaTestCase):
                 self.assertEqual(self._casts(lambda: str(plug)), 0)
                 self.assertEqual(str(plug), expected)
                 # re-pinned (round 4a M4, C8): the owner is the typed node
-                self.assertIsInstance(plug.node, Node)
-                self.assertIs(plug.node, pma if expected.startswith("plus") else node)
-                fresh = Plug(plug.plug)
+                self.assertIsInstance(plug.get_node(), Node)
+                self.assertIs(plug.get_node(), pma if expected.startswith("plus") else node)
+                fresh = Plug(plug.get_mplug())
                 self.assertEqual(self._casts(lambda: str(fresh)), 1)
                 self.assertEqual(_owner(plug), _owner(fresh))
         # a parent that holds no node hands none on and is not resolved
-        held = Plug(node.rotate.plug)
+        held = Plug(node.rotate.get_mplug())
         self.assertIsNone(held.child(0)._node)
         self.assertIsNone(held.rotateY._node)
         self.assertIsNone(held._node)
@@ -1426,9 +1426,9 @@ class TestPlugNodeReuse(MayaTestCase):
                 self.assertEqual(self._casts(lambda: names.append(str(lookup()))), 0)
                 self.assertEqual(names, [f"T2|S.{attr}"])
                 plug = lookup()
-                self.assertEqual(plug.name, attr)
+                self.assertEqual(plug.get_name(), attr)
                 self.assertEqual(str(plug), f"T2|S.{attr}")
-                self.assertEqual(plug.node.long_name, "|T2|S")
+                self.assertEqual(plug.get_node().long_name, "|T2|S")
         held_t1 = Node("|T1|S")
         self.assertEqual(self._casts(lambda: str(held_t1.visibility)), 0)
 
@@ -1457,11 +1457,11 @@ class TestPlugNodeReuse(MayaTestCase):
                     # through the second instance)
                     plug = get(Node(path))
                     self.assertEqual(str(plug), f"{path[1:]}.{attr}")
-                    self.assertEqual(plug.full_name, f"{path[1:]}.{attr}")
+                    self.assertEqual(plug.get_full_name(), f"{path[1:]}.{attr}")
                     # re-pinned (round 4a M4, C8): the owner is the typed node
-                    self.assertIsInstance(plug.node, Node)
-                    self.assertIs(type(plug.node), Transform)
-                    self.assertEqual(plug.node.long_name, path)
+                    self.assertIsInstance(plug.get_node(), Node)
+                    self.assertIs(type(plug.get_node()), Transform)
+                    self.assertEqual(plug.get_node().long_name, path)
         for name in ("|T2|S.visibility", "T1|S.visibility"):
             with self.subTest(name=name):
                 self.assertEqual(str(Plug(name)), "T1|S.visibility")
@@ -1476,7 +1476,7 @@ class TestPlugNodeReuse(MayaTestCase):
         # returns Joint; the exact-class wrapper is Transform._wrap
         plug = Node(Transform._wrap(self._known_type("joint"))).tx
         self.assertEqual(self._casts(lambda: str(plug)), 0)
-        self.assertIs(type(plug.node), Transform)
+        self.assertIs(type(plug.get_node()), Transform)
 
     def test_shape_attr_via_transform_gets_shape_node(self):
         points = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
@@ -1486,8 +1486,8 @@ class TestPlugNodeReuse(MayaTestCase):
         Node(_mobject(shape))
         plug = Node(curve).controlPoints
         self.assertEqual(str(plug), f"{shape}.controlPoints")
-        self.assertEqual(plug.node.name, shape)
-        self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+        self.assertEqual(plug.get_node().name, shape)
+        self.assertEqual(_owner(plug), _owner(Plug(plug.get_mplug())))
 
     def test_child_plug_tracks_rename(self):
         node     = Node(self._known_type("transform"))
@@ -1505,8 +1505,8 @@ class TestPlugNodeReuse(MayaTestCase):
         ctn  = Container(cmds.container(name="box"))
         plug = ctn.blackBox
         self.assertEqual(self._casts(lambda: str(plug)), 0)
-        self.assertIs(plug.node, ctn)
-        self.assertEqual(plug.node.name, "box")
+        self.assertIs(plug.get_node(), ctn)
+        self.assertEqual(plug.get_node().name, "box")
 
     def test_element_plug_shares_node(self):
         base   = cmds.polyCube(name="base")[0]
@@ -1514,9 +1514,9 @@ class TestPlugNodeReuse(MayaTestCase):
         bs     = cmds.blendShape(target, base, name="bs")[0]
         Node(_mobject(bs))
         for plug in (Node(bs).weight[0], Node(bs).w[0], Node(bs).weight[0:1][0]):
-            with self.subTest(plug=plug.name):
+            with self.subTest(plug=plug.get_name()):
                 self.assertEqual(self._casts(lambda: str(plug)), 0)
-                self.assertEqual(plug.node.name, Plug(f"{bs}.weight[0]").node.name)
+                self.assertEqual(plug.get_node().name, Plug(f"{bs}.weight[0]").get_node().name)
                 self.assertEqual(_owner(plug), _owner(Plug(f"{bs}.weight[0]")))
 
     def test_changes_after_lookup_match_a_fresh_plug(self):
@@ -1535,8 +1535,8 @@ class TestPlugNodeReuse(MayaTestCase):
             held = (node.tx, node.t[1], node.t.tz)
             step()
             for plug in held:
-                with self.subTest(step=index, plug=plug.name):
-                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+                with self.subTest(step=index, plug=plug.get_name()):
+                    self.assertEqual(_owner(plug), _owner(Plug(plug.get_mplug())))
                     self.assertEqual(_owner(plug)[0], "ok")
 
     def test_custom_type_set_after_lookup(self):
@@ -1547,11 +1547,11 @@ class TestPlugNodeReuse(MayaTestCase):
         held = (node.tx, node.t[0])
         set_custom_type(str(node), "perfReuseProbe")
         for plug in held:
-            with self.subTest(plug=plug.name):
+            with self.subTest(plug=plug.get_name()):
                 self.assertEqual(self._casts(lambda: str(plug)), 0)
-                self.assertIs(type(plug.node), Transform)
+                self.assertIs(type(plug.get_node()), Transform)
                 # a fresh cast sees the custom type
-                self.assertNotEqual(_owner(plug), _owner(Plug(plug.plug)))
+                self.assertNotEqual(_owner(plug), _owner(Plug(plug.get_mplug())))
 
     def test_held_plug_of_a_deleted_reused_name_raises(self):
         # the owner rule (round 3, D-A): a held plug of a deleted node raises
@@ -1574,10 +1574,10 @@ class TestPlugNodeReuse(MayaTestCase):
                     # re-pinned (round 3b review): a plug built from the MPlug
                     # of a deleted node raises when it is built (it can take no
                     # handle of the node), no longer when it is named
-                    self.assertEqual(_outcome(Plug, plug.plug), deleted)
+                    self.assertEqual(_outcome(Plug, plug.get_mplug()), deleted)
                 cmds.undo()
                 for plug in plugs:
-                    self.assertEqual(_owner(plug), _owner(Plug(plug.plug)))
+                    self.assertEqual(_owner(plug), _owner(Plug(plug.get_mplug())))
                     self.assertEqual(_owner(plug)[0], "ok")
 
                 # the cast resolves the name, so it finds a newer node of that
@@ -1590,7 +1590,7 @@ class TestPlugNodeReuse(MayaTestCase):
                     # re-pinned (round 3b review): it named the node that took
                     # the name ("ok"); a plug built from the MPlug of a deleted
                     # node now raises when it is built, as a held plug does
-                    self.assertEqual(_outcome(Plug, plug.plug), deleted)
+                    self.assertEqual(_outcome(Plug, plug.get_mplug()), deleted)
 
     def test_plug_node_is_the_node_it_was_read_from(self):
         # the owner rule (round 3, D-A): the plug's node is the user's own node
@@ -1600,7 +1600,7 @@ class TestPlugNodeReuse(MayaTestCase):
         cached = held.find_attr("tx")
         vars(held)["user_tag"] = "set on the user's node"
         for plug in (node.tx, node.t[0], node.t.translateY, node.rotate.child(0)):
-            owner = plug.node >> None
+            owner = plug.get_node() >> None
             self.assertIs(type(owner), Transform)
             self.assertIs(owner, held)
             self.assertIs(owner.mdagpath, held.mdagpath)
@@ -1609,14 +1609,14 @@ class TestPlugNodeReuse(MayaTestCase):
             self.assertTrue(hasattr(owner, "user_tag"))
             self.assertIs(owner.find_attr("tx"), cached)
         # find_attr filters a lookup the user's node already cached
-        self.assertIsNone(node.tx.node.find_attr("translateX", data_type="string"))
+        self.assertIsNone(node.tx.get_node().find_attr("translateX", data_type="string"))
 
         cube  = cmds.polyCube(name="gc")[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
         Node(_mobject(shape))
         mesh  = Node(shape)
         local = (mesh >> None).local_shape_attr
-        self.assertIs((mesh.outMesh.node >> None).local_shape_attr, local)
+        self.assertIs((mesh.outMesh.get_node() >> None).local_shape_attr, local)
 
     def test_plug_node_finds_a_readded_extension_attr(self):
         node = Node(self._known_type("transform"))
@@ -1627,9 +1627,9 @@ class TestPlugNodeReuse(MayaTestCase):
                 nodeType="transform", attribute="perfExt", forceDelete=True
             )
             cmds.addExtension(nodeType="transform", longName="perfExt", dataType="string")
-            plug = node.tx.node.perfExt
+            plug = node.tx.get_node().perfExt
             self.assertEqual(str(plug), f"{node}.perfExt")
-            self.assertEqual(plug.data_type, "string")
+            self.assertEqual(plug.get_data_type(), "string")
         finally:
             if cmds.attributeQuery("perfExt", type="transform", exists=True):
                 cmds.deleteExtension(
@@ -1665,7 +1665,7 @@ class TestCachedAttributeOwner(MayaTestCase):
                     with self.assertRaises(RuntimeError) as ctx:
                         func(cached)
                     self.assertEqual(str(ctx.exception), f"{name} already deleted!")
-                self.assertFalse(cached.node.is_valid)
+                self.assertFalse(cached.get_node().is_valid)
                 self.assertEqual(cmds.getAttr(f"{name}.{attr}"), 0.0)
 
     def test_cached_attr_of_an_instance_names_the_path_read_through(self):
@@ -1947,15 +1947,15 @@ class TestConnectQuery(MayaTestCase):
         # API fast paths off (a free dst's connect goes through the API, unnamed)
         self._scene()
         names    = []
-        original = _base.Attribute.full_name
+        original = _base.Attribute.get_full_name
 
         def full_name(attr):
-            names.append(original.fget(attr))
+            names.append(original(attr))
             return names[-1]
 
         source      = Node("a").tx
         destination = Node("b").tx
-        with mock.patch.object(journal, "API_EDITS", False),                 mock.patch.object(_base.Attribute, "full_name", property(full_name)):
+        with mock.patch.object(journal, "API_EDITS", False),                 mock.patch.object(_base.Attribute, "get_full_name", full_name):
             with mock.patch.object(cmds, "connectAttr") as connect:
                 source.connect(destination)
                 self.assertEqual(names, ["b.translateX", "a.translateX"])
@@ -2009,7 +2009,7 @@ class TestConnectQuery(MayaTestCase):
             (Plug("t2|loc.instObjGroups[1]"), False),
             (Plug("a.instObjGroups[3]"), False),
         ):
-            with self.subTest(plug=plug.plug.name()):
+            with self.subTest(plug=plug.get_mplug().name()):
                 self.assertIs(_base._names_own_plug(_named(plug)), expected)
         for remove in (False, True):
             with self.subTest(remove=remove):
@@ -2027,7 +2027,7 @@ def _connecting_hook(hook):
     """`hook` behind a step that connects src.translate into the attr first."""
 
     def connecting(self, attr):
-        name = attr.full_name
+        name = attr.get_full_name()
         if not cmds.listConnections(name, source=True, destination=False):
             cmds.connectAttr("src.translate", name, force=True)
         return hook(self, attr)
@@ -2085,7 +2085,7 @@ class TestFallbackQueryReuse(MayaTestCase):
                 _base.Attribute("pick.input[5]"),
             ):
                 with self.subTest(selector=selector, plug=str(plug)):
-                    resolved = selector == 1 and plug.name == "output"
+                    resolved = selector == 1 and plug.get_name() == "output"
                     requery  = self._requery(plug)
                     if resolved:
                         self.assertEqual(requery[0], "double3")
@@ -2094,7 +2094,7 @@ class TestFallbackQueryReuse(MayaTestCase):
                         self.assertEqual(requery, ("Tdata", 2))
                         self.assertEqual(self._data_type(plug), ("Tdata", 1))
         self.assertEqual(self._data_type(pick.input[1]), self._requery(pick.input[1]))
-        self.assertEqual(pick.input[1].data_type, "double3")
+        self.assertEqual(pick.input[1].get_data_type(), "double3")
 
     def test_generic_attr_on_plain_node_queries_once(self):
         Node.create("transform", name="src")
@@ -2129,7 +2129,7 @@ class TestFallbackQueryReuse(MayaTestCase):
         self.assertEqual(
             self._data_type(picks[2].output), self._requery(picks[2].output)
         )
-        self.assertEqual(picks[2].output.data_type, "matrix")
+        self.assertEqual(picks[2].output.get_data_type(), "matrix")
 
     def test_answer_is_only_for_the_running_call(self):
         pick = Node.create("choice", name="pick")
@@ -2231,7 +2231,7 @@ class TestFallbackQueryReuse(MayaTestCase):
         attr = _base.Attribute("net2.generic")
         attr._node = Node("net2")
         plug = _named(Plug("net3.generic"))
-        for owned, owner in ((attr, attr._node), (plug, plug.node)):
+        for owned, owner in ((attr, attr._node), (plug, plug.get_node())):
             with self.subTest(owner=type(owned).__name__):
                 hook     = _connecting_hook(base_hook)
                 instance = mock.patch.object(
@@ -2445,9 +2445,11 @@ _FULL_NAME_CASES = (
     ("container_owner", _container_owner, "ctr.blackBox", 1, True),
     ("name_raises", _name_raises, "w.translateX", 0, True),
     # the half-built node's name property raises AttributeError, which Python
-    # retries through DGNode.__getattr__ ("name"), and full_name's through
-    # Plug.__getattr__, whose container query names the node once more
-    ("half_built_node", _half_built_node, (AttributeError, "name"), 2, False),
+    # retries through DGNode.__getattr__ ("name"). Re-pinned (user decision
+    # 2026-10-16, the property ban): get_full_name is a method, so its error is
+    # not retried through Plug.__getattr__ (whose container query named the node
+    # once more): one read, was two
+    ("half_built_node", _half_built_node, (AttributeError, "name"), 1, False),
 )
 
 
@@ -2505,9 +2507,9 @@ class TestFullNameReadsTheOwner(MayaTestCase):
         plug = factory()
         results, reads = _name_forwards(
             lambda: [
-                _result(lambda: plug.full_name),
+                _result(lambda: plug.get_full_name()),
                 _result(lambda: str(plug)),
-                _result(lambda: plug.full_name),
+                _result(lambda: plug.get_full_name()),
                 _result(lambda: str(plug)),
             ]
         )
@@ -2546,8 +2548,8 @@ class TestFullNameReadsTheOwner(MayaTestCase):
                 # a node whose name property raises is named by its fn set, not
                 # by its Maya attr of that name
                 if type(plug) is not ComponentPlug and case != "name_raises":
-                    self.assertEqual(plug.full_name, f"{plug.node.name}.{plug.alias}")
-                self.assertEqual(plug.full_name, expected)
+                    self.assertEqual(plug.get_full_name(), f"{plug.get_node().name}.{plug.get_alias()}")
+                self.assertEqual(plug.get_full_name(), expected)
 
     def test_referenced_node(self):
         folder = tempfile.mkdtemp(prefix="rig_full_name_ref_")
@@ -2567,7 +2569,7 @@ class TestFullNameReadsTheOwner(MayaTestCase):
                     if oracle:
                         loaded = _name_forwards(lambda: _fn_set_full_name(plug))
                     else:
-                        loaded = _name_forwards(lambda: plug.full_name)
+                        loaded = _name_forwards(lambda: plug.get_full_name())
                     self.assertEqual(
                         loaded, (("ok", "ref:refT.translateX"), int(not oracle))
                     )
@@ -2581,10 +2583,12 @@ class TestFullNameReadsTheOwner(MayaTestCase):
             shutil.rmtree(folder, ignore_errors=True)
 
     def test_plug_keeps_the_attribute_property(self):
-        # `_names_own_plug` and the tests that wrap `Attribute.full_name` still see
-        # the one property on Plug; ComponentPlug names itself
-        self.assertIs(Plug.full_name, _base.Attribute.full_name)
-        self.assertIsNot(ComponentPlug.full_name, _base.Attribute.full_name)
+        # re-pinned (user decision 2026-10-16, the property ban): the name is the
+        # method get_full_name. `_names_own_plug` and the tests that wrap
+        # `Attribute.get_full_name` still see the one function on Plug;
+        # ComponentPlug names itself
+        self.assertIs(Plug.get_full_name, _base.Attribute.get_full_name)
+        self.assertIsNot(ComponentPlug.get_full_name, _base.Attribute.get_full_name)
 
 class TestAnimCurveCost(MayaTestCase):
     """Features step 5: keys (``AnimCurve([...])``) cost the plain ``<<`` nothing measurable,

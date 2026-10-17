@@ -111,8 +111,8 @@ def _attr_plugs(prefix):
     ``owned, cached`` has read its attribute and fn set before the free."""
     node   = Node(f"{prefix}held")
     cached = node.dynf
-    cached.mobject
-    cached.fn_set
+    cached.get_mobject()
+    cached.get_fn_set()
     return {
         "owned":          node.dyne,
         "owned, cached":  cached,
@@ -128,14 +128,14 @@ def _attr_plugs(prefix):
 
 
 _ATTR_OPS = {
-    "name":                lambda a: a.name,
-    "alias":               lambda a: a.alias,
-    "mobject":             lambda a: a.mobject,
-    "fn_set":              lambda a: a.fn_set,
-    "is_typed":            lambda a: a.is_typed,
-    "attribute_type":      lambda a: a.attribute_type,
-    "enums":               lambda a: a.enums,
-    "default_value":       lambda a: a.default_value,
+    "name":                lambda a: a.get_name(),
+    "alias":               lambda a: a.get_alias(),
+    "mobject":             lambda a: a.get_mobject(),
+    "fn_set":              lambda a: a.get_fn_set(),
+    "is_typed":            lambda a: a.is_typed(),
+    "attribute_type":      lambda a: a.get_attribute_type(),
+    "enums":               lambda a: a.get_enums(),
+    "default_value":       lambda a: a.get_default_value(),
     "get_categories":      lambda a: a.get_categories(),
     "has_category":        lambda a: a.has_category("rig"),
     "filter_array_values": lambda a: a.filter_array_values(0.0),
@@ -172,24 +172,24 @@ class TestAttributeReadsHeldAcrossAFreeRaise(_HeldAcrossAFree):
             ("Plug(MPlug)", Plug(_mplug("held.dyne"))),
         ):
             with self.subTest(plug=label):
-                self.assertEqual(enum.name, "dyne")
-                self.assertEqual(enum.alias, "dyne")
-                self.assertEqual(enum.mobject.apiType(), OpenMaya.MFn.kEnumAttribute)
-                self.assertIsInstance(enum.fn_set, OpenMaya.MFnEnumAttribute)
-                self.assertFalse(enum.is_typed)
-                self.assertEqual(enum.attribute_type, "enum")
-                self.assertEqual(enum.enums, ["aa", "bb", "cc"])
+                self.assertEqual(enum.get_name(), "dyne")
+                self.assertEqual(enum.get_alias(), "dyne")
+                self.assertEqual(enum.get_mobject().apiType(), OpenMaya.MFn.kEnumAttribute)
+                self.assertIsInstance(enum.get_fn_set(), OpenMaya.MFnEnumAttribute)
+                self.assertFalse(enum.is_typed())
+                self.assertEqual(enum.get_attribute_type(), "enum")
+                self.assertEqual(enum.get_enums(), ["aa", "bb", "cc"])
         array = Attribute("held.dyna")
-        self.assertTrue(array.is_typed)
+        self.assertTrue(array.is_typed())
         self.assertEqual(array.filter_array_values(0.0), ([0, 2], [1.0, 2.0]))
-        self.assertEqual(Attribute("held.dynm")[3].name, "dynm[3]")
-        self.assertEqual(Plug("held.dynv").dynvX.name, "dynvX")
-        self.assertEqual(Node("held").dynf.default_value, 0.5)
+        self.assertEqual(Attribute("held.dynm")[3].get_name(), "dynm[3]")
+        self.assertEqual(Plug("held.dynv").dynvX.get_name(), "dynvX")
+        self.assertEqual(Node("held").dynf.get_default_value(), 0.5)
         # a node deleted to the undo queue is still alive: its attrs read on
         dynf = Node("held").dynf
         cmds.delete("held")
-        self.assertEqual(dynf.name, "dynf")
-        self.assertEqual(dynf.mobject.apiType(), OpenMaya.MFn.kNumericAttribute)
+        self.assertEqual(dynf.get_name(), "dynf")
+        self.assertEqual(dynf.get_mobject().apiType(), OpenMaya.MFn.kNumericAttribute)
 
 
 def _operand_plugs(prefix):
@@ -382,7 +382,7 @@ class TestAPlugOfADeletedNodesMPlugRaises(MayaTestCase):
                 cmds.createNode("transform", name="held")
                 cmds.addAttr("held", longName="dynf", attributeType="double")
                 cmds.setAttr("held.dynf", 7.0)
-                mplug = Node("held").dynf.plug  # an MPlug the caller keeps
+                mplug = Node("held").dynf.get_mplug()  # an MPlug the caller keeps
                 known = _mplug("held.ty")
                 Plug(known)  # a plug of the node was built before (once, a table entry)
                 cmds.delete("held")
@@ -490,7 +490,7 @@ class TestAPlugKeepsItsHashAcrossADelete(MayaTestCase):
         makers = {
             "owned worldMatrix":           lambda: Node("held").worldMatrix,
             "owned shape instObjGroups":   lambda: Node("heldShape").instObjGroups,
-            "Plug(MPlug) worldMatrix":     lambda: Plug(Node("held").worldMatrix.plug),
+            "Plug(MPlug) worldMatrix":     lambda: Plug(Node("held").worldMatrix.get_mplug()),
             "Plug(MPlug) instObjGroups":   lambda: Plug(_mplug("heldShape.instObjGroups")),
             "typed worldMatrix":           lambda: Node("held").find_attr("worldMatrix"),
             "Plug(str) worldMatrix":       lambda: Plug("held.worldMatrix"),
@@ -582,11 +582,11 @@ def _dynamic_plugs():
 _DYNAMIC_OPS = {
     "str":       str,
     "get":       lambda p: p.get(),
-    "name":      lambda p: p.name,
-    "mobject":   lambda p: p.mobject,
-    "is_locked": lambda p: p.is_locked,
+    "name":      lambda p: p.get_name(),
+    "mobject":   lambda p: p.get_mobject(),
+    "is_locked": lambda p: p.is_locked(),
     "set":       lambda p: p.set(1),
-    "data_type": lambda p: p.data_type,
+    "data_type": lambda p: p.get_data_type(),
     "lift":      lambda p: rig.lift(p) + 1,
 }
 
@@ -708,7 +708,7 @@ class TestAPlugOfAFreedDynamicAttrRaises(MayaTestCase):
         ):
             with self.subTest(plug=label):
                 handle = vars(plug)["_attrh"]
-                code   = OpenMaya.MObjectHandle(plug.plug.attribute()).hashCode()
+                code   = OpenMaya.MObjectHandle(plug.get_mplug().attribute()).hashCode()
                 self.assertEqual(handle.hashCode(), code)
                 # re-pinned (round 5 NW6): the API 2.0 handle's MObject
                 self.assertEqual(OpenMaya.MFnAttribute(handle.object()).name, long_name)

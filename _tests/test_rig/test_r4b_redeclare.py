@@ -69,7 +69,7 @@ class TestRedeclare(MayaTestCase):
         node << Float("test", dv=5)
         node.test << drv.tx
         plug = node << Float("test")
-        self.assertIs(plug.node, node)
+        self.assertIs(plug.get_node(), node)
         self.assertEqual(str(plug), "rd.test")
         self.assertEqual(cmds.getAttr("rd.test"), 7)
         self.assertEqual(_inputs("rd.test"), ["drv.translateX"])
@@ -131,7 +131,7 @@ class TestRedeclare(MayaTestCase):
                 node.d << drv.tx
                 for name, value in (("w", 2.5), ("d", 7)):
                     plug = node << Float(name, **kwargs)
-                    self.assertIs(plug.node, node)
+                    self.assertIs(plug.get_node(), node)
                     self.assertEqual(_q(f"rd.{name}", flag), expected)
                     self.assertEqual(cmds.getAttr(f"rd.{name}"), value)
                 self.assertEqual(_inputs("rd.d"), ["drv.translateX"])

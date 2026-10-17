@@ -145,7 +145,7 @@ class TestReference(MayaTestCase):
             ("a typed attribute", lambda: Transform(grp.find_attr("tx")), grp),
             ("an MObject", lambda: Transform(_mobject("j1")), Node("j1")),
             ("an MDagPath", lambda: DAGNode(sel.getDagPath(0)), Node("j1")),
-            ("an MPlug", lambda: Transform(grp.tx.plug), grp),
+            ("an MPlug", lambda: Transform(grp.tx.get_mplug()), grp),
             ("a uuid", lambda: Transform(cmds.ls("grp", uuid=True)[0]), grp),
             ("a path", lambda: Transform("|g1|a"), Node("|g1|a")),
             # the attribute of a dotted name is not checked (C11)

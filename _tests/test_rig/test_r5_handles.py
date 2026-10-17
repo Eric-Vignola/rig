@@ -138,7 +138,7 @@ def _ops(held):
         ("owned_dag.hash", lambda: hash(held["owned_dag"]) == held["h_owned_dag"]),
         ("loose.str", lambda: str(held["loose"])),
         ("loose.get", lambda: held["loose"].get()),
-        ("loose.node", lambda: held["loose"].node.name),
+        ("loose.node", lambda: held["loose"].get_node().name),
         ("dyn.str", lambda: str(held["dyn"])),
         ("dyn.get", lambda: held["dyn"].get()),
         ("dyn.set", lambda: (held["dyn"] << 0.5) is held["dyn"]),
@@ -343,15 +343,15 @@ class TestOneHandlePerPlug(MayaTestCase):
         self.assertIsNone(vars(plug)["_node"])
         self.assertIsInstance(own, OpenMaya.MObjectHandle)
         self.assertTrue(own.isValid())
-        node = plug.node
+        node = plug.get_node()
         self.assertIs(vars(plug)["_handle"], vars(node)["_objhandle"])
         self.assertEqual(vars(plug)["_handle"].hashCode(), own.hashCode())
         # the plugs derived from it after hold that handle too
         parent = Plug("t.t")
-        parent.node
+        parent.get_node()
         child  = parent.translateX
         self.assertIs(vars(child)["_node"], vars(parent)["_node"])
-        self.assertIs(vars(child)["_handle"], vars(parent.node)["_objhandle"])
+        self.assertIs(vars(child)["_handle"], vars(parent.get_node())["_objhandle"])
 
     def test_the_handles_answer_alike(self):
         # the owner's handle and a plug's own handle of one node answer the
@@ -620,7 +620,7 @@ def _by_name(obj):
     node its name names, resolved by name."""
     out = []
     try:
-        name = obj.full_name.split(".", 1)[0] if isinstance(obj, Attribute) else str(obj)
+        name = obj.get_full_name().split(".", 1)[0] if isinstance(obj, Attribute) else str(obj)
         sel  = OpenMaya.MSelectionList()
         sel.add(name)
         out.append(OpenMaya.MObjectHandle(sel.getDependNode(0)))

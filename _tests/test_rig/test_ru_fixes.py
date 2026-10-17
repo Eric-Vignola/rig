@@ -125,7 +125,7 @@ class TestLatticePartialIndex(MayaTestCase):
         self.assertIsInstance(elem, ComponentPlug)
         self.assertNotIsInstance(elem, List)
         self.assertEqual(str(elem), f"{self.shape}.pt[0][1][2]")
-        self.assertEqual(elem.name, Plug(f"{self.shape}.pt[0][1][2]").name)
+        self.assertEqual(elem.get_name(), Plug(f"{self.shape}.pt[0][1][2]").get_name())
 
     def test_slices_are_unchanged(self):
         slab = self.node.pt[0, :, :]
@@ -165,7 +165,7 @@ class TestLatticePartialIndex(MayaTestCase):
 
     def test_plug_strings_and_components_are_unchanged(self):
         self.assertEqual(
-            Plug(f"{self.shape}.pt[0][1][2]").name, self.node.pt[0, 1, 2].name
+            Plug(f"{self.shape}.pt[0][1][2]").get_name(), self.node.pt[0, 1, 2].get_name()
         )
         points = Components(self.shape, "pt")
         self.assertEqual(points.count, 60)
@@ -582,7 +582,7 @@ class TestEnumNamesReview(MayaTestCase):
         fog = Node(cmds.createNode("envFog", name="ru_fog"))
         fields = dict(
             base_module._enum_fields(
-                base_module.OpenMaya.MFnEnumAttribute(fog.find_attr("fogAxis").mobject)
+                base_module.OpenMaya.MFnEnumAttribute(fog.find_attr("fogAxis").get_mobject())
             )
         )
         self.assertEqual(fields[" -X"], 1)

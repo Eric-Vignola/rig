@@ -381,13 +381,17 @@ DSL spelling, `node.tx`, is a `Plug`: the same methods, the DSL's
 operators, a numpy-shaped `get()`.
 
 `lock()` / `unlock()` run `setAttr -lock` and return the attribute (the
-DSL's `plug << lock` is the same call); `is_locked` is True for the plug's
+DSL's `plug << lock` is the same call); `is_locked()` is True for the plug's
 own lock and for a locked parent's (a compound's for its children, a multi
 root's for its elements). An attribute already in that state is left as it
 is, with no undo step. Both refuse a plug of a locked node (Maya locks no
 plug there: lock the plugs first, then the node), and `unlock()` a child
-whose locked parent holds the lock. `attr.is_locked = x` still works, as
-`lock()` / `unlock()`; write those. `DGNode.lock()` / `unlock()` /
+whose locked parent holds the lock. An attribute has no properties: every
+member is a method (`attr.get_node()`, `attr.get_full_name()` or
+`str(attr)`, `attr.is_multi()`, `attr.set_alias(x)`, `attr.set_keyable(b)`),
+and `attr.is_locked = x` raises, naming `lock()` / `unlock()`; a predicate
+named without brackets (`if attr.is_locked:`) raises TypeError, as it would
+always pass. `DGNode.lock()` / `unlock()` /
 `is_locked` are the node's (`lockNode`; `is_locked` has no setter), and a
 locked node refuses `rename`, `delete`, `set_parent`, `add_attr`,
 `delete_attr`, `rename_attr` and a new attribute spec with one

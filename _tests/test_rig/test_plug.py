@@ -35,7 +35,7 @@ class TestPlugBasics(MayaTestCase):
     def test_node_property_returns_rignode(self):
         node = Node.create("transform", name="cube1")
         plug = node.translateX
-        self.assertIsInstance(plug.node, Node)
+        self.assertIsInstance(plug.get_node(), Node)
 
 
 class TestPlugAttributeLookup(MayaTestCase):
@@ -63,7 +63,7 @@ class TestPlugSiblingFallback(MayaTestCase):
         node      = Node.create("plusMinusAverage", name="pma1")
         output    = node.output1D
         operation = output.operation
-        self.assertEqual(operation.alias, "operation")
+        self.assertEqual(operation.get_alias(), "operation")
         operation << 3
         self.assertEqual(cmds.getAttr("pma1.operation"), 3)
 
@@ -81,7 +81,7 @@ class TestPlugSiblingFallback(MayaTestCase):
 
         a   = Node.create("transform", name="src_xform")
         dec = _decompose_matrix(a.matrix)
-        self.assertEqual(dec.outputRotate.alias, "outputRotate")
+        self.assertEqual(dec.outputRotate.get_alias(), "outputRotate")
         # Same underlying node as dec.
         self.assertEqual(str(dec).split(".")[0], str(dec.outputRotate).split(".")[0])
 
@@ -105,7 +105,7 @@ class TestPlugSiblingFallback(MayaTestCase):
         # name like `ro` must return the transform's `.rotateOrder`,
         # NOT raise TypeError.
         ro = cube.matrix.ro
-        self.assertEqual(ro.alias, "rotateOrder")
+        self.assertEqual(ro.get_alias(), "rotateOrder")
 
 
 class TestPlugSliceReturnsPlugList(MayaTestCase):
@@ -660,7 +660,7 @@ class TestPlugRshiftNamedClone(MayaTestCase):
         np.testing.assert_array_almost_equal(plug >> None, [0.1, 0.2, 0.3])
         same = self.src.tint >> "__tint__"
         self.assertEqual(str(same), "src.__tint__")
-        self.assertEqual(same.num_children, 3)
+        self.assertEqual(same.get_num_children(), 3)
         np.testing.assert_array_almost_equal(same >> None, [0.1, 0.2, 0.3])
 
     def test_underscore_names_work(self):
@@ -987,7 +987,7 @@ class TestPlugCompoundFanOut(MayaTestCase):
 
         t = self._src.t
         self.assertTrue(_is_compound(t))
-        for i in range(t.num_children):
+        for i in range(t.get_num_children()):
             child = t.child(i)
             self.assertIsInstance(child, Plug)
 
@@ -1383,8 +1383,8 @@ class TestPlugDataTypeTypedOutput(MayaTestCase):
 
         # Must NOT raise, and the rig Plug path must agree with the base
         # Attribute path (which dispatches to the typed Choice node).
-        self.assertEqual(out.data_type, "doubleLinear")
-        self.assertEqual(out.data_type, Attribute(str(out)).data_type)
+        self.assertEqual(out.get_data_type(), "doubleLinear")
+        self.assertEqual(out.get_data_type(), Attribute(str(out)).get_data_type())
 
     def test_choice_output_data_type_via_string_plug(self):
         # The same must hold for a Plug rebuilt from a string (the path the
@@ -1395,7 +1395,7 @@ class TestPlugDataTypeTypedOutput(MayaTestCase):
         b        = Node.create("transform", name="b")
         out_name = str(f.choice([a.tx, b.tx], selector=a.ty))
 
-        self.assertEqual(Plug(out_name).data_type, "doubleLinear")
+        self.assertEqual(Plug(out_name).get_data_type(), "doubleLinear")
 
 
 class TestPlugV3USlerpDivWrites(MayaTestCase):
@@ -1517,7 +1517,7 @@ class TestChoiceCompoundPreservation(MayaTestCase):
         # _is_compound must recognize the choice output as compound
         # (data_type == "double3" via runtime check).
         self.assertTrue(_is_compound(result))
-        self.assertEqual(result.data_type, "double3")
+        self.assertEqual(result.get_data_type(), "double3")
 
     def test_choice_compound_pipes_through_math_ops(self):
         from rig import functions as f
@@ -1618,8 +1618,10 @@ class TestInjectSetPathCoverage(MayaTestCase):
 
         from rig._internal import plug as plugmod
 
-        fake_dst           = mock.MagicMock()
-        fake_dst.data_type = "matrix"
+        fake_dst = mock.MagicMock()
+        # re-pinned (user decision 2026-10-16, the property ban): a dst that is
+        # no Attribute answers get_data_type() (was the data_type property)
+        fake_dst.get_data_type.return_value = "matrix"
         fake_dst.__str__   = lambda self: "bogus_node.nope"
         with self.assertRaises(plugmod.InjectionError):
             plugmod._set_or_connect([float(i) for i in range(16)], fake_dst)
@@ -1933,8 +1935,13 @@ class TestPlugStrMethodShadowing(MayaTestCase):
             self.assertIsInstance(getattr(p, name), Plug, name)
 
     def test_every_public_str_method_is_routed(self):
+        # re-pinned (user decision 2026-10-16, the property ban): a route is a
+        # non-data descriptor (_StrRoute), not a property
+        from rig._internal.plug import _StrRoute
+
         for name in (n for n in vars(str) if not n.startswith("_")):
-            self.assertIsInstance(getattr(Plug, name), property, name)
+            self.assertIsInstance(getattr(Plug, name), _StrRoute, name)
+            self.assertNotIsInstance(getattr(Plug, name), property, name)
 
     def test_string_methods_reachable_via_cast(self):
         self.assertEqual(str(Plug("ctrl.rotateX")).upper(), "CTRL.ROTATEX")

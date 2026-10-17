@@ -140,7 +140,7 @@ class TestRotateOrderNames(_SceneCase):
             for order, name in enumerate(_NAMES):
                 with self.subTest(function=label, name=name):
                     plug = call(name)
-                    node = plug.node
+                    node = plug.get_node()
                     if not cmds.attributeQuery(attr, node=str(node), exists=True):
                         # compose publishes its matrix out of a container: read
                         # the composeMatrix that feeds it
@@ -167,7 +167,7 @@ class TestRotateOrderNames(_SceneCase):
         self.assertIs(M.decompose(wm, rotate_order=3), M.decompose(wm, rotate_order=3.0))
         driven = M.decompose(wm, rotate_order=self.u.ro)
         self.assertEqual(
-            cmds.listConnections(f"{driven.node}.inputRotateOrder", source=True, plugs=True),
+            cmds.listConnections(f"{driven.get_node()}.inputRotateOrder", source=True, plugs=True),
             ["u.rotateOrder"],
         )
         for value in (0, 5, None, self.u.ro, [1, 2], (self.u.ro, 3), 2.0):
@@ -224,7 +224,7 @@ class TestRotateOrderNames(_SceneCase):
                 out = M.decompose(mats, rotate_order=orders)
                 self.assertIsInstance(out, List)
                 self.assertEqual(
-                    [cmds.getAttr(f"{plug.node}.inputRotateOrder") for plug in out], [2, 4]
+                    [cmds.getAttr(f"{plug.get_node()}.inputRotateOrder") for plug in out], [2, 4]
                 )
                 self.assertIs(out[0], M.decompose(self.t.worldMatrix[0], rotate_order=2))
         before = _scene()
@@ -503,8 +503,8 @@ class TestOperandShapes(_SceneCase):
     def test_other_iterables_pass_as_before(self):
         t = self.t
         self.assertEqual(F.sum(range(3)), 3)
-        self.assertEqual(cmds.nodeType(F.sum({"a": t.tx, "b": 1}.values()).node), "sum")
-        self.assertEqual(cmds.nodeType((t.t + [1, 2, 3]).node), "plusMinusAverage")
+        self.assertEqual(cmds.nodeType(F.sum({"a": t.tx, "b": 1}.values()).get_node()), "sum")
+        self.assertEqual(cmds.nodeType((t.t + [1, 2, 3]).get_node()), "plusMinusAverage")
         self.assertEqual(F.sum([1, 2, 3]), 6)
         self.assertEqual(F.sum(i for i in (1, 2, 3)), 6)  # folded, as the list is
         plug = t.tx
@@ -856,9 +856,9 @@ class TestSamePlugFold(_SceneCase):
                 self.assertEqual(
                     sorted(cmds.nodeType(x) for x in _new(before)), ["condition", "equal"]
                 )
-                self.assertEqual(cmds.nodeType(eq.node), "equal")
+                self.assertEqual(cmds.nodeType(eq.get_node()), "equal")
                 self.assertEqual(
-                    cmds.listConnections(str(eq.node.input1), plugs=True), [str(p)]
+                    cmds.listConnections(str(eq.get_node().input1), plugs=True), [str(p)]
                 )
 
     def test_force_nodes_and_constant_folding_off_build_the_node(self):
@@ -885,7 +885,7 @@ class TestSamePlugFold(_SceneCase):
                     sorted(cmds.nodeType(x) for x in _new(before)), ["condition", "equal"]
                 )
                 self.assertEqual(
-                    cmds.listConnections(str(eq.node.input1), plugs=True), ["t.translateX"]
+                    cmds.listConnections(str(eq.get_node().input1), plugs=True), ["t.translateX"]
                 )
                 # folding on again: a bool; the memoized node is not looked up
                 before = _scene()
@@ -933,14 +933,14 @@ class TestSamePlugFold(_SceneCase):
         self.assertIs(condition(t.tx == t.tx, a, b), a)
         self.assertIs(condition(t.tx != t.tx, a, b), b)
         self.assertEqual(_new(before), [])
-        self.assertEqual(cmds.nodeType(condition(t.tx == u.tx, a, b).node), "condition")
+        self.assertEqual(cmds.nodeType(condition(t.tx == u.tx, a, b).get_node()), "condition")
 
     def test_the_result_type_depends_on_the_data(self):
         # CR-17, written into decision X1: one plug gives a bool, two a Plug
         t, u = self.t, self.u
         same, other = t.tx == t.tx, t.tx == u.tx
         self.assertIs(same, True)
-        self.assertEqual(cmds.nodeType(other.node), "equal")
+        self.assertEqual(cmds.nodeType(other.get_node()), "equal")
         with self.assertRaises(AttributeError):
             same.node
         # `>>` connects neither (a plug is connected with `destination << source`)
@@ -1446,7 +1446,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         """`plug` is a Plug of `node`'s attr `name`, owned by the node object, in
         the state the node's own attribute access (``node.<name>``) builds."""
         self.assertIs(type(plug), Plug)
-        self.assertIs(plug.node, node)
+        self.assertIs(plug.get_node(), node)
         self.assertIs(vars(plug)["_node"], node)
         # re-pinned (round 5 NW6, F17): an owned plug holds its owner's handle
         # (it took none of its own)
@@ -1484,7 +1484,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
                 plug = node << spec
                 if name == "rename":
                     # a method wins over the Maya attr in `node.rename`
-                    self.assertIs(plug.node, node)
+                    self.assertIs(plug.get_node(), node)
                     self.assertEqual(plug, node.find_attr("rename"))
                 else:
                     self._assert_owned(plug, node, name)
@@ -1495,11 +1495,11 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         vector = node.vk
         self.assertEqual(str(vector), "held.vk")
         for child in (vector.vkX, vector[1], vector.child(2)):
-            self.assertIs(child.node, node)
+            self.assertIs(child.get_node(), node)
         # a multi spec gives its array root, pre-sized
         array = node.arr
         self.assertEqual(list(array.get_logical_indices()), [0, 1, 2])
-        self.assertIs(array[2].node, node)
+        self.assertIs(array[2].get_node(), node)
 
     def test_an_existing_attr(self):
         node, _ = _owned_spec_scene()
@@ -1538,10 +1538,10 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         self._assert_owned(out, node, "outk")
         self.assertFalse(cmds.addAttr("held.outk", query=True, writable=True))
         notes = node << Note("hello")
-        self.assertIs(notes.node, node)
+        self.assertIs(notes.get_node(), node)
         self.assertEqual(cmds.getAttr("held.notes"), "hello")
         chained = node << Float("ck") << 3.0 << lock
-        self.assertIs(chained.node, node)
+        self.assertIs(chained.get_node(), node)
         self.assertEqual(cmds.getAttr("held.ck"), 3.0)
         self.assertTrue(cmds.getAttr("held.ck", lock=True))
 
@@ -1552,28 +1552,28 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         # a plug built from a name casts its node once, which owns the new plug
         named = Plug("held.tx")
         added = named << Float("pk2")
-        self.assertIs(added.node, named.node)
-        self.assertIs(vars(added)["_node"], named.node)
+        self.assertIs(added.get_node(), named.get_node())
+        self.assertIs(vars(added)["_node"], named.get_node())
         self.assertEqual(str.__str__(added), "held.pk2")
         # an attr of the shape read through its transform: the shape's
         shape_attr = node.localPositionX
         on_shape = shape_attr << Float("lk")
-        self.assertIs(on_shape.node, shape_attr.node)
+        self.assertIs(on_shape.get_node(), shape_attr.get_node())
         self.assertEqual(str(on_shape), "heldShape.lk")
         # a typed Attribute target (spec.apply): its owner too
         typed = node.find_attr("ty")
-        self.assertIs(Float("tk").apply(typed).node, node)
+        self.assertIs(Float("tk").apply(typed).get_node(), node)
         # the clone of plug >> node is owned by the node
         clone = node.pk >> other
-        self.assertIs(clone.node, other)
+        self.assertIs(clone.get_node(), other)
         self.assertEqual(str(clone), "other.pk")
 
     def test_a_list_target(self):
         node, other = _owned_spec_scene()
         added = List([node, other.tx]) << Float("lst")
         self.assertEqual([str(p) for p in added], ["held.lst", "other.lst"])
-        self.assertIs(added[0].node, node)
-        self.assertIs(added[1].node, other)
+        self.assertIs(added[0].get_node(), node)
+        self.assertIs(added[1].get_node(), other)
 
     def test_a_leading_underscore(self):
         node, _ = _owned_spec_scene()
@@ -1582,7 +1582,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         node.__parked__ << 4.0
         self.assertEqual(cmds.getAttr("held.__parked__"), 4.0)
         self.assertEqual(parked.get(), 4.0)
-        self.assertIs(node.__parked__.node, node)
+        self.assertIs(node.__parked__.get_node(), node)
 
     def test_the_string_path(self):
         # a name findPlug does not resolve (an alias of an element, a component
@@ -1625,7 +1625,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         cmds.createNode("transform", name="X", parent="B")
         ax = Node("|A|X")
         plug = ax << Float("k")
-        self.assertIs(plug.node, ax)
+        self.assertIs(plug.get_node(), ax)
         self.assertEqual(str.__str__(plug), "A|X.k")
         self.assertEqual(str(plug), "A|X.k")
         self.assertEqual(cmds.getAttr(plug), 0.0)
@@ -1640,7 +1640,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         with container("box") as box:
             inside = Node.create("transform", name="inside")
             self._assert_owned(inside << Float("ck"), inside, "ck")
-        self.assertIs((box << Float("bk")).node, box)
+        self.assertIs((box << Float("bk")).get_node(), box)
         self.assertEqual(str(box.bk), "box.bk")
 
     def test_an_instanced_target(self):
@@ -1655,7 +1655,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         self.assertEqual(cmds.getAttr(plug), 0.0)
         self.assertEqual(str(s1 << Float("k1")), "T1|S.k1")
         on_plug = s2.v << Float("pk")
-        self.assertIs(on_plug.node, s2)
+        self.assertIs(on_plug.get_node(), s2)
         self.assertEqual(str(on_plug), "T2|S.pk")
         vector = s2 << Vector("iv")
         self.assertEqual(str(vector), "T2|S.iv")
@@ -1665,7 +1665,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         try:
             cmds.parent("|T2|S", removeObject=True, shape=True)
             again = s2 << Float("k2")
-            self.assertIs(again.node, s2)
+            self.assertIs(again.get_node(), s2)
             self.assertEqual(str.__str__(again), f"{s2}.k2")
             self.assertEqual(cmds.getAttr(again), 0.0)
         finally:
@@ -1707,7 +1707,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
             with self.assertRaisesRegex(ValueError, r"held\.undone"):
                 plug.get()
             cmds.redo()
-            self.assertIs(plug.node, node)
+            self.assertIs(plug.get_node(), node)
             self.assertEqual(plug.get(), 0.0)
             plug << 2.0
             self.assertEqual(cmds.getAttr("held.undone"), 2.0)
@@ -1759,7 +1759,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
                     for op in (str, lambda p: p.get(), lambda p: p << 1.0):
                         with self.assertRaisesRegex(RuntimeError, _FREED):
                             op(plug)
-                    self.assertIs(plug.node, node)
+                    self.assertIs(plug.get_node(), node)
                     self.assertFalse(cmds.attributeQuery("k2", node="held", exists=True))
                     self.assertEqual(_new(before), [])
             # a reference unload
@@ -1798,7 +1798,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
         memoize_module._collect_handles(first, handles)
         self.assertEqual(len(handles), 1)
         # re-pinned (round 5 NW6): the node handle is `_objhandle`
-        self.assertEqual(handles[0].hashCode(), vars(first.node)["_objhandle"].hashCode())
+        self.assertEqual(handles[0].hashCode(), vars(first.get_node())["_objhandle"].hashCode())
         self.assertIs(spec_plug(0), first)
         self.assertEqual(len(calls), 1)
         # a new scene frees the node: the entry is dropped, never returned

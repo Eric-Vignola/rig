@@ -115,7 +115,7 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
         identity = _named_dg_identity(attr, None)
         if identity is not None:
             return (identity, _plug_identity_name(attr))
-    node_str = attr.full_name.split(".", 1)[0]  # "node.attr" -> "node"
+    node_str = str(attr).split(".", 1)[0]  # "node.attr" -> "node"
     identity = _named_dg_identity(attr, node_str)
     if identity is None:
         identity = _node_identity(node_str)
@@ -124,7 +124,7 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
 
 def _named_dg_identity(attr: Attribute, node_str: Optional[str]) -> Optional[Tuple[str, int]]:
     """``_node_identity(node_str)`` read from the handle and fn set of the DG
-    node object (``attr``'s owner) ``attr.full_name`` just took ``node_str``
+    node object (``attr``'s owner) ``str(attr)`` just took ``node_str``
     from, or None.
 
     A DG node's name names no other node, so when the live node object's own
@@ -231,7 +231,7 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
                     out.append(handle)
                 return
         try:
-            node_str = obj.full_name.split(".", 1)[0]
+            node_str = str(obj).split(".", 1)[0]
             sel = OpenMaya.MSelectionList()
             sel.add(node_str)
             out.append(OpenMaya.MObjectHandle(sel.getDependNode(0)))
@@ -305,7 +305,7 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
         if not mplug.isDynamic:
             return None
         owner = attr.__dict__["_node"]
-        node  = attr.node if owner is None else owner
+        node  = type(attr).get_node(attr) if owner is None else owner
         if not isinstance(node, DGNode) or not _handle_valid(node.__dict__):
             return None
         mobject = mplug.attribute()

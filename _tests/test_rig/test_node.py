@@ -108,7 +108,7 @@ class TestNodeInjectSpec(MayaTestCase):
         node   = Node.create("transform", name="cube1")
         result = node << Float("blend")
         self.assertIsInstance(result, Plug)
-        self.assertEqual(result.alias, "blend")
+        self.assertEqual(result.get_alias(), "blend")
 
     def test_inject_unsupported_value_raises(self):
         node = Node.create("transform", name="cube1")
@@ -498,19 +498,19 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
         node  = Node(shape)
         for u, v in [(0, 0), (1, 2), (3, 3)]:
             self.assertEqual(
-                node.cv[u, v].name,
-                Plug(f"{shape}.cv[{u}][{v}]").name,
+                node.cv[u, v].get_name(),
+                Plug(f"{shape}.cv[{u}][{v}]").get_name(),
                 msg=f"cv[{u},{v}] storage diverged from Plug path",
             )
-            self.assertIn("controlPoints", node.cv[u, v].name)
+            self.assertIn("controlPoints", node.cv[u, v].get_name())
 
     def test_lattice_element_resolves_to_same_controlpoint_as_plug_path(self):
         shape = self._lattice("lat_resolve", (3, 4, 5))
         node  = Node(shape)
         for s, t, u in [(0, 0, 0), (1, 2, 0), (2, 3, 4)]:
             self.assertEqual(
-                node.pt[s, t, u].name,
-                Plug(f"{shape}.pt[{s}][{t}][{u}]").name,
+                node.pt[s, t, u].get_name(),
+                Plug(f"{shape}.pt[{s}][{t}][{u}]").get_name(),
                 msg=f"pt[{s},{t},{u}] storage diverged from Plug path",
             )
 
@@ -646,7 +646,7 @@ class TestNodeMultiDimComponentIndexing(MayaTestCase):
         # resolution path (_axis_sizes bounds-check + _element) uses new name
         elem = handle[1, 2]
         self.assertEqual(str(elem), f"{renamed}.cv[1][2]")
-        self.assertEqual(elem.name, Plug(f"{renamed}.cv[1][2]").name)
+        self.assertEqual(elem.get_name(), Plug(f"{renamed}.cv[1][2]").get_name())
         # and a write through the held handle drives the renamed shape
         base = cmds.pointPosition(f"{renamed}.cv[1][2]", local=True)
         handle[1, 2] << (4.0, 5.0, 6.0)

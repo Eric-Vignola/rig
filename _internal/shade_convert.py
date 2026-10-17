@@ -362,10 +362,10 @@ def _clone(src_plug: Plug, dst_node: str, name: str, hidden: bool | None = None)
     own ``attributeType`` (a ``float`` stays a ``float``, a ``float3`` a
     ``float3``: the restore gate and the type gate compare exactly), its
     ``hidden`` flag (or the one given) and its keyable state."""
-    src_node = str(src_plug.node)
-    src_attr = src_plug.alias
+    src_node = str(type(src_plug).get_node(src_plug))
+    src_attr = type(src_plug).get_alias(src_plug)
     shape    = _shape(src_attr, node=src_node)
-    spec     = _spec_from_attribute(src_plug, name, bool(src_plug.is_multi))
+    spec     = _spec_from_attribute(src_plug, name, bool(type(src_plug).is_multi(src_plug)))
     if shape is not None and _element_type(shape) in _SCALARS and "dataType" not in spec.kargs:
         spec.kargs["attributeType"] = _element_type(shape)
     if hidden is None:
@@ -386,7 +386,7 @@ def _clone(src_plug: Plug, dst_node: str, name: str, hidden: bool | None = None)
     # refused by Maya, never re-declared
     spec.overwrite        = True
     new_plug              = _cast_node(dst_node) << spec
-    if src_plug.is_multi:
+    if type(src_plug).is_multi(src_plug):
         for index in src_plug.get_logical_indices() or []:
             try:
                 new_plug[index] << src_plug[index].get()

@@ -368,7 +368,7 @@ class TestFillsOneElement(UndoWalk, MayaTestCase):
         cmds.file(new=True, force=True)
         # `is_multi` raises "... already deleted!": not one (its `<<` raises it too)
         with self.assertRaisesRegex(RuntimeError, "already deleted"):
-            freed.is_multi
+            freed.is_multi()
         self.assertIs(types._fills_one_element(freed), False)
 
 

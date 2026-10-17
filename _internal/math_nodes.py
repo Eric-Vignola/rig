@@ -233,7 +233,7 @@ def _plus_minus_average_legacy(
             # broadcasts across the vec3 child).
             if _is_sequence(obj):
                 explicit = False
-                node.input3D[node.input3D.next_index] << obj
+                node.input3D[type(node.input3D).get_next_available_index(node.input3D)] << obj
             else:
                 explicit = explicit and _fills_one_element(obj)
                 if explicit:

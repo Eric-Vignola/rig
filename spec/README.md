@@ -156,9 +156,9 @@ print(repr(plug), plug >> None, cmds.getAttr("ctrl.gain", keyable=True))   # Plu
 ```
 
 The new plug belongs to the node object the spec was applied to:
-`(ctrl << Float("x")).node is ctrl`. A plug on the left works too and
-means its node: `ctrl.tx << Float("y")` adds `y` to `ctrl`, and the new
-plug's `node` is `ctrl`.
+`(ctrl << Float("x")).get_node() is ctrl`. A plug on the left works too
+and means its node: `ctrl.tx << Float("y")` adds `y` to `ctrl`, and the new
+plug's `get_node()` is `ctrl`.
 
 An attribute may take a method's name: `ctrl << Bool("lock")` makes
 `ctrl.lock` its plug, while `ctrl.lock()` is still the method (a bare name
@@ -365,7 +365,7 @@ mix[0] << objA.wm            # matrix
 mix[1] << objA.message       # message
 mix[2] << objA.tx            # a number
 mix[3] << objA.t             # double3, connected whole, never per channel
-print([mix[i].data_type for i in range(4)])          # ['matrix', 'Tdata', 'typed', 'double3']
+print([mix[i].get_data_type() for i in range(4)])    # ['matrix', 'Tdata', 'typed', 'double3']
 print(mix[3].get_inputs(), mix[2] >> None)           # List([Plug("objA.translate")]) 1.0
 ```
 
@@ -405,7 +405,7 @@ try:
 except TypeError as e:
     print(str(e)[:73])                               # 'nodeA.mixedInputArray[5]' is a typed attribute that holds any data: it
 mix[3] << None                                       # disconnected, and the double3 dropped
-print(mix[3].data_type, len(mix >> None))            # Tdata 5
+print(mix[3].get_data_type(), len(mix >> None))      # Tdata 5
 ```
 
 ### Leading underscores are fine
@@ -445,7 +445,7 @@ print(repr(parked), ctrl.__parked__ >> None)   # Plug("ctrl.__parked__") 3.5
   field's value or its name (`<< "auto"`): the exact name first, then the
   one field that matches with case, spaces, `_` and a `-` between letters
   ignored. Any other string is a `TypeError` that lists the fields, before
-  anything is set. `plug.enums` lists the names.
+  anything is set. `plug.get_enums()` lists the names.
 - **Modifiers return the plug they edited**, so they can sit anywhere in
   a chain and inside a per-channel list: `ctrl.s << [lock, skip, hide]`.
 - **Every spec name is also at `rig.*`**; `rig.spec.*` is the home.

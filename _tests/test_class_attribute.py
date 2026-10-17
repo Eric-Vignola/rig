@@ -83,15 +83,15 @@ class TestAttributeClass(MayaTestCase):
             attr      = self.node.add_attr(f"test_{typ}_attr", **kwargs)
 
             # property check
-            self.assertTrue(attr.fn_set.hasObj(attr.mobject))
+            self.assertTrue(attr.get_fn_set().hasObj(attr.get_mobject()))
             self.assertEqual(
-                attr.attribute_type, "typed" if data.get("is_dt", False) else typ
+                attr.get_attribute_type(), "typed" if data.get("is_dt", False) else typ
             )
-            self.assertEqual(attr.data_type, data.get("return_type", typ))
-            self.assertEqual(attr.name,      attr_name)
-            self.assertEqual(attr.full_name, f"{self.node}.{attr_name}")
-            self.assertTrue(attr.is_dynamic)
-            self.assertFalse(attr.is_multi)
+            self.assertEqual(attr.get_data_type(), data.get("return_type", typ))
+            self.assertEqual(attr.get_name(),      attr_name)
+            self.assertEqual(attr.get_full_name(), f"{self.node}.{attr_name}")
+            self.assertTrue(attr.is_dynamic())
+            self.assertFalse(attr.is_multi())
 
             # value check
             val = data.get("val")
@@ -122,30 +122,30 @@ class TestAttributeClass(MayaTestCase):
 
         # test on a native attr
         attr = self.node.tx
-        self.assertFalse(attr.is_dynamic)
-        self.assertEqual(attr.node, self.node)
+        self.assertFalse(attr.is_dynamic())
+        self.assertEqual(attr.get_node(), self.node)
 
-        self.assertEqual(attr.alias, attr.name)
+        self.assertEqual(attr.get_alias(), attr.get_name())
         alias      = f"{typ}_alias"
-        attr.alias = f"{typ}_alias"
-        self.assertEqual(attr.alias, f"{typ}_alias")
+        attr.set_alias(f"{typ}_alias")
+        self.assertEqual(attr.get_alias(), f"{typ}_alias")
         self.assertEqual(self.node.find_alias(alias), attr)
-        attr.alias = None
-        self.assertEqual(attr.alias, attr.name)
+        attr.set_alias(None)
+        self.assertEqual(attr.get_alias(), attr.get_name())
         with self.assertRaises(RuntimeError):
             self.node.find_alias(alias)
 
-        self.assertFalse(attr.is_locked)
-        attr.is_locked = True
-        self.assertTrue(attr.is_locked)
+        self.assertFalse(attr.is_locked())
+        attr.lock()
+        self.assertTrue(attr.is_locked())
 
-        self.assertTrue(attr.is_keyable)
-        attr.is_keyable = False
-        self.assertFalse(attr.is_keyable)
+        self.assertTrue(attr.is_keyable())
+        attr.set_keyable(False)
+        self.assertFalse(attr.is_keyable())
 
-        self.assertEqual(attr.default_value, 0)
+        self.assertEqual(attr.get_default_value(), 0)
         with self.assertRaises(RuntimeError):
-            attr.default_value = 1
+            attr.set_default_value(1)
 
     def test_compound_attr(self):
         num_c     = 3
@@ -160,17 +160,17 @@ class TestAttributeClass(MayaTestCase):
         c_attr = self.node.c0
         self.assertEqual(c_attr.get_parent(), attr)
         self.assertEqual(attr.c0,             c_attr)
-        self.assertEqual(attr.num_children,   num_c)
+        self.assertEqual(attr.get_num_children(),   num_c)
 
     def test_array_attr(self):
         attr_name = "test_array"
         attr      = self.node.add_attr(attr_name, attributeType="double", multi=True)
-        self.assertEqual(attr.default_value, 0)
-        self.assertTrue(attr.is_multi)
+        self.assertEqual(attr.get_default_value(), 0)
+        self.assertTrue(attr.is_multi())
         attr[1].set(1)
         attr[4].set(4)
         self.assert_list_equal(attr.get_logical_indices(), [1, 4])
-        self.assertEqual(attr.num_elements, 2)
+        self.assertEqual(attr.get_num_elements(), 2)
 
     def test_typed_attr(self):
         attr_name = "test_typed"
@@ -196,35 +196,35 @@ class TestAttributeClass(MayaTestCase):
         attr1 = self.node.find_attr("tx")
         attr2 = self.node.find_attr("ty")
         for attr in (attr1, attr2):
-            self.assertFalse(attr.is_connected)
-            self.assertTrue(attr.is_free_to_change)
+            self.assertFalse(attr.is_connected())
+            self.assertTrue(attr.is_free_to_change())
 
         attr1 >> attr2
-        self.assertTrue(attr1.is_connected)
-        self.assertTrue(attr1.is_free_to_change)
-        self.assertTrue(attr2.is_connected)
-        self.assertFalse(attr2.is_free_to_change)
+        self.assertTrue(attr1.is_connected())
+        self.assertTrue(attr1.is_free_to_change())
+        self.assertTrue(attr2.is_connected())
+        self.assertFalse(attr2.is_free_to_change())
 
         self.assertEqual(attr1.get_connected_attrs(src=False, dst=True), [attr2])
         self.assertEqual(attr2.get_connected_attrs(src=True, dst=False), [attr1])
 
         attr1 // attr2
         for attr in (attr1, attr2):
-            self.assertFalse(attr.is_connected)
-            self.assertTrue(attr.is_free_to_change)
+            self.assertFalse(attr.is_connected())
+            self.assertTrue(attr.is_free_to_change())
 
         attr1 >> attr2
         attr3 = self.node.find_attr("tz")
         with self.assertRaises(RuntimeError):
             attr3.connect(attr2)
         attr3.connect(attr2, force=True)
-        self.assertFalse(attr1.is_connected)
-        self.assertTrue(attr2.is_connected)
-        self.assertTrue(attr3.is_connected)
+        self.assertFalse(attr1.is_connected())
+        self.assertTrue(attr2.is_connected())
+        self.assertTrue(attr3.is_connected())
 
         attr3.break_connections()
         for attr in (attr1, attr2, attr3):
-            self.assertFalse(attr.is_connected)
+            self.assertFalse(attr.is_connected())
 
     def test_set_attrs(self):
         xform = Node(cmds.polyCube(ch=False)[0])
@@ -262,7 +262,7 @@ class TestAttributeClass(MayaTestCase):
         self.assertEqual(obj.pnts[0]._component_type, "kMeshVertComponent")
         self.assertEqual(len(obj.pnts[:]),            8)  # 8
         self.assertEqual(
-            obj.pnts[:], [item.node.pnts[i] for i, item in enumerate(obj.pnts[:])]
+            obj.pnts[:], [item.get_node().pnts[i] for i, item in enumerate(obj.pnts[:])]
         )
 
         # test nurbs curve, surf and lattice (all use "cp")
@@ -290,7 +290,7 @@ class TestAttributeClass(MayaTestCase):
             self.assertEqual(obj.cp[0]._component_type, att_type[i])
             self.assertEqual(len(obj.cp[:]),            counts[i])
             self.assertEqual(
-                obj.cp[:], [item.node.cp[i] for i, item in enumerate(obj.cp[:])]
+                obj.cp[:], [item.get_node().cp[i] for i, item in enumerate(obj.cp[:])]
             )
 
 

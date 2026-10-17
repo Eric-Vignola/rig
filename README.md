@@ -226,8 +226,8 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   one plug read through two instance paths is one key, and a lookup
   builds nothing). An ordering result (`<`, `>=`...) has no truth value:
   `if plug > 0:` and `sorted(plugs)` are a `TypeError`.
-- **A plug belongs to the node you read it from.** `node.tx.node is
-  node`. An instanced node names its plugs through the path you took
+- **A plug belongs to the node you read it from.** `node.tx.get_node()
+  is node`. An instanced node names its plugs through the path you took
   (`Node("|T2|S").v` is `T2|S.visibility`, and its `worldMatrix` is T2's
   element). A handle never falls back to a name: once its node is deleted,
   or freed by a new scene, a file open or a reference unload, it raises

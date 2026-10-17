@@ -792,12 +792,8 @@ class _ContainerStack:
         # Attribute (which costs ~50us per call AND fails on component
         # plugs via TypeError("item is not a plug")).
         try:
-            if isinstance(dst, str):
-                dst_name = dst
-            elif hasattr(dst, "full_name"):
-                dst_name = dst.full_name
-            else:
-                dst_name = str(dst)
+            # a plug is a str (its name); anything else is named by str()
+            dst_name = dst if isinstance(dst, str) else str(dst)
         except Exception:
             return
 
@@ -875,7 +871,7 @@ class _ContainerStack:
         if leaf is None:
             return False
         try:
-            owning_node = attr.node.name
+            owning_node = type(attr).get_node(attr).name
         except Exception:
             return False
         try:
@@ -1685,7 +1681,7 @@ def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -
     if add_attr_kwargs.get("multi"):
         return source
     try:
-        if source.is_multi and source.data_type == "matrix":
+        if type(source).is_multi(source) and type(source).get_data_type(source) == "matrix":
             index = _path_instance_number(source)
             return source[0 if index is None else index]
     except (AttributeError, RuntimeError, TypeError, IndexError):
@@ -1921,7 +1917,7 @@ def _is_container_member(container_node, plug) -> bool:
     attributes-node path instead of bound directly.
     """
     try:
-        owner = plug.node.name
+        owner = type(plug).get_node(plug).name
     except Exception:
         return False
     return _is_direct_member(str(container_node), owner)
@@ -1983,7 +1979,7 @@ def _same_node(name_a: str, name_b: str) -> bool:
 def _plug_is_multi(plug) -> bool:
     """True iff ``plug`` is a multi / array attribute (robust to bare plugs)."""
     try:
-        return bool(plug.is_multi)
+        return bool(type(plug).is_multi(plug))
     except (AttributeError, RuntimeError):
         return False
 
@@ -2243,7 +2239,7 @@ def _publish_to_container(
     return plug
 
 
-# Maps an Attribute.data_type string to addAttr kwargs that will
+# Maps an Attribute.get_data_type string to addAttr kwargs that will
 # create a matching attribute via ``cmds.addAttr``. Used by the
 # external-source form of ``publish_input`` when cloning the source
 # plug's spec is overridden by user kwargs.
@@ -2349,13 +2345,13 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
     # ``{"dt": "string"}``.
     if isinstance(source, Attribute):
         try:
-            dt = source.data_type
+            dt = type(source).get_data_type(source)
         except Exception:
             return {"at": "double"}
         spec = dict(_DATA_TYPE_TO_ADDATTR.get(dt, {"at": "double"}))
         # If the source is itself a multi, mirror that.
         try:
-            if source.is_multi:
+            if type(source).is_multi(source):
                 spec["multi"] = True
         except (AttributeError, RuntimeError):
             pass
@@ -2371,7 +2367,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
         first_attr_elem = None
     if first_attr_elem is not None:
         try:
-            dt = first_attr_elem.data_type
+            dt = type(first_attr_elem).get_data_type(first_attr_elem)
         except Exception:
             dt = "double"
         # v4.R: 3- or 4-element scalar List -> compound vec3/vec4
@@ -2393,7 +2389,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
         }
         compound_at = _COMPOUND_FROM_SCALAR.get((dt, n_elems))
         if compound_at and all(
-            isinstance(x, Attribute) and getattr(x, "data_type", None) == dt
+            isinstance(x, Attribute) and type(x).get_data_type(x) == dt
             for x in source
         ):
             return {"at": compound_at}
