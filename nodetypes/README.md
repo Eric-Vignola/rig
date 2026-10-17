@@ -127,7 +127,7 @@ from rig.nodetypes.plugins import load_plugin
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
 | `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete`, `remove(x)` (the DSL's `x << -layer`); the DSL's `Layer` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `get_namespace`, `get_file_path(copy_number=False)`, `get_nodes`, `delete` |
-| `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `data_type` of both follows the wiring and the selector |
+| `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `get_data_type()` of both follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
 | `AnimCurve` | any animation curve (the abstract `animCurve`), and the types with no class below (a driven key's `animCurveU*`) | `AnimCurve.of(x)` (the curves driving a plug, a node, a `List`), `get_keys` / `set_keys`, `get_num_keys`, `evaluate`; called with values, `AnimCurve([...])` makes the keys `plug << ...` takes (a value, not a node); `create` / `define` are refused (abstract) |
 | `AnimCurveTL`, `AnimCurveTA`, `AnimCurveTU`, `AnimCurveTT` | exactly `animCurveTL`, `animCurveTA`, `animCurveTU`, `animCurveTT` | everything `AnimCurve` has; `create(keys, ...)` / `define(name, keys, ...)`; called with values a `TypeError` naming `AnimCurve([...])` |
@@ -163,6 +163,16 @@ operators and its `get()` differ. The two spellings of one plug are equal
 and one dict or set key, and the typed methods hand back `Attribute`s
 (`list_attr`, `list_connections(plugs=True)`). `Node(plug)` is the node the
 plug was read from.
+
+Both spellings follow one rule for a name: **a bare name is the Maya
+attribute if one exists, otherwise the method; with brackets it is the
+method.** Every public member of a node or plug class is a method, so
+`node.get_name()` (or `str(node)`), `plug.get_node()` and `node.is_valid()`
+are how you ask, and a Maya attribute is never hidden. The objects these
+classes hand back that point into the scene follow it too: `Components`
+(`faces.get_indices()`) and a `ColorSet` (`cset.get_data()`) read through
+methods. The cgmath data that `serialize()` returns is a value: its fields
+are attributes (`data.name`, `data.node_type`).
 
 ### Three verbs: refer, define, create
 

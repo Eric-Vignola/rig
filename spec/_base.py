@@ -582,7 +582,7 @@ class _AttrSpec:
         kargs.pop("dv", None)
         if multi:
             kargs["multi"] = True
-        # DGNode.add_attr is rename-safe and uses self.name internally.
+        # DGNode.add_attr is rename-safe: it names its node through str(self).
         long_name = kargs.pop("longName")
         wrap_node.add_attr(long_name, **kargs)
 

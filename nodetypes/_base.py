@@ -1595,7 +1595,7 @@ def _new_attr(
 
 
 def _attr_mobject(attr: Any) -> OpenMaya.MObject:
-    """`attr.mobject` (cached on `attr`) without its owner check, for a caller that
+    """`attr.get_mobject()` (cached on `attr`) without its owner check, for a caller that
     made one: the attribute of a dynamic attr is freed with its node."""
     d       = attr.__dict__
     mobject = d["_mobject"]
@@ -2475,7 +2475,7 @@ def _names_own_plug(attr: Any) -> bool:
             return False
         # the owner's path, valid once the attr was named: a stale path (its
         # instance removed while the node lives on in another) is re-resolved by
-        # DAGNode.name; an invalid one would name the node "". Kept as a guard.
+        # the DAG node's naming (str(node)); an invalid one would name the node "". Kept as a guard.
         path = None
         if dag:
             path = _naming_dag_path(attr)

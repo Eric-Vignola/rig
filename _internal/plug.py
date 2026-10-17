@@ -165,7 +165,7 @@ _GET_DATA_TYPE        = Attribute.get_data_type
 # An attribute name Maya keeps: what ``plug >> "name"`` clones under.
 _ATTR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
-# The rig._internal modules the hot ``<<`` / ``Plug.node`` paths use; see
+# The rig._internal modules the hot ``<<`` / ``Plug.get_node()`` paths use; see
 # :func:`_lazy`.
 _LAZY_MODULES: SimpleNamespace | None = None
 
@@ -758,7 +758,7 @@ class Plug(Attribute):
         opaque types pass through unchanged.
 
         For the raw ``cmds.getAttr`` shape, call
-        ``cmds.getAttr(self.full_name)`` directly.
+        ``cmds.getAttr(str(self))`` directly.
 
         The multi root of a typed attribute that holds any data (a ``Typed``
         multi, ``choice.input``) gives a list, one value per element in index
@@ -1555,7 +1555,7 @@ class ComponentPlug(Plug):
       (``pt[0][1]`` would be ``pt[0][0][1]``, not the ``s=0, t=1`` line).
       Write ``pt[0, t, u]`` for one point or ``pt[0, :, :]`` for the slab.
 
-    Element plugs *display* (``str`` / ``repr`` / :attr:`full_name`) in the
+    Element plugs *display* (``str`` / ``repr`` / :meth:`get_full_name`) in the
     component form ``cv[u][v]`` / ``pt[s][t][u]`` -- both valid Maya component
     strings -- while their underlying :class:`MPlug` is the real flat
     ``controlPoints[k]`` storage, so set / connect / get operate normally. Flat
@@ -1720,10 +1720,10 @@ class ComponentPlug(Plug):
         The underlying MPlug is the flat ``controlPoints[k]`` (via the proven
         component-translation path); the plug *displays* in ``cv[u][v]`` form.
 
-        The node name is read from the *live* MPlug (:attr:`node`) at call
+        The node name is read from the *live* MPlug (:meth:`get_node`) at call
         time -- never from the cached ``_comp_node`` -- so a handle held across
         a rename still resolves (MObjectHandle-based identity, the same source
-        :attr:`full_name` uses).
+        :meth:`get_full_name` uses).
         """
         node_name = str(type(self).get_node(self))
         name      = f"{node_name}.{self._comp_alias}" + "".join(f"[{c}]" for c in coords)
@@ -1731,7 +1731,7 @@ class ComponentPlug(Plug):
         element   = _component_plug(
             mplug, node_name, self._comp_alias, self._comp_ndims, coords, None
         )
-        # owned by the node object the handle holds (``self.node`` bound it),
+        # owned by the node object the handle holds (``self.get_node()`` bound it),
         # with its handle
         element.__dict__["_node"]   = self.__dict__["_node"]
         element.__dict__["_handle"] = self.__dict__["_handle"]
