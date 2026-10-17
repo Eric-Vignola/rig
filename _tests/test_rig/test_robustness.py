@@ -965,6 +965,9 @@ class TestDeletedElementsFollowUps(MayaTestCase):
             ctls.remove(gone)
         warn.assert_not_called()
         self.assertEqual([str(x) for x in ctls], ["c0", "c2"])
+        # not there: ValueError, as list.remove gives (its repr, marked)
+        with self.assertRaisesRegex(ValueError, r'^Transform\("c1", deleted\) is not in List$'):
+            ctls.remove(gone)
 
     def test_nested_lists_and_hash(self):
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
@@ -978,6 +981,19 @@ class TestDeletedElementsFollowUps(MayaTestCase):
         self.assertEqual(sorted(cmds.editDisplayLayerMembers("L", query=True)), ["c1", "c2"])
         self.assertIsInstance(hash(List([a, b])), int)
         self.assertEqual(len({List([a, b]): 1}), 1)
+
+    def test_membership_skips_a_plug_of_a_freed_node(self):
+        # the membership fold meets the freed element before reading it: the
+        # List rule's skip, as for a node deleted to the undo queue
+        names = [cmds.createNode("transform", name=f"c{i}") for i in range(2)]
+        layer = Layer.define("L")
+        Node("c1") << layer
+        plugs = List([Node("c0").tx, Node("c1").tx])
+        cmds.delete("c0")
+        cmds.flushUndo()  # c0 is freed
+        with mock.patch.object(cmds, "warning") as warn:
+            self.assertIs(plugs in layer, True)
+        warn.assert_called_once_with("List element [0] c0.translateX was deleted; skipped")
 
     def test_a_components_on_a_deleted_shape_is_skipped(self):
         cmds.polyCube(name="c1", ch=False)

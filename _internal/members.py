@@ -580,11 +580,6 @@ class Components:
             shown = f"{shown} ... (+{more} more)"
         return f"{path}.{shown}"
 
-    def _gone(self) -> bool:
-        """True if its shape was deleted to the undo queue or freed (the List
-        rule skips it, `rig._internal.list._gone`)."""
-        return _is_deleted_node(self._shape)
-
     def _gone_name(self) -> str:
         """What a List's skip warning names it by, without reading the shape."""
         return self._shown(_deleted_name(self._shape))
@@ -852,10 +847,14 @@ class _Normaliser:
             # (see `_inherit_owner`), checked once; a dynamic attr's every time.
             d = item.__dict__
             if d.get("_handle") is not checked or d.get("_attrh") is not None:
+                if self.from_list:
+                    # a plug of a node deleted to the undo queue or freed: the
+                    # List skips it (its handle only is read, safe once freed)
+                    handle = d.get("_handle")
+                    if handle is not None and not handle.isValid():
+                        raise _Gone
                 _ensure_owner_alive(item)
                 checked = d.get("_handle")
-                if self.from_list and checked is not None and not checked.isValid():
-                    raise _Gone  # a plug of a node deleted to the undo queue
             mplug = item._mplug
             node  = mplug.node()
             if last_node is None or node != last_node:

@@ -1053,7 +1053,8 @@ class List(list):
         for i in range(start, min(stop, length)):
             if items[i] is not _NO_MATCH and match(items[i]):
                 return i
-        raise ValueError(f"{value!r} is not in List")
+        # (a deleted probe shows marked, as a user reads it: its repr raises here)
+        raise ValueError(f"{_user_view(repr, value)} is not in List")
 
     def count(self, value: Any) -> int:
         if _gone(value):
