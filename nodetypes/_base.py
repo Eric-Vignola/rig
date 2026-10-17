@@ -3019,7 +3019,10 @@ class Attribute(str):
 
     def get_attribute_type(self) -> str:
         """Returns the type of this attribute."""
-        return cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self).name, attributeType=True)
+        cls = type(self)
+        return cmds.attributeQuery(
+            cls.get_name(self), node=cls.get_node(self).name, attributeType=True
+        )
 
     def get_data_type(self) -> str:
         """Returns the data type of the value hosted by this attribute."""
@@ -3173,8 +3176,10 @@ class Attribute(str):
 
     def get_categories(self) -> list[str]:
         """Returns a list of categories this attribute belongs to."""
+        cls = type(self)
         return (
-            cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self).name, categories=True) or []
+            cmds.attributeQuery(cls.get_name(self), node=cls.get_node(self).name, categories=True)
+            or []
         )
 
     def has_category(self, category: str | list[str]) -> bool:
