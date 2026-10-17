@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from maya import cmds
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dg_node import DGNode
 
@@ -52,7 +52,7 @@ class Reference(DGNode):
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         refs = set(cmds.ls(type="reference"))
-        cmds_edit.file(file_path.as_posix(), reference=True, namespace=namespace)
+        _cmds_edit.file(file_path.as_posix(), reference=True, namespace=namespace)
         return (set(cmds.ls(type="reference")) - refs).pop()
 
     @classmethod
@@ -86,4 +86,4 @@ class Reference(DGNode):
 
     def delete(self) -> None:
         """Deletes this reference."""
-        cmds_edit.file(type(self).get_file_path(self, copy_number=True), removeReference=True)
+        _cmds_edit.file(type(self).get_file_path(self, copy_number=True), removeReference=True)

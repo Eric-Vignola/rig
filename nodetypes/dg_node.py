@@ -8,7 +8,15 @@ from typing import Any, Sequence
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import barrier, cmds_edit, one_step, outside, rig_code, statement, user_call
+from rig._internal.journal import (
+    barrier as _barrier,
+    cmds_edit as _cmds_edit,
+    one_step as _one_step,
+    outside as _outside,
+    rig_code as _rig_code,
+    statement as _statement,
+    user_call as _user_call,
+)
 from rig.nodetypes._base import (
     _MISSING,
     _as_method_plug,
@@ -205,8 +213,8 @@ def _create_template(cls, args, kwargs):
     the call made before its error propagates: nothing half-built is left."""
     attrs = kwargs.pop(_CREATE_ATTRS, None)
     if not attrs:
-        new_node = user_call(cls._create, *args, **kwargs)
-        return user_call(cls.post_create, new_node, *args, **kwargs)
+        new_node = _user_call(cls._create, *args, **kwargs)
+        return _user_call(cls.post_create, new_node, *args, **kwargs)
     hook = _define_hook()
     with hook.chunk("rig.create"):
         node, _ = hook.track(_create_with_attrs, (cls, args, kwargs, attrs), {}, discard=True)
@@ -235,10 +243,10 @@ def _set_or_delete(node: Any, attrs: dict) -> None:
     try:
         for attr, value in attrs.items():
             getattr(node, attr) << value
-        barrier()  # the values journaled: a registration that fails deletes the node too
+        _barrier()  # the values journaled: a registration that fails deletes the node too
     except BaseException:
         try:
-            cmds_edit.delete(type(node).get_long_name(node))
+            _cmds_edit.delete(type(node).get_long_name(node))
         except (RuntimeError, ValueError):
             pass
         raise
@@ -246,8 +254,8 @@ def _set_or_delete(node: Any, attrs: dict) -> None:
 
 def _create_with_attrs(cls, args, kwargs, attrs):
     """`_create_template`'s create, then the attribute values."""
-    new_node = user_call(cls._create, *args, **kwargs)
-    node     = user_call(cls.post_create, new_node, *args, **kwargs)
+    new_node = _user_call(cls._create, *args, **kwargs)
+    node     = _user_call(cls.post_create, new_node, *args, **kwargs)
     for attr, value in attrs.items():
         getattr(node, attr) << value
     return node
@@ -568,7 +576,7 @@ def _define(
             # member: deleting it deletes the container
             alive = [n for n in created if cmds.objExists(n) and cmds.nodeType(n) != "hyperLayout"]
             if alive:
-                cmds_edit.delete(alive)
+                _cmds_edit.delete(alive)
             raise NodeTypeError(
                 name, label, label,
                 message=(
@@ -657,17 +665,17 @@ def _typed_creator(fn):
     name_index = params.index("name") if "name" in params else None
 
     def run(cls, args, kwargs):
-        return user_call(fn, cls, *args, **kwargs)
+        return _user_call(fn, cls, *args, **kwargs)
 
     @functools.wraps(fn)
     def creator(cls, *args, **kwargs):
         hook = _TYPED_CREATE_HOOK
         if hook is None:
             kwargs.pop("container", None)
-            return user_call(fn, cls, *args, **kwargs)
+            return _user_call(fn, cls, *args, **kwargs)
         return hook(cls, run, args, kwargs, name_index)
 
-    return statement(creator)
+    return _statement(creator)
 
 
 # the file methods a transform has not (its shape and its branch have them), named by
@@ -1078,7 +1086,7 @@ class DGNode(Node):
             return plug
         return _named_through_owner(plug)
 
-    @statement
+    @_statement
     def __setattr__(self, name: str, value: Any) -> None:
         """``node.tx = 5`` is sugar for ``node.tx << 5``.
 
@@ -1130,10 +1138,10 @@ class DGNode(Node):
                 # raises, a private class default is shadowed on the instance;
                 # a setter that is not rig's own is code a user wrote
                 # (journal.outside)
-                if rig_code(found.fset if isinstance(found, property) else type(found)):
+                if _rig_code(found.fset if isinstance(found, property) else type(found)):
                     object.__setattr__(self, name, value)
                 else:
-                    with outside():
+                    with _outside():
                         object.__setattr__(self, name, value)
                 return
             # a public member that is no plug method: a callable a class
@@ -1166,7 +1174,7 @@ class DGNode(Node):
 
     # --- DSL operators
 
-    @statement
+    @_statement
     def __lshift__(self, other: Any) -> Any:
         """``node << X`` -- inject: a membership node (a layer, a shader, an
         engine) or ``Tag`` makes the node a member, an
@@ -1174,7 +1182,7 @@ class DGNode(Node):
         its channels. See :func:`rig._internal.node._node_lshift`."""
         return (_DSL_NODE or _dsl_node())._node_lshift(self, other)
 
-    @statement
+    @_statement
     def __rshift__(self, other: Any) -> Any:
         """``node >> None`` returns the node itself (a no-op: the node already is
         the typed node); ``node >> spec`` declares an output attribute and
@@ -1281,7 +1289,7 @@ class DGNode(Node):
         new_name = str(new_name)
         if type(self).get_short_name(self) != new_name:
             self._refuse_if_locked("rename")
-            cmds_edit.rename(str(self), new_name)
+            _cmds_edit.rename(str(self), new_name)
 
     # --- lockNode
 
@@ -1306,7 +1314,7 @@ class DGNode(Node):
             why = _node_lock_refusal(fn, str(self), True)
             if why:
                 raise _injection_error(why)
-            cmds_edit.lockNode(str(self), lock=True)
+            _cmds_edit.lockNode(str(self), lock=True)
         return self
 
     def unlock(self) -> "DGNode":
@@ -1322,7 +1330,7 @@ class DGNode(Node):
             why = _node_lock_refusal(fn, str(self), False)
             if why:
                 raise _injection_error(why)
-            cmds_edit.lockNode(str(self), lock=False)
+            _cmds_edit.lockNode(str(self), lock=False)
         return self
 
     def _refuse_if_locked(self, verb: str) -> None:
@@ -1487,7 +1495,7 @@ class DGNode(Node):
         return cmds.createNode(cls.NATIVE_NODE_TYPE, name=name, skipSelect=skip)
 
     @classmethod
-    @statement
+    @_statement
     def create(
         cls,
         *inputs:   Any,
@@ -1589,7 +1597,7 @@ class DGNode(Node):
         return hook(cls, _create_template, inputs, kwargs)
 
     @classmethod
-    @statement
+    @_statement
     def define(
         cls,
         name:      str,
@@ -1679,7 +1687,7 @@ class DGNode(Node):
             return found if isinstance(found, cls) else cls._coerce(found)
 
         def make(made_name, parent_node):
-            return user_call(
+            return _user_call(
                 cls.create, name=made_name, parent=parent_node, container=container, **kwargs, **attrs
             )
 
@@ -1701,7 +1709,7 @@ class DGNode(Node):
     def duplicate(self, *args, **kwargs) -> list[DGNode]:
         """Thin wrapper around `cmds.duplicate()`."""
         old_nodes = set(cmds.ls(dagObjects=True, long=True))
-        cmds_edit.duplicate(str(self), *args, **kwargs)
+        _cmds_edit.duplicate(str(self), *args, **kwargs)
         if kwargs.get("returnRootsOnly", kwargs.get("rr", False)):
             for node in cmds.ls(dagObjects=True, long=True):
                 if node not in old_nodes:
@@ -1719,7 +1727,7 @@ class DGNode(Node):
         one is refused (InjectionError, nothing changed)."""
         if not nodes:
             self._refuse_if_locked("delete")
-        cmds_edit.delete(nodes or str(self), **kwargs)
+        _cmds_edit.delete(nodes or str(self), **kwargs)
 
     # --- namespace
 
@@ -1727,14 +1735,14 @@ class DGNode(Node):
         """Returns the namespace of this node."""
         return type(self).get_fn_set(self).namespace
 
-    @statement
+    @_statement
     def set_namespace(self, namespace: str) -> None:
         """Moves this node to `namespace` (made if missing): one undo step. A
         locked node is refused (InjectionError, nothing changed)."""
         self._refuse_if_locked("rename")
         if not cmds.namespace(exists=namespace):
-            one_step()  # the namespace and the rename: one undo step
-            cmds_edit.namespace(add=namespace)
+            _one_step()  # the namespace and the rename: one undo step
+            _cmds_edit.namespace(add=namespace)
         self.rename(f"{namespace}:{get_clean_name(self._name())}")
 
     # --- attribute methods
@@ -2048,7 +2056,7 @@ class DGNode(Node):
         self._refuse_if_locked(f"add the attribute {long_name!r} to")
 
         # add attribute
-        cmds_edit.addAttr(str(self), **kwargs)
+        _cmds_edit.addAttr(str(self), **kwargs)
 
         # compound attr are not actually created until all child attrs are added
         # there fore quiet is set to True so that find_attr won't fail
@@ -2060,7 +2068,7 @@ class DGNode(Node):
             if isinstance(attr, Attribute):
                 attr = type(attr).get_name(attr)
             self._refuse_if_locked(f"delete the attribute {str(attr)!r} of")
-            cmds_edit.deleteAttr(str(self), attribute=attr)
+            _cmds_edit.deleteAttr(str(self), attribute=attr)
             return True
         return False
 
@@ -2080,9 +2088,9 @@ class DGNode(Node):
                     raise RuntimeError(
                         f"Attribute {old_name} does not belong to {self}"
                     )
-                cmds_edit.renameAttr(str(old_name), new_name)
+                _cmds_edit.renameAttr(str(old_name), new_name)
             else:
-                cmds_edit.renameAttr(f"{self}.{old_name}", new_name)
+                _cmds_edit.renameAttr(f"{self}.{old_name}", new_name)
 
         return self.find_attr(new_name)
 
@@ -2154,7 +2162,7 @@ class DGNode(Node):
         )
         if result:
             for i in range(0, len(result), 2):
-                cmds_edit.disconnectAttr(result[i], result[i + 1])
+                _cmds_edit.disconnectAttr(result[i], result[i + 1])
 
 
 _PLAIN_CREATES.add(DGNode._create.__func__)

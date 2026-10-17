@@ -21,7 +21,7 @@ import numbers
 from typing import Any
 
 from rig._internal.container import container, ContainerOptions
-from rig._internal.journal import user_call
+from rig._internal.journal import user_call as _user_call
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
 from rig._internal.operands import operands
@@ -80,7 +80,7 @@ def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp) -> Any:
         y1 = choice(yp[1 : n + 1], selector=i)
 
         weight = (x - x0) / (x1 - x0)
-        return container.publish_output(user_call(method, y0, y1, weight=weight), "output")
+        return container.publish_output(_user_call(method, y0, y1, weight=weight), "output")
 
 
 # --------------------------------------------------------------------- #

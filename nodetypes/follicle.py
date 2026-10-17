@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 from maya import cmds
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _typed_creator
 from rig.nodetypes.transform import Transform
@@ -121,12 +121,12 @@ class Follicle(DAGNode):
 
         if maintain_offset is False:
             outPos = cmds.getAttr(f"{self}.outTranslate")
-            cmds_edit.setAttr(f"{constrainee}.translate", *outPos[0])
+            _cmds_edit.setAttr(f"{constrainee}.translate", *outPos[0])
         # cmds.setAttr(follicle+".simulationMethod", 0)
         if translation:
-            cmds_edit.pointConstraint(parent, constrainee, mo=True)
+            _cmds_edit.pointConstraint(parent, constrainee, mo=True)
         if rotation:
-            cmds_edit.orientConstraint(parent, constrainee, mo=True)
+            _cmds_edit.orientConstraint(parent, constrainee, mo=True)
 
     def set_uv_values(self, uv: list[float]) -> None:
         """Sets the uv values of this follicle."""

@@ -59,7 +59,8 @@ class _FoldingTestBase(MayaTestCase):
         self._saved_folding = ContainerOptions.constant_folding
 
     def tearDown(self):
-        ContainerOptions.constant_folding = self._saved_folding
+        # re-pinned (user decision 2026-10-16, ContainerOptions is read-only): set_options
+        set_options(constant_folding=self._saved_folding)
         super().tearDown()
 
 

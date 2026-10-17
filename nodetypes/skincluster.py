@@ -12,7 +12,7 @@ from typing import Callable, List, Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
-from rig._internal.journal import cmds_edit, statement
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import _cast
@@ -212,15 +212,15 @@ class SkinCluster(Deformer):
             # mesh that drives it (listHistory reaches them too)
             skin = [str(s) for s in _skinclusters_of(_cast(geom))]
             if skin:
-                cmds_edit.delete(skin)
+                _cmds_edit.delete(skin)
 
             # make the skincluster
-            name = cmds_edit.skinCluster(influences, geom, **kwargs)[0]
+            name = _cmds_edit.skinCluster(influences, geom, **kwargs)[0]
 
             # weights columns already align with skin_data.influences (creation
             # preserves order), so set them directly without serialize/conform
             if skin_data is not None:
-                SetSkinWeightsCommand(cls._wrap(name), skin_data.weights)
+                _SetSkinWeightsCommand(cls._wrap(name), skin_data.weights)
 
         return name
 
@@ -281,13 +281,13 @@ class SkinCluster(Deformer):
         # pickers that track selection order read the last one.
         ordered = cmds.ls(orderedSelection=True, long=True) or []
         try:
-            cmds_edit.skinCluster(str(self), edit=True, addInfluence=infs, wt=0.0)
+            _cmds_edit.skinCluster(str(self), edit=True, addInfluence=infs, wt=0.0)
         finally:
             if ordered:
-                cmds_edit.select(ordered[:-1], replace=True)
-                cmds_edit.select(ordered[-1], add=True)
+                _cmds_edit.select(ordered[:-1], replace=True)
+                _cmds_edit.select(ordered[-1], add=True)
             else:
-                cmds_edit.select(clear=True)
+                _cmds_edit.select(clear=True)
 
     def remove_influence_objects(self, infs: INF_TYPE) -> None:
         """Removes influence objects from this skincluster.
@@ -295,7 +295,7 @@ class SkinCluster(Deformer):
         Args:
             infs: A list of influence object names.
         """
-        cmds_edit.skinCluster(str(self), edit=True, removeInfluence=infs)
+        _cmds_edit.skinCluster(str(self), edit=True, removeInfluence=infs)
 
     def set_influence_objects(self, infs: INF_TYPE) -> None:
         """Sets the influence objects of this skincluster.
@@ -358,7 +358,7 @@ class SkinCluster(Deformer):
         from cgmath.geometry import SkinData
 
         if not isinstance(data, SkinData):
-            SetSkinWeightsCommand(self, data, indices=indices)
+            _SetSkinWeightsCommand(self, data, indices=indices)
             return
 
         # make sure incoming data has long inf names,
@@ -387,7 +387,7 @@ class SkinCluster(Deformer):
                 self.add_influence_objects(to_add)
 
             # apply weights
-            SetSkinWeightsCommand(self, new_data.weights, indices=indices)
+            _SetSkinWeightsCommand(self, new_data.weights, indices=indices)
 
             # remove excessive influences that might be introduced by conforming
             if not additive:
@@ -429,20 +429,20 @@ class SkinCluster(Deformer):
 
         skin   = skins[0]
         joints = cmds.skinCluster(skin, query=True, influence=True)
-        cmds_edit.setAttr(skin + ".envelope", 0)
-        cmds_edit.skinCluster(skin, edit=True, unbindKeepHistory=True)
+        _cmds_edit.setAttr(skin + ".envelope", 0)
+        _cmds_edit.skinCluster(skin, edit=True, unbindKeepHistory=True)
 
         # delete bindPose
         dagPose = cmds.dagPose(transform, query=True, bindPose=True)
         if dagPose:
-            cmds_edit.delete(dagPose)
+            _cmds_edit.delete(dagPose)
         dagPose = cmds.listConnections(skin + ".bindPose", d=False, type="dagPose")
         if dagPose:
-            cmds_edit.delete(dagPose)
+            _cmds_edit.delete(dagPose)
 
         # rebind
-        cmds_edit.skinCluster(joints, shape, toSelectedBones=True)
-        cmds_edit.setAttr(skin + ".envelope", 1)
+        _cmds_edit.skinCluster(joints, shape, toSelectedBones=True)
+        _cmds_edit.setAttr(skin + ".envelope", 1)
 
     def get_mesh(self) -> Mesh:
         """Returns the mesh this skincluster is attached to."""
@@ -601,7 +601,7 @@ class SkinCluster(Deformer):
         self.serialize(full_path=full_path, optimize=optimize).save(path)
         return path
 
-    @statement
+    @_statement
     def _load_new(cls, skin, geometry, **kwargs):
         from cgmath.geometry import SkinData
 
@@ -610,7 +610,7 @@ class SkinCluster(Deformer):
         with _undo_chunk("rig.SkinCluster.load"), _files.kept_selection():
             return cls.create(geometry, data, **kwargs)
 
-    @statement
+    @_statement
     def _load_into(self, skin, *args, **kwargs):
         from cgmath.geometry import SkinData
 
@@ -730,7 +730,7 @@ def _weight_components(
     return type(geom).get_mdagpath(geom), comps, OpenMaya.MFnComponent(comps).elementCount
 
 
-class SetSkinWeightsCommand:
+class _SetSkinWeightsCommand:
     """
     A set skin weights command with undo/redo support: one undo step (rig's
     plug-in command). Raises ValueError, before any edit, when the weights are

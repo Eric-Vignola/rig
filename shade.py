@@ -112,7 +112,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes import material_node as _material_node
 from rig.nodetypes.material_node import (
     _own_type,
@@ -134,8 +134,9 @@ from rig._internal.members import (
     _never_held,
     _render_tokens,
     _Selection,
+    _token_miss,
     Components,
-    normalise,
+    normalise as _normalise,
 )
 from rig._internal.node import Node
 from rig._internal.plug import Plug
@@ -404,17 +405,17 @@ def _make_explicit(path: str) -> None:
         return
     groups = _groups(path)
     if groups.owner is not None:
-        cmds_edit.sets(path, edit=True, remove=groups.owner)
-        cmds_edit.sets(
+        _cmds_edit.sets(path, edit=True, remove=groups.owner)
+        _cmds_edit.sets(
             _face_names(path, np.arange(groups.num_faces)), edit=True,
             forceElement=groups.owner,
         )
         groups = _groups(path)
     for name, source, destination in groups.remainders:
         remainder = _remainder(_groups(path), name)
-        cmds_edit.disconnectAttr(source, destination)
+        _cmds_edit.disconnectAttr(source, destination)
         if remainder.size:
-            cmds_edit.sets(_face_names(path, remainder), edit=True, forceElement=name)
+            _cmds_edit.sets(_face_names(path, remainder), edit=True, forceElement=name)
 
 
 # ---------- The left-hand side --------------------------------------------- #
@@ -453,7 +454,7 @@ def _kind_message(selection: _Selection) -> str:
 
 def _check_kinds(selections: list[_Selection]) -> None:
     for selection in selections:
-        if selection.kind not in _MaterialMember.ACCEPTS:
+        if selection.kind not in _MaterialMember._ACCEPTS:
             raise _NeverHolds(_kind_message(selection))
 
 
@@ -599,12 +600,12 @@ def _remove_members(engine: ShadingEngine, target: _Target) -> None:
     _make_explicit(target.path)
     held = _held(engine, target.path)
     if target.whole:
-        cmds_edit.sets(target.path, edit=True, remove=str(engine))
+        _cmds_edit.sets(target.path, edit=True, remove=str(engine))
     elif held is not _NOT_MEMBER:
         requested = target.face_ids()
         inside    = requested if held is None else np.intersect1d(held, requested)
         if inside.size:
-            cmds_edit.sets(_face_names(target.path, inside), edit=True, remove=str(engine))
+            _cmds_edit.sets(_face_names(target.path, inside), edit=True, remove=str(engine))
     _verify(engine, target, present=False)
 
 
@@ -639,7 +640,7 @@ def _adopt(material: str) -> ShadingEngine:
     engine = ShadingEngine.for_material(material, create=True)
     owner  = cmds.container(query=True, findContainer=[material])
     if owner:
-        cmds_edit.container(
+        _cmds_edit.container(
             owner, edit=True, force=True,
             addNode=[str(engine), *engine.get_material_info()],
         )
@@ -763,9 +764,9 @@ class _MaterialMember(_MemberSpec):
     refused before any write.
     """
 
-    KIND        = "material"
-    ACCEPTS     = frozenset({"whole", "f"})
-    WANT_SHAPES = True
+    _KIND        = "material"
+    _ACCEPTS     = frozenset({"whole", "f"})
+    _WANT_SHAPES = True
 
     def __init__(self, node: Any = None, remove: bool = False, kind: type = Material) -> None:
         # the shader or engine node (None: the kind token of ``kind``); its
@@ -781,7 +782,7 @@ class _MaterialMember(_MemberSpec):
         return None if self._node is None else str(self._node)
 
     @property
-    def purges(self) -> bool:
+    def _purges(self) -> bool:
         return self._node is None
 
     def __neg__(self) -> "_MaterialMember":
@@ -810,10 +811,7 @@ class _MaterialMember(_MemberSpec):
         if name.startswith("_"):
             raise AttributeError(name)
         what = "the kind token (every material)" if self._node is None else "a removal token"
-        raise AttributeError(
-            f"{self!r} is {what}, not a material; {name} is the node's: "
-            f"Material('x').{name}"
-        )
+        raise _token_miss(self, name, what, "material", "Material('x')")
 
     def _found(self) -> _Found:
         """The material as it is now: a shader node is itself, an engine
@@ -930,7 +928,7 @@ class _MaterialMember(_MemberSpec):
         (an attribute plug is a ``TypeError``: the node is the member; what a
         material never holds, a vertex or a curve, wears none: ``[]``)."""
         kind       = self._kind.__name__
-        selections = normalise(
+        selections = _normalise(
             x,
             want_shapes  = True,
             refuse_plugs = lambda plug: TypeError(
@@ -1046,7 +1044,7 @@ def _scene_targets(targets: Any) -> list[_Target]:
             type=sorted(_SHADEABLE), long=True, noIntermediate=True, allPaths=True
         ) or []
         return [_Target(path, cmds.nodeType(path), True, []) for path in paths]
-    selections = normalise(targets, want_shapes=True)
+    selections = _normalise(targets, want_shapes=True)
     _check_kinds(selections)
     return _targets(selections)
 
@@ -1108,7 +1106,7 @@ def repair(targets: Any = None) -> List:
         for item in _scene_targets(targets):
             entries = _entries(item)
             if item.whole and not entries:
-                cmds_edit.sets(item.path, edit=True, forceElement=ShadingEngine.DEFAULT)
+                _cmds_edit.sets(item.path, edit=True, forceElement=ShadingEngine.DEFAULT)
                 fixed.append(Node(item.path))
                 continue
             if item.node_type != "mesh":
@@ -1123,7 +1121,7 @@ def repair(targets: Any = None) -> List:
                 continue
             missing = np.setdiff1d(item.face_ids(), covered)
             if missing.size:
-                cmds_edit.sets(
+                _cmds_edit.sets(
                     _face_names(item.path, missing), edit=True,
                     forceElement=ShadingEngine.DEFAULT,
                 )
@@ -1147,4 +1145,4 @@ def tidy(targets: Any = None) -> None:
                     engine.assign([item.path], touched=[item.path], normalise=True)
         for group_id in cmds.ls(type="groupId") or []:
             if _is_orphan_group_id(group_id):
-                cmds_edit.delete(group_id)
+                _cmds_edit.delete(group_id)

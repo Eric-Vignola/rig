@@ -9,8 +9,10 @@ explicit index carrier ``Components(node, "vtx", ids)`` for every point kind
 string, ``Components("pCube1.f[0:3]")``. It is NOT a ``str`` subclass and has
 NO ``__len__`` / ``__iter__``: ``List`` passes it through untouched and
 the broadcast engine treats it as a scalar. A selection is a set -- indices
-are stored sorted and unique -- and ``indices`` / ``count`` resolve live from
-the shape while the selection is the whole kind (``is_all``).
+are stored sorted and unique -- and ``get_indices()`` / ``get_count()`` resolve
+live from the shape while the selection is the whole kind (``is_all()``). It
+points into the scene, so every public member is a method (user decision
+2026-10-16: a scene handle exposes methods).
 
 :func:`normalise` folds any left-hand side of a membership operator -- a
 ``Node``, a component ``Plug`` (``vtx[i]``), a ``ComponentPlug`` (``cv[u, v]``),
@@ -43,7 +45,7 @@ Usage::
 
     cube = Node("pCube1")                      # transform with ONE mesh shape
     cube.f                                     # Components("|pCube1|pCubeShape1.f[*]")
-    cube.f[:3].names                           # ['|pCube1|pCubeShape1.f[0:2]']
+    cube.f[:3].get_names()                     # ['|pCube1|pCubeShape1.f[0:2]']
     cube.e[[0, 4]] >> None                     # array([0, 4])
     Components(cube, "vtx", [0, 1, 2])         # explicit carrier, zero plugs built
     Components("pCube1.f[0:3]")                # from a Maya component string
@@ -289,8 +291,13 @@ class Components:
     right type. Kinds are ``f`` / ``e`` / ``vtx`` / ``uv`` (mesh), ``cv``
     (curve: flat ids; surface: ``(N, 2)`` coordinates) and ``pt`` (lattice:
     ``(N, 3)`` coordinates). ``indices=None`` means the whole kind
-    (:meth:`is_all`): nothing is materialised until :attr:`indices` /
-    :attr:`count` are read, which resolve live from the shape.
+    (:meth:`is_all`): nothing is materialised until :meth:`get_indices` /
+    :meth:`get_count` are called, which resolve live from the shape.
+
+    It points into the scene, so every public member is a method (user
+    decision 2026-10-16): ``get_shape()``, ``get_kind()``, ``is_all()``,
+    ``get_indices()``, ``get_count()``, ``get_names()``; the shape's node type
+    is ``c.get_shape().get_node_type()``.
 
     Indexing is positional and numpy-like -- ``c[2]``, ``c[:8]``, ``c[[0, 4]]``,
     ``c[np.array(...)]`` -- and returns a new :class:`Components`; slices
@@ -378,20 +385,14 @@ class Components:
 
     # -- identity -- #
 
-    @property
-    def shape(self) -> Node:
-        """The geometry shape ``Node`` (DAG-path backed)."""
+    def get_shape(self) -> Node:
+        """The geometry shape ``Node`` (DAG-path backed); its node type is
+        ``c.get_shape().get_node_type()``."""
         return self._shape
 
-    @property
-    def kind(self) -> str:
+    def get_kind(self) -> str:
         """``'f'`` / ``'e'`` / ``'vtx'`` / ``'cv'`` / ``'pt'`` / ``'uv'``."""
         return self._kind
-
-    @property
-    def geometry(self) -> str:
-        """The shape's node type (``'mesh'``, ``'nurbsSurface'``, ...)."""
-        return type(self._shape).get_node_type(self._shape)
 
     @_scene_predicate
     def is_all(self) -> bool:
@@ -410,11 +411,11 @@ class Components:
 
     # -- contents -- #
 
-    @property
-    def indices(self) -> np.ndarray:
+    def get_indices(self) -> np.ndarray:
         """The native ids, ``(N,)`` -- or coordinates, ``(N, 2)`` on a surface
-        and ``(N, 3)`` on a lattice -- sorted and unique. Resolved live from
-        the shape when :attr:`is_all`. Read-only."""
+        and ``(N, 3)`` on a lattice -- sorted and unique (``c >> None`` reads
+        the same). Resolved live from the shape when :meth:`is_all`.
+        Read-only."""
         if self._indices is not None:
             return self._indices
         sizes               = self._sizes
@@ -422,15 +423,14 @@ class Components:
         ids.flags.writeable = False
         return ids
 
-    @property
-    def count(self) -> int:
-        """How many components the selection holds."""
+    def get_count(self) -> int:
+        """How many components the selection holds (live from the shape when
+        :meth:`is_all`)."""
         if self._indices is not None:
             return len(self._indices)
         return int(np.prod(self._sizes))
 
-    @property
-    def names(self) -> list[str]:
+    def get_names(self) -> list[str]:
         """Full-DAG-path compact component strings ``maya.cmds`` accepts:
         ``['|pCube1|pCubeShape1.f[0:2]', '|pCube1|pCubeShape1.f[5]']``, or
         ``['|pCube1|pCubeShape1.f[*]']`` for the whole kind."""
@@ -446,7 +446,7 @@ class Components:
         if isinstance(key, bool):
             raise TypeError("a bool is not a component index")
         if isinstance(key, numbers.Integral):
-            count = self.count
+            count = self.get_count()
             index = key + count if key < 0 else key
             if not 0 <= index < count:
                 raise IndexError(
@@ -454,7 +454,7 @@ class Components:
                 )
             return self._select(np.array([index]))
         if isinstance(key, slice):
-            count             = self.count
+            count             = self.get_count()
             start, stop, step = key.indices(count)
             if self._indices is None and (start, stop, step) == (0, count, 1):
                 return self
@@ -472,7 +472,7 @@ class Components:
                     f"a Components takes a flat sequence of positions, got shape "
                     f"{positions.shape}"
                 )
-            count     = self.count
+            count     = self.get_count()
             positions = np.where(positions < 0, positions + count, positions)
             if positions.size and (positions.min() < 0 or positions.max() >= count):
                 raise IndexError(f"{self!r}: index out of range for {count} components")
@@ -509,7 +509,7 @@ class Components:
 
     def __rshift__(self, other: Any) -> Any:
         if other is None:
-            return self.indices
+            return self.get_indices()
         if isinstance(other, _types._MEMBERSHIP):
             return other._member().query(self)
         raise TypeError(
@@ -520,7 +520,7 @@ class Components:
     # -- equality / hashing / display -- #
 
     def __bool__(self) -> bool:
-        return self.count > 0
+        return self.get_count() > 0
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, Components):
@@ -529,7 +529,7 @@ class Components:
             return False
         if self._indices is None and other._indices is None:
             return True
-        return np.array_equal(self.indices, other.indices)
+        return np.array_equal(self.get_indices(), other.get_indices())
 
     def __hash__(self) -> int:
         return hash((self._path, self._kind))
@@ -774,7 +774,8 @@ class _Normaliser:
         self.group(type(node).get_long_name(node), node_type, "whole").sources.append(source)
 
     def add_components(self, components: Components) -> None:
-        group = self.group(components._path, components.geometry, components._kind)
+        shape = components._shape
+        group = self.group(components._path, type(shape).get_node_type(shape), components._kind)
         group.sources.append(components)
         if components._indices is None:
             group.is_all = True
@@ -935,6 +936,30 @@ def _class_operand_error(cls: Any, verb: str) -> str | None:
     return None
 
 
+def _token_miss(token: Any, name: str, what: str, noun: str, example: str) -> AttributeError:
+    """The AttributeError of ``token.<name>`` on the token of a membership node
+    (``-layer``, ``Layer()``, ``-red``, ``Blinn()``): a token is no node, so it
+    has no attributes; ``what`` says which token it is, ``noun`` / ``example``
+    name the node (``layer``, ``Layer('x')``). The name of a token is
+    ``str(token)`` (user decision 2026-10-16). A token whose node is deleted
+    still raises AttributeError (its repr, which reads the node's name, is not
+    used then)."""
+    try:
+        head = f"{token!r} is {what}, not {_article(noun)} {noun}"
+    except Exception:  # noqa: BLE001 -- the node is deleted: its name cannot be read
+        head = f"{what} whose {noun} is deleted"
+    if name == "name":
+        return AttributeError(
+            f"{head}; a token has no name attribute: str(token) is its name, "
+            f"and {example}.get_name() the {noun} node's"
+        )
+    return AttributeError(f"{head}; {name} is the {noun} node's: {example}.{name}")
+
+
+def _article(noun: str) -> str:
+    return "an" if noun[:1] in "aeiou" else "a"
+
+
 class _SpecMeta(type):
     """The metaclass of the membership specs: ``x in Tag`` (the class) is a
     TypeError naming ``Tag('x')`` and ``Tag()``."""
@@ -959,13 +984,13 @@ class _MemberSpec(metaclass=_SpecMeta):
     its own member): the ``<<`` / ``>>`` slots run ``other._member()``'s verb.
 
     The verbs are template methods. :meth:`inject` (``lhs << spec``)
-    normalises the left-hand side, applies :attr:`ACCEPTS`, hands the
+    normalises the left-hand side, applies :attr:`_ACCEPTS`, hands the
     selections to :meth:`_plan` -- which validates everything and raises
     BEFORE any scene write -- then runs :meth:`_apply` inside one undo chunk
-    named ``rig.<KIND>`` and returns the left-hand side unchanged.
+    named ``rig.<kind>`` (``_KIND``) and returns the left-hand side unchanged.
     :meth:`query` (``lhs >> spec``) returns whatever :meth:`_query` reads: a
     plain value (ids), never a :class:`Components`. :meth:`of` enumerates the
-    collections holding ``x``; an :attr:`EXCLUSIVE` kind (a node is in at
+    collections holding ``x``; an :attr:`_EXCLUSIVE` kind (a node is in at
     most one collection) answers ``lhs >> Spec()`` with that one or
     ``None``. :meth:`contains` (``lhs in spec``) answers whether every member
     of the left-hand side is in the collection (:meth:`_contains`); a kind or
@@ -979,12 +1004,12 @@ class _MemberSpec(metaclass=_SpecMeta):
     Tag('x')`` asks about ``cube``).
     """
 
-    KIND:        str = ""
-    ACCEPTS:     frozenset[str] = frozenset()
-    WANT_SHAPES: bool = False
-    EXCLUSIVE:   bool = False
+    _KIND:        str = ""
+    _ACCEPTS:     frozenset[str] = frozenset()
+    _WANT_SHAPES: bool = False
+    _EXCLUSIVE:   bool = False
     # whether ``lhs >> Spec('x')`` answers ids (a layer holds whole objects)
-    HAS_IDS:     bool = True
+    _HAS_IDS:     bool = True
 
     def __init__(self, name: Any = None, **kw: Any) -> None:
         if name is not None:
@@ -1021,17 +1046,12 @@ class _MemberSpec(metaclass=_SpecMeta):
         member)."""
         return cls.__name__
 
-    @property
-    def name(self) -> str | None:
-        return self._name
+    # the name is ``str(spec)`` (user decision 2026-10-16); ``Tag('x').name``
+    # is a value's field (`Tag.name`); a token of a membership node reads its
+    # node's name, so it has no ``name`` (``str(-layer)``, the repr)
 
     @property
-    def removes(self) -> bool:
-        """``True`` on a ``-Spec('x')`` copy."""
-        return self._remove
-
-    @property
-    def purges(self) -> bool:
+    def _purges(self) -> bool:
         """``True`` for the kind token ``Spec()``: no particular collection
         (every one of this kind on ``<<``, the enumeration on ``>>``)."""
         return self._name is None
@@ -1076,7 +1096,7 @@ class _MemberSpec(metaclass=_SpecMeta):
         An attribute plug on the left is a ``TypeError`` (the node is the
         member), unless the kind claims it (:meth:`_plan_plug`)."""
         plan = self._prepare(lhs)
-        with _undo_chunk(f"rig.{self.KIND}"):
+        with _undo_chunk(f"rig.{self._KIND}"):
             self._apply(plan)
         return lhs
 
@@ -1087,7 +1107,7 @@ class _MemberSpec(metaclass=_SpecMeta):
         if plan is None:
             selections = normalise(
                 lhs,
-                want_shapes  = self.WANT_SHAPES,
+                want_shapes  = self._WANT_SHAPES,
                 refuse_plugs = lambda plug: self._plug_error(plug, "<<"),
             )
             self._check_kinds(selections)
@@ -1098,7 +1118,7 @@ class _MemberSpec(metaclass=_SpecMeta):
         """``lhs >> spec``: a plain value read out of the left-hand side --
         the native ids of its members that are in the collection.
         ``lhs >> Spec()`` enumerates instead: the collections :meth:`of`
-        lists, or, for an :attr:`EXCLUSIVE` kind, the one holding the
+        lists, or, for an :attr:`_EXCLUSIVE` kind, the one holding the
         left-hand side or ``None``. A removal token or an attribute plug on
         the left is a ``TypeError``."""
         if self._remove:
@@ -1108,11 +1128,11 @@ class _MemberSpec(metaclass=_SpecMeta):
             )
         selections = normalise(
             lhs,
-            want_shapes  = self.WANT_SHAPES,
+            want_shapes  = self._WANT_SHAPES,
             refuse_plugs = lambda plug: self._plug_error(plug, ">>"),
             empty        = "nothing to ask about: the left-hand side of '>>' names no member",
         )
-        if not self.purges:
+        if not self._purges:
             self._check_kinds(selections)
             return self._query(selections)
         try:
@@ -1122,7 +1142,7 @@ class _MemberSpec(metaclass=_SpecMeta):
             if not _never_held(error):
                 raise
             found = []   # a left-hand side this kind never holds: in none
-        if self.EXCLUSIVE:
+        if self._EXCLUSIVE:
             return found[0] if found else None
         return found
 
@@ -1143,13 +1163,13 @@ class _MemberSpec(metaclass=_SpecMeta):
                 f"'in' asks about one collection; {self!r} is a removal: ask with "
                 f"x in {repr(self)[1:]}"
             )
-        if self.purges:
+        if self._purges:
             raise TypeError(
                 f"'in' asks about one collection; {self!r} names every one of its "
                 f"kind: x >> {self!r} enumerates the ones holding x"
             )
         selections = normalise(
-            lhs, want_shapes=self.WANT_SHAPES,
+            lhs, want_shapes=self._WANT_SHAPES,
             empty="nothing to ask about: the left-hand side of 'in' names no member",
         )
         try:
@@ -1168,7 +1188,7 @@ class _MemberSpec(metaclass=_SpecMeta):
         attribute plug is a ``TypeError`` (the node is the member)."""
         selections = normalise(
             x,
-            want_shapes  = cls.WANT_SHAPES,
+            want_shapes  = cls._WANT_SHAPES,
             refuse_plugs = lambda plug: TypeError(
                 f"'{plug}' is a plug; membership takes the node: "
                 f"{cls._kind_name()}.of({type(plug).get_node(plug)})"
@@ -1188,11 +1208,11 @@ class _MemberSpec(metaclass=_SpecMeta):
         node = type(plug).get_node(plug)
         if verb == "<<":
             how = f"{node} << {self!r} (to connect, name a plug: other.attr)"
-        elif self.purges:
+        elif self._purges:
             how = f"{node} >> {self!r} enumerates"
         else:
             how = f"ask with {plug} in {self!r} (a plug stands for its node there)"
-            if self.HAS_IDS:
+            if self._HAS_IDS:
                 how += f", or {node} >> {self!r} for ids"
             target = self._clone_target()
             if target is not None:
@@ -1207,15 +1227,15 @@ class _MemberSpec(metaclass=_SpecMeta):
     # -- per-kind hooks -- #
 
     def _check_kinds(self, selections: list[_Selection]) -> None:
-        """Apply :attr:`ACCEPTS`; :meth:`_kind_error` words the refusal."""
+        """Apply :attr:`_ACCEPTS`; :meth:`_kind_error` words the refusal."""
         for selection in selections:
-            if selection.kind not in self.ACCEPTS:
+            if selection.kind not in self._ACCEPTS:
                 raise _NeverHolds(self._kind_error(selection))
 
     def _kind_error(self, selection: _Selection) -> str:
         return (
             f"{type(self).__name__} does not take {selection.kind!r} components "
-            f"({selection.names[0]}); it accepts {sorted(self.ACCEPTS)}"
+            f"({selection.names[0]}); it accepts {sorted(self._ACCEPTS)}"
         )
 
     def _plan_plug(self, plug: Plug) -> Any:

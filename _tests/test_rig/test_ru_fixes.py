@@ -168,11 +168,12 @@ class TestLatticePartialIndex(MayaTestCase):
             Plug(f"{self.shape}.pt[0][1][2]").get_name(), self.node.pt[0, 1, 2].get_name()
         )
         points = Components(self.shape, "pt")
-        self.assertEqual(points.count, 60)
+        # re-pinned (user decision 2026-10-16, a Components is a scene handle): methods
+        self.assertEqual(points.get_count(), 60)
         long_name = cmds.ls(self.shape, long=True)[0]
-        self.assertEqual(points[0].names, [f"{long_name}.pt[0][0][0]"])
+        self.assertEqual(points[0].get_names(), [f"{long_name}.pt[0][0][0]"])
         self.assertEqual(
-            Components(self.shape, "pt", [[0, 1, 2]]).names, [f"{long_name}.pt[0][1][2]"]
+            Components(self.shape, "pt", [[0, 1, 2]]).get_names(), [f"{long_name}.pt[0][1][2]"]
         )
 
 

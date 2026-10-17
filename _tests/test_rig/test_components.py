@@ -1,6 +1,8 @@
 """Tests for ``rig._internal.members`` -- Components, the Node fallbacks and
 the left-hand-side normaliser."""
 
+# re-pinned throughout (user decision 2026-10-16, a Components is a scene handle: get_kind() / get_count() / get_names() / get_indices() / get_shape() replace its properties; geometry is get_shape().get_node_type())
+
 import time
 from unittest import mock
 
@@ -55,14 +57,16 @@ def _lattice(target):
 class _Spec(_MemberSpec):
     """A kind that accepts every selection and implements no verb."""
 
-    KIND    = "test"
-    ACCEPTS = frozenset({"whole", "vtx", "e", "f", "cv", "pt", "uv"})
+    # re-pinned (user decision 2026-10-16, the protocol constants are private)
+    _KIND    = "test"
+    _ACCEPTS = frozenset({"whole", "vtx", "e", "f", "cv", "pt", "uv"})
 
 
 class _Strict(_MemberSpec):
-    """A kind that accepts nothing: the ACCEPTS gate fires before any hook."""
+    """A kind that accepts nothing: the _ACCEPTS gate fires before any hook."""
 
-    KIND = "strict"
+    # re-pinned (user decision 2026-10-16, the protocol constants are private)
+    _KIND = "strict"
 
 
 # --------------------------------------------------------------------- #
@@ -79,20 +83,20 @@ class TestComponentsConstruction(MayaTestCase):
         self.assertIsInstance(faces, Components)
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(faces.is_all())
-        self.assertEqual(faces.kind,     "f")
-        self.assertEqual(faces.geometry, "mesh")
-        self.assertEqual(faces.count,    6)
-        self.assertEqual(faces.names,    [f"{shape}.f[*]"])
-        np.testing.assert_array_equal(faces.indices, np.arange(6))
-        self.assertEqual(str(faces.shape), "pCube1Shape")
+        self.assertEqual(faces.get_kind(),     "f")
+        self.assertEqual(faces.get_shape().get_node_type(), "mesh")
+        self.assertEqual(faces.get_count(),    6)
+        self.assertEqual(faces.get_names(),    [f"{shape}.f[*]"])
+        np.testing.assert_array_equal(faces.get_indices(), np.arange(6))
+        self.assertEqual(str(faces.get_shape()), "pCube1Shape")
 
     def test_e_on_transform_resolves_to_its_single_mesh_shape(self):
         xform, shape = _cube()
         edges        = Node(xform).e
         self.assertIsInstance(edges, Components)
-        self.assertEqual(edges.kind,  "e")
-        self.assertEqual(edges.count, 12)
-        self.assertEqual(edges.names, [f"{shape}.e[*]"])
+        self.assertEqual(edges.get_kind(),  "e")
+        self.assertEqual(edges.get_count(), 12)
+        self.assertEqual(edges.get_names(), [f"{shape}.e[*]"])
 
     def test_transform_with_two_mesh_shapes_raises_naming_them(self):
         xform, shapes = _two_shape_cube()
@@ -126,28 +130,28 @@ class TestComponentsConstruction(MayaTestCase):
     def test_explicit_carrier_is_a_sorted_set_and_builds_no_plugs(self):
         xform, shape = _cube()
         verts        = Components(Node(xform), "vtx", [4, 0, 2, 2])
-        self.assertEqual(verts.kind, "vtx")
+        self.assertEqual(verts.get_kind(), "vtx")
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertFalse(verts.is_all())
-        self.assertEqual(verts.count, 3)
-        np.testing.assert_array_equal(verts.indices, [0, 2, 4])
+        self.assertEqual(verts.get_count(), 3)
+        np.testing.assert_array_equal(verts.get_indices(), [0, 2, 4])
         self.assertEqual(
-            verts.names, [f"{shape}.vtx[0]", f"{shape}.vtx[2]", f"{shape}.vtx[4]"]
+            verts.get_names(), [f"{shape}.vtx[0]", f"{shape}.vtx[2]", f"{shape}.vtx[4]"]
         )
-        self.assertFalse(verts.indices.flags.writeable)
+        self.assertFalse(verts.get_indices().flags.writeable)
 
     def test_explicit_carrier_from_ndarray_and_negative_wrap(self):
         _, shape = _cube()
         verts    = Components(shape, "vtx", np.array([-1, 1]))
-        np.testing.assert_array_equal(verts.indices, [1, 7])
+        np.testing.assert_array_equal(verts.get_indices(), [1, 7])
 
     def test_explicit_carrier_whole_kind(self):
         _, shape = _cube()
         uvs      = Components(shape, "uv")
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(uvs.is_all())
-        self.assertEqual(uvs.count, 14)
-        self.assertEqual(uvs.names, [f"{shape}.map[*]"])
+        self.assertEqual(uvs.get_count(), 14)
+        self.assertEqual(uvs.get_names(), [f"{shape}.map[*]"])
 
     def test_explicit_carrier_rejections(self):
         xform, shape = _cube()
@@ -174,21 +178,21 @@ class TestComponentsConstruction(MayaTestCase):
     def test_synonyms_canonicalise(self):
         _, shape = _cube()
         uvs      = Components(shape, "map", [1, 0])
-        self.assertEqual(uvs.kind, "uv")
-        self.assertEqual(uvs.names, [f"{shape}.map[0:1]"])
-        self.assertEqual(Components(shape, "pnts", [3]).kind, "vtx")
+        self.assertEqual(uvs.get_kind(), "uv")
+        self.assertEqual(uvs.get_names(), [f"{shape}.map[0:1]"])
+        self.assertEqual(Components(shape, "pnts", [3]).get_kind(), "vtx")
 
     def test_string_constructor(self):
         xform, shape = _cube()
         faces        = Components("pCube1.f[0:3]")
-        self.assertEqual(faces.kind, "f")
-        self.assertEqual(str(faces.shape), "pCube1Shape")
-        np.testing.assert_array_equal(faces.indices, [0, 1, 2, 3])
+        self.assertEqual(faces.get_kind(), "f")
+        self.assertEqual(str(faces.get_shape()), "pCube1Shape")
+        np.testing.assert_array_equal(faces.get_indices(), [0, 1, 2, 3])
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(Components("pCube1.f[*]").is_all())
-        self.assertEqual(Components(f"{shape}.vtx[2]").names, [f"{shape}.vtx[2]"])
-        self.assertEqual(Components("pCube1.map[1]").kind,    "uv")
-        self.assertEqual(Components("pCube1.e[3:4]").names,   [f"{shape}.e[3:4]"])
+        self.assertEqual(Components(f"{shape}.vtx[2]").get_names(), [f"{shape}.vtx[2]"])
+        self.assertEqual(Components("pCube1.map[1]").get_kind(),    "uv")
+        self.assertEqual(Components("pCube1.e[3:4]").get_names(),   [f"{shape}.e[3:4]"])
 
     def test_string_constructor_rejections(self):
         _cube()
@@ -208,15 +212,15 @@ class TestComponentsConstruction(MayaTestCase):
     def test_string_constructor_on_a_surface(self):
         xform, shape = _sphere_surface()
         cv = Components("nurbsSphere1.cv[1][2]")
-        self.assertEqual(cv.kind, "cv")
-        self.assertEqual(cv.geometry, "nurbsSurface")
-        np.testing.assert_array_equal(cv.indices, [[1, 2]])
-        self.assertEqual(cv.names, [f"{shape}.cv[1][2]"])
+        self.assertEqual(cv.get_kind(), "cv")
+        self.assertEqual(cv.get_shape().get_node_type(), "nurbsSurface")
+        np.testing.assert_array_equal(cv.get_indices(), [[1, 2]])
+        self.assertEqual(cv.get_names(), [f"{shape}.cv[1][2]"])
         row = Components("nurbsSphere1.cv[1][*]")
-        self.assertEqual(row.count, 8)
-        self.assertEqual(row.names, [f"{shape}.cv[1][0:7]"])
+        self.assertEqual(row.get_count(), 8)
+        self.assertEqual(row.get_names(), [f"{shape}.cv[1][0:7]"])
         rect = Components("nurbsSphere1.cv[1:2][2:3]")
-        self.assertEqual(rect.names, [f"{shape}.cv[1][2:3]", f"{shape}.cv[2][2:3]"])
+        self.assertEqual(rect.get_names(), [f"{shape}.cv[1][2:3]", f"{shape}.cv[2][2:3]"])
 
     def test_surface_whole_kind_resolves_distinct_cvs(self):
         # A default sphere is periodic in V: 77 controlPoints, 56 real CVs.
@@ -224,9 +228,9 @@ class TestComponentsConstruction(MayaTestCase):
         cvs          = Components(xform, "cv")
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(cvs.is_all())
-        self.assertEqual(cvs.count,         56)
-        self.assertEqual(cvs.indices.shape, (56, 2))
-        self.assertEqual(cvs.names,         [f"{shape}.cv[*]"])
+        self.assertEqual(cvs.get_count(),         56)
+        self.assertEqual(cvs.get_indices().shape, (56, 2))
+        self.assertEqual(cvs.get_names(),         [f"{shape}.cv[*]"])
 
     def test_lattice_points_are_three_dimensional(self):
         xform, _ = _cube()
@@ -234,11 +238,11 @@ class TestComponentsConstruction(MayaTestCase):
         points = Components(lattice, "pt")
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(points.is_all())
-        self.assertEqual(points.count, 24)
-        self.assertEqual(points.indices.shape, (24, 3))
+        self.assertEqual(points.get_count(), 24)
+        self.assertEqual(points.get_indices().shape, (24, 3))
         sparse = Components(shape, "pt", [[1, 2, 3], [0, 0, 1], [0, 0, 0]])
         self.assertEqual(
-            sparse.names, [f"{shape}.pt[0][0][0:1]", f"{shape}.pt[1][2][3]"]
+            sparse.get_names(), [f"{shape}.pt[0][0][0:1]", f"{shape}.pt[1][2][3]"]
         )
         with self.assertRaises(IndexError):
             Components(shape, "pt", [[2, 0, 0]])
@@ -255,9 +259,9 @@ class TestComponentsIndexing(MayaTestCase):
     def test_int_keys(self):
         _, shape = _cube()
         faces    = Node(shape).f
-        self.assertEqual(faces[2].names,           [f"{shape}.f[2]"])
-        self.assertEqual(faces[-1].names,          [f"{shape}.f[5]"])
-        self.assertEqual(faces[np.int64(3)].names, [f"{shape}.f[3]"])
+        self.assertEqual(faces[2].get_names(),           [f"{shape}.f[2]"])
+        self.assertEqual(faces[-1].get_names(),          [f"{shape}.f[5]"])
+        self.assertEqual(faces[np.int64(3)].get_names(), [f"{shape}.f[3]"])
         with self.assertRaises(IndexError):
             faces[6]
         with self.assertRaises(IndexError):
@@ -266,32 +270,32 @@ class TestComponentsIndexing(MayaTestCase):
     def test_slices_clamp_and_the_full_slice_is_the_handle(self):
         _, shape = _cube()
         faces    = Node(shape).f
-        self.assertEqual(faces[:3].names,   [f"{shape}.f[0:2]"])
-        self.assertEqual(faces[:100].count, 6)
-        self.assertEqual(faces[2:4].names,  [f"{shape}.f[2:3]"])
+        self.assertEqual(faces[:3].get_names(),   [f"{shape}.f[0:2]"])
+        self.assertEqual(faces[:100].get_count(), 6)
+        self.assertEqual(faces[2:4].get_names(),  [f"{shape}.f[2:3]"])
         self.assertEqual(
-            faces[::2].names, [f"{shape}.f[0]", f"{shape}.f[2]", f"{shape}.f[4]"]
+            faces[::2].get_names(), [f"{shape}.f[0]", f"{shape}.f[2]", f"{shape}.f[4]"]
         )
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(faces[:].is_all())
         self.assertTrue(faces[0:6:1].is_all())
         self.assertFalse(faces[0:6:2].is_all())
         empty = faces[6:]
-        self.assertEqual(empty.count, 0)
+        self.assertEqual(empty.get_count(), 0)
         self.assertFalse(empty)
-        self.assertEqual(empty.names, [])
+        self.assertEqual(empty.get_names(), [])
         self.assertTrue(repr(empty).endswith('.f[]")'))
 
     def test_sequence_keys(self):
         _, shape = _cube()
         faces    = Node(shape).f
         self.assertEqual(
-            faces[[0, 1, 2, 5]].names, [f"{shape}.f[0:2]", f"{shape}.f[5]"]
+            faces[[0, 1, 2, 5]].get_names(), [f"{shape}.f[0:2]", f"{shape}.f[5]"]
         )
-        self.assertEqual(faces[(5, 0)].names, [f"{shape}.f[0]", f"{shape}.f[5]"])
-        self.assertEqual(faces[np.array([4, -1])].names, [f"{shape}.f[4:5]"])
-        self.assertEqual(faces[[]].count, 0)
-        self.assertEqual(faces[np.array([], dtype=int)].count, 0)
+        self.assertEqual(faces[(5, 0)].get_names(), [f"{shape}.f[0]", f"{shape}.f[5]"])
+        self.assertEqual(faces[np.array([4, -1])].get_names(), [f"{shape}.f[4:5]"])
+        self.assertEqual(faces[[]].get_count(), 0)
+        self.assertEqual(faces[np.array([], dtype=int)].get_count(), 0)
         with self.assertRaises(IndexError):
             faces[[0, 6]]
         with self.assertRaises(IndexError):
@@ -318,20 +322,20 @@ class TestComponentsIndexing(MayaTestCase):
     def test_indexing_is_positional_on_the_sorted_selection(self):
         _, shape = _cube()
         picked   = Node(shape).f[[5, 2, 3]]
-        np.testing.assert_array_equal(picked.indices, [2, 3, 5])
-        self.assertEqual(picked[0].names,  [f"{shape}.f[2]"])
-        self.assertEqual(picked[-1].names, [f"{shape}.f[5]"])
-        self.assertEqual(picked[1:].names, [f"{shape}.f[3]", f"{shape}.f[5]"])
+        np.testing.assert_array_equal(picked.get_indices(), [2, 3, 5])
+        self.assertEqual(picked[0].get_names(),  [f"{shape}.f[2]"])
+        self.assertEqual(picked[-1].get_names(), [f"{shape}.f[5]"])
+        self.assertEqual(picked[1:].get_names(), [f"{shape}.f[3]", f"{shape}.f[5]"])
         with self.assertRaises(IndexError):
             picked[3]
 
     def test_surface_handle_indexes_the_grid_row_major(self):
         xform, shape = _sphere_surface()
         cvs          = Components(xform, "cv")
-        np.testing.assert_array_equal(cvs[0].indices, [[0, 0]])
-        np.testing.assert_array_equal(cvs[9].indices, [[1, 1]])
-        self.assertEqual(cvs[:2].names, [f"{shape}.cv[0][0:1]"])
-        self.assertEqual(cvs[[7, 8]].names, [f"{shape}.cv[0][7]", f"{shape}.cv[1][0]"])
+        np.testing.assert_array_equal(cvs[0].get_indices(), [[0, 0]])
+        np.testing.assert_array_equal(cvs[9].get_indices(), [[1, 1]])
+        self.assertEqual(cvs[:2].get_names(), [f"{shape}.cv[0][0:1]"])
+        self.assertEqual(cvs[[7, 8]].get_names(), [f"{shape}.cv[0][7]", f"{shape}.cv[1][0]"])
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(cvs[:].is_all())
 
@@ -446,19 +450,19 @@ class TestComponentsOperators(MayaTestCase):
     def test_names_are_selectable(self):
         xform, shape = _cube()
         node         = Node(shape)
-        cmds.select(node.f[[0, 1, 2, 5]].names)
+        cmds.select(node.f[[0, 1, 2, 5]].get_names())
         self.assertEqual(cmds.ls(sl=True), ["pCube1.f[0:2]", "pCube1.f[5]"])
-        cmds.select(node.e.names)
+        cmds.select(node.e.get_names())
         self.assertEqual(cmds.ls(sl=True), ["pCube1.e[0:11]"])
-        cmds.select(Components(shape, "uv", [1, 2]).names)
+        cmds.select(Components(shape, "uv", [1, 2]).get_names())
         self.assertEqual(cmds.ls(sl=True), ["pCube1.map[1:2]"])
         surface, _ = _sphere_surface()
-        cmds.select(Components(surface, "cv", [[1, 2], [1, 3], [2, 0]]).names)
+        cmds.select(Components(surface, "cv", [[1, 2], [1, 3], [2, 0]]).get_names())
         self.assertEqual(
             cmds.ls(sl=True), ["nurbsSphere1.cv[1][2:3]", "nurbsSphere1.cv[2][0]"]
         )
         lattice, lattice_shape = _lattice(xform)
-        cmds.select(Components(lattice_shape, "pt", [[0, 0, 0], [0, 0, 1]]).names)
+        cmds.select(Components(lattice_shape, "pt", [[0, 0, 0], [0, 0, 1]]).get_names())
         self.assertEqual(cmds.ls(sl=True), ["ffd1Lattice.pt[0][0][0:1]"])
 
     def test_type_predicates(self):
@@ -857,7 +861,7 @@ class TestNormalisePerformance(MayaTestCase):
         self.assertTrue(faces.is_all())
         self.assertEqual(sel.tokens, ("f[*]",))
         self.assertLess(elapsed, 0.05, f"face handle took {elapsed:.3f} s")
-        self.assertEqual(faces.count, 316 * 316)
+        self.assertEqual(faces.get_count(), 316 * 316)
 
     def test_explicit_carrier_at_scale(self):
         plane   = cmds.polyPlane(name="bigPlane", sx=316, sy=316, ch=False)[0]
@@ -866,7 +870,7 @@ class TestNormalisePerformance(MayaTestCase):
         verts   = Components(plane, "vtx", ids)
         sel     = normalise(verts, want_shapes=True)[0]
         elapsed = time.perf_counter() - started
-        self.assertEqual(verts.count, len(ids))
+        self.assertEqual(verts.get_count(), len(ids))
         self.assertEqual(len(sel.tokens), len(ids))
         self.assertLess(elapsed, 0.5, f"carrier took {elapsed:.3f} s")
 
@@ -940,16 +944,18 @@ class TestMemberSpecContract(MayaTestCase):
         with self.assertRaises(TypeError):
             _Spec(5)
         spec = _Spec("cap", at="pCube1")
-        self.assertEqual(spec.name,  "cap")
+        # re-pinned (user decision 2026-10-16): a spec's name is str(spec) (Tag keeps .name); removes / purges are private
+        self.assertEqual(spec._name, "cap")
+        self.assertFalse(hasattr(spec, "name"))
         self.assertEqual(str(spec),  "cap")
         self.assertEqual(repr(spec), "_Spec('cap')")
-        self.assertFalse(spec.removes)
-        self.assertFalse(spec.purges)
+        self.assertFalse(spec._remove)
+        self.assertFalse(spec._purges)
         self.assertEqual(spec._options, {"at": "pCube1"})
         # an empty call is the purge: the same object as Spec(None)
         for purge in (_Spec(), _Spec(None)):
-            self.assertTrue(purge.purges)
-            self.assertIsNone(purge.name)
+            self.assertTrue(purge._purges)
+            self.assertIsNone(purge._name)
             self.assertEqual(repr(purge), "_Spec(None)")
 
     def test_negation_copies(self):
@@ -957,9 +963,10 @@ class TestMemberSpecContract(MayaTestCase):
         removal = -spec
         self.assertIsNot(removal, spec)
         self.assertIsInstance(removal, _Spec)
-        self.assertTrue(removal.removes)
-        self.assertFalse(spec.removes)
-        self.assertEqual(removal.name, "cap")
+        # re-pinned (user decision 2026-10-16): a spec's name is str(spec) (Tag keeps .name); removes / purges are private
+        self.assertTrue(removal._remove)
+        self.assertFalse(spec._remove)
+        self.assertEqual(str(removal), "cap")
         self.assertEqual(removal._options, spec._options)
         self.assertIsNot(removal._options, spec._options)
         self.assertEqual(repr(removal), "-_Spec('cap')")

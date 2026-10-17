@@ -431,7 +431,8 @@ except TypeError as e:
 
 Specs with no name: their kwargs are `setAttr` flags, they edit the plug
 on the left and return it. `lock` / `unlock` also take a node and a
-`List`.
+`List`. The four are shared by every statement, so their `kargs` is a
+read-only mapping (`lock.kargs["lock"] = False` raises `TypeError`).
 
 ```python
 print(lock.kargs, unlock.kargs, hide.kargs, unhide.kargs, skip.kargs)  # {'lock': True} {'lock': False} {'keyable': False, 'channelBox': False} {'keyable': True, 'channelBox': False} {}

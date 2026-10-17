@@ -8,7 +8,7 @@ from typing import Any, Iterator
 
 import numpy as np
 from maya import cmds
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes.dg_node import DGNode, get_clean_name, get_short_name
 from rig.nodetypes.transform import Transform
 
@@ -258,8 +258,8 @@ class Joint(Transform):
 
         matrix = _world_matrix(str(self))
         rot    = np.degrees(matrix_to_euler(matrix, XYZ))[0].tolist()
-        cmds_edit.setAttr(f"{self}.jointOrient", 0, 0, 0)
-        cmds_edit.xform(str(self), worldSpace=True, rotation=rot)
+        _cmds_edit.setAttr(f"{self}.jointOrient", 0, 0, 0)
+        _cmds_edit.xform(str(self), worldSpace=True, rotation=rot)
 
     def convert_rotation_to_orients(self):
         """converts joint rotation into orients"""
@@ -268,8 +268,8 @@ class Joint(Transform):
         local_matrix = np.reshape(cmds.getAttr(f"{self}.matrix"), (4, 4))
         rotation     = np.degrees(matrix_to_euler(local_matrix, XYZ))[0].tolist()
 
-        cmds_edit.setAttr(f"{self}.r", 0, 0, 0)
-        cmds_edit.setAttr(f"{self}.jo", rotation[0], rotation[1], rotation[2])
+        _cmds_edit.setAttr(f"{self}.r", 0, 0, 0)
+        _cmds_edit.setAttr(f"{self}.jo", rotation[0], rotation[1], rotation[2])
 
     def hierarchy_to_rotations(self):
         """converts joint orients into rotations"""
@@ -301,10 +301,10 @@ class Joint(Transform):
         )
         if not child_joints:
             # no children, ju
-            cmds_edit.setAttr(f"{self}.jo", 0, 0, 0)
-            cmds_edit.setAttr(f"{self}.rx", 0)
-            cmds_edit.setAttr(f"{self}.ry", 0)
-            cmds_edit.setAttr(f"{self}.rz", 0)
+            _cmds_edit.setAttr(f"{self}.jo", 0, 0, 0)
+            _cmds_edit.setAttr(f"{self}.rx", 0)
+            _cmds_edit.setAttr(f"{self}.ry", 0)
+            _cmds_edit.setAttr(f"{self}.rz", 0)
             print(f"{self} has no children, zeroing orients")
             return
 
@@ -312,7 +312,7 @@ class Joint(Transform):
         child_joint_parents = [
             cmds.listRelatives(c, parent=True)[0] for c in child_joints
         ]
-        cmds_edit.parent(child_joints, w=True)
+        _cmds_edit.parent(child_joints, w=True)
 
         # get the parent matrix
         matrix       = _world_matrix(str(self))
@@ -344,12 +344,12 @@ class Joint(Transform):
                 rotation_order,
             )
         )[0].tolist()
-        cmds_edit.xform(str(self), worldSpace=True, rotation=rotation)
+        _cmds_edit.xform(str(self), worldSpace=True, rotation=rotation)
         self.convert_orients_to_rotation()
 
         # reparent children
         for i in range(len(child_joints)):
-            cmds_edit.parent(child_joints[i], child_joint_parents[i])
+            _cmds_edit.parent(child_joints[i], child_joint_parents[i])
 
     def orient_chain(self, aim_axis="x", up_axis="y"):
         """orients chain given aim axis and up axis"""

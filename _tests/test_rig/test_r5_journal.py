@@ -1296,7 +1296,8 @@ class TestUserCodeOrder(_JournalCase):
             return cmds.isConnected("m.outputX", "k.input1X")
 
         if plain_call:
-            with mock.patch.object(dg_node_module, "user_call", lambda fn, *x, **k: fn(*x, **k)):
+            # re-pinned (user decision 2026-10-16, the journal imports are private in public modules)
+            with mock.patch.object(dg_node_module, "_user_call", lambda fn, *x, **k: fn(*x, **k)):
                 journal.run_statement(body, (), {})
         else:
             journal.run_statement(body, (), {})

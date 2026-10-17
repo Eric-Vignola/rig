@@ -44,13 +44,14 @@ from typing import List, Optional, Union
 
 import maya.cmds as cmds
 from maya.api import OpenMaya
-from rig._internal.journal import barrier, cmds_edit
+from rig._internal.journal import barrier as _barrier, cmds_edit as _cmds_edit
 
 _BUNDLED_DIR       = os.path.dirname(os.path.abspath(__file__))
 _PLUGIN_EXTENSIONS = (".py", ".mll", ".so", ".bundle")
 
-# the command undoable_api_command.py registers (its COMMAND_NAME)
-UNDOABLE_API_COMMAND = "rigUndoableAPICommand"
+# the command undoable_api_command.py registers: its COMMAND_NAME, spelled once there
+# (importing the module registers nothing: Maya's load of the plug-in does)
+from rig.nodetypes.plugins.undoable_api_command import COMMAND_NAME as UNDOABLE_API_COMMAND  # noqa: E402
 # rig's bundled plug-ins that register a command: the command in maya.cmds is the
 # loaded check (a same-named plug-in loaded from elsewhere does not pass it)
 _BUNDLED_COMMANDS = {"undoable_api_command": UNDOABLE_API_COMMAND}
@@ -162,7 +163,7 @@ def load_plugin(
         if unload_on_exit:
             for name in reversed(loaded):
                 try:
-                    cmds_edit.unloadPlugin(name)
+                    _cmds_edit.unloadPlugin(name)
                 except Exception as error:  # noqa: BLE001 (a refusal is reported, not raised)
                     cmds.warning(f"load_plugin: could not unload {name}: {str(error).strip()}")
                 else:
@@ -193,7 +194,7 @@ def _run_undoable(obj):
     a ``RuntimeError`` says that rig needs it for the edit (``obj``'s class names it,
     its ``UNDO_EDIT``), where rig looked for it and Maya's reason, and nothing is
     changed."""
-    barrier()
+    _barrier()
     command = getattr(cmds, UNDOABLE_API_COMMAND, None)
     if command is None:
         try:

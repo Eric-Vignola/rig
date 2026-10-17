@@ -16,7 +16,11 @@ from typing import Generator, List
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit, mel_eval, statement
+from rig._internal.journal import (
+    cmds_edit as _cmds_edit,
+    mel_eval as _mel_eval,
+    statement as _statement,
+)
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import Attribute
@@ -575,7 +579,7 @@ class Mesh(Geometry):
         """
         map_name = f"{self}.{map_name}"
         if cmds.objExists(map_name):
-            cmds_edit.deleteAttr(map_name)
+            _cmds_edit.deleteAttr(map_name)
 
     def rename_uv_set(self, new_name: str, uv_set: str | None = None) -> None:
         """Renames the current uv set: one undo step.
@@ -699,8 +703,8 @@ class Mesh(Geometry):
 
         with _undo_chunk("rig.Mesh.bake_deformation"):
             # set to bind pose
-            cmds_edit.select(str(self), replace=True)
-            mel_eval("gotoBindPose;")
+            _cmds_edit.select(str(self), replace=True)
+            _mel_eval("gotoBindPose;")
 
             # bake delta mush, use a high max inf count to maintain fidelity
             # (None: as many as the skeleton has joints, which is no cap)
@@ -708,7 +712,7 @@ class Mesh(Geometry):
                 bake_cap = len(cmds.ls("root_joint", dag=True, type="joint"))
             else:
                 bake_cap = max(8, max_influences)
-            cmds_edit.bakeDeformer(
+            _cmds_edit.bakeDeformer(
                 srcSkeletonName = "root_joint",
                 srcMeshName     = str(self),
                 dstSkeletonName = "root_joint",
@@ -848,7 +852,7 @@ class Mesh(Geometry):
         self.serialize(world_space=world_space, include_uvs=False).save(path)
         return path
 
-    @statement
+    @_statement
     def _load_new(cls, mesh, uvs=None, *, name=None, container=None, normals=True, **kwargs):
         _files.creating_takes_no_space(cls.__name__, "mesh", kwargs)
         normals = _restore_flag("Mesh.load", "normals", normals)
@@ -856,7 +860,7 @@ class Mesh(Geometry):
         with _undo_chunk("rig.Mesh.load"):
             return cls.create(data, uv_data, name=name, container=container, normals=normals, **kwargs)
 
-    @statement
+    @_statement
     def _load_into(self, mesh, uvs=None, *, world_space=True, normals=True, **kwargs):
         method = f"Mesh({str(self)!r}).load"
         if kwargs:
@@ -1171,8 +1175,8 @@ class Mesh(Geometry):
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
         paint_attr = f"{type(self).NATIVE_NODE_TYPE}.{type(self).get_long_name(self)}.{type(map_attr).get_name(map_attr)}"
-        cmds_edit.select(type(map_attr).get_node(map_attr), replace=True)
-        mel_eval(
+        _cmds_edit.select(type(map_attr).get_node(map_attr), replace=True)
+        _mel_eval(
             f'artSetToolAndSelectAttr("artAttrCtx", "{paint_attr}");artAttrInitPaintableAttr;'
         )
 
@@ -2286,20 +2290,20 @@ def _create_mesh(
                 _write_uv_set(fn, uv.name, uv, clear=False)
         if shading is not None:
             _restore_shading(fn, shading)
-        cmds_edit.sets(xform, forceElement="initialShadingGroup")
+        _cmds_edit.sets(xform, forceElement="initialShadingGroup")
         if name:
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
-            xform = cmds_edit.rename(xform, name)
+            xform = _cmds_edit.rename(xform, name)
         if obj is not None:
             _place_object(xform, obj)
         else:
             matrix = mesh_data.matrix.ravel()
             if not np.array_equal(matrix, _IDENTITY_16):
                 # a new transform is at rest already (world-space data has no matrix)
-                cmds_edit.xform(xform, matrix=matrix)
+                _cmds_edit.xform(xform, matrix=matrix)
     except BaseException:
         if handle.isValid():
-            cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+            _cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
         raise
     return xform
 
@@ -2457,7 +2461,7 @@ def _place_object(xform: str, obj) -> None:
     node = _cast(xform)
     if obj.get_parent() is not None:
         node.find_attr("rotateOrder").set(int(obj.rotate_order))
-        cmds_edit.xform(xform, matrix=np.asarray(obj.world_matrix, dtype=float).ravel().tolist())
+        _cmds_edit.xform(xform, matrix=np.asarray(obj.world_matrix, dtype=float).ravel().tolist())
         return
     for attr, field, rest in _OBJECT_PLACEMENT:
         value = getattr(obj, field)
@@ -3103,10 +3107,10 @@ class _MeshAddColorSetCommand(_MeshSetsEdit):
 
 
 class _ColorSetDataCommand(_MeshSetsEdit):
-    """`ColorSet.data`: one colour per vertex. Undo puts the set's colours back
+    """`ColorSet.set_data`: one colour per vertex. Undo puts the set's colours back
     face-vertex by face-vertex; the current colour set stays current."""
 
-    UNDO_EDIT = "ColorSet.data"
+    UNDO_EDIT = "ColorSet.set_data"
 
     def __init__(self, mesh: Mesh, name: str, rep: int, colors: OpenMaya.MColorArray) -> None:
         self._name    = name
@@ -3200,7 +3204,13 @@ class _ColorSetDeleteCommand(_MeshSetsEdit):
 
 
 class ColorSet:
-    """Represents a color set of a mesh"""
+    """A colour set of a mesh: a handle on the scene, so every public member is
+    a method (user decision 2026-10-16): ``get_name()``, ``get_mesh()``,
+    ``is_valid()``, ``get_representation()``, ``get_data()`` /
+    ``set_data(colours)``, ``delete()``. Made by ``mesh.get_color_sets()``,
+    ``mesh.add_color_set(name, rep)`` or ``ColorSet(mesh, name)``."""
+
+    __slots__ = ("_mesh", "_name")
 
     class Representation(enum.Enum):
         """
@@ -3216,69 +3226,70 @@ class ColorSet:
         self._name = name
 
     def __repr__(self):
-        return f"ColorSet<{self.mesh}.{self.name}>)"
+        return f"ColorSet<{self._mesh}.{self._name}>"
 
-    @property
-    def name(self) -> str:
-        """The name of the color set"""
+    def get_name(self) -> str:
+        """The name of the colour set (the one this handle was made with)."""
         return self._name
 
-    @property
-    def mesh(self) -> Mesh:
-        """The mesh this color set belongs too"""
+    def get_mesh(self) -> Mesh:
+        """The mesh this colour set belongs to."""
         return self._mesh
 
     @_scene_predicate
     def is_valid(self) -> bool:
         """Does the underlying colorset still exist? A method (named without
         brackets, ``cset.is_valid`` has no truth value: the predicate guard)."""
-        return self.name in type(self.mesh).get_fn_set(self.mesh).getColorSetNames()
+        return self._name in type(self._mesh).get_fn_set(self._mesh).getColorSetNames()
 
-    @property
-    def representation(self) -> ColorSet.Representation:
+    def get_representation(self) -> ColorSet.Representation:
         """The representation of the color set (ie the data type Alpha|RGB|RGBA)"""
         if not self.is_valid():
             raise RuntimeError(
-                f"{self.name} is not a valid color set for {self.mesh}!"
+                f"{self._name} is not a valid color set for {self._mesh}!"
             )
-        return self.Representation(type(self.mesh).get_fn_set(self.mesh).getColorRepresentation(self.name))
+        return self.Representation(type(self._mesh).get_fn_set(self._mesh).getColorRepresentation(self._name))
 
-    @property
-    def data(self) -> np.array:
-        """the data of the color set expressed as a numpy array."""
-        with self.as_current_color_set():
-            return np.array(type(self.mesh).get_fn_set(self.mesh).getVertexColors())
+    def get_data(self) -> np.ndarray:
+        """The colours of the set, one per vertex, as a ``(V, 4)`` numpy array.
+        A read: the current colour set is left as it is, and the scene is not
+        marked modified."""
+        if not self.is_valid():
+            raise RuntimeError(
+                f"{self._name} is not a valid color set for {self._mesh}!"
+            )
+        return np.array(type(self._mesh).get_fn_set(self._mesh).getVertexColors(self._name))
 
-    @data.setter
-    def data(self, data):
-        """set the colorset data: one colour per vertex, a ``(V, 4)`` array. One
-        undo step, whose undo puts back the set's colours as they were,
-        face-vertex by face-vertex. The current colour set is unchanged."""
-        mesh = self.mesh
+    def set_data(self, data: np.ndarray) -> None:
+        """Set the colours: one per vertex, a ``(V, 4)`` array. One undo step,
+        whose undo puts back the set's colours as they were, face-vertex by
+        face-vertex. The current colour set is unchanged."""
+        mesh = self._mesh
+        data = np.asarray(data)
         if data.shape[0] != type(mesh).get_num_vertices(mesh):
             raise RuntimeError(f"shape of data is not ({type(mesh).get_num_vertices(mesh)}, 4): !")
-        rep = self.representation.value  # raises for a colour set that is gone
-        _ColorSetDataCommand(mesh, self.name, rep, OpenMaya.MColorArray(data))
+        rep = self.get_representation().value  # raises for a colour set that is gone
+        _ColorSetDataCommand(mesh, self._name, rep, OpenMaya.MColorArray(data))
 
     @contextlib.contextmanager
     def as_current_color_set(self) -> Generator[None, None, None]:
         """Context manager that sets the current color set to this one"""
         if not self.is_valid():
             raise RuntimeError(
-                f"{self.name} is not a valid color set for {self.mesh}!"
+                f"{self._name} is not a valid color set for {self._mesh}!"
             )
 
         try:
-            current_colorset = type(self.mesh).get_fn_set(self.mesh).currentColorSetName()
-            type(self.mesh).get_fn_set(self.mesh).setCurrentColorSetName(self.name)
+            current_colorset = type(self._mesh).get_fn_set(self._mesh).currentColorSetName()
+            type(self._mesh).get_fn_set(self._mesh).setCurrentColorSetName(self._name)
             yield
         finally:
             if current_colorset:
-                type(self.mesh).get_fn_set(self.mesh).setCurrentColorSetName(current_colorset)
+                type(self._mesh).get_fn_set(self._mesh).setCurrentColorSetName(current_colorset)
 
     def delete(self):
         """Delete this color set (nothing happens when it no longer exists): one
         undo step, whose undo brings the set back with its representation,
         clamping and colours (current again if it was)."""
         if self.is_valid():
-            _ColorSetDeleteCommand(self.mesh, self.name)
+            _ColorSetDeleteCommand(self._mesh, self._name)

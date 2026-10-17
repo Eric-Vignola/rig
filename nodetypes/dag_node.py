@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type
 from rig.nodetypes.dg_node import _PLAIN_CREATES, _ensure_valid, DGNode
 
@@ -303,12 +303,12 @@ class DAGNode(DGNode):
                     kwargs[ln] = True
 
             if parent:
-                cmds_edit.parent(str(self), parent, **kwargs)
+                _cmds_edit.parent(str(self), parent, **kwargs)
             else:
                 if "w" in kwargs:
                     kwargs.pop("w")
                 kwargs["world"] = True
-                cmds_edit.parent(str(self), **kwargs)
+                _cmds_edit.parent(str(self), **kwargs)
 
     # --- deformers
 

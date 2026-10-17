@@ -3,7 +3,7 @@
 Every mesh edit is one undo step through rig's plug-in command
 (``rig.nodetypes.plugins._run_undoable``): ``Mesh.set_points``, the UV set edits
 (``add_uv_set``, ``rename_uv_set``, ``delete_uv_set``, ``set_uv_data``) and the colour
-set edits (``add_color_set``, the ``ColorSet.data`` setter, ``ColorSet.delete``). Each
+set edits (``add_color_set``, ``ColorSet.set_data``, ``ColorSet.delete``). Each
 is API only, sets included (never ``polyUVSet`` / ``polyColorSet``, whose undo beside
 API data edits and a later vertex edit restores broken sets: runs\\rU2\\S3\\probe).
 The user's own polyUVSet / polyColorSet beside them: TestNativeSetEditsBesideRig and
@@ -13,6 +13,8 @@ Undo tests check the scene (``rig._tests._undo``), never ``cmds.undo()``'s retur
 value. The walks run on a history-free cube, one with vertex tweaks, one with
 construction history and a skinned one where the edit is exact there.
 """
+
+# re-pinned throughout (user decision 2026-10-16, a ColorSet is a scene handle: get_data() / set_data(colours) / get_name() replace the data property and name)
 
 import ast
 import inspect
@@ -161,7 +163,7 @@ class _UndoCase(UndoWalk, MayaTestCase):
             mesh.get_uv_coords(uv_set)
             mesh.get_assigned_uvs(uv_set)
         for color_set in mesh.get_color_sets():
-            color_set.data
+            color_set.get_data()
 
     def assert_refused(self, mesh, call, error, regex=None):
         """``call`` raises ``error`` and leaves the scene and the undo queue as they were."""
@@ -594,7 +596,7 @@ def partial_colors(mesh, name, rep=OpenMaya.MFnMesh.kRGBA):
 
 
 class TestColorSetUndo(_UndoCase):
-    """``Mesh.add_color_set``, ``ColorSet.data`` and ``ColorSet.delete``: one undo step
+    """``Mesh.add_color_set``, ``ColorSet.set_data`` and ``ColorSet.delete``: one undo step
     each, exact on every kind of mesh (MESH_KINDS)."""
 
     def build(self, kind):
@@ -618,7 +620,7 @@ class TestColorSetUndo(_UndoCase):
             with self.subTest(kind):
                 mesh = self.build(kind)
                 self.walk(mesh, [lambda: mesh.add_color_set("cs1", RGBA), lambda: mesh.add_color_set("cs2", ALPHA)], msg=kind)
-                self.assertEqual([c.name for c in mesh.get_color_sets()], ["pre", "part", "cs1", "cs2"])
+                self.assertEqual([c.get_name() for c in mesh.get_color_sets()], ["pre", "part", "cs1", "cs2"])
 
     def test_data(self):
         ramp = np.column_stack((np.linspace(0, 1, 8), np.linspace(1, 0, 8), np.full(8, 0.5), np.full(8, 0.25)))
@@ -626,9 +628,9 @@ class TestColorSetUndo(_UndoCase):
             with self.subTest(kind):
                 mesh = self.build(kind)
                 self.walk(mesh, [
-                    lambda: setattr(ColorSet(mesh, "part"), "data", colours(mesh, [1.0, 0.0, 0.0, 1.0])),
-                    lambda: setattr(ColorSet(mesh, "part"), "data", ramp),
-                    lambda: setattr(ColorSet(mesh, "pre"), "data", ramp),   # the current set
+                    lambda: ColorSet(mesh, "part").set_data(colours(mesh, [1.0, 0.0, 0.0, 1.0])),
+                    lambda: ColorSet(mesh, "part").set_data(ramp),
+                    lambda: ColorSet(mesh, "pre").set_data(ramp),   # the current set
                 ], msg=kind)
                 self.assertEqual(mesh.get_fn_set().currentColorSetName(), "pre")
 
@@ -641,9 +643,9 @@ class TestColorSetUndo(_UndoCase):
                     lambda: mesh.add_color_set("cs1", RGB),
                     lambda: ColorSet(mesh, "part").delete(),
                 ], msg=kind)
-                self.assertEqual([c.name for c in mesh.get_color_sets()], ["cs1"])
+                self.assertEqual([c.get_name() for c in mesh.get_color_sets()], ["cs1"])
                 self.undo_steps(3)
-                self.assertEqual([c.name for c in mesh.get_color_sets()], ["pre", "part"])
+                self.assertEqual([c.get_name() for c in mesh.get_color_sets()], ["pre", "part"])
                 self.assertEqual(mesh.get_fn_set().currentColorSetName(), "pre")
 
     def test_add_data_delete_then_vertex_edits(self):
@@ -656,7 +658,7 @@ class TestColorSetUndo(_UndoCase):
                 cmds.flushUndo()
                 self.walk(mesh, [
                     lambda: mesh.add_color_set("c", RGBA),
-                    lambda: setattr(ColorSet(mesh, "c"), "data", colours(mesh, [0.1, 0.5, 0.9, 1.0])),
+                    lambda: ColorSet(mesh, "c").set_data(colours(mesh, [0.1, 0.5, 0.9, 1.0])),
                     lambda: ColorSet(mesh, "c").delete(),
                     lambda: mesh.set_points(lifted(mesh)),
                     lambda: move_vertices(mesh),
@@ -669,10 +671,10 @@ class TestColorSetUndo(_UndoCase):
                 mesh   = self.build(kind)
                 before = self.state(mesh)
                 cs     = mesh.add_color_set("cs1", RGBA)
-                cs.data = colours(mesh, blue)
+                cs.set_data(colours(mesh, blue))
                 ColorSet(mesh, "part").delete()
                 cs2 = mesh.add_color_set("cs2", ALPHA)
-                cs2.data = colours(mesh, blue)
+                cs2.set_data(colours(mesh, blue))
                 ColorSet(mesh, "pre").delete()
                 after = self.state(mesh)
                 for cycle in range(2):
@@ -683,16 +685,16 @@ class TestColorSetUndo(_UndoCase):
                 # the held Mesh and ColorSet still answer
                 # re-pinned (user decision 2026-10-16, the predicate guard): a method
                 self.assertTrue(cs.is_valid())
-                self.assertTrue(np.allclose(cs.data, blue))
-                self.assertEqual([c.name for c in mesh.get_color_sets()], ["cs1", "cs2"])
+                self.assertTrue(np.allclose(cs.get_data(), blue))
+                self.assertEqual([c.get_name() for c in mesh.get_color_sets()], ["cs1", "cs2"])
 
     def test_the_existing_errors(self):
         mesh = self.build("free")
         self.assert_refused(mesh, lambda: mesh.add_color_set("pre", RGBA), ValueError, "has color set pre")
         self.assert_refused(mesh, lambda: mesh.add_color_set("x", "RGBA"), ValueError)
-        self.assert_refused(mesh, lambda: setattr(ColorSet(mesh, "pre"), "data", np.zeros((3, 4))),
+        self.assert_refused(mesh, lambda: ColorSet(mesh, "pre").set_data(np.zeros((3, 4))),
                             RuntimeError, "shape of data")
-        self.assert_refused(mesh, lambda: setattr(ColorSet(mesh, "nope"), "data", np.zeros((8, 4))),
+        self.assert_refused(mesh, lambda: ColorSet(mesh, "nope").set_data(np.zeros((8, 4))),
                             RuntimeError, "not a valid color set")
         ColorSet(mesh, "nope").delete()  # nothing to delete: nothing happens
         self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
@@ -704,12 +706,12 @@ class TestColorSetUndo(_UndoCase):
                 cmds.undoInfo(state=False)
                 try:
                     cs = mesh.add_color_set("cs1", RGBA)
-                    cs.data = colours(mesh, [1.0, 0.0, 0.0, 1.0])
+                    cs.set_data(colours(mesh, [1.0, 0.0, 0.0, 1.0]))
                     ColorSet(mesh, "part").delete()
                 finally:
                     cmds.undoInfo(state=True)
-                self.assertEqual([c.name for c in mesh.get_color_sets()], ["pre", "cs1"])
-                self.assertTrue(np.allclose(cs.data, [1.0, 0.0, 0.0, 1.0]))
+                self.assertEqual([c.get_name() for c in mesh.get_color_sets()], ["pre", "cs1"])
+                self.assertTrue(np.allclose(cs.get_data(), [1.0, 0.0, 0.0, 1.0]))
                 self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
 
     def test_a_new_scene_with_colour_edits_queued(self):
@@ -717,7 +719,7 @@ class TestColorSetUndo(_UndoCase):
             with self.subTest(kind):
                 mesh = self.build(kind)
                 cs = mesh.add_color_set("cs1", RGBA)
-                cs.data = colours(mesh, [1.0, 0.0, 0.0, 1.0])
+                cs.set_data(colours(mesh, [1.0, 0.0, 0.0, 1.0]))
                 ColorSet(mesh, "part").delete()
                 self.undo_steps(1)  # one on the redo queue
         mesh = self.build("history")
@@ -778,7 +780,7 @@ class TestNativeSetEditsBesideRig(_UndoCase):
         ])
 
     def test_a_native_colour_set_delete_then_a_vertex_edit(self):
-        # crashed Maya in the undo of ColorSet.data (clearColors). After the vertex edit the
+        # crashed Maya in the undo of ColorSet.set_data (clearColors). After the vertex edit the
         # undo of Maya's own delete brings the colours back inexactly (Maya, not rig), so the
         # walk checks the ends: where it started, where it ended, both ways, twice
         for vertex_edit in ("move", "set_points"):
@@ -788,7 +790,7 @@ class TestNativeSetEditsBesideRig(_UndoCase):
                 cmds.flushUndo()
                 before = self.state(mesh)
                 mesh.add_color_set("cs", RGBA)
-                ColorSet(mesh, "cs").data = colours(mesh, [0.1, 0.5, 0.9, 1.0])
+                ColorSet(mesh, "cs").set_data(colours(mesh, [0.1, 0.5, 0.9, 1.0]))
                 cmds.polyColorSet(mesh.get_name(), delete=True, colorSet="cs")
                 if vertex_edit == "move":
                     move_vertices(mesh)
@@ -814,10 +816,10 @@ class TestNativeSetEditsBesideRig(_UndoCase):
         move_vertices(cube)
         self.undo_steps(3)
         self.assertEqual(list(cube.get_uv_sets()), ["map1", "a"])
-        self.assertEqual([c.name for c in cube.get_color_sets()], ["cs"])
+        self.assertEqual([c.get_name() for c in cube.get_color_sets()], ["cs"])
         self.walk(cube, [
             lambda: cube.set_uv_data(uv_data(cube, "map1", "a", 0.5), "a"),
-            lambda: setattr(ColorSet(cube, "cs"), "data", colours(cube, [0.2, 0.4, 0.6, 1.0])),
+            lambda: ColorSet(cube, "cs").set_data(colours(cube, [0.2, 0.4, 0.6, 1.0])),
             lambda: cube.rename_uv_set("r", "a"),
         ])
         self.assertEqual(list(cube.get_uv_sets()), ["map1", "r"])
@@ -902,14 +904,14 @@ class TestSetElementsAndLinks(_UndoCase):
         mesh = make_mesh()
         for name in ("c0", "c1", "c2"):
             mesh.add_color_set(name, RGBA)
-            ColorSet(mesh, name).data = colours(mesh, [0.1, 0.2, 0.3, 1.0])
+            ColorSet(mesh, name).set_data(colours(mesh, [0.1, 0.2, 0.3, 1.0]))
         cmds.flushUndo()
         elements = set_elements(mesh, "colorSet")
         self.assertEqual(elements, {"c0": [0], "c1": [1], "c2": [2]})
         self.walk(mesh, [lambda: ColorSet(mesh, "c1").delete(), lambda: ColorSet(mesh, "c0").delete()])
         self.undo_steps(2)
         self.assertEqual(set_elements(mesh, "colorSet"), elements)
-        self.assertEqual([c.name for c in mesh.get_color_sets()], ["c0", "c1", "c2"])
+        self.assertEqual([c.get_name() for c in mesh.get_color_sets()], ["c0", "c1", "c2"])
 
 
 # --- several edits: create, chunks, errors, undo off --------------------------------------------
@@ -927,7 +929,7 @@ class TestMeshEditsTogether(_UndoCase):
             lambda: mesh.set_uv_data(per_face_vertex_uvs(mesh), "map1"),
             lambda: mesh.rename_uv_set("uv3", "uv2"),
             lambda: mesh.add_color_set("cs1", RGBA),
-            lambda: setattr(ColorSet(mesh, "cs1"), "data", colours(mesh, [1.0, 0.0, 0.0, 1.0])),
+            lambda: ColorSet(mesh, "cs1").set_data(colours(mesh, [1.0, 0.0, 0.0, 1.0])),
             lambda: mesh.delete_uv_set("uv3"),
             lambda: ColorSet(mesh, "cs1").delete(),
         ]

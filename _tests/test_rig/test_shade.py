@@ -88,13 +88,14 @@ class TestMaterialConstruction(MayaTestCase):
         self.assertEqual(repr(values[0]), 'Blinn("red")')
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
         self.assertAlmostEqual(cmds.getAttr("red.diffuse"), 0.5)
-        self.assertTrue(values[2].purges)
+        # re-pinned (user decision 2026-10-16): removes / purges are private; a token's name is str(token), it has no .name
+        self.assertTrue(values[2]._purges)
         self.assertEqual(repr(values[2]), "Material()")
         self.assertEqual(repr(values[3]), "Lambert()")
         self.assertEqual(repr(values[4]), DEFAULT)
         self.assertEqual(str(values[4]),  ISG)
         self.assertEqual(repr(values[5]), '-Blinn("red")')
-        self.assertTrue(values[5].removes)
+        self.assertTrue(values[5]._remove)
         self.assertEqual(repr(values[6]), f"-{DEFAULT}")
         for cls, node_type in (
             (Lambert, "lambert"), (Blinn, "blinn"), (Phong, "phong"),
@@ -111,8 +112,9 @@ class TestMaterialConstruction(MayaTestCase):
         # Material() / Blinn() are the kind token (Material(None) is refused);
         # Default() is initialShadingGroup's node
         for purge in (Material(), Blinn(), Lambert()):
-            self.assertTrue(purge.purges)
-            self.assertIsNone(purge.name)
+            # re-pinned (user decision 2026-10-16): removes / purges are private; a token's name is str(token), it has no .name
+            self.assertTrue(purge._purges)
+            self.assertFalse(hasattr(purge, "name"))
         self.assertEqual(repr(Blinn()), "Blinn()")
         self.assertEqual(str(Default()), ISG)
         self.assertIsInstance(Default(), ShadingEngine)
@@ -159,13 +161,14 @@ class TestMaterialConstruction(MayaTestCase):
         the node is the whole state)."""
         red     = Blinn.define("red")
         removal = -red
-        self.assertTrue(removal.removes)
-        self.assertEqual(removal.name, "red")
+        # re-pinned (user decision 2026-10-16): removes / purges are private; a token's name is str(token), it has no .name
+        self.assertTrue(removal._remove)
+        self.assertEqual(str(removal), "red")
         self.assertEqual(repr(removal), '-Blinn("red")')
         red.rename("scarlet")
         self.assertEqual(repr(removal), '-Blinn("scarlet")')
         engine = -red.get_engine()
-        self.assertTrue(engine.removes)
+        self.assertTrue(engine._remove)
         self.assertEqual(repr(engine), '-ShadingEngine("scarletSG")')
 
     def test_methods_refuse_removal_and_purge_copies(self):
@@ -986,12 +989,13 @@ class TestMaterialQuery(MayaTestCase):
         self.assertEqual([str(x) for x in shade.materials(self.cube.f[[0, 3]])], ["red", "blue"])
         found = shade.bindings(self.cube)
         self.assertEqual(
-            sorted((str(m), f.indices.tolist()) for m, f in found),
+            # re-pinned (user decision 2026-10-16, a Components is a scene handle): methods
+            sorted((str(m), f.get_indices().tolist()) for m, f in found),
             [("blue", [3]), ("red", [0, 1, 2]), ("standardSurface1", [4, 5])],
         )
         self.assertTrue(all(isinstance(f, Components) for _, f in found))
         self.assertEqual(
-            [(str(m), f.indices.tolist()) for m, f in shade.bindings(self.cube.f[2:4])],
+            [(str(m), f.get_indices().tolist()) for m, f in shade.bindings(self.cube.f[2:4])],
             [("red", [2]), ("blue", [3])],
         )
         # object level is the whole kind
@@ -1000,8 +1004,8 @@ class TestMaterialQuery(MayaTestCase):
         self.assertEqual(material, Blinn("red"))
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertTrue(faces.is_all())
-        self.assertEqual(faces.names, [f"{self.shape}.f[*]"])
-        self.assertEqual(shade.bindings(_cube("other").f[:2])[0][1].indices.tolist(), [0, 1])
+        self.assertEqual(faces.get_names(), [f"{self.shape}.f[*]"])
+        self.assertEqual(shade.bindings(_cube("other").f[:2])[0][1].get_indices().tolist(), [0, 1])
         with self.assertRaisesRegex(TypeError, "per face"):
             shade.bindings(Node(cmds.sphere(name="srf")[0]))
 

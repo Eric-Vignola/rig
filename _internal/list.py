@@ -383,7 +383,7 @@ class List(list):
         # plugs and the nodes in one undo step), not a fan-out per element
         if _is_attribute_spec(other):
             kargs = getattr(other, "kargs", None)
-            if isinstance(kargs, dict) and kargs.keys() == {"lock"}:
+            if kargs is not None and kargs.keys() == {"lock"}:  # a dict, or a modifier's read-only mapping
                 return self.lock() if kargs["lock"] else self.unlock()
 
         # Keys: one curve per plug (``List(ctrls).ry << AnimCurve([...])``), every

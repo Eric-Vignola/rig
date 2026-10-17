@@ -95,13 +95,15 @@ class TestContainerStack(MayaTestCase):
     def test_stack_empty_outside_with_block(self):
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertFalse(container.is_active())
-        self.assertEqual(container.stack, [])
+        # re-pinned (user decision 2026-10-16, rig.container.get_stack()): read-only (name, Container or None) tuples
+        self.assertEqual(container.get_stack(), ())
 
     def test_stack_populated_inside_with_block(self):
         with container("ctn1"):
             # re-pinned (user decision 2026-10-16, the predicate guard): a method
             self.assertTrue(container.is_active())
-            self.assertEqual(len(container.stack), 1)
+            # re-pinned (user decision 2026-10-16, rig.container.get_stack()): read-only (name, Container or None) tuples
+            self.assertEqual(container.get_stack(), (("ctn1", Container("ctn1")),))
         self.assertFalse(container.is_active())
 
     def test_stack_pops_on_exception(self):
@@ -230,19 +232,22 @@ class TestFrameMembers(MayaTestCase):
 
         outside = Node(cmds.createNode("transform", name="outside"))
         with container("outer"):
-            outer = container.stack[-1]
+            # re-pinned (user decision 2026-10-16, rig.container.get_stack()): the frames are rig's own bookkeeping
+            outer = container._stack[-1]
             golden.append([])
             a = Node.create("multiplyDivide", name="a")
             record(a)
             with container("mid"):
-                mid = container.stack[-1]
+                # re-pinned (user decision 2026-10-16, rig.container.get_stack()): the frames are rig's own bookkeeping
+                mid = container._stack[-1]
                 golden.append([])
                 b = Node.create("plusMinusAverage", name="b")
                 record(b)
                 container.add(a)
                 record(a)
                 with container("inner"):
-                    inner = container.stack[-1]
+                    # re-pinned (user decision 2026-10-16, rig.container.get_stack()): the frames are rig's own bookkeeping
+                    inner = container._stack[-1]
                     golden.append([])
                     c = Node.create("condition", name="c")
                     container.add([outside, str(b)])
@@ -265,7 +270,8 @@ class TestFrameMembers(MayaTestCase):
         node_a = Node(cmds.createNode("transform", name="mixedA"))
         name_b = cmds.createNode("transform", name="mixedB")
         with container("mixed") as ctn:
-            frame = container.stack[-1]
+            # re-pinned (user decision 2026-10-16, rig.container.get_stack()): the frames are rig's own bookkeeping
+            frame = container._stack[-1]
             container.add([node_a, name_b])
             self.assertEqual(frame.members, [_uuid(node_a), _uuid(name_b)])
         members = cmds.container(str(ctn), q=True, nodeList=True) or []
@@ -285,7 +291,8 @@ class TestFrameMembers(MayaTestCase):
         container_module._node_uuid = counting
         try:
             with container("lookups"):
-                frame = container.stack[-1]
+                # re-pinned (user decision 2026-10-16, rig.container.get_stack()): the frames are rig's own bookkeeping
+                frame = container._stack[-1]
                 node  = Node.create("multiplyDivide", name="lookupA")
                 self.assertEqual(calls, [])
                 name_b = cmds.createNode("transform", name="lookupB")
@@ -299,7 +306,8 @@ class TestFrameMembers(MayaTestCase):
         node = Node(cmds.createNode("multiplyDivide", name="md"))
         cmds.rename(str(node), "abcdefabcdefabcdefabcdefabcdefab")
         with container("ctn") as ctn:
-            frame = container.stack[-1]
+            # re-pinned (user decision 2026-10-16, rig.container.get_stack()): the frames are rig's own bookkeeping
+            frame = container._stack[-1]
             with self.assertRaises(TypeError) as ctx:
                 container.add(node)
             self.assertTrue(str(ctx.exception).startswith("Invalid object name: "))

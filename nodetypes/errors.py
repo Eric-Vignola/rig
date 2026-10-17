@@ -146,8 +146,10 @@ class NodeNotFoundError(NodeLookupError):
     ``no joint named 'spnie_01'`` with its hints (did you mean, another
     namespace, the scope prefix), or ``no node has the uuid '...'``. A node
     class's reference ends it with the call that finds or makes the node
-    (``door``), read when it is printed, as the hints are:
-    ``...; Joint.define('spnie_01') finds or makes it``."""
+    (``door``): ``...; Joint.define('spnie_01') finds or makes it``. The
+    hints and the door are read from the scene once, when the message is
+    first built (printed, or ``door`` read), and kept: an error is a value,
+    so ``door`` always agrees with ``str(error)``."""
 
     # the node class whose reference raised the error (``Joint``), set by the
     # reference; None for ``Node(x)`` and an error made directly
@@ -168,7 +170,8 @@ class NodeNotFoundError(NodeLookupError):
     def __str__(self) -> str:
         if self._message is None:
             text = super().__str__()
-            door = self.door
+            door = self._read_door()
+            self._door    = door
             self._message = f"{text}; {door} finds or makes it" if door else text
         return self._message
 
@@ -178,19 +181,26 @@ class NodeNotFoundError(NodeLookupError):
         function)."""
         state = dict(self.__dict__)
         if state.pop("node_class", None) is not None:
-            state["_message"] = str(self)
-            state["_door"]    = self.door
+            str(self)  # the message and the door, as text
+            state["_message"] = self._message
+            state["_door"]    = self._door
         return type(self), self.args, state
 
     @property
     def door(self) -> str | None:
         """The call that finds or makes the missing node
-        (``"Joint.define('spnie_01')"``), read from the scene now: the
-        reference's class's ``define`` when it makes the node from the name
-        (``DGNode._define_door``); None for a uuid, ``Node(x)``, an error made
-        directly, or a scene that cannot be read. A copy keeps it as text."""
-        if "_door" in self.__dict__:
-            return self._door
+        (``"Joint.define('spnie_01')"``): the reference's class's ``define``
+        when it makes the node from the name (``DGNode._define_door``); None
+        for a uuid, ``Node(x)``, an error made directly, or a scene that could
+        not be read. Read from the scene once, with the message (the first
+        ``str(error)`` or ``door`` read), and kept: it always agrees with
+        ``str(error)``. A copy keeps it as text."""
+        if self._message is None:
+            str(self)
+        return self.__dict__.get("_door")
+
+    def _read_door(self) -> str | None:
+        """The door as the scene gives it now (see `door`)."""
         if self.node_class is None or self.uuid:
             return None
         try:

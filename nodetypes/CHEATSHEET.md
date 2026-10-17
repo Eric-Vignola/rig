@@ -973,14 +973,18 @@ mesh.delete_map("mask2")
 print(mesh.get_paintable_maps(), mesh.sanitize_map_values([1, 2]))                               # ['mask'] [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 ```
 
-Colour sets are `ColorSet` handles; `data` is an `(V, 4)` array:
+Colour sets are `ColorSet` handles on the scene, so every member is a
+method: `get_name()`, `get_mesh()`, `is_valid()`, `get_representation()`,
+and `get_data()` / `set_data(colours)`, an `(V, 4)` array. `get_data()` is a
+read (the current colour set stays, the scene is not marked modified);
+`set_data` is one undo step.
 
 ```python
 print(mesh.get_color_sets())                                     # []
 cset = mesh.add_color_set("tint", ColorSet.Representation.RGBA)   # Alpha, RGB or RGBA
-print(cset, cset.name, cset.mesh, cset.is_valid(), cset.representation)   # ColorSet<cubeShape.tint>) tint cubeShape True Representation.RGBA
-cset.data = np.tile([1.0, 0.0, 0.0, 1.0], (8, 1))
-print(cset.data.shape, cset.data[0])         # (8, 4) [1. 0. 0. 1.]
+print(cset, cset.get_name(), cset.get_mesh(), cset.is_valid(), cset.get_representation())   # ColorSet<cubeShape.tint> tint cubeShape True Representation.RGBA
+cset.set_data(np.tile([1.0, 0.0, 0.0, 1.0], (8, 1)))
+print(cset.get_data().shape, cset.get_data()[0])   # (8, 4) [1. 0. 0. 1.]
 cset.delete()
 print(cset.is_valid(), mesh.get_color_sets())  # False []
 ```
@@ -1639,7 +1643,7 @@ step). The object's rules:
 rig's own API edits keep these rules and go through `.run(obj)`, one step
 each: `Mesh.set_points`, the UV set edits (`add_uv_set`, `rename_uv_set`,
 `delete_uv_set`, `set_uv_data`), the colour set edits (`add_color_set`,
-`ColorSet.data`, `ColorSet.delete`) and `SkinCluster.set_weights`.
+`ColorSet.set_data`, `ColorSet.delete`) and `SkinCluster.set_weights`.
 `Mesh.create` and `NurbsCurve.create` need no command: their shape rides a
 recorded `createNode` transform. The DSL's connects and value sets use the
 command too, one step per statement ([root CHEATSHEET section 38](../CHEATSHEET.md#38-undo)),
