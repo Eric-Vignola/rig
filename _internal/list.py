@@ -526,9 +526,8 @@ class List(list):
         undo step.
 
         Defined explicitly because methods do not broadcast through
-        :meth:`__getattr__` (a node's ``is_locked`` property does: one bool per
-        node; a plug's ``is_locked()`` is a method: ``[x.is_locked() for x in
-        lst]``)."""
+        :meth:`__getattr__` (``is_locked()`` is a method of a node and of a plug:
+        ``[x.is_locked() for x in lst]``)."""
         return _set_locks(self, True)
 
     def unlock(self) -> "List":
@@ -765,7 +764,7 @@ def _set_locks(items: "List", state: bool) -> "List":
             same.append(x)
             plugs.append(x)
         elif isinstance(x, Node):
-            fn = x.fn_set
+            fn = type(x).get_fn_set(x)
             if fn.isLocked == state:
                 continue
             uuid = str(fn.uuid())
@@ -777,7 +776,7 @@ def _set_locks(items: "List", state: bool) -> "List":
 
     # the checks, in the order of the edits
     for x, fn in nodes:
-        why = _node_lock_refusal(fn, x.name, state)
+        why = _node_lock_refusal(fn, str(x), state)
         if why:
             raise _injection_error(why)
     for x in plugs:
@@ -793,11 +792,11 @@ def _set_locks(items: "List", state: bool) -> "List":
         return items
     with _undo_chunk("rig.lock" if state else "rig.unlock") if commands > 1 else contextlib.nullcontext():
         if not state and nodes:
-            cmds_edit.lockNode([x.name for x, _ in nodes], lock=False)
+            cmds_edit.lockNode([str(x) for x, _ in nodes], lock=False)
         for x in plugs:
             cmds_edit.setAttr(str(x), lock=state)
         if state and nodes:
-            cmds_edit.lockNode([x.name for x, _ in nodes], lock=True)
+            cmds_edit.lockNode([str(x) for x, _ in nodes], lock=True)
     return items
 
 
@@ -980,7 +979,7 @@ def _lift_or_pass(obj: Any) -> Any:
 
 def _values_list(items: Optional[Iterable[Any]] = None, parent_multi: Any = None) -> "List":
     """[Internal] A List rig builds from what it computed: a broadcast
-    (``nodes.tx``, ``nodes.is_locked``), an operator's results, a slice, a
+    (``nodes.tx``, ``nodes.t``), an operator's results, a slice, a
     ``multi[:]`` (with `parent_multi`), a vectorized call's or a command's
     results. Its elements are kept as they come (`_fill_values`: a str is
     still read as a name), never refused by `_user_items`' rule: a value

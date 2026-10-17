@@ -134,6 +134,12 @@ def _called(depth: int = 2) -> bool:
     return bool(k and (k & 1 or co[i + 1] & 1))
 
 
+def _is_predicate_name(name: str) -> bool:
+    """True for a predicate's name (``is_locked``, ``has_category``): its bare
+    access is guarded (`_BarePredicate`)."""
+    return name.startswith(("is_", "has_"))
+
+
 # ``(node, name, bound) -> node.<name>'s plug as a _MethodPlug running bound``,
 # or `bound` when no exact Plug can be built; set by rig.nodetypes.dg_node
 _METHOD_PLUG_HOOK = None
@@ -187,13 +193,15 @@ def _node_has_attr(d: dict, name: str) -> bool:
 class _PlugMethod:
     """A public function of a node class (see above): the function itself on the
     class, on a node the plug of its Maya attr of that name if it has one, else
-    the bound method."""
+    the bound method (a predicate's guarded when named without brackets,
+    `_BarePredicate`)."""
 
-    __slots__ = ("func", "name", "__dict__")
+    __slots__ = ("func", "name", "guard", "__dict__")
 
     def __init__(self, func: Any, name: str) -> None:
-        self.func = func
-        self.name = name
+        self.func  = func
+        self.name  = name
+        self.guard = _is_predicate_name(name)
         self.__dict__.update(getattr(func, "__dict__", {}))
         for key in ("__module__", "__name__", "__qualname__", "__doc__"):
             try:
@@ -225,7 +233,7 @@ class _PlugMethod:
             aliases = fn.getAliasList()
             if aliases and _alias_target(aliases, self.name) is not None:
                 return _METHOD_PLUG_HOOK(inst, self.name, bound)
-        return bound
+        return _BarePredicate(bound) if self.guard else bound
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         # ``Cls.__dict__[name](node, ...)`` calls the function, as it did
@@ -261,18 +269,19 @@ class _PlugDescriptor(_PlugMethod):
                 return bound
         if _node_has_attr(inst.__dict__, self.name):
             return _METHOD_PLUG_HOOK(inst, self.name, bound)
-        return bound
+        return _BarePredicate(bound) if self.guard else bound
 
 
 class _PlugClassMethod(classmethod):
     """`_PlugMethod` of a classmethod; still a classmethod (``.__func__``,
     ``isinstance(x, classmethod)``, help()'s "class method")."""
 
-    __slots__ = ("_name",)
+    __slots__ = ("_name", "_guard")
 
     def __init__(self, func: Any, name: str) -> None:
         super().__init__(func)
-        self._name = name
+        self._name  = name
+        self._guard = _is_predicate_name(name)
 
     def __get__(self, inst: Any, owner: Any = None) -> Any:
         if inst is None:
@@ -290,17 +299,18 @@ class _PlugClassMethod(classmethod):
                 return bound
         if _node_has_attr(inst.__dict__, self._name):
             return _METHOD_PLUG_HOOK(inst, self._name, bound)
-        return bound
+        return _BarePredicate(bound) if self._guard else bound
 
 
 class _PlugStaticMethod(staticmethod):
     """`_PlugMethod` of a staticmethod."""
 
-    __slots__ = ("_name",)
+    __slots__ = ("_name", "_guard")
 
     def __init__(self, func: Any, name: str) -> None:
         super().__init__(func)
-        self._name = name
+        self._name  = name
+        self._guard = _is_predicate_name(name)
 
     def __get__(self, inst: Any, owner: Any = None) -> Any:
         func = self.__func__
@@ -318,7 +328,7 @@ class _PlugStaticMethod(staticmethod):
                 return func
         if _node_has_attr(inst.__dict__, self._name):
             return _METHOD_PLUG_HOOK(inst, self._name, func)
-        return func
+        return _BarePredicate(func) if self._guard else func
 
 
 _PLUG_DESCRIPTORS = (_PlugMethod, _PlugClassMethod, _PlugStaticMethod)
@@ -348,6 +358,26 @@ def _plug_member(name: str, value: Any) -> Any:
     if isinstance(value, _CREATES_OR_UPDATES):
         return _PlugDescriptor(value, name)
     return value
+
+
+def _refuse_node_member(class_name: str, name: str, value: Any) -> None:
+    """Raise TypeError for a public member of a node class body that is a
+    property, a cached_property or another descriptor that is no method (the
+    property ban, user decision 2026-10-16: every public member of a node is a
+    method, so a bare name is the node's Maya attr of that name or the method).
+    Runs at class creation only. A function, classmethod, staticmethod or
+    ``creates_or_updates`` (made a plug method), a class, and data pass (class
+    data is its own rule)."""
+    if isinstance(value, (type, _FunctionType, classmethod, staticmethod)):
+        return
+    if hasattr(type(value), "__get__"):
+        kind = "property" if isinstance(value, property) else "descriptor"
+        raise TypeError(
+            f"{class_name}.{name}: a node class has no public {kind} (every public "
+            f"member of a node is a method, so that a bare name is the node's Maya "
+            f"attr of that name or the method): write a method (def get_{name}(self)), "
+            f"or keep it private (_{name})"
+        )
 
 
 def _raw_function(value: Any) -> Any:
@@ -483,6 +513,8 @@ class NodeMeta(type):
                 member = _plug_member(key, value)
                 if member is not value:
                     attrs[key] = member
+                else:
+                    _refuse_node_member(class_name, key, value)
         cls_obj   = type.__new__(mcs, class_name, bases, attrs)
 
         # a new class can change the dispatch of any node type
@@ -761,8 +793,8 @@ def _cast_node(name: str) -> Any:
     return _cast(name.split(".", 1)[0])
 
 
-# (DGNode.__init__, DAGNode.__init__, their is_type functions, their name
-# properties), bound on first use since dg_node imports this module
+# (DGNode.__init__, DAGNode.__init__, their is_type functions, their private
+# name readers), bound on first use since dg_node imports this module
 _BASE_CONSTRUCTOR_PARTS = None
 
 # (DGNode, DAGNode), bound on first use for the same reason
@@ -788,7 +820,7 @@ def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
     """Builds `cls_obj(obj)` without its `is_type` check, or returns None.
 
     For a class that keeps the DGNode or DAGNode constructor, type check and
-    name property, `is_type` only depends on the node type and the custom type
+    name reader (`_name`), `is_type` only depends on the node type and the custom type
     attr, so it passes for every node of a type that was already cast. The
     constructor's state is set in the constructor's order, the handle from the
     MObject just resolved (see `DGNode.__init__`). ``sel`` is the
@@ -809,9 +841,9 @@ def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
                 DGNode.__dict__["is_type"].__func__,
                 DAGNode.__dict__["is_type"].__func__,
             ),
-            (DGNode.__dict__["name"], DAGNode.__dict__["name"]),
+            (DGNode.__dict__["_name"], DAGNode.__dict__["_name"]),
         )
-    dg_init, dag_init, is_type_funcs, name_props = _BASE_CONSTRUCTOR_PARTS
+    dg_init, dag_init, is_type_funcs, name_funcs = _BASE_CONSTRUCTOR_PARTS
 
     init = cls_obj.__init__
     if (
@@ -819,7 +851,7 @@ def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
         or cls_obj.__new__ is not object.__new__
         or cls_obj.CUSTOM_NODE_TYPE
         or getattr(cls_obj.is_type, "__func__", None) not in is_type_funcs
-        or cls_obj.name not in name_props
+        or cls_obj._name not in name_funcs
     ):
         return None
     try:
@@ -995,17 +1027,11 @@ _FALLBACK_QUERY = None
 _USER_CODE_RUNS = [0]
 
 # Bound by `rig.nodetypes.dg_node` when it loads (it imports this module):
-# `_keeps_query`, and DGNode's `name`, `fn_set` and `ensure_valid` (see
-# `_dg_named_owner`), read before any patch of them can exist
+# `_keeps_query`, and DGNode's naming: its private reader `_name`, its `__str__`
+# and its `ensure_valid` function (see `_dg_named_owner`), read before any patch
+# of them can exist
 _KEEPS_QUERY = None
 _DG_NAMING   = None
-
-
-def _fn_set_name(node: Any) -> str:
-    """The fn set name of `node`: the partial path name of a DAG fn set, else the
-    node name. Reads the fn set directly, never `node.name`."""
-    fn = node.__dict__["_fn_set"]
-    return fn.partialPathName() if isinstance(fn, OpenMaya.MFnDagNode) else fn.name()
 
 
 # The handle of a node (`_objhandle`, an `MObjectHandle`) is the one object
@@ -1249,16 +1275,18 @@ def _dg_named_owner(attr: Any) -> Any:
     through `_ensure_dg_named`'s two checks, else None.
 
     That holds when `attr`'s class keeps Attribute's `get_full_name` and its owner's
-    class keeps DGNode's `name`, `fn_set` and `ensure_valid` (and Python's own
-    attribute lookup), with no `ensure_valid` set on the owner itself: the name
-    is then the owner's `ensure_valid()`, the `name()` of its fn set (which a
-    valid node answers), the check of a dynamic attr's attribute handle, and the
-    MPlug's own name, which a valid node's plug answers, a deleted dynamic
-    attribute's too. So a caller that needs only the raise runs the two checks
-    and builds no name. A DAG node's class names it through its path
-    (`DAGNode.name` re-binds a stale one), so it is never such an owner. The
-    classes are read at every call, so a patched method is seen at once. The
-    owner test is `_dg_named_node`'s, written out here (the hot path)."""
+    class keeps DGNode's naming (``__str__``, the private `_name`) and
+    `ensure_valid` (and Python's own attribute lookup), with no `ensure_valid`
+    set on the owner itself: the name is then the owner's `ensure_valid()`, the
+    `name()` of its held fn set (which a valid node answers), the check of a
+    dynamic attr's attribute handle, and the MPlug's own name, which a valid
+    node's plug answers, a deleted dynamic attribute's too. So a caller that
+    needs only the raise runs the two checks and builds no name. A DAG node's
+    class names it through its path (`DAGNode._name` re-binds a stale one), so
+    it is never such an owner. The classes are read at every call, so a patched
+    method is seen at once (the naming members are plain functions: their class
+    reads run no descriptor). The owner test is `_dg_named_node`'s, written out
+    here (the hot path)."""
     node = attr.__dict__.get("_node")
     if node is None or type(attr).get_full_name is not _ATTRIBUTE_FULL_NAME:
         return None
@@ -1267,8 +1295,8 @@ def _dg_named_owner(attr: Any) -> Any:
     try:
         if (
             naming is None
-            or cls.name is not naming[0]
-            or cls.fn_set is not naming[1]
+            or cls._name is not naming[0]
+            or cls.__str__ is not naming[1]
             or cls.ensure_valid is not naming[2]
             or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
             or "ensure_valid" in node.__dict__
@@ -1281,7 +1309,7 @@ def _dg_named_owner(attr: Any) -> Any:
 
 def _dg_named_node(node: Any) -> bool:
     """True if `node` (a node object) is named as a DGNode is, the owner test of
-    `_dg_named_owner`: its class keeps DGNode's `name`, `fn_set` and
+    `_dg_named_owner`: its class keeps DGNode's naming (``__str__``, `_name`) and
     `ensure_valid` (and Python's own attribute lookup), with no `ensure_valid`
     set on the node itself. Its name is then its fn set's, which names that node
     while it is valid, and naming it raises exactly when its handle is not valid
@@ -1291,8 +1319,8 @@ def _dg_named_node(node: Any) -> bool:
     try:
         return not (
             naming is None
-            or cls.name is not naming[0]
-            or cls.fn_set is not naming[1]
+            or cls._name is not naming[0]
+            or cls.__str__ is not naming[1]
             or cls.ensure_valid is not naming[2]
             or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
             or "ensure_valid" in node.__dict__
@@ -1580,20 +1608,9 @@ def _point_count(attr: Any) -> int:
     a component slice). Read through the node's own class: the owner can be a
     class the user chose (``DAGNode(mesh).vtx[0:2]``), which has none."""
     node = type(attr).get_node(attr)
-    if not hasattr(type(node), "num_weight_points"):
+    if not hasattr(type(node), "get_num_weight_points"):
         node = _cast(attr._mplug.node())
-    return node.num_weight_points
-
-
-def _node_name(node: Any) -> str:
-    """The name `Attribute.get_full_name` gives `node`, a plug's owner. Anything but a
-    str from the `name` property is the node's Maya attr of that name (a class
-    whose `name` property raises), so the node is named by its fn set instead.
-    Raises if the node is deleted."""
-    name = node.name
-    if type(name) is not str:
-        name = _fn_set_name(node)
-    return name
+    return type(node).get_num_weight_points(node)
 
 
 def _instanced_element_alias(mplug: OpenMaya.MPlug, node: Any, alias: str) -> str:
@@ -1638,7 +1655,7 @@ def _path_instance_number(attr: Any, node: Any = None) -> int | None:
     fn = node.__dict__.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode) or not _is_instanced_array(mplug):
         return None
-    _node_name(node)
+    str(node)  # the name `get_full_name` gives (re-paths a stale path, raises if deleted)
     return fn.getPath().instanceNumber()
 
 
@@ -2013,7 +2030,7 @@ def _plug_hash(attr: Any) -> int:
         node = type(attr).get_node(attr)
     handle = node.__dict__.get("_objhandle")
     if handle is None:
-        # not a DGNode: named as the node's name property names it
+        # not a DGNode: named as str(node) names it
         return hash((hash(str(node)), _plug_identity_name(attr)))
     if not handle.isAlive():
         return hash((handle.hashCode(), str.__str__(attr)))
@@ -2998,11 +3015,7 @@ class Attribute(str):
         node = self.__dict__["_node"]
         if node is None:
             node = type(self).get_node(self)
-        name = node.name
-        # anything but a str is the node's Maya attr of that name (a class whose
-        # `name` property raises), so the node is named by its fn set instead
-        if type(name) is not str:
-            name = _fn_set_name(node)
+        name = str(node)
         # `alias`, read once the name proved the node is alive, and the attribute
         # of a dynamic attr (see `_ensure_owner_alive`)
         d      = self.__dict__
@@ -3037,7 +3050,7 @@ class Attribute(str):
         """Returns the type of this attribute."""
         cls = type(self)
         return cmds.attributeQuery(
-            cls.get_name(self), node=cls.get_node(self).name, attributeType=True
+            cls.get_name(self), node=str(cls.get_node(self)), attributeType=True
         )
 
     def get_data_type(self) -> str:
@@ -3194,7 +3207,7 @@ class Attribute(str):
         """Returns a list of categories this attribute belongs to."""
         cls = type(self)
         return (
-            cmds.attributeQuery(cls.get_name(self), node=cls.get_node(self).name, categories=True)
+            cmds.attributeQuery(cls.get_name(self), node=str(cls.get_node(self)), categories=True)
             or []
         )
 
@@ -3369,8 +3382,8 @@ class Attribute(str):
                 continue
             processed.add(c)
 
-            if not node_type or c.node_type == node_type:
-                if exclude_node_types and c.node_type in exclude_node_types:
+            if not node_type or type(c).get_node_type(c) == node_type:
+                if exclude_node_types and type(c).get_node_type(c) in exclude_node_types:
                     continue
                 result.append(c)
             if _cur_depth < depth:
@@ -4010,16 +4023,10 @@ _PLUG_FOR_METHODS        = None
 _METHOD_PLUG_FOR_METHODS = None
 
 
-def _is_predicate_name(name: str) -> bool:
-    """True for a predicate's name (``is_locked``, ``has_category``): its bare
-    access is guarded (`_BarePredicate`)."""
-    return name.startswith(("is_", "has_"))
-
-
 class _BarePredicate:
     """A predicate named without brackets where no Maya attr of that name answers
-    (``plug.is_locked``): the bound method, whose truth value raises, so ``if
-    plug.is_locked:`` cannot pass silently (user decision 2026-10-16: a bare
+    (``plug.is_locked``, ``node.is_valid``): the bound method, whose truth value
+    raises, so ``if node.is_locked:`` cannot pass silently (user decision 2026-10-16: a bare
     predicate is guarded). A call runs the method; ``__name__``, ``__func__``,
     ``__self__``, ``__doc__`` and ``__wrapped__`` (``inspect.signature``) are the
     method's."""
@@ -4537,9 +4544,9 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
     if found is not None:
         return found
     if name is None:
-        name = node.name
+        name = str(node)
     raise NodeTypeError(
-        name, label, node.node_type, f"Node({name!r}) is {node!r}{cls._mismatch_hint(node)}"
+        name, label, type(node).get_node_type(node), f"Node({name!r}) is {node!r}{cls._mismatch_hint(node)}"
     )
 
 

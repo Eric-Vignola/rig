@@ -66,7 +66,7 @@ def lifted(mesh):
 
 def move_vertices(mesh):
     """A user's native vertex edit (recorded ``move``)."""
-    cmds.move(0.0, 1.0, 0.0, f"{mesh.long_name}.vtx[*]", relative=True)
+    cmds.move(0.0, 1.0, 0.0, f"{mesh.get_long_name()}.vtx[*]", relative=True)
 
 
 def uv_data(mesh, uv_set="map1", name=None, scale=1.0):
@@ -95,13 +95,13 @@ def no_uvs(mesh, name="map1"):
 
 
 def colours(mesh, rgba):
-    return np.tile(rgba, (mesh.num_vertices, 1))
+    return np.tile(rgba, (mesh.get_num_vertices(), 1))
 
 
 def tweaks(mesh):
     """The non-zero vertex tweaks (``pnts``) of `mesh` by logical index, read
     through the plug (a ``getAttr`` of a range would make the elements)."""
-    plug = mesh.fn_set.findPlug("pnts", False)
+    plug = mesh.get_fn_set().findPlug("pnts", False)
     out  = {}
     for i in range(plug.numElements()):
         element = plug.elementByPhysicalIndex(i)
@@ -127,8 +127,8 @@ class _UndoCase(UndoWalk, MayaTestCase):
         """The scene, the mesh's data and, on a mesh with history, its vertex tweaks
         (without history ``setPoints`` folds a tweak into the vertices, whose points
         are what counts: undo gives the points back, not the split)."""
-        state = self.scene_state(meshes=[mesh.long_name])
-        if mesh.fn_set.findPlug("inMesh", False).isDestination:
+        state = self.scene_state(meshes=[mesh.get_long_name()])
+        if mesh.get_fn_set().findPlug("inMesh", False).isDestination:
             state["tweaks"] = tweaks(mesh)
         return state
 
@@ -156,8 +156,8 @@ class _UndoCase(UndoWalk, MayaTestCase):
     @staticmethod
     def read_through(mesh):
         """Reads through a held Mesh and its ColorSets (a stale MFnMesh would crash)."""
-        mesh.num_vertices
-        for uv_set in mesh.uv_sets:
+        mesh.get_num_vertices()
+        for uv_set in mesh.get_uv_sets():
             mesh.get_uv_coords(uv_set)
             mesh.get_assigned_uvs(uv_set)
         for color_set in mesh.get_color_sets():
@@ -236,18 +236,18 @@ class TestMeshEditRules(MayaTestCase):
 
     def test_a_mesh_function_set_is_new_on_every_access(self):
         cube = make_mesh()
-        self.assertIsNot(cube.fn_set, cube.fn_set)
-        self.assertEqual(cube.fn_set.numVertices, 8)
+        self.assertIsNot(cube.get_fn_set(), cube.get_fn_set())
+        self.assertEqual(cube.get_fn_set().numVertices, 8)
 
     def test_a_held_mesh_survives_native_set_edits(self):
         # an MFnMesh kept from before a polyUVSet / polyColorSet crashed Maya when used after it
         cube = make_mesh("history")
         cube.get_uv_coords()
-        cmds.polyUVSet(cube.name, create=True, uvSet="uv2")
-        cmds.polyColorSet(cube.name, create=True, colorSet="cs")
+        cmds.polyUVSet(cube.get_name(), create=True, uvSet="uv2")
+        cmds.polyColorSet(cube.get_name(), create=True, colorSet="cs")
         cube.set_uv_data(uv_data(cube, "map1", "uv2"), "uv2")
-        self.assertEqual(cube.fn_set.numUVs("uv2"), 14)
-        self.assertEqual(cube.num_vertices, 8)
+        self.assertEqual(cube.get_fn_set().numUVs("uv2"), 14)
+        self.assertEqual(cube.get_num_vertices(), 8)
 
 
 # --- set_points ---------------------------------------------------------------------------
@@ -356,7 +356,7 @@ class TestSetUVDataUndo(_UndoCase):
                     lambda: cube.set_uv_data(fourteen, "map1"),                   # 24 -> 14
                     lambda: cube.set_uv_data(no_uvs(cube), "map1"),               # 14 -> 0
                 ], msg=kind)
-                self.assertEqual(cube.fn_set.numUVs("map1"), 0)
+                self.assertEqual(cube.get_fn_set().numUVs("map1"), 0)
 
     def test_an_empty_old_set_comes_back_empty(self):
         cube = make_mesh()
@@ -367,15 +367,15 @@ class TestSetUVDataUndo(_UndoCase):
             lambda: cube.set_uv_data(per_face_vertex_uvs(cube, "uv2"), "uv2"),
         ])
         self.undo_steps(2)
-        self.assertEqual(cube.fn_set.numUVs("uv2"), 0)
-        self.assertEqual(set(cube.fn_set.getAssignedUVs("uv2")[0]), {0})
+        self.assertEqual(cube.get_fn_set().numUVs("uv2"), 0)
+        self.assertEqual(set(cube.get_fn_set().getAssignedUVs("uv2")[0]), {0})
 
     def test_the_rename_path(self):
         cube = make_mesh()
         cube.add_uv_set("uv2")
         cmds.flushUndo()
         self.walk(cube, [lambda: cube.set_uv_data(uv_data(cube, "map1", "uv3", 0.5), "uv2")])
-        self.assertEqual(list(cube.uv_sets), ["map1", "uv3"])
+        self.assertEqual(list(cube.get_uv_sets()), ["map1", "uv3"])
 
     def test_invalid_data_raises_before_any_edit(self):
         cube = make_mesh()
@@ -431,14 +431,14 @@ class TestSetUVDataUndoWithHistory(_UndoCase):
     def test_more_uvs_undo_keeps_the_extra_ones_unassigned(self):
         cube = make_mesh("history")
         cmds.flushUndo()
-        before = mesh_state(cube.long_name)
+        before = mesh_state(cube.get_long_name())
         nodes  = self.state(cube)["nodes"]
         cube.set_uv_data(per_face_vertex_uvs(cube), "map1")
         after = self.state(cube)
-        self.assertEqual(cube.fn_set.numUVs("map1"), 24)
+        self.assertEqual(cube.get_fn_set().numUVs("map1"), 24)
         self.assertEqual(after["nodes"], nodes)
         self.undo_steps(1)
-        u, v, counts, ids = mesh_state(cube.long_name)["uvs"]["map1"]
+        u, v, counts, ids = mesh_state(cube.get_long_name())["uvs"]["map1"]
         u0, v0, counts0, ids0 = before["uvs"]["map1"]
         self.assertEqual((counts, ids), (counts0, ids0))         # the old assignment
         self.assertEqual((u[: len(u0)], v[: len(v0)]), (u0, v0))  # the old UVs
@@ -464,8 +464,8 @@ class TestUVSetUndo(_UndoCase):
                 cube = make_mesh(kind)
                 cmds.flushUndo()
                 states = self.walk(cube, [lambda: cube.add_uv_set("uv2"), lambda: cube.add_uv_set("uv3")], msg=kind)
-                self.assertEqual(list(cube.uv_sets), ["map1", "uv2", "uv3"])
-                self.assertEqual(cube.current_uv_set, "map1")
+                self.assertEqual(list(cube.get_uv_sets()), ["map1", "uv2", "uv3"])
+                self.assertEqual(cube.get_current_uv_set(), "map1")
                 if kind in HISTORY_FREE:
                     self.assertEqual(states[2]["nodes"], states[0]["nodes"])  # no node
 
@@ -476,7 +476,7 @@ class TestUVSetUndo(_UndoCase):
                 cube = make_mesh(kind)
                 cmds.flushUndo()
                 self.walk(cube, [lambda: cube.rename_uv_set("uvA"), lambda: cube.rename_uv_set("uvB", "uvA")], msg=kind)
-                self.assertEqual(list(cube.uv_sets), ["uvB"])
+                self.assertEqual(list(cube.get_uv_sets()), ["uvB"])
 
     def test_delete_keeps_the_place_and_the_current_set(self):
         for kind in HISTORY_FREE:
@@ -486,16 +486,16 @@ class TestUVSetUndo(_UndoCase):
                 for name, scale in (("a", 0.2), ("b", 0.4), ("c", 0.6)):
                     cube.add_uv_set(name)
                     cube.set_uv_data(uv_data(cube, "map1", name, scale), name)
-                cmds.polyUVSet(cube.name, currentUVSet=True, uvSet="b")
+                cmds.polyUVSet(cube.get_name(), currentUVSet=True, uvSet="b")
                 cmds.flushUndo()
                 self.walk(cube, [
                     lambda: cube.delete_uv_set("a"),   # in the middle
                     lambda: cube.delete_uv_set(),      # the current one, b
                 ], msg=kind)
-                self.assertEqual(list(cube.uv_sets), ["map1", "c"])
+                self.assertEqual(list(cube.get_uv_sets()), ["map1", "c"])
                 self.undo_steps(2)
-                self.assertEqual(list(cube.uv_sets), ["map1", "a", "b", "c"])
-                self.assertEqual(cube.current_uv_set, "b")
+                self.assertEqual(list(cube.get_uv_sets()), ["map1", "a", "b", "c"])
+                self.assertEqual(cube.get_current_uv_set(), "b")
 
     def test_the_existing_errors(self):
         cube = make_mesh()
@@ -573,10 +573,10 @@ class TestUVSetEditsThenVertexEdits(_UndoCase):
                 for _ in range(2):
                     self.assertEqual(self.undo_all(), 6)
                     self.read_through(cube)
-                    self.assertEqual(list(cube.uv_sets), ["map1"])
+                    self.assertEqual(list(cube.get_uv_sets()), ["map1"])
                     self.assertEqual(self.redo_all(), 6)
                     self.read_through(cube)
-                    self.assertEqual(list(cube.uv_sets), ["map1"])
+                    self.assertEqual(list(cube.get_uv_sets()), ["map1"])
 
 
 # --- colour sets --------------------------------------------------------------------------
@@ -584,7 +584,7 @@ class TestUVSetEditsThenVertexEdits(_UndoCase):
 
 def partial_colors(mesh, name, rep=OpenMaya.MFnMesh.kRGBA):
     """A colour set `name` with colours on three face-vertices only (API)."""
-    fn = mesh.fn_set
+    fn = mesh.get_fn_set()
     fn.createColorSet(name, False, rep=rep)
     current = fn.currentColorSetName()
     fn.setCurrentColorSetName(name)
@@ -603,7 +603,7 @@ class TestColorSetUndo(_UndoCase):
         face-vertices); ``pre`` is current. The queue is flushed."""
         cmds.file(new=True, force=True)
         mesh = make_mesh(kind)
-        fn   = mesh.fn_set
+        fn   = mesh.get_fn_set()
         fn.createColorSet("pre", True, rep=OpenMaya.MFnMesh.kRGB)
         fn.setCurrentColorSetName("pre")
         fn.setVertexColors(
@@ -630,7 +630,7 @@ class TestColorSetUndo(_UndoCase):
                     lambda: setattr(ColorSet(mesh, "part"), "data", ramp),
                     lambda: setattr(ColorSet(mesh, "pre"), "data", ramp),   # the current set
                 ], msg=kind)
-                self.assertEqual(mesh.fn_set.currentColorSetName(), "pre")
+                self.assertEqual(mesh.get_fn_set().currentColorSetName(), "pre")
 
     def test_delete_keeps_the_place_and_the_current_set(self):
         for kind in MESH_KINDS:
@@ -644,7 +644,7 @@ class TestColorSetUndo(_UndoCase):
                 self.assertEqual([c.name for c in mesh.get_color_sets()], ["cs1"])
                 self.undo_steps(3)
                 self.assertEqual([c.name for c in mesh.get_color_sets()], ["pre", "part"])
-                self.assertEqual(mesh.fn_set.currentColorSetName(), "pre")
+                self.assertEqual(mesh.get_fn_set().currentColorSetName(), "pre")
 
     def test_add_data_delete_then_vertex_edits(self):
         # the round-U review's blocker 25, colour half (with polyColorSet -delete the
@@ -729,7 +729,7 @@ class TestColorSetUndo(_UndoCase):
 def set_elements(mesh, array):
     """{set name: [logical indices]} of the mesh's ``uvSet`` / ``colorSet`` elements
     (an emptied element reads under '')."""
-    plug = mesh.fn_set.findPlug(array, False)
+    plug = mesh.get_fn_set().findPlug(array, False)
     out  = {}
     for i in range(plug.numElements()):
         element = plug.elementByPhysicalIndex(i)
@@ -741,7 +741,7 @@ def link_uv_set(mesh, uv_set):
     """A file texture linked to the UV set `uv_set` (what the UV Linking editor makes)."""
     texture = cmds.shadingNode("file", asTexture=True, name=f"tex_{uv_set}")
     index   = set_elements(mesh, "uvSet")[uv_set][0]
-    cmds.uvLink(uvSet=f"{mesh.long_name}.uvSet[{index}].uvSetName", texture=texture)
+    cmds.uvLink(uvSet=f"{mesh.get_long_name()}.uvSet[{index}].uvSetName", texture=texture)
 
 
 class TestNativeSetEditsBesideRig(_UndoCase):
@@ -762,7 +762,7 @@ class TestNativeSetEditsBesideRig(_UndoCase):
                 self.walk(cube, [
                     lambda: cube.add_uv_set("a"),
                     lambda: cube.set_uv_data(uv_data(cube, "map1", "a", 0.3), "a"),
-                    lambda: cmds.polyUVSet(cube.name, delete=True, uvSet="a"),
+                    lambda: cmds.polyUVSet(cube.get_name(), delete=True, uvSet="a"),
                     (lambda: move_vertices(cube)) if vertex_edit == "move" else (lambda: cube.set_points(lifted(cube))),
                 ], msg=vertex_edit)
 
@@ -771,7 +771,7 @@ class TestNativeSetEditsBesideRig(_UndoCase):
         cube = make_mesh()
         cmds.flushUndo()
         self.walk(cube, [
-            lambda: cmds.polyUVSet(cube.name, copy=True, uvSet="map1", newUVSet="a"),
+            lambda: cmds.polyUVSet(cube.get_name(), copy=True, uvSet="map1", newUVSet="a"),
             lambda: cube.delete_uv_set("a"),
             lambda: move_vertices(cube),
         ])
@@ -788,7 +788,7 @@ class TestNativeSetEditsBesideRig(_UndoCase):
                 before = self.state(mesh)
                 mesh.add_color_set("cs", RGBA)
                 ColorSet(mesh, "cs").data = colours(mesh, [0.1, 0.5, 0.9, 1.0])
-                cmds.polyColorSet(mesh.name, delete=True, colorSet="cs")
+                cmds.polyColorSet(mesh.get_name(), delete=True, colorSet="cs")
                 if vertex_edit == "move":
                     move_vertices(mesh)
                 else:
@@ -806,20 +806,20 @@ class TestNativeSetEditsBesideRig(_UndoCase):
         # Maya alone leaves the sets 'a' and 'cs' out of the mesh's cached input: an API
         # write into them crashed Maya, and rename_uv_set did nothing
         cube = make_mesh()
-        cmds.polyUVSet(cube.name, copy=True, uvSet="map1", newUVSet="a")
-        cmds.polyColorSet(cube.name, create=True, colorSet="cs", representation="RGBA")
-        cmds.polyUVSet(cube.name, delete=True, uvSet="a")
-        cmds.polyColorSet(cube.name, delete=True, colorSet="cs")
+        cmds.polyUVSet(cube.get_name(), copy=True, uvSet="map1", newUVSet="a")
+        cmds.polyColorSet(cube.get_name(), create=True, colorSet="cs", representation="RGBA")
+        cmds.polyUVSet(cube.get_name(), delete=True, uvSet="a")
+        cmds.polyColorSet(cube.get_name(), delete=True, colorSet="cs")
         move_vertices(cube)
         self.undo_steps(3)
-        self.assertEqual(list(cube.uv_sets), ["map1", "a"])
+        self.assertEqual(list(cube.get_uv_sets()), ["map1", "a"])
         self.assertEqual([c.name for c in cube.get_color_sets()], ["cs"])
         self.walk(cube, [
             lambda: cube.set_uv_data(uv_data(cube, "map1", "a", 0.5), "a"),
             lambda: setattr(ColorSet(cube, "cs"), "data", colours(cube, [0.2, 0.4, 0.6, 1.0])),
             lambda: cube.rename_uv_set("r", "a"),
         ])
-        self.assertEqual(list(cube.uv_sets), ["map1", "r"])
+        self.assertEqual(list(cube.get_uv_sets()), ["map1", "r"])
 
     def test_a_native_create_rig_delete(self):
         # the redo of rig's delete deleted nothing, and the next undo made a set 'a1'
@@ -829,19 +829,19 @@ class TestNativeSetEditsBesideRig(_UndoCase):
                 cube = make_mesh(kind)
                 cmds.flushUndo()
                 self.walk(cube, [
-                    lambda: cmds.polyUVSet(cube.name, create=True, uvSet="a"),
+                    lambda: cmds.polyUVSet(cube.get_name(), create=True, uvSet="a"),
                     lambda: cube.delete_uv_set("a"),
                 ], msg=kind)
                 self.walk(cube, [
-                    lambda: cmds.polyUVSet(cube.name, copy=True, uvSet="map1", newUVSet="b"),
+                    lambda: cmds.polyUVSet(cube.get_name(), copy=True, uvSet="map1", newUVSet="b"),
                     lambda: cube.delete_uv_set("b"),
                 ], msg=f"{kind} copy")
                 self.walk(cube, [
-                    lambda: cmds.polyColorSet(cube.name, create=True, colorSet="cs", representation="RGBA"),
+                    lambda: cmds.polyColorSet(cube.get_name(), create=True, colorSet="cs", representation="RGBA"),
                     lambda: ColorSet(cube, "cs").delete(),
                     lambda: cube.set_points(lifted(cube)),
                 ], msg=f"{kind} colour")
-                self.assertEqual(list(cube.uv_sets), ["map1"])
+                self.assertEqual(list(cube.get_uv_sets()), ["map1"])
 
     def test_rig_add_then_a_native_delete(self):
         # rig's add, undone and redone, made the set in a new element, which the redo of
@@ -851,7 +851,7 @@ class TestNativeSetEditsBesideRig(_UndoCase):
         self.walk(cube, [
             lambda: cube.add_uv_set("a"),
             lambda: cube.set_uv_data(uv_data(cube, "map1", "a", 0.3), "a"),
-            lambda: cmds.polyUVSet(cube.name, delete=True, uvSet="a"),
+            lambda: cmds.polyUVSet(cube.get_name(), delete=True, uvSet="a"),
             lambda: move_vertices(cube),
         ])
 
@@ -883,7 +883,7 @@ class TestSetElementsAndLinks(_UndoCase):
                 self.assertEqual(set_elements(cube, "uvSet"), elements)
                 for name, chooser in (("a", "uvChooser1"), ("b", "uvChooser2")):
                     self.assertEqual(
-                        cmds.listConnections(f"{cube.long_name}.uvSet[{elements[name][0]}].uvSetName", plugs=True),
+                        cmds.listConnections(f"{cube.get_long_name()}.uvSet[{elements[name][0]}].uvSetName", plugs=True),
                         [f"{chooser}.uvSets[0]"],
                     )
 
@@ -950,14 +950,14 @@ class TestMeshEditsTogether(_UndoCase):
             with self.subTest(label):
                 before = self.scene_state()
                 mesh   = Mesh.create(data, uv_data=uvs, name="m")
-                states = [self.scene_state(meshes=[mesh.long_name])]
+                states = [self.scene_state(meshes=[mesh.get_long_name()])]
                 edits  = self.edits(mesh)
                 if uvs is None:
                     edits = [e for i, e in enumerate(edits) if i not in (2, 3)]  # no UVs to copy
                 for edit in edits:
                     edit()
-                    states.append(self.scene_state(meshes=[mesh.long_name]))
-                long_name = mesh.long_name
+                    states.append(self.scene_state(meshes=[mesh.get_long_name()]))
+                long_name = mesh.get_long_name()
                 for cycle in range(2):
                     for i in range(len(states) - 1, 0, -1):
                         self.undo_steps(1)
@@ -1014,7 +1014,7 @@ class TestMeshEditsTogether(_UndoCase):
         cmds.flushUndo()
         for edit in self.edits(on):
             edit()
-        expected = mesh_state(on.long_name)
+        expected = mesh_state(on.get_long_name())
         cmds.undoInfo(state=False)
         try:
             for edit in self.edits(mesh):
@@ -1022,7 +1022,7 @@ class TestMeshEditsTogether(_UndoCase):
         finally:
             cmds.undoInfo(state=True)
         self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
-        self.assertEqual(mesh_state(mesh.long_name), expected)
+        self.assertEqual(mesh_state(mesh.get_long_name()), expected)
 
 
 # --- skin weights beside mesh edits -------------------------------------------------------------
@@ -1044,12 +1044,12 @@ class TestSkinWeightsBesideMeshEdits(_UndoCase):
         skins = ["cShape_skincluster"]
 
         def state():
-            return self.scene_state(meshes=[mesh.long_name], skins=skins)
+            return self.scene_state(meshes=[mesh.get_long_name()], skins=skins)
 
         states = [state()]
         for edit in (
             lambda: mesh.set_points(lifted(mesh)),
-            lambda: SkinCluster.create(mesh.name, SkinData(influences=[j1, j2], weights=np.tile([0.75, 0.25], (8, 1)))),
+            lambda: SkinCluster.create(mesh.get_name(), SkinData(influences=[j1, j2], weights=np.tile([0.75, 0.25], (8, 1)))),
             lambda: SkinCluster(skins[0]).set_weights(np.tile([0.25, 0.75], (8, 1))),
             lambda: mesh.add_color_set("cs1", RGBA),
         ):

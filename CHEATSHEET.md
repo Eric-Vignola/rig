@@ -212,7 +212,7 @@ string or an MPlug, never asked for its node, keeps a handle of that node
 and raises the same. A new scene, a file open or a reference unload frees
 the node for good; the error then names the class only, or, for such a
 plug, the node by the name the plug was built with. Every read of a freed
-plug raises it, `name` and `mobject` too, and so does a DSL function given
+plug raises it, `get_name()` and `get_mobject()` too, and so does a DSL function given
 one (`rig.normalize(plug)`), before it builds anything.
 
 ```python
@@ -242,7 +242,7 @@ for probe in (lambda: a.tx, lambda: tz >> None):
 
 `node.lock()` locks the node (`lockNode`) and `node.unlock()` unlocks it;
 `node << lock` / `<< unlock` are the same calls, and each returns the node.
-`node.is_locked` reads it (read only; a member of a locked container reads
+`node.is_locked()` reads it (a member of a locked container reads
 locked). A node already in the asked state is left as it is, with no undo
 step. A locked node still takes values and connections. rig refuses to
 rename, delete or reparent it, or to add, replace or destroy its
@@ -255,7 +255,7 @@ from rig.spec import lock
 
 ctl = Transform.define("ctl")
 ctl.tx.lock()                                   # the plugs first
-print(ctl.lock() is ctl, ctl.is_locked)         # True True
+print(ctl.lock() is ctl, ctl.is_locked())       # True True
 print((ctl << lock) is ctl)                     # True  -- locked already: nothing written
 ctl.ty << 2                                     # a locked node takes values
 for edit in (lambda: ctl.rename("hand"), lambda: ctl.tz.lock()):
@@ -265,7 +265,7 @@ for edit in (lambda: ctl.rename("hand"), lambda: ctl.tz.lock()):
         print(err)
 # cannot rename 'ctl': it is locked; Node('ctl').unlock() unlocks it. Nothing was changed
 # 'ctl.translateZ' is on the locked node 'ctl', whose plugs Maya never locks: Node('ctl').unlock() unlocks it. Nothing was changed
-print(ctl.unlock().is_locked, ctl.tx.is_locked(), ctl.ty >> None)   # False True 2.0
+print(ctl.unlock().is_locked(), ctl.tx.is_locked(), ctl.ty >> None)   # False True 2.0
 ```
 
 ---
@@ -360,12 +360,12 @@ counts as an attribute (`aliasAttr`, a blendShape target): a target named
 still deletes the node; an alias of a compound's child does the same on the
 plug.
 
-Python's other names keep their meaning: a property setter runs
-(`a.namespace = "ns"`), a property or another class member hides a Maya
-attribute of its name (`Plug(a.find_attr(name)) << value` reaches it, and a
-new attribute named like one is made with a warning naming that spelling),
-and a `_` name, or a default the class body declares (`side = None` in a
-subclass), is Python state on the object. Any other name is
+A node and a plug have no properties (every public member is a method), so
+no other name hides a Maya attribute but class data: a default a node class
+body declares (`side = None` in a subclass) is Python state on the object,
+and hides a Maya attribute of its name (`Plug(a.find_attr(name)) << value`
+reaches it, and a new attribute named like one is made with a warning
+naming that spelling); so is a `_` name. Any other name is
 `Attribute not found`, never a new Python attribute.
 
 ```python
@@ -381,7 +381,7 @@ from rig.spec import Bool
 a << Bool("lock")                                  # a Maya attr named like a method
 a.lock = True                                      # bare: the plug (a.lock << True)
 print(repr(a.lock), a.lock >> None)                # Plug("a.lock") True
-print(a.lock() is a, a.is_locked)                  # True True
+print(a.lock() is a, a.is_locked())                # True True
 a.unlock()                                         # brackets: the method, which locked the node
 try:
     a.get_parent = None                            # no Maya attr get_parent: a method stays
@@ -482,7 +482,7 @@ An old spelling raises `AttributeError` naming the new one (`'a.translateX'
 has no child or sibling attribute 'node'; plug.node is now
 plug.get_node()`), unless the plug has a child or a sibling of that name:
 then it is that plug, as the rule says (`renderLayer.adjustments[0].plug`,
-a compound child named `alias`). The node's own members are unchanged here.
+a compound child named `alias`).
 
 ```python
 try:
@@ -494,6 +494,38 @@ try:
         pass
 except TypeError as err:
     print(err)                                       # is_locked is a method: call it (is_locked())
+```
+
+A node has no properties either (the same rule: bare, a name is the node's
+Maya attribute of that name if it has one, else the method). `str(node)` is
+its name, with no check. A bare predicate has no truth value (`if
+ctl.is_locked:` raises `TypeError`), and `node.namespace = "ns"` is the `=`
+of a Maya attr `namespace` like any other name. Up to v2.0.0a5 these were
+properties:
+
+| Was | Now |
+|---|---|
+| `node.name` | `str(node)` or `node.get_name()` |
+| `node.long_name` / `short_name` / `clean_name` | `node.get_long_name()` / `get_short_name()` / `get_clean_name()` |
+| `node.uuid` / `node.node_type` | `node.get_uuid()` / `node.get_node_type()` |
+| `node.namespace`, `node.namespace = ns` | `node.get_namespace()`, `node.set_namespace(ns)` |
+| `node.mobject` / `fn_set` / `mdagpath` | `node.get_mobject()` / `get_fn_set()` / `get_mdagpath()` |
+| `node.is_locked` / `is_valid` / `is_shape` / `is_default` | the same names, called: `node.is_valid()` |
+| `geo.local_shape_attr` / `world_shape_attr` / `injection_node` / `component_tags` | `geo.get_local_shape_attr()` / `get_world_shape_attr()` / `get_injection_node()` / `get_component_tags()` |
+| `mesh.num_vertices` / `num_polygons` / `num_weight_points` / `uv_sets` / `current_uv_set` / `paintable_maps` | `mesh.get_num_vertices()` / ... (`get_` before each) |
+| `curve.num_cvs` / `num_weight_points` | `curve.get_num_cvs()` / `get_num_weight_points()` |
+| `material.engine`, `blendShape.num_targets`, `animCurve.num_keys` | `material.get_engine()`, `get_num_targets()`, `get_num_keys()` |
+| `ref.file_path` / `ref.file_path_with_copy_number` | `ref.get_file_path()` / `ref.get_file_path(copy_number=True)` |
+
+An old spelling raises naming the new one, unless the node has a Maya attr of
+that name (an `aiAOV`'s `name`, a rigger's `uuid`): then it is that plug.
+
+```python
+try:
+    a.uuid
+except AttributeError as err:
+    print(str(err).split("; ")[1])                   # node.uuid is now node.get_uuid()
+print(str(a), a.get_name(), a.is_valid())            # a a True
 ```
 
 A plug is owned by the node you read it from: `plug.get_node()` is that very
@@ -884,17 +916,17 @@ lock` routes to them; a method of each element, `List(shapes).save(path)`,
 raises `TypeError` naming the loop, `[x.save(...) for x in items]`): every element, nodes and plugs, checked first, so a
 refused one changes nothing. `lock()` locks the plugs, then the nodes in
 one `lockNode`; `unlock()` the nodes, then the plugs. It is one undo step,
-`rig.lock` / `rig.unlock`, and returns the List. `nodes.is_locked` maps,
-one bool per element, over nodes; a plug's `is_locked()` is a method, which
-does not broadcast: `[x.is_locked() for x in plugs]`.
+`rig.lock` / `rig.unlock`, and returns the List. `is_locked()` is a
+method of a node and of a plug, which does not broadcast: `[x.is_locked()
+for x in items]` (a bare `nodes.is_locked` has no truth value).
 
 ```python
 from rig.spec import unlock
 
 both = List([Node("c0"), Node("c0").tx, Node("c1")])
 print(both.lock() is both, cmds.undoInfo(query=True, undoName=True))   # True rig.lock
-print(list(nodes.is_locked), Node("c0").tx.is_locked())                # [True, True, False] True
-print((both << unlock) is both, list(nodes.is_locked))                 # True [False, False, False]
+print([x.is_locked() for x in nodes], Node("c0").tx.is_locked())      # [True, True, False] True
+print((both << unlock) is both, [x.is_locked() for x in nodes])        # True [False, False, False]
 try:
     List([Node("c2"), 3]).lock()
 except TypeError as err:
@@ -1271,13 +1303,13 @@ with container("hand") as hand:
     except InjectionError as err:
         print(err)                                # lock 'hand' after its with block: a locked container takes no new member. Nothing was changed
 hand.lock()
-print(palm.is_locked)                             # True
+print(palm.is_locked())                           # True
 try:
     palm.unlock()
 except InjectionError as err:
     print(str(err).split(":")[0])                 # 'palm' is locked by its container 'hand' (a locked container locks its members)
 hand.unlock()
-print(palm.is_locked)                             # False
+print(palm.is_locked())                           # False
 ```
 
 ---
@@ -2512,7 +2544,7 @@ the node it is applied to. Every kind uses the same spellings:
 | yes / no | `x in c`, `x not in c` | every member of `x` is in the tag | every face of `x` wears it | the node is in it |
 | ids | `x >> c` | ndarray of the ids of `x` in the tag, in its own category; a node reads the whole tag | ndarray of the face ids of `x` wearing it; all faces when object-level | refused: a layer has no ids (ask with `in`) |
 | enumerate | `x >> Kind()` == `Kind.of(x)` | `[Tag('a'), ...]` holding `x` | `[Blinn("red"), ...]` typed by the live node type | `DisplayLayer("L")` or `None` (`Layer.of` gives `[]` / `[DisplayLayer("L")]`) |
-| methods | | `.set(members)` `.clear(node)` `.rename(node, new)` `.delete(node)` | `.rename(new)` `.delete()` `.astype(Phong)` `.engine` | `.clear()` `.rename(new)` `.delete()` |
+| methods | | `.set(members)` `.clear(node)` `.rename(node, new)` `.delete(node)` | `.rename(new)` `.delete()` `.astype(Phong)` `.get_engine()` | `.clear()` `.rename(new)` `.delete()` |
 
 `Kind()` is the class called with no name: `Tag()`, `Material()` (every
 material; `Blinn()` every blinn), `Layer()`. `-c` is the removal token of
@@ -2880,7 +2912,7 @@ cube  = make(cmds.polyCube, "cube", ch=False)
 other = make(cmds.polyCube, "other", ch=False)
 
 red = Blinn.define("red", color=(1, 0, 0))      # made now: red + redSG + materialInfo, color set
-print(repr(red), repr(red.engine))              # Blinn("red") ShadingEngine("redSG")
+print(repr(red), repr(red.get_engine()))        # Blinn("red") ShadingEngine("redSG")
 print(cube << red)                              # cube -- returns the LHS; assigns
 print(cmds.nodeType("red"), members("redSG"))   # blinn ['cubeShape']
 print(Blinn.define("red", color=(0, 0, 1)) == red, cmds.getAttr("red.color")[0])   # True (0.0, 0.0, 1.0) -- found, and its colour set
@@ -2916,7 +2948,7 @@ List([cube, other.f[:2]]) << Lambert.define("both")
 print(sorted(members("bothSG")))                # ['cubeShape', 'other.f[0:1]'] -- one engine holds both entries
 
 looks = [Lambert.create(name="plane") for _ in range(2)]
-print(looks, [str(m.engine) for m in looks])    # [Lambert("plane"), Lambert("plane1")] ['planeSG', 'plane1SG']
+print(looks, [str(m.get_engine()) for m in looks])   # [Lambert("plane"), Lambert("plane1")] ['planeSG', 'plane1SG']
 
 with container("look"):
     free   = Blinn.define("free")                          # stays out: a material is a scene asset
@@ -2994,7 +3026,7 @@ shade.tidy()
 print(sorted(members("redSG")))  # ['cubeShape', 'otherShape']
 
 red.rename("crimson")            # the engine follows the <mat>SG convention; the node object follows the name
-print(red, red.engine)           # crimson crimsonSG
+print(red, red.get_engine())     # crimson crimsonSG
 for bad in (lambda: cube.vtx[:3] << red, lambda: cube << Lambert("crimson"), lambda: cube << Blinn("nope")):
     try:
         bad()
@@ -3034,7 +3066,7 @@ cube = make(cmds.polyCube, "cube", ch=False)
 mat = Blinn.define("red", color=(1, 0, 0))
 cube << mat
 p = mat.astype(Phong)                           # nothing set beyond color: no warning
-print(repr(p), cmds.nodeType("red"), repr(p.engine), members("redSG"))   # Phong("red") phong ShadingEngine("redSG") ['cubeShape']
+print(repr(p), cmds.nodeType("red"), repr(p.get_engine()), members("redSG"))   # Phong("red") phong ShadingEngine("redSG") ['cubeShape']
 try:
     str(mat)
 except RuntimeError as err:
@@ -3124,7 +3156,7 @@ old = lossy
 new = lossy.astype(Phong)                        # warns: parks again
 print(cmds.undoInfo(query=True, undoName=True))  # rig.shade.convert
 try:
-    old.name
+    str(old)
 except RuntimeError as err:
     print(str(err).split(";")[0])                # 'lossy' was converted to a phong
 print(repr(new), round(new.diffuse >> None, 2))  # Phong("lossy") 0.33
@@ -3439,7 +3471,7 @@ print(keys)                                              # AnimCurve([7.0, 8.0],
 ctrls[1].tx << keys                                      # copies the animation
 curve = AnimCurve.of(ctrls[1].tx)[0]
 curve.set_keys([0, 3], times=[0, 10])
-print(curve.num_keys, curve.evaluate([0, 5, 10]))        # 2 [0.  1.5 3. ]
+print(curve.get_num_keys(), curve.evaluate([0, 5, 10]))  # 2 [0.  1.5 3. ]
 ```
 
 **Refused, with nothing written:**

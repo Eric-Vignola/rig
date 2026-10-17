@@ -186,7 +186,7 @@ class TestAlwaysNew(MayaTestCase):
     def _two(self, make):
         """The names of two nodes ``make()`` returns, checked distinct."""
         first, second = make(), make()
-        self.assertNotEqual(first.uuid, second.uuid)
+        self.assertNotEqual(first.get_uuid(), second.get_uuid())
         return str(first), str(second)
 
     def test_node_create(self):
@@ -199,7 +199,7 @@ class TestAlwaysNew(MayaTestCase):
     def test_rc_command(self):
         made = [rc.polyCube(name="c") for _ in range(2)]
         self.assertEqual([[str(n) for n in m] for m in made], [["c", "polyCube1"], ["c1", "polyCube2"]])
-        self.assertNotEqual(made[0][0].uuid, made[1][0].uuid)
+        self.assertNotEqual(made[0][0].get_uuid(), made[1][0].get_uuid())
 
     def test_typed_create(self):
         self.assertEqual(self._two(lambda: Transform.create(name="t")), ("t", "t1"))
@@ -279,10 +279,10 @@ class TestTagIdiomsStay(MayaTestCase):
 
     def test_node_on_the_left_creates_and_deletes_the_tag(self):
         self.assertIs(self.cube << Tag("empty"), self.cube)
-        self.assertIn("empty", self.shape.component_tags)
+        self.assertIn("empty", self.shape.get_component_tags())
         self.assertEqual((self.cube >> Tag("empty")).shape, (0,))
         self.assertIs(self.cube << -Tag("empty"), self.cube)
-        self.assertNotIn("empty", self.shape.component_tags)
+        self.assertNotIn("empty", self.shape.get_component_tags())
         # the deleted tag holds nothing: no ids, not in it (round 4b follow-up
         # F4; it was a ValueError)
         self.assertEqual((self.cube >> Tag("empty")).shape, (0,))

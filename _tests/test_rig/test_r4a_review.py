@@ -195,16 +195,16 @@ class TestNodeCreateTypedDispatch(_SceneCase):
     def test_a_world_node_of_the_same_name_does_not_rename_it(self):
         cmds.createNode("transform", name="t")
         node = Node.create("transform", name="t", parent="grp")
-        self.assertEqual(node.long_name, "|grp|t")
+        self.assertEqual(node.get_long_name(), "|grp|t")
         self.assertEqual(str(node), "grp|t")
         joint = Joint.create(name="t", parent="grp|t")
-        self.assertEqual(joint.long_name, "|grp|t|t")
+        self.assertEqual(joint.get_long_name(), "|grp|t|t")
 
     def test_inside_a_scope(self):
         with container("box") as box:
             with container("inner"):
                 node = Node.create("transform", name="t", parent="grp")
-        self.assertEqual(node.long_name, "|grp|inner_t")
+        self.assertEqual(node.get_long_name(), "|grp|inner_t")
         self.assertEqual(_local(node, "t"), [0.0, 0.0, 0.0])
         self.assertEqual(_members(box), ["inner_t"])
 
@@ -638,7 +638,10 @@ class TestListProbes(_PlugCase):
             self.assertNotIn(probe_node, nodes)
             self.assertNotIn(probe_plug, plugs)
             self.assertNotIn(probe_plug, nodes)
-        self.assertEqual(calls, ["node", "plug", "plug"])
+        # re-pinned (user decision 2026-10-16, the property ban): a plug's name
+        # reads its node's str(node) (was its name property), so naming the probe
+        # plug counts its node too; each probe is still named once per call
+        self.assertEqual(calls, ["node", "plug", "node", "plug", "node"])
 
     def test_a_deleted_probe_or_element_raises(self):
         cmds.undoInfo(state=True, infinity=True)

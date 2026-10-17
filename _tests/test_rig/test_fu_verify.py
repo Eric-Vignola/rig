@@ -42,7 +42,7 @@ class TestAChildBelowAnElement(MayaTestCase):
         top, steps = _base._held_path(attr)
         self.assertEqual([is_element for is_element, _key in steps], [True, False])
         self.assertEqual(steps[0][1], 1)
-        self.assertEqual(top, Node("pma").fn_set.attribute("input3D"))
+        self.assertEqual(top, Node("pma").get_fn_set().attribute("input3D"))
 
     def test_the_held_path_finds_the_plug_again(self):
         """guard: the held attr's path rebinds to its own plug, as before."""
@@ -51,7 +51,7 @@ class TestAChildBelowAnElement(MayaTestCase):
             with self.subTest(name):
                 attr = Node("pma").find_attr(name)
                 top, steps = _base._held_path(attr)
-                cur = _base.OpenMaya.MPlug(Node("pma").mobject, top)
+                cur = _base.OpenMaya.MPlug(Node("pma").get_mobject(), top)
                 for is_element, key in steps:
                     cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
                 self.assertEqual(cur.name(), attr.get_mplug().name())

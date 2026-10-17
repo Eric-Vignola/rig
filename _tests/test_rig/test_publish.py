@@ -1579,9 +1579,9 @@ class TestPublishMembership(MayaTestCase):
             try:
                 if mobj.hasFn(OpenMaya.MFn.kDagNode):
                     for path in OpenMaya.MDagPath.getAllPathsTo(mobj):
-                        names.add(Node(path).name)
+                        names.add(Node(path).get_name())
                 else:
-                    names.add(Node(mobj).name)
+                    names.add(Node(mobj).get_name())
             except Exception:
                 continue
         names |= {"nonexistent", "dup"}
@@ -1665,8 +1665,8 @@ class TestPublishMembership(MayaTestCase):
             curve = cmds.curveOnSurface(plane, uv=[(0.1, 0.1), (0.5, 0.5)], d=1)
             cmds.container(str(ctn), edit=True, addNode=[curve], force=True)
             node = Node(cmds.ls(curve, long=True)[0])
-            self.assertEqual(node.name, "planePShape->curve1")
-            for name in (node.name, "|planeP|planePShape->|curve1"):
+            self.assertEqual(node.get_name(), "planePShape->curve1")
+            for name in (node.get_name(), "|planeP|planePShape->|curve1"):
                 self.assertEqual(
                     _C._is_direct_member(str(ctn), name),
                     self._nodelist_member(str(ctn), name),

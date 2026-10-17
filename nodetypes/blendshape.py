@@ -157,15 +157,14 @@ class BlendShape(Deformer):
 
     # --- target operations
 
-    @property
-    def num_targets(self) -> int:
+    def get_num_targets(self) -> int:
         """Returns the number of targets"""
         weight = self.find_attr("weight")
         return type(weight).get_num_elements(weight)
 
     def get_targets(self) -> list[str]:
         """Returns a list of targets in this node."""
-        return cmds.listAttr(self.name, string="weight", multi=True)
+        return cmds.listAttr(str(self), string="weight", multi=True)
 
     def get_target_indices(self) -> list[int]:
         """Returns a list of target index in this node."""
@@ -182,7 +181,7 @@ class BlendShape(Deformer):
         if target_attr:
             return target_attr.logical_index()
         if failfast:
-            raise RuntimeError(f"Target {self.name}.{target_name} not found.")
+            raise RuntimeError(f"Target {self}.{target_name} not found.")
         return -1
 
     def get_target_name(self, target_id: int) -> str | None:
@@ -252,8 +251,8 @@ class BlendShape(Deformer):
         Returns:
             The target index.
         """
-        if not self.fn_set.findAlias(target_name).isNull():
-            raise RuntimeError(f"Target {self.name}.{target_name} already exists.")
+        if not type(self).get_fn_set(self).findAlias(target_name).isNull():
+            raise RuntimeError(f"Target {self}.{target_name} already exists.")
 
         weight_attr            = self.find_attr("weight")
         index                  = weight_attr.get_next_available_index()
@@ -530,7 +529,7 @@ class BlendShape(Deformer):
 
     @statement
     def _load_into(self, targets, *args, **kwargs):
-        method = f"BlendShape({self.name!r}).load"
+        method = f"BlendShape({str(self)!r}).load"
         if args or kwargs:
             got = [type(a).__name__ for a in args] + [f"{k}=" for k in kwargs]
             raise TypeError(
@@ -550,7 +549,7 @@ class BlendShape(Deformer):
         next evaluation. Logged at INFO; the load's chunk holds the disconnects."""
         from rig._internal.plug import Plug, _disconnect_incoming
 
-        fn      = OpenMaya.MFnDependencyNode(self.mobject)
+        fn      = OpenMaya.MFnDependencyNode(type(self).get_mobject(self))
         inputs  = fn.findPlug("inputTarget", False)
         indices = [i for i in (self.get_target_index(n) for n in names) if i >= 0]
         if not indices:

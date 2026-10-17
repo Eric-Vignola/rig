@@ -27,7 +27,7 @@ def _geo(node):
 
 
 def _tags(node):
-    return _geo(node).component_tags
+    return _geo(node).get_component_tags()
 
 
 def _contents(node, name):

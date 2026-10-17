@@ -133,7 +133,7 @@ def _own_shapes(dg: DAGNode, node_types: Iterable[str]) -> list[str]:
     in ``node_types`` (never the subtree)."""
     return (
         cmds.listRelatives(
-            dg.long_name,
+            type(dg).get_long_name(dg),
             shapes         = True,
             noIntermediate = True,
             fullPath       = True,
@@ -151,23 +151,23 @@ def _axis_sizes(shape: DAGNode, kind: str) -> tuple[int, ...]:
     wraps excluded (the same rule as :meth:`ComponentPlug._axis_sizes`) and
     ``(s, t, u)`` for lattice points.
     """
-    node_type = shape.node_type
+    node_type = type(shape).get_node_type(shape)
     if kind == "f":
-        return (shape.num_polygons,)
+        return (type(shape).get_num_polygons(shape),)
     if kind == "e":
-        return (shape.fn_set.numEdges,)
+        return (type(shape).get_fn_set(shape).numEdges,)
     if kind == "uv":
-        return (shape.fn_set.numUVs(),)
+        return (type(shape).get_fn_set(shape).numUVs(),)
     if node_type == "nurbsSurface":
-        fn       = shape.fn_set
+        fn       = type(shape).get_fn_set(shape)
         periodic = OpenMaya.MFnNurbsSurface.kPeriodic
         u        = fn.numCVsInU - (fn.degreeInU if fn.formInU == periodic else 0)
         v        = fn.numCVsInV - (fn.degreeInV if fn.formInV == periodic else 0)
         return (u, v)
     if node_type == "lattice":
-        name = shape.long_name
+        name = type(shape).get_long_name(shape)
         return tuple(cmds.getAttr(f"{name}.{axis}Divisions") for axis in "stu")
-    return (shape.num_weight_points,)
+    return (type(shape).get_num_weight_points(shape),)
 
 
 def _grid(sizes: tuple[int, ...]) -> np.ndarray:
@@ -224,7 +224,7 @@ def _resolve_shape(obj: Any, kind: str) -> Node:
         raise TypeError(
             f"'{node}' is not a DAG node; components live on geometry shapes"
         )
-    node_type = node.node_type
+    node_type = type(node).get_node_type(node)
     wanted    = _KIND_GEOMETRY[kind]
     if node_type in wanted:
         return node
@@ -330,7 +330,7 @@ class Components:
             sizes = _axis_sizes(shape, kind)
             if len(ranges) != len(sizes):
                 raise TypeError(
-                    f"{comp_part!r}: '{kind}' on a {shape.node_type} "
+                    f"{comp_part!r}: '{kind}' on a {type(shape).get_node_type(shape)} "
                     f"takes {len(sizes)} indices, got {len(ranges)}"
                 )
             if any(r is not None for r in ranges):
@@ -390,7 +390,7 @@ class Components:
     @property
     def geometry(self) -> str:
         """The shape's node type (``'mesh'``, ``'nurbsSurface'``, ...)."""
-        return self._shape.node_type
+        return type(self._shape).get_node_type(self._shape)
 
     @property
     def is_all(self) -> bool:
@@ -399,7 +399,7 @@ class Components:
 
     @property
     def _path(self) -> str:
-        return self._shape.long_name
+        return type(self._shape).get_long_name(self._shape)
 
     @property
     def _sizes(self) -> tuple[int, ...]:
@@ -555,7 +555,7 @@ def _maybe_components(node: Node, kind: str) -> Components | None:
     ``AttributeError`` naming the shapes when there are several."""
     if not isinstance(node, DAGNode):
         return None
-    node_type = node.node_type
+    node_type = type(node).get_node_type(node)
     if node_type == "mesh":
         return Components(node, kind)
     if node_type in _GEOMETRY_TYPES:
@@ -576,7 +576,7 @@ def _single_geometry_shape(node: Node) -> Node | None:
     (so its point aliases resolve through the transform), ``None`` when there
     is none or ``node`` is not a transform, ``AttributeError`` naming the
     shapes when there are several."""
-    if not isinstance(node, DAGNode) or node.node_type in _GEOMETRY_TYPES:
+    if not isinstance(node, DAGNode) or type(node).get_node_type(node) in _GEOMETRY_TYPES:
         return None
     shapes = _own_shapes(node, _GEOMETRY_TYPES)
     if not shapes:
@@ -759,16 +759,16 @@ class _Normaliser:
         held (the attribute plug that stands for the node)."""
         source = node if source is None else source
         if not isinstance(node, DAGNode):
-            self.group(node.name, node.node_type, "whole").sources.append(source)
+            self.group(str(node), type(node).get_node_type(node), "whole").sources.append(source)
             return
-        node_type = node.node_type
+        node_type = type(node).get_node_type(node)
         if node_type not in _GEOMETRY_TYPES and self.want_shapes:
             shapes = _own_shapes(node, _GEOMETRY_TYPES)
             if shapes:
                 for path in shapes:
                     self.group(path, cmds.nodeType(path), "whole").sources.append(source)
                 return
-        self.group(node.long_name, node_type, "whole").sources.append(source)
+        self.group(type(node).get_long_name(node), node_type, "whole").sources.append(source)
 
     def add_components(self, components: Components) -> None:
         group = self.group(components._path, components.geometry, components._kind)

@@ -107,7 +107,7 @@ class TestLayerNode(_Case):
         self.assertIs(rig.membership.Layer, DisplayLayer)
         self.assertIsInstance(self.L, DisplayLayer)
         self.assertEqual(Layer("L"), self.L)
-        self.assertEqual(Layer.create(name="L2").name, "L2")
+        self.assertEqual(Layer.create(name="L2").get_name(), "L2")
         self.assertEqual(Layer.define("L3", displayType=2).displayType >> None, 2)
 
     def test_assign_remove_purge_and_the_answers(self):
@@ -373,7 +373,7 @@ class TestTokens(_Case):
         red = Blinn.create(name="red")
         for value in (
             Tag("cap"), Tag(), -Tag("cap"), self.L, DisplayLayer(), -self.L, red, -red, Blinn(),
-            Material(), red.engine, -red.engine,
+            Material(), red.get_engine(), -red.get_engine(),
         ):
             with self.subTest(repr(value)):
                 self.assertTrue(_types._is_membership(value))
@@ -445,7 +445,7 @@ class TestIn(_Case):
 
     def test_a_missing_tag_is_false(self):
         shape  = Node(cmds.listRelatives("sph", shapes=True, fullPath=True)[0])
-        tags   = shape.component_tags
+        tags   = shape.get_component_tags()
         before = _scene()
         self.assertFalse(self.sph in Tag("ghost"))
         self.assertFalse(self.sph.vtx[0] in Tag("ghost"))
@@ -453,7 +453,7 @@ class TestIn(_Case):
         self.assertFalse(self.sph.tx in Tag("ghost"))
         self.assertFalse(List([self.sph.vtx[0], self.sph.f[0]]) in Tag("ghost"))
         self.assertEqual(_scene(), before)
-        self.assertEqual(shape.component_tags, tags)
+        self.assertEqual(shape.get_component_tags(), tags)
 
     def test_other_kinds_are_false(self):
         before = _scene()

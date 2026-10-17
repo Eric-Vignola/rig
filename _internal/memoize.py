@@ -82,7 +82,7 @@ def _stable_key(obj: Any) -> Any:
     if _is_plug(obj):
         return _attribute_key(obj)
     if _is_node(obj):
-        return ("node", _node_identity(obj.name))
+        return ("node", _node_identity(str(obj)))
     if _is_list(obj):
         return tuple(_stable_key(x) for x in obj)
     if _is_sequence(obj):

@@ -70,7 +70,7 @@ def _oracle(cls, name):
         node = cls(name)
     except (NodeNotFoundError, NodeTypeError):
         return False
-    return node.is_valid
+    return node.is_valid()
 
 
 def _outcome(call):

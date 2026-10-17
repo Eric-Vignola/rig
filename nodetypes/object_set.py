@@ -40,7 +40,7 @@ class ObjectSet(DGNode):
                 Otherwise also return components.
         """
         result = []
-        for each in cmds.sets(self.name, query=True) or []:
+        for each in cmds.sets(str(self), query=True) or []:
             if each.find(".") == -1:
                 if as_components:
                     result.append((_cast(each), None))
@@ -56,16 +56,16 @@ class ObjectSet(DGNode):
 
     def add_members(self, objects: Any) -> None:
         """Adds a list of nodes to this set."""
-        cmds_edit.sets(objects, add=self.name)
+        cmds_edit.sets(objects, add=str(self))
 
     def remove_members(self, objects: Any) -> None:
         """Removes object(s) from this set."""
-        cmds_edit.sets(objects, remove=self.name)
+        cmds_edit.sets(objects, remove=str(self))
 
     def force_elements(self, objects: Any) -> None:
         """Force object(s) in this set."""
-        cmds_edit.sets(objects, forceElement=self.name)
+        cmds_edit.sets(objects, forceElement=str(self))
 
     def clear(self) -> None:
         """Clear object(s) in this set."""
-        cmds_edit.sets(clear=self.name)
+        cmds_edit.sets(clear=str(self))

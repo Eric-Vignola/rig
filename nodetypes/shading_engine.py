@@ -120,7 +120,7 @@ class ShadingEngine(ObjectSet):
         """A Maya default engine (``initialShadingGroup``, ``initialParticleSE``)
         takes no delete or rename: TypeError, nothing written (Maya itself
         prints an error and deletes nothing, or raises a RuntimeError)."""
-        name = self.name
+        name = str(self)
         if cmds.ls(name, defaultNodes=True):
             raise TypeError(f"'{name}' cannot be {verb}: it is a Maya default shading engine")
 
@@ -185,7 +185,7 @@ class ShadingEngine(ObjectSet):
         """
         sel = OpenMaya.MSelectionList()
         try:
-            sel.add(material.name if isinstance(material, DGNode) else str(material))
+            sel.add(str(material) if isinstance(material, DGNode) else str(material))
         except RuntimeError:
             found = cmds.ls(str(material))
             raise ValueError(f"Material must match one node: {material} -> {found}") from None
@@ -232,7 +232,7 @@ class ShadingEngine(ObjectSet):
     def get_material(self) -> DGNode | None:
         """Returns the surface shader feeding this engine, or None."""
         material = cmds.listConnections(
-            f"{self.name}.surfaceShader", source=True, destination=False
+            f"{self}.surfaceShader", source=True, destination=False
         )
         return _cast(material[0]) if material else None
 
@@ -246,11 +246,11 @@ class ShadingEngine(ObjectSet):
         source = str(material)
         if "." not in source:
             source = f"{source}.outColor"
-        cmds_edit.connectAttr(source, f"{self.name}.surfaceShader", force=True)
+        cmds_edit.connectAttr(source, f"{self}.surfaceShader", force=True)
 
     def get_material_info(self) -> list[str]:
         """Returns the materialInfo nodes attached to this engine."""
-        return cmds.listConnections(f"{self.name}.message", type="materialInfo") or []
+        return cmds.listConnections(f"{self}.message", type="materialInfo") or []
 
     # --- membership
 
@@ -258,7 +258,7 @@ class ShadingEngine(ObjectSet):
         """[Internal] Yields (dag path, face ids) per DAG member as Maya stores it:
         None for whole-object membership, an array for a face component (every
         face of the mesh included). Other component kinds are skipped."""
-        members = self.fn_set.getMembers(False)
+        members = type(self).get_fn_set(self).getMembers(False)
         for i in range(members.length()):
             try:
                 dagpath, component = members.getComponent(i)
@@ -320,7 +320,7 @@ class ShadingEngine(ObjectSet):
         touched = [_long_name(x) for x in touched]
         before  = self._group_ids(touched)
 
-        cmds_edit.sets(members, edit=True, forceElement=self.name)
+        cmds_edit.sets(members, edit=True, forceElement=str(self))
 
         if normalise:
             self._renormalise(touched)
@@ -341,7 +341,7 @@ class ShadingEngine(ObjectSet):
             if path in touched and len(ids) == OpenMaya.MFnMesh(dagpath).numPolygons:
                 paths.append(path)
         if paths:
-            cmds_edit.sets(paths, edit=True, forceElement=self.name)
+            cmds_edit.sets(paths, edit=True, forceElement=str(self))
 
     @staticmethod
     def _group_ids(shapes: Sequence[str]) -> set[str]:

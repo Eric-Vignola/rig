@@ -24,12 +24,12 @@ class TestReference(MayaTestCase):
             ref1 = Reference.create(path, namespace="ns1")
             ref2 = Reference.create(path, namespace="ns2")
 
-            self.assertEqual(ref1.file_path, path)
-            self.assertEqual(ref2.file_path, path)
-            self.assertEqual(ref1.file_path_with_copy_number, path)
-            self.assertEqual(ref2.file_path_with_copy_number, path + "{1}")
-            self.assertEqual(ref1.namespace, "ns1")
-            self.assertEqual(ref2.namespace, "ns2")
+            self.assertEqual(ref1.get_file_path(), path)
+            self.assertEqual(ref2.get_file_path(), path)
+            self.assertEqual(ref1.get_file_path(copy_number=True), path)
+            self.assertEqual(ref2.get_file_path(copy_number=True), path + "{1}")
+            self.assertEqual(ref1.get_namespace(), "ns1")
+            self.assertEqual(ref2.get_namespace(), "ns2")
 
             self.assertTrue(Node("ns1:cube") in ref1.get_nodes())
             self.assertTrue(Node("ns2:cube") in ref2.get_nodes())

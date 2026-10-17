@@ -27,7 +27,7 @@ from rig.bridges import commands as rc
 cube = rc.polyCube(name="cube", ch=False)[0]  # a Transform
 mesh = cube.get_shape()                       # a typed method, on the same object
 print(repr(cube), (cube >> None) is cube, repr(mesh))  # Transform("cube") True Mesh("cubeShape")
-print(mesh.get_materials(), mesh.num_vertices)         # [StandardSurface("standardSurface1")] 8
+print(mesh.get_materials(), mesh.get_num_vertices())   # [StandardSurface("standardSurface1")] 8
 ```
 
 You rarely import from `rig.nodetypes` at all: `Node(x)` and the `rc` / `rn`
@@ -111,25 +111,25 @@ from rig.nodetypes.plugins import load_plugin
 | Class | Wraps | What it adds |
 |---|---|---|
 | `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.define(type, name, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
-| `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); name / long / short / clean name, uuid, `rename`, `namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
-| `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `mdagpath`, `get_bounding_box`, `get_deformers` |
+| `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); `str(node)` / `get_name`, `get_long_name` / `get_short_name` / `get_clean_name`, `get_uuid`, `rename`, `get_namespace` / `set_namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
+| `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `get_mdagpath`, `get_bounding_box`, `get_deformers` |
 | `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
-| `Geometry` | `geometryShape` | component tags: `injection_node`, `component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `local_shape_attr` / `world_shape_attr`, `get_component_mobject`, paintable attrs |
+| `Geometry` | `geometryShape` | component tags: `get_injection_node`, `get_component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `get_local_shape_attr` / `get_world_shape_attr`, `get_component_mobject`, paintable attrs |
 | `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
-| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `num_cvs`, `num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`), `save` / `load` (files: the class creates, a node updates its CVs) |
+| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `get_num_cvs`, `get_num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`), `save` / `load` (files: the class creates, a node updates its CVs) |
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
 | `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members` |
-| `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `engine`, `of`, `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
+| `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
 | `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete`; the DSL's `Layer` |
-| `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `namespace`, `file_path`, `get_nodes`, `delete` |
+| `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `get_namespace`, `get_file_path(copy_number=False)`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `data_type` of both follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
-| `AnimCurve` | any animation curve (the abstract `animCurve`), and the types with no class below (a driven key's `animCurveU*`) | `AnimCurve.of(x)` (the curves driving a plug, a node, a `List`), `get_keys` / `set_keys`, `num_keys`, `evaluate`; called with values, `AnimCurve([...])` makes the keys `plug << ...` takes (a value, not a node); `create` / `define` are refused (abstract) |
+| `AnimCurve` | any animation curve (the abstract `animCurve`), and the types with no class below (a driven key's `animCurveU*`) | `AnimCurve.of(x)` (the curves driving a plug, a node, a `List`), `get_keys` / `set_keys`, `get_num_keys`, `evaluate`; called with values, `AnimCurve([...])` makes the keys `plug << ...` takes (a value, not a node); `create` / `define` are refused (abstract) |
 | `AnimCurveTL`, `AnimCurveTA`, `AnimCurveTU`, `AnimCurveTT` | exactly `animCurveTL`, `animCurveTA`, `animCurveTU`, `animCurveTT` | everything `AnimCurve` has; `create(keys, ...)` / `define(name, keys, ...)`; called with values a `TypeError` naming `AnimCurve([...])` |
 
 Each class inherits everything above it in its column, so a `Mesh` has
@@ -272,9 +272,10 @@ other type.
 
 ### Handles, not names
 
-A node object holds an `MObject` (a DAG node also an `MDagPath`). `name` is
-read back from the handle each time, so the object survives renames and
-reparenting; `is_valid` says whether the node still exists and any method
+A node object holds an `MObject` (a DAG node also an `MDagPath`). Its name
+(`str(node)`, `get_name()`) is read back from the handle each time, so the
+object survives renames and reparenting; `is_valid()` says whether the node
+still exists and any method
 after deletion raises `RuntimeError("... already deleted!")`. A handle never
 falls back to its name: a new node that takes the name is not picked up, and
 an undo of the delete brings the old one back. A new scene, a file open or a
@@ -286,8 +287,8 @@ MPlug (`Attribute("held.ty")`, `Plug("held.ty")`) that never cast its node
 keeps a handle of that node: deleted, it raises `"held already deleted!"`,
 and freed, `"held node (freed by a new scene, a file open or a reference
 unload) already deleted!"`, named by the name it was built with.
-Every attribute read checks the handle first, `name`, `mobject` and
-`fn_set` included: the attribute of a dynamic attr is freed with its node.
+Every attribute read checks the handle first, `get_name()`, `get_mobject()`
+and `get_fn_set()` included: the attribute of a dynamic attr is freed with its node.
 An attribute built from the MPlug of a node already deleted raises
 `"held already deleted!"` when it is built: that node has no name to take
 a handle by.
@@ -392,7 +393,7 @@ member is a method (`attr.get_node()`, `attr.get_full_name()` or
 and `attr.is_locked = x` raises, naming `lock()` / `unlock()`; a predicate
 named without brackets (`if attr.is_locked:`) raises TypeError, as it would
 always pass. `DGNode.lock()` / `unlock()` /
-`is_locked` are the node's (`lockNode`; `is_locked` has no setter), and a
+`is_locked()` are the node's (`lockNode`), and a
 locked node refuses `rename`, `delete`, `set_parent`, `add_attr`,
 `delete_attr`, `rename_attr` and a new attribute spec with one
 `InjectionError`: `cannot rename 'x': it is locked; Node('x').unlock()
@@ -443,10 +444,10 @@ and a dangling output is wrapped in `MFnMesh` / `MFnNurbsCurve`.
 
 Maya writes tags where `cmds.deformableShape(tagInjectionNode=True)` says:
 the shape itself until a deformer exists, its intermediate `Orig` shape
-from then on. `Geometry.injection_node` answers that (uncached, since a
+from then on. `Geometry.get_injection_node()` answers that (uncached, since a
 deformer moves it) and every editor writes there, so the shape you hold
 and the tag editor never disagree. Readers go through the evaluated
-geometry (`local_shape_attr`), so procedural tags — a history `polyCube`'s
+geometry (`get_local_shape_attr()`), so procedural tags — a history `polyCube`'s
 six face tags are outputs of `polyCube1` — are visible and serialisable,
 but any edit to one raises.
 
@@ -490,7 +491,7 @@ shader (`cmds.shadingNode(asShader=True)`, listed in `defaultShaderList1`),
 scene-level asset, keep it out of an active `with container()` scope
 unless `container=True`. `Material.create(type="aiStandardSurface")` builds
 a type with no class. `rn.blinn()` makes only the shader, in the scope; the
-first assignment builds its engine. `engine` is the engine the shader
+first assignment builds its engine. `get_engine()` is the engine the shader
 feeds (find-only), `delete()` / `rename()` act on the network (the shader,
 its engines and their materialInfo; `cmds.delete` is the one-node escape),
 and `astype(Phong)` converts, returning the new node, while the old node
@@ -716,7 +717,7 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
   so slice `[:, :3]`. Matrices are `MMatrix`; `np.array(m).reshape(4, 4)`
   is row-major with translation in row 3.
 - **Weights are `(V, I)` numpy arrays**, rows are points in
-  `num_weight_points` order, columns follow `get_influence_objects()`.
+  `get_num_weight_points()` order, columns follow `get_influence_objects()`.
 - **Component ids are native**: `(N,)`, `(N, 2)` or `(N, 3)` integer
   arrays; strings are the shape-local `vtx[a:b]` / `cv[u][v0:v1]` /
   `f[a:b]` tokens `geometry.iter_component_tokens` renders.

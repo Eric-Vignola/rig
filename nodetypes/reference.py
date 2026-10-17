@@ -61,36 +61,29 @@ class Reference(DGNode):
         path = Path(file_path).as_posix()
         refs = []
         for each in cls.find_all():
-            if each.file_path == path:
+            if type(each).get_file_path(each) == path:
                 refs.append(each)
         return refs
 
-    @property
-    def namespace(self) -> str:
+    def get_namespace(self) -> str:
         """Returns the namespace of this reference."""
-        return cmds.referenceQuery(self.name, namespace=True)[1:]
+        return cmds.referenceQuery(str(self), namespace=True)[1:]
 
-    @namespace.setter
-    def namespace(self, namespace: str) -> None:
-        """Sets the namespace of this reference."""
+    def set_namespace(self, namespace: str) -> None:
+        """Not supported: a reference's namespace is its file's (raises, as the
+        ``namespace`` setter did)."""
         raise NotImplementedError("Cannot set namespace of a reference node.")
 
-    @property
-    def file_path(self) -> str:
-        """Returns the file path of this reference."""
-        path = cmds.referenceQuery(self.name, filename=True, withoutCopyNumber=True)
-        return Path(path).as_posix()
-
-    @property
-    def file_path_with_copy_number(self) -> str:
-        """Returns the file path of this reference (with copy number)."""
-        path = cmds.referenceQuery(self.name, filename=True, withoutCopyNumber=False)
+    def get_file_path(self, copy_number: bool = False) -> str:
+        """Returns the file path of this reference (posix), with its copy number
+        (``scene.ma{1}``) when `copy_number` is True."""
+        path = cmds.referenceQuery(str(self), filename=True, withoutCopyNumber=not copy_number)
         return Path(path).as_posix()
 
     def get_nodes(self) -> list[DGNode]:
         """Returns all the nodes in this reference."""
-        return [_cast(x) for x in cmds.referenceQuery(self.name, nodes=True) or []]
+        return [_cast(x) for x in cmds.referenceQuery(str(self), nodes=True) or []]
 
     def delete(self) -> None:
         """Deletes this reference."""
-        cmds_edit.file(self.file_path_with_copy_number, removeReference=True)
+        cmds_edit.file(type(self).get_file_path(self, copy_number=True), removeReference=True)

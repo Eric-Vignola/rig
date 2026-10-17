@@ -298,10 +298,10 @@ class TestShaderCreate(_Case):
         self.assertEqual(str(Lambert.create(n="skin")), "skin")
         self.assertEqual(str(Phong.create(name="shiny", skipSelect=True)), "shiny")
         cmds.namespace(add="look")
-        self.assertEqual(Blinn.create(name="look:red").name, "look:red")
+        self.assertEqual(Blinn.create(name="look:red").get_name(), "look:red")
         self.assertTrue(cmds.objExists("look:redSG"))
         cmds.namespace(setNamespace="look")
-        self.assertEqual(Blinn.create(name="blue").name, "look:blue")
+        self.assertEqual(Blinn.create(name="blue").get_name(), "look:blue")
 
     def test_create_takes_attributes(self):
         tex = cmds.createNode("ramp", name="tex")
@@ -448,31 +448,31 @@ class TestShaderNetworkVerbs(_Case):
 
     def test_the_engine_is_find_only(self):
         red = Blinn.create(name="red")
-        self.assertEqual(red.engine, ShadingEngine("redSG"))
+        self.assertEqual(red.get_engine(), ShadingEngine("redSG"))
         bare = Node(_shader("blinn", "bare"))
         self.assertRefused(
             ValueError,
             r"^'bare' feeds no shading engine yet; assigning it \(geometry << Blinn\(\"bare\"\)\) builds bareSG$",
-            lambda: bare.engine,
+            lambda: bare.get_engine(),
         )
         # two engines: <mat>SG wins; none named so: refused
         alt = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="altSG")
         cmds.connectAttr("red.outColor", f"{alt}.surfaceShader")
-        self.assertEqual(red.engine, ShadingEngine("redSG"))
+        self.assertEqual(red.get_engine(), ShadingEngine("redSG"))
         cmds.rename("redSG", "mainSG")
-        self.assertRefused(ValueError, "feeds 2 shading engines", lambda: red.engine)
+        self.assertRefused(ValueError, "feeds 2 shading engines", lambda: red.get_engine())
 
     def test_delete_removes_the_network(self):
         cube = cmds.polyCube(name="cube", constructionHistory=False)[0]
         red  = Blinn.create(name="red")
-        info = red.engine.get_material_info()
+        info = red.get_engine().get_material_info()
         cmds.sets(cube, edit=True, forceElement="redSG")
         self.assertIsNone(red.delete())
         for name in ("red", "redSG", *info):
             self.assertFalse(cmds.objExists(name))
         # the members are green: in no engine
         self.assertFalse(cmds.listConnections("cubeShape", type="shadingEngine"))
-        self.assertFalse(red.is_valid)
+        self.assertFalse(red.is_valid())
         # one undo step brings the network back
         cmds.undo()
         self.assertTrue(all(cmds.objExists(n) for n in ("red", "redSG", *info)))
@@ -490,7 +490,7 @@ class TestShaderNetworkVerbs(_Case):
         red = Blinn.create(name="red")
         self.assertIsNone(red.rename("blue"))
         self.assertEqual(str(red), "blue")
-        self.assertEqual(str(red.engine), "blueSG")
+        self.assertEqual(str(red.get_engine()), "blueSG")
         self.assertFalse(cmds.objExists("redSG"))
         cmds.undo()
         self.assertEqual((cmds.objExists("red"), cmds.objExists("redSG")), (True, True))
@@ -498,7 +498,7 @@ class TestShaderNetworkVerbs(_Case):
         # an engine off the convention keeps its name
         cmds.rename("blueSG", "customSG")
         red.rename("green")
-        self.assertEqual(str(red.engine), "customSG")
+        self.assertEqual(str(red.get_engine()), "customSG")
         # the one-node escape
         cmds.rename("green", "plain")
         self.assertTrue(cmds.objExists("customSG"))
@@ -529,12 +529,12 @@ class TestShaderNetworkVerbs(_Case):
         # raises "already deleted!", never a crash; the name refers again
         red = Blinn.create(name="red")
         cmds.delete("red")
-        for verb in (lambda: red.engine, lambda: red.delete(), lambda: red.rename("x")):
+        for verb in (lambda: red.get_engine(), lambda: red.delete(), lambda: red.rename("x")):
             self.assertRefused(RuntimeError, "already deleted!", verb)
         cmds.undo()
-        self.assertEqual(str(red.engine), "redSG")
+        self.assertEqual(str(red.get_engine()), "redSG")
         cmds.file(new=True, force=True)
-        for verb in (lambda: red.engine, lambda: red.delete(), lambda: red.rename("x")):
+        for verb in (lambda: red.get_engine(), lambda: red.delete(), lambda: red.rename("x")):
             self.assertRefused(RuntimeError, r"freed by a new scene.*already deleted!", verb)
         self.assertRefused(NodeNotFoundError, "no blinn named 'red'", lambda: Blinn("red"))
         self.assertIs(type(Blinn.create(name="red")), Blinn)

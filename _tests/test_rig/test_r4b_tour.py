@@ -349,8 +349,8 @@ class TestTourW1(_Case):
         self.assertRefused(AmbiguousNodeError,
                            r"^'a' is ambiguous: it names 2 nodes: \|g[12]\|a, \|g[12]\|a; use a path$",
                            lambda: Transform("a"))
-        self.assertEqual(Transform("g1|a").long_name, "|g1|a")
-        self.assertEqual(Transform("|g2|a").long_name, "|g2|a")
+        self.assertEqual(Transform("g1|a").get_long_name(), "|g1|a")
+        self.assertEqual(Transform("|g2|a").get_long_name(), "|g2|a")
 
     def test_one_lookup_rule_for_the_namespaces(self):
         self.assertRefused(NodeNotFoundError,
@@ -368,8 +368,8 @@ class TestTourW1(_Case):
                     r"^'x' is ambiguous: it names :x and :char:x; spell the namespace$",
                     lambda: Node("x"),
                 )
-                self.assertEqual(Node(":x").uuid, cmds.ls(":x", uuid=True)[0])
-                self.assertEqual(Node(":char:x").uuid, cmds.ls(":char:x", uuid=True)[0])
+                self.assertEqual(Node(":x").get_uuid(), cmds.ls(":x", uuid=True)[0])
+                self.assertEqual(Node(":char:x").get_uuid(), cmds.ls(":char:x", uuid=True)[0])
 
     def test_define_never_builds_in_the_referenced_file(self):
         found = self.assertFound(lambda: Joint.define("char:root"))
@@ -415,7 +415,7 @@ class TestTourW2(_Case):
 
     def test_a_rerun_makes_no_new_transform(self):
         root, ctls, riders = self.build()
-        self.assertEqual([c.long_name for c in ctls], ["|rig|L_arm|ctl", "|rig|R_arm|ctl"])
+        self.assertEqual([c.get_long_name() for c in ctls], ["|rig|L_arm|ctl", "|rig|R_arm|ctl"])
         self.assertEqual([str(r) for r in riders], ["rider1", "rider2", "rider3"])
         cmds.setAttr("|rig|L_arm|ctl.tx", 3)
         cmds.createNode("transform", name="drv")
@@ -449,7 +449,7 @@ class TestTourW2(_Case):
         before = _scene()
         left = Transform.define("ctl", parent="|rig|L_arm", tx=5, update=True)
         self.assertEqual(_scene(), before)
-        self.assertEqual((left.long_name, cmds.getAttr("|rig|L_arm|ctl.tx")), ("|rig|L_arm|ctl", 5.0))
+        self.assertEqual((left.get_long_name(), cmds.getAttr("|rig|L_arm|ctl.tx")), ("|rig|L_arm|ctl", 5.0))
         self.assertEqual(Transform("L_arm|ctl"), left)
 
     def test_a_nested_name_is_not_forked(self):
@@ -468,7 +468,7 @@ class TestTourW2(_Case):
     def test_create_is_always_new_and_takes_keywords(self):
         root = Transform.define("rig")
         made = [Transform.create(name="tmp", parent=root) for _ in range(2)]
-        self.assertEqual([m.long_name for m in made], ["|rig|tmp", "|rig|tmp1"])
+        self.assertEqual([m.get_long_name() for m in made], ["|rig|tmp", "|rig|tmp1"])
         self.assertRefused(TypeError, r"^Transform\.create\(\) takes name= and parent= as keywords \(got 'tmp'\)$",
                            lambda: Transform.create("tmp"))
         self.assertRefused(NodeNotFoundError, r"^no DAG node named 'nosuch'$",
@@ -570,12 +570,12 @@ class TestTourW3(_Case):
         self.assertEqual(cmds.listConnections("red.color", source=True, plugs=True), ["tex.outColor"])
         self.assertEqual(red, Node("red"))
         self.assertEqual(red, Blinn("red"))
-        self.assertEqual(repr(red.engine), 'ShadingEngine("redSG")')
+        self.assertEqual(repr(red.get_engine()), 'ShadingEngine("redSG")')
 
     def test_create_is_always_new(self):
         made = [Lambert.create(name="m", diffuse=1) for _ in range(2)]
         self.assertEqual([repr(m) for m in made], ['Lambert("m")', 'Lambert("m1")'])
-        self.assertEqual([repr(m.engine) for m in made], ['ShadingEngine("mSG")', 'ShadingEngine("m1SG")'])
+        self.assertEqual([repr(m.get_engine()) for m in made], ['ShadingEngine("mSG")', 'ShadingEngine("m1SG")'])
         plane = _cube("plane")
         self.assertIs(plane << made[1], plane)
         self.assertEqual((plane in made[1], plane in made[0]), (True, False))
@@ -784,7 +784,7 @@ class TestTourW5(_Case):
         members = cmds.container(str(rig_scope), query=True, nodeList=True)
         self.assertTrue(members and all(m.startswith("lerp_") for m in members), members)
         # outside the scope 'anchor' is another key
-        self.assertEqual(Transform.define("anchor").long_name, "|anchor")
+        self.assertEqual(Transform.define("anchor").get_long_name(), "|anchor")
 
 
 class TestTourW6(_Case):

@@ -40,7 +40,7 @@ class TestComponentTags(MayaTestCase):
             self.mesh.set_component_tag_contents(tag, ids, category=cat)
 
     def test_query(self):
-        self.assertEqual(self.mesh.component_tags, self.tags)
+        self.assertEqual(self.mesh.get_component_tags(), self.tags)
         for each in self.tags:
             self.assertTrue(self.mesh.has_component_tag(each))
         self.assertFalse(self.mesh.has_component_tag("aaa"))
@@ -90,7 +90,7 @@ class TestComponentTags(MayaTestCase):
         new_target = "new_target"
         i          = self.mesh.add_component_tag(new_target)
         self.assertTrue(self.mesh.is_component_tag_empty(2))
-        self.assertEqual(self.mesh.component_tags, self.tags + [new_target])
+        self.assertEqual(self.mesh.get_component_tags(), self.tags + [new_target])
         self.assertEqual(self.mesh.get_component_tag_index(new_target), 2)
 
         data = self.mesh.get_component_tag_data(new_target)
@@ -140,7 +140,7 @@ class TestComponentTagNames(MayaTestCase):
             with self.subTest(name=name):
                 i = self.mesh.add_component_tag(name)
                 self.assertEqual(self.mesh.get_component_tag_name(i), stored)
-                self.assertIn(stored, self.mesh.component_tags)
+                self.assertIn(stored, self.mesh.get_component_tags())
 
     def test_add_component_tag_finds_a_tag_by_the_name_maya_stores(self):
         """' ab' is stored 'ab': it was looked up as ' ab', so a second 'ab' was
@@ -155,7 +155,7 @@ class TestComponentTagNames(MayaTestCase):
 
                 i = self.mesh.add_component_tag(name, force=True)
                 self.assertEqual(self.mesh.get_component_tag_name(i), "ab")
-                self.assertEqual(self.mesh.component_tags.count("ab"), 1)
+                self.assertEqual(self.mesh.get_component_tags().count("ab"), 1)
 
     def test_rename_component_tag_refuses_a_name_maya_refuses(self):
         """It failed with a bare "Maya command error" (runs/r5/SKIN/review)."""
@@ -172,7 +172,7 @@ class TestComponentTagNames(MayaTestCase):
         """add_component_tag(5) said "Component tag '5' already exists": the int
         was looked up as the index of the cube's sixth tag, and force=True removed
         that tag (runs/r5/REBIND)."""
-        names  = list(self.mesh.component_tags)
+        names  = list(self.mesh.get_component_tags())
         before = self.tag_multi()
         for key in (5, 0, 1.5, None, b"ab", ["ab"]):
             for force in (False, True):
@@ -180,11 +180,11 @@ class TestComponentTagNames(MayaTestCase):
                     with self.assertRaisesRegex(TypeError, f"^{re.escape(repr(key))} is not a component tag name: .*a str"):
                         self.mesh.add_component_tag(key, force=force)
                     self.assertEqual(self.tag_multi(), before)
-                    self.assertEqual(self.mesh.component_tags, names)
+                    self.assertEqual(self.mesh.get_component_tags(), names)
             with self.subTest(key=key, rename=True):
                 with self.assertRaisesRegex(TypeError, "is not a component tag name: .*a str"):
                     self.mesh.rename_component_tag("top", key)
-                self.assertEqual(self.mesh.component_tags, names)
+                self.assertEqual(self.mesh.get_component_tags(), names)
 
     def test_a_missing_dotted_key_does_not_exist(self):
         """A bare key with a '.' ('ab.ce', one name to Maya) was read as an
@@ -243,28 +243,28 @@ class TestComponentTagLocations(MayaTestCase):
 
     def test_injection_node_undeformed(self):
         mesh = Node(cmds.polySphere(ch=False)[0]).get_children(type="mesh")[0]
-        self.assertEqual(mesh.injection_node, mesh)
+        self.assertEqual(mesh.get_injection_node(), mesh)
 
     def test_clustered_mesh(self):
         xform = cmds.polySphere(ch=False)[0]
         mesh  = Node(xform).get_children(type="mesh")[0]
         cmds.cluster(xform)
-        orig = cmds.deformableShape(mesh.name, tagInjectionNode=True)[0]
-        self.assertNotEqual(orig, mesh.name)
-        self.assertEqual(mesh.injection_node.name, orig)
+        orig = cmds.deformableShape(mesh.get_name(), tagInjectionNode=True)[0]
+        self.assertNotEqual(orig, mesh.get_name())
+        self.assertEqual(mesh.get_injection_node().get_name(), orig)
 
         # the editor writes where Maya's own command writes: the Orig
         i = mesh.add_component_tag("rtag")
         self.assertEqual(cmds.getAttr(f"{orig}.componentTags", multiIndices=True), [i])
-        self.assertIsNone(cmds.getAttr(f"{mesh.name}.componentTags", multiIndices=True))
+        self.assertIsNone(cmds.getAttr(f"{mesh.get_name()}.componentTags", multiIndices=True))
         mesh.set_component_tag_contents("rtag", [1, 2])
         self.assertEqual(mesh.get_component_tag_contents("rtag"), ["vtx[1:2]"])
 
         # and the editors see what Maya's own command wrote there
-        cmds.componentTag(f"{mesh.name}.vtx[5]", create=True, newTagName="mtag")
+        cmds.componentTag(f"{mesh.get_name()}.vtx[5]", create=True, newTagName="mtag")
         self.assertTrue(mesh.has_component_tag("mtag"))
         self.assertNotEqual(mesh.get_component_tag_index("mtag"), -1)
-        self.assertEqual(mesh.component_tags, ["rtag", "mtag"])
+        self.assertEqual(mesh.get_component_tags(), ["rtag", "mtag"])
         mesh.set_component_tag_contents("mtag", [7, 8, 9])
         self.assertEqual(mesh.get_component_tag_contents("mtag"), ["vtx[7:9]"])
         self.assertTrue(np.array_equal(mesh.get_component_tag_indices("mtag"), [7, 8, 9]))
@@ -272,7 +272,7 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertTrue(mesh.has_component_tag("ntag"))
         mesh.remove_component_tag("ntag")
         self.assertFalse(mesh.has_component_tag("ntag"))
-        self.assertEqual(mesh.component_tags, ["rtag"])
+        self.assertEqual(mesh.get_component_tags(), ["rtag"])
 
     def test_nurbs_curve(self):
         crv   = cmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)])
@@ -328,7 +328,7 @@ class TestComponentTagLocations(MayaTestCase):
         mesh = Node(cmds.polyCube()[0]).get_children(type="mesh")[0]
         self.assertTrue(mesh.has_component_tag("top"))
         self.assertEqual(mesh.get_component_tag_index("top"), -1)
-        self.assertEqual(mesh.component_tags, self.CUBE_TAGS)
+        self.assertEqual(mesh.get_component_tags(), self.CUBE_TAGS)
         self.assertEqual(mesh.get_component_tag_contents("top"), ["f[1]"])
         self.assertTrue(np.array_equal(mesh.get_component_tag_indices("top"), [1]))
         self.assertEqual(mesh.get_component_tag_data("top").component_type, "f")
@@ -344,17 +344,17 @@ class TestComponentTagLocations(MayaTestCase):
         with self.assertRaisesRegex(RuntimeError, "procedural"):
             mesh.add_component_tag("top")
         self.assertEqual(mesh.get_component_tag_contents("top"), ["f[1]"])
-        self.assertIsNone(cmds.getAttr(f"{mesh.name}.componentTags", multiIndices=True))
+        self.assertIsNone(cmds.getAttr(f"{mesh.get_name()}.componentTags", multiIndices=True))
 
         # a new name is editable next to them
         mesh.add_component_tag("cap")
         mesh.set_component_tag_contents("cap", [0, 1], category="f")
-        self.assertEqual(mesh.component_tags, ["cap"] + self.CUBE_TAGS)
+        self.assertEqual(mesh.get_component_tags(), ["cap"] + self.CUBE_TAGS)
         self.assertEqual(mesh.get_component_tag_contents("cap"), ["f[0:1]"])
 
     def test_polycube_baked_tags_are_editable(self):
         mesh = Node(cmds.polyCube(ch=False)[0]).get_children(type="mesh")[0]
-        self.assertEqual(mesh.component_tags, self.CUBE_TAGS)
+        self.assertEqual(mesh.get_component_tags(), self.CUBE_TAGS)
         self.assertEqual(mesh.get_component_tag_index("top"), 5)
         self.assertTrue(mesh.has_component_tag(5))
 
@@ -366,7 +366,7 @@ class TestComponentTagLocations(MayaTestCase):
         self.assertTrue(np.array_equal(mesh.get_component_tag_indices("cap"), [0, 1]))
         mesh.remove_component_tag("cap")
         self.assertFalse(mesh.has_component_tag("cap"))
-        self.assertEqual(mesh.component_tags, self.CUBE_TAGS[:-1])
+        self.assertEqual(mesh.get_component_tags(), self.CUBE_TAGS[:-1])
 
     def test_tag_references(self):
         cluster = cmds.cluster(cmds.polySphere(ch=False)[0])[0]
@@ -400,8 +400,8 @@ class TestComponentTagLocations(MayaTestCase):
         dst = Node(cmds.polySphere(ch=False, name="dstS")[0]).get_children(type="mesh")[0]
         src.add_component_tag("cap")
         src.set_component_tag_contents("cap", [0, 1, 2, 3], "v")
-        cmds.cluster(dst.name)                       # dst now injects on its Orig
-        self.assertNotEqual(dst.injection_node.name, dst.name)
+        cmds.cluster(dst.get_name())                       # dst now injects on its Orig
+        self.assertNotEqual(dst.get_injection_node().get_name(), dst.get_name())
         src.transfer_component_tags("cap", dst)
         # written where Maya reads it, so the visible shape resolves it
         self.assertTrue(dst.has_component_tag("cap"))
@@ -462,7 +462,7 @@ class TestComponentTagLocations(MayaTestCase):
     def _edge_ends(mesh):
         """Maya's own edge table: {edge id: (vertex, vertex)}."""
         from maya.api import OpenMaya
-        fn = OpenMaya.MFnMesh(mesh.mdagpath)
+        fn = OpenMaya.MFnMesh(mesh.get_mdagpath())
         return {e: tuple(sorted(fn.getEdgeVertices(e))) for e in range(fn.numEdges)}
 
     def _transfer(self, src, dst, tag, ids, kind, **kwargs):
@@ -485,7 +485,7 @@ class TestComponentTagLocations(MayaTestCase):
         for make in ("sphere", "torus"):
             src = Node(getattr(cmds, "poly" + make.title())(ch=False, name="s" + make)[0]).get_shape()
             dst = Node(getattr(cmds, "poly" + make.title())(ch=False, name="d" + make)[0]).get_shape()
-            counts = {"f": cmds.polyEvaluate(src.name, face=True), "e": len(self._edge_ends(src)), "v": src.num_vertices}
+            counts = {"f": cmds.polyEvaluate(src.get_name(), face=True), "e": len(self._edge_ends(src)), "v": src.get_num_vertices()}
             for mode in (ResampleMode.SPATIAL, ResampleMode.UV):
                 for kind, count in counts.items():
                     with self.subTest(make, mode=mode.name, kind=kind):
@@ -510,7 +510,7 @@ class TestComponentTagLocations(MayaTestCase):
         from cgmath.geometry.resample import ResampleMode
 
         src, dst = self._planes()
-        cmds.move(30, 0, 0, dst.get_parent().name)
+        cmds.move(30, 0, 0, dst.get_parent().get_name())
         self.assertEqual(self._transfer(src, dst, "uvf", [5, 6], "f", mode=ResampleMode.UV), [5, 6])
         # far along +x, every target face centre is closest to the source's +x column
         self.assertEqual(self._transfer(src, dst, "spf", [3, 7, 11, 15], "f"), list(range(16)))
@@ -523,7 +523,7 @@ class TestComponentTagLocations(MayaTestCase):
         from maya.api import OpenMaya
 
         src, dst = self._planes(4, 8)
-        fn = OpenMaya.MFnMesh(dst.mdagpath)
+        fn = OpenMaya.MFnMesh(dst.get_mdagpath())
         pts = fn.getPoints(OpenMaya.MSpace.kWorld)
 
         def centre(f):
@@ -538,7 +538,7 @@ class TestComponentTagLocations(MayaTestCase):
                 # each landed face's centre is inside one tagged source face
                 for f in got:
                     p = OpenMaya.MPoint(centre(f)[0], 0, centre(f)[1])
-                    closest = OpenMaya.MFnMesh(src.mdagpath).getClosestPoint(p, OpenMaya.MSpace.kWorld)[1]
+                    closest = OpenMaya.MFnMesh(src.get_mdagpath()).getClosestPoint(p, OpenMaya.MSpace.kWorld)[1]
                     self.assertIn(closest, tagged, f)
 
     @staticmethod
@@ -571,7 +571,7 @@ class TestComponentTagLocations(MayaTestCase):
                     for f in (0, 1):
                         with self.subTest(lift=lift, order=order, mode=mode.name, face=f):
                             self.assertEqual(self._transfer(src, dst, "dart", [f], "f", mode=mode), [f])
-                cmds.delete(src.get_parent().name, dst.get_parent().name)
+                cmds.delete(src.get_parent().get_name(), dst.get_parent().get_name())
 
     def test_transfer_component_tags_bent_concave_quads_keep_their_centre(self):
         """A sphere with jittered points (seeded): faces 806, 807, 835 and 837 sit
@@ -584,7 +584,7 @@ class TestComponentTagLocations(MayaTestCase):
         shapes = []
         for name in ("bent_src", "bent_dst"):
             shape = Node(cmds.polySphere(ch=False, name=name, sx=30, sy=30)[0]).get_shape()
-            fn    = OpenMaya.MFnMesh(shape.mdagpath)
+            fn    = OpenMaya.MFnMesh(shape.get_mdagpath())
             pts   = np.array([[p.x, p.y, p.z] for p in fn.getPoints()])
             pts  += np.random.default_rng(3).normal(scale=0.03, size=pts.shape)
             fn.setPoints([OpenMaya.MPoint(*p) for p in pts])
@@ -603,8 +603,8 @@ class TestComponentTagLocations(MayaTestCase):
         src = Node(cmds.polyPlane(ch=False, name="ring_src", sx=3, sy=3, w=3, h=3)[0]).get_shape()
         dst = Node(cmds.polyPlane(ch=False, name="ring_dst", sx=1, sy=1, w=3, h=3)[0]).get_shape()
         hole = [OpenMaya.MPoint(x, 0, z) for x, z in ((-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5))]
-        OpenMaya.MFnMesh(dst.mdagpath).addHoles(0, hole, [4])
-        self.assertEqual(len(OpenMaya.MFnMesh(dst.mdagpath).getHoles()), 1)
+        OpenMaya.MFnMesh(dst.get_mdagpath()).addHoles(0, hole, [4])
+        self.assertEqual(len(OpenMaya.MFnMesh(dst.get_mdagpath()).getHoles()), 1)
         self.assertEqual(self._transfer(src, dst, "ring", [0, 1, 2, 3, 5, 6, 7, 8], "f"), [0])
         self.assertEqual(self._transfer(src, dst, "ring", [4], "f"), [])
 

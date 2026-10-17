@@ -21,19 +21,19 @@ class TestBaseNodes(MayaTestCase):
 
     def test_uuid(self):
         # checks if a node object can be created from a uuid string
-        node_from_uid = Node(self.parent.uuid)
+        node_from_uid = Node(self.parent.get_uuid())
         self.assertEqual(self.parent, node_from_uid)
 
     def test_properties(self):
         # casting node name
         self.assertEqual(Node("|" + self.node_name), self.parent)
-        self.assertEqual(Node(self.parent.mobject),  self.parent)
-        self.assertEqual(Node(self.parent.mdagpath), self.parent)
+        self.assertEqual(Node(self.parent.get_mobject()),  self.parent)
+        self.assertEqual(Node(self.parent.get_mdagpath()), self.parent)
 
         # name
-        self.assertEqual(self.child.short_name, self.parent.short_name, self.node_name)
-        self.assertNotEqual(self.child.name,      self.parent.name)
-        self.assertNotEqual(self.child.long_name, self.parent.long_name)
+        self.assertEqual(self.child.get_short_name(), self.parent.get_short_name(), self.node_name)
+        self.assertNotEqual(self.child.get_name(),      self.parent.get_name())
+        self.assertNotEqual(self.child.get_long_name(), self.parent.get_long_name())
         self.assertNotEqual(self.child,           self.parent)
 
         # type and search
@@ -51,8 +51,8 @@ class TestBaseNodes(MayaTestCase):
     def test_delete(self):
         self.parent.delete()
         self.assertFalse(cmds.objExists(self.node_name))
-        self.assertFalse(self.parent.is_valid)
-        self.assertFalse(self.child.is_valid)
+        self.assertFalse(self.parent.is_valid())
+        self.assertFalse(self.child.is_valid())
 
     def test_attr(self):
         attr_name     = "test_attr"
@@ -73,13 +73,13 @@ class TestBaseNodes(MayaTestCase):
     def test_duplicate(self):
         dup = self.parent.duplicate(returnRootsOnly=True)
         self.assertEqual(len(dup), 1)
-        self.assertTrue(dup[0].short_name.startswith(self.parent.short_name))
-        self.assertEqual(dup[0].get_children()[0].short_name, self.child.short_name)
+        self.assertTrue(dup[0].get_short_name().startswith(self.parent.get_short_name()))
+        self.assertEqual(dup[0].get_children()[0].get_short_name(), self.child.get_short_name())
 
         dup = self.parent.duplicate(renameChildren=True)
         self.assertEqual(len(dup), 2)
-        self.assertTrue(dup[0].short_name.startswith(self.parent.short_name))
-        self.assertNotEqual(dup[1].short_name, self.child.short_name)
+        self.assertTrue(dup[0].get_short_name().startswith(self.parent.get_short_name()))
+        self.assertNotEqual(dup[1].get_short_name(), self.child.get_short_name())
 
     def test_hier(self):
         child2 = Node.create("transform")
@@ -109,8 +109,8 @@ class TestBaseNodes(MayaTestCase):
         self.assertTrue(Transform.is_type(c_node_name, exact_type=False))
         self.assertTrue(TestNode.is_type(c_node_name))
         self.assertTrue(TestNode.is_type(c_node_name, exact_type=False))
-        self.assertFalse(TestNode.is_type(self.child.name))
-        self.assertFalse(TestNode.is_type(self.child.name, exact_type=False))
+        self.assertFalse(TestNode.is_type(self.child.get_name()))
+        self.assertFalse(TestNode.is_type(self.child.get_name(), exact_type=False))
 
     def test_connections(self):
         joint = Node.create("joint")

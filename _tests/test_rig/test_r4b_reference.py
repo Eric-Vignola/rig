@@ -255,7 +255,7 @@ class TestReference(MayaTestCase):
         self.assertEqual(repr(Mesh("body")), 'Mesh("bodyShape")')
         # an instanced shape: the path through the transform named
         cmds.instance("body", name="body_inst")
-        self.assertEqual(Mesh("body_inst").name, "body_inst|bodyShape")
+        self.assertEqual(Mesh("body_inst").get_name(), "body_inst|bodyShape")
         # refused: no shape of the type, a shape of another type, a joint
         cases = (
             (lambda: Mesh("grp"), "'grp' is a transform, not a mesh; Node\\('grp'\\) is "
@@ -303,7 +303,7 @@ class TestReference(MayaTestCase):
 
         node = _Wrapper("grp")
         self.assertIs(type(node), _Wrapper)
-        self.assertEqual(node.name, "grp")
+        self.assertEqual(node.get_name(), "grp")
         self.assertIs(_Wrapper(node), node)
         # its constructor's rule: a joint passes Transform's is_type
         self.assertIs(type(_Wrapper("j1")), _Wrapper)
@@ -371,7 +371,7 @@ class TestReference(MayaTestCase):
                         AmbiguousNodeError, "names :x and :char:x; spell the namespace",
                         lambda: Transform("x"),
                     )
-                    self.assertEqual(Transform(":x").uuid, cmds.ls(":x", uuid=True)[0])
+                    self.assertEqual(Transform(":x").get_uuid(), cmds.ls(":x", uuid=True)[0])
                     self.assertRefused(NodeLookupError, "is a pattern", lambda: Transform("x*"))
             finally:
                 cmds.namespace(relativeNames=False)
@@ -392,7 +392,7 @@ class TestReference(MayaTestCase):
         # the name reused by a new node refers to the new node
         cmds.createNode("joint", name="held")
         self.assertIs(type(Transform("held")), Joint)
-        self.assertTrue(Transform("held").is_valid)
+        self.assertTrue(Transform("held").is_valid())
 
     def test_a_renamed_node(self):
         grp = Node("grp")

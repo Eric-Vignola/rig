@@ -462,7 +462,7 @@ it. `create` always makes a new network, so a second
 `create_plane(name="run")` gets its own `run1` and `run1SG` instead of
 re-using `run`; `Lambert.define(name, ...)` would find `run` and share it.
 The returned `Lambert` is the node the rest of the script wires textures
-into; `material.engine` is its shading engine.
+into; `material.get_engine()` is its shading engine.
 
 ---
 

@@ -272,7 +272,7 @@ def _state_of(geo: Geometry, path: str, name: str, entry: dict, node: str) -> _H
     if entry["procedural"] or not entry["editable"]:
         return _Home(path, geo, name, _PROCEDURAL, node, category, empty)
     answer = cmds.componentTag(
-        f"{path}.{_PROBE_TOKEN[geo.node_type]}",
+        f"{path}.{_PROBE_TOKEN[type(geo).get_node_type(geo)]}",
         queryEdit         = True,
         tagName           = name,
         injectionLocation = node,
@@ -304,7 +304,8 @@ def _resolve(geo: Geometry, path: str, name: str, at: str | None) -> _Home:
         return _Home(path, geo, name, _MISSING, at, "", True)
     final = _final(entries)
     if final is None:
-        return _Home(path, geo, name, _MISSING, geo.injection_node.long_name, "", True)
+        injection = type(geo).get_injection_node(geo)
+        return _Home(path, geo, name, _MISSING, type(injection).get_long_name(injection), "", True)
     return _state_of(geo, path, name, final, _full_path(final["node"], path))
 
 
@@ -315,12 +316,12 @@ def _resolve_at(at: Any, path: str) -> str | None:
     if at is None:
         return None
     node = at if isinstance(at, Node) else Node(at)
-    if node.node_type not in _GEOMETRY_TYPES:
+    if type(node).get_node_type(node) not in _GEOMETRY_TYPES:
         shape = _single_geometry_shape(node)
         if shape is None:
             raise TypeError(f"at={at!r}: '{node}' is not a geometry node")
         node = shape
-    full = node.long_name
+    full = type(node).get_long_name(node)
     # The geometry chain, as Maya walks it: the shape, its Orig and the meshes
     # upstream through inMesh and a deformer's input geometry, also past a
     # visible mesh. Not the own history, which goes through every input of a
@@ -674,7 +675,7 @@ class Tag(_MemberSpec):
     def _plan_purge(self, group: _TagGroup, geo: Geometry, category: str | None) -> list:
         # Only names that still resolve: a deleted baked tag leaves a dead,
         # unresolvable history entry behind that nothing can edit.
-        live   = set(geo.component_tags)
+        live   = set(type(geo).get_component_tags(geo))
         finals = {}
         for entry in geo.get_component_tag_history() or []:
             if entry["final"] and entry["key"] in live:
@@ -921,7 +922,7 @@ class Tag(_MemberSpec):
     @classmethod
     def _of(cls, selections: list[_Selection]) -> list["Tag"]:
         group, geo = cls._single(selections, "Tag.of takes")
-        names      = geo.component_tags
+        names      = type(geo).get_component_tags(geo)
         if group.whole:
             return [cls._unchecked(name) for name in names]
         category = _CATEGORY_OF_KIND[group.comps[0].kind]
@@ -1208,7 +1209,7 @@ class _LayerMember(_MemberSpec):
 
     @property
     def _name(self) -> str | None:
-        return None if self._layer is None else self._layer.name
+        return None if self._layer is None else str(self._layer)
 
     @property
     def purges(self) -> bool:
@@ -1240,7 +1241,7 @@ class _LayerMember(_MemberSpec):
         return f"{'-' if self._remove else ''}{self._layer!r}"
 
     def _clone_target(self) -> str | None:
-        return None if self._layer is None or self._remove else self._layer.name
+        return None if self._layer is None or self._remove else str(self._layer)
 
     def __getattr__(self, name: str) -> Any:
         # a token is no layer: its methods and plugs are the layer node's
@@ -1273,7 +1274,7 @@ class _LayerMember(_MemberSpec):
         if self._layer is None:
             return [lambda: self._move(None, paths)]
         # a deleted layer raises here, before any write; defaultLayer is no layer
-        layer = None if self._layer.is_default else self._layer
+        layer = None if type(self._layer).is_default(self._layer) else self._layer
         if not self._remove:
             return [lambda: self._move(layer, paths)]
         if layer is None:
@@ -1295,7 +1296,7 @@ class _LayerMember(_MemberSpec):
         membership back from the node side."""
         if not paths:
             return
-        target = _display_layer._DEFAULT_ABSOLUTE if layer is None else layer.name
+        target = _display_layer._DEFAULT_ABSOLUTE if layer is None else str(layer)
         cmds_edit.editDisplayLayerMembers(target, *paths, noRecurse=True)
         for path in paths:
             if _holding_layer(path) != layer:
@@ -1315,7 +1316,7 @@ class _LayerMember(_MemberSpec):
 
     def _contains(self, selections: list[_Selection]) -> bool:
         paths    = _layer_targets(selections)
-        expected = None if self._layer.is_default else self._layer
+        expected = None if type(self._layer).is_default(self._layer) else self._layer
         return all(_holding_layer(path) == expected for path in paths)
 
     @classmethod

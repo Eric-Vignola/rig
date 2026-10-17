@@ -132,7 +132,7 @@ class TestTheFlagOnLoad(_NormalsCase):
         self.ready()
         smooth = self.assert_untouched_shading(lambda: Mesh.load(path, uv_path, name="smooth", normals=False))
         self.assertEqual((_hard_edges(str(smooth)), _locked_rows(str(smooth))), (set(), set()))
-        self.assertEqual(list(smooth.uv_sets), ["map1"])
+        self.assertEqual(list(smooth.get_uv_sets()), ["map1"])
         self.assertEqual(self.undo_name(), "rig.Mesh.load")
         self.assert_kept_selection()
         shaded = Mesh.load(path, uv_path, name="shaded")

@@ -921,8 +921,8 @@ def convert(
     On a shader already of that type the node itself is returned, ``attrs``
     written only under ``update``."""
     _gate_type(dst)
-    old  = node.name   # a deleted node raises here (naming its conversion, if any)
-    uuid = node.uuid
+    old  = str(node)   # a deleted node raises here (naming its conversion, if any)
+    uuid = type(node).get_uuid(node)
     src  = cmds.nodeType(old)
     if cmds.ls(old, defaultNodes=True):
         raise RuntimeError(
@@ -936,7 +936,7 @@ def convert(
         )
     # a conversion deletes the old node, which a lock forbids (the template of
     # rig's verbs on a locked node: InjectionError, a RuntimeError)
-    _refuse_locked_node(node.fn_set, "convert", old)
+    _refuse_locked_node(type(node).get_fn_set(node), "convert", old)
     _check_attrs(attrs, node_type=dst)
     if src == dst:
         if dry_run:

@@ -58,18 +58,18 @@ def _cube(name="body", ch=False):
 
 
 def _fv_normals(shape, space=OpenMaya.MSpace.kObject):
-    fn = Mesh(shape).fn_set
+    fn = Mesh(shape).get_fn_set()
     normals = np.array([tuple(v) for v in fn.getNormals(space)])
     return normals[np.array(list(fn.getNormalIds()[1]), dtype=int)]
 
 
 def _hard_edges(shape):
-    fn = Mesh(shape).fn_set
+    fn = Mesh(shape).get_fn_set()
     return {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
 
 
 def _locked_rows(shape):
-    fn = Mesh(shape).fn_set
+    fn = Mesh(shape).get_fn_set()
     counts, ids = fn.getNormalIds()
     _, verts = fn.getVertices()
     faces = np.repeat(np.arange(len(counts)), list(counts))
@@ -102,7 +102,7 @@ def _skeleton():
 
 
 def _world_matrices(nodes):
-    return {Node(n).short_name: np.array(cmds.xform(str(n), query=True, matrix=True, worldSpace=True))
+    return {Node(n).get_short_name(): np.array(cmds.xform(str(n), query=True, matrix=True, worldSpace=True))
             for n in nodes}
 
 
@@ -299,7 +299,7 @@ class TestMesh(_Case):
         t = _cube()
         self.assertEqual(Mesh(t).save(self.path("only.npz")), self.path("only.npz"))
         mesh = Mesh.load(self.path("only.npz"), name="m")
-        self.assertEqual(list(mesh.uv_sets), ["map1"])
+        self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
         self.assertEqual(len(mesh.get_uv_coords("map1")), 0)
 
     def test_world_space_false_brings_back_the_transform(self):
@@ -330,8 +330,8 @@ class TestMesh(_Case):
         data = Mesh(t).serialize(include_uvs=False)
         data.save_obj(self.path("body.obj"))
         mesh = Mesh.load(self.path("body.obj"), self.path("body.obj"), name="from_obj")
-        self.assertEqual(mesh.num_vertices, 8)
-        self.assertEqual(list(mesh.uv_sets), ["map1"])
+        self.assertEqual(mesh.get_num_vertices(), 8)
+        self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
 
     def test_wrong_and_swapped_inputs_make_nothing(self):
         t, path, uvs = self.saved()
@@ -403,7 +403,7 @@ class TestMesh(_Case):
         self.assert_one_step("rig.Mesh.load", lambda: cmds.objExists("m"))
         self.assertEqual(cmds.ls("m", uuid=True), uuid)
         self.assertEqual(_hard_edges("mShape"), _hard_edges("bodyShape"))
-        self.assertIs(mesh.is_valid, True)
+        self.assertIs(mesh.is_valid(), True)
 
     def test_the_names(self):
         _, path, uvs = self.saved()
@@ -587,7 +587,7 @@ class TestMesh(_Case):
                     obj.save(self.path(f"hero_{label}.{ext}"))
                     self.ready()
                     mesh = Mesh.load(self.path(f"hero_{label}.{ext}"))
-                    self.assertEqual(list(mesh.uv_sets), sets)
+                    self.assertEqual(list(mesh.get_uv_sets()), sets)
                     self.assertEqual(str(mesh.get_parent()).rstrip("0123456789"), "hero")
                     self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.t")[0], (5.0, 0.0, 0.0))
                     self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.r")[0], (0.0, 45.0, 0.0))
@@ -604,7 +604,7 @@ class TestMesh(_Case):
         cmds.delete("copy", constructionHistory=True)
         world = _world_points("copyShape")
         copy.load(self.path("hero.npz"))
-        self.assertEqual(list(copy.uv_sets), ["map1", "second"])
+        self.assertEqual(list(copy.get_uv_sets()), ["map1", "second"])
         # world space: the Object's transform places the points (the copy is where it is)
         self.assertFalse(np.allclose(_world_points("copyShape"), world, atol=1e-5))
         copy.load(self.path("hero.npz"), world_space=False)
@@ -647,7 +647,7 @@ class TestNurbsCurve(_Case):
 
     def test_the_round_trip_in_each_format(self):
         for label, shape in self.sources().items():
-            fn = NurbsCurve(shape).fn_set
+            fn = NurbsCurve(shape).get_fn_set()
             for ext in FORMATS:
                 with self.subTest(label=label, ext=ext):
                     path = self.path(f"{label}.{ext}")
@@ -655,7 +655,7 @@ class TestNurbsCurve(_Case):
                     self.ready()
                     curve = NurbsCurve.load(path)
                     self.assertIsInstance(curve, NurbsCurve)
-                    got = curve.fn_set
+                    got = curve.get_fn_set()
                     self.assertEqual((got.numCVs, got.degree, got.form), (fn.numCVs, fn.degree, fn.form))
                     np.testing.assert_allclose(np.array(got.knots()), np.array(fn.knots()), atol=1e-9)
                     np.testing.assert_allclose(_cvs(str(curve)), _cvs(shape), atol=1e-9)
@@ -775,7 +775,7 @@ class TestNurbsSurface(_Case):
 
     def test_the_round_trip_in_each_format(self):
         for label, shape in self.sources().items():
-            fn = NurbsSurface(shape).fn_set
+            fn = NurbsSurface(shape).get_fn_set()
             for ext in FORMATS:
                 with self.subTest(label=label, ext=ext):
                     path = self.path(f"{label}.{ext}")
@@ -783,7 +783,7 @@ class TestNurbsSurface(_Case):
                     self.ready()
                     surface = NurbsSurface.load(path)
                     self.assertIsInstance(surface, NurbsSurface)
-                    got = surface.fn_set
+                    got = surface.get_fn_set()
                     self.assertEqual(
                         (got.numCVsInU, got.numCVsInV, got.degreeInU, got.degreeInV, got.formInU, got.formInV),
                         (fn.numCVsInU, fn.numCVsInV, fn.degreeInU, fn.degreeInV, fn.formInU, fn.formInV),
@@ -831,10 +831,10 @@ class TestNurbsSurface(_Case):
     def test_the_node_form_keeps_its_knots(self):
         # a BSplinePatchData holds no knots: an update keeps the surface's own
         shape = self.sources()["plane"]
-        knots = np.array(NurbsSurface(shape).fn_set.knotsInU())
+        knots = np.array(NurbsSurface(shape).get_fn_set().knotsInU())
         NurbsSurface(shape).save(self.path("p.npz"))
         NurbsSurface(shape).load(self.path("p.npz"), world_space=True)
-        np.testing.assert_array_equal(np.array(NurbsSurface(shape).fn_set.knotsInU()), knots)
+        np.testing.assert_array_equal(np.array(NurbsSurface(shape).get_fn_set().knotsInU()), knots)
 
     def test_the_node_form_refuses_another_layout(self):
         shapes = self.sources()
@@ -872,12 +872,12 @@ class TestSkinCluster(_Case):
             with self.subTest(ext=ext):
                 path = self.path(f"skin.{ext}")
                 self.assertEqual(skin.save(path), path)
-                cmds.delete(skin.name)
+                cmds.delete(skin.get_name())
                 self.ready()
                 skin = SkinCluster.load(path, geo)
                 self.assertIsInstance(skin, SkinCluster)
                 np.testing.assert_array_equal(skin.get_weights(), weights)
-                self.assertEqual([j.short_name for j in skin.get_influence_objects()], ["j1", "j2"])
+                self.assertEqual([j.get_short_name() for j in skin.get_influence_objects()], ["j1", "j2"])
                 self.assertEqual(self.undo_name(), "rig.SkinCluster.load")
 
     def test_the_class_form_replaces_the_geometrys_own_skin(self):
@@ -966,7 +966,7 @@ class TestSkinCluster(_Case):
         data = skin.serialize()
         data.influences = ["j1", "j3"]  # the file names j3, not j2
         skin.load(data)
-        self.assertEqual([j.short_name for j in skin.get_influence_objects()], ["j1", "j3"])
+        self.assertEqual([j.get_short_name() for j in skin.get_influence_objects()], ["j1", "j3"])
 
     def test_the_node_form_takes_the_file_alone(self):
         geo, skin, _ = self.bound()
@@ -1011,7 +1011,7 @@ class TestBlendShape(_Case):
             with self.subTest(ext=ext):
                 path = self.path(f"face.{ext}")
                 self.assertEqual(bs.save(path), path)
-                cmds.delete(bs.name)
+                cmds.delete(bs.get_name())
                 self.ready()
                 bs = BlendShape.load(path, base, name="face_bs")
                 self.assertEqual(self.undo_name(), "rig.BlendShape.load")
@@ -1113,9 +1113,9 @@ class TestHierarchy(_Case):
                 self.ready()
                 nodes = Joint.load_hierarchy(path)
                 self.assertIsInstance(nodes, List)
-                self.assertEqual([n.short_name for n in nodes], ["root", "spine", "tip", "grp"])
+                self.assertEqual([n.get_short_name() for n in nodes], ["root", "spine", "tip", "grp"])
                 self.assertEqual([type(n).__name__ for n in nodes], ["Joint", "Joint", "Transform", "Transform"])
-                self.assertEqual(nodes[1].long_name, "|root|spine")
+                self.assertEqual(nodes[1].get_long_name(), "|root|spine")
                 for name, matrix in _world_matrices(names).items():
                     np.testing.assert_allclose(matrix, matrices[name], atol=1e-9)
                 self.assertEqual(cmds.getAttr("spine.twist"), 2.5)
@@ -1141,8 +1141,8 @@ class TestHierarchy(_Case):
         root = _skeleton()
         root.save_hierarchy(self.path("skel.npz"))
         nodes = Joint.load_hierarchy(self.path("skel.npz"))
-        self.assertEqual(nodes[0].short_name, "root1")
-        self.assertEqual(nodes[1].long_name, "|root1|spine")
+        self.assertEqual(nodes[0].get_short_name(), "root1")
+        self.assertEqual(nodes[1].get_long_name(), "|root1|spine")
 
     def test_parent_and_world_space(self):
         root = _skeleton()
@@ -1151,23 +1151,23 @@ class TestHierarchy(_Case):
         rig_grp = Transform.create(name="rig_grp")
         rig_grp.t.set(10, 0, 0)
         kept = Transform.load_hierarchy(self.path("skel.npz"), parent="rig_grp")
-        self.assertEqual(kept[0].long_name, "|rig_grp|root")
-        np.testing.assert_allclose(_world_matrices([kept[1].long_name])["spine"], matrices["spine"], atol=1e-9)
+        self.assertEqual(kept[0].get_long_name(), "|rig_grp|root")
+        np.testing.assert_allclose(_world_matrices([kept[1].get_long_name()])["spine"], matrices["spine"], atol=1e-9)
         local = Transform.load_hierarchy(self.path("skel.npz"), parent=rig_grp, world_space=False)
-        self.assertEqual(local[0].long_name, "|rig_grp|root1")
-        self.assertEqual(cmds.getAttr(f"{local[0].long_name}.t")[0], (0.0, 0.0, 0.0))
+        self.assertEqual(local[0].get_long_name(), "|rig_grp|root1")
+        self.assertEqual(cmds.getAttr(f"{local[0].get_long_name()}.t")[0], (0.0, 0.0, 0.0))
 
     def test_data_objects_paths_and_a_clip(self):
         root = _skeleton()
         data = root.serialize_hierarchy()
         nodes = Transform.load_hierarchy(data)
-        self.assertEqual(nodes[0].short_name, "root1")
+        self.assertEqual(nodes[0].get_short_name(), "root1")
         root.save_hierarchy(pathlib.Path(self.path("skel.npz")))
-        self.assertEqual(Transform.load_hierarchy(pathlib.Path(self.path("skel.npz")))[0].short_name, "root2")
+        self.assertEqual(Transform.load_hierarchy(pathlib.Path(self.path("skel.npz")))[0].get_short_name(), "root2")
         from cgmath.hierarchy import ClipData
 
         clip = ClipData(data, frames=3)
-        self.assertEqual(Transform.load_hierarchy(clip)[0].short_name, "root3")
+        self.assertEqual(Transform.load_hierarchy(clip)[0].get_short_name(), "root3")
 
     def test_wrong_inputs_make_nothing(self):
         Mesh(cmds.polyCube(name="m", constructionHistory=False)[0]).save(self.path("m.npz"))
@@ -1188,9 +1188,9 @@ class TestHierarchy(_Case):
                 with mock.patch.object(_files, "read") as read:
                     self.assert_refused(
                         TypeError,
-                        f"^{name}\\('{node.name}'\\).load_hierarchy\\(...\\) would update the hierarchy at "
-                        f"'{node.name}' in place, which rig does not do \\(its transforms hold the rig's "
-                        f"constraints, skins and children\\); {name}.load_hierarchy\\(path, parent='{node.name}'\\) "
+                        f"^{name}\\('{node.get_name()}'\\).load_hierarchy\\(...\\) would update the hierarchy at "
+                        f"'{node.get_name()}' in place, which rig does not do \\(its transforms hold the rig's "
+                        f"constraints, skins and children\\); {name}.load_hierarchy\\(path, parent='{node.get_name()}'\\) "
                         f"makes a new one under it$",
                         lambda: node.load_hierarchy(self.path("skel.npz")),
                     )

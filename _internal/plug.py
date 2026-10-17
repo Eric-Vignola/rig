@@ -399,7 +399,7 @@ class Plug(Attribute):
         #    ``Plug('foo.outputTranslate').outputRotate`` => ``Plug('foo.outputRotate')``.
         #    A Maya attribute (or component) of the node only, through the node
         #    class's ``__getattr__``: never the node's Python members, so
-        #    ``node.tx.delete()`` / ``.rename()`` / ``.uuid`` do not reach the node.
+        #    ``node.tx.delete()`` / ``.rename()`` / ``.get_uuid()`` do not reach the node.
         node = type(self).get_node(self)
         try:
             return type(node).__getattr__(node, attr_name)
@@ -1582,7 +1582,7 @@ class ComponentPlug(Plug):
         """Record the component metadata (``__init__`` and ``_component_plug``)."""
         # ``_comp_node`` is the node name captured at construction. It is the
         # str BUFFER source for an element only -- NOT used for live resolution
-        # (``_axis_sizes``/``_element`` read ``self.node.name`` so a held handle
+        # (``_axis_sizes``/``_element`` read ``str(self.get_node())`` so a held handle
         # stays rename-safe). Do not reintroduce ``cmds`` lookups on this field.
         self._comp_node  = comp_node
         self._comp_alias = comp_alias
@@ -1599,7 +1599,7 @@ class ComponentPlug(Plug):
         if self._comp_coords is None:
             return Attribute.get_full_name(self)  # bare handle -> controlPoints
         coords = "".join(f"[{c}]" for c in self._comp_coords)
-        return f"{type(self).get_node(self).name}.{self._comp_alias}{coords}"
+        return f"{type(self).get_node(self)}.{self._comp_alias}{coords}"
 
     # -- indexing -- #
 
@@ -1672,7 +1672,7 @@ class ComponentPlug(Plug):
         missing = _AXIS_NAMES[ndims][len(specs):]
         left    = len(missing)
         return (
-            f"{type(self).get_node(self).name}.{alias}[{given}] leaves {left} of {ndims} axes "
+            f"{type(self).get_node(self)}.{alias}[{given}] leaves {left} of {ndims} axes "
             "unspecified, and a chained index would pick from the flattened "
             f"selection: write {alias}[{given}, {', '.join(missing)}] for one "
             f"point or {alias}[{given}, {', '.join(':' * left)}] for the slab"
@@ -1689,7 +1689,7 @@ class ComponentPlug(Plug):
         a rename still resolves (MObjectHandle-based identity, the same source
         :attr:`full_name` uses).
         """
-        node_name = type(self).get_node(self).name
+        node_name = str(type(self).get_node(self))
         name      = f"{node_name}.{self._comp_alias}" + "".join(f"[{c}]" for c in coords)
         mplug     = _maybe_translate_component(name)
         element   = _component_plug(
@@ -1712,7 +1712,7 @@ class ComponentPlug(Plug):
         Reads the *live* node name from the MPlug (rename-safe) -- not the
         cached ``_comp_node``.
         """
-        node_name = type(self).get_node(self).name
+        node_name = str(type(self).get_node(self))
         if cmds.nodeType(node_name) == "lattice":
             return (
                 cmds.getAttr(f"{node_name}.sDivisions"),
@@ -1744,7 +1744,7 @@ def _maybe_component_plug(
     if attr_name not in _MULTIDIM_ALIASES:
         return None
     try:
-        node_name = type(attr_obj).get_node(attr_obj).name
+        node_name = str(type(attr_obj).get_node(attr_obj))
         node_type = cmds.nodeType(node_name)
     except (RuntimeError, AttributeError):
         return None

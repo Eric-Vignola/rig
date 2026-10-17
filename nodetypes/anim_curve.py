@@ -132,7 +132,7 @@ class AnimCurve(DGNode):
         """The reference's hint for a curve of another type: the generic reference."""
         if cls is AnimCurve or not isinstance(node, AnimCurve):
             return ""
-        return f"; AnimCurve({node.name!r}) takes any curve"
+        return f"; AnimCurve({str(node)!r}) takes any curve"
 
     @classmethod
     def _abstract(cls, verb: str) -> TypeError:
@@ -198,12 +198,12 @@ class AnimCurve(DGNode):
             node = DGNode.create.__func__(cls, name=name, container=container, **kwargs)
             try:
                 if entry is not None:
-                    anim_keys._write(node.fn_set, entry)
+                    anim_keys._write(type(node).get_fn_set(node), entry)
                 for attr, v in attrs.items():
                     getattr(node, attr) << v
             except BaseException:
                 try:
-                    cmds_edit.delete(node.name)
+                    cmds_edit.delete(str(node))
                 except (RuntimeError, ValueError):
                     pass
                 raise
@@ -273,7 +273,7 @@ class AnimCurve(DGNode):
         if made or not update or (value is None and not attrs):
             return node
         if attrs:
-            _check_attrs(attrs, node=node.name)
+            _check_attrs(attrs, node=str(node))
         entry = node._plan_set(value, call) if value is not None else None
         if (entry is None or entry.same) and not attrs:
             return node
@@ -281,7 +281,7 @@ class AnimCurve(DGNode):
 
         with _undo_chunk("rig.define"):
             if entry is not None and not entry.same:
-                anim_keys._write(node.fn_set, entry)
+                anim_keys._write(type(node).get_fn_set(node), entry)
             for attr, v in attrs.items():
                 getattr(node, attr) << v
         return node
@@ -304,10 +304,10 @@ class AnimCurve(DGNode):
     # --- the keys
 
     def _timed_type(self, verb: str) -> str:
-        curve_type = _TIMED.get(self.fn_set.animCurveType)
+        curve_type = _TIMED.get(type(self).get_fn_set(self).animCurveType)
         if curve_type is None:
             raise TypeError(
-                f"{self.name!r} is {_article(self.node_type)} {self.node_type}, keyed by its "
+                f"{str(self)!r} is {_article(type(self).get_node_type(self))} {type(self).get_node_type(self)}, keyed by its "
                 f"driver: {verb} reads and writes curves keyed by time (TL, TA, TU, TT)"
             )
         return curve_type
@@ -326,7 +326,7 @@ class AnimCurve(DGNode):
             locked = _locked_channels(plug, [plug])
             if locked:
                 raise _injection_error(
-                    f"Cannot set the keys of {self.name!r}: it keys the locked plug "
+                    f"Cannot set the keys of {str(self)!r}: it keys the locked plug "
                     f"{locked[0]!r}. Unlock first: {_unlock_hint(plug, locked)} (a locked plug "
                     f"takes no new keys, even the ones its curve holds). Nothing was changed"
                 )
@@ -337,13 +337,13 @@ class AnimCurve(DGNode):
         tangent is a step when every plug it keys is a bool or an enum."""
         anim_keys  = _anim_keys()
         curve_type = self._timed_type(call)
-        fn = self.fn_set
-        _refuse_locked_node(fn, "set the keys of", self.name)
+        fn = type(self).get_fn_set(self)
+        _refuse_locked_node(fn, "set the keys of", str(self))
         if fn.isFromReferencedFile:
             from rig.nodetypes._base import _injection_error
 
             raise _injection_error(
-                f"cannot set the keys of {self.name!r}: it is from a referenced file, whose keys "
+                f"cannot set the keys of {str(self)!r}: it is from a referenced file, whose keys "
                 f"the file holds (key the plug: it gets a new curve). Nothing was changed"
             )
         if value._names is not None:
@@ -367,7 +367,7 @@ class AnimCurve(DGNode):
         ``AnimCurve(...)``) or an ``AnimCurve`` value. Keys it holds already write nothing.
         The values are in UI units. Refused (InjectionError, nothing changed): a locked
         (lockNode) curve, a curve from a referenced file."""
-        call  = f"{type(self).__name__}({self.name!r}).set_keys()"
+        call  = f"{type(self).__name__}({str(self)!r}).set_keys()"
         value = _anim_keys().coerce(keys, times, options, call)
         if value is None:
             raise TypeError(f"{call} takes the keys: values, or an AnimCurve value")
@@ -377,7 +377,7 @@ class AnimCurve(DGNode):
         from rig._internal.undo import _undo_chunk
 
         with _undo_chunk("rig.AnimCurve.set_keys"):
-            _anim_keys()._write(self.fn_set, entry)
+            _anim_keys()._write(type(self).get_fn_set(self), entry)
         return self
 
     def get_keys(self) -> Any:
@@ -386,19 +386,18 @@ class AnimCurve(DGNode):
         elsewhere), the weights of a weighted curve, the infinities. ``other.tx <<
         curve.get_keys()`` reproduces the curve (tangents that are not fixed recompute
         identically from the same keys). ValueError for a curve with no key."""
-        return _anim_keys().read_keys(self.fn_set, self._timed_type("get_keys()"))
+        return _anim_keys().read_keys(type(self).get_fn_set(self), self._timed_type("get_keys()"))
 
-    @property
-    def num_keys(self) -> int:
+    def get_num_keys(self) -> int:
         """The number of keys."""
-        return self.fn_set.numKeys
+        return type(self).get_fn_set(self).numKeys
 
     def evaluate(self, times: Any) -> Any:
         """The curve's value at ``times`` (frames in the scene's time unit), in UI units
         (degrees, the linear unit, frames for a time curve): a float for one time, an
         ndarray of the shape of ``times`` for several."""
         curve_type = self._timed_type("evaluate()")
-        fn   = self.fn_set
+        fn   = type(self).get_fn_set(self)
         unit = OpenMaya.MTime.uiUnit()
         arr  = np.asarray(times, dtype=float)
         if curve_type == "animCurveTT":

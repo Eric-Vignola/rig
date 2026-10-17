@@ -33,7 +33,7 @@ class TestGetDeformers(UndoWalk, MayaTestCase):
 
     @staticmethod
     def names(node, **kwargs):
-        return [x.name for x in Node(node).get_deformers(**kwargs)]
+        return [x.get_name() for x in Node(node).get_deformers(**kwargs)]
 
     def test_get_deformers_leaves_no_undo_step(self):
         """findRelatedDeformer is a recorded command: each call was an undo step,
@@ -60,7 +60,7 @@ class TestGetDeformers(UndoWalk, MayaTestCase):
             with self.subTest(k):
                 self.assertEqual(self.names(f"c{k}Shape"), chain)
                 self.assertEqual(self.names(f"c{k}"), chain)
-                self.assertEqual(Node(f"c{k}").get_deformers(first_only=True).name, chain[0])
+                self.assertEqual(Node(f"c{k}").get_deformers(first_only=True).get_name(), chain[0])
                 self.assertEqual(self.names(f"c{k}Shape", node_type=["cluster", "ffd"]), [chain[0], chain[3]])
 
     def test_get_deformers_finds_what_findRelatedDeformer_finds(self):

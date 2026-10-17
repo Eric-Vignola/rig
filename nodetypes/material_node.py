@@ -229,7 +229,7 @@ def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngi
         raise ValueError(f"'{new}' already exists")
     engine  = engine_of()
     old     = _leaf(material)
-    follows = engine is not None and _leaf(engine.name) == f"{old}SG"
+    follows = engine is not None and _leaf(str(engine)) == f"{old}SG"
     if follows and _exists(f"{new}SG"):
         raise ValueError(
             f"'{new}SG' already exists, so the engine of '{new}' could not follow "
@@ -240,10 +240,10 @@ def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngi
         if _leaf(got) != _leaf(new):
             raise RuntimeError(f"Maya renamed '{material}' to '{got}', not '{new}'")
         if follows:
-            got_engine = cmds_edit.rename(engine.name, f"{new}SG")
+            got_engine = cmds_edit.rename(str(engine), f"{new}SG")
             if _leaf(got_engine) != f"{_leaf(new)}SG":
                 raise RuntimeError(
-                    f"Maya renamed '{engine.name}' to '{got_engine}', not '{new}SG'"
+                    f"Maya renamed '{engine}' to '{got_engine}', not '{new}SG'"
                 )
     return got
 
@@ -331,9 +331,9 @@ class Material(DGNode):
         reference, and the conversion."""
         if not isinstance(node, Material) or cls is Material:
             return ""
-        name = node.name
+        name = str(node)
         hint = f"; Material({name!r}) takes any surface shader"
-        if node.node_type != _own_type(cls):
+        if type(node).get_node_type(node) != _own_type(cls):
             hint += f"; {type(node).__name__}({name!r}).astype({cls.__name__}) converts it"
         return hint
 
@@ -431,7 +431,7 @@ class Material(DGNode):
             # active scope only when asked
             from rig._internal.container import container as scope
 
-            scope.add([shader, engine.name, *engine.get_material_info()])
+            scope.add([shader, str(engine), *engine.get_material_info()])
         if cls.CUSTOM_NODE_TYPE:
             set_custom_type(shader, cls.CUSTOM_NODE_TYPE)
         # the node just made is of this class (the generic class: its cast)
@@ -439,9 +439,9 @@ class Material(DGNode):
         for attr, value in attrs.items():
             getattr(node, attr) << value
         fed = engine.get_material()
-        if fed is None or fed.name != shader:
+        if fed is None or str(fed) != shader:
             raise RuntimeError(
-                f"{engine.name}.surfaceShader does not read '{shader}' after the "
+                f"{engine}.surfaceShader does not read '{shader}' after the "
                 f"build (it reads {fed})"
             )
         return node
@@ -491,7 +491,8 @@ class Material(DGNode):
             attrs = _attribute_keywords(node_type, kwargs, flags, "Material.define()")
 
         def accept(found):
-            return found if found.node_type == node_type else None
+            # (`type` is this method's argument: the call form, which builds no plug)
+            return found if found.get_node_type() == node_type else None
 
         def make(made_name, _parent):
             return cls.create(type=node_type, name=made_name, container=container, **kwargs, **attrs)
@@ -516,7 +517,7 @@ class Material(DGNode):
         # (``ls -exactType`` given this list drops its first type)
         types = cmds.listNodeTypes(_SURFACE) or []
         found = cmds.ls(*args, type=types, **kwargs) if types else []
-        return [node for node in map(_cast, found or ()) if cls.is_type(node.name)]
+        return [node for node in map(_cast, found or ()) if cls.is_type(str(node))]
 
     # --- the membership grammar (rig.shade)
 
@@ -597,14 +598,13 @@ class Material(DGNode):
 
     # --- the network
 
-    @property
-    def engine(self) -> ShadingEngine:
+    def get_engine(self) -> ShadingEngine:
         """The shading engine this shader feeds (``<shader>SG`` when it feeds
         several and one is named so; ValueError when several and none is).
         Find-only: ValueError when it feeds none (an assignment builds one)."""
         engine = ShadingEngine.for_material(self, create=False)
         if engine is None:
-            name = self.name
+            name = str(self)
             raise ValueError(
                 f"'{name}' feeds no shading engine yet; assigning it (geometry << {self!r}) "
                 f"builds {_leaf(name)}SG"
@@ -622,7 +622,7 @@ class Material(DGNode):
         if nodes is not None:
             super().delete(nodes, **kwargs)
             return
-        _delete_network(self.name)
+        _delete_network(str(self))
 
     def rename(self, new_name: Any) -> None:
         """Renames the shader, and its engine when the engine follows the
@@ -639,7 +639,7 @@ class Material(DGNode):
                 f"{new_name!r} is not a node name Maya keeps: identifiers of "
                 f"[A-Za-z0-9_] not starting with a digit, joined by ':' or '|'"
             )
-        _rename_network(self.name, new_name, lambda: ShadingEngine.for_material(self, create=False))
+        _rename_network(str(self), new_name, lambda: ShadingEngine.for_material(self, create=False))
 
 
 class Lambert(Material):

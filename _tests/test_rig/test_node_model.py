@@ -212,7 +212,7 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             bls.get_target_weight_attr(0)
             bls.get_target_data(0)
             bls.serialize()
-            self.assertEqual(bls.num_targets, 2)
+            self.assertEqual(bls.get_num_targets(), 2)
             self.assertEqual(list(bls.get_target_indices()), [0, 1])
 
         def follicles():
@@ -250,14 +250,14 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             mesh = ball.get_children(type="mesh")[0]
             mesh.add_component_tag("t1")
             mesh.set_component_tag_contents("t1", [2, 3], category="v")
-            self.assertEqual(mesh.component_tags, ["t1"])
+            self.assertEqual(mesh.get_component_tags(), ["t1"])
             self.assertTrue(mesh.has_component_tag(0))
             self.assertEqual(mesh.get_component_tag_index("t1"), 0)
             self.assertEqual(mesh.get_component_tag_name(0), "t1")
             mesh.rename_component_tag("t1", "t2")
-            self.assertEqual(mesh.component_tags, ["t2"])
+            self.assertEqual(mesh.get_component_tags(), ["t2"])
             mesh.remove_component_tag("t2")
-            self.assertEqual(mesh.component_tags, [])
+            self.assertEqual(mesh.get_component_tags(), [])
 
         for label, func in (
             ("transforms", transforms),
@@ -360,7 +360,7 @@ class TestTypedLayerPrep(MayaTestCase):
         self.assertIsNot(dup, dg)
         for key in _DAG_KEYS:
             self.assertIs(vars(dup)[key], vars(dg)[key])
-        self.assertEqual(dup.name, "a")
+        self.assertEqual(dup.get_name(), "a")
 
     def test_dunder_probe_on_a_freed_node(self):
         cmds.createNode("transform", name="a")
@@ -393,8 +393,8 @@ class TestTypedLayerPrep(MayaTestCase):
         shape = cmds.listRelatives(cube, shapes=True)[0]
         mesh  = Mesh(Node(cube))
         self.assertIs(type(mesh), Mesh)
-        self.assertEqual(mesh.name, shape)
-        self.assertTrue(mesh.mobject == _mobject(shape))
+        self.assertEqual(mesh.get_name(), shape)
+        self.assertTrue(mesh.get_mobject() == _mobject(shape))
         # a node of the class itself (or a subclass) still shares its internals
         again = Mesh(mesh)
         self.assertIs(vars(again)["_fn_set"], vars(mesh)["_fn_set"])
@@ -483,7 +483,7 @@ class TestPrivateProbeOnAFreedNode(MayaTestCase):
                 self.assertIs(type(dup), type(node))
                 # re-pinned (round 5 NW6): the API 2.0 node handle
                 self.assertIs(vars(dup)["_objhandle"], vars(node)["_objhandle"])
-                self.assertFalse(dup.is_valid)
+                self.assertFalse(dup.is_valid())
                 with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
                     node.ensure_valid()
                 self.assertEqual(probe.mock_calls, [])
@@ -665,16 +665,16 @@ class TestApi1HandleReaders(MayaTestCase):
         for label, (node, valid) in cases.items():
             with self.subTest(case=label):
                 self.assertIs(_handle_valid(vars(node)), valid)
-                self.assertIs(node.is_valid, valid)
+                self.assertIs(node.is_valid(), valid)
         self.assertIs(_handle_valid({}), False)
         cmds.undo()
-        self.assertTrue(deleted.is_valid)
+        self.assertTrue(deleted.is_valid())
         cmds.file(new=True, force=True)
         # a freed node: only its handle is read
         probe = mock.Mock()
         vars(freed)["_fn_set"] = probe
         self.assertIs(_handle_valid(vars(freed)), False)
-        self.assertIs(freed.is_valid, False)
+        self.assertIs(freed.is_valid(), False)
         self.assertEqual(probe.mock_calls, [])
 
 
@@ -697,7 +697,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
             with self.subTest(plug=str(plug)):
                 self.assertIsInstance(plug, Plug)
                 self.assertIs(plug.get_node(), dg)
-                self.assertTrue(plug.get_node().mobject == _mobject("a"))
+                self.assertTrue(plug.get_node().get_mobject() == _mobject("a"))
         # the typed API still reads Attributes
         self.assertNotIsInstance(dg.find_attr("tx"), Plug)
         dg.tx << 3.0
@@ -753,11 +753,18 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         self.assertEqual(cmds.getAttr("a.__parked__"), 4.0)
         self.assertEqual(list(vars(dg)), before)
 
-        dg.namespace = "ns"
-        self.assertEqual(dg.name, "ns:a")
+        # re-pinned (user decision 2026-10-16, the property ban): a node has no
+        # settable member: set_namespace(ns); `dg.namespace = v` / `dg.name = x`
+        # are the '=' sugar of Maya attrs of those names, which a has not (the
+        # error names the new spelling)
+        with self.assertRaises(AttributeError) as ctx:
+            dg.namespace = "ns"
+        self.assertIn("node.set_namespace(ns)", str(ctx.exception))
+        dg.set_namespace("ns")
+        self.assertEqual(dg.get_name(), "ns:a")
         with self.assertRaises(AttributeError) as ctx:
             dg.name = "x"
-        self.assertIn("setter", str(ctx.exception))
+        self.assertIn("node.rename(x)", str(ctx.exception))
         # re-pinned (user decision 2026-10-16, name clashes: a bare name is the
         # Maya attr if one exists, else the method; assignment is strict): no
         # attr 'rename', so it raises; a curve shape's 'create' is its plug
@@ -798,7 +805,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         self.assertIs(type(node), Transform)
         node.tx = 2
         self.assertEqual(cmds.getAttr("a.tx"), 2.0)
-        node.namespace = "ns"
+        node.set_namespace("ns")  # re-pinned (the property ban): was node.namespace = "ns"
         self.assertEqual(str(node), "ns:a")
         with self.assertRaises(AttributeError):
             node.rename = 1
@@ -851,7 +858,7 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         self.assertEqual(str(Node(cube).vtx[3]), f"{shape}.controlPoints[3]")
         faces = Node(cube).f
         self.assertIsInstance(faces, Components)
-        self.assertTrue(faces.shape.mobject == _mobject(shape))
+        self.assertTrue(faces.shape.get_mobject() == _mobject(shape))
         self.assertIsInstance(Node(shape).e, Components)
         from rig._internal.plug import ComponentPlug
 
@@ -1083,7 +1090,7 @@ class TestMergeReviewFixes(MayaTestCase):
         with container("box") as box:
             made = type(box).create("transform", name="viaCtn")
         self.assertIs(type(made), Transform)
-        self.assertIn(made.name, cmds.container(str(box), query=True, nodeList=True))
+        self.assertIn(made.get_name(), cmds.container(str(box), query=True, nodeList=True))
 
     def test_maya_attr_wrap_is_not_shadowed(self):
         # M4 (82547f5): Node.wrap lives on the metaclass, so a node's Maya attr
@@ -1096,9 +1103,9 @@ class TestMergeReviewFixes(MayaTestCase):
         self.assertEqual(cmds.getAttr("brown.wrap"), 0)
         brownian.wrap = 1
         self.assertEqual(cmds.getAttr("brown.wrap"), 1)
-        self.assertEqual(Node.wrap("brown").name, "brown")
-        self.assertEqual(Transform.wrap(["persp"])[0].name, "persp")
-        self.assertEqual(type(brownian).wrap("brown").name, "brown")
+        self.assertEqual(Node.wrap("brown").get_name(), "brown")
+        self.assertEqual(Transform.wrap(["persp"])[0].get_name(), "persp")
+        self.assertEqual(type(brownian).wrap("brown").get_name(), "brown")
         self.assertIsNone(Node.wrap(None))
 
 
@@ -1186,7 +1193,7 @@ class TestTypedDslEdges(MayaTestCase):
                     with self.assertRaisesRegex(RuntimeError, self._FREED):
                         op(*entry)
         for node, plug, *_ in held:
-            self.assertFalse(node.is_valid)
+            self.assertFalse(node.is_valid())
             self.assertIsInstance(hash(plug), int)
             self.assertFalse(hasattr(plug, "__array__"))
             self.assertFalse(hasattr(node, "__array__"))
@@ -1289,7 +1296,7 @@ class TestTypedDslEdges(MayaTestCase):
             cmds.namespace(set=":")
         self.assertEqual(made, "ns:m")
         other = Node(made)
-        other.namespace = "other"
+        other.set_namespace("other")  # re-pinned (the property ban): was other.namespace = "other"
         self.assertEqual(str(other.ty), "other:m.translateY")
         self.assertEqual(str(dg.ty), "ns:n.translateY")
 
@@ -1528,7 +1535,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         self.assertIs(box.blackBox.get_node(), box)
         self.assertEqual(str(box.slide), "inner.translateX")
         # class members win over published names
-        self.assertEqual(box.name, "box")
+        self.assertEqual(box.get_name(), "box")
         box.slide = 2.0
         self.assertEqual(cmds.getAttr("inner.tx"), 2.0)
         # the "_" rule: only a Maya attr of the live container
@@ -1541,7 +1548,9 @@ class TestOneNodeHierarchy(MayaTestCase):
     def test_publish_refuses_a_container_member_name(self):
         with container("box") as box:
             inner = Node.create("transform", name="inner")
-            for name in ("name", "cleanup", "uuid", "rename"):
+            # re-pinned (user decision 2026-10-16, the property ban): the methods
+            # are refused; 'name' and 'uuid' were properties, now no members
+            for name in ("get_name", "cleanup", "get_uuid", "rename"):
                 with self.subTest(name=name):
                     with self.assertRaisesRegex(ValueError, "is a Container attribute"):
                         container.publish_input(inner.tx, name)
@@ -1550,11 +1559,18 @@ class TestOneNodeHierarchy(MayaTestCase):
                     # the external-source form too
                     with self.assertRaisesRegex(ValueError, "is a Container attribute"):
                         container.publish_input(1.0, name)
-            # a plain name still publishes
+            # a plain name still publishes, and so do 'name' and 'uuid' now
             container.publish_input(inner.ty, "lift")
+            container.publish_input(inner.tx, "name")
+            container.publish_output(inner.worldMatrix[0], "uuid")
         self.assertEqual(
-            cmds.container(str(box), query=True, publishName=True) or [], ["lift"]
+            sorted(cmds.container(str(box), query=True, publishName=True) or []),
+            ["lift", "name", "uuid"],
         )
+        box.name = 2.5  # the published plug: '=' is its '<<'
+        self.assertEqual(cmds.getAttr("inner.tx"), 2.5)
+        self.assertEqual(str(box), "box")
+        self.assertEqual(box.get_name(), "box")
 
     def test_node_level_class_attribute_refuses_sugar(self):
         # re-pinned (user decision 2026-10-16, name clashes: a bare name is the
@@ -1671,7 +1687,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         self.assertIs(Node(node), node)
         self.assertIs(Node(plug), node)
         self.assertIs(node >> None, node)
-        self.assertFalse(node.is_valid)
+        self.assertFalse(node.is_valid())
         self.assertFalse(hasattr(node, "__array__"))
         self.assertIsInstance(hash(plug), int)
         for label, op in (
@@ -1696,14 +1712,14 @@ class TestOneNodeHierarchy(MayaTestCase):
             cmds.createNode("multiplyDivide")  # reuse the freed memory
         self.assertIs(Node(box), box)
         self.assertIs(box >> None, box)
-        self.assertFalse(box.is_valid)
+        self.assertFalse(box.is_valid())
         self.assertFalse(hasattr(box, "__array__"))
         self.assertFalse(hasattr(box, "_nope"))
         for label, op in (
             ("published", lambda: box.slide),
             ("genuine", lambda: box.blackBox),
             ("sugar", lambda: setattr(box, "slide", 1.0)),
-            ("name", lambda: box.name),
+            ("name", lambda: box.get_name()),
             ("repr", lambda: repr(box)),
         ):
             with self.subTest(op=label):
@@ -2251,11 +2267,11 @@ class TestOwnerRule(MayaTestCase):
         curve  = cmds.curve(point=points, name="crv")
         shape  = cmds.listRelatives(curve, shapes=True)[0]
         plug   = Node(curve).controlPoints
-        self.assertEqual(plug.get_node().name, shape)
-        self.assertTrue(plug.get_node().mobject == _mobject(shape))
+        self.assertEqual(plug.get_node().get_name(), shape)
+        self.assertTrue(plug.get_node().get_mobject() == _mobject(shape))
         self.assertEqual(str(plug), f"{shape}.controlPoints")
         # the transform's own attrs are still its own
-        self.assertEqual(Node(curve).tx.get_node().name, curve)
+        self.assertEqual(Node(curve).tx.get_node().get_name(), curve)
 
     def test_stale_path_names_the_surviving_instance(self):
         cmds.createNode("transform", name="T1")
@@ -2266,9 +2282,9 @@ class TestOwnerRule(MayaTestCase):
         held = node.visibility
         self.assertEqual(str(held), "T2|S.visibility")
         cmds.parent("T2|S", removeObject=True, shape=True)
-        self.assertEqual(node.name, "S")
-        self.assertEqual(node.long_name, "|T1|S")
-        self.assertTrue(node.mdagpath.isValid())
+        self.assertEqual(node.get_name(), "S")
+        self.assertEqual(node.get_long_name(), "|T1|S")
+        self.assertTrue(node.get_mdagpath().isValid())
         self.assertEqual(str(held), "S.visibility")
         self.assertEqual(str(node.localPositionX), "S.localPositionX")
 
@@ -2345,20 +2361,28 @@ class TestOwnerRule(MayaTestCase):
         for label, factory in plugs.items():
             with self.subTest(pattern=label):
                 plug = factory()
-                self.assertTrue(plug.get_node().mobject == plug.get_mplug().node(), str(plug))
+                self.assertTrue(plug.get_node().get_mobject() == plug.get_mplug().node(), str(plug))
                 self.assertIsInstance(plug.get_node(), Node)
         for kind in ("f", "e"):
             with self.subTest(pattern=kind):
                 components = getattr(Node(cube), kind)
                 self.assertIsInstance(components, Components)
-                self.assertTrue(components.shape.mobject == _mobject(mesh))
+                self.assertTrue(components.shape.get_mobject() == _mobject(mesh))
 
     def test_name_property_that_raises_names_by_fn_set(self):
+        # re-pinned (user decision 2026-10-16, the property ban): a node class
+        # declares no property, and a plug is named through the node's private
+        # naming (`_name`), so a get_name that raises never reaches it
+        with self.assertRaisesRegex(TypeError, "a node class has no public property"):
+            class _NameProperty(Transform):
+                @property
+                def name(self):
+                    raise AttributeError("no name")
+
         class _NameRaises(Transform):
             NATIVE_NODE_TYPE = "mergeNameRaisesProbe"
 
-            @property
-            def name(self):
+            def get_name(self):
                 raise AttributeError("no name")
 
         cmds.createNode("transform", name="w")
@@ -2439,7 +2463,7 @@ class TestReviewFixes(MayaTestCase):
                     with self.assertRaisesRegex(RuntimeError, self._FREED):
                         op(*entry)
         for node, plug, *_ in held:
-            self.assertFalse(node.is_valid)
+            self.assertFalse(node.is_valid())
             self.assertIsInstance(hash(plug), int)
             self.assertFalse(hasattr(plug, "__array__"))
             self.assertFalse(hasattr(node, "__deepcopy__"))
@@ -2558,15 +2582,15 @@ class TestReviewFixes(MayaTestCase):
         node = Node("|T2|S")
         held = node.visibility
         cmds.parent("T2|S", removeObject=True, shape=True)
-        self.assertTrue(node.mdagpath.isValid())
-        self.assertEqual(node.mdagpath.fullPathName(), "|T1|S")
+        self.assertTrue(node.get_mdagpath().isValid())
+        self.assertEqual(node.get_mdagpath().fullPathName(), "|T1|S")
         self.assertEqual(str(node.visibility), "S.visibility")
         # undoing the removal: the node names the path it was taken through again
         cmds.undo()
-        self.assertEqual(node.long_name, "|T2|S")
+        self.assertEqual(node.get_long_name(), "|T2|S")
         self.assertEqual(str(node.visibility), "T2|S.visibility")
         self.assertEqual(str(held), "T2|S.visibility")
-        self.assertEqual(node.mdagpath.fullPathName(), "|T2|S")
+        self.assertEqual(node.get_mdagpath().fullPathName(), "|T2|S")
         # and a second removal re-resolves it again
         cmds.parent("T2|S", removeObject=True, shape=True)
         self.assertEqual(str(held), "S.visibility")
@@ -2601,7 +2625,7 @@ class TestReviewFixes(MayaTestCase):
         tmp = cmds.polySphere(name="tmp", ch=False)[0]
         cmds.parent(cmds.listRelatives(tmp, shapes=True)[0], xf, shape=True, relative=True)
         self.assertEqual(str(node.outMesh), "tmpShape.outMesh")
-        self.assertEqual(node.outMesh.get_node().name, "tmpShape")
+        self.assertEqual(node.outMesh.get_node().get_name(), "tmpShape")
         # typed access too, and the transform's own attrs are still cached
         self.assertEqual(str((node >> None).find_attr("outMesh")), "tmpShape.outMesh")
         node.tx

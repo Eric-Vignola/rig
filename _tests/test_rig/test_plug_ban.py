@@ -265,7 +265,7 @@ class TestTheResidues(MayaTestCase):
     def test_node_of_a_cast_that_gives_an_attribute(self):
         # Node()'s defensive path: an input the cast resolves to an attribute
         t = Node(cmds.createNode("transform", name="t"))
-        mobject = t.mobject
+        mobject = t.get_mobject()
         with mock.patch.object(_base, "_cast", return_value=t.tx):
             self.assertIs(Node(mobject), t)
 

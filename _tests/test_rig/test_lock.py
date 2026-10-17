@@ -90,12 +90,12 @@ class TestSpellings(_Case):
     def test_a_node(self):
         ctl = Transform.create(name="ctl")
         self.assertIs(ctl.lock(), ctl)
-        self.assertTrue(ctl.is_locked)
+        self.assertTrue(ctl.is_locked())
         self.assertEqual(_node_locks("ctl"), [True])
         self.assertIs(ctl.unlock(), ctl)
-        self.assertFalse(ctl.is_locked)
+        self.assertFalse(ctl.is_locked())
         self.assertIs(ctl << lock, ctl)
-        self.assertTrue(ctl.is_locked)
+        self.assertTrue(ctl.is_locked())
         self.assertIs(ctl << unlock, ctl)
         self.assertEqual(_node_locks("ctl"), [False])
 
@@ -116,7 +116,11 @@ class TestSpellings(_Case):
         nodes = List([a, b])
         self.assertIs(nodes.lock(), nodes)
         self.assertEqual(_node_locks("a", "b"), [True, True])
-        self.assertEqual(list(nodes.is_locked), [True, True])
+        # re-pinned (user decision 2026-10-16, the property ban): is_locked is a
+        # method, which does not broadcast; a bare one has no truth value
+        self.assertEqual([x.is_locked() for x in nodes], [True, True])
+        with self.assertRaisesRegex(TypeError, r"call it on each one"):
+            bool(nodes.is_locked)
         self.assertIs(nodes.unlock(), nodes)
         self.assertIs(nodes << lock, nodes)
         self.assertEqual(_node_locks("a", "b"), [True, True])
@@ -129,10 +133,10 @@ class TestSpellings(_Case):
     def test_chaining(self):
         made = Transform.create(name="x").lock()
         self.assertEqual(made, Node("x"))
-        self.assertTrue(made.is_locked)
+        self.assertTrue(made.is_locked())
         ctl = Transform.define("ctl").lock()
         self.assertIsInstance(ctl, Transform)
-        self.assertTrue(ctl.is_locked)
+        self.assertTrue(ctl.is_locked())
         again = Transform.define("ctl")
         self.assertIs(again.lock(), again)
         lst = List([Transform.create(name="y")])
@@ -142,7 +146,7 @@ class TestSpellings(_Case):
         ctl = Transform.create(name="ctl")
         with self.assertRaises(AttributeError):
             ctl.is_locked = True
-        self.assertFalse(ctl.is_locked)
+        self.assertFalse(ctl.is_locked())
 
     def test_the_plug_setter_is_lock_and_unlock(self):
         # re-pinned (user decision 2026-10-16, the property ban): a plug has no
@@ -169,9 +173,9 @@ class TestSpellings(_Case):
         self.assertEqual(str(layer.lock), "AL.lock")
         layer.lock << True
         self.assertTrue(cmds.getAttr("AL.lock"))
-        self.assertFalse(layer.is_locked)
+        self.assertFalse(layer.is_locked())
         self.assertIs(layer.lock(), layer)
-        self.assertTrue(layer.is_locked)
+        self.assertTrue(layer.is_locked())
         layer.unlock()
 
 
@@ -262,13 +266,13 @@ class TestRefusals(_Case):
     def test_a_referenced_node(self):
         self.reference()
         free, held = Node("ref:free"), Node("ref:held")
-        self.assertTrue(held.is_locked)
+        self.assertTrue(held.is_locked())
         self.assert_refused(free.lock, "'ref:free' is referenced", "Maya saves no lockNode edit")
         self.assert_refused(lambda: free << lock, "is referenced")
         self.assert_refused(held.unlock, "'ref:held' is referenced", "the unlock would be gone")
         mine = Transform.create(name="mine")
         self.assert_refused(lambda: List([mine, free]).lock(), "is referenced")
-        self.assertFalse(mine.is_locked)
+        self.assertFalse(mine.is_locked())
         # already in the asked state: nothing to refuse
         cmds.flushUndo()
         self.assertIs(held.lock(), held)
@@ -281,7 +285,7 @@ class TestRefusals(_Case):
     def test_a_reference_node(self):
         self.reference()
         rn = Node("refRN")
-        self.assertTrue(rn.is_locked)
+        self.assertTrue(rn.is_locked())
         self.assert_refused(rn.unlock, "'refRN' is a reference node, which Maya keeps locked")
         cmds.flushUndo()
         self.assertIs(rn.lock(), rn)
@@ -291,7 +295,7 @@ class TestRefusals(_Case):
         add = Node.create("multiplyDivide", name="add1")
         cmds.container(name="ctn", addNode=["add1"], force=True)
         cmds.lockNode("ctn", lock=True)
-        self.assertTrue(add.is_locked)
+        self.assertTrue(add.is_locked())
         self.assert_refused(
             add.unlock,
             "'add1' is locked by its container 'ctn'",
@@ -374,9 +378,9 @@ class TestRefusals(_Case):
                     "lock 'arm' after its with block: a locked container takes no new member. "
                     "Nothing was changed",
                 )
-                self.assertFalse(Node("arm").is_locked)
+                self.assertFalse(Node("arm").is_locked())
         self.assertIs(arm.lock(), arm)
-        self.assertTrue(Node("md").is_locked)
+        self.assertTrue(Node("md").is_locked())
 
 
 class TestList(_Case):
@@ -415,7 +419,7 @@ class TestList(_Case):
         self.assertEqual((_node_locks("a", "b"), _plug_locks("a.tx", "b.ry")), state)
 
     def test_the_nodes_go_in_one_lock_node(self):
-        names = [Transform.create(name=f"n{i}").name for i in range(5)]
+        names = [Transform.create(name=f"n{i}").get_name() for i in range(5)]
         lst   = List(names + [Node("n0"), "n1"])
         with mock.patch.object(cmds, "lockNode", wraps=cmds.lockNode) as probe:
             lst.lock()
@@ -499,7 +503,7 @@ class TestRigVerbsOnALockedNode(_Case):
         ctl.tx << None
         self.assertEqual(Transform.define("ctl", tx=3), ctl)
         self.assertEqual(cmds.getAttr("ctl.tx"), 3)
-        self.assertTrue(ctl.is_locked)
+        self.assertTrue(ctl.is_locked())
 
     def test_a_statement_of_sets_on_locked_nodes_is_one_step(self):
         # the journal's API route (a statement is one undo step for its API edits); the
@@ -603,10 +607,10 @@ class TestContainers(_Case):
             md = Node.create("multiplyDivide", name="md")
         md.lock()
         arm.lock()
-        self.assertTrue(md.is_locked)
+        self.assertTrue(md.is_locked())
         # Maya's rule (pinned): a container's unlock unlocks every member, its own lock too
         arm.unlock()
-        self.assertFalse(md.is_locked)
+        self.assertFalse(md.is_locked())
         self.assertEqual(_node_locks("md"), [False])
 
 
@@ -629,9 +633,9 @@ class TestDefaultNodesAndFiles(_Case):
                 node = Node(name)
                 try:
                     self.assertIs(node.lock(), node)
-                    self.assertTrue(node.is_locked)
+                    self.assertTrue(node.is_locked())
                     self.assertIs(node.unlock(), node)
-                    self.assertFalse(node.is_locked)
+                    self.assertFalse(node.is_locked())
                 finally:
                     cmds.lockNode(name, lock=False)
 
@@ -645,9 +649,9 @@ class TestDefaultNodesAndFiles(_Case):
             cmds.file(save=True, force=True, type="mayaAscii")
             cmds.file(new=True, force=True)
             cmds.file(path, open=True, force=True)
-            self.assertTrue(Node("ctl").is_locked)
+            self.assertTrue(Node("ctl").is_locked())
             self.assertTrue(Node("free").tx.is_locked())
-            self.assertFalse(Node("free").is_locked)
+            self.assertFalse(Node("free").is_locked())
         finally:
             cmds.file(new=True, force=True)
             shutil.rmtree(folder, ignore_errors=True)
@@ -683,4 +687,4 @@ class TestTheLockedPlugHint(_Case):
         self.undo_steps(2)
         self.assertEqual(cmds.getAttr("a.tx"), 0)
         self.assertEqual(cmds.listConnections("a.ty", plugs=True), None)
-        self.assertTrue(a.is_locked)
+        self.assertTrue(a.is_locked())

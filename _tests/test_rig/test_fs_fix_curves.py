@@ -90,7 +90,7 @@ class TestALockedPlugsCurve(_Case):
         """guard: a curve that keys nothing takes new keys."""
         free = AnimCurveTU.create([0, 1], name="free")
         free.set_keys([2, 3])
-        self.assertEqual(free.num_keys, 2)
+        self.assertEqual(free.get_num_keys(), 2)
 
 
 class TestASteppedCurve(_Case):
@@ -107,9 +107,9 @@ class TestASteppedCurve(_Case):
 
     def test_the_keys_it_holds_write_nothing(self):
         for curve, keys in ((AnimCurve.of(self.a.v)[0], [1, 0, 1]), (AnimCurve.of(self.a.mode)[0], [0, 2, 0])):
-            with self.subTest(curve=curve.name):
+            with self.subTest(curve=curve.get_name()):
                 self.assertEqual(_steps(lambda: curve.set_keys(keys)), 0)
-                self.assertEqual(set(self.out_tangents(curve.name)), {"step"})
+                self.assertEqual(set(self.out_tangents(curve.get_name())), {"step"})
 
     def test_define_with_the_keys_it_holds(self):
         self.assertEqual(_steps(lambda: AnimCurveTU.define("a_mode", [0, 2, 0])), 0)
@@ -137,9 +137,9 @@ class TestASteppedCurve(_Case):
         """guard: a curve shared by a bool and a number keys linear (not every plug is a
         bool or an enum)."""
         curve = AnimCurve.of(self.a.v)[0]
-        cmds.connectAttr(curve.name + ".output", "a.tz")
+        cmds.connectAttr(curve.get_name() + ".output", "a.tz")
         curve.set_keys([0, 1, 0])
-        self.assertEqual(set(self.out_tangents(curve.name)), {"linear"})
+        self.assertEqual(set(self.out_tangents(curve.get_name())), {"linear"})
 
 
 class TestOnePlugInTwoRows(_Case):

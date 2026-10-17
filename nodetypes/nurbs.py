@@ -210,17 +210,15 @@ class NurbsCurve(Geometry):
 
     # --- curve geometry data methods
 
-    @property
-    def num_cvs(self) -> int:
+    def get_num_cvs(self) -> int:
         """Returns the number of CVs."""
-        return self.fn_set.numCVs
+        return type(self).get_fn_set(self).numCVs
 
-    @property
-    def num_weight_points(self) -> int:
+    def get_num_weight_points(self) -> int:
         """Returns the number of points in this geometry that can be skin weighted."""
-        cv_count = self.fn_set.numCVs
-        if self.fn_set.form == OpenMaya.MFnNurbsCurve.kPeriodic:
-            cv_count -= self.fn_set.degree
+        cv_count = type(self).get_fn_set(self).numCVs
+        if type(self).get_fn_set(self).form == OpenMaya.MFnNurbsCurve.kPeriodic:
+            cv_count -= type(self).get_fn_set(self).degree
         return cv_count
 
     def get_points(self, world_space: bool = True) -> OpenMaya.MPointArray:
@@ -233,7 +231,7 @@ class NurbsCurve(Geometry):
             A MPointArray of the cvs.
         """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return self.fn_set.cvPositions(space)
+        return type(self).get_fn_set(self).cvPositions(space)
 
     # --- serialization
 
@@ -262,7 +260,7 @@ class NurbsCurve(Geometry):
         """
         from cgmath.geometry import BSplineData
 
-        fn       = self.fn_set
+        fn       = type(self).get_fn_set(self)
         degree   = fn.degree
         periodic = fn.form == OpenMaya.MFnNurbsCurve.kPeriodic
         points   = np.array(self.get_points(world_space=world_space))[:, :3]
@@ -277,7 +275,7 @@ class NurbsCurve(Geometry):
                 custom["knots"] = knots
             elif not _same_spacing(knots, uniform, degree):
                 LOGGER.warning(
-                    f"{self.name}: this cgmath's BSplineData takes no knots, so the "
+                    f"{self}: this cgmath's BSplineData takes no knots, so the "
                     f"curve's uneven knots are dropped and its data has another shape"
                 )
         return BSplineData(points=points, degree=degree, periodic=periodic, **custom)
@@ -322,7 +320,7 @@ class NurbsCurve(Geometry):
     def _load_into(self, curve, *args, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplineData
 
-        method = f"NurbsCurve({self.name!r}).load"
+        method = f"NurbsCurve({str(self)!r}).load"
         _files.space_by_keyword(method, args)
         _updates_only(method, kwargs, "NurbsCurve.load(path, ...) makes a new curve")
         world_space = _files.required_space(method, "BSplineData", world_space)
@@ -410,20 +408,18 @@ class NurbsSurface(Geometry):
         with _undo_chunk("rig.NurbsSurface.create"):
             return super().create(data, name=name, container=container, **kwargs)
 
-    @property
-    def num_cvs(self) -> int:
+    def get_num_cvs(self) -> int:
         """Returns the number of cvs."""
-        return self.fn_set.numCVsInU * self.fn_set.numCVsInV
+        return type(self).get_fn_set(self).numCVsInU * type(self).get_fn_set(self).numCVsInV
 
-    @property
-    def num_weight_points(self) -> int:
+    def get_num_weight_points(self) -> int:
         """Returns the number of points in this geometry that can be skin weighted."""
-        cv_count_u = self.fn_set.numCVsInU
-        if self.fn_set.formInU == OpenMaya.MFnNurbsSurface.kPeriodic:
-            cv_count_u -= self.fn_set.degreeInU
-        cv_count_v = self.fn_set.numCVsInV
-        if self.fn_set.formInV == OpenMaya.MFnNurbsSurface.kPeriodic:
-            cv_count_v -= self.fn_set.degreeInV
+        cv_count_u = type(self).get_fn_set(self).numCVsInU
+        if type(self).get_fn_set(self).formInU == OpenMaya.MFnNurbsSurface.kPeriodic:
+            cv_count_u -= type(self).get_fn_set(self).degreeInU
+        cv_count_v = type(self).get_fn_set(self).numCVsInV
+        if type(self).get_fn_set(self).formInV == OpenMaya.MFnNurbsSurface.kPeriodic:
+            cv_count_v -= type(self).get_fn_set(self).degreeInV
         return cv_count_u * cv_count_v
 
     def get_points(self, world_space: bool = True) -> OpenMaya.MPointArray:
@@ -436,7 +432,7 @@ class NurbsSurface(Geometry):
             A MPointArray of the cvs.
         """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return self.fn_set.cvPositions(space)
+        return type(self).get_fn_set(self).cvPositions(space)
 
     # --- serialization
 
@@ -463,7 +459,7 @@ class NurbsSurface(Geometry):
 
         points = self.get_points(world_space=world_space)
 
-        fn         = self.fn_set
+        fn         = type(self).get_fn_set(self)
         num_cvs_u  = fn.numCVsInU
         num_cvs_v  = fn.numCVsInV
         degree_u   = fn.degreeInU
@@ -480,7 +476,7 @@ class NurbsSurface(Geometry):
         ]
         if uneven:
             LOGGER.warning(
-                f"{self.name}: this cgmath's BSplinePatchData takes no knots, so the "
+                f"{self}: this cgmath's BSplinePatchData takes no knots, so the "
                 f"surface's uneven knots in {' and '.join(uneven)} are dropped and its "
                 f"data has another shape"
             )
@@ -550,7 +546,7 @@ class NurbsSurface(Geometry):
     def _load_into(self, surface, *args, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplinePatchData
 
-        method = f"NurbsSurface({self.name!r}).load"
+        method = f"NurbsSurface({str(self)!r}).load"
         _files.space_by_keyword(method, args)
         _updates_only(method, kwargs, "NurbsSurface.load(path, ...) makes a new surface")
         world_space = _files.required_space(method, "BSplinePatchData", world_space)
@@ -577,12 +573,12 @@ def _updates_only(method: str, kwargs: dict, door: str) -> None:
 def _no_history(node, method: str, door: str) -> None:
     """Raises ValueError when the shape `node` has history (its ``create`` input
     connected), which would compute over the CVs an update sets."""
-    fn = node.fn_set
+    fn = type(node).get_fn_set(node)
     if fn.findPlug("create", False).isDestination:
         kind = OpenMaya.MFn.kNurbsCurve if isinstance(node, NurbsCurve) else OpenMaya.MFn.kNurbsSurface
         raise ValueError(
             deformed_refusal(
-                method, node.name, fn.object(), kind, type(node).__name__,
+                method, str(node), fn.object(), kind, type(node).__name__,
                 "its create input is connected", "CVs", door,
                 load_args="path, world_space=...",
             )
@@ -608,7 +604,7 @@ def _curve_update(curve: NurbsCurve, method: str, src, data) -> OpenMaya.MPointA
     CV layout (count, degree, form, knots) is the curve's."""
     door = f"NurbsCurve.load({_label(src)}) makes a new curve"
     _no_history(curve, method, door)
-    fn       = curve.fn_set
+    fn       = type(curve).get_fn_set(curve)
     cvs      = np.asarray(data.cv, dtype=np.float64)
     knots    = np.asarray(data.kv, dtype=np.float64)
     now      = np.array(fn.knots())
@@ -622,7 +618,7 @@ def _curve_update(curve: NurbsCurve, method: str, src, data) -> OpenMaya.MPointA
     )
     if not same:
         raise ValueError(
-            f"{method}: {_label(src)} holds another CV layout than {curve.name!r} ({len(cvs)} CVs "
+            f"{method}: {_label(src)} holds another CV layout than {str(curve)!r} ({len(cvs)} CVs "
             f"of degree {int(data.degree)}, {'periodic' if periodic else 'open'}, against its "
             f"{fn.numCVs} of degree {fn.degree}, {'periodic' if fn.form == OpenMaya.MFnNurbsCurve.kPeriodic else 'open'}"
             f", or other knots); a load updates the CVs of the same layout: {door}"
@@ -636,7 +632,7 @@ def _surface_update(surface: NurbsSurface, method: str, src, data) -> OpenMaya.M
     surface keeps its knots (the data holds none)."""
     door = f"NurbsSurface.load({_label(src)}) makes a new surface"
     _no_history(surface, method, door)
-    fn  = surface.fn_set
+    fn  = type(surface).get_fn_set(surface)
     cvs = np.asarray(data.cv, dtype=np.float64)
     kp  = OpenMaya.MFnNurbsSurface.kPeriodic
     same = (
@@ -647,7 +643,7 @@ def _surface_update(surface: NurbsSurface, method: str, src, data) -> OpenMaya.M
     )
     if not same:
         raise ValueError(
-            f"{method}: {_label(src)} holds another CV layout than {surface.name!r} "
+            f"{method}: {_label(src)} holds another CV layout than {str(surface)!r} "
             f"({' x '.join(str(n) for n in cvs.shape[:2])} CVs of degrees {int(data.degree_u)} x "
             f"{int(data.degree_v)} against its {fn.numCVsInU} x {fn.numCVsInV} of degrees "
             f"{fn.degreeInU} x {fn.degreeInV}, or other forms); a load updates the CVs of the "
@@ -664,7 +660,7 @@ class _SetCVsCommand:
     UNDO_EDIT = "NurbsCurve.load / NurbsSurface.load"
 
     def __init__(self, node, points: OpenMaya.MPointArray, world_space: bool) -> None:
-        self._path   = OpenMaya.MDagPath(node.mdagpath)
+        self._path   = OpenMaya.MDagPath(type(node).get_mdagpath(node))
         self._fn_cls = type(node).FN_SET
         self._points = points
         self._space  = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject

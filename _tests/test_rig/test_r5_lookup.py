@@ -454,7 +454,7 @@ class TestTheSkippedHelpers(MayaTestCase):
         found = []
         for name in ("md", "pma", "cubeShape", "crvShape", "skin", "bls"):
             node = Node(name)
-            fn   = node.fn_set
+            fn   = node.get_fn_set()
             for attr in cmds.listAttr(name) or []:
                 if "." in attr:
                     continue
@@ -953,10 +953,13 @@ class TestMemoKeys(MayaTestCase):
             checked.append(node)
             return original(node)
 
+        # re-pinned (user decision 2026-10-16, the property ban): the naming is
+        # DGNode's __str__ and private `_name` (the name and fn_set properties are
+        # the methods get_name / get_fn_set, which naming does not read)
         for owner, name, value in (
             (DGNode, "ensure_valid", ensure_valid),
-            (DGNode, "name", property(lambda node: node.fn_set.name())),
-            (DGNode, "fn_set", property(lambda node: node._fn_set)),
+            (DGNode, "_name", lambda node: (node.ensure_valid(), node._fn_set.name())[1]),
+            (DGNode, "__str__", lambda node: node._name()),
             (Attribute, "get_full_name", lambda attr, f=Attribute.get_full_name: f(attr)),
         ):
             with self.subTest(patched=f"{owner.__name__}.{name}"):
@@ -975,12 +978,13 @@ class TestMemoKeys(MayaTestCase):
     def test_a_user_class_with_its_own_name(self):
         self._scene()
 
+        # re-pinned (user decision 2026-10-16, the property ban): a node class
+        # declares no property, so its own naming is its __str__
         class _OwnName(DGNode):
             CUSTOM_NODE_TYPE = "r5lookupOwnName"
 
-            @property
-            def name(self):
-                return self.fn_set.name()
+            def __str__(self):
+                return self.get_fn_set().name()
 
         set_custom_type("md", "r5lookupOwnName")
         plug = Node("md").input1X

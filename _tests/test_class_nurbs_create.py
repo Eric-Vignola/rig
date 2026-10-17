@@ -95,7 +95,7 @@ def curve_state(name):
 
 def _on_curve(curve, params):
     """The object-space points of `curve` at `params`."""
-    fn = curve.fn_set
+    fn = curve.get_fn_set()
     return np.array([list(fn.getPointAtParam(float(u), OpenMaya.MSpace.kObject))[:3] for u in params])
 
 
@@ -139,12 +139,12 @@ class _CurveCreateCase(UndoWalk, MayaTestCase):
         parent = curve.get_parent()
         self.assertEqual(cmds.ls(str(parent))[0], xform)
         self.assertEqual(cmds.ls(selection=True), ["selprobe"])
-        self.assertEqual(cmds.listRelatives(parent.long_name, children=True, fullPath=True), [curve.long_name])
-        self.assertFalse(cmds.getAttr(curve.long_name + ".intermediateObject"))
-        self.assertEqual(cmds.listHistory(curve.long_name), [cmds.ls(curve.long_name)[0]])
-        self.assertIsNone(cmds.listConnections(curve.long_name, source=True, destination=False))
+        self.assertEqual(cmds.listRelatives(parent.get_long_name(), children=True, fullPath=True), [curve.get_long_name()])
+        self.assertFalse(cmds.getAttr(curve.get_long_name() + ".intermediateObject"))
+        self.assertEqual(cmds.listHistory(curve.get_long_name()), [cmds.ls(curve.get_long_name())[0]])
+        self.assertIsNone(cmds.listConnections(curve.get_long_name(), source=True, destination=False))
         identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-        self.assertEqual(cmds.xform(parent.long_name, query=True, matrix=True, objectSpace=True), identity)
+        self.assertEqual(cmds.xform(parent.get_long_name(), query=True, matrix=True, objectSpace=True), identity)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -160,7 +160,7 @@ class TestNurbsCurveCreatePoints(_CurveCreateCase):
         self.assertEqual(state["form"], OPEN)
         self.assertEqual(state["knots"], (0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 3.0))
         self.assertEqual(state["cvs"], _rows(POINTS))
-        self.assertEqual(curve.num_cvs, 6)
+        self.assertEqual(curve.get_num_cvs(), 6)
         self.assertEqual(state, curve_state(cmds.curve(point=POINTS)))
 
     def test_each_degree_matches_cmds_curve(self):
@@ -269,8 +269,8 @@ class TestNurbsCurveCreateNames(_CurveCreateCase):
         cmds.createNode("transform", name="c", parent=cmds.createNode("transform", name="grp"))
         self.ready()
         curve = NurbsCurve.create(POINTS, name="c")
-        self.assertEqual(curve.long_name, "|c|cShape")
-        self.assertEqual(curve.get_parent().long_name, "|c")
+        self.assertEqual(curve.get_long_name(), "|c|cShape")
+        self.assertEqual(curve.get_parent().get_long_name(), "|c")
         self.assertEqual(cmds.ls(selection=True), ["selprobe"])
 
     def test_namespace(self):
@@ -376,8 +376,8 @@ class TestNurbsCurveCreateBSpline(_CurveCreateCase):
                 self.assertEqual(state["form"], PERIODIC)
                 self.assertEqual(state["cvs"], _rows(ring + ring[:degree]))
                 self.assertEqual(state["knots"], tuple(float(k) for k in range(1 - degree, 8 + degree)))
-                self.assertEqual(curve.num_cvs, 8 + degree)
-                self.assertEqual(curve.num_weight_points, 8)
+                self.assertEqual(curve.get_num_cvs(), 8 + degree)
+                self.assertEqual(curve.get_num_weight_points(), 8)
 
     def test_periodic_data_rebuilds_a_maya_circle(self):
         circle = cmds.circle(sections=8, degree=3, constructionHistory=False)[0]
@@ -498,7 +498,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
     def assert_same_shape(self, curve, other, samples=48):
         """The two curves trace the same points, each over its own parameter range."""
         def trace(c):
-            lo, hi = c.fn_set.knotDomain
+            lo, hi = c.get_fn_set().knotDomain
             return _on_curve(c, np.linspace(lo, hi, samples + 1))
 
         self.assertLess(abs(trace(curve) - trace(other)).max(), 1e-9)
@@ -539,7 +539,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
 
     def test_closed_form_is_open(self):
         closed = _closed_form()
-        self.assertEqual(NurbsCurve(closed).fn_set.form, OpenMaya.MFnNurbsCurve.kClosed)
+        self.assertEqual(NurbsCurve(closed).get_fn_set().form, OpenMaya.MFnNurbsCurve.kClosed)
         data = NurbsCurve(closed).serialize(world_space=False)
         self.assertFalse(data.periodic)
         self.assertEqual(_rows(data.points), _rows(POINTS + [POINTS[0]]))  # every CV
@@ -638,7 +638,7 @@ class TestNurbsCurveCreateUndo(_CurveCreateCase):
     def test_redo_returns_the_same_node(self):
         self.ready()
         curve = NurbsCurve.create(POINTS, name="c")
-        handle = OpenMaya.MObjectHandle(curve.mobject)
+        handle = OpenMaya.MObjectHandle(curve.get_mobject())
         uuid = cmds.ls("cShape", uuid=True)[0]
         points = [tuple(p) for p in curve.get_points(world_space=False)]
         for _ in range(3):
@@ -647,7 +647,7 @@ class TestNurbsCurveCreateUndo(_CurveCreateCase):
             cmds.redo()
             self.assertTrue(handle.isValid())
             self.assertEqual(cmds.ls("cShape", uuid=True)[0], uuid)
-            self.assertEqual(curve.num_cvs, 6)
+            self.assertEqual(curve.get_num_cvs(), 6)
             self.assertEqual([tuple(p) for p in curve.get_points(world_space=False)], points)
             self.assertEqual(str(curve), "cShape")
 
@@ -856,13 +856,13 @@ def _surface_shape(t):
 
 
 def _surface_layout(shape):
-    fn = NurbsSurface(shape).fn_set
+    fn = NurbsSurface(shape).get_fn_set()
     return (fn.numCVsInU, fn.numCVsInV, fn.degreeInU, fn.degreeInV, fn.formInU, fn.formInV)
 
 
 def _surface_at(shape, steps=7):
     """World-space points of `shape` over a grid of its normalised parameters."""
-    fn = NurbsSurface(shape).fn_set
+    fn = NurbsSurface(shape).get_fn_set()
     (u0, u1), (v0, v1) = fn.knotDomainInU, fn.knotDomainInV
     return np.array([
         list(fn.getPointAtParam(u0 + s * (u1 - u0), v0 + t * (v1 - v0), OpenMaya.MSpace.kWorld))[:3]
@@ -923,8 +923,8 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
         # a nurbsPlane's 0..1 comes back as 0..3: the same surface, another parameter range
         shape = self.sources()["plane"]
         surface = NurbsSurface.create(NurbsSurface(shape).serialize())
-        self.assertEqual(tuple(surface.fn_set.knotDomainInU), (0.0, 3.0))
-        self.assertEqual(tuple(NurbsSurface(shape).fn_set.knotDomainInU), (0.0, 1.0))
+        self.assertEqual(tuple(surface.get_fn_set().knotDomainInU), (0.0, 3.0))
+        self.assertEqual(tuple(NurbsSurface(shape).get_fn_set().knotDomainInU), (0.0, 1.0))
 
     def test_names_and_attributes(self):
         data = NurbsSurface(self.sources()["plane"]).serialize()
@@ -952,7 +952,7 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
         self.redo_steps(1)
         self.assert_same(self.state(), after)
         self.assertEqual(cmds.ls("s", uuid=True), uuid)
-        self.assertIs(surface.is_valid, True)
+        self.assertIs(surface.is_valid(), True)
 
     def test_input_that_is_no_surface(self):
         data = NurbsSurface(self.sources()["plane"]).serialize()
@@ -997,7 +997,7 @@ class TestNurbsSurfaceSerialize(_CurveCreateCase):
 
     def test_a_closed_direction_is_open(self):
         shape = _closed_surface()
-        fn = NurbsSurface(shape).fn_set
+        fn = NurbsSurface(shape).get_fn_set()
         self.assertIn(S_CLOSED, (fn.formInU, fn.formInV))
         data = NurbsSurface(shape).serialize()
         self.assertEqual((bool(data.periodic_u), bool(data.periodic_v)), (False, False))
@@ -1007,7 +1007,7 @@ class TestNurbsSurfaceSerialize(_CurveCreateCase):
 
     def test_a_periodic_direction_trims_its_wrap(self):
         shape = _periodic_loft()
-        fn = NurbsSurface(shape).fn_set
+        fn = NurbsSurface(shape).get_fn_set()
         data = NurbsSurface(shape).serialize()
         periodic = (fn.formInU == S_PERIODIC, fn.formInV == S_PERIODIC)
         self.assertEqual((bool(data.periodic_u), bool(data.periodic_v)), periodic)

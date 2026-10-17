@@ -164,7 +164,7 @@ class TestMaterialConstruction(MayaTestCase):
         self.assertEqual(repr(removal), '-Blinn("red")')
         red.rename("scarlet")
         self.assertEqual(repr(removal), '-Blinn("scarlet")')
-        engine = -red.engine
+        engine = -red.get_engine()
         self.assertTrue(engine.removes)
         self.assertEqual(repr(engine), '-ShadingEngine("scarletSG")')
 
@@ -225,11 +225,11 @@ class TestMaterialCreate(MayaTestCase):
         it now pins the node's (round 4b NC7): the same name, class, uuid and
         network after three assignments."""
         red   = Blinn.define("red", color=(1, 0, 0))
-        state = (red.name, type(red), repr(red), red.uuid, str(red.engine))
+        state = (red.get_name(), type(red), repr(red), red.get_uuid(), str(red.get_engine()))
         self.cube       << red
         self.cube       << red
         self.cube.f[:2] << red
-        self.assertEqual((red.name, type(red), repr(red), red.uuid, str(red.engine)), state)
+        self.assertEqual((red.get_name(), type(red), repr(red), red.get_uuid(), str(red.get_engine())), state)
         self.assertEqual(cmds.ls("red*", type="blinn"), ["red"])
 
     def test_found_material_is_a_plain_assignment(self):
@@ -287,7 +287,7 @@ class TestMaterialCreate(MayaTestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(sorted(cmds.ls("plane*", type="lambert")), ["plane", "plane1"])
         self.assertEqual(sorted(cmds.ls("plane*", type="shadingEngine")), ["plane1SG", "planeSG"])
-        self.assertEqual(str(second.engine), "plane1SG")
+        self.assertEqual(str(second.get_engine()), "plane1SG")
         self.assertEqual(cmds.getAttr("plane1.diffuse"), 0)
         self.assertEqual(_members("planeSG"), ["cubeShape"])
         self.assertEqual(_members("plane1SG"), ["otherShape"])
@@ -305,7 +305,7 @@ class TestMaterialCreate(MayaTestCase):
             self.cube << Blinn.define("red")
             self.assertEqual(set(cmds.ls()),           before)
             self.assertEqual(str(Blinn("red")),        "look:red")
-            self.assertEqual(str(Blinn("red").engine), "look:redSG")
+            self.assertEqual(str(Blinn("red").get_engine()), "look:redSG")
         finally:
             cmds.namespace(set=":")
         self.assertEqual(cmds.ls(type="blinn"), ["look:red"])
@@ -335,7 +335,7 @@ class TestMaterialCreate(MayaTestCase):
         self.assertIsNone(cmds.listConnections("bare", type="shadingEngine"))
         self.cube << Material("bare")
         self.assertEqual(_members("bareSG"), ["cubeShape"])
-        self.assertEqual(str(Blinn("bare").engine), "bareSG")
+        self.assertEqual(str(Blinn("bare").get_engine()), "bareSG")
         shaders = cmds.listConnections("defaultShaderList1.shaders", source=True, destination=False)
         self.assertEqual(shaders.count("bare"), 1)
         # an engine is no shader; its node names exactly that engine
@@ -346,7 +346,7 @@ class TestMaterialCreate(MayaTestCase):
         self.cube << ShadingEngine("bareSG")
         self.assertEqual(_members("bareSG"), ["cubeShape"])
         self.assertEqual(Default().get_material(), Node("standardSurface1"))
-        self.assertEqual(Default(), Material("standardSurface1").engine)
+        self.assertEqual(Default(), Material("standardSurface1").get_engine())
         # an engine node is exactly that engine, a shaderless one too (round 4b
         # FIX); the particle engine is refused
         empty  = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="emptySG")
@@ -434,7 +434,7 @@ class TestMaterialHandle(MayaTestCase):
         red = Blinn.define("red")
         self.cube << red
         self.assertEqual(str(red), "red")
-        self.assertEqual(str(red.engine), "redSG")
+        self.assertEqual(str(red.get_engine()), "redSG")
         plug = red.color << (0, 1, 0)
         self.assertEqual(str(plug), "red.color")
         self.assertEqual(cmds.getAttr("red.color")[0], (0.0, 1.0, 0.0))
@@ -450,7 +450,7 @@ class TestMaterialHandle(MayaTestCase):
         # a bare material has no engine yet
         rn.blinn(name="bare")
         with self.assertRaisesRegex(ValueError, "feeds no shading engine"):
-            Blinn("bare").engine
+            Blinn("bare").get_engine()
 
     def test_ambiguous_names_refuse(self):
         cmds.polyCube(name="dup")
@@ -664,7 +664,7 @@ class TestMaterialAssign(MayaTestCase):
             ("List([cube.tx, cube.ty]) << blue", lambda: List([self.cube.tx, self.cube.ty]) << self.blue),
             ("cube.sx << -blue",                lambda: self.cube.sx << -self.blue),
             ("cube.v << Default()",             lambda: self.cube.v << Default()),
-            ("cube.v >> redSG",                 lambda: self.cube.v >> self.red.engine),
+            ("cube.v >> redSG",                 lambda: self.cube.v >> self.red.get_engine()),
             ("shape.castsShadows << red",       lambda: Node(self.shape).castsShadows << self.red),
             ("joint.tx << red",                 lambda: joint.tx << self.red),
             ("List([cube.tx, cube.vtx[0]]) << blue", lambda: List([self.cube.tx, self.cube.vtx[0]]) << self.blue),
@@ -861,7 +861,7 @@ class TestMaterialQuery(MayaTestCase):
         self.cube.f[:3] << red
         np.testing.assert_array_equal(self.cube >> Blinn("red"),           [0, 1, 2])
         np.testing.assert_array_equal(self.cube >> Material("red"),        [0, 1, 2])
-        np.testing.assert_array_equal(self.cube >> red.engine,             [0, 1, 2])
+        np.testing.assert_array_equal(self.cube >> red.get_engine(),             [0, 1, 2])
         np.testing.assert_array_equal(self.cube.f >> red,                  [0, 1, 2])
         np.testing.assert_array_equal(self.cube.f[1:5] >> red,             [1, 2])
         np.testing.assert_array_equal(self.cube.f[[5, 0]] >> red,          [0])
@@ -1103,13 +1103,13 @@ class TestMaterialMethods(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(cmds.ls(type="blinn"), ["red"])
         self.assertEqual(str(red), "red")
-        self.assertEqual(str(red.engine), "redSG")
+        self.assertEqual(str(red.get_engine()), "redSG")
         self.assertEqual(_members("redSG"), ["cubeShape"])
         # an engine off the convention is not renamed, so the name is free
         cmds.rename("redSG", "customSG")
         red.rename("blue")
         self.assertEqual(cmds.ls(type="blinn"), ["blue"])
-        self.assertEqual(str(red.engine),       "customSG")
+        self.assertEqual(str(red.get_engine()),       "customSG")
         self.assertEqual(cmds.ls("blueSG*"),    ["blueSG"])
 
     def test_rename_follows_the_engine_convention_and_the_spec(self):
@@ -1124,13 +1124,13 @@ class TestMaterialMethods(MayaTestCase):
         self.assertFalse(cmds.objExists("redSG"))
         self.assertEqual(str(red),           "blue")
         self.assertEqual(red,                Blinn("blue"))
-        self.assertEqual(str(red.engine),    "blueSG")
+        self.assertEqual(str(red.get_engine()),    "blueSG")
         self.assertEqual(_members("blueSG"), ["cubeShape"])
         # an engine off the convention keeps its name
         cmds.rename("blueSG", "customSG")
         Blinn("blue").rename("green")
         self.assertTrue(cmds.objExists("customSG"))
-        self.assertEqual(str(Blinn("green").engine), "customSG")
+        self.assertEqual(str(Blinn("green").get_engine()), "customSG")
         before = set(cmds.ls())
         with self.assertRaisesRegex(ValueError, "already exists"):
             Blinn("green").rename("lambert1")
@@ -1281,7 +1281,7 @@ class TestMaterialErrors(MayaTestCase):
         with self.assertRaisesRegex(ValueError, "redX"):
             other << Blinn("red")
         with self.assertRaises(ValueError):
-            Blinn("red").engine
+            Blinn("red").get_engine()
         # a query reads every engine the shader feeds (round 4b FIX): no raise
         self.assertNotIn(other, Blinn("red"))
         self.assertEqual(set(cmds.ls()), self.before)

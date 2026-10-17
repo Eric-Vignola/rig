@@ -163,9 +163,10 @@ plug's `get_node()` is `ctrl`.
 An attribute may take a method's name: `ctrl << Bool("lock")` makes
 `ctrl.lock` its plug, while `ctrl.lock()` is still the method (a bare name
 is the Maya attribute if one exists, otherwise the method; with brackets it
-is the method). Only a name a property or another class member holds
-(`name`, `is_locked`) hides the new attribute: it is made, with a warning
-naming `Plug(ctrl.find_attr(name))`, which reaches it.
+is the method). A node has no properties (`name`, `uuid` and `is_locked`
+are plugs once the node has those attributes); only class data a node class
+declares (`side = None` in a subclass) hides the new attribute: it is made,
+with a warning naming `Plug(ctrl.find_attr(name))`, which reaches it.
 
 ### Declaring it again applies the settings and keeps the value
 

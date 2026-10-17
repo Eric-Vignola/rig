@@ -702,10 +702,10 @@ class _ContainerStack:
             try:
                 if (
                     dg_node is not None
-                    and dg_node.is_valid
+                    and type(dg_node).is_valid(dg_node)
                     and not (len(name) >= 32 and is_valid_maya_uid(name))
                 ):
-                    uuid = dg_node.uuid
+                    uuid = type(dg_node).get_uuid(dg_node)
                 else:
                     uuid = _node_uuid(name)
             except ValueError:
@@ -742,7 +742,7 @@ class _ContainerStack:
                 return
         fn = leaf.__dict__.get("_fn_set")
         if fn is not None and _handle_valid(leaf.__dict__) and fn.isLocked:
-            raise _injection_error(_locked_node_text("add a node to", leaf.name))
+            raise _injection_error(_locked_node_text("add a node to", str(leaf)))
 
     def _is_open(self, uuid: str) -> bool:
         """True while the container of ``uuid`` has its ``with`` block open
@@ -750,7 +750,7 @@ class _ContainerStack:
         block)."""
         for frame in self._stack:
             node = frame.container_node
-            if node is not None and _handle_valid(node.__dict__) and node.uuid == uuid:
+            if node is not None and _handle_valid(node.__dict__) and type(node).get_uuid(node) == uuid:
                 return True
         return False
 
@@ -871,7 +871,7 @@ class _ContainerStack:
         if leaf is None:
             return False
         try:
-            owning_node = type(attr).get_node(attr).name
+            owning_node = str(type(attr).get_node(attr))
         except Exception:
             return False
         try:
@@ -1435,7 +1435,7 @@ def _typed_create(
             and not cls.CUSTOM_NODE_TYPE
             and isinstance(result, DGNode)
         ):
-            _gc_tag(result.name, result)
+            _gc_tag(str(result), result)
         if registers:
             if created and not _made_only(result, created):
                 container.add(created)
@@ -1459,7 +1459,7 @@ def _made_only(result: Any, created: list) -> bool:
     if len(created) != 1 or not isinstance(result, DGNode):
         return False
     try:
-        name = result.long_name if isinstance(result, DAGNode) else result.name
+        name = type(result).get_long_name(result) if isinstance(result, DAGNode) else str(result)
     except (RuntimeError, ValueError):
         return False
     return name == created[0]
@@ -1917,7 +1917,7 @@ def _is_container_member(container_node, plug) -> bool:
     attributes-node path instead of bound directly.
     """
     try:
-        owner = type(plug).get_node(plug).name
+        owner = str(type(plug).get_node(plug))
     except Exception:
         return False
     return _is_direct_member(str(container_node), owner)
@@ -2103,10 +2103,11 @@ def _destroy_published_name(container_node, name: str) -> bool:
 
 def _refuse_container_member_name(name: str) -> None:
     """Raise ``ValueError`` if ``name`` is a Python member of :class:`Container`
-    (``name``, ``uuid``, ``cleanup``, ...): ``ctn.<name>`` gives the member, so
-    an attribute published under that name could never be read back. A member
-    of the metaclass (``wrap``) is not one: a container reads it as its
-    published attribute."""
+    (``get_name``, ``cleanup``, ``rename``, ...): ``ctn.<name>`` gives the member,
+    so an attribute published under that name could never be read back. A node
+    has no properties (the property ban, user decision 2026-10-16), so ``name``
+    and ``uuid`` publish. A member of the metaclass (``wrap``) is not one: a
+    container reads it as its published attribute."""
     if _class_attr(Container, name) is not _MISSING:
         raise ValueError(
             f"{name!r} is a Container attribute "
@@ -2693,21 +2694,21 @@ class Container(DGNode):
     )
 
     def __repr__(self) -> str:
-        return f'Container("{self.name}")'
+        return f'Container("{self._name()}")'
 
     @classmethod
     def _coerce(cls, node: Any) -> Any:
         """The reference's hook (see ``DGNode._coerce``): the unregistered
         Container wraps a node of type ``container`` (a cast of one is a plain
         node); any other node is refused."""
-        if cmds.objectType(node.name, isAType="container"):
-            return cls._wrap(node.name)
+        if cmds.objectType(str(node), isAType="container"):
+            return cls._wrap(str(node))
         return None
 
     def __eq__(self, other: Any) -> bool:
         # symmetric with a plain node of the same container (DGNode's own test
         # is ``isinstance(other, type(self))``, which a plain node fails)
-        return isinstance(other, DGNode) and self.name == other.name
+        return isinstance(other, DGNode) and self._name() == other._name()
 
     __hash__ = DGNode.__hash__
 
@@ -2731,7 +2732,7 @@ class Container(DGNode):
         (``ctn << Float("blend")`` adds a real attr ON the container) are not
         in those tables and fall through to the inherited
         ``DGNode.__getattr__`` (``findPlug`` works on them), whose ``_`` rule applies: a ``_`` name resolves only to a Maya
-        attr of the live container. Python members (``name``, ``cleanup``, ...)
+        attr of the live container. Python members (``get_name``, ``cleanup``, ...)
         win over published names, which the publish guard refuses.
         """
         if attr_name[:1] != "_":
@@ -2758,7 +2759,7 @@ class Container(DGNode):
         for the argument and return-value documentation.
         """
         return cleanup(
-            container      = self.name,
+            container      = str(self),
             extra_types    = extra_types,
             aggressive     = aggressive,
             memoize_caches = memoize_caches,
@@ -2780,7 +2781,8 @@ def _node_uuid(node_name: str) -> str:
     """
     try:
         # a name Maya returned (or a node's own name): Maya's resolution
-        return _cast_node(node_name).uuid
+        node = _cast_node(node_name)
+        return type(node).get_uuid(node)
     except (ValueError, RuntimeError):
         raise ValueError(f"Cannot resolve UUID for {node_name!r}")
 

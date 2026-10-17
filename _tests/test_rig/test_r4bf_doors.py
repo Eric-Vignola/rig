@@ -198,8 +198,8 @@ class TestDefineDoor(_Case):
         try:
             error = self.miss(lambda: Joint("elbow"))
             self.assertEqual(str(error), "no joint named 'elbow'; Joint.define('elbow') finds or makes it")
-            self.assertEqual(Joint.define("elbow").name, "char:elbow")
-            self.assertEqual(Joint("elbow").name, "char:elbow")
+            self.assertEqual(Joint.define("elbow").get_name(), "char:elbow")
+            self.assertEqual(Joint("elbow").get_name(), "char:elbow")
         finally:
             cmds.namespace(set=":")
 

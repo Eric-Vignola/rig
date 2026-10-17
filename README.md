@@ -235,7 +235,7 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   does a plug built from a string (`Plug("a.tx")`) or an MPlug.
 - **Locks: plugs first, then the node.** `ctl.tx.lock()` locks a plug
   and `ctl.lock()` the node (`lockNode`); `x << lock` is the same call, and
-  `ctl.is_locked` reads either (a member of a locked container reads
+  `ctl.is_locked()` reads either (a member of a locked container reads
   locked). An object already locked or unlocked is left as it is, with no
   undo step. Maya locks no plug of a locked node, so lock the plugs first
   (`List([ctl.tx, ctl]).lock()` does it in that order). A locked node still

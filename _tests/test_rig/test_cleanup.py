@@ -29,8 +29,8 @@ class TestCleanupOwnership(MayaTestCase):
         with container("ctn"):
             n = Node.create("multiplyDivide", name="mul1")
         self.assertTrue(
-            cmds.attributeQuery(_RIG_TAG, node=n.name, exists=True),
-            f"{n.name} missing __rig__ tag",
+            cmds.attributeQuery(_RIG_TAG, node=n.get_name(), exists=True),
+            f"{n.get_name()} missing __rig__ tag",
         )
 
     def test_rig_created_transform_is_NOT_tagged(self):
@@ -38,8 +38,8 @@ class TestCleanupOwnership(MayaTestCase):
         with container("ctn"):
             n = Node.create("transform", name="ctrl1")
         self.assertFalse(
-            cmds.attributeQuery(_RIG_TAG, node=n.name, exists=True),
-            f"{n.name} should not be tagged (it's a transform)",
+            cmds.attributeQuery(_RIG_TAG, node=n.get_name(), exists=True),
+            f"{n.get_name()} should not be tagged (it's a transform)",
         )
 
     def test_user_created_node_is_NOT_tagged(self):

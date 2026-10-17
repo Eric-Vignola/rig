@@ -1261,12 +1261,12 @@ class TestDgNamedOwner(MayaTestCase):
         loose.get_node()  # casts its node: owned now
         self.assertIsNotNone(_base._dg_named_owner(loose))
 
+        # re-pinned (user decision 2026-10-16, the property ban): a node class declares no property, so its own naming is its __str__
         class _OwnName(DGNode):
             CUSTOM_NODE_TYPE = "r5injectOwnName"
 
-            @property
-            def name(self):
-                return self.fn_set.name()
+            def __str__(self):
+                return self.get_fn_set().name()
 
         cmds.createNode("multiplyDivide", name="ownName")
         set_custom_type("ownName", "r5injectOwnName")
@@ -1302,9 +1302,12 @@ class TestDgNamedOwner(MayaTestCase):
             N["md"].input1X << N["md2"].outputX
             self.assertTrue(checked)
         self.assertIs(_base._dg_named_owner(plug), N["md"])
+        # re-pinned (user decision 2026-10-16, the property ban): the naming is
+        # DGNode's __str__ and private `_name` (the fn_set and name properties are
+        # the methods get_fn_set / get_name, which naming does not read)
         for owner, name, value in (
-            (DGNode, "fn_set", property(lambda node: node._fn_set)),
-            (DGNode, "name", property(lambda node: node._fn_set.name())),
+            (DGNode, "_name", lambda node: node._fn_set.name()),
+            (DGNode, "__str__", lambda node: node._fn_set.name()),
             (type(N["md"]), "__getattribute__", lambda node, name: object.__getattribute__(node, name)),
             (Attribute, "get_full_name", lambda attr, f=Attribute.get_full_name: f(attr)),
         ):

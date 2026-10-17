@@ -151,11 +151,11 @@ class TestMeshCreateNames(_MeshCreateCase):
         self.assertEqual(cmds.ls(str(mesh.get_parent()))[0], xform)
         self.assertEqual(cmds.ls(selection=True), ["selprobe"])
         self.assertEqual(
-            sorted(set(cmds.listConnections(mesh.long_name, type="shadingEngine") or [])),
+            sorted(set(cmds.listConnections(mesh.get_long_name(), type="shadingEngine") or [])),
             ["initialShadingGroup"],
         )
         self.assert_no_history(mesh)
-        matrix = cmds.xform(mesh.get_parent().long_name, query=True, matrix=True, objectSpace=True)
+        matrix = cmds.xform(mesh.get_parent().get_long_name(), query=True, matrix=True, objectSpace=True)
         for got, want in zip(matrix, data.matrix.ravel()):
             self.assertAlmostEqual(got, float(want), places=6)
 
@@ -225,8 +225,8 @@ class TestMeshCreateNames(_MeshCreateCase):
                 self.ready()
                 mesh = Mesh.create(data, uv_data=uvs, name="m")
                 self._check(mesh, "m", "mShape", data)
-                self.assertEqual(list(mesh.uv_sets), names)
-                self.assertEqual(mesh.current_uv_set, names[0])
+                self.assertEqual(list(mesh.get_uv_sets()), names)
+                self.assertEqual(mesh.get_current_uv_set(), names[0])
                 for name, uv in zip(names, uvs if isinstance(uvs, list) else [uvs]):
                     written = mesh.serialize_uv(name)
                     self.assertEqual(written.indices.tolist(), uv.indices.tolist())
@@ -255,7 +255,7 @@ class TestMeshCreateNames(_MeshCreateCase):
     def test_no_uvs_leaves_map1_empty(self):
         data, _ = _cube_data()
         mesh = Mesh.create(data, uv_data=[], name="m")
-        self.assertEqual(list(mesh.uv_sets), ["map1"])
+        self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
         self.assertEqual(len(mesh.get_uv_coords("map1")), 0)
 
 
@@ -340,7 +340,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         data, uvs = _cube_data()
         self.ready()
         mesh = Mesh.create(data, uv_data=uvs, name="m")
-        handle = OpenMaya.MObjectHandle(mesh.mobject)
+        handle = OpenMaya.MObjectHandle(mesh.get_mobject())
         uuid = cmds.ls("mShape", uuid=True)[0]
         points = [tuple(p) for p in mesh.get_points(world_space=False)]
         for _ in range(3):
@@ -349,7 +349,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
             cmds.redo()
             self.assertTrue(handle.isValid())
             self.assertEqual(cmds.ls("mShape", uuid=True)[0], uuid)
-            self.assertEqual(mesh.num_vertices, 8)
+            self.assertEqual(mesh.get_num_vertices(), 8)
             self.assertEqual([tuple(p) for p in mesh.get_points(world_space=False)], points)
             self.assertEqual(str(mesh), "mShape")
 
@@ -424,7 +424,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         finally:
             cmds.undoInfo(state=True)
         self.assertEqual(str(mesh), "mShape")
-        self.assertEqual(list(mesh.uv_sets), ["map1"])
+        self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
         self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
 
 
@@ -631,7 +631,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
         cmds.delete(t)
         self.ready()
         mesh = Mesh.create(data, uv_data=uvs, name="m")
-        handle = OpenMaya.MObjectHandle(mesh.mobject)
+        handle = OpenMaya.MObjectHandle(mesh.get_mobject())
         for _ in range(3):
             self.undo_steps(1)
             self.assertFalse(cmds.objExists("mShape"))
@@ -681,7 +681,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
         cmds.delete(t, constructionHistory=True)
         shape = _shape(t)
         placed = {name: _uv_placement(shape, name) for name in ("map1", "uv2", "uv3")}
-        fn = Mesh(shape).fn_set
+        fn = Mesh(shape).get_fn_set()
         face4 = list(fn.getPolygonVertices(4))
         data, uvs = _serialized(t)
         # the id of the UV at each hole corner, as the mesh lists the holes
@@ -726,20 +726,20 @@ class TestMeshCreateHoles(_MeshCreateCase):
 
 def _fv_normals(shape):
     """Maya's normal of each face-vertex of `shape`, in its order, object space."""
-    fn = Mesh(shape).fn_set
+    fn = Mesh(shape).get_fn_set()
     normals = np.array([tuple(v) for v in fn.getNormals()])
     return normals[np.array(list(fn.getNormalIds()[1]), dtype=int)]
 
 
 def _hard_edges(shape):
     """The hard edges of `shape` as vertex pairs (edge ids differ between meshes)."""
-    fn = Mesh(shape).fn_set
+    fn = Mesh(shape).get_fn_set()
     return {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
 
 
 def _locked_rows(shape):
     """The face-vertices of `shape` whose normal is locked, as (face, vertex) pairs."""
-    fn = Mesh(shape).fn_set
+    fn = Mesh(shape).get_fn_set()
     counts, ids = fn.getNormalIds()
     _, verts = fn.getVertices()
     faces = np.repeat(np.arange(len(counts)), list(counts))
@@ -814,7 +814,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         t = cmds.polyCube(name="src", constructionHistory=False)[0]
         cmds.xform(t, translation=(3, 1, 2), rotation=(20, 40, 10), scale=(1, 2, 0.5))
         shape = _shape(t)
-        fn = Mesh(shape).fn_set
+        fn = Mesh(shape).get_fn_set()
         world = np.array([tuple(v) for v in fn.getNormals(OpenMaya.MSpace.kWorld)])[
             np.array(list(fn.getNormalIds()[1]))
         ]
@@ -850,7 +850,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         self.assertFalse(cmds.objExists("m"))
         self.redo_steps(1)
         self.assert_shading(Mesh("mShape"), normals, hard, locked)
-        self.assertIs(mesh.is_valid, True)
+        self.assertIs(mesh.is_valid(), True)
 
     def test_data_numbered_another_way(self):
         # the same normals listed in another order (data another tool wrote): compared face-vertex
@@ -917,7 +917,7 @@ class TestMeshCreateShadingCost(MayaTestCase):
                 start = time.perf_counter()
                 mesh = Mesh.create(source, uv_data=uvs)
                 times.append(time.perf_counter() - start)
-                cmds.delete(mesh.get_parent().long_name)
+                cmds.delete(mesh.get_parent().get_long_name())
             return min(times)
 
         best(data, 2)  # warm up
@@ -954,7 +954,7 @@ class TestMeshCreateObject(_MeshCreateCase):
         self.ready()
         mesh = Mesh.create(obj)
         self.assertEqual((str(mesh), str(mesh.get_parent())), ("heroShape", "hero"))
-        self.assertEqual(list(mesh.uv_sets), ["map1"])
+        self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
         np.testing.assert_allclose(mesh.serialize_uv("map1").points, map1.points, atol=1e-6)
         for attr, want in (("t", (5, 1, 2)), ("r", (10, 45, 0)), ("s", (2, 2, 2))):
             np.testing.assert_allclose(cmds.getAttr(f"hero.{attr}")[0], want, atol=1e-9)
@@ -972,7 +972,7 @@ class TestMeshCreateObject(_MeshCreateCase):
 
         obj.uv = UVList(uvs)
         mesh = Mesh.create(obj)
-        self.assertEqual(list(mesh.uv_sets), ["map1", "second"])
+        self.assertEqual(list(mesh.get_uv_sets()), ["map1", "second"])
 
     def test_name_and_no_uvs(self):
         obj, _ = self.object(name="hero", uv=None)

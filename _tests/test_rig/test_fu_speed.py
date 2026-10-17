@@ -64,7 +64,7 @@ def _plugs():
     cmds.addAttr("xf", longName="inner", attributeType="double", multi=True, parent="cmp")
     found = []
     for name in ("md", "pma", "cubeShape", "skin", "bls", "xf", "j1"):
-        fn = OpenMaya.MFnDependencyNode(Node(name).mobject)
+        fn = OpenMaya.MFnDependencyNode(Node(name).get_mobject())
         for i in range(fn.attributeCount()):
             attribute = fn.attribute(i)
             if not OpenMaya.MFnAttribute(attribute).parent.isNull():
@@ -112,7 +112,7 @@ class TestTheSameAnswers(MayaTestCase):
         cmds.joint(name="j1")
         cmds.polyCube(name="geo", constructionHistory=False)
         cmds.skinCluster("j1", "geo", name="skin")
-        plug = OpenMaya.MFnDependencyNode(Node("skin").mobject).findPlug("weights", False)
+        plug = OpenMaya.MFnDependencyNode(Node("skin").get_mobject()).findPlug("weights", False)
         self.assertEqual(dg_node._multi_child_walk(plug), (True, True))
         self.assertIs(dg_node._is_unresolved_multi_child(plug), True)
         with self.assertRaisesRegex(AttributeError, "a child of an unindexed multi"):

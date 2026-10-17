@@ -8,7 +8,7 @@ from typing import Any, Sequence
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import barrier, cmds_edit, outside, rig_code, statement, user_call
+from rig._internal.journal import barrier, cmds_edit, one_step, outside, rig_code, statement, user_call
 from rig.nodetypes._base import (
     _MISSING,
     _as_method_plug,
@@ -235,7 +235,7 @@ def _set_or_delete(node: Any, attrs: dict) -> None:
         barrier()  # the values journaled: a registration that fails deletes the node too
     except BaseException:
         try:
-            cmds_edit.delete(node.long_name if isinstance(node.fn_set, OpenMaya.MFnDagNode) else node.name)
+            cmds_edit.delete(type(node).get_long_name(node))
         except (RuntimeError, ValueError):
             pass
         raise
@@ -313,7 +313,7 @@ def _is_at(node: Any, spelling: str) -> bool:
     sel = OpenMaya.MSelectionList()
     try:
         sel.add(spelling)
-        return sel.getDependNode(0) == node.mobject
+        return sel.getDependNode(0) == type(node).get_mobject(node)
     except RuntimeError:
         return False
 
@@ -360,13 +360,13 @@ def _refuse_owner(hook: Any, node: Any, refer: str) -> None:
     reals = [(requested, real) for requested, real in hook.frames() if real is not None]
     if not reals:
         return
-    long_name = node.long_name
+    long_name = type(node).get_long_name(node)
     owner     = hook.owner(long_name)
     if owner is None or owner in {str(real) for _, real in reals}:
         return
     requested, current = reals[-1]
     here  = str(current)
-    shown = node.name
+    shown = str(node)
     # (by leaf: a scope's container is made in the current namespace)
     leaf = requested.rsplit(":", 1)[-1]
     if here != requested and re.fullmatch(rf"{re.escape(leaf)}\d*", owner.rsplit(":", 1)[-1]):
@@ -452,7 +452,7 @@ def _define(
         from rig.nodetypes.dag_node import DAGNode
 
         parent_node = DAGNode(parent)  # the reference: a missing parent raises here
-        spelling    = f"{_absolute_path(parent_node.mdagpath)}|{absolute}"
+        spelling    = f"{_absolute_path(type(parent_node).get_mdagpath(parent_node))}|{absolute}"
     else:
         spelling = f"|{absolute}" if dag else absolute
     key = _shown(spelling)
@@ -462,15 +462,15 @@ def _define(
     if found is not None:
         node = accept(found)
         if node is None:
-            shown = found.name
+            shown = str(found)
             raise NodeTypeError(
-                name, label, found.node_type,
+                name, label, type(found).get_node_type(found),
                 f"Node({shown!r}) is {found!r}{hint(found) if hint else ''}",
             )
         if aware or joins:
             _refuse_owner(hook, node, refer)
         if update and attrs:
-            _check_attrs(attrs, node=node.name)
+            _check_attrs(attrs, node=str(node))
             with hook.chunk("rig.define"):
                 for attr, value in attrs.items():
                     getattr(node, attr) << value
@@ -543,7 +543,7 @@ def _define(
                 up      = other_node.get_parent() if dag and who == refer else None
                 message = (
                     f"{call}: {name!r} exists at {other}; {who}({name!r}) refers to it"
-                    + (f", and {spell(f'{name!r}, parent={up.name!r}')} keys it there" if up is not None else "")
+                    + (f", and {spell(f'{name!r}, parent={str(up)!r}')} keys it there" if up is not None else "")
                 )
             raise AmbiguousNodeError(name, [other], label, message=message)
 
@@ -553,14 +553,14 @@ def _define(
     with hook.chunk("rig.define"):
         if plain is True or (callable(plain) and plain()):
             node    = make(made_name, parent_node)
-            created = [node.long_name if dag else node.name]
+            created = [type(node).get_long_name(node) if dag else str(node)]
         else:
             node, created = hook.track(make, (made_name, parent_node), {}, discard=True)
         # 6. the post-condition: the new node is the key; else what the call
         # made is deleted (never cmds.undo(): with the queue off it raises and
         # keeps the node, with it on it names the user's previous step)
         if not _is_at(node, spelling):
-            made  = node.long_name
+            made  = type(node).get_long_name(node)
             # not the hyperLayout a scope's container makes with its first
             # member: deleting it deletes the container
             alive = [n for n in created if cmds.objExists(n) and cmds.nodeType(n) != "hyperLayout"]
@@ -623,11 +623,11 @@ def _define_untyped(
         attrs = _attribute_keywords(node_type, kwargs, flags, spell("..."))
 
     def accept(found):
-        return found if found.node_type == node_type else None
+        return found if type(found).get_node_type(found) == node_type else None
 
     def make(made_name, parent_node):
         if parent_node is not None:
-            kwargs["parent"] = parent_node.long_name
+            kwargs["parent"] = type(parent_node).get_long_name(parent_node)
         node = hook.create_node(node_type, name=made_name, container=joins, **kwargs)
         if attrs:
             _set_or_delete(node, attrs)
@@ -680,7 +680,7 @@ def _file_method_hint(node, name: str) -> str | None:
 
     if not isinstance(node, Transform):
         return None
-    short = node.short_name
+    short = type(node).get_short_name(node)
     kind  = "joint" if type(node).__name__ == "Joint" else "transform"
     shape = None
     try:
@@ -698,6 +698,56 @@ def _file_method_hint(node, name: str) -> str | None:
     else:
         branch = f"{type(node).__name__}.load_hierarchy(path) makes a branch"
     return f"{short!r} is a {kind}: {own}{branch}"
+
+
+# The node properties rig had before the property ban (user decision 2026-10-16),
+# and their spelling now: the miss path of ``DGNode.__getattr__`` names it
+# (``node.uuid`` is a Maya attr lookup, which misses unless the node has an attr
+# ``uuid``); the hot path never reads it. The predicates (``is_locked``,
+# ``is_valid``, ``is_shape``, ``is_default``) kept their names: a bare one is
+# guarded (``_BarePredicate``).
+_OLD_NODE_NAMES = {
+    "name":                       "node.get_name() or str(node)",
+    "long_name":                  "node.get_long_name()",
+    "short_name":                 "node.get_short_name()",
+    "clean_name":                 "node.get_clean_name()",
+    "uuid":                       "node.get_uuid()",
+    "namespace":                  "node.get_namespace() / node.set_namespace(ns)",
+    "node_type":                  "node.get_node_type()",
+    "mobject":                    "node.get_mobject()",
+    "fn_set":                     "node.get_fn_set()",
+    "mdagpath":                   "node.get_mdagpath()",
+    "local_shape_attr":           "node.get_local_shape_attr()",
+    "world_shape_attr":           "node.get_world_shape_attr()",
+    "injection_node":             "node.get_injection_node()",
+    "component_tags":             "node.get_component_tags()",
+    "num_vertices":               "node.get_num_vertices()",
+    "num_polygons":               "node.get_num_polygons()",
+    "num_weight_points":          "node.get_num_weight_points()",
+    "num_cvs":                    "node.get_num_cvs()",
+    "uv_sets":                    "node.get_uv_sets()",
+    "current_uv_set":             "node.get_current_uv_set()",
+    "paintable_maps":             "node.get_paintable_maps()",
+    "engine":                     "node.get_engine()",
+    "num_targets":                "node.get_num_targets()",
+    "num_keys":                   "node.get_num_keys()",
+    "file_path":                  "node.get_file_path()",
+    "file_path_with_copy_number": "node.get_file_path(copy_number=True)",
+}
+
+# ``node.<name> = value`` of a node property before the ban: its spelling now
+_OLD_NODE_SETTERS = {
+    "name":      "node.name = x is now node.rename(x)",
+    "namespace": "node.namespace = ns is now node.set_namespace(ns)",
+    "is_locked": "node.is_locked = state is now node.lock() / node.unlock()",
+}
+
+
+def _old_node_hint(name: str) -> str:
+    """``"; node.uuid is now node.get_uuid()"`` for an old node property name, else
+    ``""``: the end of a lookup miss's AttributeError."""
+    new = _OLD_NODE_NAMES.get(name)
+    return f"; node.{name} is now {new}" if new else ""
 
 
 # NURBS-surface ``cv`` / lattice ``pt``: the names a ComponentPlug may answer
@@ -853,29 +903,31 @@ class DGNode(Node):
                 d["_mobject"] = sel.getDependNode(0)
             d["_fn_set"]    = self.FN_SET(d["_mobject"])
             d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
-        type(self).is_type(self.name, exact_type=False, failfast=True)
+        type(self).is_type(self._name(), exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
 
-    # --- dunders
+    # --- dunders: they read the private naming (`_name`, `_long_name`), never a
+    # public method (the property ban, user decision 2026-10-16), so ``str(node)``
+    # is the check-free way to read a node's name
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}("{self.name}")'
+        return f'{self.__class__.__name__}("{self._name()}")'
 
     def __str__(self) -> str:
-        return self.name
+        return self._name()
 
     def __hash__(self) -> int:
-        return hash(self.long_name)
+        return hash(self._long_name())
 
     def __eq__(self, other: Any) -> bool:
         # another object answers for itself (a plug: ``plug == node`` is
         # False and builds nothing)
         if not isinstance(other, Node):
             return NotImplemented
-        return isinstance(other, type(self)) and self.name == other.name
+        return isinstance(other, type(self)) and self._name() == other._name()
 
     def __gt__(self, other: Any) -> bool:
-        return self.name > str(other)
+        return self._name() > str(other)
 
     def __getattr__(self, attr_name):
         """Returns the Maya attribute ``attr_name`` as a DSL :class:`Plug` owned
@@ -952,6 +1004,8 @@ class DGNode(Node):
                     hint = _file_method_hint(self, attr_name)
                     if hint:
                         raise AttributeError(f"{error}; {hint}") from None
+                if attr_name in _OLD_NODE_NAMES:
+                    raise AttributeError(f"{error}{_old_node_hint(attr_name)}") from None
                 raise
         elif not d["_objhandle"].isAlive():
             # a node a new scene freed: its cached MPlug points at freed memory
@@ -1006,15 +1060,16 @@ class DGNode(Node):
 
         The node's own state (``_mobject``, ``_attr_dict`` ...) and a Python
         attribute already stored on this instance (``vars(node)["tag"] = 1``)
-        are stored. A class attribute of that name wins: a property's setter
-        runs (``node.namespace = "ns"``), a read-only property raises, a data
-        default declared on the class (``side = None`` in a subclass body) is
-        shadowed on the instance, so a node class keeps Python state under the
-        names it declares (``self.side = "L"``), and another class member
-        raises. A public method's name follows the plug-method rule: with a Maya
-        attr of that name, ``node.lock = 1`` is ``node.lock << 1``; without one it
-        raises, as assignment is strict: a method is never replaced on one node
-        (patch the class, or write ``vars(node)``). A
+        are stored. A node has no settable public member (the property ban, user
+        decision 2026-10-16: ``node.set_namespace(ns)``, ``node.rename(x)``). A
+        data default declared on the class (``side = None`` in a subclass body)
+        is shadowed on the instance, so a node class keeps Python state under the
+        names it declares (``self.side = "L"``), and a private class member's
+        setter runs. A public method's name follows the plug-method rule: with a
+        Maya attr of that name (or an alias), ``node.lock = 1`` is
+        ``node.lock << 1``; without one it raises, as assignment is strict: a
+        method is never replaced on one node (patch the class, or write
+        ``vars(node)``). A
         ``_`` name is Python state unless the live node has a Maya attr of that
         name (``node.__parked__ = 4.0``). Any other name must be a Maya attr: a
         typo raises "Attribute not found" instead of adding a Python attribute,
@@ -1036,16 +1091,18 @@ class DGNode(Node):
                 type(self).__getattr__(self, name) << value
                 return
             _ensure_valid(self)
+            hint = _OLD_NODE_SETTERS.get(name)
             raise AttributeError(
                 f"{type(self).__name__}.{name} is a method and {self} has no Maya "
                 f"attr {name!r}: {self}.{name} = value sets that attr once it exists; "
-                f"a method is not replaced on a node"
+                f"a method is not replaced on a node" + (f"; {hint}" if hint else "")
             )
         if found is not _MISSING:
-            if name[:1] == "_" or hasattr(type(found), "__set__"):
-                # a property setter runs, a read-only one raises, a private
-                # class default is shadowed on the instance; a setter that is
-                # not rig's own is code a user wrote (journal.outside)
+            if name[:1] == "_":
+                # a private member: a property setter runs, a read-only one
+                # raises, a private class default is shadowed on the instance;
+                # a setter that is not rig's own is code a user wrote
+                # (journal.outside)
                 if rig_code(found.fset if isinstance(found, property) else type(found)):
                     object.__setattr__(self, name, value)
                 else:
@@ -1071,6 +1128,9 @@ class DGNode(Node):
         try:
             plug = type(self).__getattr__(self, name)
         except AttributeError as error:
+            hint = _OLD_NODE_SETTERS.get(name)
+            if hint:
+                raise AttributeError(f"{str(error).split(';')[0]}; {hint}") from error
             raise AttributeError(
                 f"{error} (to keep Python state on a node object, declare a "
                 f"default in its class body, {name} = None, or use a '_' name)"
@@ -1100,34 +1160,46 @@ class DGNode(Node):
         return _node_rshift(self, other)
 
     def __fspath__(self) -> str:
-        return self.name
+        return self._name()
 
-    # --- properties & utils
+    # --- the node's own naming (private: the dunders and rig's internals read
+    # it; a DAG node overrides both readers)
 
-    @property
-    def mobject(self) -> OpenMaya.MObject:
+    def _name(self) -> str:
+        """The node name: its held fn set's (``"... already deleted!"`` for a
+        deleted node), what ``str(node)`` gives."""
+        _ensure_valid(self)
+        return self.__dict__["_fn_set"].name()
+
+    # a DG node's long name is its name
+    _long_name = _name
+
+    # --- queries: every public member is a method (the property ban, user
+    # decision 2026-10-16). Bare, a name is the node's Maya attr of that name
+    # when it has one, else the method; with brackets it is the method. rig's
+    # own code reads them through the class (``type(node).get_uuid(node)``),
+    # ``str(node)`` for the name, or private state.
+
+    def get_mobject(self) -> OpenMaya.MObject:
         """Returns the mobject."""
         _ensure_valid(self)
         return self.__dict__["_mobject"]
 
-    @property
-    def node_type(self) -> str:
+    def get_node_type(self) -> str:
         """Returns the node type."""
         if self.CUSTOM_NODE_TYPE:
             return self.CUSTOM_NODE_TYPE
-        return cmds.nodeType(self.name)
+        return cmds.nodeType(str(self))
 
     def has_base_type(self, base_type: str) -> bool:
         """Checks if this node inherits from the given base type."""
-        return cmds.objectType(self.name, isAType=base_type)
+        return cmds.objectType(str(self), isAType=base_type)
 
-    @property
-    def fn_set(self) -> OpenMaya.MFnBase:
+    def get_fn_set(self) -> OpenMaya.MFnBase:
         """Returns the OpenMaya function set."""
         _ensure_valid(self)
         return self.__dict__["_fn_set"]
 
-    @property
     def is_valid(self) -> bool:
         """Check if this node is valid (not deleted, not freed by a new scene, a
         file open or a reference unload). False for a half-built node."""
@@ -1149,47 +1221,44 @@ class DGNode(Node):
                 raise _deleted_error(fn.name(), uuid=fn.uuid().asString())
             raise _deleted_error(type(self).__name__, freed=True)
 
-    @property
-    def name(self) -> str:
-        """Returns the node name."""
-        return self.fn_set.name()
+    def get_name(self) -> str:
+        """Returns the node name: a DAG node's shortest unique path. ``str(node)``
+        is the same name."""
+        return self._name()
 
-    @property
-    def uuid(self) -> str:
+    def get_long_name(self) -> str:
+        """Returns the long name: a DAG node's full path, a DG node's name."""
+        return self._long_name()
+
+    def get_uuid(self) -> str:
         """Returns the node's universally unique identifyer as a string."""
-        return str(self.fn_set.uuid())
+        return str(type(self).get_fn_set(self).uuid())
 
-    @property
-    def short_name(self) -> str:
-        """Returns the short name."""
-        return get_short_name(self.name)
+    def get_short_name(self) -> str:
+        """Returns the short name (the part after the last ``|``)."""
+        return get_short_name(self._name())
 
-    # for consistency with DAGNode
-    long_name = name
-
-    @property
-    def clean_name(self) -> str:
+    def get_clean_name(self) -> str:
         """Returns the clean node name (no namespace)."""
-        return get_clean_name(self.name)
+        return get_clean_name(self._name())
 
     def rename(self, new_name: Any) -> None:
         """Renames the node. A locked node is refused (InjectionError, nothing
         changed)."""
         new_name = str(new_name)
-        if self.short_name != new_name:
+        if type(self).get_short_name(self) != new_name:
             self._refuse_if_locked("rename")
-            cmds_edit.rename(self.name, new_name)
+            cmds_edit.rename(str(self), new_name)
 
     # --- lockNode
 
-    @property
     def is_locked(self) -> bool:
         """True when the node is locked (read only; ``lock()`` / ``unlock()``
         change it): its own ``lockNode``, or a locked container it is in (Maya
         tells them apart nowhere). Maya then refuses to rename, delete or
         reparent it, to add, delete or rename its attributes, and to lock or
         unlock its plugs; values and connections still change."""
-        return self.fn_set.isLocked
+        return type(self).get_fn_set(self).isLocked
 
     def lock(self) -> "DGNode":
         """Locks the node (``lockNode -lock on``) and returns it: ``node.lock()``
@@ -1199,12 +1268,12 @@ class DGNode(Node):
         Refused (InjectionError, nothing changed): a referenced node (Maya
         saves no lockNode edit for one), a container whose ``with container()``
         block is open."""
-        fn = self.fn_set
+        fn = type(self).get_fn_set(self)
         if not fn.isLocked:
-            why = _node_lock_refusal(fn, self.name, True)
+            why = _node_lock_refusal(fn, str(self), True)
             if why:
                 raise _injection_error(why)
-            cmds_edit.lockNode(self.name, lock=True)
+            cmds_edit.lockNode(str(self), lock=True)
         return self
 
     def unlock(self) -> "DGNode":
@@ -1215,21 +1284,21 @@ class DGNode(Node):
         Refused (InjectionError, nothing changed): a referenced node, a
         reference node (``xRN``, which Maya keeps locked), a member of a locked
         container (unlock the container: Maya unlocks every member with it)."""
-        fn = self.fn_set
+        fn = type(self).get_fn_set(self)
         if fn.isLocked:
-            why = _node_lock_refusal(fn, self.name, False)
+            why = _node_lock_refusal(fn, str(self), False)
             if why:
                 raise _injection_error(why)
-            cmds_edit.lockNode(self.name, lock=False)
+            cmds_edit.lockNode(str(self), lock=False)
         return self
 
     def _refuse_if_locked(self, verb: str) -> None:
         """InjectionError ``cannot <verb> 'x': it is locked; Node('x').unlock()
         unlocks it. Nothing was changed`` when this node is locked, before
         Maya's own error (an ``MFn.isLocked`` read, 0.1 us)."""
-        fn = self.fn_set
+        fn = type(self).get_fn_set(self)
         if fn.isLocked:
-            _refuse_locked_node(fn, verb, self.name)
+            _refuse_locked_node(fn, verb, str(self))
 
     @classmethod
     def is_type(cls, node_name, failfast: bool = False, **kwargs) -> bool:
@@ -1282,12 +1351,12 @@ class DGNode(Node):
                     return True
                 found = _node_from_str(name, label)
             node = _typed(cls, found)
-            return node is not None and node.is_valid
+            return node is not None and type(node).is_valid(node)
         try:
             node = cls(name)
         except (NodeNotFoundError, NodeTypeError):
             return False
-        return node.is_valid
+        return type(node).is_valid(node)
 
     @classmethod
     def _coerce(cls, node: Any) -> Any:
@@ -1302,7 +1371,7 @@ class DGNode(Node):
         own = cls.__dict__
         if own.get("CUSTOM_NODE_TYPE") or own.get("NATIVE_NODE_TYPE"):
             return None
-        name = node.name
+        name = str(node)
         if not cls.is_type(name, exact_type=False):
             return None
         return cls._wrap(name)
@@ -1600,7 +1669,7 @@ class DGNode(Node):
     def duplicate(self, *args, **kwargs) -> list[DGNode]:
         """Thin wrapper around `cmds.duplicate()`."""
         old_nodes = set(cmds.ls(dagObjects=True, long=True))
-        cmds_edit.duplicate(self.name, *args, **kwargs)
+        cmds_edit.duplicate(str(self), *args, **kwargs)
         if kwargs.get("returnRootsOnly", kwargs.get("rr", False)):
             for node in cmds.ls(dagObjects=True, long=True):
                 if node not in old_nodes:
@@ -1618,21 +1687,23 @@ class DGNode(Node):
         one is refused (InjectionError, nothing changed)."""
         if not nodes:
             self._refuse_if_locked("delete")
-        cmds_edit.delete(nodes or self.name, **kwargs)
+        cmds_edit.delete(nodes or str(self), **kwargs)
 
     # --- namespace
 
-    @property
-    def namespace(self) -> str:
+    def get_namespace(self) -> str:
         """Returns the namespace of this node."""
-        return self._fn_set.namespace
+        return type(self).get_fn_set(self).namespace
 
-    @namespace.setter
-    def namespace(self, namespace: str) -> None:
-        """Sets the namespace of this node."""
+    @statement
+    def set_namespace(self, namespace: str) -> None:
+        """Moves this node to `namespace` (made if missing): one undo step. A
+        locked node is refused (InjectionError, nothing changed)."""
+        self._refuse_if_locked("rename")
         if not cmds.namespace(exists=namespace):
+            one_step()  # the namespace and the rename: one undo step
             cmds_edit.namespace(add=namespace)
-        self.rename(f"{namespace}:{self.clean_name}")
+        self.rename(f"{namespace}:{get_clean_name(self._name())}")
 
     # --- attribute methods
 
@@ -1683,7 +1754,7 @@ class DGNode(Node):
         # nodes). Its MPlug is read once its node is known alive.
         if isinstance(attr, Attribute):
             _ensure_owner_alive(attr)
-            if attr._mplug.node() != self.mobject:
+            if attr._mplug.node() != type(self).get_mobject(self):
                 if quiet:
                     return None, False
                 raise AttributeError(f"{attr} doesn't belong to {self}.")
@@ -1717,10 +1788,10 @@ class DGNode(Node):
                 "\n" not in text or re.match(r"^.*[\[\.].*$", text)
             ):
                 sel = OpenMaya.MSelectionList()
-                sel.add(f"{self.name}.{attr}")
+                sel.add(f"{self}.{attr}")
                 plug = sel.getPlug(0)
             else:
-                plug = self.fn_set.findPlug(attr, False)
+                plug = type(self).get_fn_set(self).findPlug(attr, False)
         except RuntimeError:
             # Fallback: component-alias resolution. Maya's
             # ``MFnDependencyNode.findPlug()`` doesn't recognise short
@@ -1734,7 +1805,7 @@ class DGNode(Node):
             canonical = None
             if isinstance(attr, str) and attr in _COMPONENT_ALIASES:
                 try:
-                    resolved = cmds.listAttr(f"{self.name}.{attr}[0]")
+                    resolved = cmds.listAttr(f"{self}.{attr}[0]")
                 except (RuntimeError, ValueError):
                     resolved = None
                 if resolved:
@@ -1747,7 +1818,7 @@ class DGNode(Node):
                     canonical = _CANONICAL_COMPONENT_PLUG.get(canonical, canonical)
             if canonical is not None:
                 try:
-                    plug = self.fn_set.findPlug(canonical, False)
+                    plug = type(self).get_fn_set(self).findPlug(canonical, False)
                 except RuntimeError:
                     # ``cmds.listAttr`` enumerated the alias but
                     # ``findPlug`` rejected the canonical name. Honour
@@ -1766,7 +1837,7 @@ class DGNode(Node):
                 # ``name()`` reports the alias. Fall back to it before giving up.
                 try:
                     sel = OpenMaya.MSelectionList()
-                    sel.add(f"{self.name}.{attr}")
+                    sel.add(f"{self}.{attr}")
                     plug = sel.getPlug(0)
                 except RuntimeError:
                     if quiet:
@@ -1869,7 +1940,7 @@ class DGNode(Node):
         if canonical is None:
             return plug
         try:
-            return self.fn_set.findPlug(canonical, False)
+            return type(self).get_fn_set(self).findPlug(canonical, False)
         except RuntimeError:
             return plug
 
@@ -1884,12 +1955,12 @@ class DGNode(Node):
         Returns:
             The attribute instance or None if no match was found.
         """
-        alias_list = cmds.aliasAttr(f"{self.name}", query=True) or []
+        alias_list = cmds.aliasAttr(f"{self}", query=True) or []
         for i in range(0, len(alias_list), 2):
             if alias_list[i] == alias:
                 sel       = OpenMaya.MSelectionList()
                 attr_name = alias_list[i + 1]
-                sel.add(f"{self.name}.{attr_name}")
+                sel.add(f"{self}.{attr_name}")
                 # a plug of this node: checked through this node's handle, and
                 # its attribute's, if dynamic
                 plug   = sel.getPlug(0)
@@ -1904,7 +1975,7 @@ class DGNode(Node):
         """Checks if an attribute exists."""
         if isinstance(attr, Attribute):
             return not type(attr).get_mobject(attr).isNull()
-        return self.fn_set.hasAttribute(attr)
+        return type(self).get_fn_set(self).hasAttribute(attr)
 
     def set_attrs(self, skip_missing=False, **kwargs) -> None:
         """Gracefully sets attributes on a node from given kwargs."""
@@ -1945,7 +2016,7 @@ class DGNode(Node):
         self._refuse_if_locked(f"add the attribute {long_name!r} to")
 
         # add attribute
-        cmds_edit.addAttr(self.name, **kwargs)
+        cmds_edit.addAttr(str(self), **kwargs)
 
         # compound attr are not actually created until all child attrs are added
         # there fore quiet is set to True so that find_attr won't fail
@@ -1957,16 +2028,16 @@ class DGNode(Node):
             if isinstance(attr, Attribute):
                 attr = type(attr).get_name(attr)
             self._refuse_if_locked(f"delete the attribute {str(attr)!r} of")
-            cmds_edit.deleteAttr(self.name, attribute=attr)
+            cmds_edit.deleteAttr(str(self), attribute=attr)
             return True
         return False
 
     def rename_attr(self, old_name: Attribute | str, new_name: str) -> Attribute:
         """Renames a given attribute. Thin wrapper of cmds.renameAttr()."""
         if not self.has_attr(old_name):
-            raise RuntimeError(f"Attribute not found: {self.name}.{old_name}")
+            raise RuntimeError(f"Attribute not found: {self}.{old_name}")
         elif self.has_attr(new_name):
-            raise RuntimeError(f"Attribute already exists: {self.name}.{new_name}")
+            raise RuntimeError(f"Attribute already exists: {self}.{new_name}")
 
         # an attr is renamed whatever its name (a Plug's `!=` builds a node)
         if isinstance(old_name, Attribute) or old_name != new_name:
@@ -1979,7 +2050,7 @@ class DGNode(Node):
                     )
                 cmds_edit.renameAttr(str(old_name), new_name)
             else:
-                cmds_edit.renameAttr(f"{self.name}.{old_name}", new_name)
+                cmds_edit.renameAttr(f"{self}.{old_name}", new_name)
 
         return self.find_attr(new_name)
 
@@ -1997,7 +2068,7 @@ class DGNode(Node):
         """
         attrs = [
             self.find_attr(x, quiet=True)
-            for x in cmds.listAttr(self.name, *args, **kwargs) or []
+            for x in cmds.listAttr(str(self), *args, **kwargs) or []
         ]
         return [a for a in attrs if a is not None]
 
@@ -2006,7 +2077,7 @@ class DGNode(Node):
         cmds.listConnections()."""
         casted = {}
         result = []
-        for each in cmds.listConnections(self.name, **kwargs) or []:
+        for each in cmds.listConnections(str(self), **kwargs) or []:
             obj = casted.get(each)
             if not obj:
                 obj          = _cast(each)
@@ -2042,7 +2113,7 @@ class DGNode(Node):
     def remove_from_all_sets(self) -> None:
         """Removes this node from all object sets."""
         result = cmds.listConnections(
-            self.name,
+            str(self),
             source      = False,
             destination = True,
             type        = "objectSet",
@@ -2107,8 +2178,8 @@ def _keeps_query(node_cls: type) -> bool:
 # of them can
 _base_module._KEEPS_QUERY = _keeps_query
 _base_module._DG_NAMING   = (
-    DGNode.__dict__["name"],
-    DGNode.__dict__["fn_set"],
+    DGNode.__dict__["_name"],
+    DGNode.__dict__["__str__"],
     _ENSURE_VALID,
 )
 

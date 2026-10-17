@@ -820,7 +820,7 @@ class TestNormalisePerformance(MayaTestCase):
     def test_hundred_thousand_vertex_slice(self):
         plane = cmds.polyPlane(name="bigPlane", sx=316, sy=316, ch=False)[0]
         node  = Node(cmds.listRelatives(plane, shapes=True, fullPath=True)[0])
-        self.assertEqual((node >> None).num_weight_points, 100489)
+        self.assertEqual((node >> None).get_num_weight_points(), 100489)
         sliced  = node.vtx[:]
         started = time.perf_counter()
         sel     = normalise(sliced, want_shapes=True)[0]

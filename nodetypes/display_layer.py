@@ -125,14 +125,13 @@ class DisplayLayer(DGNode):
             kwargs["noRecurse"] = True
         return cmds_edit.createDisplayLayer(*args, **kwargs)
 
-    # --- properties
+    # --- queries
 
-    @property
     def is_default(self) -> bool:
         """Whether this is ``defaultLayer``, the layer that means no layer
         (by its absolute name: ``namespace -relativeNames`` cannot change the
         answer)."""
-        return self.fn_set.absoluteName() == _DEFAULT_ABSOLUTE
+        return type(self).get_fn_set(self).absoluteName() == _DEFAULT_ABSOLUTE
 
     # --- the membership grammar (rig.Layer)
 
@@ -183,7 +182,7 @@ class DisplayLayer(DGNode):
     def get_members(self, no_recurse: bool = True) -> list[DAGNode]:
         """Returns a list of objects in this layer."""
         objs = cmds.editDisplayLayerMembers(
-            self.name, query=True, fullNames=True, noRecurse=no_recurse
+            str(self), query=True, fullNames=True, noRecurse=no_recurse
         )
         return [_cast(x) for x in objs or []]
 
@@ -195,7 +194,7 @@ class DisplayLayer(DGNode):
         """
         if not isinstance(objects, (list, tuple)):
             objects = [objects]
-        cmds_edit.editDisplayLayerMembers(self.name, *objects, noRecurse=no_recurse)
+        cmds_edit.editDisplayLayerMembers(str(self), *objects, noRecurse=no_recurse)
 
     def remove_members(self, objects: DAGNode | str | list[DAGNode | str]) -> None:
         """Removes object(s) from this layer (they go to ``defaultLayer``);
@@ -209,8 +208,8 @@ class DisplayLayer(DGNode):
     def _guard(self, verb: str) -> str:
         """The layer's name, once it is known to take ``verb``: never
         ``defaultLayer`` (TypeError) nor a referenced layer (RuntimeError)."""
-        name = self.name
-        if self.is_default:
+        name = str(self)
+        if type(self).is_default(self):
             raise TypeError(f"'{name}' cannot be {verb}: it is the layer of no layer")
         if cmds.referenceQuery(name, isNodeReferenced=True):
             raise RuntimeError(f"'{name}' is referenced and cannot be {verb}; edit the source file")
@@ -254,7 +253,7 @@ class DisplayLayer(DGNode):
                 f"[A-Za-z0-9_] not starting with a digit, joined by ':'"
             )
         old = self._guard("renamed")
-        if new_name in (old, self.short_name):
+        if new_name in (old, type(self).get_short_name(self)):
             return
         self._refuse_if_locked("rename")
         try:

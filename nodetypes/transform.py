@@ -152,7 +152,7 @@ class Transform(DAGNode):
         """
         dup = self.duplicate(parentOnly=False)[0]
         dup.set_parent(parent or None)
-        dup.rename(name or self.short_name)
+        dup.rename(name or type(self).get_short_name(self))
         dup.delete(ch=True)
         dup.set_xfrom_attrs_locked(False)
 
@@ -231,7 +231,7 @@ class Transform(DAGNode):
         ):
             if as_transform:
                 node = node.get_parent()
-            if node not in found and (not regex or regex(node.short_name)):
+            if node not in found and (not regex or regex(type(node).get_short_name(node))):
                 yield node
 
     def find_shape(self, shape_type: str, match_name: str, **kwargs) -> DAGNode:
@@ -325,7 +325,7 @@ class Transform(DAGNode):
             matrix = matrix.asMatrix()
 
         cmds_edit.xform(
-            self.name,
+            str(self),
             worldSpace  = world_space,
             objectSpace = not world_space,
             matrix      = matrix,
@@ -334,18 +334,18 @@ class Transform(DAGNode):
     def get_rotate_pivot(self, world_space: bool = True) -> OpenMaya.MPoint:
         """Returns the rotation pivot."""
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return self.fn_set.rotatePivot(space)
+        return type(self).get_fn_set(self).rotatePivot(space)
 
     def get_scale_pivot(self, world_space: bool = True) -> OpenMaya.MPoint:
         """Returns the scale pivot."""
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return self.fn_set.scalePivot(space)
+        return type(self).get_fn_set(self).scalePivot(space)
 
     def set_pivots(
         self, pivot: OpenMaya.MVector | list[float], world_space: bool = True
     ) -> None:
         """Sets both the scale and rotate pivots."""
-        cmds_edit.xform(self.name, pivots=pivot, worldSpace=world_space)
+        cmds_edit.xform(str(self), pivots=pivot, worldSpace=world_space)
 
     def match_matrix(
         self, target_transform: Transform, world_space: bool = False
@@ -360,13 +360,13 @@ class Transform(DAGNode):
         """creates a TransformData object from a given string"""
         from cgmath.hierarchy import TransformData
 
-        node   = TransformData(name=self.short_name, uuid=self.uuid)
+        node   = TransformData(name=type(self).get_short_name(self), uuid=type(self).get_uuid(self))
         parent = self.get_parent()
         if parent is not None:
-            _set_parent_uuid(node, parent.uuid)
+            _set_parent_uuid(node, type(parent).get_uuid(parent))
 
         # if there is a locatorShape, set this type as "locator"
-        node.node_type = cmds.nodeType(self.name)
+        node.node_type = cmds.nodeType(str(self))
 
         if node.node_type == "joint":
             node.joint_orient             = np.array(cmds.getAttr(f"{node}.jo")[0])
@@ -376,7 +376,7 @@ class Transform(DAGNode):
 
         else:
             locators = cmds.listRelatives(
-                self.name, c=True, ni=True, f=False, type="locator"
+                str(self), c=True, ni=True, f=False, type="locator"
             )
 
             # the shape's localScale/localPosition are not carried, only the kind
@@ -517,7 +517,7 @@ class Transform(DAGNode):
             if isinstance(bindpose, bool):
                 pass
             elif isinstance(bindpose, DGNode):
-                bindpose = bindpose.name
+                bindpose = str(bindpose)
             elif not isinstance(bindpose, str) or isinstance(bindpose, Attribute):
                 raise TypeError(
                     f"bindpose= takes False, True or a dagPose name, not {bindpose!r}"
@@ -534,17 +534,17 @@ class Transform(DAGNode):
                 # type="transform" also lists every type derived from it
                 # (constraints, ikHandles, etc.), a TransformData can't describe
                 # those, skip them along with what is under them.
-                if cmds.nodeType(child.name) not in SERIALIZED_NODE_TYPES:
+                if cmds.nodeType(str(child)) not in SERIALIZED_NODE_TYPES:
                     below = cmds.listRelatives(
-                        child.name, ad=True, type="transform", f=True
+                        str(child), ad=True, type="transform", f=True
                     )
-                    for name in [child.name] + (below or []):
+                    for name in [str(child)] + (below or []):
                         node_type          = cmds.nodeType(name)
                         skipped[node_type] = skipped.get(node_type, 0) + 1
                     continue
 
                 tree.append(child.serialize())
-                objs.append(child.mobject)
+                objs.append(type(child).get_mobject(child))
                 _recurse(child)
 
         # serialize the root
@@ -553,14 +553,14 @@ class Transform(DAGNode):
 
         # recurse through the hierarchy
         tree    = [root]
-        objs    = [self.mobject]  # the serialized nodes' MObjects, for the bind pose
+        objs    = [type(self).get_mobject(self)]  # the serialized nodes' MObjects, for the bind pose
         skipped = {}
         _recurse(self)
 
         if bindpose is not False:
             from rig.nodetypes import _bindpose
 
-            for index, entry in _bindpose.resolve(self.short_name, objs, bindpose).items():
+            for index, entry in _bindpose.resolve(type(self).get_short_name(self), objs, bindpose).items():
                 _bindpose.apply(tree[index], entry, objs[index])
 
         if skipped:
@@ -674,10 +674,10 @@ class Transform(DAGNode):
                 obj     = outside.serialize()
                 _set_parent_uuid(obj, None)
                 hierarchy.list.insert(0, obj)
-                obj.matrix = cmds.xform(outside.long_name, q=True, matrix=True, worldSpace=True)
+                obj.matrix = cmds.xform(type(outside).get_long_name(outside), q=True, matrix=True, worldSpace=True)
                 for node in hierarchy.get_roots()[1:]:
                     node.set_parent(obj, world_space=world_space)
-                    under[id(node)] = outside.long_name
+                    under[id(node)] = type(outside).get_long_name(outside)
                 hierarchy.list.pop(0)
 
         # create the hierarchy at identity before setting any attributes,
@@ -689,8 +689,12 @@ class Transform(DAGNode):
             if id(node) in under:
                 parent = under[id(node)]
             elif parent:
-                parent = getattr(parent, "name", parent)
-                parent = parent.long_name if isinstance(parent, DAGNode) else str(parent)
+                # hierarchy data by its name, which holds its node once made (a
+                # node's own name would be a Maya attr lookup); a node by its
+                # long name
+                if not isinstance(parent, DAGNode):
+                    parent = getattr(parent, "name", parent)
+                parent = type(parent).get_long_name(parent) if isinstance(parent, DAGNode) else str(parent)
 
             # create node
             if node.node_type != "locator":
@@ -699,14 +703,14 @@ class Transform(DAGNode):
                     name = node.name
                     obj  = _cast(cmds_edit.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
                     if parent is not None:
-                        cmds_edit.parent(obj.long_name, parent)
+                        cmds_edit.parent(type(obj).get_long_name(obj), parent)
                 else:
                     obj = _create_nested(node.node_type, name=node, parent=parent)
 
             else:
                 obj = _cast(cmds_edit.spaceLocator(name=node.name)[0])
                 if parent is not None:
-                    cmds_edit.parent(obj.long_name, parent)
+                    cmds_edit.parent(type(obj).get_long_name(obj), parent)
 
             # rename the node's string name with the node object
             # in case of scene duplicate during parenting.
@@ -776,16 +780,16 @@ class Transform(DAGNode):
         data = _files.read(hierarchy, (HierarchyData,), method, "the hierarchy")
         kwargs = {} if container is None else {"container": container}
         if isinstance(parent, DAGNode):
-            parent = parent.long_name
+            parent = type(parent).get_long_name(parent)
         with _undo_chunk(f"rig.{cls.__name__}.load_hierarchy"):
             return cls._load_built(data, parent, world_space, **kwargs)
 
     def _load_hierarchy_refused(self, *args, **kwargs):
         name = type(self).__name__
         raise TypeError(
-            f"{name}({self.name!r}).load_hierarchy(...) would update the hierarchy at {self.name!r} "
+            f"{name}({str(self)!r}).load_hierarchy(...) would update the hierarchy at {str(self)!r} "
             f"in place, which rig does not do (its transforms hold the rig's constraints, skins "
-            f"and children); {name}.load_hierarchy(path, parent={self.name!r}) makes a new one "
+            f"and children); {name}.load_hierarchy(path, parent={str(self)!r}) makes a new one "
             f"under it"
         )
 

@@ -102,7 +102,7 @@ class TestDefine(_Case):
         first  = Transform.define("rig")
         second = Transform.define("rig")
         self.assertEqual(first, second)
-        self.assertEqual(first.long_name, "|rig")
+        self.assertEqual(first.get_long_name(), "|rig")
         self.assertEqual(cmds.ls("rig*", type="transform"), ["rig"])
         self.assertIs(type(first), Transform)
         # the reference finds what define made
@@ -114,8 +114,8 @@ class TestDefine(_Case):
         for side in "LR":
             arm = Transform.define(f"{side}_arm", parent=root)
             ctls.append(Transform.define("ctl", parent=arm, tx=1))
-        self.assertEqual([c.long_name for c in ctls], ["|rig|L_arm|ctl", "|rig|R_arm|ctl"])
-        self.assertEqual([cmds.getAttr(f"{c.long_name}.tx") for c in ctls], [1.0, 1.0])
+        self.assertEqual([c.get_long_name() for c in ctls], ["|rig|L_arm|ctl", "|rig|R_arm|ctl"])
+        self.assertEqual([cmds.getAttr(f"{c.get_long_name()}.tx") for c in ctls], [1.0, 1.0])
         # found by path, by node object and by a partial path
         self.assertEqual(Transform.define("ctl", parent="|rig|L_arm"), ctls[0])
         self.assertEqual(Transform.define("ctl", parent=Node("R_arm")), ctls[1])
@@ -166,7 +166,7 @@ class TestDefine(_Case):
         cmds.undo()
         self.assertFalse(cmds.objExists("ctl"))
         cmds.redo()
-        self.assertTrue(ctl.is_valid)
+        self.assertTrue(ctl.is_valid())
         self.assertEqual((cmds.getAttr("ctl.tx"), cmds.getAttr("ctl.rotateOrder")), (1.0, 2))
 
     def test_an_attribute_typo_raises_on_a_hit_and_a_miss(self):
@@ -209,7 +209,7 @@ class TestDefine(_Case):
         dead = Node("g2")
         cmds.delete("g2")
         self.assertRefused(RuntimeError, "deleted", lambda: Transform.define("x", parent=dead))
-        self.assertEqual(Transform.define("x", parent="g1|a").long_name, "|g1|a|x")
+        self.assertEqual(Transform.define("x", parent="g1|a").get_long_name(), "|g1|a|x")
 
     def test_the_name_is_a_key(self):
         cmds.createNode("transform", name="rig")
@@ -256,7 +256,7 @@ class TestDefine(_Case):
             with self.subTest(pattern=pattern):
                 self.assertRefused(NodeTypeError, pattern, call)
         # a DAG node of the same short name under another parent is no clash
-        self.assertEqual(Transform.define("a", parent="grp").long_name, "|grp|a")
+        self.assertEqual(Transform.define("a", parent="grp").get_long_name(), "|grp|a")
 
     def test_in_the_current_namespace(self):
         cmds.namespace(add="char")
@@ -268,7 +268,7 @@ class TestDefine(_Case):
         layer = DisplayLayer.define("L")
         self.assertEqual(str(layer), "char:L")
         # ':' is the root namespace
-        self.assertEqual(Transform.define(":top_x").long_name, "|top_x")
+        self.assertEqual(Transform.define(":top_x").get_long_name(), "|top_x")
         cmds.namespace(setNamespace=":")
         self.assertEqual(Transform.define("char:x"), made)
         self.assertEqual(str(Joint.define("char:j")), "char:j")
@@ -284,8 +284,8 @@ class TestDefine(_Case):
         self.assertEqual(Transform.define("y", parent=grp), under)
         cmds.namespace(relativeNames=False)
         cmds.namespace(setNamespace=":")
-        self.assertEqual(made.long_name, "|char:x")
-        self.assertEqual(under.long_name, "|grp|char:y")
+        self.assertEqual(made.get_long_name(), "|char:x")
+        self.assertEqual(under.get_long_name(), "|grp|char:y")
 
     def test_the_registries_define(self):
         cmds.createNode("transform", name="sel")
@@ -345,24 +345,24 @@ class TestDefine(_Case):
         off its key, is no longer there, so define makes a new one at the key."""
         first = Transform.define("rig")
         cmds.undo()
-        self.assertFalse(first.is_valid)
+        self.assertFalse(first.is_valid())
         again = Transform.define("rig")
-        self.assertEqual(again.long_name, "|rig")
+        self.assertEqual(again.get_long_name(), "|rig")
         cmds.rename("rig", "rig_old")
         made = Transform.define("rig")
-        self.assertEqual((made.long_name, again.long_name), ("|rig", "|rig_old"))
+        self.assertEqual((made.get_long_name(), again.get_long_name()), ("|rig", "|rig_old"))
         self.assertEqual(Transform.define("rig"), made)
 
     def test_a_node_deleted_is_made_again(self):
         first = Transform.define("rig")
         cmds.delete("rig")
         second = Transform.define("rig")
-        self.assertFalse(first.is_valid)
-        self.assertEqual(second.long_name, "|rig")
+        self.assertFalse(first.is_valid())
+        self.assertEqual(second.get_long_name(), "|rig")
         cmds.file(new=True, force=True)
         with self.assertRaisesRegex(RuntimeError, "deleted"):
             second.tx << 1
-        self.assertEqual(Transform.define("rig").long_name, "|rig")
+        self.assertEqual(Transform.define("rig").get_long_name(), "|rig")
 
 
 class TestNodeDefine(_Case):
@@ -373,7 +373,7 @@ class TestNodeDefine(_Case):
         self.assertIs(type(root), Transform)
         self.assertEqual(Node.define("transform", "rig"), root)
         joint = Node.define("joint", "j", parent=root, tx=1)
-        self.assertEqual((type(joint), joint.long_name, cmds.getAttr("|rig|j.tx")), (Joint, "|rig|j", 1.0))
+        self.assertEqual((type(joint), joint.get_long_name(), cmds.getAttr("|rig|j.tx")), (Joint, "|rig|j", 1.0))
         self.assertIs(type(Node.define("displayLayer", "L")), DisplayLayer)
         self.assertRefused(TypeError, r"^SkinCluster\.define\(\) is refused", lambda: Node.define("skinCluster", "skin"))
         self.assertRefused(NodeTypeError, r"not a joint", lambda: Node.define("joint", "rig"))
@@ -409,7 +409,7 @@ class TestNodeDefine(_Case):
     def test_an_unregistered_dag_type_takes_a_parent(self):
         rig = Transform.create(name="rig")
         made = Node.define("aimConstraint", "aim", parent=rig)
-        self.assertEqual((cmds.nodeType(str(made)), made.long_name), ("aimConstraint", "|rig|aim"))
+        self.assertEqual((cmds.nodeType(str(made)), made.get_long_name()), ("aimConstraint", "|rig|aim"))
         self.assertEqual(Node.define("aimConstraint", "aim", parent="rig"), made)
         self.assertRefused(AmbiguousNodeError, r"'aim' exists at \|rig\|aim", lambda: Node.define("aimConstraint", "aim"))
 
@@ -439,7 +439,7 @@ class TestDefineElsewhere(_Case):
         self.assertEqual(Joint.define("root", parent="char_grp"), root)
         cmds.createNode("transform", name="other")
         made = Joint.define("root", parent="other")  # an explicit key
-        self.assertEqual(made.long_name, "|other|root")
+        self.assertEqual(made.get_long_name(), "|other|root")
 
     def test_another_type_nested_names_node(self):
         """The hint names no define of that key: a transform there would make
@@ -477,7 +477,7 @@ class TestDefineElsewhere(_Case):
                 )
         cmds.namespace(relativeNames=False)
         made = Transform.define("char:x")  # spelled: its own key
-        self.assertEqual(made.long_name, "|char:x")
+        self.assertEqual(made.get_long_name(), "|char:x")
         self.assertEqual(Transform.define("x"), made)  # found at the key now
 
     def test_a_dg_key_in_the_other_namespace(self):
@@ -497,7 +497,7 @@ class TestDefineElsewhere(_Case):
         ``x`` is no second node under that name."""
         cmds.namespace(add="char")
         cmds.createNode("transform", name="char:x")
-        self.assertEqual(Transform.define("x").long_name, "|x")
+        self.assertEqual(Transform.define("x").get_long_name(), "|x")
 
 
 class TestDefineReferenceNamespace(_Case):
@@ -638,7 +638,7 @@ class TestDefineInContainer(_Case):
         self.assertEqual((str(made), again), ("inner_k", made))
         self.assertEqual(cmds.container(str(arm), query=True, nodeList=True), ["inner_k"])
         # outside the scope 'k' is another key
-        self.assertEqual(Transform.define("k").long_name, "|k")
+        self.assertEqual(Transform.define("k").get_long_name(), "|k")
 
     def test_a_rerun_in_a_new_container_is_refused(self):
         def build():

@@ -378,7 +378,7 @@ class TestLookupRule(MayaTestCase):
             cmds.namespace(setNamespace=current)
             for name, long_name in cases:
                 with self.subTest(current=current, name=name):
-                    self.assertEqual(Node(name).long_name, long_name)
+                    self.assertEqual(Node(name).get_long_name(), long_name)
         cmds.namespace(setNamespace=":")
         # a qualified miss is not retried anywhere else
         self._refused(lambda: Node("chr:x"), NodeNotFoundError, "no node named 'chr:x'")
@@ -386,8 +386,8 @@ class TestLookupRule(MayaTestCase):
         self._refused(lambda: Node("root:x"), NodeNotFoundError)
 
     def test_a_bare_name_at_the_root_namespace(self):
-        self.assertEqual(Node("x").long_name, "|x")
-        self.assertEqual(Node("spine_01").long_name, "|spine_01")
+        self.assertEqual(Node("x").get_long_name(), "|x")
+        self.assertEqual(Node("spine_01").get_long_name(), "|spine_01")
         # char:root is not looked up while the root namespace is current
         error = self._refused(lambda: Node("root"), NodeNotFoundError)
         self.assertEqual((error.name, error.label), ("root", "node"))
@@ -439,8 +439,8 @@ class TestLookupRule(MayaTestCase):
                     error = self._refused(lambda: Node(uid), NodeNotFoundError)
                     self.assertTrue(error.uuid)
                     self.assertEqual(str(error), f"no node has the uuid {uid!r}")
-                    self.assertEqual(Node(_uuid("|g1|a")).long_name, "|g1|a")
-                    self.assertEqual(Node(_uuid("char:x")).long_name, "|char:x")
+                    self.assertEqual(Node(_uuid("|g1|a")).get_long_name(), "|g1|a")
+                    self.assertEqual(Node(_uuid("char:x")).get_long_name(), "|char:x")
             cmds.namespace(setNamespace=":")
 
     def test_a_constructor_error_is_not_masked(self):
@@ -480,8 +480,8 @@ class TestLookupRule(MayaTestCase):
                 self._refused(call, cls, text)
         # a name the constructor resolves is unchanged: the lookup runs on a
         # miss only
-        self.assertEqual(Joint("spine_01").name, "spine_01")
-        self.assertEqual(Transform("|g1|a").long_name, "|g1|a")
+        self.assertEqual(Joint("spine_01").get_name(), "spine_01")
+        self.assertEqual(Transform("|g1|a").get_long_name(), "|g1|a")
 
     def test_a_hit_at_the_root_makes_no_command_call(self):
         names = ("x", "spine_01", "|g1|a", "char:x", "boxShape", "x.tx", "char:x.tx")
@@ -529,17 +529,17 @@ class TestNamespaceLookup(MayaTestCase):
     def test_only_at_the_root(self):
         for relative in self._modes():
             with self.subTest(relative=relative):
-                self.assertEqual(Node("solo").uuid, _uuid(":solo"))
-                self.assertEqual(Node("spine_01").uuid, _uuid(":spine_01"))
+                self.assertEqual(Node("solo").get_uuid(), _uuid(":solo"))
+                self.assertEqual(Node("spine_01").get_uuid(), _uuid(":spine_01"))
 
     def test_only_in_the_current_namespace(self):
         for relative in self._modes():
             with self.subTest(relative=relative):
-                self.assertEqual(Node("only").uuid, _uuid(":char:only"))
+                self.assertEqual(Node("only").get_uuid(), _uuid(":char:only"))
                 root = Joint("root")
                 self.assertIsInstance(root, Joint)
-                self.assertEqual(root.uuid, _uuid(":char:root"))
-                self.assertEqual(Node("root").uuid, root.uuid)
+                self.assertEqual(root.get_uuid(), _uuid(":char:root"))
+                self.assertEqual(Node("root").get_uuid(), root.get_uuid())
 
     def test_at_both_is_ambiguous(self):
         for relative in self._modes():
@@ -557,14 +557,14 @@ class TestNamespaceLookup(MayaTestCase):
                     Node("x.tx")
                 self.assertEqual(set(cmds.ls()), before)
                 # spelled, each is found
-                self.assertEqual(Node(":x").uuid, _uuid(":x"))
-                self.assertEqual(Node(":char:x").uuid, _uuid(":char:x"))
+                self.assertEqual(Node(":x").get_uuid(), _uuid(":x"))
+                self.assertEqual(Node(":char:x").get_uuid(), _uuid(":char:x"))
 
     def test_the_root_namespace_looks_nowhere_else(self):
         for relative in (False, True):
             with self.subTest(relative=relative):
                 cmds.namespace(relativeNames=relative)
-                self.assertEqual(Node("x").uuid, _uuid(":x"))
+                self.assertEqual(Node("x").get_uuid(), _uuid(":x"))
                 with self.assertRaises(NodeNotFoundError):
                     Node("only")
         cmds.namespace(relativeNames=False)
@@ -573,7 +573,7 @@ class TestNamespaceLookup(MayaTestCase):
         cmds.namespace(add="sub", parent=":char")
         cmds.namespace(setNamespace=":char:sub")
         # char:x is in neither the root nor char:sub
-        self.assertEqual(Node("x").uuid, _uuid(":x"))
+        self.assertEqual(Node("x").get_uuid(), _uuid(":x"))
         cmds.createNode("transform", name=":char:sub:x")
         with self.assertRaises(AmbiguousNodeError) as ctx:
             Node("x")
@@ -589,8 +589,8 @@ class TestNamespaceLookup(MayaTestCase):
         cmds.namespace(setNamespace=":char")
         made = cmds.createNode("transform", name="made")
         self.assertEqual(made, "char:made")
-        self.assertEqual(Node(made).uuid, _uuid(":char:made"))
-        self.assertEqual(Node("made").uuid, _uuid(":char:made"))
+        self.assertEqual(Node(made).get_uuid(), _uuid(":char:made"))
+        self.assertEqual(Node("made").get_uuid(), _uuid(":char:made"))
 
     def test_names_maya_returns_stay_exact(self):
         """``container.createNode``, the ``rc`` results and ``Node.wrap`` cast the
@@ -602,14 +602,14 @@ class TestNamespaceLookup(MayaTestCase):
             cmds.createNode(node_type, name=f":{name}")
 
         def in_char(node):
-            return node.uuid in cmds.ls(":char:*", uuid=True)
+            return node.get_uuid() in cmds.ls(":char:*", uuid=True)
 
         for relative in self._modes():
             with self.subTest(relative=relative):
-                self.assertEqual(rc.ls(":x")[0].uuid, _uuid(":x"))
-                self.assertEqual(rc.ls(":char:x")[0].uuid, _uuid(":char:x"))
-                self.assertEqual(Node.wrap(cmds.ls(":x"))[0].uuid, _uuid(":x"))
-                self.assertEqual(Node.wrap(cmds.ls(":char:x"))[0].uuid, _uuid(":char:x"))
+                self.assertEqual(rc.ls(":x")[0].get_uuid(), _uuid(":x"))
+                self.assertEqual(rc.ls(":char:x")[0].get_uuid(), _uuid(":char:x"))
+                self.assertEqual(Node.wrap(cmds.ls(":x"))[0].get_uuid(), _uuid(":x"))
+                self.assertEqual(Node.wrap(cmds.ls(":char:x"))[0].get_uuid(), _uuid(":char:x"))
                 self.assertTrue(in_char(container.createNode("multiplyDivide", name="md1")))
                 self.assertTrue(in_char(container.createNode("transform", name="x")))
                 self.assertTrue(in_char(rc.createNode("transform", name="x")))
