@@ -972,11 +972,11 @@ Colour sets are `ColorSet` handles; `data` is an `(V, 4)` array:
 ```python
 print(mesh.get_color_sets())                                     # []
 cset = mesh.add_color_set("tint", ColorSet.Representation.RGBA)   # Alpha, RGB or RGBA
-print(cset, cset.name, cset.mesh, cset.is_valid, cset.representation)   # ColorSet<cubeShape.tint>) tint cubeShape True Representation.RGBA
+print(cset, cset.name, cset.mesh, cset.is_valid(), cset.representation)   # ColorSet<cubeShape.tint>) tint cubeShape True Representation.RGBA
 cset.data = np.tile([1.0, 0.0, 0.0, 1.0], (8, 1))
 print(cset.data.shape, cset.data[0])         # (8, 4) [1. 0. 0. 1.]
 cset.delete()
-print(cset.is_valid, mesh.get_color_sets())  # False []
+print(cset.is_valid(), mesh.get_color_sets())  # False []
 ```
 
 Materials, read from the shading engines the shape belongs to.

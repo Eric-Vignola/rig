@@ -117,7 +117,8 @@ class _Case(UndoWalk, MayaTestCase):
         try:
             cmds.namespace(set=":")
             shutil.rmtree(self.dir, ignore_errors=True)
-            self.assertFalse(container.is_active)
+            # re-pinned (user decision 2026-10-16, the predicate guard): a method
+            self.assertFalse(container.is_active())
         finally:
             super().tearDown()
 

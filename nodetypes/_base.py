@@ -4243,6 +4243,55 @@ class _BarePredicate:
         return f"<predicate {self._bound!r}: call it>"
 
 
+class _ScenePredicate:
+    """A predicate method of a scene handle (an object that points into the scene
+    and has no Maya attr lookup: ``Components.is_all``, ``ColorSet.is_valid``,
+    ``rig.container.is_active``; user decision 2026-10-16, the predicate guard).
+    Called (``faces.is_all()``, the call-site check) it is the bound method; named
+    without brackets, a `_BarePredicate`, whose truth value raises
+    (``if faces.is_all:``). On the class, the function. Made by
+    `_scene_predicate`."""
+
+    __slots__ = ("func", "__dict__")
+
+    def __init__(self, func: Any) -> None:
+        self.func = func
+        self.__dict__.update(getattr(func, "__dict__", {}))
+        for key in ("__module__", "__name__", "__qualname__", "__doc__"):
+            try:
+                self.__dict__[key] = getattr(func, key)
+            except AttributeError:
+                pass
+        self.__dict__["__wrapped__"] = func
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        if inst is None:
+            return self.func
+        bound = _MethodType(self.func, inst)
+        try:
+            f = _GETFRAME(1)
+        except ValueError:
+            return _BarePredicate(bound)
+        co = f.f_code.co_code
+        i  = f.f_lasti
+        k  = _METHOD_LOAD[co[i]]
+        if k and (k & 1 or co[i + 1] & 1):
+            return bound
+        return _BarePredicate(bound)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.func(*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f"<predicate {self.__dict__.get('__qualname__', '?')}>"
+
+
+def _scene_predicate(func: Any) -> _ScenePredicate:
+    """Decorate the ``is_x`` / ``has_x`` method of a scene handle: guarded when
+    named without brackets (see `_ScenePredicate`)."""
+    return _ScenePredicate(func)
+
+
 class _ChildOrMethod:
     """A public function of an Attribute class: on an instance, the compound child
     of the same name if there is one (a method plug, whose call runs the

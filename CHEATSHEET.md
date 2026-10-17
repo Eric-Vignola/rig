@@ -1164,7 +1164,7 @@ from rig import Components
 print(repr(cube.f), repr(cube.e[[4, 0]]))    # Components("|pCube1|pCube1Shape.f[*]") Components("|pCube1|pCube1Shape.e[0] e[4]")
 faces = cube.f[:3]
 print(faces.indices, faces.count, faces.names)                                    # [0 1 2] 3 ['|pCube1|pCube1Shape.f[0:2]']
-print(faces.kind, faces.geometry, str(faces.shape), faces.is_all, cube.f.is_all)  # f mesh pCube1Shape False True
+print(faces.kind, faces.geometry, str(faces.shape), faces.is_all(), cube.f.is_all())  # f mesh pCube1Shape False True
 print(cube.e[[4, 0]] >> None, cube.f >> None)                                     # [0 4] [0 1 2 3 4 5]
 print(cube.f[[5, 2]] == cube.f[[2, 5]], bool(cube.f[6:]))                         # True False
 ```
@@ -1234,7 +1234,7 @@ print(repr(arm), fk, repr(ik), scratch)                          # Container("ar
 print(str(fk_ctrl), str(ik_ctrl), str(tmp))                      # fk_ctrl ctrl1 scratch_tmp
 print(sorted(cmds.container("arm", query=True, nodeList=True)))  # ['ctrl', 'fk_ctrl', 'ik', 'outside', 'scratch_tmp']
 print(cmds.container(query=True, findContainer="loose"))         # None
-print(container.is_active, container.stack)                      # False []
+print(container.is_active(), container.stack)                    # False []
 ```
 
 Every scope prefixes the names it creates, the real sub-container `ik` is
@@ -2630,7 +2630,7 @@ while `sph.vtx[:3]` is a `List` of element plugs. Surfaces index as
 `srf.cv[u, v]`, lattices as `lat.pt[s, t, u]`.
 
 ```python
-print(sph.f, sph.f.is_all, sph.f[:3])   # Components("|sph|sphShape.f[*]") True Components("|sph|sphShape.f[0:2]")
+print(sph.f, sph.f.is_all(), sph.f[:3])   # Components("|sph|sphShape.f[*]") True Components("|sph|sphShape.f[0:2]")
 print(repr(sph.vtx), len(sph.vtx[:3]))  # Plug("sphShape.controlPoints") 3
 ```
 

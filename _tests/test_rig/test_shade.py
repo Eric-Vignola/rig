@@ -998,7 +998,8 @@ class TestMaterialQuery(MayaTestCase):
         self.cube << Blinn("red")
         [(material, faces)] = shade.bindings(self.cube)
         self.assertEqual(material, Blinn("red"))
-        self.assertTrue(faces.is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(faces.is_all())
         self.assertEqual(faces.names, [f"{self.shape}.f[*]"])
         self.assertEqual(shade.bindings(_cube("other").f[:2])[0][1].indices.tolist(), [0, 1])
         with self.assertRaisesRegex(TypeError, "per face"):

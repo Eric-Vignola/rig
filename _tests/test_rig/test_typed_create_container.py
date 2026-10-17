@@ -101,7 +101,8 @@ class TestTypedCreateInContainer(MayaTestCase):
         _base._CASTABLE_TYPES.clear()
         cmds.namespace(set=":")
         self.assertEqual(container_module._TYPED_DEPTH, 0)
-        self.assertFalse(container.is_active)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertFalse(container.is_active())
         super().tearDown()
 
     # -- helpers -- #

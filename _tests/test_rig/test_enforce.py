@@ -20,6 +20,10 @@ public name, methods only.
 * `TestUnderscoreRuleOnNodes` / `...OnLists` / `...OnPlugs`: the '_' rule B. A
   ``_`` name is Python state only if it is rig's own state or its class body
   declares it; otherwise it is a Maya attr (a plug's child), else it raises.
+* `TestScenePredicates`: the predicate guard on the scene handles
+  (``faces.is_all``, ``cset.is_valid``, ``rig.container.is_active``).
+* `TestPredicateLint`: rig's own code reads no bare ``.is_x`` / ``.has_x`` but
+  the value objects' data.
 """
 
 import functools
@@ -544,3 +548,128 @@ class TestUnderscoreRuleOnPlugs(MayaTestCase):
         with self.assertRaisesRegex(RuntimeError, "already deleted!"):
             plug.__child__ = 5
         cmds.undo()
+
+
+class TestScenePredicates(MayaTestCase):
+    """The predicate guard (user decision 2026-10-16) on the scene handles: a
+    bare ``is_x`` has no truth value, a call runs the method."""
+
+    TEST_START_NEW_SCENE = True
+
+    def _handles(self):
+        from rig._internal.container import container
+        from rig.nodetypes.mesh import ColorSet
+
+        cube = Node(cmds.polyCube(name="cube", ch=False)[0]).get_shape()
+        cset = cube.add_color_set("tint", ColorSet.Representation.RGBA)
+        return ((cube.f, "is_all", True), (cube.f[:2], "is_all", False),
+                (cset, "is_valid", True), (container, "is_active", False))
+
+    def test_a_bare_predicate_has_no_truth_value(self):
+        for handle, name, _ in self._handles():
+            with self.subTest(handle=type(handle).__name__, name=name):
+                bare = getattr(handle, name)
+                self.assertIs(type(bare), _base._BarePredicate)
+                with self.assertRaisesRegex(
+                    TypeError, rf"^{name} is a method: call it \({name}\(\)\)$"
+                ):
+                    bool(bare)
+
+    def test_a_call_runs_the_method(self):
+        for handle, name, expected in self._handles():
+            with self.subTest(handle=type(handle).__name__, name=name):
+                self.assertIs(getattr(handle, name)(), expected)
+        from rig._internal.container import container
+
+        with container("box"):
+            self.assertIs(container.is_active(), True)
+        self.assertIs(container.is_active(), False)
+
+    def test_class_access_is_the_function(self):
+        from rig._internal.container import _ContainerStack
+        from rig._internal.members import Components
+        from rig.nodetypes.mesh import ColorSet
+
+        for cls, name in ((Components, "is_all"), (ColorSet, "is_valid"),
+                          (_ContainerStack, "is_active")):
+            with self.subTest(cls=cls.__name__):
+                self.assertTrue(inspect.isfunction(getattr(cls, name)))
+
+    def test_nodes_and_plugs_too(self):
+        """guard: the node and plug sides (the property ban steps)."""
+        t = Transform.create(name="t")
+        for owner, name in ((t, "is_locked"), (t.tx, "is_locked"), (t.tx, "has_category")):
+            with self.subTest(owner=str(owner), name=name):
+                self.assertIs(type(getattr(owner, name)), _base._BarePredicate)
+        self.assertIs(t.tx.is_locked(), False)
+
+
+# value objects keep their data as attributes (user decision 2026-10-16): the
+# bare ``is_x`` reads of rig's own code that are no predicate method. Keyed by
+# (file, receiver, name)
+_VALUE_DATA = {
+    # membership's selection groups (members._Selection / _Group), plain values
+    ("membership.py", "selection", "is_all"),
+    ("shade.py", "selection", "is_all"),
+    ("_internal/members.py", "self", "is_all"),
+    # an operand's facts (shorthand._Facts), plain values
+    ("_internal/plug.py", "dst_facts", "is_compound"),
+    ("_internal/plug.py", "src_facts", "is_compound"),
+    ("_internal/shorthand.py", "src_facts", "is_matrix"),
+    ("_internal/shorthand.py", "src_facts", "is_quaternion"),
+    ("_internal/shorthand.py", "src_facts", "is_vector"),
+    ("_internal/shorthand.py", "dst_facts", "is_matrix"),
+    ("_internal/shorthand.py", "dst_facts", "is_quaternion"),
+    ("_internal/shorthand.py", "dst_facts", "is_vector"),
+    ("_internal/shorthand.py", "self", "is_compound"),
+    # a class's own is_type (class access: the function, compared by identity)
+    ("nodetypes/_base.py", "cls_obj", "is_type"),
+}
+
+
+class TestPredicateLint(MayaTestCase):
+    """rig's own code (outside ``_tests``), read with ``ast``: no bare ``.is_x`` /
+    ``.has_x`` read but the value objects' data (user decision 2026-10-16: the
+    lint goes with the guard)."""
+
+    def test_no_bare_predicate_in_rig_source(self):
+        import ast
+        import os
+
+        root  = os.path.dirname(rig.__file__)
+        found = []
+        seen  = set()
+        for base, dirs, files in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d not in ("_tests", "__pycache__"))
+            for name in sorted(f for f in files if f.endswith(".py")):
+                path = os.path.join(base, name)
+                rel  = os.path.relpath(path, root).replace(os.sep, "/")
+                with open(path, encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read())
+                callees = {id(c.func) for c in ast.walk(tree) if isinstance(c, ast.Call)}
+                for n in ast.walk(tree):
+                    if (
+                        isinstance(n, ast.Attribute)
+                        and isinstance(n.ctx, ast.Load)
+                        and n.attr.startswith(("is_", "has_"))
+                        and id(n) not in callees
+                    ):
+                        key = (rel, ast.unparse(n.value), n.attr)
+                        seen.add(key)
+                        if key not in _VALUE_DATA:
+                            found.append(f"{rel}:{n.lineno} {key[1]}.{n.attr}")
+        self.assertEqual(found, [])
+        self.assertEqual(_VALUE_DATA - seen, set())  # no stale allowance
+
+    def test_the_lint_finds_a_bare_read(self):
+        """guard: the scan above flags a bare read and passes a call."""
+        import ast
+
+        tree    = ast.parse("if node.is_valid:\n    pass\nnode.is_valid()\nx = faces.is_all\n")
+        callees = {id(c.func) for c in ast.walk(tree) if isinstance(c, ast.Call)}
+        bare    = [
+            n.attr for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute) and n.attr.startswith(("is_", "has_"))
+            and id(n) not in callees
+        ]
+        self.assertEqual(sorted(bare), ["is_all", "is_valid"])
