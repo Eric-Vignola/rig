@@ -336,8 +336,13 @@ class TestOldNames(MayaTestCase):
                 with self.assertRaisesRegex(AttributeError, "a bare Attribute has no '=' sugar"):
                     setattr(attr, name, value)
                 self.assertNotIn(name, vars(attr))
-        attr._private = 1  # its own state
-        self.assertEqual(vars(attr)["_private"], 1)
+        # re-pinned (user decision 2026-10-16, the '_' rule B): its own state is
+        # rig's plug state or what its class declares; any other '_' name raises
+        with self.assertRaisesRegex(AttributeError, r"a '_' name on a plug"):
+            attr._private = 1
+        self.assertNotIn("_private", vars(attr))
+        attr._fn_set = None  # rig's plug state
+        self.assertIsNone(vars(attr)["_fn_set"])
 
     def test_hasattr_answers_on_a_bare_attribute(self):
         attr = self.t.find_attr("tx")

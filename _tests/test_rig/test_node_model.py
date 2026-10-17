@@ -782,16 +782,26 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         with self.assertRaises(AttributeError):
             dg.user_tag = 1
         self.assertNotIn("user_tag", vars(dg))
-        dg._cache = 1
-        self.assertEqual(vars(dg)["_cache"], 1)
+        # re-pinned (user decision 2026-10-16, the '_' rule B): an undeclared '_'
+        # name with no Maya attr raises; vars(node) is the way to keep one
+        with self.assertRaisesRegex(AttributeError, r"declares no '_cache'"):
+            dg._cache = 1
+        self.assertNotIn("_cache", vars(dg))
+        vars(dg)["_cache"] = 1
+        dg._cache = 2
+        self.assertEqual(vars(dg)["_cache"], 2)
 
         with mock.patch.object(dg, "_attr_data_type_fallback", create=True) as hook:
             self.assertIs(dg._attr_data_type_fallback, hook)
         self.assertNotIn("_attr_data_type_fallback", vars(dg))
 
         cmds.delete("ns:a")
-        dg._x = 1
-        self.assertEqual(vars(dg)["_x"], 1)
+        # re-pinned (user decision 2026-10-16, the '_' rule B): an undeclared '_'
+        # name on a deleted node raises its "already deleted!"
+        with self.assertRaises(RuntimeError) as ctx:
+            dg._x = 1
+        self.assertTrue(str(ctx.exception).endswith("a already deleted!"))
+        self.assertNotIn("_x", vars(dg))
         with self.assertRaises(RuntimeError) as ctx:
             dg.tx = 1
         self.assertTrue(str(ctx.exception).endswith("a already deleted!"))

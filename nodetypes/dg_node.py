@@ -753,6 +753,22 @@ def _old_node_hint(name: str) -> str:
     return f"; node.{name} is now {new}" if new else ""
 
 
+def _refuse_undeclared(node: Any, name: str) -> None:
+    """Raise for ``node.<name> = value`` of a ``_`` name that is no node state,
+    no member of the node's class and no Maya attr of the live node (the '_'
+    rule, user decision 2026-10-16): ``already deleted!`` for a deleted or freed
+    node, else AttributeError naming the declaration that keeps Python state."""
+    d = node.__dict__
+    if d.get("_attr_dict") is not None and not _handle_valid(d):  # a built node
+        _ensure_valid(node)
+    cls = type(node).__name__
+    raise AttributeError(
+        f"{cls}.{name}: a '_' name on a node is its class's Python state or the "
+        f"node's Maya attr, and {cls} declares no {name!r} nor has the node that "
+        f"attr: declare it in the class body ({name} = None) to keep Python state"
+    )
+
+
 # NURBS-surface ``cv`` / lattice ``pt``: the names a ComponentPlug may answer
 _MULTIDIM = frozenset({"cv", "pt"})
 
@@ -762,7 +778,9 @@ _MULTIDIM = frozenset({"cv", "pt"})
 _COMPONENT_TOKENS = frozenset({"f", "e"}) | _COMPONENT_ALIASES
 
 # The instance state the node constructors, caches and the plug hash store,
-# which the ``=`` sugar stores directly (never a Maya attr of that name)
+# which the ``=`` sugar stores directly (never a Maya attr of that name): rig's
+# own node state under the '_' rule (user decision 2026-10-16), with the ``_``
+# names a node class declares
 _NODE_STATE = frozenset(
     {
         "_mobject",
@@ -1076,11 +1094,13 @@ class DGNode(Node):
         follows the plug-method rule: with a Maya attr of that name (or an
         alias), ``node.lock = 1`` is ``node.lock << 1``; without one it raises,
         as assignment is strict: a method is never replaced on one node (patch
-        the class, or write ``vars(node)``). A ``_`` name is Python state unless
-        the live node has a Maya attr of that name (``node.__parked__ = 4.0``).
-        Any other name must be a Maya attr: a typo raises "Attribute not found"
-        instead of adding a Python attribute, and a deleted node raises
-        ``already deleted!``.
+        the class, or write ``vars(node)``). A ``_`` name follows the '_' rule
+        (user decision 2026-10-16): it is Python state only if it is rig's node
+        state or the class body (its MRO) declares it; otherwise it is the live
+        node's Maya attr of that name (``node.__parked__ = 4.0``), else it raises
+        (``node._tga = 5`` on a node with no ``_tga`` attr). Any other name must
+        be a Maya attr: a typo raises "Attribute not found" instead of adding a
+        Python attribute, and a deleted node raises ``already deleted!``.
         """
         d = self.__dict__
         # the node state, and a Python attribute already stored on this instance
@@ -1124,11 +1144,12 @@ class DGNode(Node):
                 f"Plug(node.find_attr({name!r})) << value for a Maya attr of that name"
             )
         if name[:1] == "_":
+            # the '_' rule (user decision 2026-10-16): a '_' name that is no node
+            # state and no class member is the live node's Maya attr of that
+            # name (``node.__parked__ = 4.0``), else it raises
             fn = d.get("_fn_set")
             if fn is None or not _handle_valid(d) or not fn.hasAttribute(name):
-                # private Python state (on a deleted or freed node too)
-                d[name] = value
-                return
+                _refuse_undeclared(self, name)
         try:
             plug = type(self).__getattr__(self, name)
         except AttributeError as error:

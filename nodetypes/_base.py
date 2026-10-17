@@ -2802,6 +2802,44 @@ def _attribute_of(attr: str, *, node_type: str | None, node: str | None):
     return None if found.isNull() else found
 
 
+# The plug state rig keeps on an Attribute / Plug instance (`_attr_state`, the
+# child caches, a method plug's method): a ``_`` name a plug stores as Python
+# state (the '_' rule, user decision 2026-10-16); any other ``_`` name must be
+# a member of the plug's class or, on a Plug, a child / Maya attr of that name
+_PLUG_STATE = frozenset(
+    {
+        "_mplug",
+        "_mobject",
+        "_fn_set",
+        "_node",
+        "_handle",
+        "_attrh",
+        "_Attribute__component_type",
+        "_Attribute__child_name_dict",
+        "_Attribute__child_id_dict",
+        "_geometry_attr_cache",
+        "_polymorphic_owner_cache",
+        "_static_key_cache",
+        "_method",
+        "__wrapped__",
+    }
+    | set(_FORWARDED)
+)
+
+
+def _undeclared_plug_state(plug: Any, name: str) -> AttributeError:
+    """The AttributeError of ``plug.<name> = value`` for a ``_`` name that is no
+    plug state, no member of its class and (on a Plug) no child or Maya attr of
+    that name (the '_' rule, user decision 2026-10-16)."""
+    cls  = type(plug).__name__
+    what = "a child or Maya attr" if isinstance(plug, _PLUG_FOR_METHODS or ()) else "no '=' sugar"
+    return AttributeError(
+        f"{cls}.{name}: a '_' name on a plug is its class's Python state or a "
+        f"child / Maya attr of that name, and {str.__str__(plug)!r} has neither "
+        f"({what}): declare it in the class body ({name} = None) to keep Python state"
+    )
+
+
 class _PlugMeta(type):
     """The metaclass of `Attribute` (and so of every plug class): a class
     assignment follows the class-body rule (`_wrap_plug_methods`). A public
@@ -2870,7 +2908,7 @@ class Attribute(str, metaclass=_PlugMeta):
         # assignment is strict (user decisions 2026-10-16): a method is never
         # replaced on one plug, a bare Attribute has no ``=`` sugar, and a plug
         # has no settable members (the property ban: ``set_alias(x)``,
-        # ``set_keyable(b)``, ``lock()``); a ``_`` name is its state
+        # ``set_keyable(b)``, ``lock()``); a ``_`` name is its state (the '_' rule)
         if name[:1] != "_":
             hint = _OLD_PLUG_SETTERS.get(name)
             if hint is None and name in _OLD_PLUG_NAMES:
@@ -2885,7 +2923,16 @@ class Attribute(str, metaclass=_PlugMeta):
                 f"sugar (Plug({str.__str__(self)!r}).{name} << value sets the plug "
                 f"of that name)" + (f"; {hint}" if hint else "")
             )
-        object.__setattr__(self, name, value)
+        # the '_' rule (user decision 2026-10-16): the attribute's own state or a
+        # member of its class; a bare Attribute has no '=' sugar for the rest
+        if (
+            name in _PLUG_STATE
+            or name in self.__dict__
+            or _class_attr(type(self), name) is not _MISSING
+        ):
+            object.__setattr__(self, name, value)
+            return
+        raise _undeclared_plug_state(self, name)
 
     # --- dunders
 

@@ -103,6 +103,10 @@ from rig.nodetypes._base import (
     _ChildOrMethod,
     _clash_child,
     _class_attr,
+    _ensure_node_valid,
+    _MISSING,
+    _PLUG_STATE,
+    _undeclared_plug_state,
     _class_data_hint,
     _dg_named_owner,
     _element_path,
@@ -524,7 +528,13 @@ class Plug(Attribute):
 
     @statement
     def __setattr__(self, name: str, value: Any) -> Any:
-        """``plug.x = 5`` is sugar for ``plug.x << 5``; a ``_`` name is plug state.
+        """``plug.x = 5`` is sugar for ``plug.x << 5``.
+
+        A ``_`` name follows the '_' rule (user decision 2026-10-16): it is
+        Python state only if it is rig's plug state (`_PLUG_STATE`), a name
+        already stored on the plug, or one its class body (MRO) declares;
+        otherwise it is the child or Maya attr ``plug.<name>`` reads
+        (``plug.__child__ = 5`` sets the child ``__child__``), else it raises.
 
         A plug has no settable Python members (the property ban, user decision
         2026-10-16: ``plug.set_alias(x)``, ``plug.set_keyable(b)``,
@@ -536,7 +546,25 @@ class Plug(Attribute):
         container-published plug ``plug.x`` reads (``Plug.__getattr__``).
         """
         if name[:1] == "_":
-            object.__setattr__(self, name, value)
+            # the '_' rule (user decision 2026-10-16): the plug's own state, a
+            # member of its class, or a child / Maya attr of that name, which
+            # ``plug.<name>`` reads (``plug.__child__ = 5`` sets it); else it
+            # raises
+            d = self.__dict__
+            if (
+                name in _PLUG_STATE
+                or name in d
+                or _class_attr(type(self), name) is not _MISSING
+            ):
+                object.__setattr__(self, name, value)
+                return
+            try:
+                plug = type(self).__getattr__(self, name)
+            except AttributeError:
+                if "_mplug" in d:
+                    _ensure_node_valid(self)  # "already deleted!" first
+                raise _undeclared_plug_state(self, name) from None
+            plug.__lshift__(value)
             return
         if isinstance(_class_attr(type(self), name), _ChildOrMethod):
             _ensure_owner_alive(self)
@@ -1543,6 +1571,13 @@ class ComponentPlug(Plug):
     # an element by index (``element_by_*`` of the handle: the flat
     # ``controlPoints[k]``) is a Plug, as a Plug's is (D29)
     _CHILD_CLASS = Plug
+
+    # the component metadata `_set_component` records: plug state its class
+    # declares (the '_' rule, user decision 2026-10-16)
+    _comp_node   = ""
+    _comp_alias  = ""
+    _comp_ndims  = 0
+    _comp_coords = None
 
     def __new__(
         cls,
