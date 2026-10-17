@@ -25,8 +25,10 @@ access runs the full check (``hasAttribute``).
 * `TestIntrospection`: what a method plug forwards of its method.
 * `TestLists`: a broadcast where every element has the attr, where only some do
   (refused), and a bracketed call over a List.
-* `TestAliases`: an alias named like a method is not an attribute to the rule
-  (the alias check was measured and not adopted; the user decides).
+* `TestAliases`: an alias counts as an attribute for the rule (user decision
+  2026-10-16): an ``aliasAttr`` name and a blendShape target named like a method
+  are the plug bare and the method with brackets, as are the alias's add, rename,
+  removal and their undo / redo; a compound child's alias on a plug.
 * `TestTheUnderscoreProbe`: a ``_`` probe on a plug of a node deleted to the undo
   queue raises AttributeError.
 * `TestCallSiteForms`: the 18 call forms of the reference (``props\\critic\\
@@ -394,13 +396,85 @@ class TestLists(_Case):
 
 class TestAliases(_Case):
     def test_an_alias_is_not_an_attribute_to_the_rule(self):
-        """guard (the measured outcome, pending the user's decision)."""
-        # measured, not adopted (the alias gate costs a no-alias bare miss
-        # +15%): the user decides; the alias is reached through find_attr
+        """guard, re-pinned: an alias IS an attribute to the rule (user decision
+        2026-10-16, "Aliases: ADOPT"); the id is kept."""
         cmds.addAttr("T", ln="w0", at="double")
         cmds.aliasAttr("rename", "T.w0")
-        self.assertTrue(inspect.ismethod(self.t.rename))
-        self.assertEqual(str(Plug(self.t.find_attr("rename"))), "T.rename")
+        self.assertIs(type(self.t.rename), _MethodPlug)
+        self.assertEqual(str(self.t.rename), "T.rename")
+        self.t.rename << 3.0
+        self.assertEqual(cmds.getAttr("T.w0"), 3.0)
+        self.t.rename = 4.0  # '=' on the alias is '<<'
+        self.assertEqual(cmds.getAttr("T.w0"), 4.0)
+        self.t.rename("R")  # brackets: the method
+        self.assertTrue(cmds.objExists("R"))
+        self.assertEqual(str(Plug(self.t.find_attr("rename"))), "R.rename")
+
+    def test_blendshape_targets_named_like_methods(self):
+        base = cmds.polyCube(name="base", ch=False)[0]
+        for name in ("delete", "duplicate"):
+            cmds.polyCube(name=name, ch=False)
+        bs = Node(cmds.blendShape("delete", "duplicate", base, name="bs")[0])
+        self.assertIs(type(bs.delete), _MethodPlug)
+        self.assertIs(type(bs.duplicate), _MethodPlug)
+        self.assertEqual(str(bs.delete), "bs.delete")
+        bs.delete << 0.5
+        self.assertEqual(cmds.getAttr("bs.weight[0]"), 0.5)
+        bs.duplicate = 0.25
+        self.assertEqual(cmds.getAttr("bs.weight[1]"), 0.25)
+        self.assertEqual(bs.delete >> None, 0.5)
+        bs.delete()  # brackets: deletes the node
+        self.assertFalse(cmds.objExists("bs"))
+
+    def test_add_rename_remove_and_undo_redo(self):
+        cmds.undoInfo(state=True, infinity=True)
+        t = self.t
+        cmds.addAttr("T", ln="w0", at="double")
+        self.assertTrue(inspect.ismethod(t.lock))
+        cmds.aliasAttr("lock", "T.w0")
+        self.assertIs(type(t.lock), _MethodPlug)
+        cmds.undo()  # the alias undone: the method again
+        self.assertTrue(inspect.ismethod(t.lock))
+        cmds.redo()
+        self.assertIs(type(t.lock), _MethodPlug)
+        cmds.aliasAttr("unlock", "T.lock")  # renamed: the new name is the plug
+        self.assertTrue(inspect.ismethod(t.lock))
+        self.assertIs(type(t.unlock), _MethodPlug)
+        cmds.aliasAttr("T.unlock", remove=True)
+        self.assertTrue(inspect.ismethod(t.unlock))
+        self.assertIs(t.lock(), t)  # the methods still run
+        self.assertIs(t.unlock(), t)
+
+    def test_a_compound_childs_alias_on_a_plug(self):
+        cmds.addAttr("T", ln="pair", at="compound", nc=2)
+        cmds.addAttr("T", ln="pa", at="double", p="pair")
+        cmds.addAttr("T", ln="pb", at="double", p="pair")
+        cmds.aliasAttr("get", "T.pa")
+        child = self.t.pair.get
+        self.assertIs(type(child), _MethodPlug)
+        self.assertEqual(child.get_name(), "pa")
+        child << 2.0
+        self.assertEqual(cmds.getAttr("T.pa"), 2.0)
+        self.assertEqual(list(self.t.pair.get()), [2.0, 0.0])  # brackets: the method
+
+    def test_a_node_without_aliases_reads_one_short_list(self):
+        """the gate: a bare miss on a node with no alias reads the alias list
+        once (empty), never findAlias."""
+        calls = []
+
+        class _Fn:
+            def hasAttribute(self, name):  # noqa: N802
+                calls.append("has")
+                return False
+
+            def getAliasList(self):  # noqa: N802
+                calls.append("list")
+                return ()
+
+        node = _stand_in(Transform)
+        vars(node)["_fn_set"] = _Fn()
+        self.assertTrue(inspect.ismethod(node.serialize))
+        self.assertEqual(calls, ["has", "list"])
 
 
 class TestTheUnderscoreProbe(_Case):
@@ -433,6 +507,11 @@ class _CountingFn:
     def hasAttribute(self, name):  # noqa: N802
         self.checks += 1
         return False
+
+    def getAliasList(self):  # noqa: N802
+        # a miss reads the aliases too (an alias counts as an attribute, user
+        # decision 2026-10-16): none here
+        return ()
 
 
 def _stand_in(cls):

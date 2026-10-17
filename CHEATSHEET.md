@@ -355,9 +355,10 @@ attribute, `ctl.lock` is the bound method. Assigning to a method name never
 replaces the method: with the attribute it is `<<`, without one it raises
 (to patch a method, patch the class). Every public method of every node and
 plug class follows the rule, a node class you write included. An alias
-(`aliasAttr`, a blendShape target) is not an attribute to the rule:
-`Plug(ctl.find_attr("alias"))` reaches it. Code that reached such an
-attribute through `find_attr` keeps working.
+counts as an attribute (`aliasAttr`, a blendShape target): a target named
+`delete` is the plug `bs.delete` (`bs.delete << 0.5`), and `bs.delete()`
+still deletes the node; an alias of a compound's child does the same on the
+plug.
 
 Python's other names keep their meaning: a property setter runs
 (`a.namespace = "ns"`), a property or another class member hides a Maya

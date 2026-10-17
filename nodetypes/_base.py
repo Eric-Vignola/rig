@@ -158,16 +158,30 @@ def _as_method_plug(plug: Any, cls: type, bound: Any) -> Any:
     return plug
 
 
+def _alias_target(aliases: tuple, name: str) -> "str | None":
+    """The attribute the alias `name` stands for in `aliases` (a fn set's
+    ``getAliasList()``: ``(("smile", "weight[0]"), ...)``), or None."""
+    for pair in aliases:
+        if pair[0] == name:
+            return pair[1]
+    return None
+
+
 def _node_has_attr(d: dict, name: str) -> bool:
     """True if the node of instance dict `d` is a live, built node with a Maya
     attribute `name` (its held fn set's ``hasAttribute``, after its handle's
     ``isValid``: a node a new scene freed is never asked; a deleted or
-    half-built node is False)."""
-    return (
-        d.get("_attr_dict") is not None
-        and d["_objhandle"].isValid()
-        and d["_fn_set"].hasAttribute(name)
-    )
+    half-built node is False), or an alias `name` (``aliasAttr``, a blendShape
+    target: an alias counts as an attribute for the name rule, user decision
+    2026-10-16). The alias list is read only after a miss, and is empty on most
+    nodes (~0.1 us)."""
+    if d.get("_attr_dict") is None or not d["_objhandle"].isValid():
+        return False
+    fn = d["_fn_set"]
+    if fn.hasAttribute(name):
+        return True
+    aliases = fn.getAliasList()
+    return bool(aliases) and _alias_target(aliases, name) is not None
 
 
 class _PlugMethod:
@@ -203,12 +217,14 @@ class _PlugMethod:
             if k and (k & 1 or co[i + 1] & 1):
                 return bound
         d = inst.__dict__
-        if (
-            d.get("_attr_dict") is not None
-            and d["_objhandle"].isValid()
-            and d["_fn_set"].hasAttribute(self.name)
-        ):
-            return _METHOD_PLUG_HOOK(inst, self.name, bound)
+        if d.get("_attr_dict") is not None and d["_objhandle"].isValid():
+            # a Maya attr of that name, or an alias (`_node_has_attr` inline)
+            fn = d["_fn_set"]
+            if fn.hasAttribute(self.name):
+                return _METHOD_PLUG_HOOK(inst, self.name, bound)
+            aliases = fn.getAliasList()
+            if aliases and _alias_target(aliases, self.name) is not None:
+                return _METHOD_PLUG_HOOK(inst, self.name, bound)
         return bound
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -3964,7 +3980,13 @@ def _clash_child(inst: Any, name: str) -> Any:
     if fn is None:
         fn = OpenMaya.MFnDependencyNode(mplug.node())
     if not fn.hasAttribute(name):
-        return None
+        # an alias counts as an attribute (user decision 2026-10-16): the child
+        # it stands for, if it is one of this compound's (by its long name)
+        aliases = fn.getAliasList()
+        target  = _alias_target(aliases, name) if aliases else None
+        if target is None:
+            return None
+        name = target
     # the node has an attribute of that name: a child of this compound? Read
     # from the child cache `Attribute.__getattr__` keeps, built here without its
     # raise on a miss (the raise formats full_name: ~5 us)
