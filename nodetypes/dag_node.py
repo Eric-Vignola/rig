@@ -5,7 +5,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type
-from rig.nodetypes.dg_node import _PLAIN_CREATES, DGNode
+from rig.nodetypes.dg_node import _PLAIN_CREATES, _ensure_valid, DGNode
 
 
 def _parent_valid(mobject) -> bool:
@@ -74,7 +74,7 @@ class DAGNode(DGNode):
                 d["_mobject"]  = d["_mdagpath"].node()
             d["_fn_set"]    = self.FN_SET(d["_mdagpath"])
             d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
-        self.is_type(self.name, exact_type=False, failfast=True)
+        type(self).is_type(self.name, exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
 
     # --- creation
@@ -107,7 +107,7 @@ class DAGNode(DGNode):
     @property
     def mdagpath(self) -> str:
         """Returns the MDagpath object."""
-        self.ensure_valid()
+        _ensure_valid(self)
         d = self.__dict__
         if "_taken_mdagpath" in d:
             self._retake_path()

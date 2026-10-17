@@ -117,7 +117,7 @@ class Joint(Transform):
             kwargs: Keyword arguments passed to `traverse` method.
         """
         kwargs["match_name"] = match_name
-        it                   = self.iter_joints(**kwargs)
+        it                   = type(self).iter_joints(self, **kwargs)
         return next(it, None)
 
     def find_skinclusters(self, recursive: bool = False) -> list[DGNode]:

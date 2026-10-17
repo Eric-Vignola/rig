@@ -341,11 +341,12 @@ class BlendShape(Deformer):
         if target_mesh:
             kwargs           = {"include_uvs": False, "world_space": False}
             target_mesh      = target_mesh[0].node
-            target_mesh_data = target_mesh.serialize(**kwargs)
+            target_mesh_data = type(target_mesh).serialize(target_mesh, **kwargs)
             if not original_mesh_data:
                 original_mesh_data = self.get_original_geometries()
                 if original_mesh_data:
-                    original_mesh_data = original_mesh_data[0].serialize(**kwargs)
+                    original = original_mesh_data[0]
+                    original_mesh_data = type(original).serialize(original, **kwargs)
 
             if original_mesh_data:
                 target_data = MorphData.from_mesh_data(

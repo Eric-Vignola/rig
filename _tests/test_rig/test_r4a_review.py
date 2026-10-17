@@ -480,21 +480,20 @@ class TestSetattrSugarState(_SceneCase):
         curve = cmds.curve(point=[(0, 0, 0), (1, 0, 0)], degree=1)
         shape = Node(cmds.listRelatives(curve, shapes=True)[0])
         maker = Node(cmds.createNode("makeNurbCircle", name="mk"))
-        with self.assertRaisesRegex(
-            AttributeError, r"use Plug\(node\.find_attr\('create'\)\) << value"
-        ):
-            shape.create = maker.outputCurve
-        # the advised line
-        Plug(shape.find_attr("create")) << maker.outputCurve
+        # re-pinned (user decision 2026-10-16, name clashes): the attr is the plug, `=` its `<<`
+        shape.create = maker.outputCurve
         self.assertEqual(
             cmds.listConnections(f"{shape}.create", source=True, plugs=True),
             ["mk.outputCurve"],
         )
         cmds.addAttr("mk", longName="rename", attributeType="double")
-        with self.assertRaisesRegex(AttributeError, r"Plug\(node\.find_attr\('rename'\)\)"):
-            maker.rename = 3
-        Plug(maker.find_attr("rename")) << 3
+        maker.rename = 3
         self.assertEqual(cmds.getAttr("mk.rename"), 3.0)
+        maker.rename << 4
+        self.assertEqual(maker.rename >> None, 4.0)
+        # the old advice still works
+        Plug(maker.find_attr("rename")) << 5
+        self.assertEqual(cmds.getAttr("mk.rename"), 5.0)
 
 
 class TestSiblingLookupGivesMayaAttributes(_PlugCase):

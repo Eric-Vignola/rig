@@ -4,7 +4,6 @@ import functools
 import inspect
 import re
 from functools import total_ordering
-from types import FunctionType, MethodType
 from typing import Any, Sequence
 
 from maya import cmds
@@ -12,6 +11,7 @@ from maya.api import OpenMaya
 from rig._internal.journal import barrier, cmds_edit, outside, rig_code, statement, user_call
 from rig.nodetypes._base import (
     _MISSING,
+    _as_method_plug,
     _attr_handle,
     _attr_mobject,
     _attr_state,
@@ -31,7 +31,10 @@ from rig.nodetypes._base import (
     _hold_like,
     _hold_path,
     _new_attr,
+    _node_has_attr,
     _node_from_str,
+    _PLUG_DESCRIPTORS,
+    _raw_function,
     _node_lock_refusal,
     _refuse_locked_node,
     _queried_data_type,
@@ -850,7 +853,7 @@ class DGNode(Node):
                 d["_mobject"] = sel.getDependNode(0)
             d["_fn_set"]    = self.FN_SET(d["_mobject"])
             d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
-        self.is_type(self.name, exact_type=False, failfast=True)
+        type(self).is_type(self.name, exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
 
     # --- dunders
@@ -878,7 +881,10 @@ class DGNode(Node):
         """Returns the Maya attribute ``attr_name`` as a DSL :class:`Plug` owned
         by this node (``node.tx.node is node``).
 
-        Only runs once normal lookup failed, so Python members always win. A
+        Only runs once normal lookup failed, so Python members win, except a
+        public method: a node with a Maya attr of that name gives its plug
+        (``node.lock``, a ``_MethodPlug`` whose call ``node.lock()`` is the
+        method; see ``rig.nodetypes._base._PlugMethod``). A
         ``_`` name (Python probes dunders constantly: ``__deepcopy__``,
         ``__array__``, ``__apiobject__``) resolves only to a Maya attr that
         really exists on a live node; the node's handle is read first, it is
@@ -919,17 +925,22 @@ class DGNode(Node):
         fresh = False
         if attr is None:
             try:
-                find = self.find_attr
-                if (
-                    type(find) is MethodType
-                    and find.__func__ is _FIND_ATTR
-                    and find.__self__ is self
-                ):
+                # read off the class and this node's own dict, never as
+                # ``self.find_attr``: that is a plug method (on a node with a
+                # Maya attr ``find_attr`` it would build that plug through here)
+                cls  = type(self)
+                find = d.get("find_attr")
+                if find is None and cls.__getattribute__ is not _OBJECT_GETATTRIBUTE:
+                    # a class with a lookup of its own: its answer
+                    find = self.find_attr
+                if find is None and cls.find_attr is _FIND_ATTR:
                     # DGNode's own lookup, which also says whether it built the
                     # attr from its MPlug just now (see below)
                     attr, fresh = DGNode._find_attr_fresh(self, attr_name)
-                else:
+                elif find is not None:
                     attr = find(attr_name)
+                else:
+                    attr = cls.find_attr(self, attr_name)
             except AttributeError as error:
                 if attr_name in _COMPONENT_TOKENS:
                     from rig._internal.node import _component_fallback
@@ -999,10 +1010,11 @@ class DGNode(Node):
         runs (``node.namespace = "ns"``), a read-only property raises, a data
         default declared on the class (``side = None`` in a subclass body) is
         shadowed on the instance, so a node class keeps Python state under the
-        names it declares (``self.side = "L"``), and a method or other class
-        member raises (``Plug(node.find_attr("rename")) << value`` reaches a
-        Maya attr of such a name), unless a callable replaces a method on this
-        instance (``node.get_parent = f``, ``mock.patch.object(node, ...)``). A
+        names it declares (``self.side = "L"``), and another class member
+        raises. A public method's name follows the plug-method rule: with a Maya
+        attr of that name, ``node.lock = 1`` is ``node.lock << 1``; without one it
+        raises, as assignment is strict: a method is never replaced on one node
+        (patch the class, or write ``vars(node)``). A
         ``_`` name is Python state unless the live node has a Maya attr of that
         name (``node.__parked__ = 4.0``). Any other name must be a Maya attr: a
         typo raises "Attribute not found" instead of adding a Python attribute,
@@ -1010,11 +1022,25 @@ class DGNode(Node):
         """
         d = self.__dict__
         # the node state, and a Python attribute already stored on this instance
-        # (``vars(node)["tag"] = ...``, a method mock.patch.object patched)
+        # (``vars(node)["tag"] = ...``, a method a test patched in vars(node))
         if name in _NODE_STATE or name in d:
             d[name] = value
             return
         found = _class_attr(type(self), name)
+        if isinstance(found, _PLUG_DESCRIPTORS):
+            # a plug method (user decision 2026-10-16, strict): ``node.x = v`` is
+            # ``node.x << v`` when the node has the Maya attr ``x`` (``node.x``
+            # is then its plug); else it raises: a method is never replaced on
+            # one node (patch the class, or write vars(node))
+            if _node_has_attr(d, name):
+                type(self).__getattr__(self, name) << value
+                return
+            _ensure_valid(self)
+            raise AttributeError(
+                f"{type(self).__name__}.{name} is a method and {self} has no Maya "
+                f"attr {name!r}: {self}.{name} = value sets that attr once it exists; "
+                f"a method is not replaced on a node"
+            )
         if found is not _MISSING:
             if name[:1] == "_" or hasattr(type(found), "__set__"):
                 # a property setter runs, a read-only one raises, a private
@@ -1025,13 +1051,6 @@ class DGNode(Node):
                 else:
                     with outside():
                         object.__setattr__(self, name, value)
-                return
-            # a callable shadows a method on this instance (monkeypatching,
-            # ``mock.patch.object(node, "get_parent")``)
-            if callable(value) and isinstance(
-                found, (FunctionType, classmethod, staticmethod)
-            ):
-                d[name] = value
                 return
             # a data default the class declares (not callable, not a
             # descriptor): Python state of the instance
@@ -1088,8 +1107,8 @@ class DGNode(Node):
     @property
     def mobject(self) -> OpenMaya.MObject:
         """Returns the mobject."""
-        self.ensure_valid()
-        return self._mobject
+        _ensure_valid(self)
+        return self.__dict__["_mobject"]
 
     @property
     def node_type(self) -> str:
@@ -1105,8 +1124,8 @@ class DGNode(Node):
     @property
     def fn_set(self) -> OpenMaya.MFnBase:
         """Returns the OpenMaya function set."""
-        self.ensure_valid()
-        return self._fn_set
+        _ensure_valid(self)
+        return self.__dict__["_fn_set"]
 
     @property
     def is_valid(self) -> bool:
@@ -1930,7 +1949,7 @@ class DGNode(Node):
 
         # compound attr are not actually created until all child attrs are added
         # there fore quiet is set to True so that find_attr won't fail
-        return self.find_attr(long_name, quiet=True)
+        return type(self).find_attr(self, long_name, quiet=True)
 
     def delete_attr(self, attr: Attribute | str) -> bool:
         """Deletse an attribute of a given name. Thin wrapper of cmds.deleteAttr()."""
@@ -2039,9 +2058,28 @@ _PLAIN_CREATES.add(DGNode._create.__func__)
 _DG_POST_CREATE = DGNode.post_create.__func__
 
 # DGNode's own `find_attr`: `DGNode.__getattr__` asks its lookup directly (which
-# says whether it built the attr just now) when `node.find_attr` is this one, read
-# before any patch of it can exist
-_FIND_ATTR = DGNode.__dict__["find_attr"]
+# says whether it built the attr just now) when the class's `find_attr` is this
+# one, read before any patch of it can exist (the function: class access gives
+# it, see `_raw_function`)
+_FIND_ATTR           = _raw_function(DGNode.__dict__["find_attr"])
+_OBJECT_GETATTRIBUTE = object.__dict__["__getattribute__"]
+_ENSURE_VALID        = _raw_function(DGNode.__dict__["ensure_valid"])
+
+
+def _ensure_valid(node: Any) -> None:
+    """``node.ensure_valid()`` for rig's hot readers (``fn_set``, ``mobject``,
+    ``mdagpath`` ...): DGNode's own check inline (the handle), else the method
+    the node's class or the node itself has, read off the class (a public
+    method's instance access is a plug method's check)."""
+    d      = node.__dict__
+    handle = d.get("_objhandle")
+    if (
+        handle is None
+        or not handle.isValid()
+        or type(node).ensure_valid is not _ENSURE_VALID
+        or "ensure_valid" in d
+    ):
+        node.ensure_valid()
 
 # Node classes whose data type fallback hook only reads the scene before it calls
 # DGNode's, mapped to that hook. With DGNode's own hook nothing runs in between.
@@ -2071,5 +2109,29 @@ _base_module._KEEPS_QUERY = _keeps_query
 _base_module._DG_NAMING   = (
     DGNode.__dict__["name"],
     DGNode.__dict__["fn_set"],
-    DGNode.__dict__["ensure_valid"],
+    _ENSURE_VALID,
 )
+
+
+# the class of a node-level method plug: rig._internal.plug._MethodPlug
+_METHOD_PLUG_CLASS = None
+
+
+def _method_plug(node: Any, name: str, bound: Any) -> Any:
+    """``node.<name>`` where the node has a Maya attr ``name`` and its class a
+    public method of that name: the plug ``node.<name>`` builds (the same
+    lookup: owner, handles and path naming are a plug's), made a
+    ``_MethodPlug`` whose call runs `bound`. When no exact Plug comes out (a
+    child of an unindexed multi compound of that name, a ComponentPlug, a
+    lookup that raises), `bound`: the bare name is then the method, and
+    ``node.<name>()`` keeps working."""
+    try:
+        plug = type(node).__getattr__(node, name)
+    except Exception:
+        return bound
+    if type(plug) is not _PLUG_CLASS or _METHOD_PLUG_CLASS is None:
+        return bound
+    return _as_method_plug(plug, _METHOD_PLUG_CLASS, bound)
+
+
+_base_module._METHOD_PLUG_HOOK = _method_plug

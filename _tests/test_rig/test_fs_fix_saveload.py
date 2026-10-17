@@ -184,21 +184,24 @@ class TestASkinLoadOfWhatItHolds(_Case):
 
 class TestAShadowedAttribute(_Case):
     def test_a_warning_names_find_attr(self):
+        # re-pinned (user decision 2026-10-16, name clashes): a method name no longer shadows (see
+        # test_a_method_name_is_no_shadow); a property still does: node.is_locked
+        # is its value
         ctl = Node.create("transform", name="ctl")
         with self.assertLogs("rig.spec._base", level=logging.WARNING) as logs:
-            plug = ctl << Bool("lock")
-        self.assertEqual(str(plug), "ctl.lock")
+            plug = ctl << Bool("is_locked")
+        self.assertEqual(str(plug), "ctl.is_locked")
         text = "\n".join(logs.output)
-        self.assertIn("'lock' is a Python member of Transform", text)
-        self.assertIn("Plug(ctl.find_attr('lock'))", text)
-        Plug(ctl.find_attr("lock")) << 1
-        self.assertTrue(cmds.getAttr("ctl.lock"))
+        self.assertIn("'is_locked' is a Python member of Transform", text)
+        self.assertIn("Plug(ctl.find_attr('is_locked'))", text)
+        Plug(ctl.find_attr("is_locked")) << 1
+        self.assertTrue(cmds.getAttr("ctl.is_locked"))
 
     def test_the_short_name_too(self):
         ctl = Node.create("transform", name="ctl")
         with self.assertLogs("rig.spec._base", level=logging.WARNING) as logs:
-            ctl << Float("lockWeight", sn="lock")
-        self.assertIn("'lock' is a Python member of Transform", "\n".join(logs.output))
+            ctl << Float("lockedWeight", sn="is_locked")
+        self.assertIn("'is_locked' is a Python member of Transform", "\n".join(logs.output))
 
     def test_no_warning_for_a_free_name_or_a_redeclaration(self):
         """guard."""
@@ -208,10 +211,25 @@ class TestAShadowedAttribute(_Case):
             with self.assertLogs(logger, level=logging.WARNING):
                 ctl << Float("weight")
         with self.assertLogs(logger, level=logging.WARNING):
-            ctl << Bool("lock")
+            ctl << Bool("is_locked")
         with self.assertRaises(AssertionError):
             with self.assertLogs(logger, level=logging.WARNING):
-                ctl << Bool("lock")  # re-declared: kept, no second warning
+                ctl << Bool("is_locked")  # re-declared: kept, no second warning
+
+    def test_a_method_name_is_no_shadow(self):
+        """user decision 2026-10-16, name clashes: node.lock is the plug once the node
+        has the attr, node.lock() the method."""
+        ctl = Node.create("transform", name="ctl")
+        logger = logging.getLogger("rig.spec._base")
+        with self.assertRaises(AssertionError):
+            with self.assertLogs(logger, level=logging.WARNING):
+                ctl << Bool("lock")
+        self.assertIsInstance(ctl.lock, Plug)
+        ctl.lock << 1
+        self.assertTrue(ctl.lock >> None)
+        self.assertIs(ctl.lock(), ctl)
+        self.assertTrue(ctl.is_locked)
+        ctl.unlock()
 
 
 class TestAListOfMethods(_Case):

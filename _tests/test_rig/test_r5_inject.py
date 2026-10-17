@@ -671,7 +671,9 @@ _ORACLE_PATH = os.path.join(
 
 _DATA_TYPE_CODE = Attribute.__dict__["data_type"].fget.__code__
 _FULL_NAME_CODE = Attribute.__dict__["full_name"].fget.__code__
-_LISTING_CODE   = Attribute.__dict__["get_connected_attrs"].__code__
+# re-pinned (user decision 2026-10-16, name clashes): the class dict holds a
+# plug method; class access is the function
+_LISTING_CODE   = Attribute.get_connected_attrs.__code__
 _CHOICE_HOOK    = Choice.__dict__["_attr_data_type_fallback"].__code__
 
 

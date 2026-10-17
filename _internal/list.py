@@ -63,7 +63,7 @@ import contextlib
 import functools
 import numbers
 import operator
-from types import MethodType
+from types import FunctionType, MethodType
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
 import numpy as np
@@ -80,7 +80,10 @@ from rig.nodetypes._base import (
     _is_enum_attr,
     _is_text,
     _is_uuid,
+    _METHOD_LOAD,
+    _MethodAttribute,
     _MISSING,
+    _GETFRAME,
     _plug_identity_name,
     _same_plug,
     Attribute,
@@ -102,7 +105,7 @@ from rig._internal.operands import (
     operator_where,
     REFLECTED,
 )
-from rig._internal.plug import Plug
+from rig._internal.plug import _MethodPlug, Plug
 from rig._internal.types import _is_attribute_spec, _is_components, _is_membership
 from rig.nodetypes.errors import AmbiguousNodeError
 from rig._internal.undo import _undo_chunk
@@ -267,10 +270,30 @@ class List(list):
         found = _values_list(
             getattr(x, name) if isinstance(x, (Plug, Node)) else x for x in self
         )
-        if found and all(type(x) is MethodType for x in found):
+        if not found:
+            return found
+        # the plug-method rule over a List: with brackets it is the method
+        # (``List(nodes).lock()``, the caller's frame on a method load: each
+        # method plug stands for its method), bare it is the plugs if every
+        # element has the Maya attr
+        f  = _GETFRAME(1)
+        co = f.f_code.co_code
+        i  = f.f_lasti
+        k  = _METHOD_LOAD[co[i]]
+        if k and (k & 1 or co[i + 1] & 1):
+            found = _values_list(
+                x.__dict__["_method"] if isinstance(x, _METHOD_PLUGS) else x for x in found
+            )
+        methods = [type(x) is MethodType or type(x) is FunctionType for x in found]
+        if all(methods):
             # a method of every element (``List(shapes).save``): a List of bound
             # methods, which a call refuses with the loop to write
             return _Methods(found, name)
+        if any(methods):
+            plugs = [k for k, x in enumerate(found) if isinstance(x, _METHOD_PLUGS)]
+            if plugs:
+                # only some elements have the Maya attr: neither plugs nor methods
+                raise AttributeError(_mixed_methods_text(name, plugs, len(found)))
         return found
 
     @statement
@@ -883,6 +906,25 @@ def _private_plug(x: Any, name: str) -> Any:
         return type(x).__getattr__(x, name)
     except AttributeError:
         return None
+
+
+# the method plugs a broadcast can gather (`List.__getattr__`)
+_METHOD_PLUGS = (_MethodPlug, _MethodAttribute)
+
+
+def _mixed_methods_text(name: str, plugs: list, count: int) -> str:
+    """The refusal of ``List(items).<name>`` where elements `plugs` (indices) have
+    a Maya attr `name` (their plugs) and the others do not (their methods)."""
+    others = [k for k in range(count) if k not in plugs]
+    def spell(ids: list) -> str:
+        return ", ".join(f"[{k}]" for k in ids)
+    return (
+        f"List(...).{name}: {name} is a method of each element, and a method does not "
+        f"broadcast over a List (plugs and values do); element(s) {spell(plugs)} have a "
+        f"Maya attr {name!r} (their plugs), {spell(others)} do not (their methods): "
+        f"give every element the attr for the plugs, or call the method on each one: "
+        f"[x.{name}(...) for x in items]"
+    )
 
 
 class _Methods(List):

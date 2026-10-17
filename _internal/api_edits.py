@@ -40,7 +40,8 @@ _FREE         = OpenMaya.MPlug.kFreeToChange
 _add          = journal.add
 
 # bound at the first fast-path call (`_bind`), once rig's classes exist: the exact plug
-# classes (Attribute, Plug; a subclass, a ComponentPlug included, takes cmds) and rig's
+# classes (Attribute, Plug and their method plugs, `_MethodPlug` / `_MethodAttribute`;
+# another subclass, a ComponentPlug included, takes cmds) and rig's
 # own node naming (the `name` / `fn_set` / `ensure_valid` a node class must keep)
 _API_CLASSES: tuple = ()
 _NAMES:       tuple = ()
@@ -53,7 +54,7 @@ def _bind() -> None:
     global _API_CLASSES, _NAMES, _FN_SETS, _ENSURE, _BOUND
     global _names_own_plug, _attr_mobject, _ready
 
-    from rig._internal.plug import Plug
+    from rig._internal.plug import _MethodPlug, Plug
     from rig.nodetypes import _base
     from rig.nodetypes.dag_node import DAGNode
     from rig.nodetypes.dg_node import DGNode
@@ -62,10 +63,10 @@ def _bind() -> None:
 
     _names_own_plug = _base._names_own_plug
     _attr_mobject   = _base._attr_mobject
-    _API_CLASSES    = (_base.Attribute, Plug)
+    _API_CLASSES    = (_base.Attribute, Plug, _MethodPlug, _base._MethodAttribute)
     _NAMES          = (DGNode.__dict__["name"], DAGNode.__dict__["name"])
     _FN_SETS        = (DGNode.__dict__["fn_set"], Mesh.__dict__["fn_set"])
-    _ENSURE         = DGNode.__dict__["ensure_valid"]
+    _ENSURE         = _base._raw_function(DGNode.__dict__["ensure_valid"])
     _BOUND          = True
 
 

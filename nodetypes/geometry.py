@@ -26,6 +26,7 @@ from numpy.typing import ArrayLike
 from rig._internal.journal import cmds_edit
 from rig.nodetypes._base import _cast, Attribute
 from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.dg_node import _ensure_valid
 
 if TYPE_CHECKING:
     from cgmath.geometry import GeomSubsetData
@@ -228,7 +229,7 @@ class Geometry(DAGNode):
     @property
     def local_shape_attr(self) -> Attribute:
         """Returns the local shape out attribute."""
-        self.ensure_valid()
+        _ensure_valid(self)
         if not self.__local_shape_attr:
             attr_name               = cmds.deformableShape(self.name, localShapeOutAttr=True)[0]
             self.__local_shape_attr = self.find_attr(attr_name)
@@ -237,7 +238,7 @@ class Geometry(DAGNode):
     @property
     def world_shape_attr(self) -> Attribute:
         """Returns the world shape out attribute."""
-        self.ensure_valid()
+        _ensure_valid(self)
         if not self.__world_shape_attr:
             attr_name               = cmds.deformableShape(self.name, worldShapeOutAttr=True)[0]
             self.__world_shape_attr = self.find_attr(attr_name)[0]
@@ -300,7 +301,7 @@ class Geometry(DAGNode):
                 answers no node (``['']``), as it stores no tag on a referenced
                 node (runs/r5/TAGLEFT/fix/probe_injnode.txt).
         """
-        self.ensure_valid()
+        _ensure_valid(self)
         nodes = cmds.deformableShape(self.long_name, tagInjectionNode=True)
         if nodes and not nodes[0]:
             raise RuntimeError(

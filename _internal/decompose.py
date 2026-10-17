@@ -131,8 +131,8 @@ def _node_is_transform(node: Any) -> bool:
     Uses :meth:`DGNode.has_base_type` (canonical API) instead of raw
     MSelectionList / MFn introspection.
     """
-    if hasattr(node, "has_base_type"):
-        node.ensure_valid()
+    if hasattr(type(node), "has_base_type"):  # the class: no plug-method check
+        type(node).ensure_valid(node)
     else:
         try:
             node = _cast(str(node))
@@ -152,7 +152,7 @@ def _resolve_rotate_order(node: Any) -> int:
     rather than ``cmds.getAttr`` with string-formatted names.
     """
     try:
-        wrapped = node if hasattr(node, "find_attr") else _cast(str(node))
+        wrapped = node if hasattr(type(node), "find_attr") else _cast(str(node))
         return int(wrapped.find_attr("rotateOrder").get())
     except (RuntimeError, AttributeError):
         return 0
@@ -236,7 +236,7 @@ def _setattr_disconnect(plug_str: str, *values: float) -> None:
     _disconnect_compound(plug_str)
     try:
         plug_attr = Attribute(plug_str)
-        plug_attr.set(*values)
+        type(plug_attr).set(plug_attr, *values)
     except (RuntimeError, Exception):
         pass
 
@@ -258,7 +258,7 @@ def _apply_full_decomposition(
     Uses :meth:`DGNode.find_attr` (canonical API) to obtain attribute
     plugs by name rather than building ``f"{node}.t"`` strings.
     """
-    wrapped = node if hasattr(node, "find_attr") else _cast(str(node))
+    wrapped = node if hasattr(type(node), "find_attr") else _cast(str(node))
 
     def _set_channel(attr_name: str, values: Any) -> None:
         try:
@@ -269,7 +269,7 @@ def _apply_full_decomposition(
             return
         _disconnect_compound(channel.full_name)
         try:
-            channel.set(*values)
+            type(channel).set(channel, *values)
         except (RuntimeError, Exception):
             pass
 
@@ -335,7 +335,7 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
         if dst_data_type == "matrix":
             _disconnect_compound(plug_str)
             try:
-                dst.set(*m4x4.ravel().tolist(), type="matrix")
+                type(dst).set(dst, *m4x4.ravel().tolist(), type="matrix")
             except RuntimeError as e:
                 LOGGER.debug("matrix set on %s failed: %s", dst, e)
             return True

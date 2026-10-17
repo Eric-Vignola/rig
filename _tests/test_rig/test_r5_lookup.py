@@ -697,7 +697,11 @@ class TestALookupOfItsOwn(MayaTestCase):
             self.assertEqual(builds.counts, (2, 0))
             self.assertEqual(str.__str__(plug), "md.input1X")
         node = Node("md")
-        with mock.patch.object(node, "find_attr", wraps=node.find_attr) as patched:
+        # re-pinned (user decision 2026-10-16, name clashes: assignment is
+        # strict, a method is never replaced on one node by assignment): the
+        # instance patch is written to vars(node)
+        patched = mock.Mock(wraps=node.find_attr)
+        with mock.patch.dict(vars(node), find_attr=patched):
             with _Builds() as builds:
                 node.input1Y
             patched.assert_called_once_with("input1Y")

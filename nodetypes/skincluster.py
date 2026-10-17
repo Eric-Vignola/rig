@@ -714,7 +714,7 @@ def _bind_point_count(geom: str) -> int | None:
         else cmds.listRelatives(geom, shapes=True, noIntermediate=True, fullPath=True) or []
     )
     shape = _cast(shapes[0]) if shapes else None
-    if not hasattr(shape, "get_component_mobject"):
+    if not hasattr(type(shape), "get_component_mobject"):
         return None
     comps = shape.get_component_mobject()  # held: an MFnComponent does not keep it alive
     return OpenMaya.MFnComponent(comps).elementCount

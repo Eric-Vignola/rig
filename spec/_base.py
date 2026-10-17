@@ -51,6 +51,7 @@ from rig.nodetypes._base import (
     _attr_state,
     _class_attr,
     _enum_fields,
+    is_plug_method,
     _handle_valid,
     _parse_enum_names,
     _refuse_locked_node,
@@ -106,16 +107,18 @@ _PER_CHILD  = frozenset((
 ))
 
 
-# {(node class, name): True if a Python member of the class has the name}
+# {(node class, name): True if a Python member of the class hides an attr of the name}
 _SHADOWED: Dict[tuple, bool] = {}
 
 
 def _warn_shadowed(node_string: str, node: Any, long_name: str, short_name: Any) -> None:
     """A new attribute whose long or short name is a Python member of the node's class
-    (``lock``, ``save``, ``name``, ``parent`` ...): ``node.<name>`` is that member, never
-    the plug, so the attribute is made and a warning names the way to reach it
-    (``Plug(node.find_attr(name))``). One class lookup per name, for a new attribute
-    only (a re-declaration says nothing)."""
+    that hides it (a property or data: ``name``, ``is_locked`` ...): ``node.<name>`` is
+    that member, never the plug, so the attribute is made and a warning names the way to
+    reach it (``Plug(node.find_attr(name))``). A public method's name hides nothing
+    (``lock``, ``save``: ``node.lock`` is then the plug and ``node.lock()`` the method,
+    see `rig.nodetypes._base._PlugMethod`). One class lookup per name, for a new
+    attribute only (a re-declaration says nothing)."""
     cls = type(node)
     for name in (long_name, short_name):
         if not isinstance(name, str):
@@ -123,7 +126,9 @@ def _warn_shadowed(node_string: str, node: Any, long_name: str, short_name: Any)
         key   = (cls, name)
         known = _SHADOWED.get(key)
         if known is None:
-            known = _SHADOWED[key] = _class_attr(cls, name) is not _MISSING
+            known = _SHADOWED[key] = (
+                _class_attr(cls, name) is not _MISSING and not is_plug_method(cls, name)
+            )
         if not known:
             continue
         LOGGER.warning(
@@ -334,12 +339,12 @@ class _AttrSpec:
         ):
             for child in _get_compound(target):
                 try:
-                    child.set(**kargs)
+                    type(child).set(child, **kargs)
                 except RuntimeError as e:
                     LOGGER.debug("set modifier on %s failed: %s", child, e)
 
         try:
-            target.set(**kargs)
+            type(target).set(target, **kargs)
         except RuntimeError as e:
             LOGGER.debug("set modifier on %s failed: %s", target, e)
         return target
@@ -403,7 +408,7 @@ class _AttrSpec:
                 kargs["multi"] = True
             # Use DGNode.add_attr (rename-safe wrapper that uses self.name).
             kargs.pop("longName", None)
-            added = wrap_node.add_attr(long_name, **kargs)
+            added = type(wrap_node).add_attr(wrap_node, long_name, **kargs)
 
         # ---- Multi pre-sizing ---- #
         if multi and self.size is not None:
