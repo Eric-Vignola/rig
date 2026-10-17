@@ -17,6 +17,9 @@ public name, methods only.
   is kept, and ``mock.patch.object`` restores what it patched.
 * `TestNoShadowingLeft`: ``spec._warn_shadowed``, ``_SHADOWED`` and
   ``is_plug_method`` are gone, and nothing hides a new attribute.
+* `TestUnderscoreRuleOnNodes` / `...OnLists` / `...OnPlugs`: the '_' rule B. A
+  ``_`` name is Python state only if it is rig's own state or its class body
+  declares it; otherwise it is a Maya attr (a plug's child), else it raises.
 """
 
 import functools
@@ -333,3 +336,211 @@ class TestNoShadowingLeft(MayaTestCase):
                     with self.assertLogs(logger, level=logging.WARNING):
                         t << Bool(name)
                 self.assertIsInstance(getattr(t, name), Plug)
+
+
+
+class TestUnderscoreRuleOnNodes(MayaTestCase):
+    """The '_' rule B (user decision 2026-10-16): on a node a '_' name is Python
+    state only if it is rig's node state or its class body (MRO) declares it;
+    otherwise it is the node's Maya attr, else it raises."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_an_undeclared_name_raises(self):
+        cube = cmds.polyCube(name="pCube1", ch=False)[0]
+        t    = Transform.create(name="t")
+        for node, name in ((t, "__tga__"), (t, "_tga"), (Node(cube), "_x")):
+            with self.subTest(node=str(node), name=name):
+                with self.assertRaisesRegex(
+                    AttributeError,
+                    rf"^Transform\.{name}: a '_' name on a node is its class's Python "
+                    rf"state or the node's Maya attr, .*declare it in the class body "
+                    rf"\({name} = None\)",
+                ):
+                    setattr(node, name, 5)
+                self.assertNotIn(name, vars(node))
+                self.assertFalse(hasattr(node, name))
+
+    def test_a_maya_attr_of_that_name_is_set(self):
+        """guard: the Maya attr of a '_' name is the assignment's target."""
+        t = Transform.create(name="t")
+        cmds.addAttr("t", longName="__tga__", attributeType="double")
+        cmds.addAttr("t", longName="_tga", attributeType="double")
+        t.__tga__ = 5
+        t._tga = 6
+        self.assertEqual(cmds.getAttr("t.__tga__"), 5)
+        self.assertEqual(cmds.getAttr("t._tga"), 6)
+        self.assertNotIn("_tga", vars(t))
+
+    def test_a_declared_name_is_python_state(self):
+        """guard: a '_' name the class body (MRO) declares is Python state."""
+        class _Base(Transform):
+            _side = None
+
+            @property
+            def _label(self):
+                return vars(self).get("_label_value")
+
+            @_label.setter
+            def _label(self, value):
+                vars(self)["_label_value"] = value
+
+        class _Ctl(_Base):
+            pass
+
+        ctl = _Ctl._wrap(Transform.create(name="ctl"))
+        cmds.addAttr("ctl", longName="_side", dataType="string")
+        ctl._side = "L"  # declared: Python state, even with a Maya attr of the name
+        self.assertEqual(vars(ctl)["_side"], "L")
+        self.assertEqual(cmds.getAttr("ctl._side"), None)
+        ctl._label = "x"  # a private property's setter runs
+        self.assertEqual(ctl._label, "x")
+
+    def test_rigs_own_state_and_a_name_already_stored(self):
+        """guard: rig's node state and a name in vars(node) are stored."""
+        t = Transform.create(name="t")
+        handle = vars(t)["_objhandle"]
+        t._objhandle = handle
+        self.assertIs(vars(t)["_objhandle"], handle)
+        vars(t)["_mine"] = 1  # the way to keep one on an instance (tests)
+        t._mine = 2
+        self.assertEqual(vars(t)["_mine"], 2)
+
+    def test_a_deleted_a_freed_and_a_half_built_node(self):
+        cmds.undoInfo(state=True, infinity=True)
+        t = Transform.create(name="t")
+        cmds.delete("t")
+        with self.assertRaisesRegex(RuntimeError, "t already deleted!"):
+            t._x = 1
+        cmds.undo()
+        f = Transform.create(name="f")
+        cmds.file(new=True, force=True)
+        with self.assertRaisesRegex(RuntimeError, "already deleted"):
+            f._x = 1
+        half = object.__new__(Transform)
+        with self.assertRaises(AttributeError):
+            half._x = 1
+        self.assertNotIn("_x", vars(half))
+
+    def test_tests_patch_the_class(self):
+        t = Transform.create(name="t")
+        with mock.patch.object(Transform, "_hook", "patched", create=True):
+            self.assertEqual(t._hook, "patched")
+        self.assertFalse(hasattr(t, "_hook"))
+        # a name the class declares can be patched on one instance
+        with mock.patch.object(t, "_attr_data_type_fallback", lambda attr: None):
+            self.assertIn("_attr_data_type_fallback", vars(t))
+        self.assertNotIn("_attr_data_type_fallback", vars(t))
+        with self.assertRaises(AttributeError):
+            with mock.patch.object(t, "_hook", "x", create=True):
+                pass
+        self.assertNotIn("_hook", vars(t))
+
+
+class TestUnderscoreRuleOnLists(MayaTestCase):
+    """A List mirrors the node rule (user decision 2026-10-16)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_an_undeclared_name_raises(self):
+        a = Transform.create(name="a")
+        b = Transform.create(name="b")
+        for items in ([a, b], [a.tx, b.tx], [1.0, 2.0], []):
+            nodes = rig.List(items)
+            with self.subTest(items=[str(x) for x in items]):
+                with self.assertRaisesRegex(AttributeError, r"no element has '_x'"):
+                    nodes._x = 1
+                self.assertNotIn("_x", vars(nodes))
+
+    def test_every_elements_maya_attr_is_set(self):
+        """guard: the broadcast of a '_' name every element has."""
+        a = Transform.create(name="a")
+        b = Transform.create(name="b")
+        for name in ("a", "b"):
+            cmds.addAttr(name, longName="_tag", attributeType="double")
+        rig.List([a, b])._tag = 3
+        self.assertEqual([cmds.getAttr("a._tag"), cmds.getAttr("b._tag")], [3, 3])
+
+    def test_its_own_and_its_declared_state(self):
+        """guard: the List's own state and a subclass's declared state."""
+        class _Sub(rig.List):
+            _extra = None
+
+        a = Transform.create(name="a")
+        nodes = _Sub([a])
+        nodes._extra = 1
+        nodes._parent_multi = None
+        self.assertEqual(vars(nodes)["_extra"], 1)
+        self.assertIn("_parent_multi", vars(nodes))
+
+
+class TestUnderscoreRuleOnPlugs(MayaTestCase):
+    """Plugs follow the same rule (lead extension of the user decision): a '_'
+    name is plug state if rig's or declared, else a child / Maya attr of that
+    name, else it raises."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_a_child_of_that_name_is_set(self):
+        t = Transform.create(name="t")
+        cmds.addAttr("t", longName="pair", attributeType="compound", numberOfChildren=2)
+        cmds.addAttr("t", longName="__child__", attributeType="double", parent="pair")
+        cmds.addAttr("t", longName="other", attributeType="double", parent="pair")
+        pair = t.pair
+        pair.__child__ = 5
+        self.assertEqual(cmds.getAttr("t.__child__"), 5)
+        self.assertNotIn("__child__", vars(pair))
+
+    def test_a_maya_attr_of_the_node_is_set(self):
+        t = Transform.create(name="t")
+        cmds.addAttr("t", longName="_tga", attributeType="double")
+        plug = t.tx
+        plug._tga = 2  # read as plug._tga: the node's attr
+        self.assertEqual(cmds.getAttr("t._tga"), 2)
+        self.assertNotIn("_tga", vars(plug))
+
+    def test_an_undeclared_name_raises(self):
+        t = Transform.create(name="t")
+        for plug in (t.tx, t.translate, t.find_attr("tx")):
+            with self.subTest(plug=type(plug).__name__, name=str(plug)):
+                with self.assertRaisesRegex(
+                    AttributeError, r"\.__child__: a '_' name on a plug is its class's "
+                    r"Python state or a child / Maya attr of that name"
+                ):
+                    plug.__child__ = 5
+                self.assertNotIn("__child__", vars(plug))
+
+    def test_rigs_and_the_declared_plug_state(self):
+        """guard: rig's plug state and a subclass's declared state are stored."""
+        class _StatedPlug(Plug):
+            _extra = None
+
+        t     = Transform.create(name="t")
+        plug  = t.tx
+        owner = vars(plug)["_node"]
+        plug._node = owner  # rig's plug state
+        self.assertIs(vars(plug)["_node"], owner)
+        stated = _StatedPlug(plug.get_mplug())
+        stated._extra = 3
+        self.assertEqual(vars(stated)["_extra"], 3)
+        attr = t.find_attr("tx")
+        attr._fn_set = None
+        self.assertIsNone(vars(attr)["_fn_set"])
+
+    def test_a_component_plug_declares_its_state(self):
+        surface = Node(cmds.sphere(name="s", ch=False)[0]).get_shape()
+        handle  = surface.cv
+        for name in ("_comp_node", "_comp_alias", "_comp_ndims", "_comp_coords"):
+            with self.subTest(name=name):
+                self.assertIn(name, vars(type(handle)))
+                self.assertIn(name, vars(handle))
+        self.assertEqual(str(surface.cv[1, 2]), "sShape.cv[1][2]")
+
+    def test_a_deleted_nodes_plug(self):
+        cmds.undoInfo(state=True, infinity=True)
+        t    = Transform.create(name="t")
+        plug = t.tx
+        cmds.delete("t")
+        with self.assertRaisesRegex(RuntimeError, "already deleted!"):
+            plug.__child__ = 5
+        cmds.undo()

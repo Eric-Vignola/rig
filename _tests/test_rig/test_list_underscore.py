@@ -11,8 +11,8 @@ Maya, though ``Node`` and ``Plug`` resolve such a name (``persp.__is_camera__``)
   leaves ``vars(nodes)`` as it was; the list's own state stays Python state.
 * `TestNotEveryElement`: a name the first element lacks is AttributeError; a name only some
   elements have raises naming the first that lacks it, in any order, and sets nothing; an
-  assignment of a name no element has is Python state, as on a node; a List subclass keeps the
-  private state its class body declares.
+  assignment of a name no element has raises, as on a node (the '_' rule, user decision
+  2026-10-16); a List subclass keeps the private state its class body declares.
 * `TestProbes`: Python's probes (``__deepcopy__``, ``copy.copy``, an empty List, numpy, a
   Python member of the node such as ``_fn_set``) get what they got before, and a probe on a
   long list costs one lookup.
@@ -235,15 +235,20 @@ class TestNotEveryElement(_Case):
                     nodes.__tag__
 
     def test_an_assignment_no_element_has_is_python_state_as_on_a_node(self):
+        # re-pinned (user decision 2026-10-16, the '_' rule B): a '_' name that is
+        # no List state, no class member and no element's Maya attr raises, as on
+        # a node (the typo the pending question was about), and stores nothing
         a, = _tagged("a")
         d = Node.create("transform", name="d")
         nodes = List([d, a])
-        nodes.__tga__ = 5
-        self.assertEqual(vars(nodes)["__tga__"], 5)
-        self.assertEqual(nodes.__tga__, 5)
-        # as a node does (DGNode.__setattr__; whether a typo should raise is pending)
-        d.__tga__ = 5
-        self.assertEqual(vars(d)["__tga__"], 5)
+        with self.assertRaisesRegex(AttributeError, r"no element has '__tga__'"):
+            nodes.__tga__ = 5
+        self.assertNotIn("__tga__", vars(nodes))
+        with self.assertRaises(AttributeError):
+            nodes.__tga__
+        with self.assertRaisesRegex(AttributeError, r"declares no '__tga__'"):
+            d.__tga__ = 5
+        self.assertNotIn("__tga__", vars(d))
 
     def test_a_subclass_keeps_the_private_state_its_class_declares(self):
         # a '_' name a List subclass writes in its __init__ is Python state when
@@ -300,8 +305,11 @@ class TestProbes(_Case):
         with self.assertRaises(AttributeError):
             List([]).__tag__
         empty = List([])
-        empty.__tag__ = 3
-        self.assertEqual(vars(empty)["__tag__"], 3)
+        # re-pinned (user decision 2026-10-16, the '_' rule B): no element has it,
+        # so an assignment raises and stores nothing
+        with self.assertRaisesRegex(AttributeError, r"no element has '__tag__'"):
+            empty.__tag__ = 3
+        self.assertNotIn("__tag__", vars(empty))
 
     def test_never_a_python_member_of_an_element(self):
         a, b = _tagged("a", "b")

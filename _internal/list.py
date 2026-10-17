@@ -311,11 +311,11 @@ class List(list):
         that has a Maya attr of that name (``nodes.__tag__ = 5``). A name only
         some elements have raises AttributeError naming the first that lacks it,
         or its ``already deleted!`` when that one was deleted or freed, in any
-        order, and sets nothing. A name no element has is Python state, as on a
-        node (``node.__parked__ = 4.0``). A ``List`` subclass keeps private state
-        under a ``_`` name by declaring it in its class body (``_extra = None``),
-        as a node class does: else, should every element have a Maya attr of
-        that name, ``self._extra = x`` sets those attrs.
+        order, and sets nothing. A name no element has raises AttributeError,
+        as on a node (the '_' rule, user decision 2026-10-16: ``nodes._tga = 5``;
+        an empty List has no element, so it raises too). A ``List`` subclass
+        keeps private state under a ``_`` name by declaring it in its class body
+        (``_extra = None``), as a node class does.
         """
         if name.startswith("_"):
             if (
@@ -330,11 +330,16 @@ class List(list):
             if plugs is None:
                 # the first element lacks it: a later one that has it raises
                 # (no partial broadcast); else Node's rule (`DGNode.__setattr__`,
-                # its ``_`` branch): a `_` name no element has is Python state.
-                # Should such a typo raise, these two branches change together.
+                # its ``_`` branch, user decision 2026-10-16): a `_` name that
+                # is no List state, no class member and no element's Maya attr
+                # raises
                 _refuse_partial(self, name)
-                object.__setattr__(self, name, value)
-                return
+                raise AttributeError(
+                    f"{type(self).__name__}.{name}: a '_' name on a List is its "
+                    f"class's Python state or every element's Maya attr, and no "
+                    f"element has {name!r}: declare it in the class body "
+                    f"({name} = None) to keep Python state"
+                )
             plugs.__lshift__(value)
             return
         # Broadcast assignment => broadcast inject on each element's plug.
@@ -808,7 +813,7 @@ _LIST_STATE = frozenset(("_parent_multi", "_method"))
 def _private_plugs(items: "List", name: str) -> Optional["List"]:
     """``items.<name>`` for a ``_`` name (``nodes.__tag__``): the List of each
     element's Maya attr of that name, or None (the caller's AttributeError, or,
-    for an assignment, `_refuse_partial` then Python state) when the list is
+    for an assignment, `_refuse_partial` then the '_' rule's raise) when the list is
     empty or its first element is no node or plug with such an attr (see
     `_private_plug`). A Python probe (``__deepcopy__``, ``__array__``) costs
     one lookup, on the first element.
@@ -833,9 +838,9 @@ def _refuse_partial(items: "List", name: str) -> None:
     """For an assignment `_private_plugs` found no broadcast for (its first
     element lacks `name`): raise as `_private_plugs` does for a later element
     when any element has `name`, naming the first element, which lacks it (its
-    ``already deleted!`` when deleted or freed), and return when none has it,
-    which leaves `name` Python state (Node's rule). So ``List([d, a]).__tag__ =
-    5`` raises as ``List([a, d]).__tag__ = 5`` does, whatever the order. Every
+    ``already deleted!`` when deleted or freed), and return when none has it
+    (the caller raises: Node's '_' rule). So ``List([d, a]).__tag__ = 5``
+    raises as ``List([a, d]).__tag__ = 5`` does, whatever the order. Every
     element is read: an assignment is no Python probe."""
     for i, x in enumerate(list.__iter__(items)):
         if i and _private_plug(x, name) is not None:

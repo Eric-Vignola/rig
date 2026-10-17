@@ -4,6 +4,7 @@ from unittest import mock
 
 from maya import cmds
 from rig import lift, Node, Plug
+from rig.nodetypes.transform import Transform
 from rig.spec import Float
 from rig._tests._base import MayaTestCase
 
@@ -91,7 +92,16 @@ class TestNodeAssignmentSugar(MayaTestCase):
         # Internal state (_*) should bypass the inject sugar.
         # re-pinned (round 4a M8, the _dg_node shim it read is gone): a "_" name
         # is stored on the node object, with no Maya attr and no Maya write
-        node = Node.create("transform", name="cube1")
+        # re-pinned (user decision 2026-10-16, the '_' rule B): a node keeps a '_'
+        # name as Python state when its class body declares it; undeclared, with
+        # no Maya attr of that name, it raises
+        class _Stated(Transform):
+            _private = None
+
+        plain = Node.create("transform", name="plain")
+        with self.assertRaisesRegex(AttributeError, r"declares no '_private'"):
+            plain._private = 1
+        node = _Stated._wrap(Node.create("transform", name="cube1"))
         with mock.patch.object(cmds, "setAttr", wraps=cmds.setAttr) as set_attr:
             node._private = 1
         self.assertEqual(vars(node)["_private"], 1)
