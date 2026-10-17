@@ -8,11 +8,13 @@ and the user decision "Deleted nodes in a List + the cmds crash" (2026-10-16).
   ``set_points`` given a Plug or a node (or a list holding one) raise TypeError naming the
   fix (OpenMaya reads a Plug, a str with ``__getitem__``, as a sequence: an access violation).
 * `TestDeletedNodeName`: a deleted or freed node's str is its last known name, marked
-  ("obj1 (deleted)"), its repr ``Transform("obj1", deleted)``; a plug of one has a marked repr;
-  every operation on the node (and a plug's str) still raises "already deleted!".
-* `TestListSkipsDeletedElements`: rig's List operations skip a deleted or freed element (a node,
-  or a plug of one), with ONE warning per statement naming it; a derived List holds rig.skip in
-  its slot, which every List operation leaves alone (chained broadcasts stay aligned).
+  ("obj1 (deleted)"), its repr ``Transform("obj1", deleted)``; a plug of one has a marked str and
+  repr (user decision 6C, 2026-10-17); every operation on the node (and rig's private name reader,
+  `_name_of`) still raises "already deleted!".
+* `TestListSkipsDeletedElements` (re-pinned, user decisions 1A-4A and 6C 2026-10-17, the List
+  rule): every rig operation on a List holding a deleted or freed element (a node, or a plug of
+  one) raises the List error; Python's len(), indexing and iteration answer; an undo makes the
+  List usable again (it skipped the element with one warning per statement).
 * `TestRawCmdsGivenADeletedList`: maya.cmds given a List whose first element is a deleted or
   freed node raises a clean error instead of crashing Maya (select / delete / setAttr / xform /
   parent; deleted to the undo queue, after a flushUndo, a new scene, a file open), in its own
@@ -21,17 +23,19 @@ and the user decision "Deleted nodes in a List + the cmds crash" (2026-10-16).
 Fix round (2026-10-17, the reviews of the robustness run; runs/features/robust/fix):
 
 * `TestAnimCurveOfAFreedPlug`: ``AnimCurve.of`` on a plug of a freed node raises before its
-  MPlug is read (an access violation), and a List skips such elements.
+  MPlug is read (an access violation), and a List holding such elements raises the List error.
 * `TestDataFnSetOfAMatrixAttribute`: ``get_data_fn_set()`` on a matrix attribute reads the
   plug's matrix data (the data handle access-violated).
 * `TestMeshPointsRefuseComponents`: the mesh point methods refuse a Components selection.
 * `TestRawCmdsGivenOtherDeletedElements`, `TestMarkedReprOfOtherKinds`: a Components on a
   deleted shape, a membership token of a deleted layer / material / engine, a List of an element
   method, a bare predicate: marked repr, and maya.cmds given a List of them raises cleanly.
-* `TestRigWrappersGivenADeletedList`: rig's wrappers that forward a user's List to cmds.
+* `TestRigWrappersGivenADeletedList`: rig's wrappers given a user's List raise the List error
+  (positional and keyword arguments), before Maya is called.
 * `TestNoPythonFrame`: a str() / repr() called by C code with no Python frame below it.
-* `TestOneWarningPerStatement`, `TestDeletedElementsFollowUps`: the warning per statement,
-  get() keeping a List, a deleted probe found by identity, nested Lists, hash, Components.
+* `TestOneWarningPerStatement`, `TestDeletedElementsFollowUps` (re-pinned, the List rule): no
+  warning, every statement raises; get() is a numpy array or raises; a deleted probe raises;
+  nested Lists, hash, Components.
 
 Negative control: every test fails on b42933c (runs/features/robust/impl/negctl, and
 runs/features/robust/fix/out/nc_base for the fix round's).
@@ -49,7 +53,8 @@ from maya import cmds
 from maya.api import OpenMaya
 
 import rig
-from rig import AnimCurve, Layer, List, Node, Plug, Tag, skip
+from rig import AnimCurve, Layer, List, Node, Plug, Tag
+from rig.nodetypes._base import _name_of
 from rig.nodetypes import Mesh
 from rig.shade import Blinn
 from rig.spec import Float
@@ -221,9 +226,13 @@ class TestDeletedNodeName(MayaTestCase):
         self.assertEqual(f"{node}", "renamed (deleted)")
         self.assertEqual(repr(node), 'Transform("renamed", deleted)')
         self.assertEqual(repr(plug), 'Plug("obj1.translateX", deleted)')
+        # (re-pinned, user decision 6C 2026-10-17: a plug's str is marked too, the
+        # name it was built with; rig's private name reader raises)
+        self.assertEqual(str(plug), "obj1.translateX (deleted)")
         for label, op in (
             ("get_name", lambda: node.get_name()), ("get_node_type", lambda: node.get_node_type()),
-            ("ty", lambda: node.ty), ("str(plug)", lambda: str(plug)), ("plug.get", lambda: plug.get()),
+            ("ty", lambda: node.ty), ("str(plug)", lambda: _name_of(plug)), ("plug.get", lambda: plug.get()),
+            ("_name_of(node)", lambda: _name_of(node)),
             ("hash", lambda: hash(node)), ("==", lambda: node == node), ("lock", lambda: node.lock()),
             ("in Tag", lambda: node in Tag("probe")), ("<< Float", lambda: node << Float("k")),
         ):
@@ -267,7 +276,14 @@ class TestDeletedNodeName(MayaTestCase):
 
 
 class TestListSkipsDeletedElements(MayaTestCase):
+    """Re-pinned (user decisions 1A-4A and 6C, 2026-10-17, the List rule; the test ids are
+    kept): every rig operation on a List holding a deleted element raises one RuntimeError
+    naming it, before anything is read or written; Python's len(), indexing and iteration
+    answer; an undo that brings the element back makes the List usable again (the robustness
+    run skipped it, with one warning per statement)."""
+
     TEST_START_NEW_SCENE = True
+    USED = r"^List element \[1\] Transform\(\"c1\", deleted\) was deleted: this List can no longer be used; build a new List$"
 
     def setUp(self):
         super().setUp()
@@ -276,118 +292,100 @@ class TestListSkipsDeletedElements(MayaTestCase):
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
         self.ctls = List([Node(n) for n in names])
         self.c0, self.c1, self.c2 = (Node(n) for n in names)
-        cmds.delete("c1")  # the middle one: alignment shows
+        cmds.delete("c1")  # the middle one
 
-    def warned(self, call, count=1):
-        """``call()``'s result; `count` warnings were printed, each naming [1] c1."""
+    def refused(self, call):
+        """``call()`` raises the List error naming [1] c1; nothing was warned."""
         with mock.patch.object(cmds, "warning") as warn:
-            result = call()
-        self.assertEqual(warn.call_count, count)
-        for args in warn.call_args_list:
-            self.assertEqual(args[0][0], "List element [1] c1 was deleted; skipped")
-        return result
+            with self.assertRaisesRegex(RuntimeError, self.USED):
+                call()
+        warn.assert_not_called()
 
     def test_the_element_stays_in_its_slot(self):
+        # Python's len(), indexing and iteration answer (user decision 6C): Maya's
+        # argument readers go through them
         self.assertEqual(len(self.ctls), 3)
         self.assertEqual(
             repr(self.ctls), 'List([Transform("c0"), Transform("c1", deleted), Transform("c2")])'
         )
         self.assertEqual([str(x) for x in self.ctls], ["c0", "c1 (deleted)", "c2"])
+        self.assertEqual(str(self.ctls[1]), "c1 (deleted)")
+        self.assertEqual(len(list(self.ctls)), 3)
 
     def test_an_attribute_broadcast_holds_skip_in_its_slot(self):
-        tx = self.warned(lambda: self.ctls.tx)
-        self.assertEqual(list(tx), [self.c0.tx, skip, self.c2.tx])
-        self.assertEqual(self.warned(lambda: self.ctls["ty"])[1], skip)
-        # a chained broadcast keeps skipping, with no new warning
-        self.warned(lambda: tx << [1.0, 2.0, 3.0], count=0)
-        self.assertEqual((cmds.getAttr("c0.tx"), cmds.getAttr("c2.tx")), (1.0, 3.0))
-        self.assertEqual(self.warned(lambda: tx.get(), count=0), [1.0, skip, 3.0])
-        summed = self.warned(lambda: tx + 1, count=0)
-        self.assertIs(summed[1], skip)
-        self.assertEqual(summed[2].get(), 4.0)
+        self.refused(lambda: self.ctls.tx)
+        self.refused(lambda: self.ctls["ty"])
+        self.refused(lambda: self.ctls[:2])
+        self.refused(lambda: self.ctls[[0, 2]])
 
     def test_inject_and_assignment(self):
-        self.warned(lambda: self.ctls.ty << 5)
-        self.warned(lambda: setattr(self.ctls, "tz", 6))
-        self.warned(lambda: self.ctls.sx << [2, 3, 4])  # pairs stay aligned
-        self.assertEqual([cmds.getAttr(f"c{i}.ty") for i in (0, 2)], [5, 5])
-        self.assertEqual([cmds.getAttr(f"c{i}.tz") for i in (0, 2)], [6, 6])
-        self.assertEqual([cmds.getAttr(f"c{i}.sx") for i in (0, 2)], [2, 4])
-        added = self.warned(lambda: self.ctls << Float("k"))
-        self.assertEqual([str(x) for x in added if x is not skip], ["c0.k", "c2.k"])
-        self.assertIs(added[1], skip)
-        self.warned(lambda: self.ctls.ry << AnimCurve([0, 90], times=[0, 24]))
-        self.assertEqual(sorted(cmds.listConnections("c0.ry", "c2.ry", source=True) or []),
-                         ["c0_rotateY", "c2_rotateY"])
+        self.refused(lambda: self.ctls.ty << 5)
+        self.refused(lambda: setattr(self.ctls, "tz", 6))
+        self.refused(lambda: self.ctls.sx << [2, 3, 4])
+        self.refused(lambda: self.ctls << Float("k"))
+        self.refused(lambda: self.ctls.ry << AnimCurve([0, 90], times=[0, 24]))
+        self.assertEqual([cmds.getAttr(f"c{i}.ty") for i in (0, 2)], [0, 0])
+        self.assertFalse(cmds.attributeQuery("k", node="c0", exists=True))
 
     def test_reads_queries_and_operators(self):
-        self.assertEqual(self.warned(lambda: self.ctls.get()), [self.c0, skip, self.c2])
-        self.assertEqual(self.warned(lambda: self.ctls >> None), [self.c0, skip, self.c2])
-        tx = self.warned(lambda: self.ctls.tx)
-        inputs = self.warned(lambda: tx.get_inputs(), count=0)
-        self.assertEqual((len(inputs), inputs[1]), (3, skip))
-        self.assertEqual(self.warned(lambda: list(-tx), count=0)[1], skip)
-        self.assertEqual(self.warned(lambda: list(tx > 0), count=0)[1], skip)
-        self.assertEqual(self.warned(lambda: list(self.ctls.tx * 2))[1], skip)
-        # a List operand with a deleted element: its row is skipped too
-        with mock.patch.object(cmds, "warning") as warn:
-            rows = List([self.c2.tx, self.c0.tx, self.c0.ty]) + self.ctls.ty
-        self.assertEqual(warn.call_count, 1)  # the operand's broadcast warned
-        self.assertEqual([x is skip for x in rows], [False, True, False])
+        for call in (
+            lambda: self.ctls.get(), lambda: self.ctls >> None, lambda: -self.ctls,
+            lambda: self.ctls > 0, lambda: self.ctls * 2, lambda: 2 * self.ctls,
+            lambda: self.ctls == self.ctls, lambda: self.ctls.get_inputs(),
+            lambda: List([self.c2.tx, self.c0.tx]) + self.ctls, lambda: self.c0.tx << self.ctls,
+        ):
+            self.refused(call)
 
     def test_lock_unlock(self):
-        self.warned(lambda: self.ctls.lock())
-        self.assertEqual(cmds.lockNode("c0", "c2", query=True, lock=True), [True, True])
-        self.warned(lambda: self.ctls.unlock())
+        self.refused(lambda: self.ctls.lock())
+        self.refused(lambda: self.ctls.unlock())
         self.assertEqual(cmds.lockNode("c0", "c2", query=True, lock=True), [False, False])
 
     def test_membership(self):
         layer = Layer.define("L")
-        self.warned(lambda: self.ctls << layer)
-        self.assertEqual(sorted(cmds.editDisplayLayerMembers("L", query=True)), ["c0", "c2"])
-        self.assertIs(self.warned(lambda: self.ctls in layer), True)
-        self.warned(lambda: layer.remove(self.ctls))
+        self.refused(lambda: self.ctls << layer)
+        self.refused(lambda: self.ctls in layer)
+        self.refused(lambda: layer.remove(self.ctls))
+        self.refused(lambda: self.ctls >> Layer())
         self.assertIsNone(cmds.editDisplayLayerMembers("L", query=True))
-        self.assertIs(self.warned(lambda: self.ctls in layer), False)
 
     def test_list_verbs_match_no_deleted_element(self):
-        self.assertIs(self.warned(lambda: self.c2 in self.ctls), True)
-        self.assertEqual(self.warned(lambda: self.ctls.index(self.c2)), 2)
-        self.assertEqual(self.warned(lambda: self.ctls.count("c1")), 0)
-        # re-pinned (fix round 2026-10-17, the same decision): a deleted probe
-        # is found by identity only, never read nor warned for (it raised "c1
-        # already deleted!"): the List's own element object matches, so a List
-        # can drop it; another object of the deleted node matches nothing
+        # in / index / count / remove raise, for a live probe too, and for the
+        # List's own element object (no identity match)
         held = list.__getitem__(self.ctls, 1)
-        self.assertIs(self.warned(lambda: self.c1 in self.ctls, count=0), False)
-        self.assertIs(self.warned(lambda: held in self.ctls, count=0), True)
-        self.assertEqual(self.warned(lambda: self.ctls.index(held), count=0), 1)
-        self.warned(lambda: self.ctls.remove(self.c2))
-        self.assertEqual(len(self.ctls), 2)
-        self.warned(lambda: self.ctls.remove(held), count=0)
-        self.assertEqual(list.__len__(self.ctls), 1)
+        for probe in (self.c2, "c1", self.c1, held):
+            self.refused(lambda: probe in self.ctls)
+            self.refused(lambda: self.ctls.index(probe))
+            self.refused(lambda: self.ctls.count(probe))
+            self.refused(lambda: self.ctls.remove(probe))
+        self.assertEqual(len(self.ctls), 3)
 
     def test_a_plug_of_a_deleted_node(self):
         plugs = List([self.c0.tx, self.c0.ty, Plug("c2.tx")])
         cmds.delete("c0")
-        with mock.patch.object(cmds, "warning") as warn:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r'^List element \[0\] Plug\("c0.translateX", deleted\) belongs to a node that was deleted: '
+            r"this List can no longer be used; build a new List$",
+        ):
             plugs << 7
-        warn.assert_called_once_with(
-            "List elements [0] c0.translateX, [1] c0.translateY were deleted; skipped"
-        )
-        self.assertEqual(cmds.getAttr("c2.tx"), 7)
+        self.assertEqual(cmds.getAttr("c2.tx"), 0)
         self.assertEqual(
             repr(plugs),
             'List([Plug("c0.translateX", deleted), Plug("c0.translateY", deleted), Plug("c2.translateX")])',
         )
 
     def test_one_undo_step(self):
-        self.warned(lambda: self.ctls.tx << [1, 2, 3])
-        self.assertEqual((cmds.getAttr("c0.tx"), cmds.getAttr("c2.tx")), (1, 3))
-        cmds.undo()
-        self.assertEqual((cmds.getAttr("c0.tx"), cmds.getAttr("c2.tx")), (0, 0))
+        # the undo of the delete makes the same List usable again (state-based, 1A);
+        # the redo makes it raise again
+        self.refused(lambda: self.ctls.tx << [1, 2, 3])
         cmds.undo()  # the delete of c1
-        self.assertEqual([str(x) for x in self.ctls], ["c0", "c1", "c2"])
+        self.ctls.tx << [1, 2, 3]
+        self.assertEqual([cmds.getAttr(f"c{i}.tx") for i in range(3)], [1, 2, 3])
+        cmds.delete("c1")  # deleted again
+        self.refused(lambda: self.ctls.tx.get())
+        cmds.undo()
+        self.assertEqual(list(self.ctls.tx.get()), [1, 2, 3])
 
     def test_a_freed_element(self):
         folder = tempfile.mkdtemp(prefix="rig_robust_list_")
@@ -396,12 +394,13 @@ class TestListSkipsDeletedElements(MayaTestCase):
         cmds.file(rename=path)
         cmds.file(save=True, type="mayaAscii", force=True)
         cmds.file(path, open=True, force=True)  # c0 and c2 come back as new nodes
-        live = List([self.c0, Node("c2")])
-        with mock.patch.object(cmds, "warning") as warn:
-            self.assertEqual(list(live.tx), [skip, Node("c2").tx])
-            live.tx << 9
-        self.assertEqual(warn.call_args_list[0][0][0], "List element [0] c0 was deleted; skipped")
-        self.assertEqual((cmds.getAttr("c0.tx"), cmds.getAttr("c2.tx")), (0, 9))
+        with self.assertRaisesRegex(RuntimeError, r"^List element \[0\] Transform\(\"c0\", deleted\) was "
+                                                  r"deleted and freed: a List holds what is in the scene$"):
+            List([self.c0, Node("c2")])
+        freed = r"^List element \[0\] Transform\(\"c0\", deleted\) was deleted and freed: this List"
+        with self.assertRaisesRegex(RuntimeError, freed):
+            self.ctls.tx << 9
+        self.assertEqual(cmds.getAttr("c2.tx"), 0)
 
 
 # --------------------------------------------------------------------- #
@@ -508,7 +507,8 @@ _CURVES_OF = _HEAD + r"""
 class TestAnimCurveOfAFreedPlug(MayaTestCase):
     """``AnimCurve.of(x)`` read the MPlug of a plug whose node a file open or a new scene
     freed (an access violation, or values read from freed memory): it raises "... already
-    deleted!" before the read, and a List skips such elements (the List rule)."""
+    deleted!" before the read, and a List holding such elements raises the List error
+    (re-pinned, user decisions 1A-4A and 6C 2026-10-17: it skipped them)."""
 
     def test_raises_already_deleted_and_a_list_skips(self):
         code, out, err = _in_own_mayapy(_CURVES_OF)
@@ -522,7 +522,11 @@ class TestAnimCurveOfAFreedPlug(MayaTestCase):
                     for message in seen:
                         self.assertRegex(message, r"^RuntimeError: .*already deleted!$")
             with self.subTest(how=how, kind="List"):
-                self.assertEqual(result[f"{how} List"], {"returned List": 50})
+                seen = result[f"{how} List"]
+                self.assertEqual(sum(seen.values()), 50, seen)
+                for message in seen:
+                    self.assertRegex(message, r"^RuntimeError: List element \[0\] .* was deleted and freed: "
+                                              r"this List can no longer be used; build a new List$")
 
 
 _MATRIX_DATA = _HEAD + r"""
@@ -698,12 +702,13 @@ _REPRS = _HEAD + r"""
     token = -Layer("lay")
     t = Node(cmds.createNode("transform", name="t0"))
     named = List([t]).get_name
+    held = List([faces, token, named])  # (a List holds what is in the scene: built first)
     cmds.delete("c1", "lay", "t0")
     out["faces"] = repr(faces)
     out["faces str"] = str(faces)
     out["token"] = repr(token)
     out["token str"] = str(token)
-    out["List"] = repr(List([faces, token, named]))
+    out["List"] = repr(held)
     out["pred"] = repr(t.is_locked)
 """ + _TAIL
 
@@ -761,6 +766,10 @@ _WRAPPERS = _HEAD + r"""
         "DisplayLayer.create(List)": (["t1", "t2"], lambda t1, t2, keep, lst: DisplayLayer.create(lst)),
         "BlendShape.create(List)": (["tgt1", "tgt2"], lambda t1, t2, keep, lst: BlendShape.create(lst, Node("base"))),
         "rc.select(List)": (["t1", "t2"], lambda t1, t2, keep, lst: rc.select(lst)),
+        "rc.select(add=List)": (["t1", "t2"], lambda t1, t2, keep, lst: rc.select("keep", add=lst) or
+                                rc.select(lst, add=True)),
+        "rc.sets(add=List)": (["t1", "t2"], lambda t1, t2, keep, lst: rc.sets(lst, add="st")),
+        "rc.container(addNode=List)": (["t1", "t2"], lambda t1, t2, keep, lst: rc.container(addNode=lst)),
     }
     for how in ("undo", "flush"):
         for label, (names, call) in calls.items():
@@ -777,12 +786,12 @@ _WRAPPERS = _HEAD + r"""
 
 
 class TestRigWrappersGivenADeletedList(MayaTestCase):
-    """rig's thin wrappers that forward a user's List to maya.cmds (``node.delete(nodes)``,
+    """rig's wrappers given a user's List holding a deleted element (``node.delete(nodes)``,
     ``duplicate``, ``set_parent``, ``ObjectSet.add_members``, ``find_all``,
-    ``DisplayLayer.create``, ``BlendShape.create``, ``rc.select``): Maya's parser reads it in
-    rig's own frame, where a deleted node's str() raised (a crash); it reads the marked name
-    there now (`journal.forward`), so Maya raises its own clean error, or, as the user's own
-    cmds call would, acts on the elements that still name a node."""
+    ``DisplayLayer.create``, ``BlendShape.create``, ``rc.select``, a List given as a keyword
+    argument): re-pinned (user decisions 1A-4A and 6C, 2026-10-17, the List rule): each raises
+    the List error before Maya is called, and nothing is changed. A plain list of deleted nodes
+    reaches Maya, which raises its own clean error (their str() is the marked name)."""
 
     def test_a_clean_error_instead_of_a_crash(self):
         code, out, err = _in_own_mayapy(_WRAPPERS)
@@ -794,18 +803,17 @@ class TestRigWrappersGivenADeletedList(MayaTestCase):
                 if case.endswith(" keep"):
                     self.assertIs(outcome, True)  # nothing else was deleted
                     continue
-                if "rc.select" in case:
-                    # the bridge names each node in Python first: the clean error
-                    self.assertRegex(outcome, r"^RuntimeError: .*already deleted!$")
-                    continue
-                self.assertNotIn("already deleted", outcome)
-                if "duplicate" in case:
-                    # Maya duplicates the node and ignores the names that match none
-                    self.assertEqual(outcome, "returned list")
-                elif "find_all" in case:
-                    self.assertRegex(outcome, r"^RuntimeError: Syntax error")
-                else:
+                if "(list)" in case:
+                    # a plain list: Maya reads the marked names, its own clean error
                     self.assertRegex(outcome, r"^(TypeError|ValueError|RuntimeError): ")
+                    self.assertNotIn("List element", outcome)
+                    continue
+                freed = " and freed" if case.startswith("flush") else ""
+                self.assertRegex(
+                    outcome,
+                    rf"^RuntimeError: List element \[0\] \w+\(\"\w+\", deleted\) was deleted{freed}: this "
+                    r"List can no longer be used; build a new List$",
+                )
 
 
 _NO_FRAME = _HEAD + r"""
@@ -874,11 +882,13 @@ class TestNoPythonFrame(MayaTestCase):
 
 
 class TestOneWarningPerStatement(MayaTestCase):
-    """The skip warning is printed once per statement (user decision 2026-10-16): a statement
-    whose operations each skip the same element names it once; the next statement, or a
-    loop's next pass, warns again."""
+    """Re-pinned (user decisions 1A-4A and 6C, 2026-10-17, the List rule; the test ids are
+    kept): no warning anywhere; every statement on a List holding a deleted element raises the
+    List error, a chained one at its first use, each pass of a loop, another List of the same
+    names too (it warned once per statement and skipped)."""
 
     TEST_START_NEW_SCENE = True
+    USED = r"^List element \[1\] Transform\(\"c1\", deleted\) was deleted: this List can no longer be used; build a new List$"
 
     def setUp(self):
         super().setUp()
@@ -890,47 +900,45 @@ class TestOneWarningPerStatement(MayaTestCase):
 
     def test_a_chained_statement_warns_once(self):
         ctls = self.ctls
-        with mock.patch.object(cmds, "warning") as warn:
-            ctls.tx << ctls.ty * 2 + ctls.tz
-        self.assertEqual(warn.call_count, 1)
-        with mock.patch.object(cmds, "warning") as warn:
-            ctls.tx = ctls.ty
-        self.assertEqual(warn.call_count, 1)
-        with mock.patch.object(cmds, "warning") as warn:
-            ctls.ty << ctls.tx.get()
-        self.assertEqual(warn.call_count, 1)
-        warn.assert_called_once_with("List element [1] c1 was deleted; skipped")
+        for call in (lambda: ctls.tx << ctls.ty * 2 + ctls.tz, lambda: setattr(ctls, "tx", ctls.ty),
+                     lambda: ctls.ty << ctls.tx.get()):
+            with mock.patch.object(cmds, "warning") as warn:
+                with self.assertRaisesRegex(RuntimeError, self.USED):
+                    call()
+            warn.assert_not_called()
+        self.assertEqual(cmds.ls(type="multiplyDivide"), [])
 
     def test_each_statement_and_each_pass_warns(self):
         ctls = self.ctls
-        with mock.patch.object(cmds, "warning") as warn:
-            ctls.tx << 1
-            ctls.ty << 2
-        self.assertEqual(warn.call_count, 2)
-        with mock.patch.object(cmds, "warning") as warn:
-            for value in range(3):
+        raised = 0
+        for value in range(3):
+            try:
                 ctls.tz << value
-        self.assertEqual(warn.call_count, 3)
+            except RuntimeError:
+                raised += 1
+        self.assertEqual(raised, 3)
 
     def test_another_list_of_the_same_names_warns(self):
-        def broadcast(ctls):
-            ctls.tx << 1
-
-        with mock.patch.object(cmds, "warning") as warn:
-            for _ in range(2):
-                cmds.file(new=True, force=True)
-                names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
-                ctls = List([Node(n) for n in names])
-                cmds.delete("c1")
-                broadcast(ctls)
-        self.assertEqual(warn.call_count, 2)
+        raised = []
+        for _ in range(2):
+            cmds.file(new=True, force=True)
+            names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
+            ctls = List([Node(n) for n in names])
+            cmds.delete("c1")
+            try:
+                ctls.tx << 1
+            except RuntimeError as error:
+                raised.append(str(error))
+        self.assertEqual(len(raised), 2)
+        for text in raised:
+            self.assertRegex(text, self.USED)
 
 
 class TestDeletedElementsFollowUps(MayaTestCase):
-    """The review's follow-ups of the List rule: get() keeps a List when a slot is skipped, a
-    deleted probe is found by identity, a nested List's deleted element is skipped by
-    membership, a List with a deleted element hashes, a Components on a deleted shape is
-    skipped."""
+    """Re-pinned (user decisions 1A-4A and 6C, 2026-10-17, the List rule; the test ids are
+    kept): get() is a numpy array, and raises once an element is deleted; a deleted probe
+    raises its "already deleted!" (no identity match); a nested List's deleted element raises
+    with its path; hash raises; a Components on a deleted shape raises (each was skipped)."""
 
     TEST_START_NEW_SCENE = True
 
@@ -943,67 +951,66 @@ class TestDeletedElementsFollowUps(MayaTestCase):
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
         ctls = List([Node(n) for n in names])
         self.assertEqual(type(ctls.tx.get()).__name__, "ndarray")
+        tx = ctls.tx
         cmds.delete("c1")
-        with mock.patch.object(cmds, "warning"):
-            got = ctls.tx.get()
-            self.assertIs(type(got), List)
-            self.assertIs(got[1], skip)
-            plus = got + 1
-            self.assertEqual([plus[0], plus[2]], [1.0, 1.0])
-            self.assertIs(plus[1], skip)
-            ctls.ty << got
-            self.assertIs(type(ctls.t.get()), List)
+        with self.assertRaisesRegex(RuntimeError, r"^List element \[1\] Plug\(\"c1.translateX\", deleted\) "
+                                                  r"belongs to a node that was deleted: this List"):
+            tx.get()
+        cmds.undo()
+        self.assertEqual(type(tx.get()).__name__, "ndarray")
 
     def test_a_deleted_probe_is_found_by_identity(self):
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
         ctls = List([Node(n) for n in names])
         gone = list.__getitem__(ctls, 1)
+        live = List([Node("c0"), Node("c2")])
         cmds.delete("c1")
-        with mock.patch.object(cmds, "warning") as warn:
-            self.assertIn(gone, ctls)
-            self.assertEqual((ctls.index(gone), ctls.count(gone)), (1, 1))
+        with self.assertRaisesRegex(RuntimeError, r"^c1 already deleted!$"):
+            gone in live
+        with self.assertRaisesRegex(RuntimeError, r"^c1 already deleted!$"):
+            live.remove(gone)
+        with self.assertRaisesRegex(RuntimeError, r"this List can no longer be used; build a new List$"):
             ctls.remove(gone)
-        warn.assert_not_called()
-        self.assertEqual([str(x) for x in ctls], ["c0", "c2"])
-        # not there: ValueError, as list.remove gives (its repr, marked)
-        with self.assertRaisesRegex(ValueError, r'^Transform\("c1", deleted\) is not in List$'):
-            ctls.remove(gone)
+        self.assertEqual(len(ctls), 3)
 
     def test_nested_lists_and_hash(self):
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
         a, b, c = (Node(n) for n in names)
         nested = List([List([a, b]), List([c])])
+        flat = List([a, b])
         layer = Layer.define("L")
         cmds.delete("c0")
-        with mock.patch.object(cmds, "warning") as warn:
+        with self.assertRaisesRegex(RuntimeError, r"^List element \[0\]\[0\] Transform\(\"c0\", deleted\) "
+                                                  r"was deleted: this List can no longer be used"):
             nested << layer
-        warn.assert_called_once_with("List element [0][0] c0 was deleted; skipped")
-        self.assertEqual(sorted(cmds.editDisplayLayerMembers("L", query=True)), ["c1", "c2"])
-        self.assertIsInstance(hash(List([a, b])), int)
-        self.assertEqual(len({List([a, b]): 1}), 1)
+        self.assertIsNone(cmds.editDisplayLayerMembers("L", query=True))
+        with self.assertRaisesRegex(RuntimeError, r"this List can no longer be used"):
+            hash(flat)
+        with self.assertRaisesRegex(RuntimeError, r"a List holds what is in the scene$"):
+            List([a, b])
+        self.assertIsInstance(hash(List([b, c])), int)
 
     def test_membership_skips_a_plug_of_a_freed_node(self):
-        # the membership fold meets the freed element before reading it: the
-        # List rule's skip, as for a node deleted to the undo queue
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(2)]
         layer = Layer.define("L")
         Node("c1") << layer
         plugs = List([Node("c0").tx, Node("c1").tx])
         cmds.delete("c0")
         cmds.flushUndo()  # c0 is freed
-        with mock.patch.object(cmds, "warning") as warn:
-            self.assertIs(plugs in layer, True)
-        warn.assert_called_once_with("List element [0] c0.translateX was deleted; skipped")
+        with self.assertRaisesRegex(RuntimeError, r"^List element \[0\] Plug\(\"c0.translateX\", deleted\) "
+                                                  r"belongs to a node that was deleted and freed: this List"):
+            plugs in layer
 
     def test_a_components_on_a_deleted_shape_is_skipped(self):
         cmds.polyCube(name="c1", ch=False)
         cmds.polyCube(name="c2", ch=False)
         faces = List([Node("c1Shape").f[:3], Node("c2Shape").f[0]])
         cmds.delete("c1")
-        with mock.patch.object(cmds, "warning") as warn:
+        with self.assertRaisesRegex(RuntimeError, r'^List element \[0\] Components\("c1Shape.f\[0:2\]", deleted\) '
+                                                  r"belongs to a node that was deleted: this List"):
             faces << Tag("cap")
-        warn.assert_called_once_with("List element [0] c1Shape.f[0:2] was deleted; skipped")
-        self.assertEqual(list(Node("c2Shape").f >> Tag("cap")), [0])
+        self.assertEqual(list(Node("c2Shape").f >> Tag("cap")), [])
         self.assertEqual(repr(faces), 'List([Components("c1Shape.f[0:2]", deleted), Components("|c2|c2Shape.f[0]")])')
+        self.assertEqual(str(list.__getitem__(faces, 0)), 'Components("c1Shape.f[0:2]", deleted)')
         with self.assertRaisesRegex(RuntimeError, "already deleted!"):
             list.__getitem__(faces, 0).get_names()  # an operation on it raises

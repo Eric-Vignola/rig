@@ -640,7 +640,9 @@ class TestListProbes(_PlugCase):
         # the probe is named once per call, whatever the number of elements
         probe_node, probe_plug = self.b, self.b.tx
         calls     = []
-        node_str  = type(probe_node).__str__
+        # re-pinned (user decision 6C 2026-10-17): rig reads a node's name
+        # through its private name reader (``_rig_name``), not its str()
+        node_str  = type(probe_node)._rig_name
         plug_name = Attribute.get_full_name
 
         def counted_str(node):
@@ -653,7 +655,7 @@ class TestListProbes(_PlugCase):
                 calls.append("plug")
             return plug_name(attr)
 
-        with mock.patch.object(type(probe_node), "__str__", counted_str), mock.patch.object(
+        with mock.patch.object(type(probe_node), "_rig_name", counted_str), mock.patch.object(
             Plug, "get_full_name", counted_name
         ):
             self.assertNotIn(probe_node, nodes)
@@ -669,26 +671,27 @@ class TestListProbes(_PlugCase):
         gone = Node(cmds.createNode("transform", name="gone"))
         plug = gone.tx
         cmds.delete("gone")
-        # re-pinned (fix round 2026-10-17, user decision 2026-10-16 "Deleted nodes
-        # in a List", the clean-up ``ctls.remove(gone_ctl)``): a deleted or freed
-        # probe is found by identity only, never read nor warned for (it raised
-        # its "already deleted!")
+        # re-pinned (user decisions 1A-4A and 6C 2026-10-17, the List rule): a
+        # deleted probe raises its "already deleted!" (reading it is an
+        # operation on the deleted node: no identity match); a List cannot hold
+        # a deleted element, and one built before the delete raises the List
+        # error at every probe, a live one too
+        live = List([self.a, self.a.tx])
         for probe in (gone, plug):
             with self.subTest(probe=type(probe).__name__):
-                with mock.patch.object(cmds, "warning") as warn:
-                    self.assertIs(probe in List([self.a, self.a.tx]), False)
-                    self.assertIs(probe in List([self.a, probe]), True)
-                    self.assertEqual(List([probe, self.a, probe]).count(probe), 2)
-                warn.assert_not_called()
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
-        # List"): a deleted element is skipped (one warning), the probe still
-        # raises (an operation on the deleted node itself)
-        for elements in (List([self.a, gone]), List([self.a.tx, plug])):
-            with mock.patch.object(cmds, "warning") as warn:
-                self.assertIs(self.b in elements, False)
-                self.assertIs(self.b.tx in elements, False)
-                self.assertIs(elements[0] in elements, True)
-            self.assertEqual(warn.call_count, 3)
+                with self.assertRaisesRegex(RuntimeError, r"^gone already deleted!$"):
+                    probe in live
+                with self.assertRaisesRegex(RuntimeError, r"^gone already deleted!$"):
+                    live.index(probe)
+                with self.assertRaisesRegex(RuntimeError, r"a List holds what is in the scene$"):
+                    List([self.a, probe])
+        cmds.undo()
+        held = (List([self.a, gone]), List([self.a.tx, plug]))
+        cmds.redo()
+        for elements in held:
+            for probe in (self.b, self.b.tx, list.__getitem__(elements, 0)):
+                with self.assertRaisesRegex(RuntimeError, r"this List can no longer be used; build a new List$"):
+                    probe in elements
         self.assertNotIn(gone, List([]))
 
 

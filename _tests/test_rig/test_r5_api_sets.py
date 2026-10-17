@@ -812,16 +812,21 @@ class TestTheRedoQueue(_SetCase):
                 cmds.flushUndo()
                 with mock.patch.object(journal, "API_EDITS", api):
                     plug = self.undone_plug()
-                    # re-pinned (robustness run, user decision 2026-10-16 "Deleted
-                    # nodes in a List"): the freed element is skipped with one
-                    # warning, the live one is edited (it raised the freed error)
-                    with mock.patch.object(cmds, "warning") as warn:
+                    # re-pinned (user decisions 1A-4A and 6C 2026-10-17, the List
+                    # rule): a List cannot hold the undone node's plug, so both
+                    # routes raise the List's error and edit nothing (the
+                    # robustness run skipped it; before that it raised the
+                    # deleted error)
+                    try:
                         edit(plug)
-                outcomes.append((warn.call_count, cmds.getAttr("m.input2X"),
+                        raised = None
+                    except RuntimeError as error:
+                        raised = str(error)
+                outcomes.append((raised, cmds.getAttr("m.input2X"),
                                  cmds.listConnections("m.input2X", source=True, destination=False)))
             with self.subTest(edit=label):
                 self.assertEqual(outcomes[0], outcomes[1])
-                self.assertEqual(outcomes[0][0], 1)
+                self.assertRegex(outcomes[0][0], r"belongs to a node that was deleted: a List holds what is in the scene$")
 
     def test_an_empty_redo_queue_keeps_one_journal(self):
         Node("a").tx << 1.0

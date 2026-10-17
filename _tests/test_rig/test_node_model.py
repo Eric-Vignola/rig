@@ -586,20 +586,17 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes._base", "_node_has_attr"),
         ("rig.nodetypes._base", "_PlugMethod.__get__"),
         ("rig.nodetypes.dg_node", "_ensure_valid"),
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in
-        # a List"): a deleted or freed node's str and repr (its last known name,
-        # marked), and a List's test of a deleted or freed element (skipped)
-        ("rig.nodetypes.dg_node", "DGNode.__repr__"),
-        ("rig.nodetypes.dg_node", "DGNode.__str__"),
+        # re-pinned (user decisions 1A-4A and 6C 2026-10-17, the List rule): the
+        # test of a deleted or freed node (its marked str and repr, its last
+        # known name), and the List rule's check of an element: the handle its
+        # validity is read from (a node's, a plug's owner's, a Components'
+        # shape's, a token's node's), the scan, and the check of an appended
+        # node or plug
         ("rig.nodetypes.dg_node", "_deleted_name"),
         ("rig.nodetypes.dg_node", "_is_deleted_node"),
-        ("rig._internal.list", "_handle_key"),
-        # re-pinned (fix round 2026-10-17, the same decision): a List's test of a
-        # Components element whose shape was deleted or freed, and the
-        # membership fold's test of a deleted or freed List element (it folds
-        # the List again without them)
-        ("rig._internal.list", "_element_handle"),
-        ("rig._internal.members", "_gone_element"),
+        ("rig._internal.list", "_anchor"),
+        ("rig._internal.list", "_first_gone"),
+        ("rig._internal.list", "List.append"),
     }
 )
 
@@ -1156,8 +1153,9 @@ class TestTypedDslEdges(MayaTestCase):
         plug = dg.tx
         cmds.delete("gone")
         for label, op in (
-            ("str(plug)", lambda: str(plug)),
-            ("str(dg.tx)", lambda: str(dg.tx)),
+            # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+            ("str(plug)", lambda: _base._name_of(plug)),
+            ("str(dg.tx)", lambda: _base._name_of(dg.tx)),
             ("dg.ty", lambda: dg.ty),
             ("dg.tx << 1", lambda: dg.tx << 1),
             ("dg.tx = 1", lambda: setattr(dg, "tx", 1)),
@@ -1178,7 +1176,8 @@ class TestTypedDslEdges(MayaTestCase):
         # new node is another one
         cmds.delete("back")
         cmds.createNode("multiplyDivide", name="back")
-        for op in (lambda: str(plug), lambda: str(dg.tx), lambda: dg.tz):
+        # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+        for op in (lambda: _base._name_of(plug), lambda: _base._name_of(dg.tx), lambda: dg.tz):
             with self.assertRaisesRegex(RuntimeError, "^back already deleted!$"):
                 op()
         self.assertEqual(str(Node("back").input1X), "back.input1X")
@@ -1202,7 +1201,8 @@ class TestTypedDslEdges(MayaTestCase):
             "node.ty":           lambda n, p, t, w, a: n.ty,
             "node.tx = 1":       lambda n, p, t, w, a: setattr(n, "tx", 1),
             "node << spec":      lambda n, p, t, w, a: n << Float("k"),
-            "str(plug)":         lambda n, p, t, w, a: str(p),
+            # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+            "str(plug)":         lambda n, p, t, w, a: _base._name_of(p),
             "plug.get()":        lambda n, p, t, w, a: p.get(),
             "plug << 1":         lambda n, p, t, w, a: p << 1,
             "plug + 1":          lambda n, p, t, w, a: p + 1,
@@ -1382,7 +1382,8 @@ class TestTypedDslEdges(MayaTestCase):
         cmds.deleteAttr("a.userDyn")
         cmds.flushUndo()
         for label, op in (
-            ("str", lambda: str(plug)),
+            # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+            ("str", lambda: _base._name_of(plug)),
             ("get", lambda: plug.get()),
             ("<<", lambda: plug << 1),
             ("+", lambda: plug + 1),
@@ -2352,13 +2353,14 @@ class TestOwnerRule(MayaTestCase):
         node = Node(cmds.createNode("transform", name="held"))
         plug = node.tx
         cmds.delete("held")
-        for func in (str, lambda p: p.get()):
+        # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+        for func in (_base._name_of, lambda p: p.get()):
             with self.assertRaises(RuntimeError) as ctx:
                 func(plug)
             self.assertEqual(str(ctx.exception), "held already deleted!")
         cmds.createNode("transform", name="held")
         with self.assertRaises(RuntimeError) as ctx:
-            str(plug)
+            _base._name_of(plug)  # (re-pinned, user decision 6C 2026-10-17: rig's name reader; str() is marked)
         self.assertEqual(str(ctx.exception), "held already deleted!")
         # a plug built from the name finds the new node
         self.assertEqual(str(Plug("held.tx")), "held.translateX")
@@ -2488,7 +2490,8 @@ class TestReviewFixes(MayaTestCase):
             "node == node":      lambda n, p, t, w, a, d: n == n,
             "hash(node)":        lambda n, p, t, w, a, d: hash(n),
             "node.tx = 1":       lambda n, p, t, w, a, d: setattr(n, "tx", 1),
-            "str(plug)":         lambda n, p, t, w, a, d: str(p),
+            # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+            "str(plug)":         lambda n, p, t, w, a, d: _base._name_of(p),
             "plug.get()":        lambda n, p, t, w, a, d: p.get(),
             "plug.set(1)":       lambda n, p, t, w, a, d: p.set(1),
             "plug << 1":         lambda n, p, t, w, a, d: p << 1,
@@ -2594,8 +2597,9 @@ class TestReviewFixes(MayaTestCase):
         typed = node >> None
         cmds.delete("gone")
         for op in (
-            lambda: str(plug),
-            lambda: str(node.tx),
+            # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+            lambda: _base._name_of(plug),
+            lambda: _base._name_of(node.tx),
             lambda: node.ty,
             lambda: plug.get(),
         ):
@@ -2934,7 +2938,7 @@ class TestInstancedPlugIdentity(MayaTestCase):
         members.discard(held)
         self.assertEqual(len(members), 0)
         with self.assertRaisesRegex(RuntimeError, "^b already deleted!$"):
-            str(held)
+            _base._name_of(held)  # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
         # a new node of the same name is another plug, another key
         cmds.createNode("transform", name="b")
         fresh = Plug("b.tx")

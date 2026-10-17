@@ -264,7 +264,6 @@ class TestDSLFunctionsCheckTheirFreedOperands(_HeldAcrossAFree):
             ("list", ([1.0, held],), {}),
             ("tuple", ((held, 1.0),), {}),
             ("nested", ([[1.0, (held,)]],), {}),
-            ("List", (List([held]),), {}),
             ("object array", (np.array([1.0, held], dtype=object),), {}),
             ("keyword", (1.0,), {"b": [held]}),
             ("config", (1.0,), {"mode": held}),
@@ -274,6 +273,10 @@ class TestDSLFunctionsCheckTheirFreedOperands(_HeldAcrossAFree):
                 with self.assertRaisesRegex(RuntimeError, _FREED):
                     probe(*args, **kwargs)
         self.assertEqual(ran, [])
+        # re-pinned (user decisions 1A / 6C, 2026-10-17, the List rule): a List
+        # cannot hold a freed plug, so its case is the List's own refusal
+        with self.assertRaisesRegex(RuntimeError, r"was deleted and freed: a List holds what is in the scene$"):
+            List([held])
         # a plain str before the freed plug raises its TypeError first, as before
         with self.assertRaises(TypeError):
             probe(["cube.ty", held])
@@ -350,7 +353,8 @@ class TestNodeHandlesAreLookedUpOncePerNode(MayaTestCase):
             # re-pinned (round 5 NW6): the API 2.0 handle's MObject
             self.assertEqual(OpenMaya.MFnDependencyNode(handle.object()).name(), name)
         with self.assertRaisesRegex(RuntimeError, _FREED):
-            str(held)
+            _base._name_of(held)  # (re-pinned, user decision 6C: rig's name reader)
+        self.assertEqual(str(held), str.__str__(held) + " (deleted)")
 
     def test_the_table_drops_freed_nodes(self):
         # re-pinned (round 5 NW6): no table keeps a freed node's handle; the
@@ -531,8 +535,10 @@ class TestTheDeletedMessagesShareOneText(MayaTestCase):
         node, owned, unowned = Node("held"), Node("held").tx, Plug("held.ty")
         cmds.delete("held")
         for label, op in (
-            ("node", node.ensure_valid), ("owned", lambda: str(owned)),
-            ("unowned", lambda: str(unowned)),
+            # (re-pinned, user decision 6C 2026-10-17: a plug's name read as rig
+            # reads it, `_name_of`; its str() is the marked name)
+            ("node", node.ensure_valid), ("owned", lambda: _base._name_of(owned)),
+            ("unowned", lambda: _base._name_of(unowned)),
         ):
             with self.subTest(target=label, free="delete"):
                 with self.assertRaises(RuntimeError) as ctx:
@@ -542,8 +548,8 @@ class TestTheDeletedMessagesShareOneText(MayaTestCase):
         cmds.file(new=True, force=True)
         for label, op, name in (
             ("node", node.ensure_valid, "Transform"),
-            ("owned", lambda: str(owned), "Transform"),
-            ("unowned", lambda: str(unowned), "held"),
+            ("owned", lambda: _base._name_of(owned), "Transform"),
+            ("unowned", lambda: _base._name_of(unowned), "held"),
         ):
             with self.subTest(target=label, free="new scene"):
                 with self.assertRaises(RuntimeError) as ctx:
@@ -580,7 +586,9 @@ def _dynamic_plugs():
 
 
 _DYNAMIC_OPS = {
-    "str":       str,
+    # (re-pinned, user decision 6C 2026-10-17: str() is the marked name; rig's
+    # private name reader raises)
+    "str":       _base._name_of,
     "get":       lambda p: p.get(),
     "name":      lambda p: p.get_name(),
     "mobject":   lambda p: p.get_mobject(),

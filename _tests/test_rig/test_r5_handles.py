@@ -120,7 +120,10 @@ def _hold(prefix=""):
 
 
 def _ops(held):
-    """The operations whose outcomes are compared, in the order they run."""
+    """The operations whose outcomes are compared, in the order they run. A
+    plug's name is read as rig reads it (`_base._name_of`, user decision 6C
+    2026-10-17: str() is the marked name now; the reader raises as str() did at
+    45d2c13)."""
     dg, dag = held["dg"], held["dag"]
     return (
         ("dg.name", lambda: dg.get_name()),
@@ -130,22 +133,22 @@ def _ops(held):
         ("dag.name", lambda: dag.get_name()),
         ("dag.is_valid", lambda: dag.is_valid()),
         ("dag.attr", lambda: dag.tx.get()),
-        ("owned.str", lambda: str(held["owned"])),
+        ("owned.str", lambda: _base._name_of(held["owned"])),
         ("owned.get", lambda: held["owned"].get()),
         ("owned.set", lambda: (held["owned"] << 4.0) is held["owned"]),
         ("owned.hash", lambda: hash(held["owned"]) == held["h_owned"]),
         ("owned_dag.get", lambda: held["owned_dag"].get()),
         ("owned_dag.hash", lambda: hash(held["owned_dag"]) == held["h_owned_dag"]),
-        ("loose.str", lambda: str(held["loose"])),
+        ("loose.str", lambda: _base._name_of(held["loose"])),
         ("loose.get", lambda: held["loose"].get()),
         ("loose.node", lambda: held["loose"].get_node().get_name()),
-        ("dyn.str", lambda: str(held["dyn"])),
+        ("dyn.str", lambda: _base._name_of(held["dyn"])),
         ("dyn.get", lambda: held["dyn"].get()),
         ("dyn.set", lambda: (held["dyn"] << 0.5) is held["dyn"]),
         ("loose_dyn.get", lambda: held["loose_dyn"].get()),
         ("memo.again", lambda: functions.choice([held["arg"], 1.0], 0) is held["first"]),
         ("memo_dyn.again", lambda: functions.choice([held["dyn"], 2.0], 0) is held["first_dyn"]),
-        ("memo.result", lambda: str(held["first"])),
+        ("memo.result", lambda: _base._name_of(held["first"])),
     )
 
 

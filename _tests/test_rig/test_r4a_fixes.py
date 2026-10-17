@@ -65,7 +65,7 @@ from rig._internal import memoize as memoize_module
 from rig._internal import operands as operands_module
 from rig._internal.memoize import memoize
 from rig._internal.plug import Plug
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute, _name_of
 from rig.spec import Float
 from rig._tests._base import MayaTestCase
 
@@ -1350,11 +1350,11 @@ class TestListStrProbe(_SceneCase):
         self._assert_misses("a.tx", items)
 
     def test_a_deleted_element(self):
-        # E1: a plug of a node deleted to the undo queue matches nothing, read
-        # nowhere; the undo brings it back; a new node of its name is another
-        # plug. Re-pinned (robustness run, user decision 2026-10-16 "Deleted
-        # nodes in a List"): the deleted element is skipped, with one warning
-        # naming it (it raised "already deleted!")
+        # E1: a plug of a node deleted to the undo queue is read nowhere; the
+        # undo brings it back; a new node of its name is another plug.
+        # Re-pinned (user decisions 1A-4A and 6C 2026-10-17, the List rule): a
+        # List holding the deleted element raises the List error at every probe
+        # (it skipped the element with a warning)
         cmds.undoInfo(state=True, infinity=True)
         try:
             cmds.createNode("transform", name="gone")
@@ -1362,20 +1362,16 @@ class TestListStrProbe(_SceneCase):
             live = List([self.t.tx])
             cmds.delete("gone")
             before = _scene()
-            for label, call, answer in (
-                ("in", lambda: "gone.tx" in items, False),
-                ("index", lambda: items.index("t.tx"), ValueError),
-                ("count", lambda: items.count("gone.tx"), 0),
-                ("remove", lambda: items.remove("gone.tx"), ValueError),
+            used = r"^List element \[0\] Plug\(\"gone.translateX\", deleted\) belongs to a node that was deleted: this List can no longer be used; build a new List$"
+            for label, call in (
+                ("in", lambda: "gone.tx" in items),
+                ("index", lambda: items.index("t.tx")),
+                ("count", lambda: items.count("gone.tx")),
+                ("remove", lambda: items.remove("gone.tx")),
             ):
                 with self.subTest(label):
-                    with mock.patch.object(cmds, "warning") as warn:
-                        if answer is ValueError:
-                            with self.assertRaisesRegex(ValueError, r" is not in List$"):
-                                call()
-                        else:
-                            self.assertEqual(call(), answer)
-                    warn.assert_called_once_with("List element [0] gone.translateX was deleted; skipped")
+                    with self.assertRaisesRegex(RuntimeError, used):
+                        call()
             self.assertEqual(len(items), 1)
             # a str that names the plug of the deleted node names no plug
             self._assert_misses("gone.tx", live)
@@ -1384,8 +1380,8 @@ class TestListStrProbe(_SceneCase):
             self._assert_finds("gone.tx", items[0])
             cmds.delete("gone")
             cmds.createNode("transform", name="gone")
-            with mock.patch.object(cmds, "warning"):
-                self.assertIs("gone.tx" in items, False)
+            with self.assertRaisesRegex(RuntimeError, used):
+                "gone.tx" in items
             self._assert_misses("gone.tx", List([self.u.tx]))
         finally:
             cmds.undoInfo(state=False)
@@ -1417,16 +1413,15 @@ class TestListStrProbe(_SceneCase):
                     items = List([Node("t").tx, Node("u").tx])
                     free()
                     before = _scene()
-                    # re-pinned (robustness run, user decision 2026-10-16 "Deleted
-                    # nodes in a List"): a freed element is skipped unread (one
-                    # warning), so nothing matches, the new nodes of its names
-                    # neither (it raised the freed error)
+                    # re-pinned (user decisions 1A-4A and 6C 2026-10-17, the
+                    # List rule): a List holding a freed element raises the List
+                    # error at every probe, reading nothing (it skipped it)
+                    freed = r"^List element \[0\] Plug\(\"t.translateX\", deleted\) belongs to a node that was deleted and freed: this List can no longer be used"
                     for probe in ("t.tx", "nope.tx", "u.translateX"):
-                        with mock.patch.object(cmds, "warning") as warn:
-                            self.assertIs(probe in items, False)
-                            with self.assertRaisesRegex(ValueError, r" is not in List$"):
-                                items.index(probe)
-                        self.assertEqual(warn.call_count, 2)
+                        with self.assertRaisesRegex(RuntimeError, freed):
+                            probe in items
+                        with self.assertRaisesRegex(RuntimeError, freed):
+                            items.index(probe)
                     self.assertEqual(_new(before), [])
         finally:
             cmds.file(new=True, force=True)
@@ -1695,7 +1690,8 @@ class TestOwnerBoundSpecApply(MayaTestCase):
             cmds.deleteAttr("held.gone")
             cmds.flushUndo()
             for label, op in (
-                ("str", str),
+                # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+                ("str", _name_of),
                 ("get", lambda p: p.get()),
                 ("<<", lambda p: p << 1.0),
                 ("+", lambda p: p + 1),
@@ -1736,7 +1732,7 @@ class TestOwnerBoundSpecApply(MayaTestCase):
             # a node that took the name is never reached
             cmds.createNode("transform", name="held")
             with self.assertRaisesRegex(RuntimeError, r"^held already deleted!$"):
-                str(kept)
+                _name_of(kept)  # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
             cmds.undo()
             cmds.undo()
             self.assertEqual(kept.get(), 0.0)
@@ -1771,7 +1767,8 @@ class TestOwnerBoundSpecApply(MayaTestCase):
                     before = _scene()
                     with self.assertRaisesRegex(RuntimeError, _FREED):
                         node << Float("k2")
-                    for op in (str, lambda p: p.get(), lambda p: p << 1.0):
+                    # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+                    for op in (_name_of, lambda p: p.get(), lambda p: p << 1.0):
                         with self.assertRaisesRegex(RuntimeError, _FREED):
                             op(plug)
                     self.assertIs(plug.get_node(), node)

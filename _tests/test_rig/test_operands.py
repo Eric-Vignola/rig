@@ -243,23 +243,23 @@ class TestListOperators(_OperandCase):
         self.assertRejects(lambda: self.u.tx + items)
 
     def test_a_freed_plug_still_reports_the_free(self):
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
-        # List"): a freed element's row is skipped (rig.skip, one warning naming
-        # it), so it is checked no further; a live row still is
-        from rig import skip
-
+        # re-pinned (user decisions 1A-4A and 6C 2026-10-17, the List rule): a
+        # List holding a freed element raises the List error before any row is
+        # checked or built, on either side of the operator (it skipped the row)
         items = List([self.t.tx, self.t.ty])
         cmds.file(new=True, force=True)
         cmds.createNode("transform", name="live")
-        for call in (lambda: items + S, lambda: S + items, lambda: items == [1, S]):
-            with mock.patch.object(cmds, "warning") as warn:
-                self.assertEqual(list(call()), [skip, skip])
-            warn.assert_called_once_with(
-                "List elements [0] t.translateX, [1] t.translateY were deleted; skipped"
-            )
-        mixed = List([items[0], Node("live").tx])
-        with mock.patch.object(cmds, "warning"):
-            self.assertRejects(lambda: mixed + S, "is a plain str")
+        before = _scene()
+        for call in (lambda: items + S, lambda: S + items, lambda: items == [1, S], lambda: items + 1):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"^List element \[0\] Plug\(\"t.translateX\", deleted\) belongs to a node that was "
+                r"deleted and freed: this List can no longer be used; build a new List$",
+            ):
+                call()
+        self.assertEqual(_scene(), before)
+        with self.assertRaisesRegex(RuntimeError, r"a List holds what is in the scene$"):
+            List([items[0], Node("live").tx])
 
     def test_rows_without_a_plug_are_left_alone(self):
         nodes = List([Node("t"), Node("u")])

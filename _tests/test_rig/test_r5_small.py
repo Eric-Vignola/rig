@@ -53,7 +53,7 @@ from maya import cmds
 
 from rig import Node, Plug
 from rig.nodetypes import _base
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute, _name_of
 from rig.nodetypes.choice import Choice
 from rig.nodetypes.dg_node import DGNode
 from rig._tests._base import MayaTestCase
@@ -517,7 +517,10 @@ def _result(value, node):
     state = vars(value)
     mplug = None
     try:
-        name  = str(value)
+        # rig's private name reader: it raises "... already deleted!" for a plug
+        # of a deleted or freed node, as str() did at ee03336 (user decision 6C,
+        # 2026-10-17: str() is the marked name now), so the MPlug is never read then
+        name  = _name_of(value)
         mplug = state.get("_mplug")
     except Exception as error:  # noqa: BLE001 - the error is the thing compared
         name = ["raises", _chain(error)]

@@ -997,8 +997,10 @@ class TestJournal(_JournalCase):
         self.assertTrue(journal._register_scene_callbacks())
         # kBeforeNew, kBeforeOpen, (R5 D3) the Undo and Redo events (the redo queue, journal.add),
         # and (R5 DFIX) a node removal and the reference unload / remove / load / import (a user's
-        # callback inside a statement: journal._before_removal)
-        self.assertEqual(len(callbacks.registered_ids(journal.__name__)), 9)
+        # callback inside a statement: journal._before_removal); re-pinned (user decisions
+        # 1A / 6C 2026-10-17, the List rule's scene epoch): kAfterNew, kAfterOpen,
+        # kAfterUnloadReference and kAfterRemoveReference settle a removal (journal._settle)
+        self.assertEqual(len(callbacks.registered_ids(journal.__name__)), 13)
         folder = tempfile.mkdtemp(prefix="rig_r5_journal_")
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         path = os.path.join(folder, "scene.ma").replace("\\", "/")

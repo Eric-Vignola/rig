@@ -260,10 +260,15 @@ class TestMembershipTokens(MayaTestCase):
     def test_a_token_of_a_deleted_node_raises_attribute_error(self):
         layer_token, red_token = -self.layer, -self.red
         cmds.delete("lay", "red")
-        for token, noun in ((layer_token, "layer"), (red_token, "material")):
+        # re-pinned (user decision 6C 2026-10-17): the message shows the token's
+        # repr, its node marked (a repr never raises), as for a live token
+        for token, noun, shown in (
+            (layer_token, "layer", r'-DisplayLayer\("lay", deleted\)'),
+            (red_token, "material", r'-Blinn\("red", deleted\)'),
+        ):
             for name in ("get_name", "name", "anything"):
                 with self.subTest(noun=noun, name=name):
-                    with self.assertRaisesRegex(AttributeError, f"^a removal token whose {noun} is deleted; "):
+                    with self.assertRaisesRegex(AttributeError, f"^{shown} is a removal token, not an? {noun}; "):
                         getattr(token, name)
                     self.assertFalse(hasattr(token, name))
 
