@@ -174,6 +174,8 @@ _VALUE_RECEIVER = re.compile(r"^(Tag\(.*\)|data|uv|keys|err|spec|cgmath.*|rig\._
 _SHOWN_ON_PURPOSE = {
     "if a.tx.is_locked:", "if ctl.is_locked:", "if attr.is_locked:", "attr.is_locked = x",
     "nodes.is_locked", "renderLayer.adjustments[0].plug", 'node.namespace = "ns"',
+    # the guard covers a comparison too (fix round 2026-10-16)
+    "a.tx.is_locked == False", "ctl.is_valid == True",
 }
 
 

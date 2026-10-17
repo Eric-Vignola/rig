@@ -256,7 +256,7 @@ class _AttrSpec:
 
         if isinstance(target, Attribute):
             # its owner (a plug built from a name casts its node once)
-            wrap_node = type(target).get_node(target)
+            wrap_node = type(target)._raw_get_node(target)
         elif isinstance(target, Node):
             wrap_node = target
         else:
@@ -279,10 +279,13 @@ class _AttrSpec:
         same refusals, nothing written when it is locked already). Any other
         modifier on a node is a TypeError naming ``node.<attr> << it``.
         """
-        kargs = dict(self.kargs)
+        # read as it is (a frozen modifier's is a read-only mapping): no copy
+        kargs = self.kargs
         if kargs.keys() == {"lock"}:
             if isinstance(target, (Attribute, Node)):
-                return target.lock() if kargs["lock"] else target.unlock()
+                # through the class: no call-site check (a hot statement)
+                cls = type(target)
+                return cls.lock(target) if kargs["lock"] else cls.unlock(target)
             raise TypeError(
                 f"lock / unlock take a node or a plug, not {type(target).__name__} ({target!r})"
             )
@@ -304,12 +307,12 @@ class _AttrSpec:
         ):
             for child in _get_compound(target):
                 try:
-                    type(child).set(child, **kargs)
+                    type(child)._raw_set(child, **kargs)
                 except RuntimeError as e:
                     LOGGER.debug("set modifier on %s failed: %s", child, e)
 
         try:
-            type(target).set(target, **kargs)
+            type(target)._raw_set(target, **kargs)
         except RuntimeError as e:
             LOGGER.debug("set modifier on %s failed: %s", target, e)
         return target
@@ -480,7 +483,7 @@ class _AttrSpec:
         children) and its checked edit; no target without settings. Raises
         TypeError for another kind or a setting that cannot apply."""
         plug_name = f"{node_string}.{long_name}"
-        fn        = type(wrap_node).get_fn_set(wrap_node)
+        fn        = type(wrap_node)._raw_get_fn_set(wrap_node)
         attribute = fn.attribute(long_name)
         have      = _existing_kind(node_string, long_name, attribute)
         want      = self._kind()
@@ -522,7 +525,7 @@ class _AttrSpec:
         long_name = self.kargs.get("longName")
         if long_name is None:
             return
-        wrap_node   = type(target).get_node(target) if isinstance(target, Attribute) else target
+        wrap_node   = type(target)._raw_get_node(target) if isinstance(target, Attribute) else target
         node_string = str(wrap_node)
         if wrap_node.has_attr(long_name):
             _refuse_static(node_string, long_name, wrap_node)
@@ -778,14 +781,14 @@ def _refuse_static(node_string: str, long_name: str, wrap_node: Any) -> None:
     """A declaration names a static attribute of the node (its long or short
     name: ``Float("s")`` is ``scale``): TypeError before any edit. The node
     type owns it; a declaration adds or re-declares a dynamic attribute."""
-    attribute = type(wrap_node).get_fn_set(wrap_node).attribute(long_name)
+    attribute = type(wrap_node)._raw_get_fn_set(wrap_node).attribute(long_name)
     fn        = OpenMaya.MFnAttribute(attribute)
     if fn.dynamic:
         return
     named = fn.name if fn.name == long_name else f"{fn.name}, whose short name is {long_name!r}"
     raise TypeError(
         f"'{node_string}.{long_name}' is a static attribute of the "
-        f"{type(wrap_node).get_fn_set(wrap_node).typeName} ({named}); a declaration adds a dynamic "
+        f"{type(wrap_node)._raw_get_fn_set(wrap_node).typeName} ({named}); a declaration adds a dynamic "
         f"attribute: pick another name"
     )
 
@@ -795,7 +798,7 @@ def _refuse_other_name(node_string: str, long_name: str, wrap_node: Any) -> None
     alias (``aliasAttr``, a blendShape target) or a container's published
     name. TypeError before any edit: a second attribute of that name would be
     one the name no longer reaches."""
-    fn = type(wrap_node).get_fn_set(wrap_node)
+    fn = type(wrap_node)._raw_get_fn_set(wrap_node)
     if fn.findAlias(long_name).isNull():
         return
     # (a container's published name is an alias of its borderConnections)
@@ -1089,7 +1092,7 @@ def _clone_attribute(
     # Auto-detect multi from src.
     if multi is None and isinstance(src_plug, Plug):
         try:
-            multi = type(src_plug).is_multi(src_plug)
+            multi = type(src_plug)._raw_is_multi(src_plug)
         except Exception:
             multi = False
 
@@ -1175,7 +1178,7 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
 
     # Compound first (Vector / Color / Euler / Quat).
     try:
-        nchildren = type(src_plug).get_num_children(src_plug)
+        nchildren = type(src_plug)._raw_get_num_children(src_plug)
     except Exception:
         nchildren = 0
 

@@ -15,7 +15,9 @@ class TestDisplayLayer(MayaTestCase):
         self.default_layer = DisplayLayer("defaultLayer")
         self.xform         = Node(cmds.group(empty=True))
         self.layer         = DisplayLayer.create()
-        self.layer.add_members(self.xform)
+        # re-pinned (user decision 2026-10-16, ONE WAY ONLY): the raw
+        # add_members / remove_members raise; << and layer.remove are the forms
+        self.xform << self.layer
 
     def test_members(self):
         self.assertEqual(self.layer.get_members(), [self.xform])
@@ -54,11 +56,19 @@ class TestDisplayLayer(MayaTestCase):
     def test_remove_members_and_delete(self):
         other = Node(cmds.group(empty=True, name="other"))
         fresh = DisplayLayer.define("fresh")
-        fresh.add_members(other)
+        # re-pinned (user decision 2026-10-16, ONE WAY ONLY): the raw verbs
+        # raise, naming the rig form, with nothing changed; << and
+        # layer.remove(x) (the shorthand x << -layer) are the forms
+        with self.assertRaisesRegex(TypeError, r"layer\.add_members is not rig's form: write cube << "):
+            fresh.add_members(other)
+        with self.assertRaisesRegex(TypeError, r"layer\.remove_members is not rig's form: write .*\.remove\(cube\)"):
+            self.layer.remove_members(self.xform)
+        self.assertEqual(DisplayLayer.for_node(self.xform), self.layer)
+        other << fresh
         # a node held by another layer is left there
-        self.layer.remove_members(other)
+        self.layer.remove(other)
         self.assertEqual(DisplayLayer.for_node(other), fresh)
-        self.layer.remove_members(self.xform)
+        self.layer.remove(self.xform)
         self.assertIsNone(DisplayLayer.for_node(self.xform))
         self.assertEqual(self.layer.get_members(), [])
         fresh.delete()

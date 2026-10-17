@@ -37,6 +37,7 @@ from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
 from rig._internal.journal import rig_code, statement
 from rig.nodetypes._base import (
+    _PLUG_TYPES,
     _dg_named_node,
     _dg_named_owner,
     _ensure_dg_named,
@@ -74,7 +75,7 @@ def _stable_key(obj: Any) -> Any:
         return None
     if isinstance(obj, str):
         # Important: must come before _is_attribute (Attribute IS a str).
-        if isinstance(obj, Attribute):
+        if type(obj) in _PLUG_TYPES:
             return _attribute_key(obj)
         return obj
     if isinstance(obj, numbers.Real):
@@ -214,11 +215,11 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
     if (
         obj is None
         or isinstance(obj, (str, bytes, numbers.Real))
-        and not isinstance(obj, Attribute)
+        and type(obj) not in _PLUG_TYPES
         and not _is_node(obj)
     ):
         return
-    if isinstance(obj, Attribute):
+    if type(obj) in _PLUG_TYPES:
         d      = obj.__dict__
         node   = _dg_named_owner(obj)
         handle = d.get("_handle")
@@ -305,7 +306,7 @@ def _attr_check(attr: Attribute) -> Optional[_AttrCheck]:
         if not mplug.isDynamic:
             return None
         owner = attr.__dict__["_node"]
-        node  = type(attr).get_node(attr) if owner is None else owner
+        node  = type(attr)._raw_get_node(attr) if owner is None else owner
         if not isinstance(node, DGNode) or not _handle_valid(node.__dict__):
             return None
         mobject = mplug.attribute()
@@ -322,7 +323,7 @@ def _collect_attr_checks(values: Any, out: list[Any]) -> None:
     """Append an `_AttrCheck` for each dynamic attribute a plug in `values` (the
     call arguments; a list, tuple or List among them is walked) reads."""
     for value in values:
-        if isinstance(value, Attribute):
+        if type(value) in _PLUG_TYPES:
             check = _attr_check(value)
             if check is not None:
                 out.append(check)

@@ -73,7 +73,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import _attribute_of, _check_attrs, _lookup  # noqa: F401 (re-exported)
-from rig.nodetypes._base import _scene_predicate
+from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.errors import NodeNotFoundError
 from rig.nodetypes.geometry import iter_component_tokens
@@ -158,11 +158,11 @@ def _axis_sizes(shape: DAGNode, kind: str) -> tuple[int, ...]:
     if kind == "f":
         return (type(shape).get_num_polygons(shape),)
     if kind == "e":
-        return (type(shape).get_fn_set(shape).numEdges,)
+        return (type(shape)._raw_get_fn_set(shape).numEdges,)
     if kind == "uv":
-        return (type(shape).get_fn_set(shape).numUVs(),)
+        return (type(shape)._raw_get_fn_set(shape).numUVs(),)
     if node_type == "nurbsSurface":
-        fn       = type(shape).get_fn_set(shape)
+        fn       = type(shape)._raw_get_fn_set(shape)
         periodic = OpenMaya.MFnNurbsSurface.kPeriodic
         u        = fn.numCVsInU - (fn.degreeInU if fn.formInU == periodic else 0)
         v        = fn.numCVsInV - (fn.degreeInV if fn.formInV == periodic else 0)
@@ -313,6 +313,20 @@ class Components:
     """
 
     __slots__ = ("_shape", "_kind", "_indices")
+
+    # the members before the per-object rule (user decision 2026-10-16): a miss
+    # names the method now (`_old_handle_name`)
+    _OLD_NAMES = {
+        "shape":    "c.shape is now c.get_shape()",
+        "kind":     "c.kind is now c.get_kind()",
+        "indices":  "c.indices is now c.get_indices()",
+        "count":    "c.count is now c.get_count()",
+        "names":    "c.names is now c.get_names()",
+        "geometry": "c.geometry is now c.get_shape().get_node_type()",
+    }
+
+    def __getattr__(self, name: str) -> Any:
+        raise _old_handle_name(self, name, Components._OLD_NAMES)
 
     # ``__getitem__`` alone would let Python's legacy protocol iterate a
     # selection one component at a time; ``None`` opts out, so ``iter(c)``
@@ -495,7 +509,7 @@ class Components:
 
     def __lshift__(self, other: Any) -> Any:
         if isinstance(other, _types._MEMBERSHIP):
-            return other._member().inject(self)
+            return other._member()._run_inject(self)
         if other is None:
             raise TypeError(
                 "Components << None is not a clear; use members << -Spec('x') to "
@@ -511,7 +525,7 @@ class Components:
         if other is None:
             return self.get_indices()
         if isinstance(other, _types._MEMBERSHIP):
-            return other._member().query(self)
+            return other._member()._run_query(self)
         raise TypeError(
             f"'>>' on Components supports '>> None' (the native ids) or a "
             f"membership query (Tag('x'), Tag()), not {type(other).__name__}"
@@ -835,7 +849,7 @@ class _Normaliser:
                 # Layer("x")`` asks about ``cube``).
                 if self.refuse is not None:
                     raise self.refuse(item)
-                self.add_node(type(item).get_node(item), source=item)
+                self.add_node(type(item)._raw_get_node(item), source=item)
                 continue
             group.sources.append(item)
 
@@ -953,6 +967,12 @@ def _token_miss(token: Any, name: str, what: str, noun: str, example: str) -> At
             f"{head}; a token has no name attribute: str(token) is its name, "
             f"and {example}.get_name() the {noun} node's"
         )
+    if name in ("inject", "query", "contains"):
+        # the verbs are the operators only (one way only, fix round 2026-10-16)
+        return AttributeError(
+            f"{head}; a token has no methods: x << token, x >> token and x in token "
+            f"are its verbs ({noun}.remove(x) takes x out)"
+        )
     return AttributeError(f"{head}; {name} is the {noun} node's: {example}.{name}")
 
 
@@ -983,16 +1003,16 @@ class _MemberSpec(metaclass=_SpecMeta):
     hook. :meth:`_member` is the spec itself (a membership node class answers
     its own member): the ``<<`` / ``>>`` slots run ``other._member()``'s verb.
 
-    The verbs are template methods. :meth:`inject` (``lhs << spec``)
+    The verbs are template methods. :meth:`_run_inject` (``lhs << spec``)
     normalises the left-hand side, applies :attr:`_ACCEPTS`, hands the
     selections to :meth:`_plan` -- which validates everything and raises
     BEFORE any scene write -- then runs :meth:`_apply` inside one undo chunk
     named ``rig.<kind>`` (``_KIND``) and returns the left-hand side unchanged.
-    :meth:`query` (``lhs >> spec``) returns whatever :meth:`_query` reads: a
+    :meth:`_run_query` (``lhs >> spec``) returns whatever :meth:`_query` reads: a
     plain value (ids), never a :class:`Components`. :meth:`of` enumerates the
     collections holding ``x``; an :attr:`_EXCLUSIVE` kind (a node is in at
     most one collection) answers ``lhs >> Spec()`` with that one or
-    ``None``. :meth:`contains` (``lhs in spec``) answers whether every member
+    ``None``. :meth:`_run_contains` (``lhs in spec``) answers whether every member
     of the left-hand side is in the collection (:meth:`_contains`); a kind or
     removal token there is a ``TypeError``.
 
@@ -1088,7 +1108,7 @@ class _MemberSpec(metaclass=_SpecMeta):
 
     # -- the verbs -- #
 
-    def inject(self, lhs: Any) -> Any:
+    def _run_inject(self, lhs: Any) -> Any:
         """``lhs << spec``: make the left-hand side a member (or, for a
         removal / kind token, not a member). Everything is validated before
         the first scene write; the writes run in one undo chunk; the
@@ -1114,7 +1134,7 @@ class _MemberSpec(metaclass=_SpecMeta):
             plan = self._plan(selections)
         return plan
 
-    def query(self, lhs: Any) -> Any:
+    def _run_query(self, lhs: Any) -> Any:
         """``lhs >> spec``: a plain value read out of the left-hand side --
         the native ids of its members that are in the collection.
         ``lhs >> Spec()`` enumerates instead: the collections :meth:`of`
@@ -1147,9 +1167,9 @@ class _MemberSpec(metaclass=_SpecMeta):
         return found
 
     def __contains__(self, lhs: Any) -> bool:
-        return self.contains(lhs)
+        return self._run_contains(lhs)
 
-    def contains(self, lhs: Any) -> bool:
+    def _run_contains(self, lhs: Any) -> bool:
         """``lhs in spec``: whether EVERY member of the left-hand side is in
         this collection (every node, every component; a ``List`` / list of
         them: every element). An attribute plug stands for its node. A member
@@ -1191,7 +1211,7 @@ class _MemberSpec(metaclass=_SpecMeta):
             want_shapes  = cls._WANT_SHAPES,
             refuse_plugs = lambda plug: TypeError(
                 f"'{plug}' is a plug; membership takes the node: "
-                f"{cls._kind_name()}.of({type(plug).get_node(plug)})"
+                f"{cls._kind_name()}.of({type(plug)._raw_get_node(plug)})"
             ),
         )
         try:
@@ -1205,7 +1225,7 @@ class _MemberSpec(metaclass=_SpecMeta):
     def _plug_error(self, plug: Plug, verb: str) -> TypeError:
         """The refusal of an attribute plug on the left of ``verb`` (``<<`` /
         ``>>``): the node is the member, and ``in`` reads a plug as its node."""
-        node = type(plug).get_node(plug)
+        node = type(plug)._raw_get_node(plug)
         if verb == "<<":
             how = f"{node} << {self!r} (to connect, name a plug: other.attr)"
         elif self._purges:

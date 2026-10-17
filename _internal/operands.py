@@ -56,7 +56,7 @@ from typing import Any, Callable, Iterable, Optional, Tuple
 
 import numpy as np
 from rig._internal.journal import outside, statement
-from rig.nodetypes._base import _ensure_owner_alive, _match_enum_field, Attribute
+from rig.nodetypes._base import _ensure_owner_alive, _match_enum_field, _PLUG_TYPES, Attribute
 
 
 # The operand types that can be, or can hold, a plain str (or bytes). Numbers,
@@ -135,7 +135,7 @@ def _live_text_operand(obj: Any) -> Optional[Any]:
     was freed (see `_ensure_owner_alive`): the type predicates a function
     starts with read its operands' MPlugs, which then point at freed memory."""
     if isinstance(obj, str):
-        if isinstance(obj, Attribute):
+        if type(obj) in _PLUG_TYPES:
             _ensure_owner_alive(obj)
             return None
         return obj

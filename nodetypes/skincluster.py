@@ -266,7 +266,7 @@ class SkinCluster(Deformer):
 
     def get_influence_objects(self) -> list[DAGNode]:
         """Returns a list of influence objects."""
-        return [_cast(x) for x in type(self).get_fn_set(self).influenceObjects()]
+        return [_cast(x) for x in type(self)._raw_get_fn_set(self).influenceObjects()]
 
     def add_influence_objects(self, infs: INF_TYPE) -> None:
         """Adds influence objects to this skincluster.
@@ -326,7 +326,7 @@ class SkinCluster(Deformer):
         """Returns a 2D numpy array of weight values (per component per influence)."""
         geom  = self.get_geometries()[0]
         comps = geom.get_component_mobject()
-        weights, inf_count = type(self).get_fn_set(self).getWeights(type(geom).get_mdagpath(geom), comps)
+        weights, inf_count = type(self)._raw_get_fn_set(self).getWeights(type(geom).get_mdagpath(geom), comps)
         weights = np.array(weights)
         return np.reshape(weights, (type(geom).get_num_weight_points(geom), inf_count))
 
@@ -563,7 +563,7 @@ class SkinCluster(Deformer):
 
         infs = [
             x.fullPathName() if full_path else x.partialPathName()
-            for x in type(self).get_fn_set(self).influenceObjects()
+            for x in type(self)._raw_get_fn_set(self).influenceObjects()
         ]
         data = SkinData(influences=infs, weights=self.get_weights())
 
@@ -748,7 +748,7 @@ class _SetSkinWeightsCommand:
         super().__init__()
 
         # gather info from this skincluster
-        self._fn_set = type(skincluster).get_fn_set(skincluster)
+        self._fn_set = type(skincluster)._raw_get_fn_set(skincluster)
         inf_count    = len(self._fn_set.influenceObjects())
         inf_ids      = OpenMaya.MIntArray(range(inf_count))
 

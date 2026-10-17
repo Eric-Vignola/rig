@@ -1168,7 +1168,7 @@ def curves_of(x: Any) -> list:
         if isinstance(item, Attribute):
             walk(item._mplug)
         elif isinstance(item, Node):
-            fn = OpenMaya.MFnDependencyNode(type(item).get_mobject(item))
+            fn = OpenMaya.MFnDependencyNode(type(item)._raw_get_mobject(item))
             for mp in fn.getConnections():
                 add_source(mp)
         elif isinstance(item, (list, tuple)):

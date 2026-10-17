@@ -92,12 +92,18 @@ class TestRemovalMethods(MayaTestCase):
                 self.assertEqual(read(self.a), read(self.b))
         self.assertEqual((self.a >> self.red).tolist(), [4, 5])
         self.assertIs(self.a in self.lay, False)
-        # a tag: components leave it, a node deletes it
+        # a tag: components leave it. Re-pinned (user decision 2026-10-16,
+        # "Removal methods details": Tag.remove takes members only): a node is a
+        # TypeError naming Tag('cap').delete(node), with nothing written; the
+        # operator node << -Tag('cap') still deletes the tag
         Tag("cap").remove(self.sph.vtx[:2])
         self.assertEqual((self.sph >> Tag("cap")).tolist(), [2, 3, 4, 5, 6, 7])
         self.sph.vtx[2:4] << -Tag("cap")
         self.assertEqual((self.sph >> Tag("cap")).tolist(), [4, 5, 6, 7])
-        Tag("cap").remove(self.sph)
+        with self.assertRaisesRegex(TypeError, r"Tag\('cap'\)\.remove takes members .*Tag\('cap'\)\.delete\("):
+            Tag("cap").remove(self.sph)
+        self.assertEqual((self.sph >> Tag("cap")).tolist(), [4, 5, 6, 7])
+        Tag("cap").delete(self.sph)
         self.assertEqual(Tag.of(self.sph), [])
 
     def test_it_returns_the_left_hand_side(self):
@@ -151,11 +157,15 @@ class TestRemovalMethods(MayaTestCase):
         cluster = Node(cmds.cluster(str(sph))[0])   # the injection node is now the Orig shape
         sph.vtx[:4] << Tag("lid")
         cluster.input[0].componentTagExpression << Tag("lid")
-        got, want = _refusal(lambda: Tag("lid").remove(sph)), _refusal(lambda: sph << -Tag("lid"))
-        self.assertEqual(got, want)
+        # re-pinned (user decision 2026-10-16, "Removal methods details":
+        # Tag.remove takes members only, so a node is refused there, naming
+        # delete): Tag('lid').delete(node) refuses as the operator does
+        self.assertIs(_refusal(lambda: Tag("lid").remove(sph))[0], TypeError)
+        got, want = _refusal(lambda: Tag("lid").delete(sph)), _refusal(lambda: sph << -Tag("lid"))
+        self.assertEqual(got[0], want[0])
         self.assertIs(got[0], RuntimeError)
         self.assertTrue(sph in Tag("lid"))
-        Tag("lid", force=True).remove(sph)
+        Tag("lid", force=True).delete(sph)
         self.assertEqual(Tag.of(sph), [])
 
     def test_one_undo_step(self):

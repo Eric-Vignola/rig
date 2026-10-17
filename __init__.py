@@ -38,7 +38,8 @@ Names on nodes and plugs:
       node either way.
     * Nodes and plugs have no properties: ``str(node)`` /
       ``node.get_name()``, ``plug.get_node()``, ``plug.is_locked()``.
-      A predicate named without brackets has no truth value.
+      A predicate named without brackets has no truth value and does not
+      compare (``if plug.is_locked:`` and ``node.is_valid == True`` raise).
     * Other objects follow what they are: one that points into the scene
       (``Components``, ``ColorSet``, ``rig.container``, the membership
       tokens) reads through methods (``faces.get_indices()``); a value you
@@ -81,7 +82,8 @@ Operator conventions:
       (a value goes next): ``<<`` returns what the next ``<<`` should target.
     * ``c.remove(x)`` takes ``x`` out of the collection ``c`` and returns
       ``x`` (``red.remove(cube)``, ``layer.remove(cube)``,
-      ``Tag("x").remove(cube.f[:3])``); ``x << -c`` is its shorthand
+      ``Tag("x").remove(cube.f[:3])``: a tag's takes members, and
+      ``Tag("x").delete(node)`` deletes it); ``x << -c`` is its shorthand
       (``-Tag("x")``, ``-layer``), with the same refusals and undo step;
       the kind token ``Tag()`` / ``Layer()`` names no particular one: on
       ``<<`` it purges, removing the LHS from every collection of that kind;

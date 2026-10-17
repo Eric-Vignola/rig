@@ -354,17 +354,28 @@ animLayer's `lock` are plugs the same way, and a compound's child named
 attribute, `ctl.lock` is the bound method. Assigning to a method name never
 replaces the method: with the attribute it is `<<`, without one it raises
 (to patch a method, patch the class). Every public method of every node and
-plug class follows the rule, a node class you write included. An alias
-counts as an attribute (`aliasAttr`, a blendShape target): a target named
-`delete` is the plug `bs.delete` (`bs.delete << 0.5`), and `bs.delete()`
-still deletes the node; an alias of a compound's child does the same on the
-plug.
+plug class follows the rule, a node class you write included, and so do the
+`str` methods of a bare `Attribute` (`node.find_attr(...)`, a `str`): a
+compound child named `upper` is `attr.upper`, while `attr.upper()` is
+`str.upper`. An alias counts as an attribute (`aliasAttr`, a blendShape
+target): a target named `delete` is the plug `bs.delete` (`bs.delete <<
+0.5`), and `bs.delete()` still deletes the node; an alias of a compound's
+child does the same on the plug, an element's child too (`t.items[0].get`
+with `get` aliasing `items[0].val`). `dir(plug)` lists the plug's methods,
+never `str`'s (on a plug, `plug.upper` is a child or sibling lookup), and
+`help()` takes the class's method (`help(type(node).serialize)`: on a
+method plug, `help(node.serialize)` reads the plug as a `str` topic).
 
 A node and a plug have no properties and no public Python state: every
 public member of their classes is a method, so no other name hides a Maya
 attribute. A class body (and a later `Cls.x = ...`) declares, under a public
 name, only methods; a property, a nested class or lowercase data
 (`side = None`) is refused when the class is made, naming the `_` spelling.
+A method is a plain `def`: a decorated one (`@functools.lru_cache`,
+`partialmethod`) is refused too, naming the fix (decorate a private helper
+and call it from a plain method). A later `Cls.x = ...` takes a function, or
+a `unittest.mock` mock (`mock.patch.object`); any other callable (a
+`functools.partial`, a builtin) is refused, as in a class body.
 A node class keeps its Python state under the `_` names its body declares
 (`_side = None`, then `self._side = "L"`). An UPPER_CASE declaration
 (`NATIVE_NODE_TYPE`, `CUSTOM_NODE_TYPE`, `FN_SET`, `DEFAULT`, your own
@@ -475,8 +486,9 @@ A plug has no properties: every member is a method, under the rule above
 (bare, a name is the plug's compound child of that name if it has one, else
 the method; with brackets, the method). A predicate named without brackets
 has no truth value: `if a.tx.is_locked:` raises `TypeError` (`is_locked is a
-method: call it (is_locked())`), where it would always pass. Up to
-v2.0.0a5 these were properties:
+method: call it (is_locked())`), where it would always pass, and so does a
+comparison (`a.tx.is_locked == False`). Up to v2.0.0a5 these were
+properties:
 
 | Was | Now |
 |---|---|
@@ -514,7 +526,8 @@ except TypeError as err:
 A node has no properties either (the same rule: bare, a name is the node's
 Maya attribute of that name if it has one, else the method). `str(node)` is
 its name, with no check. A bare predicate has no truth value (`if
-ctl.is_locked:` raises `TypeError`), and `node.namespace = "ns"` is the `=`
+ctl.is_locked:` and `ctl.is_valid == True` raise `TypeError`), and
+`node.namespace = "ns"` is the `=
 of a Maya attr `namespace` like any other name. Up to v2.0.0a5 these were
 properties:
 
@@ -564,6 +577,11 @@ set with `set_options` (section 12). Up to v2.0.0a5:
 | `rig.container.stack`, `rig.container.containers` | `rig.container.get_stack()`: `(name, Container or None)` tuples |
 | `(-layer).name`, `(-red).name` | `str(-layer)`, `str(-red)` |
 | `ContainerOptions.flag = x` | `rig.set_options(flag=x)` |
+
+An old spelling raises naming the new one here too (`faces.count`: `'Components'
+object has no attribute 'count'; c.count is now c.get_count()`). The one
+class nested in a handle is a set of constants, `ColorSet.Representation`
+(`ColorSet.Representation.RGBA`).
 
 A plug is owned by the node you read it from: `plug.get_node()` is that very
 node object, shared by the plug's children and elements. A node with two
@@ -864,6 +882,10 @@ and rig objects:
 | an OpenMaya `MPlug` / `MObject` / `MDagPath` | its `Plug` / node |
 | any other object | the node of its `uuid` when one node of the scene has it, else what its `str` names: a `TransformData` is the node it was serialized from (renamed or not, whatever else is named like it), so a `HierarchyData` gives its nodes; in another scene its name decides |
 | anything else | a `TypeError` naming its index, its type and its str; nothing is added |
+
+A `List` is a `list`, so `list`'s own methods (`count`, `index`, `remove`,
+`copy`, `sort`, ...) are the List's: a Maya attr of one of those names does
+not broadcast bare (`[x.count for x in nodes]` reads it).
 
 The rule is the same for `List(items)`, `append`, `extend`, `insert`, `+=`
 and item / slice assignment. A sequence of nodes, names or other objects
@@ -1288,7 +1310,10 @@ DAG parents, so the second `ctrl` is `ctrl1`. Inside the blocks,
 None))` in `fk`), and `container.is_active()` says whether one is open.
 
 A `Container` is a `Node`: it takes attribute specs, and a published name
-resolves to the real plug behind it (section 5).
+resolves to the real plug behind it (section 5). A published name counts as
+an attribute for the name rule, so it may be a method's name: bare,
+`ctn.rename` is the published plug, and `ctn.rename()` renames the
+container (only a private member's name, `_name`, is refused).
 
 ```python
 from rig.spec import Float
@@ -2594,7 +2619,7 @@ the node it is applied to. Every kind uses the same spellings:
 | Verb | Spelling | `Tag` | Material (`red = Blinn.define("red")`) | Layer (`L = Layer.define("L")`) |
 |---|---|---|---|---|
 | add | `x << c` | members into the tag (made with them when missing); a **node** on the left makes the tag itself, empty | move into the material's shading engine (exclusive) | move the node into the layer (exclusive) |
-| remove these | `c.remove(x)`, shorthand `x << -c` | out of the tag, which stays; a node **deletes** the tag | leave the engine: those faces are in **no** engine (green) | back to `defaultLayer` |
+| remove these | `c.remove(x)`, shorthand `x << -c` | out of the tag, which stays; `.remove` takes members only (a node is a `TypeError` naming `.delete(node)`), while `node << -Tag('x')` deletes the tag | leave the engine: those faces are in **no** engine (green) | back to `defaultLayer` |
 | purge | `x << Kind()` | out of every editable tag of that category; a node on the left deletes every editable tag | out of every engine (green); `Default()` reverts | `defaultLayer` |
 | yes / no | `x in c`, `x not in c` | every member of `x` is in the tag | every face of `x` wears it | the node is in it |
 | ids | `x >> c` | ndarray of the ids of `x` in the tag, in its own category; a node reads the whole tag | ndarray of the face ids of `x` wearing it; all faces when object-level | refused: a layer has no ids (ask with `in`) |
@@ -2610,7 +2635,9 @@ list (`red.remove([a, b])`), which cannot sit on the left of `<<`. `-c` is
 the removal token of `c`. A token is no node: it has no attributes and no
 methods (`(-red).remove(x)` is an `AttributeError`), and its name is
 `str(token)` (`str(-red)` is `"red"`; the repr shows it too). `Tag("cap")`
-is a value, so `Tag("cap").name` is its name.
+is a value, so `Tag("cap").name` is its name. `Tag("cap").remove(x)` takes
+members only: a node there is a `TypeError` naming `Tag("cap").delete(node)`,
+which deletes the tag (`node << -Tag("cap")` still does too).
 
 Three rules hold for every kind. `<<` returns what the next `<<` should
 target: an attribute spec returns the new plug (a value goes next), a
@@ -2763,7 +2790,7 @@ the tag Maya stores: the ends trimmed, a space inside made `_`.
 ```python
 sph.vtx[:2] << Tag("lid rim")                   # the tag 'lid_rim'
 print(sph >> Tag("lid_rim"), Tag(" lid rim ") == Tag("lid_rim"))   # [0 1] True
-Tag("lid_rim").remove(sph)                      # the node: delete the tag
+Tag("lid_rim").delete(sph)                      # delete the tag (sph << -Tag("lid_rim") too)
 try:
     Tag("a:")                                   # ValueError: Maya refuses it ('b', '1a', 'a-b', 'a..b' too)
 except ValueError as err:
@@ -2779,7 +2806,7 @@ sph.vtx[1] << -Tag("cap")                       # the shorthand of the same remo
 print(sph >> Tag("cap"))                        # [2 3 4 5 6 7]
 Tag("cap").remove(sph.vtx)                      # empty it
 print((sph >> Tag("cap")).shape)                # (0,)
-Tag("empty").remove(sph)                        # the node: delete the tag
+Tag("empty").delete(sph)                        # delete the tag; Tag("empty").remove(sph) is a TypeError: members only
 
 sph.vtx[:4]  << Tag("aa")
 sph.vtx[2:6] << Tag("bb")
@@ -2832,7 +2859,7 @@ Tag("cap").rename(sph, "crown", force=True)     # rewrites the reference
 print(expr >> None)                             # crown + lid
 Tag("crown").clear(sph)                         # empty, name survives
 print((sph >> Tag("crown")).shape)              # (0,)
-Tag("crown").delete(sph, force=True)            # Tag('crown', force=True).remove(sph) does the same
+Tag("crown").delete(sph, force=True)            # Tag('crown', force=True).delete(sph) does the same
 print(Tag.of(sph))                              # []
 ```
 
@@ -2853,7 +2880,7 @@ except TypeError as err:
 cube.f[:3] << Tag("top", at=cube)               # an editable shadow on cubeShape; later edits find it without at=
 cube.f[3]  << Tag("top")
 print(cube >> Tag("top"))                       # [0 1 2 3]
-Tag("top").remove(cube)                         # delete the shadow: the procedural tag shows again
+Tag("top").delete(cube)                         # delete the shadow: the procedural tag shows again
 print(cube >> Tag("top"))                       # [1]
 
 baked = make(cmds.polyCube, "baked", ch=False)

@@ -95,6 +95,7 @@ from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
+    _PLUG_TYPES,
     _NON_MATRIX_ATTR_API_TYPES,
     _OLD_PLUG_SETTERS,
     _attr_handle,
@@ -151,7 +152,8 @@ LOGGER = logging.getLogger(__name__)
 
 # The right-hand sides of ``<<`` that are never reshaped (see `_prepared_operand`):
 # numbers, None, plugs and the plain sequences, passed by one isinstance call.
-_NOT_RESHAPED = _SCALARS + (Attribute, list, tuple, np.ndarray, str)
+# (an Attribute is a str: str covers it, on isinstance's exact-type fast path)
+_NOT_RESHAPED = _SCALARS + (list, tuple, np.ndarray, str)
 
 # Attribute's own members the inject fast paths ask a plug's class to keep:
 # its connection reads (`_disconnect_incoming`), its name (`_named_with_dot`)
@@ -378,7 +380,7 @@ class Plug(Attribute):
             except (AttributeError, TypeError):
                 pass
             try:
-                node = type(self).get_node(self)
+                node = type(self)._raw_get_node(self)
             except RuntimeError:
                 # a node deleted to the undo queue (``already deleted!``): a
                 # probe gets the AttributeError it expects
@@ -405,7 +407,7 @@ class Plug(Attribute):
         #    A Maya attribute (or component) of the node only, through the node
         #    class's ``__getattr__``: never the node's Python members, so
         #    ``node.tx.delete()`` / ``.rename()`` / ``.get_uuid()`` do not reach the node.
-        node = type(self).get_node(self)
+        node = type(self)._raw_get_node(self)
         try:
             return type(node).__getattr__(node, attr_name)
         except AttributeError:
@@ -420,7 +422,7 @@ class Plug(Attribute):
         #    (which ``findPlug`` cannot resolve directly) and genuine
         #    on-container attrs.
         try:
-            owner = cmds.container(query=True, findContainer=str(type(self).get_node(self)))
+            owner = cmds.container(query=True, findContainer=str(type(self)._raw_get_node(self)))
         except (
             RuntimeError,
             ValueError,
@@ -441,6 +443,13 @@ class Plug(Attribute):
             + (_class_data_hint(self, attr_name) or _old_name_hint(attr_name))
         )
 
+    def __dir__(self) -> list:
+        # without the str method names: on a Plug each is an attribute lookup
+        # (`_StrRoute`), never a member, so dir() and completion do not list
+        # them (fix round 2026-10-16)
+        cls = type(self)
+        return [n for n in super().__dir__() if type(_class_attr(cls, n)) is not _StrRoute]
+
     def __getitem__(self, key: Any) -> "Plug":
         # Multi attrs and geometry components are handled by Attribute's
         # __getitem__ (which already supports both numeric indexing and
@@ -449,7 +458,7 @@ class Plug(Attribute):
         # (``_CHILD_CLASS``) owned as this plug is, built once (D29). A list
         # result becomes a List.
         _ensure_owner_alive(self)
-        is_indexable_via_attribute = type(self).is_multi(self) or self._component_type != "unknown"
+        is_indexable_via_attribute = type(self)._raw_is_multi(self) or self._component_type != "unknown"
         if is_indexable_via_attribute:
             result = super().__getitem__(key)
             if isinstance(result, list):
@@ -463,7 +472,7 @@ class Plug(Attribute):
                 # idiom by letting :meth:`List.__lshift__` route writes
                 # through the parent when the slice was empty (auto-create
                 # indices to match the source length).
-                parent = self if type(self).is_multi(self) and isinstance(key, slice) else None
+                parent = self if type(self)._raw_is_multi(self) and isinstance(key, slice) else None
                 return values_list(result, parent)
             return result
 
@@ -472,7 +481,7 @@ class Plug(Attribute):
         # canonical :meth:`MPlug.child` API. NumPy-style: ``int`` returns
         # a single Plug, ``slice`` returns a List of children.
         try:
-            n = type(self).get_num_children(self)
+            n = type(self)._raw_get_num_children(self)
         except (RuntimeError, TypeError):
             n = 0
 
@@ -522,7 +531,7 @@ class Plug(Attribute):
         _ensure_owner_alive(self)
         # the cached child Attribute names the MPlug; the Plug is a new one
         # each time (plugs are never cached), owned as this plug is
-        return _inherit_owner(self, _new_attr(Plug, Attribute.child(self, i)._mplug))
+        return _inherit_owner(self, _new_attr(Plug, Attribute._raw_child(self, i)._mplug))
 
     # -- assignment via attribute syntax -- #
 
@@ -611,7 +620,7 @@ class Plug(Attribute):
         ``controlPoints[k]`` Plug of its storage, keeping ``equals`` consistent
         with ``__hash__``. Anything else (a plain str) compares by name.
         """
-        if isinstance(other, Attribute):
+        if type(other) in _PLUG_TYPES:
             return _same_plug(self, other)
         return str(self) == str(other)
 
@@ -626,7 +635,7 @@ class Plug(Attribute):
 
         Raises :class:`ValueError` if this plug is not a multi.
         """
-        if not type(self).is_multi(self):
+        if not type(self)._raw_is_multi(self):
             raise ValueError(f"{self} is not a multi attribute")
         idx  = type(self).get_next_available_index(self)
         elem = self[idx]
@@ -685,7 +694,7 @@ class Plug(Attribute):
         a = d.get("_attrh")
         if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
             _ensure_owner_alive(self)
-        if isinstance(other, Attribute):
+        if type(other) in _PLUG_TYPES:
             d = other.__dict__
             h = d.get("_handle")
             a = d.get("_attrh")
@@ -713,7 +722,7 @@ class Plug(Attribute):
         # shorthand and the string-plug set, which would read a node as a
         # value.
         if lazy.types._is_membership(other):
-            return other._member().inject(self)
+            return other._member()._run_inject(self)
 
         # Attribute spec (a user's spec class is code a user wrote).
         if lazy.types._is_attribute_spec(other):
@@ -736,7 +745,7 @@ class Plug(Attribute):
         # type facts from one `shorthand._Facts` each, made here (they query
         # nothing until asked), see `_inject_value`.
         shorthand = lazy.shorthand
-        if isinstance(other, Attribute):
+        if type(other) in _PLUG_TYPES:
             dst_facts = shorthand._Facts(self)
             src_facts = shorthand._Facts(other)
         else:
@@ -768,7 +777,7 @@ class Plug(Attribute):
         if mplug is not None and mplug.isArray and _is_generic_slot(self):
             return [self[i].get() for i in self.get_logical_indices()]
         try:
-            dt = type(self).get_data_type(self)
+            dt = type(self)._raw_get_data_type(self)
         except Exception:
             dt = None
         return _to_numpy(Attribute.get(self), data_type=dt)
@@ -851,7 +860,7 @@ class Plug(Attribute):
         # membership, before the clone onto a node: a layer node on the
         # right is a collection, not a clone target
         if _is_membership(other):
-            return other._member().query(self)
+            return other._member()._run_query(self)
 
         # Retired connection-query sentinels (the List class or Plug itself
         # on the right).
@@ -940,7 +949,7 @@ class Plug(Attribute):
             return self.__rshift__(leaf_frame.container_node)
 
         # a plug is a str too, but not a clone name: '>>' never connects
-        if isinstance(other, Attribute):
+        if type(other) in _PLUG_TYPES:
             raise TypeError(
                 f"'>>' does not connect plugs: write {other} << {self}, or "
                 f"{self}.connect({other}, force=True)"
@@ -967,7 +976,7 @@ class Plug(Attribute):
         if not sep:
             # the plug's own node: never looked up again by its name (which
             # the lookup rule could find ambiguous while a namespace is current)
-            dst_node  = type(self).get_node(self)
+            dst_node  = type(self)._raw_get_node(self)
             node_name = str(dst_node)
         else:
             if not node_name or not cmds.objExists(node_name):
@@ -984,7 +993,7 @@ class Plug(Attribute):
             )
         new_plug = _clone_attribute(self, dst_node, attr_name=attr_name)
         try:
-            if not type(self).is_multi(self):
+            if not type(self)._raw_is_multi(self):
                 new_plug << self.get()
         except Exception as e:
             LOGGER.debug("could not copy the value of %s onto %s: %s", self, new_plug, e)
@@ -1306,7 +1315,7 @@ class Plug(Attribute):
         """
         from rig._internal.math_nodes import _condition_op
 
-        if isinstance(other, Attribute):
+        if type(other) in _PLUG_TYPES:
             # names both first: a deleted node raises as the names do
             same = _same_plug(self, other)
             if same and _lazy().container.ContainerOptions.constant_folding:
@@ -1327,7 +1336,7 @@ class Plug(Attribute):
         is ``True`` and builds nothing."""
         from rig._internal.math_nodes import _condition_op
 
-        if isinstance(other, Attribute):
+        if type(other) in _PLUG_TYPES:
             # names both first: a deleted node raises as the names do
             same = _same_plug(self, other)
             if same and _lazy().container.ContainerOptions.constant_folding:
@@ -1468,7 +1477,7 @@ def _checking_operands(method: Any) -> Any:
         if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
             _ensure_owner_alive(self)
         for operand in other:
-            if isinstance(operand, Attribute):
+            if type(operand) in _PLUG_TYPES:
                 d = operand.__dict__
                 h = d.get("_handle")
                 a = d.get("_attrh")
@@ -1635,7 +1644,7 @@ class ComponentPlug(Plug):
         if self._comp_coords is None:
             return Attribute.get_full_name(self)  # bare handle -> controlPoints
         coords = "".join(f"[{c}]" for c in self._comp_coords)
-        return f"{type(self).get_node(self)}.{self._comp_alias}{coords}"
+        return f"{type(self)._raw_get_node(self)}.{self._comp_alias}{coords}"
 
     # -- indexing -- #
 
@@ -1708,7 +1717,7 @@ class ComponentPlug(Plug):
         missing = _AXIS_NAMES[ndims][len(specs):]
         left    = len(missing)
         return (
-            f"{type(self).get_node(self)}.{alias}[{given}] leaves {left} of {ndims} axes "
+            f"{type(self)._raw_get_node(self)}.{alias}[{given}] leaves {left} of {ndims} axes "
             "unspecified, and a chained index would pick from the flattened "
             f"selection: write {alias}[{given}, {', '.join(missing)}] for one "
             f"point or {alias}[{given}, {', '.join(':' * left)}] for the slab"
@@ -1725,7 +1734,7 @@ class ComponentPlug(Plug):
         a rename still resolves (MObjectHandle-based identity, the same source
         :meth:`get_full_name` uses).
         """
-        node_name = str(type(self).get_node(self))
+        node_name = str(type(self)._raw_get_node(self))
         name      = f"{node_name}.{self._comp_alias}" + "".join(f"[{c}]" for c in coords)
         mplug     = _maybe_translate_component(name)
         element   = _component_plug(
@@ -1748,7 +1757,7 @@ class ComponentPlug(Plug):
         Reads the *live* node name from the MPlug (rename-safe) -- not the
         cached ``_comp_node``.
         """
-        node_name = str(type(self).get_node(self))
+        node_name = str(type(self)._raw_get_node(self))
         if cmds.nodeType(node_name) == "lattice":
             return (
                 cmds.getAttr(f"{node_name}.sDivisions"),
@@ -1780,7 +1789,7 @@ def _maybe_component_plug(
     if attr_name not in _MULTIDIM_ALIASES:
         return None
     try:
-        node_name = str(type(attr_obj).get_node(attr_obj))
+        node_name = str(type(attr_obj)._raw_get_node(attr_obj))
         node_type = cmds.nodeType(node_name)
     except (RuntimeError, AttributeError):
         return None
@@ -1862,7 +1871,7 @@ def _disconnect_incoming(
     (rig's own moves of a wire: a shader conversion, a blendShape load) only
     ``dst``'s own input is removed, as before.
     """
-    if not isinstance(dst, Attribute):
+    if type(dst) not in _PLUG_TYPES:
         # Allow raw strings only as a fallback path.
         try:
             dst = Attribute(str(dst))
@@ -1901,8 +1910,8 @@ def _disconnect_incoming(
         mplug = d.get("_mplug")
         if (
             mplug is not None
-            and cls.get_connected_attrs is _GET_CONNECTED_ATTRS
-            and cls.iter_connected_attrs is _ITER_CONNECTED_ATTRS
+            and cls._raw_get_connected_attrs is _GET_CONNECTED_ATTRS
+            and cls._raw_iter_connected_attrs is _ITER_CONNECTED_ATTRS
             and "get_connected_attrs" not in d
             and "iter_connected_attrs" not in d
         ):
@@ -2448,7 +2457,7 @@ def _locked_channels(dst: Any, leaves: list | None = None) -> list:
     """
     types = _lazy().types
 
-    if not isinstance(dst, Attribute):
+    if type(dst) not in _PLUG_TYPES:
         return []
     if leaves is None:
         try:
@@ -2458,14 +2467,14 @@ def _locked_channels(dst: Any, leaves: list | None = None) -> list:
 
     locked = []
     for leaf in leaves:
-        leaf_attr = leaf if isinstance(leaf, Attribute) else None
+        leaf_attr = leaf if type(leaf) in _PLUG_TYPES else None
         if leaf_attr is None:
             try:
                 leaf_attr = Attribute(str(leaf))
             except Exception:
                 continue
         try:
-            if type(leaf_attr).is_locked(leaf_attr):
+            if type(leaf_attr)._raw_is_locked(leaf_attr):
                 locked.append(str(leaf_attr))
         except Exception:
             pass
@@ -2485,7 +2494,7 @@ def _spec_slot_channels(dst: Any, src: Any) -> frozenset:
     """
     types = _lazy().types
 
-    if isinstance(src, (Attribute, str)) or not types._is_sequence(src):
+    if isinstance(src, str) or not types._is_sequence(src):  # an Attribute is a str
         return frozenset()
     if not any(types._is_attribute_spec(x) for x in src):
         return frozenset()
@@ -2556,7 +2565,7 @@ def _driver(dst_attr: Any) -> int:
     of its own, `_wired_ancestor`); ``_FREE`` otherwise. A plug whose owner is
     gone, or that cannot be read, answers ``_FREE``, and its set raises what it
     raised before."""
-    if not isinstance(dst_attr, Attribute):
+    if type(dst_attr) not in _PLUG_TYPES:
         return _FREE
     try:
         _ensure_owner_alive(dst_attr)
@@ -2615,7 +2624,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
     elif driver == _BELOW_WHOLE:
         _disconnect_incoming(dst_attr, "set", write_follows=True)
     try:
-        type(dst_attr).set(dst_attr, *set_args, **set_kwargs)
+        type(dst_attr)._raw_set(dst_attr, *set_args, **set_kwargs)
         return
     except (RuntimeError, TypeError) as first:
         try:
@@ -2630,7 +2639,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
             )
             _disconnect_incoming(dst_attr, "set", write_follows=True, one_driver=True)
             try:
-                type(dst_attr).set(dst_attr, *set_args, **set_kwargs)
+                type(dst_attr)._raw_set(dst_attr, *set_args, **set_kwargs)
                 return
             except (RuntimeError, TypeError) as second:
                 raise InjectionError(
@@ -2837,14 +2846,14 @@ def _dst_data_type(dst: Any, facts: Any = None) -> Any:
     own ``get_data_type`` is always asked. `facts`, dst's `shorthand._Facts` of this
     ``<<``, answers the query while its answers can be reused."""
     if (
-        getattr(type(dst), "get_data_type", None) is _GET_DATA_TYPE
+        getattr(type(dst), "_raw_get_data_type", None) is _GET_DATA_TYPE
         and _fixed_attr_kind(dst) in _NON_MATRIX_ATTR_API_TYPES
     ):
         return _FIXED_KIND
     if facts is not None and facts._reusable:
         return facts._get_data_type()
     try:
-        return type(dst).get_data_type(dst)
+        return type(dst)._raw_get_data_type(dst)
     except Exception:
         return None
 
@@ -2854,7 +2863,7 @@ def _resolved_data_type(dst: Any, data_type: Any) -> Any:
     ``dst.get_data_type()`` (None if it raises)."""
     if data_type is _FIXED_KIND:
         try:
-            return type(dst).get_data_type(dst)
+            return type(dst)._raw_get_data_type(dst)
         except Exception:
             return None
     return data_type
@@ -2920,9 +2929,9 @@ def _inject_value(
     #     value it keeps no other way is refused before any query or edit. A
     #     multi root keeps the multi rules below, and each of its elements comes
     #     back here (``dst[i] << ...``, the auto-index step).
-    generic = isinstance(dst, Attribute) and _is_generic_slot(dst)
+    generic = type(dst) in _PLUG_TYPES and _is_generic_slot(dst)
     if generic and not dst._mplug.isArray:
-        if isinstance(src, Attribute):
+        if type(src) in _PLUG_TYPES:
             _named_with_dot(src)
         elif not _is_generic_number(src):
             _refuse_generic(str(dst), src)
@@ -2945,7 +2954,7 @@ def _inject_value(
         compound_dst = types._is_compound(dst)
     try:
         leaves = (
-            [type(dst).child(dst, i) for i in range(type(dst).get_num_children(dst))]
+            [type(dst)._raw_child(dst, i) for i in range(type(dst)._raw_get_num_children(dst))]
             if compound_dst
             else [dst]
         )
@@ -2958,10 +2967,10 @@ def _inject_value(
     # the element a multi root appends) are all read before the first set, so
     # a wrong one raises TypeError and changes nothing (a plain str into one
     # enum leaf is read by _set_or_connect, before its set).
-    if _holds_text(src) and isinstance(dst, Attribute):
+    if _holds_text(src) and type(dst) in _PLUG_TYPES:
         is_array = dst._mplug.isArray
         if compound_dst or is_array or not isinstance(src, str):
-            _check_enum_names(type(dst).get_mobject(dst), src, str(dst), element=not is_array)
+            _check_enum_names(type(dst)._raw_get_mobject(dst), src, str(dst), element=not is_array)
 
     # Resolve dst data type once (or `_FIXED_KIND`, see `_dst_data_type`).
     dst_data_type = _dst_data_type(dst, dst_facts)
@@ -2974,7 +2983,7 @@ def _inject_value(
         # Without this, `texture.fileTextureName << shape.image` would
         # store the literal string ``"shape.image"`` as the dst's value
         # instead of building the live connection.
-        if isinstance(src, Attribute):
+        if type(src) in _PLUG_TYPES:
             _set_or_connect(src, dst)
             return
         _do_set(dst, str(src), type="string")
@@ -3007,18 +3016,18 @@ def _inject_value(
     # Outside the query, ``get_attribute_type()`` only builds the owning
     # node (and raises what a failed cast raises), so an Attribute dst builds
     # its node here and runs ``cmds.attributeQuery`` for a multi root only.
-    lazy_attr_type = isinstance(dst, Attribute)
+    lazy_attr_type = type(dst) in _PLUG_TYPES
     dst_attr_type  = None
     try:
         if lazy_attr_type:
-            type(dst).get_node(dst)
+            type(dst)._raw_get_node(dst)
         else:
             dst_attr_type = type(dst).get_attribute_type(dst)
     except (AttributeError, RuntimeError, TypeError):
         lazy_attr_type = False
     try:
         is_bare_multi_root = (
-            type(dst).is_multi(dst)
+            type(dst)._raw_is_multi(dst)
             and not str(dst).endswith("]")
             and dst_data_type != "matrix"
             and (_attribute_type_or_none(dst) if lazy_attr_type else dst_attr_type)
@@ -3038,9 +3047,9 @@ def _inject_value(
         # multi root into a single new dst index (creating a spurious
         # extra index with default values -- see TestInjectMultiToMulti
         # for the regression).
-        if isinstance(src, Attribute):
+        if type(src) in _PLUG_TYPES:
             try:
-                src_is_multi = type(src).is_multi(src) and not str(src).endswith("]")
+                src_is_multi = type(src)._raw_is_multi(src) and not str(src).endswith("]")
                 if src_is_multi and generic and _path_instance_number(src) is not None:
                     # an array of per-instance elements read without an index
                     # (``obj.wm``) is the element of its path's instance, one
@@ -3065,7 +3074,7 @@ def _inject_value(
             return
 
         if (
-            not isinstance(src, Attribute)
+            type(src) not in _PLUG_TYPES
             and not isinstance(src, str)
             and not isinstance(src, numbers.Real)
             and types._is_sequence(src)
@@ -3088,7 +3097,7 @@ def _inject_value(
     # read without an index it is the element of its path's instance, as cmds
     # resolves its name (``T2|S.worldMatrix`` is ``worldMatrix[1]``).
     try:
-        if type(dst).is_multi(dst) and not str(dst).endswith("]"):
+        if type(dst)._raw_is_multi(dst) and not str(dst).endswith("]"):
             next_index = _path_instance_number(dst)
             if next_index is None:
                 try:
@@ -3116,7 +3125,7 @@ def _inject_value(
 
     # 3 & 4: Sequence sources -- strict shape validation + matrix routing.
     if (
-        not isinstance(src, Attribute)
+        type(src) not in _PLUG_TYPES
         and not isinstance(src, str)
         and not isinstance(src, numbers.Real)
         and types._is_sequence(src)
@@ -3174,7 +3183,7 @@ def _inject_value(
             # 4. Compound dst (vector / quat / euler) -- must match channel
             #    count exactly OR be a 1-element broadcast.
             if compound_dst:
-                n = type(dst).get_num_children(dst)
+                n = type(dst)._raw_get_num_children(dst)
                 if flat.size == n:
                     src = flat.tolist()
                 elif flat.size == 1:
@@ -3199,9 +3208,9 @@ def _inject_value(
         # existing compound-detection logic below.
 
     if src_facts is not None and src is src_facts._obj and src_facts._reusable:
-        compound_src = src_facts.is_compound and isinstance(src, Attribute)
+        compound_src = src_facts.is_compound and type(src) in _PLUG_TYPES
     else:
-        compound_src = types._is_compound(src) and isinstance(src, Attribute)
+        compound_src = types._is_compound(src) and type(src) in _PLUG_TYPES
 
     # a generic slot as the source reads as what it holds (a number broadcasts
     # into a compound's children as a scalar does), but compound data (a double3)
@@ -3253,7 +3262,7 @@ def _inject_value(
     # `_free_of_whole_wire`)
     if (
         compound_dst
-        and isinstance(dst, Attribute)
+        and type(dst) in _PLUG_TYPES
         and len(src_channels) in (1, len(dst_channels))
         and dst._mplug.isDestination
         and not any(
@@ -3286,7 +3295,7 @@ def _inject_generic(dst: Any, src: Any) -> None:
     Maya keeps no other value in such an attr (setAttr refuses a string, a
     matrix, a double3; one set through the API is dropped, with an error, when
     the file is opened again)."""
-    if isinstance(src, Attribute):
+    if type(src) in _PLUG_TYPES:
         try:
             index = _path_instance_number(src)
         except (AttributeError, KeyError):
@@ -3350,7 +3359,7 @@ def _disconnect_and_drop(dst: Any) -> None:
     input makes the two one undo step (`journal.one_step`): one undo brings back
     the connection and the data together (an undo of the drop alone would leave
     the slot disconnected with the data a saved file refuses)."""
-    if isinstance(dst, Attribute) and _is_generic_slot(dst):
+    if type(dst) in _PLUG_TYPES and _is_generic_slot(dst):
         _ensure_owner_alive(dst)
         mplug = dst._mplug
         if not mplug.isArray and mplug.isDestination:
@@ -3370,7 +3379,7 @@ def _clear_generic_data(dst: Any, generic: bool = False) -> None:
     element that does not exist is not made. The drop is an API edit journaled
     with the statement (`rig._internal.api_edits.api_clear_data`): one undo puts
     the data back."""
-    if not (generic or (isinstance(dst, Attribute) and _is_generic_slot(dst))):
+    if not (generic or (type(dst) in _PLUG_TYPES and _is_generic_slot(dst))):
         return
     mplug = dst._mplug
     if mplug.isArray or mplug.isDestination:
@@ -3456,7 +3465,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     container = lazy.container.container
 
     # Coerce dst to Attribute if it isn't already, so we can use the API.
-    if not isinstance(dst, Attribute):
+    if type(dst) not in _PLUG_TYPES:
         try:
             dst_attr = Attribute(str(dst))
         except Exception:
@@ -3467,7 +3476,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
         dst_attr = dst
 
     # Plug / Attribute source => connect.
-    if isinstance(src, Attribute):
+    if type(src) in _PLUG_TYPES:
         if _named_with_dot(src):
             _disconnect_incoming(
                 dst_attr if dst_attr is not None else dst,
@@ -3477,7 +3486,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
             )
             try:
                 if dst_attr is not None:
-                    type(src).connect(src, dst_attr, force=True)
+                    type(src)._raw_connect(src, dst_attr, force=True)
                     container.absorb_unit_conversions(dst_attr)
                 else:
                     # Fallback for raw-string dst we couldn't coerce.
@@ -3535,8 +3544,8 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
         # get_data_type() (a str has none: no data type)
         try:
             dt = (
-                type(dst).get_data_type(dst)
-                if isinstance(dst, Attribute)
+                type(dst)._raw_get_data_type(dst)
+                if type(dst) in _PLUG_TYPES
                 else dst.get_data_type()
             )
         except Exception:
@@ -3569,7 +3578,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     # the choice explicit.
     if isinstance(src, lazy.node.Node):
         try:
-            dt = type(dst_attr).get_data_type(dst_attr) if dst_attr is not None else None
+            dt = type(dst_attr)._raw_get_data_type(dst_attr) if dst_attr is not None else None
         except Exception:
             dt = None
         if dt == "matrix":

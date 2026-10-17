@@ -48,8 +48,10 @@ from rig.nodetypes import (
 from rig.nodetypes._base import (
     _cast_node,
     _check_attrs,
+    _old_handle_name,
     _class_attr,
     _ClassData,
+    _PLUG_DESCRIPTORS,
     _scene_predicate,
     _handle_valid,
     _locked_node_text,
@@ -501,10 +503,23 @@ class _ContainerStack:
     nodes to the active scope.
     """
 
+    # the members before the per-object rule (user decision 2026-10-16): a miss
+    # names the method now (`_old_handle_name`)
+    _OLD_NAMES = {
+        "stack":      "rig.container.stack is now rig.container.get_stack()",
+        "containers": (
+            "rig.container.containers is gone: rig.container.get_stack() gives "
+            "the (name, Container or None) of each open block"
+        ),
+    }
+
     def __init__(self) -> None:
         self._stack: List[_StackFrame] = []
         # Pending args for the next __enter__ -- set by __call__.
         self._pending: Optional[dict] = None
+
+    def __getattr__(self, name: str) -> Any:
+        raise _old_handle_name(self, name, _ContainerStack._OLD_NAMES)
 
     # -- context-manager entry point -- #
 
@@ -745,10 +760,10 @@ class _ContainerStack:
             try:
                 if (
                     dg_node is not None
-                    and type(dg_node).is_valid(dg_node)
+                    and type(dg_node)._raw_is_valid(dg_node)
                     and not (len(name) >= 32 and is_valid_maya_uid(name))
                 ):
-                    uuid = type(dg_node).get_uuid(dg_node)
+                    uuid = type(dg_node)._raw_get_uuid(dg_node)
                 else:
                     uuid = _node_uuid(name)
             except ValueError:
@@ -793,7 +808,7 @@ class _ContainerStack:
         block)."""
         for frame in self._stack:
             node = frame.container_node
-            if node is not None and _handle_valid(node.__dict__) and type(node).get_uuid(node) == uuid:
+            if node is not None and _handle_valid(node.__dict__) and type(node)._raw_get_uuid(node) == uuid:
                 return True
         return False
 
@@ -911,7 +926,7 @@ class _ContainerStack:
         if leaf is None:
             return False
         try:
-            owning_node = str(type(attr).get_node(attr))
+            owning_node = str(type(attr)._raw_get_node(attr))
         except Exception:
             return False
         try:
@@ -1721,7 +1736,7 @@ def _resolve_multi_parent_source(source: Any, add_attr_kwargs: Dict[str, Any]) -
     if add_attr_kwargs.get("multi"):
         return source
     try:
-        if type(source).is_multi(source) and type(source).get_data_type(source) == "matrix":
+        if type(source)._raw_is_multi(source) and type(source)._raw_get_data_type(source) == "matrix":
             index = _path_instance_number(source)
             return source[0 if index is None else index]
     except (AttributeError, RuntimeError, TypeError, IndexError):
@@ -1957,7 +1972,7 @@ def _is_container_member(container_node, plug) -> bool:
     attributes-node path instead of bound directly.
     """
     try:
-        owner = str(type(plug).get_node(plug))
+        owner = str(type(plug)._raw_get_node(plug))
     except Exception:
         return False
     return _is_direct_member(str(container_node), owner)
@@ -2019,7 +2034,7 @@ def _same_node(name_a: str, name_b: str) -> bool:
 def _plug_is_multi(plug) -> bool:
     """True iff ``plug`` is a multi / array attribute (robust to bare plugs)."""
     try:
-        return bool(type(plug).is_multi(plug))
+        return bool(type(plug)._raw_is_multi(plug))
     except (AttributeError, RuntimeError):
         return False
 
@@ -2143,14 +2158,20 @@ def _destroy_published_name(container_node, name: str) -> bool:
 
 def _refuse_container_member_name(name: str) -> None:
     """Raise ``ValueError`` if ``name`` is a Python member of :class:`Container`
-    (``get_name``, ``cleanup``, ``rename``, ...): ``ctn.<name>`` gives the member,
-    so an attribute published under that name could never be read back. A node
-    has no properties (the property ban, user decision 2026-10-16), so ``name``
-    and ``uuid`` publish. A member of the metaclass (``wrap``) is not one: a
-    container reads it as its published attribute; nor is class data
-    (``NATIVE_NODE_TYPE``: the class's, never an instance's)."""
+    that ``ctn.<name>`` would give instead of an attribute published under that
+    name: a private or dunder member. A public method is no such member (the
+    name rule with aliases, user decisions 2026-10-16: a published name is an
+    attribute of the container, so bare ``ctn.rename`` is the published plug
+    and ``ctn.rename()`` the method; fix round 2026-10-16), nor is class data
+    (``NATIVE_NODE_TYPE``: the class's, never an instance's) or a member of the
+    metaclass (``wrap``). A node has no properties (the property ban), so
+    ``name`` and ``uuid`` publish too."""
     found = _class_attr(Container, name)
-    if found is not _MISSING and type(found) is not _ClassData:
+    if (
+        found is not _MISSING
+        and type(found) is not _ClassData
+        and not isinstance(found, _PLUG_DESCRIPTORS)
+    ):
         raise ValueError(
             f"{name!r} is a Container attribute "
             f"({type(getattr(Container, name)).__name__}); "
@@ -2197,8 +2218,9 @@ def _publish_to_container(
         if ``<container_node>.<name>`` already exists.
     ValueError
         if ``direction`` is not ``'input'`` or ``'output'``, if ``name`` is empty,
-        or if ``name`` is a :class:`Container` attribute (``name``, ``cleanup``,
-        ...), which ``ctn.<name>`` would give instead of the published plug.
+        or if ``name`` is a private :class:`Container` member (``_stack``, a
+        dunder), which ``ctn.<name>`` would give instead of the published plug
+        (a method's name publishes: the name rule).
     """
     if direction not in ("input", "output"):
         raise ValueError(f"direction must be 'input' or 'output', got {direction!r}")
@@ -2388,13 +2410,13 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
     # ``{"dt": "string"}``.
     if isinstance(source, Attribute):
         try:
-            dt = type(source).get_data_type(source)
+            dt = type(source)._raw_get_data_type(source)
         except Exception:
             return {"at": "double"}
         spec = dict(_DATA_TYPE_TO_ADDATTR.get(dt, {"at": "double"}))
         # If the source is itself a multi, mirror that.
         try:
-            if type(source).is_multi(source):
+            if type(source)._raw_is_multi(source):
                 spec["multi"] = True
         except (AttributeError, RuntimeError):
             pass
@@ -2410,7 +2432,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
         first_attr_elem = None
     if first_attr_elem is not None:
         try:
-            dt = type(first_attr_elem).get_data_type(first_attr_elem)
+            dt = type(first_attr_elem)._raw_get_data_type(first_attr_elem)
         except Exception:
             dt = "double"
         # v4.R: 3- or 4-element scalar List -> compound vec3/vec4
@@ -2432,7 +2454,7 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
         }
         compound_at = _COMPOUND_FROM_SCALAR.get((dt, n_elems))
         if compound_at and all(
-            isinstance(x, Attribute) and type(x).get_data_type(x) == dt
+            isinstance(x, Attribute) and type(x)._raw_get_data_type(x) == dt
             for x in source
         ):
             return {"at": compound_at}
@@ -2824,7 +2846,7 @@ def _node_uuid(node_name: str) -> str:
     try:
         # a name Maya returned (or a node's own name): Maya's resolution
         node = _cast_node(node_name)
-        return type(node).get_uuid(node)
+        return type(node)._raw_get_uuid(node)
     except (ValueError, RuntimeError):
         raise ValueError(f"Cannot resolve UUID for {node_name!r}")
 

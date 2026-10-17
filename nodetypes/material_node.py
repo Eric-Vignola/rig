@@ -550,14 +550,14 @@ class Material(DGNode):
         -red`` (its shorthand) does: those faces are in no engine (green); the
         same refusals, before any write; one undo step. Returns ``members``,
         as ``<<`` returns its left-hand side (user decision 2026-10-16)."""
-        return (-self)._member().inject(members)
+        return (-self)._member()._run_inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in red``: whether every face of every shadeable shape of ``x``
         (a node, faces, a plug, which stands for its node, or a list of them),
         or the whole object, wears this shader (through its engine, the
         ``<shader>SG`` rule of ``<<``)."""
-        return self._member().contains(lhs)
+        return self._member()._run_contains(lhs)
 
     @classmethod
     def of(cls, x: Any) -> list:

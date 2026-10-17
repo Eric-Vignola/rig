@@ -72,9 +72,9 @@ class DAGNode(DGNode):
                     sel.add(_lookup(str(node), _type_label(type(self))))
                 d["_mdagpath"] = sel.getDagPath(0)
                 d["_mobject"]  = d["_mdagpath"].node()
-            d["_fn_set"]    = type(self).FN_SET(d["_mdagpath"])
+            d["_fn_set"]    = type(self)._raw_FN_SET(d["_mdagpath"])
             d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
-        type(self).is_type(self._name(), exact_type=False, failfast=True)
+        type(self)._raw_is_type(self._name(), exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
 
     # --- creation
@@ -145,7 +145,7 @@ class DAGNode(DGNode):
         d = self.__dict__
         d.setdefault("_taken_mdagpath", d["_mdagpath"])
         d["_mdagpath"]  = OpenMaya.MDagPath.getAPathTo(d["_mobject"])
-        fn = d["_fn_set"] = type(self).FN_SET(d["_mdagpath"])
+        fn = d["_fn_set"] = type(self)._raw_FN_SET(d["_mdagpath"])
         return fn
 
     def _retake_path(self) -> None:
@@ -157,7 +157,7 @@ class DAGNode(DGNode):
         if _handle_valid(d) and taken.isValid():
             del d["_taken_mdagpath"]
             d["_mdagpath"] = taken
-            d["_fn_set"]   = type(self).FN_SET(taken)
+            d["_fn_set"]   = type(self)._raw_FN_SET(taken)
 
     def is_shape(self) -> bool:
         """Returns whether this node is a shape node."""
@@ -204,7 +204,7 @@ class DAGNode(DGNode):
 
     def get_bounding_box(self, world_space: bool = True) -> OpenMaya.MBoundingBox:
         """Returns the bounding box of this dag node."""
-        bbx = type(self).get_fn_set(self).boundingBox
+        bbx = type(self)._raw_get_fn_set(self).boundingBox
         if world_space:
             parent = self.get_parent()
             if parent:
@@ -236,7 +236,7 @@ class DAGNode(DGNode):
             The parent object or None if parented to world.
         """
         index  = max(index, 0)
-        fn_set = type(self).get_fn_set(self)
+        fn_set = type(self)._raw_get_fn_set(self)
         for _ in range(index + 1):
             mobject = fn_set.parent(0)
             if not _parent_valid(mobject):
@@ -256,7 +256,7 @@ class DAGNode(DGNode):
         """
         node_types = [node_type] if isinstance(node_type, str) else node_type
 
-        fn_set = type(self).get_fn_set(self)
+        fn_set = type(self)._raw_get_fn_set(self)
         while fn_set:
             mobject = fn_set.parent(0)
             if not _parent_valid(mobject):
@@ -336,9 +336,9 @@ class DAGNode(DGNode):
         """
         node_types = [node_type] if isinstance(node_type, str) else node_type
         deformers  = []
-        shape      = type(self).get_mobject(self)
+        shape      = type(self)._raw_get_mobject(self)
         if shape.hasFn(OpenMaya.MFn.kTransform):
-            fn    = type(self).get_fn_set(self)
+            fn    = type(self)._raw_get_fn_set(self)
             shape = next(
                 (c for c in (fn.child(i) for i in range(fn.childCount()))
                  if c.hasFn(OpenMaya.MFn.kShape) and not OpenMaya.MFnDagNode(c).isIntermediateObject),

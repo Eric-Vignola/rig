@@ -120,12 +120,38 @@ class ShadingEngine(ObjectSet):
         (its shorthand) does: those faces are in no engine (green); the same
         refusals, before any write; one undo step. Returns ``members``, as
         ``<<`` returns its left-hand side (user decision 2026-10-16)."""
-        return (-self)._member().inject(members)
+        return (-self)._member()._run_inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in sg``: whether every face of every shadeable shape of ``x``
         (or the whole object) is in exactly this engine."""
-        return self._member().contains(lhs)
+        return self._member()._run_contains(lhs)
+
+    # one way only (user decision 2026-10-16): an object set's raw verbs are
+    # refused on an engine, naming the membership grammar, which checks its
+    # members (``sets -add`` broke the engine's exclusivity, ``-forceElement``
+    # and ``-remove`` took no check)
+
+    def add_members(self, *args: Any, **kwargs: Any) -> None:
+        """Refused: ``cube.f[0:2] << sg`` (or ``<< red``, the material) assigns."""
+        raise TypeError(
+            f"sg.add_members is not rig's form: write cube.f[0:2] << {self!r} (or "
+            f"<< the material); {self!r}.remove(...) takes members out"
+        )
+
+    def remove_members(self, *args: Any, **kwargs: Any) -> None:
+        """Refused: ``sg.remove(x)`` (shorthand ``x << -sg``) takes members out."""
+        raise TypeError(
+            f"sg.remove_members is not rig's form: write {self!r}.remove(cube.f[0:2]) "
+            f"(shorthand cube.f[0:2] << -sg, or red.remove(...) for the material)"
+        )
+
+    def force_elements(self, *args: Any, **kwargs: Any) -> None:
+        """Refused: ``cube.f[0:2] << sg`` moves members here from any engine."""
+        raise TypeError(
+            f"sg.force_elements is not rig's form: write cube.f[0:2] << {self!r} (or "
+            f"<< the material): it moves them from any other engine"
+        )
 
     def _refuse_default(self, verb: str) -> None:
         """A Maya default engine (``initialShadingGroup``, ``initialParticleSE``)
@@ -269,7 +295,7 @@ class ShadingEngine(ObjectSet):
         """[Internal] Yields (dag path, face ids) per DAG member as Maya stores it:
         None for whole-object membership, an array for a face component (every
         face of the mesh included). Other component kinds are skipped."""
-        members = type(self).get_fn_set(self).getMembers(False)
+        members = type(self)._raw_get_fn_set(self).getMembers(False)
         for i in range(members.length()):
             try:
                 dagpath, component = members.getComponent(i)

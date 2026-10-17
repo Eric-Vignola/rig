@@ -198,7 +198,7 @@ class AnimCurve(DGNode):
             node = DGNode.create.__func__(cls, name=name, container=container, **kwargs)
             try:
                 if entry is not None:
-                    anim_keys._write(type(node).get_fn_set(node), entry)
+                    anim_keys._write(type(node)._raw_get_fn_set(node), entry)
                 for attr, v in attrs.items():
                     getattr(node, attr) << v
             except BaseException:
@@ -281,7 +281,7 @@ class AnimCurve(DGNode):
 
         with _undo_chunk("rig.define"):
             if entry is not None and not entry.same:
-                anim_keys._write(type(node).get_fn_set(node), entry)
+                anim_keys._write(type(node)._raw_get_fn_set(node), entry)
             for attr, v in attrs.items():
                 getattr(node, attr) << v
         return node
@@ -304,7 +304,7 @@ class AnimCurve(DGNode):
     # --- the keys
 
     def _timed_type(self, verb: str) -> str:
-        curve_type = _TIMED.get(type(self).get_fn_set(self).animCurveType)
+        curve_type = _TIMED.get(type(self)._raw_get_fn_set(self).animCurveType)
         if curve_type is None:
             raise TypeError(
                 f"{str(self)!r} is {_article(type(self).get_node_type(self))} {type(self).get_node_type(self)}, keyed by its "
@@ -337,7 +337,7 @@ class AnimCurve(DGNode):
         tangent is a step when every plug it keys is a bool or an enum."""
         anim_keys  = _anim_keys()
         curve_type = self._timed_type(call)
-        fn = type(self).get_fn_set(self)
+        fn = type(self)._raw_get_fn_set(self)
         _refuse_locked_node(fn, "set the keys of", str(self))
         if fn.isFromReferencedFile:
             from rig.nodetypes._base import _injection_error
@@ -377,7 +377,7 @@ class AnimCurve(DGNode):
         from rig._internal.undo import _undo_chunk
 
         with _undo_chunk("rig.AnimCurve.set_keys"):
-            _anim_keys()._write(type(self).get_fn_set(self), entry)
+            _anim_keys()._write(type(self)._raw_get_fn_set(self), entry)
         return self
 
     def get_keys(self) -> Any:
@@ -386,18 +386,18 @@ class AnimCurve(DGNode):
         elsewhere), the weights of a weighted curve, the infinities. ``other.tx <<
         curve.get_keys()`` reproduces the curve (tangents that are not fixed recompute
         identically from the same keys). ValueError for a curve with no key."""
-        return _anim_keys().read_keys(type(self).get_fn_set(self), self._timed_type("get_keys()"))
+        return _anim_keys().read_keys(type(self)._raw_get_fn_set(self), self._timed_type("get_keys()"))
 
     def get_num_keys(self) -> int:
         """The number of keys."""
-        return type(self).get_fn_set(self).numKeys
+        return type(self)._raw_get_fn_set(self).numKeys
 
     def evaluate(self, times: Any) -> Any:
         """The curve's value at ``times`` (frames in the scene's time unit), in UI units
         (degrees, the linear unit, frames for a time curve): a float for one time, an
         ndarray of the shape of ``times`` for several."""
         curve_type = self._timed_type("evaluate()")
-        fn   = type(self).get_fn_set(self)
+        fn   = type(self)._raw_get_fn_set(self)
         unit = OpenMaya.MTime.uiUnit()
         arr  = np.asarray(times, dtype=float)
         if curve_type == "animCurveTT":

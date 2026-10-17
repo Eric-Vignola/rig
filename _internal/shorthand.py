@@ -40,6 +40,7 @@ from rig._internal.types import (
     _is_transform,
 )
 from rig.nodetypes._base import (
+    _PLUG_TYPES,
     _fixed_attr_kind,
     _is_generic_slot,
     _NON_MATRIX_ATTR_API_TYPES,
@@ -65,11 +66,11 @@ def shorthand(src: Any, dst: Any, src_facts: Any = None, dst_facts: Any = None) 
         return False
 
     # every source test below is False for a non-attribute
-    if not isinstance(src, Attribute):
+    if type(src) not in _PLUG_TYPES:
         return False
     # a typed attr that holds any data (`Typed`, choice.input ...) takes its source as
     # it is: no translation network, whatever it holds now (its data type is not read)
-    if isinstance(dst, Attribute) and _is_generic_slot(dst):
+    if type(dst) in _PLUG_TYPES and _is_generic_slot(dst):
         return False
 
     # src / dst type facts, each queried at most once for this call
@@ -179,7 +180,7 @@ class _Facts:
         if self._data_type is _UNSET:
             runs = _USER_CODE_RUNS[0]
             try:
-                self._data_type = type(self._obj).get_data_type(self._obj)
+                self._data_type = type(self._obj)._raw_get_data_type(self._obj)
             except Exception:
                 self._data_type = None
             if (
@@ -195,7 +196,7 @@ class _Facts:
         """Returns the operand's ``num_children``, or None if the query raised."""
         if self._num_children is _UNSET:
             try:
-                self._num_children = type(self._obj).get_num_children(self._obj)
+                self._num_children = type(self._obj)._raw_get_num_children(self._obj)
             except Exception:
                 self._num_children = None
         return self._num_children
@@ -204,7 +205,7 @@ class _Facts:
     def is_matrix(self) -> bool:
         """True if the operand is an attribute holding a 4x4 matrix."""
         obj = self._obj
-        if not isinstance(obj, Attribute):
+        if type(obj) not in _PLUG_TYPES:
             return False
         try:
             # a scalar or numeric compound kind never holds a matrix
@@ -234,7 +235,7 @@ class _Facts:
     def _query_is_compound(self) -> bool:
         """The ``_is_compound`` rule, on the shared queries."""
         obj = self._obj
-        if not isinstance(obj, Attribute):
+        if type(obj) not in _PLUG_TYPES:
             return False
         try:
             if obj._mplug.isCompound:
@@ -261,7 +262,7 @@ def _matrix_to_transform(src: Any, dst: Any) -> bool:
     # otherwise has no `.ro`, fall back to the owning node's rotateOrder.
     rotate_order    = _safe_attr(dst, "ro") or _safe_attr(_node_of(dst), "ro")
     decomposed      = _decompose_matrix(src, rotate_order=rotate_order)
-    decomposed_node = type(decomposed).get_node(decomposed)
+    decomposed_node = type(decomposed)._raw_get_node(decomposed)
 
     # Bare transform (no `.attr`) OR `.matrix` plug on a transform --
     # wire all four channels via the decomposeMatrix outputs. The sibling
@@ -292,7 +293,7 @@ def _matrix_to_transform(src: Any, dst: Any) -> bool:
 
 def _matrix_to_quaternion(src: Any, dst: Any) -> bool:
     decomposed = _decompose_matrix(src)
-    _bare_inject(type(decomposed).get_node(decomposed).outputQuat, dst)
+    _bare_inject(type(decomposed)._raw_get_node(decomposed).outputQuat, dst)
     return True
 
 
@@ -389,7 +390,7 @@ def _transform_to_quaternion(src: Any, dst: Any) -> bool:
     attr = _attr_path(src)
     if not attr:
         decomposed = _decompose_matrix(src.matrix)
-        _bare_inject(type(decomposed).get_node(decomposed).outputQuat, dst)
+        _bare_inject(type(decomposed)._raw_get_node(decomposed).outputQuat, dst)
         return True
     if attr in ("rotate", "rotateX", "rotateY", "rotateZ"):
         node = _euler_to_quaternion(src)
@@ -457,7 +458,7 @@ def _attr_path(plug: Any) -> str:
     # Prefer the canonical attribute name (rename-safe).
     if isinstance(plug, Attribute):
         try:
-            return type(plug).get_name(plug)
+            return type(plug)._raw_get_name(plug)
         except RuntimeError:
             pass
     s = str(plug)
@@ -474,7 +475,7 @@ def _node_of(plug: Any) -> Any:
     # Prefer the canonical Attribute.get_node (rename-safe).
     if isinstance(plug, Attribute):
         try:
-            return type(plug).get_node(plug)
+            return type(plug)._raw_get_node(plug)
         except RuntimeError:
             pass
     return Node(str(plug).split(".")[0])

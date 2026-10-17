@@ -587,8 +587,10 @@ class TestTagOnSphere(MayaTestCase):
             List([self.sph, 5, None]) << Tag("xx")
         # a raw component string reaches the normaliser only outside a
         # List (whose constructor lifts it to a Plug)
+        # re-pinned (fix round 2026-10-16, one way only): the verb is private
+        # (_run_inject); << is its public spelling
         with self.assertRaisesRegex(TypeError, r"Components\("):
-            Tag("xx").inject([self.sph.vtx[0], f"{self.shape}.vtx[1]"])
+            Tag("xx")._run_inject([self.sph.vtx[0], f"{self.shape}.vtx[1]"])
         with self.assertRaises(ValueError):
             List([]) << Tag("xx")
         with self.assertRaises(ValueError):

@@ -560,7 +560,7 @@ print(cube.get_shapes(), cube.get_shape(), cube.get_shapes(no_interm=False))  # 
 print(list(grp.iter_shapes("mesh")), grp.find_shape("mesh", "cu"))            # [Transform("cube")] cube -- transforms of matching shapes
 print(list(grp.iter_shapes("mesh", as_transform=False)))                      # [Mesh("cubeShape")]
 
-DisplayLayer.define("geo").add_members(cube)
+cube << DisplayLayer.define("geo")
 clean = cube.duplicate_geometry(name="cube_clean")           # no history, no sets or layers, zeroed xform, pivots at origin
 print(repr(clean), clean.get_parent(), clean.get_shapes(), clean.t.get())           # Transform("cube_clean") None [Mesh("cube_cleanShape")] [0. 0. 0.]
 print(DisplayLayer.for_node(clean), cube.duplicate_geometry(parent=grp).get_long_name())  # None |grp|cube2
@@ -1444,25 +1444,31 @@ Exclusive, objects only, read from the node's own `drawOverride` input.
 `DisplayLayer` is also the DSL's `Layer` (`rig.Layer is DisplayLayer`): a
 layer node on the right of `<<` or `in` is the membership collection
 (`cube << layer`, `cube in layer`, `layer.remove(cube)`, whose shorthand is
-`cube << -layer`: the root cheatsheet, section 35).
+`cube << -layer`: the root cheatsheet, section 35). That is the one way in
+and out of a layer: the raw `add_members` / `remove_members` an object set
+has raise a TypeError naming these forms.
 
 ```python
 layer = DisplayLayer.define("geometry")                           # empty; never becomes the current layer
 print(repr(layer), layer.is_default(), DisplayLayer("defaultLayer").is_default())     # DisplayLayer("geometry") False True
 
-layer.add_members(cube)                                                               # the node itself, never the subtree
+cube << layer                                                                         # the node itself, never the subtree
 print(layer.get_members(), DisplayLayer.for_node(cube), DisplayLayer.for_node(mesh))  # [Transform("cube")] geometry None
 
 grp = Transform.create(name="grp")
 cube.set_parent(grp)
-layer.add_members([grp])
+grp << layer
 print(layer.get_members(), layer.get_members(no_recurse=False))   # [Transform("grp"), Transform("cube")] [Transform("grp"), Transform("cube")]
 
 ref = DisplayLayer.define("ref")
-ref.add_members(cube)                                                                            # exclusive: cube leaves geometry
+cube << ref                                                                                      # exclusive: cube leaves geometry
 print(DisplayLayer.for_node(cube), layer.get_members())                                          # ref [Transform("grp")]
-layer.remove_members(cube)                                                                       # not ours: left alone
+layer.remove(cube)                                                                               # not ours: left alone
 print(DisplayLayer.for_node(cube))                                                               # ref
+try:
+    layer.add_members(cube)
+except TypeError as e:
+    print(str(e)[:35])                                                                           # layer.add_members is not rig's form
 
 ref.rename("reference")
 ref.visibility.set(False)
