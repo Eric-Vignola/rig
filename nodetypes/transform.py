@@ -15,7 +15,7 @@ from maya.api import OpenMaya
 from rig._internal.journal import barrier as _barrier, cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
-from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, _is_generic_slot, Attribute
+from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, _is_generic_slot, Attribute, _name_of
 from rig.nodetypes.dag_node import DAGNode, _parent_path
 from rig.nodetypes.dg_node import DGNode, _attribute_keywords, _got, _typed_creator
 
@@ -242,9 +242,9 @@ class Transform(DAGNode):
         elif match_name:
             names = [match_name] if isinstance(match_name, str) else match_name
             if exact_match:
-                return re.compile(r"|".join([rf"^{x}$" for x in names])).match
+                return re.compile(r"|".join([rf"^{_name_of(x)}$" for x in names])).match
             else:
-                return re.compile(r"|".join([rf"{x}" for x in names])).search
+                return re.compile(r"|".join([rf"{_name_of(x)}" for x in names])).search
 
     def iter_shapes(
         self,
@@ -332,7 +332,7 @@ class Transform(DAGNode):
     def freeze(self, *args, **kwargs) -> None:
         """Thin wrapper around cmds.makeIdentity() function."""
         kwargs["apply"] = kwargs.get("apply", kwargs.get("a", True))
-        _cmds_edit.makeIdentity(self, *args, **kwargs)
+        _cmds_edit.makeIdentity(_name_of(self), *args, **kwargs)
 
     def get_matrix(
         self, world_space: bool = True, as_transform_matrix: bool = False
@@ -367,7 +367,7 @@ class Transform(DAGNode):
             matrix = matrix.asMatrix()
 
         _cmds_edit.xform(
-            str(self),
+            _name_of(self),
             worldSpace  = world_space,
             objectSpace = not world_space,
             matrix      = matrix,
@@ -387,7 +387,7 @@ class Transform(DAGNode):
         self, pivot: OpenMaya.MVector | list[float], world_space: bool = True
     ) -> None:
         """Sets both the scale and rotate pivots."""
-        _cmds_edit.xform(str(self), pivots=pivot, worldSpace=world_space)
+        _cmds_edit.xform(_name_of(self), pivots=pivot, worldSpace=world_space)
 
     def match_matrix(
         self, target_transform: Transform, world_space: bool = False
@@ -408,17 +408,17 @@ class Transform(DAGNode):
             _set_parent_uuid(node, type(parent)._raw_get_uuid(parent))
 
         # if there is a locatorShape, set this type as "locator"
-        node.node_type = cmds.nodeType(str(self))
+        node.node_type = cmds.nodeType(_name_of(self))
 
         if node.node_type == "joint":
-            node.joint_orient             = np.array(cmds.getAttr(f"{node}.jo")[0])
-            node.segment_scale_compensate = bool(cmds.getAttr(f"{node}.ssc"))
+            node.joint_orient             = np.array(cmds.getAttr(f"{_name_of(node)}.jo")[0])
+            node.segment_scale_compensate = bool(cmds.getAttr(f"{_name_of(node)}.ssc"))
             node.rotate_axis              = np.array(self.find_attr("ra").get()[0])
             node.radius                   = self.find_attr("radius").get()
 
         else:
             locators = cmds.listRelatives(
-                str(self), c=True, ni=True, f=False, type="locator"
+                _name_of(self), c=True, ni=True, f=False, type="locator"
             )
 
             # the shape's localScale/localPosition are not carried, only the kind
@@ -464,9 +464,9 @@ class Transform(DAGNode):
                 data["value"] = [
                     [int(i), att[i].get()]
                     for i in att.get_logical_indices()
-                    if cmds.getAttr(str(att[i]), type=True) == "typed"
+                    if cmds.getAttr(_name_of(att[i]), type=True) == "typed"
                 ]
-            elif cmds.getAttr(str(att), type=True) == "typed":
+            elif cmds.getAttr(_name_of(att), type=True) == "typed":
                 data["value"] = att.get()
             parent = att.get_parent()
             if parent is not None:
@@ -559,7 +559,7 @@ class Transform(DAGNode):
             if isinstance(bindpose, bool):
                 pass
             elif isinstance(bindpose, DGNode):
-                bindpose = str(bindpose)
+                bindpose = _name_of(bindpose)
             elif not isinstance(bindpose, str) or isinstance(bindpose, Attribute):
                 raise TypeError(
                     f"bindpose= takes False, True or a dagPose name, not {bindpose!r}"
@@ -576,11 +576,11 @@ class Transform(DAGNode):
                 # type="transform" also lists every type derived from it
                 # (constraints, ikHandles, etc.), a TransformData can't describe
                 # those, skip them along with what is under them.
-                if cmds.nodeType(str(child)) not in SERIALIZED_NODE_TYPES:
+                if cmds.nodeType(_name_of(child)) not in SERIALIZED_NODE_TYPES:
                     below = cmds.listRelatives(
-                        str(child), ad=True, type="transform", f=True
+                        _name_of(child), ad=True, type="transform", f=True
                     )
-                    for name in [str(child)] + (below or []):
+                    for name in [_name_of(child)] + (below or []):
                         node_type          = cmds.nodeType(name)
                         skipped[node_type] = skipped.get(node_type, 0) + 1
                     continue
@@ -836,7 +836,7 @@ class Transform(DAGNode):
                 # long name
                 if not isinstance(parent, DAGNode):
                     parent = getattr(parent, "name", parent)
-                parent = type(parent).get_long_name(parent) if isinstance(parent, DAGNode) else str(parent)
+                parent = type(parent).get_long_name(parent) if isinstance(parent, DAGNode) else _name_of(parent)
 
             # create node
             obj = _make_from_data(node, node.name, parent)
@@ -912,9 +912,9 @@ class Transform(DAGNode):
     def _load_hierarchy_refused(self, *args, **kwargs):
         name = type(self).__name__
         raise TypeError(
-            f"{name}({str(self)!r}).load_hierarchy(...) would update the hierarchy at {str(self)!r} "
+            f"{name}({_name_of(self)!r}).load_hierarchy(...) would update the hierarchy at {_name_of(self)!r} "
             f"in place, which rig does not do (its transforms hold the rig's constraints, skins "
-            f"and children); {name}.load_hierarchy(path, parent={str(self)!r}) makes a new one "
+            f"and children); {name}.load_hierarchy(path, parent={_name_of(self)!r}) makes a new one "
             f"under it"
         )
 
@@ -942,7 +942,7 @@ class Transform(DAGNode):
                 node.add_attr(name, **attr)
             except Exception as e:
                 failed.add(name)
-                LOGGER.warning(f"Skipped user defined attr {node}.{name}: {e}")
+                LOGGER.warning(f"Skipped user defined attr {_name_of(node)}.{name}: {e}")
 
         # pass 2: channel box and values
         for name, attr in specs.items():
@@ -952,7 +952,7 @@ class Transform(DAGNode):
             att = node.find_attr(name, quiet=True)
             if att is None:
                 LOGGER.warning(
-                    f"User defined attr {node}.{name} was not created, "
+                    f"User defined attr {_name_of(node)}.{name} was not created, "
                     "a compound parent is missing children"
                 )
                 continue
@@ -973,4 +973,4 @@ class Transform(DAGNode):
                     att.set(value)
 
             except Exception as e:
-                LOGGER.warning(f"Skipped user defined attr {node}.{name} value: {e}")
+                LOGGER.warning(f"Skipped user defined attr {_name_of(node)}.{name} value: {e}")

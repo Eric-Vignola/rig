@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 from maya import cmds
+from rig.nodetypes._base import _name_of
 from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _typed_creator
@@ -103,7 +104,7 @@ class Follicle(DAGNode):
                 follicle.find_attr("parameterV").set(uv[1] - fudge_factor)
             if is_at_origin(fTranform):
                 raise Exception(
-                    f"Can't attach follicle {follicle} to meaningful uv at {uv}"
+                    f"Can't attach follicle {_name_of(follicle)} to meaningful uv at {uv}"
                 )
 
         return follicle
@@ -120,13 +121,13 @@ class Follicle(DAGNode):
         parent = self.get_parent()
 
         if maintain_offset is False:
-            outPos = cmds.getAttr(f"{self}.outTranslate")
-            _cmds_edit.setAttr(f"{constrainee}.translate", *outPos[0])
+            outPos = cmds.getAttr(f"{_name_of(self)}.outTranslate")
+            _cmds_edit.setAttr(f"{_name_of(constrainee)}.translate", *outPos[0])
         # cmds.setAttr(follicle+".simulationMethod", 0)
         if translation:
-            _cmds_edit.pointConstraint(parent, constrainee, mo=True)
+            _cmds_edit.pointConstraint(_name_of(parent), _name_of(constrainee), mo=True)
         if rotation:
-            _cmds_edit.orientConstraint(parent, constrainee, mo=True)
+            _cmds_edit.orientConstraint(_name_of(parent), _name_of(constrainee), mo=True)
 
     def set_uv_values(self, uv: list[float]) -> None:
         """Sets the uv values of this follicle."""

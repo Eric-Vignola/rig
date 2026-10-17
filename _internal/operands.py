@@ -56,7 +56,7 @@ from typing import Any, Callable, Iterable, Optional, Tuple
 
 import numpy as np
 from rig._internal.journal import outside, statement
-from rig.nodetypes._base import _ensure_owner_alive, _match_enum_field, _PLUG_TYPES, Attribute
+from rig.nodetypes._base import _ensure_owner_alive, _match_enum_field, _PLUG_TYPES, Attribute, _name_of
 
 
 # The operand types that can be, or can hold, a plain str (or bytes). Numbers,
@@ -301,7 +301,7 @@ def operator_error(
     ``left`` raises for a plug whose node was deleted, as every other operator
     on it does.
     """
-    plug = str(left)
+    plug = _name_of(left)
     if dunder == "__rmod__" and right is found and row is None and isinstance(found, str):
         return text_format_error(found, plug)
     where = operator_where(dunder, plug, right, row)

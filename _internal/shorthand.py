@@ -40,6 +40,7 @@ from rig._internal.types import (
     _is_transform,
 )
 from rig.nodetypes._base import (
+    _name_of,
     _PLUG_TYPES,
     _fixed_attr_kind,
     _is_generic_slot,
@@ -461,7 +462,7 @@ def _attr_path(plug: Any) -> str:
             return type(plug)._raw_get_name(plug)
         except RuntimeError:
             pass
-    s = str(plug)
+    s = _name_of(plug)
     return ".".join(s.split(".")[1:])
 
 
@@ -478,7 +479,7 @@ def _node_of(plug: Any) -> Any:
             return type(plug)._raw_get_node(plug)
         except RuntimeError:
             pass
-    return Node(str(plug).split(".")[0])
+    return Node(_name_of(plug).split(".")[0])
 
 
 def _safe_attr(obj: Any, *names: str) -> Any:

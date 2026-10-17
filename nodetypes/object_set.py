@@ -9,7 +9,7 @@ from typing import Any
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit as _cmds_edit
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 
@@ -40,7 +40,7 @@ class ObjectSet(DGNode):
                 Otherwise also return components.
         """
         result = []
-        for each in cmds.sets(str(self), query=True) or []:
+        for each in cmds.sets(_name_of(self), query=True) or []:
             if each.find(".") == -1:
                 if as_components:
                     result.append((_cast(each), None))
@@ -48,7 +48,7 @@ class ObjectSet(DGNode):
                     result.append(_cast(each))
             elif as_components:
                 sel = OpenMaya.MSelectionList()
-                sel.add(each)
+                sel.add(_name_of(each))
                 mdagpath, mobject = sel.getComponent(0)
                 result.append((_cast(mdagpath), mobject))
 
@@ -56,16 +56,16 @@ class ObjectSet(DGNode):
 
     def add_members(self, objects: Any) -> None:
         """Adds a list of nodes to this set."""
-        _cmds_edit.sets(objects, add=str(self))
+        _cmds_edit.sets(objects, add=_name_of(self))
 
     def remove_members(self, objects: Any) -> None:
         """Removes object(s) from this set."""
-        _cmds_edit.sets(objects, remove=str(self))
+        _cmds_edit.sets(objects, remove=_name_of(self))
 
     def force_elements(self, objects: Any) -> None:
         """Force object(s) in this set."""
-        _cmds_edit.sets(objects, forceElement=str(self))
+        _cmds_edit.sets(objects, forceElement=_name_of(self))
 
     def clear(self) -> None:
         """Clear object(s) in this set."""
-        _cmds_edit.sets(clear=str(self))
+        _cmds_edit.sets(clear=_name_of(self))

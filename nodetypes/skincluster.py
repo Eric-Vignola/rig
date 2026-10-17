@@ -12,10 +12,11 @@ from typing import Callable, List, Union
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
+from rig._internal import journal as _journal
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.dg_node import get_short_name
@@ -93,7 +94,7 @@ def flatten_vertices(seq):
         else:
             name, comp = m.group(1).split(".")
             if comp != "vtx":
-                raise RuntimeError(f"[{comp} is not a supported component]")
+                raise RuntimeError(f"[{_name_of(comp)} is not a supported component]")
             name = Mesh(name)
             start, end = int(m.group(2)), m.group(3)
             rng = range(start, int(end) + 1) if end else (start,)
@@ -186,7 +187,7 @@ class SkinCluster(Deformer):
         # find the target geometry
         geoms_found = cmds.ls(geom)
         if not geoms_found:
-            raise RuntimeError(f"Geometry {geom} not found.")
+            raise RuntimeError(f"Geometry {_name_of(geom)} not found.")
         geom = geoms_found[0]
 
         if skin_data is not None:
@@ -195,7 +196,7 @@ class SkinCluster(Deformer):
             if count is not None and weights.size != count * len(influences):
                 raise ValueError(
                     f"SkinCluster.create: weights of shape {weights.shape} for {count} points "
-                    f"x {len(influences)} influences of {geom}"
+                    f"x {len(influences)} influences of {_name_of(geom)}"
                 )
 
         # set some default kwargs
@@ -210,7 +211,7 @@ class SkinCluster(Deformer):
         with _undo_chunk("rig.SkinCluster.create"):
             # delete the geometry's own skinclusters, if any: not those of a
             # mesh that drives it (listHistory reaches them too)
-            skin = [str(s) for s in _skinclusters_of(_cast(geom))]
+            skin = [_name_of(s) for s in _skinclusters_of(_cast(geom))]
             if skin:
                 _cmds_edit.delete(skin)
 
@@ -229,7 +230,10 @@ class SkinCluster(Deformer):
         """The influences as Joints; a name no joint has raises RuntimeError
         naming every missing one, a name several nodes have
         AmbiguousNodeError (the reference raises it: "use a path"). Each name
-        is looked up once."""
+        is looked up once. A List holding a deleted or freed element raises
+        the List rule's error first (`journal.check_lists`)."""
+        if _journal.LIST_TYPE:
+            _journal.check_lists((infs,))
         infs = [infs] if not isinstance(infs, (list, tuple, set)) else infs
 
         out     = []
@@ -238,7 +242,7 @@ class SkinCluster(Deformer):
             if isinstance(inf, Joint):
                 out.append(inf)
             else:
-                inf = str(inf)
+                inf = _name_of(inf)
                 try:
                     out.append(Joint(inf))
                 except (NodeNotFoundError, NodeTypeError):
@@ -257,9 +261,9 @@ class SkinCluster(Deformer):
             A function that takes a joint name and returns a driver joint name.
         """
         for i, inf in enumerate(self.get_influence_objects()):
-            driver = search_func(str(inf))
+            driver = search_func(_name_of(inf))
             if not Joint.exists(driver):
-                raise RuntimeError(f"Driver joint not found: {driver}.")
+                raise RuntimeError(f"Driver joint not found: {_name_of(driver)}.")
             Joint(driver).find_attr("worldInverseMatrix")[0] >> self.find_attr(
                 "bindPreMatrix"
             )[i]
@@ -281,7 +285,7 @@ class SkinCluster(Deformer):
         # pickers that track selection order read the last one.
         ordered = cmds.ls(orderedSelection=True, long=True) or []
         try:
-            _cmds_edit.skinCluster(str(self), edit=True, addInfluence=infs, wt=0.0)
+            _cmds_edit.skinCluster(_name_of(self), edit=True, addInfluence=infs, wt=0.0)
         finally:
             if ordered:
                 _cmds_edit.select(ordered[:-1], replace=True)
@@ -295,7 +299,7 @@ class SkinCluster(Deformer):
         Args:
             infs: A list of influence object names.
         """
-        _cmds_edit.skinCluster(str(self), edit=True, removeInfluence=infs)
+        _cmds_edit.skinCluster(_name_of(self), edit=True, removeInfluence=infs)
 
     def set_influence_objects(self, infs: INF_TYPE) -> None:
         """Sets the influence objects of this skincluster.
@@ -376,7 +380,7 @@ class SkinCluster(Deformer):
         if len(new_data.weights) != count:
             raise ValueError(
                 f"SkinCluster.set_weights: {len(new_data.weights)} rows of weights for "
-                f"{count} points of {self}"
+                f"{count} points of {_name_of(self)}"
             )
 
         with _undo_chunk("rig.SkinCluster.set_weights"):
@@ -412,17 +416,17 @@ class SkinCluster(Deformer):
         """
         if cmds.objectType(geo, isAType="shape"):
             # dagPose queries a transform ("Hierarchy must be specified" on a shape)
-            shape     = str(geo)
+            shape     = _name_of(geo)
             transform = cmds.listRelatives(shape, parent=True, pa=True)[0]
         else:
             shape     = cmds.listRelatives(geo, shapes=True, noIntermediate=True, pa=True)[0]
             transform = geo
-        skins = [str(s) for s in _skinclusters_of(_cast(geo))]
+        skins = [_name_of(s) for s in _skinclusters_of(_cast(geo))]
         if not skins:
             return
         if len(skins) > 1:
             raise RuntimeError(
-                f"SkinCluster.rebind: {geo} has {len(skins)} skinClusters of its own "
+                f"SkinCluster.rebind: {_name_of(geo)} has {len(skins)} skinClusters of its own "
                 f"({', '.join(skins)}); rebind takes one, as Maya re-binds only the "
                 f"one nearest the shape in place. Nothing was changed"
             )
@@ -509,7 +513,7 @@ class SkinCluster(Deformer):
                 if skin is not None:
                     source_skins.append(skin)
                 else:
-                    raise RuntimeError(f"No skinCluster found on {mesh}")
+                    raise RuntimeError(f"No skinCluster found on {_name_of(mesh)}")
 
             # serialize + combined the source data
             source_mesh_data = sum([x.serialize()[0] for x in source_meshes])
@@ -614,7 +618,7 @@ class SkinCluster(Deformer):
     def _load_into(self, skin, *args, **kwargs):
         from cgmath.geometry import SkinData
 
-        method = f"SkinCluster({str(self)!r}).load"
+        method = f"SkinCluster({_name_of(self)!r}).load"
         if args or kwargs:
             got = [type(a).__name__ for a in args] + [f"{k}=" for k in kwargs]
             raise TypeError(
@@ -761,7 +765,7 @@ class _SetSkinWeightsCommand:
         if len(weights) != count * inf_count:
             raise ValueError(
                 f"SkinCluster.set_weights: {len(weights)} weights for {count} points "
-                f"x {inf_count} influences of {skincluster}"
+                f"x {inf_count} influences of {_name_of(skincluster)}"
             )
 
         # internal vars

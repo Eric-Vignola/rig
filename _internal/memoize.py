@@ -37,6 +37,7 @@ from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
 from rig._internal.journal import rig_code, statement
 from rig.nodetypes._base import (
+    _name_of,
     _PLUG_TYPES,
     _dg_named_node,
     _dg_named_owner,
@@ -83,7 +84,7 @@ def _stable_key(obj: Any) -> Any:
     if _is_plug(obj):
         return _attribute_key(obj)
     if _is_node(obj):
-        return ("node", _node_identity(str(obj)))
+        return ("node", _node_identity(_name_of(obj)))
     if _is_list(obj):
         return tuple(_stable_key(x) for x in obj)
     if _is_sequence(obj):
@@ -116,7 +117,7 @@ def _attribute_key(attr: Attribute) -> Tuple[Any, str]:
         identity = _named_dg_identity(attr, None)
         if identity is not None:
             return (identity, _plug_identity_name(attr))
-    node_str = str(attr).split(".", 1)[0]  # "node.attr" -> "node"
+    node_str = _name_of(attr).split(".", 1)[0]  # "node.attr" -> "node"
     identity = _named_dg_identity(attr, node_str)
     if identity is None:
         identity = _node_identity(node_str)
@@ -174,7 +175,7 @@ def _node_identity(node_name: str) -> Tuple[str, int]:
     """
     try:
         sel = OpenMaya.MSelectionList()
-        sel.add(node_name)
+        sel.add(_name_of(node_name))
         mobject   = sel.getDependNode(0)
         hash_code = OpenMaya.MObjectHandle(mobject).hashCode()
         try:
@@ -232,7 +233,7 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
                     out.append(handle)
                 return
         try:
-            node_str = str(obj).split(".", 1)[0]
+            node_str = _name_of(obj).split(".", 1)[0]
             sel = OpenMaya.MSelectionList()
             sel.add(node_str)
             out.append(OpenMaya.MObjectHandle(sel.getDependNode(0)))
@@ -249,7 +250,7 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
                 return
         try:
             sel = OpenMaya.MSelectionList()
-            sel.add(str(obj))
+            sel.add(_name_of(obj))
             out.append(OpenMaya.MObjectHandle(sel.getDependNode(0)))
         except Exception:
             pass

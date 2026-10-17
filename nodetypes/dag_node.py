@@ -4,7 +4,7 @@ from typing import Any
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit as _cmds_edit
-from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type
+from rig.nodetypes._base import _cast, _handle_valid, _lookup, _type_label, get_custom_type, _name_of
 from rig.nodetypes.dg_node import _PLAIN_CREATES, _ensure_valid, DGNode
 
 
@@ -66,10 +66,10 @@ class DAGNode(DGNode):
             else:
                 sel = OpenMaya.MSelectionList()
                 try:
-                    sel.add(str(node))
+                    sel.add(_name_of(node))
                 except Exception:
                     # the lookup rule of Node(x) (see DGNode.__init__)
-                    sel.add(_lookup(str(node), _type_label(type(self))))
+                    sel.add(_lookup(_name_of(node), _type_label(type(self))))
                 d["_mdagpath"] = sel.getDagPath(0)
                 d["_mobject"]  = d["_mdagpath"].node()
             d["_fn_set"]    = type(self)._raw_FN_SET(d["_mdagpath"])
@@ -99,7 +99,7 @@ class DAGNode(DGNode):
 
         node = cmds.createNode(cls.NATIVE_NODE_TYPE, **kwargs)
         sel  = OpenMaya.MSelectionList()
-        sel.add(node)
+        sel.add(_name_of(node))
         return sel.getDagPath(0).partialPathName()
 
     # --- queries (methods: see DGNode)
@@ -225,7 +225,7 @@ class DAGNode(DGNode):
         """
         # force long name
         kwargs["fullPath"] = True
-        return [_cast(x) for x in cmds.listRelatives(str(self), **kwargs) or []]
+        return [_cast(x) for x in cmds.listRelatives(_name_of(self), **kwargs) or []]
 
     def get_parent(self, index: int = 0) -> DGNode | None:
         """Returns the parent object at a given index.
@@ -292,7 +292,7 @@ class DAGNode(DGNode):
         """
         parent = parent or None
         cur    = self.get_parent()
-        if str(cur) != str(parent):
+        if _name_of(cur) != _name_of(parent):
             # a locked node is never reparented (refused before Maya's error)
             self._refuse_if_locked("reparent")
             if type(self).is_shape(self):
@@ -304,12 +304,12 @@ class DAGNode(DGNode):
                     kwargs[ln] = True
 
             if parent:
-                _cmds_edit.parent(str(self), parent, **kwargs)
+                _cmds_edit.parent(_name_of(self), parent, **kwargs)
             else:
                 if "w" in kwargs:
                     kwargs.pop("w")
                 kwargs["world"] = True
-                _cmds_edit.parent(str(self), **kwargs)
+                _cmds_edit.parent(_name_of(self), **kwargs)
 
     # --- deformers
 

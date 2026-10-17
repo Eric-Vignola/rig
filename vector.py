@@ -24,6 +24,7 @@ import numbers
 from typing import Any
 
 from maya import cmds
+from rig.nodetypes._base import _name_of
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import sequences
 from rig._internal.journal import cmds_edit as _cmds_edit
@@ -417,11 +418,11 @@ def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
             # keep the `_constant` aggregator here so the result stays
             # a single Plug.
             result    = _constant([0] * len(outputs), name="lerp_out1")
-            node_name = str(result).split(".")[0]
+            node_name = _name_of(result).split(".")[0]
             suffixes  = ["X", "Y", "Z", "W"]
             for idx, scalar_out in enumerate(outputs):
                 _cmds_edit.connectAttr(
-                    str(scalar_out),
+                    _name_of(scalar_out),
                     f"{node_name}.value{suffixes[idx]}",
                     force=True,
                 )

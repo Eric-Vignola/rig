@@ -80,7 +80,7 @@ from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
-from rig.nodetypes._base import _cast, _cast_node, _check_attrs, _refuse_locked_node
+from rig.nodetypes._base import _cast, _cast_node, _check_attrs, _refuse_locked_node, _name_of
 from rig.nodetypes.material_node import _gate_type, _leaf
 from rig.spec._base import _spec_from_attribute
 
@@ -330,14 +330,14 @@ def _own_locks(node: str, attr: str) -> list:
     """The plugs of ``attr`` carrying their OWN lock flag, read top-down: a
     locked parent covers its children and is the one name returned."""
     try:
-        if cmds.getAttr(f"{node}.{attr}", lock=True):
+        if cmds.getAttr(f"{_name_of(node)}.{_name_of(attr)}", lock=True):
             return [attr]
     except RuntimeError:
         return []
     locked = []
     for child in _q(attr, "listChildren", node=node) or []:
         try:
-            if cmds.getAttr(f"{node}.{child}", lock=True):
+            if cmds.getAttr(f"{_name_of(node)}.{_name_of(child)}", lock=True):
                 locked.append(child)
         except RuntimeError:
             pass
@@ -362,7 +362,7 @@ def _clone(src_plug: Plug, dst_node: str, name: str, hidden: bool | None = None)
     own ``attributeType`` (a ``float`` stays a ``float``, a ``float3`` a
     ``float3``: the restore gate and the type gate compare exactly), its
     ``hidden`` flag (or the one given) and its keyable state."""
-    src_node = str(type(src_plug)._raw_get_node(src_plug))
+    src_node = _name_of(type(src_plug)._raw_get_node(src_plug))
     src_attr = type(src_plug).get_alias(src_plug)
     shape    = _shape(src_attr, node=src_node)
     spec     = _spec_from_attribute(src_plug, name, bool(type(src_plug)._raw_is_multi(src_plug)))
@@ -374,7 +374,7 @@ def _clone(src_plug: Plug, dst_node: str, name: str, hidden: bool | None = None)
     if not hidden:
         # A compound parent always reads non-keyable; its children carry the flag.
         children = _q(src_attr, "listChildren", node=src_node) or []
-        probe    = f"{src_node}.{children[0]}" if children else str(src_plug)
+        probe    = f"{_name_of(src_node)}.{_name_of(children[0])}" if children else _name_of(src_plug)
         try:
             keyable = bool(cmds.getAttr(probe, keyable=True))
         except RuntimeError:
@@ -474,7 +474,7 @@ def _scan_values(scan: _Scan, park: bool) -> None:
         shape = _shape(root, node=old)
         if shape is None or not _q(root, "storable", node=old) or not _q(root, "writable", node=old):
             continue
-        plug = f"{old}.{root}"
+        plug = f"{old}.{_name_of(root)}"
         if shape[1]:
             try:
                 size = cmds.getAttr(plug, size=True)
@@ -605,8 +605,8 @@ def _scan_wires_out(scan: _Scan) -> None:
             locked = False
         if locked:
             raise RuntimeError(
-                f"'{dst_plug}' is locked and the link from '{old}' into it must move "
-                f"onto the new {dst}; unlock it first"
+                f"'{_name_of(dst_plug)}' is locked and the link from '{old}' into it must move "
+                f"onto the new {_name_of(dst)}; unlock it first"
             )
 
 
@@ -630,8 +630,8 @@ def _unbind(scan: _Scan) -> None:
     """Release every published alias of the old node (a compound's parent
     releases its children with it)."""
     for node, leaf, attr, _ in scan.bindings:
-        if (f"{scan.old}.{leaf}", attr) in _bound(node):
-            cmds_edit.container(node, edit=True, unbindAttr=[f"{scan.old}.{leaf}", attr])
+        if (f"{_name_of(scan.old)}.{leaf}", attr) in _bound(node):
+            cmds_edit.container(node, edit=True, unbindAttr=[f"{_name_of(scan.old)}.{leaf}", attr])
 
 
 def _rebind(scan: _Scan, name: str) -> None:
@@ -685,7 +685,7 @@ def _prepare(scan: _Scan, park: bool) -> str:
     new      = cmds.createNode(dst, name=f"{space}:{_leaf(old)}{SUFFIX}", skipSelect=True)
     try:
         if cmds.nodeType(new) != dst:
-            raise RuntimeError(f"Maya made a {cmds.nodeType(new)} for '{dst}', not a {dst}")
+            raise RuntimeError(f"Maya made a {cmds.nodeType(new)} for '{_name_of(dst)}', not a {_name_of(dst)}")
         for names in scan.locks.values():
             for name in names:
                 cmds_edit.setAttr(f"{old}.{name}", lock=False)
@@ -704,11 +704,11 @@ def _prepare(scan: _Scan, park: bool) -> str:
             cmds_edit.copyAttr(old, new, values=True, attribute=sorted(names))
         for name in [*scan.values, *scan.dynamic]:
             if not _q(name, "exists", node=new):
-                raise RuntimeError(f"'{name}' did not arrive on the new {dst}")
+                raise RuntimeError(f"'{name}' did not arrive on the new {_name_of(dst)}")
         for name in scan.dynamic:
             if _shape(name, node=old) != _shape(name, node=new):
                 raise RuntimeError(
-                    f"cannot recreate dynamic attribute '{name}' on a {dst} with its type"
+                    f"cannot recreate dynamic attribute '{name}' on a {_name_of(dst)} with its type"
                 )
     except Exception:
         if cmds.objExists(new):
@@ -722,15 +722,15 @@ def _park(scan: _Scan, root: str) -> None:
     type, copy its value, re-home its doomed wires onto it (leaf or parent
     level) and remember where its locks go on the new node."""
     old    = scan.old
-    name   = f"__{root}__"
+    name   = f"__{_name_of(root)}__"
     shape  = _shape(root, node=old)
-    parked = _clone(Plug(f"{old}.{root}"), old, name, hidden=True)
-    _copy_value(f"{old}.{root}", str(parked), shape)
+    parked = _clone(Plug(f"{old}.{_name_of(root)}"), old, name, hidden=True)
+    _copy_value(f"{old}.{_name_of(root)}", _name_of(parked), shape)
     children_src = _q(root, "listChildren", node=old) or []
     children_dst = _q(name, "listChildren", node=old) or []
     for src_plug, leaf in scan.park_wires.get(root, []):
         _disconnect_incoming(Plug(f"{old}.{leaf}"))
-        target = str(parked) if leaf == root else f"{old}.{children_dst[children_src.index(leaf)]}"
+        target = _name_of(parked) if leaf == root else f"{old}.{_name_of(children_dst[children_src.index(leaf)])}"
         cmds_edit.connectAttr(src_plug, target)
     for locked in scan.locks.get(root, []):
         scan.relock.append(
@@ -777,7 +777,7 @@ def _commit(scan: _Scan, new: str, park: bool) -> str:
     got        = cmds_edit.rename(new, absolute)
     if _absolute(got) != absolute:
         raise RuntimeError(
-            f"the new {dst} could not take the name '{old}' back (Maya named it "
+            f"the new {_name_of(dst)} could not take the name '{old}' back (Maya named it "
             f"'{got}'); the conversion is rolled back"
         )
     _rebind(scan, got)
@@ -792,14 +792,14 @@ def _move_element_wires(old: str, new: str, name: str) -> None:
     for index in cmds.getAttr(f"{old}.{name}", multiIndices=True) or []:
         element = f"{name}[{index}]"
         pairs = cmds.listConnections(
-            f"{old}.{element}", source=True, destination=False, plugs=True,
+            f"{old}.{_name_of(element)}", source=True, destination=False, plugs=True,
             connections=True, skipConversionNodes=False,
         ) or []
         for dst_plug, src_plug in zip(pairs[0::2], pairs[1::2]):
             cmds_edit.disconnectAttr(src_plug, dst_plug)
             cmds_edit.connectAttr(src_plug, f"{new}.{dst_plug.split('.', 1)[1]}")
         pairs = cmds.listConnections(
-            f"{old}.{element}", source=False, destination=True, plugs=True,
+            f"{old}.{_name_of(element)}", source=False, destination=True, plugs=True,
             connections=True,
         ) or []
         for src_plug, dst_plug in zip(pairs[0::2], pairs[1::2]):
@@ -812,15 +812,15 @@ def _verify(scan: _Scan, new: str) -> None:
     is wrong here is rolled back in one undo."""
     old, dst = scan.old, scan.dst
     if cmds.nodeType(new) != dst:
-        raise RuntimeError(f"'{new}' is a {cmds.nodeType(new)}, not a {dst}")
+        raise RuntimeError(f"'{new}' is a {cmds.nodeType(new)}, not a {_name_of(dst)}")
     for engine in scan.engines:
-        fed = cmds.listConnections(f"{engine}.surfaceShader", source=True, destination=False)
+        fed = cmds.listConnections(f"{_name_of(engine)}.surfaceShader", source=True, destination=False)
         if fed != [new]:
-            raise RuntimeError(f"{engine}.surfaceShader reads {fed}, not the new {dst}")
+            raise RuntimeError(f"{_name_of(engine)}.surfaceShader reads {_name_of(fed)}, not the new {_name_of(dst)}")
     for info in scan.infos:
-        fed = cmds.listConnections(f"{info}.material", source=True, destination=False)
+        fed = cmds.listConnections(f"{_name_of(info)}.material", source=True, destination=False)
         if fed != [new]:
-            raise RuntimeError(f"{info}.material reads {fed}, not the new {dst}")
+            raise RuntimeError(f"{info}.material reads {_name_of(fed)}, not the new {_name_of(dst)}")
     if scan.dsl1_index is not None:
         # read from the new node's own wires, never from the list (which
         # holds every shader of the scene), in the list's index order
@@ -835,16 +835,16 @@ def _verify(scan: _Scan, new: str) -> None:
         )
         if slots != [f"defaultShaderList1.shaders[{scan.dsl1_index}]"]:
             raise RuntimeError(
-                f"defaultShaderList1 lists the new {dst} at {slots}, not at the old "
+                f"defaultShaderList1 lists the new {_name_of(dst)} at {slots}, not at the old "
                 f"index {scan.dsl1_index}"
             )
     owner = cmds.container(query=True, findContainer=[new]) or None
     if owner != scan.container:
-        raise RuntimeError(f"the new {dst} sits in container {owner!r}, not {scan.container!r}")
+        raise RuntimeError(f"the new {_name_of(dst)} sits in container {owner!r}, not {scan.container!r}")
     if owner is not None:
         members = cmds.container(owner, query=True, nodeList=True) or []
         if members.count(new) != 1:
-            raise RuntimeError(f"'{owner}' lists the new {dst} {members.count(new)} times")
+            raise RuntimeError(f"'{_name_of(owner)}' lists the new {_name_of(dst)} {members.count(new)} times")
     left = cmds.listConnections(old, plugs=True, connections=True) or []
     if left:
         raise RuntimeError(
@@ -870,12 +870,12 @@ def _restore(node: str, dst: str) -> list:
             or not _q(bare, "writable", type=dst)
         ):
             continue
-        parked, real = f"{node}.{name}", f"{node}.{bare}"
+        parked, real = f"{_name_of(node)}.{name}", f"{_name_of(node)}.{bare}"
         pairs = [(parked, real)] + list(zip(
-            (f"{node}.{c}" for c in _q(name, "listChildren", node=node) or []),
-            (f"{node}.{c}" for c in _q(bare, "listChildren", node=node) or []),
+            (f"{_name_of(node)}.{c}" for c in _q(name, "listChildren", node=node) or []),
+            (f"{_name_of(node)}.{c}" for c in _q(bare, "listChildren", node=node) or []),
         ))
-        locked = [f"{node}.{c}" for c in _own_locks(node, name)]
+        locked = [f"{_name_of(node)}.{c}" for c in _own_locks(node, name)]
         for plug in locked:
             cmds_edit.setAttr(plug, lock=False)
         inputs = {
@@ -921,7 +921,7 @@ def convert(
     On a shader already of that type the node itself is returned, ``attrs``
     written only under ``update``."""
     _gate_type(dst)
-    old  = str(node)   # a deleted node raises here (naming its conversion, if any)
+    old  = _name_of(node)   # a deleted node raises here (naming its conversion, if any)
     uuid = type(node)._raw_get_uuid(node)
     src  = cmds.nodeType(old)
     if cmds.ls(old, defaultNodes=True):
@@ -944,7 +944,7 @@ def convert(
         if attrs and update:
             with _undo_chunk("rig.material"):
                 for attr, value in attrs.items():
-                    Plug(f"{old}.{attr}") << value
+                    Plug(f"{old}.{_name_of(attr)}") << value
         return node
     scan   = _scan(old, src, dst, park)
     report = scan.report()
@@ -974,7 +974,7 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> str:
                 name = _commit(scan, new, park)
                 _restore(name, scan.dst)
                 for attr, value in attrs.items():
-                    Plug(f"{name}.{attr}") << value
+                    Plug(f"{name}.{_name_of(attr)}") << value
         except Exception:
             if cmds.undoInfo(query=True, undoName=True) == CHUNK:
                 cmds_edit.undo()

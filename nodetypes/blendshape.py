@@ -15,7 +15,7 @@ from numpy.typing import ArrayLike
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
-from rig.nodetypes._base import _connected_attrs, Attribute
+from rig.nodetypes._base import _connected_attrs, Attribute, _name_of
 from rig.nodetypes.deformer import Deformer
 from rig.nodetypes.geometry import iter_component_ranges
 from rig.nodetypes.transform import Transform
@@ -164,7 +164,7 @@ class BlendShape(Deformer):
 
     def get_targets(self) -> list[str]:
         """Returns a list of targets in this node."""
-        return cmds.listAttr(str(self), string="weight", multi=True)
+        return cmds.listAttr(_name_of(self), string="weight", multi=True)
 
     def get_target_indices(self) -> list[int]:
         """Returns a list of target index in this node."""
@@ -181,7 +181,7 @@ class BlendShape(Deformer):
         if target_attr:
             return target_attr.logical_index()
         if failfast:
-            raise RuntimeError(f"Target {self}.{target_name} not found.")
+            raise RuntimeError(f"Target {_name_of(self)}.{target_name} not found.")
         return -1
 
     def get_target_name(self, target_id: int) -> str | None:
@@ -252,7 +252,7 @@ class BlendShape(Deformer):
             The target index.
         """
         if not type(self)._raw_get_fn_set(self).findAlias(target_name).isNull():
-            raise RuntimeError(f"Target {self}.{target_name} already exists.")
+            raise RuntimeError(f"Target {_name_of(self)}.{target_name} already exists.")
 
         weight_attr            = self.find_attr("weight")
         index                  = weight_attr.get_next_available_index()
@@ -446,7 +446,7 @@ class BlendShape(Deformer):
         from cgmath.geometry import MorphList
 
         names       = [match_name] if isinstance(match_name, str) else match_name
-        regex       = re.compile(r"|".join([rf"^{x}$" for x in names])) if names else None
+        regex       = re.compile(r"|".join([rf"^{_name_of(x)}$" for x in names])) if names else None
         weight_attr = self.find_attr("weight")
         org_mesh    = self.get_original_geometries()
 
@@ -529,7 +529,7 @@ class BlendShape(Deformer):
 
     @_statement
     def _load_into(self, targets, *args, **kwargs):
-        method = f"BlendShape({str(self)!r}).load"
+        method = f"BlendShape({_name_of(self)!r}).load"
         if args or kwargs:
             got = [type(a).__name__ for a in args] + [f"{k}=" for k in kwargs]
             raise TypeError(

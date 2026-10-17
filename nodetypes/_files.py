@@ -19,7 +19,7 @@ import os
 import sys
 from types import FunctionType, MethodType
 
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute, _name_of
 
 # the files cgmath's Data.save writes, by extension
 OWN_TYPES = ("npz", "json", "pkl")
@@ -167,7 +167,7 @@ def read(
     file from an older cgmath raises cgmath's own LegacyFileError (a
     ValueError). Nothing is made."""
     if _is_node(src):
-        raise TypeError(f"{method}: {slot} is a file (a path) or its data, not the node {str(src)!r}")
+        raise TypeError(f"{method}: {slot} is a file (a path) or its data, not the node {_name_of(src)!r}")
     if is_path(src):
         from cgmath.geometry import Data
         from cgmath.geometry._base import get_file_type

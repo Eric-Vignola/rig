@@ -38,6 +38,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any, Optional
 
+from rig.nodetypes._base import _name_of
 from rig.spec._base import _AttrSpec
 
 
@@ -141,7 +142,7 @@ class _DestroySpec(_AttrSpec):
                 f"specific plug, use the bare-sentinel form: "
                 f"'plug << destroy' (got plug={target!r})"
             )
-        node_str = str(target) if not isinstance(target, Node) else str(target)
+        node_str = _name_of(target) if not isinstance(target, Node) else _name_of(target)
         for attr_name in self.attr_names:
             full = f"{node_str}.{attr_name}"
             _do_destroy(
@@ -202,7 +203,7 @@ class _DestroyMarker(_AttrSpec):
         from rig._internal.plug import _do_destroy, Plug
 
         if isinstance(target, Plug):
-            _do_destroy(str(target))
+            _do_destroy(_name_of(target))
             return target
         if isinstance(target, Node):
             raise TypeError(
@@ -211,7 +212,7 @@ class _DestroyMarker(_AttrSpec):
                 f"attr, or 'node.attr_name << destroy' to target a plug."
             )
         # Anything else -- treat as a plug-string.
-        _do_destroy(str(target))
+        _do_destroy(_name_of(target))
         return target
 
     def __repr__(self) -> str:

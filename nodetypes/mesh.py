@@ -24,7 +24,7 @@ from rig._internal.journal import (
 from rig._internal.types import _is_components
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute, _name_of
 from rig.nodetypes._base import _cast
 from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
@@ -181,10 +181,10 @@ def _refuse_rig_points(points: Any, method: str, many: bool = False) -> None:
         what = f"the plug {name!r}"
     else:
         fix  = (
-            f"pass a position: Node({str(bad)!r}).get_rotate_pivot() (world space) "
+            f"pass a position: Node({_name_of(bad)!r}).get_rotate_pivot() (world space) "
             f"or its translate's value, .t.get()"
         )
-        what = f"the node {str(bad)!r}"
+        what = f"the node {_name_of(bad)!r}"
     raise TypeError(f"Mesh.{method} takes {takes}, not {what}: {fix}")
 
 
@@ -415,7 +415,7 @@ class Mesh(Geometry):
         count = type(self).get_num_vertices(self)
         if len(points) != count:
             raise ValueError(
-                f"Mesh.set_points: {len(points)} points for the {count} vertices of {self}"
+                f"Mesh.set_points: {len(points)} points for the {count} vertices of {_name_of(self)}"
             )
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         _MeshSetPointsCommand(self, points, space)
@@ -513,7 +513,7 @@ class Mesh(Geometry):
 
         normals = []
         mSel    = OpenMaya.MSelectionList()
-        mSel.add(str(self))
+        mSel.add(_name_of(self))
         dag_path  = mSel.getDagPath(0)
 
         mesh_iter = OpenMaya.MItMeshFaceVertex(dag_path)
@@ -538,7 +538,7 @@ class Mesh(Geometry):
         """
         nodes = []
         shading_engines = set(
-            cmds.listConnections(str(self), d=True, s=False, type="shadingEngine") or []
+            cmds.listConnections(_name_of(self), d=True, s=False, type="shadingEngine") or []
         )
         if not shading_engines:
             return nodes
@@ -551,7 +551,7 @@ class Mesh(Geometry):
 
             # skip shading engines with no material
             mat = cmds.listConnections(
-                f"{sg}.surfaceShader", source=True, destination=False, plugs=False
+                f"{_name_of(sg)}.surfaceShader", source=True, destination=False, plugs=False
             )
             if not mat:
                 continue
@@ -662,7 +662,7 @@ class Mesh(Geometry):
         Args:
             map_name: A map name to delete. If None, use current map.
         """
-        map_name = f"{self}.{map_name}"
+        map_name = f"{_name_of(self)}.{map_name}"
         if cmds.objExists(map_name):
             _cmds_edit.deleteAttr(map_name)
 
@@ -788,7 +788,7 @@ class Mesh(Geometry):
 
         with _undo_chunk("rig.Mesh.bake_deformation"):
             # set to bind pose
-            _cmds_edit.select(str(self), replace=True)
+            _cmds_edit.select(_name_of(self), replace=True)
             _mel_eval("gotoBindPose;")
 
             # bake delta mush, use a high max inf count to maintain fidelity
@@ -799,9 +799,9 @@ class Mesh(Geometry):
                 bake_cap = max(8, max_influences)
             _cmds_edit.bakeDeformer(
                 srcSkeletonName = "root_joint",
-                srcMeshName     = str(self),
+                srcMeshName     = _name_of(self),
                 dstSkeletonName = "root_joint",
-                dstMeshName     = str(self),
+                dstMeshName     = _name_of(self),
                 maxInfluences   = bake_cap,
             )
 
@@ -947,7 +947,7 @@ class Mesh(Geometry):
 
     @_statement
     def _load_into(self, mesh, uvs=None, *, world_space=True, normals=True, **kwargs):
-        method = f"Mesh({str(self)!r}).load"
+        method = f"Mesh({_name_of(self)!r}).load"
         if kwargs:
             raise TypeError(
                 f"{method} updates the mesh in place: it takes the files, world_space= and normals= "
@@ -1165,7 +1165,7 @@ class Mesh(Geometry):
                 MAP_DEFAULT_CATEGORY is always used.
         """
         names = [match_name] if isinstance(match_name, str) else match_name
-        regex = re.compile(r"|".join([rf"^{x}$" for x in names])) if names else None
+        regex = re.compile(r"|".join([rf"^{_name_of(x)}$" for x in names])) if names else None
 
         category = category or MAP_DEFAULT_CATEGORY
         return [
@@ -1264,7 +1264,7 @@ class Mesh(Geometry):
         """Enable painting mode on the given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
-        paint_attr = f"{type(self).NATIVE_NODE_TYPE}.{type(self).get_long_name(self)}.{type(map_attr)._raw_get_name(map_attr)}"
+        paint_attr = f"{type(self).NATIVE_NODE_TYPE}.{_name_of(type(self).get_long_name(self))}.{type(map_attr)._raw_get_name(map_attr)}"
         _cmds_edit.select(type(map_attr)._raw_get_node(map_attr), replace=True)
         _mel_eval(
             f'artSetToolAndSelectAttr("artAttrCtx", "{paint_attr}");artAttrInitPaintableAttr;'
@@ -1293,7 +1293,7 @@ class Mesh(Geometry):
         representation = ColorSet.Representation(representation)
 
         if name in type(self)._raw_get_fn_set(self).getColorSetNames():
-            raise ValueError(f"{self} has color set {name}!")
+            raise ValueError(f"{_name_of(self)} has color set {name}!")
         _MeshAddColorSetCommand(self, name, representation.value)
         return ColorSet(mesh=self, name=name)
 
@@ -1539,7 +1539,7 @@ def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
             return []
         # the edges of dst both of whose ends landed
         return cmds.polyListComponentConversion(
-            [f"{dst}.{x}" for x in iter_component_tokens("vtx", verts)],
+            [f"{_name_of(dst)}.{_name_of(x)}" for x in iter_component_tokens("vtx", verts)],
             fromVertex=True, toEdge=True, internal=True,
         ) or []
 
@@ -2356,7 +2356,7 @@ def _create_mesh(
 
     xform  = cmds.createNode("transform", name="polySurface#", skipSelect=True)
     sel    = OpenMaya.MSelectionList()
-    sel.add(xform)
+    sel.add(_name_of(xform))
     parent = sel.getDependNode(0)
     handle = OpenMaya.MObjectHandle(parent)
     try:
@@ -2455,7 +2455,7 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, nor
     )
     if not same:
         raise ValueError(
-            f"{method}: {_source_label(src)} holds another topology than {str(mesh)!r} "
+            f"{method}: {_source_label(src)} holds another topology than {_name_of(mesh)!r} "
             f"({len(data.points)} vertices and {len(counts)} faces against its {fn.numVertices} and "
             f"{fn.numPolygons}, or other face lists or holes); a load updates the points, the shading "
             f"and the UVs of the same topology: Mesh.load({_source_label(src)}) makes a new mesh"
@@ -2521,8 +2521,8 @@ def _object_uvs(obj, uv_data, method: str = "Mesh.create()", slot: str = "uv_dat
     carries its UVs) or the Object holds no mesh."""
     if uv_data is not None:
         raise TypeError(
-            f"{method}: an Object carries its mesh and its UVs, so it takes no {slot} "
-            f"({slot} goes with a MeshData)"
+            f"{method}: an Object carries its mesh and its UVs, so it takes no {_name_of(slot)} "
+            f"({_name_of(slot)} goes with a MeshData)"
         )
     from cgmath.geometry import MeshData
 
@@ -2666,7 +2666,7 @@ def _has_history(fn: OpenMaya.MFnMesh) -> bool:
 def _history_refusal(method: str, mesh: Mesh, fn: OpenMaya.MFnMesh) -> str:
     """Why `Mesh('x').load` refuses a mesh with history (`deformed_refusal`)."""
     return deformed_refusal(
-        method, str(mesh), fn.object(), OpenMaya.MFn.kMesh, "Mesh", "its inMesh is connected",
+        method, _name_of(mesh), fn.object(), OpenMaya.MFn.kMesh, "Mesh", "its inMesh is connected",
         "points", "Mesh.load(path) makes a new mesh",
     )
 
@@ -3353,7 +3353,7 @@ class ColorSet:
         """The representation of the color set (ie the data type Alpha|RGB|RGBA)"""
         if not self.is_valid():
             raise RuntimeError(
-                f"{self._name} is not a valid color set for {self._mesh}!"
+                f"{self._name} is not a valid color set for {_name_of(self._mesh)}!"
             )
         return self.Representation(type(self._mesh)._raw_get_fn_set(self._mesh).getColorRepresentation(self._name))
 
@@ -3363,7 +3363,7 @@ class ColorSet:
         marked modified."""
         if not self.is_valid():
             raise RuntimeError(
-                f"{self._name} is not a valid color set for {self._mesh}!"
+                f"{self._name} is not a valid color set for {_name_of(self._mesh)}!"
             )
         return np.array(type(self._mesh)._raw_get_fn_set(self._mesh).getVertexColors(self._name))
 
@@ -3383,7 +3383,7 @@ class ColorSet:
         """Context manager that sets the current color set to this one"""
         if not self.is_valid():
             raise RuntimeError(
-                f"{self._name} is not a valid color set for {self._mesh}!"
+                f"{self._name} is not a valid color set for {_name_of(self._mesh)}!"
             )
 
         try:

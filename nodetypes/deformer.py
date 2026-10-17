@@ -15,7 +15,7 @@ import fnmatch
 import re
 
 from maya import cmds
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.dg_node import DGNode
 
 
@@ -44,8 +44,8 @@ def tag_references(name: str) -> list[tuple[str, int]]:
     exact = re.compile(rf"(?<![A-Za-z0-9_.:*]){re.escape(name)}(?![A-Za-z0-9_.:*])")
     found = []
     for deformer in cmds.ls(type="geometryFilter") or []:
-        for i in cmds.getAttr(f"{deformer}.input", multiIndices=True) or []:
-            expr = cmds.getAttr(f"{deformer}.input[{i}].componentTagExpression") or ""
+        for i in cmds.getAttr(f"{_name_of(deformer)}.input", multiIndices=True) or []:
+            expr = cmds.getAttr(f"{_name_of(deformer)}.input[{i}].componentTagExpression") or ""
             if exact.search(expr) or any(
                 fnmatch.fnmatchcase(name, token)
                 for token in _GLOB_TOKEN_RE.findall(expr)
@@ -66,14 +66,14 @@ class Deformer(DGNode):
         """Returns a list of geometry objects (post-deformation).
         TODO support components
         """
-        return [_cast(x) for x in cmds.deformer(str(self), query=True, geometry=True)]
+        return [_cast(x) for x in cmds.deformer(_name_of(self), query=True, geometry=True)]
 
     def get_original_geometries(self) -> list[DGNode]:
         """Returns a list of original geometry objects (pre-deformation)."""
 
         geom = (
             cmds.listConnections(
-                f"{self}.originalGeometry",
+                f"{_name_of(self)}.originalGeometry",
                 source      = True,
                 destination = False,
                 plugs       = True,

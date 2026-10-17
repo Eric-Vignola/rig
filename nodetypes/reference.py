@@ -9,7 +9,7 @@ from pathlib import Path
 
 from maya import cmds
 from rig._internal.journal import cmds_edit as _cmds_edit
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.dg_node import DGNode
 
 
@@ -67,7 +67,7 @@ class Reference(DGNode):
 
     def get_namespace(self) -> str:
         """Returns the namespace of this reference."""
-        return cmds.referenceQuery(str(self), namespace=True)[1:]
+        return cmds.referenceQuery(_name_of(self), namespace=True)[1:]
 
     def set_namespace(self, namespace: str) -> None:
         """Not supported: a reference's namespace is its file's (raises, as the
@@ -77,12 +77,12 @@ class Reference(DGNode):
     def get_file_path(self, copy_number: bool = False) -> str:
         """Returns the file path of this reference (posix), with its copy number
         (``scene.ma{1}``) when `copy_number` is True."""
-        path = cmds.referenceQuery(str(self), filename=True, withoutCopyNumber=not copy_number)
+        path = cmds.referenceQuery(_name_of(self), filename=True, withoutCopyNumber=not copy_number)
         return Path(path).as_posix()
 
     def get_nodes(self) -> list[DGNode]:
         """Returns all the nodes in this reference."""
-        return [_cast(x) for x in cmds.referenceQuery(str(self), nodes=True) or []]
+        return [_cast(x) for x in cmds.referenceQuery(_name_of(self), nodes=True) or []]
 
     def delete(self) -> None:
         """Deletes this reference."""

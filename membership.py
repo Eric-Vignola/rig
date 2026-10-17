@@ -94,7 +94,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig.nodetypes import display_layer as _display_layer
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
 from rig.nodetypes.geometry import _check_component_tag_name, Geometry
@@ -103,7 +103,6 @@ from rig.nodetypes.mesh import _own_history
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal import types as _types
 from rig._internal.members import (
-    _as_user_reads,
     _GEOMETRY_TYPES,
     _POINT_KIND,
     _MemberSpec,
@@ -215,10 +214,10 @@ def _references(name: str, node: str) -> list[str]:
     to be safe)."""
     found = []
     for deformer, i in tag_references(name):
-        plug = f"{deformer}.input[{i}]"
+        plug = f"{_name_of(deformer)}.input[{i}]"
         try:
             history = cmds.geometryAttrInfo(
-                f"{plug}.inputGeometry", componentTagHistory=True
+                f"{_name_of(plug)}.inputGeometry", componentTagHistory=True
             ) or []
         except RuntimeError:
             history = None
@@ -226,7 +225,7 @@ def _references(name: str, node: str) -> list[str]:
             e["key"] == name and node in (cmds.ls(e["node"], long=True) or [])
             for e in history
         ):
-            found.append(f"{plug}.componentTagExpression")
+            found.append(f"{_name_of(plug)}.componentTagExpression")
     return found
 
 
@@ -276,7 +275,7 @@ def _state_of(geo: Geometry, path: str, name: str, entry: dict, node: str) -> _H
     if entry["procedural"] or not entry["editable"]:
         return _Home(path, geo, name, _PROCEDURAL, node, category, empty)
     answer = cmds.componentTag(
-        f"{path}.{_PROBE_TOKEN[type(geo).get_node_type(geo)]}",
+        f"{path}.{_name_of(_PROBE_TOKEN[type(geo).get_node_type(geo)])}",
         queryEdit         = True,
         tagName           = name,
         injectionLocation = node,
@@ -323,7 +322,7 @@ def _resolve_at(at: Any, path: str) -> str | None:
     if type(node).get_node_type(node) not in _GEOMETRY_TYPES:
         shape = _single_geometry_shape(node)
         if shape is None:
-            raise TypeError(f"at={at!r}: '{node}' is not a geometry node")
+            raise TypeError(f"at={at!r}: '{_name_of(node)}' is not a geometry node")
         node = shape
     full = type(node).get_long_name(node)
     # The geometry chain, as Maya walks it: the shape, its Orig and the meshes
@@ -596,12 +595,12 @@ class Tag(_MemberSpec):
             return None
         if self._remove:
             raise TypeError(
-                f"only an add-op tag can be written to {plug}; the complement of "
+                f"only an add-op tag can be written to {_name_of(plug)}; the complement of "
                 f"'{self._name}' is the expression string '!{self._name}'"
             )
         if self._name is None:
             raise TypeError(
-                f"Tag() has no name to write to {plug}; write Tag('x') or a "
+                f"Tag() has no name to write to {_name_of(plug)}; write Tag('x') or a "
                 f"plain expression string ('*' means every point)"
             )
         index = mplug.parent().logicalIndex()
@@ -610,12 +609,12 @@ class Tag(_MemberSpec):
         def step() -> None:
             plug << name
             seen = cmds.geometryAttrInfo(
-                f"{deformer}.input[{index}].inputGeometry", componentTagNames=True
+                f"{_name_of(deformer)}.input[{index}].inputGeometry", componentTagNames=True
             ) or []
             if name not in seen:
                 cmds.warning(
                     f"rig.Tag: '{name}' is not a component tag on the input geometry "
-                    f"of {deformer}.input[{index}] (it sees {seen}); the deformer "
+                    f"of {_name_of(deformer)}.input[{index}] (it sees {seen}); the deformer "
                     f"moves nothing until the tag exists upstream of it"
                 )
 
@@ -987,8 +986,8 @@ class Tag(_MemberSpec):
                 node = _short(selection.path)
                 raise TypeError(
                     f"Tag({self._name!r}).remove takes members (components: "
-                    f"{node}.vtx[...] / .f[...] / .e[...]); to delete the tag from "
-                    f"{node}, write Tag({self._name!r}).delete({node!r})"
+                    f"{_name_of(node)}.vtx[...] / .f[...] / .e[...]); to delete the tag from "
+                    f"{_name_of(node)}, write Tag({self._name!r}).delete({node!r})"
                 )
 
     def set(self, members: Any) -> None:
@@ -1078,7 +1077,7 @@ class Tag(_MemberSpec):
                     for token in _GLOB_TOKEN_RE.findall(rewritten)
                 ):
                     raise RuntimeError(
-                        f"{plug} references '{home.name}' through a glob "
+                        f"{_name_of(plug)} references '{home.name}' through a glob "
                         f"({expression!r}); rewrite that expression by hand first"
                     )
                 rewrites.append((plug, rewritten))
@@ -1223,13 +1222,6 @@ def _layer_targets(selections: list[_Selection]) -> list[str]:
     return paths
 
 
-def _layer_token_repr(token: "_LayerMember") -> str:
-    # (`_as_user_reads`: a deleted layer shows marked to a user)
-    if token._layer is None:
-        return "DisplayLayer()"
-    return f"{'-' if token._remove else ''}{token._layer!r}"
-
-
 class _LayerMember(_MemberSpec):
     """The membership of display layers (private): what a layer node, its
     removal token and the kind token run for ``<<`` / ``>>`` / ``in`` /
@@ -1270,7 +1262,7 @@ class _LayerMember(_MemberSpec):
 
     @property
     def _name(self) -> str | None:
-        return None if self._layer is None else str(self._layer)
+        return None if self._layer is None else _name_of(self._layer)
 
     @property
     def _purges(self) -> bool:
@@ -1297,10 +1289,12 @@ class _LayerMember(_MemberSpec):
         )
 
     def __repr__(self) -> str:
-        return _as_user_reads(_layer_token_repr, self)
+        if self._layer is None:
+            return "DisplayLayer()"
+        return f"{'-' if self._remove else ''}{self._layer!r}"
 
     def _clone_target(self) -> str | None:
-        return None if self._layer is None or self._remove else str(self._layer)
+        return None if self._layer is None or self._remove else _name_of(self._layer)
 
     def __getattr__(self, name: str) -> Any:
         # a token is no layer: its methods and plugs are the layer node's
@@ -1352,12 +1346,12 @@ class _LayerMember(_MemberSpec):
         membership back from the node side."""
         if not paths:
             return
-        target = _display_layer._DEFAULT_ABSOLUTE if layer is None else str(layer)
+        target = _display_layer._DEFAULT_ABSOLUTE if layer is None else _name_of(layer)
         _cmds_edit.editDisplayLayerMembers(target, *paths, noRecurse=True)
         for path in paths:
             if _holding_layer(path) != layer:
                 raise RuntimeError(
-                    f"'{path}' did not land in {target}; its drawOverride reads "
+                    f"'{path}' did not land in {_name_of(target)}; its drawOverride reads "
                     f"{_holding_layer(path)}"
                 )
 

@@ -49,7 +49,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya as om
-from rig.nodetypes._base import _cast, _connected_attrs, _path_instance_number, Attribute
+from rig.nodetypes._base import _cast, _connected_attrs, _path_instance_number, Attribute, _name_of
 from rig._internal.types import _is_quaternion
 
 
@@ -135,7 +135,7 @@ def _node_is_transform(node: Any) -> bool:
         type(node)._raw_ensure_valid(node)
     else:
         try:
-            node = _cast(str(node))
+            node = _cast(_name_of(node))
         except (RuntimeError, ValueError):
             return False
     try:
@@ -152,7 +152,7 @@ def _resolve_rotate_order(node: Any) -> int:
     rather than ``cmds.getAttr`` with string-formatted names.
     """
     try:
-        wrapped = node if hasattr(type(node), "find_attr") else _cast(str(node))
+        wrapped = node if hasattr(type(node), "find_attr") else _cast(_name_of(node))
         return int(wrapped.find_attr("rotateOrder").get())
     except (RuntimeError, AttributeError):
         return 0
@@ -258,7 +258,7 @@ def _apply_full_decomposition(
     Uses :meth:`DGNode.find_attr` (canonical API) to obtain attribute
     plugs by name rather than building ``f"{node}.t"`` strings.
     """
-    wrapped = node if hasattr(type(node), "find_attr") else _cast(str(node))
+    wrapped = node if hasattr(type(node), "find_attr") else _cast(_name_of(node))
 
     def _set_channel(attr_name: str, values: Any) -> None:
         try:
@@ -267,7 +267,7 @@ def _apply_full_decomposition(
             channel = None
         if channel is None:
             return
-        _disconnect_compound(str(channel))
+        _disconnect_compound(_name_of(channel))
         try:
             type(channel)._raw_set(channel, *values)
         except (RuntimeError, Exception):
@@ -305,12 +305,12 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
     m4x4, had_translation = coerced
 
     attr     = type(dst).get_alias(dst)
-    plug_str = str(dst)
+    plug_str = _name_of(dst)
     try:
         node = type(dst)._raw_get_node(dst)
     except Exception:
         return False
-    node_str = str(node)
+    node_str = _name_of(node)
 
     is_transform = _node_is_transform(node)
     try:
