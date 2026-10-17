@@ -16,9 +16,9 @@ Maya, though ``Node`` and ``Plug`` resolve such a name (``persp.__is_camera__``)
 * `TestProbes`: Python's probes (``__deepcopy__``, ``copy.copy``, an empty List, numpy, a
   Python member of the node such as ``_fn_set``) get what they got before, and a probe on a
   long list costs one lookup.
-* `TestDeleted`: an element deleted to the undo queue or freed by a new scene: a read
-  AttributeError when it is the first, its ``already deleted!`` after an element that has the
-  attr; an assignment its ``already deleted!`` in either place.
+* `TestDeleted`: an element deleted to the undo queue or freed by a new scene is skipped in
+  either place, rig.skip in its slot, with one warning naming it (re-pinned, user decision
+  2026-10-16 "Deleted nodes in a List": it raised ``already deleted!``).
 
 Negative control: on 818c24f (runs\\features\\listunderscore\\negctl3.json) 15 of the 23 tests
 fail; the eight guards (the probes, a Python member of an element, the list's own state, a
@@ -368,31 +368,49 @@ class TestProbes(_Case):
 
 
 class TestDeleted(_Case):
+    # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"):
+    # a deleted or freed element is skipped wherever it is, rig.skip in its slot and one
+    # warning naming it; the other elements broadcast (it raised "already deleted!")
+
+    def _assert_skipped(self, items, gone):
+        """``List(items).__tag__`` reads and sets the live elements only; `gone` is the
+        index of the deleted one."""
+        from rig import skip
+
+        with mock.patch.object(cmds, "warning") as warn:
+            got = List(items).__tag__
+        self.assertEqual(warn.call_count, 1)
+        self.assertRegex(warn.call_args[0][0], rf"^List element \[{gone}\] \S+ was deleted; skipped$")
+        self.assertIs(got[gone], skip)
+        self.assertEqual([str(x) for x in got if x is not skip], ["a.__tag__"])
+        self.assertIsNone(getattr(List(items), "__deepcopy__", None))
+        nodes = List(items)
+        with mock.patch.object(cmds, "warning"):
+            nodes.__tag__ = 5
+        self.assertNotIn("__tag__", vars(nodes))
+        self.assertEqual(cmds.getAttr("a.__tag__"), 5)
+        with mock.patch.object(cmds, "warning"):
+            nodes.__tag__ = 1
+        self.assertEqual(cmds.getAttr("a.__tag__"), 1)
+
     def test_deleted_to_the_undo_queue(self):
+        from rig import skip
+
         a, b = _tagged("a", "b")
         bt = b.t
         cmds.delete("b")
         for items in ([b, a], [bt, a.t]):
             with self.subTest(first=str(items[1])):
-                self.assertEqual(getattr(List(items), "__tag__", "raised"), "raised")
-                self.assertIsNone(getattr(List(items), "__deepcopy__", None))
-                # an assignment raises, as with the deleted element second (LU FIX)
-                nodes = List(items)
-                with self.assertRaisesRegex(RuntimeError, "already deleted"):
-                    nodes.__tag__ = 5
-                self.assertNotIn("__tag__", vars(nodes))
-                self.assertEqual(cmds.getAttr("a.__tag__"), 1)
+                self._assert_skipped(items, 0)
         for items in ([a, b], [a.t, bt]):
             with self.subTest(second=str(items[0])):
-                with self.assertRaisesRegex(RuntimeError, "already deleted"):
-                    List(items).__tag__
-                with self.assertRaisesRegex(RuntimeError, "already deleted"):
-                    List(items).__tag__ = 5
-                self.assertEqual(cmds.getAttr("a.__tag__"), 1)
+                self._assert_skipped(items, 1)
         # as the public name does
-        with self.assertRaisesRegex(RuntimeError, "already deleted"):
-            List([a, b]).tag
-        cmds.undo()
+        with mock.patch.object(cmds, "warning"):
+            tags = List([a, b]).tag
+        self.assertEqual([str(tags[0]), tags[1]], ["a.tag", skip])
+        while not cmds.objExists("b"):  # the sets above, then the delete
+            cmds.undo()
         self.assertEqual(_names(List([a, b]).__tag__), ["a.__tag__", "b.__tag__"])
 
     def test_freed_by_a_new_scene(self):
@@ -402,17 +420,7 @@ class TestDeleted(_Case):
         a2, = _tagged("a")
         for items in ([b, a2], [bt, a2.t]):
             with self.subTest(first=type(items[0]).__name__):
-                self.assertEqual(getattr(List(items), "__tag__", "raised"), "raised")
-                self.assertIsNone(getattr(List(items), "__deepcopy__", None))
-                nodes = List(items)
-                with self.assertRaisesRegex(RuntimeError, "already deleted"):
-                    nodes.__tag__ = 5
-                self.assertNotIn("__tag__", vars(nodes))
-                self.assertEqual(cmds.getAttr("a.__tag__"), 1)
+                self._assert_skipped(items, 0)
         for items in ([a2, b], [a2.t, bt]):
             with self.subTest(second=type(items[1]).__name__):
-                with self.assertRaisesRegex(RuntimeError, "already deleted"):
-                    List(items).__tag__
-                with self.assertRaisesRegex(RuntimeError, "already deleted"):
-                    List(items).__tag__ = 5
-                self.assertEqual(cmds.getAttr("a.__tag__"), 1)
+                self._assert_skipped(items, 1)

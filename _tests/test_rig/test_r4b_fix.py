@@ -832,15 +832,21 @@ class TestConvertedRecord(_Case):
         l_.astype(Blinn)
         for held, kind in ((x, "phong"), (p, "lambert"), (l_, "blinn")):
             with self.subTest(kind):
+                # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+                # its marked name; an operation on it (get_name()) raises
                 with self.assertRaisesRegex(RuntimeError, rf"^'x' was converted to a {kind}; use the node astype"):
-                    str(held)
+                    held.get_name()
+                self.assertEqual(str(held), "x (deleted)")
         cmds.namespace(add="ns")
         root = Blinn.define("y")
         root.astype(Phong)
         ns_y = Blinn.define("ns:y")
         ns_y.astype(Lambert)
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError, r"^'y' was converted to a phong"):
-            str(root)
+            root.get_name()
+        self.assertEqual(str(root), "y (deleted)")
 
 
 class TestReferencedShaderEngine(_Case):

@@ -855,8 +855,11 @@ class TestTourW7(_Case):
     def test_undo_and_redo_a_create(self):
         held = Transform.create(name="h")
         cmds.undo()
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError, r"^h already deleted!$"):
-            str(held)
+            held.get_name()
+        self.assertEqual(str(held), "h (deleted)")
         self.assertRefused(NodeNotFoundError, r"^no transform named 'h'; Transform\.define\('h'\) finds or makes it$",
                            lambda: Transform("h"))
         cmds.redo()
@@ -869,9 +872,12 @@ class TestTourW7(_Case):
         cmds.file(new=True, force=True)
         for held, cls in ((red, "Blinn"), (layer, "DisplayLayer"), (cube, "Transform")):
             with self.subTest(held=cls):
+                # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+                # its marked name; an operation on it (get_name()) raises
                 with self.assertRaisesRegex(RuntimeError,
                                             rf"^{cls} node \(freed by a new scene, .*\) already deleted!$"):
-                    str(held)
+                    held.get_name()
+                self.assertRegex(str(held), r"^(red|L|cube) \(deleted\)$")
         other = _cube("other")
         self.assertRefused(RuntimeError, "freed by a new scene", lambda: other << red)
         self.assertEqual(_engines("otherShape"), ["initialShadingGroup"])
@@ -906,9 +912,12 @@ class TestTourW7(_Case):
         cube << red
         phong = red.astype(Phong)
         self.assertEqual(repr(phong), 'Phong("red")')
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError,
                                     r"^'red' was converted to a phong; use the node astype\(\) returned"):
-            str(red)
+            red.get_name()
+        self.assertEqual((str(red), repr(red)), ("red (deleted)", 'Blinn("red", deleted)'))
         self.assertTrue(cube in phong)
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
         back = shade.convert(phong, Blinn)

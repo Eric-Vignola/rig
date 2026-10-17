@@ -12,6 +12,7 @@ config too, and takes one of the six rotate-order names (round 4a).
 """
 
 import inspect
+from unittest import mock
 
 import numpy as np
 from maya import cmds
@@ -242,12 +243,23 @@ class TestListOperators(_OperandCase):
         self.assertRejects(lambda: self.u.tx + items)
 
     def test_a_freed_plug_still_reports_the_free(self):
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+        # List"): a freed element's row is skipped (rig.skip, one warning naming
+        # it), so it is checked no further; a live row still is
+        from rig import skip
+
         items = List([self.t.tx, self.t.ty])
         cmds.file(new=True, force=True)
+        cmds.createNode("transform", name="live")
         for call in (lambda: items + S, lambda: S + items, lambda: items == [1, S]):
-            with self.assertRaises(RuntimeError) as ctx:
-                call()
-            self.assertIn("already deleted", str(ctx.exception))
+            with mock.patch.object(cmds, "warning") as warn:
+                self.assertEqual(list(call()), [skip, skip])
+            warn.assert_called_once_with(
+                "List elements [0] t.translateX, [1] t.translateY were deleted; skipped"
+            )
+        mixed = List([items[0], Node("live").tx])
+        with mock.patch.object(cmds, "warning"):
+            self.assertRejects(lambda: mixed + S, "is a plain str")
 
     def test_rows_without_a_plug_are_left_alone(self):
         nodes = List([Node("t"), Node("u")])

@@ -175,8 +175,11 @@ class TestConversion(MayaTestCase):
         self.assertEqual([repr(m) for m in Material.of(self.cube)], ['Phong("red")'])
         p.cosinePower << 40
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
-            str(mat)
+            mat.get_name()
+        self.assertEqual(str(mat), "red (deleted)")
         with self.assertRaisesRegex(TypeError, r"Phong\('red'\)\.astype\(Blinn\) converts it"):
             Blinn("red")
         self.assertEqual(cmds.ls("*__rigconvert*"), [])
@@ -410,8 +413,11 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_sources("look:redSG.surfaceShader"), ["look:red.outColor"])
         self.assertEqual(cmds.ls("*__rigconvert*", recursive=True), [])
         self.assertEqual(cmds.ls("red*", recursive=True), ["look:red", "look:redSG"])
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError, r"'look:red' was converted to a phong"):
-            str(held)
+            held.get_name()
+        self.assertEqual(str(held), "look:red (deleted)")
 
     def test_strict_refuses_with_the_warning_text(self):
         red    = self._lossy_red()
@@ -476,8 +482,11 @@ class TestConversion(MayaTestCase):
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
         # a held node dies with its scene; a look that outlives it is a recipe
         cmds.file(new=True, force=True)
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError, "freed by a new scene"):
-            str(p)
+            p.get_name()
+        self.assertTrue(str(p).endswith(" (deleted)"))
 
         def look():
             return Phong.define("red", color=[1, 0, 0], cosinePower=40)
@@ -662,8 +671,11 @@ class TestConversion(MayaTestCase):
         # the undo revives the old node; the new one is gone (plain message)
         self.assertTrue(red.is_valid())
         self.assertEqual(red, Blinn("red"))
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError, r"^red__rigconvert already deleted!$"):
-            str(new)
+            new.get_name()
+        self.assertEqual(str(new), "red__rigconvert (deleted)")
         with mock.patch.object(cmds, "warning") as warn:
             self.assertIs(red.astype(Blinn), red)
         self.assertEqual(warn.call_count, 0)
@@ -674,8 +686,11 @@ class TestConversion(MayaTestCase):
             cmds.listAttr("red", userDefined=True),
             ["myNote", "__eccentricity__", "__specularRollOff__"],
         )
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
+        # its marked name; an operation on it (get_name()) raises
         with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
-            str(red)
+            red.get_name()
+        self.assertEqual(str(red), "red (deleted)")
         red = Phong("red")
         # the grammar interaction costs two entries: convert, then assign
         cmds.flushUndo()

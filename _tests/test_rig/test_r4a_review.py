@@ -673,11 +673,15 @@ class TestListProbes(_PlugCase):
             with self.subTest(probe=type(probe).__name__):
                 with self.assertRaisesRegex(RuntimeError, "already deleted!"):
                     probe in List([self.a, self.a.tx])
+        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
+        # List"): a deleted element is skipped (one warning), the probe still
+        # raises (an operation on the deleted node itself)
         for elements in (List([self.a, gone]), List([self.a.tx, plug])):
-            with self.assertRaisesRegex(RuntimeError, "already deleted!"):
-                self.b in elements
-            with self.assertRaisesRegex(RuntimeError, "already deleted!"):
-                self.b.tx in elements
+            with mock.patch.object(cmds, "warning") as warn:
+                self.assertIs(self.b in elements, False)
+                self.assertIs(self.b.tx in elements, False)
+                self.assertIs(elements[0] in elements, True)
+            self.assertEqual(warn.call_count, 3)
         self.assertNotIn(gone, List([]))
 
 
