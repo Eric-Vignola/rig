@@ -103,6 +103,7 @@ from rig.nodetypes.mesh import _own_history
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal import types as _types
 from rig._internal.members import (
+    _as_user_reads,
     _GEOMETRY_TYPES,
     _POINT_KIND,
     _MemberSpec,
@@ -1222,6 +1223,13 @@ def _layer_targets(selections: list[_Selection]) -> list[str]:
     return paths
 
 
+def _layer_token_repr(token: "_LayerMember") -> str:
+    # (`_as_user_reads`: a deleted layer shows marked to a user)
+    if token._layer is None:
+        return "DisplayLayer()"
+    return f"{'-' if token._remove else ''}{token._layer!r}"
+
+
 class _LayerMember(_MemberSpec):
     """The membership of display layers (private): what a layer node, its
     removal token and the kind token run for ``<<`` / ``>>`` / ``in`` /
@@ -1289,9 +1297,7 @@ class _LayerMember(_MemberSpec):
         )
 
     def __repr__(self) -> str:
-        if self._layer is None:
-            return "DisplayLayer()"
-        return f"{'-' if self._remove else ''}{self._layer!r}"
+        return _as_user_reads(_layer_token_repr, self)
 
     def _clone_target(self) -> str | None:
         return None if self._layer is None or self._remove else str(self._layer)

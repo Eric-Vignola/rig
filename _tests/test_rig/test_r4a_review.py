@@ -669,10 +669,17 @@ class TestListProbes(_PlugCase):
         gone = Node(cmds.createNode("transform", name="gone"))
         plug = gone.tx
         cmds.delete("gone")
+        # re-pinned (fix round 2026-10-17, user decision 2026-10-16 "Deleted nodes
+        # in a List", the clean-up ``ctls.remove(gone_ctl)``): a deleted or freed
+        # probe is found by identity only, never read nor warned for (it raised
+        # its "already deleted!")
         for probe in (gone, plug):
             with self.subTest(probe=type(probe).__name__):
-                with self.assertRaisesRegex(RuntimeError, "already deleted!"):
-                    probe in List([self.a, self.a.tx])
+                with mock.patch.object(cmds, "warning") as warn:
+                    self.assertIs(probe in List([self.a, self.a.tx]), False)
+                    self.assertIs(probe in List([self.a, probe]), True)
+                    self.assertEqual(List([probe, self.a, probe]).count(probe), 2)
+                warn.assert_not_called()
         # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a
         # List"): a deleted element is skipped (one warning), the probe still
         # raises (an operation on the deleted node itself)
