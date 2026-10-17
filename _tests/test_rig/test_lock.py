@@ -156,13 +156,17 @@ class TestSpellings(_Case):
         self.assertFalse(cmds.getAttr("ctl.ty", lock=True))
 
     def test_a_maya_attribute_named_lock(self):
+        # re-pinned (user decision 2026-10-16, name clashes): a static Maya attr
+        # of that name: layer.lock is the plug, layer.lock() the method
         layer = Node.create("animLayer", name="AL")
-        self.assertEqual(layer.lock.__func__, Node.create("transform", name="t").lock.__func__)
-        attr = Plug(layer.find_attr("lock"))
-        self.assertEqual(str(attr), "AL.lock")
-        attr << True
+        self.assertIsInstance(layer.lock, Plug)
+        self.assertEqual(str(layer.lock), "AL.lock")
+        layer.lock << True
         self.assertTrue(cmds.getAttr("AL.lock"))
         self.assertFalse(layer.is_locked)
+        self.assertIs(layer.lock(), layer)
+        self.assertTrue(layer.is_locked)
+        layer.unlock()
 
 
 class TestNoOp(_Case):

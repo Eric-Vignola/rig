@@ -473,7 +473,7 @@ def _is_euler(obj: Any) -> bool:
         if probe is None:
             continue
         try:
-            if probe.child(0).attribute_type == "doubleAngle":
+            if type(probe).child(probe, 0).attribute_type == "doubleAngle":
                 return True
         except Exception:
             pass

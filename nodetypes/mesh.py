@@ -2470,7 +2470,8 @@ def _place_object(xform: str, obj) -> None:
         if isinstance(rest, tuple):
             value = [float(x) for x in np.asarray(value, dtype=float).ravel()]
             if value != list(rest):
-                node.find_attr(attr).set(*value)
+                found = node.find_attr(attr)
+                type(found).set(found, *value)
         elif value != rest:
             node.find_attr(attr).set(type(rest)(value))
 

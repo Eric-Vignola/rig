@@ -100,6 +100,8 @@ from rig.nodetypes._base import (
     _attr_handle,
     _attr_state,
     _check_enum_names,
+    _ChildOrMethod,
+    _clash_child,
     _class_attr,
     _dg_named_owner,
     _element_path,
@@ -148,8 +150,8 @@ _NOT_RESHAPED = _SCALARS + (Attribute, list, tuple, np.ndarray, str)
 # Attribute's own members the inject fast paths ask a plug's class to keep:
 # its connection reads and MPlug (`_disconnect_incoming`), its name
 # (`_named_with_dot`) and its data type (`_dst_data_type`)
-_GET_CONNECTED_ATTRS  = Attribute.__dict__["get_connected_attrs"]
-_ITER_CONNECTED_ATTRS = Attribute.__dict__["iter_connected_attrs"]
+_GET_CONNECTED_ATTRS  = Attribute.get_connected_attrs  # class access: the function
+_ITER_CONNECTED_ATTRS = Attribute.iter_connected_attrs
 _ATTRIBUTE_PLUG       = Attribute.__dict__["plug"]
 _ATTRIBUTE_STR        = Attribute.__dict__["__str__"]
 _ATTRIBUTE_DATA_TYPE  = Attribute.__dict__["data_type"]
@@ -369,7 +371,12 @@ class Plug(Attribute):
                 return _inherit_owner(self, _new_attr(Plug, child.plug))
             except (AttributeError, TypeError):
                 pass
-            node = self.node
+            try:
+                node = self.node
+            except RuntimeError:
+                # a node deleted to the undo queue (``already deleted!``): a
+                # probe gets the AttributeError it expects
+                raise AttributeError(attr_name) from None
             return type(node).__getattr__(node, attr_name)
         # a freed node's MPlug points at freed memory: "already deleted!"
         _ensure_owner_alive(self)
@@ -508,7 +515,7 @@ class Plug(Attribute):
         _ensure_owner_alive(self)
         # the cached child Attribute names the MPlug; the Plug is a new one
         # each time (plugs are never cached), owned as this plug is
-        return _inherit_owner(self, _new_attr(Plug, super().child(i).plug))
+        return _inherit_owner(self, _new_attr(Plug, Attribute.child(self, i).plug))
 
     # -- assignment via attribute syntax -- #
 
@@ -521,11 +528,27 @@ class Plug(Attribute):
         property with a setter (``plug.alias = ...``, ``plug.is_locked = ...``)
         or another descriptor with ``__set__``. A property without one (such as
         the ``str`` method names routed to plugs, ``plug.center``) stays sugar.
+
+        A plug method's name (``plug.get = v``) follows the plug-method rule: the
+        compound child of that name takes it (``plug.get << v``); a plug with no
+        such child raises, as assignment is strict (user decision 2026-10-16): a
+        method is never replaced on one plug, and no sibling of that name is
+        reached.
         """
         if name.startswith("_"):
             object.__setattr__(self, name, value)
             return
         found = _class_attr(type(self), name)
+        if isinstance(found, _ChildOrMethod):
+            _ensure_owner_alive(self)
+            child = _clash_child(self, name)
+            if child is None:
+                raise AttributeError(
+                    f"{type(self).__name__}.{name} is a method and {self.full_name!r} "
+                    f"has no child attribute {name!r}: a method is not replaced on a plug"
+                )
+            _inherit_owner(self, _new_attr(Plug, child.plug)).__lshift__(value)
+            return
         if isinstance(found, property):
             settable = found.fset is not None
         else:
@@ -743,7 +766,7 @@ class Plug(Attribute):
             dt = self.data_type
         except Exception:
             dt = None
-        return _to_numpy(super().get(), data_type=dt)
+        return _to_numpy(Attribute.get(self), data_type=dt)
 
     def get_inputs(self) -> Any:
         """Return the plug driving this one, as a ``List`` of 0 or 1.
@@ -2569,7 +2592,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
     elif driver == _BELOW_WHOLE:
         _disconnect_incoming(dst_attr, "set", write_follows=True)
     try:
-        dst_attr.set(*set_args, **set_kwargs)
+        type(dst_attr).set(dst_attr, *set_args, **set_kwargs)
         return
     except (RuntimeError, TypeError) as first:
         try:
@@ -2584,7 +2607,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
             )
             _disconnect_incoming(dst_attr, "set", write_follows=True, one_driver=True)
             try:
-                dst_attr.set(*set_args, **set_kwargs)
+                type(dst_attr).set(dst_attr, *set_args, **set_kwargs)
                 return
             except (RuntimeError, TypeError) as second:
                 raise InjectionError(
@@ -2899,7 +2922,7 @@ def _inject_value(
         compound_dst = types._is_compound(dst)
     try:
         leaves = (
-            [dst.child(i) for i in range(dst.num_children)] if compound_dst else [dst]
+            [type(dst).child(dst, i) for i in range(dst.num_children)] if compound_dst else [dst]
         )
     except Exception:
         leaves = None
@@ -3044,7 +3067,7 @@ def _inject_value(
             next_index = _path_instance_number(dst)
             if next_index is None:
                 try:
-                    next_index = dst.get_next_available_index()
+                    next_index = type(dst).get_next_available_index(dst)
                 except Exception:
                     next_index = 0
             dst = dst[next_index]
@@ -3429,7 +3452,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
             )
             try:
                 if dst_attr is not None:
-                    src.connect(dst_attr, force=True)
+                    type(src).connect(src, dst_attr, force=True)
                     container.absorb_unit_conversions(dst_attr)
                 else:
                     # Fallback for raw-string dst we couldn't coerce.
@@ -3532,7 +3555,31 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
 
 # The typed nodes' attribute lookup (``DGNode.__getattr__``) returns Plugs and
 # upgrades multi-dimensional components once this module has loaded (D31).
+from rig.nodetypes import _base as _base_module  # noqa: E402
 from rig.nodetypes import dg_node as _dg_node_module  # noqa: E402
 
 _dg_node_module._PLUG_CLASS     = Plug
 _dg_node_module._COMPONENT_PLUG = _maybe_component_plug
+
+
+class _MethodPlug(Plug):
+    """A method plug: ``node.x`` where ``x`` is both a Maya attr of the node and
+    a public method of its class, or ``plug.x`` where ``x`` is both a compound
+    child of the plug and a public plug method. It is the plug (every Plug
+    operation: ``.get()``, ``>> None``, ``<<``, ``>>``), and a call runs the
+    method (``node.x()``, ``node.x(full=True)``). It forwards the method's
+    ``__wrapped__`` (``inspect.signature``), ``__doc__``, ``__name__``,
+    ``__qualname__``, ``__func__`` and ``__self__`` (kept in its ``__dict__``,
+    see `rig.nodetypes._base._as_method_plug`); ``inspect.ismethod`` is False.
+    Its repr is a Plug's."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.__dict__["_method"](*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f'Plug("{self.full_name}")'
+
+
+_dg_node_module._METHOD_PLUG_CLASS       = _MethodPlug
+_base_module._PLUG_FOR_METHODS        = Plug
+_base_module._METHOD_PLUG_FOR_METHODS = _MethodPlug

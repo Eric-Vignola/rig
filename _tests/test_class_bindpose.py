@@ -418,12 +418,16 @@ class TestErrors(_Case):
     def test_the_argument_is_checked_before_the_walk(self):
         calls = []
         original = Transform.serialize
+        # re-pinned (user decision 2026-10-16, name clashes): the class dict holds
+        # a plug method (class access gives its function), so the patch puts the
+        # class dict entry back, as mock.patch.object does
+        entry = Transform.__dict__["serialize"]
         Transform.serialize = lambda self: calls.append(self) or original(self)
         try:
             with self.assertRaises(TypeError):
                 Node("grp").serialize_hierarchy(bindpose=None)
         finally:
-            Transform.serialize = original
+            Transform.serialize = entry
         self.assertEqual(calls, [])
 
     def test_not_found(self):

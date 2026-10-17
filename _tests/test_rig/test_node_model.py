@@ -575,6 +575,12 @@ _HANDLE_SITES = frozenset(
         # a List's '_' name lookup (LU FIX): the fn set of a plug's owner when
         # the plug shares its handle, compared by identity only
         ("rig._internal.list", "_private_plug"),
+        # plug methods (user decision 2026-10-16, name clashes): the attr check
+        # of a public method's lookup on a node, and the inline ensure_valid
+        # rig's hot readers call instead of the public name on the node
+        ("rig.nodetypes._base", "_node_has_attr"),
+        ("rig.nodetypes._base", "_PlugMethod.__get__"),
+        ("rig.nodetypes.dg_node", "_ensure_valid"),
     }
 )
 
@@ -750,15 +756,16 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         with self.assertRaises(AttributeError) as ctx:
             dg.name = "x"
         self.assertIn("setter", str(ctx.exception))
+        # re-pinned (user decision 2026-10-16, name clashes: a bare name is the
+        # Maya attr if one exists, else the method; assignment is strict): no
+        # attr 'rename', so it raises; a curve shape's 'create' is its plug
         with self.assertRaises(AttributeError) as ctx:
             dg.rename = 1
-        self.assertIn("find_attr('rename')", str(ctx.exception))
+        self.assertIn("has no Maya attr 'rename'", str(ctx.exception))
         curve = Node(
             cmds.listRelatives(cmds.curve(point=[(0, 0, 0), (1, 0, 0)], degree=1), shapes=True)[0]
         )
-        with self.assertRaises(AttributeError) as ctx:
-            curve.create = 1
-        self.assertIn("find_attr('create')", str(ctx.exception))
+        self.assertIsInstance(curve.create, Plug)
         self.assertIs(type(curve.find_attr("create")), _base_module().Attribute)
         with self.assertRaises(AttributeError) as ctx:
             dg.tranlsateX = 1
@@ -1003,21 +1010,28 @@ class TestMergeReviewFixes(MayaTestCase):
         self.assertEqual(mesh.get_map_values("skinMask"), [0.5] * 8)
 
     def test_instance_monkeypatching_of_node_methods(self):
+        # re-pinned (user decision 2026-10-16, name clashes: assignment is
+        # strict): a method is never replaced on one node by assignment, so
+        # mock.patch.object(node, ...) and node.m = f raise; a test patches the
+        # class, or writes vars(node)
         node = Node(cmds.createNode("transform", name="a"))
-        with mock.patch.object(node, "get_parent", return_value="P"):
+        with self.assertRaises(AttributeError):
+            with mock.patch.object(node, "get_parent", return_value="P"):
+                pass
+        self.assertNotIn("get_parent", vars(node))
+        with mock.patch.dict(vars(node), get_parent=lambda: "P"):
             self.assertEqual(node.get_parent(), "P")
         self.assertIsNone(node.get_parent())
         self.assertNotIn("get_parent", vars(node))
-        node.get_parent = lambda: "Q"
-        self.assertEqual(node.get_parent(), "Q")
-        del node.get_parent
+        with self.assertRaisesRegex(AttributeError, "is a method"):
+            node.get_parent = lambda: "Q"
         self.assertIsNone(node.get_parent())
         # a Python attribute stored on the instance is set there again
         vars(node)["user_tag"] = 1
         node.user_tag = 2
         self.assertEqual(vars(node)["user_tag"], 2)
-        # still refused: a non-callable over a method, a name that is no Maya attr
-        with self.assertRaisesRegex(AttributeError, r"find_attr\('rename'\)"):
+        # still refused: a value over a method, a name that is no Maya attr
+        with self.assertRaisesRegex(AttributeError, r"has no Maya attr 'rename'"):
             node.rename = 1
         with self.assertRaisesRegex(AttributeError, "Attribute not found"):
             node.side = "L"
@@ -1541,13 +1555,18 @@ class TestOneNodeHierarchy(MayaTestCase):
         )
 
     def test_node_level_class_attribute_refuses_sugar(self):
-        # a Maya attr named like a node method (a curve shape's `create`) is
-        # reached through find_attr (`wrap` is a Maya attr now: TestMergeReviewFixes)
+        # re-pinned (user decision 2026-10-16, name clashes: a bare name is the
+        # Maya attr if one exists): a curve shape's `create` is the plug, and
+        # `=` is its `<<` (`wrap` is a Maya attr too: TestMergeReviewFixes)
         curve = Node(cmds.listRelatives(cmds.curve(p=[(0, 0, 0), (1, 0, 0)], d=1), shapes=True)[0])
         self.assertTrue(cmds.attributeQuery("create", node=str(curve), exists=True))
-        with self.assertRaises(AttributeError) as ctx:
-            curve.create = 1
-        self.assertIn("find_attr('create')", str(ctx.exception))
+        self.assertIsInstance(curve.create, Plug)
+        self.assertEqual(str(curve.create), f"{curve}.create")
+        maker = Node(cmds.createNode("makeNurbCircle", name="mk"))
+        curve.create = maker.outputCurve
+        self.assertEqual(
+            cmds.listConnections(f"{curve}.create", source=True, plugs=True), ["mk.outputCurve"]
+        )
         self.assertIs(type(curve.find_attr("create")), _base_module().Attribute)
 
     def test_lift(self):

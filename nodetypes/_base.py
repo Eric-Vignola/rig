@@ -4,6 +4,7 @@ Node base classes, the Attribute wrapper and utils
 
 from __future__ import annotations
 
+import dis as _dis
 import itertools
 import math
 import re
@@ -12,6 +13,8 @@ import uuid
 import weakref
 from functools import total_ordering
 from numbers import Number, Real
+from types import FunctionType as _FunctionType
+from types import MethodType as _MethodType
 from typing import Any, Iterator
 
 import numpy as np
@@ -67,6 +70,283 @@ def _class_attr(cls: type, name: str) -> Any:
         if found is not _MISSING:
             return found
     return _MISSING
+
+
+# --- plug methods: a method whose name is also a Maya attribute ---------------
+#
+# THE RULE (user decision 2026-10-16), on a node or a plug: a bare name is the
+# Maya attribute if one exists, otherwise the method; with brackets it is the
+# method. ``node.serialize`` is the plug when the node has a Maya attribute
+# ``serialize`` (a ``_MethodPlug``: a real Plug, whose call runs the method),
+# else the bound method; ``node.serialize()`` is the method either way.
+#
+# `NodeMeta` makes every public method of every node class (a function, a
+# classmethod, a staticmethod, a ``creates_or_updates``: subclasses, Container
+# and user subclasses included) one of the descriptors below; `Attribute` and
+# its subclasses do the same for their public functions (`_ChildOrMethod`, a
+# compound child of that name). Class access (``Transform.serialize``) gives
+# what the plain member gives.
+#
+# THE CALL-SITE CHECK (user decision): ``x.m(...)`` compiles the load of ``m``
+# to a method load (3.11: LOAD_METHOD; 3.12+: LOAD_ATTR with its oparg's
+# method bit, or LOAD_SUPER_ATTR for ``super().m()``). A descriptor reached by
+# one returns the bound method without asking Maya, since a call is always the
+# method. Any other access (``x.m``, ``getattr(x, "m")``, ``x.m(*a)``, which
+# 3.11 loads by LOAD_ATTR) runs the full check, and so does every access on a
+# Python version whose encoding is not known here (`_METHOD_LOAD` all 0).
+#
+# Rig's own code reaches public methods by calls (the cheap path) or through
+# the class (``type(x).m(x)``, no check at all) on its hot paths: see
+# test_plug_methods.TestInternalAccesses. A class-level identity constant of a
+# public method (``Cls.__dict__["m"]``) holds `_raw_function` of it.
+
+
+def _method_loads() -> bytes:
+    """A table over the opcodes: 1 for a method load whatever its oparg (3.11's
+    LOAD_METHOD), 2 for one whose oparg's bit 0 says so (3.12+: LOAD_ATTR,
+    LOAD_SUPER_ATTR), 0 for anything else; all 0 on another Python (the full
+    check always)."""
+    version = sys.version_info[:2]
+    ops     = _dis.opmap
+    table   = bytearray(256)
+    if version == (3, 11) and "LOAD_METHOD" in ops:
+        table[ops["LOAD_METHOD"]] = 1
+    elif (3, 12) <= version <= (3, 14) and "LOAD_ATTR" in ops and "LOAD_SUPER_ATTR" in ops:
+        table[ops["LOAD_ATTR"]]       = 2
+        table[ops["LOAD_SUPER_ATTR"]] = 2
+    return bytes(table)
+
+
+_METHOD_LOAD = _method_loads()
+_GETFRAME    = sys._getframe
+
+
+def _called(depth: int = 2) -> bool:
+    """True if the frame `depth` levels up sits on a method load (the access is
+    the callee of a call). The descriptors inline this; for tests and tools."""
+    try:
+        f = _GETFRAME(depth)
+    except ValueError:
+        return False
+    co = f.f_code.co_code
+    i  = f.f_lasti
+    k  = _METHOD_LOAD[co[i]]
+    return bool(k and (k & 1 or co[i + 1] & 1))
+
+
+# ``(node, name, bound) -> node.<name>'s plug as a _MethodPlug running bound``,
+# or `bound` when no exact Plug can be built; set by rig.nodetypes.dg_node
+_METHOD_PLUG_HOOK = None
+
+# what a method plug forwards of its method (besides __wrapped__ and the call):
+# kept in its own __dict__, which wins over the class's non-data __doc__
+_FORWARDED = ("__name__", "__qualname__", "__func__", "__self__", "__doc__")
+
+
+def _as_method_plug(plug: Any, cls: type, bound: Any) -> Any:
+    """`plug` made a method plug of class `cls` (``_MethodPlug`` /
+    `_MethodAttribute`) whose call runs `bound`. The class is switched with
+    ``object.__setattr__`` (``Plug.__setattr__`` is a journal statement)."""
+    object.__setattr__(plug, "__class__", cls)
+    d = plug.__dict__
+    d["_method"]     = bound
+    d["__wrapped__"] = bound
+    for key in _FORWARDED:
+        value = getattr(bound, key, _MISSING)
+        if value is not _MISSING:
+            d[key] = value
+    return plug
+
+
+def _node_has_attr(d: dict, name: str) -> bool:
+    """True if the node of instance dict `d` is a live, built node with a Maya
+    attribute `name` (its held fn set's ``hasAttribute``, after its handle's
+    ``isValid``: a node a new scene freed is never asked; a deleted or
+    half-built node is False)."""
+    return (
+        d.get("_attr_dict") is not None
+        and d["_objhandle"].isValid()
+        and d["_fn_set"].hasAttribute(name)
+    )
+
+
+class _PlugMethod:
+    """A public function of a node class (see above): the function itself on the
+    class, on a node the plug of its Maya attr of that name if it has one, else
+    the bound method."""
+
+    __slots__ = ("func", "name", "__dict__")
+
+    def __init__(self, func: Any, name: str) -> None:
+        self.func = func
+        self.name = name
+        self.__dict__.update(getattr(func, "__dict__", {}))
+        for key in ("__module__", "__name__", "__qualname__", "__doc__"):
+            try:
+                self.__dict__[key] = getattr(func, key)
+            except AttributeError:
+                pass
+        self.__dict__["__wrapped__"] = func
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        if inst is None:
+            return self.func
+        bound = _MethodType(self.func, inst)
+        try:
+            f = _GETFRAME(1)
+        except ValueError:
+            f = None
+        if f is not None:
+            co = f.f_code.co_code
+            i  = f.f_lasti
+            k  = _METHOD_LOAD[co[i]]
+            if k and (k & 1 or co[i + 1] & 1):
+                return bound
+        d = inst.__dict__
+        if (
+            d.get("_attr_dict") is not None
+            and d["_objhandle"].isValid()
+            and d["_fn_set"].hasAttribute(self.name)
+        ):
+            return _METHOD_PLUG_HOOK(inst, self.name, bound)
+        return bound
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # ``Cls.__dict__[name](node, ...)`` calls the function, as it did
+        return self.func(*args, **kwargs)
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        set_name = getattr(type(self.func), "__set_name__", None)
+        if set_name is not None:
+            set_name(self.func, owner, name)
+
+    def __repr__(self) -> str:
+        return f"<plug method {self.__dict__.get('__qualname__', self.name)}>"
+
+
+class _PlugDescriptor(_PlugMethod):
+    """`_PlugMethod` of another method descriptor (``creates_or_updates``)."""
+
+    __slots__ = ()
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        if inst is None:
+            return self.func.__get__(None, owner)
+        bound = self.func.__get__(inst, owner)
+        try:
+            f = _GETFRAME(1)
+        except ValueError:
+            f = None
+        if f is not None:
+            co = f.f_code.co_code
+            i  = f.f_lasti
+            k  = _METHOD_LOAD[co[i]]
+            if k and (k & 1 or co[i + 1] & 1):
+                return bound
+        if _node_has_attr(inst.__dict__, self.name):
+            return _METHOD_PLUG_HOOK(inst, self.name, bound)
+        return bound
+
+
+class _PlugClassMethod(classmethod):
+    """`_PlugMethod` of a classmethod; still a classmethod (``.__func__``,
+    ``isinstance(x, classmethod)``, help()'s "class method")."""
+
+    __slots__ = ("_name",)
+
+    def __init__(self, func: Any, name: str) -> None:
+        super().__init__(func)
+        self._name = name
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        if inst is None:
+            return _MethodType(self.__func__, owner)
+        bound = _MethodType(self.__func__, type(inst))
+        try:
+            f = _GETFRAME(1)
+        except ValueError:
+            f = None
+        if f is not None:
+            co = f.f_code.co_code
+            i  = f.f_lasti
+            k  = _METHOD_LOAD[co[i]]
+            if k and (k & 1 or co[i + 1] & 1):
+                return bound
+        if _node_has_attr(inst.__dict__, self._name):
+            return _METHOD_PLUG_HOOK(inst, self._name, bound)
+        return bound
+
+
+class _PlugStaticMethod(staticmethod):
+    """`_PlugMethod` of a staticmethod."""
+
+    __slots__ = ("_name",)
+
+    def __init__(self, func: Any, name: str) -> None:
+        super().__init__(func)
+        self._name = name
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        func = self.__func__
+        if inst is None:
+            return func
+        try:
+            f = _GETFRAME(1)
+        except ValueError:
+            f = None
+        if f is not None:
+            co = f.f_code.co_code
+            i  = f.f_lasti
+            k  = _METHOD_LOAD[co[i]]
+            if k and (k & 1 or co[i + 1] & 1):
+                return func
+        if _node_has_attr(inst.__dict__, self._name):
+            return _METHOD_PLUG_HOOK(inst, self._name, func)
+        return func
+
+
+_PLUG_DESCRIPTORS = (_PlugMethod, _PlugClassMethod, _PlugStaticMethod)
+
+# rig.nodetypes._files.creates_or_updates, read at the first class made
+_CREATES_OR_UPDATES = None
+
+
+def _plug_member(name: str, value: Any) -> Any:
+    """The class-dict entry `NodeMeta` keeps for the member `name` = `value` of a
+    node class body: a public method becomes its plug-method descriptor; any
+    other member (a property, data, a private name, a descriptor already made,
+    a classmethod / staticmethod subclass someone wrote) is kept."""
+    global _CREATES_OR_UPDATES
+    if name[:1] == "_" or isinstance(value, _PLUG_DESCRIPTORS):
+        return value
+    if isinstance(value, _FunctionType):
+        return _PlugMethod(value, name)
+    if type(value) is classmethod:
+        return _PlugClassMethod(value.__func__, name)
+    if type(value) is staticmethod:
+        return _PlugStaticMethod(value.__func__, name)
+    if _CREATES_OR_UPDATES is None:
+        from rig.nodetypes._files import creates_or_updates
+
+        _CREATES_OR_UPDATES = creates_or_updates
+    if isinstance(value, _CREATES_OR_UPDATES):
+        return _PlugDescriptor(value, name)
+    return value
+
+
+def _raw_function(value: Any) -> Any:
+    """The function of a class-dict method entry, a plug-method descriptor or
+    not: what an identity constant holds (``_raw_function(DGNode.__dict__[
+    "find_attr"])`` is what ``cls.find_attr`` gives on the class)."""
+    if isinstance(value, (_PlugMethod, _ChildOrMethod)):
+        value = value.func
+    return getattr(value, "__func__", value)
+
+
+def is_plug_method(cls: type, name: str) -> bool:
+    """True if ``name`` on node class or plug class `cls` is a method that a Maya
+    attribute of that name turns into the plug (``node.<name>``)."""
+    return isinstance(_class_attr(cls, name), _PLUG_DESCRIPTORS + (_ChildOrMethod,))
 
 
 # The node class registry: the node type (a class's ``CUSTOM_NODE_TYPE``, else
@@ -180,6 +460,13 @@ class NodeMeta(type):
         return value
 
     def __new__(mcs, class_name, bases, attrs):
+        # every public method of the class body is a plug method (see
+        # `_PlugMethod`): node.<name> is the plug of a Maya attr of that name
+        for key, value in list(attrs.items()):
+            if key[:1] != "_":
+                member = _plug_member(key, value)
+                if member is not value:
+                    attrs[key] = member
         cls_obj   = type.__new__(mcs, class_name, bases, attrs)
 
         # a new class can change the dispatch of any node type
@@ -1003,7 +1290,7 @@ def _ensure_dg_named(attr: Any, owner: Any) -> None:
     owner's ``"... already deleted!"`` (`ensure_valid`), then the freed dynamic
     attribute's ``"<plug> already deleted!"`` (see `_ensure_owner_alive`), the
     two checks `Attribute.full_name` makes, in its order and with its texts."""
-    owner.ensure_valid()
+    _DG_NAMING[2](owner)  # its class keeps DGNode's ensure_valid (`_dg_named_owner`)
     handle = attr.__dict__.get("_attrh")
     if handle is not None and not handle.isAlive():
         raise _deleted_error(str.__str__(attr))
@@ -2412,6 +2699,22 @@ class Attribute(str):
         self.__dict__.update(_attr_state(mplug, handle, _attr_handle(mplug)))
         _hold_if_element(self)
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # a subclass's public functions are plug methods too (`_ChildOrMethod`)
+        super().__init_subclass__(**kwargs)
+        _wrap_plug_methods(cls)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # assignment is strict (user decision 2026-10-16): a method is never
+        # replaced on one plug, and a bare Attribute has no ``=`` sugar
+        if name[:1] != "_" and isinstance(_class_attr(type(self), name), _ChildOrMethod):
+            raise AttributeError(
+                f"{type(self).__name__}.{name} is a method: a method is not replaced on "
+                f"an attribute, and a bare Attribute has no '=' sugar "
+                f"(Plug({str.__str__(self)}).{name} << value sets a child of that name)"
+            )
+        object.__setattr__(self, name, value)
+
     # --- dunders
 
     def __repr__(self) -> str:
@@ -2459,7 +2762,7 @@ class Attribute(str):
         _ensure_owner_alive(self)
 
         if isinstance(key, (int, np.integer)):
-            return self.element_by_logical_index(int(key))
+            return type(self).element_by_logical_index(self, int(key))
 
         elif isinstance(key, (list, tuple, np.ndarray)):
             # Fancy indexing with the ids a membership query returns
@@ -2530,7 +2833,7 @@ class Attribute(str):
 
             attribute_list = []
             for index in range(start, stop, step):
-                attribute_list.append(self.element_by_logical_index(index))
+                attribute_list.append(type(self).element_by_logical_index(self, index))
             return attribute_list
 
         else:
@@ -3519,7 +3822,7 @@ class Attribute(str):
 
     def get_next_available_index(self) -> int:
         """Returns the next available logical index."""
-        ids = set(self.get_logical_indices())
+        ids = set(type(self).get_logical_indices(self))
         for index in range(len(ids) + 1):
             if index not in ids:
                 return index
@@ -3590,6 +3893,144 @@ class Attribute(str):
 
 
 Attribute._CHILD_CLASS = Attribute
+
+
+# --- plug methods on plugs: a compound child named like a method --------------
+#
+# ``plug.<name>`` (no brackets) is the compound child of that name when the plug
+# has one, else the bound method; ``plug.<name>()`` is always the method (see
+# the rule above `_PlugMethod`). The child comes back as a method plug
+# (``_MethodPlug``, `_MethodAttribute` for a bare Attribute): a real child plug
+# whose call runs the method it shadows. Every public function of Attribute and
+# of each subclass (Plug, ComponentPlug, a user's) is a `_ChildOrMethod`
+# (`Attribute.__init_subclass__`). Children match by long name, as
+# ``plug.<child>`` resolves them; an array root keeps its methods (its
+# unindexed children are no plugs to read or write); properties are untouched;
+# the str method names already resolve to plugs on a Plug
+# (``_attr_over_str_method``).
+
+
+def _clash_child(inst: Any, name: str) -> Any:
+    """The compound child Attribute of `inst` named `name` (by long name), or
+    None. The handles come first: a freed node's MPlug is never read (an MPlug
+    call on freed memory is an access violation)."""
+    d     = inst.__dict__
+    mplug = d.get("_mplug")
+    if mplug is None:
+        return None
+    handle = d.get("_handle")
+    if handle is not None and not handle.isAlive():
+        return None
+    handle = d.get("_attrh")
+    if handle is not None and not handle.isAlive():
+        return None
+    if not mplug.isCompound or mplug.isArray:
+        return None
+    owner = d.get("_node")
+    fn    = owner.__dict__.get("_fn_set") if owner is not None else None
+    if fn is None:
+        fn = OpenMaya.MFnDependencyNode(mplug.node())
+    if not fn.hasAttribute(name):
+        return None
+    # the node has an attribute of that name: a child of this compound? Read
+    # from the child cache `Attribute.__getattr__` keeps, built here without its
+    # raise on a miss (the raise formats full_name: ~5 us)
+    names = d.get("_Attribute__child_name_dict")
+    if not names:
+        names = d.setdefault("_Attribute__child_name_dict", {})
+        ids   = d.setdefault("_Attribute__child_id_dict", {})
+        for i in range(mplug.numChildren()):
+            child_plug = mplug.child(i)
+            child_name = child_plug.partialName(False, False, False, False, False, True)
+            child_name = child_name.rsplit(".", 1)[-1]
+            attr = _inherit_owner(inst, _new_attr(Attribute, child_plug))
+            names[child_name] = attr
+            ids[i]            = attr
+    return names.get(name)
+
+
+# the Plug class and its method plug (rig._internal.plug sets them): a child of a
+# Plug is a ``_MethodPlug``, of a bare Attribute a `_MethodAttribute`
+_PLUG_FOR_METHODS        = None
+_METHOD_PLUG_FOR_METHODS = None
+
+
+class _ChildOrMethod:
+    """A public function of an Attribute class: on an instance, the compound child
+    of the same name if there is one (a method plug, whose call runs the
+    method), else the bound method; on the class, the function."""
+
+    __slots__ = ("func", "name", "__dict__")
+
+    def __init__(self, func: Any, name: str) -> None:
+        self.func = func
+        self.name = name
+        self.__dict__.update(getattr(func, "__dict__", {}))
+        for key in ("__module__", "__name__", "__qualname__", "__doc__"):
+            try:
+                self.__dict__[key] = getattr(func, key)
+            except AttributeError:
+                pass
+        self.__dict__["__wrapped__"] = func
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        if inst is None:
+            return self.func
+        bound = _MethodType(self.func, inst)
+        try:
+            f = _GETFRAME(1)
+        except ValueError:
+            f = None
+        if f is not None:
+            co = f.f_code.co_code
+            i  = f.f_lasti
+            k  = _METHOD_LOAD[co[i]]
+            if k and (k & 1 or co[i + 1] & 1):
+                return bound
+        try:
+            child = _clash_child(inst, self.name)
+            if child is None:
+                return bound
+            plug_cls = _PLUG_FOR_METHODS
+            if plug_cls is not None and isinstance(inst, plug_cls):
+                plug = _inherit_owner(inst, _new_attr(plug_cls, child.plug))
+                return _as_method_plug(plug, _METHOD_PLUG_FOR_METHODS, bound)
+            plug = _inherit_owner(inst, _new_attr(Attribute, child.plug))
+            return _as_method_plug(plug, _MethodAttribute, bound)
+        except Exception:
+            # no plug to build (a freed attribute, an MPlug that refuses):
+            # the method, never an error
+            return bound
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # ``Cls.__dict__[name](plug, ...)`` calls the function, as it did
+        return self.func(*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f"<plug method {self.__dict__.get('__qualname__', self.name)}>"
+
+
+def _wrap_plug_methods(cls: type) -> None:
+    """Make every public function `cls` defines a `_ChildOrMethod` (Attribute
+    and each subclass, through `Attribute.__init_subclass__`)."""
+    for name, value in list(vars(cls).items()):
+        if name[:1] != "_" and isinstance(value, _FunctionType):
+            type.__setattr__(cls, name, _ChildOrMethod(value, name))
+
+
+class _MethodAttribute(Attribute):
+    """A bare Attribute's compound child named like an Attribute method
+    (``attr.get`` with a child ``get``): the child, whose call runs the method
+    of its parent (``attr.get()``)."""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.__dict__["_method"](*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f'Attribute("{self.full_name}")'
+
+
+_wrap_plug_methods(Attribute)
 
 # the naming `_dg_named_owner` finds a plug's class keeps
 _ATTRIBUTE_FULL_NAME = Attribute.__dict__["full_name"]
