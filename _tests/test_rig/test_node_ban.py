@@ -90,6 +90,65 @@ def _cube(name="cube"):
     return Node(cmds.polyCube(name=name, ch=False)[0]).get_shape()
 
 
+_AOV_CODE = """
+import json, os, sys
+import maya.standalone
+maya.standalone.initialize(name="python")
+try:
+    from maya import cmds
+    try:
+        cmds.loadPlugin("mtoa", quiet=True)
+    except RuntimeError:
+        print("RESULT " + json.dumps("SKIP"))
+    else:
+        import rig
+        from rig import Node
+        aov = Node(cmds.createNode("aiAOV", name="aov"))
+        plug = aov.name
+        aov.name = "diffuse"
+        print("RESULT " + json.dumps({
+            "file": rig.__file__, "plug": type(plug).__name__, "str": str(plug),
+            "set": cmds.getAttr("aov.name"), "node": str(aov), "get_name": aov.get_name(),
+        }))
+finally:
+    sys.stdout.flush()
+    try:
+        maya.standalone.uninitialize()  # (os._exit alone crashes mtoa's shutdown)
+    except BaseException:
+        pass
+    sys.stdout.flush()
+    os._exit(0)
+"""
+
+
+def _in_own_mayapy(code):
+    """What `code` prints after ``RESULT `` (json), run in a new mayapy on this
+    rig (its file checked; "file" is dropped)."""
+    import json
+    import shutil
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    # this rig's root only (the test process's whole path breaks mtoa's Qt import)
+    env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(rig.__file__)))
+    env["MAYA_DISABLE_CER"] = "1"
+    cwd = tempfile.mkdtemp(prefix="rig_node_ban_")
+    try:
+        proc = subprocess.run([sys.executable, "-c", code], cwd=cwd, env=env, timeout=600,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    finally:
+        shutil.rmtree(cwd, ignore_errors=True)
+    output = proc.stdout.decode("utf-8", "replace")
+    lines  = [line for line in output.splitlines() if line.startswith("RESULT ")]
+    assert len(lines) == 1, f"exit {proc.returncode}: " + output[-2000:]
+    result = json.loads(lines[0][len("RESULT "):])
+    if isinstance(result, dict) and "file" in result:
+        here = os.path.normcase(os.path.dirname(rig.__file__))
+        assert os.path.normcase(os.path.dirname(result.pop("file"))) == here, output[-2000:]
+    return result
+
+
 class TestRenamedReads(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
@@ -257,17 +316,16 @@ class TestTheClashesTheBanFixes(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_an_ai_aov_name(self):
-        try:
-            cmds.loadPlugin("mtoa", quiet=True)
-        except RuntimeError:
+        """In a mayapy of its own: mtoa loaded here would stay loaded for the rest
+        of the suite (test_shade pins aiStandardSurface as unregistered). Skipped
+        without mtoa."""
+        result = _in_own_mayapy(_AOV_CODE)
+        if result == "SKIP":
             self.skipTest("mtoa is not available")
-        aov = Node(cmds.createNode("aiAOV", name="aov"))
-        self.assertIsInstance(aov.name, Plug)
-        self.assertEqual(str(aov.name), "aov.name")
-        aov.name = "diffuse"
-        self.assertEqual(cmds.getAttr("aov.name"), "diffuse")
-        self.assertEqual(str(aov), "aov")
-        self.assertEqual(aov.get_name(), "aov")
+        self.assertEqual(
+            result,
+            {"plug": "Plug", "str": "aov.name", "set": "diffuse", "node": "aov", "get_name": "aov"},
+        )
 
     def test_a_namespace_attr_and_its_assignment(self):
         t = Transform.create(name="t")
