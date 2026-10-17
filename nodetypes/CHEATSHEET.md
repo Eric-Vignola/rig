@@ -591,6 +591,29 @@ skeleton = root.serialize_hierarchy()
 print(type(skeleton).__name__, skeleton.name, [x.node_type for x in skeleton])   # HierarchyData ['root', 'child', 'probe'] ['joint', 'joint', 'locator']
 ```
 
+`Transform.create(data)` builds one node from its `TransformData`, as
+`Mesh.create(mesh_data)` builds a mesh: the type the data names (a joint's
+data makes a `Joint`, a locator's a transform with its locator shape), its
+name (`name=` overrides it; Maya renames a taken one), its values as local
+values, its user-defined attributes and a joint's orient, segment scale
+compensate, radius and draw style. `parent=` and the attribute keywords
+are `create`'s (a keyword may also name one of the data's own attributes);
+the data's parent and uuid are not used. `Joint.create(joint_data)` is the
+same, and refuses a transform's data. Every refusal comes before anything
+is made; one undo step; the selection is kept.
+
+```python
+twin = Transform.create(data, name="twin", tx=2)                # cube's data, without its mesh: a transform
+print(repr(twin), twin.tx.get(), twin.weight.get())             # Transform("twin") 2.0 0.5
+bone = Joint.create(child.serialize(), name="bone")             # a joint's orient, radius ... come too
+print(repr(bone), bone.ty.get())                                # Joint("bone") 5.0
+try:
+    Joint.create(data)                                          # a transform's data
+except TypeError as err:
+    print(err)                                                  # Joint.create(): the data describes a transform, which Joint does not make; Transform.create(data) makes it
+cmds.delete("twin", "bone")
+```
+
 `create_hierarchy` rebuilds it (needs `cgmath` 1.0.1 or later, for
 `SUPPORTED_NODE_TYPES`) and returns the new nodes as a `List`, typed as
 `Transform.create` types its node (`Joint`, `Transform`; a locator's
@@ -969,6 +992,9 @@ print(repr(mesh.duplicate_map("mask", "mask2")), [m.name for m in mesh.serialize
 print(mesh.get_map_attrs(category="weights"), mesh.find_map_attr("visibility"))            # [Attribute("cubeShape.mask")] None
 mesh.mirror_map("mask", Axis.X)                                                            # +X values onto their -X partners
 print(np.round(mesh.get_map_values("mask"), 2))                                            # [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
+from cgmath.geometry.mesh import Axis as CgmathAxis
+mesh.mirror_map("mask2", CgmathAxis.X)                                                     # cgmath's Axis names the same planes
+print(mesh.get_map_values("mask2") == mesh.get_map_values("mask"))                         # True
 mesh.delete_map("mask2")
 print(mesh.get_paintable_maps(), mesh.sanitize_map_values([1, 2]))                               # ['mask'] [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 ```
@@ -1417,8 +1443,8 @@ Exclusive, objects only, read from the node's own `drawOverride` input.
 `defaultLayer` means "no layer": `for_node` answers `None` there.
 `DisplayLayer` is also the DSL's `Layer` (`rig.Layer is DisplayLayer`): a
 layer node on the right of `<<` or `in` is the membership collection
-(`cube << layer`, `cube in layer`, `cube << -layer`: the root cheatsheet,
-section 35).
+(`cube << layer`, `cube in layer`, `layer.remove(cube)`, whose shorthand is
+`cube << -layer`: the root cheatsheet, section 35).
 
 ```python
 layer = DisplayLayer.define("geometry")                           # empty; never becomes the current layer
@@ -1593,7 +1619,9 @@ print(repr(made), type(made).__name__)                             # Transform("
 print([Node(x) for x in cmds.listRelatives("pc", shapes=True)])    # [Mesh("pcShape")]
 ```
 
-`Axis` names the mirror plane for `Mesh.mirror_map`.
+`Axis` names the mirror plane for `Mesh.mirror_map`, which takes cgmath's
+`cgmath.geometry.mesh.Axis` too (the same `X` / `Y` / `Z`); anything else
+is a `TypeError` before the map is read.
 
 ```python
 print(Axis.X, Axis.Z.value)  # Axis.X 2

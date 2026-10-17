@@ -51,7 +51,7 @@ for the node classes and their typed methods.
 | 29 | [`tween`](#29-tween) | the 42 easing curves by family, extrapolation |
 | 30 | [`random`](#30-random) | `value` / `uniform` / `randint` and the `3D` variants, `seed`, `trigger` |
 | 31 | [The cross-type verbs at `rig.*`](#31-the-cross-type-verbs-at-rig) | `dist` `lerp` `slerp` `blend` `elerp` `normalize` `inverse` `angle` `to_euler` `to_quaternion` `to_matrix`, the routing table |
-| 32 | [The membership grammar](#32-the-membership-grammar) | `x << c` / `x << -c` / `x << Kind()` / `x in c` / `x >> c` / `x >> Kind()` for `Tag`, materials and layers; a name on the right never creates; the plug refusal; the rejected spellings |
+| 32 | [The membership grammar](#32-the-membership-grammar) | `x << c` / `c.remove(x)` (shorthand `x << -c`) / `x << Kind()` / `x in c` / `x >> c` / `x >> Kind()` for `Tag`, materials and layers; a name on the right never creates; the plug refusal; the rejected spellings |
 | 33 | [Components as members](#33-components-as-members) | the bare handle is the whole kind, `sph.vtx` is all points, no `__len__`, `List` pairing |
 | 34 | [Tag](#34-tag) | one category per tag, `.set` / `.clear` / `.rename` / `.delete`, `in` and queries as arrays, `componentTagExpression`, procedural `polyCube` tags and `at=` |
 | 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
@@ -2464,7 +2464,9 @@ print(before != (seeded >> None))                 # True -- re-rolls when the tr
 ```
 
 `uniform` / `randint` remap it; the `3D` variants run three independent
-LCGs, one per channel, and take a **three-element** `seed`.
+LCGs, one per channel, and take a **three-element** `seed`, or none
+(three fresh seeds). Any other `seed` is a `TypeError` before anything is
+made.
 
 ```python
 cmds.currentTime(1)
@@ -2592,16 +2594,21 @@ the node it is applied to. Every kind uses the same spellings:
 | Verb | Spelling | `Tag` | Material (`red = Blinn.define("red")`) | Layer (`L = Layer.define("L")`) |
 |---|---|---|---|---|
 | add | `x << c` | members into the tag (made with them when missing); a **node** on the left makes the tag itself, empty | move into the material's shading engine (exclusive) | move the node into the layer (exclusive) |
-| remove these | `x << -c` | out of the tag, which stays; a node on the left **deletes** the tag | leave the engine: those faces are in **no** engine (green) | back to `defaultLayer` |
+| remove these | `c.remove(x)`, shorthand `x << -c` | out of the tag, which stays; a node **deletes** the tag | leave the engine: those faces are in **no** engine (green) | back to `defaultLayer` |
 | purge | `x << Kind()` | out of every editable tag of that category; a node on the left deletes every editable tag | out of every engine (green); `Default()` reverts | `defaultLayer` |
 | yes / no | `x in c`, `x not in c` | every member of `x` is in the tag | every face of `x` wears it | the node is in it |
 | ids | `x >> c` | ndarray of the ids of `x` in the tag, in its own category; a node reads the whole tag | ndarray of the face ids of `x` wearing it; all faces when object-level | refused: a layer has no ids (ask with `in`) |
 | enumerate | `x >> Kind()` == `Kind.of(x)` | `[Tag('a'), ...]` holding `x` | `[Blinn("red"), ...]` typed by the live node type | `DisplayLayer("L")` or `None` (`Layer.of` gives `[]` / `[DisplayLayer("L")]`) |
-| methods | | `.set(members)` `.clear(node)` `.rename(node, new)` `.delete(node)` | `.rename(new)` `.delete()` `.astype(Phong)` `.get_engine()` | `.clear()` `.rename(new)` `.delete()` |
+| methods | | `.remove(x)` `.set(members)` `.clear(node)` `.rename(node, new)` `.delete(node)` | `.remove(x)` `.rename(new)` `.delete()` `.astype(Phong)` `.get_engine()` (an engine: `sg.remove(x)`) | `.remove(x)` `.clear()` `.rename(new)` `.delete()` |
 
 `Kind()` is the class called with no name: `Tag()`, `Material()` (every
-material; `Blinn()` every blinn), `Layer()`. `-c` is the removal token of
-`c`. A token is no node: it has no attributes, and its name is
+material; `Blinn()` every blinn), `Layer()`. `c.remove(x)` is the method of
+the removal, and `x << -c` its shorthand: the same writes, the same
+refusals before any write, one undo step, and both return `x` (as every
+membership `<<` returns its left-hand side). The method also takes a plain
+list (`red.remove([a, b])`), which cannot sit on the left of `<<`. `-c` is
+the removal token of `c`. A token is no node: it has no attributes and no
+methods (`(-red).remove(x)` is an `AttributeError`), and its name is
 `str(token)` (`str(-red)` is `"red"`; the repr shows it too). `Tag("cap")`
 is a value, so `Tag("cap").name` is its name.
 
@@ -2627,6 +2634,15 @@ print(sph >> Tag())                                             # [Tag('lid'), T
 print(sph << red << geo is sph)                                 # True -- a node on the left: its shapes wear red, it sits in 'geometry'
 print(sph in red, faces in red, sph in geo, sph.tx in geo)      # True True True True
 print((sph >> red).size, sph >> Layer(), Material.of(sph))      # 400 geometry [Blinn("red")]
+```
+
+The removal, the method first, then its shorthand:
+
+```python
+print(red.remove(sph.f[:2]))                    # Components("|sph|sphShape.f[0:1]") -- returns the left-hand side, as << does
+print(sph.f[:4] >> red)                         # [2 3]
+sph.f[2] << -red                                # the shorthand: the same removal
+print(sph.f[:4] >> red)                         # [3]
 ```
 
 A missing layer or material raises at the reference, naming the `define`
@@ -2747,7 +2763,7 @@ the tag Maya stores: the ends trimmed, a space inside made `_`.
 ```python
 sph.vtx[:2] << Tag("lid rim")                   # the tag 'lid_rim'
 print(sph >> Tag("lid_rim"), Tag(" lid rim ") == Tag("lid_rim"))   # [0 1] True
-sph << -Tag("lid_rim")
+Tag("lid_rim").remove(sph)                      # the node: delete the tag
 try:
     Tag("a:")                                   # ValueError: Maya refuses it ('b', '1a', 'a-b', 'a..b' too)
 except ValueError as err:
@@ -2758,11 +2774,12 @@ Remove members, empty, delete, purge. An empty tag is a legal state (it
 deforms nothing and silences a deformer's "Missing componentTags").
 
 ```python
-sph.vtx[:2] << -Tag("cap")                      # remove these; the tag survives
+Tag("cap").remove(sph.vtx[:1])                  # remove these; the tag survives
+sph.vtx[1] << -Tag("cap")                       # the shorthand of the same removal
 print(sph >> Tag("cap"))                        # [2 3 4 5 6 7]
-sph.vtx     << -Tag("cap")                      # empty it
+Tag("cap").remove(sph.vtx)                      # empty it
 print((sph >> Tag("cap")).shape)                # (0,)
-sph << -Tag("empty")                    # node on the left: delete the tag
+Tag("empty").remove(sph)                        # the node: delete the tag
 
 sph.vtx[:4]  << Tag("aa")
 sph.vtx[2:6] << Tag("bb")
@@ -2815,7 +2832,7 @@ Tag("cap").rename(sph, "crown", force=True)     # rewrites the reference
 print(expr >> None)                             # crown + lid
 Tag("crown").clear(sph)                         # empty, name survives
 print((sph >> Tag("crown")).shape)              # (0,)
-Tag("crown").delete(sph, force=True)            # sph << -Tag('crown', force=True) is the operator form
+Tag("crown").delete(sph, force=True)            # Tag('crown', force=True).remove(sph) does the same
 print(Tag.of(sph))                              # []
 ```
 
@@ -2836,7 +2853,7 @@ except TypeError as err:
 cube.f[:3] << Tag("top", at=cube)               # an editable shadow on cubeShape; later edits find it without at=
 cube.f[3]  << Tag("top")
 print(cube >> Tag("top"))                       # [0 1 2 3]
-cube << -Tag("top")                             # delete the shadow: the procedural tag shows again
+Tag("top").remove(cube)                         # delete the shadow: the procedural tag shows again
 print(cube >> Tag("top"))                       # [1]
 
 baked = make(cmds.polyCube, "baked", ch=False)
@@ -2923,7 +2940,8 @@ for bad in (lambda: cube.f[:2] << bg, lambda: cube.tx << bg, lambda: cube << Lay
 # no displayLayer named 'nope'; Display
 ```
 
-`-layer` and `Layer()` both land in `defaultLayer`. The layer node is the
+`layer.remove(x)` (shorthand `x << -layer`) and `x << Layer()` both land
+in `defaultLayer`. The layer node is the
 handle: its attributes are plugs, `.rename()` keeps the node object,
 `.clear()` sends the members to `defaultLayer` and keeps the layer,
 `.delete()` sends them there and deletes it. A new layer never joins the
@@ -2931,7 +2949,7 @@ active rig container, and `Layer.create(name=...)` always makes a new one.
 
 ```python
 cube  << bg
-cube  << -bg                                    # back to defaultLayer
+bg.remove(cube)                                 # back to defaultLayer (cube << -bg is the shorthand)
 print(cube >> Layer())                          # None
 other << Layer()                                # the purge is defaultLayer too
 print(Layer.of(other))                          # []
@@ -3026,18 +3044,19 @@ other.f[:2] << red                              # the one no-op: red already own
 print(sorted(members("redSG")))                 # ['cube.f[3:5]', 'otherShape']
 ```
 
-`-mat` leaves faces in **no** engine (green); `Material()` (or `Blinn()`,
-every blinn) does it for every engine; `Default()` reverts to
-`initialShadingGroup` and `-Default()` leaves it.
+`mat.remove(x)` (shorthand `x << -mat`; an engine: `sg.remove(x)`) leaves
+faces in **no** engine (green); `Material()` (or `Blinn()`, every blinn)
+does it for every engine; `Default()` reverts to `initialShadingGroup` and
+`Default().remove(x)` leaves it.
 
 ```python
-cube.f[[0]] << -decal                           # face 0 is green
+decal.remove(cube.f[[0]])                       # face 0 is green (cube.f[[0]] << -decal is the shorthand)
 print(members("decalSG"), Material.of(cube.f[0]))    # ['cube.f[1:2]'] []
 cube << Material()                              # green everywhere
 print(Material.of(cube), shade.bindings(cube))  # [] []
 cube << Default()                               # initialShadingGroup again
 print(Material.of(cube))                        # [ShadingEngine("initialShadingGroup")]
-cube << -Default()
+Default().remove(cube)                          # cube << -Default() is the shorthand
 print(Material.of(cube))                        # []
 ```
 

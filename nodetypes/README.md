@@ -113,7 +113,7 @@ from rig.nodetypes.plugins import load_plugin
 | `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.define(type, name, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
 | `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); `str(node)` / `get_name`, `get_long_name` / `get_short_name` / `get_clean_name`, `get_uuid`, `rename`, `get_namespace` / `set_namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `get_mdagpath`, `get_bounding_box`, `get_deformers` |
-| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
+| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `Transform.create(transform_data)` (one node; `Joint.create(joint_data)`), `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
 | `Geometry` | `geometryShape` | component tags: `get_injection_node`, `get_component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `get_local_shape_attr` / `get_world_shape_attr`, `get_component_mobject`, paintable attrs |
 | `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
@@ -122,10 +122,10 @@ from rig.nodetypes.plugins import load_plugin
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
-| `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members` |
-| `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
+| `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members`, `remove(x)` (the DSL's `x << -sg`) |
+| `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `remove(x)` (the DSL's `x << -mat`), `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
-| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete`; the DSL's `Layer` |
+| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete`, `remove(x)` (the DSL's `x << -layer`); the DSL's `Layer` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `get_namespace`, `get_file_path(copy_number=False)`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `data_type` of both follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
@@ -517,8 +517,9 @@ side without enumerating layers. A node is in one layer; `defaultLayer`
 there. Children draw with a member's override through the DAG without
 being members, and `add_members` never recurses. The DSL's `Layer` is this
 class (`rig.Layer is DisplayLayer`): a layer node on the right of `<<`,
-`in` or `-` is the membership collection, and `DisplayLayer()` (`Layer()`)
-the kind, which means `defaultLayer` on `<<`.
+`in` or `-` is the membership collection (`layer.remove(x)` is the method
+of `x << -layer`), and `DisplayLayer()` (`Layer()`) the kind, which means
+`defaultLayer` on `<<`.
 
 ### Serialisation and files
 
@@ -529,7 +530,7 @@ data to a `cgmath` file and `load` reads it back.
 
 | Node | `serialize()` | Back in | Save | Load |
 |---|---|---|---|---|
-| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=True, container=None)` creates, a typed `List`, parents first |
+| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create(transform_data)` / `Joint.create(joint_data)` (one node), `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=True, container=None)` creates, a typed `List`, parents first |
 | `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`; `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, **attrs)` creates; `Mesh('x').load(path, uvs=None, *, world_space=True, normals=True)` updates |
 | `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` | | |
 | `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=True)` | `NurbsCurve.load(path, *, name=, container=, **attrs)` creates; `NurbsCurve('x').load(path, *, world_space)` updates its CVs, `world_space=` required (the same for `NurbsSurface`) |
