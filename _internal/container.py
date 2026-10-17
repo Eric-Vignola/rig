@@ -50,6 +50,7 @@ from rig.nodetypes._base import (
     _check_attrs,
     _class_attr,
     _ClassData,
+    _scene_predicate,
     _handle_valid,
     _locked_node_text,
     _MISSING,
@@ -835,8 +836,11 @@ class _ContainerStack:
         """
         return [f.container_node for f in self._stack]
 
-    @property
+    @_scene_predicate
     def is_active(self) -> bool:
+        """True inside a ``with container(...)`` scope. A method (named without
+        brackets, ``container.is_active`` has no truth value: the predicate
+        guard)."""
         return bool(self._stack)
 
     # -- internals -- #

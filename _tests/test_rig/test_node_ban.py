@@ -528,8 +528,9 @@ _NODE_ONLY = {
     "num_weight_points", "num_cvs", "uv_sets", "current_uv_set", "paintable_maps", "num_targets",
     "file_path", "file_path_with_copy_number",
 }
-# ColorSet (a scene object outside nodes: its own step) keeps its is_valid property
-_ALLOWED_BARE = {("nodetypes/mesh.py", "is_valid")}
+# re-pinned (user decision 2026-10-16, the predicate guard): ColorSet's is_valid
+# is a guarded method too, so nothing is allowed bare
+_ALLOWED_BARE = set()
 
 
 def _rig_sources():

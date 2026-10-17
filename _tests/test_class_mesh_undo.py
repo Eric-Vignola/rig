@@ -681,7 +681,8 @@ class TestColorSetUndo(_UndoCase):
                     self.assertEqual(self.redo_all(), 6)
                     self.assertEqual(self.state(mesh), after, f"{kind}: redo_all {cycle}")
                 # the held Mesh and ColorSet still answer
-                self.assertTrue(cs.is_valid)
+                # re-pinned (user decision 2026-10-16, the predicate guard): a method
+                self.assertTrue(cs.is_valid())
                 self.assertTrue(np.allclose(cs.data, blue))
                 self.assertEqual([c.name for c in mesh.get_color_sets()], ["cs1", "cs2"])
 

@@ -77,7 +77,8 @@ class TestComponentsConstruction(MayaTestCase):
         _, shape = _cube()
         faces    = Node(shape).f
         self.assertIsInstance(faces, Components)
-        self.assertTrue(faces.is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(faces.is_all())
         self.assertEqual(faces.kind,     "f")
         self.assertEqual(faces.geometry, "mesh")
         self.assertEqual(faces.count,    6)
@@ -126,7 +127,8 @@ class TestComponentsConstruction(MayaTestCase):
         xform, shape = _cube()
         verts        = Components(Node(xform), "vtx", [4, 0, 2, 2])
         self.assertEqual(verts.kind, "vtx")
-        self.assertFalse(verts.is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertFalse(verts.is_all())
         self.assertEqual(verts.count, 3)
         np.testing.assert_array_equal(verts.indices, [0, 2, 4])
         self.assertEqual(
@@ -142,7 +144,8 @@ class TestComponentsConstruction(MayaTestCase):
     def test_explicit_carrier_whole_kind(self):
         _, shape = _cube()
         uvs      = Components(shape, "uv")
-        self.assertTrue(uvs.is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(uvs.is_all())
         self.assertEqual(uvs.count, 14)
         self.assertEqual(uvs.names, [f"{shape}.map[*]"])
 
@@ -181,7 +184,8 @@ class TestComponentsConstruction(MayaTestCase):
         self.assertEqual(faces.kind, "f")
         self.assertEqual(str(faces.shape), "pCube1Shape")
         np.testing.assert_array_equal(faces.indices, [0, 1, 2, 3])
-        self.assertTrue(Components("pCube1.f[*]").is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(Components("pCube1.f[*]").is_all())
         self.assertEqual(Components(f"{shape}.vtx[2]").names, [f"{shape}.vtx[2]"])
         self.assertEqual(Components("pCube1.map[1]").kind,    "uv")
         self.assertEqual(Components("pCube1.e[3:4]").names,   [f"{shape}.e[3:4]"])
@@ -218,7 +222,8 @@ class TestComponentsConstruction(MayaTestCase):
         # A default sphere is periodic in V: 77 controlPoints, 56 real CVs.
         xform, shape = _sphere_surface()
         cvs          = Components(xform, "cv")
-        self.assertTrue(cvs.is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(cvs.is_all())
         self.assertEqual(cvs.count,         56)
         self.assertEqual(cvs.indices.shape, (56, 2))
         self.assertEqual(cvs.names,         [f"{shape}.cv[*]"])
@@ -227,7 +232,8 @@ class TestComponentsConstruction(MayaTestCase):
         xform, _ = _cube()
         lattice, shape = _lattice(xform)
         points = Components(lattice, "pt")
-        self.assertTrue(points.is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(points.is_all())
         self.assertEqual(points.count, 24)
         self.assertEqual(points.indices.shape, (24, 3))
         sparse = Components(shape, "pt", [[1, 2, 3], [0, 0, 1], [0, 0, 0]])
@@ -266,9 +272,10 @@ class TestComponentsIndexing(MayaTestCase):
         self.assertEqual(
             faces[::2].names, [f"{shape}.f[0]", f"{shape}.f[2]", f"{shape}.f[4]"]
         )
-        self.assertTrue(faces[:].is_all)
-        self.assertTrue(faces[0:6:1].is_all)
-        self.assertFalse(faces[0:6:2].is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(faces[:].is_all())
+        self.assertTrue(faces[0:6:1].is_all())
+        self.assertFalse(faces[0:6:2].is_all())
         empty = faces[6:]
         self.assertEqual(empty.count, 0)
         self.assertFalse(empty)
@@ -325,7 +332,8 @@ class TestComponentsIndexing(MayaTestCase):
         np.testing.assert_array_equal(cvs[9].indices, [[1, 1]])
         self.assertEqual(cvs[:2].names, [f"{shape}.cv[0][0:1]"])
         self.assertEqual(cvs[[7, 8]].names, [f"{shape}.cv[0][7]", f"{shape}.cv[1][0]"])
-        self.assertTrue(cvs[:].is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(cvs[:].is_all())
 
 
 # --------------------------------------------------------------------- #
@@ -845,7 +853,8 @@ class TestNormalisePerformance(MayaTestCase):
         faces   = node.f
         sel     = normalise(faces, want_shapes=True)[0]
         elapsed = time.perf_counter() - started
-        self.assertTrue(faces.is_all)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertTrue(faces.is_all())
         self.assertEqual(sel.tokens, ("f[*]",))
         self.assertLess(elapsed, 0.05, f"face handle took {elapsed:.3f} s")
         self.assertEqual(faces.count, 316 * 316)

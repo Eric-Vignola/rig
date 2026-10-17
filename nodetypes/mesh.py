@@ -21,6 +21,7 @@ from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal, iter_component_tokens
 from rig.nodetypes.object_set import ObjectSet
@@ -3227,15 +3228,16 @@ class ColorSet:
         """The mesh this color set belongs too"""
         return self._mesh
 
-    @property
+    @_scene_predicate
     def is_valid(self) -> bool:
-        """Does the underlying colorset still exist?"""
+        """Does the underlying colorset still exist? A method (named without
+        brackets, ``cset.is_valid`` has no truth value: the predicate guard)."""
         return self.name in type(self.mesh).get_fn_set(self.mesh).getColorSetNames()
 
     @property
     def representation(self) -> ColorSet.Representation:
         """The representation of the color set (ie the data type Alpha|RGB|RGBA)"""
-        if not self.is_valid:
+        if not self.is_valid():
             raise RuntimeError(
                 f"{self.name} is not a valid color set for {self.mesh}!"
             )
@@ -3261,7 +3263,7 @@ class ColorSet:
     @contextlib.contextmanager
     def as_current_color_set(self) -> Generator[None, None, None]:
         """Context manager that sets the current color set to this one"""
-        if not self.is_valid:
+        if not self.is_valid():
             raise RuntimeError(
                 f"{self.name} is not a valid color set for {self.mesh}!"
             )
@@ -3278,5 +3280,5 @@ class ColorSet:
         """Delete this color set (nothing happens when it no longer exists): one
         undo step, whose undo brings the set back with its representation,
         clamping and colours (current again if it was)."""
-        if self.is_valid:
+        if self.is_valid():
             _ColorSetDeleteCommand(self.mesh, self.name)

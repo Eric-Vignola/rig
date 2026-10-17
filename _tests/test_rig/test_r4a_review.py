@@ -80,7 +80,8 @@ class _SceneCase(MayaTestCase):
         for key, value in self._options.items():
             setattr(ContainerOptions, key, value)
         cmds.namespace(set=":")
-        self.assertFalse(container.is_active)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertFalse(container.is_active())
         super().tearDown()
 
 

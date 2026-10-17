@@ -93,14 +93,16 @@ class TestContainerStack(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_stack_empty_outside_with_block(self):
-        self.assertFalse(container.is_active)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertFalse(container.is_active())
         self.assertEqual(container.stack, [])
 
     def test_stack_populated_inside_with_block(self):
         with container("ctn1"):
-            self.assertTrue(container.is_active)
+            # re-pinned (user decision 2026-10-16, the predicate guard): a method
+            self.assertTrue(container.is_active())
             self.assertEqual(len(container.stack), 1)
-        self.assertFalse(container.is_active)
+        self.assertFalse(container.is_active())
 
     def test_stack_pops_on_exception(self):
         try:
@@ -109,7 +111,8 @@ class TestContainerStack(MayaTestCase):
         except RuntimeError:
             pass
         # Stack must be empty after exception bubble-up.
-        self.assertFalse(container.is_active)
+        # re-pinned (user decision 2026-10-16, the predicate guard): a method
+        self.assertFalse(container.is_active())
 
 
 class TestOptionsReturnsDict(MayaTestCase):

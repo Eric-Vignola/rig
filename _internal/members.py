@@ -71,6 +71,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import _attribute_of, _check_attrs, _lookup  # noqa: F401 (re-exported)
+from rig.nodetypes._base import _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.errors import NodeNotFoundError
 from rig.nodetypes.geometry import iter_component_tokens
@@ -288,7 +289,7 @@ class Components:
     right type. Kinds are ``f`` / ``e`` / ``vtx`` / ``uv`` (mesh), ``cv``
     (curve: flat ids; surface: ``(N, 2)`` coordinates) and ``pt`` (lattice:
     ``(N, 3)`` coordinates). ``indices=None`` means the whole kind
-    (:attr:`is_all`): nothing is materialised until :attr:`indices` /
+    (:meth:`is_all`): nothing is materialised until :attr:`indices` /
     :attr:`count` are read, which resolve live from the shape.
 
     Indexing is positional and numpy-like -- ``c[2]``, ``c[:8]``, ``c[[0, 4]]``,
@@ -392,9 +393,11 @@ class Components:
         """The shape's node type (``'mesh'``, ``'nurbsSurface'``, ...)."""
         return type(self._shape).get_node_type(self._shape)
 
-    @property
+    @_scene_predicate
     def is_all(self) -> bool:
-        """``True`` for the whole-kind handle (``cube.f``, ``cube.f[:]``)."""
+        """``True`` for the whole-kind handle (``cube.f``, ``cube.f[:]``). A
+        method (named without brackets, ``faces.is_all`` has no truth value: the
+        predicate guard)."""
         return self._indices is None
 
     @property
