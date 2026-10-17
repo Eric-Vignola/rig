@@ -286,6 +286,23 @@ def randint(
 # --------------------------------------------------------------------- #
 
 
+def _check_seeds(function: str, seed: Any) -> None:
+    """The ``seed`` of a 3D generator: None (three fresh seeds) or three seeds,
+    one per component; anything else is a TypeError raised before anything is
+    made (a scalar or a short list raised mid-build, leaving nodes behind)."""
+    if seed is None:
+        return
+    try:
+        count = None if isinstance(seed, (str, bytes)) else len(seed)
+    except TypeError:
+        count = None
+    if count != 3:
+        raise TypeError(
+            f"rig.random.{function}() seed= takes three seeds, one per component "
+            f"(seed=[1, 2, 3]), or None for three fresh ones; got {seed!r}"
+        )
+
+
 @operands
 @vectorize
 @_memoize_on_seed
@@ -295,13 +312,18 @@ def value3D(trigger: Optional[Any] = None, seed: Optional[Any] = None) -> Any:
     Memoised on explicit seed.
 
     Named ``value3D`` (not ``random3D``) to mirror the scalar
-    :func:`value` rename (kills the ``random.random`` module clash)."""
+    :func:`value` rename (kills the ``random.random`` module clash).
+
+    ``seed`` is three seeds, one per component (``seed=[1, 2, 3]``), or None:
+    three fresh ones. Anything else is a TypeError before anything is
+    made."""
+    _check_seeds("value3D", seed)
 
     with container("value3d1"):
         if seed is None:
-            seed = [
-                _python_randint(0, _SEED_RANGE_MAX),
-            ]
+            # one fresh seed per component (a single one raised IndexError,
+            # leaving the first component's nodes behind)
+            seed = [_python_randint(0, _SEED_RANGE_MAX) for _ in range(3)]
 
         if trigger is not None:
             trigger = container.publish_input(trigger, "trigger")
@@ -331,7 +353,8 @@ def uniform3D(
 ) -> Any:
     """``uniform3D(start, end, trigger=None, seed=None)`` -- pseudo-random
     3-vector Plug in ``[start, end)`` per component. Memoised on
-    explicit seed."""
+    explicit seed. ``seed`` is :func:`value3D`'s: three seeds, or None."""
+    _check_seeds("uniform3D", seed)
 
     with container("uniform3d1"):
         if trigger is not None:
@@ -356,7 +379,9 @@ def randint3D(
 ) -> Any:
     """``randint3D(start, end, trigger=None, seed=None)`` -- pseudo-random
     integer 3-vector Plug in ``[start, end]`` (long-cast of
-    :func:`uniform3D`). Memoised on explicit seed."""
+    :func:`uniform3D`). Memoised on explicit seed. ``seed`` is
+    :func:`value3D`'s: three seeds, or None."""
+    _check_seeds("randint3D", seed)
 
     with container("randint3d1"):
         if trigger is not None:

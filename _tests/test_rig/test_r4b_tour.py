@@ -469,7 +469,10 @@ class TestTourW2(_Case):
         root = Transform.define("rig")
         made = [Transform.create(name="tmp", parent=root) for _ in range(2)]
         self.assertEqual([m.get_long_name() for m in made], ["|rig|tmp", "|rig|tmp1"])
-        self.assertRefused(TypeError, r"^Transform\.create\(\) takes name= and parent= as keywords \(got 'tmp'\)$",
+        # a transform class also takes one TransformData (user decision 2026-10-16,
+        # "List casting details + Transform.create(data)"): its refusal names it
+        self.assertRefused(TypeError, r"^Transform\.create\(\) takes name= and parent= as keywords, or one "
+                                      r"TransformData \(got 'tmp'\)$",
                            lambda: Transform.create("tmp"))
         self.assertRefused(NodeNotFoundError, r"^no DAG node named 'nosuch'$",
                            lambda: Transform.define("x", parent="nosuch"))

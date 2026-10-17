@@ -7,17 +7,17 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Union
+from typing import Any, Union
 
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
+from rig._internal.journal import barrier as _barrier, cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, _is_generic_slot, Attribute
-from rig.nodetypes.dag_node import DAGNode
-from rig.nodetypes.dg_node import DGNode, _typed_creator
+from rig.nodetypes.dag_node import DAGNode, _parent_path
+from rig.nodetypes.dg_node import DGNode, _attribute_keywords, _got, _typed_creator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -62,6 +62,10 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
     ``rig.Joint.load_hierarchy``) and leaves the selection as it was.
     """
 
+# the keywords ``Transform.create(transform_data)`` reads itself (`_create_from_data`):
+# every other keyword is an attribute of the new node
+_DATA_CREATE_FLAGS = frozenset({"name", "n", "parent", "p"})
+
 # the exact Maya node types serialize_hierarchy() captures,
 # a locator is a "transform" holding a locator shape.
 SERIALIZED_NODE_TYPES = ("transform", "joint")
@@ -101,6 +105,44 @@ def _create_nested(node_type: str, **kwargs) -> DAGNode:
     if node_cls is not None:
         return node_cls.create(**kwargs)
     return _cast(cmds.createNode(node_type, **kwargs))
+
+
+def _make_from_data(data: TransformData, name: Any, parent: str | None) -> DAGNode:
+    """The node one TransformData describes, made at identity, named `name`,
+    under `parent` (a long name; None: the world): a joint or a transform by
+    its class's typed create (nested, see `_create_nested`), a locator's
+    transform by ``spaceLocator``, a space_transform's box by ``polyCube``.
+    `create_hierarchy`'s per-node create, which ``Transform.create(data)``
+    shares (the values are `_set_values`'s)."""
+    if data.node_type == "locator":
+        obj = _cast(_cmds_edit.spaceLocator(name=name)[0])
+    elif data.node_type == "space_transform":
+        # an RTR space_transform box
+        obj = _cast(_cmds_edit.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
+    else:
+        return _create_nested(data.node_type, name=name, parent=parent)
+    if parent is not None:
+        _cmds_edit.parent(type(obj).get_long_name(obj), parent)
+    return obj
+
+
+def _set_values(node: DAGNode, data: TransformData) -> None:
+    """Sets the values `data` holds for `node` (scale, rotate, translate,
+    rotate order and axis, visibility; on a joint its orient, segment scale
+    compensate, radius and draw style): what `create_hierarchy` and
+    ``Transform.create(data)`` set once the node exists."""
+    node.set_attrs(skip_missing=True, **data.to_attributes())
+
+
+def _put_back_selection(before: list[str]) -> None:
+    """Selects `before` again, in its order (``cmds.ls(orderedSelection=True,
+    long=True)`` read before a create), or clears a selection a create made
+    when it was empty."""
+    if before:
+        _cmds_edit.select(before[:-1], replace=True)
+        _cmds_edit.select(before[-1], add=True)
+    elif cmds.ls(selection=True):
+        _cmds_edit.select(clear=True)
 
 
 def _typed_nodes(names: list[str]) -> List:
@@ -609,6 +651,106 @@ class Transform(DAGNode):
 
     @classmethod
     @_typed_creator
+    def _create_from_data(
+        cls,
+        inputs:   tuple,
+        name:     Any = None,
+        parent:   Any = None,
+        **kwargs: Any,
+    ) -> DAGNode:
+        """[Internal] ``Transform.create(transform_data)`` / ``Joint.create(
+        joint_data)`` (user decision 2026-10-16): `DGNode.create` hands it the
+        positional ``inputs`` of a create on a transform class.
+
+        The node the data describes (its ``node_type``: a transform, a joint, a
+        locator's transform, a space_transform box), named the data's name
+        (``name=`` / ``n=`` overrides it), made at identity under ``parent=`` /
+        ``p=`` (None: the world; the data's own parent uuid is not used, nor its
+        uuid: Maya gives the node a new one), then given the data's values (as
+        local values: scale, rotate, translate, rotate order and axis,
+        visibility; a joint's orient, segment scale compensate, radius and draw
+        style), its user-defined attributes, and last the attribute keywords,
+        as ``create`` sets them (a keyword names an attribute of the node type,
+        or one of the data's user-defined attributes). `create_hierarchy`'s
+        per-node code builds it.
+
+        Refused before anything is made: anything but one TransformData
+        (TypeError, naming the keyword form), a node type the data cannot
+        rebuild, data of a type the class does not make (``Joint.create`` of a
+        transform's data: TypeError naming ``Transform.create``; a joint's
+        data on ``Transform`` makes a ``Joint``), a missing ``parent=``
+        (NodeNotFoundError) and an attribute keyword the node type does not
+        have (AttributeError).
+
+        ONE undo step (``rig.<Class>.create``); the selection is left as it was
+        (as ``Mesh.create``); a value that fails once the node exists deletes
+        it before the error propagates. Inside ``with container()`` the nodes
+        it made join the scope, as for every typed create: an explicit
+        ``name=`` takes the flattened scope's prefix, the data's name is kept
+        (as ``Mesh.create`` keeps its data's and ``create_hierarchy`` its
+        hierarchy's names)."""
+        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, TransformData
+
+        call = f"{cls.__name__}.create()"
+        if len(inputs) != 1 or not isinstance(inputs[0], TransformData):
+            raise TypeError(
+                f"{call} takes name= and parent= as keywords, or one TransformData "
+                f"(got {_got(inputs)})"
+            )
+        data = inputs[0]
+        for short, value in (("n", name), ("p", parent)):
+            given = kwargs.pop(short, None)
+            if given is not None:
+                if value is not None:
+                    long_form = "name" if short == "n" else "parent"
+                    raise TypeError(f"{call} takes {long_form}= or {short}=, not both")
+                if short == "n":
+                    name = given
+                else:
+                    parent = given
+        node_type = data.node_type
+        if node_type not in SUPPORTED_NODE_TYPES:
+            raise TypeError(
+                f"{call}: a TransformData of a {node_type!r} cannot be built; it "
+                f"describes a {', a '.join(SUPPORTED_NODE_TYPES)}"
+            )
+        made_cls = _NODE_CLASS_DICT.get("joint") if node_type == "joint" else Transform
+        if not issubclass(made_cls, cls):
+            raise TypeError(
+                f"{call}: the data describes a {node_type}, which "
+                f"{cls.__name__} does not make; {made_cls.__name__}.create(data) makes it"
+            )
+        # the keywords: attributes of the node type (checked on it), or of the data's
+        # own user-defined attributes, which the node has once it is built
+        own   = {key: kwargs.pop(key) for key in list(kwargs) if key in (data.user_defined_attributes or {})}
+        attrs = {}
+        if kwargs:
+            attrs = _attribute_keywords(made_cls.NATIVE_NODE_TYPE, kwargs, _DATA_CREATE_FLAGS, call)
+        attrs.update(own)
+        parent = None if parent is None else _parent_path(parent)
+        name   = data.name if name is None else name
+
+        before = cmds.ls(orderedSelection=True, long=True) or []
+        with _undo_chunk(f"rig.{cls.__name__}.create"):
+            node = _make_from_data(data, name, parent)
+            try:
+                _set_values(node, data)
+                if data.user_defined_attributes:
+                    cls._create_user_attrs(node, data.user_defined_attributes)
+                for attr, value in attrs.items():
+                    getattr(node, attr) << value
+                _barrier()  # the values journaled: a registration that fails deletes the node too
+            except BaseException:
+                try:
+                    _cmds_edit.delete(type(node).get_long_name(node))
+                except (RuntimeError, ValueError):
+                    pass
+                raise
+            _put_back_selection(before)
+        return node
+
+    @classmethod
+    @_typed_creator
     def _load_built(
         cls,
         hierarchy:   HierarchyData,
@@ -697,20 +839,7 @@ class Transform(DAGNode):
                 parent = type(parent).get_long_name(parent) if isinstance(parent, DAGNode) else str(parent)
 
             # create node
-            if node.node_type != "locator":
-                if node.node_type == "space_transform":
-                    """creates a RTR space_transform box """
-                    name = node.name
-                    obj  = _cast(_cmds_edit.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
-                    if parent is not None:
-                        _cmds_edit.parent(type(obj).get_long_name(obj), parent)
-                else:
-                    obj = _create_nested(node.node_type, name=node, parent=parent)
-
-            else:
-                obj = _cast(_cmds_edit.spaceLocator(name=node.name)[0])
-                if parent is not None:
-                    _cmds_edit.parent(type(obj).get_long_name(obj), parent)
+            obj = _make_from_data(node, node.name, parent)
 
             # rename the node's string name with the node object
             # in case of scene duplicate during parenting.
@@ -718,8 +847,7 @@ class Transform(DAGNode):
 
         # set attributes after hierarchy creation.
         for i, node in enumerate(hierarchy):
-            node = node.name
-            node.set_attrs(skip_missing=True, **hierarchy[i].to_attributes())
+            _set_values(node.name, hierarchy[i])
 
         # add user defined attrs once every transform is set,
         # so a bad attr can never leave the hierarchy at identity.
@@ -733,11 +861,8 @@ class Transform(DAGNode):
         created = [str(x.name) for x in hierarchy]
         if select:
             _cmds_edit.select(created)
-        elif before:
-            _cmds_edit.select(before[:-1], replace=True)
-            _cmds_edit.select(before[-1], add=True)
-        elif cmds.ls(selection=True):
-            _cmds_edit.select(clear=True)
+        else:
+            _put_back_selection(before)
         return created
 
     # --- files

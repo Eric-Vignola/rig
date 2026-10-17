@@ -12,8 +12,9 @@ shape, and a DG node is refused by Maya.
 
 ``DisplayLayer`` is also the DSL's ``Layer`` (``rig.Layer is
 DisplayLayer``): a layer node on the right of ``<<`` / ``>>`` / ``in`` is
-the membership collection (``cube << layer``, ``cube << -layer``, ``cube in
-layer``), and ``DisplayLayer()`` (``Layer()``) is the kind token:
+the membership collection (``cube << layer``, ``cube in layer``;
+``layer.remove(cube)``, whose shorthand is ``cube << -layer``), and
+``DisplayLayer()`` (``Layer()``) is the kind token:
 defaultLayer, the layer of no layer, on ``<<``; the enumeration on ``>>``.
 
 Usage::
@@ -27,7 +28,8 @@ Usage::
     layer.remove_members("|grp")                     # back to defaultLayer
     layer.rename("geo") ; layer.clear() ; layer.delete()
 
-    cube << layer ; cube in layer ; cube << -layer   # the membership grammar (rig.Layer)
+    cube << layer ; cube in layer                    # the membership grammar (rig.Layer)
+    layer.remove(cube)                               # back to defaultLayer; cube << -layer is the shorthand
     cube >> DisplayLayer() ; DisplayLayer.of(cube)   # the layer holding cube, or None ; [layer] or []
 """
 
@@ -37,7 +39,7 @@ import re
 from typing import Any
 
 from maya import cmds
-from rig._internal.journal import cmds_edit as _cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig.nodetypes._base import _cast, _lookup
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
@@ -154,6 +156,16 @@ class DisplayLayer(DGNode):
             f"~{self!r} is unassigned; -layer removes members and Layer() removes "
             f"them from every layer"
         )
+
+    @_statement
+    def remove(self, members: Any) -> Any:
+        """``layer.remove(x)``: moves ``x`` (a DAG node, or a ``List`` / list of
+        them) back to defaultLayer when it is in this layer, exactly as ``x <<
+        -layer`` (its shorthand) does: the same refusals, before any write (a
+        component, a DG node, an attribute plug, ``defaultLayer`` itself), one
+        undo step. Returns ``members``, as ``<<`` returns its left-hand side
+        (user decision 2026-10-16)."""
+        return (-self)._member().inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in layer``: whether every node of ``x`` (a node, a plug, which

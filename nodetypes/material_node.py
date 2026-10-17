@@ -41,17 +41,18 @@ Usage::
     red.color << (0, 1, 0)                         # a plain plug: red is the node
     Lambert.find_all(exact_type=False)             # lamberts, and the blinns and phongs typed Blinn / Phong
 
-    red.engine                                     # ShadingEngine("redSG") (find-only; ValueError when none)
+    red.get_engine()                               # ShadingEngine("redSG") (find-only; ValueError when none)
     red.rename("blue")                             # blue and blueSG (the engine follows <mat>SG)
     red.delete()                                   # the shader, its engines and their materialInfos
     cmds.delete("blue")                            # the one-node escape
 
-    cube << red ; cube << -red ; cube << Material()    # assign ; remove ; out of every engine (rig.shade)
+    cube << red ; red.remove(cube) ; cube << Material()    # assign ; remove (shorthand: cube << -red) ; out of every engine (rig.shade)
     cube in red ; cube >> red ; Blinn.of(cube)     # every face? ; the face ids ; [Blinn("red")] or []
     red = red.astype(Phong)                        # Phong("red"): the new node; the held blinn raises
 
 A shader node is a membership collection (``rig.shade``): on the right of
-``<<`` it assigns, ``-red`` is the removal token, ``Material()`` /
+``<<`` it assigns, ``red.remove(x)`` takes ``x`` out (shorthand: ``x <<
+-red``, where ``-red`` is the removal token), ``Material()`` /
 ``Blinn()`` the kind token (out of every engine on ``<<``, the enumeration on
 ``>>``), ``x in red`` asks. ``Blinn(None)`` is a TypeError. ``astype``
 converts: it makes a new node of the target type, which it returns; the old
@@ -541,6 +542,15 @@ class Material(DGNode):
             f"~{self!r} is unassigned; -mat removes members and Material() removes "
             f"them from every shading engine"
         )
+
+    @_statement
+    def remove(self, members: Any) -> Any:
+        """``red.remove(x)``: takes ``x`` (a node's shadeable shapes, mesh faces,
+        or a ``List`` / list of them) out of red's engine, exactly as ``x <<
+        -red`` (its shorthand) does: those faces are in no engine (green); the
+        same refusals, before any write; one undo step. Returns ``members``,
+        as ``<<`` returns its left-hand side (user decision 2026-10-16)."""
+        return (-self)._member().inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in red``: whether every face of every shadeable shape of ``x``

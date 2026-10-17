@@ -22,8 +22,9 @@ exists (never creates it), ``Layer.define('x', ...)`` finds or makes it and
 side (its ``drawOverride`` input), never by enumerating layers, and a layer
 never joins the active rig container.
 
-The membership verbs are one grammar for every kind: ``<<`` adds (``-x``
-removes; the kind token ``Tag()`` / ``Layer()`` purges), ``in`` / ``not in``
+The membership verbs are one grammar for every kind: ``<<`` adds,
+``c.remove(x)`` removes (``x << -c`` is its shorthand; the kind token
+``Tag()`` / ``Layer()`` purges), ``in`` / ``not in``
 asks yes or no with all-members semantics (every node, every component, every
 element of a list), ``>>`` reads ids (``>> Tag()`` / ``>> Layer()``
 enumerates). An attribute plug on the left of ``<<`` / ``>>`` / ``of`` is
@@ -39,9 +40,10 @@ Usage::
     sph.vtx[:8] << Tag("cap")             # create 'cap' WITH vtx[0:7] at the injection node
     sph.f[:3]   << Tag("lid")             # a face tag; returns sph.f[:3]
     sph         << Tag("empty")           # node on the left: the tag itself, created empty
-    sph.vtx[:3] << -Tag("cap")            # remove those vertices; the tag survives
-    sph.vtx     << -Tag("cap")            # empty it (an empty tag deforms nothing)
-    sph         << -Tag("cap")            # delete it (RuntimeError while a deformer references it)
+    Tag("cap").remove(sph.vtx[:3])        # remove those vertices; the tag survives
+    sph.vtx[:3] << -Tag("cap")            # the same: x << -Tag('cap') is the shorthand
+    Tag("cap").remove(sph.vtx)            # empty it (an empty tag deforms nothing)
+    Tag("cap").remove(sph)                # delete it (RuntimeError while a deformer references it)
     sph.vtx[:8] << Tag()                  # out of every editable vertex tag on the node
     sph         << Tag()                  # delete every editable tag on the node
     sph.tx      << Tag("cap")             # TypeError: a plug; the node is the member
@@ -70,7 +72,7 @@ Usage::
     geo << geom                           # moves geo (exclusive); returns geo
     ref  = Layer.define("ref", displayType=2, visibility=False)   # attributes set when it is made
     List([geo, Node("ctl")]) << ref       # one editDisplayLayerMembers call
-    geo << -ref ; geo << Layer()          # both: back to defaultLayer
+    ref.remove(geo) ; geo << Layer()      # both: back to defaultLayer (geo << -ref is the shorthand)
     geo in ref ; geo.tx in ref            # True ; True (a plug stands for its node)
     geo >> Layer() ; Layer.of(geo)        # DisplayLayer("ref") or None ; [DisplayLayer("ref")] or []
     Layer("rig")                          # NodeNotFoundError when it does not exist: never created
@@ -90,7 +92,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit as _cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig.nodetypes import display_layer as _display_layer
 from rig.nodetypes._base import _cast
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
@@ -398,7 +400,9 @@ class Tag(_MemberSpec):
     ``members << Tag()`` removes them from every editable tag of their
     category on that node; ``node << Tag()`` deletes every editable tag.
     ``<<`` returns the left-hand side; every write of one ``<<`` is one undo
-    chunk. An attribute plug on the left of ``<<`` / ``>>`` / ``Tag.of`` is
+    chunk. ``Tag('x').remove(members)`` is the method of the removal, which
+    ``members << -Tag('x')`` spells short: the same writes, refusals and
+    return. An attribute plug on the left of ``<<`` / ``>>`` / ``Tag.of`` is
     a ``TypeError`` (the node is the member: ``sph << Tag('x')``); only a
     deformer's ``componentTagExpression`` plug keeps its own meaning and
     receives the name.
@@ -945,6 +949,22 @@ class Tag(_MemberSpec):
         return found
 
     # -- methods -- #
+
+    @_statement
+    def remove(self, members: Any) -> Any:
+        """``Tag('x').remove(members)``: exactly what ``members << -Tag('x')``
+        (its shorthand) does: components leave the tag, which stays; a node
+        deletes the tag itself (refused while a deformer references it unless
+        ``force=True``); the same refusals, before any write; one undo step.
+        Returns ``members``, as ``<<`` returns its left-hand side (user
+        decision 2026-10-16)."""
+        if self._name is None and not self._remove:
+            raise TypeError(
+                "Tag().remove(x): a method names one tag; x << Tag() takes x out of "
+                "every tag"
+            )
+        self._verb("remove")
+        return (-self).inject(members)
 
     def set(self, members: Any) -> None:
         """Replace the tag's contents with ``members`` on their node

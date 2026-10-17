@@ -1511,9 +1511,10 @@ class DGNode(Node):
         * ``name=`` and (a DAG class) ``parent=`` are keywords only. The
           positional arguments are the inputs a class is built from
           (``Mesh.create(mesh_data)``, ``SkinCluster.create(geo, joints)``,
-          ``Reference.create(path, namespace)``, ``DisplayLayer.create(*objects)``);
-          a class that makes just its node refuses one before anything is
-          made (``Transform.create("test")``: TypeError). A DG class refuses
+          ``Reference.create(path, namespace)``, ``DisplayLayer.create(*objects)``,
+          ``Transform.create(transform_data)`` / ``Joint.create(joint_data)``);
+          a class that makes just its node refuses any other before anything
+          is made (``Transform.create("test")``: TypeError). A DG class refuses
           ``parent=``; a class whose command takes no name refuses ``name=``.
         * Every other keyword is a flag of the class's command when it is in
           ``_CREATE_FLAGS`` (``skipSelect`` / ``ss``; a DAG class's ``p``; a
@@ -1564,6 +1565,11 @@ class DGNode(Node):
             )
         flags = cls._CREATE_FLAGS
         if inputs and getattr(cls._create, "__func__", None) in _PLAIN_CREATES:
+            # a class built from data as well (``Transform.create(transform_data)``,
+            # user decision 2026-10-16) takes its data there, with its own checks
+            from_data = getattr(cls, "_create_from_data", None)
+            if from_data is not None:
+                return from_data(inputs, name=name, parent=parent, container=container, **kwargs)
             keywords = "name= and parent= as keywords" if "parent" in flags else "name= as a keyword"
             raise TypeError(f"{cls.__name__}.create() takes {keywords} (got {_got(inputs)})")
         if cls.NATIVE_NODE_TYPE in _ABSTRACT_TYPES:

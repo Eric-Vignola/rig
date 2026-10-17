@@ -79,9 +79,13 @@ class TestCreate(_SceneCase):
     def test_a_positional_name_is_refused_before_anything_is_made(self):
         cmds.createNode("transform", name="test")
         before = _scene()
+        # a transform class also takes one TransformData (user decision 2026-10-16,
+        # "List casting details + Transform.create(data)"): its refusal names it
         for cls, text in (
-            (Transform, r"^Transform\.create\(\) takes name= and parent= as keywords \(got 'test'\)$"),
-            (Joint,     r"^Joint\.create\(\) takes name= and parent= as keywords \(got 'test'\)$"),
+            (Transform, r"^Transform\.create\(\) takes name= and parent= as keywords, or one TransformData "
+                        r"\(got 'test'\)$"),
+            (Joint,     r"^Joint\.create\(\) takes name= and parent= as keywords, or one TransformData "
+                        r"\(got 'test'\)$"),
             (Choice,    r"^Choice\.create\(\) takes name= as a keyword \(got 'test'\)$"),
             (ObjectSet, r"^ObjectSet\.create\(\) takes name= as a keyword \(got 'test'\)$"),
         ):
