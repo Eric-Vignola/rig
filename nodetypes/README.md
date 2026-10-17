@@ -392,9 +392,11 @@ whose locked parent holds the lock. `attr.is_locked = x` still works, as
 locked node refuses `rename`, `delete`, `set_parent`, `add_attr`,
 `delete_attr`, `rename_attr` and a new attribute spec with one
 `InjectionError`: `cannot rename 'x': it is locked; Node('x').unlock()
-unlocks it. Nothing was changed`. A node's Python members win over a Maya
-attribute of the same name, so `Node("animLayer1").lock` is the method:
-`Plug(node.find_attr("lock"))` reaches the attribute.
+unlocks it. Nothing was changed`. A Maya attribute named like a method
+follows the rule of every node and plug: a bare name is the Maya attribute if
+one exists, otherwise the method; with brackets it is the method. So
+`Node("animLayer1").lock` is the plug of its `lock` attribute and
+`Node("animLayer1").lock()` locks the node.
 
 An `Attribute` holds its `MPlug`. After a disconnect, Maya can free the
 `MPlug` of an array element (one of a multi that is not keyable, connected

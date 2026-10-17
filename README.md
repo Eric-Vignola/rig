@@ -157,8 +157,11 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   typed methods on one object. `Node(x) is x` for a node, `Node(plug)` and
   `Node("x.tx")` give the plug's node, and `node >> None` is the node
   itself. `node.tx` is a DSL `Plug`; `node.find_attr("tx")` is the typed
-  `Attribute` of the same plug. `Node.create(type, ...)` makes a node and
-  `Node.find_all(type)` lists them. A class names its type too:
+  `Attribute` of the same plug. A name that is both a Maya attribute and a
+  method is the attribute bare and the method with brackets (`ctl.lock` is
+  the plug of a `lock` attribute, `ctl.lock()` locks the node).
+  `Node.create(type, ...)` makes a node and `Node.find_all(type)` lists
+  them. A class names its type too:
   `Transform("x")` is the same node, refused when `x` is no transform.
 - **Injection is right-to-left and returns the left-hand side.**
   `obj.t << [1, 2, 3] << lock` reads "t receives 1,2,3, then a lock". The
