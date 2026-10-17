@@ -134,6 +134,24 @@ class Axis(enum.Enum):
     Z = 2
 
 
+def _axis_index(axis: object) -> int:
+    """The coordinate index (0, 1, 2) of a mirror axis: rig's `Axis` (values
+    0 / 1 / 2) or cgmath's ``cgmath.geometry.mesh.Axis`` (values 'x' / 'y' /
+    'z'), the same three members; anything else is a TypeError."""
+    if isinstance(axis, Axis):
+        return axis.value
+    try:
+        from cgmath.geometry.mesh import Axis as _CgmathAxis
+    except ImportError:  # pragma: no cover -- cgmath ships with rig
+        _CgmathAxis = None
+    if _CgmathAxis is not None and isinstance(axis, _CgmathAxis):
+        return Axis[axis.name].value
+    raise TypeError(
+        f"a mirror axis is rig.nodetypes.Axis or cgmath.geometry.mesh.Axis (X, Y or Z), "
+        f"not {axis!r}"
+    )
+
+
 class Mesh(Geometry):
     """
     Mesh node class
@@ -1099,9 +1117,14 @@ class Mesh(Geometry):
     ) -> None:
         """Mirrors this map.
 
+        ``mirror_axis`` is rig's ``Axis`` (``rig.nodetypes.Axis.X``) or cgmath's
+        (``cgmath.geometry.mesh.Axis.X``): the same three planes. Anything else
+        is a TypeError before the map is read.
+
         TODO code is pretty hacky at the moment, needs to be refactored for speed improvements
         Replicate closer to Maya's copySkinWeights mirrormode options
         """
+        axis         = _axis_index(mirror_axis)
         cur_map_vals = self.get_map_values(map_name)
         vert_points  = self.get_points(world_space=False)
         vert_count   = len(vert_points)
@@ -1117,10 +1140,10 @@ class Mesh(Geometry):
 
         invert_axis_val = -1.0 if mirror_inverse else 1.0
         for idx, vert_pos in enumerate(np_mesh_points_array):
-            mirror_value = vert_pos[mirror_axis.value] * invert_axis_val
+            mirror_value = vert_pos[axis] * invert_axis_val
             if mirror_value > 0.0:
-                mirror_pos                    = np.copy(vert_pos)
-                mirror_pos[mirror_axis.value] = mirror_pos[mirror_axis.value] * -1
+                mirror_pos       = np.copy(vert_pos)
+                mirror_pos[axis] = mirror_pos[axis] * -1
                 mesh_idx_and_points_to_mirror.append([idx, mirror_pos])
 
         kdtree = cKDTree(np_mesh_points_array)

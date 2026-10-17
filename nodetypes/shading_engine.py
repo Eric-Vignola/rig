@@ -20,11 +20,13 @@ Usage::
     sg.get_face_members()                          # [(Mesh("pCubeShape1"), None)]
     sg.get_material()                              # Blinn("myBlinn")
 
-    cube << sg ; faces << -sg ; cube in sg ; cube >> sg   # the membership grammar (rig.shade)
+    cube << sg ; cube in sg ; cube >> sg           # the membership grammar (rig.shade)
+    sg.remove(faces)                               # out of sg (green); faces << -sg is the shorthand
 
 An engine node on the right of ``<<`` / ``>>`` / ``in`` names exactly that
 engine (``faces << ShadingEngine("altSG")``, while a shader node goes to the
-engine it feeds); ``-sg`` is its removal token. It is no kind:
+engine it feeds); ``sg.remove(x)`` takes members out, and ``-sg`` is its
+removal token (``x << -sg``, the shorthand). It is no kind:
 ``ShadingEngine()`` is a TypeError, and ``Material()`` takes the members out
 of every engine.
 """
@@ -36,7 +38,7 @@ from typing import Any, Iterator, Sequence
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit as _cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
@@ -110,6 +112,15 @@ class ShadingEngine(ObjectSet):
             f"~{self!r} is unassigned; -sg removes members and Material() removes "
             f"them from every shading engine"
         )
+
+    @_statement
+    def remove(self, members: Any) -> Any:
+        """``sg.remove(x)``: takes ``x`` (a node's shadeable shapes, mesh faces,
+        or a ``List`` / list of them) out of this engine, exactly as ``x << -sg``
+        (its shorthand) does: those faces are in no engine (green); the same
+        refusals, before any write; one undo step. Returns ``members``, as
+        ``<<`` returns its left-hand side (user decision 2026-10-16)."""
+        return (-self)._member().inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in sg``: whether every face of every shadeable shape of ``x``

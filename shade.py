@@ -20,7 +20,8 @@ feeding no engine yet -- ``lambert1``, a bare ``rn.blinn()`` -- gets
 ``ShadingEngine`` node names exactly that engine (``faces <<
 ShadingEngine("altSG")``), and ``Default()`` is ``initialShadingGroup``'s.
 Shading membership is exclusive: a member leaves whatever engine held it.
-``-node`` is the removal token and ``Material()`` / ``Blinn()`` (no name) the
+``node.remove(x)`` takes ``x`` out (shorthand: ``x << -node``, where
+``-node`` is the removal token) and ``Material()`` / ``Blinn()`` (no name) the
 kind token: on ``<<`` it takes the left-hand side out of every engine
 (green), on ``>>`` it enumerates the materials holding it. ``Blinn(None)`` is
 a ``TypeError`` (a failed lookup must not mean every material).
@@ -44,12 +45,13 @@ Usage::
     cube << red                              # assigns; returns cube
     cube.f[:3] << Lambert("decal")           # an existing lambert: faces 0-2 leave redSG for decalSG
     red.color << (0, 1, 0)                   # a plain plug: red is the node
-    red.engine                               # ShadingEngine("redSG")
+    red.get_engine()                         # ShadingEngine("redSG")
     cube >> red                              # array([3, 4, 5])   faces wearing red (all: object-level)
     cube in red ; cube.f[3:] in red          # False ; True   every face of the left
     Material.of(cube)                        # [Blinn("red"), Lambert("decal")]   live nodes
 
-    cube.f[:3] << -Lambert("decal")          # those faces are in NO shading engine (green)
+    Lambert("decal").remove(cube.f[:3])      # those faces are in NO shading engine (green)
+    cube.f[:3] << -Lambert("decal")          # the same: x << -mat is the shorthand of mat.remove(x)
     cube << Material()                       # green everywhere (Blinn() purges the same way)
     cube >> Material() ; cube >> Blinn()     # the operator spelling of Material.of / Blinn.of
     cube << Default()                        # initialShadingGroup again
