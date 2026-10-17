@@ -328,8 +328,13 @@ shader conversion replaced by the name it had), and its repr
 `Transform("held", deleted)`; an attribute of one has the repr
 `Attribute("held.translateY", deleted)`, and its `str` raises. The marked
 name names no Maya node, so `maya.cmds` given the node, or a `List` holding
-it, raises Maya's own error. A `List` skips such an element (see the root
-cheatsheet's List section).
+it, raises Maya's own error, whoever passes it on (rig's own wrappers, such
+as `node.delete(nodes)`, included). A `List` skips such an element (see the
+root cheatsheet's List section). rig's errors for a freed node name its class
+(`Transform node (freed by ...) already deleted!`): the freed handle can no
+longer be read, while the str is the name rig last read. A plug's str is the
+text it was built with, so a raw `cmds` call given a held plug reaches
+whichever node has that name now (rig's verbs check the node first).
 
 A DAG node keeps the path it was taken through, and the attributes it finds
 are named through that path: with `S` instanced under `T1` and `T2`,
@@ -890,16 +895,20 @@ Verified on Maya 2025; not bugs to work around blindly.
   before any edit.
 - **`Mesh.get_closest_point` returns `(MPoint, face id)`**, the raw
   `MFnMesh.getClosestPoint` tuple, not the point its docstring describes.
-- **A point is a value, never a plug or a node.** `get_closest_point`,
-  `get_uv_at_point` and `set_points` take an `MPoint` or numbers (rows of
-  them); a `Plug`, a node, or a list holding one is a `TypeError` naming the
-  fix, `plug.get()` (OpenMaya reads a Plug as a sequence of plugs, which
-  crashed Maya).
+- **A point is a value, never a plug, a node or components.**
+  `get_closest_point`, `get_uv_at_point` and `set_points` take an `MPoint` or
+  numbers (rows of them); a `Plug`, a node, a `Components` selection
+  (`mesh.f[0]`, `mesh.e[:3]`), or a list holding one is a `TypeError` naming
+  the fix, `plug.get()` or a vertex position (OpenMaya reads a Plug or a
+  Components as a sequence, which crashed Maya).
 - **`get_data_fn_set()` reads one plug's data.** A compound or a multi
   (array) plug has no data handle of its own: a `TypeError` names a child
   or an element to ask instead. A plug of a numeric, unit, enum or message
   attribute holds no data: `None` (only a typed, matrix or generic
-  attribute holds data).
+  attribute holds data). A matrix attribute (`offsetParentMatrix`,
+  `multMatrix.matrixSum`, an `addAttr(at="matrix")`) gives its
+  `MFnMatrixData`, as a typed matrix (`worldMatrix[0]`) does: Maya's data
+  handle of one holds no data, so it is read from the plug's value.
 - **`Mesh.outMesh.get()` returns `(MeshData, UVList)`**: the shape's
   `serialize()` with its default `include_uvs=True`.
 - **`set_component_tag_category` converts nothing on a deformed mesh**: it
