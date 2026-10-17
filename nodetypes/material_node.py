@@ -66,7 +66,7 @@ from typing import Any, Callable
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
+from rig._internal.journal import cmds_edit as _cmds_edit, forward as _forward, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
 from rig.nodetypes._base import (
@@ -517,7 +517,9 @@ class Material(DGNode):
         # ``ls -type`` of the surface types, then each node's own type
         # (``ls -exactType`` given this list drops its first type)
         types = cmds.listNodeTypes(_SURFACE) or []
-        found = cmds.ls(*args, type=types, **kwargs) if types else []
+        # (the user's arguments through `_forward`: a deleted node in a List of
+        # them reads as its marked name in Maya's parser, see DGNode.find_all)
+        found = _forward(cmds.ls, *args, type=types, **kwargs) if types else []
         return [node for node in map(_cast, found or ()) if cls.is_type(str(node))]
 
     # --- the membership grammar (rig.shade)

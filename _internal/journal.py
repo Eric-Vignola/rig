@@ -356,7 +356,9 @@ def user_call(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
 class _Edits:
     """``cmds_edit.<command>(...)``: the ``maya.cmds`` command, called once the pending list
     is registered. The command is read from ``maya.cmds`` on every call (a plug-in's command
-    after a reload, a test's ``mock.patch.object(cmds, ...)``)."""
+    after a reload, a test's ``mock.patch.object(cmds, ...)``). Called from this module, so
+    a deleted node forwarded from a user reads as its marked name in Maya's argument parser
+    (see `forward`)."""
 
     def __getattr__(self, name: str) -> Callable[..., Any]:
         if name.startswith("_"):
@@ -376,6 +378,17 @@ class _Edits:
 
 
 cmds_edit = _Edits()
+
+
+def forward(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    """``fn(*args, **kwargs)``: a ``maya.cmds`` command (a query, or an edit a caller
+    registered the pending list for) given arguments rig forwards from a user. Maya's
+    argument parser reads a list through ``str()`` of each element, and a ``str()`` that
+    raises there crashes Maya: called from this module, a deleted or freed node in them
+    reads as the user would read it, its marked name, which names no node (see
+    `rig.nodetypes._base._called_from_rig`), so Maya raises its own clean error.
+    ``cmds_edit`` calls from here too."""
+    return fn(*args, **kwargs)
 
 
 def mel_eval(script: str) -> Any:

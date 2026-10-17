@@ -21,6 +21,7 @@ from rig._internal.journal import (
     mel_eval as _mel_eval,
     statement as _statement,
 )
+from rig._internal.types import _is_components
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import Attribute
@@ -131,8 +132,13 @@ MAP_DEFAULT_CATEGORY = "PaintableMap"  # all maps will have this category assign
 
 # the rig objects an OpenMaya point never takes: a Plug is a str with a
 # __getitem__ / __len__, which OpenMaya.MPoint / MVector / MPointArray read as a
-# sequence of plugs (an access violation in Maya 2025)
+# sequence of plugs (an access violation in Maya 2025); a Components selection
+# (``cube.f[0]``, `_is_components`) is read through its __getitem__ the same way
 _RIG_OBJECTS = (Attribute, DGNode)
+
+
+def _is_rig_object(x: Any) -> bool:
+    return isinstance(x, _RIG_OBJECTS) or _is_components(x)
 
 # the exact types of the usual elements of a point sequence (none is a rig object)
 _POINT_TYPES = frozenset((
@@ -149,21 +155,27 @@ def _refuse_rig_points(points: Any, method: str, many: bool = False) -> None:
     reads them as points), and the first row's values (rows of plugs, which
     OpenMaya refuses with its own TypeError, get the hint too)."""
     bad = None
-    if isinstance(points, _RIG_OBJECTS):
+    if _is_rig_object(points):
         bad = points
     elif isinstance(points, (list, tuple)):
         for p in points:
             if type(p) in _POINT_TYPES:  # one set lookup for the usual elements
                 continue
-            if isinstance(p, _RIG_OBJECTS):
+            if _is_rig_object(p):
                 bad = p
                 break
         if bad is None and many and points and isinstance(points[0], (list, tuple)):
-            bad = next((v for v in points[0] if isinstance(v, _RIG_OBJECTS)), None)
+            bad = next((v for v in points[0] if _is_rig_object(v)), None)
     if bad is None:
         return
     takes = "points (MPoints, or rows of 3 numbers)" if many else "a point (an MPoint, or 3 numbers)"
-    if isinstance(bad, Attribute):
+    if _is_components(bad):
+        what = f"the components {bad!r}"
+        fix  = (
+            "pass a position: a vertex's from the shape's get_points() (indexed by its "
+            "id), or a vertex plug's value, .vtx[i].get()"
+        )
+    elif isinstance(bad, Attribute):
         name = str.__str__(bad)
         fix  = f"pass its value, {type(bad).__name__}({name!r}).get()"
         what = f"the plug {name!r}"

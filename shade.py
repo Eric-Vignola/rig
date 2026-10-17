@@ -130,6 +130,7 @@ from rig.nodetypes.material_node import (
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal.list import List
 from rig._internal.members import (
+    _as_user_reads,
     _GEOMETRY_TYPES,
     _MemberSpec,
     _NeverHolds,
@@ -743,6 +744,13 @@ def _of(kind: type, selections: list[_Selection]) -> list:
     return found
 
 
+def _material_token_repr(token: "_MaterialMember") -> str:
+    # (`_as_user_reads`: a deleted shader or engine shows marked to a user)
+    if token._node is None:
+        return f"{token._kind.__name__}()"
+    return f"{'-' if token._remove else ''}{token._node!r}"
+
+
 class _MaterialMember(_MemberSpec):
     """The membership of materials (private): what a shader node, a
     ``ShadingEngine`` node, their removal tokens and a class's kind token run
@@ -804,9 +812,7 @@ class _MaterialMember(_MemberSpec):
         )
 
     def __repr__(self) -> str:
-        if self._node is None:
-            return f"{self._kind.__name__}()"
-        return f"{'-' if self._remove else ''}{self._node!r}"
+        return _as_user_reads(_material_token_repr, self)
 
     def __getattr__(self, name: str) -> Any:
         # a token is no material: its methods and plugs are the node's

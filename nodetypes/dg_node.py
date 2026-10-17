@@ -11,6 +11,7 @@ from maya.api import OpenMaya
 from rig._internal.journal import (
     barrier as _barrier,
     cmds_edit as _cmds_edit,
+    forward as _forward,
     one_step as _one_step,
     outside as _outside,
     rig_code as _rig_code,
@@ -1543,8 +1544,10 @@ class DGNode(Node):
         type_key = "exactType" if exact_type else "type"
         kwargs.setdefault(type_key, cls.NATIVE_NODE_TYPE)
 
-        # a node listed by its type is built as this class (its exact type)
-        for node in cmds.ls(*args, **kwargs):
+        # a node listed by its type is built as this class (its exact type);
+        # the user's arguments reach cmds through `_forward` (a deleted node in
+        # a List of them reads as its marked name in Maya's parser)
+        for node in _forward(cmds.ls, *args, **kwargs):
             if cls.CUSTOM_NODE_TYPE:
                 if get_custom_type(node) == cls.CUSTOM_NODE_TYPE:
                     nodes.append(cls._wrap(node))

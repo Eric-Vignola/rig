@@ -75,9 +75,10 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _GETFRAME,
     _check_enum_names,
     _class_attr,
-    _deleted_plug_repr,
+    _user_view,
     _ensure_node_valid,
     _ensure_owner_alive,
     _enum_value,
@@ -100,7 +101,7 @@ from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
-from rig._internal.journal import statement, user_call
+from rig._internal.journal import _in_rig, statement, user_call
 from rig._internal.node import Node
 from rig._internal.operands import (
     _CAN_HOLD_STR,
@@ -115,6 +116,7 @@ from rig._internal.operands import (
 )
 from rig._internal.plug import _MethodPlug, Plug
 from rig._internal.types import _is_attribute_spec, _is_components, _is_membership
+from rig._internal.types import _lazy as _types_lazy
 from rig.nodetypes.errors import AmbiguousNodeError
 from rig._internal.undo import _undo_chunk
 from rig.spec.modifiers import skip as _skip_marker
@@ -123,10 +125,11 @@ from rig.spec.modifiers import skip as _skip_marker
 # --- deleted elements (user decision 2026-10-16) ------------------------------
 #
 # A node deleted (to the undo queue) or freed (a new scene, a file open, a
-# reference unload) stays in its List slot, and so does a plug of one: length,
-# indices and zip pairing are unchanged. rig's own List operations skip such an
-# element and print ONE warning per operation naming the skipped ones ("List
-# element [0] obj1 was deleted; skipped"); a List an operation derives (an
+# reference unload) stays in its List slot, and so does a plug of one and a
+# Components selection on one: length, indices and zip pairing are unchanged.
+# rig's own List operations skip such an element and print ONE warning per
+# statement naming the skipped ones ("List element [0] obj1 was deleted;
+# skipped", `_warn`); a List an operation derives (an
 # attribute broadcast, an operator's results, get(), get_inputs()) holds
 # ``rig.skip`` in that slot, which every List operation leaves alone, so chained
 # broadcasts stay aligned and keep skipping. Every rig operation on the node or
@@ -142,22 +145,38 @@ _SKIP = _skip_marker
 _HANDLE_KEYS: dict = {}
 
 
+# the key of a Components selection (``__slots__``, no __dict__): its shape's
+# handle is read (`_element_handle`)
+_SHAPE_KEY = "_shape"
+
+
 def _handle_key(t: type) -> Optional[str]:
     key = _HANDLE_KEYS[t] = (
-        "_handle" if issubclass(t, Attribute) else "_objhandle" if issubclass(t, Node) else None
+        "_handle" if issubclass(t, Attribute)
+        else "_objhandle" if issubclass(t, Node)
+        else _SHAPE_KEY if issubclass(t, _types_lazy().members.Components)
+        else None
     )
     return key
 
 
+def _element_handle(x: Any, key: str) -> Any:
+    """The handle `_gone` reads for `x`: its own (a node's), its owner's (a
+    plug's), or its shape's (a Components')."""
+    if key is _SHAPE_KEY:
+        return x._shape.__dict__.get("_objhandle")
+    return x.__dict__.get(key)
+
+
 def _gone(x: Any) -> bool:
     """True if `x` is a node deleted to the undo queue or freed, or a plug of
-    one (its handle, or its owner's, is not valid). Reads only the handle, which
-    is safe on a freed node."""
+    one (its handle, or its owner's, is not valid), or a Components selection
+    on one. Reads only the handle, which is safe on a freed node."""
     t   = type(x)
     key = _HANDLE_KEYS[t] if t in _HANDLE_KEYS else _handle_key(t)
     if key is None:
         return False
-    handle = x.__dict__.get(key)
+    handle = _element_handle(x, key)
     return handle is not None and not handle.isValid()
 
 
@@ -173,7 +192,7 @@ def _gone_indices(items: Iterable[Any]) -> list:
         key = keys[t] if t in keys else _handle_key(t)
         if key is None:
             continue
-        handle = x.__dict__.get(key)
+        handle = x.__dict__.get(key) if key is not _SHAPE_KEY else _element_handle(x, key)
         if handle is None or handle is seen:
             continue
         if handle.isValid():
@@ -185,36 +204,72 @@ def _gone_indices(items: Iterable[Any]) -> list:
 
 def _gone_name(x: Any) -> str:
     """The name a skipped element is warned by: a node's last known name, a
-    plug's str buffer (the name it was built with), both without reading the
-    freed node."""
+    plug's str buffer (the name it was built with), a Components' shape's last
+    known name and its ids, all without reading the freed node."""
     if isinstance(x, Attribute):
         return str.__str__(x)
+    if not isinstance(x, Node):
+        return x._gone_name()  # a Components
     from rig.nodetypes.dg_node import _deleted_name
 
     return _deleted_name(x)
 
 
-def _element_repr(x: Any) -> str:
-    """The repr of a List element, a deleted or freed one marked."""
-    if _gone(x):
-        if isinstance(x, Attribute):
-            return _deleted_plug_repr(x, "Plug" if isinstance(x, _MethodPlug) else None)
-        from rig.nodetypes.dg_node import _deleted_repr
-
-        return _deleted_repr(x)
-    return repr(x)
-
-
 def _skipped_names(items: list, indices: list) -> list:
-    return [f"[{i}] {_gone_name(items[i])}" for i in indices]
+    """``(label, element)`` of each skipped element `indices` of `items`: the
+    label a warning names it by (``[i] name``)."""
+    return [(f"[{i}] {_gone_name(items[i])}", items[i]) for i in indices]
+
+
+# the statement the last skip warning was for: ((id of the user's frame, its
+# code, its line), its instruction offset, the ids of the elements named), or
+# None. No frame and no element is kept (that would keep a user's objects
+# alive): ids only.
+_WARNED: list = [None]
+
+
+def _user_frame() -> Any:
+    """The frame of the user's code running the List operation (the first frame
+    up the stack that is not rig's own code), or None (C code called it)."""
+    try:
+        frame = _GETFRAME(2)
+    except ValueError:
+        return None
+    in_rig = _in_rig
+    while frame is not None and in_rig(frame.f_globals.get("__name__") or ""):
+        frame = frame.f_back
+    return frame
 
 
 def _warn(named: list) -> None:
-    """ONE warning naming the skipped elements `named` (``[i] name``)."""
-    if len(named) == 1:
-        cmds.warning(f"List element {named[0]} was deleted; skipped")
+    """ONE warning per statement naming the skipped elements `named` (``(label,
+    element)``, the label ``[i] name``; user decision 2026-10-16): a statement
+    whose operations skip the same element (``lst.tx << lst.ty * 2 + lst.tz``,
+    ``lst.tx = lst.ty``) names it once. The statement is the user's frame and
+    line running it, at an instruction past the last warning's (a loop's next
+    pass is back at the same one: it warns again). Called from no user frame
+    (C code), every warning is printed."""
+    frame = _user_frame()
+    if frame is not None:
+        key  = (id(frame), frame.f_code, frame.f_lineno)
+        at   = frame.f_lasti
+        last = _WARNED[0]
+        if last is not None and last[0] == key and at > last[1]:
+            known = last[2]
+            fresh = [(label, x) for label, x in named if id(x) not in known]
+            known.update(id(x) for _, x in named)
+            _WARNED[0] = (key, at, known)
+            if not fresh:
+                return
+            named = fresh
+        else:
+            _WARNED[0] = (key, at, {id(x) for _, x in named})
     else:
-        cmds.warning(f"List elements {', '.join(named)} were deleted; skipped")
+        _WARNED[0] = None
+    if len(named) == 1:
+        cmds.warning(f"List element {named[0][0]} was deleted; skipped")
+    else:
+        cmds.warning(f"List elements {', '.join(label for label, _ in named)} were deleted; skipped")
 
 
 def _warn_skipped(items: list, indices: list) -> None:
@@ -248,7 +303,7 @@ def _skip_rows(items: Any, other: Any) -> tuple:
     notes: list = []
     if isinstance(other, List):
         theirs = _with_skips(other, notes)
-        notes  = [f"operand {n}" for n in notes]
+        notes  = [(f"operand {label}", x) for label, x in notes]
         if notes:
             other = _values_list(theirs)
     mine: list = []
@@ -259,21 +314,42 @@ def _skip_rows(items: Any, other: Any) -> tuple:
 
 
 def _live(items: "List") -> "List":
-    """`items` without its deleted or freed elements (one warning names them),
-    or `items` itself when none is: for an operation on the List as a whole
-    (membership, a query), which has no slot to keep."""
-    gone = _gone_indices(list.__iter__(items))
-    skip = _SKIP
-    if not gone and not any(x is skip for x in list.__iter__(items)):
-        return items
+    """`items` without its deleted or freed elements and its skip slots, a
+    nested List's too (one warning names them), or `items` itself when it has
+    none: for an operation on the List as a whole (membership, a query), which
+    has no slot to keep."""
+    notes: list = []
+    live = _live_into(items, notes, "")
+    if notes:
+        _warn(notes)
+    return live
+
+
+def _live_into(items: "List", notes: list, where: str) -> "List":
+    """`_live` of `items` (at `where`, ``[i]`` of its parents), the names of
+    the elements left out appended to `notes`."""
     elements = list(list.__iter__(items))
-    if gone:
-        _warn_skipped(elements, gone)
-    dropped = set(gone)
-    # a skip slot (a derived List's) is left alone too
-    return _values_list(
-        x for i, x in enumerate(elements) if i not in dropped and x is not skip
-    )
+    gone     = set(_gone_indices(elements))
+    skip     = _SKIP
+    out      = []
+    changed  = False
+    for i, x in enumerate(elements):
+        if i in gone:
+            notes.append((f"{where}[{i}] {_gone_name(x)}", x))
+            changed = True
+        elif x is skip:
+            changed = True  # a skip slot (a derived List's) is left alone too
+        elif isinstance(x, List):
+            y = _live_into(x, notes, f"{where}[{i}]")
+            changed = changed or y is not x
+            out.append(y)
+        else:
+            out.append(x)
+    return _values_list(out) if changed else items
+
+
+def _list_repr(items: "List") -> str:
+    return f"List({list.__repr__(items)})"
 
 
 def _operand_rows(dunder: str, items: list, other: Any) -> list:
@@ -468,11 +544,14 @@ class List(list):
     @reprlib.recursive_repr("List([...])")
     def __repr__(self) -> str:
         # a deleted or freed element shows marked (user decision 2026-10-16:
-        # ``List([Transform("obj1", deleted), Transform("obj2")])``), rendered
-        # here: its own repr raises in rig's code (`_called_from_rig`)
-        if not _gone_indices(list.__iter__(self)):
+        # ``List([Transform("obj1", deleted), Transform("obj2")])``), whoever
+        # asks: its own repr raises in rig's code (`_called_from_rig`), so the
+        # List renders again as a user reads it (`_user_view`), which marks a
+        # node, a plug, a Components, a token or a method of one, nested too
+        try:
             return f"List({list.__repr__(self)})"
-        return f"List([{', '.join(map(_element_repr, list.__iter__(self)))}])"
+        except RuntimeError:
+            return _user_view(_list_repr, self)
 
     # -- attribute access broadcasts -- #
 
@@ -820,6 +899,13 @@ class List(list):
         per_element = [
             x >> None if isinstance(x, (Plug, Node, List)) else x for x in _with_skips(self)
         ]
+        skip = _SKIP
+        if any(x is skip for x in per_element):
+            # a skipped element's slot: a List of the values with rig.skip there
+            # (user decision 2026-10-16, a derived List; fix round 2026-10-17):
+            # it broadcasts as every derived List does (``lst.tx.get() + 1``
+            # keeps skip in that slot, ``lst.ty << lst.tx.get()`` leaves it)
+            return _values_list(per_element)
         return _stack_values(per_element)
 
     # -- arithmetic broadcast -- #
@@ -940,11 +1026,21 @@ class List(list):
 
         ``index``, ``count`` and ``remove`` match elements the same way.
         """
+        if _gone(other):
+            # a deleted or freed probe is found by identity only, never read nor
+            # warned for (``ctls.remove(gone_ctl)``)
+            return any(x is other for x in list.__iter__(self))
         match = _matcher(other)
         return any(x is not _NO_MATCH and match(x) for x in _unmatched_gone(self))
 
     def index(self, value: Any, start: int = 0, stop: Optional[int] = None) -> int:
-        items  = _unmatched_gone(self)
+        if _gone(value):
+            # a deleted or freed probe: by identity only (see `__contains__`)
+            items = list(list.__iter__(self))
+            match = lambda x: x is value  # noqa: E731
+        else:
+            items = _unmatched_gone(self)
+            match = None
         length = len(items)
         if stop is None:
             stop = length
@@ -952,13 +1048,17 @@ class List(list):
             start = max(length + start, 0)
         if stop < 0:
             stop = max(length + stop, 0)
-        match = _matcher(value)
+        if match is None:
+            match = _matcher(value)
         for i in range(start, min(stop, length)):
             if items[i] is not _NO_MATCH and match(items[i]):
                 return i
         raise ValueError(f"{value!r} is not in List")
 
     def count(self, value: Any) -> int:
+        if _gone(value):
+            # a deleted or freed probe: by identity only (see `__contains__`)
+            return sum(1 for x in list.__iter__(self) if x is value)
         match = _matcher(value)
         return sum(1 for x in _unmatched_gone(self) if x is not _NO_MATCH and match(x))
 
@@ -970,7 +1070,8 @@ class List(list):
     def __hash__(self) -> int:
         try:
             return hash(tuple(hash(x) for x in self))
-        except TypeError:
+        except (TypeError, RuntimeError):
+            # an unhashable element, or a deleted or freed node's (its name)
             return id(self)
 
 

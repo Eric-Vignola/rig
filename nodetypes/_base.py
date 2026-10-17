@@ -1423,12 +1423,45 @@ def _called_from_rig(depth: int) -> bool:
     the last known name, marked, which names no Maya node; rig's own code
     reading a name is an operation on that node, which raises "... already
     deleted!", as it always did (a guard, a message, a memo key). Only the
-    deleted path reads the caller (one frame read)."""
-    module = _GETFRAME(depth + 1).f_globals.get("__name__") or ""
+    deleted path reads the caller (one frame read).
+
+    Not rig's code, so the marked name (fix round 2026-10-17: a str() that
+    raises inside Maya's argument parser crashes Maya):
+    - `rig._internal.journal`'s frames: it calls maya.cmds with the arguments
+      rig's wrappers forward from a user (``node.delete(nodes)``,
+      ``BlendShape.create(targets)``, ``rc.select(...)``: ``cmds_edit``,
+      `journal.forward`), and Maya's parser reads them there;
+    - no Python frame at all: C code called the str() or repr() (a Qt slot, a
+      deferred or atexit callable, a thread: ``partial(cmds.select, ctls)``);
+    - a repr rendered for a user (`_user_view`: a List's, a Components', a
+      membership token's), whose own frame is rig's."""
+    if _USER_VIEW[0]:
+        return False
+    try:
+        frame = _GETFRAME(depth + 1)
+    except ValueError:  # "call stack is not deep enough": no Python caller
+        return False
+    module = frame.f_globals.get("__name__") or ""
     rig    = _RIG_FRAMES.get(module)
     if rig is None:
-        rig = _RIG_FRAMES[module] = _journal._in_rig(module)
+        rig = _RIG_FRAMES[module] = _journal._in_rig(module) and module != _journal.__name__
     return rig
+
+
+# above 0 while `_user_view` renders: `_called_from_rig` then answers False
+_USER_VIEW = [0]
+
+
+def _user_view(render: Any, *args: Any) -> Any:
+    """``render(*args)`` with every deleted or freed node read as a user reads it
+    (its marked name: `_called_from_rig` answers False): for a repr that renders
+    what it holds (a List's elements, a token's node), once its plain rendering
+    raised for a deleted one."""
+    _USER_VIEW[0] += 1
+    try:
+        return render(*args)
+    finally:
+        _USER_VIEW[0] -= 1
 
 
 def _deleted_plug_repr(attr: Any, cls_name: str | None = None) -> str:
@@ -1726,16 +1759,20 @@ def _new_attr(
 def _attr_mobject(attr: Any) -> OpenMaya.MObject:
     """`attr.get_mobject()` (cached on `attr`), for a caller that made the owner
     check: the attribute of a dynamic attr is freed with its node. Defence in
-    depth: the handles are read first anyway (an ``isAlive`` each), so a caller
-    that missed its check raises ``"... already deleted!"`` instead of reading
-    the cached MObject or the MPlug of a freed node."""
-    d       = attr.__dict__
-    handle  = d.get("_handle")
-    attrh   = d.get("_attrh")
-    if (handle is not None and not handle.isAlive()) or (attrh is not None and not attrh.isAlive()):
+    depth: what could be freed is checked before it is read, so a caller that
+    missed its check raises ``"... already deleted!"`` instead: a dynamic
+    attr's attribute (its handle, `_attrh`, read whenever it has one), and, the
+    first time, the MPlug of a freed node (the owner's handle). A static attr's
+    cached MObject is its node class's, which a freed node does not free."""
+    d     = attr.__dict__
+    attrh = d.get("_attrh")
+    if attrh is not None and not attrh.isAlive():
         _ensure_owner_alive(attr)
     mobject = d["_mobject"]
     if not mobject:
+        handle = d.get("_handle")
+        if handle is not None and not handle.isAlive():
+            _ensure_owner_alive(attr)
         mobject = d["_mobject"] = d["_mplug"].attribute()
     return mobject
 
@@ -1747,6 +1784,10 @@ _DATA_ATTR_TYPES = frozenset((
     OpenMaya.MFn.kFloatMatrixAttribute,
     OpenMaya.MFn.kGenericAttribute,
 ))
+
+# of them, the matrix attributes: their value is the plug's MObject, never the
+# data handle's (`get_data_fn_set`)
+_MATRIX_ATTR_TYPES = frozenset((OpenMaya.MFn.kMatrixAttribute, OpenMaya.MFn.kFloatMatrixAttribute))
 
 _K_TYPED_ATTR = OpenMaya.MFn.kTypedAttribute
 _K_ANY_DATA   = OpenMaya.MFnData.kAny
@@ -3864,7 +3905,9 @@ class Attribute(str, metaclass=_PlugMeta):
         plug.asMObject() causes internal failure. A compound or a multi (array)
         plug has no data handle of its own: TypeError, naming a child or an
         element to ask instead. (Maya reads freed memory for the data of a plug
-        that holds none, which can crash it: neither is asked.)"""
+        that holds none, which can crash it: neither is asked. A matrix
+        attribute's matrix data is read from the plug's value, as Maya's data
+        handle of one holds none.)"""
         _ensure_owner_alive(self)
         mplug = self._mplug
         if mplug.isArray or mplug.isCompound:
@@ -3874,9 +3917,18 @@ class Attribute(str, metaclass=_PlugMeta):
                 f"{self} is a {what} plug, which has no data handle: "
                 f"get_data_fn_set() reads one plug's data; ask {ask}"
             )
-        if _attr_mobject(self).apiType() not in _DATA_ATTR_TYPES:
+        attr_type = _attr_mobject(self).apiType()
+        if attr_type not in _DATA_ATTR_TYPES:
             return None
-        data_mobject = mplug.asMDataHandle().data()
+        if attr_type in _MATRIX_ATTR_TYPES:
+            # a matrix attribute's data handle has no data to give: its MObject
+            # is the plug's value (MDataHandle.data() reads freed memory there)
+            try:
+                data_mobject = mplug.asMObject()
+            except RuntimeError:
+                return None
+        else:
+            data_mobject = mplug.asMDataHandle().data()
         api_type     = data_mobject.apiType()
         if api_type != OpenMaya.MFn.kInvalid:
             data_fn = DATA_TYPE_TO_FN.get(api_type, OpenMaya.MFnData)
@@ -4483,7 +4535,14 @@ class _BarePredicate:
         return self._bound
 
     def __repr__(self) -> str:
-        return f"<predicate {self._bound!r}: call it>"
+        try:
+            return f"<predicate {self._bound!r}: call it>"
+        except RuntimeError:
+            # its node deleted or freed: as a user reads it, marked (rig's own
+            # code raises, as the node's repr does)
+            if _called_from_rig(1):
+                raise
+            return _user_view(lambda: f"<predicate {self._bound!r}: call it>")
 
 
 class _ScenePredicate:

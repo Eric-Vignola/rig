@@ -594,6 +594,12 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes.dg_node", "_deleted_name"),
         ("rig.nodetypes.dg_node", "_is_deleted_node"),
         ("rig._internal.list", "_handle_key"),
+        # re-pinned (fix round 2026-10-17, the same decision): a List's test of a
+        # Components element whose shape was deleted or freed, and the
+        # membership fold's test of a deleted or freed List element (it folds
+        # the List again without them)
+        ("rig._internal.list", "_element_handle"),
+        ("rig._internal.members", "_gone_element"),
     }
 )
 

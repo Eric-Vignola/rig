@@ -1135,8 +1135,11 @@ def rshift_error(lhs: Any) -> TypeError:
 def curves_of(x: Any) -> list:
     """``AnimCurve.of(x)``: the curve nodes directly driving the plugs of ``x`` (a plug, a
     compound's children, a multi's elements; a node: every plug it has a curve on; a List
-    of them), each once, in order. A pairBlend or a unitConversion is not looked through."""
-    from rig.nodetypes._base import Attribute, Node, _cast
+    of them), each once, in order. A pairBlend or a unitConversion is not looked through.
+    A plug of a node freed (a new scene, a file open) raises "... already deleted!" before
+    its MPlug is read; a List skips its deleted or freed elements, with one warning, as
+    every List operation does."""
+    from rig.nodetypes._base import Attribute, Node, _cast, _ensure_owner_alive
 
     found: list = []
     seen: dict = {}
@@ -1166,12 +1169,18 @@ def curves_of(x: Any) -> list:
 
     def visit(item):
         if isinstance(item, Attribute):
+            # a freed node's MPlug points at freed memory: checked before it is read
+            _ensure_owner_alive(item)
             walk(item._mplug)
         elif isinstance(item, Node):
             fn = OpenMaya.MFnDependencyNode(type(item)._raw_get_mobject(item))
             for mp in fn.getConnections():
                 add_source(mp)
         elif isinstance(item, (list, tuple)):
+            if isinstance(item, List):
+                # the List rule: its deleted or freed elements (and skip slots)
+                # are left out, with one warning naming them
+                item = _live(item)
             for sub in item:
                 visit(sub)
         else:
@@ -1179,7 +1188,7 @@ def curves_of(x: Any) -> list:
                 f"AnimCurve.of() takes a plug, a node or a List of them; got {item!r}"
             )
 
-    visit(x)
-    from rig._internal.list import List
+    from rig._internal.list import List, _live
 
+    visit(x)
     return List(found)

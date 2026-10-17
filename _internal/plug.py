@@ -776,9 +776,13 @@ class Plug(Attribute):
         order (getAttr refuses that root: "compound with mixed type elements").
         """
         # a freed node's MPlug points at freed memory: checked before the first
-        # MPlug read (``isArray``, the generic-slot test's ``attribute()``)
-        _ensure_owner_alive(self)
-        mplug = self.__dict__.get("_mplug")
+        # MPlug read (``isArray``, the generic-slot test's ``attribute()``),
+        # inline (`_ensure_owner_alive` raises, when a handle is not alive)
+        d = self.__dict__
+        h = d.get("_handle")
+        if (h is not None and not h.isAlive()) or d.get("_attrh") is not None:
+            _ensure_owner_alive(self)
+        mplug = d.get("_mplug")
         if mplug is not None and mplug.isArray and _is_generic_slot(self):
             return [self[i].get() for i in self.get_logical_indices()]
         try:

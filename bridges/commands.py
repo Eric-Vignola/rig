@@ -34,7 +34,7 @@ from maya import cmds as _mc
 
 # the node-added tracking the typed creators share (it lives with the scope)
 from rig._internal.container import _call_tracking_creation
-from rig._internal.journal import barrier as _barrier
+from rig._internal.journal import barrier as _barrier, forward as _forward
 from rig._internal.node import Node
 from rig.nodetypes._base import _cast_node, _ensure_node_valid, Attribute
 
@@ -160,17 +160,21 @@ def _make_wrapper(name: str) -> Callable:
         # otherwise.
         from rig._internal.container import container
 
-        # a raw command can be any edit: the pending journal is registered first
+        # a raw command can be any edit: the pending journal is registered first.
+        # What `_coerce` leaves (a Components, a token ...) reaches Maya's parser
+        # through `_forward`: an element of a deleted node reads as its marked
+        # name there, as in the user's own maya.cmds call, never a raise (which
+        # crashes the parser)
         _barrier()
         if add_to_container and container._stack:
-            result, created = _call_tracking_creation(fn, args, kwargs)
+            result, created = _call_tracking_creation(_forward, (fn,) + args, kwargs)
             if created:
                 try:
                     container.add(created)
                 except Exception:
                     pass
         else:
-            result = fn(*args, **kwargs)
+            result = _forward(fn, *args, **kwargs)
 
         return _wrap_result(result)
 
