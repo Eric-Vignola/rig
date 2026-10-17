@@ -22,15 +22,16 @@ Usage::
     from rig.nodetypes import DisplayLayer
 
     layer = DisplayLayer.define("geometry")          # found, or made (empty) in the current namespace
-    layer.add_members(["|pCube1", "|grp"])           # the nodes themselves, never the subtree
-    DisplayLayer.for_node("|pCube1")                 # DisplayLayer("geometry"); None in defaultLayer
-    layer.get_members()                              # [Transform("pCube1"), Transform("grp")]
-    layer.remove_members("|grp")                     # back to defaultLayer
-    layer.rename("geo") ; layer.clear() ; layer.delete()
-
-    cube << layer ; cube in layer                    # the membership grammar (rig.Layer)
+    cube << layer ; cube in layer                    # the membership grammar (rig.Layer): the node itself
+    DisplayLayer.for_node(cube)                      # DisplayLayer("geometry"); None in defaultLayer
+    layer.get_members()                              # [Transform("cube")]
     layer.remove(cube)                               # back to defaultLayer; cube << -layer is the shorthand
     cube >> DisplayLayer() ; DisplayLayer.of(cube)   # the layer holding cube, or None ; [layer] or []
+    layer.rename("geo") ; layer.clear() ; layer.delete()
+
+There is one way in and out of a layer (user decision 2026-10-16): the raw
+``add_members`` / ``remove_members`` an object set has raise a TypeError
+naming ``cube << layer`` / ``layer.remove(cube)``.
 """
 
 from __future__ import annotations
@@ -133,7 +134,7 @@ class DisplayLayer(DGNode):
         """Whether this is ``defaultLayer``, the layer that means no layer
         (by its absolute name: ``namespace -relativeNames`` cannot change the
         answer)."""
-        return type(self).get_fn_set(self).absoluteName() == _DEFAULT_ABSOLUTE
+        return type(self)._raw_get_fn_set(self).absoluteName() == _DEFAULT_ABSOLUTE
 
     # --- the membership grammar (rig.Layer)
 
@@ -165,13 +166,13 @@ class DisplayLayer(DGNode):
         component, a DG node, an attribute plug, ``defaultLayer`` itself), one
         undo step. Returns ``members``, as ``<<`` returns its left-hand side
         (user decision 2026-10-16)."""
-        return (-self)._member().inject(members)
+        return (-self)._member()._run_inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in layer``: whether every node of ``x`` (a node, a plug, which
         stands for its node, or a list of them) is in this layer
         (``defaultLayer``: in no layer)."""
-        return self._member().contains(lhs)
+        return self._member()._run_contains(lhs)
 
     @classmethod
     def of(cls, x: Any) -> list[DisplayLayer]:
@@ -198,8 +199,27 @@ class DisplayLayer(DGNode):
         )
         return [_cast(x) for x in objs or []]
 
-    def add_members(self, objects: Any, no_recurse: bool = True) -> None:
-        """Adds a list of nodes to this set.
+    def add_members(self, *args: Any, **kwargs: Any) -> None:
+        """Refused (one way only, user decision 2026-10-16): ``cube << layer``
+        puts a node in this layer, with its checks (a component or a DG node
+        is refused, where ``editDisplayLayerMembers`` silently stored a
+        component's whole shape)."""
+        raise TypeError(
+            f"layer.add_members is not rig's form: write cube << {self!r} (a List or "
+            f"list of nodes too); {self!r}.remove(cube) takes them out"
+        )
+
+    def remove_members(self, *args: Any, **kwargs: Any) -> None:
+        """Refused (one way only, user decision 2026-10-16):
+        ``layer.remove(cube)`` (shorthand ``cube << -layer``) takes a node out."""
+        raise TypeError(
+            f"layer.remove_members is not rig's form: write {self!r}.remove(cube) "
+            f"(shorthand cube << -layer); cube << {self!r} puts it in"
+        )
+
+    def _add_members(self, objects: Any, no_recurse: bool = True) -> None:
+        """Adds a list of nodes to this layer (``editDisplayLayerMembers``, no
+        checks: rig's own use).
 
         Args:
             no_recurse: If True, do not add child objects.
@@ -208,9 +228,9 @@ class DisplayLayer(DGNode):
             objects = [objects]
         _cmds_edit.editDisplayLayerMembers(str(self), *objects, noRecurse=no_recurse)
 
-    def remove_members(self, objects: DAGNode | str | list[DAGNode | str]) -> None:
+    def _remove_members(self, objects: DAGNode | str | list[DAGNode | str]) -> None:
         """Removes object(s) from this layer (they go to ``defaultLayer``);
-        an object in another layer is left there."""
+        an object in another layer is left there (rig's own use)."""
         if not isinstance(objects, (list, tuple)):
             objects = [objects]
         mine = [str(x) for x in objects if self.for_node(x) == self]
@@ -233,7 +253,7 @@ class DisplayLayer(DGNode):
         layer."""
         self._guard("cleared")
         with _undo_chunk("rig.layer"):
-            self.remove_members(self.get_members(no_recurse=True))
+            self._remove_members(self.get_members(no_recurse=True))
 
     def delete(self, nodes: Any = None, **kwargs) -> None:
         """Deletes this layer (its members go to ``defaultLayer``), in one undo
@@ -245,7 +265,7 @@ class DisplayLayer(DGNode):
         name = self._guard("deleted")
         self._refuse_if_locked("delete")
         with _undo_chunk("rig.layer"):
-            self.remove_members(self.get_members(no_recurse=True))
+            self._remove_members(self.get_members(no_recurse=True))
             super().delete(**kwargs)
         if cmds.objExists(name):
             raise RuntimeError(f"'{name}' survived its deletion")

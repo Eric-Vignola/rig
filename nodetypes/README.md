@@ -122,10 +122,10 @@ from rig.nodetypes.plugins import load_plugin
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
-| `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members`, `remove(x)` (the DSL's `x << -sg`) |
+| `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members`, `remove(x)` (the DSL's `x << -sg`); the raw `add_members` / `remove_members` / `force_elements` raise, naming `x << sg` / `sg.remove(x)` |
 | `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `remove(x)` (the DSL's `x << -mat`), `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
-| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `add_members` / `remove_members` / `clear` / `delete`, `remove(x)` (the DSL's `x << -layer`); the DSL's `Layer` |
+| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `clear` / `delete`, `x << layer` and `remove(x)` (the DSL's `x << -layer`), the one way in and out (`add_members` / `remove_members` raise, naming them); the DSL's `Layer` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `get_namespace`, `get_file_path(copy_number=False)`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `get_data_type()` of both follows the wiring and the selector |
 | `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
@@ -525,11 +525,15 @@ Membership is a connection from the layer's `drawInfo` into the member's
 side without enumerating layers. A node is in one layer; `defaultLayer`
 (undeletable) is where it sits when in none, and `for_node` answers `None`
 there. Children draw with a member's override through the DAG without
-being members, and `add_members` never recurses. The DSL's `Layer` is this
+being members, and `x << layer` never recurses. The DSL's `Layer` is this
 class (`rig.Layer is DisplayLayer`): a layer node on the right of `<<`,
 `in` or `-` is the membership collection (`layer.remove(x)` is the method
 of `x << -layer`), and `DisplayLayer()` (`Layer()`) the kind, which means
-`defaultLayer` on `<<`.
+`defaultLayer` on `<<`. That is the one way in and out (user decision
+2026-10-16): the raw `add_members` / `remove_members` an object set has, and
+a shading engine's `force_elements`, raise a TypeError naming the rig form
+(`cube << layer`, `layer.remove(cube)`, `cube.f[0:2] << red`,
+`red.remove(...)`); a plain `ObjectSet` keeps them.
 
 ### Serialisation and files
 

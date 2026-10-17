@@ -952,19 +952,43 @@ class Tag(_MemberSpec):
 
     @_statement
     def remove(self, members: Any) -> Any:
-        """``Tag('x').remove(members)``: exactly what ``members << -Tag('x')``
-        (its shorthand) does: components leave the tag, which stays; a node
-        deletes the tag itself (refused while a deformer references it unless
-        ``force=True``); the same refusals, before any write; one undo step.
-        Returns ``members``, as ``<<`` returns its left-hand side (user
-        decision 2026-10-16)."""
+        """``Tag('x').remove(members)``: the components leave the tag, which
+        stays, as ``members << -Tag('x')`` (its shorthand) does: the same
+        refusals, before any write; one undo step. It takes MEMBERS ONLY (user
+        decision 2026-10-16, after step F): a node is a TypeError naming
+        ``Tag('x').delete(node)``, which deletes the tag (``node << -Tag('x')``
+        still does). Returns ``members``, as ``<<`` returns its left-hand side."""
         if self._name is None and not self._remove:
             raise TypeError(
                 "Tag().remove(x): a method names one tag; x << Tag() takes x out of "
                 "every tag"
             )
         self._verb("remove")
-        return (-self).inject(members)
+        self._refuse_whole(members)
+        return (-self)._run_inject(members)
+
+    def _refuse_whole(self, members: Any) -> None:
+        """`remove`'s members-only rule: a node (a whole object) among `members`
+        is a TypeError naming ``Tag('x').delete(node)``, raised before any
+        write. A plug, and anything `normalise` refuses, is left to the verb's
+        own refusal (the operator's text)."""
+        if isinstance(members, Plug):
+            return
+        try:
+            selections = _normalise(
+                members, want_shapes=True,
+                refuse_plugs=lambda plug: self._plug_error(plug, "<<"),
+            )
+        except Exception:  # noqa: BLE001 -- the verb raises its own refusal
+            return
+        for selection in selections:
+            if selection.kind == "whole":
+                node = _short(selection.path)
+                raise TypeError(
+                    f"Tag({self._name!r}).remove takes members (components: "
+                    f"{node}.vtx[...] / .f[...] / .e[...]); to delete the tag from "
+                    f"{node}, write Tag({self._name!r}).delete({node!r})"
+                )
 
     def set(self, members: Any) -> None:
         """Replace the tag's contents with ``members`` on their node

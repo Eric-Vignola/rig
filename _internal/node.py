@@ -70,7 +70,7 @@ def _node_lshift(node: Any, other: Any) -> Any:
 
     # 0. Membership -- returns the node.
     if _is_membership(other):
-        return other._member().inject(node)
+        return other._member()._run_inject(node)
 
     # 1. Attribute-spec injection -- add an attribute on this node.
     if _is_attribute_spec(other):
@@ -147,7 +147,7 @@ def _node_rshift(node: Any, other: Any) -> Any:
     from rig._internal.types import _is_attribute_spec, _is_membership
 
     if _is_membership(other):
-        return other._member().query(node)
+        return other._member()._run_query(node)
     from rig._internal.anim_keys import _Keys, rshift_error
 
     if type(other) is _Keys:

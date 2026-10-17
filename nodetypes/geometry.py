@@ -250,8 +250,8 @@ class Geometry(DAGNode):
             kwargs: kwargs supported by cmds.makePaintable().
         """
         attr               = self.find_attr(attr)
-        args               = (type(self).get_node_type(self), type(attr).get_name(attr))
-        kwargs["attrType"] = type(attr).get_data_type(attr)
+        args               = (type(self).get_node_type(self), type(attr)._raw_get_name(attr))
+        kwargs["attrType"] = type(attr)._raw_get_data_type(attr)
         _cmds_edit.makePaintable(*args, **kwargs)
 
     @staticmethod

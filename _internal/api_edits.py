@@ -85,7 +85,7 @@ def _rig_named(owner: Any) -> bool:
             cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
             or cls._name not in _NAMES
             or cls.__str__ is not _STR
-            or cls.ensure_valid is not _ENSURE
+            or cls._raw_ensure_valid is not _ENSURE
         ):
             return False
     except AttributeError:

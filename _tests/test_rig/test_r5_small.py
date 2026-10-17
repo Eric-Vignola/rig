@@ -675,6 +675,23 @@ def _non_compound_repinned(expected, got):
     return ["raises", chain]
 
 
+def _underscore_probe_repinned(case, expected, got):
+    """`expected` (an ee03336 outcome) re-pinned for a '_' name looked up on a
+    plug of a deleted or freed node (user decision 2026-10-16, must-fix: a '_'
+    probe raises AttributeError, never RuntimeError, so ``hasattr`` and numpy's
+    probes answer; fix round 2026-10-16): ee03336's "already deleted!" becomes
+    `got`'s AttributeError. Any other case is `expected` as it is."""
+    if (
+        case.endswith(": private name")
+        and (" deleted:" in case or " freed:" in case)
+        and expected[0] == "raises" and got[0] == "raises"
+        and expected[1][0][0] == "RuntimeError" and "already deleted!" in expected[1][0][1]
+        and got[1][0][0] == "AttributeError"
+    ):
+        return got
+    return expected
+
+
 class TestTheChildLookupsOfEe03336(MayaTestCase):
     """Every child lookup of `_child_outcomes` gives what ee03336 gave."""
 
@@ -688,6 +705,9 @@ class TestTheChildLookupsOfEe03336(MayaTestCase):
                 # re-pinned (user decision 2026-10-16, the property ban): the
                 # non-compound lookup error (`_non_compound_repinned`)
                 expected = _non_compound_repinned(oracle[case], table[case])
+                # re-pinned (user decision 2026-10-16, must-fix: a '_' probe on a
+                # deleted or freed node's plug is an AttributeError)
+                expected = _underscore_probe_repinned(case, expected, table[case])
                 self.assertEqual(table[case], expected)
 
     def test_the_table_reaches_every_branch(self):

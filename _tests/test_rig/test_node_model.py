@@ -1560,9 +1560,12 @@ class TestOneNodeHierarchy(MayaTestCase):
     def test_publish_refuses_a_container_member_name(self):
         with container("box") as box:
             inner = Node.create("transform", name="inner")
-            # re-pinned (user decision 2026-10-16, the property ban): the methods
-            # are refused; 'name' and 'uuid' were properties, now no members
-            for name in ("get_name", "cleanup", "get_uuid", "rename"):
+            # re-pinned (fix round 2026-10-16, the name rule with aliases, user
+            # decisions 2026-10-16): a published name is an attribute of the
+            # container (a bindAttr alias), so a method's name publishes: bare it
+            # is the published plug, called the method. A private member's name
+            # (``_name``) is still refused, in every form
+            for name in ("_name",):
                 with self.subTest(name=name):
                     with self.assertRaisesRegex(ValueError, "is a Container attribute"):
                         container.publish_input(inner.tx, name)
@@ -1571,18 +1574,31 @@ class TestOneNodeHierarchy(MayaTestCase):
                     # the external-source form too
                     with self.assertRaisesRegex(ValueError, "is a Container attribute"):
                         container.publish_input(1.0, name)
-            # a plain name still publishes, and so do 'name' and 'uuid' now
+            container.publish_input(inner.rx, "get_name")
+            container.publish_output(inner.worldInverseMatrix[0], "cleanup")
+            container.publish_input(1.0, "get_uuid")
+            container.publish_input(inner.rz, "rename")
+            # a plain name still publishes, and so do 'name' and 'uuid'
             container.publish_input(inner.ty, "lift")
             container.publish_input(inner.tx, "name")
             container.publish_output(inner.worldMatrix[0], "uuid")
         self.assertEqual(
             sorted(cmds.container(str(box), query=True, publishName=True) or []),
-            ["lift", "name", "uuid"],
+            ["cleanup", "get_name", "get_uuid", "lift", "name", "rename", "uuid"],
         )
         box.name = 2.5  # the published plug: '=' is its '<<'
         self.assertEqual(cmds.getAttr("inner.tx"), 2.5)
         self.assertEqual(str(box), "box")
         self.assertEqual(box.get_name(), "box")
+        # a method's name: bare the published plug ('=' its '<<'), called the method
+        self.assertIsInstance(box.rename, Plug)
+        self.assertEqual(str(box.rename), "inner.rotateZ")
+        box.rename = 0.5
+        self.assertAlmostEqual(cmds.getAttr("inner.rz"), 0.5)
+        self.assertIsInstance(box.get_name, Plug)
+        self.assertIsInstance(box.get_uuid, Plug)
+        self.assertEqual(box.get_uuid(), cmds.ls("box", uuid=True)[0])
+        self.assertIsInstance(box.cleanup, Plug)
 
     def test_node_level_class_attribute_refuses_sugar(self):
         # re-pinned (user decision 2026-10-16, name clashes: a bare name is the
@@ -3069,9 +3085,12 @@ class TestNoWrapperLeft(MayaTestCase):
         # canonical-kind cache. Re-pinned (user decision 2026-10-16, class data):
         # its __setattr__ is the class-body rule for a late class assignment
         # (a function made a plug method, lowercase data refused), and touches
-        # no cache; deletion is not hooked
+        # no cache. Re-pinned (fix round 2026-10-16, the class-route mirrors):
+        # deletion is hooked only to keep a mirrored name's `_raw_` mirror
+        # (`_base._MIRRORED`), and touches no cache either
         self.assertEqual(vars(_base.NodeMeta)["__setattr__"].__qualname__, "NodeMeta.__setattr__")
-        self.assertNotIn("__delattr__", vars(_base.NodeMeta))
+        self.assertEqual(vars(_base.NodeMeta)["__delattr__"].__qualname__, "NodeMeta.__delattr__")
+        self.assertNotIn("_CLASS_BY_TYPE", vars(_base.NodeMeta)["__delattr__"].__code__.co_names)
 
     def test_stack_values_treats_typed_nodes_as_nodes(self):
         from rig import List

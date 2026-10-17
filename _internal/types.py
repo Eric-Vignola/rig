@@ -19,6 +19,7 @@ from typing import Any
 
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
+    _PLUG_TYPES,
     _fixed_attr_kind,
     _new_attr,
     _NON_MATRIX_ATTR_API_TYPES,
@@ -148,7 +149,7 @@ def _is_real(obj: Any) -> bool:
 
 def _is_attribute(obj: Any) -> bool:
     """Return ``True`` if ``obj`` is an ``Attribute`` (or any subclass)."""
-    return isinstance(obj, Attribute)
+    return type(obj) in _PLUG_TYPES
 
 
 # ``data_type`` strings of the compound data a generic attribute can hold
@@ -192,13 +193,13 @@ def _is_compound(obj: Any) -> bool:
         # ``num_children`` raises TypeError on non-compound plugs (incl.
         # generic / kGeneric attributes like choice.output). Guard.
         try:
-            if type(obj).get_num_children(obj) > 0:
+            if type(obj)._raw_get_num_children(obj) > 0:
                 return True
         except Exception:
             pass
         # Generic-typed compound (e.g. choice.output after being typed
         # to double3 by a compound input connection).
-        return type(obj).get_data_type(obj) in _COMPOUND_DATA_TYPES
+        return type(obj)._raw_get_data_type(obj) in _COMPOUND_DATA_TYPES
     except Exception:
         return False
 
@@ -226,7 +227,7 @@ def _is_array(obj: Any) -> bool:
     if not _is_attribute(obj):
         return False
     try:
-        return type(obj).is_multi(obj)
+        return type(obj)._raw_is_multi(obj)
     except Exception:
         return False
 
@@ -245,10 +246,10 @@ def _fills_one_element(obj: Any) -> bool:
     """
     if isinstance(obj, numbers.Real):
         return True
-    if not isinstance(obj, Attribute):
+    if type(obj) not in _PLUG_TYPES:
         return False
     try:
-        return not type(obj).is_multi(obj)
+        return not type(obj)._raw_is_multi(obj)
     except Exception:
         return False
 
@@ -261,7 +262,7 @@ def _is_matrix(obj: Any) -> bool:
         # a scalar or numeric compound kind never holds a matrix
         if _fixed_attr_kind(obj) in _NON_MATRIX_ATTR_API_TYPES:
             return False
-        return type(obj).get_data_type(obj) == "matrix"
+        return type(obj)._raw_get_data_type(obj) == "matrix"
     except Exception:
         return False
 
@@ -298,7 +299,7 @@ def _is_quaternion(obj: Any) -> bool:
     if not _is_compound(obj):
         return False
     try:
-        return type(obj).get_num_children(obj) == 4
+        return type(obj)._raw_get_num_children(obj) == 4
     except Exception:
         return False
 
@@ -310,7 +311,7 @@ def _is_vector(obj: Any) -> bool:
     if not _is_compound(obj):
         return False
     try:
-        return type(obj).get_num_children(obj) == 3
+        return type(obj)._raw_get_num_children(obj) == 3
     except Exception:
         return False
 
@@ -347,7 +348,7 @@ def _get_compound(obj: Any) -> list:
     not a compound (or ``obj`` itself if it's already a sequence).
     """
     if _is_compound(obj):
-        return [obj.child(i) for i in range(type(obj).get_num_children(obj))]
+        return [obj.child(i) for i in range(type(obj)._raw_get_num_children(obj))]
     if _is_sequence(obj):
         return list(obj)
     return [obj]
@@ -438,11 +439,11 @@ def _arity_of(obj: Any) -> int | None:
     """
     if not _is_attribute(obj):
         return None
-    arity = _ARITY_BY_DATA_TYPE.get(type(obj).get_data_type(obj))
+    arity = _ARITY_BY_DATA_TYPE.get(type(obj)._raw_get_data_type(obj))
     if arity:
         return arity
     try:
-        arity = type(obj).get_num_children(obj)
+        arity = type(obj)._raw_get_num_children(obj)
     except (TypeError, RuntimeError):
         arity = None
     if arity:
@@ -451,7 +452,7 @@ def _arity_of(obj: Any) -> int | None:
     if src is None:
         return None
     try:
-        arity = type(src).get_num_children(src)
+        arity = type(src)._raw_get_num_children(src)
     except (TypeError, RuntimeError):
         arity = None
     if arity:
@@ -473,7 +474,7 @@ def _is_euler(obj: Any) -> bool:
         if probe is None:
             continue
         try:
-            child = type(probe).child(probe, 0)
+            child = type(probe)._raw_child(probe, 0)
             if type(child).get_attribute_type(child) == "doubleAngle":
                 return True
         except Exception:
@@ -519,7 +520,7 @@ def math_type(obj: Any) -> str:
             return "quaternion"
         if arity == 3:
             return "euler" if _is_euler(obj) else "vector"
-        if type(obj).get_data_type(obj) in _SCALAR_DATA_TYPES:
+        if type(obj)._raw_get_data_type(obj) in _SCALAR_DATA_TYPES:
             return "scalar"
         return "unknown"
     if _is_sequence(obj):

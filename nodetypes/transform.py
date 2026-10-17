@@ -376,12 +376,12 @@ class Transform(DAGNode):
     def get_rotate_pivot(self, world_space: bool = True) -> OpenMaya.MPoint:
         """Returns the rotation pivot."""
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return type(self).get_fn_set(self).rotatePivot(space)
+        return type(self)._raw_get_fn_set(self).rotatePivot(space)
 
     def get_scale_pivot(self, world_space: bool = True) -> OpenMaya.MPoint:
         """Returns the scale pivot."""
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return type(self).get_fn_set(self).scalePivot(space)
+        return type(self)._raw_get_fn_set(self).scalePivot(space)
 
     def set_pivots(
         self, pivot: OpenMaya.MVector | list[float], world_space: bool = True
@@ -402,10 +402,10 @@ class Transform(DAGNode):
         """creates a TransformData object from a given string"""
         from cgmath.hierarchy import TransformData
 
-        node   = TransformData(name=type(self).get_short_name(self), uuid=type(self).get_uuid(self))
+        node   = TransformData(name=type(self).get_short_name(self), uuid=type(self)._raw_get_uuid(self))
         parent = self.get_parent()
         if parent is not None:
-            _set_parent_uuid(node, type(parent).get_uuid(parent))
+            _set_parent_uuid(node, type(parent)._raw_get_uuid(parent))
 
         # if there is a locatorShape, set this type as "locator"
         node.node_type = cmds.nodeType(str(self))
@@ -438,7 +438,7 @@ class Transform(DAGNode):
             node.user_defined_attributes = {}
             for att in attrs:
                 try:
-                    node.user_defined_attributes[type(att).get_name(att)] = self._serialize_user_attr(att)
+                    node.user_defined_attributes[type(att)._raw_get_name(att)] = self._serialize_user_attr(att)
 
                 # gracfully pass on this one
                 except Exception as e:
@@ -459,7 +459,7 @@ class Transform(DAGNode):
         # fed it is not saved: serialization carries no connections)
         if _is_generic_slot(att):
             data["attributeType"] = "typed"
-            if type(att).is_multi(att):
+            if type(att)._raw_is_multi(att):
                 data["multi"] = True
                 data["value"] = [
                     [int(i), att[i].get()]
@@ -470,7 +470,7 @@ class Transform(DAGNode):
                 data["value"] = att.get()
             parent = att.get_parent()
             if parent is not None:
-                data["parent"] = type(parent).get_name(parent)
+                data["parent"] = type(parent)._raw_get_name(parent)
             data["keyable"]     = type(att).is_keyable(att)
             data["channel_box"] = type(att).is_channel_box(att)
             return data
@@ -478,10 +478,10 @@ class Transform(DAGNode):
         # a multi's own plug reports "compound", addAttr() wants the element
         # type. it is read off the attribute, a getAttr on an element would
         # create it.
-        if type(att).is_multi(att):
+        if type(att)._raw_is_multi(att):
             data["multi"] = True
             if type(att).is_typed(att):
-                data_type = OpenMaya.MFnTypedAttribute(type(att).get_mobject(att)).attrType()
+                data_type = OpenMaya.MFnTypedAttribute(type(att)._raw_get_mobject(att)).attrType()
                 if data_type not in TYPED_DATA_NAMES:
                     raise ValueError(f"Unsupported multi data type: {data_type}")
                 data["dataType"] = TYPED_DATA_NAMES[data_type]
@@ -493,12 +493,12 @@ class Transform(DAGNode):
             # typed attrs (string, stringArray, doubleArray, etc.)
             # are created with cmds.addAttr(dataType=...)
             if type(att).is_typed(att):
-                data["dataType"] = type(att).get_data_type(att)
+                data["dataType"] = type(att)._raw_get_data_type(att)
             else:
-                data["attributeType"] = type(att).get_data_type(att)
+                data["attributeType"] = type(att)._raw_get_data_type(att)
 
             if att._mplug.isCompound:
-                data["numberOfChildren"] = type(att).get_num_children(att)
+                data["numberOfChildren"] = type(att)._raw_get_num_children(att)
             else:
                 data["value"] = att.get()
 
@@ -507,7 +507,7 @@ class Transform(DAGNode):
 
         parent = att.get_parent()
         if parent is not None:
-            data["parent"] = type(parent).get_name(parent)
+            data["parent"] = type(parent)._raw_get_name(parent)
 
         data["keyable"]     = type(att).is_keyable(att)
         data["channel_box"] = type(att).is_channel_box(att)
@@ -586,7 +586,7 @@ class Transform(DAGNode):
                     continue
 
                 tree.append(child.serialize())
-                objs.append(type(child).get_mobject(child))
+                objs.append(type(child)._raw_get_mobject(child))
                 _recurse(child)
 
         # serialize the root
@@ -595,7 +595,7 @@ class Transform(DAGNode):
 
         # recurse through the hierarchy
         tree    = [root]
-        objs    = [type(self).get_mobject(self)]  # the serialized nodes' MObjects, for the bind pose
+        objs    = [type(self)._raw_get_mobject(self)]  # the serialized nodes' MObjects, for the bind pose
         skipped = {}
         _recurse(self)
 

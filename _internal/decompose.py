@@ -132,7 +132,7 @@ def _node_is_transform(node: Any) -> bool:
     MSelectionList / MFn introspection.
     """
     if hasattr(type(node), "has_base_type"):  # the class: no plug-method check
-        type(node).ensure_valid(node)
+        type(node)._raw_ensure_valid(node)
     else:
         try:
             node = _cast(str(node))
@@ -208,8 +208,8 @@ def _disconnect_compound(plug_str: str) -> None:
     targets = [root_attr]
     # Walk compound children via the canonical Attribute API.
     try:
-        if not type(root_attr).is_multi(root_attr):
-            for i in range(type(root_attr).get_num_children(root_attr)):
+        if not type(root_attr)._raw_is_multi(root_attr):
+            for i in range(type(root_attr)._raw_get_num_children(root_attr)):
                 targets.append(root_attr.child(i))
     except (RuntimeError, AttributeError, TypeError):
         pass  # Non-compound attr (e.g. matrix data) -- no children to enumerate.
@@ -236,7 +236,7 @@ def _setattr_disconnect(plug_str: str, *values: float) -> None:
     _disconnect_compound(plug_str)
     try:
         plug_attr = Attribute(plug_str)
-        type(plug_attr).set(plug_attr, *values)
+        type(plug_attr)._raw_set(plug_attr, *values)
     except (RuntimeError, Exception):
         pass
 
@@ -269,7 +269,7 @@ def _apply_full_decomposition(
             return
         _disconnect_compound(str(channel))
         try:
-            type(channel).set(channel, *values)
+            type(channel)._raw_set(channel, *values)
         except (RuntimeError, Exception):
             pass
 
@@ -307,14 +307,14 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
     attr     = type(dst).get_alias(dst)
     plug_str = str(dst)
     try:
-        node = type(dst).get_node(dst)
+        node = type(dst)._raw_get_node(dst)
     except Exception:
         return False
     node_str = str(node)
 
     is_transform = _node_is_transform(node)
     try:
-        dst_data_type = type(dst).get_data_type(dst)
+        dst_data_type = type(dst)._raw_get_data_type(dst)
     except Exception:
         dst_data_type = None
 
@@ -335,7 +335,7 @@ def _try_matrix_source_routing(dst: Any, arr: np.ndarray) -> bool:
         if dst_data_type == "matrix":
             _disconnect_compound(plug_str)
             try:
-                type(dst).set(dst, *m4x4.ravel().tolist(), type="matrix")
+                type(dst)._raw_set(dst, *m4x4.ravel().tolist(), type="matrix")
             except RuntimeError as e:
                 LOGGER.debug("matrix set on %s failed: %s", dst, e)
             return True

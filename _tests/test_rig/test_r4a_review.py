@@ -593,8 +593,14 @@ class TestContainerFindAllAndPublishNames(_SceneCase):
         with container("box") as box:
             inner = Node.create("transform", name="inner")
             container.publish_input(inner.tx, "wrap")
-            with self.assertRaisesRegex(ValueError, r"'cleanup' is a Container attribute"):
-                container.publish_input(inner.ty, "cleanup")
+            # re-pinned (fix round 2026-10-16, the name rule with aliases): a
+            # method's name publishes too (bare, the published plug); a private
+            # member's name is still refused
+            container.publish_input(inner.ty, "cleanup")
+            with self.assertRaisesRegex(ValueError, r"'_name' is a Container attribute"):
+                container.publish_input(inner.tz, "_name")
+        self.assertIsInstance(box.cleanup, Plug)
+        self.assertEqual(str(box.cleanup), "inner.translateY")
         box.wrap = 2.0
         self.assertEqual(cmds.getAttr("inner.tx"), 2.0)
         self.assertIsInstance(box.wrap, Plug)

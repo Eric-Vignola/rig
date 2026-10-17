@@ -97,8 +97,9 @@ def _class_attr(cls: type, name: str) -> Any:
 # Python version whose encoding is not known here (`_METHOD_LOAD` all 0).
 #
 # Rig's own code reaches public methods by calls (the cheap path) or through
-# the class (``type(x).m(x)``, no check at all) on its hot paths: see
-# test_plug_methods.TestInternalAccesses. A class-level identity constant of a
+# the class (``type(x).m(x)``, no check at all; ``type(x)._raw_m(x)`` for the
+# names `_MIRRORED` lists, which runs no descriptor either) on its hot paths:
+# see test_plug_methods.TestInternalAccesses. A class-level identity constant of a
 # public method (``Cls.__dict__["m"]``) holds `_raw_function` of it.
 
 
@@ -411,6 +412,17 @@ def _is_class_data(name: str, value: Any) -> bool:
     )
 
 
+def _decorated_method(value: Any) -> bool:
+    """True for a method-making decorator's result (``functools.lru_cache`` /
+    ``cache`` of a function, ``partialmethod``, ``singledispatchmethod``): the
+    class-body rule refuses it with its own message (`_member_refused`)."""
+    import functools
+
+    if isinstance(value, (functools.partialmethod, functools.singledispatchmethod)):
+        return True
+    return isinstance(getattr(value, "__wrapped__", None), _FunctionType)
+
+
 def _member_refused(owner: str, name: str, value: Any, plug: bool) -> TypeError:
     """The TypeError for a public member `name` = `value` of a node class
     (`plug` False) or plug class (`plug` True) named `owner` that is no method
@@ -426,6 +438,15 @@ def _member_refused(owner: str, name: str, value: Any, plug: bool) -> TypeError:
         what, bare, attr = "a plug class", "the compound child of that name", "plug"
     else:
         what, bare, attr = "a node class", "the node's Maya attr of that name", "node"
+    if kind == "descriptor" and _decorated_method(value):
+        # ``@functools.lru_cache`` / ``cache``, ``partialmethod``,
+        # ``singledispatchmethod``: a method, but not a plain function
+        return TypeError(
+            f"{owner}.{name}: {what} takes a public method as a plain function "
+            f"(def {name}(self, ...)), so that a bare name is {bare} or the "
+            f"method; a decorated method ({type(value).__name__}) is not one: "
+            f"decorate a private helper (_{name}) and call it from a plain method"
+        )
     if kind == "data":
         fix = (
             f"keep Python state under a '_' name ({'_' + name} = {value!r:.40}), or "
@@ -456,15 +477,20 @@ def _node_member(owner: str, name: str, value: Any) -> Any:
     raise _member_refused(owner, name, value, plug=False)
 
 
+def _is_mock(value: Any) -> bool:
+    """True for a ``unittest.mock`` mock (``mock.patch.object``'s MagicMock),
+    which a late class assignment keeps as it is so that patching a method works.
+    Read lazily: with ``unittest.mock`` never imported, no value is a mock."""
+    mock = sys.modules.get("unittest.mock")
+    return mock is not None and isinstance(value, mock.NonCallableMock)
+
+
 def _callable_kept(value: Any) -> bool:
-    """True for a value a late class assignment keeps as it is: a callable that
-    is no function and no descriptor (a mock), or a plug-method descriptor
-    already made."""
-    return isinstance(value, _PLUG_DESCRIPTORS) or (
-        callable(value)
-        and not isinstance(value, (_FunctionType, type))
-        and not hasattr(type(value), "__get__")
-    )
+    """True for a value a late class assignment keeps as it is: a mock
+    (`_is_mock`), or a plug-method descriptor already made. Any other callable
+    that is no function (``functools.partial``, a builtin, a callable instance)
+    follows the class-body rule, as it would in a class body."""
+    return isinstance(value, _PLUG_DESCRIPTORS) or _is_mock(value)
 
 
 def _raw_function(value: Any) -> Any:
@@ -474,6 +500,62 @@ def _raw_function(value: Any) -> Any:
     if isinstance(value, (_PlugMethod, _ChildOrMethod)):
         value = value.func
     return getattr(value, "__func__", value)
+
+
+# --- the class-route mirrors (fix round 2026-10-16) ---------------------------
+#
+# rig's internals call a public method through the class, so that a patched or
+# overridden method is seen. On a node or plug class, ``type(x).m`` runs the
+# plug-method descriptor's ``__get__`` (a Python call, ~70 ns), and rail_spine
+# made about 150k such reads per build (rev_speed: +2-3 % with the descriptor
+# kept vs swapped for the plain member). So the metaclasses keep, for each name
+# below, a plain mirror ``_raw_<name>`` of the class's member, written with the
+# member at class creation (`NodeMeta.__new__`, `_wrap_plug_methods`) and at
+# every later class assignment or deletion (``mock.patch.object`` included,
+# `NodeMeta.__setattr__` / ``__delattr__`` and `_PlugMeta`'s): it is always the
+# function ``cls.<name>`` gives (a classmethod's classmethod, a mock as it is).
+# A mirror read is a plain class read (no descriptor runs). rig's internals call
+# these names as ``type(x)._raw_m(x)`` (test_final_fixes.TestClassRouteMirrors
+# lints it: no ``type(x).m`` route of a mirrored name is left); the mirror is
+# derived, never written by hand, so a patch of the public method is seen.
+_MIRRORED = frozenset(
+    {
+        # node methods
+        "ensure_valid", "get_fn_set", "find_attr", "is_valid", "get_uuid",
+        "get_name", "get_mobject", "is_type", "set",
+        # plug methods
+        "get_full_name", "is_multi", "child", "is_locked", "get_data_type",
+        "get_node", "get_connected_attrs", "iter_connected_attrs", "connect",
+        "get_num_children", "element_by_logical_index",
+        # node class data the typed cast reads (`_ClassData`: the value)
+        "FN_SET", "CUSTOM_NODE_TYPE",
+    }
+)
+_RAW_NAME = {name: "_raw_" + name for name in _MIRRORED}
+
+
+def _mirror_value(value: Any) -> Any:
+    """What the mirror ``_raw_<name>`` of the class member `value` holds: the
+    function a class read of the member gives (a classmethod stays a plain
+    classmethod, so a class read binds it), class data's value, or the value
+    itself (a mock)."""
+    if isinstance(value, _ClassData):
+        return value.value
+    if isinstance(value, classmethod):
+        return classmethod(value.__func__)
+    return _raw_function(value)
+
+
+def _write_mirror(cls: type, name: str) -> None:
+    """Keep `cls`'s mirror of the member `name` (in `_MIRRORED`) equal to it:
+    its own entry's mirror, or none when `cls` does not define `name` (the
+    mirror is then inherited, as the member is)."""
+    raw = _RAW_NAME[name]
+    d   = cls.__dict__
+    if name in d:
+        type.__setattr__(cls, raw, _mirror_value(d[name]))
+    elif raw in d:
+        type.__delattr__(cls, raw)
 
 
 def _own_class_data(cls: type, name: str) -> Any:
@@ -618,6 +700,9 @@ class NodeMeta(type):
                 member = _node_member(class_name, key, value)
                 if member is not value:
                     attrs[key] = member
+                if key in _MIRRORED:
+                    # the class-route mirror (`_MIRRORED`)
+                    attrs[_RAW_NAME[key]] = _mirror_value(member)
         cls_obj   = type.__new__(mcs, class_name, bases, attrs)
 
         # a new class can change the dispatch of any node type
@@ -637,10 +722,20 @@ class NodeMeta(type):
         plug of a Maya attr ``helper``, ``node.helper()`` the method), an
         UPPER_CASE value is class data, and a callable that is no descriptor (a
         ``mock.patch.object`` mock) is kept as it is; any other public member
-        raises TypeError (a property, lowercase data). A ``_`` name is stored."""
+        raises TypeError (a property, lowercase data). A ``_`` name is stored.
+        A mirrored name's class-route mirror follows (`_MIRRORED`)."""
         if name[:1] != "_" and not _callable_kept(value):
             value = _node_member(cls.__name__, name, value)
         type.__setattr__(cls, name, value)
+        if name in _MIRRORED:
+            _write_mirror(cls, name)
+
+    def __delattr__(cls, name: str) -> None:
+        # ``mock.patch.object`` restores an inherited member by deleting the
+        # patch: the class-route mirror goes with it (`_MIRRORED`)
+        type.__delattr__(cls, name)
+        if name in _MIRRORED:
+            _write_mirror(cls, name)
 
 def _cast(obj: Any, build: bool = True) -> Any:
     """The typed cast, the one cast core (D12). Private: the public doors are
@@ -664,7 +759,7 @@ def _cast(obj: Any, build: bool = True) -> Any:
     mobj     = None
     dag_path = None
     sel      = None
-    if isinstance(obj.__class__, NodeMeta) or isinstance(obj, Attribute):
+    if isinstance(obj.__class__, NodeMeta) or type(obj) in _PLUG_TYPES:
         return obj
     elif isinstance(obj, OpenMaya.MPlug):
         return Attribute(obj)
@@ -960,8 +1055,8 @@ def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
     if (
         (init is not dg_init and init is not dag_init)
         or cls_obj.__new__ is not object.__new__
-        or cls_obj.CUSTOM_NODE_TYPE
-        or getattr(cls_obj.is_type, "__func__", None) not in is_type_funcs
+        or cls_obj._raw_CUSTOM_NODE_TYPE
+        or getattr(cls_obj._raw_is_type, "__func__", None) not in is_type_funcs
         or cls_obj._name not in name_funcs
     ):
         return None
@@ -974,10 +1069,10 @@ def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
         if init is dag_init:
             d["_mdagpath"] = sel.getDagPath(0)
             d["_mobject"]  = d["_mdagpath"].node()
-            d["_fn_set"]   = cls_obj.FN_SET(d["_mdagpath"])
+            d["_fn_set"]   = cls_obj._raw_FN_SET(d["_mdagpath"])
         else:
             d["_mobject"] = sel.getDependNode(0)
-            d["_fn_set"]  = cls_obj.FN_SET(d["_mobject"])
+            d["_fn_set"]  = cls_obj._raw_FN_SET(d["_mobject"])
         d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
         d["_attr_dict"] = {}
     except Exception:
@@ -1395,11 +1490,11 @@ def _dg_named_owner(attr: Any) -> Any:
     needs only the raise runs the two checks and builds no name. A DAG node's
     class names it through its path (`DAGNode._name` re-binds a stale one), so
     it is never such an owner. The classes are read at every call, so a patched
-    method is seen at once (the naming members are plain functions: their class
-    reads run no descriptor). The owner test is `_dg_named_node`'s, written out
-    here (the hot path)."""
+    method is seen at once (``ensure_valid`` and ``get_full_name`` through their
+    class-route mirrors, `_MIRRORED`: no descriptor runs). The owner test is
+    `_dg_named_node`'s, written out here (the hot path)."""
     node = attr.__dict__.get("_node")
-    if node is None or type(attr).get_full_name is not _ATTRIBUTE_FULL_NAME:
+    if node is None or type(attr)._raw_get_full_name is not _ATTRIBUTE_FULL_NAME:
         return None
     naming = _DG_NAMING
     cls    = type(node)
@@ -1408,7 +1503,7 @@ def _dg_named_owner(attr: Any) -> Any:
             naming is None
             or cls._name is not naming[0]
             or cls.__str__ is not naming[1]
-            or cls.ensure_valid is not naming[2]
+            or cls._raw_ensure_valid is not naming[2]
             or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
             or "ensure_valid" in node.__dict__
         ):
@@ -1432,7 +1527,7 @@ def _dg_named_node(node: Any) -> bool:
             naming is None
             or cls._name is not naming[0]
             or cls.__str__ is not naming[1]
-            or cls.ensure_valid is not naming[2]
+            or cls._raw_ensure_valid is not naming[2]
             or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
             or "ensure_valid" in node.__dict__
         )
@@ -1718,7 +1813,7 @@ def _point_count(attr: Any) -> int:
     """The point count of the geometry node of `attr`, a component plug (it bounds
     a component slice). Read through the node's own class: the owner can be a
     class the user chose (``DAGNode(mesh).vtx[0:2]``), which has none."""
-    node = type(attr).get_node(attr)
+    node = type(attr)._raw_get_node(attr)
     if not hasattr(type(node), "get_num_weight_points"):
         node = _cast(attr._mplug.node())
     return type(node).get_num_weight_points(node)
@@ -1762,7 +1857,7 @@ def _path_instance_number(attr: Any, node: Any = None) -> int | None:
     if not mplug.isArray:
         return None
     if node is None:
-        node = type(attr).get_node(attr)
+        node = type(attr)._raw_get_node(attr)
     fn = node.__dict__.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode) or not _is_instanced_array(mplug):
         return None
@@ -1822,7 +1917,7 @@ def _element_path(attr: Any) -> Any:
     The top plug, taken before the disconnect, stays valid. Taken before the
     disconnect, handed to `_rebind_element` after it. A plug that is not held
     by rig (`attr` has no MPlug) gives None."""
-    mplug = attr.__dict__.get("_mplug") if isinstance(attr, Attribute) else None
+    mplug = attr.__dict__.get("_mplug") if type(attr) in _PLUG_TYPES else None
     if mplug is None:
         return None
     steps, cur, element = [], mplug, False
@@ -1875,9 +1970,11 @@ class _HeldRef(weakref.ref):
     __slots__ = ("key", "path")
 
 
-def _drop_held(ref: Any) -> None:
-    """The weak reference's callback: its Attribute is gone."""
-    held = sys.__dict__.get("_rig_held_elements")
+def _drop_held(ref: Any, _sys: Any = sys) -> None:
+    """The weak reference's callback: its Attribute is gone. `sys` is bound
+    here: at interpreter exit the module's globals are already None when the
+    last plugs go."""
+    held = _sys.__dict__.get("_rig_held_elements")
     if held is not None and held.get(ref.key) is ref:
         del held[ref.key]
 
@@ -2138,7 +2235,7 @@ def _plug_hash(attr: Any) -> int:
             name   = mplug.partialName(False, False, True, False, False, True)
             serial = _handle_serial(handle, mplug.node())
             return hash((serial, name + _deleted_instance_index(mplug)))
-        node = type(attr).get_node(attr)
+        node = type(attr)._raw_get_node(attr)
     handle = node.__dict__.get("_objhandle")
     if handle is None:
         # not a DGNode: named as str(node) names it
@@ -2447,8 +2544,14 @@ def _names_own_plug(attr: Any) -> bool:
     answers it: only a parent that is an array root fails it.
     """
     # the class keeps Attribute's naming (``__str__``, ``get_full_name``,
-    # ``get_alias``: Attribute's, patched or not), read from the class dicts
-    if not isinstance(attr, Attribute) or _redefines(type(attr), _NAMING_MEMBERS):
+    # ``get_alias``: Attribute's, patched or not), read from the class dicts;
+    # Plug, the common case (24k per rail_spine build), inline: its own dict
+    cls = type(attr)
+    if cls is _PLUG_FOR_METHODS:
+        d = cls.__dict__
+        if "__str__" in d or "get_full_name" in d or "get_alias" in d:
+            return False
+    elif cls not in _PLUG_TYPES or _redefines(cls, _NAMING_MEMBERS):
         return False
     # a freed attribute (see `_ensure_owner_alive`) is not read
     d      = attr.__dict__
@@ -2533,7 +2636,7 @@ POLYMORPHIC_OUTPUT_NODE_TYPES = frozenset({"choice"})
 def _is_text(value: Any) -> bool:
     """True if `value` is a plain str: a str that is not a plug (an `Attribute`
     is a str too, and names a connection)."""
-    return isinstance(value, str) and not isinstance(value, Attribute)
+    return isinstance(value, str) and type(value) not in _PLUG_TYPES
 
 
 def _is_enum_attr(attr: Any) -> bool:
@@ -2704,7 +2807,7 @@ def _holds_text(value: Any) -> bool:
     """True if `value` is a plain str, or a list / tuple / ndarray holding one
     at any depth (a numeric ndarray is answered by its dtype)."""
     if isinstance(value, str):
-        return not isinstance(value, Attribute)
+        return type(value) not in _PLUG_TYPES
     if isinstance(value, np.ndarray):
         if value.dtype.kind == "U":
             return True
@@ -2840,6 +2943,19 @@ def _undeclared_plug_state(plug: Any, name: str) -> AttributeError:
     )
 
 
+# False until the plug descriptors exist (below Attribute): `_PlugMeta.__init__`
+# then wraps every new plug class, and Attribute itself is wrapped once there
+_PLUG_RULE_READY = False
+
+# Every plug class (Attribute and each subclass, filled by `_PlugMeta.__init__`):
+# ``type(x) in _PLUG_TYPES`` is ``isinstance(x, Attribute)`` on rig's hot paths.
+# Attribute has a metaclass (`_PlugMeta`), so ``isinstance`` takes Python's slow
+# path (``__instancecheck__``, ~70 ns, ~150k per rail_spine build); the set read
+# is the exact-type fast path (~30 ns), with the same answer (fix round
+# 2026-10-16).
+_PLUG_TYPES: set = set()
+
+
 class _PlugMeta(type):
     """The metaclass of `Attribute` (and so of every plug class): a class
     assignment follows the class-body rule (`_wrap_plug_methods`). A public
@@ -2849,17 +2965,25 @@ class _PlugMeta(type):
     descriptor (a ``mock.patch.object`` mock) is kept as it is; any other public
     member raises TypeError. A ``_`` name is stored."""
 
+    def __init__(cls, *args: Any, **kwargs: Any) -> None:
+        # the class-body rule runs here, in the metaclass, so that no subclass
+        # can skip it (a ``__init_subclass__`` that does not call super())
+        super().__init__(*args, **kwargs)
+        _PLUG_TYPES.add(cls)
+        if _PLUG_RULE_READY:
+            _wrap_plug_methods(cls)
+
     def __setattr__(cls, name: str, value: Any) -> None:
-        if name[:1] != "_" and not (
-            isinstance(value, _KEPT_ON_PLUGS)
-            or (
-                callable(value)
-                and not isinstance(value, (_FunctionType, type))
-                and not hasattr(type(value), "__get__")
-            )
-        ):
+        if name[:1] != "_" and not (isinstance(value, _KEPT_ON_PLUGS) or _is_mock(value)):
             value = _plug_class_member(cls.__name__, name, value)
         type.__setattr__(cls, name, value)
+        if name in _MIRRORED:
+            _write_mirror(cls, name)
+
+    def __delattr__(cls, name: str) -> None:
+        type.__delattr__(cls, name)
+        if name in _MIRRORED:
+            _write_mirror(cls, name)
 
 
 @total_ordering
@@ -2899,11 +3023,6 @@ class Attribute(str, metaclass=_PlugMeta):
         self.__dict__.update(_attr_state(mplug, handle, _attr_handle(mplug)))
         _hold_if_element(self)
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        # a subclass's public functions are plug methods too (`_ChildOrMethod`)
-        super().__init_subclass__(**kwargs)
-        _wrap_plug_methods(cls)
-
     def __setattr__(self, name: str, value: Any) -> None:
         # assignment is strict (user decisions 2026-10-16): a method is never
         # replaced on one plug, a bare Attribute has no ``=`` sugar, and a plug
@@ -2937,16 +3056,20 @@ class Attribute(str, metaclass=_PlugMeta):
     # --- dunders
 
     def __dir__(self) -> list:
-        # without the class data, which an instance never reads (`_ClassData`)
+        # without the class data, which an instance never reads (`_ClassData`),
+        # and the class-route mirrors (`_MIRRORED`)
         cls = type(self)
-        return [n for n in object.__dir__(self) if type(_class_attr(cls, n)) is not _ClassData]
+        return [
+            n for n in object.__dir__(self)
+            if n[:5] != "_raw_" and type(_class_attr(cls, n)) is not _ClassData
+        ]
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}("{str(self)}")'
 
     def __str__(self) -> str:
         # the name `get_full_name` gives (a subclass's own, ComponentPlug's)
-        return type(self).get_full_name(self)
+        return type(self)._raw_get_full_name(self)
 
     def __hash__(self) -> int:
         # the Maya plug's identity, not the name: one key through every instance
@@ -2961,7 +3084,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """True if `other` is an Attribute of the same Maya plug (node, attribute
         and logical indices), whatever the instance path each is named through.
         A str is never equal: compare `str(attr)` for names."""
-        return isinstance(other, Attribute) and _same_plug(self, other)
+        return type(other) in _PLUG_TYPES and _same_plug(self, other)
 
     def __ne__(self, other: Any) -> bool:
         # not `str.__ne__`, which compares the names the two were built with
@@ -2987,7 +3110,7 @@ class Attribute(str, metaclass=_PlugMeta):
         _ensure_owner_alive(self)
 
         if isinstance(key, (int, np.integer)):
-            return type(self).element_by_logical_index(self, int(key))
+            return type(self)._raw_element_by_logical_index(self, int(key))
 
         elif isinstance(key, (list, tuple, np.ndarray)):
             # Fancy indexing with the ids a membership query returns
@@ -3058,7 +3181,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
             attribute_list = []
             for index in range(start, stop, step):
-                attribute_list.append(type(self).element_by_logical_index(self, index))
+                attribute_list.append(type(self)._raw_element_by_logical_index(self, index))
             return attribute_list
 
         else:
@@ -3131,13 +3254,25 @@ class Attribute(str, metaclass=_PlugMeta):
                 ids[i]      = attr
         if attr_name in names:
             return names[attr_name]
-        raise AttributeError(f"{str(self)}.{attr_name} not found" + _old_name_hint(attr_name))
+        try:
+            name = str(self)
+        except RuntimeError:
+            if attr_name[:1] != "_":
+                raise
+            # a node deleted to the undo queue cannot be named: a '_' probe
+            # (``hasattr``, numpy's ``__array__``) still gets the AttributeError
+            # it expects (user decision 2026-10-16, must-fix), named by the str
+            # the attribute was built with; any other name raises the node's
+            # "already deleted!", as every read of a deleted node does
+            name = str.__str__(self)
+        raise AttributeError(f"{name}.{attr_name} not found" + _old_name_hint(attr_name))
 
     # --- queries: every public member is a method (the property ban, user
     # decision 2026-10-16). Bare, a name is the compound child of that name when
     # the plug has one, else the method; with brackets it is the method (see
     # `_ChildOrMethod`). rig's own code reads them through the class
-    # (``type(plug).get_node(plug)``) or private state (``plug._mplug``).
+    # (``type(plug)._raw_get_node(plug)``, the mirror `_MIRRORED` keeps, or
+    # ``type(plug).m(plug)``) or private state (``plug._mplug``).
 
     def get_mplug(self) -> OpenMaya.MPlug:
         """Returns the OpenMaya.MPlug this attribute wraps."""
@@ -3199,7 +3334,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """
         node = self.__dict__["_node"]
         if node is None:
-            node = type(self).get_node(self)
+            node = type(self)._raw_get_node(self)
         name = str(node)
         # `alias`, read once the name proved the node is alive, and the attribute
         # of a dynamic attr (see `_ensure_owner_alive`)
@@ -3226,7 +3361,7 @@ class Attribute(str, metaclass=_PlugMeta):
         if cur_alias == alias:
             return
         if not alias:
-            if cur_alias != type(self).get_name(self):
+            if cur_alias != type(self)._raw_get_name(self):
                 cmds_edit.aliasAttr(str(self), remove=True)
             return
         cmds_edit.aliasAttr(alias, str(self))
@@ -3235,7 +3370,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """Returns the type of this attribute."""
         cls = type(self)
         return cmds.attributeQuery(
-            cls.get_name(self), node=str(cls.get_node(self)), attributeType=True
+            cls._raw_get_name(self), node=str(cls._raw_get_node(self)), attributeType=True
         )
 
     def get_data_type(self) -> str:
@@ -3273,7 +3408,7 @@ class Attribute(str, metaclass=_PlugMeta):
             # override or patch is ruled out by the hook, see `_keeps_query`)
             outer = _FALLBACK_QUERY
             try:
-                node            = type(self).get_node(self)
+                node            = type(self)._raw_get_node(self)
                 hook_node       = _hook_node(node)
                 _FALLBACK_QUERY = (self, typ, hook_node)
                 if hook_node is None or not _vouched_hook(type(node)):
@@ -3299,6 +3434,8 @@ class Attribute(str, metaclass=_PlugMeta):
         key = self._static_key_cache
         if key is _STATIC_KEY_UNSET:
             key = None
+            # a freed node's MPlug is never read ("already deleted!")
+            _ensure_owner_alive(self)
             try:
                 mplug   = self._mplug
                 fn      = OpenMaya.MFnDependencyNode(mplug.node())
@@ -3392,7 +3529,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """Returns a list of categories this attribute belongs to."""
         cls = type(self)
         return (
-            cmds.attributeQuery(cls.get_name(self), node=str(cls.get_node(self)), categories=True)
+            cmds.attributeQuery(cls._raw_get_name(self), node=str(cls._raw_get_node(self)), categories=True)
             or []
         )
 
@@ -3643,7 +3780,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def get_default_value(self) -> Any:
         """Returns the default value of this attr, if any."""
-        val = cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self), listDefault=True)
+        val = cmds.attributeQuery(type(self)._raw_get_name(self), node=type(self)._raw_get_node(self), listDefault=True)
         if val is not None and len(val) == 1:
             return val[0]
         return val
@@ -3720,7 +3857,7 @@ class Attribute(str, metaclass=_PlugMeta):
             # number as numeric data, which a type flag (its data type, "Tdata"
             # when it is empty) refuses: no flag, and no type query.
             if not (len(args) == 1 and isinstance(args[0], Real) and _is_generic_slot(self)):
-                typ = type(self).get_data_type(self)
+                typ = type(self)._raw_get_data_type(self)
                 if type(self).is_typed(self) or typ == "matrix":
                     kwargs["type"] = typ
 
@@ -3729,7 +3866,7 @@ class Attribute(str, metaclass=_PlugMeta):
         if (
             len(args) == 1
             and isinstance(args[0], (list, tuple, np.ndarray))
-            and type(self).get_data_type(self) in COUNTED_ARRAY_TYPES
+            and type(self)._raw_get_data_type(self) in COUNTED_ARRAY_TYPES
         ):
             cmds_edit.setAttr(str(self), len(args[0]), *args[0], **kwargs)
 
@@ -3739,7 +3876,7 @@ class Attribute(str, metaclass=_PlugMeta):
         elif (
             len(args) == 1
             and isinstance(args[0], (list, tuple, np.ndarray))
-            and str(type(self).get_data_type(self))[-1].isdigit()
+            and str(type(self)._raw_get_data_type(self))[-1].isdigit()
         ):
             cmds_edit.setAttr(str(self), *args[0], **kwargs)
         else:
@@ -3825,6 +3962,7 @@ class Attribute(str, metaclass=_PlugMeta):
         if self._geometry_attr_cache is not None and not self._owner_is_polymorphic:
             return self._geometry_attr_cache
 
+        _ensure_owner_alive(self)
         try:
             typ = cmds.getAttr(str(self), type=True)
         except RuntimeError:
@@ -3844,6 +3982,9 @@ class Attribute(str, metaclass=_PlugMeta):
         for the lifetime of an Attribute.
         """
         if self._polymorphic_owner_cache is None:
+            # a freed node's MPlug points at freed memory: "already deleted!"
+            # before the MPlug is read (an attribute walk reaches this property)
+            _ensure_owner_alive(self)
             try:
                 type_name = OpenMaya.MFnDependencyNode(self._mplug.node()).typeName
                 self.__dict__["_polymorphic_owner_cache"] = (
@@ -3858,6 +3999,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
         See `get()` for the four-tier resolution order.
         """
+        _ensure_owner_alive(self)
         owner_obj = self._mplug.node()
         is_shape  = owner_obj.hasFn(OpenMaya.MFn.kShape)
 
@@ -3914,7 +4056,7 @@ class Attribute(str, metaclass=_PlugMeta):
         Each field is written as `cmds.attributeQuery(listEnum=True)` writes it
         (``"b=10"`` once the values are sparse). A field name set on an enum
         attr (``plug << "zxy"``, `set`) is read by `_enum_value`."""
-        enums = cmds.attributeQuery(type(self).get_name(self), node=type(self).get_node(self), listEnum=True)
+        enums = cmds.attributeQuery(type(self)._raw_get_name(self), node=type(self)._raw_get_node(self), listEnum=True)
         if enums:
             return enums[0].split(":")
         return []
@@ -3953,7 +4095,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def is_typed(self) -> bool:
         """Checks if this attribute is typed (raises as `mobject` does)."""
-        return type(self).get_mobject(self).hasFn(OpenMaya.MFn.kTypedAttribute)
+        return type(self)._raw_get_mobject(self).hasFn(OpenMaya.MFn.kTypedAttribute)
 
     def filter_array_values(
         self, filter_value: Any, sparse: bool = True, cap_count: int | None = None
@@ -3969,7 +4111,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """
         if not type(self).is_typed(self):
             raise RuntimeError(f"{self} is not a typed attribute.")
-        if not type(self).get_data_type(self).lower().endswith("array"):
+        if not type(self)._raw_get_data_type(self).lower().endswith("array"):
             raise RuntimeError(f"{self} is not a typed array attribute.")
 
         spase_ids    = []
@@ -4015,7 +4157,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def get_num_elements(self) -> int:
         """Number of elements / physical indices in the multi attr."""
-        if not type(self).is_multi(self):
+        if not type(self)._raw_is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
         return self._mplug.numElements()
 
@@ -4026,7 +4168,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def get_logical_indices(self) -> OpenMaya.MIntArray:
         """Returns existing logical indices (sparse)."""
-        if not type(self).is_multi(self):
+        if not type(self)._raw_is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
         return self._mplug.getExistingArrayAttributeIndices()
 
@@ -4041,7 +4183,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """Returns the element attribute at the given physical index: an
         instance of `_CHILD_CLASS` (a Plug's element is a Plug), owned by the
         node object this attr holds (see `_inherit_owner`)."""
-        if not type(self).is_multi(self):
+        if not type(self)._raw_is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
         element = self._mplug.elementByPhysicalIndex(i)
         return _inherit_owner(
@@ -4053,7 +4195,7 @@ class Attribute(str, metaclass=_PlugMeta):
         instance of `_CHILD_CLASS` (a Plug's element is a Plug, which
         ``plug[i]`` returns as built), owned by the node object this attr holds
         (see `_inherit_owner`)."""
-        if not type(self).is_multi(self):
+        if not type(self)._raw_is_multi(self):
             raise RuntimeError(f"{self} is not an multi attr.")
         element = self._mplug.elementByLogicalIndex(i)
         return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element), i)
@@ -4113,7 +4255,7 @@ Attribute._CHILD_CLASS = Attribute
 # (``_MethodPlug``, `_MethodAttribute` for a bare Attribute): a real child plug
 # whose call runs the method it shadows. Every public function of Attribute and
 # of each subclass (Plug, ComponentPlug, a user's) is a `_ChildOrMethod`
-# (`Attribute.__init_subclass__`); a plug has no public properties (the
+# (`_PlugMeta.__init__`); a plug has no public properties (the
 # property ban, user decision 2026-10-16: ``plug.get_node()``,
 # ``plug.is_locked()``). Children match by long name, as ``plug.<child>``
 # resolves them; an array root keeps its methods (its unindexed children are no
@@ -4184,6 +4326,12 @@ def _clash_child(inst: Any, name: str) -> Any:
         target  = _alias_target(aliases, name) if aliases else None
         if target is None:
             return None
+        if "." in target:
+            # an alias of a child below an element (``items[0].val``): this
+            # plug's child when the path above it is this plug's own
+            path, target = target.rsplit(".", 1)
+            if path != mplug.partialName(False, True, True, False, True, True):
+                return None
         name = target
     # the node has an attribute of that name: a child of this compound? Read
     # from the child cache `Attribute.__getattr__` keeps, built here without its
@@ -4228,7 +4376,22 @@ class _BarePredicate:
         name = self._bound.__name__
         raise TypeError(f"{name} is a method: call it ({name}())")
 
+    # ``node.is_valid == True`` is the same mistake as ``if node.is_valid:``
+    # (fix round 2026-10-16): it raises, never compares silently. The hash stays
+    # the object's (defining ``__eq__`` would drop it).
+    def __eq__(self, other: Any) -> bool:
+        return self.__bool__()
+
+    def __ne__(self, other: Any) -> bool:
+        return self.__bool__()
+
+    __hash__ = object.__hash__
+
     def __getattr__(self, name: str) -> Any:
+        # the method's attributes; never the slot itself (``copy`` probes a new
+        # instance whose slot is still unset: that would recurse)
+        if name == "_bound":
+            raise AttributeError(name)
         return getattr(self._bound, name)
 
     @property
@@ -4284,6 +4447,19 @@ class _ScenePredicate:
 
     def __repr__(self) -> str:
         return f"<predicate {self.__dict__.get('__qualname__', '?')}>"
+
+
+def _old_handle_name(obj: Any, name: str, table: dict) -> AttributeError:
+    """The AttributeError of a scene handle's attribute miss (``faces.count``,
+    ``cset.data``, ``rig.container.stack``): Python's text, plus the spelling
+    now when `name` is one of the handle's members before the per-object rule
+    (user decision 2026-10-16), from `table` ({old name: hint}). The miss path
+    only: a hit never reads it."""
+    hint = table.get(name)
+    return AttributeError(
+        f"{type(obj).__name__!r} object has no attribute {name!r}"
+        + (f"; {hint}" if hint else "")
+    )
 
 
 def _scene_predicate(func: Any) -> _ScenePredicate:
@@ -4370,7 +4546,7 @@ def _plug_class_member(owner: str, name: str, value: Any) -> Any:
 
 def _wrap_plug_methods(cls: type) -> None:
     """Make every public function `cls` defines a `_ChildOrMethod` (Attribute
-    and each subclass, through `Attribute.__init_subclass__`), every UPPER_CASE
+    and each subclass, through `_PlugMeta.__init__`), every UPPER_CASE
     declaration class data (`_ClassData`), and refuse any other public member its
     body declares: a property, a cached_property or another descriptor,
     lowercase data, a nested class (the property ban and the class-data rule,
@@ -4383,6 +4559,14 @@ def _wrap_plug_methods(cls: type) -> None:
         member = _plug_class_member(cls.__name__, name, value)
         if member is not value:
             type.__setattr__(cls, name, member)
+        if name in _MIRRORED:
+            # the class-route mirror (`_MIRRORED`)
+            _write_mirror(cls, name)
+
+
+# from here on every new plug class follows the class-body rule (`_PlugMeta`):
+# the descriptors above exist
+_PLUG_RULE_READY = True
 
 
 class _MethodAttribute(Attribute):
@@ -4398,6 +4582,15 @@ class _MethodAttribute(Attribute):
 
 
 _wrap_plug_methods(Attribute)
+
+# a bare Attribute's str methods follow the name rule too (fix round 2026-10-16:
+# the SCOPE of the user decision is every plug method, and an Attribute is a
+# str): bare, ``attr.upper`` is the compound child ``upper`` when the attribute
+# has one, else str's method; with brackets it is str's method. A Plug's are
+# attribute lookups instead (``rig._internal.plug._StrRoute``).
+for _str_name in [n for n in vars(str) if n[:1] != "_" and n not in vars(Attribute)]:
+    type.__setattr__(Attribute, _str_name, _ChildOrMethod(getattr(str, _str_name), _str_name))
+del _str_name
 
 # the naming `_dg_named_owner` finds a plug's class keeps (class access gives
 # the function)
@@ -4655,9 +4848,9 @@ def _node_factory(obj: Any) -> Any:
     """``Node(obj)``: the node object of ``obj`` (see :class:`Node`)."""
     if isinstance(obj, Node):
         return obj
-    if isinstance(obj, Attribute):
+    if type(obj) in _PLUG_TYPES:
         # ``Node(plug)`` strips the attribute: the node object the plug holds
-        return type(obj).get_node(obj)
+        return type(obj)._raw_get_node(obj)
     if isinstance(obj, str):
         # "pCube.tx", "pCube.translate", "pCubeShape.vtx[0]": the node, split on
         # the FIRST "." so paths and namespaces are kept (Maya node names have
@@ -4670,7 +4863,7 @@ def _node_factory(obj: Any) -> Any:
     # the cast core itself (D12)
     result = _cast(obj)
     # defensive: an exotic input the cast resolves to an attribute gives its node
-    return type(result).get_node(result) if isinstance(result, Attribute) else result
+    return type(result)._raw_get_node(result) if isinstance(result, Attribute) else result
 
 
 def _node_from_str(name: str, label: str = "node", probe: bool = False) -> Any:
@@ -4767,7 +4960,7 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
     if obj is None:
         text = cls._NONE_TEXT or f"None is not {_article(label)} {label} name"
         raise TypeError(f"{text}; {cls._KIND_HINT}" if cls._KIND_HINT else text)
-    if isinstance(obj, str) and not isinstance(obj, Attribute):
+    if isinstance(obj, str) and type(obj) not in _PLUG_TYPES:
         name = obj.split(".", 1)[0] if "." in obj else obj
         try:
             node = _node_from_str(name, label)

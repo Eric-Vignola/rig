@@ -11,7 +11,7 @@ import os
 import re
 from collections import namedtuple
 from numbers import Number
-from typing import Generator, List
+from typing import Any, Generator, List
 
 import numpy as np
 from maya import cmds
@@ -25,7 +25,7 @@ from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
-from rig.nodetypes._base import _scene_predicate
+from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal, iter_component_tokens
 from rig.nodetypes.object_set import ObjectSet
@@ -297,7 +297,7 @@ class Mesh(Geometry):
 
     def get_num_vertices(self) -> int:
         """Returns the number of vertices."""
-        return type(self).get_fn_set(self).numVertices
+        return type(self)._raw_get_fn_set(self).numVertices
 
     def get_num_weight_points(self) -> int:
         """Returns the number of points in this geometry that can be skin weighted."""
@@ -305,7 +305,7 @@ class Mesh(Geometry):
 
     def get_num_polygons(self) -> int:
         """Returns the number of faces."""
-        return type(self).get_fn_set(self).numPolygons
+        return type(self)._raw_get_fn_set(self).numPolygons
 
     def get_points(self, world_space: bool = True) -> OpenMaya.MPointArray:
         """Get the vertex points of the mesh.
@@ -317,7 +317,7 @@ class Mesh(Geometry):
             A MPointArray of the mesh's vertices.
         """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return type(self).get_fn_set(self).getPoints(space)
+        return type(self)._raw_get_fn_set(self).getPoints(space)
 
     def set_points(
         self, points: OpenMaya.MPointArray, world_space: bool = False
@@ -364,7 +364,7 @@ class Mesh(Geometry):
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         if not isinstance(point, OpenMaya.MPoint):
             point = OpenMaya.MPoint(point)
-        return type(self).get_fn_set(self).getClosestPoint(point, space)
+        return type(self)._raw_get_fn_set(self).getClosestPoint(point, space)
 
     def get_vertices_above_plane(
         self,
@@ -405,7 +405,7 @@ class Mesh(Geometry):
 
         # Loop over each face and check if all vertices are above the plane.
         face_indices = []
-        fn = type(self).get_fn_set(self)
+        fn = type(self)._raw_get_fn_set(self)
         for face_idx in range(fn.numPolygons):
             if all(
                 (
@@ -428,14 +428,14 @@ class Mesh(Geometry):
         uv_set = uv_set or type(self).get_current_uv_set(self)
         if not isinstance(point, OpenMaya.MPoint):
             point = OpenMaya.MPoint(point)
-        return type(self).get_fn_set(self).getUVAtPoint(point, space, uv_set)
+        return type(self)._raw_get_fn_set(self).getUVAtPoint(point, space, uv_set)
 
     def get_vertex_normals(
         self, angle_weighted: bool = False, world_space: bool = True
     ) -> OpenMaya.MFloatVectorArray:
         """Returns the vertex normals of the mesh."""
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return type(self).get_fn_set(self).getVertexNormals(angle_weighted, space)
+        return type(self)._raw_get_fn_set(self).getVertexNormals(angle_weighted, space)
 
     def get_per_face_vertex_normals(self):
         """
@@ -551,11 +551,11 @@ class Mesh(Geometry):
 
     def get_uv_sets(self) -> list[str]:
         """Returns a list of UV set names."""
-        return type(self).get_fn_set(self).getUVSetNames()
+        return type(self)._raw_get_fn_set(self).getUVSetNames()
 
     def get_current_uv_set(self) -> str:
         """Returns the current uv set."""
-        return type(self).get_fn_set(self).currentUVSetName()
+        return type(self)._raw_get_fn_set(self).currentUVSetName()
 
     def add_uv_set(self, uv_set: str) -> None:
         """Adds an empty UV set: one undo step.
@@ -626,7 +626,7 @@ class Mesh(Geometry):
             uv_set: A uv set name to query. If None, use current uv set.
         """
         uv_set = uv_set or type(self).get_current_uv_set(self)
-        u_vals, v_vals = type(self).get_fn_set(self).getUVs(uv_set)
+        u_vals, v_vals = type(self)._raw_get_fn_set(self).getUVs(uv_set)
         uv_coords       = np.empty((len(u_vals), 2))
         uv_coords[:, 0] = np.array(u_vals)
         uv_coords[:, 1] = np.array(v_vals)
@@ -644,7 +644,7 @@ class Mesh(Geometry):
             uv_set: A uv set name to query. If None, use current uv set.
         """
         uv_set = uv_set or type(self).get_current_uv_set(self)
-        return type(self).get_fn_set(self).getAssignedUVs(uv_set)
+        return type(self)._raw_get_fn_set(self).getAssignedUVs(uv_set)
 
     def set_uv_data(self, uv_data: UVData, uv_set: str | None = None) -> None:
         """Sets the data of an uv set.
@@ -782,7 +782,7 @@ class Mesh(Geometry):
         """
         from cgmath.geometry import MeshData, UVList
 
-        fn     = type(self).get_fn_set(self)
+        fn     = type(self)._raw_get_fn_set(self)
         points = self.get_points(world_space=world_space)
         vert_counts, vert_ids = fn.getVertices()
 
@@ -905,7 +905,7 @@ class Mesh(Geometry):
 
     def get_paintable_maps(self) -> list[str]:
         """Returns a list of paintable maps."""
-        return [type(x).get_name(x) for x in self.get_map_attrs()]
+        return [type(x)._raw_get_name(x) for x in self.get_map_attrs()]
 
     def get_map_data(self, map_name: Attribute | str, sparse: bool = True) -> MapData:
         """Get the map data from a given map attr.
@@ -930,7 +930,7 @@ class Mesh(Geometry):
 
         # arrays, as MapData declares them (cgmath 2.0.0 casts to them; 1.0.4 kept a list)
         return MapData(
-            name          = type(map_attr).get_name(map_attr),
+            name          = type(map_attr)._raw_get_name(map_attr),
             categories    = sorted(categories),
             indices       = np.asarray(ids, dtype=np.int32),
             values        = np.asarray(values, dtype=np.float64),
@@ -1077,7 +1077,7 @@ class Mesh(Geometry):
         attr = self.find_attr(map_name)
         if (
             attr
-            and type(attr).get_data_type(attr) == MAP_DATATYPE
+            and type(attr)._raw_get_data_type(attr) == MAP_DATATYPE
             and attr.has_category(MAP_DEFAULT_CATEGORY)
         ):
             return attr
@@ -1104,9 +1104,9 @@ class Mesh(Geometry):
         return [
             x
             for x in self.list_attr(userDefined=True)
-            if type(x).get_data_type(x) == MAP_DATATYPE
+            if type(x)._raw_get_data_type(x) == MAP_DATATYPE
             and (not category or x.has_category(category))
-            and (not regex or regex.match(type(x).get_name(x)))
+            and (not regex or regex.match(type(x)._raw_get_name(x)))
         ]
 
     def mirror_map(
@@ -1197,8 +1197,8 @@ class Mesh(Geometry):
         """Enable painting mode on the given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
-        paint_attr = f"{type(self).NATIVE_NODE_TYPE}.{type(self).get_long_name(self)}.{type(map_attr).get_name(map_attr)}"
-        _cmds_edit.select(type(map_attr).get_node(map_attr), replace=True)
+        paint_attr = f"{type(self).NATIVE_NODE_TYPE}.{type(self).get_long_name(self)}.{type(map_attr)._raw_get_name(map_attr)}"
+        _cmds_edit.select(type(map_attr)._raw_get_node(map_attr), replace=True)
         _mel_eval(
             f'artSetToolAndSelectAttr("artAttrCtx", "{paint_attr}");artAttrInitPaintableAttr;'
         )
@@ -1208,7 +1208,7 @@ class Mesh(Geometry):
     def get_color_sets(self) -> List[ColorSet]:
         """Returns a list of the colors sets for this object"""
         return [
-            ColorSet(mesh=self, name=name) for name in type(self).get_fn_set(self).getColorSetNames()
+            ColorSet(mesh=self, name=name) for name in type(self)._raw_get_fn_set(self).getColorSetNames()
         ]
 
     def add_color_set(
@@ -1225,7 +1225,7 @@ class Mesh(Geometry):
         # cast or throw ValueError
         representation = ColorSet.Representation(representation)
 
-        if name in type(self).get_fn_set(self).getColorSetNames():
+        if name in type(self)._raw_get_fn_set(self).getColorSetNames():
             raise ValueError(f"{self} has color set {name}!")
         _MeshAddColorSetCommand(self, name, representation.value)
         return ColorSet(mesh=self, name=name)
@@ -1342,7 +1342,7 @@ def _skinclusters_of(node):
     if not skins:
         return skins
     chain = _own_history(node)
-    return [s for s in skins if any(type(s).get_mobject(s) == o for o in chain)]
+    return [s for s in skins if any(type(s)._raw_get_mobject(s) == o for o in chain)]
 
 
 def _own_history(node):
@@ -1354,7 +1354,7 @@ def _own_history(node):
     target, a wrap's driver mesh) and what makes them are not in it, though
     ``listHistory`` reaches them; the shape's ``Orig`` and the history nodes
     and deformers between them are."""
-    shape = type(node).get_mobject(node)
+    shape = type(node)._raw_get_mobject(node)
     if shape.hasFn(OpenMaya.MFn.kTransform):
         fn    = OpenMaya.MFnDagNode(shape)
         shape = next(
@@ -2492,7 +2492,7 @@ def _place_object(xform: str, obj) -> None:
             value = [float(x) for x in np.asarray(value, dtype=float).ravel()]
             if value != list(rest):
                 found = node.find_attr(attr)
-                type(found).set(found, *value)
+                type(found)._raw_set(found, *value)
         elif value != rest:
             node.find_attr(attr).set(type(rest)(value))
 
@@ -3244,9 +3244,26 @@ class ColorSet:
         RGB   = OpenMaya.MFnMesh.kRGB
         RGBA  = OpenMaya.MFnMesh.kRGBA
 
+    # the members before the per-object rule (user decision 2026-10-16): a miss,
+    # or an assignment, names the method now (`_old_handle_name`)
+    _OLD_NAMES = {
+        "name":           "cset.name is now cset.get_name()",
+        "mesh":           "cset.mesh is now cset.get_mesh()",
+        "representation": "cset.representation is now cset.get_representation()",
+        "data":           "cset.data is now cset.get_data() / cset.set_data(colours)",
+    }
+
     def __init__(self, mesh: Mesh, name: str):
         self._mesh = mesh
         self._name = name
+
+    def __getattr__(self, name: str) -> Any:
+        raise _old_handle_name(self, name, ColorSet._OLD_NAMES)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name[:1] != "_":
+            raise _old_handle_name(self, name, ColorSet._OLD_NAMES)
+        object.__setattr__(self, name, value)
 
     def __repr__(self):
         return f"ColorSet<{self._mesh}.{self._name}>"
@@ -3263,7 +3280,7 @@ class ColorSet:
     def is_valid(self) -> bool:
         """Does the underlying colorset still exist? A method (named without
         brackets, ``cset.is_valid`` has no truth value: the predicate guard)."""
-        return self._name in type(self._mesh).get_fn_set(self._mesh).getColorSetNames()
+        return self._name in type(self._mesh)._raw_get_fn_set(self._mesh).getColorSetNames()
 
     def get_representation(self) -> ColorSet.Representation:
         """The representation of the color set (ie the data type Alpha|RGB|RGBA)"""
@@ -3271,7 +3288,7 @@ class ColorSet:
             raise RuntimeError(
                 f"{self._name} is not a valid color set for {self._mesh}!"
             )
-        return self.Representation(type(self._mesh).get_fn_set(self._mesh).getColorRepresentation(self._name))
+        return self.Representation(type(self._mesh)._raw_get_fn_set(self._mesh).getColorRepresentation(self._name))
 
     def get_data(self) -> np.ndarray:
         """The colours of the set, one per vertex, as a ``(V, 4)`` numpy array.
@@ -3281,7 +3298,7 @@ class ColorSet:
             raise RuntimeError(
                 f"{self._name} is not a valid color set for {self._mesh}!"
             )
-        return np.array(type(self._mesh).get_fn_set(self._mesh).getVertexColors(self._name))
+        return np.array(type(self._mesh)._raw_get_fn_set(self._mesh).getVertexColors(self._name))
 
     def set_data(self, data: np.ndarray) -> None:
         """Set the colours: one per vertex, a ``(V, 4)`` array. One undo step,
@@ -3303,12 +3320,12 @@ class ColorSet:
             )
 
         try:
-            current_colorset = type(self._mesh).get_fn_set(self._mesh).currentColorSetName()
-            type(self._mesh).get_fn_set(self._mesh).setCurrentColorSetName(self._name)
+            current_colorset = type(self._mesh)._raw_get_fn_set(self._mesh).currentColorSetName()
+            type(self._mesh)._raw_get_fn_set(self._mesh).setCurrentColorSetName(self._name)
             yield
         finally:
             if current_colorset:
-                type(self._mesh).get_fn_set(self._mesh).setCurrentColorSetName(current_colorset)
+                type(self._mesh)._raw_get_fn_set(self._mesh).setCurrentColorSetName(current_colorset)
 
     def delete(self):
         """Delete this color set (nothing happens when it no longer exists): one

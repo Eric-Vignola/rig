@@ -1244,8 +1244,10 @@ class TestMaterialErrors(MayaTestCase):
             self.cube.f[6:] << red
         with self.assertRaisesRegex(ValueError, "nothing to inject"):
             List([]) << red
+        # re-pinned (fix round 2026-10-16, one way only): a token's verb is
+        # private (_run_inject); a plain list reaches it only from rig itself
         with self.assertRaisesRegex(TypeError, r"Components\("):
-            red._member().inject([self.cube, f"{self.shape}.f[1]"])
+            red._member()._run_inject([self.cube, f"{self.shape}.f[1]"])
         self.assert_nothing_written()
 
     def test_wrong_material(self):

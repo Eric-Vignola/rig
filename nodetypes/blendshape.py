@@ -251,7 +251,7 @@ class BlendShape(Deformer):
         Returns:
             The target index.
         """
-        if not type(self).get_fn_set(self).findAlias(target_name).isNull():
+        if not type(self)._raw_get_fn_set(self).findAlias(target_name).isNull():
             raise RuntimeError(f"Target {self}.{target_name} already exists.")
 
         weight_attr            = self.find_attr("weight")
@@ -342,7 +342,7 @@ class BlendShape(Deformer):
         target_mesh = _connected_attrs(geom_attr, src=True, dst=False)
         if target_mesh:
             kwargs           = {"include_uvs": False, "world_space": False}
-            target_mesh      = type(target_mesh[0]).get_node(target_mesh[0])
+            target_mesh      = type(target_mesh[0])._raw_get_node(target_mesh[0])
             target_mesh_data = type(target_mesh).serialize(target_mesh, **kwargs)
             if not original_mesh_data:
                 original_mesh_data = self.get_original_geometries()
@@ -549,7 +549,7 @@ class BlendShape(Deformer):
         next evaluation. Logged at INFO; the load's chunk holds the disconnects."""
         from rig._internal.plug import Plug, _disconnect_incoming
 
-        fn      = OpenMaya.MFnDependencyNode(type(self).get_mobject(self))
+        fn      = OpenMaya.MFnDependencyNode(type(self)._raw_get_mobject(self))
         inputs  = fn.findPlug("inputTarget", False)
         indices = [i for i in (self.get_target_index(n) for n in names) if i >= 0]
         if not indices:
