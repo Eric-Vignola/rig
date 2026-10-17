@@ -31,6 +31,20 @@ Two user-facing classes carry the language:
 
   * :class:`List` -- vectorised broadcast list (NumPy-style strict).
 
+Names on nodes and plugs:
+    * A bare name is the Maya attribute if one exists, otherwise the
+      method; with brackets it is the method. ``ctl.lock`` is the plug of
+      a ``lock`` attribute when ``ctl`` has one; ``ctl.lock()`` locks the
+      node either way.
+    * Nodes and plugs have no properties: ``str(node)`` /
+      ``node.get_name()``, ``plug.get_node()``, ``plug.is_locked()``.
+      A predicate named without brackets has no truth value.
+    * Other objects follow what they are: one that points into the scene
+      (``Components``, ``ColorSet``, ``rig.container``, the membership
+      tokens) reads through methods (``faces.get_indices()``); a value you
+      hold (keys, ``Tag``, a spec, a shade ``Conversion``, an error, cgmath
+      data) keeps its data as attributes (``Tag("cap").name``).
+
 Operator conventions:
     * ``<<`` (right-to-left) -- inject: setAttr / connectAttr / disconnect /
       addAttr-spec / type-shorthand. Chains because it returns the LHS. An
@@ -53,7 +67,7 @@ Operator conventions:
       driving it, ``curve.get_keys()`` reads its keys back.
     * ``x.lock()`` / ``x.unlock()`` (``x << lock`` / ``x << unlock``) lock a
       plug (setAttr -lock), a node (lockNode) or a ``List`` (its plugs, then
-      its nodes, one undo step ``rig.lock``) and return ``x``; ``is_locked``
+      its nodes, one undo step ``rig.lock``) and return ``x``; ``is_locked()``
       reads it. Nothing is written when ``x`` already is in that state. Lock
       the plugs first, then the node (Maya locks no plug of a locked node).
       A refusal is an InjectionError with nothing changed: a referenced
@@ -65,7 +79,10 @@ Operator conventions:
       member and returns the LHS, so collections chain: ``cube.f[:3] <<
       Tag("a") << Tag("b")``. An attribute spec returns the new plug instead
       (a value goes next): ``<<`` returns what the next ``<<`` should target.
-    * ``-x`` removes the LHS from that collection (``-Tag("x")``, ``-layer``);
+    * ``c.remove(x)`` takes ``x`` out of the collection ``c`` and returns
+      ``x`` (``red.remove(cube)``, ``layer.remove(cube)``,
+      ``Tag("x").remove(cube.f[:3])``); ``x << -c`` is its shorthand
+      (``-Tag("x")``, ``-layer``), with the same refusals and undo step;
       the kind token ``Tag()`` / ``Layer()`` names no particular one: on
       ``<<`` it purges, removing the LHS from every collection of that kind;
       on ``>>`` it enumerates, ``cube >> Tag()`` being ``Tag.of(cube)``.

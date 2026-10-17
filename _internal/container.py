@@ -2797,7 +2797,7 @@ class Container(DGNode):
         container.
 
         Convenience wrapper that delegates to the top-level
-        :func:`cleanup` with ``container=self.name``. See that function
+        :func:`cleanup` with ``container=str(self)``. See that function
         for the argument and return-value documentation.
         """
         return cleanup(
@@ -2817,7 +2817,7 @@ class Container(DGNode):
 def _node_uuid(node_name: str) -> str:
     """Return the Maya UUID of ``node_name``.
 
-    Uses :attr:`DGNode.uuid` (canonical API) which routes via
+    Uses :meth:`DGNode.get_uuid` (canonical API) which routes via
     ``MFnDependencyNode.uuid()`` -- rename-safe and faster than
     ``cmds.ls(... uid=True)``.
     """

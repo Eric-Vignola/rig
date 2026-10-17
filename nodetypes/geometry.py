@@ -6,7 +6,7 @@ Usage::
     from rig import Node
 
     mesh = Node("pSphereShape1")
-    mesh.injection_node                          # the node holding editable tags
+    mesh.get_injection_node()                    # the node holding editable tags
     mesh.add_component_tag("cap")
     mesh.set_component_tag_contents("cap", [0, 1, 2])
     mesh.get_component_tag_contents("cap")       # ['vtx[0:2]']

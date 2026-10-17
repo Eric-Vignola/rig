@@ -324,7 +324,7 @@ def _decompose_matrix_impl(token: Any, rotate_order: Optional[Any] = None) -> An
     The original returns ``outputTranslate``, which is the conventional
     "default decomposition output" -- callers can also reach
     ``.outputRotate``, ``.outputScale``, ``.outputShear``, ``.outputQuat``
-    on ``token.node`` directly via the returned plug's ``.node``.
+    on the node directly via the returned plug's ``.get_node()``.
     """
 
     node = container.createNode("decomposeMatrix")

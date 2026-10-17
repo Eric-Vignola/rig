@@ -20,7 +20,7 @@ for the node classes and their typed methods.
 | # | Section | Covers |
 |---|---|---|
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
-| 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node, `lock()` / `unlock()` / `is_locked` |
+| 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node, `lock()` / `unlock()` / `is_locked()` |
 | 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.get_node()`, instance paths |
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, a `Typed` slot that holds any data, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
@@ -58,7 +58,7 @@ for the node classes and their typed methods.
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `shade.repair` / `tidy`, the network verbs |
 | 37 | [Shader conversion](#37-shader-conversion) | `mat = mat.astype(Phong)`, `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, the held old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
-| 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `num_keys` / `evaluate` |
+| 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_num_keys` / `evaluate` |
 
 ---
 
@@ -525,7 +525,7 @@ properties:
 | `node.uuid` / `node.node_type` | `node.get_uuid()` / `node.get_node_type()` |
 | `node.namespace`, `node.namespace = ns` | `node.get_namespace()`, `node.set_namespace(ns)` |
 | `node.mobject` / `fn_set` / `mdagpath` | `node.get_mobject()` / `get_fn_set()` / `get_mdagpath()` |
-| `node.is_locked` / `is_valid` / `is_shape` / `is_default` | the same names, called: `node.is_valid()` |
+| `node.is_valid` / `is_shape` / `is_default` | the same names, called: `node.is_valid()` (and the new `node.is_locked()`) |
 | `geo.local_shape_attr` / `world_shape_attr` / `injection_node` / `component_tags` | `geo.get_local_shape_attr()` / `get_world_shape_attr()` / `get_injection_node()` / `get_component_tags()` |
 | `mesh.num_vertices` / `num_polygons` / `num_weight_points` / `uv_sets` / `current_uv_set` / `paintable_maps` | `mesh.get_num_vertices()` / ... (`get_` before each) |
 | `curve.num_cvs` / `num_weight_points` | `curve.get_num_cvs()` / `get_num_weight_points()` |

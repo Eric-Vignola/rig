@@ -1061,7 +1061,7 @@ class DGNode(Node):
                 return _named_through_owner(plug)
         # the handle of the plug's node: this node's, or for an attr of another
         # node its owner's, or with none the one the attr took, which checks it
-        # until ``Plug.node`` casts it
+        # until ``Plug.get_node()`` casts it
         handle = d["_objhandle"] if owner is self else attr_d["_handle"]
         if fresh:
             # the lookup built `attr` of this MPlug just now, so the plug takes

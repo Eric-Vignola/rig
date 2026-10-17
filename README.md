@@ -54,6 +54,20 @@ Two operators carry the language:
 
 `in` asks a yes-or-no membership question.
 
+A name on a node or a plug follows one rule: **a bare name is the Maya
+attribute if one exists, otherwise the method; with brackets it is the
+method.** `ctl.lock` is the plug of a `lock` attribute when `ctl` has one,
+and `ctl.lock()` locks the node either way. Nodes and plugs have no
+properties, so what rig tells you about them is a method too: `str(node)`
+or `node.get_name()`, `plug.get_node()`, `plug.is_locked()`. Other objects
+follow what they are. One that points into the scene reads through methods:
+`Components` (`faces.get_indices()`), a `ColorSet`, `rig.container`
+(`get_stack()`), a membership token such as `-layer` (its name is
+`str(token)`). A value you hold keeps its data as attributes: keys
+(`keys.values`), a `Tag` (`Tag("cap").name`), a spec (`Float("w").kargs`),
+a shade `Conversion`, an error, cgmath data. The renames since 2.0.0a5 are
+listed in [CHEATSHEET section 2](CHEATSHEET.md#2-plug--read-set-connect).
+
 | Spelling | Meaning | Returns |
 |---|---|---|
 | `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects. A value or a plug over any connection (a constraint, a curve, a pairBlend, a wire) replaces it; one driver per channel: on a compound, the inputs its children have of their own go too | `a`, so it chains |

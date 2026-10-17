@@ -133,7 +133,9 @@ print(cmds.attributeQuery("weight", node="ctrl", exists=True))  # True -- from t
 
 Nothing has been created. The same spec can be injected into as many
 nodes as you like; `>>` copies it before stamping anything on it, so a
-spec is never mutated by use.
+spec is never mutated by use. A spec is a value, not a handle on the
+scene, so its data are plain attributes (`spec.kargs`, `spec.size`) that
+never ask Maya; nodes and plugs, which do, answer only through methods.
 
 ```python
 a = Node.create("transform", name="a")
@@ -506,7 +508,7 @@ Verified on Maya 2025; not bugs to work around blindly.
   Maya's disconnectAttr, a deleted source node): a matrix stays a matrix,
   a `.ma` saved then errors on open, and a `.mb` keeps it. rig's own
   `slot << None` drops it; run it on such a slot to clean it.
-- **A message slot and an empty one both read "Tdata"** (`data_type`), and
+- **A message slot and an empty one both read "Tdata"** (`get_data_type()`), and
   `>> None` is `None` for both.
 - **A keyable `Typed` takes keys.** Maya lists it as animatable, and
   `setKeyframe node` keys every keyable empty or number slot with an
