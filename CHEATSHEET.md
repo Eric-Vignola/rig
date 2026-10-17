@@ -343,19 +343,29 @@ print(repr(g.tx.get_inputs()), repr(g.tz.get_inputs()))   # List([Plug("g_transl
 ```
 
 Short and long names both work, and `node.tx = 5` is sugar for `node.tx << 5`.
-Python's own names keep their meaning: a property setter runs
-(`a.namespace = "ns"`), a method or class member is an `AttributeError` that
-names `Plug(a.find_attr(name)) << value` for a Maya attribute it shadows,
+
+A name that is both a Maya attribute and a method follows one rule, on a node
+and on a plug: **a bare name is the Maya attribute if one exists, otherwise
+the method; with brackets it is the method.** After `ctl << Bool("lock")`,
+`ctl.lock` is the plug (`ctl.lock << 1`, `ctl.lock >> None`, `ctl.lock = 1`)
+and `ctl.lock()` still locks the node; a curve shape's `create` and an
+animLayer's `lock` are plugs the same way, and a compound's child named
+`get` is `plug.get` while `plug.get()` reads the compound. Without the
+attribute, `ctl.lock` is the bound method. Assigning to a method name never
+replaces the method: with the attribute it is `<<`, without one it raises
+(to patch a method, patch the class). Every public method of every node and
+plug class follows the rule, a node class you write included. An alias
+(`aliasAttr`, a blendShape target) is not an attribute to the rule:
+`Plug(ctl.find_attr("alias"))` reaches it. Code that reached such an
+attribute through `find_attr` keeps working.
+
+Python's other names keep their meaning: a property setter runs
+(`a.namespace = "ns"`), a property or another class member hides a Maya
+attribute of its name (`Plug(a.find_attr(name)) << value` reaches it, and a
+new attribute named like one is made with a warning naming that spelling),
 and a `_` name, or a default the class body declares (`side = None` in a
 subclass), is Python state on the object. Any other name is
-`Attribute not found`, never a new Python attribute. A new attribute named
-like a member (`ctl << Bool("lock")`) is made, with a warning naming
-`Plug(ctl.find_attr("lock"))`: `ctl.lock` is the method. New after 2.0.0a5, the
-names `lock`, `unlock` and `is_locked` (every node and plug), `save` and
-`load` (a mesh, a curve, a surface, a skinCluster, a blendShape), and
-`save_hierarchy` / `load_hierarchy` (a transform, a joint) are members; an
-attribute of such a name a5 reached as `ctl.lock` is reached through
-`find_attr` now.
+`Attribute not found`, never a new Python attribute.
 
 ```python
 a.translateY = 2
@@ -366,6 +376,16 @@ except AttributeError as err:
     print(str(err).split(" (")[0])                 # Attribute not found: a.translateXX
 a._note = "by hand"                                # a '_' name is Python state
 print(a._note, cmds.attributeQuery("_note", node="a", exists=True))   # by hand False
+from rig.spec import Bool
+a << Bool("lock")                                  # a Maya attr named like a method
+a.lock = True                                      # bare: the plug (a.lock << True)
+print(repr(a.lock), a.lock >> None)                # Plug("a.lock") True
+print(a.lock() is a, a.is_locked)                  # True True
+a.unlock()                                         # brackets: the method, which locked the node
+try:
+    a.get_parent = None                            # no Maya attr get_parent: a method stays
+except AttributeError as err:
+    print(str(err).split(":")[0])                  # Transform.get_parent is a method and a has no Maya attr 'get_parent'
 ```
 
 An enum plug takes a field name as well as its int, through `<<`, `=`,

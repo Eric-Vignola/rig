@@ -160,6 +160,13 @@ The new plug belongs to the node object the spec was applied to:
 means its node: `ctrl.tx << Float("y")` adds `y` to `ctrl`, and the new
 plug's `node` is `ctrl`.
 
+An attribute may take a method's name: `ctrl << Bool("lock")` makes
+`ctrl.lock` its plug, while `ctrl.lock()` is still the method (a bare name
+is the Maya attribute if one exists, otherwise the method; with brackets it
+is the method). Only a name a property or another class member holds
+(`name`, `is_locked`) hides the new attribute: it is made, with a warning
+naming `Plug(ctrl.find_attr(name))`, which reaches it.
+
 ### Declaring it again applies the settings and keeps the value
 
 A spec whose name the node already has, as the same kind of attribute,
