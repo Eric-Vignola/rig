@@ -27,6 +27,7 @@ from rig.nodetypes._base import Attribute
 from rig.nodetypes._base import _cast
 from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
+from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal, iter_component_tokens
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
@@ -126,6 +127,53 @@ def _restore_flag(method: str, name: str, value) -> bool:
 MAP_DATATYPE         = "doubleArray"
 MAP_DEFAULT_VALUE    = 0.0
 MAP_DEFAULT_CATEGORY = "PaintableMap"  # all maps will have this category assigned
+
+
+# the rig objects an OpenMaya point never takes: a Plug is a str with a
+# __getitem__ / __len__, which OpenMaya.MPoint / MVector / MPointArray read as a
+# sequence of plugs (an access violation in Maya 2025)
+_RIG_OBJECTS = (Attribute, DGNode)
+
+# the exact types of the usual elements of a point sequence (none is a rig object)
+_POINT_TYPES = frozenset((
+    list, tuple, float, int, OpenMaya.MPoint, OpenMaya.MVector, OpenMaya.MFloatPoint,
+    OpenMaya.MFloatVector,
+))
+
+
+def _refuse_rig_points(points: Any, method: str, many: bool = False) -> None:
+    """Raise TypeError if `points` (a point, or with `many` a sequence of
+    points) is, or holds, a rig plug or node: OpenMaya reads a Plug as a
+    sequence and can crash Maya. The message names the fix: the plug's value
+    (``plug.get()``), or a node's position. The elements are read (OpenMaya
+    reads them as points), and the first row's values (rows of plugs, which
+    OpenMaya refuses with its own TypeError, get the hint too)."""
+    bad = None
+    if isinstance(points, _RIG_OBJECTS):
+        bad = points
+    elif isinstance(points, (list, tuple)):
+        for p in points:
+            if type(p) in _POINT_TYPES:  # one set lookup for the usual elements
+                continue
+            if isinstance(p, _RIG_OBJECTS):
+                bad = p
+                break
+        if bad is None and many and points and isinstance(points[0], (list, tuple)):
+            bad = next((v for v in points[0] if isinstance(v, _RIG_OBJECTS)), None)
+    if bad is None:
+        return
+    takes = "points (MPoints, or rows of 3 numbers)" if many else "a point (an MPoint, or 3 numbers)"
+    if isinstance(bad, Attribute):
+        name = str.__str__(bad)
+        fix  = f"pass its value, {type(bad).__name__}({name!r}).get()"
+        what = f"the plug {name!r}"
+    else:
+        fix  = (
+            f"pass a position: Node({str(bad)!r}).get_rotate_pivot() (world space) "
+            f"or its translate's value, .t.get()"
+        )
+        what = f"the node {str(bad)!r}"
+    raise TypeError(f"Mesh.{method} takes {takes}, not {what}: {fix}")
 
 
 class Axis(enum.Enum):
@@ -344,7 +392,12 @@ class Mesh(Geometry):
         # queue keeps the points of this call (the API converts a list about twice
         # as fast as an ndarray)
         if isinstance(points, np.ndarray):
-            points = points.tolist()
+            numeric = points.dtype.kind in "biuf"
+            points  = points.tolist()
+        else:
+            numeric = False
+        if not numeric:  # (an array of numbers holds no plug)
+            _refuse_rig_points(points, "set_points", many=True)
         points = OpenMaya.MPointArray(points)
 
         count = type(self).get_num_vertices(self)
@@ -363,6 +416,7 @@ class Mesh(Geometry):
         """Returns the closest mesh surface point to a given point in space."""
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         if not isinstance(point, OpenMaya.MPoint):
+            _refuse_rig_points(point, "get_closest_point")
             point = OpenMaya.MPoint(point)
         return type(self)._raw_get_fn_set(self).getClosestPoint(point, space)
 
@@ -427,6 +481,7 @@ class Mesh(Geometry):
         space  = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         uv_set = uv_set or type(self).get_current_uv_set(self)
         if not isinstance(point, OpenMaya.MPoint):
+            _refuse_rig_points(point, "get_uv_at_point")
             point = OpenMaya.MPoint(point)
         return type(self)._raw_get_fn_set(self).getUVAtPoint(point, space, uv_set)
 
