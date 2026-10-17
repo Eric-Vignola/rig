@@ -240,6 +240,24 @@ for probe in (lambda: a.tx, lambda: tz >> None):
 # held node (freed by a new scene, a file open or a reference unload) already deleted!
 ```
 
+Its name is the one thing a deleted or freed node still answers: `str(node)`
+is the last name it was known by, marked (`"held (deleted)"`), and its repr
+`Transform("held", deleted)`; a plug of one has the marked repr
+`Plug("held.translateX", deleted)` (its `str` raises). The marked name names
+no Maya node, so `maya.cmds` given it, or given a `List` holding it, raises
+Maya's own error instead of crashing. Every rig operation on the node,
+`get_name()` included, still raises `already deleted!`.
+
+```python
+gone = Node.create("transform", name="gone")
+cmds.delete("gone")
+print(str(gone), repr(gone))                   # gone (deleted) Transform("gone", deleted)
+try:
+    gone.get_name()
+except RuntimeError as err:
+    print(err)                                 # gone already deleted!
+```
+
 `node.lock()` locks the node (`lockNode`) and `node.unlock()` unlocks it;
 `node << lock` / `<< unlock` are the same calls, and each returns the node.
 `node.is_locked()` reads it (a member of a locked container reads
@@ -990,6 +1008,32 @@ try:
     List([Node("c2"), 3]).lock()
 except TypeError as err:
     print(err)                                                         # element [1] (3) is not a node or a plug: it has no lock
+```
+
+A deleted element stays in its slot: a node deleted (to the undo queue) or
+freed (a new scene, a file open, a reference unload), or a plug of one, keeps
+the List's length, indices and pairing, and its repr shows it marked. rig's
+own List operations skip it (attribute broadcasts, `<<`, `>>`, `get()`,
+`lock()` / `unlock()`, membership, `in` / `index` / `count` / `remove`, the
+operators) and print ONE warning per operation naming what they skipped
+(`List element [1] c3 was deleted; skipped`). A List an operation derives
+holds `rig.skip` in that slot, which every List operation leaves alone, so a
+chained broadcast stays aligned and keeps skipping. `maya.cmds` given such a
+List raises Maya's own error (the element's str is its marked name).
+
+```python
+Node.create("transform", name="c3")
+ctls = List(["c0", "c3", "c2"])
+cmds.delete("c3")
+print(repr(ctls))                         # List([Transform("c0"), Transform("c3", deleted), Transform("c2")])
+tx = ctls.tx                              # Warning: List element [1] c3 was deleted; skipped
+print(repr(tx))                           # List([Plug("c0.translateX"), <skip>, Plug("c2.translateX")])
+tx << [7, 8, 9]                           # c0 gets 7, c2 gets 9: the pairs stay aligned
+print(tx.get())                           # [7.0, <skip>, 9.0]
+try:
+    cmds.select(ctls)                     # Maya's own error, no crash
+except TypeError as err:
+    print(type(err).__name__)             # TypeError
 ```
 
 ---
@@ -3156,7 +3200,8 @@ material to another type and **returns the new node**; `shade.convert(mat,
 Phong)` is the same verb as a function. The new node keeps the name, the
 engines and their members, the materialInfo, the `defaultShaderList1`
 slot, the container, the dynamic attributes and the locks, in one undo
-step. The old node object raises from then on, naming the conversion. A
+step. The old node object raises from then on, naming the conversion (its
+`str` is its old name, marked: `"red (deleted)"`). A
 class call never converts: `Phong(mat)` on a blinn is a `NodeTypeError`
 that names `astype`.
 
@@ -3169,7 +3214,7 @@ cube << mat
 p = mat.astype(Phong)                           # nothing set beyond color: no warning
 print(repr(p), cmds.nodeType("red"), repr(p.get_engine()), members("redSG"))   # Phong("red") phong ShadingEngine("redSG") ['cubeShape']
 try:
-    str(mat)
+    mat.get_name()                              # its str answers: red (deleted)
 except RuntimeError as err:
     print(str(err).split(" (")[0])              # 'red' was converted to a phong; use the node astype() returned
 mat = p.astype(Blinn, diffuse=0.4)              # attributes are checked against the target, then set in the same step
@@ -3257,7 +3302,7 @@ old = lossy
 new = lossy.astype(Phong)                        # warns: parks again
 print(cmds.undoInfo(query=True, undoName=True))  # rig.shade.convert
 try:
-    str(old)
+    old.get_name()
 except RuntimeError as err:
     print(str(err).split(";")[0])                # 'lossy' was converted to a phong
 print(repr(new), round(new.diffuse >> None, 2))  # Phong("lossy") 0.33

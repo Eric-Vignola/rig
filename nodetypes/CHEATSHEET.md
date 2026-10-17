@@ -310,9 +310,9 @@ print(box.find_connected_nodes(), md.find_connected_nodes(node_type="transform")
 print(box.duplicate())                                                             # [Transform("box")]
 copy = box.duplicate(name="copy", returnRootsOnly=True)[0]
 copy.delete()
-print(copy.is_valid())                                    # False
+print(copy.is_valid(), str(copy))                         # False copy (deleted)
 try:
-    str(copy)
+    copy.get_name()                                       # every operation on it raises
 except RuntimeError as e:
     print(e)                                              # copy already deleted!
 
@@ -894,6 +894,10 @@ cmds.undo()
 print(np.array(mesh.get_points())[0, :3])                                           # [-0.5 -0.5  0.5]
 
 print(mesh.get_closest_point([0, 0, 5]))                                            # (maya.api.OpenMaya.MPoint(0, 0, 0.5, 1), 0) -- (point, face id)
+try:
+    mesh.get_closest_point(Node("persp").t)                                         # a point is a value: .t.get()
+except TypeError as e:
+    print(e)                                                                        # Mesh.get_closest_point takes a point (an MPoint, or 3 numbers), not the plug 'persp.translate': pass its value, Plug('persp.translate').get()
 print(mesh.get_vertex_normals()[0], len(mesh.get_per_face_vertex_normals()))        # (-0.57735, -0.57735, 0.57735) 24
 print(mesh.get_vertices_above_plane(np.array([0.0, 0, 0]), np.array([0.0, 1, 0])))  # [2 3 4 5]
 print(mesh.get_faces_above_plane(np.array([0.0, 0, 0]), np.array([0.0, 1, 0])))     # [1]
