@@ -175,13 +175,13 @@ class Geometry(DAGNode):
             shapes = cmds.listRelatives(
                 node,
                 shapes         = True,
-                type           = self.NATIVE_NODE_TYPE,
+                type           = type(self).NATIVE_NODE_TYPE,
                 noIntermediate = True,
                 fullPath       = True,
             )
             if len(shapes) == 0:
                 raise ValueError(
-                    f"Transform {node} has no {self.NATIVE_NODE_TYPE} shape."
+                    f"Transform {node} has no {type(self).NATIVE_NODE_TYPE} shape."
                 )
             node = shapes[0]
 
@@ -269,7 +269,7 @@ class Geometry(DAGNode):
         Args:
             component_type: The component type. e.g. "v", "e", "f", etc
         """
-        comp_type = component_type or self.POINT_COMP_TYPE
+        comp_type = component_type or type(self).POINT_COMP_TYPE
         comp_type = "vtx" if comp_type == "v" else comp_type
         sel       = OpenMaya.MSelectionList()
         if indices is None:
@@ -488,7 +488,7 @@ class Geometry(DAGNode):
         maps to POINT_COMP_TYPE, any other category is the token itself.
         """
         if category == "v":
-            prefix = self.POINT_COMP_TYPE
+            prefix = type(self).POINT_COMP_TYPE
             if prefix is None:
                 cmds.error(
                     f"{type(self).get_node_type(self)} has no point component type; pass component strings instead."

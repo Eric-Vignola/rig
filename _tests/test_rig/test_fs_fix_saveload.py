@@ -183,17 +183,20 @@ class TestASkinLoadOfWhatItHolds(_Case):
 
 
 class _Sided(Transform):
-    """A node class with class data: a Python member that hides a Maya attr of
-    its name (the property ban left class data as the one such member)."""
+    """A node class with Python state. Re-pinned (user decision 2026-10-16, class
+    data): a node class keeps it under a '_' name (``side = None`` is refused when
+    the class is made), so no Python member hides a Maya attr any more."""
 
-    side = None
+    _side = None
 
 
 class TestAShadowedAttribute(_Case):
     def test_a_warning_names_find_attr(self):
-        # re-pinned twice (user decisions 2026-10-16): a method name no longer
-        # shadows (name clashes, see test_a_method_name_is_no_shadow), nor does
-        # is_locked, a method since the property ban; class data still does
+        # re-pinned three times (user decisions 2026-10-16): a method name no
+        # longer shadows (name clashes, see test_a_method_name_is_no_shadow), nor
+        # does is_locked, a method since the property ban, nor class data (an
+        # instance never reads it; lowercase data is refused): nothing hides a
+        # new attribute, so no warning is left (spec._warn_shadowed is gone)
         plain = Node.create("transform", name="plain")
         logger = logging.getLogger("rig.spec._base")
         with self.assertRaises(AssertionError):
@@ -202,35 +205,33 @@ class TestAShadowedAttribute(_Case):
         self.assertEqual(str(plain.is_locked), "plain.is_locked")  # the plug
         self.assertIs(plain.is_locked(), False)  # the method
         ctl = _Sided._wrap(Node.create("transform", name="ctl"))
-        with self.assertLogs("rig.spec._base", level=logging.WARNING) as logs:
-            plug = ctl << Bool("side")
+        with self.assertRaises(AssertionError):
+            with self.assertLogs(logger, level=logging.WARNING):
+                plug = ctl << Bool("side")
         self.assertEqual(str(plug), "ctl.side")
-        text = "\n".join(logs.output)
-        self.assertIn("'side' is a Python member of _Sided", text)
-        self.assertIn("Plug(ctl.find_attr('side'))", text)
-        Plug(ctl.find_attr("side")) << 1
+        ctl.side << 1  # the plug: no Python member hides it
         self.assertTrue(cmds.getAttr("ctl.side"))
+        self.assertIsNone(ctl._side)  # the Python state the class declares
 
     def test_the_short_name_too(self):
-        # re-pinned (user decision 2026-10-16, the property ban): class data
-        ctl = _Sided._wrap(Node.create("transform", name="ctl"))
-        with self.assertLogs("rig.spec._base", level=logging.WARNING) as logs:
-            ctl << Float("sideWeight", sn="side")
-        self.assertIn("'side' is a Python member of _Sided", "\n".join(logs.output))
-
-    def test_no_warning_for_a_free_name_or_a_redeclaration(self):
-        """guard. Re-pinned (user decision 2026-10-16, the property ban): class
-        data is the shadowing member."""
+        # re-pinned twice (user decisions 2026-10-16, the property ban and class
+        # data): no member hides the short name, so no warning
         ctl = _Sided._wrap(Node.create("transform", name="ctl"))
         logger = logging.getLogger("rig.spec._base")
         with self.assertRaises(AssertionError):
             with self.assertLogs(logger, level=logging.WARNING):
-                ctl << Float("weight")
-        with self.assertLogs(logger, level=logging.WARNING):
-            ctl << Bool("side")
-        with self.assertRaises(AssertionError):
-            with self.assertLogs(logger, level=logging.WARNING):
-                ctl << Bool("side")  # re-declared: kept, no second warning
+                ctl << Float("sideWeight", sn="side")
+        self.assertEqual(str(ctl.side), "ctl.sideWeight")
+
+    def test_no_warning_for_a_free_name_or_a_redeclaration(self):
+        """guard. Re-pinned twice (user decisions 2026-10-16, the property ban and
+        class data): no member shadows any more, so no declaration warns."""
+        ctl = _Sided._wrap(Node.create("transform", name="ctl"))
+        logger = logging.getLogger("rig.spec._base")
+        for spec in (Float("weight"), Bool("side"), Bool("side")):  # the last re-declared
+            with self.assertRaises(AssertionError):
+                with self.assertLogs(logger, level=logging.WARNING):
+                    ctl << spec
 
     def test_a_method_name_is_no_shadow(self):
         """user decision 2026-10-16, name clashes: node.lock is the plug once the node

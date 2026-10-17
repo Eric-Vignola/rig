@@ -347,11 +347,11 @@ class TestInjectLockDefensiveCoverage(MayaTestCase):
         # _locked_channels: a leaf whose is_locked query raises is skipped
         # (``except Exception: pass``).
         n = Node.create("transform", name="c1")
+        # re-pinned (user decisions 2026-10-16, the property ban and class data):
+        # is_locked is a method, and a class assignment of a descriptor (a
+        # PropertyMock) is refused, so the method is patched with a plain mock
         with mock.patch.object(
-            type(n.translateX),
-            "is_locked",
-            new_callable = mock.PropertyMock,
-            side_effect  = RuntimeError("boom"),
+            type(n.translateX), "is_locked", side_effect=RuntimeError("boom")
         ):
             self.assertEqual(plugmod._locked_channels(n.translate), [])
 

@@ -67,6 +67,15 @@ _PREDICATES = ("is_locked", "is_valid", "is_shape", "is_default")
 _RIG_DIR    = os.path.dirname(rig.__file__)
 
 
+def _is_plug_method(cls, name):
+    """True if ``name`` on node class or plug class `cls` is a plug method. Re-pinned
+    (user decision 2026-10-16, class data: ``rig.nodetypes._base.is_plug_method`` was
+    deleted with ``spec._warn_shadowed``, its one user): read off the class dicts."""
+    return isinstance(
+        _base._class_attr(cls, name), _base._PLUG_DESCRIPTORS + (_base._ChildOrMethod,)
+    )
+
+
 def _node_classes():
     """Every node class rig defines (its modules' NodeMeta classes)."""
     import sys
@@ -269,7 +278,7 @@ class TestNoPublicProperty(MayaTestCase):
         ):
             for name in names:
                 with self.subTest(cls=cls.__name__, new=name):
-                    self.assertTrue(_base.is_plug_method(cls, name))
+                    self.assertTrue(_is_plug_method(cls, name))
 
     def test_a_node_class_body_declares_no_property(self):
         class _Descriptor:
@@ -286,13 +295,16 @@ class TestNoPublicProperty(MayaTestCase):
                     type(Transform)("_Bad", (Transform,), {"size": member})
 
     def test_methods_data_and_private_members_pass(self):
-        """guard: the refusal leaves methods, class data and private members."""
+        """guard: the refusal leaves methods, class data and private members.
+        Re-pinned (user decision 2026-10-16, class data): lowercase public data is
+        refused now (`TestClassData`), so the class keeps Python state under
+        ``_side``; ``SIZE`` is class data, read through the class."""
         class _Fine(Transform):
-            side = None  # class data: its own rule (not this step)
+            _side = None
             SIZE = 2.0
 
             def get_size(self):
-                return self.SIZE
+                return type(self).SIZE
 
             @classmethod
             def make(cls):
@@ -306,9 +318,9 @@ class TestNoPublicProperty(MayaTestCase):
             def _private(self):
                 return 4
 
-        self.assertTrue(_base.is_plug_method(_Fine, "get_size"))
-        self.assertTrue(_base.is_plug_method(_Fine, "make"))
-        self.assertTrue(_base.is_plug_method(_Fine, "helper"))
+        self.assertTrue(_is_plug_method(_Fine, "get_size"))
+        self.assertTrue(_is_plug_method(_Fine, "make"))
+        self.assertTrue(_is_plug_method(_Fine, "helper"))
         self.assertIsInstance(vars(_Fine)["_private"], property)
 
 

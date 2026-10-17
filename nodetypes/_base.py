@@ -11,6 +11,7 @@ import re
 import sys
 import uuid
 import weakref
+from functools import cached_property as _cached_property
 from functools import total_ordering
 from numbers import Number, Real
 from types import FunctionType as _FunctionType
@@ -338,10 +339,11 @@ _CREATES_OR_UPDATES = None
 
 
 def _plug_member(name: str, value: Any) -> Any:
-    """The class-dict entry `NodeMeta` keeps for the member `name` = `value` of a
-    node class body: a public method becomes its plug-method descriptor; any
-    other member (a property, data, a private name, a descriptor already made,
-    a classmethod / staticmethod subclass someone wrote) is kept."""
+    """The class-dict entry `NodeMeta` keeps for the public method `name` =
+    `value` of a node class: a function, classmethod, staticmethod or
+    ``creates_or_updates`` becomes its plug-method descriptor; a descriptor
+    already made, and a classmethod / staticmethod subclass someone wrote, are
+    kept. Anything else is returned as it is (`_node_member` decides)."""
     global _CREATES_OR_UPDATES
     if name[:1] == "_" or isinstance(value, _PLUG_DESCRIPTORS):
         return value
@@ -360,24 +362,109 @@ def _plug_member(name: str, value: Any) -> Any:
     return value
 
 
-def _refuse_node_member(class_name: str, name: str, value: Any) -> None:
-    """Raise TypeError for a public member of a node class body that is a
-    property, a cached_property or another descriptor that is no method (the
-    property ban, user decision 2026-10-16: every public member of a node is a
-    method, so a bare name is the node's Maya attr of that name or the method).
-    Runs at class creation only. A function, classmethod, staticmethod or
-    ``creates_or_updates`` (made a plug method), a class, and data pass (class
-    data is its own rule)."""
-    if isinstance(value, (type, _FunctionType, classmethod, staticmethod)):
-        return
-    if hasattr(type(value), "__get__"):
-        kind = "property" if isinstance(value, property) else "descriptor"
-        raise TypeError(
-            f"{class_name}.{name}: a node class has no public {kind} (every public "
-            f"member of a node is a method, so that a bare name is the node's Maya "
-            f"attr of that name or the method): write a method (def get_{name}(self)), "
-            f"or keep it private (_{name})"
+# --- class data and the class-body rule (user decisions 2026-10-16) ----------
+#
+# On a node or a plug every public member is a method, so that a bare name is
+# the Maya attr of that name (a plug's child) or the method. A class body (and
+# a later class assignment, `NodeMeta.__setattr__` / `_PlugMeta.__setattr__`)
+# therefore declares, under a public name, only methods: a function, a
+# classmethod, a staticmethod or a ``creates_or_updates``. A property, a
+# cached_property, another descriptor, a nested class and lowercase data are
+# refused when the class is made (no run-time cost); Python state goes under a
+# ``_`` name (``_side = None``). An UPPER_CASE declaration (``NATIVE_NODE_TYPE``,
+# ``CUSTOM_NODE_TYPE``, ``FN_SET``, ``POINT_COMP_TYPE``, ``DEFAULT``, a user's
+# ``SIZE = 2.0``) is class data: the metaclass keeps it as a `_ClassData`, which
+# the class reads (``Transform.NATIVE_NODE_TYPE``, ``type(node).FN_SET``) and an
+# instance never does (``node.DEFAULT`` is the node's Maya attr ``DEFAULT``).
+
+
+class _ClassData:
+    """An UPPER_CASE declaration of a node or plug class (see above): its value
+    on the class (``Transform.NATIVE_NODE_TYPE``), and on an instance an
+    AttributeError, which hands the name to the instance's ``__getattr__`` (the
+    node's Maya attr, a plug's child). A late class assignment of the name
+    (``Cls.FN_SET = x``, ``mock.patch.object``) makes a new one."""
+
+    __slots__ = ("value", "name")
+
+    def __init__(self, name: str, value: Any) -> None:
+        self.name  = name
+        self.value = value
+
+    def __get__(self, inst: Any, owner: Any = None) -> Any:
+        if inst is None:
+            return self.value
+        raise AttributeError(self.name)
+
+    def __repr__(self) -> str:
+        return f"<class data {self.name} = {self.value!r}>"
+
+
+def _is_class_data(name: str, value: Any) -> bool:
+    """True for an UPPER_CASE declaration (`_ClassData`): an UPPER_CASE public
+    name holding data, a class (``FN_SET = OpenMaya.MFnMesh``) included, never
+    a descriptor or a function."""
+    return (
+        name.isupper()
+        and not isinstance(value, (_FunctionType, classmethod, staticmethod))
+        and (isinstance(value, type) or not hasattr(type(value), "__get__"))
+    )
+
+
+def _member_refused(owner: str, name: str, value: Any, plug: bool) -> TypeError:
+    """The TypeError for a public member `name` = `value` of a node class
+    (`plug` False) or plug class (`plug` True) named `owner` that is no method
+    (see above), naming the spellings that work."""
+    kind = (
+        "property" if isinstance(value, property)
+        else "cached_property" if isinstance(value, _cached_property)
+        else "class" if isinstance(value, type)
+        else "descriptor" if hasattr(type(value), "__get__")
+        else "data"
+    )
+    if plug:
+        what, bare, attr = "a plug class", "the compound child of that name", "plug"
+    else:
+        what, bare, attr = "a node class", "the node's Maya attr of that name", "node"
+    if kind == "data":
+        fix = (
+            f"keep Python state under a '_' name ({'_' + name} = {value!r:.40}), or "
+            f"declare an UPPER_CASE class constant ({name.upper()} = ..., read as "
+            f"type({attr}).{name.upper()})"
         )
+    else:
+        fix = f"write a method (def get_{name}(self)), or keep it private (_{name})"
+    return TypeError(
+        f"{owner}.{name}: {what} has no public {kind} (every public member of a "
+        f"{attr} is a method, so that a bare name is {bare} or the method): {fix}"
+    )
+
+
+# what a node class keeps as it is under a public name
+_KEPT_ON_NODES = _PLUG_DESCRIPTORS + (_ClassData, classmethod, staticmethod)
+
+
+def _node_member(owner: str, name: str, value: Any) -> Any:
+    """The class-dict entry for the public member `name` = `value` of the node
+    class `owner` (its body, or a later class assignment): a plug-method
+    descriptor, a `_ClassData`, or the TypeError of `_member_refused`."""
+    member = _plug_member(name, value)
+    if member is not value or isinstance(value, _KEPT_ON_NODES):
+        return member
+    if _is_class_data(name, value):
+        return _ClassData(name, value)
+    raise _member_refused(owner, name, value, plug=False)
+
+
+def _callable_kept(value: Any) -> bool:
+    """True for a value a late class assignment keeps as it is: a callable that
+    is no function and no descriptor (a mock), or a plug-method descriptor
+    already made."""
+    return isinstance(value, _PLUG_DESCRIPTORS) or (
+        callable(value)
+        and not isinstance(value, (_FunctionType, type))
+        and not hasattr(type(value), "__get__")
+    )
 
 
 def _raw_function(value: Any) -> Any:
@@ -389,10 +476,20 @@ def _raw_function(value: Any) -> Any:
     return getattr(value, "__func__", value)
 
 
-def is_plug_method(cls: type, name: str) -> bool:
-    """True if ``name`` on node class or plug class `cls` is a method that a Maya
-    attribute of that name turns into the plug (``node.<name>``)."""
-    return isinstance(_class_attr(cls, name), _PLUG_DESCRIPTORS + (_ChildOrMethod,))
+def _own_class_data(cls: type, name: str) -> Any:
+    """The value of the UPPER_CASE declaration `name` of `cls`'s own body (not
+    inherited: ``CUSTOM_NODE_TYPE``, ``NATIVE_NODE_TYPE``), or None."""
+    found = cls.__dict__.get(name)
+    return found.value if isinstance(found, _ClassData) else found
+
+
+def _class_data_hint(obj: Any, name: str) -> str:
+    """``"; DEFAULT is class data: DisplayLayer.DEFAULT"`` when `name` is an
+    UPPER_CASE declaration of `obj`'s class (an instance never reads it, see
+    `_ClassData`), else ``""``: the end of a lookup miss's AttributeError."""
+    if not name.isupper() or not isinstance(_class_attr(type(obj), name), _ClassData):
+        return ""
+    return f"; {name} is class data: {type(obj).__name__}.{name} (type(x).{name})"
 
 
 # The node class registry: the node type (a class's ``CUSTOM_NODE_TYPE``, else
@@ -507,14 +604,20 @@ class NodeMeta(type):
 
     def __new__(mcs, class_name, bases, attrs):
         # every public method of the class body is a plug method (see
-        # `_PlugMethod`): node.<name> is the plug of a Maya attr of that name
+        # `_PlugMethod`): node.<name> is the plug of a Maya attr of that name;
+        # an UPPER_CASE declaration is class data (`_ClassData`); any other
+        # public member is refused, so that a node keeps Python state under a
+        # ``_`` name only
+        node_type = attrs.get("CUSTOM_NODE_TYPE")
+        if not node_type:
+            node_type = attrs.get("NATIVE_NODE_TYPE")
+        if isinstance(node_type, _ClassData):  # a class body copied from a class
+            node_type = node_type.value
         for key, value in list(attrs.items()):
             if key[:1] != "_":
-                member = _plug_member(key, value)
+                member = _node_member(class_name, key, value)
                 if member is not value:
                     attrs[key] = member
-                else:
-                    _refuse_node_member(class_name, key, value)
         cls_obj   = type.__new__(mcs, class_name, bases, attrs)
 
         # a new class can change the dispatch of any node type
@@ -522,14 +625,22 @@ class NodeMeta(type):
         _CASTABLE_TYPES.clear()
         _STATIC_DATA_TYPE.clear()
 
-        node_type = attrs.get("CUSTOM_NODE_TYPE")
-        if not node_type:
-            node_type = attrs.get("NATIVE_NODE_TYPE")
         if node_type:
             _NODE_CLASS_DICT[node_type] = cls_obj
 
         return cls_obj
 
+    def __setattr__(cls, name: str, value: Any) -> None:
+        """A class assignment follows the class-body rule (see `_ClassData`): a
+        public function, classmethod, staticmethod or ``creates_or_updates`` is
+        made a plug method (``Transform.helper = func``: ``node.helper`` is the
+        plug of a Maya attr ``helper``, ``node.helper()`` the method), an
+        UPPER_CASE value is class data, and a callable that is no descriptor (a
+        ``mock.patch.object`` mock) is kept as it is; any other public member
+        raises TypeError (a property, lowercase data). A ``_`` name is stored."""
+        if name[:1] != "_" and not _callable_kept(value):
+            value = _node_member(cls.__name__, name, value)
+        type.__setattr__(cls, name, value)
 
 def _cast(obj: Any, build: bool = True) -> Any:
     """The typed cast, the one cast core (D12). Private: the public doors are
@@ -2691,8 +2802,30 @@ def _attribute_of(attr: str, *, node_type: str | None, node: str | None):
     return None if found.isNull() else found
 
 
+class _PlugMeta(type):
+    """The metaclass of `Attribute` (and so of every plug class): a class
+    assignment follows the class-body rule (`_wrap_plug_methods`). A public
+    function is made a `_ChildOrMethod` (``Plug.helper = func``: ``plug.helper``
+    is the compound child ``helper`` when the plug has one, ``plug.helper()``
+    the method), an UPPER_CASE value is class data, and a callable that is no
+    descriptor (a ``mock.patch.object`` mock) is kept as it is; any other public
+    member raises TypeError. A ``_`` name is stored."""
+
+    def __setattr__(cls, name: str, value: Any) -> None:
+        if name[:1] != "_" and not (
+            isinstance(value, _KEPT_ON_PLUGS)
+            or (
+                callable(value)
+                and not isinstance(value, (_FunctionType, type))
+                and not hasattr(type(value), "__get__")
+            )
+        ):
+            value = _plug_class_member(cls.__name__, name, value)
+        type.__setattr__(cls, name, value)
+
+
 @total_ordering
-class Attribute(str):
+class Attribute(str, metaclass=_PlugMeta):
     """
     The attribute class that wraps OpenMaya.MPlug.
 
@@ -2755,6 +2888,11 @@ class Attribute(str):
         object.__setattr__(self, name, value)
 
     # --- dunders
+
+    def __dir__(self) -> list:
+        # without the class data, which an instance never reads (`_ClassData`)
+        cls = type(self)
+        return [n for n in object.__dir__(self) if type(_class_attr(cls, n)) is not _ClassData]
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}("{str(self)}")'
@@ -4115,36 +4253,40 @@ class _ChildOrMethod:
         return f"<plug method {self.__dict__.get('__qualname__', self.name)}>"
 
 
+# what a plug class keeps as it is under a public name: rig's own descriptors
+# (rig._internal.plug adds its str-method route) and class data
+_KEPT_ON_PLUGS = (_ChildOrMethod, _ClassData)
+
+
+def _plug_class_member(owner: str, name: str, value: Any) -> Any:
+    """The class-dict entry for the public member `name` = `value` of the plug
+    class `owner` (its body, or a later class assignment): a function is a
+    `_ChildOrMethod`, a classmethod / staticmethod is kept, an UPPER_CASE value
+    is a `_ClassData`, anything else the TypeError of `_member_refused`."""
+    if isinstance(value, _FunctionType):
+        return _ChildOrMethod(value, name)
+    if isinstance(value, (classmethod, staticmethod) + _KEPT_ON_PLUGS):
+        return value
+    if _is_class_data(name, value):
+        return _ClassData(name, value)
+    raise _member_refused(owner, name, value, plug=True)
+
+
 def _wrap_plug_methods(cls: type) -> None:
     """Make every public function `cls` defines a `_ChildOrMethod` (Attribute
-    and each subclass, through `Attribute.__init_subclass__`), and refuse any
-    other public member its body declares: a property, a cached_property or
-    another descriptor, lowercase data, a nested class (the property ban, user
-    decision 2026-10-16: on a plug every public member is a method, so a bare
-    name is a child of that name or the method). A classmethod or staticmethod
-    passes, and so does an UPPER_CASE declaration (``UNITS = "cm"``)."""
+    and each subclass, through `Attribute.__init_subclass__`), every UPPER_CASE
+    declaration class data (`_ClassData`), and refuse any other public member its
+    body declares: a property, a cached_property or another descriptor,
+    lowercase data, a nested class (the property ban and the class-data rule,
+    user decisions 2026-10-16: on a plug every public member is a method, so a
+    bare name is a child of that name or the method). A classmethod or
+    staticmethod passes."""
     for name, value in list(vars(cls).items()):
         if name[:1] == "_":
             continue
-        if isinstance(value, _FunctionType):
-            type.__setattr__(cls, name, _ChildOrMethod(value, name))
-        elif isinstance(value, (classmethod, staticmethod, _ChildOrMethod)):
-            continue
-        elif name.isupper() and not hasattr(type(value), "__get__") and not isinstance(value, type):
-            continue
-        else:
-            kind = (
-                "property" if isinstance(value, property)
-                else "class" if isinstance(value, type)
-                else "descriptor" if hasattr(type(value), "__get__")
-                else "data"
-            )
-            raise TypeError(
-                f"{cls.__name__}.{name}: a plug class has no public {kind} (every "
-                f"public member of a plug is a method, so that a bare name is the "
-                f"compound child of that name or the method): write a method "
-                f"(def get_{name}(self)), or keep state under _{name}"
-            )
+        member = _plug_class_member(cls.__name__, name, value)
+        if member is not value:
+            type.__setattr__(cls, name, member)
 
 
 class _MethodAttribute(Attribute):

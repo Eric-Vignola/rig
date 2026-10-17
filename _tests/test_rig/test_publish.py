@@ -1067,12 +1067,10 @@ class TestPublishMultiParentResolution(MayaTestCase):
         from rig._internal.container import _resolve_multi_parent_source
 
         a = Node.create("transform", name="a")
-        with mock.patch.object(
-            type(a.wm),
-            "is_multi",
-            new_callable = mock.PropertyMock,
-            side_effect  = RuntimeError("boom"),
-        ):
+        # re-pinned (user decisions 2026-10-16, the property ban and class data):
+        # is_multi is a method, and a class assignment of a descriptor (a
+        # PropertyMock) is refused, so the method is patched with a plain mock
+        with mock.patch.object(type(a.wm), "is_multi", side_effect=RuntimeError("boom")):
             result = _resolve_multi_parent_source(a.wm, {})
         self.assertIsInstance(result, Attribute)
         self.assertEqual(str(result), str(a.wm))

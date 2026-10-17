@@ -49,6 +49,7 @@ from rig.nodetypes._base import (
     _cast_node,
     _check_attrs,
     _class_attr,
+    _ClassData,
     _handle_valid,
     _locked_node_text,
     _MISSING,
@@ -2107,8 +2108,10 @@ def _refuse_container_member_name(name: str) -> None:
     so an attribute published under that name could never be read back. A node
     has no properties (the property ban, user decision 2026-10-16), so ``name``
     and ``uuid`` publish. A member of the metaclass (``wrap``) is not one: a
-    container reads it as its published attribute."""
-    if _class_attr(Container, name) is not _MISSING:
+    container reads it as its published attribute; nor is class data
+    (``NATIVE_NODE_TYPE``: the class's, never an instance's)."""
+    found = _class_attr(Container, name)
+    if found is not _MISSING and type(found) is not _ClassData:
         raise ValueError(
             f"{name!r} is a Container attribute "
             f"({type(getattr(Container, name)).__name__}); "
