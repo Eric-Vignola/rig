@@ -318,6 +318,18 @@ at mayapy's default queue length): an attribute of a dynamic attr keeps a
 handle of its attribute too, and then raises `"held.dyne already
 deleted!"`, named by the name it was built with. So does an extension attr
 found through its node, which `deleteExtension` frees at once.
+`get_mplug()` raises the same once the node was freed: the raw MPlug then
+points at freed memory, and reading it (`Plug(old.get_mplug())`) could crash
+Maya.
+
+The name is the one thing a deleted or freed node still answers: its `str`
+is the last name it was known by, marked (`"held (deleted)"`, a node a
+shader conversion replaced by the name it had), and its repr
+`Transform("held", deleted)`; an attribute of one has the repr
+`Attribute("held.translateY", deleted)`, and its `str` raises. The marked
+name names no Maya node, so `maya.cmds` given the node, or a `List` holding
+it, raises Maya's own error. A `List` skips such an element (see the root
+cheatsheet's List section).
 
 A DAG node keeps the path it was taken through, and the attributes it finds
 are named through that path: with `S` instanced under `T1` and `T2`,
@@ -878,6 +890,16 @@ Verified on Maya 2025; not bugs to work around blindly.
   before any edit.
 - **`Mesh.get_closest_point` returns `(MPoint, face id)`**, the raw
   `MFnMesh.getClosestPoint` tuple, not the point its docstring describes.
+- **A point is a value, never a plug or a node.** `get_closest_point`,
+  `get_uv_at_point` and `set_points` take an `MPoint` or numbers (rows of
+  them); a `Plug`, a node, or a list holding one is a `TypeError` naming the
+  fix, `plug.get()` (OpenMaya reads a Plug as a sequence of plugs, which
+  crashed Maya).
+- **`get_data_fn_set()` reads one plug's data.** A compound or a multi
+  (array) plug has no data handle of its own: a `TypeError` names a child
+  or an element to ask instead. A plug of a numeric, unit, enum or message
+  attribute holds no data: `None` (only a typed, matrix or generic
+  attribute holds data).
 - **`Mesh.outMesh.get()` returns `(MeshData, UVList)`**: the shape's
   `serialize()` with its default `include_uvs=True`.
 - **`set_component_tag_category` converts nothing on a deformed mesh**: it
