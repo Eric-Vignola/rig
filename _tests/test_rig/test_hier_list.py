@@ -585,4 +585,6 @@ class TestCost(_Case):
             with self.subTest(items=type(items[0]).__name__):
                 now    = self._best(appended, items)
                 before = self._best(overridden, items)
-                self.assertLess(now, before * 2.5, (now, before))
+                # re-pinned (user decisions 1A / 6C 2026-10-17, the List rule): an
+                # appended node or plug is checked (its handle), so the bound is 5x
+                self.assertLess(now, before * 5, (now, before))

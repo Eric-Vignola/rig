@@ -14,7 +14,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig import Node, Plug
 from rig.nodetypes import _base
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute, _name_of
 from rig._internal.node_ops import NodeOp
 from rig._tests._base import MayaTestCase
 
@@ -475,7 +475,8 @@ class TestHeldAcrossAFreeRaise(MayaTestCase):
     def _assert_freed(self, held):
         from rig import lift, List
 
-        common = {"str": str, "get": lambda p: p.get(), "Plug": Plug}
+        # (re-pinned, user decision 6C 2026-10-17: str() is the marked name; rig's private name reader raises)
+        common = {"str": _name_of, "get": lambda p: p.get(), "Plug": Plug}
         plug_ops = {"plus 1": lambda p: p + 1, "xValue << 5": lambda p: p.xValue << 5}
         typed_ops = {"lift": lift, "List": lambda p: List([p])}
         for name, attr in held.items():

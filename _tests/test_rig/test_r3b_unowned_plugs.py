@@ -21,7 +21,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig import lift, List, Node, Plug
 from rig.nodetypes import _base
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute, _name_of
 from rig._internal import plug as plug_module
 from rig._internal.plug import ComponentPlug
 from rig.spec import Float
@@ -235,7 +235,8 @@ class TestUnownedPlugsHeldAcrossAFreeRaise(MayaTestCase):
 
     def _assert_freed(self, held):
         ops = {
-            "str":        str,
+            # (re-pinned, user decision 6C 2026-10-17: str() is the marked name; rig's private name reader raises)
+            "str":        _name_of,
             "full_name":  lambda p: p.get_full_name(),
             "get":        lambda p: p.get(),
             "node":       lambda p: p.get_node(),
@@ -328,9 +329,12 @@ class TestUnownedPlugsHeldAcrossAFreeRaise(MayaTestCase):
         freed = "(freed by a new scene, a file open or a reference unload) already deleted!"
         for label, attr in (("Plug", plug), ("typed", typed), ("child", derived)):
             with self.subTest(plug=label):
+                # (re-pinned, user decision 6C 2026-10-17: the name as rig reads
+                # it, `_name_of`; str() is the name it was built with, marked)
                 with self.assertRaises(RuntimeError) as ctx:
-                    str(attr)
+                    _name_of(attr)
                 self.assertEqual(str(ctx.exception), f"held node {freed}")
+                self.assertEqual(str(attr), str.__str__(attr) + " (deleted)")
 
     def test_a_plug_asked_for_its_node_raises_through_its_owner(self):
         # once cast, the owner guards the plug, with the round-3 message
@@ -387,7 +391,9 @@ class TestUnownedPlugsOfADeletedNodeRaise(MayaTestCase):
                 cmds.setAttr(f"{name}.{attr}", 7)
                 for label, plug in plugs.items():
                     with self.subTest(plug=label):
-                        for op in (str, lambda p: p.get(), lambda p: p.get_node()):
+                        # (re-pinned, user decision 6C 2026-10-17: the name as
+                        # rig reads it, `_name_of`; str() is the marked name)
+                        for op in (_name_of, lambda p: p.get(), lambda p: p.get_node()):
                             with self.assertRaises(RuntimeError) as ctx:
                                 op(plug)
                             self.assertEqual(str(ctx.exception), f"{name} already deleted!")

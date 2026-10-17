@@ -37,7 +37,7 @@ from maya.api import OpenMaya
 
 import rig
 from rig import Layer, List, Node, Plug, Tag, skip
-from rig.nodetypes._base import Attribute
+from rig.nodetypes._base import Attribute, _name_of
 from rig.nodetypes._base import Node as _NodeBase
 from rig._tests._base import MayaTestCase
 from rig._tests.test_rig import test_r3b_unowned_plugs as r3b
@@ -147,9 +147,11 @@ def _held():
     return held, nodes
 
 
-# the operations of a held plug that must raise "... already deleted!"
+# the operations of a held plug that must raise "... already deleted!" (its
+# name read as rig reads it, `_name_of`: str() is the marked name, user decision
+# 6C 2026-10-17, checked in `_assert_no_freed_read`)
 _PLUG_OPS = {
-    "str":          str,
+    "str":          _name_of,
     "get":          lambda p: p.get(),
     ">> None":      lambda p: p >> None,
     "get_mplug":    lambda p: p.get_mplug(),
@@ -264,6 +266,13 @@ class TestNoFreedReadAcrossAFileOpen(MayaTestCase):
                 self._check(label, name, op, attr, reads)
             for name, op in answers.items():
                 self._check(label, name, op, attr, reads, answers=True)
+            if not isinstance(attr, List):
+                # str answers: the name it was built with, marked (user decision
+                # 6C, 2026-10-17), read with no API object
+                with self.subTest(held=label, op="marked str"):
+                    before = len(reads)
+                    self.assertEqual(str(attr), str.__str__(attr) + " (deleted)")
+                    self.assertEqual(reads[before:], [])
         for label, node in nodes.items():
             for name, op in _NODE_OPS.items():
                 self._check(label, name, op, node, reads)
@@ -319,16 +328,22 @@ class TestNoFreedReadAcrossAFileOpen(MayaTestCase):
         self.assertIn("Plug(str) multi: _mplug .isArray", reads[0])
 
     def test_a_freed_list_element_is_skipped_unread(self):
-        # a List holding a freed node and plug answers for the rest, with
-        # rig.skip in their slots (user decision 2026-10-16), reading nothing
+        # re-pinned (user decisions 1A / 6C, 2026-10-17: the List rule): a List
+        # holds what is in the scene, so building one from a freed node or plug
+        # raises, and a List built before the free raises at every rig use;
+        # nothing is read either way (Python's len() and indexing still answer)
         held, nodes, reads = self._freed("open")
-        live  = Node(cmds.createNode("transform", name="live"))
-        items = List([nodes["node held"], live])
-        plugs = List([held["owned tx"], live.tx])
-        self.assertEqual(items.tx, List([skip, live.tx]))
-        plugs << 2.0
-        self.assertEqual(cmds.getAttr("live.tx"), 2.0)
-        self.assertEqual(plugs.get(), [skip, 2.0])
+        live = Node(cmds.createNode("transform", name="live"))
+        with self.assertRaisesRegex(RuntimeError, r"was deleted and freed: a List holds what is in the scene$"):
+            List([nodes["node held"], live])
+        with self.assertRaisesRegex(RuntimeError, r"belongs to a node that was deleted and freed: a List holds"):
+            List([held["owned tx"], live.tx])
+        slice_ = held["owned vtx slice"]  # a List built before the free
+        self.assertEqual(len(slice_), 3)
+        with self.assertRaisesRegex(RuntimeError, r"this List can no longer be used; build a new List$"):
+            slice_ << 2.0
+        with self.assertRaisesRegex(RuntimeError, r"this List can no longer be used; build a new List$"):
+            slice_.get()
         self.assertEqual(reads, [])
 
 

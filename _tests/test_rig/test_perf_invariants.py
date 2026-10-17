@@ -504,9 +504,11 @@ class TestCheckedTypeConstruction(MayaTestCase):
                 owner = named.get_node()
                 cmds.delete(name)
 
+                # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
                 with self.assertRaises(RuntimeError) as ctx:
-                    str(named)
+                    _base._name_of(named)
                 self.assertEqual(str(ctx.exception), f"{name} already deleted!")
+                self.assertEqual(str(named), f"{name}.{attr} (deleted)")
                 self.assertIs(named.get_node(), owner)
                 self.assertFalse(owner.is_valid())
                 # re-pinned (round 3b): a plug built from an MPlug, never asked
@@ -514,7 +516,7 @@ class TestCheckedTypeConstruction(MayaTestCase):
                 # the deleted node's "already deleted!" (it raised a TypeError or
                 # a ValueError casting the deleted node)
                 with self.assertRaises(RuntimeError) as ctx:
-                    str(fresh)
+                    _base._name_of(fresh)  # (re-pinned, user decision 6C 2026-10-17: rig's name reader; str() is marked)
                 self.assertEqual(str(ctx.exception), f"{name} already deleted!")
 
                 cmds.undo()
@@ -1326,7 +1328,7 @@ class TestAttributeInitState(MayaTestCase):
 def _owner(plug):
     """The name, owner classes and owner path a plug reports, or what it raises."""
     try:
-        name = str(plug)
+        name = _base._name_of(plug)  # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
         node = plug.get_node()
         path = node._mdagpath.fullPathName() if "_mdagpath" in vars(node) else None
     except Exception as exc:
@@ -1663,7 +1665,8 @@ class TestCachedAttributeOwner(MayaTestCase):
 
                 cmds.delete(name)
                 cmds.createNode(node_type, name=name)
-                for func in (str, lambda a: a.get(), lambda a: a.set(3.0)):
+                # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
+                for func in (_base._name_of, lambda a: a.get(), lambda a: a.set(3.0)):
                     with self.assertRaises(RuntimeError) as ctx:
                         func(cached)
                     self.assertEqual(str(ctx.exception), f"{name} already deleted!")
@@ -2518,10 +2521,11 @@ class TestFullNameReadsTheOwner(MayaTestCase):
         plug = factory()
         results, reads = _name_forwards(
             lambda: [
+                # (re-pinned, user decision 6C 2026-10-17: a plug's name as rig reads it, `_name_of`; str() is marked)
                 _result(lambda: plug.get_full_name()),
-                _result(lambda: str(plug)),
+                _result(lambda: _base._name_of(plug)),
                 _result(lambda: plug.get_full_name()),
-                _result(lambda: str(plug)),
+                _result(lambda: _base._name_of(plug)),
             ]
         )
         return results, type(plug.__dict__["_node"]), reads

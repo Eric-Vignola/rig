@@ -16,9 +16,9 @@ Maya, though ``Node`` and ``Plug`` resolve such a name (``persp.__is_camera__``)
 * `TestProbes`: Python's probes (``__deepcopy__``, ``copy.copy``, an empty List, numpy, a
   Python member of the node such as ``_fn_set``) get what they got before, and a probe on a
   long list costs one lookup.
-* `TestDeleted`: an element deleted to the undo queue or freed by a new scene is skipped in
-  either place, rig.skip in its slot, with one warning naming it (re-pinned, user decision
-  2026-10-16 "Deleted nodes in a List": it raised ``already deleted!``).
+* `TestDeleted`: a List holding an element deleted to the undo queue or freed by a new
+  scene raises the List error at every ``_`` use, in either place, and an undo makes it
+  usable again (re-pinned, user decisions 1A-4A and 6C 2026-10-17, the List rule).
 
 Negative control: on 818c24f (runs\\features\\listunderscore\\negctl3.json) 15 of the 23 tests
 fail; the eight guards (the probes, a Python member of an element, the list's own state, a
@@ -296,7 +296,10 @@ class TestProbes(_Case):
         a, b = _tagged("a", "b")
         nodes = List([a, b])
         self.assertIsNone(getattr(nodes, "__deepcopy__", None))
-        self.assertFalse(hasattr(nodes, "__array__"))
+        # re-pinned (user decision 6C, 2026-10-17): a List has ``__array__``, so a
+        # numpy conversion is a checked use (numpy read it through len() and
+        # indexing, which never refuse)
+        self.assertTrue(hasattr(nodes, "__array__"))
         self.assertFalse(hasattr(nodes, "__fspath__"))
         self.assertEqual(_names(copy.copy(nodes)), ["a", "b"])
         self.assertEqual(getattr(List([]), "__tag__", "raised"), "raised")
@@ -368,59 +371,63 @@ class TestProbes(_Case):
 
 
 class TestDeleted(_Case):
-    # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"):
-    # a deleted or freed element is skipped wherever it is, rig.skip in its slot and one
-    # warning naming it; the other elements broadcast (it raised "already deleted!")
+    # re-pinned (user decisions 1A-4A and 6C, 2026-10-17, the List rule): a List
+    # holds what is in the scene. A List holding a deleted or freed element raises
+    # the List error at every rig use, a ``_`` broadcast and its assignment too
+    # (it skipped the element with a warning); building one from such an element
+    # raises at construction; Python's len() and indexing still answer
 
-    def _assert_skipped(self, items, gone):
-        """``List(items).__tag__`` reads and sets the live elements only; `gone` is the
-        index of the deleted one."""
-        from rig import skip
+    _USED = r"^List element \[{i}\] \S+\(.*, deleted\) (was|belongs to a node that was) deleted{freed}: this List can no longer be used; build a new List$"
 
-        with mock.patch.object(cmds, "warning") as warn:
-            got = List(items).__tag__
-        self.assertEqual(warn.call_count, 1)
-        self.assertRegex(warn.call_args[0][0], rf"^List element \[{gone}\] \S+ was deleted; skipped$")
-        self.assertIs(got[gone], skip)
-        self.assertEqual([str(x) for x in got if x is not skip], ["a.__tag__"])
-        self.assertIsNone(getattr(List(items), "__deepcopy__", None))
-        nodes = List(items)
-        with mock.patch.object(cmds, "warning"):
+    def _assert_refused(self, nodes, gone, freed=""):
+        """Every ``_`` use of `nodes` (a List built while every element was in the
+        scene) raises the List error naming element `gone`, and sets nothing."""
+        used = self._USED.format(i=gone, freed=freed)
+        with self.assertRaisesRegex(RuntimeError, used):
+            nodes.__tag__
+        with self.assertRaisesRegex(RuntimeError, used):
             nodes.__tag__ = 5
+        with self.assertRaisesRegex(RuntimeError, used):
+            getattr(nodes, "__deepcopy__", None)
+        with self.assertRaisesRegex(RuntimeError, used):
+            nodes.tag
+        self.assertEqual(len(nodes), 2)
+        self.assertIs(list.__getitem__(nodes, gone), nodes[gone])
         self.assertNotIn("__tag__", vars(nodes))
-        self.assertEqual(cmds.getAttr("a.__tag__"), 5)
-        with mock.patch.object(cmds, "warning"):
-            nodes.__tag__ = 1
-        self.assertEqual(cmds.getAttr("a.__tag__"), 1)
 
     def test_deleted_to_the_undo_queue(self):
-        from rig import skip
-
+        cmds.undoInfo(state=True, infinity=True)
         a, b = _tagged("a", "b")
         bt = b.t
+        held = {
+            "first": (List([b, a]), 0), "first plug": (List([bt, a.t]), 0),
+            "second": (List([a, b]), 1), "second plug": (List([a.t, bt]), 1),
+        }
+        cmds.setAttr("a.__tag__", 1)
         cmds.delete("b")
-        for items in ([b, a], [bt, a.t]):
-            with self.subTest(first=str(items[1])):
-                self._assert_skipped(items, 0)
-        for items in ([a, b], [a.t, bt]):
-            with self.subTest(second=str(items[0])):
-                self._assert_skipped(items, 1)
-        # as the public name does
-        with mock.patch.object(cmds, "warning"):
-            tags = List([a, b]).tag
-        self.assertEqual([str(tags[0]), tags[1]], ["a.tag", skip])
-        while not cmds.objExists("b"):  # the sets above, then the delete
-            cmds.undo()
-        self.assertEqual(_names(List([a, b]).__tag__), ["a.__tag__", "b.__tag__"])
+        for label, (nodes, gone) in held.items():
+            with self.subTest(held=label):
+                self._assert_refused(nodes, gone)
+        self.assertEqual(cmds.getAttr("a.__tag__"), 1)
+        with self.assertRaisesRegex(RuntimeError, r"was deleted: a List holds what is in the scene$"):
+            List([a, b])
+        # an undo brings b back: the same Lists broadcast again (state-based, 1A)
+        cmds.undo()
+        for label, (nodes, gone) in held.items():
+            with self.subTest(undone=label):
+                self.assertEqual(len(_names(nodes.__tag__)), 2)
 
     def test_freed_by_a_new_scene(self):
         a, b = _tagged("a", "b")
         bt = b.t
+        # (a new scene frees every element: the first one is named)
+        held = {"first": (List([b, a]), 0), "plug": (List([bt, a.t]), 0), "second": (List([a, b]), 0)}
         self.new_scene()
-        a2, = _tagged("a")
-        for items in ([b, a2], [bt, a2.t]):
-            with self.subTest(first=type(items[0]).__name__):
-                self._assert_skipped(items, 0)
-        for items in ([a2, b], [a2.t, bt]):
-            with self.subTest(second=type(items[1]).__name__):
-                self._assert_skipped(items, 1)
+        _tagged("a")
+        for label, (nodes, gone) in held.items():
+            with self.subTest(held=label):
+                self._assert_refused(nodes, gone, freed=" and freed")
+        with self.assertRaisesRegex(RuntimeError, r"was deleted and freed: a List holds what is in the scene$"):
+            List([bt])
+        with self.assertRaises(AttributeError):
+            a.__pair__  # (a freed node's '_' probe: AttributeError, as before)
