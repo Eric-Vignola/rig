@@ -360,13 +360,20 @@ counts as an attribute (`aliasAttr`, a blendShape target): a target named
 still deletes the node; an alias of a compound's child does the same on the
 plug.
 
-A node and a plug have no properties (every public member is a method), so
-no other name hides a Maya attribute but class data: a default a node class
-body declares (`side = None` in a subclass) is Python state on the object,
-and hides a Maya attribute of its name (`Plug(a.find_attr(name)) << value`
-reaches it, and a new attribute named like one is made with a warning
-naming that spelling); so is a `_` name. Any other name is
-`Attribute not found`, never a new Python attribute.
+A node and a plug have no properties and no public Python state: every
+public member of their classes is a method, so no other name hides a Maya
+attribute. A class body (and a later `Cls.x = ...`) declares, under a public
+name, only methods; a property, a nested class or lowercase data
+(`side = None`) is refused when the class is made, naming the `_` spelling.
+A node class keeps its Python state under the `_` names its body declares
+(`_side = None`, then `self._side = "L"`). An UPPER_CASE declaration
+(`NATIVE_NODE_TYPE`, `CUSTOM_NODE_TYPE`, `FN_SET`, `DEFAULT`, your own
+`SIZE = 2.0`) is class data: the class reads it (`Noted.SIZE`,
+`type(node).SIZE`), a node never does (`node.DEFAULT` is its Maya attribute
+`DEFAULT`). Any other `_` name is the Maya attribute of that name
+(`node.__parked__ = 4.0`), else it raises, and any other public name is
+`Attribute not found`: never a new Python attribute. A `List` and a plug
+follow the same rule (`plug.__child__ = 5` sets the child `__child__`).
 
 ```python
 a.translateY = 2
@@ -375,8 +382,16 @@ try:
     a.translateXX = 1                              # a typo
 except AttributeError as err:
     print(str(err).split(" (")[0])                 # Attribute not found: a.translateXX
-a._note = "by hand"                                # a '_' name is Python state
-print(a._note, cmds.attributeQuery("_note", node="a", exists=True))   # by hand False
+try:
+    a._note = "by hand"                            # a '_' name its class does not declare
+except AttributeError as err:
+    print(str(err).split(":")[0])                  # Transform._note
+class Noted(Transform):
+    _note = None                                   # Python state: a declared '_' name
+    SIZE  = 2.0                                    # class data: Noted.SIZE, type(node).SIZE
+noted = Noted.create(name="noted")
+noted._note = "by hand"
+print(noted._note, Noted.SIZE, cmds.attributeQuery("_note", node="noted", exists=True))   # by hand 2.0 False
 from rig.spec import Bool
 a << Bool("lock")                                  # a Maya attr named like a method
 a.lock = True                                      # bare: the plug (a.lock << True)
@@ -867,9 +882,9 @@ print(nodes.tz >> None)                      # [5. 5. 5.]
 A `_` name (`nodes.__tag__`, `nodes.__tag__ = 5`) broadcasts like any
 Maya attr when every element has it, and one only some elements have
 raises, setting nothing. Reading one no element has is an
-`AttributeError` (Python's own probes, `__deepcopy__`, expect that);
-assigning one is Python state on the list, as on a node (a `List`
-subclass declares its private state in its class body, as a node class does).
+`AttributeError` (Python's own probes, `__deepcopy__`, expect that), and
+so is assigning one, as on a node (a `List` subclass declares its private
+state in its class body, as a node class does).
 
 Slicing keeps the type; a list, tuple or array key picks slots (fancy
 indexing); an `int` returns the element.

@@ -237,6 +237,11 @@ except ValueError as e:
 A subclass with a `CUSTOM_NODE_TYPE` registers itself (that is the
 `NodeMeta` metaclass at work). The type is stamped on the node as a locked
 `__custom_node_type__` string, and `Node` reads it before anything else.
+`CUSTOM_NODE_TYPE`, `NATIVE_NODE_TYPE`, `FN_SET` and any UPPER_CASE
+declaration are class data: `Control.CUSTOM_NODE_TYPE` and, in a method,
+`type(self).CUSTOM_NODE_TYPE` read it; a node never does (`hand.DEFAULT` is
+its Maya attribute). Python state goes under a `_` name the class body
+declares (`_side = None`); a lowercase public `side = None` is refused.
 
 ```python
 class Control(Transform):
@@ -247,6 +252,7 @@ print(repr(hand), hand.get_node_type(), cmds.getAttr("hand_ctl.__custom_node_typ
 print(repr(Node("hand_ctl")), repr(Node.create("control", name="foot_ctl")))           # Control("hand_ctl") Control("foot_ctl")
 print(Control.find_all())                                                              # [Control("foot_ctl"), Control("hand_ctl")]
 print(Transform.is_type("hand_ctl"), Transform.is_type("hand_ctl", exact_type=False))  # False True
+print(Control.CUSTOM_NODE_TYPE, Control.NATIVE_NODE_TYPE, hasattr(hand, "CUSTOM_NODE_TYPE"))  # control transform False
 try:
     Control("persp")
 except ValueError as e:
@@ -1032,8 +1038,8 @@ print(repr(dst.apply_skin_data(skin.serialize())))                   # SkinClust
 
 ## 10. `NurbsCurve` and `NurbsSurface`
 
-Both are `Geometry`, so the tag methods above apply; `POINT_COMP_TYPE` is
-`cv`, and a surface's ids are `(N, 2)` `(u, v)` pairs.
+Both are `Geometry`, so the tag methods above apply; their class data
+`POINT_COMP_TYPE` is `cv`, and a surface's ids are `(N, 2)` `(u, v)` pairs.
 
 ```python
 cmds.file(new=True, force=True)
