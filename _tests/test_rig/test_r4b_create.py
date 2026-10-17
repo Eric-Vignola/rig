@@ -70,8 +70,8 @@ class TestCreate(_SceneCase):
         grp = Transform.create(name="grp")
         t   = Transform.create(name="t", parent=grp)
         j   = Joint.create(name="j", parent="grp")
-        self.assertEqual(t.long_name, "|grp|t")
-        self.assertEqual(j.long_name, "|grp|j")
+        self.assertEqual(t.get_long_name(), "|grp|t")
+        self.assertEqual(j.get_long_name(), "|grp|j")
         self.assertIsInstance(j, Joint)
         # always new: Maya picks the name
         self.assertEqual(str(Transform.create(name="grp")), "grp1")
@@ -217,7 +217,7 @@ class TestCreate(_SceneCase):
         self.assertFalse(cmds.objExists("inner_u"))
         self.assertTrue(cmds.objExists(str(outer)))
         cmds.redo()
-        self.assertTrue(t.is_valid)
+        self.assertTrue(t.is_valid())
         self.assertEqual(cmds.getAttr("inner_u.tx"), 3)
         self.assertEqual(cmds.listConnections("inner_u.ty", plugs=True), ["drv.translateX"])
 
@@ -236,7 +236,7 @@ class TestCreate(_SceneCase):
         cmds.createNode("transform", name="ctl")
         grp = Transform.create(name="grp")
         ctl = Transform.create(name="ctl", parent=grp)
-        self.assertEqual(ctl.long_name, "|grp|ctl")
+        self.assertEqual(ctl.get_long_name(), "|grp|ctl")
         self.assertTrue(cmds.objExists("|ctl"))
 
     def test_node_create_of_an_unregistered_type(self):
@@ -313,7 +313,7 @@ class TestCreateFlags(_SceneCase):
         Transform.create(name="quiet", skipSelect=True)
         self.assertEqual(cmds.ls(selection=True), ["c"])
         grp = Transform.create(name="grp")
-        self.assertEqual(Transform.create(name="k", p=grp).long_name, "|grp|k")
+        self.assertEqual(Transform.create(name="k", p=grp).get_long_name(), "|grp|k")
 
     def test_display_layer(self):
         cube = cmds.polyCube(name="cube", ch=False)[0]
@@ -406,7 +406,7 @@ class TestCreateFlags(_SceneCase):
             cmds.file(force=True, type="mayaAscii", save=True)
             self.new_scene()
             ref = Reference.create(path, namespace="hero")
-            self.assertEqual(ref.namespace, "hero")
+            self.assertEqual(ref.get_namespace(), "hero")
             self.assertTrue(cmds.objExists("hero:thing"))
             ref.delete()
             self.new_scene()
@@ -494,4 +494,4 @@ class TestSharedRefused(_SceneCase):
         # the other short flags keep their meaning
         grp = rn.transform(n="grp")
         kid = rn.transform(n="kid", p=grp, ss=True)
-        self.assertEqual(kid.long_name, "|grp|kid")
+        self.assertEqual(kid.get_long_name(), "|grp|kid")

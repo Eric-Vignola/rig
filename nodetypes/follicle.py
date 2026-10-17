@@ -103,7 +103,7 @@ class Follicle(DAGNode):
                 follicle.find_attr("parameterV").set(uv[1] - fudge_factor)
             if is_at_origin(fTranform):
                 raise Exception(
-                    f"Can't attach follicle {follicle.name} to meaningful uv at {uv}"
+                    f"Can't attach follicle {follicle} to meaningful uv at {uv}"
                 )
 
         return follicle
@@ -120,7 +120,7 @@ class Follicle(DAGNode):
         parent = self.get_parent()
 
         if maintain_offset is False:
-            outPos = cmds.getAttr(f"{self.name}.outTranslate")
+            outPos = cmds.getAttr(f"{self}.outTranslate")
             cmds_edit.setAttr(f"{constrainee}.translate", *outPos[0])
         # cmds.setAttr(follicle+".simulationMethod", 0)
         if translation:

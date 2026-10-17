@@ -123,12 +123,12 @@ def _ops(held):
     """The operations whose outcomes are compared, in the order they run."""
     dg, dag = held["dg"], held["dag"]
     return (
-        ("dg.name", lambda: dg.name),
-        ("dg.is_valid", lambda: dg.is_valid),
+        ("dg.name", lambda: dg.get_name()),
+        ("dg.is_valid", lambda: dg.is_valid()),
         ("dg.ensure_valid", lambda: dg.ensure_valid()),
         ("dg.attr", lambda: str(dg.input2X)),
-        ("dag.name", lambda: dag.name),
-        ("dag.is_valid", lambda: dag.is_valid),
+        ("dag.name", lambda: dag.get_name()),
+        ("dag.is_valid", lambda: dag.is_valid()),
         ("dag.attr", lambda: dag.tx.get()),
         ("owned.str", lambda: str(held["owned"])),
         ("owned.get", lambda: held["owned"].get()),
@@ -138,7 +138,7 @@ def _ops(held):
         ("owned_dag.hash", lambda: hash(held["owned_dag"]) == held["h_owned_dag"]),
         ("loose.str", lambda: str(held["loose"])),
         ("loose.get", lambda: held["loose"].get()),
-        ("loose.node", lambda: held["loose"].get_node().name),
+        ("loose.node", lambda: held["loose"].get_node().get_name()),
         ("dyn.str", lambda: str(held["dyn"])),
         ("dyn.get", lambda: held["dyn"].get()),
         ("dyn.set", lambda: (held["dyn"] << 0.5) is held["dyn"]),
@@ -673,11 +673,10 @@ class TestCollectHandles(MayaTestCase):
 
     def test_the_handles_are_the_by_name_routes(self):
         class _Renamed(DGNode):
-            """A DG node class with a `name` of its own: named by name."""
+            """A DG node class with a naming of its own: named by name. (re-pinned (user decision 2026-10-16, the property ban): a node class declares no property, so its own naming is its __str__.)"""
 
-            @property
-            def name(self):
-                return self.fn_set.name()
+            def __str__(self):
+                return self.get_fn_set().name()
 
         cmds.undoInfo(state=True, infinity=True)
         self._assert_by_name(self._objects(_Renamed), "live")

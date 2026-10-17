@@ -27,8 +27,8 @@ def _parent_path(parent: Any) -> str:
     anything is made. Used by every create that takes ``parent=``
     (``DAGNode._create``, ``container.createNode``, so ``rn.<type>``)."""
     if isinstance(parent, DAGNode):
-        return parent.long_name
-    return DAGNode(parent).long_name
+        return parent._long_name()
+    return DAGNode(parent)._long_name()
 
 
 class DAGNode(DGNode):
@@ -74,7 +74,7 @@ class DAGNode(DGNode):
                 d["_mobject"]  = d["_mdagpath"].node()
             d["_fn_set"]    = self.FN_SET(d["_mdagpath"])
             d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
-        type(self).is_type(self.name, exact_type=False, failfast=True)
+        type(self).is_type(self._name(), exact_type=False, failfast=True)
         d["_attr_dict"] = {}  # cache queried attributes
 
     # --- creation
@@ -102,11 +102,10 @@ class DAGNode(DGNode):
         sel.add(node)
         return sel.getDagPath(0).partialPathName()
 
-    # --- properties and utils
+    # --- queries (methods: see DGNode)
 
-    @property
-    def mdagpath(self) -> str:
-        """Returns the MDagpath object."""
+    def get_mdagpath(self) -> OpenMaya.MDagPath:
+        """Returns the MDagPath (a stale one re-resolved first)."""
         _ensure_valid(self)
         d = self.__dict__
         if "_taken_mdagpath" in d:
@@ -115,19 +114,26 @@ class DAGNode(DGNode):
             self._repath()
         return self._mdagpath
 
-    @property
-    def name(self) -> str:
-        """Returns the shortest unique name."""
-        if "_taken_mdagpath" in self.__dict__:
-            self._retake_path()
-        return self.fn_set.partialPathName() or self._repath().partialPathName()
+    # the node's own naming (DGNode's `get_name` / `get_long_name`, ``str(node)``
+    # and the other dunders read it): through the held fn set's path, a stale
+    # path re-resolved (`_repath`), the path the node was taken through taken
+    # again once valid (`_retake_path`)
 
-    @property
-    def long_name(self) -> str:
-        """Returns the long name."""
-        if "_taken_mdagpath" in self.__dict__:
+    def _name(self) -> str:
+        """The shortest unique path."""
+        d = self.__dict__
+        if "_taken_mdagpath" in d:
             self._retake_path()
-        return self.fn_set.fullPathName() or self._repath().fullPathName()
+        _ensure_valid(self)
+        return d["_fn_set"].partialPathName() or self._repath().partialPathName()
+
+    def _long_name(self) -> str:
+        """The full path."""
+        d = self.__dict__
+        if "_taken_mdagpath" in d:
+            self._retake_path()
+        _ensure_valid(self)
+        return d["_fn_set"].fullPathName() or self._repath().fullPathName()
 
     def _repath(self) -> OpenMaya.MFnDagNode:
         """Re-resolves the DAG path of a live node whose path went stale (the
@@ -153,10 +159,9 @@ class DAGNode(DGNode):
             d["_mdagpath"] = taken
             d["_fn_set"]   = self.FN_SET(taken)
 
-    @property
     def is_shape(self) -> bool:
         """Returns whether this node is a shape node."""
-        return "shape" in cmds.nodeType(self.long_name, inherited=True)
+        return "shape" in cmds.nodeType(self._long_name(), inherited=True)
 
     @classmethod
     def is_type(
@@ -199,11 +204,11 @@ class DAGNode(DGNode):
 
     def get_bounding_box(self, world_space: bool = True) -> OpenMaya.MBoundingBox:
         """Returns the bounding box of this dag node."""
-        bbx = self.fn_set.boundingBox
+        bbx = type(self).get_fn_set(self).boundingBox
         if world_space:
             parent = self.get_parent()
             if parent:
-                bbx.transformUsing(parent.mdagpath.exclusiveMatrix())
+                bbx.transformUsing(type(parent).get_mdagpath(parent).exclusiveMatrix())
         return bbx
 
     # --- hierarchy methods
@@ -219,7 +224,7 @@ class DAGNode(DGNode):
         """
         # force long name
         kwargs["fullPath"] = True
-        return [_cast(x) for x in cmds.listRelatives(self.name, **kwargs) or []]
+        return [_cast(x) for x in cmds.listRelatives(str(self), **kwargs) or []]
 
     def get_parent(self, index: int = 0) -> DGNode | None:
         """Returns the parent object at a given index.
@@ -231,7 +236,7 @@ class DAGNode(DGNode):
             The parent object or None if parented to world.
         """
         index  = max(index, 0)
-        fn_set = self.fn_set
+        fn_set = type(self).get_fn_set(self)
         for _ in range(index + 1):
             mobject = fn_set.parent(0)
             if not _parent_valid(mobject):
@@ -251,7 +256,7 @@ class DAGNode(DGNode):
         """
         node_types = [node_type] if isinstance(node_type, str) else node_type
 
-        fn_set = self.fn_set
+        fn_set = type(self).get_fn_set(self)
         while fn_set:
             mobject = fn_set.parent(0)
             if not _parent_valid(mobject):
@@ -289,7 +294,7 @@ class DAGNode(DGNode):
         if str(cur) != str(parent):
             # a locked node is never reparented (refused before Maya's error)
             self._refuse_if_locked("reparent")
-            if self.is_shape:
+            if type(self).is_shape(self):
                 if not parent:
                     raise RuntimeError("Cannot parent shapes to world.")
                 for ln, sn in zip(("relative", "shape"), ("r", "s")):
@@ -298,12 +303,12 @@ class DAGNode(DGNode):
                     kwargs[ln] = True
 
             if parent:
-                cmds_edit.parent(self.name, parent, **kwargs)
+                cmds_edit.parent(str(self), parent, **kwargs)
             else:
                 if "w" in kwargs:
                     kwargs.pop("w")
                 kwargs["world"] = True
-                cmds_edit.parent(self.name, **kwargs)
+                cmds_edit.parent(str(self), **kwargs)
 
     # --- deformers
 
@@ -331,9 +336,9 @@ class DAGNode(DGNode):
         """
         node_types = [node_type] if isinstance(node_type, str) else node_type
         deformers  = []
-        shape      = self.mobject
+        shape      = type(self).get_mobject(self)
         if shape.hasFn(OpenMaya.MFn.kTransform):
-            fn    = self.fn_set
+            fn    = type(self).get_fn_set(self)
             shape = next(
                 (c for c in (fn.child(i) for i in range(fn.childCount()))
                  if c.hasFn(OpenMaya.MFn.kShape) and not OpenMaya.MFnDagNode(c).isIntermediateObject),

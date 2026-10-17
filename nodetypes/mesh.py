@@ -150,8 +150,7 @@ class Mesh(Geometry):
         "Mesh.load(path, name='x') makes one; Mesh('x') refers to one"
     )
 
-    @property
-    def fn_set(self) -> OpenMaya.MFnMesh:
+    def get_fn_set(self) -> OpenMaya.MFnMesh:
         """A new ``MFnMesh`` of this mesh, on every access (about 3 us).
 
         An MFnMesh kept across an edit of the mesh made some other way (a
@@ -162,7 +161,7 @@ class Mesh(Geometry):
         runs/rU/U3/clearuvs_probe.py, stale_probe.py; runs/rU2/S3/probe). Keep
         one for a single call at most.
         """
-        return OpenMaya.MFnMesh(self.mdagpath)
+        return OpenMaya.MFnMesh(type(self).get_mdagpath(self))
 
     # --- creation
 
@@ -273,20 +272,17 @@ class Mesh(Geometry):
 
     # --- mesh geometry data methods
 
-    @property
-    def num_vertices(self) -> int:
+    def get_num_vertices(self) -> int:
         """Returns the number of vertices."""
-        return self.fn_set.numVertices
+        return type(self).get_fn_set(self).numVertices
 
-    @property
-    def num_weight_points(self) -> int:
+    def get_num_weight_points(self) -> int:
         """Returns the number of points in this geometry that can be skin weighted."""
-        return self.num_vertices
+        return type(self).get_num_vertices(self)
 
-    @property
-    def num_polygons(self) -> int:
+    def get_num_polygons(self) -> int:
         """Returns the number of faces."""
-        return self.fn_set.numPolygons
+        return type(self).get_fn_set(self).numPolygons
 
     def get_points(self, world_space: bool = True) -> OpenMaya.MPointArray:
         """Get the vertex points of the mesh.
@@ -298,7 +294,7 @@ class Mesh(Geometry):
             A MPointArray of the mesh's vertices.
         """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return self.fn_set.getPoints(space)
+        return type(self).get_fn_set(self).getPoints(space)
 
     def set_points(
         self, points: OpenMaya.MPointArray, world_space: bool = False
@@ -328,10 +324,10 @@ class Mesh(Geometry):
             points = points.tolist()
         points = OpenMaya.MPointArray(points)
 
-        count = self.num_vertices
+        count = type(self).get_num_vertices(self)
         if len(points) != count:
             raise ValueError(
-                f"Mesh.set_points: {len(points)} points for the {count} vertices of {self.name}"
+                f"Mesh.set_points: {len(points)} points for the {count} vertices of {self}"
             )
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         _MeshSetPointsCommand(self, points, space)
@@ -345,7 +341,7 @@ class Mesh(Geometry):
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         if not isinstance(point, OpenMaya.MPoint):
             point = OpenMaya.MPoint(point)
-        return self.fn_set.getClosestPoint(point, space)
+        return type(self).get_fn_set(self).getClosestPoint(point, space)
 
     def get_vertices_above_plane(
         self,
@@ -382,11 +378,11 @@ class Mesh(Geometry):
         )
 
         # Convert indices to True/False array.
-        is_vert_above_plane = np.isin(np.arange(self.num_vertices), vert_indices)
+        is_vert_above_plane = np.isin(np.arange(type(self).get_num_vertices(self)), vert_indices)
 
         # Loop over each face and check if all vertices are above the plane.
         face_indices = []
-        fn = self.fn_set
+        fn = type(self).get_fn_set(self)
         for face_idx in range(fn.numPolygons):
             if all(
                 (
@@ -406,17 +402,17 @@ class Mesh(Geometry):
     ) -> OpenMaya.MPoint:
         """Returns the UV coordinates of the mesh at a given point."""
         space  = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        uv_set = uv_set or self.current_uv_set
+        uv_set = uv_set or type(self).get_current_uv_set(self)
         if not isinstance(point, OpenMaya.MPoint):
             point = OpenMaya.MPoint(point)
-        return self.fn_set.getUVAtPoint(point, space, uv_set)
+        return type(self).get_fn_set(self).getUVAtPoint(point, space, uv_set)
 
     def get_vertex_normals(
         self, angle_weighted: bool = False, world_space: bool = True
     ) -> OpenMaya.MFloatVectorArray:
         """Returns the vertex normals of the mesh."""
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return self.fn_set.getVertexNormals(angle_weighted, space)
+        return type(self).get_fn_set(self).getVertexNormals(angle_weighted, space)
 
     def get_per_face_vertex_normals(self):
         """
@@ -427,7 +423,7 @@ class Mesh(Geometry):
 
         normals = []
         mSel    = OpenMaya.MSelectionList()
-        mSel.add(self.name)
+        mSel.add(str(self))
         dag_path  = mSel.getDagPath(0)
 
         mesh_iter = OpenMaya.MItMeshFaceVertex(dag_path)
@@ -452,7 +448,7 @@ class Mesh(Geometry):
         """
         nodes = []
         shading_engines = set(
-            cmds.listConnections(self.name, d=True, s=False, type="shadingEngine") or []
+            cmds.listConnections(str(self), d=True, s=False, type="shadingEngine") or []
         )
         if not shading_engines:
             return nodes
@@ -499,7 +495,7 @@ class Mesh(Geometry):
             if verbose is True the output will always be (material, face_indices) pairs.
         """
         bindings          = {}
-        face_count        = self.num_polygons
+        face_count        = type(self).get_num_polygons(self)
         whole_mesh_mat    = None  # used to record the material assigned to the entire mesh
         assigned_face_ids = set()
         for sg, mat in self.get_materials(as_pairs=True):
@@ -530,15 +526,13 @@ class Mesh(Geometry):
 
     # --- UV methods
 
-    @property
-    def uv_sets(self) -> list[str]:
+    def get_uv_sets(self) -> list[str]:
         """Returns a list of UV set names."""
-        return self.fn_set.getUVSetNames()
+        return type(self).get_fn_set(self).getUVSetNames()
 
-    @property
-    def current_uv_set(self) -> str:
+    def get_current_uv_set(self) -> str:
         """Returns the current uv set."""
-        return self.fn_set.currentUVSetName()
+        return type(self).get_fn_set(self).currentUVSetName()
 
     def add_uv_set(self, uv_set: str) -> None:
         """Adds an empty UV set: one undo step.
@@ -549,7 +543,7 @@ class Mesh(Geometry):
         Raises:
             RuntimeError: The mesh already has a UV set of that name.
         """
-        if uv_set in self.uv_sets:
+        if uv_set in type(self).get_uv_sets(self):
             raise RuntimeError(f"UV set {uv_set} already exists.")
         _MeshAddUVSetCommand(self, uv_set)
 
@@ -564,8 +558,8 @@ class Mesh(Geometry):
             RuntimeError: The mesh has no UV set of that name, or it is the
                 mesh's default (first) set, which Maya never deletes.
         """
-        uv_set = uv_set or self.current_uv_set
-        names  = self.uv_sets
+        uv_set = uv_set or type(self).get_current_uv_set(self)
+        names  = type(self).get_uv_sets(self)
         if uv_set not in names:
             raise RuntimeError(f"UV set {uv_set} does not exist.")
         if uv_set == names[0]:
@@ -578,7 +572,7 @@ class Mesh(Geometry):
         Args:
             map_name: A map name to delete. If None, use current map.
         """
-        map_name = f"{self.name}.{map_name}"
+        map_name = f"{self}.{map_name}"
         if cmds.objExists(map_name):
             cmds_edit.deleteAttr(map_name)
 
@@ -593,9 +587,9 @@ class Mesh(Geometry):
             RuntimeError: The mesh has no UV set `uv_set`, or has one named
                 `new_name` already.
         """
-        uv_set = uv_set or self.current_uv_set
+        uv_set = uv_set or type(self).get_current_uv_set(self)
         if uv_set != new_name:
-            names = self.uv_sets
+            names = type(self).get_uv_sets(self)
             if uv_set not in names:
                 raise RuntimeError(f"UV set {uv_set} does not exist.")
             if new_name in names:
@@ -608,8 +602,8 @@ class Mesh(Geometry):
         Args:
             uv_set: A uv set name to query. If None, use current uv set.
         """
-        uv_set = uv_set or self.current_uv_set
-        u_vals, v_vals = self.fn_set.getUVs(uv_set)
+        uv_set = uv_set or type(self).get_current_uv_set(self)
+        u_vals, v_vals = type(self).get_fn_set(self).getUVs(uv_set)
         uv_coords       = np.empty((len(u_vals), 2))
         uv_coords[:, 0] = np.array(u_vals)
         uv_coords[:, 1] = np.array(v_vals)
@@ -626,8 +620,8 @@ class Mesh(Geometry):
         Args:
             uv_set: A uv set name to query. If None, use current uv set.
         """
-        uv_set = uv_set or self.current_uv_set
-        return self.fn_set.getAssignedUVs(uv_set)
+        uv_set = uv_set or type(self).get_current_uv_set(self)
+        return type(self).get_fn_set(self).getAssignedUVs(uv_set)
 
     def set_uv_data(self, uv_data: UVData, uv_set: str | None = None) -> None:
         """Sets the data of an uv set.
@@ -655,8 +649,8 @@ class Mesh(Geometry):
                 UVs than the set of a mesh with history.
             TypeError: ``uv_data.name`` is not a non-empty str.
         """
-        uv_set = uv_set or self.current_uv_set
-        _check_uv_data(OpenMaya.MFnMesh(self.mdagpath), uv_set, uv_data)
+        uv_set = uv_set or type(self).get_current_uv_set(self)
+        _check_uv_data(OpenMaya.MFnMesh(type(self).get_mdagpath(self)), uv_set, uv_data)
         _MeshSetUVDataCommand(self, uv_set, uv_data)
 
     # --- deformation
@@ -704,7 +698,7 @@ class Mesh(Geometry):
 
         with _undo_chunk("rig.Mesh.bake_deformation"):
             # set to bind pose
-            cmds_edit.select(self.name, replace=True)
+            cmds_edit.select(str(self), replace=True)
             mel_eval("gotoBindPose;")
 
             # bake delta mush, use a high max inf count to maintain fidelity
@@ -715,9 +709,9 @@ class Mesh(Geometry):
                 bake_cap = max(8, max_influences)
             cmds_edit.bakeDeformer(
                 srcSkeletonName = "root_joint",
-                srcMeshName     = self.name,
+                srcMeshName     = str(self),
                 dstSkeletonName = "root_joint",
-                dstMeshName     = self.name,
+                dstMeshName     = str(self),
                 maxInfluences   = bake_cap,
             )
 
@@ -741,7 +735,7 @@ class Mesh(Geometry):
         """
         from cgmath.geometry import UVData
 
-        uv_set = uv_set or self.current_uv_set
+        uv_set = uv_set or type(self).get_current_uv_set(self)
         points = self.get_uv_coords(uv_set)
         uv_counts, uv_ids = self.get_assigned_uvs(uv_set)
         return UVData(
@@ -765,7 +759,7 @@ class Mesh(Geometry):
         """
         from cgmath.geometry import MeshData, UVList
 
-        fn     = self.fn_set
+        fn     = type(self).get_fn_set(self)
         points = self.get_points(world_space=world_space)
         vert_counts, vert_ids = fn.getVertices()
 
@@ -781,7 +775,7 @@ class Mesh(Geometry):
             points         = np.asarray(points)[:, :-1],
             normals        = np.asarray(normals),
             normal_indices = np.asarray(normal_ids),
-            name           = self.clean_name,
+            name           = type(self).get_clean_name(self),
         )
 
         # extract hole data from faces with interior boundaries
@@ -801,7 +795,7 @@ class Mesh(Geometry):
             mesh_data.matrix = np.array(self.get_parent().find_attr("wm").get()).reshape(4, 4)
 
         if include_uvs:
-            uv_list = UVList([self.serialize_uv(x) for x in self.uv_sets])
+            uv_list = UVList([self.serialize_uv(x) for x in type(self).get_uv_sets(self)])
             if mesh_data.hole_faces is not None:
                 _propagate_holes_to_uvs(mesh_data, uv_list)
             return mesh_data, uv_list
@@ -863,7 +857,7 @@ class Mesh(Geometry):
 
     @statement
     def _load_into(self, mesh, uvs=None, *, world_space=True, normals=True, **kwargs):
-        method = f"Mesh({self.name!r}).load"
+        method = f"Mesh({str(self)!r}).load"
         if kwargs:
             raise TypeError(
                 f"{method} updates the mesh in place: it takes the files, world_space= and normals= "
@@ -874,7 +868,7 @@ class Mesh(Geometry):
         update = _mesh_update(self, method, mesh, data, uv_data, world_space, normals)
         with _undo_chunk("rig.Mesh.load"):
             _MeshUpdateCommand(self, *update[:3])
-            names = set(self.uv_sets)
+            names = set(type(self).get_uv_sets(self))
             for uv in update[3]:
                 if uv.name not in names:
                     self.add_uv_set(uv.name)
@@ -886,8 +880,7 @@ class Mesh(Geometry):
 
     # --- paintable map methods
 
-    @property
-    def paintable_maps(self) -> list[str]:
+    def get_paintable_maps(self) -> list[str]:
         """Returns a list of paintable maps."""
         return [type(x).get_name(x) for x in self.get_map_attrs()]
 
@@ -906,7 +899,7 @@ class Mesh(Geometry):
         # cap filtered ids & values using vert count,
         # since Maya doesn't auto-clear stale map values...
         ids, values = map_attr.filter_array_values(
-            MAP_DEFAULT_VALUE, sparse=sparse, cap_count=self.num_vertices
+            MAP_DEFAULT_VALUE, sparse=sparse, cap_count=type(self).get_num_vertices(self)
         )
         # remove default category as all maps has it
         categories = set(map_attr.get_categories())
@@ -996,7 +989,7 @@ class Mesh(Geometry):
         """Returns the values of a given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         values     = map_attr.get()
-        vert_count = self.num_vertices
+        vert_count = type(self).get_num_vertices(self)
 
         # cap values using vert count
         # since Maya doesn't auto-clear stale map values...
@@ -1022,7 +1015,7 @@ class Mesh(Geometry):
 
         attr: Attribute = self.find_map_attr(map_attr, failfast=True)
         if isinstance(values, MapData):
-            vals = values.to_dense_array(self.num_vertices)
+            vals = values.to_dense_array(type(self).get_num_vertices(self))
         else:
             vals = self.sanitize_map_values(values)
         attr.set(vals)
@@ -1156,7 +1149,7 @@ class Mesh(Geometry):
         values = MAP_DEFAULT_VALUE if values is None else values
 
         # a single value
-        vert_count = self.num_vertices
+        vert_count = type(self).get_num_vertices(self)
         if isinstance(values, Number):
             return [float(values)] * vert_count
 
@@ -1176,7 +1169,7 @@ class Mesh(Geometry):
         """Enable painting mode on the given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
-        paint_attr = f"{self.NATIVE_NODE_TYPE}.{self.long_name}.{type(map_attr).get_name(map_attr)}"
+        paint_attr = f"{self.NATIVE_NODE_TYPE}.{type(self).get_long_name(self)}.{type(map_attr).get_name(map_attr)}"
         cmds_edit.select(type(map_attr).get_node(map_attr), replace=True)
         mel_eval(
             f'artSetToolAndSelectAttr("artAttrCtx", "{paint_attr}");artAttrInitPaintableAttr;'
@@ -1187,7 +1180,7 @@ class Mesh(Geometry):
     def get_color_sets(self) -> List[ColorSet]:
         """Returns a list of the colors sets for this object"""
         return [
-            ColorSet(mesh=self, name=name) for name in self.fn_set.getColorSetNames()
+            ColorSet(mesh=self, name=name) for name in type(self).get_fn_set(self).getColorSetNames()
         ]
 
     def add_color_set(
@@ -1204,8 +1197,8 @@ class Mesh(Geometry):
         # cast or throw ValueError
         representation = ColorSet.Representation(representation)
 
-        if name in self.fn_set.getColorSetNames():
-            raise ValueError(f"{self.name} has color set {name}!")
+        if name in type(self).get_fn_set(self).getColorSetNames():
+            raise ValueError(f"{self} has color set {name}!")
         _MeshAddColorSetCommand(self, name, representation.value)
         return ColorSet(mesh=self, name=name)
 
@@ -1321,7 +1314,7 @@ def _skinclusters_of(node):
     if not skins:
         return skins
     chain = _own_history(node)
-    return [s for s in skins if any(s.mobject == o for o in chain)]
+    return [s for s in skins if any(type(s).get_mobject(s) == o for o in chain)]
 
 
 def _own_history(node):
@@ -1333,7 +1326,7 @@ def _own_history(node):
     target, a wrap's driver mesh) and what makes them are not in it, though
     ``listHistory`` reaches them; the shape's ``Orig`` and the history nodes
     and deformers between them are."""
-    shape = node.mobject
+    shape = type(node).get_mobject(node)
     if shape.hasFn(OpenMaya.MFn.kTransform):
         fn    = OpenMaya.MFnDagNode(shape)
         shape = next(
@@ -1443,7 +1436,7 @@ def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
         return GeomSubsetData(name=data.name, indices=faces, component_type="f")
 
     if data.component_type == "e":
-        fn    = OpenMaya.MFnMesh(src.mdagpath)
+        fn    = OpenMaya.MFnMesh(type(src).get_mdagpath(src))
         verts = np.unique([v for e in data.indices.tolist() for v in fn.getEdgeVertices(e)])
         data  = GeomSubsetData(name=data.name, indices=verts, component_type="v")
         verts = _resample_map(resampler, data, mode, method).indices
@@ -1451,7 +1444,7 @@ def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
             return []
         # the edges of dst both of whose ends landed
         return cmds.polyListComponentConversion(
-            [f"{dst.name}.{x}" for x in iter_component_tokens("vtx", verts)],
+            [f"{dst}.{x}" for x in iter_component_tokens("vtx", verts)],
             fromVertex=True, toEdge=True, internal=True,
         ) or []
 
@@ -1478,7 +1471,7 @@ def _face_points(mesh, vert_counts, counts, points, indices):
     centres /= np.maximum(counts, 1)[:, None]
 
     # each triangle's corners, offsets into getVertices moved to `indices`
-    tri_counts, offsets = OpenMaya.MFnMesh(mesh.mdagpath).getTriangleOffsets()
+    tri_counts, offsets = OpenMaya.MFnMesh(type(mesh).get_mdagpath(mesh)).getTriangleOffsets()
     tri_face = np.repeat(np.arange(counts.size), np.asarray(tri_counts))
     keep     = counts[tri_face] > 0
     vcounts  = np.asarray(vert_counts)
@@ -2345,7 +2338,7 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, nor
     obj = None
     if _files.is_object(data):
         obj, data, uvs = data, data.mesh, data.uv
-    fn = OpenMaya.MFnMesh(mesh.mdagpath)
+    fn = OpenMaya.MFnMesh(type(mesh).get_mdagpath(mesh))
     if _has_history(fn):
         raise ValueError(_history_refusal(method, mesh, fn))
     _, _, holes = _mesh_topology(data)
@@ -2367,7 +2360,7 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, nor
     )
     if not same:
         raise ValueError(
-            f"{method}: {_source_label(src)} holds another topology than {mesh.name!r} "
+            f"{method}: {_source_label(src)} holds another topology than {str(mesh)!r} "
             f"({len(data.points)} vertices and {len(counts)} faces against its {fn.numVertices} and "
             f"{fn.numPolygons}, or other face lists or holes); a load updates the points, the shading "
             f"and the UVs of the same topology: Mesh.load({_source_label(src)}) makes a new mesh"
@@ -2377,7 +2370,7 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, nor
     if world_space:
         matrix = np.asarray(obj.world_matrix if obj is not None else data.matrix, dtype=np.float64).reshape(4, 4)
         points = points @ matrix[:3, :3] + matrix[3, :3]
-        world  = np.array(mesh.mdagpath.inclusiveMatrix()).reshape(4, 4)
+        world  = np.array(type(mesh).get_mdagpath(mesh).inclusiveMatrix()).reshape(4, 4)
         linear = matrix[:3, :3] @ np.linalg.inv(world[:3, :3])
         if np.allclose(linear, np.eye(3), rtol=0.0, atol=1e-12):
             linear = None
@@ -2578,7 +2571,7 @@ def _has_history(fn: OpenMaya.MFnMesh) -> bool:
 def _history_refusal(method: str, mesh: Mesh, fn: OpenMaya.MFnMesh) -> str:
     """Why `Mesh('x').load` refuses a mesh with history (`deformed_refusal`)."""
     return deformed_refusal(
-        method, mesh.name, fn.object(), OpenMaya.MFn.kMesh, "Mesh", "its inMesh is connected",
+        method, str(mesh), fn.object(), OpenMaya.MFn.kMesh, "Mesh", "its inMesh is connected",
         "points", "Mesh.load(path) makes a new mesh",
     )
 
@@ -2679,7 +2672,7 @@ class _MeshEdit:
     `fn`, a new MFnMesh of it on every call, its sets synced (`_sync_sets`)."""
 
     def __init__(self, mesh: Mesh) -> None:
-        self._path = OpenMaya.MDagPath(mesh.mdagpath)
+        self._path = OpenMaya.MDagPath(type(mesh).get_mdagpath(mesh))
 
     def fn(self) -> OpenMaya.MFnMesh:
         fn = OpenMaya.MFnMesh(self._path)
@@ -3222,7 +3215,7 @@ class ColorSet:
         self._name = name
 
     def __repr__(self):
-        return f"ColorSet<{self.mesh.name}.{self.name}>)"
+        return f"ColorSet<{self.mesh}.{self.name}>)"
 
     @property
     def name(self) -> str:
@@ -3237,22 +3230,22 @@ class ColorSet:
     @property
     def is_valid(self) -> bool:
         """Does the underlying colorset still exist?"""
-        return self.name in self.mesh.fn_set.getColorSetNames()
+        return self.name in type(self.mesh).get_fn_set(self.mesh).getColorSetNames()
 
     @property
     def representation(self) -> ColorSet.Representation:
         """The representation of the color set (ie the data type Alpha|RGB|RGBA)"""
         if not self.is_valid:
             raise RuntimeError(
-                f"{self.name} is not a valid color set for {self.mesh.name}!"
+                f"{self.name} is not a valid color set for {self.mesh}!"
             )
-        return self.Representation(self.mesh.fn_set.getColorRepresentation(self.name))
+        return self.Representation(type(self.mesh).get_fn_set(self.mesh).getColorRepresentation(self.name))
 
     @property
     def data(self) -> np.array:
         """the data of the color set expressed as a numpy array."""
         with self.as_current_color_set():
-            return np.array(self.mesh.fn_set.getVertexColors())
+            return np.array(type(self.mesh).get_fn_set(self.mesh).getVertexColors())
 
     @data.setter
     def data(self, data):
@@ -3260,8 +3253,8 @@ class ColorSet:
         undo step, whose undo puts back the set's colours as they were,
         face-vertex by face-vertex. The current colour set is unchanged."""
         mesh = self.mesh
-        if data.shape[0] != mesh.num_vertices:
-            raise RuntimeError(f"shape of data is not ({mesh.num_vertices}, 4): !")
+        if data.shape[0] != type(mesh).get_num_vertices(mesh):
+            raise RuntimeError(f"shape of data is not ({type(mesh).get_num_vertices(mesh)}, 4): !")
         rep = self.representation.value  # raises for a colour set that is gone
         _ColorSetDataCommand(mesh, self.name, rep, OpenMaya.MColorArray(data))
 
@@ -3270,16 +3263,16 @@ class ColorSet:
         """Context manager that sets the current color set to this one"""
         if not self.is_valid:
             raise RuntimeError(
-                f"{self.name} is not a valid color set for {self.mesh.name}!"
+                f"{self.name} is not a valid color set for {self.mesh}!"
             )
 
         try:
-            current_colorset = self.mesh.fn_set.currentColorSetName()
-            self.mesh.fn_set.setCurrentColorSetName(self.name)
+            current_colorset = type(self.mesh).get_fn_set(self.mesh).currentColorSetName()
+            type(self.mesh).get_fn_set(self.mesh).setCurrentColorSetName(self.name)
             yield
         finally:
             if current_colorset:
-                self.mesh.fn_set.setCurrentColorSetName(current_colorset)
+                type(self.mesh).get_fn_set(self.mesh).setCurrentColorSetName(current_colorset)
 
     def delete(self):
         """Delete this color set (nothing happens when it no longer exists): one

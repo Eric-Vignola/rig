@@ -131,7 +131,7 @@ class TestDefineGuards(_Case):
             self.assertLeavesNothing(TypeError, lambda: Node.define("decomposeMatrix", "d", n="x"),
                                      "takes its name after the type")
             self.assertFalse(cmds.pluginInfo("matrixNodes", query=True, loaded=True))
-            self.assertEqual(Node.define("decomposeMatrix", "d").node_type, "decomposeMatrix")
+            self.assertEqual(Node.define("decomposeMatrix", "d").get_node_type(), "decomposeMatrix")
         finally:
             cmds.loadPlugin("matrixNodes", quiet=True)
 
@@ -145,7 +145,7 @@ class TestDefineGuards(_Case):
         self.assertLeavesNothing(ValueError, lambda: Node.define("multiplyDivide", "rig"), "name of a namespace")
         cmds.namespace(add="sub", parent="rig")
         self.assertLeavesNothing(ValueError, lambda: Transform.define("rig:sub"), "'rig:sub' is the name of a namespace")
-        self.assertEqual(Transform.define("rig:x").name, "rig:x")
+        self.assertEqual(Transform.define("rig:x").get_name(), "rig:x")
 
     def test_the_elsewhere_hint_names_a_define_only_when_it_finds_the_node(self):
         cmds.polyCube(name="box", constructionHistory=False)
@@ -219,12 +219,12 @@ class TestOneLookupRule(_Case):
             with self.subTest(relativeNames=relative):
                 cmds.namespace(relativeNames=relative)
                 before = _scene()
-                self.assertEqual(Transform("sub:x").uuid, root)
-                self.assertEqual(Node("sub:x").uuid, root)
-                self.assertEqual(Node("sub:x.tx").uuid, root)
-                self.assertEqual(Transform.define("sub:x").uuid, root)
+                self.assertEqual(Transform("sub:x").get_uuid(), root)
+                self.assertEqual(Node("sub:x").get_uuid(), root)
+                self.assertEqual(Node("sub:x.tx").get_uuid(), root)
+                self.assertEqual(Transform.define("sub:x").get_uuid(), root)
                 self.assertTrue(Transform.exists("sub:x"))
-                self.assertEqual(Transform(":char:sub:x").uuid, inner)
+                self.assertEqual(Transform(":char:sub:x").get_uuid(), inner)
                 self.assertEqual(_scene(), before)
         cmds.namespace(relativeNames=False)
         cmds.delete(":sub:x")
@@ -233,7 +233,7 @@ class TestOneLookupRule(_Case):
         with self.assertRaises(NodeNotFoundError):
             Transform("sub:x")
         self.assertFalse(Transform.exists("sub:x"))
-        self.assertEqual(Transform("char:sub:x").uuid, inner)
+        self.assertEqual(Transform("char:sub:x").get_uuid(), inner)
 
     def test_create_reads_parent_by_the_reference_rule(self):
         from rig import AmbiguousNodeError, NodeNotFoundError
@@ -251,7 +251,7 @@ class TestOneLookupRule(_Case):
             "Transform.define":  lambda: Transform.define("e", parent="grp"),
         }.items():
             with self.subTest(label):
-                self.assertEqual(call().get_parent().long_name, "|char:grp")
+                self.assertEqual(call().get_parent().get_long_name(), "|char:grp")
         cmds.createNode("transform", name=":grp")
         # :grp and :char:grp: every create refuses, as define does
         for label, call in {
@@ -273,7 +273,7 @@ class TestOneLookupRule(_Case):
         }.items():
             with self.subTest(label):
                 self.assertLeavesNothing(NodeNotFoundError, call, "no DAG node named 'gpr'")
-        self.assertEqual(rn.transform(name="ok", parent=Node(":grp")).get_parent().long_name, "|grp")
+        self.assertEqual(rn.transform(name="ok", parent=Node(":grp")).get_parent().get_long_name(), "|grp")
 
     def test_container_create_node_refuses_shared(self):
         cmds.createNode("multiplyDivide", name="md")
@@ -812,11 +812,11 @@ class TestConvertInANamespace(_Case):
             with self.subTest(relativeNames=relative):
                 cmds.namespace(relativeNames=relative)
                 new = Material(":red").astype(kind)
-                self.assertEqual(new.uuid, cmds.ls(":red", uuid=True)[0])
+                self.assertEqual(new.get_uuid(), cmds.ls(":red", uuid=True)[0])
                 self.assertEqual(cmds.nodeType(":red"), kind.NATIVE_NODE_TYPE)
                 self.assertIn(cube, new)
                 look = Material(":look:red").astype(kind)
-                self.assertEqual(look.uuid, cmds.ls(":look:red", uuid=True)[0])
+                self.assertEqual(look.get_uuid(), cmds.ls(":look:red", uuid=True)[0])
                 self.assertEqual(cmds.ls("lib:*"), [])
 
 
@@ -895,7 +895,7 @@ class TestMembershipMessages(_Case):
 
         cube << Float("w")
         red, lay = Blinn.define("red"), DisplayLayer.define("L")
-        for token, node in ((red, "red"), (lay, "L"), (red.engine, "redSG")):
+        for token, node in ((red, "red"), (lay, "L"), (red.get_engine(), "redSG")):
             with self.subTest(node):
                 self.assertLeavesNothing(TypeError, lambda: cube.w >> token,
                                          rf"; to clone the attribute onto it: cube\.w >> '{node}\.w'$")

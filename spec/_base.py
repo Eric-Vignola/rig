@@ -113,9 +113,10 @@ _SHADOWED: Dict[tuple, bool] = {}
 
 def _warn_shadowed(node_string: str, node: Any, long_name: str, short_name: Any) -> None:
     """A new attribute whose long or short name is a Python member of the node's class
-    that hides it (a property or data: ``name``, ``is_locked`` ...): ``node.<name>`` is
-    that member, never the plug, so the attribute is made and a warning names the way to
-    reach it (``Plug(node.find_attr(name))``). A public method's name hides nothing
+    that hides it (class data: ``side = None`` in a subclass, ``NATIVE_NODE_TYPE``):
+    ``node.<name>`` is that member, never the plug, so the attribute is made and a
+    warning names the way to reach it (``Plug(node.find_attr(name))``). A node has no
+    public property (the property ban). A public method's name hides nothing
     (``lock``, ``save``: ``node.lock`` is then the plug and ``node.lock()`` the method,
     see `rig.nodetypes._base._PlugMethod`). One class lookup per name, for a new
     attribute only (a re-declaration says nothing)."""
@@ -406,7 +407,7 @@ class _AttrSpec:
                 kargs["defaultValue"] = default_value
             if multi:
                 kargs["multi"] = True
-            # Use DGNode.add_attr (rename-safe wrapper that uses self.name).
+            # Use DGNode.add_attr (rename-safe wrapper that names the node by str(self)).
             kargs.pop("longName", None)
             added = type(wrap_node).add_attr(wrap_node, long_name, **kargs)
 
@@ -517,7 +518,7 @@ class _AttrSpec:
         children) and its checked edit; no target without settings. Raises
         TypeError for another kind or a setting that cannot apply."""
         plug_name = f"{node_string}.{long_name}"
-        fn        = wrap_node.fn_set
+        fn        = type(wrap_node).get_fn_set(wrap_node)
         attribute = fn.attribute(long_name)
         have      = _existing_kind(node_string, long_name, attribute)
         want      = self._kind()
@@ -815,14 +816,14 @@ def _refuse_static(node_string: str, long_name: str, wrap_node: Any) -> None:
     """A declaration names a static attribute of the node (its long or short
     name: ``Float("s")`` is ``scale``): TypeError before any edit. The node
     type owns it; a declaration adds or re-declares a dynamic attribute."""
-    attribute = wrap_node.fn_set.attribute(long_name)
+    attribute = type(wrap_node).get_fn_set(wrap_node).attribute(long_name)
     fn        = OpenMaya.MFnAttribute(attribute)
     if fn.dynamic:
         return
     named = fn.name if fn.name == long_name else f"{fn.name}, whose short name is {long_name!r}"
     raise TypeError(
         f"'{node_string}.{long_name}' is a static attribute of the "
-        f"{wrap_node.fn_set.typeName} ({named}); a declaration adds a dynamic "
+        f"{type(wrap_node).get_fn_set(wrap_node).typeName} ({named}); a declaration adds a dynamic "
         f"attribute: pick another name"
     )
 
@@ -832,7 +833,7 @@ def _refuse_other_name(node_string: str, long_name: str, wrap_node: Any) -> None
     alias (``aliasAttr``, a blendShape target) or a container's published
     name. TypeError before any edit: a second attribute of that name would be
     one the name no longer reaches."""
-    fn = wrap_node.fn_set
+    fn = type(wrap_node).get_fn_set(wrap_node)
     if fn.findAlias(long_name).isNull():
         return
     # (a container's published name is an alias of its borderConnections)
@@ -1104,8 +1105,8 @@ def _clone_attribute(
     Optionally connect ``src_plug`` into the new attribute.
 
     Returns the new :class:`Plug`. Slimmed from Eric's 160-line version by
-    leaning on ``rig.nodetypes.Attribute``'s ``data_type`` / ``attribute_type`` /
-    ``is_multi`` / ``num_children`` properties.
+    leaning on ``rig.nodetypes.Attribute``'s ``get_data_type()`` /
+    ``get_attribute_type()`` / ``is_multi()`` / ``get_num_children()``.
     """
     from rig._internal.node import Node
     from rig._internal.plug import Plug

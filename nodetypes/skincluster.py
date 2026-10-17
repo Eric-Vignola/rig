@@ -89,7 +89,7 @@ def flatten_vertices(seq):
         # use all vertices as indices
         if m is None:
             name = Mesh(item)
-            rng  = list(range(name.num_vertices))
+            rng  = list(range(type(name).get_num_vertices(name)))
         else:
             name, comp = m.group(1).split(".")
             if comp != "vtx":
@@ -210,7 +210,7 @@ class SkinCluster(Deformer):
         with _undo_chunk("rig.SkinCluster.create"):
             # delete the geometry's own skinclusters, if any: not those of a
             # mesh that drives it (listHistory reaches them too)
-            skin = [s.name for s in _skinclusters_of(_cast(geom))]
+            skin = [str(s) for s in _skinclusters_of(_cast(geom))]
             if skin:
                 cmds_edit.delete(skin)
 
@@ -257,7 +257,7 @@ class SkinCluster(Deformer):
             A function that takes a joint name and returns a driver joint name.
         """
         for i, inf in enumerate(self.get_influence_objects()):
-            driver = search_func(inf.name)
+            driver = search_func(str(inf))
             if not Joint.exists(driver):
                 raise RuntimeError(f"Driver joint not found: {driver}.")
             Joint(driver).find_attr("worldInverseMatrix")[0] >> self.find_attr(
@@ -266,7 +266,7 @@ class SkinCluster(Deformer):
 
     def get_influence_objects(self) -> list[DAGNode]:
         """Returns a list of influence objects."""
-        return [_cast(x) for x in self.fn_set.influenceObjects()]
+        return [_cast(x) for x in type(self).get_fn_set(self).influenceObjects()]
 
     def add_influence_objects(self, infs: INF_TYPE) -> None:
         """Adds influence objects to this skincluster.
@@ -281,7 +281,7 @@ class SkinCluster(Deformer):
         # pickers that track selection order read the last one.
         ordered = cmds.ls(orderedSelection=True, long=True) or []
         try:
-            cmds_edit.skinCluster(self.name, edit=True, addInfluence=infs, wt=0.0)
+            cmds_edit.skinCluster(str(self), edit=True, addInfluence=infs, wt=0.0)
         finally:
             if ordered:
                 cmds_edit.select(ordered[:-1], replace=True)
@@ -295,7 +295,7 @@ class SkinCluster(Deformer):
         Args:
             infs: A list of influence object names.
         """
-        cmds_edit.skinCluster(self.name, edit=True, removeInfluence=infs)
+        cmds_edit.skinCluster(str(self), edit=True, removeInfluence=infs)
 
     def set_influence_objects(self, infs: INF_TYPE) -> None:
         """Sets the influence objects of this skincluster.
@@ -326,9 +326,9 @@ class SkinCluster(Deformer):
         """Returns a 2D numpy array of weight values (per component per influence)."""
         geom  = self.get_geometries()[0]
         comps = geom.get_component_mobject()
-        weights, inf_count = self.fn_set.getWeights(geom.mdagpath, comps)
+        weights, inf_count = type(self).get_fn_set(self).getWeights(type(geom).get_mdagpath(geom), comps)
         weights = np.array(weights)
-        return np.reshape(weights, (geom.num_weight_points, inf_count))
+        return np.reshape(weights, (type(geom).get_num_weight_points(geom), inf_count))
 
     def set_weights(
         self,
@@ -365,7 +365,7 @@ class SkinCluster(Deformer):
         # to ensure reliable influence conformation
         org_infs            = self._sanitize_influences(data.influences)
         new_data            = data.copy()
-        new_data.influences = [x.long_name for x in org_infs]
+        new_data.influences = [type(x).get_long_name(x) for x in org_infs]
 
         # conform received SkinData so influences align to self
         cur_data = self.serialize(full_path=True)
@@ -376,7 +376,7 @@ class SkinCluster(Deformer):
         if len(new_data.weights) != count:
             raise ValueError(
                 f"SkinCluster.set_weights: {len(new_data.weights)} rows of weights for "
-                f"{count} points of {self.name}"
+                f"{count} points of {self}"
             )
 
         with _undo_chunk("rig.SkinCluster.set_weights"):
@@ -417,7 +417,7 @@ class SkinCluster(Deformer):
         else:
             shape     = cmds.listRelatives(geo, shapes=True, noIntermediate=True, pa=True)[0]
             transform = geo
-        skins = [s.name for s in _skinclusters_of(_cast(geo))]
+        skins = [str(s) for s in _skinclusters_of(_cast(geo))]
         if not skins:
             return
         if len(skins) > 1:
@@ -563,7 +563,7 @@ class SkinCluster(Deformer):
 
         infs = [
             x.fullPathName() if full_path else x.partialPathName()
-            for x in self.fn_set.influenceObjects()
+            for x in type(self).get_fn_set(self).influenceObjects()
         ]
         data = SkinData(influences=infs, weights=self.get_weights())
 
@@ -614,7 +614,7 @@ class SkinCluster(Deformer):
     def _load_into(self, skin, *args, **kwargs):
         from cgmath.geometry import SkinData
 
-        method = f"SkinCluster({self.name!r}).load"
+        method = f"SkinCluster({str(self)!r}).load"
         if args or kwargs:
             got = [type(a).__name__ for a in args] + [f"{k}=" for k in kwargs]
             raise TypeError(
@@ -634,7 +634,7 @@ class SkinCluster(Deformer):
         nothing then. False whenever that cannot be told (an influence not in the scene:
         `set_weights` raises its own error)."""
         try:
-            names = [x.long_name for x in self._sanitize_influences(data.influences)]
+            names = [type(x).get_long_name(x) for x in self._sanitize_influences(data.influences)]
         except Exception:  # noqa: BLE001 -- set_weights reports it
             return False
         current = self.serialize(full_path=True)
@@ -727,7 +727,7 @@ def _weight_components(
     when None) and their number."""
     geom  = skincluster.get_geometries()[0]
     comps = geom.get_component_mobject(indices=indices)
-    return geom.mdagpath, comps, OpenMaya.MFnComponent(comps).elementCount
+    return type(geom).get_mdagpath(geom), comps, OpenMaya.MFnComponent(comps).elementCount
 
 
 class SetSkinWeightsCommand:
@@ -748,7 +748,7 @@ class SetSkinWeightsCommand:
         super().__init__()
 
         # gather info from this skincluster
-        self._fn_set = skincluster.fn_set
+        self._fn_set = type(skincluster).get_fn_set(skincluster)
         inf_count    = len(self._fn_set.influenceObjects())
         inf_ids      = OpenMaya.MIntArray(range(inf_count))
 
@@ -761,7 +761,7 @@ class SetSkinWeightsCommand:
         if len(weights) != count * inf_count:
             raise ValueError(
                 f"SkinCluster.set_weights: {len(weights)} weights for {count} points "
-                f"x {inf_count} influences of {skincluster.name}"
+                f"x {inf_count} influences of {skincluster}"
             )
 
         # internal vars

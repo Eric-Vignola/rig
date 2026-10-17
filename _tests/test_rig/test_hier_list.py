@@ -53,7 +53,7 @@ def _skeleton():
     pelvis = Joint.create(name="pelvis", parent=root)
     pelvis.tx << 3.5
     probe = cmds.spaceLocator(name="probe")[0]
-    cmds.parent(probe, pelvis.long_name)
+    cmds.parent(probe, pelvis.get_long_name())
     Transform.create(name="box", parent=pelvis)
     data = root.serialize_hierarchy()
     data[3].node_type = "space_transform"
@@ -83,7 +83,7 @@ class TestUserExamples(_Case):
         self.assertEqual([type(x) for x in rig_list], [Transform, Joint, Transform, Transform])
         self.assertEqual(rig_list[1].tx.get(), 3.5)
         self.assertEqual(List([str(x) for x in hier])[1].tx.get(), 3.5)
-        self.assertEqual([x.long_name for x in rig_list],
+        self.assertEqual([x.get_long_name() for x in rig_list],
                          ["|root", "|root|pelvis", "|root|pelvis|probe", "|root|pelvis|box"])
 
 
@@ -94,10 +94,10 @@ class TestCreateHierarchyReturn(_Case):
         self.assertIs(type(root), Transform)
         self.assertIs(type(pelvis), Joint)
         self.assertIs(type(probe), Transform)
-        self.assertEqual(cmds.nodeType(probe.get_shape().name), "locator")
+        self.assertEqual(cmds.nodeType(probe.get_shape().get_name()), "locator")
         self.assertIs(type(box), Transform)
-        self.assertEqual(cmds.nodeType(box.get_shape().name), "mesh")
-        self.assertEqual(cmds.ls(selection=True, long=True), [x.long_name for x in made])
+        self.assertEqual(cmds.nodeType(box.get_shape().get_name()), "mesh")
+        self.assertEqual(cmds.ls(selection=True, long=True), [x.get_long_name() for x in made])
 
     def test_parents_come_first(self):
         made = Transform.create_hierarchy(_skeleton_after_new_scene(self))
@@ -106,13 +106,13 @@ class TestCreateHierarchyReturn(_Case):
             if i == 0:
                 self.assertIsNone(parent)
             else:
-                self.assertIn(parent.long_name, [x.long_name for x in made[:i]])
+                self.assertIn(parent.get_long_name(), [x.get_long_name() for x in made[:i]])
 
     def test_a_renamed_duplicate_is_the_node_maya_made(self):
         data  = _skeleton()
         again = Transform.create_hierarchy(data)
-        self.assertEqual([x.short_name for x in again], ["root1", "pelvis", "probe", "box"])
-        self.assertEqual([x.long_name for x in again],
+        self.assertEqual([x.get_short_name() for x in again], ["root1", "pelvis", "probe", "box"])
+        self.assertEqual([x.get_long_name() for x in again],
                          ["|root1", "|root1|pelvis", "|root1|pelvis|probe", "|root1|pelvis|box"])
         self.assertEqual(again[1].tx.get(), 3.5)
         self.assertEqual([str(x) for x in data], ["root", "pelvis", "probe", "box"])  # data kept
@@ -121,7 +121,7 @@ class TestCreateHierarchyReturn(_Case):
         data  = _skeleton()
         group = Transform.create(name="grp")
         made  = Transform.create_hierarchy(data, parent="grp")
-        self.assertEqual([x.long_name for x in made],
+        self.assertEqual([x.get_long_name() for x in made],
                          ["|grp|root", "|grp|root|pelvis", "|grp|root|pelvis|probe", "|grp|root|pelvis|box"])
         self.assertEqual(made[0].get_parent(), group)
         self.assertEqual(made.tx.get().tolist(), [0.0, 3.5, -3.5, 0.0])
@@ -137,7 +137,7 @@ class TestCreateHierarchyReturn(_Case):
         cmds.undo()
         self.assertEqual(set(cmds.ls(long=True)), before)
         cmds.redo()
-        self.assertEqual([x.long_name for x in made],
+        self.assertEqual([x.get_long_name() for x in made],
                          ["|root", "|root|pelvis", "|root|pelvis|probe", "|root|pelvis|box"])
         self.assertEqual(made[1].tx.get(), 3.5)
 
@@ -163,7 +163,7 @@ class TestCreateHierarchyReturn(_Case):
         self.assertEqual([type(x) for x in made], [Transform, Joint, Transform, Transform])
         members = set(cmds.container(str(ctn), query=True, nodeList=True) or [])
         for node in made:
-            self.assertIn(node.short_name, members)
+            self.assertIn(node.get_short_name(), members)
 
 
 def _skeleton_after_new_scene(case):
@@ -188,11 +188,11 @@ class TestUserCasting(_Case):
         items.extend([pelvis])
         items.insert(0, probe)
         items += [box]
-        self.assertEqual([x.short_name for x in items], ["probe", "root", "pelvis", "box"])
+        self.assertEqual([x.get_short_name() for x in items], ["probe", "root", "pelvis", "box"])
         self.assertTrue(all(isinstance(x, Node) for x in items))
         items[0] = box
         items[1:2] = [pelvis, probe]
-        self.assertEqual([x.short_name for x in items], ["box", "pelvis", "probe", "pelvis", "box"])
+        self.assertEqual([x.get_short_name() for x in items], ["box", "pelvis", "probe", "pelvis", "box"])
         self.assertTrue(all(isinstance(x, Node) for x in items))
         self.assertIs(type(items), List)
 
@@ -247,14 +247,14 @@ class TestUserCasting(_Case):
     def test_a_name_more_than_one_node_has(self):
         # (HL_FIX F1) each TransformData is found by its uuid: the node it was serialized from
         Transform.create_hierarchy(self.data)  # a second pelvis
-        self.assertEqual([x.long_name for x in List(self.data)],
+        self.assertEqual([x.get_long_name() for x in List(self.data)],
                          ["|root", "|root|pelvis", "|root|pelvis|probe", "|root|pelvis|box"])
         # in another scene (no node has the uuid) the name decides, an ambiguous one raises
         self.new_scene()
         data = _skeleton_after_new_scene(self)
         self.assertFalse(any(cmds.ls(x.uuid) for x in data))
         Transform.create_hierarchy(data)
-        self.assertEqual([x.long_name for x in List(data[:1])], ["|root"])
+        self.assertEqual([x.get_long_name() for x in List(data[:1])], ["|root"])
         Transform.create_hierarchy(data)
         with self.assertRaisesRegex(TypeError, r"^List element \[1\] \(TransformData 'pelvis'\) .*ambiguous"):
             List(data)
@@ -268,7 +268,7 @@ class TestUserCasting(_Case):
         hier = root.serialize_hierarchy()
         self.assertEqual([str(x) for x in hier], ["root", "L_leg", "end", "R_leg", "end"])
         items = List(hier)
-        self.assertEqual([x.long_name for x in items],
+        self.assertEqual([x.get_long_name() for x in items],
                          ["|root", "|root|L_leg", "|root|L_leg|end", "|root|R_leg", "|root|R_leg|end"])
         self.assertEqual(items[4].tx.get(), 7.0)
 
@@ -278,9 +278,9 @@ class TestUserCasting(_Case):
         Joint.create(name="pelvis", parent=root)
         hier = root.serialize_hierarchy()
         cmds.createNode("transform", name="pelvis")  # a world node named like it
-        self.assertEqual([x.long_name for x in List(hier)], ["|root", "|root|pelvis"])
+        self.assertEqual([x.get_long_name() for x in List(hier)], ["|root", "|root|pelvis"])
         cmds.rename("root|pelvis", "hip")             # the original renamed: still that node
-        self.assertEqual([x.long_name for x in List(hier)], ["|root", "|root|hip"])
+        self.assertEqual([x.get_long_name() for x in List(hier)], ["|root", "|root|hip"])
         self.assertIs(type(List(hier)[1]), Joint)
 
     def test_a_plain_name_raises_as_before(self):
@@ -401,7 +401,10 @@ class TestUserCasting(_Case):
     def test_a_list_gives_its_elements_as_they_are(self):
         # (HL_FIX F4) List(other), extend(other), += other: a List's elements are kept
         nodes   = List(["root", "pelvis"])
-        objects = nodes.mobject
+        # re-pinned (user decision 2026-10-16, the property ban): node.mobject
+        # is a method now, which does not broadcast; the List of values is built
+        # as rig builds one (a broadcast's)
+        objects = list_module._values_list(x.get_mobject() for x in nodes)
         self.assertEqual([type(x) for x in List(objects)], [OpenMaya.MObject] * 2)
         methods = nodes.get_parent
         self.assertEqual(len(List(methods)), 2)
@@ -418,7 +421,8 @@ class TestUserCasting(_Case):
         import pickle
 
         nodes   = List(["root", "pelvis"])
-        objects = nodes.mobject
+        # re-pinned (the property ban): the values List built as rig builds one
+        objects = list_module._values_list(x.get_mobject() for x in nodes)
         for copied in (copy.copy(objects), copy.copy(List(objects))):
             self.assertIs(type(copied), List)
             self.assertEqual([type(x) for x in copied], [OpenMaya.MObject] * 2)
@@ -458,9 +462,13 @@ class TestValueLists(_Case):
         self.assertEqual(self.nodes.ro.get().tolist(), [2, 4])
 
     def test_python_values_of_each_element(self):
-        locked = self.nodes.is_locked
-        self.assertEqual(list(locked), [False, False])
-        objects = self.nodes.mobject
+        # re-pinned (user decision 2026-10-16, the property ban): is_locked and
+        # get_mobject are methods, which do not broadcast (a bare predicate has
+        # no truth value); a broadcast of values is a plug's (``nodes.t``)
+        with self.assertRaisesRegex(TypeError, r"call it on each one"):
+            bool(self.nodes.is_locked)
+        self.assertEqual([x.is_locked() for x in self.nodes], [False, False])
+        objects = list_module._values_list(x.get_mobject() for x in self.nodes)
         self.assertIs(type(objects), List)
         self.assertEqual([type(x) for x in objects], [OpenMaya.MObject] * 2)
         self.assertEqual([type(x) for x in objects[0:2]], [OpenMaya.MObject] * 2)

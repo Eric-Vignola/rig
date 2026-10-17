@@ -102,7 +102,7 @@ class TestXformNodes(MayaTestCase):
         dup_root = self.root.duplicate_skeleton(include_list=[self.joint2])
         self.assertIsNone(dup_root.get_parent())
         self.assertEqual(len(list(dup_root.iter_joints())), 2)
-        self.assertEqual(dup_root.get_children()[0].short_name, self.joint2.short_name)
+        self.assertEqual(dup_root.get_children()[0].get_short_name(), self.joint2.get_short_name())
 
         dup_root.rename_skeleton("test")
         for each in dup_root.iter_joints(yield_self=True):
@@ -122,7 +122,7 @@ class TestXformNodes(MayaTestCase):
 
     @staticmethod
     def _joint_names(top):
-        return [x.short_name for x in top.iter_joints(yield_self=True)]
+        return [x.get_short_name() for x in top.iter_joints(yield_self=True)]
 
     def test_replace_suffix_keeps_namespace(self):
         self.assertEqual(replace_suffix("VLR_RIG:SK:root", "test"), "VLR_RIG:SK:root_test")
@@ -148,7 +148,7 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(self._joint_names(root), originals)
 
         dup = root.duplicate_skeleton(name="VLR_RIG:copy")
-        self.assertEqual(dup.short_name, "VLR_RIG:copy")
+        self.assertEqual(dup.get_short_name(), "VLR_RIG:copy")
 
     def test_duplicate_skeleton_namespace_prefix(self):
         root, _, _ = self._namespaced_chain()
@@ -193,10 +193,10 @@ class TestXformNodes(MayaTestCase):
         dup = xform.duplicate_geometry()
 
         self.assertIsNone(dup.get_parent())
-        self.assertEqual(dup.short_name, xform.short_name)
+        self.assertEqual(dup.get_short_name(), xform.get_short_name())
         self.assertEqual(len(dup.get_children()), 1)
         c = dup.get_children()[0]
-        self.assertEqual(c.node_type, "mesh")
+        self.assertEqual(c.get_node_type(), "mesh")
         self.assertFalse(dup in s.get_members())
         self.assertFalse(c in s.get_members())
 
@@ -275,7 +275,7 @@ class TestXformNodes(MayaTestCase):
         self.root.r.set(10, 20, 30)
         self.joint2.t.set(0, 2, 0)
         self.joint3.t.set(0, 0, 3)
-        world     = [cmds.xform(x.long_name, q=True, matrix=True, worldSpace=True)
+        world     = [cmds.xform(x.get_long_name(), q=True, matrix=True, worldSpace=True)
                      for x in (self.root, self.joint2, self.joint3)]
         hierarchy = self.root.serialize_hierarchy()
 
@@ -297,7 +297,7 @@ class TestXformNodes(MayaTestCase):
         self.root.t.set(1, 2, 3)
         self.root.r.set(10, 20, 30)
         self.joint2.t.set(0, 2, 0)
-        world     = [cmds.xform(x.long_name, q=True, matrix=True, worldSpace=True)
+        world     = [cmds.xform(x.get_long_name(), q=True, matrix=True, worldSpace=True)
                      for x in (self.root, self.joint2, self.joint3)]
         hierarchy = self.root.serialize_hierarchy()
 
@@ -323,7 +323,7 @@ class TestXformNodes(MayaTestCase):
             self.assertIs(hierarchy[2].get_parent(), hierarchy[1])
 
     def test_hierarchy_compound_user_attrs_round_trip(self):
-        root = self.root.name
+        root = self.root.get_name()
         cmds.addAttr(root, ln="vec", at="double3")
         for axis in "XYZ":
             cmds.addAttr(root, ln=f"vec{axis}", at="double", parent="vec")
@@ -357,7 +357,7 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(cmds.getAttr(f"{root}.flat"), 6.5)
 
     def test_hierarchy_enum_and_multi_user_attrs_round_trip(self):
-        root = self.root.name
+        root = self.root.get_name()
         cmds.addAttr(root, ln="en", at="enum",   enumName="a=1:b=5:c")
         cmds.addAttr(root, ln="md", at="double", multi=True)
         cmds.addAttr(root, ln="ms", dt="string", multi=True)
@@ -395,7 +395,7 @@ class TestXformNodes(MayaTestCase):
     def test_hierarchy_serialize_skips_unsupported_nodes(self):
         # a constraint is a transform by inheritance only, it is not serialized
         driver = Node.create("transform", name="driver")
-        cmds.parentConstraint(driver.long_name, self.joint3.long_name)
+        cmds.parentConstraint(driver.get_long_name(), self.joint3.get_long_name())
 
         with self.assertLogs("rig.nodetypes.transform", level="WARNING") as logs:
             hierarchy = self.root.serialize_hierarchy()

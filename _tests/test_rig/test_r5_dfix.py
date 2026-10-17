@@ -486,7 +486,7 @@ class TestARefusedPlugin(_DFixCase):
         cmds.flushUndo()
         box    = Mesh("boxShape")
         before = cmds.xform("box.vtx[0]", query=True, translation=True)
-        points = OpenMaya.MPointArray(box.fn_set.getPoints())
+        points = OpenMaya.MPointArray(box.get_fn_set().getPoints())
         points[0] = OpenMaya.MPoint(9, 9, 9)
         with _Printed() as printed, self.assertRaises(RuntimeError) as raised:
             box.set_points(points, world_space=False)

@@ -29,24 +29,24 @@ class TestDisplayLayer(MayaTestCase):
         """Historical id (v2.0.0a2): pinned DisplayLayer.get_or_create and for_node; it
         now pins DisplayLayer.define (get_or_create's replacement, round 4b NC4) and
         for_node."""
-        self.assertEqual(DisplayLayer.define(self.layer.name), self.layer)
-        cmds.select(self.xform.name)
+        self.assertEqual(DisplayLayer.define(self.layer.get_name()), self.layer)
+        cmds.select(self.xform.get_name())
         fresh = DisplayLayer.define("fresh")
-        self.assertEqual(fresh.name, "fresh")
+        self.assertEqual(fresh.get_name(), "fresh")
         self.assertEqual(fresh.get_members(), [])
         self.assertEqual(DisplayLayer.define("fresh"), fresh)
         with self.assertRaisesRegex(TypeError, "not a displayLayer"):
-            DisplayLayer.define(self.xform.name)
+            DisplayLayer.define(self.xform.get_name())
         self.assertEqual(DisplayLayer.for_node(self.xform), self.layer)
         other = Node(cmds.group(empty=True, name="other"))
         self.assertIsNone(DisplayLayer.for_node(other))
-        self.assertFalse(fresh.is_default)
-        self.assertTrue(self.default_layer.is_default)
+        self.assertFalse(fresh.is_default())
+        self.assertTrue(self.default_layer.is_default())
         cmds.namespace(add="ns")
         cmds.namespace(set="ns")
         try:
             spaced = DisplayLayer.define("spaced")
-            self.assertEqual(spaced.name, "ns:spaced")
+            self.assertEqual(spaced.get_name(), "ns:spaced")
             self.assertEqual(DisplayLayer.define("spaced"), spaced)
         finally:
             cmds.namespace(set=":")

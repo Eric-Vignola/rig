@@ -15,12 +15,12 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | — | [Setup](#setup) | mayapy / Maya bootstrap, the imports |
 | 1 | [One node, two attribute spellings](#1-one-node-two-attribute-spellings) | `Node(x)` is the typed node, `node.<attr>` (`Plug`) vs `find_attr` (`Attribute`), `get_node()`, keys |
 | 2 | [`Node` — resolution and registration](#2-node--resolution-and-registration) | what a name resolves to, `create`, `find_all`, the three verbs (refer / define / create), `exists`, the errors, a custom node type |
-| 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, `lock()` / `unlock()` / `is_locked`, equality |
+| 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, `lock()` / `unlock()` / `is_locked()`, equality |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
 | 5 | [`Attribute`](#5-attribute) | get / set, `lock()` / `unlock()`, `>>` and `//` on `find_attr` results, typed arrays, multis, slicing with list keys, components |
 | 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `save_hierarchy` / `load_hierarchy` (files), `serialize_hierarchy(bindpose=True)` |
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
-| 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `injection_node`, add / set / query / serialize, `tag_references` |
+| 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `get_injection_node()`, add / set / query / serialize, `tag_references` |
 | 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back; a `cgmath` `Object`), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
 | 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create`, `NurbsSurface.create`, `save` / `load` (files) |
 | 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips, `save` / `load` (files) |
@@ -34,7 +34,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 19 | [Name helpers](#19-name-helpers) | short / clean names, suffixes, component range strings |
 | 20 | [`cmds` results as typed nodes, and `Axis`](#20-cmds-results-as-typed-nodes-and-axis) | casting `maya.cmds` results with `Node`; the mirror axis |
 | 21 | [`plugins` — `load_plugin` and undo](#21-plugins--load_plugin-and-undo) | `rigUndoableAPICommand`: your own API edit as one undo step, and its rules |
-| 22 | [`AnimCurve` and the curve classes](#22-animcurve-and-the-curve-classes) | refer, the cast, `create` / `define` with keys, `get_keys` / `set_keys` / `num_keys` / `evaluate`, `AnimCurve.of`, keys from the class call |
+| 22 | [`AnimCurve` and the curve classes](#22-animcurve-and-the-curve-classes) | refer, the cast, `create` / `define` with keys, `get_keys` / `set_keys` / `get_num_keys` / `evaluate`, `AnimCurve.of`, keys from the class call |
 
 ---
 
@@ -155,7 +155,7 @@ for name in ("cube", "cubeShape", "ballShape", "curveShape1", "locShape", "ffdLa
 # defaultLayer         displayLayer   -> DisplayLayer
 
 print(repr(Node("cube.tx")), repr(Attribute("cube.tx")))  # Transform("cube") Attribute("cube.translateX")
-print(Node(Node("cube").uuid))      # cube -- a uuid resolves too
+print(Node(Node("cube").get_uuid()))   # cube -- a uuid resolves too
 ```
 
 `Node.create(type, ...)` routes to the registered class's `create`
@@ -243,7 +243,7 @@ class Control(Transform):
     CUSTOM_NODE_TYPE = "control"
 
 hand = Control.create(name="hand_ctl")
-print(repr(hand), hand.node_type, cmds.getAttr("hand_ctl.__custom_node_type__"))       # Control("hand_ctl") control control
+print(repr(hand), hand.get_node_type(), cmds.getAttr("hand_ctl.__custom_node_type__"))  # Control("hand_ctl") control control
 print(repr(Node("hand_ctl")), repr(Node.create("control", name="foot_ctl")))           # Control("hand_ctl") Control("foot_ctl")
 print(Control.find_all())                                                              # [Control("foot_ctl"), Control("hand_ctl")]
 print(Transform.is_type("hand_ctl"), Transform.is_type("hand_ctl", exact_type=False))  # False True
@@ -258,17 +258,20 @@ except ValueError as e:
 ## 3. `DGNode`
 
 The base of everything. It holds an `MObject`, so it survives renames; it
-prints as its name, so it drops straight into `maya.cmds`.
+prints as its name, so it drops straight into `maya.cmds`. Every public
+member is a method (a bare name is the node's Maya attribute of that name if
+it has one, else the method): `str(node)` is the name, `get_name()` the same
+as a method, a predicate is called (`node.is_valid()`).
 
 ```python
 cmds.file(new=True, force=True)
 box = Transform.create(name="cube")
-print(box.name, box.long_name, box.short_name, box.clean_name, box.node_type)  # cube |cube cube cube transform
-print(box.is_valid, len(box.uuid), box.has_base_type("dagNode"))               # True 36 True
+print(box.get_name(), box.get_long_name(), box.get_short_name(), box.get_clean_name(), box.get_node_type())  # cube |cube cube cube transform
+print(box.is_valid(), len(box.get_uuid()), box.has_base_type("dagNode"))       # True 36 True
 
 box.rename("box")
-box.namespace = "asset"                    # creates the namespace when missing
-print(box.name, box.namespace, box.clean_name)         # asset:box asset box
+box.set_namespace("asset")                 # creates the namespace when missing: one undo step
+print(box, box.get_namespace(), box.get_clean_name())  # asset:box asset box
 print(str(box), repr(box), cmds.getAttr(f"{box}.tx"))  # asset:box Transform("asset:box") 0.0
 ```
 
@@ -301,9 +304,9 @@ print(box.find_connected_nodes(), md.find_connected_nodes(node_type="transform")
 print(box.duplicate())                                                             # [Transform("box")]
 copy = box.duplicate(name="copy", returnRootsOnly=True)[0]
 copy.delete()
-print(copy.is_valid)                                      # False
+print(copy.is_valid())                                    # False
 try:
-    copy.name
+    str(copy)
 except RuntimeError as e:
     print(e)                                              # copy already deleted!
 
@@ -315,8 +318,8 @@ print(sorted([md, box]), {box: 1}[Transform("asset:box")])  # [Transform("asset:
 ```
 
 Locks: `lock()` / `unlock()` run `lockNode` and return the node (the DSL's
-`node << lock` is the same call); `is_locked` reads it, read only, and is
-True for a member of a locked container too. A node already in that state
+`node << lock` is the same call); `is_locked()` reads it, and is True for
+a member of a locked container too. A node already in that state
 is left as it is, with no undo step. A locked node takes values and
 connections; `rename`, `delete`, `set_parent`, `add_attr`, `delete_attr`,
 `rename_attr`, a new attribute spec and `destroy` refuse it with one
@@ -327,13 +330,13 @@ locked inside its own `with` block.
 
 ```python
 box.lock()
-print(box.is_locked, box.lock() is box)       # True True -- locked already: nothing written
+print(box.is_locked(), box.lock() is box)     # True True -- locked already: nothing written
 try:
     box.rename("crate")
 except RuntimeError as e:
     print(e)                                  # cannot rename 'asset:box': it is locked; Node('asset:box').unlock() unlocks it. Nothing was changed
 box.tx.set(4)                                 # values still change
-print(box.unlock().is_locked, box.tx.get())   # False 4.0
+print(box.unlock().is_locked(), box.tx.get())  # False 4.0
 ```
 
 Equality is by name between node objects of the node's class, hashing by
@@ -355,11 +358,11 @@ shape = cube.get_children(shapes=True)[0]
 
 print(cube.get_parent(), cube.get_parent(1), cube.get_parents(), grp.get_parent())  # grp None [Transform("grp")] None
 print(grp.get_children(), grp.get_children(allDescendents=True))                    # [Transform("cube")] [Mesh("cubeShape"), Transform("cube")]
-print(shape.is_shape, cube.is_shape, shape.mdagpath.fullPathName())                 # True False |grp|cube|cubeShape
-print(cube.name, cube.long_name)                                                    # cube |grp|cube
+print(shape.is_shape(), cube.is_shape(), shape.get_mdagpath().fullPathName())     # True False |grp|cube|cubeShape
+print(cube, cube.get_long_name())                                                   # cube |grp|cube
 
 cube.set_parent(None)                                                               # to world
-print(cube.get_parent(), cube.long_name)                                            # None |cube
+print(cube.get_parent(), cube.get_long_name())                                      # None |cube
 try:
     shape.set_parent(None)
 except RuntimeError as e:
@@ -376,7 +379,7 @@ first (tweak nodes skipped), read through the API, so it leaves no undo step:
 ```python
 cmds.cluster("cube")
 print(cube.get_deformers(), shape.get_deformers(node_type="cluster", first_only=True))  # [Deformer("cluster1")] cluster1
-print(repr(shape.injection_node), shape.injection_node.intermediateObject.get())        # Mesh("cubeShapeOrig") True
+print(repr(shape.get_injection_node()), shape.get_injection_node().intermediateObject.get())   # Mesh("cubeShapeOrig") True
 ```
 
 ---
@@ -554,7 +557,7 @@ print(list(grp.iter_shapes("mesh", as_transform=False)))                      # 
 DisplayLayer.define("geo").add_members(cube)
 clean = cube.duplicate_geometry(name="cube_clean")           # no history, no sets or layers, zeroed xform, pivots at origin
 print(repr(clean), clean.get_parent(), clean.get_shapes(), clean.t.get())           # Transform("cube_clean") None [Mesh("cube_cleanShape")] [0. 0. 0.]
-print(DisplayLayer.for_node(clean), cube.duplicate_geometry(parent=grp).long_name)  # None |grp|cube2
+print(DisplayLayer.for_node(clean), cube.duplicate_geometry(parent=grp).get_long_name())  # None |grp|cube2
 ```
 
 Serialisation goes through `cgmath.hierarchy`: one node to a
@@ -614,12 +617,12 @@ path   = root.save_hierarchy(os.path.join(folder, "skeleton.npz"))
 print(os.path.basename(path))                                 # skeleton.npz
 cmds.select("grp")
 made = Joint.load_hierarchy(path)                             # creates: root is taken, so root1
-print(made[0], [x.short_name for x in made], cmds.ls(selection=True))  # root1 ['root1', 'child', 'probe'] ['grp']
+print(made[0], [x.get_short_name() for x in made], cmds.ls(selection=True))  # root1 ['root1', 'child', 'probe'] ['grp']
 try:
     root.load_hierarchy(path)                                 # from a node: never an update in place
 except TypeError as e:
     print(str(e).split(";")[1].strip())                       # Joint.load_hierarchy(path, parent='root') makes a new one under it
-print(Transform.load_hierarchy(path, parent="grp")[0].long_name)       # |grp|root
+print(Transform.load_hierarchy(path, parent="grp")[0].get_long_name())  # |grp|root
 try:
     Joint.load_hierarchy(cube.get_shape().save(os.path.join(folder, "cube.npz")))   # a mesh's file
 except TypeError as e:
@@ -744,20 +747,20 @@ print(hip.find_skinclusters(), knee.find_skinclusters(), root.find_skinclusters(
 
 `Geometry` is the shape base (`Mesh`, `NurbsCurve`, `NurbsSurface`, and the
 `DAGNode` fallback for lattices and locators). Its job is component tags.
-Every editor writes to `injection_node`: the shape itself until a deformer
-exists, the intermediate `Orig` shape from then on.
+Every editor writes to `get_injection_node()`: the shape itself until a
+deformer exists, the intermediate `Orig` shape from then on.
 
 ```python
 cmds.file(new=True, force=True)
 ball = Node(cmds.polySphere(name="ball", ch=False)[0]).get_shape()
-print(ball.injection_node == ball, ball.component_tags)                                                                            # True []
+print(ball.get_injection_node() == ball, ball.get_component_tags())                                                              # True []
 
 cmds.cluster("ball")
-print(repr(ball.injection_node))                                                                                                   # Mesh("ballShapeOrig")
+print(repr(ball.get_injection_node()))                                                                                             # Mesh("ballShapeOrig")
 
 ball.add_component_tag("cap")                                                                                                      # returns the new multi index
 ball.set_component_tag_contents("cap", [0, 1, 2, 3])                                                                               # ids, category "v" by default
-print(ball.component_tags, ball.has_component_tag("cap"), ball.get_component_tag_index("cap"))                                     # ['cap'] True 0
+print(ball.get_component_tags(), ball.has_component_tag("cap"), ball.get_component_tag_index("cap"))                               # ['cap'] True 0
 print(ball.get_component_tag_contents("cap"), ball.get_component_tag_indices("cap"))                                               # ['vtx[0:3]'] [0 1 2 3]
 print(ball.get_component_tag_category("cap"), ball.get_component_tag_name(0))                                                      # v cap
 print(cmds.getAttr("ballShapeOrig.componentTags", multiIndices=True), cmds.getAttr("ballShape.componentTags", multiIndices=True))  # [0] None
@@ -821,23 +824,23 @@ tags) is readable but refuses every edit:
 ball.rename_component_tag("cap", "lid")
 print(ball.has_component_tag("cap"), ball.has_component_tag("lid"))  # False True
 ball.remove_component_tag("lid")
-print(ball.component_tags)                                           # []
+print(ball.get_component_tags())                                     # []
 
 hist = Node(cmds.polyCube(name="hist")[0]).get_shape()    # ch=True: the tags are polyCube1's outputs
-print(hist.component_tags, hist.get_component_tag_index("top"), hist.get_component_tag_contents("top"))   # ['back', 'bottom', 'front', 'left', 'right', 'top'] -1 ['f[1]']
+print(hist.get_component_tags(), hist.get_component_tag_index("top"), hist.get_component_tag_contents("top"))   # ['back', 'bottom', 'front', 'left', 'right', 'top'] -1 ['f[1]']
 try:
     hist.set_component_tag_contents("top", [0], category="f")
 except RuntimeError as e:
     print(str(e)[:64])                                           # Component tag 'top' on histShape is procedural (owned by polyCub
 hist.add_component_tag("lid")   # a new name is editable next to them
-print(hist.component_tags[:2])  # ['lid', 'back']
+print(hist.get_component_tags()[:2])  # ['lid', 'back']
 ```
 
 The plugs Maya evaluates tags on, and the component `MObject`s the
 OpenMaya calls want:
 
 ```python
-print(ball.local_shape_attr, ball.world_shape_attr)                                                           # ballShape.outMesh ballShape.worldMesh
+print(ball.get_local_shape_attr(), ball.get_world_shape_attr())                                                    # ballShape.outMesh ballShape.worldMesh
 print(ball.get_component_mobject().apiTypeStr, ball.get_component_mobject("f", np.array([0, 1])).apiTypeStr)  # kMeshVertComponent kMeshPolygonComponent
 ```
 
@@ -850,7 +853,7 @@ cmds.file(new=True, force=True)
 cube = Node(cmds.polyCube(name="cube", ch=False)[0])
 mesh = cube.get_shape()
 print(repr(Mesh("cube")), Mesh("cubeShape") == mesh)                 # Mesh("cubeShape") True -- a transform name finds its mesh
-print(mesh.num_vertices, mesh.num_polygons, mesh.num_weight_points)  # 8 6 8
+print(mesh.get_num_vertices(), mesh.get_num_polygons(), mesh.get_num_weight_points())  # 8 6 8
 
 points = mesh.get_points()                                       # MPointArray, world space by default
 print(type(points).__name__, np.array(points).shape, np.array(points)[0])   # MPointArray (8, 4) [-0.5 -0.5  0.5  1. ]
@@ -870,7 +873,7 @@ print(mesh.get_faces_above_plane(np.array([0.0, 0, 0]), np.array([0.0, 1, 0]))) 
 UV sets:
 
 ```python
-print(mesh.uv_sets, mesh.current_uv_set, mesh.get_uv_coords().shape)   # ('map1',) map1 (14, 2)
+print(mesh.get_uv_sets(), mesh.get_current_uv_set(), mesh.get_uv_coords().shape)   # ('map1',) map1 (14, 2)
 counts, ids = mesh.get_assigned_uvs()
 print(len(counts), len(ids), mesh.get_uv_at_point([0, 0, 0.5], uv_set=None)[:2])   # 6 24 (0.49666666984558105, 0.125)
 
@@ -880,9 +883,9 @@ uv.name = "map2"                                                 # set_uv_data r
 mesh.add_uv_set("map2")
 mesh.set_uv_data(uv, "map2")
 mesh.rename_uv_set("uv2", "map2")
-print(mesh.uv_sets)  # ('map1', 'uv2')
+print(mesh.get_uv_sets())  # ('map1', 'uv2')
 mesh.delete_uv_set("uv2")
-print(mesh.uv_sets)  # ('map1',)
+print(mesh.get_uv_sets())  # ('map1',)
 ```
 
 To and from `cgmath.geometry.MeshData`; `Mesh.create` is undoable and puts
@@ -894,9 +897,9 @@ print(type(data).__name__, data.point_count, data.face_count, type(uv_list).__na
 print(mesh.serialize(include_uvs=False, world_space=False).matrix.shape)                                # (4, 4) -- the parent's world matrix
 
 rebuilt = Mesh.create(data, uv_data=uv_list, name="rebuilt")
-print(repr(rebuilt), rebuilt.num_vertices, rebuilt.get_parent(), rebuilt.uv_sets)  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
+print(repr(rebuilt), rebuilt.get_num_vertices(), rebuilt.get_parent(), rebuilt.get_uv_sets())  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
 print(rebuilt.get_shading_engines())                                               # [ShadingEngine("initialShadingGroup")]
-print(sum(not rebuilt.fn_set.isEdgeSmooth(e) for e in range(12)))                  # 12 -- the data's normals bring back the cube's hard edges
+print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                  # 12 -- the data's normals bring back the cube's hard edges
 ```
 
 `create` also takes a `cgmath.render.scene.Object`, for the mesh and its UVs:
@@ -907,7 +910,7 @@ its transform; its render settings are not used.
 from cgmath.render.scene import Object
 
 hero = Mesh.create(Object(name="hero", mesh=data, uv=uv_list[0], translate=(5, 0, 0)))
-print(repr(hero), hero.get_parent().t.get(), hero.uv_sets)   # Mesh("heroShape") [5. 0. 0.] ('map1',)
+print(repr(hero), hero.get_parent().t.get(), hero.get_uv_sets())   # Mesh("heroShape") [5. 0. 0.] ('map1',)
 ```
 
 To and from files: `save` writes the `MeshData` to one `cgmath` file and, with
@@ -931,12 +934,12 @@ folder = tempfile.mkdtemp()
 paths  = mesh.save(os.path.join(folder, "cube.npz"), uvs=os.path.join(folder, "cube_uv.npz"))
 print([os.path.basename(p) for p in paths])                  # ['cube.npz', 'cube_uv.npz']
 copy = Mesh.load(*paths, name="copy")                        # creates
-print(repr(copy), copy.uv_sets)                              # Mesh("copyShape") ('map1',)
+print(repr(copy), copy.get_uv_sets())                        # Mesh("copyShape") ('map1',)
 cmds.polySoftEdge("copy", angle=180, constructionHistory=False)   # softened ...
 copy.load(*paths)                                            # ... and updated in place from the files
-print(sum(not copy.fn_set.isEdgeSmooth(e) for e in range(12)))    # 12
+print(sum(not copy.get_fn_set().isEdgeSmooth(e) for e in range(12)))    # 12
 fast = Mesh.load(*paths, name="fast", normals=False)         # creates, the shading skipped
-print(sum(not fast.fn_set.isEdgeSmooth(e) for e in range(12)))    # 0
+print(sum(not fast.get_fn_set().isEdgeSmooth(e) for e in range(12)))    # 0
 try:
     Mesh.load(paths[1], paths[0])                            # the two files swapped
 except TypeError as e:
@@ -948,7 +951,7 @@ category, one value per vertex, padded or trimmed to the vertex count:
 
 ```python
 mask = mesh.add_map("mask", values=0.5, category="weights")
-print(repr(mask), mask.get_data_type(), mask.get_categories(), mesh.paintable_maps)  # Attribute("cubeShape.mask") doubleArray ['weights', 'PaintableMap'] ['mask']
+print(repr(mask), mask.get_data_type(), mask.get_categories(), mesh.get_paintable_maps())  # Attribute("cubeShape.mask") doubleArray ['weights', 'PaintableMap'] ['mask']
 mesh.set_map_values("mask", [1, 0, 1])                                         # short lists are padded with 0.0
 print(mesh.get_map_values("mask"))                                             # [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 mesh.set_map_values("mask", np.linspace(0, 1, 8))
@@ -961,7 +964,7 @@ print(mesh.get_map_attrs(category="weights"), mesh.find_map_attr("visibility")) 
 mesh.mirror_map("mask", Axis.X)                                                            # +X values onto their -X partners
 print(np.round(mesh.get_map_values("mask"), 2))                                            # [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
 mesh.delete_map("mask2")
-print(mesh.paintable_maps, mesh.sanitize_map_values([1, 2]))                               # ['mask'] [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+print(mesh.get_paintable_maps(), mesh.sanitize_map_values([1, 2]))                               # ['mask'] [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 ```
 
 Colour sets are `ColorSet` handles; `data` is an `(V, 4)` array:
@@ -987,7 +990,7 @@ print(mesh.get_material_bindings())                      # standardSurface1
 print(mesh.get_material_bindings(verbose=True))          # [(StandardSurface("standardSurface1"), array([0, 1, 2, 3, 4, 5]))]
 
 red = cmds.shadingNode("blinn", asShader=True, name="red")
-ShadingEngine.for_material(red).assign(["cube.f[0:1]"], touched=[mesh.long_name])
+ShadingEngine.for_material(red).assign(["cube.f[0:1]"], touched=[mesh.get_long_name()])
 print(sorted(mesh.get_materials()), sorted(mesh.get_shading_engines()))                # [Blinn("red"), StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup"), ShadingEngine("redSG")]
 print(mesh.get_material_bindings())                                                    # [(Blinn("red"), array([0, 1])), (StandardSurface("standardSurface1"), array([2, 3, 4, 5]))]
 print(mesh.get_materials(as_pairs=True)[0][0].get_material() in mesh.get_materials())  # True -- (engine, material) pairs
@@ -1008,13 +1011,13 @@ overlapping) a tag comes back as it was, but for those rungs.
 ```python
 dst = Node(cmds.polyCube(name="dst", ch=False)[0]).get_shape()
 mesh.transfer_maps("mask", dst)
-print(dst.paintable_maps, np.round(dst.get_map_values("mask"), 2))   # ['mask'] [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
+print(dst.get_paintable_maps(), np.round(dst.get_map_values("mask"), 2))   # ['mask'] [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
 print(dst.get_map_data("mask").categories)                           # ['weights']
 
 mesh.add_component_tag("cap")
 mesh.set_component_tag_contents("cap", [0, 1, 2, 3])
 mesh.transfer_component_tags("cap", dst)                             # written at dst's injection node
-print(dst.component_tags[-1], dst.get_component_tag_indices("cap"))  # cap [0 1 2 3]
+print(dst.get_component_tags()[-1], dst.get_component_tag_indices("cap"))  # cap [0 1 2 3]
 mesh.add_component_tag("lid")
 mesh.set_component_tag_contents("lid", [1], "f")
 mesh.transfer_component_tags("lid", dst)                             # where dst's face centres land
@@ -1035,7 +1038,7 @@ Both are `Geometry`, so the tag methods above apply; `POINT_COMP_TYPE` is
 ```python
 cmds.file(new=True, force=True)
 crv = Node(cmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)], name="crv")).get_shape()
-print(repr(crv), crv.num_cvs, crv.num_weight_points, np.array(crv.get_points())[1, :3])   # NurbsCurve("curveShape1") 5 5 [1. 0. 0.]
+print(repr(crv), crv.get_num_cvs(), crv.get_num_weight_points(), np.array(crv.get_points())[1, :3])   # NurbsCurve("curveShape1") 5 5 [1. 0. 0.]
 spline = crv.serialize()                                          # cgmath BSplineData
 print(type(spline).__name__, spline.points.shape, spline.degree, spline.periodic)  # BSplineData (5, 3) 3 False
 print(crv.cv, len(crv.cv[:]), crv.cv[[0, 2]])                                      # curveShape1.controlPoints 5 List([Plug("curveShape1.controlPoints[0]"), Plug("curveShape1.controlPoints[2]")])
@@ -1045,7 +1048,7 @@ crv.set_component_tag_contents("root", [0, 1])
 print(crv.get_component_tag_contents("root"))                                      # ['cv[0:1]']
 
 ball = Node(cmds.sphere(name="ball")[0]).get_shape()
-print(repr(ball), ball.num_cvs, ball.num_weight_points)           # NurbsSurface("ballShape") 77 56 -- periodic in V: 3 wrapped rows per column
+print(repr(ball), ball.get_num_cvs(), ball.get_num_weight_points())   # NurbsSurface("ballShape") 77 56 -- periodic in V: 3 wrapped rows per column
 patch = ball.serialize()                                          # cgmath BSplinePatchData, wrapped CVs trimmed
 print(type(patch).__name__, patch.points.shape, patch.periodic_u, patch.periodic_v)            # BSplinePatchData (7, 8, 3) False True
 
@@ -1070,11 +1073,11 @@ their range):
 ```python
 points = [(0, 0, 0), (1, 0, 1), (2, 0, 0), (3, 0, 1), (4, 0, 0)]
 arc = NurbsCurve.create(points, name="arc")                                       # a cubic with cmds.curve's knots
-print(repr(arc), arc.get_parent(), arc.fn_set.degree, list(arc.fn_set.knots()))   # NurbsCurve("arcShape") arc 3 [0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0]
+print(repr(arc), arc.get_parent(), arc.get_fn_set().degree, list(arc.get_fn_set().knots()))   # NurbsCurve("arcShape") arc 3 [0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0]
 zig = NurbsCurve.create(points, degree=1, kv=[0, 1, 2, 4, 8], name="zig")         # a degree and knots of your own
-print(zig.fn_set.degree, list(zig.fn_set.knots()))                                # 1 [0.0, 1.0, 2.0, 4.0, 8.0]
+print(zig.get_fn_set().degree, list(zig.get_fn_set().knots()))                          # 1 [0.0, 1.0, 2.0, 4.0, 8.0]
 twin = NurbsCurve.create(crv.serialize(), name="twin")                            # from a BSplineData
-print(repr(twin), twin.num_cvs, twin.fn_set.degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
+print(repr(twin), twin.get_num_cvs(), twin.get_fn_set().degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
 ```
 
 `NurbsSurface.create` builds a surface from a `BSplinePatchData`: its points,
@@ -1094,7 +1097,7 @@ import os
 import tempfile
 
 sheet = NurbsSurface.create(ball.serialize(), name="sheet")
-print(repr(sheet), sheet.num_cvs, sheet.fn_set.knotDomainInU)    # NurbsSurface("sheetShape") 77 (0.0, 4.0)
+print(repr(sheet), sheet.get_num_cvs(), sheet.get_fn_set().knotDomainInU)    # NurbsSurface("sheetShape") 77 (0.0, 4.0)
 
 folder = tempfile.mkdtemp()
 saved  = crv.save(os.path.join(folder, "crv.json"))
@@ -1107,7 +1110,7 @@ try:
 except TypeError as e:
     print(str(e).split(":")[0])                                  # NurbsCurve('againShape').load needs world_space=
 patch = NurbsSurface.load(ball.save(os.path.join(folder, "ball.npz")), name="patch")
-print(repr(patch), patch.num_cvs)                                # NurbsSurface("patchShape") 77
+print(repr(patch), patch.get_num_cvs())                          # NurbsSurface("patchShape") 77
 try:
     NurbsSurface.load(saved)                                     # a curve's file
 except TypeError as e:
@@ -1235,7 +1238,7 @@ smile = Node(cmds.polyCube(name="smile", ch=False)[0])
 cmds.xform("smile.vtx[3]", ws=True, t=(10, 2, 3))
 
 morph = BlendShape.create(smile, base, name="morph")              # cmds.blendShape(frontOfChain=True)
-print(repr(morph), morph.num_targets, morph.get_targets(), morph.get_target_indices())                   # BlendShape("morph") 1 ['smile'] [0]
+print(repr(morph), morph.get_num_targets(), morph.get_targets(), morph.get_target_indices())                   # BlendShape("morph") 1 ['smile'] [0]
 print(morph.get_target_index("smile"), morph.get_target_name(0), repr(morph.get_target_weight_attr(0)))  # 0 smile Attribute("morph.smile")
 morph.set_target_weight("smile", 1.0)
 print(morph.get_target_weight(0), morph.smile.get())                                                     # 1.0 1.0 -- the alias resolves as an attribute too
@@ -1338,12 +1341,12 @@ sg = ShadingEngine.for_material("red")
 print(repr(sg), sg.get_material(), sg.get_material_info(), sg.get_face_members())                             # ShadingEngine("redSG") red ['materialInfo1'] []
 print(ShadingEngine.for_material("red") == sg, ShadingEngine.for_material("standardSurface1", create=False))  # True initialShadingGroup
 
-sg.assign(["cube.f[0:1]"], touched=[mesh.long_name])
+sg.assign(["cube.f[0:1]"], touched=[mesh.get_long_name()])
 print(sg.get_face_members())                                                                                  # [(Mesh("cubeShape"), array([0, 1]))]
 print(Node("initialShadingGroup").get_face_members())                                                         # [(Mesh("cubeShape"), array([2, 3, 4, 5]))] -- Maya carved the rest
 print(cmds.sets("redSG", query=True), sg.get_members())                                                       # ['cube.f[0:1]'] []
 
-sg.assign([mesh.long_name], touched=[mesh.long_name])                                                         # whole object; touched= lets it delete the orphan groupIds
+sg.assign([mesh.get_long_name()], touched=[mesh.get_long_name()])                                                        # whole object; touched= lets it delete the orphan groupIds
 print(sg.get_face_members(), cmds.sets("redSG", query=True), cmds.ls(type="groupId"))                         # [(Mesh("cubeShape"), None)] ['cubeShape'] []
 ```
 
@@ -1356,9 +1359,9 @@ print(blue.get_material())                                      # None
 blue.set_material("lambert1")                                   # a node (its outColor) or a plug string
 print(blue.get_material())                                      # lambert1
 
-blue.assign(["cube.f[0:1]"], touched=[mesh.long_name], normalise=True)
+blue.assign(["cube.f[0:1]"], touched=[mesh.get_long_name()], normalise=True)
 print(sg.get_face_members(), blue.get_face_members())           # [(Mesh("cubeShape"), array([2, 3, 4, 5]))] [(Mesh("cubeShape"), array([0, 1]))]
-sg.assign(["cube.f[0:1]"], touched=[mesh.long_name], normalise=True)
+sg.assign(["cube.f[0:1]"], touched=[mesh.get_long_name()], normalise=True)
 print(cmds.sets("redSG", query=True), cmds.ls(type="groupId"))  # ['cubeShape'] []
 print(mesh.get_material_bindings())                             # red
 ```
@@ -1380,8 +1383,8 @@ from rig.bridges import nodes as rn
 from rig.nodetypes import Blinn, Lambert, Material
 
 gold = Blinn.define("gold", color=(1, 0.8, 0))                                 # made: gold, goldSG, its materialInfo
-print(repr(gold), repr(gold.engine), Blinn.define("gold") == gold)            # Blinn("gold") ShadingEngine("goldSG") True
-print(repr(Blinn.create(name="gold")), repr(Node.create("blinn", name="b2").engine))   # Blinn("gold1") ShadingEngine("b2SG")
+print(repr(gold), repr(gold.get_engine()), Blinn.define("gold") == gold)      # Blinn("gold") ShadingEngine("goldSG") True
+print(repr(Blinn.create(name="gold")), repr(Node.create("blinn", name="b2").get_engine()))   # Blinn("gold1") ShadingEngine("b2SG")
 print(repr(Node("red")), repr(Material("gold")), repr(Material.create(type="anisotropic", name="ani")))   # Blinn("red") Blinn("gold") Material("ani")
 bare = rn.blinn(name="bare")
 print(repr(bare), ShadingEngine.for_material("bare", create=False))           # Blinn("bare") None
@@ -1391,9 +1394,9 @@ except NodeTypeError as e:
     print(e)                                       # 'gold' is a blinn, not a lambert; Node('gold') is Blinn("gold"); Material('gold') takes any surface shader; Blinn('gold').astype(Lambert) converts it
 
 gold.rename("amber")
-print(gold, gold.engine)                           # amber amberSG
+print(gold, gold.get_engine())                     # amber amberSG
 gold.delete()                                      # amber, amberSG and its materialInfo
-print(cmds.ls("amber*"), gold.is_valid)            # [] False
+print(cmds.ls("amber*"), gold.is_valid())          # [] False
 ```
 
 ---
@@ -1409,7 +1412,7 @@ section 35).
 
 ```python
 layer = DisplayLayer.define("geometry")                           # empty; never becomes the current layer
-print(repr(layer), layer.is_default, DisplayLayer("defaultLayer").is_default)         # DisplayLayer("geometry") False True
+print(repr(layer), layer.is_default(), DisplayLayer("defaultLayer").is_default())     # DisplayLayer("geometry") False True
 
 layer.add_members(cube)                                                               # the node itself, never the subtree
 print(layer.get_members(), DisplayLayer.for_node(cube), DisplayLayer.for_node(mesh))  # [Transform("cube")] geometry None
@@ -1504,9 +1507,10 @@ print(rivet.parameterU.get(), rivet.parameterV.get())   # 0.1 0.2
 ## 18. `Reference`
 
 `Reference.create(path, namespace)` references a file and returns the
-reference node; the properties read `cmds.referenceQuery`. Needs a scene
-on disk, so this block is not run by the vetter. Maya keeps a reference
-node locked (`ref.unlock()` is refused: unlocked, it could be deleted under
+reference node; `get_namespace()` and `get_file_path()` read
+`cmds.referenceQuery`. Needs a scene on disk, so this block is not run by
+the vetter. Maya keeps a reference node locked (`ref.unlock()` is refused:
+unlocked, it could be deleted under
 its reference). A referenced node's `lock()` / `unlock()` is refused too:
 Maya records no reference edit for a `lockNode`, so the change would be
 gone at the next open; a plug lock on it is a reference edit, and works.
@@ -1523,13 +1527,13 @@ cmds.file(save=True, type="mayaAscii", force=True)
 cmds.file(new=True, force=True)
 
 ref = Reference.create(path, namespace="hero")
-print(repr(ref), ref.namespace, ref.file_path == path)    # Reference("heroRN") hero True
+print(repr(ref), ref.get_namespace(), ref.get_file_path() == path)    # Reference("heroRN") hero True
 print(ref.get_nodes()[:2], Reference.find_by_path(path))  # [Transform("hero:cube"), Mesh("hero:cubeShape")] [Reference("heroRN")]
 
 again = Reference.create(path, namespace="hero")                  # Maya makes it hero1, path {1}
-print(again.namespace, again.file_path_with_copy_number.endswith("{1}"), again.file_path == path)  # hero1 True True
+print(again.get_namespace(), again.get_file_path(copy_number=True).endswith("{1}"), again.get_file_path() == path)  # hero1 True True
 
-print(ref.is_locked, ref.lock() is ref)                           # True True -- a reference node stays locked
+print(ref.is_locked(), ref.lock() is ref)                         # True True -- a reference node stays locked
 try:
     Node("hero:cube").lock()
 except RuntimeError as e:
@@ -1698,7 +1702,7 @@ from rig import AnimCurve, AnimCurveTL, AnimCurveTU, NodeTypeError
 cmds.file(new=True, force=True)
 cmds.undoInfo(state=True, infinity=True)
 blink = AnimCurveTU.create([0, 1, 0], times=[0, 2, 4], name="blink")   # new, unconnected
-print(repr(blink), blink.num_keys)                       # AnimCurveTU("blink") 3
+print(repr(blink), blink.get_num_keys())                 # AnimCurveTU("blink") 3
 print(repr(Node("blink")), repr(AnimCurve("blink")))     # AnimCurveTU("blink") AnimCurveTU("blink")
 try:
     AnimCurveTL("blink")
@@ -1716,7 +1720,7 @@ cmds.flushUndo()
 again = AnimCurveTU.define("lid", [0, 1], tangents="step", post_infinity="cycle_relative")   # found, the same keys
 print(again == lid, cmds.undoInfo(query=True, undoQueueEmpty=True))   # True True
 AnimCurveTU.define("lid", [0, 1, 0], tangents="step")    # found: its keys replaced in place
-print(lid.num_keys, cmds.undoInfo(query=True, undoName=True))   # 3 rig.define
+print(lid.get_num_keys(), cmds.undoInfo(query=True, undoName=True))   # 3 rig.define
 ```
 
 ```python

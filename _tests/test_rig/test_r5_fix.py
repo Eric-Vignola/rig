@@ -297,10 +297,13 @@ class TestOneNamingRule(MayaTestCase):
         self.assertIs(_base._dg_named_node(dg), True)
         self.assertIs(_base._dg_named_node(dag), False)
         agree()
+        # re-pinned (user decision 2026-10-16, the property ban): the naming is
+        # DGNode's __str__ and private `_name` (the fn_set and name properties are
+        # the methods get_fn_set / get_name, which naming does not read)
         for owner, name, value in (
             (DGNode, "ensure_valid", lambda node: None),
-            (DGNode, "fn_set", property(lambda node: node._fn_set)),
-            (DGNode, "name", property(lambda node: node._fn_set.name())),
+            (DGNode, "_name", lambda node: node._fn_set.name()),
+            (DGNode, "__str__", lambda node: node._fn_set.name()),
             (type(dg), "__getattribute__", lambda node, name: object.__getattribute__(node, name)),
         ):
             with self.subTest(patched=f"{owner.__name__}.{name}"):
@@ -321,9 +324,11 @@ class TestOneNamingRule(MayaTestCase):
         plug  = held.input1X
         str(plug)
 
+        # re-pinned (user decision 2026-10-16, the property ban): the lookup
+        # answers the naming the node reads, its private `_name` (was `name`)
         def renamed(node, name):
-            if name == "name":
-                return "other"
+            if name == "_name":
+                return lambda: "other"
             return object.__getattribute__(node, name)
 
         def handles(obj):

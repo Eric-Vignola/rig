@@ -171,50 +171,66 @@ class TestASkinLoadOfWhatItHolds(_Case):
         skin.set_weights(w)
         skin.save(self.path("skin.npz"))
         self.ready()
-        SkinCluster(skin.name).load(self.path("skin.npz"))
+        SkinCluster(skin.get_name()).load(self.path("skin.npz"))
         self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
         # weights that differ are written, in one step
         w[:, 0] = 1 - w[:, 0]
         w[:, 1] = 1 - w[:, 1]
         skin.set_weights(w)
         cmds.flushUndo()
-        SkinCluster(skin.name).load(self.path("skin.npz"))
+        SkinCluster(skin.get_name()).load(self.path("skin.npz"))
         self.assertEqual(self.undo_name(), "rig.SkinCluster.load")
+
+
+class _Sided(Transform):
+    """A node class with class data: a Python member that hides a Maya attr of
+    its name (the property ban left class data as the one such member)."""
+
+    side = None
 
 
 class TestAShadowedAttribute(_Case):
     def test_a_warning_names_find_attr(self):
-        # re-pinned (user decision 2026-10-16, name clashes): a method name no longer shadows (see
-        # test_a_method_name_is_no_shadow); a property still does: node.is_locked
-        # is its value
-        ctl = Node.create("transform", name="ctl")
+        # re-pinned twice (user decisions 2026-10-16): a method name no longer
+        # shadows (name clashes, see test_a_method_name_is_no_shadow), nor does
+        # is_locked, a method since the property ban; class data still does
+        plain = Node.create("transform", name="plain")
+        logger = logging.getLogger("rig.spec._base")
+        with self.assertRaises(AssertionError):
+            with self.assertLogs(logger, level=logging.WARNING):
+                plain << Bool("is_locked")
+        self.assertEqual(str(plain.is_locked), "plain.is_locked")  # the plug
+        self.assertIs(plain.is_locked(), False)  # the method
+        ctl = _Sided._wrap(Node.create("transform", name="ctl"))
         with self.assertLogs("rig.spec._base", level=logging.WARNING) as logs:
-            plug = ctl << Bool("is_locked")
-        self.assertEqual(str(plug), "ctl.is_locked")
+            plug = ctl << Bool("side")
+        self.assertEqual(str(plug), "ctl.side")
         text = "\n".join(logs.output)
-        self.assertIn("'is_locked' is a Python member of Transform", text)
-        self.assertIn("Plug(ctl.find_attr('is_locked'))", text)
-        Plug(ctl.find_attr("is_locked")) << 1
-        self.assertTrue(cmds.getAttr("ctl.is_locked"))
+        self.assertIn("'side' is a Python member of _Sided", text)
+        self.assertIn("Plug(ctl.find_attr('side'))", text)
+        Plug(ctl.find_attr("side")) << 1
+        self.assertTrue(cmds.getAttr("ctl.side"))
 
     def test_the_short_name_too(self):
-        ctl = Node.create("transform", name="ctl")
+        # re-pinned (user decision 2026-10-16, the property ban): class data
+        ctl = _Sided._wrap(Node.create("transform", name="ctl"))
         with self.assertLogs("rig.spec._base", level=logging.WARNING) as logs:
-            ctl << Float("lockedWeight", sn="is_locked")
-        self.assertIn("'is_locked' is a Python member of Transform", "\n".join(logs.output))
+            ctl << Float("sideWeight", sn="side")
+        self.assertIn("'side' is a Python member of _Sided", "\n".join(logs.output))
 
     def test_no_warning_for_a_free_name_or_a_redeclaration(self):
-        """guard."""
-        ctl = Node.create("transform", name="ctl")
+        """guard. Re-pinned (user decision 2026-10-16, the property ban): class
+        data is the shadowing member."""
+        ctl = _Sided._wrap(Node.create("transform", name="ctl"))
         logger = logging.getLogger("rig.spec._base")
         with self.assertRaises(AssertionError):
             with self.assertLogs(logger, level=logging.WARNING):
                 ctl << Float("weight")
         with self.assertLogs(logger, level=logging.WARNING):
-            ctl << Bool("is_locked")
+            ctl << Bool("side")
         with self.assertRaises(AssertionError):
             with self.assertLogs(logger, level=logging.WARNING):
-                ctl << Bool("is_locked")  # re-declared: kept, no second warning
+                ctl << Bool("side")  # re-declared: kept, no second warning
 
     def test_a_method_name_is_no_shadow(self):
         """user decision 2026-10-16, name clashes: node.lock is the plug once the node
@@ -228,7 +244,7 @@ class TestAShadowedAttribute(_Case):
         ctl.lock << 1
         self.assertTrue(ctl.lock >> None)
         self.assertIs(ctl.lock(), ctl)
-        self.assertTrue(ctl.is_locked)
+        self.assertTrue(ctl.is_locked())
         ctl.unlock()
 
 
@@ -270,7 +286,7 @@ class TestTheShadingCost(_Case):
             start = time.perf_counter()
             mesh = Mesh.create(source, uv_data=uvs)
             times.append(time.perf_counter() - start)
-            cmds.delete(mesh.get_parent().long_name)
+            cmds.delete(mesh.get_parent().get_long_name())
         return min(times)
 
     def ratio(self, prepare):
@@ -316,6 +332,6 @@ class TestTheShadingCost(_Case):
         want = {frozenset(pair) for pair in shading.hard[0].tolist()}
         self.assertGreater(len(want), 100)
         made = Mesh.create(data, uv_data=uvs)
-        fn = made.fn_set
+        fn = made.get_fn_set()
         got = {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
         self.assertEqual(got, want)

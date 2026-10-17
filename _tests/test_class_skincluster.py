@@ -106,7 +106,7 @@ class TestSkinCluster(MayaTestCase):
         skin.set_weights(org_data)
         data = skin.serialize()
         self.assertEqual(org_data, data)
-        self.assertFalse(extra_joint.clean_name in data.influences)
+        self.assertFalse(extra_joint.get_clean_name() in data.influences)
 
         # test apply skin data to a skincluster with more influences (additive)
         skin.delete()
@@ -116,7 +116,7 @@ class TestSkinCluster(MayaTestCase):
         skin.set_weights(org_data, additive=True)
         data = skin.serialize()
         self.assertNotEqual(org_data, data)
-        self.assertTrue(extra_joint.clean_name in data.influences)
+        self.assertTrue(extra_joint.get_clean_name() in data.influences)
 
     def test_create_from_skin_data(self):
         # rebuild a skincluster directly from a SkinData object: influences are
@@ -247,7 +247,7 @@ class TestSkinCluster(MayaTestCase):
 
                 skin = driven.get_shape().apply_skin_data(data)
 
-                self.assertTrue(cmds.objExists(self.skin.name))
+                self.assertTrue(cmds.objExists(self.skin.get_name()))
                 self._assert_own_skin(self.cube, self.skin)
                 self._assert_own_skin(driven, skin)
 
@@ -260,7 +260,7 @@ class TestSkinCluster(MayaTestCase):
 
                 SkinCluster.copy_skincluster(str(source), [str(driven)])
 
-                self.assertTrue(cmds.objExists(self.skin.name))
+                self.assertTrue(cmds.objExists(self.skin.get_name()))
                 self._assert_own_skin(self.cube, self.skin)
                 skin = self._skin_of(driven)
                 self._assert_own_skin(driven, skin)
@@ -278,7 +278,7 @@ class TestSkinCluster(MayaTestCase):
                 SkinCluster.rebind(str(driven))
 
                 self.assertEqual(driven.get_shape().get_deformers(node_type="skinCluster"), [])
-                self.assertEqual(cmds.ls(type="skinCluster"), [self.skin.name])
+                self.assertEqual(cmds.ls(type="skinCluster"), [self.skin.get_name()])
                 self._assert_own_skin(self.cube, self.skin)
                 np.testing.assert_allclose(self.skin.get_weights(), weights, rtol=0, atol=0)
 
@@ -373,7 +373,7 @@ class TestSkinCluster(MayaTestCase):
         skin = mesh.get_shape().apply_skin_data(self.skin.serialize())
 
         self.assertNotEqual(skin, target_skin)
-        self.assertTrue(cmds.objExists(target_skin.name))
+        self.assertTrue(cmds.objExists(target_skin.get_name()))
         self.assertEqual(target_skin.get_influence_objects(), [self.joint1])
         self.assertEqual(skin.get_influence_objects(), [self.joint1, self.joint2])
         self.assertCountEqual(mesh.get_shape().get_deformers(node_type="skinCluster"), [skin, target_skin])

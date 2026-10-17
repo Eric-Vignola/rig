@@ -355,7 +355,7 @@ class TestComponentPlugOwner(MayaTestCase):
         self.assertEqual(str(second.visibility), f"G2|{shape}.visibility")
         self.assertEqual(str(second.cv), f"G2|{shape}.controlPoints")
         self.assertEqual(str(second.cv[1, 2]), f"G2|{shape}.cv[1][2]")
-        self.assertEqual(second.cv[1, 2].get_node().long_name, f"|G2|{shape}")
+        self.assertEqual(second.cv[1, 2].get_node().get_long_name(), f"|G2|{shape}")
         first = Node(f"|ball|{shape}")
         self.assertEqual(str(first.cv[1, 2]), f"ball|{shape}.cv[1][2]")
         # one Maya plug all the same
@@ -432,7 +432,7 @@ class TestLiftAndPlugOfATypedAttribute(MayaTestCase):
                 self.assertEqual(cmds.getAttr(f"{dst}.matrixSum")[12], 7.0)
         visibility = Node("|T2|S").find_attr("v")
         self.assertEqual(str(lift(visibility)), "T2|S.visibility")
-        self.assertEqual(lift(visibility).get_node().long_name, "|T2|S")
+        self.assertEqual(lift(visibility).get_node().get_long_name(), "|T2|S")
 
     def test_a_node_of_a_plug_is_its_owner(self):
         from rig.nodetypes import Transform

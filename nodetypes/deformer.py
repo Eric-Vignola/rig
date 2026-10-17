@@ -66,14 +66,14 @@ class Deformer(DGNode):
         """Returns a list of geometry objects (post-deformation).
         TODO support components
         """
-        return [_cast(x) for x in cmds.deformer(self.name, query=True, geometry=True)]
+        return [_cast(x) for x in cmds.deformer(str(self), query=True, geometry=True)]
 
     def get_original_geometries(self) -> list[DGNode]:
         """Returns a list of original geometry objects (pre-deformation)."""
 
         geom = (
             cmds.listConnections(
-                f"{self.name}.originalGeometry",
+                f"{self}.originalGeometry",
                 source      = True,
                 destination = False,
                 plugs       = True,

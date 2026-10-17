@@ -475,7 +475,7 @@ class TestLayerRemove(MayaTestCase):
         self.assertIsNone(self.cube >> Layer())
         self.assertEqual(Layer.of(self.cube), [])
         self.assertEqual(str(Layer(DEFAULT)), DEFAULT)
-        self.assertTrue(Layer(DEFAULT).is_default)
+        self.assertTrue(Layer(DEFAULT).is_default())
         self.assertTrue(Layer(DEFAULT).visibility >> None)
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "contradictory"):

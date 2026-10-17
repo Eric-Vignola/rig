@@ -395,8 +395,8 @@ class TestTagQueries(MayaTestCase):
                 attributes_node = _C._get_or_create_attributes_node("tq_ctn")
                 _C._ATTRIBUTES_NODE_CACHE.clear()
                 self.assertEqual(
-                    _C._get_or_create_attributes_node("tq_ctn").name,
-                    attributes_node.name,
+                    _C._get_or_create_attributes_node("tq_ctn").get_name(),
+                    attributes_node.get_name(),
                 )
                 container.publish_input(2.0, "knobB")
         finally:
@@ -406,4 +406,4 @@ class TestTagQueries(MayaTestCase):
             for m in cmds.container("tq_ctn", query=True, nodeList=True) or []
             if cmds.attributeQuery("__container_attributes__", node=m, exists=True)
         ]
-        self.assertEqual(attributes_nodes, [attributes_node.name])
+        self.assertEqual(attributes_nodes, [attributes_node.get_name()])

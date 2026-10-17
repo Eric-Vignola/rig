@@ -119,11 +119,12 @@ class _UserPlug(Plug):
 
 
 class _UserNamed(Transform):
-    """A user's node class with its own naming: the cmds route."""
+    """A user's node class with its own naming: the cmds route. Re-pinned (user
+    decision 2026-10-16, the property ban): a node class declares no property, so
+    its own naming is its ``__str__``."""
 
-    @property
-    def name(self):
-        return self.fn_set.partialPathName()
+    def __str__(self):
+        return self.get_fn_set().partialPathName()
 
 
 # (label, setup(), the connect, the route the API_EDITS=True run takes: "api" or "cmds")
@@ -650,7 +651,7 @@ class TestPluginLoading(_ApiCase):
         cmds.flushUndo()
         box    = Mesh("boxShape")
         before = cmds.xform("box.vtx[0]", query=True, translation=True)
-        points = OpenMaya.MPointArray(box.fn_set.getPoints())
+        points = OpenMaya.MPointArray(box.get_fn_set().getPoints())
         points[0] = OpenMaya.MPoint(9, 9, 9)
         with self.missing(), self.assertRaises(RuntimeError) as raised:
             box.set_points(points, world_space=False)

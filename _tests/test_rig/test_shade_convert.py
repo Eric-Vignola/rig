@@ -99,7 +99,7 @@ class TestLazyRetype(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(red), Blinn)
-        self.assertTrue(red.is_valid)
+        self.assertTrue(red.is_valid())
         # the type is chosen when the material is made
         p = Phong.define("p", color=[1, 0, 0])
         cube << p
@@ -171,7 +171,7 @@ class TestConversion(MayaTestCase):
         self.assertIs(type(p), Phong)
         self.assertEqual(repr(p), 'Phong("red")')
         self.assertEqual(p, Node("red"))
-        self.assertEqual(str(p.engine), "redSG")
+        self.assertEqual(str(p.get_engine()), "redSG")
         self.assertEqual([repr(m) for m in Material.of(self.cube)], ['Phong("red")'])
         p.cosinePower << 40
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
@@ -427,7 +427,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_wiring("red"),        wiring)
         self.assertEqual(cmds.nodeType("red"),  "blinn")
         self.assertIs(type(red), Blinn)
-        self.assertTrue(red.is_valid)
+        self.assertTrue(red.is_valid())
         # nothing lossy: strict passes
         clean = Blinn.define("clean")
         self.cube << clean
@@ -446,7 +446,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
         self.assertEqual(cmds.nodeType("red"), "phong")
-        self.assertTrue(m.is_valid)
+        self.assertTrue(m.is_valid())
         # attributes on a material already of that type are set, as on a found
         # material; update=False skips them
         self.assertIs(m.astype(Phong, cosinePower=40, update=False), m)
@@ -465,7 +465,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(m), Blinn)
-        self.assertTrue(m.is_valid)
+        self.assertTrue(m.is_valid())
         p = m.astype(Phong, cosinePower=40)
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.shade.convert")
@@ -604,13 +604,13 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_wiring("red"),       wiring)
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertIs(type(red), Blinn)
-        self.assertTrue(red.is_valid)
+        self.assertTrue(red.is_valid())
         # a name converts too, and returns the new node
         p = shade.convert("red", "phong")
         self.assertIs(type(p), Phong)
         self.assertEqual(p, Node("red"))
         self.assertEqual(cmds.nodeType("red"), "phong")
-        self.assertFalse(red.is_valid)
+        self.assertFalse(red.is_valid())
 
     def test_referenced_shader_is_refused(self):
         folder = tempfile.mkdtemp(prefix="rig_shade_convert_ref_")
@@ -660,7 +660,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_sources("redSG.surfaceShader"), ["red.outColor"])
         self.assertEqual(_sources(f"{info}.material"), ["red.message"])
         # the undo revives the old node; the new one is gone (plain message)
-        self.assertTrue(red.is_valid)
+        self.assertTrue(red.is_valid())
         self.assertEqual(red, Blinn("red"))
         with self.assertRaisesRegex(RuntimeError, r"^red__rigconvert already deleted!$"):
             str(new)
@@ -705,7 +705,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_wiring("red"), wiring)
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
         self.assertIs(type(red), Blinn)
-        self.assertTrue(red.is_valid)
+        self.assertTrue(red.is_valid())
         # COMMIT: the rename fails after the delete -> one guarded undo
         with mock.patch.object(cmds, "rename", side_effect=RuntimeError("boom")):
             with mock.patch.object(cmds, "warning"):
@@ -716,7 +716,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual(cmds.nodeType("red"), "blinn")
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
         self.assertEqual(cmds.listAttr("red", userDefined=True), ["myNote"])
-        self.assertTrue(red.is_valid)
+        self.assertTrue(red.is_valid())
         # with the undo queue off it still rolls back, and the queue is off after
         cmds.undoInfo(state=False)
         try:
@@ -765,9 +765,9 @@ class TestConversion(MayaTestCase):
         self.assertEqual(real, Node("red"))
         self.assertIs(type(real), Phong)
         with self.assertRaisesRegex(RuntimeError, "already deleted"):
-            stale.name
+            stale.get_name()
         with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
-            stale.name
+            stale.get_name()
         self.assertEqual(str(Node("red")), "red")
         self.assertAlmostEqual(real.diffuse >> None, 0.33, places=5)
         self.assertEqual(len(wrap._cache), 0)

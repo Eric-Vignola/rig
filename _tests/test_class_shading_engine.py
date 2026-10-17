@@ -29,7 +29,7 @@ def _faces(engine) -> list[tuple[str, list[int] | None]]:
     """(full shape path, face ids | None) per member, sorted by path."""
     return sorted(
         (
-            (node.long_name, None if ids is None else ids.tolist())
+            (node.get_long_name(), None if ids is None else ids.tolist())
             for node, ids in engine.get_face_members()
         ),
         key=lambda x: x[0],
@@ -56,8 +56,8 @@ class TestShadingEngine(MayaTestCase):
     def test_create_wiring(self):
         sg = ShadingEngine.create(name="wiredSG")
         self.assertIs(type(sg), ShadingEngine)
-        self.assertEqual(sg.name, "wiredSG")
-        self.assertEqual(sg.node_type, "shadingEngine")
+        self.assertEqual(sg.get_name(), "wiredSG")
+        self.assertEqual(sg.get_node_type(), "shadingEngine")
         partition = cmds.listConnections(f"{sg}.partition", plugs=True) or []
         self.assertTrue(any(x.startswith("renderPartition.sets") for x in partition))
         self.assertEqual(len(sg.get_material_info()), 1)
@@ -85,7 +85,7 @@ class TestShadingEngine(MayaTestCase):
         # re-pinned (round 4b NC2): ObjectSet(sg) refers to the engine, the
         # most derived class (an engine is an objectSet), so it equals
         # ShadingEngine(sg) and Node(sg) (it was an ObjectSet wrapper, unequal)
-        name = self.sg_a.name
+        name = self.sg_a.get_name()
         self.assertEqual(ShadingEngine(name), Node(name))
         self.assertIs(type(ObjectSet(name)), ShadingEngine)
         self.assertEqual(ShadingEngine(name), ObjectSet(name))
@@ -104,7 +104,7 @@ class TestShadingEngine(MayaTestCase):
 
         sg = ShadingEngine.for_material(mat)
         self.assertIs(type(sg), ShadingEngine)
-        self.assertEqual(sg.name, "lonelySG")
+        self.assertEqual(sg.get_name(), "lonelySG")
         self.assertEqual(sg.get_material(), Node(mat))
         shaders = cmds.listConnections("defaultShaderList1.shaders", source=True, destination=False)
         self.assertEqual(shaders.count(mat), 1)
@@ -273,7 +273,7 @@ class TestShadingEngine(MayaTestCase):
         self.assertEqual(cmds.ls(), before)
 
         self.assertEqual(ObjectSet.define(plain), ObjectSet(plain))
-        self.assertEqual(ShadingEngine.define(self.sg_a.name), self.sg_a)
+        self.assertEqual(ShadingEngine.define(self.sg_a.get_name()), self.sg_a)
         created = ShadingEngine.define("freshSG")
         self.assertIs(type(created), ShadingEngine)
         self.assertTrue(cmds.listConnections(f"{created}.partition", plugs=True))
@@ -288,7 +288,7 @@ class TestShadingEngine(MayaTestCase):
             second = ObjectSet.define("inNs")
         finally:
             cmds.namespace(set=":")
-        self.assertEqual(first.name, "ns:inNs")
+        self.assertEqual(first.get_name(), "ns:inNs")
         self.assertEqual(first, second)
         self.assertEqual(cmds.ls("ns:*", type="objectSet"), ["ns:inNs"])
 

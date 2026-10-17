@@ -423,7 +423,7 @@ class TestMeshMapTransfer(MayaTestCase):
 
     def test_transfer_maps_onto_the_same_plane_keeps_every_value(self):
         src, dst = self._plane("src", 4), self._plane("dst", 4)
-        ramp       = np.linspace(0.0, 1.0, src.num_vertices)
+        ramp       = np.linspace(0.0, 1.0, src.get_num_vertices())
         ramp[::3]  = 0.0
         src.add_map("XFER_RAMP", category="xfer", values=ramp.tolist())
         src.add_map("XFER_PART", values=[0.0] * 10 + [0.5, 0.25])  # the rest padded with 0
@@ -463,7 +463,7 @@ class TestMeshMapTransfer(MayaTestCase):
         from rig.nodetypes import Joint, SkinCluster
 
         if not src.has_attr("XFER_UV"):
-            src.add_map("XFER_UV", values=np.linspace(0.0, 1.0, src.num_vertices).tolist())
+            src.add_map("XFER_UV", values=np.linspace(0.0, 1.0, src.get_num_vertices()).tolist())
             src.add_component_tag("xfer_uv")
             src.set_component_tag_contents("xfer_uv", [0, 1, 5], "v")
             skin = SkinCluster.create(src, Joint.create(name="xfer_uv_j"))
@@ -475,7 +475,7 @@ class TestMeshMapTransfer(MayaTestCase):
         return (
             dst.get_map_values("XFER_UV"),
             dst.get_component_tag_indices("xfer_uv").tolist(),
-            [x.name for x in target.get_influence_objects()],
+            [x.get_name() for x in target.get_influence_objects()],
         )
 
     def test_transfers_read_no_uvs_in_spatial_mode(self):
@@ -488,7 +488,7 @@ class TestMeshMapTransfer(MayaTestCase):
         real  = mesh_api.Mesh.serialize_uv
 
         def serialize_uv(mesh, uv_set=None):
-            reads.append(mesh.name)
+            reads.append(mesh.get_name())
             return real(mesh, uv_set)
 
         with mock.patch.object(mesh_api.Mesh, "serialize_uv", serialize_uv):
@@ -508,7 +508,8 @@ class TestMeshMapTransfer(MayaTestCase):
         from cgmath.geometry.resample import ResampleMode
 
         src, dst = self._plane("src", 4), self._plane("dst", 4)
-        with mock.patch.object(mesh_api.Mesh, "uv_sets", new_callable=mock.PropertyMock, return_value=()):
+        # (the property ban: uv_sets is the method get_uv_sets)
+        with mock.patch.object(mesh_api.Mesh, "get_uv_sets", lambda self: ()):
             values, tag, influences = self._transfer_all(src, dst)
             self.assertEqual(values, src.get_map_values("XFER_UV"))
             self.assertEqual(tag, [0, 1, 5])
@@ -523,8 +524,8 @@ class TestMeshMapTransfer(MayaTestCase):
         from cgmath.geometry.resample import ResampleMode
 
         src, bare = self._plane("src", 4), self._plane("bare", 4)
-        cmds.polyMapDel(f"{bare.name}.f[*]")
-        self.assertEqual(cmds.polyEvaluate(bare.name, uvcoord=True), 0)
+        cmds.polyMapDel(f"{bare.get_name()}.f[*]")
+        self.assertEqual(cmds.polyEvaluate(bare.get_name(), uvcoord=True), 0)
         self._transfer_all(src, bare)
         skin = src.get_deformers(node_type="skinCluster")[0]
         bare.add_component_tag("xfer_face")

@@ -196,7 +196,7 @@ class TestMaterialNodes(_Case):
 
     def test_tokens_and_reprs(self):
         red    = Blinn.define("red")
-        sg     = red.engine
+        sg     = red.get_engine()
         before = _scene()
         self.assertEqual(repr(Blinn()), "Blinn()")
         self.assertEqual(repr(Material()), "Material()")
@@ -289,7 +289,7 @@ class TestNodeRhs(_Case):
         self.assertIs(faces << -red, faces)
         self.assertEqual(_members("redSG"), ["cube.f[2:5]"])
         np.testing.assert_array_equal(self.cube >> red, [2, 3, 4, 5])
-        np.testing.assert_array_equal(self.cube >> red.engine, [2, 3, 4, 5])
+        np.testing.assert_array_equal(self.cube >> red.get_engine(), [2, 3, 4, 5])
         self.assertIs(self.cube << Blinn(), self.cube)
         self.assertEqual(_engines("cubeShape"), [])
         self.cube << Default()
@@ -328,12 +328,12 @@ class TestNodeRhs(_Case):
             lambda: self.cube << -red,
             lambda: self.cube >> red,
             lambda: self.cube in red,
-            lambda: red.engine,
+            lambda: red.get_engine(),
             lambda: red.astype(Phong),
         ):
             self.assertRefused(RuntimeError, "red already deleted!", call)
         cmds.undo()
-        self.assertTrue(red.is_valid)
+        self.assertTrue(red.is_valid())
         self.assertIn(self.cube, red)
         other = _cube("other")
         other << red
@@ -443,13 +443,13 @@ class TestNodeRhs(_Case):
         self.assertEqual(_members("altSG"), ["cubeShape"])
 
     def test_an_empty_list_is_a_value_error(self):
-        for rhs in (self.red, -self.red, self.red.engine, Material()):
+        for rhs in (self.red, -self.red, self.red.get_engine(), Material()):
             self.assertRefused(ValueError, "nothing to inject", lambda rhs=rhs: List([]) << rhs)
         self.assertRefused(ValueError, r"nothing to ask about: the left-hand side of '>>' names no member",
                            lambda: List([]) >> self.red)
 
     def test_a_member_node_on_the_left_writes_nothing(self):
-        sg     = self.red.engine
+        sg     = self.red.get_engine()
         layer  = Layer.define("L")
         wiring = sorted(cmds.listConnections("redSG", connections=True, plugs=True) or [])
         for call in (
@@ -474,7 +474,7 @@ class TestNodeRhs(_Case):
         other << Node("lambert1")
         self.assertEqual(_scene() - before, set())
         self.assertEqual(sorted(_members("lambert1SG")), ["cubeShape", "otherShape"])
-        self.assertEqual(Lambert("lambert1").engine, ShadingEngine("lambert1SG"))
+        self.assertEqual(Lambert("lambert1").get_engine(), ShadingEngine("lambert1SG"))
         self.assertNotEqual(Default(), ShadingEngine("lambert1SG"))
 
     def test_other_nodes_keep_todays_message(self):
@@ -488,7 +488,7 @@ class TestNodeRhs(_Case):
         clone = grp.w >> Node.create("transform", name="dst")
         self.assertEqual(str(clone), "dst.w")
         self.assertRefused(TypeError, "is a plug; membership takes the node", lambda: grp.w >> self.red)
-        self.assertRefused(TypeError, "is a plug; membership takes the node", lambda: grp.w >> self.red.engine)
+        self.assertRefused(TypeError, "is a plug; membership takes the node", lambda: grp.w >> self.red.get_engine())
 
     def test_inside_a_container_scope(self):
         rn.blinn(name="bare", container=False)
@@ -628,7 +628,7 @@ class TestConversionReturnsNode(_Case):
         self.assertEqual(report, same)
         self.assertEqual(report.parked, ("eccentricity",))
         self.assertEqual(str(report).splitlines()[0], "rig.shade: 'red' blinn -> phong parks:")
-        self.assertTrue(self.red.is_valid)
+        self.assertTrue(self.red.is_valid())
         self.assertEqual(cmds.nodeType("red"), "blinn")
         # a shader already of the type: an empty report
         self.assertEqual(self.red.astype(Blinn, dry_run=True), Conversion("red", "blinn", "blinn"))
@@ -646,7 +646,7 @@ class TestConversionReturnsNode(_Case):
         with self.assertRaises(ValueError) as caught:
             shade.convert(self.red, "phong", strict=True)
         self.assertEqual(str(caught.exception), str(report))
-        self.assertTrue(self.red.is_valid)
+        self.assertTrue(self.red.is_valid())
         self.red.eccentricity << 0.3
         self.assertIs(type(self.red.astype(Phong, strict=True)), Phong)
 
@@ -666,7 +666,7 @@ class TestConversionReturnsNode(_Case):
         self.assertRefused(TypeError, "membership token", lambda: shade.convert(Blinn(), Phong))
         self.assertRefused(RuntimeError, "default node", lambda: shade.convert("lambert1", Phong))
         self.assertEqual(sorted(cmds.listConnections("red", connections=True, plugs=True) or []), wiring)
-        self.assertTrue(self.red.is_valid)
+        self.assertTrue(self.red.is_valid())
 
     def test_a_reference_never_converts(self):
         for call in (lambda: Phong(self.red), lambda: Phong("red"), lambda: Phong(Node("red").color)):
@@ -675,7 +675,7 @@ class TestConversionReturnsNode(_Case):
                 call,
             )
         self.assertEqual(cmds.nodeType("red"), "blinn")
-        self.assertTrue(self.red.is_valid)
+        self.assertTrue(self.red.is_valid())
 
     def test_a_shader_of_the_type_is_returned_as_is(self):
         cmds.flushUndo()
@@ -711,9 +711,9 @@ class TestConvertedHandle(_Case):
         token = -held
         new   = held.astype(Phong)
         for label, call in (
-            ("str", lambda: str(held)), ("repr", lambda: repr(held)), ("name", lambda: held.name),
+            ("str", lambda: str(held)), ("repr", lambda: repr(held)), ("name", lambda: held.get_name()),
             ("plug", lambda: held.color.get()), ("get", lambda: plug.get()),
-            ("set", lambda: plug << (1, 0, 0)), ("engine", lambda: held.engine),
+            ("set", lambda: plug << (1, 0, 0)), ("engine", lambda: held.get_engine()),
             ("astype", lambda: held.astype(Lambert)), ("<<", lambda: self.cube << held),
             ("<< token", lambda: self.cube << token), ("in", lambda: self.cube in held),
             ("refer", lambda: Phong(held)), ("convert", lambda: shade.convert(held, "lambert")),
@@ -721,7 +721,7 @@ class TestConvertedHandle(_Case):
         ):
             with self.subTest(label):
                 self.assertRefused(RuntimeError, self.CONVERTED, call)
-        self.assertFalse(held.is_valid)
+        self.assertFalse(held.is_valid())
         self.assertEqual(held == new, False)
         # a node deleted another way keeps the plain message
         other = Blinn.define("other")
@@ -734,7 +734,7 @@ class TestConvertedHandle(_Case):
         held = self.red
         new  = held.astype(Phong)
         cmds.undo()
-        self.assertTrue(held.is_valid)
+        self.assertTrue(held.is_valid())
         self.assertEqual(held, Blinn("red"))
         self.assertIn(self.cube, held)
         self.assertRefused(RuntimeError, r"^red__rigconvert already deleted!$", lambda: str(new))
@@ -745,7 +745,7 @@ class TestConvertedHandle(_Case):
 
     def test_a_new_scene_or_a_file_open_clears_the_record(self):
         held = self.red
-        uuid = held.uuid
+        uuid = held.get_uuid()
         held.astype(Phong)
         self.assertEqual(_base._CONVERTED.get(uuid), ("red", "phong"))
         cmds.file(new=True, force=True)
@@ -758,7 +758,7 @@ class TestConvertedHandle(_Case):
             cmds.file(rename=path)
             cmds.file(save=True, type="mayaAscii", force=True)
             red = Blinn.define("red")
-            uuid = red.uuid
+            uuid = red.get_uuid()
             red.astype(Phong)
             self.assertIn(uuid, _base._CONVERTED)
             cmds.file(path, open=True, force=True)
@@ -784,7 +784,7 @@ class TestConvertedHandle(_Case):
                                lambda held=held: str(held))
         self.assertIn(self.cube, third)
         cmds.undo()
-        self.assertTrue(second.is_valid)
+        self.assertTrue(second.is_valid())
         self.assertRefused(RuntimeError, "already deleted", lambda: str(third))
 
     def test_a_namespaced_node(self):
@@ -796,5 +796,5 @@ class TestConvertedHandle(_Case):
         self.assertRefused(RuntimeError, r"^'look:red' was converted to a phong; use the node astype\(\) returned",
                            lambda: str(held))
         # the root red is untouched
-        self.assertTrue(self.red.is_valid)
+        self.assertTrue(self.red.is_valid())
         self.assertEqual(cmds.nodeType("red"), "blinn")

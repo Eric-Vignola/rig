@@ -353,13 +353,13 @@ class TestMemoizeNodeKeyHardening(MayaTestCase):
         key  = _stable_key(node)
         # Shape is ("node", (uuid, hashCode)).
         self.assertEqual(key[0], "node")
-        self.assertEqual(key[1][0], node.uuid)
+        self.assertEqual(key[1][0], node.get_uuid())
 
     def test_attribute_key_embeds_uuid(self):
         node = Node.create("transform", name="cube1")
         key  = _stable_key(node.translateX)
         # Shape is ((uuid, hashCode), alias).
-        self.assertEqual(key[0][0], node.uuid)
+        self.assertEqual(key[0][0], node.get_uuid())
 
     def test_node_identity_unresolvable_raises_typeerror(self):
         # An unresolvable node must raise TypeError so the @memoize wrapper

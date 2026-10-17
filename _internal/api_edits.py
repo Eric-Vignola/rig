@@ -42,30 +42,29 @@ _add          = journal.add
 # bound at the first fast-path call (`_bind`), once rig's classes exist: the exact plug
 # classes (Attribute, Plug and their method plugs, `_MethodPlug` / `_MethodAttribute`;
 # another subclass, a ComponentPlug included, takes cmds) and rig's
-# own node naming (the `name` / `fn_set` / `ensure_valid` a node class must keep)
+# own node naming (the ``__str__`` / `_name` / `ensure_valid` a node class must keep)
 _API_CLASSES: tuple = ()
 _NAMES:       tuple = ()
-_FN_SETS:     tuple = ()
+_STR:         Any   = None
 _ENSURE:      Any   = None
 _BOUND              = False
 
 
 def _bind() -> None:
-    global _API_CLASSES, _NAMES, _FN_SETS, _ENSURE, _BOUND
+    global _API_CLASSES, _NAMES, _STR, _ENSURE, _BOUND
     global _names_own_plug, _attr_mobject, _ready
 
     from rig._internal.plug import _MethodPlug, Plug
     from rig.nodetypes import _base
     from rig.nodetypes.dag_node import DAGNode
     from rig.nodetypes.dg_node import DGNode
-    from rig.nodetypes.mesh import Mesh
     from rig.nodetypes.plugins import _fast_path_ready as _ready
 
     _names_own_plug = _base._names_own_plug
     _attr_mobject   = _base._attr_mobject
     _API_CLASSES    = (_base.Attribute, Plug, _MethodPlug, _base._MethodAttribute)
-    _NAMES          = (DGNode.__dict__["name"], DAGNode.__dict__["name"])
-    _FN_SETS        = (DGNode.__dict__["fn_set"], Mesh.__dict__["fn_set"])
+    _NAMES          = (DGNode.__dict__["_name"], DAGNode.__dict__["_name"])
+    _STR            = DGNode.__dict__["__str__"]
     _ENSURE         = _base._raw_function(DGNode.__dict__["ensure_valid"])
     _BOUND          = True
 
@@ -75,16 +74,17 @@ _OBJECT_GETATTRIBUTE = object.__dict__["__getattribute__"]
 
 def _rig_named(owner: Any) -> bool:
     """True if ``owner`` (a plug's node object) is named by rig's own naming: its class
-    keeps rig's ``name``, ``fn_set`` and ``ensure_valid`` (and Python's attribute lookup),
-    none is set on the node itself, and a DAG node has no taken path to rebind (naming it
-    would rebind it first, `DAGNode.name`). The name of its plug is then the name of its
-    MPlug (`_names_own_plug` checks the rest), so the API edit is the cmds edit."""
+    keeps rig's ``__str__``, private name reader (`_name`) and ``ensure_valid`` (and
+    Python's attribute lookup), none is set on the node itself, and a DAG node has no
+    taken path to rebind (naming it would rebind it first, `DAGNode._name`). The name of
+    its plug is then the name of its MPlug (`_names_own_plug` checks the rest), so the API
+    edit is the cmds edit."""
     cls = type(owner)
     try:
         if (
             cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
-            or cls.name not in _NAMES
-            or cls.fn_set not in _FN_SETS
+            or cls._name not in _NAMES
+            or cls.__str__ is not _STR
             or cls.ensure_valid is not _ENSURE
         ):
             return False

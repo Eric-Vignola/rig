@@ -76,7 +76,7 @@ class _Case(MayaTestCase):
         before = _slots(shader)
         self.assertEqual(bool(before), listed_before)
         made = ShadingEngine.for_material(shader)
-        self.assertEqual(_uuid(made.name), _uuid(engine))
+        self.assertEqual(_uuid(made.get_name()), _uuid(engine))
         after = _slots(shader)
         if listed_before:
             self.assertEqual(after, before)
@@ -236,5 +236,5 @@ class TestNoWholeListRead(_Case):
             phong = red.astype(Phong)
         self.assertTrue(reads)
         self.assertEqual([arg for arg in reads if "defaultShaderList" in arg], [])
-        self.assertEqual(len(_slots(phong.name)), 1)
+        self.assertEqual(len(_slots(phong.get_name())), 1)
         self.assertEqual(len(_slots("bare")), 1)

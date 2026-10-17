@@ -271,7 +271,7 @@ objC = Node.create("transform", name="objC")
 one  = nodeA << Typed("one")
 one << objA.wm
 objC.r << one                                        # as a source it reads as what it holds: a matrix
-print(cmds.nodeType(objC.r.get_inputs()[0].get_node().name))   # decomposeMatrix
+print(cmds.nodeType(str(objC.r.get_inputs()[0].get_node())))   # decomposeMatrix
 ```
 
 ---
@@ -475,7 +475,7 @@ first. `hide` / `unhide` are for plugs.
 ```python
 from rig import InjectionError
 
-print(repr(ctrl.rz << lock), repr(ctrl << lock), Node("ctrl").is_locked)   # Plug("ctrl.rotateZ") Transform("ctrl") True
+print(repr(ctrl.rz << lock), repr(ctrl << lock), Node("ctrl").is_locked())   # Plug("ctrl.rotateZ") Transform("ctrl") True
 cmds.flushUndo()
 ctrl << lock                                    # locked already
 print(cmds.undoInfo(query=True, undoQueueEmpty=True))   # True

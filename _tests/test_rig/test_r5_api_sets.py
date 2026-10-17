@@ -323,11 +323,12 @@ class _UserPlug(Plug):
 
 
 class _UserNamed(Transform):
-    """A user's node class with its own naming: the cmds route."""
+    """A user's node class with its own naming: the cmds route. Re-pinned (user
+    decision 2026-10-16, the property ban): a node class declares no property, so
+    its own naming is its ``__str__``."""
 
-    @property
-    def name(self):
-        return self.fn_set.partialPathName()
+    def __str__(self):
+        return self.get_fn_set().partialPathName()
 
 
 def _guard_cases():

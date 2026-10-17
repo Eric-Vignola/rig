@@ -857,20 +857,20 @@ class TestNodeClasses(_Case):
     def test_create(self):
         c = AnimCurveTU.create([0, 1, 0], name="blink")
         self.assertIs(type(c), AnimCurveTU)
-        self.assertEqual((c.name, _values("blink"), _inputs("blink.input")), ("blink", [0.0, 1.0, 0.0], []))
+        self.assertEqual((c.get_name(), _values("blink"), _inputs("blink.input")), ("blink", [0.0, 1.0, 0.0], []))
         self.assertEqual(cmds.listConnections("blink.output") or [], [])
         c2 = AnimCurveTU.create(AnimCurve([0, 1, 0], times=[0, 2, 4]), name="blink")
-        self.assertEqual(c2.name, "blink1")
+        self.assertEqual(c2.get_name(), "blink1")
         self.assertEqual(_times("blink1"), [0.0, 2.0, 4.0])
         self.assertRefusesWithNothingChanged(
             TypeError, lambda: AnimCurveTU.create(AnimCurve([0, 1]), times=[0, 1], name="x"), "holds its own times")
         self.assertRefusesWithNothingChanged(
             TypeError, lambda: AnimCurveTU.create(AnimCurve([0, 1]), tangents="step", name="x"), "holds its own")
         empty = AnimCurveTL.create(name="empty")
-        self.assertEqual(empty.num_keys, 0)
+        self.assertEqual(empty.get_num_keys(), 0)
         by_type = Node.create("animCurveTU", name="byType")
         self.assertIs(type(by_type), AnimCurveTU)
-        self.assertEqual(by_type.num_keys, 0)
+        self.assertEqual(by_type.get_num_keys(), 0)
         # attributes are set after the keys: an attribute wins over the keys' infinity
         c3 = AnimCurveTA.create([0, 1], infinity="cycle", preInfinity=1, name="spin")
         self.assertEqual((cmds.getAttr("spin.preInfinity"), cmds.getAttr("spin.postInfinity")), (1, 3))
@@ -910,7 +910,7 @@ class TestNodeClasses(_Case):
         cmds.flushUndo()
         self.assertIs(c.set_keys([0, 3], times=[0, 10]), c)
         self.assertEqual(self.undo_name(), "rig.AnimCurve.set_keys")
-        self.assertEqual(c.num_keys, 2)
+        self.assertEqual(c.get_num_keys(), 2)
         np.testing.assert_allclose(c.evaluate([0, 5, 10]), [0, 1.5, 3])
         self.assertIsInstance(c.evaluate(5), float)
         cmds.flushUndo()
@@ -930,15 +930,15 @@ class TestNodeClasses(_Case):
         n.arr[0] << AnimCurve([0, 1])
         n.arr[3] << AnimCurve([0, 1])
         n.sx << 2
-        self.assertEqual([c.name for c in AnimCurve.of(n.tx)], ["n_translateX"])
-        self.assertEqual([c.name for c in AnimCurve.of(n.t)], ["n_translateX", "n_translateY", "n_translateZ"])
-        self.assertEqual([c.name for c in AnimCurve.of(n.arr)], ["n_arr_0_", "n_arr_3_"])
+        self.assertEqual([c.get_name() for c in AnimCurve.of(n.tx)], ["n_translateX"])
+        self.assertEqual([c.get_name() for c in AnimCurve.of(n.t)], ["n_translateX", "n_translateY", "n_translateZ"])
+        self.assertEqual([c.get_name() for c in AnimCurve.of(n.arr)], ["n_arr_0_", "n_arr_3_"])
         self.assertEqual(len(AnimCurve.of(n.s)), 0)
-        self.assertEqual(sorted(c.name for c in AnimCurve.of(n)),
+        self.assertEqual(sorted(c.get_name() for c in AnimCurve.of(n)),
                          ["n_arr_0_", "n_arr_3_", "n_translateX", "n_translateY", "n_translateZ"])
-        self.assertEqual(sorted(c.name for c in AnimCurveTU.of(n)), ["n_arr_0_", "n_arr_3_"])
+        self.assertEqual(sorted(c.get_name() for c in AnimCurveTU.of(n)), ["n_arr_0_", "n_arr_3_"])
         both = AnimCurve.of(List([n.tx, n.tx, n.ty]))
-        self.assertEqual([c.name for c in both], ["n_translateX", "n_translateY"])
+        self.assertEqual([c.get_name() for c in both], ["n_translateX", "n_translateY"])
         self.assertIsInstance(both, List)
         # a curve behind a pairBlend is not looked through
         _cube("c")
@@ -995,7 +995,7 @@ class TestReadBack(_Case):
         n, drv = _cube("n"), _cube("drv")
         cmds.setDrivenKeyframe("n.sy", currentDriver="drv.tx", driverValue=0, value=1)
         uu = AnimCurve(_curve_of("n.sy"))
-        self.assertEqual(uu.num_keys, 1)
+        self.assertEqual(uu.get_num_keys(), 1)
         for fn in (uu.get_keys, lambda: uu.set_keys([1]), lambda: uu.evaluate(1)):
             with self.assertRaises(TypeError):
                 fn()
@@ -1044,14 +1044,14 @@ class TestNaming(_Case):
         with container("arm"):
             ctl = Node.create("transform", name="ctl")
             ctl.tx << AnimCurve([0, 1])
-        self.assertEqual(_curve_of(f"{ctl}.tx"), f"{ctl.name}_translateX")
+        self.assertEqual(_curve_of(f"{ctl}.tx"), f"{ctl.get_name()}_translateX")
         members = cmds.container("arm", query=True, nodeList=True) or []
         self.assertIn(_curve_of(f"{ctl}.tx"), members)
         set_options(flatten_containers=True)
         with container("leg"):
             inner = Node.create("transform", name="ctl")
             inner.ty << AnimCurve([0, 1])
-        self.assertEqual(_curve_of(f"{inner}.ty"), f"{inner.name}_translateY")
+        self.assertEqual(_curve_of(f"{inner}.ty"), f"{inner.get_name()}_translateY")
         # a curve is data: never a cleanup() candidate
         from rig._internal import container as container_module
 
