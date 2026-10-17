@@ -254,6 +254,16 @@ custom type stamps the string onto every node it creates, so `Node`
 recognises those nodes later. `Transform.is_type(custom_node)` is `False`
 at exact type and `True` with `exact_type=False`.
 
+The metaclass also holds a node class to the one rule (a bare name on a node
+is its Maya attribute if one exists, otherwise the method). A class body, and
+a later `Cls.x = ...`, declares only methods under a public name; a
+property, a nested class or lowercase data is refused when the class is
+made. UPPER_CASE declarations (`NATIVE_NODE_TYPE`, `CUSTOM_NODE_TYPE`,
+`FN_SET`, `POINT_COMP_TYPE`, `DEFAULT`, your own) are class data: read on
+the class (`type(self).FN_SET` in a method), never on a node. Python state
+is a `_` name the class body declares (`_side = None`); an undeclared `_`
+name is the node's Maya attribute of that name, else an error.
+
 `Node.create(type, ...)` runs the registered class's `create` with the
 arguments when there is one — which is how `Node.create("skinCluster", geo,
 joints)` ends up in `SkinCluster._create`, `"shadingEngine"` is built
@@ -722,7 +732,7 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
   arrays; strings are the shape-local `vtx[a:b]` / `cv[u][v0:v1]` /
   `f[a:b]` tokens `geometry.iter_component_tokens` renders.
 - **Categories are `"v"`, `"e"`, `"f"`**; `"v"` maps to the geometry's
-  `POINT_COMP_TYPE` (`vtx` on meshes, `cv` on curves and surfaces).
+  class's `POINT_COMP_TYPE` (`vtx` on meshes, `cv` on curves and surfaces).
 - **`cmds` flags pass through.** `get_children(**listRelatives_kwargs)`,
   `duplicate(**duplicate_kwargs)`, `find_all(**ls_kwargs)`,
   `list_attr(**listAttr_kwargs)`; a `create` passes its command's flags
@@ -749,7 +759,8 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
   step, a skeleton duplicate with a suffix, an orient pass, a map mirror.
 - You want **your own node type**: subclass `Transform` (or any class here)
   with `CUSTOM_NODE_TYPE`, and `Node` will hand your class back for the
-  nodes it created.
+  nodes it created. Keep its Python state under declared `_` names
+  (`_side = None`) and its constants UPPER_CASE (read as `type(self).X`).
 - You need `cmds.*` results as **typed nodes**: cast them,
   `Node(cmds.polyCube(ch=False)[0])`, or `Node.wrap(result)` for a whole
   result.
