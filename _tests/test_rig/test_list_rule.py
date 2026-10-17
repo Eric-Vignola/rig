@@ -22,7 +22,7 @@
   plain list holding a deleted node (Maya's TypeError, nothing deleted), the removal window
   (a user's node-removed callback using the List), a pending Python error inside Maya's parser,
   and rig reloaded or re-imported with Lists of the old copy.
-* `TestTheScenEpoch`: the epoch and the doomed handles live on ``sys`` (reload-safe); every
+* `TestTheSceneEpoch`: the epoch and the doomed handles live on ``sys`` (reload-safe); every
   notification moves the epoch first; a handle that cannot be recorded makes no List trusted
   until the next undo / redo / scene event.
 
