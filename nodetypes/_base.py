@@ -2302,13 +2302,9 @@ def _names_own_plug(attr: Any) -> bool:
     element on its path) is answered from its parents alone, as the loop below
     answers it: only a parent that is an array root fails it.
     """
-    cls = type(attr)
-    if (
-        not isinstance(attr, Attribute)
-        or cls.__str__ is not Attribute.__str__
-        or cls.get_full_name is not Attribute.get_full_name
-        or cls.get_alias is not Attribute.get_alias
-    ):
+    # the class keeps Attribute's naming (``__str__``, ``get_full_name``,
+    # ``get_alias``: Attribute's, patched or not), read from the class dicts
+    if not isinstance(attr, Attribute) or _redefines(type(attr), _NAMING_MEMBERS):
         return False
     # a freed attribute (see `_ensure_owner_alive`) is not read
     d      = attr.__dict__
@@ -3010,14 +3006,16 @@ class Attribute(str):
 
     def set_alias(self, alias: str | None) -> None:
         """Sets the alias of this attribute (``aliasAttr``); None or ``""``
-        removes it. The same alias is left as it is (no command)."""
+        removes it. The same alias, or no alias to remove, is left as it is
+        (no command)."""
         cur_alias = type(self).get_alias(self)
         if cur_alias == alias:
             return
-        elif not alias and cur_alias != type(self).get_name(self):
-            cmds_edit.aliasAttr(str(self), remove=True)
-        else:
-            cmds_edit.aliasAttr(alias, str(self))
+        if not alias:
+            if cur_alias != type(self).get_name(self):
+                cmds_edit.aliasAttr(str(self), remove=True)
+            return
+        cmds_edit.aliasAttr(alias, str(self))
 
     def get_attribute_type(self) -> str:
         """Returns the type of this attribute."""
@@ -4132,6 +4130,35 @@ _wrap_plug_methods(Attribute)
 # the naming `_dg_named_owner` finds a plug's class keeps (class access gives
 # the function)
 _ATTRIBUTE_FULL_NAME = Attribute.get_full_name
+
+# the members `_names_own_plug` asks a plug's class to keep as Attribute holds
+# them (patched or not): read from the class dicts by `_redefines`, since a plug
+# method's class access (``cls.get_full_name``) runs `_ChildOrMethod.__get__`, a
+# Python call, and the check runs on every API edit
+_NAMING_MEMBERS = ("__str__", "get_full_name", "get_alias")
+
+
+def _redefines(cls: type, names: tuple) -> bool:
+    """True if a class of `cls`'s MRO before Attribute defines one of `names`
+    (or Attribute is not in it): then `cls` does not keep Attribute's member of
+    that name. Read from the class dicts, so no descriptor runs; Plug, the common
+    case, is one dict."""
+    if cls is Attribute:
+        return False
+    if cls is _PLUG_FOR_METHODS:
+        d = cls.__dict__
+        for name in names:
+            if name in d:
+                return True
+        return False
+    for base in cls.__mro__:
+        if base is Attribute:
+            return False
+        d = base.__dict__
+        for name in names:
+            if name in d:
+                return True
+    return True
 
 
 # `Node.create`'s body: ``rig._internal.container`` sets it when it loads, to
