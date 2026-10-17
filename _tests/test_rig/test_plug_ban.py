@@ -22,6 +22,8 @@ and ``lock()`` / ``unlock()``; ``next_index`` is ``get_next_available_index()``.
   no public state; ``hasattr`` answers on a bare Attribute.
 * `TestBarePredicates`: a predicate named without brackets has no truth value
   (user decision: the guard), on a plug and over a List.
+* `TestPlugClassEnforcement`: a plug class declares no public member but methods
+  (and UPPER_CASE data), checked when the class is made.
 * `TestRigSourceLint`: rig's own code reads no old name, names no predicate bare,
   and every class route it takes resolves.
 """
@@ -405,6 +407,41 @@ class TestBarePredicates(MayaTestCase):
         self.assertEqual([x.is_locked() for x in lst], [False, True])
         # a method that is no predicate keeps a List's truth value
         self.assertTrue(bool(lst.get_node))
+
+
+class TestPlugClassEnforcement(MayaTestCase):
+    """A plug class (rig's, a user's) declares no public member but methods: a
+    property, a cached_property or another descriptor, lowercase data or a nested
+    class is refused when the class is made; UPPER_CASE data passes."""
+
+    def test_refused_members(self):
+        import functools
+
+        class _Descriptor:
+            def __get__(self, inst, owner=None):
+                return 1
+
+        for label, body in (
+            ("property", {"side": property(lambda self: 1)}),
+            ("cached_property", {"side": functools.cached_property(lambda self: 1)}),
+            ("descriptor", {"side": _Descriptor()}),
+            ("data", {"side": None}),
+            ("class", {"Inner": type("Inner", (), {})}),
+        ):
+            for base in (Plug, Attribute):
+                with self.subTest(member=label, base=base.__name__):
+                    with self.assertRaisesRegex(TypeError, r"a plug class has no public"):
+                        type("_Bad", (base,), dict(body))
+
+    def test_methods_and_declarations_pass(self):
+        def foo(self):
+            return 1
+
+        cls = type("_Good", (Plug,), {"UNITS": "cm", "foo": foo, "_side": None,
+                                      "make": classmethod(lambda c: c)})
+        self.assertIsInstance(cls.__dict__["foo"], _base._ChildOrMethod)
+        self.assertEqual(cls.UNITS, "cm")
+        self.assertIs(cls.foo, foo)
 
 
 _RIG_DIR = os.path.dirname(os.path.abspath(rig.__file__))
