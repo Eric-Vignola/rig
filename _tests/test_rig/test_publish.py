@@ -1046,7 +1046,7 @@ class TestPublishMultiParentResolution(MayaTestCase):
 
         pma          = Node.create("plusMinusAverage", name="pma")
         scalar_multi = pma.input1D
-        self.assertTrue(scalar_multi.is_multi)
+        self.assertTrue(scalar_multi.is_multi())
         result = _resolve_multi_parent_source(scalar_multi, {})
         # NB: compare via str -- Plug.__eq__ is overloaded to build a
         # comparison node, so it cannot be used as a boolean assertion.

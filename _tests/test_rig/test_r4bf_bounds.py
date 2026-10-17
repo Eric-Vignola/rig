@@ -242,7 +242,7 @@ class TestFirstDeclaration(_Case):
             self.holder << Vector("vec")
             List([self.holder]) << Float("listed")
         refuse.assert_not_called()
-        self.assertEqual((str(plug), plug.node, cmds.getAttr("holder.free")), ("holder.free", self.holder, 2.0))
+        self.assertEqual((str(plug), plug.get_node(), cmds.getAttr("holder.free")), ("holder.free", self.holder, 2.0))
         self.assertLessEqual({"free", "vec", "vecX", "vecY", "vecZ", "listed"},
                              set(cmds.listAttr("holder", userDefined=True)))
 

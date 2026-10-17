@@ -5,7 +5,7 @@
 ``Node("pCube1")`` returns the typed node (``Transform``, ``Mesh``, ...), and
 ``Node(x) is x`` for a node object. Every node class (``DGNode`` and its
 subclasses) carries the DSL: attribute access returns :class:`Plug` instances
-owned by the node (``node.tx.node is node``; on a node with more than one DAG
+owned by the node (``node.tx.get_node() is node``; on a node with more than one DAG
 path named through its path, ``Node("|T2|S").v`` is ``T2|S.visibility``),
 ``<<`` / ``>>`` inject and introspect, ``node.tx = 5`` is ``node.tx << 5``. A
 node never falls back to its name: after a delete, a new scene, a file open or

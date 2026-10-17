@@ -240,7 +240,7 @@ class TestFindAttrHit(MayaTestCase):
             self.assertEqual(lookup.call_count, 1)
         self.assertIs(again, first)
         self.assertIs(again, vars(node)["_attr_dict"]["input1X"])
-        self.assertIs(again.node, node)
+        self.assertIs(again.get_node(), node)
 
     def test_every_other_form_takes_the_lookup(self):
         node = Node(cmds.createNode("multiplyDivide", name="md"))
@@ -335,7 +335,7 @@ class TestOneNamingRule(MayaTestCase):
         self.assertEqual(handles(held), [held._objhandle.hashCode()])
         with mock.patch.object(type(held), "__getattribute__", renamed):
             # the name gives the other node, and so do the handles, as the key
-            self.assertEqual(plug.full_name, "other.input1X")
+            self.assertEqual(plug.get_full_name(), "other.input1X")
             self.assertEqual(handles(plug), [other._objhandle.hashCode()])
             self.assertEqual(handles(held), [other._objhandle.hashCode()])
             self.assertEqual(

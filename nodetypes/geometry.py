@@ -252,8 +252,8 @@ class Geometry(DAGNode):
             kwargs: kwargs supported by cmds.makePaintable().
         """
         attr               = self.find_attr(attr)
-        args               = (self.node_type, attr.name)
-        kwargs["attrType"] = attr.data_type
+        args               = (self.node_type, type(attr).get_name(attr))
+        kwargs["attrType"] = type(attr).get_data_type(attr)
         cmds_edit.makePaintable(*args, **kwargs)
 
     @staticmethod
@@ -407,7 +407,7 @@ class Geometry(DAGNode):
         """
         element = self._editable_component_tag(tag)
         if element is not None:
-            cmds_edit.removeMultiInstance(element.full_name, b=True)
+            cmds_edit.removeMultiInstance(str(element), b=True)
 
     def rename_component_tag(self, tag: str | int, new_key: str) -> None:
         """Renames a component tag with the given key the object.
@@ -529,7 +529,7 @@ class Geometry(DAGNode):
                 tags.append(name)
 
         visible = cmds.geometryAttrInfo(
-            f"{self.local_shape_attr.full_name}",
+            f"{str(self.local_shape_attr)}",
             componentTagNames=True,
         )
         tags.extend(name for name in visible or [] if name not in tags)
@@ -579,7 +579,7 @@ class Geometry(DAGNode):
             expr: Component tag expression. (E.g. '*', 'top', 'top+bottom', etc.)
         """
         return cmds.geometryAttrInfo(
-            f"{self.local_shape_attr.full_name}",
+            f"{str(self.local_shape_attr)}",
             componentTagExpression = expr,
             subsetState            = True,
         )
@@ -601,7 +601,7 @@ class Geometry(DAGNode):
         ```
         """
         return cmds.geometryAttrInfo(
-            f"{self.local_shape_attr.full_name}",
+            f"{str(self.local_shape_attr)}",
             componentTagHistory=True,
         )
 
@@ -615,7 +615,7 @@ class Geometry(DAGNode):
         """
         tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
         return cmds.geometryAttrInfo(
-            f"{self.local_shape_attr.full_name}",
+            f"{str(self.local_shape_attr)}",
             componentTagExpression = tag_name,
             componentTagCategory   = True,
         )
@@ -655,7 +655,7 @@ class Geometry(DAGNode):
         """
         tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
         components = cmds.geometryAttrInfo(
-            f"{self.local_shape_attr.full_name}",
+            f"{str(self.local_shape_attr)}",
             componentTagExpression = tag_name,
             components             = True,
         )

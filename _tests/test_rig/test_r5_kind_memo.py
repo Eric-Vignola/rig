@@ -105,8 +105,8 @@ def _old_names_own_plug(attr):
     if (
         not isinstance(attr, Attribute)
         or cls.__str__ is not Attribute.__str__
-        or cls.full_name is not Attribute.full_name
-        or cls.alias is not Attribute.alias
+        or cls.get_full_name is not Attribute.get_full_name
+        or cls.get_alias is not Attribute.get_alias
     ):
         return False
     handle = attr.__dict__.get("_attrh")
@@ -374,7 +374,7 @@ class TestTheMemoAnswersAsTheComputation(UndoWalk, MayaTestCase):
                     expected = _old_fixed_attr_kind(plug)
                     self.assertEqual(_base._fixed_attr_kind(plug), expected)
                     self.assertEqual(_base._fixed_attr_kind(plug), expected)
-                    self.assertIs("_kind" in vars(plug), not plug.plug.isElement)
+                    self.assertIs("_kind" in vars(plug), not plug.get_mplug().isElement)
 
 
 class TestWhatIsNeverKept(UndoWalk, MayaTestCase):
@@ -647,8 +647,8 @@ class TestNamesOwnPlug(UndoWalk, MayaTestCase):
         # an element with no index, so it keeps no kind and takes the loop
         pma  = Node(cmds.createNode("plusMinusAverage", name="pma"))
         plug = _unindexed_child("pma")
-        self.assertTrue(plug.plug.isChild)
-        parent = plug.plug.parent()
+        self.assertTrue(plug.get_mplug().isChild)
+        parent = plug.get_mplug().parent()
         self.assertTrue(parent.isElement and parent.logicalIndex() < 0)
         self.assertIsNone(_base._fixed_attr_kind(plug))
         self.assertNotIn("_kind", vars(plug))

@@ -21,7 +21,7 @@ for the node classes and their typed methods.
 |---|---|---|
 | — | [Setup](#setup) | `mayapy` bootstrap, an empty scene |
 | 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node, `lock()` / `unlock()` / `is_locked` |
-| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.node`, instance paths |
+| 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.get_node()`, instance paths |
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, a `Typed` slot that holds any data, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, a taken name refused, `plug >> container` |
@@ -196,7 +196,7 @@ The new plug is owned by the node it was added to.
 from rig.spec import Float
 
 blend = a << Float("blend")
-print(repr(blend), blend.node is a)                            # Plug("a.blend") True
+print(repr(blend), blend.get_node() is a)                      # Plug("a.blend") True
 print(repr(a >> Float("result")))                              # Plug("a.result")
 print(cmds.attributeQuery("result", node="a", writable=True))  # False
 try:
@@ -265,7 +265,7 @@ for edit in (lambda: ctl.rename("hand"), lambda: ctl.tz.lock()):
         print(err)
 # cannot rename 'ctl': it is locked; Node('ctl').unlock() unlocks it. Nothing was changed
 # 'ctl.translateZ' is on the locked node 'ctl', whose plugs Maya never locks: Node('ctl').unlock() unlocks it. Nothing was changed
-print(ctl.unlock().is_locked, ctl.tx.is_locked, ctl.ty >> None)   # False True 2.0
+print(ctl.unlock().is_locked, ctl.tx.is_locked(), ctl.ty >> None)   # False True 2.0
 ```
 
 ---
@@ -443,19 +443,59 @@ the same node, so a result plug still reaches its node's other attributes.
 total = a.tx + b.tx                          # a result plug on a sum node
 print(str(total), str(total.input))  # add1.output add1.input
 print(repr(a.matrix.ro))             # Plug("a.rotateOrder")  -- sibling of a typed-atomic plug
-total.node.input[1] << 10                    # .node is the owning node
+total.get_node().input[1] << 10              # get_node() is the owning node
 print(total >> None)                         # 11.0
 ```
 
 Plug introspection you will reach for:
 
 ```python
-print(a.tx.alias, a.tx.data_type, a.t.num_children)  # translateX doubleLinear 3
-print(a.wm.is_multi, a.wm.data_type)                 # True matrix
-print(a.tx.full_name, repr(a.tx.node))               # a.translateX Transform("a")
+print(a.tx.get_alias(), a.tx.get_data_type(), a.t.get_num_children())  # translateX doubleLinear 3
+print(a.wm.is_multi(), a.wm.get_data_type())                           # True matrix
+print(str(a.tx), a.tx.get_full_name(), repr(a.tx.get_node()))          # a.translateX a.translateX Transform("a")
 ```
 
-A plug is owned by the node you read it from: `plug.node` is that very
+A plug has no properties: every member is a method, under the rule above
+(bare, a name is the plug's compound child of that name if it has one, else
+the method; with brackets, the method). A predicate named without brackets
+has no truth value: `if a.tx.is_locked:` raises `TypeError` (`is_locked is a
+method: call it (is_locked())`), where it would always pass. Up to
+v2.0.0a5 these were properties:
+
+| Was | Now |
+|---|---|
+| `plug.plug` | `plug.get_mplug()` |
+| `plug.full_name` | `str(plug)` or `plug.get_full_name()` |
+| `plug.node` / `plug.name` | `plug.get_node()` / `plug.get_name()` |
+| `plug.alias`, `plug.alias = x` | `plug.get_alias()`, `plug.set_alias(x)` (None removes it) |
+| `plug.attribute_type` / `plug.data_type` / `plug.enums` | `plug.get_attribute_type()` / `plug.get_data_type()` / `plug.get_enums()` |
+| `plug.default_value`, `= v` | `plug.get_default_value()`, `plug.set_default_value(v)` |
+| `plug.fn_set` / `plug.mobject` | `plug.get_fn_set()` / `plug.get_mobject()` |
+| `plug.num_children` / `plug.num_elements` | `plug.get_num_children()` / `plug.get_num_elements()` |
+| `plug.is_locked`, `plug.is_locked = b` | `plug.is_locked()`, `plug.lock()` / `plug.unlock()` |
+| `plug.is_keyable`, `= b` / `plug.is_channel_box`, `= b` | `plug.is_keyable()`, `plug.set_keyable(b)` / `plug.is_channel_box()`, `plug.set_channel_box(b)` |
+| `plug.is_dynamic` / `is_connected` / `is_free_to_change` / `is_typed` / `is_multi` | the same names, called: `plug.is_multi()` |
+| `multi.next_index` | `multi.get_next_available_index()` |
+
+An old spelling raises `AttributeError` naming the new one (`'a.translateX'
+has no child or sibling attribute 'node'; plug.node is now
+plug.get_node()`), unless the plug has a child or a sibling of that name:
+then it is that plug, as the rule says (`renderLayer.adjustments[0].plug`,
+a compound child named `alias`). The node's own members are unchanged here.
+
+```python
+try:
+    a.tx.node
+except AttributeError as err:
+    print(str(err).split("; ")[1])                   # plug.node is now plug.get_node()
+try:
+    if a.tx.is_locked:                               # no brackets
+        pass
+except TypeError as err:
+    print(err)                                       # is_locked is a method: call it (is_locked())
+```
+
+A plug is owned by the node you read it from: `plug.get_node()` is that very
 node object, shared by the plug's children and elements. A node with two
 instance paths names its plugs through the path you took, and a world space
 array (`worldMatrix`, `worldInverseMatrix`, `worldMesh`, ...) read through a
@@ -463,7 +503,7 @@ path is that instance's element; `cmds` reads the same name. A plug built from a
 `Plug("|T2|S.v")` is named as Maya names it, through the first path.
 
 ```python
-print(a.tx.node is a, a.t[0].node is a, (a.tx.node >> None) is (a >> None))  # True True True
+print(a.tx.get_node() is a, a.t[0].get_node() is a, (a.tx.get_node() >> None) is (a >> None))  # True True True
 Node.create("transform", name="T1")
 t2 = Node.create("transform", name="T2")
 cmds.createNode("transform", name="S", parent="T1")
@@ -554,7 +594,7 @@ net = Node.create("network", name="net")
 net   << Float("w", multi=True)
 net.w << 1.0
 net.w << 2.0                                 # appended at [1]
-print(net.w.next_index, repr(net.w[:]))      # 2 List([Plug("net.w[0]"), Plug("net.w[1]")])
+print(net.w.get_next_available_index(), repr(net.w[:]))   # 2 List([Plug("net.w[0]"), Plug("net.w[1]")])
 net.w[:4] << [10, 20, 30, 40]                # indices 0..3, the missing two created on write
 print(net.w[:] >> None)                      # [10. 20. 30. 40.]
 net.w << [100, 200]                          # the bare multi with a sequence: index by index from 0
@@ -590,7 +630,7 @@ mix[0] << feed.r                             # rewired across kinds: no composeM
 mix << 2.5                                   # the root appends; a number is a value
 print(mix[0].get_inputs(), mix >> None)      # List([Plug("feed.rotate")]) [array([0., 0., 0.]), array([0., 0., 0.]), 2.5]
 mix[1] << None                               # disconnects, and drops the double3 it held
-print(mix[1].data_type)                      # Tdata
+print(mix[1].get_data_type())                # Tdata
 ```
 
 A blendShape aliases every `weight[i]` to its target name, and the DSL
@@ -653,7 +693,7 @@ containment compares Maya plugs and builds nothing.
 
 ```python
 test = ctrl.tx == 5
-print(repr(test), cmds.nodeType(test.node))                      # Plug("equal1.output") equal
+print(repr(test), cmds.nodeType(test.get_node()))                # Plug("equal1.output") equal
 print(ctrl.tx == Node("ctrl").tx, ctrl.tx != ctrl.translateX)    # True False  -- one Maya plug: a bool, no node
 print(ctrl.tx.equals(ctrl.tx), ctrl.tx.equals(drv.tx))           # True False
 print(len({ctrl.tx, ctrl.tx}), {ctrl.tx: "x"}[Node("ctrl").tx])  # 1 x
@@ -699,7 +739,7 @@ src << Color("tint") << [0.1, 0.2, 0.3]
 
 print(repr(src.blend >> dst),       dst.blend >> None)      # Plug("dst.blend") 0.0
 print(repr(src.blend >> "blend2"),  src.blend2 >> None)     # Plug("src.blend2") 0.25
-print(repr(src.tint >> "dst.tint"), dst.tint.num_children)  # Plug("dst.tint") 3
+print(repr(src.tint >> "dst.tint"), dst.tint.get_num_children())  # Plug("dst.tint") 3
 try:
     src.blend >> "tint"
 except TypeError as err:
@@ -844,14 +884,15 @@ raises `TypeError` naming the loop, `[x.save(...) for x in items]`): every eleme
 refused one changes nothing. `lock()` locks the plugs, then the nodes in
 one `lockNode`; `unlock()` the nodes, then the plugs. It is one undo step,
 `rig.lock` / `rig.unlock`, and returns the List. `nodes.is_locked` maps,
-one bool per element.
+one bool per element, over nodes; a plug's `is_locked()` is a method, which
+does not broadcast: `[x.is_locked() for x in plugs]`.
 
 ```python
 from rig.spec import unlock
 
 both = List([Node("c0"), Node("c0").tx, Node("c1")])
 print(both.lock() is both, cmds.undoInfo(query=True, undoName=True))   # True rig.lock
-print(list(nodes.is_locked), Node("c0").tx.is_locked)                  # [True, True, False] True
+print(list(nodes.is_locked), Node("c0").tx.is_locked())                # [True, True, False] True
 print((both << unlock) is both, list(nodes.is_locked))                 # True [False, False, False]
 try:
     List([Node("c2"), 3]).lock()
@@ -879,7 +920,7 @@ print((a.tx - b.tx) >> None, (10 - a.tx) >> None)          # 2.0 4.0
 print((a.tx * b.tx) >> None, (a.tx / b.tx) >> None)        # 24.0 1.5
 print((a.tx ** 2) >> None,   (2 ** b.tx) >> None)          # 36.0 16.0
 print((a.tx // 4) >> None,   (a.tx % 4) >> None)           # 1 2.0
-print((-a.tx) >> None,       cmds.nodeType((-a.tx).node))  # -6.0 negate
+print((-a.tx) >> None,       cmds.nodeType((-a.tx).get_node()))  # -6.0 negate
 ```
 
 Repeated expressions dedupe: the same operands give the same node, not a
@@ -919,7 +960,7 @@ for build in (lambda: a.tx == "b.ty", lambda: a.t + [1, "b.ty", 2], lambda: "%s"
 # a.translate + [1, 'b.ty', 2]
 # '%s' % a.translateX
 print(len(cmds.ls()) == nodes)                   # True  -- nothing was built
-print(cmds.nodeType((a.tx + Plug("b.tx")).node), f"{a.tx}.x")  # sum a.translateX.x  -- the add1 above, deduped
+print(cmds.nodeType((a.tx + Plug("b.tx")).get_node()), f"{a.tx}.x")  # sum a.translateX.x  -- the add1 above, deduped
 ```
 
 | Operator | Scalar node (2024+ / legacy) | Compound |
@@ -1468,7 +1509,7 @@ def _twice_legacy(x):
 
 a.tx << 3
 print(twice(3), repr(twice(a.tx)), twice(a.tx) >> None)  # 6 Plug("twice1.output") 6.0
-print(repr(twice(a.t)), cmds.nodeType(twice(a.t).node))  # Plug("output_plug1.value") network  -- one assembled output
+print(repr(twice(a.t)), cmds.nodeType(twice(a.t).get_node()))  # Plug("output_plug1.value") network  -- one assembled output
 print(len(cmds.ls(type="multiply")))                     # 4  -- twice1 plus one per channel of a.t
 ```
 
@@ -1482,7 +1523,7 @@ from rig._internal.maya_version import get_maya_version, get_target_version, is_
 
 set_options(maya_version=2022)
 print(get_target_version(), is_at_least(2024))                        # 2022 False
-print(cmds.nodeType(twice(a.tx).node), repr(a.tx + a.ty))             # multiplyDivide Plug("add1.output1D")
+print(cmds.nodeType(twice(a.tx).get_node()), repr(a.tx + a.ty))       # multiplyDivide Plug("add1.output1D")
 set_options(maya_version=None)
 print(get_target_version() == get_maya_version(), repr(a.tx + a.ty))  # True Plug("add2.output")
 ```

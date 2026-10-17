@@ -831,7 +831,7 @@ class _Normaliser:
                 # Layer("x")`` asks about ``cube``).
                 if self.refuse is not None:
                     raise self.refuse(item)
-                self.add_node(item.node, source=item)
+                self.add_node(type(item).get_node(item), source=item)
                 continue
             group.sources.append(item)
 
@@ -1168,7 +1168,7 @@ class _MemberSpec(metaclass=_SpecMeta):
             want_shapes  = cls.WANT_SHAPES,
             refuse_plugs = lambda plug: TypeError(
                 f"'{plug}' is a plug; membership takes the node: "
-                f"{cls._kind_name()}.of({plug.node})"
+                f"{cls._kind_name()}.of({type(plug).get_node(plug)})"
             ),
         )
         try:
@@ -1182,7 +1182,7 @@ class _MemberSpec(metaclass=_SpecMeta):
     def _plug_error(self, plug: Plug, verb: str) -> TypeError:
         """The refusal of an attribute plug on the left of ``verb`` (``<<`` /
         ``>>``): the node is the member, and ``in`` reads a plug as its node."""
-        node = plug.node
+        node = type(plug).get_node(plug)
         if verb == "<<":
             how = f"{node} << {self!r} (to connect, name a plug: other.attr)"
         elif self.purges:
@@ -1193,7 +1193,7 @@ class _MemberSpec(metaclass=_SpecMeta):
                 how += f", or {node} >> {self!r} for ids"
             target = self._clone_target()
             if target is not None:
-                how += f"; to clone the attribute onto it: {plug} >> '{target}.{plug.alias}'"
+                how += f"; to clone the attribute onto it: {plug} >> '{target}.{type(plug).get_alias(plug)}'"
         return TypeError(f"'{plug}' is a plug; membership takes the node: {how}")
 
     def _clone_target(self) -> str | None:

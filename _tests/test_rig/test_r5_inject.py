@@ -626,12 +626,12 @@ _CASES = [
     ("patched Choice hook",
      lambda N: _patched_choice_hook(lambda: (N["ch"].input << N["xf"].t, N["md"].input1 << N["ch"].output))),
     # data_type (H2) on the plugs of a DG node, live, deleted, freed
-    ("data_type live", lambda N: N["md"].input1X.data_type),
-    ("data_type of a deleted node", lambda N: (lambda p: (cmds.delete("mdA"), p.data_type))(N["md"].input1X)),
+    ("data_type live", lambda N: N["md"].input1X.get_data_type()),
+    ("data_type of a deleted node", lambda N: (lambda p: (cmds.delete("mdA"), p.get_data_type()))(N["md"].input1X)),
     ("data_type of a freed node",
-     lambda N: (lambda held, M: held.data_type)(*_freed(N, "md", "input1X"))),
-    ("data_type of a freed dynamic attr", lambda N: _deleted_attr(N, flush=True).data_type),
-    ("data_type of a deleted dynamic attr", lambda N: _deleted_attr(N).data_type),
+     lambda N: (lambda held, M: held.get_data_type())(*_freed(N, "md", "input1X"))),
+    ("data_type of a freed dynamic attr", lambda N: _deleted_attr(N, flush=True).get_data_type()),
+    ("data_type of a deleted dynamic attr", lambda N: _deleted_attr(N).get_data_type()),
 ]
 
 
@@ -669,8 +669,8 @@ _ORACLE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "r5_inject_oracle_619f29f.json"
 )
 
-_DATA_TYPE_CODE = Attribute.__dict__["data_type"].fget.__code__
-_FULL_NAME_CODE = Attribute.__dict__["full_name"].fget.__code__
+_DATA_TYPE_CODE = Attribute.get_data_type.__code__
+_FULL_NAME_CODE = Attribute.get_full_name.__code__
 # re-pinned (user decision 2026-10-16, name clashes): the class dict holds a
 # plug method; class access is the function
 _LISTING_CODE   = Attribute.get_connected_attrs.__code__
@@ -1095,13 +1095,13 @@ class TestTheSentinel(MayaTestCase):
     def test_a_class_with_its_own_data_type_is_asked(self):
         N    = _build()
         asks = []
-        real = Attribute.__dict__["data_type"].fget
+        real = Attribute.get_data_type
 
         def asked(attr):
             asks.append(str.__str__(attr))
             return real(attr)
 
-        with mock.patch.object(Attribute, "data_type", property(asked)):
+        with mock.patch.object(Attribute, "get_data_type", asked):
             N["md"].input1X << 1.0
             self.assertEqual(cmds.getAttr("mdA.input1X"), 1.0)
             N["md"].input1 << N["md2"].output
@@ -1258,7 +1258,7 @@ class TestDgNamedOwner(MayaTestCase):
         ):
             with self.subTest(case=label):
                 self.assertIsNone(_base._dg_named_owner(attr))
-        loose.node  # casts its node: owned now
+        loose.get_node()  # casts its node: owned now
         self.assertIsNotNone(_base._dg_named_owner(loose))
 
         class _OwnName(DGNode):
@@ -1296,7 +1296,7 @@ class TestDgNamedOwner(MayaTestCase):
         self.assertIs(_base._dg_named_owner(plug), N["md"])
         with mock.patch.object(DGNode, "ensure_valid", ensure_valid):
             self.assertIsNone(_base._dg_named_owner(plug))
-            self.assertEqual(plug.data_type, "float")
+            self.assertEqual(plug.get_data_type(), "float")
             self.assertTrue(checked)  # through the name, as before
             del checked[:]
             N["md"].input1X << N["md2"].outputX
@@ -1306,7 +1306,7 @@ class TestDgNamedOwner(MayaTestCase):
             (DGNode, "fn_set", property(lambda node: node._fn_set)),
             (DGNode, "name", property(lambda node: node._fn_set.name())),
             (type(N["md"]), "__getattribute__", lambda node, name: object.__getattribute__(node, name)),
-            (Attribute, "full_name", property(Attribute.__dict__["full_name"].fget)),
+            (Attribute, "get_full_name", lambda attr, f=Attribute.get_full_name: f(attr)),
         ):
             with self.subTest(patched=f"{owner.__name__}.{name}"):
                 with mock.patch.object(owner, name, value):
@@ -1317,8 +1317,8 @@ class TestDgNamedOwner(MayaTestCase):
         """(what naming `attr` raises, what its data_type raises, what
         `_named_with_dot` raises)."""
         return (
-            _raised(lambda: attr.full_name),
-            _raised(lambda: attr.data_type),
+            _raised(lambda: attr.get_full_name()),
+            _raised(lambda: attr.get_data_type()),
             _raised(lambda: plugmod._named_with_dot(attr)),
         )
 
@@ -1346,12 +1346,12 @@ class TestDgNamedOwner(MayaTestCase):
         held = N["md2"].outputX
         str(held)
         cmds.file(new=True, force=True)
-        named = _raised(lambda: held.full_name)
+        named = _raised(lambda: held.get_full_name())
         self.assertEqual(named[0], "RuntimeError")
         self.assertTrue(named[1].endswith(
             "(freed by a new scene, a file open or a reference unload) already deleted!"
         ))
-        self.assertEqual(_raised(lambda: held.data_type), named)
+        self.assertEqual(_raised(lambda: held.get_data_type()), named)
         self.assertEqual(_raised(lambda: plugmod._named_with_dot(held)), named)
 
     def test_a_static_hit_builds_no_name(self):
@@ -1362,10 +1362,10 @@ class TestDgNamedOwner(MayaTestCase):
             ("a DAG plug", N["xf"].tx, True),
             ("a generic slot (no static type)", N["ch"].input[0], True),
         ):
-            attr.data_type  # a first query keeps the static type
+            attr.get_data_type()  # a first query keeps the static type
             with self.subTest(case=label):
                 with _Calls({_FULL_NAME_CODE: "full_name"}) as calls:
-                    attr.data_type
+                    attr.get_data_type()
                 self.assertEqual(calls.counts["full_name"] > 0, named)
         for label, attr, names in (
             ("a DG plug", N["md"].outputX, 0),  # 619f29f: 1
@@ -1464,7 +1464,7 @@ class TestDisconnectIncoming(MayaTestCase):
         held = dict(shapes)
         for label, plug in shapes:
             with self.subTest(shape=label):
-                mplug = plug.plug
+                mplug = plug.get_mplug()
                 self.assertEqual(bool(mplug.isDestination), bool(mplug.connectedTo(True, False)))
         # a node deleted to the undo queue, then its delete undone
         for step in ("delete", "undo"):
@@ -1475,11 +1475,11 @@ class TestDisconnectIncoming(MayaTestCase):
             for label in ("a connected scalar (locked)", "a connected compound",
                           "a child of a connected compound", "an unconnected scalar"):
                 with self.subTest(step=step, shape=label):
-                    mplug = held[label].plug
+                    mplug = held[label].get_mplug()
                     self.assertEqual(bool(mplug.isDestination), bool(mplug.connectedTo(True, False)))
         # a connected dynamic attribute deleted to the undo queue
         cmds.deleteAttr("netK.dynm")
-        mplug = held["a connected dynamic attr"].plug
+        mplug = held["a connected dynamic attr"].get_mplug()
         self.assertFalse(mplug.isDestination)
         self.assertEqual(len(mplug.connectedTo(True, False)), 0)
 
@@ -1495,12 +1495,12 @@ class TestDisconnectIncoming(MayaTestCase):
         for index in range(count):
             cmds.file(new=True, force=True)
             label, plug = _shapes()[1][index]
-            destination = bool(plug.plug.isDestination)
+            destination = bool(plug.get_mplug().isDestination)
             # re-pinned (review fix, features run): a child below a compound connected
             # whole has no input of its own, but the compound's input is split into one
             # per child first (`_free_of_whole_wire`), then the child's own is listed and
             # removed; both paths make that same scene, each listing more than once
-            whole = not destination and plugmod._below_a_wire(plug.plug)
+            whole = not destination and plugmod._below_a_wire(plug.get_mplug())
             # one driver per channel (user decision 2026-10-16) is `<<`'s (``one_driver=True``:
             # a compound's children lose their own inputs too, `test_od_one_driver`); this
             # default call, rig's own moves of a wire (a shader conversion, a blendShape

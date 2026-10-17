@@ -160,7 +160,8 @@ class BlendShape(Deformer):
     @property
     def num_targets(self) -> int:
         """Returns the number of targets"""
-        return self.find_attr("weight").num_elements
+        weight = self.find_attr("weight")
+        return type(weight).get_num_elements(weight)
 
     def get_targets(self) -> list[str]:
         """Returns a list of targets in this node."""
@@ -190,7 +191,8 @@ class BlendShape(Deformer):
         Args:
             target_id: A target index to work with.
         """
-        return self.get_target_weight_attr(target_id).alias
+        weight = self.get_target_weight_attr(target_id)
+        return type(weight).get_alias(weight)
 
     def set_target_name(self, target: int | str, name: str) -> None:
         """Sets the name of a target.
@@ -203,7 +205,8 @@ class BlendShape(Deformer):
             target_id = self.get_target_index(target, failfast=True)
         else:
             target_id = target
-        self.get_target_weight_attr(target_id).alias = name
+        weight = self.get_target_weight_attr(target_id)
+        type(weight).set_alias(weight, name)
 
     def get_target_weight_attr(self, target: str | int) -> Attribute:
         """Returns the weight attribute a target.
@@ -255,8 +258,8 @@ class BlendShape(Deformer):
         weight_attr            = self.find_attr("weight")
         index                  = weight_attr.get_next_available_index()
         weight_attr            = weight_attr[index]
-        weight_attr.alias      = target_name
-        weight_attr.is_keyable = True
+        type(weight_attr).set_alias(weight_attr, target_name)
+        type(weight_attr).set_keyable(weight_attr, True)
         weight_attr.set(0)
         return index
 
@@ -327,7 +330,7 @@ class BlendShape(Deformer):
 
         # get weight alias/target name and weight value
         weight_attr = self.get_target_weight_attr(target)
-        target_name = weight_attr.alias
+        target_name = type(weight_attr).get_alias(weight_attr)
         # get target attributes
         geom_attr, offset_attr, comp_attr = self.target_data_attrs(target_id)
 
@@ -340,7 +343,7 @@ class BlendShape(Deformer):
         target_mesh = _connected_attrs(geom_attr, src=True, dst=False)
         if target_mesh:
             kwargs           = {"include_uvs": False, "world_space": False}
-            target_mesh      = target_mesh[0].node
+            target_mesh      = type(target_mesh[0]).get_node(target_mesh[0])
             target_mesh_data = type(target_mesh).serialize(target_mesh, **kwargs)
             if not original_mesh_data:
                 original_mesh_data = self.get_original_geometries()
@@ -457,7 +460,8 @@ class BlendShape(Deformer):
         target_data_list = []
         for i in self.get_target_indices():
             if regex:
-                target_name = weight_attr[i].alias
+                target      = weight_attr[i]
+                target_name = type(target).get_alias(target)
                 if not regex.match(target_name):
                     continue
 

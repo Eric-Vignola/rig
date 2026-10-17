@@ -60,9 +60,9 @@ class TestBaseNodes(MayaTestCase):
 
         # rename attr
         attr = self.child.add_attr(attr_name, dataType="doubleArray")
-        self.assertEqual(attr.name, attr_name)
+        self.assertEqual(attr.get_name(), attr_name)
         self.child.rename_attr(attr_name, new_attr_name)
-        self.assertEqual(attr.name, new_attr_name)
+        self.assertEqual(attr.get_name(), new_attr_name)
         self.assertEqual(self.child.list_attr(userDefined=True), [attr])
 
         # delete attr

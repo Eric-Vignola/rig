@@ -620,7 +620,7 @@ class TestListProbes(_PlugCase):
         probe_node, probe_plug = self.b, self.b.tx
         calls     = []
         node_str  = type(probe_node).__str__
-        plug_name = Attribute.full_name.fget
+        plug_name = Attribute.get_full_name
 
         def counted_str(node):
             if node is probe_node:
@@ -633,7 +633,7 @@ class TestListProbes(_PlugCase):
             return plug_name(attr)
 
         with mock.patch.object(type(probe_node), "__str__", counted_str), mock.patch.object(
-            Plug, "full_name", property(counted_name)
+            Plug, "get_full_name", counted_name
         ):
             self.assertNotIn(probe_node, nodes)
             self.assertNotIn(probe_plug, plugs)

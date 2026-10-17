@@ -238,12 +238,12 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             pick = Node(cmds.createNode("choice", name="pick"))
             self.assertIsInstance(pick, Choice)
             cmds.connectAttr("src.translate", "pick.input[0]")
-            self.assertEqual(pick.find_attr("output").data_type, "double3")
+            self.assertEqual(pick.find_attr("output").get_data_type(), "double3")
             # a message input: getAttr answers "Tdata", so Choice's fallback
             # hook reads the selector to resolve the output
             cmds.connectAttr("src.message", "pick.input[1]")
             cmds.setAttr("pick.selector", 1)
-            self.assertEqual(pick.find_attr("output").data_type, "message")
+            self.assertEqual(pick.find_attr("output").get_data_type(), "message")
 
         def component_tags():
             ball = Node(cmds.polySphere(name="ball", ch=False)[0])
@@ -569,7 +569,9 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes.dg_node", "DGNode._find_attr_fresh"),
         ("rig.nodetypes.dg_node", "DGNode.find_alias"),
         ("rig._internal.plug", "_named_plug"),
-        ("rig.nodetypes._base", "Attribute.node"),
+        # re-pinned (user decision 2026-10-16, the property ban): the owner a
+        # plug casts is read by the method Attribute.get_node
+        ("rig.nodetypes._base", "Attribute.get_node"),
         ("rig._internal.memoize", "_attr_check"),
         ("rig.spec._base", "_plug_of"),
         # a List's '_' name lookup (LU FIX): the fn set of a plug's owner when
@@ -694,8 +696,8 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         for plug in (dg.tx, dg.t, dg.t[0], dg.t.ty, dg.worldMatrix[0]):
             with self.subTest(plug=str(plug)):
                 self.assertIsInstance(plug, Plug)
-                self.assertIs(plug.node, dg)
-                self.assertTrue(plug.node.mobject == _mobject("a"))
+                self.assertIs(plug.get_node(), dg)
+                self.assertTrue(plug.get_node().mobject == _mobject("a"))
         # the typed API still reads Attributes
         self.assertNotIsInstance(dg.find_attr("tx"), Plug)
         dg.tx << 3.0
@@ -900,10 +902,10 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         cmds.createNode("transform", name="b")
         dg = Node("a")
         for plug in (dg.tx, Node("a").tx, Plug("a.tx"), dg.t[0]):
-            with self.subTest(plug=type(plug.node).__name__):
+            with self.subTest(plug=type(plug.get_node()).__name__):
                 attr = dg.find_attr(plug)
                 self.assertIs(type(attr), attribute_cls)
-                self.assertIs(attr.node, plug.node)
+                self.assertIs(attr.get_node(), plug.get_node())
                 self.assertEqual(str(attr), "a.translateX")
                 self.assertEqual(attr.get(), 0.0)
         # another node's plug is refused, quietly too
@@ -998,7 +1000,7 @@ class TestMergeReviewFixes(MayaTestCase):
         self.assertIsInstance(plug, Plug)
         attr = mesh.find_attr(plug)
         self.assertIs(type(attr), attribute_cls)
-        self.assertIs(attr.node, mesh)
+        self.assertIs(attr.get_node(), mesh)
         self.assertEqual(mesh.get_map_values(plug)[:3], [0.0, 0.5, 1.0])
         self.assertEqual(list(mesh.get_map_data(plug).indices), [1, 2, 5])
         self.assertEqual(plug.filter_array_values(0.0), ([1, 2, 5], [0.5, 1.0, 0.25]))
@@ -1053,22 +1055,22 @@ class TestMergeReviewFixes(MayaTestCase):
                 node   = factory(cmds.createNode("transform", name="n"))
                 parent = node.tx.get_parent()
                 self.assertIs(type(parent), attribute_cls)
-                self.assertIs(parent.node, node)
+                self.assertIs(parent.get_node(), node)
                 child = node.find_attr("t").child(0)
                 self.assertIs(type(child), attribute_cls)
-                self.assertIs(child.node, node)
+                self.assertIs(child.get_node(), node)
                 pma = factory(cmds.createNode("plusMinusAverage", name="pma"))
                 pma.input1D[0] << 1
                 element = pma.input1D[0]
                 self.assertIs(type(element), Plug)
-                self.assertIs(element.node, pma)
+                self.assertIs(element.get_node(), pma)
                 element = pma.input1D.element_by_physical_index(0)
                 # M4B (D29): a Plug's element is a Plug
                 self.assertIs(type(element), Plug)
-                self.assertIs(element.node, pma)
+                self.assertIs(element.get_node(), pma)
                 element = pma.find_attr("input1D").element_by_physical_index(0)
                 self.assertIs(type(element), attribute_cls)
-                self.assertIs(element.node, pma)
+                self.assertIs(element.get_node(), pma)
                 # plugs are not cached (D30)
                 self.assertIsNot(node.tx, node.tx)
 
@@ -1089,7 +1091,7 @@ class TestMergeReviewFixes(MayaTestCase):
         brownian = Node(cmds.shadingNode("brownian", asTexture=True, name="brown"))
         self.assertIs(type(brownian.wrap), Plug)
         self.assertEqual(str(brownian.wrap), "brown.wrap")
-        self.assertIs(brownian.wrap.node, brownian)
+        self.assertIs(brownian.wrap.get_node(), brownian)
         brownian.wrap << 0
         self.assertEqual(cmds.getAttr("brown.wrap"), 0)
         brownian.wrap = 1
@@ -1145,7 +1147,7 @@ class TestTypedDslEdges(MayaTestCase):
             with self.assertRaisesRegex(RuntimeError, "^back already deleted!$"):
                 op()
         self.assertEqual(str(Node("back").input1X), "back.input1X")
-        self.assertIsNot(Node("back").input1X.node, dg)
+        self.assertIsNot(Node("back").input1X.get_node(), dg)
 
     def _held(self, names):
         held = []
@@ -1189,7 +1191,7 @@ class TestTypedDslEdges(MayaTestCase):
             self.assertFalse(hasattr(plug, "__array__"))
             self.assertFalse(hasattr(node, "__array__"))
             self.assertFalse(hasattr(node, "__deepcopy__"))
-            self.assertIs(plug.node, node)
+            self.assertIs(plug.get_node(), node)
             self.assertIs(node >> None, node)
 
     def test_held_across_a_new_scene_raise(self):
@@ -1245,7 +1247,7 @@ class TestTypedDslEdges(MayaTestCase):
         second = Node("|T2|S")
         self.assertEqual(str(second.v), "T2|S.visibility")
         self.assertEqual(str(Node("|T1|S").v), "T1|S.visibility")
-        self.assertIs(second.v.node, second)
+        self.assertIs(second.v.get_node(), second)
         for path, index, name in (
             ("|T2|S", 0, "T2|S.worldMatrix[0]"),
             ("|T2|S", 1, "T2|S.worldMatrix"),
@@ -1277,7 +1279,7 @@ class TestTypedDslEdges(MayaTestCase):
         cmds.createNode("transform", name="ns:n")
         dg = Node("ns:n")
         self.assertEqual(str(dg.tx), "ns:n.translateX")
-        self.assertIs(dg.tx.node, dg)
+        self.assertIs(dg.tx.get_node(), dg)
         dg.tx = 3
         self.assertEqual(cmds.getAttr("ns:n.tx"), 3.0)
         try:
@@ -1298,7 +1300,7 @@ class TestTypedDslEdges(MayaTestCase):
         cube  = cmds.polyCube(name="cube", ch=False)[0]
         shape = cmds.listRelatives(cube, shapes=True)[0]
         mesh  = Node(shape)
-        self.assertIs(mesh.vtx.node, mesh)
+        self.assertIs(mesh.vtx.get_node(), mesh)
         self.assertEqual(str(mesh.vtx[2]), f"{shape}.controlPoints[2]")
         self.assertEqual(
             [str(p) for p in mesh.vtx[0:2]],
@@ -1310,14 +1312,14 @@ class TestTypedDslEdges(MayaTestCase):
         shell = Node(cmds.listRelatives(surf, shapes=True)[0])
         cv    = shell.cv
         self.assertIsInstance(cv, ComponentPlug)
-        self.assertIs(cv.node, shell)
+        self.assertIs(cv.get_node(), shell)
         element = cv[1, 2]
-        self.assertIs(element.node, shell)
+        self.assertIs(element.get_node(), shell)
         self.assertTrue(element.equals(Plug(f"{shell}.cv[1][2]")))
         lattice = cmds.lattice(cmds.polySphere(name="lsph", ch=False)[0], divisions=(2, 3, 2))[1]
         pt = Node(cmds.listRelatives(lattice, shapes=True)[0]).pt
         self.assertIsInstance(pt, ComponentPlug)
-        self.assertEqual(str(pt[1, 2, 0]), f"{pt.node}.pt[1][2][0]")
+        self.assertEqual(str(pt[1, 2, 0]), f"{pt.get_node()}.pt[1][2][0]")
         # a 1-D curve cv is a plain Plug
         crv = Node(
             cmds.listRelatives(
@@ -1359,15 +1361,15 @@ class TestTypedDslEdges(MayaTestCase):
         cmds.createNode("transform", name="a")
         dg   = Node("a")
         node = Node("a")
-        self.assertIs(dg.tx.node, dg)
-        self.assertIs(dg.t[0].node, dg)
-        self.assertIs(dg.t.ty.node, dg)
-        self.assertIs(node.tx.node, node)
-        self.assertIs(node.t[0].node, node)
-        self.assertIs(node.t.ty.node, node)
+        self.assertIs(dg.tx.get_node(), dg)
+        self.assertIs(dg.t[0].get_node(), dg)
+        self.assertIs(dg.t.ty.get_node(), dg)
+        self.assertIs(node.tx.get_node(), node)
+        self.assertIs(node.t[0].get_node(), node)
+        self.assertIs(node.t.ty.get_node(), node)
         # re-pinned (round 4a M4, C8): Node("a") is the typed node, no wrapper
-        self.assertIs(type(node.tx.node), Transform)
-        self.assertIs(type(dg.tx.node), Transform)
+        self.assertIs(type(node.tx.get_node()), Transform)
+        self.assertIs(type(dg.tx.get_node()), Transform)
         self.assertIsInstance(node, Node)
         self.assertIs(Node(dg), dg)
         # the typed class is kept, and ">> None" is the node itself
@@ -1380,7 +1382,7 @@ class TestTypedDslEdges(MayaTestCase):
         self.assertEqual(hash(dg.tx), hash(Plug("a.tx")))
         self.assertTrue(dg.tx.equals(node.tx))
         # a Plug of a typed Attribute is owned by its typed node
-        self.assertIs(Plug(dg.find_attr("tx")).node, dg)
+        self.assertIs(Plug(dg.find_attr("tx")).get_node(), dg)
 
 
 class TestOneNodeHierarchy(MayaTestCase):
@@ -1413,8 +1415,8 @@ class TestOneNodeHierarchy(MayaTestCase):
             ("dotted", f"{cube}.tx", Transform),
             ("dotted compound", f"{cube}.translate", Transform),
             ("dotted component", f"{shape}.vtx[0]", Mesh),
-            ("mplug", node.tx.plug, Transform),
-            ("shape mplug", Node(shape).find_attr("outMesh").plug, Mesh),
+            ("mplug", node.tx.get_mplug(), Transform),
+            ("shape mplug", Node(shape).find_attr("outMesh").get_mplug(), Mesh),
             ("mobject", _mobject(cube), Transform),
             ("mdagpath", sel.getDagPath(0), Transform),
             ("uuid", uuid, Transform),
@@ -1464,8 +1466,8 @@ class TestOneNodeHierarchy(MayaTestCase):
         for plug in (node.tx, node.t[0], node.t.ty, node.translate.child(2), node.wm[0]):
             with self.subTest(plug=str(plug)):
                 self.assertIs(type(plug), Plug)
-                self.assertIs(plug.node, node)
-        self.assertIs(node.find_attr("tx").node, node)
+                self.assertIs(plug.get_node(), node)
+        self.assertIs(node.find_attr("tx").get_node(), node)
         self.assertIs(node >> None, node)
         self.assertEqual(repr(node), 'Transform("a")')
         self.assertEqual(repr(Node("persp").tx), 'Plug("persp.translateX")')
@@ -1474,7 +1476,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         # (K's _bound parity, on round 3's constructors): a node's plug holds the
         # state keys a Plug built from its MPlug holds, in the same order
         cmds.createNode("transform", name="a")
-        mplug = Node("a").find_attr("tx").plug
+        mplug = Node("a").find_attr("tx").get_mplug()
         self.assertEqual(list(vars(Node("a").tx)), list(vars(Plug(mplug))))
         self.assertEqual(str(Node("a").tx), str(Plug(mplug)))
         self.assertEqual(list(vars(Node("a").t[0])), list(vars(Plug(mplug))))
@@ -1487,9 +1489,9 @@ class TestOneNodeHierarchy(MayaTestCase):
         cmds.createNode("transform", name="a")
         plug   = Node("a").tx
         before = hash(plug)
-        self.assertEqual(before, hash((base._node_serial(plug.node), "translateX")))
+        self.assertEqual(before, hash((base._node_serial(plug.get_node()), "translateX")))
         # re-pinned (round 5 NW6): the node handle is `_objhandle` (the same hashCode)
-        self.assertNotEqual(before, hash((plug.node._objhandle.hashCode(), "translateX")))
+        self.assertNotEqual(before, hash((plug.get_node()._objhandle.hashCode(), "translateX")))
         cmds.rename("a", "b")
         self.assertEqual(str(plug), "b.translateX")
         self.assertEqual(hash(plug), before)
@@ -1523,7 +1525,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         self.assertFalse(box == Node("inner"))
         self.assertEqual(repr(box), 'Container("box")')
         # a genuine attr is owned by the container, a published one by its node
-        self.assertIs(box.blackBox.node, box)
+        self.assertIs(box.blackBox.get_node(), box)
         self.assertEqual(str(box.slide), "inner.translateX")
         # class members win over published names
         self.assertEqual(box.name, "box")
@@ -1578,7 +1580,7 @@ class TestOneNodeHierarchy(MayaTestCase):
         attr = node.find_attr("tx")
         plug = lift(attr)
         self.assertIs(type(plug), Plug)
-        self.assertIs(plug.node, node)
+        self.assertIs(plug.get_node(), node)
         self.assertIs(lift(plug), plug)
         self.assertIs(type(lift("a")), Transform)
         self.assertIs(type(lift("a.tx")), Plug)
@@ -1611,8 +1613,8 @@ class TestOneNodeHierarchy(MayaTestCase):
         self.assertEqual(str(clone), "dst.knob")
         # tightened (round 4a M10, spec S5): the clone is owned by dst itself,
         # and the spec's plug by src
-        self.assertIs(clone.node, dst)
-        self.assertIs(knob.node, src)
+        self.assertIs(clone.get_node(), dst)
+        self.assertIs(knob.get_node(), src)
         with self.assertRaisesRegex(TypeError, "^Cannot inject bare Node 'src' into matrix Plug"):
             dst.offsetParentMatrix << src
         with self.assertRaisesRegex(TypeError, r"^Cannot inject Node into a bare Node"):
@@ -1677,7 +1679,7 @@ class TestOneNodeHierarchy(MayaTestCase):
             ("str(node)", lambda: str(node)),
             ("repr(node)", lambda: repr(node)),
             ("plug.get()", lambda: plug.get()),
-            ("lift(plug.node)", lambda: str(Node(plug.node).ty)),
+            ("lift(plug.node)", lambda: str(Node(plug.get_node()).ty)),
         ):
             with self.subTest(op=label):
                 with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
@@ -1793,7 +1795,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         accessor of `parent`, with the MPlugs and classes round 3 built."""
         Attribute = _base_module().Attribute
         cls       = Plug if isinstance(parent, Plug) else Attribute
-        mplug     = parent.plug
+        mplug     = parent.get_mplug()
         if kind == "multi":
             cases = {
                 "[1]": (lambda: parent[1], [(mplug.elementByLogicalIndex(1), cls)]),
@@ -1858,7 +1860,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
                     self.assertEqual(vars(item)[key], value, key)
             self.assertEqual(_name_or_error(item), _name_or_error(oracle))
             if vars(parent)["_node"] is not None:
-                self.assertIs(item.node, parent.node)
+                self.assertIs(item.get_node(), parent.get_node())
 
     def _sweep(self, parents):
         for label, (make, kind) in parents.items():
@@ -1926,10 +1928,10 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         flat   = handle.element_by_logical_index(3)
         self.assertIs(type(handle), ComponentPlug)
         self.assertIs(type(flat), Plug)
-        self.assertIs(flat.node, handle.node)
+        self.assertIs(flat.get_node(), handle.get_node())
         self.assertEqual(str(flat), "surfShape.controlPoints[3]")
         self.assertIs(type(handle[1, 2]), ComponentPlug)
-        self.assertIs(handle[1, 2].node, handle.node)
+        self.assertIs(handle[1, 2].get_node(), handle.get_node())
         # a Plug's element by index is a Plug, a typed attr's an Attribute
         self.assertIs(type(Node("pma").input1D.element_by_physical_index(0)), Plug)
         self.assertIs(type(Node("pma").find_attr("input1D").element_by_physical_index(0)), Attribute)
@@ -2113,21 +2115,37 @@ class TestPlugQuickWins(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_property_setters_work_on_a_plug(self):
+        # re-pinned (user decision 2026-10-16, the property ban): the setters are
+        # methods (set_alias, set_keyable, set_channel_box, set_default_value,
+        # lock); the old ``plug.x = v`` spellings raise naming them, set nothing
         net = cmds.createNode("network", name="net")
         cmds.addAttr(net, ln="knob", at="double", keyable=True)
         plug = Node(net).knob
-        plug.alias = "dial"
-        self.assertEqual(Plug("net.knob").alias, "dial")
-        plug.alias = None
-        self.assertEqual(Plug("net.knob").alias, "knob")
-        plug.is_keyable = False
+        plug.set_alias("dial")
+        self.assertEqual(Plug("net.knob").get_alias(), "dial")
+        plug.set_alias(None)
+        self.assertEqual(Plug("net.knob").get_alias(), "knob")
+        plug.set_keyable(False)
         self.assertFalse(cmds.getAttr("net.knob", keyable=True))
-        plug.is_channel_box = True
+        plug.set_channel_box(True)
         self.assertTrue(cmds.getAttr("net.knob", channelBox=True))
-        plug.default_value = 2.5
+        plug.set_default_value(2.5)
         self.assertEqual(cmds.addAttr("net.knob", query=True, defaultValue=True), 2.5)
-        plug.is_locked = True
+        plug.lock()
         self.assertTrue(cmds.getAttr("net.knob", lock=True))
+        for name, value, new in (
+            ("alias", "x", "set_alias"),
+            ("is_keyable", True, "set_keyable"),
+            ("is_channel_box", False, "set_channel_box"),
+            ("default_value", 1.0, "set_default_value"),
+            ("is_locked", False, "unlock"),
+        ):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(AttributeError, rf"plug\.{new}\("):
+                    setattr(plug, name, value)
+        self.assertEqual(Plug("net.knob").get_alias(), "knob")
+        self.assertTrue(cmds.getAttr("net.knob", lock=True))
+        self.assertTrue(cmds.getAttr("net.knob", channelBox=True))
         # none of them became a Python attribute of the plug
         for name in ("alias", "is_keyable", "is_channel_box", "default_value", "is_locked"):
             self.assertNotIn(name, vars(plug))
@@ -2165,14 +2183,14 @@ class TestPlugQuickWins(MayaTestCase):
         dg = Node("a")
         try:
             cmds.addExtension(nodeType="transform", longName="mergeExt", at="double")
-            self.assertEqual(dg.find_attr("mergeExt").data_type, "double")
+            self.assertEqual(dg.find_attr("mergeExt").get_data_type(), "double")
             cmds.deleteExtension(
                 nodeType="transform", attribute="mergeExt", forceDelete=True
             )
             cmds.addExtension(nodeType="transform", longName="mergeExt", dataType="string")
             attr = dg.find_attr("mergeExt")
             self.assertEqual(str(attr), "a.mergeExt")
-            self.assertEqual(attr.data_type, "string")
+            self.assertEqual(attr.get_data_type(), "string")
             self.assertNotIn("mergeExt", dg._attr_dict)
             # normal attrs are still cached
             dg.find_attr("tx")
@@ -2221,11 +2239,11 @@ class TestOwnerRule(MayaTestCase):
             node.translate.child(2),
         ):
             with self.subTest(plug=str(plug)):
-                self.assertIs(plug.node, node)
+                self.assertIs(plug.get_node(), node)
         for plug in (pma.input1D[3], pma.input3D[1], pma.input3D[1].input3Dx):
             with self.subTest(plug=str(plug)):
-                self.assertIs(plug.node, pma)
-        self.assertIs(node.find_attr("tx").node, node)
+                self.assertIs(plug.get_node(), pma)
+        self.assertIs(node.find_attr("tx").get_node(), node)
         self.assertIs(node.find_attr("tx"), node.find_attr("translateX"))
 
     def test_foreign_plug_gets_its_own_node(self):
@@ -2233,11 +2251,11 @@ class TestOwnerRule(MayaTestCase):
         curve  = cmds.curve(point=points, name="crv")
         shape  = cmds.listRelatives(curve, shapes=True)[0]
         plug   = Node(curve).controlPoints
-        self.assertEqual(plug.node.name, shape)
-        self.assertTrue(plug.node.mobject == _mobject(shape))
+        self.assertEqual(plug.get_node().name, shape)
+        self.assertTrue(plug.get_node().mobject == _mobject(shape))
         self.assertEqual(str(plug), f"{shape}.controlPoints")
         # the transform's own attrs are still its own
-        self.assertEqual(Node(curve).tx.node.name, curve)
+        self.assertEqual(Node(curve).tx.get_node().name, curve)
 
     def test_stale_path_names_the_surviving_instance(self):
         cmds.createNode("transform", name="T1")
@@ -2327,8 +2345,8 @@ class TestOwnerRule(MayaTestCase):
         for label, factory in plugs.items():
             with self.subTest(pattern=label):
                 plug = factory()
-                self.assertTrue(plug.node.mobject == plug.plug.node(), str(plug))
-                self.assertIsInstance(plug.node, Node)
+                self.assertTrue(plug.get_node().mobject == plug.get_mplug().node(), str(plug))
+                self.assertIsInstance(plug.get_node(), Node)
         for kind in ("f", "e"):
             with self.subTest(pattern=kind):
                 components = getattr(Node(cube), kind)
@@ -2351,7 +2369,7 @@ class TestOwnerRule(MayaTestCase):
         for plug in (Node(node).tx, node.find_attr("tx"), Node(node).t[0]):
             with self.subTest(plug=type(plug).__name__):
                 self.assertEqual(str(plug), "w.translateX")
-                self.assertEqual(plug.full_name, "w.translateX")
+                self.assertEqual(plug.get_full_name(), "w.translateX")
 
 
 class TestReviewFixes(MayaTestCase):
@@ -2394,9 +2412,9 @@ class TestReviewFixes(MayaTestCase):
             "plug << 1":         lambda n, p, t, w, a, d: p << 1,
             "plug << None":      lambda n, p, t, w, a, d: p << None,
             "plug >> None":      lambda n, p, t, w, a, d: p >> None,
-            "plug.alias":        lambda n, p, t, w, a, d: p.alias,
-            "plug.is_connected": lambda n, p, t, w, a, d: p.is_connected,
-            "plug.is_locked":    lambda n, p, t, w, a, d: p.is_locked,
+            "plug.alias":        lambda n, p, t, w, a, d: p.get_alias(),
+            "plug.is_connected": lambda n, p, t, w, a, d: p.is_connected(),
+            "plug.is_locked":    lambda n, p, t, w, a, d: p.is_locked(),
             "plug.get_inputs()": lambda n, p, t, w, a, d: p.get_inputs(),
             "plug + 1":          lambda n, p, t, w, a, d: p + 1,
             "plug == plug":      lambda n, p, t, w, a, d: p == p,
@@ -2425,7 +2443,7 @@ class TestReviewFixes(MayaTestCase):
             self.assertIsInstance(hash(plug), int)
             self.assertFalse(hasattr(plug, "__array__"))
             self.assertFalse(hasattr(node, "__deepcopy__"))
-            self.assertIs(plug.node, node)
+            self.assertIs(plug.get_node(), node)
             self.assertIs(Node(node), node)
             self.assertIs(type(node >> None), Transform)
 
@@ -2583,7 +2601,7 @@ class TestReviewFixes(MayaTestCase):
         tmp = cmds.polySphere(name="tmp", ch=False)[0]
         cmds.parent(cmds.listRelatives(tmp, shapes=True)[0], xf, shape=True, relative=True)
         self.assertEqual(str(node.outMesh), "tmpShape.outMesh")
-        self.assertEqual(node.outMesh.node.name, "tmpShape")
+        self.assertEqual(node.outMesh.get_node().name, "tmpShape")
         # typed access too, and the transform's own attrs are still cached
         self.assertEqual(str((node >> None).find_attr("outMesh")), "tmpShape.outMesh")
         node.tx

@@ -136,11 +136,11 @@ print(cmds.getAttr("drv.weight"))                                          # 0.5
 
 A plug on the left means its node — `ctrl.tx << Float("y")` adds `y` to
 `ctrl` — and the new plug is owned by that node object, as `(ctrl <<
-Float("y")).node is ctrl`:
+Float("y")).get_node() is ctrl`:
 
 ```python
 y = ctrl.tx << Float("y")
-print(repr(y), y.node is ctrl)   # Plug("ctrl.y") True
+print(repr(y), y.get_node() is ctrl)   # Plug("ctrl.y") True
 ```
 
 ---
@@ -231,7 +231,7 @@ mix[1] << objA.message       # message
 mix[2] << objA.tx            # a number
 mix[3] << objA.t             # double3, connected whole, never per channel
 print(repr(mix), cmds.getAttr("nodeA.mixedInputArray", multiIndices=True))   # Plug("nodeA.mixedInputArray") [0, 1, 2, 3]
-print([mix[i].data_type for i in range(4)], mix.data_type)                   # ['matrix', 'Tdata', 'typed', 'double3'] compound
+print([mix[i].get_data_type() for i in range(4)], mix.get_data_type())       # ['matrix', 'Tdata', 'typed', 'double3'] compound
 print(cmds.getAttr("nodeA.mixedInputArray", keyable=True))                   # False
 
 before = set(cmds.ls())
@@ -257,7 +257,7 @@ disconnects and drops the data the old input left (a number stays);
 ```python
 mix << objA.message                                  # appends: the next free index
 mix << [1, None, objA.tx]                            # item i into [i]
-print(mix[1].get_inputs(), mix[1].data_type, mix[5].get_inputs())   # List([]) Tdata List([Plug("objA.message")])
+print(mix[1].get_inputs(), mix[1].get_data_type(), mix[5].get_inputs())   # List([]) Tdata List([Plug("objA.message")])
 try:
     mix << [1, "x"]
 except TypeError as e:
@@ -265,13 +265,13 @@ except TypeError as e:
 values = mix >> None
 print(len(values), values[0], values[1], values[2])  # 6 1.0 None 1.0
 mix[3] << None
-print(mix[3].data_type)                              # Tdata -- the matrix the input left is dropped
+print(mix[3].get_data_type())                        # Tdata -- the matrix the input left is dropped
 
 objC = Node.create("transform", name="objC")
 one  = nodeA << Typed("one")
 one << objA.wm
 objC.r << one                                        # as a source it reads as what it holds: a matrix
-print(cmds.nodeType(objC.r.get_inputs()[0].node.name))   # decomposeMatrix
+print(cmds.nodeType(objC.r.get_inputs()[0].get_node().name))   # decomposeMatrix
 ```
 
 ---
@@ -281,7 +281,7 @@ print(cmds.nodeType(objC.r.get_inputs()[0].node.name))   # decomposeMatrix
 `en=` (or `enumName=`) takes a colon-delimited string, a list or tuple
 of names, a dict of names to values or `(name, value)` pairs; the default
 is a two-state `False:True`. Values are indices unless the fields give
-their own; `plug.enums` lists the names. A value (`<<`, `=`, `dv=`) is
+their own; `plug.get_enums()` lists the names. A value (`<<`, `=`, `dv=`) is
 the field's value or its name: the exact name first, then the one field
 that matches with case, spaces, `_` and a `-` between letters ignored.
 Any other string is a `TypeError` that lists the fields, raised before
@@ -290,7 +290,7 @@ anything is set.
 ```python
 ctrl << Enum("mode", en=["off", "on", "auto"]) << 2
 print(cmds.attributeQuery("mode", node="ctrl", listEnum=True), ctrl.mode >> None)  # ['off:on:auto'] 2
-print(ctrl.mode.enums, cmds.getAttr("ctrl.mode", asString=True))                   # ['off', 'on', 'auto'] auto
+print(ctrl.mode.get_enums(), cmds.getAttr("ctrl.mode", asString=True))             # ['off', 'on', 'auto'] auto
 
 ctrl << Enum("side", en="L:R:")                                     # trailing colon optional
 ctrl << Enum("toggle")
@@ -345,7 +345,7 @@ ctrl << Quat("q")
 print(at("ctrl.aim"), cmds.attributeQuery("aim", node="ctrl", listChildren=True), at("ctrl.aimX"))  # double3 ['aimX', 'aimY', 'aimZ'] double
 print(cmds.attributeQuery("tint", node="ctrl", listChildren=True))                                  # ['tintR', 'tintG', 'tintB']
 print(at("ctrl.rot"), at("ctrl.rotX"))                                                              # double3 doubleAngle
-print(at("ctrl.q"), ctrl.q.num_children)                                                            # double4 4
+print(at("ctrl.q"), ctrl.q.get_num_children())                                                      # double4 4
 ```
 
 A compound takes a sequence, a plug of the same width, or a per-channel
@@ -763,7 +763,7 @@ cmds.file(new=True, force=True)
 ctrl = Node.create("transform", name="ctrl")
 
 ctrl << Float("weights", multi=True, size=3)
-print(ctrl.weights.is_multi, cmds.getAttr("ctrl.weights", multiIndices=True))   # True [0, 1, 2]
+print(ctrl.weights.is_multi(), cmds.getAttr("ctrl.weights", multiIndices=True))  # True [0, 1, 2]
 ctrl.weights[1] << 0.5
 print(ctrl.weights[:] >> None)                                                  # [0.  0.5 0. ]
 ctrl.weights[:] << [1, 2, 3]

@@ -35,7 +35,7 @@ def _to_numpy(raw: Any, data_type: Optional[str] = None) -> Any:
 
     Args:
         raw: The raw value returned by ``cmds.getAttr``.
-        data_type: The plug's :class:`Attribute.data_type` (e.g.
+        data_type: The plug's :class:`Attribute.get_data_type` (e.g.
             ``"matrix"``, ``"double3"``, ``"string"``). Used to decide
             whether to reshape (``"matrix"`` => ``(4, 4)`` or
             ``(-1, 4, 4)``).

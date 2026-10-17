@@ -732,7 +732,7 @@ def _filtered(
     """`attr_obj` if it is in `category` and holds `data_type` (each when given),
     else None: `DGNode.find_attr`'s filters."""
     if (not category or attr_obj.has_category(category)) and (
-        not data_type or attr_obj.data_type == data_type
+        not data_type or type(attr_obj).get_data_type(attr_obj) == data_type
     ):
         return attr_obj
     return None
@@ -879,7 +879,7 @@ class DGNode(Node):
 
     def __getattr__(self, attr_name):
         """Returns the Maya attribute ``attr_name`` as a DSL :class:`Plug` owned
-        by this node (``node.tx.node is node``).
+        by this node (``node.tx.get_node() is node``).
 
         Only runs once normal lookup failed, so Python members win, except a
         public method: a node with a Maya attr of that name gives its plug
@@ -1683,7 +1683,7 @@ class DGNode(Node):
         # nodes). Its MPlug is read once its node is known alive.
         if isinstance(attr, Attribute):
             _ensure_owner_alive(attr)
-            if attr.plug.node() != self.mobject:
+            if attr._mplug.node() != self.mobject:
                 if quiet:
                     return None, False
                 raise AttributeError(f"{attr} doesn't belong to {self}.")
@@ -1903,7 +1903,7 @@ class DGNode(Node):
     def has_attr(self, attr: Attribute | str) -> bool:
         """Checks if an attribute exists."""
         if isinstance(attr, Attribute):
-            return not attr.mobject.isNull()
+            return not type(attr).get_mobject(attr).isNull()
         return self.fn_set.hasAttribute(attr)
 
     def set_attrs(self, skip_missing=False, **kwargs) -> None:
@@ -1955,7 +1955,7 @@ class DGNode(Node):
         """Deletse an attribute of a given name. Thin wrapper of cmds.deleteAttr()."""
         if self.has_attr(attr):
             if isinstance(attr, Attribute):
-                attr = attr.name
+                attr = type(attr).get_name(attr)
             self._refuse_if_locked(f"delete the attribute {str(attr)!r} of")
             cmds_edit.deleteAttr(self.name, attribute=attr)
             return True
@@ -1970,14 +1970,14 @@ class DGNode(Node):
 
         # an attr is renamed whatever its name (a Plug's `!=` builds a node)
         if isinstance(old_name, Attribute) or old_name != new_name:
-            old_text = old_name.name if isinstance(old_name, Attribute) else old_name
+            old_text = type(old_name).get_name(old_name) if isinstance(old_name, Attribute) else old_name
             self._refuse_if_locked(f"rename the attribute {str(old_text)!r} of")
             if isinstance(old_name, Attribute):
-                if old_name.node != self:
+                if type(old_name).get_node(old_name) != self:
                     raise RuntimeError(
                         f"Attribute {old_name} does not belong to {self}"
                     )
-                cmds_edit.renameAttr(old_name.full_name, new_name)
+                cmds_edit.renameAttr(str(old_name), new_name)
             else:
                 cmds_edit.renameAttr(f"{self.name}.{old_name}", new_name)
 
@@ -2020,18 +2020,18 @@ class DGNode(Node):
     def _attr_data_type_fallback(self, attr: Attribute) -> str:
         """A hook for node classes to resolve the data type of an given attribute on this node.
 
-        This is called by Attribute.data_type, when it fails to resolve the data type
+        This is called by Attribute.get_data_type, when it fails to resolve the data type
         using cmds.getAttr(attr_name, type=True).
 
         cmds.getAttr should always work but it's not the case in practice. This method
         gives node classes a chance to correct any undesired Maya behavior.
         """
-        # Attribute.data_type's own query still holds if its call ran this node's
+        # Attribute.get_data_type's own query still holds if its call ran this node's
         # class hook first, and that hook changes neither the scene nor the attr
         # before it gets here
         typ = _queried_data_type(attr, self)
         if typ is None or not _keeps_query(type(self)):
-            typ = cmds.getAttr(attr.full_name, type=True)
+            typ = cmds.getAttr(str(attr), type=True)
         # maintain consistent type string with cmds.addAttr()
         if typ == "TdataCompound":
             return "compound"
@@ -2089,9 +2089,9 @@ _QUERY_KEEPING_HOOKS = {}
 
 def _keeps_query(node_cls: type) -> bool:
     """True if the fallback hook of `node_cls` reaches DGNode's with the scene and
-    the attr unchanged, so the type Attribute.data_type queried still holds. Any
+    the attr unchanged, so the type Attribute.get_data_type queried still holds. Any
     other class or hook (a subclass override, a class-level patch) queries again;
-    an instance hook is ruled out by `Attribute.data_type` itself."""
+    an instance hook is ruled out by `Attribute.get_data_type` itself."""
     hook = node_cls._attr_data_type_fallback
     if hook is _BASE_FALLBACK_HOOK:
         return True

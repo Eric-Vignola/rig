@@ -134,7 +134,7 @@ class TestDeclaration(_Case):
         mix = self.net << Typed("mix", multi=True)
         self.assertIsInstance(mix, Plug)
         self.assertEqual(str(mix), "net.mix")
-        self.assertIs(mix.node, self.net)
+        self.assertIs(mix.get_node(), self.net)
         self.assertEqual(_kind("net.mix"), ("typed", ["Tdata"], OpenMaya.MFnData.kAny))
         self.assertTrue(cmds.addAttr("net.mix", query=True, multi=True))
         one = self.net << Typed("one")
@@ -306,7 +306,7 @@ class TestConnectEachKind(_Case):
         self.assertEqual(cmds.getAttr("net.mix[0]", type=True), "double3")
         self.assertEqual(_inputs("net.mix[0]"), ["objA.translate"])
         np.testing.assert_allclose(mix[0] >> None, [1, 2, 3])
-        self.assertEqual(mix[0].data_type, "double3")
+        self.assertEqual(mix[0].get_data_type(), "double3")
 
 
 _KINDS = ("matrix", "double3", "number", "message", "mesh", "empty")
@@ -350,7 +350,7 @@ class TestRewireMatrix(_Case):
                         self.assertEqual(_nodes(), before)
                         self.assertEqual(_inputs(name), self._NAMES[new])
                         # the plug held across both statements and one taken fresh
-                        self.assertEqual(mix[i].full_name, name)
+                        self.assertEqual(mix[i].get_full_name(), name)
                     i += 1
 
     def test_a_held_element_rewired_twice(self):
@@ -511,8 +511,8 @@ class TestRootForms(_Case):
         np.testing.assert_allclose(values[2], [1, 2, 3])
         self.assertIsNone(values[3])
         self.assertEqual(len(mix.get()), 4)
-        self.assertEqual(mix.data_type, "compound")
-        self.assertEqual([mix[i].data_type for i in (0, 1, 3, 7)], ["matrix", "typed", "double3", "Tdata"])
+        self.assertEqual(mix.get_data_type(), "compound")
+        self.assertEqual([mix[i].get_data_type() for i in (0, 1, 3, 7)], ["matrix", "typed", "double3", "Tdata"])
 
 
 # --------------------------------------------------------------------------- << None
@@ -627,7 +627,7 @@ class TestNoneDrop(_Case):
             if drop:
                 slot << None
             else:
-                cmds.disconnectAttr(_inputs(slot.full_name)[0], slot.full_name)
+                cmds.disconnectAttr(_inputs(slot.get_full_name())[0], slot.get_full_name())
         path = os.path.join(folder, f"typed_{int(drop)}{ext}")
         cmds.file(rename=path)
         cmds.file(save=True, type=kind, force=True)

@@ -84,6 +84,8 @@ from rig.nodetypes._base import (
     _MethodAttribute,
     _MISSING,
     _GETFRAME,
+    _BarePredicate,
+    _is_predicate_name,
     _plug_identity_name,
     _same_plug,
     Attribute,
@@ -159,9 +161,9 @@ def _enum_rows(rows: Iterable) -> list:
         if isinstance(mine, Plug) and _holds_text(theirs):
             where = f"List row {row}, {mine}"
             if _is_text(theirs) and _is_enum_attr(mine):
-                theirs = _enum_value(mine.plug, theirs, where)
+                theirs = _enum_value(mine._mplug, theirs, where)
             else:
-                _check_enum_names(mine.mobject, theirs, where, element=not mine.plug.isArray)
+                _check_enum_names(type(mine).get_mobject(mine), theirs, where, element=not mine._mplug.isArray)
         resolved.append((mine, theirs))
     return resolved
 
@@ -284,7 +286,10 @@ class List(list):
             found = _values_list(
                 x.__dict__["_method"] if isinstance(x, _METHOD_PLUGS) else x for x in found
             )
-        methods = [type(x) is MethodType or type(x) is FunctionType for x in found]
+        methods = [
+            type(x) is MethodType or type(x) is FunctionType or type(x) is _BarePredicate
+            for x in found
+        ]
         if all(methods):
             # a method of every element (``List(shapes).save``): a List of bound
             # methods, which a call refuses with the loop to write
@@ -521,7 +526,9 @@ class List(list):
         undo step.
 
         Defined explicitly because methods do not broadcast through
-        :meth:`__getattr__` (``lst.is_locked`` does: one bool per element)."""
+        :meth:`__getattr__` (a node's ``is_locked`` property does: one bool per
+        node; a plug's ``is_locked()`` is a method: ``[x.is_locked() for x in
+        lst]``)."""
         return _set_locks(self, True)
 
     def unlock(self) -> "List":
@@ -750,7 +757,7 @@ def _set_locks(items: "List", state: bool) -> "List":
     for i, x in enumerate(items):
         if isinstance(x, Attribute) and not _is_components(x):
             _ensure_owner_alive(x)
-            if x.plug.isLocked == state:
+            if x._mplug.isLocked == state:
                 continue
             same = seen_plugs.setdefault(hash(x), [])
             if any(_same_plug(x, other) for other in same):
@@ -774,7 +781,7 @@ def _set_locks(items: "List", state: bool) -> "List":
         if why:
             raise _injection_error(why)
     for x in plugs:
-        owner = OpenMaya.MFnDependencyNode(x.plug.node())
+        owner = OpenMaya.MFnDependencyNode(x._mplug.node())
         # a plug of a node this List unlocks first: only a parent's lock refuses it
         first = not state and owner.isLocked and str(owner.uuid()) in seen_nodes
         why   = _plug_lock_refusal(x, state, node=not first)
@@ -788,7 +795,7 @@ def _set_locks(items: "List", state: bool) -> "List":
         if not state and nodes:
             cmds_edit.lockNode([x.name for x, _ in nodes], lock=False)
         for x in plugs:
-            cmds_edit.setAttr(x.full_name, lock=state)
+            cmds_edit.setAttr(str(x), lock=state)
         if state and nodes:
             cmds_edit.lockNode([x.name for x, _ in nodes], lock=True)
     return items
@@ -946,6 +953,18 @@ class _Methods(List):
             f"not broadcast over a List (plugs and values do); call it on each one: "
             f"[x.{name}(...) for x in items]"
         )
+
+    def __bool__(self) -> bool:
+        # a predicate of each element named without brackets (``if
+        # List(plugs).is_locked:``) has no truth value, as an element's has none
+        # (`_BarePredicate`); any other method List is a non-empty list
+        name = self._method
+        if _is_predicate_name(name):
+            raise TypeError(
+                f"List(...).{name} is a method of each element: call it on each one "
+                f"([x.{name}() for x in items], all(...) / any(...) for one answer)"
+            )
+        return list.__len__(self) > 0
 
 
 def _lift_or_pass(obj: Any) -> Any:
@@ -1232,13 +1251,13 @@ class _SamePlug:
     def __call__(self, item: Any) -> bool:
         probe = self.probe
         if self.name is None:
-            self.name     = probe.full_name
+            self.name     = str(probe)
             self.mnode    = probe.__dict__["_mplug"].node()
             self.identity = _plug_identity_name(probe)
         if item is probe:
             return True
         if isinstance(item, Attribute):
-            item.full_name
+            str(item)
             return item.__dict__["_mplug"].node() == self.mnode and (
                 _plug_identity_name(item) == self.identity
             )
@@ -1335,7 +1354,7 @@ class _NamedPlug:
         if self.plug is None:
             # a deleted or freed element raises, as its name does (and as
             # `_same_plug` names both)
-            item.full_name
+            str(item)
             return False
         return _same_plug(item, self.plug)
 

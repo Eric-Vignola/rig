@@ -35,7 +35,7 @@ class TestEnumNameForms(MayaTestCase):
         """The fields of ``en_t.<attr>`` as ``plug.enums`` and as
         ``cmds.attributeQuery(listEnum=True)`` read them."""
         plug = getattr(self.node, attr)
-        return plug.enums, cmds.attributeQuery(attr, node="en_t", listEnum=True)
+        return plug.get_enums(), cmds.attributeQuery(attr, node="en_t", listEnum=True)
 
     # -- the four forms that worked before this round (pins) -- #
 
@@ -174,7 +174,7 @@ class TestEnumNameForms(MayaTestCase):
                 plug  = self.node << Enum(attr, en=en)
                 clone = plug >> f"{attr}_copy"
                 self.assertEqual(self._fields(f"{attr}_copy"), self._fields(attr))
-                clone << plug.enums[-1].split("=")[0]
+                clone << plug.get_enums()[-1].split("=")[0]
                 self.assertEqual(
                     cmds.getAttr(f"en_t.{attr}_copy"),
                     {"sp0": 5, "sp1": 11}[attr],

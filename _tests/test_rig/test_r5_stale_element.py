@@ -98,8 +98,8 @@ class TestRewireAnElement(UndoWalk, MayaTestCase):
             self.assertEqual(_inputs(), [name2])
             state2 = self.scene_state()
             # the plug object is alive, and names its element
-            self.assertEqual(dst().plug.name(), "net.w[0]")
-            self.assertEqual(dst().plug.logicalIndex(), 0)
+            self.assertEqual(dst().get_mplug().name(), "net.w[0]")
+            self.assertEqual(dst().get_mplug().logicalIndex(), 0)
             self.assertEqual(cmds.getAttr("net.w", multiIndices=True), [0])
 
             self.undo_steps(1)
@@ -118,7 +118,7 @@ class TestRewireAnElement(UndoWalk, MayaTestCase):
             self.assert_state_equal(self.scene_state(), state2, "undo third")
             self.redo_steps(1)
             self.assert_state_equal(self.scene_state(), state3, "redo third")
-            self.assertEqual(dst().plug.name(), "net.w[0]")
+            self.assertEqual(dst().get_mplug().name(), "net.w[0]")
 
     def check(self, kind, how):
         for api in (True, False):
@@ -178,7 +178,7 @@ class TestOtherEdits(UndoWalk, MayaTestCase):
             self.assertEqual(_inputs(), [])
             slot << s2
             self.assertEqual(_inputs(), ["objA.translateY"])
-            self.assertEqual(slot.plug.name(), "net.w[0]")
+            self.assertEqual(slot.get_mplug().name(), "net.w[0]")
         self.each_route(body)
 
     def test_disconnect_then_a_rewire(self):
@@ -210,7 +210,7 @@ class TestOtherEdits(UndoWalk, MayaTestCase):
             n.w[1] << s1
             (driven,) = s1.break_connections()
             self.assertEqual(_inputs("net.w[1]"), [])
-            self.assertEqual(driven.plug.name(), "net.w[1]")
+            self.assertEqual(driven.get_mplug().name(), "net.w[1]")
             s2.connect(driven)
             self.assertEqual(_inputs("net.w[1]"), ["objA.translateY"])
         self.each_route(body)

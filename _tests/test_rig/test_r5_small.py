@@ -46,6 +46,7 @@ Tests:
 import copy
 import json
 import os
+import re
 from unittest import mock
 
 from maya import cmds
@@ -92,17 +93,17 @@ def _outcome(func):
 
 def _old_hook(self, attr):
     """Choice's hook as ee03336 wrote it: the selector through ``get()``."""
-    if attr.name == "output":
+    if attr.get_name() == "output":
         sel_id  = self.find_attr("selector").get()
         in_attr = self.find_attr(f"input[{sel_id}]", quiet=True)
         if in_attr is not None:
             src_attr = _base._connected_attrs(in_attr, src=True, dst=False, first_only=True)
             if src_attr:
-                return src_attr.data_type
-    elif attr.name.startswith("input"):
+                return src_attr.get_data_type()
+    elif attr.get_name().startswith("input"):
         src_attr = _base._connected_attrs(attr, src=True, dst=False, first_only=True)
         if src_attr:
-            return src_attr.data_type
+            return src_attr.get_data_type()
     return DGNode._attr_data_type_fallback(self, attr)
 
 
@@ -188,7 +189,7 @@ class TestTheChoiceHook(UndoWalk, MayaTestCase):
                 node     = Node("ch")
                 selector = node.find_attr("selector")
                 output   = node.find_attr("output")
-                value    = selector.plug.asInt()
+                value    = selector.get_mplug().asInt()
                 self.assertEqual(value, selector.get())
                 self.assertIs(type(value), type(selector.get()))
                 self.assertEqual(
@@ -197,9 +198,9 @@ class TestTheChoiceHook(UndoWalk, MayaTestCase):
                 )
                 # through data_type, from a fresh plug, against the old hook in
                 # its place
-                new = _outcome(lambda: Node("ch").output.data_type)
+                new = _outcome(lambda: Node("ch").output.get_data_type())
                 with mock.patch.object(Choice, "_attr_data_type_fallback", _old_hook):
-                    old = _outcome(lambda: Node("ch").output.data_type)
+                    old = _outcome(lambda: Node("ch").output.get_data_type())
                 self.assertEqual(new, old)
         self.assertEqual(count, 30)
 
@@ -216,7 +217,7 @@ class TestTheChoiceHook(UndoWalk, MayaTestCase):
         _choice_scene()
         cmds.setAttr("ch.selector", 1)
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
-            typ = Node("ch").output.data_type
+            typ = Node("ch").output.get_data_type()
         self.assertEqual(typ, "doubleLinear")
         # only data_type's own query (ee03336: then a type and a value query of
         # ch.selector, get()'s); its answer, "typed", is what runs the hook
@@ -282,7 +283,7 @@ class TestLazyChildCaches(MayaTestCase):
     def test_no_constructor_makes_them(self):
         self._scene()
         node  = Node("md")
-        mplug = node.find_attr("input1").plug
+        mplug = node.find_attr("input1").get_mplug()
         made = {
             "Attribute(MPlug)":   lambda: Attribute(mplug),
             "Attribute(name)":    lambda: Attribute("md.input1"),
@@ -351,13 +352,18 @@ class TestLazyChildCaches(MayaTestCase):
         # a plug's lookups are new plugs each time, of the cached child's MPlug
         plug = Plug("md.input1")
         self.assertIsNot(plug.input1X, plug.input1X)
-        self.assertIs(plug.input1X.plug, vars(plug)[NAMES]["input1X"].plug)
+        self.assertIs(plug.input1X.get_mplug(), vars(plug)[NAMES]["input1X"].get_mplug())
 
     def test_errors_and_non_compounds_as_before(self):
         self._scene()
         scalar = Attribute("md.input1X")
-        with self.assertRaisesRegex(TypeError, "^Plug is not a compound parent$"):
+        # re-pinned (user decision 2026-10-16, the property ban): AttributeError,
+        # so hasattr answers (it was TypeError 'Plug is not a compound parent')
+        with self.assertRaisesRegex(
+            AttributeError, r"^md\.input1X is not a compound: it has no child 'input1Y'\.$"
+        ):
             scalar.input1Y
+        self.assertFalse(hasattr(scalar, "input1Y"))
         self.assertNotIn(NAMES, vars(scalar))
         self.assertNotIn(IDS, vars(scalar))
         plug = Plug("md.input1X")
@@ -415,7 +421,7 @@ class TestLazyChildCaches(MayaTestCase):
         dup  = copy.copy(plug)
         self.assertNotIn(NAMES, vars(dup))
         self.assertEqual(str(dup.input1X), str(plug.input1X))
-        self.assertEqual(dup.input1X.plug, plug.input1X.plug)
+        self.assertEqual(dup.input1X.get_mplug(), plug.input1X.get_mplug())
         self.assertIsNot(vars(dup)[NAMES], vars(plug)[NAMES])
         # a copy made once the caches exist shares them, as before
         again = copy.copy(plug)
@@ -649,6 +655,26 @@ _ORACLE_PATH = os.path.join(
 )
 
 
+def _non_compound_repinned(expected, got):
+    """`expected` (an ee03336 outcome) with its non-compound lookup error re-pinned
+    (user decision 2026-10-16, the property ban): a bare Attribute's name lookup
+    on a non-compound raises AttributeError, so ``hasattr`` answers, where it
+    raised TypeError 'Plug is not a compound parent'; the message is `got`'s
+    when it says so."""
+    if not (expected[0] == "raises" and got[0] == "raises" and len(expected[1]) == len(got[1])):
+        return expected
+    chain = []
+    for old, new in zip(expected[1], got[1]):
+        if (
+            old[:2] == ["TypeError", "Plug is not a compound parent"]
+            and new[0] == "AttributeError"
+            and re.search(r" is not a compound: it has no child '\w+'\.$", new[1])
+        ):
+            old = ["AttributeError", new[1], *old[2:]]
+        chain.append(old)
+    return ["raises", chain]
+
+
 class TestTheChildLookupsOfEe03336(MayaTestCase):
     """Every child lookup of `_child_outcomes` gives what ee03336 gave."""
 
@@ -659,7 +685,10 @@ class TestTheChildLookupsOfEe03336(MayaTestCase):
         self.assertEqual(sorted(table), sorted(oracle))
         for case in sorted(oracle):
             with self.subTest(case=case):
-                self.assertEqual(table[case], oracle[case])
+                # re-pinned (user decision 2026-10-16, the property ban): the
+                # non-compound lookup error (`_non_compound_repinned`)
+                expected = _non_compound_repinned(oracle[case], table[case])
+                self.assertEqual(table[case], expected)
 
     def test_the_table_reaches_every_branch(self):
         # the oracle holds children, cache hits, the errors of each kind, and

@@ -23,7 +23,7 @@ Two user-facing classes carry the language:
     *child* attribute first; if not found, falls back to a *sibling* on
     the same node -- so ``decompose(node.matrix).outputRotate`` works
     even if the decomposeMatrix was returned via its ``.outputTranslate``.
-    ``plug.node`` is the node the plug was read from (``node.tx.node is
+    ``plug.get_node()`` is the node the plug was read from (``node.tx.get_node() is
     node``), and an instanced node names its plugs through that node's path.
 
   * :class:`Container` -- a node class (a ``DGNode`` subclass) for Maya

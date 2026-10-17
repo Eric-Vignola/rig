@@ -7,7 +7,7 @@ Covers:
   auto-appends.
 - ``List`` empty-slice + parent-multi fallback
   (``empty_multi[:] << values`` works).
-- ``Plug.next_index`` property and ``Plug.append(value)`` helper
+- ``Plug.get_next_available_index()`` and ``Plug.append(value)`` helper
   for explicit auto-append (replaces the implicit ``multi << scalar``
   idiom for users who want the explicit form).
 - ``_clone_attribute`` mirrors source multi indices on the new
@@ -187,7 +187,7 @@ class TestPlugListEmptySliceFallback(MayaTestCase):
 
 
 class TestPlugAppendAndNextIndex(MayaTestCase):
-    """``Plug.next_index`` and ``Plug.append`` -- explicit form of
+    """``Plug.get_next_available_index()`` and ``Plug.append`` -- explicit form of
     the implicit ``multi << scalar`` auto-append."""
 
     TEST_START_NEW_SCENE = True
@@ -195,15 +195,15 @@ class TestPlugAppendAndNextIndex(MayaTestCase):
     def test_next_index_starts_at_zero(self):
         n = Node.create("network", name="net")
         n << Float("w", multi=True)
-        self.assertEqual(n.w.next_index, 0)
+        self.assertEqual(n.w.get_next_available_index(), 0)
 
     def test_next_index_advances_after_append(self):
         n = Node.create("network", name="net")
         n   << Float("w", multi=True)
         n.w << 10.0
-        self.assertEqual(n.w.next_index, 1)
+        self.assertEqual(n.w.get_next_available_index(), 1)
         n.w << 20.0
-        self.assertEqual(n.w.next_index, 2)
+        self.assertEqual(n.w.get_next_available_index(), 2)
 
     def test_append_writes_at_next_available_index(self):
         n = Node.create("network", name="net")
@@ -236,9 +236,15 @@ class TestPlugAppendAndNextIndex(MayaTestCase):
                 self.assertAlmostEqual(a, e)
 
     def test_next_index_raises_on_non_multi(self):
+        # re-pinned (user decision 2026-10-16, the property ban): next_index is
+        # gone; get_next_available_index() raises RuntimeError on a non-multi
+        # (next_index raised ValueError), and the old name raises naming it
         n = Node.create("transform", name="cube")
-        with self.assertRaises(ValueError):
-            _ = n.tx.next_index
+        with self.assertRaisesRegex(RuntimeError, "is not an multi attr"):
+            _ = n.tx.get_next_available_index()
+        n << Float("w", multi=True)
+        with self.assertRaisesRegex(AttributeError, r"plug\.get_next_available_index\(\)"):
+            _ = n.w.next_index
 
     def test_append_raises_on_non_multi(self):
         n = Node.create("transform", name="cube")

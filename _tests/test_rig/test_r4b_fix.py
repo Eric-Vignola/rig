@@ -195,7 +195,7 @@ class TestOneLookupRule(_Case):
                 cmds.namespace(relativeNames=relative)
                 cube = Node(":cube")
                 plug = cube.tx >> f"k{int(relative)}"
-                self.assertIs(plug.node, cube)
+                self.assertIs(plug.get_node(), cube)
                 self.assertTrue(cmds.attributeQuery(f"k{int(relative)}", node=":cube", exists=True))
                 self.assertFalse(cmds.attributeQuery(f"k{int(relative)}", node=":char:cube", exists=True))
         cmds.namespace(relativeNames=False)

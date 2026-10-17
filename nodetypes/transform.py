@@ -282,7 +282,10 @@ class Transform(DAGNode):
     def set_xfrom_attrs_locked(self, locked: bool) -> None:
         """Locks or Unlocks all transform attributes on this node."""
         for attr in self.iter_xform_attrs():
-            attr.is_locked = locked
+            if locked:
+                type(attr).lock(attr)
+            else:
+                type(attr).unlock(attr)
 
     def freeze(self, *args, **kwargs) -> None:
         """Thin wrapper around cmds.makeIdentity() function."""
@@ -302,7 +305,7 @@ class Transform(DAGNode):
             attr = self.find_attr("worldMatrix")[0]
         else:
             attr = self.find_attr("matrix")
-        mat = OpenMaya.MFnMatrixData(attr.plug.asMObject()).matrix()
+        mat = OpenMaya.MFnMatrixData(attr._mplug.asMObject()).matrix()
         if as_transform_matrix:
             return OpenMaya.MTransformationMatrix(mat)
         return mat
@@ -393,11 +396,11 @@ class Transform(DAGNode):
             node.user_defined_attributes = {}
             for att in attrs:
                 try:
-                    node.user_defined_attributes[att.name] = self._serialize_user_attr(att)
+                    node.user_defined_attributes[type(att).get_name(att)] = self._serialize_user_attr(att)
 
                 # gracfully pass on this one
                 except Exception as e:
-                    LOGGER.warning(f"Skipped user defined attr {att.full_name}: {e}")
+                    LOGGER.warning(f"Skipped user defined attr {att}: {e}")
 
         return node
 
@@ -414,58 +417,58 @@ class Transform(DAGNode):
         # fed it is not saved: serialization carries no connections)
         if _is_generic_slot(att):
             data["attributeType"] = "typed"
-            if att.is_multi:
+            if type(att).is_multi(att):
                 data["multi"] = True
                 data["value"] = [
                     [int(i), att[i].get()]
                     for i in att.get_logical_indices()
-                    if cmds.getAttr(att[i].full_name, type=True) == "typed"
+                    if cmds.getAttr(str(att[i]), type=True) == "typed"
                 ]
-            elif cmds.getAttr(att.full_name, type=True) == "typed":
+            elif cmds.getAttr(str(att), type=True) == "typed":
                 data["value"] = att.get()
             parent = att.get_parent()
             if parent is not None:
-                data["parent"] = parent.name
-            data["keyable"]     = att.is_keyable
-            data["channel_box"] = att.is_channel_box
+                data["parent"] = type(parent).get_name(parent)
+            data["keyable"]     = type(att).is_keyable(att)
+            data["channel_box"] = type(att).is_channel_box(att)
             return data
 
         # a multi's own plug reports "compound", addAttr() wants the element
         # type. it is read off the attribute, a getAttr on an element would
         # create it.
-        if att.is_multi:
+        if type(att).is_multi(att):
             data["multi"] = True
-            if att.is_typed:
-                data_type = OpenMaya.MFnTypedAttribute(att.mobject).attrType()
+            if type(att).is_typed(att):
+                data_type = OpenMaya.MFnTypedAttribute(type(att).get_mobject(att)).attrType()
                 if data_type not in TYPED_DATA_NAMES:
                     raise ValueError(f"Unsupported multi data type: {data_type}")
                 data["dataType"] = TYPED_DATA_NAMES[data_type]
             else:
-                data["attributeType"] = att.attribute_type
+                data["attributeType"] = type(att).get_attribute_type(att)
             data["value"] = [[int(i), att[i].get()] for i in att.get_logical_indices()]
 
         else:
             # typed attrs (string, stringArray, doubleArray, etc.)
             # are created with cmds.addAttr(dataType=...)
-            if att.is_typed:
-                data["dataType"] = att.data_type
+            if type(att).is_typed(att):
+                data["dataType"] = type(att).get_data_type(att)
             else:
-                data["attributeType"] = att.data_type
+                data["attributeType"] = type(att).get_data_type(att)
 
-            if att.plug.isCompound:
-                data["numberOfChildren"] = att.num_children
+            if att._mplug.isCompound:
+                data["numberOfChildren"] = type(att).get_num_children(att)
             else:
                 data["value"] = att.get()
 
         if data.get("attributeType") == "enum":
-            data["enumName"] = ":".join(att.enums)
+            data["enumName"] = ":".join(type(att).get_enums(att))
 
         parent = att.get_parent()
         if parent is not None:
-            data["parent"] = parent.name
+            data["parent"] = type(parent).get_name(parent)
 
-        data["keyable"]     = att.is_keyable
-        data["channel_box"] = att.is_channel_box
+        data["keyable"]     = type(att).is_keyable(att)
+        data["channel_box"] = type(att).is_channel_box(att)
         return data
 
     def serialize_hierarchy(self, bindpose: bool | str | DGNode = False) -> HierarchyData:
@@ -827,7 +830,7 @@ class Transform(DAGNode):
 
             try:
                 if attr.get("channel_box"):
-                    att.is_channel_box = True
+                    type(att).set_channel_box(att, True)
 
                 value = attr.get("value")
                 if value is None:

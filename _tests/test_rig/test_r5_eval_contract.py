@@ -257,7 +257,7 @@ def _static_prime_a(rec):
     _expression("c2.minR")
     rec.op("c1.minR << 0.5", lambda: str(Node("c1").minR << 0.5))
     cmds.setAttr("drv.input1X", 3.0)  # the driver of c2.minR is dirty
-    rec.op("c2.minR.data_type", lambda: Node("c2").minR.data_type, counted=True)
+    rec.op("c2.minR.data_type", lambda: Node("c2").minR.get_data_type(), counted=True)
     rec.op("c1.minR", lambda: cmds.getAttr("c1.minR"))
     rec.op("c2.minR", lambda: cmds.getAttr("c2.minR"))
 
@@ -269,7 +269,7 @@ def _static_prime_b(rec):
     _expression("k2.maxG")
     rec.op("k1.maxG << 2.0", lambda: str(Node("k1").maxG << 2.0))
     cmds.setAttr("drv.input1X", 4.0)
-    rec.op("str(k2.maxG.data_type)", lambda: str(Node("k2").maxG.data_type), counted=True)
+    rec.op("str(k2.maxG.data_type)", lambda: str(Node("k2").maxG.get_data_type()), counted=True)
     rec.op("k1.maxG", lambda: cmds.getAttr("k1.maxG"))
     rec.op("k2.maxG", lambda: cmds.getAttr("k2.maxG"))
 
@@ -280,7 +280,7 @@ def _uncached_f(rec):
     type cache, as the review's earlier cases left it (another node's query
     puts it there), so only the choice's queries can pull the output."""
     cmds.createNode("rigR5Uncached", name="primer")
-    rec.op("primer.outMatrix.data_type", lambda: Node("primer").outMatrix.data_type)
+    rec.op("primer.outMatrix.data_type", lambda: Node("primer").outMatrix.get_data_type())
     cmds.createNode("rigR5Uncached", name="u")
     rec.op(
         "functions.choice([u.outMatrix, u.outMatrix], 0)",

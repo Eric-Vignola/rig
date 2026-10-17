@@ -889,7 +889,7 @@ class Mesh(Geometry):
     @property
     def paintable_maps(self) -> list[str]:
         """Returns a list of paintable maps."""
-        return [x.name for x in self.get_map_attrs()]
+        return [type(x).get_name(x) for x in self.get_map_attrs()]
 
     def get_map_data(self, map_name: Attribute | str, sparse: bool = True) -> MapData:
         """Get the map data from a given map attr.
@@ -914,7 +914,7 @@ class Mesh(Geometry):
 
         # arrays, as MapData declares them (cgmath 2.0.0 casts to them; 1.0.4 kept a list)
         return MapData(
-            name          = map_attr.name,
+            name          = type(map_attr).get_name(map_attr),
             categories    = sorted(categories),
             indices       = np.asarray(ids, dtype=np.int32),
             values        = np.asarray(values, dtype=np.float64),
@@ -1061,7 +1061,7 @@ class Mesh(Geometry):
         attr = self.find_attr(map_name)
         if (
             attr
-            and attr.data_type == MAP_DATATYPE
+            and type(attr).get_data_type(attr) == MAP_DATATYPE
             and attr.has_category(MAP_DEFAULT_CATEGORY)
         ):
             return attr
@@ -1088,9 +1088,9 @@ class Mesh(Geometry):
         return [
             x
             for x in self.list_attr(userDefined=True)
-            if x.data_type == MAP_DATATYPE
+            if type(x).get_data_type(x) == MAP_DATATYPE
             and (not category or x.has_category(category))
-            and (not regex or regex.match(x.name))
+            and (not regex or regex.match(type(x).get_name(x)))
         ]
 
     def mirror_map(
@@ -1176,8 +1176,8 @@ class Mesh(Geometry):
         """Enable painting mode on the given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
-        paint_attr = f"{self.NATIVE_NODE_TYPE}.{self.long_name}.{map_attr.name}"
-        cmds_edit.select(map_attr.node, replace=True)
+        paint_attr = f"{self.NATIVE_NODE_TYPE}.{self.long_name}.{type(map_attr).get_name(map_attr)}"
+        cmds_edit.select(type(map_attr).get_node(map_attr), replace=True)
         mel_eval(
             f'artSetToolAndSelectAttr("artAttrCtx", "{paint_attr}");artAttrInitPaintableAttr;'
         )

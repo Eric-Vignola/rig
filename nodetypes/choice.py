@@ -21,7 +21,7 @@ class Choice(DGNode):
         input connections.
         """
         # for the output, use get the selected input and use its connected data type
-        if attr.name == "output":
+        if type(attr).get_name(attr) == "output":
             selector = type(self).find_attr(self, "selector")
             # the int `selector.get()` reads with cmds.getAttr, read from the plug:
             # a long is never geometry, and MPlug.asInt evaluates it at the
@@ -30,25 +30,23 @@ class Choice(DGNode):
             # or freed node raises the "already deleted!" `get()` raises, and
             # never reads its plug
             type(self).ensure_valid(self)
-            sel_id = selector.plug.asInt()
+            sel_id = selector._mplug.asInt()
             # quiet=True: an unresolvable selection must degrade to the base
-            # "Tdata" answer, not raise. ``data_type`` is a property, so an
-            # AttributeError escaping here sends Python into Plug.__getattr__,
-            # which relabels it as a bogus "has no child or sibling attribute
-            # 'data_type'" and buries the real cause.
+            # "Tdata" answer, not raise (this hook runs inside
+            # ``get_data_type()``, whose callers read None or the type).
             in_attr = type(self).find_attr(self, f"input[{sel_id}]", quiet=True)
             if in_attr is not None:
                 src_attr = _connected_attrs(
                     in_attr, src=True, dst=False, first_only=True
                 )
                 if src_attr:
-                    return src_attr.data_type
+                    return type(src_attr).get_data_type(src_attr)
 
         # for input attrs, use its connected data type
-        elif attr.name.startswith("input"):
+        elif type(attr).get_name(attr).startswith("input"):
             src_attr = _connected_attrs(attr, src=True, dst=False, first_only=True)
             if src_attr:
-                return src_attr.data_type
+                return type(src_attr).get_data_type(src_attr)
 
         return super()._attr_data_type_fallback(attr)
 
