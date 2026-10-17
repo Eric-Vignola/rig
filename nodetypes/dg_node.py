@@ -24,6 +24,7 @@ from rig.nodetypes._base import (
     _attr_handle,
     _attr_mobject,
     _attr_state,
+    _called_from_rig,
     _cast,
     _check_attrs,
     _class_attr,
@@ -802,8 +803,54 @@ _NODE_STATE = frozenset(
         # round 3: the node's plug hash serial and a DAG node's taken path
         "_node_serial",
         "_taken_mdagpath",
+        # the name the node was last read by (`_name`): a deleted or freed
+        # node's marked str (`_deleted_name`, user decision 2026-10-16)
+        "_last_name",
     }
 )
+
+# what follows the last known name of a deleted or freed node in its str (user
+# decision 2026-10-16): "obj1 (deleted)" matches no Maya node
+_DELETED_MARK = " (deleted)"
+
+
+def _deleted_name(node: Any) -> str:
+    """The last known name of `node`, a node object whose handle is not valid
+    (deleted to the undo queue, or freed by a new scene, a file open or a
+    reference unload), with no marker: a node deleted to the undo queue is
+    alive, and named by its MObject (as `DGNode.ensure_valid` names it), or, a
+    node a shader conversion replaced, by the name it had (the conversion's
+    record, `_base._CONVERTED`: 'red', not its aside name); a freed one cannot
+    be read, so it is the name `_name` last read (every node object reads it
+    when it is built or cast by a name), else its class name."""
+    d    = node.__dict__
+    name = None
+    handle = d.get("_objhandle")
+    if handle is not None and handle.isAlive():
+        try:
+            fn   = OpenMaya.MFnDependencyNode(d["_mobject"])
+            name = fn.name()
+            converted = _base_module._CONVERTED
+            if converted:
+                record = converted.get(fn.uuid().asString())
+                if record is not None:
+                    name = record[0]
+        except Exception:  # noqa: BLE001 (the cached name then)
+            name = None
+    return name or d.get("_last_name") or type(node).__name__
+
+
+def _deleted_repr(node: Any) -> str:
+    """The repr of `node`, a node object deleted or freed: its class and last
+    known name, marked (``Transform("obj1", deleted)``)."""
+    return f'{type(node).__name__}("{_deleted_name(node)}", deleted)'
+
+
+def _is_deleted_node(node: Any) -> bool:
+    """True if `node` (a node object) was deleted to the undo queue or freed
+    (its handle is not valid); False for a valid or a half-built one."""
+    handle = node.__dict__.get("_objhandle")
+    return handle is not None and not handle.isValid()
 
 
 def _filtered(
@@ -941,9 +988,25 @@ class DGNode(Node):
     # is the check-free way to read a node's name
 
     def __repr__(self) -> str:
+        # a deleted or freed node: its class and last known name, marked (user
+        # decision 2026-10-16); in rig's own code it raises, as its name does
+        # (`_called_from_rig`)
+        handle = self.__dict__.get("_objhandle")
+        if handle is not None and not handle.isValid() and not _called_from_rig(1):
+            return _deleted_repr(self)
         return f'{self.__class__.__name__}("{self._name()}")'
 
     def __str__(self) -> str:
+        # a deleted or freed node is its last known name, marked: "obj1
+        # (deleted)" names no Maya node, so maya.cmds given it (a List of
+        # nodes included, which Maya's argument parser reads through str(),
+        # and a str() that raises there crashes Maya) raises a clean error
+        # (user decision 2026-10-16). rig's own code reading the name is an
+        # operation on the node, which raises "... already deleted!", as it
+        # always did (`_called_from_rig`: a guard, a message, a memo key)
+        handle = self.__dict__.get("_objhandle")
+        if handle is not None and not handle.isValid() and not _called_from_rig(1):
+            return _deleted_name(self) + _DELETED_MARK
         return self._name()
 
     def __hash__(self) -> int:
@@ -1213,9 +1276,12 @@ class DGNode(Node):
 
     def _name(self) -> str:
         """The node name: its held fn set's (``"... already deleted!"`` for a
-        deleted node), what ``str(node)`` gives."""
+        deleted node), what ``str(node)`` gives a valid node. Kept as the last
+        known name (`_deleted_name`)."""
         _ensure_valid(self)
-        return self.__dict__["_fn_set"].name()
+        d    = self.__dict__
+        name = d["_last_name"] = d["_fn_set"].name()
+        return name
 
     # a DG node's long name is its name
     _long_name = _name

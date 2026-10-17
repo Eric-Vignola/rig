@@ -1074,6 +1074,10 @@ def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
             d["_mobject"] = sel.getDependNode(0)
             d["_fn_set"]  = cls_obj._raw_FN_SET(d["_mobject"])
         d["_objhandle"] = OpenMaya.MObjectHandle(d["_mobject"])
+        # the name it was cast by: its last known name until `_name` reads one
+        # (a freed node's marked str, `dg_node._deleted_name`), where the
+        # constructor's `_name` call keeps it
+        d["_last_name"] = obj if type(obj) is str else None
         d["_attr_dict"] = {}
     except Exception:
         return None
@@ -1404,6 +1408,36 @@ def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None
     )
 
 
+# {module name: True if it is rig's own code}: `_called_from_rig`'s cache
+_RIG_FRAMES: dict = {}
+
+
+def _called_from_rig(depth: int) -> bool:
+    """True if the caller `depth` frames above the function calling this one is
+    rig's own code (its package, not ``rig.examples`` / ``rig._tests``: the
+    barrier lint's rule, `journal._in_rig`), by its module name, cached.
+
+    The str and repr of a node deleted or freed, or of a plug of one (user
+    decision 2026-10-16 "Deleted nodes in a List"): a user, Maya's argument
+    parser (called from a user's ``cmds.select(nodes)``) and a List's repr get
+    the last known name, marked, which names no Maya node; rig's own code
+    reading a name is an operation on that node, which raises "... already
+    deleted!", as it always did (a guard, a message, a memo key). Only the
+    deleted path reads the caller (one frame read)."""
+    module = _GETFRAME(depth + 1).f_globals.get("__name__") or ""
+    rig    = _RIG_FRAMES.get(module)
+    if rig is None:
+        rig = _RIG_FRAMES[module] = _journal._in_rig(module)
+    return rig
+
+
+def _deleted_plug_repr(attr: Any, cls_name: str | None = None) -> str:
+    """The repr of `attr`, a plug of a node deleted or freed: its class (or
+    `cls_name`) and the name it was built with (its str buffer, read without
+    the node), marked."""
+    return f'{cls_name or type(attr).__name__}("{str.__str__(attr)}", deleted)'
+
+
 def _ensure_owner_alive(attr: Any) -> None:
     """Raise ``"... already deleted!"`` if the node that owns `attr` was freed (a
     new scene, a file open, a reference unload): `attr`'s MPlug then points at
@@ -1690,14 +1724,29 @@ def _new_attr(
 
 
 def _attr_mobject(attr: Any) -> OpenMaya.MObject:
-    """`attr.get_mobject()` (cached on `attr`) without its owner check, for a caller that
-    made one: the attribute of a dynamic attr is freed with its node."""
+    """`attr.get_mobject()` (cached on `attr`), for a caller that made the owner
+    check: the attribute of a dynamic attr is freed with its node. Defence in
+    depth: the handles are read first anyway (an ``isAlive`` each), so a caller
+    that missed its check raises ``"... already deleted!"`` instead of reading
+    the cached MObject or the MPlug of a freed node."""
     d       = attr.__dict__
+    handle  = d.get("_handle")
+    attrh   = d.get("_attrh")
+    if (handle is not None and not handle.isAlive()) or (attrh is not None and not attrh.isAlive()):
+        _ensure_owner_alive(attr)
     mobject = d["_mobject"]
     if not mobject:
         mobject = d["_mobject"] = d["_mplug"].attribute()
     return mobject
 
+
+# the attribute types whose plugs hold data (an MObject `get_data_fn_set` reads)
+_DATA_ATTR_TYPES = frozenset((
+    OpenMaya.MFn.kTypedAttribute,
+    OpenMaya.MFn.kMatrixAttribute,
+    OpenMaya.MFn.kFloatMatrixAttribute,
+    OpenMaya.MFn.kGenericAttribute,
+))
 
 _K_TYPED_ATTR = OpenMaya.MFn.kTypedAttribute
 _K_ANY_DATA   = OpenMaya.MFnData.kAny
@@ -3065,6 +3114,13 @@ class Attribute(str, metaclass=_PlugMeta):
         ]
 
     def __repr__(self) -> str:
+        # a plug of a node deleted or freed shows the name it was built with,
+        # marked, as its node does (``Plug("obj1.translateX", deleted)``, user
+        # decision 2026-10-16: a List of them repr()s); its str raises, and so
+        # does its repr in rig's own code (`_called_from_rig`)
+        handle = self.__dict__.get("_handle")
+        if handle is not None and not handle.isValid() and not _called_from_rig(1):
+            return _deleted_plug_repr(self)
         return f'{self.__class__.__name__}("{str(self)}")'
 
     def __str__(self) -> str:
@@ -3275,8 +3331,17 @@ class Attribute(str, metaclass=_PlugMeta):
     # ``type(plug).m(plug)``) or private state (``plug._mplug``).
 
     def get_mplug(self) -> OpenMaya.MPlug:
-        """Returns the OpenMaya.MPlug this attribute wraps."""
-        return self._mplug
+        """Returns the OpenMaya.MPlug this attribute wraps. Raises ``"...
+        already deleted!"`` once its node was freed (a new scene, a file open, a
+        reference unload): the MPlug then points at freed memory, and reading it
+        (``Plug(old.get_mplug())``, ``.isArray``) can crash Maya. A node deleted
+        to the undo queue is still alive, and its MPlug is returned."""
+        d = self.__dict__
+        h = d.get("_handle")
+        a = d.get("_attrh")
+        if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
+            _ensure_owner_alive(self)
+        return d["_mplug"]
 
     def get_fn_set(self) -> OpenMaya.MFnBase:
         """Returns the attribute function set. Raises ``"... already deleted!"``
@@ -3794,9 +3859,24 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def get_data_fn_set(self) -> OpenMaya.MFnData | None:
         """Returns the proper data function set for this attr, or None if
-        this attribute holds no data, or plug.asMObject() causes internal failure."""
+        this attribute holds no data (a numeric, unit, enum, message ...
+        attribute: only a typed, matrix or generic attribute holds data), or
+        plug.asMObject() causes internal failure. A compound or a multi (array)
+        plug has no data handle of its own: TypeError, naming a child or an
+        element to ask instead. (Maya reads freed memory for the data of a plug
+        that holds none, which can crash it: neither is asked.)"""
         _ensure_owner_alive(self)
-        data_mobject = self._mplug.asMDataHandle().data()
+        mplug = self._mplug
+        if mplug.isArray or mplug.isCompound:
+            what = "multi (array)" if mplug.isArray else "compound"
+            ask  = f"an element ({self}[0])" if mplug.isArray else "a child"
+            raise TypeError(
+                f"{self} is a {what} plug, which has no data handle: "
+                f"get_data_fn_set() reads one plug's data; ask {ask}"
+            )
+        if _attr_mobject(self).apiType() not in _DATA_ATTR_TYPES:
+            return None
+        data_mobject = mplug.asMDataHandle().data()
         api_type     = data_mobject.apiType()
         if api_type != OpenMaya.MFn.kInvalid:
             data_fn = DATA_TYPE_TO_FN.get(api_type, OpenMaya.MFnData)

@@ -46,6 +46,7 @@ from rig.nodetypes import (
     errors as _nodetypes_errors,
 )
 from rig.nodetypes._base import (
+    _called_from_rig,
     _cast_node,
     _check_attrs,
     _old_handle_name,
@@ -64,7 +65,7 @@ from rig.nodetypes._base import (
     is_valid_maya_uid,
 )
 from rig.nodetypes.dag_node import _parent_path, DAGNode
-from rig.nodetypes.dg_node import _create_template, DGNode
+from rig.nodetypes.dg_node import _create_template, _deleted_name, _is_deleted_node, DGNode
 from rig.nodetypes.transform import Transform
 from rig._internal.maya_version import get_target_version, set_target_version
 from rig._internal.node import Node
@@ -2758,6 +2759,8 @@ class Container(DGNode):
     )
 
     def __repr__(self) -> str:
+        if _is_deleted_node(self) and not _called_from_rig(1):
+            return f'Container("{_deleted_name(self)}", deleted)'
         return f'Container("{self._name()}")'
 
     @classmethod

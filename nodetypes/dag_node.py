@@ -125,7 +125,8 @@ class DAGNode(DGNode):
         if "_taken_mdagpath" in d:
             self._retake_path()
         _ensure_valid(self)
-        return d["_fn_set"].partialPathName() or self._repath().partialPathName()
+        name = d["_last_name"] = d["_fn_set"].partialPathName() or self._repath().partialPathName()
+        return name
 
     def _long_name(self) -> str:
         """The full path."""

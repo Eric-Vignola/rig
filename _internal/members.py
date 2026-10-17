@@ -73,7 +73,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import _attribute_of, _check_attrs, _lookup  # noqa: F401 (re-exported)
-from rig.nodetypes._base import _old_handle_name, _scene_predicate
+from rig.nodetypes._base import _ensure_owner_alive, _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.errors import NodeNotFoundError
 from rig.nodetypes.geometry import iter_component_tokens
@@ -805,10 +805,18 @@ class _Normaliser:
         contexts  = self.contexts
         last_node = None
         last_ctx  = None
+        checked   = None
         for i, item in enumerate(items):
             if not isinstance(item, Plug):
                 self.add(item, f"{where}[{i}]" if nested else where)
                 continue
+            # a freed node's MPlug points at freed memory: "already deleted!"
+            # before it is read. The plugs of one slice share one handle object
+            # (see `_inherit_owner`), checked once; a dynamic attr's every time.
+            d = item.__dict__
+            if d.get("_handle") is not checked or d.get("_attrh") is not None:
+                _ensure_owner_alive(item)
+                checked = d.get("_handle")
             mplug = item._mplug
             node  = mplug.node()
             if last_node is None or node != last_node:
@@ -865,6 +873,11 @@ class _Normaliser:
         return [selection for selection in result if selection is not None]
 
 
+# rig._internal.list, bound at the first List left-hand side (it imports this
+# package's types module)
+_LIST_MODULE = None
+
+
 def normalise(
     lhs: Any, *, want_shapes: bool, refuse_plugs: Any = None, empty: str = "nothing to inject"
 ) -> list[_Selection]:
@@ -894,6 +907,17 @@ def normalise(
       entries on one path both survive. An empty result is
       ``ValueError(empty)`` (``'nothing to inject'``; a query words its own).
     """
+    global _LIST_MODULE
+    if isinstance(lhs, list):
+        # a rig List leaves out its deleted or freed elements and its skip
+        # slots, with one warning naming them (user decision 2026-10-16)
+        lists = _LIST_MODULE
+        if lists is None:
+            from rig._internal import list as lists
+
+            _LIST_MODULE = lists
+        if isinstance(lhs, lists.List):
+            lhs = lists._live(lhs)
     normaliser = _Normaliser(want_shapes, refuse_plugs)
     normaliser.add(lhs, "")
     selections = normaliser.selections()
@@ -1123,7 +1147,11 @@ class _MemberSpec(metaclass=_SpecMeta):
     def _prepare(self, lhs: Any) -> Any:
         """`inject`'s checks and plan, which write nothing (a ``List`` pair
         broadcast runs them for every pair before its first write)."""
-        plan = self._plan_plug(lhs) if isinstance(lhs, Plug) else None
+        plan = None
+        if isinstance(lhs, Plug):
+            # a freed node's MPlug points at freed memory (`_plan_plug` reads it)
+            _ensure_owner_alive(lhs)
+            plan = self._plan_plug(lhs)
         if plan is None:
             selections = normalise(
                 lhs,

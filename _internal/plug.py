@@ -95,6 +95,8 @@ from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
+    _called_from_rig,
+    _deleted_plug_repr,
     _PLUG_TYPES,
     _NON_MATRIX_ATTR_API_TYPES,
     _OLD_PLUG_SETTERS,
@@ -773,6 +775,9 @@ class Plug(Attribute):
         multi, ``choice.input``) gives a list, one value per element in index
         order (getAttr refuses that root: "compound with mixed type elements").
         """
+        # a freed node's MPlug points at freed memory: checked before the first
+        # MPlug read (``isArray``, the generic-slot test's ``attribute()``)
+        _ensure_owner_alive(self)
         mplug = self.__dict__.get("_mplug")
         if mplug is not None and mplug.isArray and _is_generic_slot(self):
             return [self[i].get() for i in self.get_logical_indices()]
@@ -3619,6 +3624,9 @@ class _MethodPlug(Plug):
         return self.__dict__["_method"](*args, **kwargs)
 
     def __repr__(self) -> str:
+        handle = self.__dict__.get("_handle")
+        if handle is not None and not handle.isValid() and not _called_from_rig(1):
+            return _deleted_plug_repr(self, "Plug")
         return f'Plug("{str(self)}")'
 
 
