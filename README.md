@@ -248,9 +248,13 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   `already deleted!` instead of reaching a new node of the same name. So
   does a plug built from a string (`Plug("a.tx")`) or an MPlug. Only its
   name still answers: `str(node)` is its last known name, marked
-  (`"a (deleted)"`), which names no Maya node. A `List` keeps such an
-  element in its slot and its operations skip it, with one warning naming
-  it (`rig.skip` in that slot of a List they derive).
+  (`"a (deleted)"`), which names no Maya node, for everyone (a plug's too:
+  `"a.translateX (deleted)"`). A `List` holds what is in the scene: once
+  an element is deleted, every rig operation on the List raises one
+  `RuntimeError` naming it (build a new List), while Python's `len()`,
+  indexing and iteration still answer, so raw `maya.cmds` given the List
+  raises Maya's own error instead of crashing. An undo that brings the node
+  back makes the List usable again.
 - **Locks: plugs first, then the node.** `ctl.tx.lock()` locks a plug
   and `ctl.lock()` the node (`lockNode`); `x << lock` is the same call, and
   `ctl.is_locked()` reads either (a member of a locked container reads
