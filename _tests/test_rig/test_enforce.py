@@ -65,6 +65,20 @@ class _Descriptor:
         return 1
 
 
+def _keep_registry(case):
+    """Restore the node class registry when `case` ends: a class registered here
+    (a CUSTOM_NODE_TYPE) never reaches another module's walk over it."""
+    registered = dict(_base._NODE_CLASS_DICT)
+
+    def restore():
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
+
+    case.addCleanup(restore)
+
+
 def _members():
     """(label, member) for every public member a class body refuses."""
     return (
@@ -146,16 +160,20 @@ class TestClassBody(MayaTestCase):
     def test_a_class_body_copied_from_a_class(self):
         """guard: a class made from another's dict (its plug methods and class data
         already made) is made again, and registers its node type."""
-        class _Copied(Transform):
+        _keep_registry(self)
+
+        class _EnforceCopied(Transform):
             CUSTOM_NODE_TYPE = "rigEnforceCopied"
 
             def get_size(self):
                 return 1
 
-        again = type(_Copied)("_Again", (Transform,), dict(vars(_Copied)))
+        again = type(_EnforceCopied)(
+            "_EnforceAgain", (Transform,), dict(vars(_EnforceCopied))
+        )
         self.assertEqual(again.CUSTOM_NODE_TYPE, "rigEnforceCopied")
         self.assertIs(_base._NODE_CLASS_DICT["rigEnforceCopied"], again)
-        self.assertIs(vars(again)["get_size"], vars(_Copied)["get_size"])
+        self.assertIs(vars(again)["get_size"], vars(_EnforceCopied)["get_size"])
 
 
 class TestClassData(MayaTestCase):
@@ -209,20 +227,22 @@ class TestClassData(MayaTestCase):
         self.assertEqual(DisplayLayer.DEFAULT, "defaultLayer")
 
     def test_a_user_custom_node_type_class(self):
-        class _Ctl(Transform):
+        _keep_registry(self)
+
+        class _EnforceCtl(Transform):
             CUSTOM_NODE_TYPE = "rigEnforceCtl"
             SIDES            = ("L", "R")
 
             def get_sides(self):
                 return type(self).SIDES
 
-        ctl = _Ctl.create(name="ctl")
-        self.assertIs(type(Node("ctl")), _Ctl)
+        ctl = _EnforceCtl.create(name="ctl")
+        self.assertIs(type(Node("ctl")), _EnforceCtl)
         self.assertEqual(ctl.get_node_type(), "rigEnforceCtl")
         self.assertEqual(ctl.get_sides(), ("L", "R"))
-        self.assertIs(_base._NODE_CLASS_DICT["rigEnforceCtl"], _Ctl)
-        self.assertEqual(_Ctl.CUSTOM_NODE_TYPE, "rigEnforceCtl")
-        self.assertEqual(_Ctl.NATIVE_NODE_TYPE, "transform")  # inherited
+        self.assertIs(_base._NODE_CLASS_DICT["rigEnforceCtl"], _EnforceCtl)
+        self.assertEqual(_EnforceCtl.CUSTOM_NODE_TYPE, "rigEnforceCtl")
+        self.assertEqual(_EnforceCtl.NATIVE_NODE_TYPE, "transform")  # inherited
         with self.assertRaises(AttributeError):
             ctl.SIDES
 
