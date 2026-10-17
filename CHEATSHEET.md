@@ -543,6 +543,28 @@ except AttributeError as err:
 print(str(a), a.get_name(), a.is_valid())            # a a True
 ```
 
+The objects that are neither nodes nor plugs follow the same split, by what
+they are. One that points into the scene reads through methods: a
+`Components` (section 10), a `ColorSet` ([nodetypes CHEATSHEET](nodetypes/CHEATSHEET.md)),
+`rig.container` (`get_stack()`, `is_active()`) and the membership tokens
+(`-layer`, `Blinn()`: a token's name is `str(token)`). A value you hold
+keeps its data as attributes, which never call Maya and read the same until
+you change the object: keys (`keys.values`, read-only arrays), a `Tag`
+(`Tag("cap").name`), a shade `Conversion` (`report.parked`), a spec
+(`Float("w").kargs`; the shared `lock` / `unlock` / `hide` / `unhide` keep a
+read-only one), an error (`err.door`, read once with the message). The
+process-wide options are read on `ContainerOptions`, which is read-only, and
+set with `set_options` (section 12). Up to v2.0.0a5:
+
+| Was | Now |
+|---|---|
+| `faces.indices` / `count` / `names` / `kind` / `shape` | `faces.get_indices()` / `get_count()` / `get_names()` / `get_kind()` / `get_shape()` |
+| `faces.geometry` | `faces.get_shape().get_node_type()` |
+| `cset.name` / `mesh` / `representation`, `cset.data`, `cset.data = c` | `cset.get_name()` / `get_mesh()` / `get_representation()`, `cset.get_data()`, `cset.set_data(c)` |
+| `rig.container.stack`, `rig.container.containers` | `rig.container.get_stack()`: `(name, Container or None)` tuples |
+| `(-layer).name`, `(-red).name` | `str(-layer)`, `str(-red)` |
+| `ContainerOptions.flag = x` | `rig.set_options(flag=x)` |
+
 A plug is owned by the node you read it from: `plug.get_node()` is that very
 node object, shared by the plug's children and elements. A node with two
 instance paths names its plugs through the path you took, and a world space
@@ -2579,7 +2601,9 @@ the node it is applied to. Every kind uses the same spellings:
 
 `Kind()` is the class called with no name: `Tag()`, `Material()` (every
 material; `Blinn()` every blinn), `Layer()`. `-c` is the removal token of
-`c`.
+`c`. A token is no node: it has no attributes, and its name is
+`str(token)` (`str(-red)` is `"red"`; the repr shows it too). `Tag("cap")`
+is a value, so `Tag("cap").name` is its name.
 
 Three rules hold for every kind. `<<` returns what the next `<<` should
 target: an attribute spec returns the new plug (a value goes next), a
