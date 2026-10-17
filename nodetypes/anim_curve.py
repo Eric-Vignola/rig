@@ -30,7 +30,7 @@ import numpy as np
 from maya.api import OpenMaya, OpenMayaAnim
 
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
-from rig.nodetypes._base import _check_attrs, _refuse_locked_node, _type_label
+from rig.nodetypes._base import _check_attrs, _refuse_locked_node, _type_label, _name_of
 from rig.nodetypes.dg_node import (
     _ABSTRACT_TYPES,
     _attribute_keywords,
@@ -132,7 +132,7 @@ class AnimCurve(DGNode):
         """The reference's hint for a curve of another type: the generic reference."""
         if cls is AnimCurve or not isinstance(node, AnimCurve):
             return ""
-        return f"; AnimCurve({str(node)!r}) takes any curve"
+        return f"; AnimCurve({_name_of(node)!r}) takes any curve"
 
     @classmethod
     def _abstract(cls, verb: str) -> TypeError:
@@ -203,7 +203,7 @@ class AnimCurve(DGNode):
                     getattr(node, attr) << v
             except BaseException:
                 try:
-                    _cmds_edit.delete(str(node))
+                    _cmds_edit.delete(_name_of(node))
                 except (RuntimeError, ValueError):
                     pass
                 raise
@@ -273,7 +273,7 @@ class AnimCurve(DGNode):
         if made or not update or (value is None and not attrs):
             return node
         if attrs:
-            _check_attrs(attrs, node=str(node))
+            _check_attrs(attrs, node=_name_of(node))
         entry = node._plan_set(value, call) if value is not None else None
         if (entry is None or entry.same) and not attrs:
             return node
@@ -307,7 +307,7 @@ class AnimCurve(DGNode):
         curve_type = _TIMED.get(type(self)._raw_get_fn_set(self).animCurveType)
         if curve_type is None:
             raise TypeError(
-                f"{str(self)!r} is {_article(type(self).get_node_type(self))} {type(self).get_node_type(self)}, keyed by its "
+                f"{_name_of(self)!r} is {_article(type(self).get_node_type(self))} {type(self).get_node_type(self)}, keyed by its "
                 f"driver: {verb} reads and writes curves keyed by time (TL, TA, TU, TT)"
             )
         return curve_type
@@ -326,7 +326,7 @@ class AnimCurve(DGNode):
             locked = _locked_channels(plug, [plug])
             if locked:
                 raise _injection_error(
-                    f"Cannot set the keys of {str(self)!r}: it keys the locked plug "
+                    f"Cannot set the keys of {_name_of(self)!r}: it keys the locked plug "
                     f"{locked[0]!r}. Unlock first: {_unlock_hint(plug, locked)} (a locked plug "
                     f"takes no new keys, even the ones its curve holds). Nothing was changed"
                 )
@@ -338,12 +338,12 @@ class AnimCurve(DGNode):
         anim_keys  = _anim_keys()
         curve_type = self._timed_type(call)
         fn = type(self)._raw_get_fn_set(self)
-        _refuse_locked_node(fn, "set the keys of", str(self))
+        _refuse_locked_node(fn, "set the keys of", _name_of(self))
         if fn.isFromReferencedFile:
             from rig.nodetypes._base import _injection_error
 
             raise _injection_error(
-                f"cannot set the keys of {str(self)!r}: it is from a referenced file, whose keys "
+                f"cannot set the keys of {_name_of(self)!r}: it is from a referenced file, whose keys "
                 f"the file holds (key the plug: it gets a new curve). Nothing was changed"
             )
         if value._names is not None:
@@ -367,7 +367,7 @@ class AnimCurve(DGNode):
         ``AnimCurve(...)``) or an ``AnimCurve`` value. Keys it holds already write nothing.
         The values are in UI units. Refused (InjectionError, nothing changed): a locked
         (lockNode) curve, a curve from a referenced file."""
-        call  = f"{type(self).__name__}({str(self)!r}).set_keys()"
+        call  = f"{type(self).__name__}({_name_of(self)!r}).set_keys()"
         value = _anim_keys().coerce(keys, times, options, call)
         if value is None:
             raise TypeError(f"{call} takes the keys: values, or an AnimCurve value")

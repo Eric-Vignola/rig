@@ -66,10 +66,12 @@ from typing import Any, Callable
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit as _cmds_edit, forward as _forward, statement as _statement
+from rig._internal import journal as _journal
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
 from rig.nodetypes._base import (
+    _name_of,
     _NODE_CLASS_DICT,
     _cast,
     _lookup,
@@ -189,9 +191,9 @@ def _guard_owned(material: str, verb: str) -> None:
     engine and ``defaultLayer`` refuse theirs) or a referenced shader
     (RuntimeError, as the referenced engines and layers)."""
     if cmds.ls(material, defaultNodes=True):
-        raise TypeError(f"'{material}' is a Maya default node and cannot be {verb}")
+        raise TypeError(f"'{_name_of(material)}' is a Maya default node and cannot be {verb}")
     if cmds.referenceQuery(material, isNodeReferenced=True):
-        raise RuntimeError(f"'{material}' is referenced and cannot be {verb}; edit the source file")
+        raise RuntimeError(f"'{_name_of(material)}' is referenced and cannot be {verb}; edit the source file")
 
 
 def _refuse_locked_material(material: str, verb: str) -> None:
@@ -214,7 +216,7 @@ def _delete_network(material: str) -> None:
             if cmds.objExists(name):
                 _cmds_edit.delete(name)
     if cmds.objExists(material) or any(cmds.objExists(name) for name in engines):
-        raise RuntimeError(f"'{material}' survived its deletion")
+        raise RuntimeError(f"'{_name_of(material)}' survived its deletion")
 
 
 def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngine | None]) -> str:
@@ -230,7 +232,7 @@ def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngi
         raise ValueError(f"'{new}' already exists")
     engine  = engine_of()
     old     = _leaf(material)
-    follows = engine is not None and _leaf(str(engine)) == f"{old}SG"
+    follows = engine is not None and _leaf(_name_of(engine)) == f"{old}SG"
     if follows and _exists(f"{new}SG"):
         raise ValueError(
             f"'{new}SG' already exists, so the engine of '{new}' could not follow "
@@ -239,12 +241,12 @@ def _rename_network(material: str, new: str, engine_of: Callable[[], ShadingEngi
     with _undo_chunk("rig.material"):
         got = _cmds_edit.rename(material, new)
         if _leaf(got) != _leaf(new):
-            raise RuntimeError(f"Maya renamed '{material}' to '{got}', not '{new}'")
+            raise RuntimeError(f"Maya renamed '{_name_of(material)}' to '{got}', not '{new}'")
         if follows:
-            got_engine = _cmds_edit.rename(str(engine), f"{new}SG")
+            got_engine = _cmds_edit.rename(_name_of(engine), f"{new}SG")
             if _leaf(got_engine) != f"{_leaf(new)}SG":
                 raise RuntimeError(
-                    f"Maya renamed '{engine}' to '{got_engine}', not '{new}SG'"
+                    f"Maya renamed '{_name_of(engine)}' to '{got_engine}', not '{new}SG'"
                 )
     return got
 
@@ -315,7 +317,7 @@ class Material(DGNode):
         if not super().is_type(node_name, failfast=failfast):
             return False
         try:
-            kind = cmds.nodeType(str(node_name))
+            kind = cmds.nodeType(_name_of(node_name))
         except RuntimeError:
             kind = None
         own = _own_type(cls)
@@ -332,7 +334,7 @@ class Material(DGNode):
         reference, and the conversion."""
         if not isinstance(node, Material) or cls is Material:
             return ""
-        name = str(node)
+        name = _name_of(node)
         hint = f"; Material({name!r}) takes any surface shader"
         if type(node).get_node_type(node) != _own_type(cls):
             hint += f"; {type(node).__name__}({name!r}).astype({cls.__name__}) converts it"
@@ -432,7 +434,7 @@ class Material(DGNode):
             # active scope only when asked
             from rig._internal.container import container as scope
 
-            scope.add([shader, str(engine), *engine.get_material_info()])
+            scope.add([shader, _name_of(engine), *engine.get_material_info()])
         if cls.CUSTOM_NODE_TYPE:
             set_custom_type(shader, cls.CUSTOM_NODE_TYPE)
         # the node just made is of this class (the generic class: its cast)
@@ -440,10 +442,10 @@ class Material(DGNode):
         for attr, value in attrs.items():
             getattr(node, attr) << value
         fed = engine.get_material()
-        if fed is None or str(fed) != shader:
+        if fed is None or _name_of(fed) != shader:
             raise RuntimeError(
-                f"{engine}.surfaceShader does not read '{shader}' after the "
-                f"build (it reads {fed})"
+                f"{_name_of(engine)}.surfaceShader does not read '{_name_of(shader)}' after the "
+                f"build (it reads {_name_of(fed)})"
             )
         return node
 
@@ -517,10 +519,11 @@ class Material(DGNode):
         # ``ls -type`` of the surface types, then each node's own type
         # (``ls -exactType`` given this list drops its first type)
         types = cmds.listNodeTypes(_SURFACE) or []
-        # (the user's arguments through `_forward`: a deleted node in a List of
-        # them reads as its marked name in Maya's parser, see DGNode.find_all)
-        found = _forward(cmds.ls, *args, type=types, **kwargs) if types else []
-        return [node for node in map(_cast, found or ()) if cls.is_type(str(node))]
+        # (a List argument raises the List rule's error first, `check_lists`)
+        if _journal.LIST_TYPE:
+            _journal.check_lists(args, kwargs)
+        found = cmds.ls(*args, type=types, **kwargs) if types else []
+        return [node for node in map(_cast, found or ()) if cls.is_type(_name_of(node))]
 
     # --- the membership grammar (rig.shade)
 
@@ -616,7 +619,7 @@ class Material(DGNode):
         Find-only: ValueError when it feeds none (an assignment builds one)."""
         engine = ShadingEngine.for_material(self, create=False)
         if engine is None:
-            name = str(self)
+            name = _name_of(self)
             raise ValueError(
                 f"'{name}' feeds no shading engine yet; assigning it (geometry << {self!r}) "
                 f"builds {_leaf(name)}SG"
@@ -634,7 +637,7 @@ class Material(DGNode):
         if nodes is not None:
             super().delete(nodes, **kwargs)
             return
-        _delete_network(str(self))
+        _delete_network(_name_of(self))
 
     def rename(self, new_name: Any) -> None:
         """Renames the shader, and its engine when the engine follows the
@@ -651,7 +654,7 @@ class Material(DGNode):
                 f"{new_name!r} is not a node name Maya keeps: identifiers of "
                 f"[A-Za-z0-9_] not starting with a digit, joined by ':' or '|'"
             )
-        _rename_network(str(self), new_name, lambda: ShadingEngine.for_material(self, create=False))
+        _rename_network(_name_of(self), new_name, lambda: ShadingEngine.for_material(self, create=False))
 
 
 class Lambert(Material):

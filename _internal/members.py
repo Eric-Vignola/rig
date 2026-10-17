@@ -73,16 +73,15 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import _attribute_of, _check_attrs, _lookup  # noqa: F401 (re-exported)
-from rig.nodetypes._base import _called_from_rig, _ensure_owner_alive, _old_handle_name, _scene_predicate
-from rig.nodetypes._base import _user_view
+from rig.nodetypes._base import _ensure_owner_alive, _name_of, _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _deleted_name, _is_deleted_node
 from rig.nodetypes.errors import NodeNotFoundError
 from rig.nodetypes.geometry import iter_component_tokens
+from rig._internal import journal as _journal
 from rig._internal import types as _types
 from rig._internal.node import Node
 from rig._internal.plug import ComponentPlug, Plug
-from rig.spec.modifiers import skip as _SKIP
 from rig._internal.undo import _undo_chunk
 
 
@@ -228,7 +227,7 @@ def _resolve_shape(obj: Any, kind: str) -> Node:
     node = obj if isinstance(obj, Node) else Node(obj)
     if not isinstance(node, DAGNode):
         raise TypeError(
-            f"'{node}' is not a DAG node; components live on geometry shapes"
+            f"'{_name_of(node)}' is not a DAG node; components live on geometry shapes"
         )
     node_type = type(node).get_node_type(node)
     wanted    = _KIND_GEOMETRY[kind]
@@ -237,17 +236,17 @@ def _resolve_shape(obj: Any, kind: str) -> Node:
     if node_type in _GEOMETRY_TYPES:
         raise TypeError(
             f"'{kind}' components live on {_join(wanted)} shapes; "
-            f"'{node}' is a {node_type}"
+            f"'{_name_of(node)}' is a {node_type}"
         )
     shapes = _own_shapes(node, wanted)
     if len(shapes) == 1:
         return Node(shapes[0])
     if not shapes:
         raise TypeError(
-            f"'{node}' has no {_join(wanted)} shape to take '{kind}' components from"
+            f"'{_name_of(node)}' has no {_join(wanted)} shape to take '{kind}' components from"
         )
     raise TypeError(
-        f"'{node}' has {len(shapes)} {_join(wanted)} shapes ({', '.join(shapes)}); "
+        f"'{_name_of(node)}' has {len(shapes)} {_join(wanted)} shapes ({', '.join(shapes)}); "
         f"use Node('<shape>')"
     )
 
@@ -455,7 +454,7 @@ class Components:
         if self._indices is None:
             return [f"{path}.{_TOKEN_PREFIX.get(self._kind, self._kind)}[*]"]
         tokens = _render_tokens(self._kind, self._indices)
-        return [f"{path}.{token}" for token in tokens]
+        return [f"{path}.{_name_of(token)}" for token in tokens]
 
     # -- indexing -- #
 
@@ -553,18 +552,21 @@ class Components:
 
     def __repr__(self) -> str:
         # its shape deleted or freed: the shape's last known name, marked, as a
-        # node shows (``Components("c1Shape.f[0:2]", deleted)``: Maya's argument
-        # parser reads a List of them through str(), where a raise crashes
-        # Maya); rig's own code raises "... already deleted!", as the shape's
-        # name does (fix round 2026-10-17)
+        # node shows (``Components("c1Shape.f[0:2]", deleted)``). A repr never
+        # raises, and the str is the repr, marked for everyone (user decision
+        # 6C, 2026-10-17); rig reads it through `_name_of` (`_rig_name`)
         try:
             path = self._path
-        except RuntimeError:
-            shape = self._shape
-            if not _is_deleted_node(shape) or _called_from_rig(1):
-                raise
-            return f'Components("{self._shown(_deleted_name(shape))}", deleted)'
+        except Exception:  # noqa: BLE001
+            if _is_deleted_node(self._shape):
+                return f'Components("{self._shown(_deleted_name(self._shape))}", deleted)'
+            return object.__repr__(self)
         return f'Components("{self._shown(path)}")'
+
+    def _rig_name(self) -> str:
+        # the private name reader's (`_name_of`): the repr, "... already
+        # deleted!" once the shape was deleted or freed
+        return f'Components("{self._shown(self._path)}")'
 
     def _shown(self, path: str) -> str:
         """``<path>.<kind>[...]`` as the repr shows it (the first tokens)."""
@@ -579,11 +581,6 @@ class Components:
         if more > 0:
             shown = f"{shown} ... (+{more} more)"
         return f"{path}.{shown}"
-
-    def _gone_name(self) -> str:
-        """What a List's skip warning names it by, without reading the shape."""
-        return self._shown(_deleted_name(self._shape))
-
 
 # ---------- Node.__getattr__ fallbacks ------------------------------------ #
 
@@ -605,7 +602,7 @@ def _maybe_components(node: Node, kind: str) -> Components | None:
         return None
     if len(shapes) > 1:
         raise AttributeError(
-            f"'{node}' has {len(shapes)} mesh shapes ({', '.join(shapes)}); "
+            f"'{_name_of(node)}' has {len(shapes)} mesh shapes ({', '.join(shapes)}); "
             f"use Node('<shape>').{kind}"
         )
     return Components(Node(shapes[0]), kind)
@@ -623,7 +620,7 @@ def _single_geometry_shape(node: Node) -> Node | None:
         return None
     if len(shapes) > 1:
         raise AttributeError(
-            f"'{node}' has {len(shapes)} geometry shapes ({', '.join(shapes)}); "
+            f"'{_name_of(node)}' has {len(shapes)} geometry shapes ({', '.join(shapes)}); "
             f"use Node('<shape>')"
         )
     return Node(shapes[0])
@@ -662,7 +659,7 @@ class _Selection:
         """The tokens qualified with :attr:`path` (``[path]`` for ``'whole'``)."""
         if self.kind == "whole":
             return [self.path]
-        return [f"{self.path}.{token}" for token in self.tokens]
+        return [f"{self.path}.{_name_of(token)}" for token in self.tokens]
 
 
 class _NodeContext:
@@ -759,18 +756,11 @@ class _Normaliser:
     """Folds a left-hand side into :class:`_Group` accumulators keyed by
     ``(path, kind, flat)`` in first-appearance order. ``refuse`` (None, or a
     callable given an attribute plug, returning the exception to raise)
-    refuses attribute plugs instead of reading them as their node. With
-    ``from_list`` (the left-hand side is a rig List) a deleted or freed element
-    (a node, a plug or a Components on one) or a skip slot raises `_Gone` when
-    it is met, before anything is read from it: `normalise` then folds the List
-    again without them (`rig._internal.list._live`, one warning). Folding
-    writes nothing, so the second pass is the first one's result without them,
-    and a List with none pays one handle test per new handle (already read)."""
+    refuses attribute plugs instead of reading them as their node."""
 
-    def __init__(self, want_shapes: bool, refuse: Any = None, from_list: bool = False) -> None:
+    def __init__(self, want_shapes: bool, refuse: Any = None) -> None:
         self.want_shapes = want_shapes
         self.refuse      = refuse
-        self.from_list   = from_list
         self.groups:   dict[tuple[str, str, bool], _Group] = {}
         self.contexts: dict[int, _NodeContext] = {}
 
@@ -782,8 +772,6 @@ class _Normaliser:
         return group
 
     def add(self, item: Any, where: str) -> None:
-        if self.from_list and not isinstance(item, Plug) and _gone_element(item):
-            raise _Gone
         if isinstance(item, Plug):
             self.add_sequence((item,), where, nested=False)
         elif isinstance(item, Node):
@@ -808,7 +796,7 @@ class _Normaliser:
         held (the attribute plug that stands for the node)."""
         source = node if source is None else source
         if not isinstance(node, DAGNode):
-            self.group(str(node), type(node).get_node_type(node), "whole").sources.append(source)
+            self.group(_name_of(node), type(node).get_node_type(node), "whole").sources.append(source)
             return
         node_type = type(node).get_node_type(node)
         if node_type not in _GEOMETRY_TYPES and self.want_shapes:
@@ -847,12 +835,6 @@ class _Normaliser:
             # (see `_inherit_owner`), checked once; a dynamic attr's every time.
             d = item.__dict__
             if d.get("_handle") is not checked or d.get("_attrh") is not None:
-                if self.from_list:
-                    # a plug of a node deleted to the undo queue or freed: the
-                    # List skips it (its handle only is read, safe once freed)
-                    handle = d.get("_handle")
-                    if handle is not None and not handle.isValid():
-                        raise _Gone
                 _ensure_owner_alive(item)
                 checked = d.get("_handle")
             mplug = item._mplug
@@ -911,30 +893,6 @@ class _Normaliser:
         return [selection for selection in result if selection is not None]
 
 
-# rig._internal.list, bound at the first List left-hand side (it imports this
-# package's types module)
-_LIST_MODULE = None
-
-
-class _Gone(Exception):
-    """`_Normaliser` (``from_list``) met a deleted or freed element of a rig
-    List, or a skip slot: `normalise` folds the List again without them."""
-
-
-def _gone_element(item: Any) -> bool:
-    """True for a skip slot, and for a node deleted or freed or a Components
-    on one (a List element `_Normaliser` must not read)."""
-    if item is _SKIP:
-        return True
-    if isinstance(item, Node):
-        handle = item.__dict__.get("_objhandle")
-    elif isinstance(item, Components):
-        handle = item._shape.__dict__.get("_objhandle")
-    else:
-        return False
-    return handle is not None and not handle.isValid()
-
-
 def normalise(
     lhs: Any, *, want_shapes: bool, refuse_plugs: Any = None, empty: str = "nothing to inject"
 ) -> list[_Selection]:
@@ -964,26 +922,12 @@ def normalise(
       entries on one path both survive. An empty result is
       ``ValueError(empty)`` (``'nothing to inject'``; a query words its own).
     """
-    global _LIST_MODULE
-    lists = None
-    if isinstance(lhs, list):
-        lists = _LIST_MODULE
-        if lists is None:
-            from rig._internal import list as lists
-
-            _LIST_MODULE = lists
-        if not isinstance(lhs, lists.List):
-            lists = None
-    normaliser = _Normaliser(want_shapes, refuse_plugs, from_list=lists is not None)
-    try:
-        normaliser.add(lhs, "")
-    except _Gone:
-        # a rig List leaves out its deleted or freed elements and its skip
-        # slots, a nested List's too, with one warning naming them (user
-        # decision 2026-10-16), found while folding (which writes nothing):
-        # folded again without them
-        normaliser = _Normaliser(want_shapes, refuse_plugs)
-        normaliser.add(lists._live(lhs), "")
+    if _journal.LIST_TYPE:
+        # the List rule: a List left-hand side (or one in a plain list) holding a
+        # deleted or freed element raises (`journal.check_lists`)
+        _journal.check_lists((lhs,))
+    normaliser = _Normaliser(want_shapes, refuse_plugs)
+    normaliser.add(lhs, "")
     selections = normaliser.selections()
     if not selections:
         raise ValueError(empty)
@@ -1044,12 +988,9 @@ def _token_miss(token: Any, name: str, what: str, noun: str, example: str) -> At
     has no attributes; ``what`` says which token it is, ``noun`` / ``example``
     name the node (``layer``, ``Layer('x')``). The name of a token is
     ``str(token)`` (user decision 2026-10-16). A token whose node is deleted
-    still raises AttributeError (its repr, which reads the node's name, is not
-    used then)."""
-    try:
-        head = f"{token!r} is {what}, not {_article(noun)} {noun}"
-    except Exception:  # noqa: BLE001 -- the node is deleted: its name cannot be read
-        head = f"{what} whose {noun} is deleted"
+    raises the same AttributeError, its repr marked (``-Blinn("red", deleted)``:
+    a repr never raises)."""
+    head = f"{token!r} is {what}, not {_article(noun)} {noun}"
     if name == "name":
         return AttributeError(
             f"{head}; a token has no name attribute: str(token) is its name, "
@@ -1076,21 +1017,18 @@ class _SpecMeta(type):
         raise TypeError(_class_operand_error(cls, "in"))
 
 
-def _as_user_reads(render: Callable[[Any], str], obj: Any) -> str:
-    """``render(obj)``, the str or repr of a membership token or spec, from its
-    ``__str__`` / ``__repr__``: when it raises for a deleted or freed node and
-    the caller is not rig's own code, rendered again as a user reads it (the
-    node's marked name, `rig.nodetypes._base._user_view`)."""
-    try:
-        return render(obj)
-    except RuntimeError:
-        if _called_from_rig(2):
-            raise
-        return _user_view(render, obj)
-
-
 def _spec_str(spec: Any) -> str:
+    # (the name raises "... already deleted!" for a token of a deleted node)
     return spec._name if spec._name is not None else repr(spec)
+
+
+def _token_node(spec: Any) -> Any:
+    """The node a membership token stands for (a layer, a shader, an engine), or
+    None (a Tag, a kind token)."""
+    node = getattr(spec, "_layer", None)
+    if node is None:
+        node = getattr(spec, "_node", None)
+    return node if isinstance(node, Node) else None
 
 
 def _spec_repr(spec: Any) -> str:
@@ -1209,16 +1147,27 @@ class _MemberSpec(metaclass=_SpecMeta):
             f"{cls}() removes them from every collection of this kind"
         )
 
-    # a token whose node (a layer, a shader, an engine) was deleted or freed: as
-    # a user reads it, its node's marked name (Maya's argument parser reads a
-    # List of tokens through str(), where a raise crashes Maya); rig's own code
-    # raises "... already deleted!", as the node's name does (`_as_user_reads`)
+    # a token whose node (a layer, a shader, an engine) was deleted or freed:
+    # its str is the node's marked name, and its repr the node's marked repr (a
+    # token class's own __repr__); neither raises
 
     def __str__(self) -> str:
-        return _as_user_reads(_spec_str, self)
+        # a token whose node (a layer, a shader, an engine) was deleted or freed
+        # is that node's marked name, for everyone (user decision 6C); rig reads
+        # it through `_name_of` (`_rig_name`), which raises "... already deleted!"
+        try:
+            return _spec_str(self)
+        except RuntimeError:
+            node = _token_node(self)
+            if node is None or not _is_deleted_node(node):
+                raise
+            return str(node)
+
+    def _rig_name(self) -> str:
+        return _spec_str(self)
 
     def __repr__(self) -> str:
-        return _as_user_reads(_spec_repr, self)
+        return _spec_repr(self)
 
     # -- the verbs -- #
 
@@ -1328,7 +1277,7 @@ class _MemberSpec(metaclass=_SpecMeta):
             x,
             want_shapes  = cls._WANT_SHAPES,
             refuse_plugs = lambda plug: TypeError(
-                f"'{plug}' is a plug; membership takes the node: "
+                f"'{_name_of(plug)}' is a plug; membership takes the node: "
                 f"{cls._kind_name()}.of({type(plug)._raw_get_node(plug)})"
             ),
         )
@@ -1355,7 +1304,7 @@ class _MemberSpec(metaclass=_SpecMeta):
             target = self._clone_target()
             if target is not None:
                 how += f"; to clone the attribute onto it: {plug} >> '{target}.{type(plug).get_alias(plug)}'"
-        return TypeError(f"'{plug}' is a plug; membership takes the node: {how}")
+        return TypeError(f"'{_name_of(plug)}' is a plug; membership takes the node: {how}")
 
     def _clone_target(self) -> str | None:
         """The node a ``plug >> token`` could have meant to clone onto (a

@@ -46,7 +46,7 @@ from rig.nodetypes import (
     errors as _nodetypes_errors,
 )
 from rig.nodetypes._base import (
-    _called_from_rig,
+    _name_of,
     _cast_node,
     _check_attrs,
     _old_handle_name,
@@ -639,7 +639,7 @@ class _ContainerStack:
         if should_cleanup:
             if frame.container_node is not None:
                 # Real Maya container -- scope cleanup to its contents.
-                cleanup(container=str(frame.container_node))
+                cleanup(container=_name_of(frame.container_node))
             elif frame.members:
                 # Flattened scope -- sweep the explicit member list collected
                 # during the with-block.
@@ -751,7 +751,7 @@ class _ContainerStack:
             return
 
         items      = list(node) if isinstance(node, (list, tuple)) else [node]
-        node_names = [str(n) for n in items]
+        node_names = [_name_of(n) for n in items]
 
         # Track UUIDs on every stack frame. A live node object gives its uuid,
         # so read it there instead of re-resolving the name (a name that parses
@@ -782,7 +782,7 @@ class _ContainerStack:
             if not made:
                 barrier()
             try:
-                cmds.container(str(leaf), edit=True, addNode=node_names, force=True)
+                cmds.container(_name_of(leaf), edit=True, addNode=node_names, force=True)
             except RuntimeError as e:
                 LOGGER.debug(
                     "Failed to add %s to container %s: %s", node_names, leaf, e
@@ -852,7 +852,7 @@ class _ContainerStack:
         # plugs via TypeError("item is not a plug")).
         try:
             # a plug is a str (its name); anything else is named by str()
-            dst_name = dst if isinstance(dst, str) else str(dst)
+            dst_name = dst if isinstance(dst, str) else _name_of(dst)
         except Exception:
             return
 
@@ -927,11 +927,11 @@ class _ContainerStack:
         if leaf is None:
             return False
         try:
-            owning_node = str(type(attr)._raw_get_node(attr))
+            owning_node = _name_of(type(attr)._raw_get_node(attr))
         except Exception:
             return False
         try:
-            return _is_direct_member(str(leaf), owning_node)
+            return _is_direct_member(_name_of(leaf), owning_node)
         except Exception:
             return False
 
@@ -1239,7 +1239,7 @@ def _discard_made(handles: list) -> None:
     # a DAG child goes with its parent
     alive = [
         name for name in names
-        if cmds.objExists(name) and not any(name.startswith(f"{other}|") for other in names)
+        if cmds.objExists(name) and not any(name.startswith(f"{_name_of(other)}|") for other in names)
     ]
     if alive:
         try:
@@ -1491,7 +1491,7 @@ def _typed_create(
             and not cls.CUSTOM_NODE_TYPE
             and isinstance(result, DGNode)
         ):
-            _gc_tag(str(result), result)
+            _gc_tag(_name_of(result), result)
         if registers:
             if created and not _made_only(result, created):
                 container.add(created)
@@ -1504,7 +1504,7 @@ def _flattened_name(prefix: str, name: Any) -> str:
     """``name`` with the flattened scope's ``prefix`` on its leaf: ``x`` is
     ``inner_x``, ``ns:x`` is ``ns:inner_x`` and ``:x`` is ``:inner_x`` (a prefix
     in front of the namespace would name, and make, another namespace)."""
-    namespace, colon, leaf = str(name).rpartition(":")
+    namespace, colon, leaf = _name_of(name).rpartition(":")
     return f"{namespace}{colon}{prefix}_{leaf}"
 
 
@@ -1515,7 +1515,7 @@ def _made_only(result: Any, created: list) -> bool:
     if len(created) != 1 or not isinstance(result, DGNode):
         return False
     try:
-        name = type(result).get_long_name(result) if isinstance(result, DAGNode) else str(result)
+        name = type(result).get_long_name(result) if isinstance(result, DAGNode) else _name_of(result)
     except (RuntimeError, ValueError):
         return False
     return name == created[0]
@@ -1802,7 +1802,7 @@ def _has_attr_or_alias(node: str, attr: str) -> bool:
     if isinstance(node, str) and _PLAIN_NODE_NAME.match(node):
         try:
             sel = OpenMaya.MSelectionList()
-            sel.add(node)
+            sel.add(_name_of(node))
             if sel.length() == 1:
                 fn = OpenMaya.MFnDependencyNode(sel.getDependNode(0))
                 return fn.hasAttribute(attr) or not fn.findAlias(attr).isNull()
@@ -1835,7 +1835,7 @@ def _get_or_create_attributes_node(container_node) -> "Node":
     ``container.createNode``) so it never gets the ``__rig__`` GC tag, then
     added as a member so ``bindAttr`` can bind its attrs to the container.
     """
-    ctn = str(container_node)
+    ctn = _name_of(container_node)
     try:
         uuid = _node_uuid(ctn)
     except (
@@ -1859,7 +1859,7 @@ def _get_or_create_attributes_node(container_node) -> "Node":
     # Create a fresh attributes node. Raw createNode => no ``__rig__`` tag =>
     # GC-safe.
     node_name = cmds.createNode(
-        "network", name=f"{ctn}_attributes", skipSelect=True
+        "network", name=f"{_name_of(ctn)}_attributes", skipSelect=True
     )
     try:
         cmds_edit.addAttr(
@@ -1889,9 +1889,9 @@ def _publish_native(container_node, inner_plug, name: str) -> str:
     auto-renames on collision (``"weight"`` -> ``"weight1"``) rather than
     raising. Returns the actual published name.
     """
-    ctn       = str(container_node)
+    ctn       = _name_of(container_node)
     published = cmds_edit.container(ctn, edit=True, publishName=name) or name
-    cmds_edit.container(ctn, edit=True, bindAttr=(str(inner_plug), published))
+    cmds_edit.container(ctn, edit=True, bindAttr=(_name_of(inner_plug), published))
     return published
 
 
@@ -1899,7 +1899,7 @@ def _published_name_exists(container_node, name: str) -> bool:
     """True iff ``name`` is already taken on ``container_node`` -- either a
     native published name / real attr (``attributeQuery`` sees both) or a
     registered multi."""
-    ctn = str(container_node)
+    ctn = _name_of(container_node)
     try:
         if cmds.attributeQuery(name, node=ctn, exists=True):
             return True
@@ -1922,9 +1922,9 @@ def _register_multi(container_node, name: str, owner) -> None:
     ``(owner_node_uuid, real_attr_name)`` so :func:`_resolve_published` can
     rebuild the real plug rename-safely.
     """
-    owner_node, _, attr = str(owner).partition(".")
+    owner_node, _, attr = _name_of(owner).partition(".")
     try:
-        uuid       = _node_uuid(str(container_node))
+        uuid       = _node_uuid(_name_of(container_node))
         owner_uuid = _node_uuid(owner_node)
     except Exception:
         return
@@ -1941,7 +1941,7 @@ def _resolve_published(container_node, name: str):
     """
     from rig._internal.plug import Plug
 
-    ctn = str(container_node)
+    ctn = _name_of(container_node)
     try:
         bind = cmds.container(ctn, query=True, bindAttr=True) or []
     except Exception:
@@ -1959,8 +1959,8 @@ def _resolve_published(container_node, name: str):
     if entry is not None:
         owner_uuid, attr = entry
         owner = _name_from_uuid(owner_uuid)
-        if owner and cmds.objExists(f"{owner}.{attr}"):
-            return Plug(f"{owner}.{attr}")
+        if owner and cmds.objExists(f"{_name_of(owner)}.{_name_of(attr)}"):
+            return Plug(f"{_name_of(owner)}.{_name_of(attr)}")
     return None
 
 
@@ -1973,10 +1973,10 @@ def _is_container_member(container_node, plug) -> bool:
     attributes-node path instead of bound directly.
     """
     try:
-        owner = str(type(plug)._raw_get_node(plug))
+        owner = _name_of(type(plug)._raw_get_node(plug))
     except Exception:
         return False
-    return _is_direct_member(str(container_node), owner)
+    return _is_direct_member(_name_of(container_node), owner)
 
 
 def _is_direct_member(container_name: str, node_name: str) -> bool:
@@ -1993,7 +1993,7 @@ def _is_direct_member(container_name: str, node_name: str) -> bool:
     try:
         if "->" not in node_name:
             sel = OpenMaya.MSelectionList()
-            sel.add(node_name)
+            sel.add(_name_of(node_name))
             mobj = sel.getDependNode(0)
             if mobj.hasFn(OpenMaya.MFn.kDagNode):
                 instanced = OpenMaya.MFnDagNode(mobj).isInstanced()
@@ -2050,12 +2050,12 @@ def _plug_is_bound(container_node, plug) -> bool:
     DISTINCT attributes-node carrier attr instead (identity / passthrough --
     e.g. an ease whose output IS its input).
     """
-    ctn = str(container_node)
+    ctn = _name_of(container_node)
     try:
         bind = cmds.container(ctn, query=True, bindAttr=True) or []
     except (RuntimeError, ValueError):
         return False
-    plug_str = str(plug)
+    plug_str = _name_of(plug)
     # bind is flat: [innerPlug, publishedName, ...]; even indices are plugs.
     return any(bind[i] == plug_str for i in range(0, len(bind) - 1, 2))
 
@@ -2076,7 +2076,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
     purpose-built knob); attrs on real inner nodes are left intact so
     destroying the public API never mutates internal compute.
     """
-    ctn   = str(container_node)
+    ctn   = _name_of(container_node)
     found = False
 
     # Native single: locate the plug bound to ``name`` and unbind it.
@@ -2130,10 +2130,10 @@ def _destroy_published_name(container_node, name: str) -> bool:
             if (
                 owner
                 and _is_attributes_node(owner)
-                and cmds.objExists(f"{owner}.{attr}")
+                and cmds.objExists(f"{_name_of(owner)}.{_name_of(attr)}")
             ):
                 try:
-                    cmds_edit.deleteAttr(f"{owner}.{attr}")
+                    cmds_edit.deleteAttr(f"{_name_of(owner)}.{_name_of(attr)}")
                 except RuntimeError as e:
                     LOGGER.debug("deleteAttr %s.%s failed: %s", owner, attr, e)
             del reg[name]
@@ -2234,14 +2234,14 @@ def _publish_to_container(
     if isinstance(container_node, Node):
         container_target = container_node
     else:
-        container_target = Node(str(container_node))
+        container_target = Node(_name_of(container_node))
 
     # Collision check -- raise a clearer error than Maya would. (``publishName``
     # silently auto-renames on collision rather than raising, so we must
     # pre-check; ``_published_name_exists`` covers native names AND multis.)
     if _published_name_exists(container_target, name):
         raise AttributeError(
-            f"{container_target}.{name} already exists; choose a different name."
+            f"{_name_of(container_target)}.{name} already exists; choose a different name."
         )
 
     # Resolve a bare matrix multi-parent (e.g. ``worldMatrix``) to its ``[0]``
@@ -2525,12 +2525,12 @@ def _create_external_input(
     if isinstance(container_node, Node):
         container_target = container_node
     else:
-        container_target = Node(str(container_node))
+        container_target = Node(_name_of(container_node))
 
     # Collision check -- raise a clearer error than Maya would.
     if _published_name_exists(container_target, name):
         raise AttributeError(
-            f"{container_target}.{name} already exists; choose a different name."
+            f"{_name_of(container_target)}.{name} already exists; choose a different name."
         )
 
     attributes_node = _get_or_create_attributes_node(container_target)
@@ -2548,9 +2548,9 @@ def _create_external_input(
         # Default to keyable=True so published knobs land in the channel
         # box (matches user expectations for an exposed input).
         kwargs.setdefault("keyable", True)
-        _add_attr_with_compound_children(str(attributes_node), kwargs)
+        _add_attr_with_compound_children(_name_of(attributes_node), kwargs)
 
-    new_plug = Plug(f"{attributes_node}.{name}")
+    new_plug = Plug(f"{_name_of(attributes_node)}.{name}")
 
     # 2. Publish the attributes-node attr natively (single) or register it
     #    (multi).
@@ -2598,11 +2598,11 @@ def _create_external_output(
     if isinstance(container_node, Node):
         container_target = container_node
     else:
-        container_target = Node(str(container_node))
+        container_target = Node(_name_of(container_node))
 
     if _published_name_exists(container_target, name):
         raise AttributeError(
-            f"{container_target}.{name} already exists; choose a different name."
+            f"{_name_of(container_target)}.{name} already exists; choose a different name."
         )
 
     attributes_node = _get_or_create_attributes_node(container_target)
@@ -2640,8 +2640,8 @@ def _create_external_output(
             if inferred_compound:
                 kwargs.update(inferred)
                 kwargs.setdefault("keyable", False)
-                _add_attr_with_compound_children(str(attributes_node), kwargs)
-                new_plug = Plug(f"{attributes_node}.{name}")
+                _add_attr_with_compound_children(_name_of(attributes_node), kwargs)
+                new_plug = Plug(f"{_name_of(attributes_node)}.{name}")
                 # Compound single (double3 etc.) -- native-publishable.
                 _publish_native(container_target, new_plug, name)
                 if value:
@@ -2662,8 +2662,8 @@ def _create_external_output(
         # but still channel-box visible would require explicit cb=True.
         kwargs.setdefault("keyable", False)
 
-        _add_attr_with_compound_children(str(attributes_node), kwargs)
-        new_plug = Plug(f"{attributes_node}.{name}")
+        _add_attr_with_compound_children(_name_of(attributes_node), kwargs)
+        new_plug = Plug(f"{_name_of(attributes_node)}.{name}")
 
         # MULTI attrs are not natively published (see module header) unless the
         # ``native_multi_publish`` flag is set -- they resolve through the
@@ -2692,10 +2692,10 @@ def _create_external_output(
             if "at" not in kwargs and "dt" not in kwargs:
                 kwargs.update(_infer_attr_type(source))
             kwargs.setdefault("keyable", False)
-            _add_attr_with_compound_children(str(attributes_node), kwargs)
+            _add_attr_with_compound_children(_name_of(attributes_node), kwargs)
         else:
             _clone_attribute(source, attributes_node, attr_name=name)
-        new_plug = Plug(f"{attributes_node}.{name}")
+        new_plug = Plug(f"{_name_of(attributes_node)}.{name}")
 
         if _plug_is_multi(new_plug) and not ContainerOptions.native_multi_publish:
             _register_multi(container_target, name, attributes_node)
@@ -2720,8 +2720,8 @@ def _create_external_output(
     if "at" not in kwargs and "dt" not in kwargs:
         kwargs.update(_infer_attr_type(source))
     kwargs.setdefault("keyable", False)
-    _add_attr_with_compound_children(str(attributes_node), kwargs)
-    new_plug = Plug(f"{attributes_node}.{name}")
+    _add_attr_with_compound_children(_name_of(attributes_node), kwargs)
+    new_plug = Plug(f"{_name_of(attributes_node)}.{name}")
     _publish_native(container_target, new_plug, name)
     if value and source is not None:
         new_plug << source
@@ -2759,7 +2759,7 @@ class Container(DGNode):
     )
 
     def __repr__(self) -> str:
-        if _is_deleted_node(self) and not _called_from_rig(1):
+        if _is_deleted_node(self):
             return f'Container("{_deleted_name(self)}", deleted)'
         return f'Container("{self._name()}")'
 
@@ -2768,8 +2768,8 @@ class Container(DGNode):
         """The reference's hook (see ``DGNode._coerce``): the unregistered
         Container wraps a node of type ``container`` (a cast of one is a plain
         node); any other node is refused."""
-        if cmds.objectType(str(node), isAType="container"):
-            return cls._wrap(str(node))
+        if cmds.objectType(_name_of(node), isAType="container"):
+            return cls._wrap(_name_of(node))
         return None
 
     def __eq__(self, other: Any) -> bool:
@@ -2826,7 +2826,7 @@ class Container(DGNode):
         for the argument and return-value documentation.
         """
         return cleanup(
-            container      = str(self),
+            container      = _name_of(self),
             extra_types    = extra_types,
             aggressive     = aggressive,
             memoize_caches = memoize_caches,

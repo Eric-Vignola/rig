@@ -34,9 +34,10 @@ from maya import cmds as _mc
 
 # the node-added tracking the typed creators share (it lives with the scope)
 from rig._internal.container import _call_tracking_creation
-from rig._internal.journal import barrier as _barrier, forward as _forward
+from rig._internal import journal as _journal
+from rig._internal.journal import barrier as _barrier
 from rig._internal.node import Node
-from rig.nodetypes._base import _cast_node, _ensure_node_valid, Attribute
+from rig.nodetypes._base import _cast_node, _ensure_node_valid, Attribute, _name_of
 
 
 # Per-command wrapper cache. Built lazily by ``__getattr__``.
@@ -69,7 +70,7 @@ def _coerce(value: Any) -> Any:
     their node is checked (see `_checked_plug`).
     """
     if isinstance(value, Node):
-        return str(value)
+        return _name_of(value)
     if isinstance(value, Attribute):
         return _checked_plug(value)
     if isinstance(value, (list, tuple)) and value:
@@ -77,7 +78,7 @@ def _coerce(value: Any) -> Any:
         # unchanged to avoid mutating arbitrary list inputs.
         if any(isinstance(x, Node) for x in value):
             return [
-                str(x) if isinstance(x, Node)
+                _name_of(x) if isinstance(x, Node)
                 else _checked_plug(x) if isinstance(x, Attribute)
                 else x
                 for x in value
@@ -150,6 +151,11 @@ def _make_wrapper(name: str) -> Callable:
         # (Pop BEFORE the cmds call so it doesn't reach Maya.)
         add_to_container = kwargs.pop("container", True)
 
+        # the List rule: a List argument (or flag value) holding a deleted or
+        # freed element raises rig's error first (`journal.check_lists`)
+        if _journal.LIST_TYPE:
+            _journal.check_lists(args, kwargs)
+
         if coerce_args:
             args   = tuple(_coerce(a) for a in args)
             kwargs = {k: _coerce(v) for k, v in kwargs.items()}
@@ -160,21 +166,17 @@ def _make_wrapper(name: str) -> Callable:
         # otherwise.
         from rig._internal.container import container
 
-        # a raw command can be any edit: the pending journal is registered first.
-        # What `_coerce` leaves (a Components, a token ...) reaches Maya's parser
-        # through `_forward`: an element of a deleted node reads as its marked
-        # name there, as in the user's own maya.cmds call, never a raise (which
-        # crashes the parser)
+        # a raw command can be any edit: the pending journal is registered first
         _barrier()
         if add_to_container and container._stack:
-            result, created = _call_tracking_creation(_forward, (fn,) + args, kwargs)
+            result, created = _call_tracking_creation(fn, args, kwargs)
             if created:
                 try:
                     container.add(created)
                 except Exception:
                     pass
         else:
-            result = _forward(fn, *args, **kwargs)
+            result = fn(*args, **kwargs)
 
         return _wrap_result(result)
 

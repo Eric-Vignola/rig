@@ -48,6 +48,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
 
+from rig.nodetypes._base import _name_of
 from rig._internal import journal
 from rig._internal.undo import _undo_chunk
 
@@ -658,7 +659,7 @@ class _Plan:
 def _kind_text(leaf: Any) -> str:
     """What a non-numeric attribute holds, for a refusal (read on its path only)."""
     try:
-        kind = cmds.getAttr(str(leaf), type=True)
+        kind = cmds.getAttr(_name_of(leaf), type=True)
     except (RuntimeError, ValueError):
         kind = None
     return kind or "non-numeric"
@@ -732,7 +733,7 @@ def _curve_name(mplug: Any) -> str:
     an element's ``[i]`` written ``_i_``, a child's ``.`` written ``_``."""
     node = OpenMaya.MFnDependencyNode(mplug.node()).name().rsplit("|", 1)[-1].rsplit(":", 1)[-1]
     attr = mplug.partialName(False, False, False, False, False, True)
-    return f"{node}_{attr.replace('[', '_').replace(']', '_').replace('.', '_')}"
+    return f"{_name_of(node)}_{attr.replace('[', '_').replace(']', '_').replace('.', '_')}"
 
 
 def _resolve_side(given_types: Any, slope: Any, weight: Any, default: int, n: int) -> Any:
@@ -794,7 +795,7 @@ def _columns(keys: _Keys, count: int, dst: Any) -> None:
         if arr is not None and np.ndim(arr) == 2 and arr.shape[1] not in (1, count):
             what = f"{count} channel" + ("s" if count != 1 else "")
             raise ValueError(
-                f"{dst} << AnimCurve(...): (N, {arr.shape[1]}) keys for {what}; give (N,) "
+                f"{_name_of(dst)} << AnimCurve(...): (N, {arr.shape[1]}) keys for {what}; give (N,) "
                 f"for the same keys on every channel or (N, {count}) for one column per channel"
             )
 
@@ -816,10 +817,10 @@ def require_plugin(what: str = "keys") -> None:
 def _indexed_name(attr: Any, mplug: Any) -> str:
     """``attr``'s name for a message, with its element index: Maya names an element of a
     per-instance array without it (``a.worldMatrix`` for ``a.wm[0]``)."""
-    name = str(attr)
+    name = _name_of(attr)
     if mplug.isElement and not name.endswith("]"):
         node = name.split(".", 1)[0]
-        return f"{node}.{mplug.partialName(False, False, True, False, False, True)}"
+        return f"{_name_of(node)}.{mplug.partialName(False, False, True, False, False, True)}"
     return name
 
 
@@ -838,8 +839,8 @@ def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     where = where or f"{_indexed_name(dst, mplug)} << AnimCurve(...)"
     if mplug.isArray:
         raise TypeError(
-            f"{where}: {str(dst)!r} is a multi attribute: key an element ({dst}[i]) or every "
-            f"element ({dst}[:]); a curve appended to the multi would add a new curve on every "
+            f"{where}: {_name_of(dst)!r} is a multi attribute: key an element ({_name_of(dst)}[i]) or every "
+            f"element ({_name_of(dst)}[:]); a curve appended to the multi would add a new curve on every "
             f"re-run and never find its own"
         )
     plan = _Plan()
@@ -1013,7 +1014,7 @@ def _new_curve(curve_type: str, name: str) -> Any:
 
     made = cmds.createNode(curve_type, name=name, skipSelect=True)
     sel = OpenMaya.MSelectionList()
-    sel.add(made)
+    sel.add(_name_of(made))
     mobj = sel.getDependNode(0)
     if container._stack:
         from rig.nodetypes._base import _cast
@@ -1119,16 +1120,16 @@ def fanout(pairs: list, fanout_channel: Any) -> None:
 def node_error(node: Any) -> TypeError:
     """``node << keys``: a curve keys a plug."""
     return TypeError(
-        f"Cannot inject AnimCurve keys into the node {str(node)!r}: a curve keys a plug, "
-        f"{node}.<attr> << AnimCurve(...)"
+        f"Cannot inject AnimCurve keys into the node {_name_of(node)!r}: a curve keys a plug, "
+        f"{_name_of(node)}.<attr> << AnimCurve(...)"
     )
 
 
 def rshift_error(lhs: Any) -> TypeError:
     """``x >> keys``: keys go on the right of ``<<``."""
     return TypeError(
-        f"'{lhs} >> AnimCurve(...)' is not a form: keys go on the right of '<<' "
-        f"({lhs} << AnimCurve(...) keys it); AnimCurve.of(x) lists the curves driving x"
+        f"'{_name_of(lhs)} >> AnimCurve(...)' is not a form: keys go on the right of '<<' "
+        f"({_name_of(lhs)} << AnimCurve(...) keys it); AnimCurve.of(x) lists the curves driving x"
     )
 
 
@@ -1137,10 +1138,12 @@ def curves_of(x: Any) -> list:
     compound's children, a multi's elements; a node: every plug it has a curve on; a List
     of them), each once, in order. A pairBlend or a unitConversion is not looked through.
     A plug of a node freed (a new scene, a file open) raises "... already deleted!" before
-    its MPlug is read; a List skips its deleted or freed elements, with one warning, as
-    every List operation does."""
+    its MPlug is read; a List holding a deleted or freed element raises (the List rule)."""
+    from rig._internal import journal
     from rig.nodetypes._base import Attribute, Node, _cast, _ensure_owner_alive
 
+    if journal.LIST_TYPE:
+        journal.check_lists((x,))
     found: list = []
     seen: dict = {}
 
@@ -1177,18 +1180,13 @@ def curves_of(x: Any) -> list:
             for mp in fn.getConnections():
                 add_source(mp)
         elif isinstance(item, (list, tuple)):
-            if isinstance(item, List):
-                # the List rule: its deleted or freed elements (and skip slots)
-                # are left out, with one warning naming them
-                item = _live(item)
             for sub in item:
                 visit(sub)
         else:
             raise TypeError(
                 f"AnimCurve.of() takes a plug, a node or a List of them; got {item!r}"
             )
-
-    from rig._internal.list import List, _live
+    from rig._internal.list import List
 
     visit(x)
     return List(found)

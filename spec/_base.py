@@ -44,6 +44,7 @@ from rig._internal.journal import cmds_edit
 # rig.nodetypes imports neither rig.spec nor rig._internal.plug
 from rig._internal.undo import _undo_chunk  # a leaf module: maya.cmds and rig._internal.journal
 from rig.nodetypes._base import (
+    _name_of,
     Attribute,
     Node,
     _attr_handle,
@@ -260,11 +261,11 @@ class _AttrSpec:
         elif isinstance(target, Node):
             wrap_node = target
         else:
-            wrap_node = Node(str(target))
+            wrap_node = Node(_name_of(target))
 
         # the node's name (a DAG node's shortest unique path, through the path
         # it holds) names the new plug for cmds
-        return self._apply_addattr(str(wrap_node), wrap_node)
+        return self._apply_addattr(_name_of(wrap_node), wrap_node)
 
     # -- internals -- #
 
@@ -510,7 +511,7 @@ class _AttrSpec:
                     own["defaultValue"] = dv[i]  # a scalar is ignored, as on creation
                 # a multi's children are named through element 0, which only a
                 # default edit would make: their default is fixed, as a multi's
-                child_plug = f"{plug_name}{index}.{child}" if multi else f"{node_string}.{child}"
+                child_plug = f"{plug_name}{index}.{_name_of(child)}" if multi else f"{node_string}.{_name_of(child)}"
                 targets.append((child_plug, child, child_at, multi, own))
         else:
             targets = [(plug_name, long_name, at, multi, settings)]
@@ -526,7 +527,7 @@ class _AttrSpec:
         if long_name is None:
             return
         wrap_node   = type(target)._raw_get_node(target) if isinstance(target, Attribute) else target
-        node_string = str(wrap_node)
+        node_string = _name_of(wrap_node)
         if wrap_node.has_attr(long_name):
             _refuse_static(node_string, long_name, wrap_node)
             if self.overwrite:
@@ -607,7 +608,7 @@ class _AttrSpec:
             if isinstance(base_dv, (list, tuple)) and len(base_dv) > i:
                 child_kargs["defaultValue"] = base_dv[i]
 
-            child_long_name = f"{self.kargs['longName']}{self.compound[i]}"
+            child_long_name = f"{self.kargs['longName']}{_name_of(self.compound[i])}"
             child_kargs.pop("longName", None)
             wrap_node.add_attr(child_long_name, **child_kargs)
 
@@ -695,7 +696,7 @@ def _existing_kind(node_string: str, long_name: str, attribute: Any) -> tuple:
         ]
         children = tuple(
             (name, cmds.addAttr(
-                f"{plug}[0].{name}" if multi else f"{node_string}.{name}",
+                f"{_name_of(plug)}[0].{name}" if multi else f"{node_string}.{name}",
                 query=True, attributeType=True,
             ))
             for name in names
@@ -810,8 +811,8 @@ def _refuse_other_name(node_string: str, long_name: str, wrap_node: Any) -> None
     pairs  = cmds.aliasAttr(node_string, query=True) or []
     target = dict(zip(pairs[::2], pairs[1::2])).get(long_name, "another attribute")
     raise TypeError(
-        f"'{node_string}.{long_name}' is an alias of {node_string}.{target}; "
-        f"re-declare {target}, or pick another name"
+        f"'{node_string}.{long_name}' is an alias of {node_string}.{_name_of(target)}; "
+        f"re-declare {_name_of(target)}, or pick another name"
     )
 
 
@@ -852,12 +853,12 @@ def _check_settings(
                 current = cmds.addAttr(target, query=True, **{flag: True})
             except (RuntimeError, TypeError, ValueError) as e:
                 raise TypeError(
-                    f"'{target}': {flag}={value!r} cannot be read on the existing "
+                    f"'{_name_of(target)}': {flag}={value!r} cannot be read on the existing "
                     f"attribute ({str(e).strip()}); overwrite=True replaces it"
                 ) from None
             if not _same_setting(current, value):
                 raise TypeError(
-                    f"'{target}': {flag} cannot be changed on an existing attribute "
+                    f"'{_name_of(target)}': {flag} cannot be changed on an existing attribute "
                     f"(it is {current!r}, the spec gives {value!r}); overwrite=True "
                     f"replaces it"
                 )
@@ -867,12 +868,12 @@ def _check_settings(
         # and a hidden flag set here is not saved as a reference edit
         if keyable is not None and bool(cmds.getAttr(target, keyable=True)) != bool(keyable):
             raise TypeError(
-                f"'{target}' comes from a referenced file: its keyable state is set in "
+                f"'{_name_of(target)}' comes from a referenced file: its keyable state is set in "
                 f"that file (Maya refuses the change); nothing was changed"
             )
         if hidden is not None and bool(cmds.addAttr(target, query=True, hidden=True)) != bool(hidden):
             raise TypeError(
-                f"'{target}' comes from a referenced file: its hidden flag is set in that "
+                f"'{_name_of(target)}' comes from a referenced file: its hidden flag is set in that "
                 f"file (Maya would not save the change); nothing was changed"
             )
     if at not in _NO_VALUE and at != "enum" and (
@@ -890,35 +891,35 @@ def _check_settings(
 
         low, high = bound("minValue", "hasMinValue"), bound("maxValue", "hasMaxValue")
         if low is not None and high is not None and low > high:
-            raise TypeError(f"'{target}': min={low} is above max={high}")
+            raise TypeError(f"'{_name_of(target)}': min={low} is above max={high}")
         if {"softMinValue", "softMaxValue"} & edit.keys():
             # a soft bound given: inside the soft pair and the range
             soft_low  = bound("softMinValue", "hasSoftMinValue")
             soft_high = bound("softMaxValue", "hasSoftMaxValue")
             if soft_low is not None and soft_high is not None and soft_low > soft_high:
-                raise TypeError(f"'{target}': softMinValue={soft_low} is above softMaxValue={soft_high}")
+                raise TypeError(f"'{_name_of(target)}': softMinValue={soft_low} is above softMaxValue={soft_high}")
             for soft, label in ((soft_low, "softMinValue"), (soft_high, "softMaxValue")):
                 if soft is None or label not in edit:
                     continue
                 if low is not None and soft < low:
-                    raise TypeError(f"'{target}': {label}={soft} is below min={low}")
+                    raise TypeError(f"'{_name_of(target)}': {label}={soft} is below min={low}")
                 if high is not None and soft > high:
-                    raise TypeError(f"'{target}': {label}={soft} is above max={high}")
+                    raise TypeError(f"'{_name_of(target)}': {label}={soft} is above max={high}")
         dv = edit.get("defaultValue")
         if isinstance(dv, (int, float)):
             if low is not None and dv < low:
-                raise TypeError(f"'{target}': dv={dv} is below min={low}")
+                raise TypeError(f"'{_name_of(target)}': dv={dv} is below min={low}")
             if high is not None and dv > high:
-                raise TypeError(f"'{target}': dv={dv} is above max={high}")
+                raise TypeError(f"'{_name_of(target)}': dv={dv} is above max={high}")
         elif "defaultValue" not in edit and {"minValue", "maxValue"} & edit.keys():
             # a new range moves the attribute's own default into it, silently
             # and for good (an undo keeps it): refuse, naming dv=
             current = cmds.addAttr(target, query=True, defaultValue=True)
             if isinstance(current, (int, float)):
                 if low is not None and current < low:
-                    raise TypeError(f"'{target}': the default {current} is below min={low}; pass dv=")
+                    raise TypeError(f"'{_name_of(target)}': the default {current} is below min={low}; pass dv=")
                 if high is not None and current > high:
-                    raise TypeError(f"'{target}': the default {current} is above max={high}; pass dv=")
+                    raise TypeError(f"'{_name_of(target)}': the default {current} is above max={high}; pass dv=")
     if at == "enum" and isinstance(edit.get("defaultValue"), numbers.Integral):
         fields = (
             _parse_enum_names(edit["enumName"]) if "enumName" in edit
@@ -927,7 +928,7 @@ def _check_settings(
         if edit["defaultValue"] not in {value for _, value in fields}:
             listed = ", ".join(f"{field}={value}" for field, value in fields) or "none"
             raise TypeError(
-                f"'{target}': dv={edit['defaultValue']} is not one of its enum fields' values: {listed}"
+                f"'{_name_of(target)}': dv={edit['defaultValue']} is not one of its enum fields' values: {listed}"
             )
     default = edit.pop("defaultValue", None) if _API_DEFAULT.get(at) else None
     return edit, default, keyable, hidden
@@ -936,7 +937,7 @@ def _check_settings(
 def _attribute_of(target: str) -> Any:
     """The attribute MObject of the plug name ``target``."""
     sel = OpenMaya.MSelectionList()
-    sel.add(target)
+    sel.add(_name_of(target))
     return sel.getPlug(0).attribute()
 
 
@@ -1086,7 +1087,7 @@ def _clone_attribute(
         attr_name = (
             type(src_plug).get_alias(src_plug)
             if isinstance(src_plug, Plug)
-            else str(src_plug).rsplit(".", 1)[-1]
+            else _name_of(src_plug).rsplit(".", 1)[-1]
         )
 
     # Auto-detect multi from src.
@@ -1166,7 +1167,7 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
 
     if not isinstance(src_plug, Plug):
         # Bare plug-like -- wrap.
-        src_plug = Plug(str(src_plug))
+        src_plug = Plug(_name_of(src_plug))
 
     # a typed attr that holds any data clones as one, whatever it holds now (an
     # element as a single one): tested before the data type, which follows its input

@@ -127,10 +127,10 @@ from rig.nodetypes.material_node import (
     StandardSurface,
     SurfaceShader,
 )
+from rig.nodetypes._base import _name_of
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal.list import List
 from rig._internal.members import (
-    _as_user_reads,
     _GEOMETRY_TYPES,
     _MemberSpec,
     _NeverHolds,
@@ -249,7 +249,7 @@ def _num_faces(path: str) -> int:
 
 
 def _face_names(path: str, ids: np.ndarray) -> list[str]:
-    return [f"{path}.{token}" for token in _render_tokens("f", ids)]
+    return [f"{path}.{_name_of(token)}" for token in _render_tokens("f", ids)]
 
 
 @dataclass
@@ -350,7 +350,7 @@ def _held(engine: ShadingEngine, path: str) -> Any:
     reports through it; on an instance Maya releases faces despite the
     link, so it counts for nothing."""
     groups = _groups(path)
-    name   = str(engine)
+    name   = _name_of(engine)
     if groups.owner == name:
         return None
     parts = [ids for holder, ids in groups.explicit if holder == name]
@@ -586,9 +586,9 @@ def _check_instanced(engine: str, target: _Target) -> None:
         return
     transform = _short(target.path.rsplit("|", 1)[0])
     raise TypeError(
-        f"'{target.path}' is an instance and {engine} holds the whole object "
+        f"'{target.path}' is an instance and {_name_of(engine)} holds the whole object "
         f"there: Maya releases no faces of an instanced object-level membership. "
-        f"Assign the faces to keep explicitly instead ({transform}.f[keep] << "
+        f"Assign the faces to keep explicitly instead ({_name_of(transform)}.f[keep] << "
         f"Material('x')) or de-instance the shape first"
     )
 
@@ -603,12 +603,12 @@ def _remove_members(engine: ShadingEngine, target: _Target) -> None:
     _make_explicit(target.path)
     held = _held(engine, target.path)
     if target.whole:
-        _cmds_edit.sets(target.path, edit=True, remove=str(engine))
+        _cmds_edit.sets(target.path, edit=True, remove=_name_of(engine))
     elif held is not _NOT_MEMBER:
         requested = target.face_ids()
         inside    = requested if held is None else np.intersect1d(held, requested)
         if inside.size:
-            _cmds_edit.sets(_face_names(target.path, inside), edit=True, remove=str(engine))
+            _cmds_edit.sets(_face_names(target.path, inside), edit=True, remove=_name_of(engine))
     _verify(engine, target, present=False)
 
 
@@ -628,8 +628,8 @@ def _verify(engine: ShadingEngine, target: _Target, present: bool) -> None:
     if not ok:
         state = "hold" if present else "release"
         raise RuntimeError(
-            f"{engine} did not {state} {target.names()[0]}; it holds "
-            f"{cmds.sets(str(engine), query=True) or []}"
+            f"{_name_of(engine)} did not {state} {target.names()[0]}; it holds "
+            f"{cmds.sets(_name_of(engine), query=True) or []}"
         )
 
 
@@ -645,13 +645,13 @@ def _adopt(material: str) -> ShadingEngine:
     if owner:
         _cmds_edit.container(
             owner, edit=True, force=True,
-            addNode=[str(engine), *engine.get_material_info()],
+            addNode=[_name_of(engine), *engine.get_material_info()],
         )
     shader = engine.get_material()
-    if shader is None or str(shader) != material:
+    if shader is None or _name_of(shader) != material:
         raise RuntimeError(
-            f"{engine}.surfaceShader does not read '{material}' after the "
-            f"build (it reads {shader})"
+            f"{_name_of(engine)}.surfaceShader does not read '{_name_of(material)}' after the "
+            f"build (it reads {_name_of(shader)})"
         )
     return engine
 
@@ -701,7 +701,7 @@ def _held_by(engines: list[ShadingEngine], path: str) -> Any:
 def _is_default(engine: ShadingEngine) -> bool:
     """Whether ``engine`` is ``initialShadingGroup``, by its leaf (the name
     reads ``:initialShadingGroup`` with ``namespace -relativeNames`` on)."""
-    return _leaf(str(engine)) == ShadingEngine.DEFAULT
+    return _leaf(_name_of(engine)) == ShadingEngine.DEFAULT
 
 
 def _answer(kind: type, engine: ShadingEngine) -> Any:
@@ -721,7 +721,7 @@ def _answer(kind: type, engine: ShadingEngine) -> Any:
         pick = ShadingEngine.for_material(shader, create=False)
     except ValueError:
         pick = None
-    return shader if pick is not None and str(pick) == str(engine) else engine
+    return shader if pick is not None and _name_of(pick) == _name_of(engine) else engine
 
 
 def _of(kind: type, selections: list[_Selection]) -> list:
@@ -742,13 +742,6 @@ def _of(kind: type, selections: list[_Selection]) -> list:
         if answer is not None and answer not in found:
             found.append(answer)
     return found
-
-
-def _material_token_repr(token: "_MaterialMember") -> str:
-    # (`_as_user_reads`: a deleted shader or engine shows marked to a user)
-    if token._node is None:
-        return f"{token._kind.__name__}()"
-    return f"{'-' if token._remove else ''}{token._node!r}"
 
 
 class _MaterialMember(_MemberSpec):
@@ -789,7 +782,7 @@ class _MaterialMember(_MemberSpec):
 
     @property
     def _name(self) -> str | None:
-        return None if self._node is None else str(self._node)
+        return None if self._node is None else _name_of(self._node)
 
     @property
     def _purges(self) -> bool:
@@ -812,7 +805,9 @@ class _MaterialMember(_MemberSpec):
         )
 
     def __repr__(self) -> str:
-        return _as_user_reads(_material_token_repr, self)
+        if self._node is None:
+            return f"{self._kind.__name__}()"
+        return f"{'-' if self._remove else ''}{self._node!r}"
 
     def __getattr__(self, name: str) -> Any:
         # a token is no material: its methods and plugs are the node's
@@ -826,13 +821,13 @@ class _MaterialMember(_MemberSpec):
         node stands for the shader feeding it (the particle engine and an
         engine fed by no surface shader raise). A deleted node raises its
         ``already deleted!`` here, before any write."""
-        name = str(self._node)
+        name = _name_of(self._node)
         if isinstance(self._node, ShadingEngine):
             return _engine_found(name)
         return _Found(name, None, cmds.nodeType(name))
 
     def _clone_target(self) -> str | None:
-        return None if self._node is None or self._remove else str(self._node)
+        return None if self._node is None or self._remove else _name_of(self._node)
 
     # -- refusals -- #
 
@@ -867,7 +862,7 @@ class _MaterialMember(_MemberSpec):
         steps = []
         for engine in _engines_read(self._found()):
             for target in targets:
-                _check_instanced(str(engine), target)
+                _check_instanced(_name_of(engine), target)
                 steps.append(lambda e=engine, t=target: _remove_members(e, t))
         return steps
 
@@ -886,7 +881,7 @@ class _MaterialMember(_MemberSpec):
         for target in targets:
             # Faces into the engine that already owns the whole shape is the
             # one permitted no-op: the state holds and nothing is rewritten.
-            if not target.whole and _plain_owner(target.path) != str(engine):
+            if not target.whole and _plain_owner(target.path) != _name_of(engine):
                 _make_explicit(target.path)
         engine.assign([name for target in targets for name in target.names()])
         for target in targets:
@@ -940,7 +935,7 @@ class _MaterialMember(_MemberSpec):
             x,
             want_shapes  = True,
             refuse_plugs = lambda plug: TypeError(
-                f"'{plug}' is a plug; membership takes the node: {kind}.of({type(plug)._raw_get_node(plug)})"
+                f"'{_name_of(plug)}' is a plug; membership takes the node: {kind}.of({type(plug)._raw_get_node(plug)})"
             ),
         )
         try:

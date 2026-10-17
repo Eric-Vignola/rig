@@ -39,7 +39,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
-from rig.nodetypes._base import _cast
+from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.object_set import ObjectSet
@@ -157,7 +157,7 @@ class ShadingEngine(ObjectSet):
         """A Maya default engine (``initialShadingGroup``, ``initialParticleSE``)
         takes no delete or rename: TypeError, nothing written (Maya itself
         prints an error and deletes nothing, or raises a RuntimeError)."""
-        name = str(self)
+        name = _name_of(self)
         if cmds.ls(name, defaultNodes=True):
             raise TypeError(f"'{name}' cannot be {verb}: it is a Maya default shading engine")
 
@@ -222,10 +222,10 @@ class ShadingEngine(ObjectSet):
         """
         sel = OpenMaya.MSelectionList()
         try:
-            sel.add(str(material) if isinstance(material, DGNode) else str(material))
+            sel.add(_name_of(material) if isinstance(material, DGNode) else _name_of(material))
         except RuntimeError:
-            found = cmds.ls(str(material))
-            raise ValueError(f"Material must match one node: {material} -> {found}") from None
+            found = cmds.ls(_name_of(material))
+            raise ValueError(f"Material must match one node: {_name_of(material)} -> {_name_of(found)}") from None
         shader   = OpenMaya.MFnDependencyNode(sel.getDependNode(0))
         material = shader.absoluteName()
 
@@ -242,7 +242,7 @@ class ShadingEngine(ObjectSet):
                 engines.append(node)
 
         leaf         = material.rsplit(":", 1)[-1]
-        default_name = f":{leaf}SG" if shader.isFromReferencedFile else f"{material}SG"
+        default_name = f":{leaf}SG" if shader.isFromReferencedFile else f"{_name_of(material)}SG"
         if len(engines) == 1:
             return cls._wrap(engines[0])
         if engines:
@@ -260,7 +260,7 @@ class ShadingEngine(ObjectSet):
         engine.set_material(material)
         if not _listed(shader):
             _cmds_edit.connectAttr(
-                f"{material}.message", "defaultShaderList1.shaders", nextAvailable=True
+                f"{_name_of(material)}.message", "defaultShaderList1.shaders", nextAvailable=True
             )
         return engine
 
@@ -269,7 +269,7 @@ class ShadingEngine(ObjectSet):
     def get_material(self) -> DGNode | None:
         """Returns the surface shader feeding this engine, or None."""
         material = cmds.listConnections(
-            f"{self}.surfaceShader", source=True, destination=False
+            f"{_name_of(self)}.surfaceShader", source=True, destination=False
         )
         return _cast(material[0]) if material else None
 
@@ -280,14 +280,14 @@ class ShadingEngine(ObjectSet):
             material: A surface shader node (its ``outColor`` is used) or an
                 output plug string such as ``"myRamp.outColor"``.
         """
-        source = str(material)
+        source = _name_of(material)
         if "." not in source:
-            source = f"{source}.outColor"
-        _cmds_edit.connectAttr(source, f"{self}.surfaceShader", force=True)
+            source = f"{_name_of(source)}.outColor"
+        _cmds_edit.connectAttr(source, f"{_name_of(self)}.surfaceShader", force=True)
 
     def get_material_info(self) -> list[str]:
         """Returns the materialInfo nodes attached to this engine."""
-        return cmds.listConnections(f"{self}.message", type="materialInfo") or []
+        return cmds.listConnections(f"{_name_of(self)}.message", type="materialInfo") or []
 
     # --- membership
 
@@ -353,11 +353,11 @@ class ShadingEngine(ObjectSet):
             touched: The shapes the members live on, by any name.
             normalise: If True, collapse all-faces memberships to object level.
         """
-        members = [str(x) for x in members]
+        members = [_name_of(x) for x in members]
         touched = [_long_name(x) for x in touched]
         before  = self._group_ids(touched)
 
-        _cmds_edit.sets(members, edit=True, forceElement=str(self))
+        _cmds_edit.sets(members, edit=True, forceElement=_name_of(self))
 
         if normalise:
             self._renormalise(touched)
@@ -378,7 +378,7 @@ class ShadingEngine(ObjectSet):
             if path in touched and len(ids) == OpenMaya.MFnMesh(dagpath).numPolygons:
                 paths.append(path)
         if paths:
-            _cmds_edit.sets(paths, edit=True, forceElement=str(self))
+            _cmds_edit.sets(paths, edit=True, forceElement=_name_of(self))
 
     @staticmethod
     def _group_ids(shapes: Sequence[str]) -> set[str]:
@@ -391,7 +391,7 @@ class ShadingEngine(ObjectSet):
 
 def _long_name(node: str | DAGNode) -> str:
     """Returns the full DAG path of a node that matches exactly one path."""
-    found = cmds.ls(str(node), long=True)
+    found = cmds.ls(_name_of(node), long=True)
     if len(found) != 1:
-        raise ValueError(f"Shape must match one node: {node} -> {found}")
+        raise ValueError(f"Shape must match one node: {_name_of(node)} -> {_name_of(found)}")
     return found[0]

@@ -442,7 +442,7 @@ def _member_refused(owner: str, name: str, value: Any, plug: bool) -> TypeError:
         # ``@functools.lru_cache`` / ``cache``, ``partialmethod``,
         # ``singledispatchmethod``: a method, but not a plain function
         return TypeError(
-            f"{owner}.{name}: {what} takes a public method as a plain function "
+            f"{_name_of(owner)}.{name}: {what} takes a public method as a plain function "
             f"(def {name}(self, ...)), so that a bare name is {bare} or the "
             f"method; a decorated method ({type(value).__name__}) is not one: "
             f"decorate a private helper (_{name}) and call it from a plain method"
@@ -456,8 +456,8 @@ def _member_refused(owner: str, name: str, value: Any, plug: bool) -> TypeError:
     else:
         fix = f"write a method (def get_{name}(self)), or keep it private (_{name})"
     return TypeError(
-        f"{owner}.{name}: {what} has no public {kind} (every public member of a "
-        f"{attr} is a method, so that a bare name is {bare} or the method): {fix}"
+        f"{_name_of(owner)}.{name}: {what} has no public {kind} (every public member of a "
+        f"{_name_of(attr)} is a method, so that a bare name is {bare} or the method): {fix}"
     )
 
 
@@ -771,14 +771,14 @@ def _cast(obj: Any, build: bool = True) -> Any:
         obj      = obj.partialPathName()
     elif not isinstance(obj, str):
         t = type(obj)
-        raise ValueError(f"{obj} ({t}) is not a str, MObject, MDagPath, or MPlug")
+        raise ValueError(f"{_name_of(obj)} ({t}) is not a str, MObject, MDagPath, or MPlug")
 
     # if obj is given as a unique id, convert to string
     # (uuid.UUID() needs 32 hex digits, so a shorter string is never a uid)
     if len(obj) >= 32 and is_valid_maya_uid(obj):
         str_from_uid = cmds.ls(obj, uid=True)
         if not str_from_uid:
-            raise TypeError(f"No object matches uuid: {obj}.")
+            raise TypeError(f"No object matches uuid: {_name_of(obj)}.")
 
         # node name is properly converted to a name string
         obj      = str_from_uid[0]
@@ -800,7 +800,7 @@ def _cast(obj: Any, build: bool = True) -> Any:
             mobj = dag_path.node()
         elif mobj is None and _PLAIN_NODE_NAME.match(obj):
             sel = OpenMaya.MSelectionList()
-            sel.add(obj)
+            sel.add(_name_of(obj))
             if sel.length() == 1:
                 mobj = sel.getDependNode(0)
         handed_in = from_mobject or dag_path is not None
@@ -825,7 +825,7 @@ def _cast(obj: Any, build: bool = True) -> Any:
     else:
         cls_obj = _CLASS_BY_TYPE[key] = _native_node_class(obj)
     if not cls_obj:
-        raise ValueError(f"Failed casting {obj}")
+        raise ValueError(f"Failed casting {_name_of(obj)}")
     if not build and type(cls_obj) is NodeMeta and _keeps_base_constructor(cls_obj):
         return cls_obj
 
@@ -896,7 +896,7 @@ def _cast_by_name(obj: str) -> Any:
         _USER_CODE_RUNS[0] += 1
         return _construct(cls_obj, obj)
 
-    raise ValueError(f"Failed casting {obj}")
+    raise ValueError(f"Failed casting {_name_of(obj)}")
 
 
 def _construct(cls_obj: Any, obj: Any) -> Any:
@@ -1063,7 +1063,7 @@ def _construct_checked_type(cls_obj, obj: str, sel: Any = None) -> Any:
     try:
         if sel is None:
             sel = OpenMaya.MSelectionList()
-            sel.add(str(obj))
+            sel.add(_name_of(obj))
         inst = object.__new__(cls_obj)
         d    = inst.__dict__
         if init is dag_init:
@@ -1109,12 +1109,13 @@ def _mobject_to_str(mobject: OpenMaya.MObject) -> str:
 
 def get_custom_type(node_name: str) -> str | None:
     """Returns the value of the custom type attr, if exists."""
+    node_name = _name_of(node_name)
     # answer "no custom type" with the API when the name resolves to one node;
     # attributeQuery(exists) also matches aliases, hasAttribute does not
     if isinstance(node_name, str) and _PLAIN_NODE_NAME.match(node_name):
         try:
             sel = OpenMaya.MSelectionList()
-            sel.add(node_name)
+            sel.add(_name_of(node_name))
             if sel.length() == 1:
                 fn = OpenMaya.MFnDependencyNode(sel.getDependNode(0))
                 if (
@@ -1130,6 +1131,7 @@ def get_custom_type(node_name: str) -> str | None:
 
 def set_custom_type(node_name: str, custom_type: str) -> None:
     """Sets the custom type of a given node."""
+    node_name = _name_of(node_name)
     attr = f"{node_name}.{CUSTOM_TYPE_ATTR}"
     if cmds.attributeQuery(CUSTOM_TYPE_ATTR, node=node_name, exists=True):
         cmds_edit.deleteAttr(attr)
@@ -1383,9 +1385,9 @@ def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None
         if fn is None:
             fn = OpenMaya.MFnDependencyNode(mplug.node())
         if fn.isLocked:
-            name = str(attr).partition(".")[0]
+            name = _name_of(attr).partition(".")[0]
             return (
-                f"'{str(attr)}' is on the locked node '{name}', whose plugs Maya "
+                f"'{_name_of(attr)}' is on the locked node '{name}', whose plugs Maya "
                 f"never {'locks' if state else 'unlocks'}: {_unlock_way(name)[1]}. "
                 f"Nothing was changed"
             )
@@ -1401,67 +1403,64 @@ def _plug_lock_refusal(attr: Any, state: bool, node: bool = True) -> "str | None
             holder = cur
     if holder is None:
         return None
-    held = str(_new_attr(Attribute, holder))
+    held = _name_of(_new_attr(Attribute, holder))
     return (
-        f"'{str(attr)}' is locked by its parent '{held}' (a locked parent locks "
+        f"'{_name_of(attr)}' is locked by its parent '{held}' (a locked parent locks "
         f"its children): Plug({held!r}).unlock() unlocks it. Nothing was changed"
     )
 
 
-# {module name: True if it is rig's own code}: `_called_from_rig`'s cache
-_RIG_FRAMES: dict = {}
+# --------------------------------------------------------------------------- #
+# Names of deleted things (user decision 6C, 2026-10-17)
+#
+# ``str()`` of a node deleted to the undo queue or freed (a new scene, a file
+# open, a reference unload, a flushed undo queue) is its last known name,
+# marked, for EVERYONE: ``"ctl_b (deleted)"``, which names no Maya node. The
+# same holds for a plug of one (``"ctl_b.translateX (deleted)"``), a Components
+# on one and a membership token of one. A user, ``print``, logging, an f-string
+# and Maya's own argument readers get it; Maya, given that name, raises its own
+# clean error ("No object matches name", "Object [...] is invalid", "Cannot
+# find node 'ctl_b (deleted)'"), where a ``str()`` that raised would crash it.
+# A repr is marked too and never raises.
+#
+# rig's own code never reads a name through ``str()``: it reads it through the
+# PRIVATE NAME READER, `_name_of`, which raises "... already deleted!" for such
+# a node, plug, Components or token: an operation on a deleted node raises, as
+# it always did (a guard, a cmds argument, a memo key, a container record ...).
+# No caller is inspected anywhere.
+#
+# A plug is a ``str`` subclass: Maya's argument readers read its str buffer
+# directly (the name it was built with, unmarked) and never call ``str()``, so
+# raw ``cmds.getAttr(plug)`` of a plug of a deleted node raises "No object
+# matches name", or reads the node that now has that name. Python's ``str()``,
+# f-strings and ``%s`` call ``__str__`` and get the marked name, as for a node
+# (``str.join`` and ``+`` read the buffer, as for any str subclass).
+# --------------------------------------------------------------------------- #
+
+# what follows the last known name of a deleted or freed node in its str
+_DELETED_MARK = " (deleted)"
+
+def _name_of(x: Any) -> str:
+    """rig's private name reader: the name of a node, a plug, a Components or a
+    membership token (its class's ``_rig_name``), raising "... already deleted!"
+    when it (its node) was deleted or freed, where ``str()`` gives the marked
+    name; any other object's ``str()`` (a str as it is). Every rig use of a name
+    reads it here."""
+    if type(x) is str:
+        return x
+    read = getattr(type(x), "_rig_name", None)
+    return str(x) if read is None else read(x)
 
 
-def _called_from_rig(depth: int) -> bool:
-    """True if the caller `depth` frames above the function calling this one is
-    rig's own code (its package, not ``rig.examples`` / ``rig._tests``: the
-    barrier lint's rule, `journal._in_rig`), by its module name, cached.
-
-    The str and repr of a node deleted or freed, or of a plug of one (user
-    decision 2026-10-16 "Deleted nodes in a List"): a user, Maya's argument
-    parser (called from a user's ``cmds.select(nodes)``) and a List's repr get
-    the last known name, marked, which names no Maya node; rig's own code
-    reading a name is an operation on that node, which raises "... already
-    deleted!", as it always did (a guard, a message, a memo key). Only the
-    deleted path reads the caller (one frame read).
-
-    Not rig's code, so the marked name (fix round 2026-10-17: a str() that
-    raises inside Maya's argument parser crashes Maya):
-    - `rig._internal.journal`'s frames: it calls maya.cmds with the arguments
-      rig's wrappers forward from a user (``node.delete(nodes)``,
-      ``BlendShape.create(targets)``, ``rc.select(...)``: ``cmds_edit``,
-      `journal.forward`), and Maya's parser reads them there;
-    - no Python frame at all: C code called the str() or repr() (a Qt slot, a
-      deferred or atexit callable, a thread: ``partial(cmds.select, ctls)``);
-    - a repr rendered for a user (`_user_view`: a List's, a Components', a
-      membership token's), whose own frame is rig's."""
-    if _USER_VIEW[0]:
-        return False
-    try:
-        frame = _GETFRAME(depth + 1)
-    except ValueError:  # "call stack is not deep enough": no Python caller
-        return False
-    module = frame.f_globals.get("__name__") or ""
-    rig    = _RIG_FRAMES.get(module)
-    if rig is None:
-        rig = _RIG_FRAMES[module] = _journal._in_rig(module) and module != _journal.__name__
-    return rig
-
-
-# above 0 while `_user_view` renders: `_called_from_rig` then answers False
-_USER_VIEW = [0]
-
-
-def _user_view(render: Any, *args: Any) -> Any:
-    """``render(*args)`` with every deleted or freed node read as a user reads it
-    (its marked name: `_called_from_rig` answers False): for a repr that renders
-    what it holds (a List's elements, a token's node), once its plain rendering
-    raised for a deleted one."""
-    _USER_VIEW[0] += 1
-    try:
-        return render(*args)
-    finally:
-        _USER_VIEW[0] -= 1
+def _plug_gone(attr: Any) -> bool:
+    """True if `attr`'s node (the handle it took of it) was deleted or freed, or
+    its dynamic attribute was deleted: what its marked str and repr show."""
+    d      = attr.__dict__
+    handle = d.get("_handle")
+    if handle is not None and not handle.isValid():
+        return True
+    attrh = d.get("_attrh")
+    return attrh is not None and not attrh.isAlive()
 
 
 def _deleted_plug_repr(attr: Any, cls_name: str | None = None) -> str:
@@ -1891,7 +1890,7 @@ def _owner_is_instanced(owner: Any) -> bool:
 def _full_name_buffer(attr: Any) -> Any:
     """`attr`, or a copy of it (sharing its state) whose str buffer is its full
     name, if the two differ. For a fresh attr only: the copy stands in for it."""
-    name = str(attr)
+    name = _name_of(attr)
     if name == str.__str__(attr):
         return attr
     copy = str.__new__(type(attr), name)
@@ -1951,7 +1950,7 @@ def _path_instance_number(attr: Any, node: Any = None) -> int | None:
     fn = node.__dict__.get("_fn_set")
     if not isinstance(fn, OpenMaya.MFnDagNode) or not _is_instanced_array(mplug):
         return None
-    str(node)  # the name `get_full_name` gives (re-paths a stale path, raises if deleted)
+    _name_of(node)  # the name `get_full_name` gives (re-paths a stale path, raises if deleted)
     return fn.getPath().instanceNumber()
 
 
@@ -1985,8 +1984,8 @@ def _same_plug(attr: Any, other: Any) -> bool:
     through (``Node("|T1|S").v`` and ``Node("|T2|S").v``). World space elements of
     different instances are different plugs. Both are named first, so a deleted
     or freed node raises as the names did."""
-    str(attr)
-    str(other)
+    _name_of(attr)
+    _name_of(other)
     if attr is other:
         return True
     return attr.__dict__["_mplug"].node() == other.__dict__["_mplug"].node() and (
@@ -2329,7 +2328,7 @@ def _plug_hash(attr: Any) -> int:
     handle = node.__dict__.get("_objhandle")
     if handle is None:
         # not a DGNode: named as str(node) names it
-        return hash((hash(str(node)), _plug_identity_name(attr)))
+        return hash((hash(_name_of(node)), _plug_identity_name(attr)))
     if not handle.isAlive():
         return hash((handle.hashCode(), str.__str__(attr)))
     serial = _node_serial(node)
@@ -2972,12 +2971,12 @@ def _check_attrs(attrs: dict, *, node_type: str | None = None, node: str | None 
     for attr, value in attrs.items():
         query = {"type": node_type} if node is None else {"node": node}
         if not cmds.attributeQuery(attr, exists=True, **query):
-            where = f"a {node_type}" if node is None else f"'{node}'"
-            raise AttributeError(f"{where} has no attribute '{attr}'")
+            where = f"a {node_type}" if node is None else f"'{_name_of(node)}'"
+            raise AttributeError(f"{where} has no attribute '{_name_of(attr)}'")
         if _holds_text(value):
             attribute = _attribute_of(attr, node_type=node_type, node=node)
             if attribute is not None:
-                _check_enum_names(attribute, value, f"{node or node_type}.{attr}")
+                _check_enum_names(attribute, value, f"{_name_of(node or node_type)}.{_name_of(attr)}")
 
 
 def _attribute_of(attr: str, *, node_type: str | None, node: str | None):
@@ -2988,7 +2987,7 @@ def _attribute_of(attr: str, *, node_type: str | None, node: str | None):
             found = OpenMaya.MNodeClass(node_type).attribute(attr)
         else:
             sel = OpenMaya.MSelectionList()
-            sel.add(node)
+            sel.add(_name_of(node))
             found = OpenMaya.MFnDependencyNode(sel.getDependNode(0)).attribute(attr)
     except (RuntimeError, TypeError, ValueError):
         return None
@@ -3103,7 +3102,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """
         if isinstance(name_or_mplug, str):
             sel = OpenMaya.MSelectionList()
-            sel.add(name_or_mplug)
+            sel.add(_name_of(name_or_mplug))
             mplug = sel.getPlug(0)
         elif isinstance(name_or_mplug, OpenMaya.MPlug):
             mplug = name_or_mplug
@@ -3156,16 +3155,30 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def __repr__(self) -> str:
         # a plug of a node deleted or freed shows the name it was built with,
-        # marked, as its node does (``Plug("obj1.translateX", deleted)``, user
-        # decision 2026-10-16: a List of them repr()s); its str raises, and so
-        # does its repr in rig's own code (`_called_from_rig`)
-        handle = self.__dict__.get("_handle")
-        if handle is not None and not handle.isValid() and not _called_from_rig(1):
+        # marked, as its node does (``Plug("obj1.translateX", deleted)``): a
+        # repr never raises (a List's repr, Maya's "Object [...] is invalid")
+        if _plug_gone(self):
             return _deleted_plug_repr(self)
-        return f'{self.__class__.__name__}("{str(self)}")'
+        try:
+            return f'{self.__class__.__name__}("{type(self)._raw_get_full_name(self)}")'
+        except Exception:  # noqa: BLE001 (a repr never raises)
+            return _deleted_plug_repr(self) if _plug_gone(self) else object.__repr__(self)
 
     def __str__(self) -> str:
-        # the name `get_full_name` gives (a subclass's own, ComponentPlug's)
+        # the name `get_full_name` gives (a subclass's own, ComponentPlug's); a
+        # plug of a node deleted or freed is the name it was built with, marked,
+        # for everyone (``"obj1.translateX (deleted)"``, user decision 6C); rig
+        # reads names through `_name_of` (`_rig_name`), which raises
+        try:
+            return type(self)._raw_get_full_name(self)
+        except RuntimeError:
+            if not _plug_gone(self):
+                raise
+            return str.__str__(self) + _DELETED_MARK
+
+    def _rig_name(self) -> str:
+        # the private name reader's (`_name_of`): "... already deleted!" for a
+        # plug of a node deleted or freed
         return type(self)._raw_get_full_name(self)
 
     def __hash__(self) -> int:
@@ -3188,7 +3201,7 @@ class Attribute(str, metaclass=_PlugMeta):
         return not self.__eq__(other)
 
     def __gt__(self, other: Any) -> bool:
-        return str(self) > str(other)
+        return _name_of(self) > _name_of(other)
 
     def __getitem__(
         self, key: int | slice | list | tuple | np.ndarray
@@ -3231,7 +3244,7 @@ class Attribute(str, metaclass=_PlugMeta):
                 count = _point_count(self)
                 ids   = np.where(ids < 0, ids + count, ids)
                 if ids.size and (ids.min() < 0 or ids.max() >= count):
-                    raise IndexError(f"{self} index out of range for {count} points")
+                    raise IndexError(f"{_name_of(self)} index out of range for {count} points")
             return [self.element_by_logical_index(int(index)) for index in ids]
 
         elif isinstance(key, slice):
@@ -3352,7 +3365,7 @@ class Attribute(str, metaclass=_PlugMeta):
         if attr_name in names:
             return names[attr_name]
         try:
-            name = str(self)
+            name = _name_of(self)
         except RuntimeError:
             if attr_name[:1] != "_":
                 raise
@@ -3441,7 +3454,7 @@ class Attribute(str, metaclass=_PlugMeta):
         node = self.__dict__["_node"]
         if node is None:
             node = type(self)._raw_get_node(self)
-        name = str(node)
+        name = _name_of(node)
         # `alias`, read once the name proved the node is alive, and the attribute
         # of a dynamic attr (see `_ensure_owner_alive`)
         d      = self.__dict__
@@ -3468,15 +3481,15 @@ class Attribute(str, metaclass=_PlugMeta):
             return
         if not alias:
             if cur_alias != type(self)._raw_get_name(self):
-                cmds_edit.aliasAttr(str(self), remove=True)
+                cmds_edit.aliasAttr(_name_of(self), remove=True)
             return
-        cmds_edit.aliasAttr(alias, str(self))
+        cmds_edit.aliasAttr(alias, _name_of(self))
 
     def get_attribute_type(self) -> str:
         """Returns the type of this attribute."""
         cls = type(self)
         return cmds.attributeQuery(
-            cls._raw_get_name(self), node=str(cls._raw_get_node(self)), attributeType=True
+            cls._raw_get_name(self), node=_name_of(cls._raw_get_node(self)), attributeType=True
         )
 
     def get_data_type(self) -> str:
@@ -3485,7 +3498,7 @@ class Attribute(str, metaclass=_PlugMeta):
         owner = _dg_named_owner(self)
         if owner is None:
             # the name comes first so a deleted node's plug raises as before
-            full_name = str(self)
+            full_name = _name_of(self)
         else:
             # naming the attr would raise only from these checks (see
             # `_dg_named_owner`), so the name is built on a miss only
@@ -3497,7 +3510,7 @@ class Attribute(str, metaclass=_PlugMeta):
             if typ is not None:
                 return typ
         if full_name is None:
-            full_name = str(self)
+            full_name = _name_of(self)
 
         typ = cmds.getAttr(full_name, type=True)
 
@@ -3592,7 +3605,7 @@ class Attribute(str, metaclass=_PlugMeta):
             why = _plug_lock_refusal(self, True)
             if why:
                 raise _injection_error(why)
-            cmds_edit.setAttr(str(self), lock=True)
+            cmds_edit.setAttr(_name_of(self), lock=True)
         return self
 
     def unlock(self) -> "Attribute":
@@ -3608,7 +3621,7 @@ class Attribute(str, metaclass=_PlugMeta):
             why = _plug_lock_refusal(self, False)
             if why:
                 raise _injection_error(why)
-            cmds_edit.setAttr(str(self), lock=False)
+            cmds_edit.setAttr(_name_of(self), lock=False)
         return self
 
     def is_keyable(self) -> bool:
@@ -3618,7 +3631,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def set_keyable(self, state: bool) -> None:
         """Sets the keyable state (``setAttr -keyable``)."""
-        cmds_edit.setAttr(str(self), keyable=state)
+        cmds_edit.setAttr(_name_of(self), keyable=state)
 
     def is_channel_box(self) -> bool:
         """Attribute channel box state."""
@@ -3627,7 +3640,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     def set_channel_box(self, state: bool) -> None:
         """Sets the channel box state (``setAttr -channelBox``)."""
-        cmds_edit.setAttr(str(self), channelBox=state)
+        cmds_edit.setAttr(_name_of(self), channelBox=state)
 
     # --- category methods
 
@@ -3635,7 +3648,7 @@ class Attribute(str, metaclass=_PlugMeta):
         """Returns a list of categories this attribute belongs to."""
         cls = type(self)
         return (
-            cmds.attributeQuery(cls._raw_get_name(self), node=str(cls._raw_get_node(self)), categories=True)
+            cmds.attributeQuery(cls._raw_get_name(self), node=_name_of(cls._raw_get_node(self)), categories=True)
             or []
         )
 
@@ -3652,7 +3665,7 @@ class Attribute(str, metaclass=_PlugMeta):
         if isinstance(category, str):
             category = [category]
         for each in category:
-            cmds_edit.addAttr(str(self), edit=True, category=each)
+            cmds_edit.addAttr(_name_of(self), edit=True, category=each)
 
     # --- connection methods
 
@@ -3680,8 +3693,8 @@ class Attribute(str, metaclass=_PlugMeta):
         """
         if _api_connect(self, other):
             return
-        dst = str(other)
-        src = str(self)
+        dst = _name_of(other)
+        src = _name_of(self)
         # cmds.isConnected is True only for a direct src -> dst connection, so it
         # is False for a dst plug that is not a destination; a name that may not
         # resolve to its plug keeps the query, and so its errors
@@ -3702,8 +3715,8 @@ class Attribute(str, metaclass=_PlugMeta):
         element's MPlug again after the disconnect (see `_element_path`), so it
         stays usable.
         """
-        _self = str(self)
-        name  = str(other)
+        _self = _name_of(self)
+        name  = _name_of(other)
         if cmds.isConnected(_self, name):
             path = _element_path(other)
             cmds_edit.disconnectAttr(_self, name)
@@ -3751,7 +3764,7 @@ class Attribute(str, metaclass=_PlugMeta):
         cmds.listConnections()."""
         casted = {}
         result = []
-        for each in cmds.listConnections(str(self), **kwargs) or []:
+        for each in cmds.listConnections(_name_of(self), **kwargs) or []:
             obj = casted.get(each)
             if not obj:
                 obj          = _cast(each)
@@ -3792,7 +3805,7 @@ class Attribute(str, metaclass=_PlugMeta):
                     _processed.add(_cast(x))
 
         connections = cmds.listConnections(
-            str(self),
+            _name_of(self),
             source      = source,
             destination = destination,
             connections = connections,
@@ -3860,14 +3873,14 @@ class Attribute(str, metaclass=_PlugMeta):
         """
         attrs = self.get_connected_attrs(src=src, dst=dst)
         for attr in attrs:
-            attr_name = str(attr)
-            if cmds.isConnected(str(self), attr_name):
-                src_name = str(self)
+            attr_name = _name_of(attr)
+            if cmds.isConnected(_name_of(self), attr_name):
+                src_name = _name_of(self)
                 dst_name = attr_name
                 dst_attr = attr
             else:
                 src_name = attr_name
-                dst_name = str(self)
+                dst_name = _name_of(self)
                 dst_attr = self
             path = _element_path(dst_attr)
             cmds_edit.disconnectAttr(src_name, dst_name)
@@ -3895,8 +3908,8 @@ class Attribute(str, metaclass=_PlugMeta):
         """Sets the default value of this dynamic attribute (``addAttr -edit
         -defaultValue``); a native attribute's raises RuntimeError."""
         if not type(self).is_dynamic(self):
-            raise RuntimeError(f"Cannot set default value for native attr: {self}")
-        cmds_edit.addAttr(str(self), edit=True, defaultValue=value)
+            raise RuntimeError(f"Cannot set default value for native attr: {_name_of(self)}")
+        cmds_edit.addAttr(_name_of(self), edit=True, defaultValue=value)
 
     def get_data_fn_set(self) -> OpenMaya.MFnData | None:
         """Returns the proper data function set for this attr, or None if
@@ -3914,7 +3927,7 @@ class Attribute(str, metaclass=_PlugMeta):
             what = "multi (array)" if mplug.isArray else "compound"
             ask  = f"an element ({self}[0])" if mplug.isArray else "a child"
             raise TypeError(
-                f"{self} is a {what} plug, which has no data handle: "
+                f"{_name_of(self)} is a {what} plug, which has no data handle: "
                 f"get_data_fn_set() reads one plug's data; ask {ask}"
             )
         attr_type = _attr_mobject(self).apiType()
@@ -3971,7 +3984,7 @@ class Attribute(str, metaclass=_PlugMeta):
             and "type" not in kwargs
             and _attr_mobject(self).hasFn(OpenMaya.MFn.kEnumAttribute)
         ):
-            args = (_enum_value(_attr_mobject(self), args[0], str(self)),)
+            args = (_enum_value(_attr_mobject(self), args[0], _name_of(self)),)
         # one numeric value into a plug of a fixed kind outside any array (today's route
         # makes no type query there): through the API and journaled when its guards hold
         # (`rig._internal.api_edits.api_set`), else the cmds route below
@@ -4000,7 +4013,7 @@ class Attribute(str, metaclass=_PlugMeta):
             and isinstance(args[0], (list, tuple, np.ndarray))
             and type(self)._raw_get_data_type(self) in COUNTED_ARRAY_TYPES
         ):
-            cmds_edit.setAttr(str(self), len(args[0]), *args[0], **kwargs)
+            cmds_edit.setAttr(_name_of(self), len(args[0]), *args[0], **kwargs)
 
         # special handling for compound attrs
         # - use the unpacked first argument if it is a valid iterable
@@ -4008,11 +4021,11 @@ class Attribute(str, metaclass=_PlugMeta):
         elif (
             len(args) == 1
             and isinstance(args[0], (list, tuple, np.ndarray))
-            and str(type(self)._raw_get_data_type(self))[-1].isdigit()
+            and _name_of(type(self)._raw_get_data_type(self))[-1].isdigit()
         ):
-            cmds_edit.setAttr(str(self), *args[0], **kwargs)
+            cmds_edit.setAttr(_name_of(self), *args[0], **kwargs)
         else:
-            cmds_edit.setAttr(str(self), *args, **kwargs)
+            cmds_edit.setAttr(_name_of(self), *args, **kwargs)
 
     def _is_fixed_kind_outside_array(self) -> bool:
         """True if this attr's kind never takes the cmds.setAttr() `type` arg.
@@ -4070,7 +4083,7 @@ class Attribute(str, metaclass=_PlugMeta):
         if self._is_geometry_typed_attr:
             return self._get_geometry_value()
 
-        return cmds.getAttr(str(self))
+        return cmds.getAttr(_name_of(self))
 
     @property
     def _is_geometry_typed_attr(self) -> bool:
@@ -4096,7 +4109,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
         _ensure_owner_alive(self)
         try:
-            typ = cmds.getAttr(str(self), type=True)
+            typ = cmds.getAttr(_name_of(self), type=True)
         except RuntimeError:
             result = False
         else:
@@ -4242,9 +4255,9 @@ class Attribute(str, metaclass=_PlugMeta):
             [sparse_ids, sparse_values]
         """
         if not type(self).is_typed(self):
-            raise RuntimeError(f"{self} is not a typed attribute.")
+            raise RuntimeError(f"{_name_of(self)} is not a typed attribute.")
         if not type(self)._raw_get_data_type(self).lower().endswith("array"):
-            raise RuntimeError(f"{self} is not a typed array attribute.")
+            raise RuntimeError(f"{_name_of(self)} is not a typed array attribute.")
 
         spase_ids    = []
         spase_values = []
@@ -4257,7 +4270,7 @@ class Attribute(str, metaclass=_PlugMeta):
         is_num = isinstance(values[0], Number)
         if not isinstance(values[0], type(filter_value)):
             raise RuntimeError(
-                f"Default value {filter_value} doesn't match data type in {self}"
+                f"Default value {filter_value} doesn't match data type in {_name_of(self)}"
             )
 
         # cap the return values to cap_count, if requested
@@ -4290,7 +4303,7 @@ class Attribute(str, metaclass=_PlugMeta):
     def get_num_elements(self) -> int:
         """Number of elements / physical indices in the multi attr."""
         if not type(self)._raw_is_multi(self):
-            raise RuntimeError(f"{self} is not an multi attr.")
+            raise RuntimeError(f"{_name_of(self)} is not an multi attr.")
         return self._mplug.numElements()
 
     def logical_index(self) -> int:
@@ -4301,7 +4314,7 @@ class Attribute(str, metaclass=_PlugMeta):
     def get_logical_indices(self) -> OpenMaya.MIntArray:
         """Returns existing logical indices (sparse)."""
         if not type(self)._raw_is_multi(self):
-            raise RuntimeError(f"{self} is not an multi attr.")
+            raise RuntimeError(f"{_name_of(self)} is not an multi attr.")
         return self._mplug.getExistingArrayAttributeIndices()
 
     def get_next_available_index(self) -> int:
@@ -4316,7 +4329,7 @@ class Attribute(str, metaclass=_PlugMeta):
         instance of `_CHILD_CLASS` (a Plug's element is a Plug), owned by the
         node object this attr holds (see `_inherit_owner`)."""
         if not type(self)._raw_is_multi(self):
-            raise RuntimeError(f"{self} is not an multi attr.")
+            raise RuntimeError(f"{_name_of(self)} is not an multi attr.")
         element = self._mplug.elementByPhysicalIndex(i)
         return _inherit_owner(
             self, _new_attr(self._CHILD_CLASS, element), element.logicalIndex()
@@ -4328,13 +4341,13 @@ class Attribute(str, metaclass=_PlugMeta):
         ``plug[i]`` returns as built), owned by the node object this attr holds
         (see `_inherit_owner`)."""
         if not type(self)._raw_is_multi(self):
-            raise RuntimeError(f"{self} is not an multi attr.")
+            raise RuntimeError(f"{_name_of(self)} is not an multi attr.")
         element = self._mplug.elementByLogicalIndex(i)
         return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element), i)
 
     def delete_logical_index(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""
-        cmds_edit.removeMultiInstance(str(self.element_by_logical_index(i)), **kwargs)
+        cmds_edit.removeMultiInstance(_name_of(self.element_by_logical_index(i)), **kwargs)
 
     # --- component type info
     # TODO make a proper Component class
@@ -4348,13 +4361,13 @@ class Attribute(str, metaclass=_PlugMeta):
             # indexed component, eg: pCubeShape1.pnts[0]
             try:
                 tracker = OpenMaya.MSelectionList()
-                tracker.add(str(self))
+                tracker.add(_name_of(self))
                 return tracker.getComponent(0)[-1]
 
             # non-indexed component, eg: pCubeShape1.pnts
             except TypeError:
                 tracker = OpenMaya.MSelectionList()
-                tracker.add(f"{self}[*]")
+                tracker.add(f"{_name_of(self)}[*]")
                 return tracker.getComponent(0)[-1]
 
         # this is not related to a component
@@ -4535,14 +4548,8 @@ class _BarePredicate:
         return self._bound
 
     def __repr__(self) -> str:
-        try:
-            return f"<predicate {self._bound!r}: call it>"
-        except RuntimeError:
-            # its node deleted or freed: as a user reads it, marked (rig's own
-            # code raises, as the node's repr does)
-            if _called_from_rig(1):
-                raise
-            return _user_view(lambda: f"<predicate {self._bound!r}: call it>")
+        # (a deleted node's repr is marked and never raises)
+        return f"<predicate {self._bound!r}: call it>"
 
 
 class _ScenePredicate:
@@ -5114,7 +5121,7 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
     if found is not None:
         return found
     if name is None:
-        name = str(node)
+        name = _name_of(node)
     raise NodeTypeError(
         name, label, type(node).get_node_type(node), f"Node({name!r}) is {node!r}{cls._mismatch_hint(node)}"
     )

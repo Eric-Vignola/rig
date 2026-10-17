@@ -24,7 +24,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
 from rig._internal.journal import cmds_edit as _cmds_edit
-from rig.nodetypes._base import _cast, Attribute
+from rig.nodetypes._base import _cast, Attribute, _name_of
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _ensure_valid
 
@@ -170,7 +170,7 @@ class Geometry(DAGNode):
         (a node object of another class is taken by its name).
         """
         if isinstance(node, DAGNode) and not isinstance(node, type(self)):
-            node = str(node)
+            node = _name_of(node)
         if isinstance(node, str) and cmds.nodeType(node) == "transform":
             shapes = cmds.listRelatives(
                 node,
@@ -181,7 +181,7 @@ class Geometry(DAGNode):
             )
             if len(shapes) == 0:
                 raise ValueError(
-                    f"Transform {node} has no {type(self).NATIVE_NODE_TYPE} shape."
+                    f"Transform {_name_of(node)} has no {type(self).NATIVE_NODE_TYPE} shape."
                 )
             node = shapes[0]
 
@@ -230,7 +230,7 @@ class Geometry(DAGNode):
         """Returns the local shape out attribute."""
         _ensure_valid(self)
         if not self.__local_shape_attr:
-            attr_name               = cmds.deformableShape(str(self), localShapeOutAttr=True)[0]
+            attr_name               = cmds.deformableShape(_name_of(self), localShapeOutAttr=True)[0]
             self.__local_shape_attr = self.find_attr(attr_name)
         return self.__local_shape_attr
 
@@ -238,7 +238,7 @@ class Geometry(DAGNode):
         """Returns the world shape out attribute."""
         _ensure_valid(self)
         if not self.__world_shape_attr:
-            attr_name               = cmds.deformableShape(str(self), worldShapeOutAttr=True)[0]
+            attr_name               = cmds.deformableShape(_name_of(self), worldShapeOutAttr=True)[0]
             self.__world_shape_attr = self.find_attr(attr_name)[0]
         return self.__world_shape_attr
 
@@ -273,11 +273,11 @@ class Geometry(DAGNode):
         comp_type = "vtx" if comp_type == "v" else comp_type
         sel       = OpenMaya.MSelectionList()
         if indices is None:
-            sel.add(f"{self}.{comp_type}[*]")
+            sel.add(f"{_name_of(self)}.{comp_type}[*]")
         else:
-            token = f"{self}.{comp_type}"  # node_name.component_type
+            token = f"{_name_of(self)}.{comp_type}"  # node_name.component_type
             for item in iter_component_ranges(token, indices):
-                sel.add(item)
+                sel.add(_name_of(item))
 
         _, mobject = sel.getComponent(0)
         return mobject
@@ -302,7 +302,7 @@ class Geometry(DAGNode):
         nodes = cmds.deformableShape(type(self).get_long_name(self), tagInjectionNode=True)
         if nodes and not nodes[0]:
             raise RuntimeError(
-                f"{self} has no node Maya can store component tags on: it is "
+                f"{_name_of(self)} has no node Maya can store component tags on: it is "
                 f"referenced, and so is its geometry chain; a deformer added to it "
                 f"makes a local Orig that holds them"
             )
@@ -340,7 +340,7 @@ class Geometry(DAGNode):
                 kind  = "procedural" if owner and owner[1] else "injected"
                 node  = owner[0] if owner else "another node"
                 cmds.error(
-                    f"Component tag '{tag}' on {self} is {kind} (owned by {node}) "
+                    f"Component tag '{tag}' on {_name_of(self)} is {kind} (owned by {_name_of(node)}) "
                     f"and cannot be edited at {injection}."
                 )
 
@@ -385,7 +385,7 @@ class Geometry(DAGNode):
                 owner = self._component_tag_owner(stored)
                 if owner and owner[1]:
                     cmds.error(
-                        f"Component tag '{stored}' already exists (procedural, owned by {owner[0]})."
+                        f"Component tag '{stored}' already exists (procedural, owned by {_name_of(owner[0])})."
                     )
                 cmds.error(f"Component tag '{stored}' already exists.")
 
@@ -404,7 +404,7 @@ class Geometry(DAGNode):
         """
         element = self._editable_component_tag(tag)
         if element is not None:
-            _cmds_edit.removeMultiInstance(str(element), b=True)
+            _cmds_edit.removeMultiInstance(_name_of(element), b=True)
 
     def rename_component_tag(self, tag: str | int, new_key: str) -> None:
         """Renames a component tag with the given key the object.
@@ -525,7 +525,7 @@ class Geometry(DAGNode):
                 tags.append(name)
 
         visible = cmds.geometryAttrInfo(
-            f"{str(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_local_shape_attr(self))}",
             componentTagNames=True,
         )
         tags.extend(name for name in visible or [] if name not in tags)
@@ -575,7 +575,7 @@ class Geometry(DAGNode):
             expr: Component tag expression. (E.g. '*', 'top', 'top+bottom', etc.)
         """
         return cmds.geometryAttrInfo(
-            f"{str(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_local_shape_attr(self))}",
             componentTagExpression = expr,
             subsetState            = True,
         )
@@ -597,7 +597,7 @@ class Geometry(DAGNode):
         ```
         """
         return cmds.geometryAttrInfo(
-            f"{str(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_local_shape_attr(self))}",
             componentTagHistory=True,
         )
 
@@ -611,7 +611,7 @@ class Geometry(DAGNode):
         """
         tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
         return cmds.geometryAttrInfo(
-            f"{str(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_local_shape_attr(self))}",
             componentTagExpression = tag_name,
             componentTagCategory   = True,
         )
@@ -636,7 +636,7 @@ class Geometry(DAGNode):
             else:
                 c = OpenMaya.MFnGeometryData.kEdges
             tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
-            ctag_utils.convertTagCategory(str(self), tag_name, c)
+            ctag_utils.convertTagCategory(_name_of(self), tag_name, c)
 
     def get_component_tag_contents(
         self, tag: str | int, full_name: bool = False
@@ -651,13 +651,13 @@ class Geometry(DAGNode):
         """
         tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
         components = cmds.geometryAttrInfo(
-            f"{str(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_local_shape_attr(self))}",
             componentTagExpression = tag_name,
             components             = True,
         )
 
         if full_name:
-            return [f"{self}.{component}" for component in components]
+            return [f"{_name_of(self)}.{_name_of(component)}" for component in components]
         return components
 
     def get_component_tag_indices(self, tag: str | int) -> np.ndarray:
@@ -772,7 +772,7 @@ class Geometry(DAGNode):
         """
         data      = []
         names     = [match_name] if isinstance(match_name, str) else match_name
-        tag_regex = re.compile(r"|".join([rf"^{x}$" for x in names])) if names else None
+        tag_regex = re.compile(r"|".join([rf"^{_name_of(x)}$" for x in names])) if names else None
         for name in type(self).get_component_tags(self):
             if not tag_regex or tag_regex.match(name):
                 data.append(self.get_component_tag_data(name, category=category))

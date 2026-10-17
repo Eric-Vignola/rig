@@ -41,7 +41,7 @@ from typing import Any
 
 from maya import cmds
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
-from rig.nodetypes._base import _cast, _lookup
+from rig.nodetypes._base import _cast, _lookup, _name_of
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.errors import NodeNotFoundError
@@ -187,7 +187,7 @@ class DisplayLayer(DGNode):
         """Returns the display layer holding a DAG node, read from the node's own
         ``drawOverride`` input, or None when it is in ``defaultLayer``."""
         layers = cmds.listConnections(
-            f"{node}.drawOverride", source=True, destination=False,
+            f"{_name_of(node)}.drawOverride", source=True, destination=False,
             type=cls.NATIVE_NODE_TYPE,
         )
         return cls._wrap(layers[0]) if layers else None
@@ -195,7 +195,7 @@ class DisplayLayer(DGNode):
     def get_members(self, no_recurse: bool = True) -> list[DAGNode]:
         """Returns a list of objects in this layer."""
         objs = cmds.editDisplayLayerMembers(
-            str(self), query=True, fullNames=True, noRecurse=no_recurse
+            _name_of(self), query=True, fullNames=True, noRecurse=no_recurse
         )
         return [_cast(x) for x in objs or []]
 
@@ -226,21 +226,21 @@ class DisplayLayer(DGNode):
         """
         if not isinstance(objects, (list, tuple)):
             objects = [objects]
-        _cmds_edit.editDisplayLayerMembers(str(self), *objects, noRecurse=no_recurse)
+        _cmds_edit.editDisplayLayerMembers(_name_of(self), *objects, noRecurse=no_recurse)
 
     def _remove_members(self, objects: DAGNode | str | list[DAGNode | str]) -> None:
         """Removes object(s) from this layer (they go to ``defaultLayer``);
         an object in another layer is left there (rig's own use)."""
         if not isinstance(objects, (list, tuple)):
             objects = [objects]
-        mine = [str(x) for x in objects if self.for_node(x) == self]
+        mine = [_name_of(x) for x in objects if self.for_node(x) == self]
         if mine:
             _cmds_edit.editDisplayLayerMembers(_DEFAULT_ABSOLUTE, *mine, noRecurse=True)
 
     def _guard(self, verb: str) -> str:
         """The layer's name, once it is known to take ``verb``: never
         ``defaultLayer`` (TypeError) nor a referenced layer (RuntimeError)."""
-        name = str(self)
+        name = _name_of(self)
         if type(self).is_default(self):
             raise TypeError(f"'{name}' cannot be {verb}: it is the layer of no layer")
         if cmds.referenceQuery(name, isNodeReferenced=True):

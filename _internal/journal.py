@@ -53,6 +53,7 @@ from typing import Any, Callable
 from maya import cmds as _cmds
 from maya import mel as _mel
 from maya.api.OpenMaya import MDGModifier as _MDGModifier
+from maya.api.OpenMaya import MObjectHandle as _MObjectHandle
 
 # The API fast paths (`rig._internal.api_edits`: the connects and the single numeric value
 # sets) read it at every edit: False
@@ -244,6 +245,10 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
     `one_step` opened is closed after that registration."""
     if _S.open:
         return func(*args, **kwargs)
+    if LIST_TYPE:
+        # the List rule: a List argument holding a deleted or freed element raises
+        # before anything is built (see `check_lists`)
+        check_lists(args, kwargs)
     _S.open  = True
     _S.entry = args
     outer, _S.chunk = _S.chunk, False
@@ -353,18 +358,47 @@ def user_call(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
         return fn(*args, **kwargs)
 
 
+# The List rule (`rig._internal.list`, user decision 6C 2026-10-17): every rig operation on a
+# List that holds a deleted or freed element raises, while the List never refuses Python's
+# ``len()``, indexing or iteration (Maya's argument readers go through them). So rig checks
+# the Lists it is given where it is given them: the outermost statement's arguments
+# (`run_statement`), every ``cmds_edit`` call, rig's command wrappers and queries. Filled
+# by rig._internal.list when it is imported (it imports this module): ``[the List types,
+# the check]``; kept across an ``importlib.reload`` of this module (the module dict is
+# reused), so the Lists of the import that filled it stay checked.
+LIST_TYPE: list = globals().get("LIST_TYPE") or []
+
+
+def check_lists(args: tuple, kwargs: Any = None) -> None:
+    """The List rule's check of every List among ``args`` and the values of ``kwargs``, and
+    among the elements of a plain list or tuple given there (one level: ``[L1, L2]``): a List
+    holding a deleted or freed element raises its RuntimeError. Reads nothing but the List
+    types, unless a List is found (``LIST_TYPE`` filled)."""
+    types, check = LIST_TYPE
+    for a in args:
+        t = type(a)
+        if t in types:
+            check(a)
+        elif (t is list or t is tuple) and not types.isdisjoint(map(type, a)):
+            for b in a:
+                if type(b) in types:
+                    check(b)
+    if kwargs:
+        check_lists(tuple(kwargs.values()))
+
+
 class _Edits:
     """``cmds_edit.<command>(...)``: the ``maya.cmds`` command, called once the pending list
     is registered. The command is read from ``maya.cmds`` on every call (a plug-in's command
-    after a reload, a test's ``mock.patch.object(cmds, ...)``). Called from this module, so
-    a deleted node forwarded from a user reads as its marked name in Maya's argument parser
-    (see `forward`)."""
+    after a reload, a test's ``mock.patch.object(cmds, ...)``)."""
 
     def __getattr__(self, name: str) -> Callable[..., Any]:
         if name.startswith("_"):
             raise AttributeError(name)
 
         def command(*args: Any, **kwargs: Any) -> Any:
+            if LIST_TYPE:
+                check_lists(args, kwargs)
             if _S.pending:
                 _flush()
             if kwargs:
@@ -378,17 +412,6 @@ class _Edits:
 
 
 cmds_edit = _Edits()
-
-
-def forward(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-    """``fn(*args, **kwargs)``: a ``maya.cmds`` command (a query, or an edit a caller
-    registered the pending list for) given arguments rig forwards from a user. Maya's
-    argument parser reads a list through ``str()`` of each element, and a ``str()`` that
-    raises there crashes Maya: called from this module, a deleted or freed node in them
-    reads as the user would read it, its marked name, which names no node (see
-    `rig.nodetypes._base._called_from_rig`), so Maya raises its own clean error.
-    ``cmds_edit`` calls from here too."""
-    return fn(*args, **kwargs)
 
 
 def mel_eval(script: str) -> Any:
@@ -412,14 +435,82 @@ def mel_eval(script: str) -> Any:
 # --------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------- #
+# The scene epoch (the List rule, `rig._internal.list`): a List that found every element it
+# holds in the scene keeps the epoch it found them at, and is checked again only once the
+# epoch moved. ``EPOCH[0]`` moves when a node is about to be removed (Maya calls the
+# node-removed callback BEFORE the node goes: it is still valid there), when a scene is
+# about to be replaced or a reference unloaded / removed, and once such a change is over
+# (the Undo / Redo events, kAfterNew / kAfterOpen / kAfterUnloadReference /
+# kAfterRemoveReference). ``DOOMED`` holds the handles of the nodes announced removed:
+# while one of them is still valid the removal is in progress (a user's node-removed
+# callback runs before rig's or after it), and a List found valid then keeps no epoch (it
+# would be stale the moment the node goes). Settled (every doomed handle invalid, or one of
+# the "over" events) it is emptied. Nothing else is kept: a List holds no registration, and
+# a node is never told which Lists hold it.
+# shared by every import of rig in this session (kept on ``sys``, as the callback registry
+# is): a purge of ``sys.modules['rig*']`` or an ``importlib.reload`` removes the callbacks
+# of the copy it replaces, and a List of that copy must keep seeing the epoch move
+EPOCH: list = sys.__dict__.setdefault("_rig_scene_epoch", [0])
+DOOMED: list = sys.__dict__.setdefault("_rig_scene_doomed", [])
+
+# a doomed list this long is pruned of the handles already invalid (a long build that
+# deletes many nodes, and no List checked meanwhile)
+_DOOMED_PRUNE = 256
+
+
+def _settle(*_args: Any) -> None:
+    """A removal is over (the Undo / Redo events, a scene replaced, a reference unloaded or
+    removed): the epoch moves and the doomed handles are dropped."""
+    EPOCH[0] += 1
+    del DOOMED[:]
+
+
 def _discard(*_args: Any) -> None:
-    """kBeforeNew / kBeforeOpen: drop the pending list (see above)."""
+    """kBeforeNew / kBeforeOpen: the scene epoch moves (first, see `_node_removed`); drop the
+    pending list (see above)."""
+    EPOCH[0] += 1
     _S.pending = []
 
 
 def _undone_or_redone(*_args: Any) -> None:
-    """The Undo / Redo events: Maya's redo queue may hold entries now (see `add`)."""
+    """The Undo / Redo events: Maya's redo queue may hold entries now (see `add`); a removal
+    an undo or a redo made is over (the scene epoch)."""
+    EPOCH[0] += 1
+    del DOOMED[:]
     _S.redo = True
+
+
+class _Untrusted:
+    """A doomed entry for a removal whose node handle could not be recorded (Maya called the
+    node-removed callback with a Python error left pending: a user's object whose ``str()``
+    raised inside Maya's argument parser, ``cmds.delete([obj, node])``): it stays "valid",
+    so no List keeps an epoch until the next undo, redo or scene event empties the doomed
+    list (`_settle`). A slowdown only: every List use checks its elements meanwhile."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def isValid() -> bool:  # noqa: N802 (MObjectHandle's spelling)
+        return True
+
+
+_UNTRUSTED = _Untrusted()
+
+
+def _node_removed(node: Any, *_args: Any) -> None:
+    """A node is about to be removed: the scene epoch moves FIRST (nothing before it can
+    fail: a List must hear of every removal), then the node's handle is doomed (see above;
+    `_UNTRUSTED` when it cannot be recorded), then `_before_removal`'s registration."""
+    EPOCH[0] += 1
+    try:
+        DOOMED.append(_MObjectHandle(node))
+    except BaseException:  # noqa: BLE001 (a pending error: no List is trusted, see _Untrusted)
+        DOOMED.append(_UNTRUSTED)
+    if len(DOOMED) > _DOOMED_PRUNE:
+        DOOMED[:] = [h for h in DOOMED if h.isValid()]
+    if _S.pending:
+        barrier()
 
 
 def _before_removal(*_args: Any) -> None:
@@ -449,9 +540,13 @@ def _scene_callback_specs() -> list:
         (msg.addCallback,   msg.kBeforeOpen,              _discard),
         (event,             "Undo",                       _undone_or_redone),
         (event,             "Redo",                       _undone_or_redone),
-        (_add_node_removed, "dependNode",                 _before_removal),
+        (_add_node_removed, "dependNode",                 _node_removed),
         (msg.addCallback,   msg.kBeforeUnloadReference,   _before_removal),
         (msg.addCallback,   msg.kBeforeRemoveReference,   _before_removal),
+        (msg.addCallback,   msg.kAfterNew,                _settle),
+        (msg.addCallback,   msg.kAfterOpen,               _settle),
+        (msg.addCallback,   msg.kAfterUnloadReference,    _settle),
+        (msg.addCallback,   msg.kAfterRemoveReference,    _settle),
         (msg.addCallback,   msg.kBeforeLoadReference,     _before_removal),
         (msg.addCallback,   msg.kBeforeImportReference,   _before_removal),
     ]

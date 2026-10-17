@@ -95,8 +95,7 @@ from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
-    _called_from_rig,
-    _deleted_plug_repr,
+    _name_of,
     _PLUG_TYPES,
     _NON_MATRIX_ATTR_API_TYPES,
     _OLD_PLUG_SETTERS,
@@ -424,7 +423,7 @@ class Plug(Attribute):
         #    (which ``findPlug`` cannot resolve directly) and genuine
         #    on-container attrs.
         try:
-            owner = cmds.container(query=True, findContainer=str(type(self)._raw_get_node(self)))
+            owner = cmds.container(query=True, findContainer=_name_of(type(self)._raw_get_node(self)))
         except (
             RuntimeError,
             ValueError,
@@ -441,7 +440,7 @@ class Plug(Attribute):
                 pass
 
         raise AttributeError(
-            f"{str(self)!r} has no child or sibling attribute {attr_name!r}"
+            f"{_name_of(self)!r} has no child or sibling attribute {attr_name!r}"
             + (_class_data_hint(self, attr_name) or _old_name_hint(attr_name))
         )
 
@@ -493,7 +492,7 @@ class Plug(Attribute):
                     key += n
                 if not 0 <= key < n:
                     raise IndexError(
-                        f"{self} child index {key} out of range (num_children={n})"
+                        f"{_name_of(self)} child index {key} out of range (num_children={n})"
                     )
                 return _inherit_owner(self, _new_attr(Plug, self._mplug.child(key)))
             if isinstance(key, slice):
@@ -583,7 +582,7 @@ class Plug(Attribute):
             if child is None:
                 hint = _OLD_PLUG_SETTERS.get(name)
                 raise AttributeError(
-                    f"{type(self).__name__}.{name} is a method and {str(self)!r} "
+                    f"{type(self).__name__}.{name} is a method and {_name_of(self)!r} "
                     f"has no child attribute {name!r}: a method is not replaced on a plug"
                     + (f"; {hint}" if hint else "")
                 )
@@ -624,7 +623,7 @@ class Plug(Attribute):
         """
         if type(other) in _PLUG_TYPES:
             return _same_plug(self, other)
-        return str(self) == str(other)
+        return _name_of(self) == _name_of(other)
 
     # -- multi-attribute helpers (v4.F.b) -- #
 
@@ -638,7 +637,7 @@ class Plug(Attribute):
         Raises :class:`ValueError` if this plug is not a multi.
         """
         if not type(self)._raw_is_multi(self):
-            raise ValueError(f"{self} is not a multi attribute")
+            raise ValueError(f"{_name_of(self)} is not a multi attribute")
         idx  = type(self).get_next_available_index(self)
         elem = self[idx]
         elem << value
@@ -883,7 +882,7 @@ class Plug(Attribute):
         if isinstance(other, Node):
             # Container detection: publish instead of clone.
             try:
-                node_type = cmds.nodeType(str(other))
+                node_type = cmds.nodeType(_name_of(other))
             except Exception:
                 node_type = None
             if node_type == "container":
@@ -925,10 +924,10 @@ class Plug(Attribute):
             name = type(self).get_alias(self)
             if other.has_attr(name):
                 raise TypeError(
-                    f"'{other}' already has an attribute '{name}': '>>' clones, it never "
-                    f"overwrites. Clone under another name ({self} >> '{other}.<name>'), "
-                    f"re-declare it with {other} << <spec>, or destroy it first "
-                    f"({other} << destroy({name!r}))"
+                    f"'{_name_of(other)}' already has an attribute '{name}': '>>' clones, it never "
+                    f"overwrites. Clone under another name ({_name_of(self)} >> '{_name_of(other)}.<name>'), "
+                    f"re-declare it with {_name_of(other)} << <spec>, or destroy it first "
+                    f"({_name_of(other)} << destroy({name!r}))"
                 )
             return _clone_attribute(self, other)
 
@@ -960,15 +959,15 @@ class Plug(Attribute):
         # a plug is a str too, but not a clone name: '>>' never connects
         if type(other) in _PLUG_TYPES:
             raise TypeError(
-                f"'>>' does not connect plugs: write {other} << {self}, or "
-                f"{self}.connect({other}, force=True)"
+                f"'>>' does not connect plugs: write {_name_of(other)} << {_name_of(self)}, or "
+                f"{_name_of(self)}.connect({_name_of(other)}, force=True)"
             )
 
         if isinstance(other, str):
             return self._clone_as(other)
 
         raise TypeError(
-            f"'>>' from Plug({self}) to {type(other).__name__} is not supported. "
+            f"'>>' from Plug({_name_of(self)}) to {type(other).__name__} is not supported. "
             f"Use '<<' to connect, or '>> None' to get the value."
         )
 
@@ -986,7 +985,7 @@ class Plug(Attribute):
             # the plug's own node: never looked up again by its name (which
             # the lookup rule could find ambiguous while a namespace is current)
             dst_node  = type(self)._raw_get_node(self)
-            node_name = str(dst_node)
+            node_name = _name_of(dst_node)
         else:
             if not node_name or not cmds.objExists(node_name):
                 raise TypeError(
@@ -1381,7 +1380,7 @@ class Plug(Attribute):
         identity = getattr(self, "_identity", True)
         if identity is None:
             raise TypeError(
-                f"the truth value of {str(self)!r}, the output of an ordering "
+                f"the truth value of {_name_of(self)!r}, the output of an ordering "
                 f"comparison (<, <=, >, >=), is only known when Maya evaluates it; "
                 f"read it with .get(), pick with rig.condition(...), or order plugs "
                 f"by name with sorted(plugs, key=str)"
@@ -1497,7 +1496,7 @@ def _checking_operands(method: Any) -> Any:
                 if found is not None:
                     raise _operator_error(dunder, self, operand, found)
             elif not isinstance(operand, _SCALARS) and isinstance(operand, _RESHAPED):
-                listed = _prepared_operand(operand, _operator_where(dunder, str(self), operand))
+                listed = _prepared_operand(operand, _operator_where(dunder, _name_of(self), operand))
                 found  = _text_operand(listed)
                 if found is not None:
                     raise _operator_error(dunder, self, listed, found)
@@ -1612,7 +1611,7 @@ class ComponentPlug(Plug):
         # ``Plug(mplug)`` does. ``__init__`` records the component metadata.
         if comp_coords is not None:
             coords = "".join(f"[{c}]" for c in comp_coords)
-            return super().__new__(cls, f"{comp_node}.{comp_alias}{coords}")
+            return super().__new__(cls, f"{_name_of(comp_node)}.{comp_alias}{coords}")
         return super().__new__(cls, mplug)
 
     def __init__(
@@ -1653,7 +1652,7 @@ class ComponentPlug(Plug):
         if self._comp_coords is None:
             return Attribute.get_full_name(self)  # bare handle -> controlPoints
         coords = "".join(f"[{c}]" for c in self._comp_coords)
-        return f"{type(self)._raw_get_node(self)}.{self._comp_alias}{coords}"
+        return f"{_name_of(type(self)._raw_get_node(self))}.{self._comp_alias}{coords}"
 
     # -- indexing -- #
 
@@ -1700,7 +1699,7 @@ class ComponentPlug(Plug):
                 resolved = spec + size if spec < 0 else spec
                 if not 0 <= resolved < size:
                     raise IndexError(
-                        f"{self._comp_alias} axis {axis} index {spec} out of "
+                        f"{self._comp_alias} axis {axis} index {_name_of(spec)} out of "
                         f"range [0, {size})"
                     )
                 per_axis.append([resolved])
@@ -1722,7 +1721,7 @@ class ComponentPlug(Plug):
         node (as :meth:`_element` does) and the alias the handle answers to."""
         ndims   = self._comp_ndims
         alias   = self._comp_alias
-        given   = ", ".join(str(s) for s in specs)
+        given   = ", ".join(_name_of(s) for s in specs)
         missing = _AXIS_NAMES[ndims][len(specs):]
         left    = len(missing)
         return (
@@ -1743,7 +1742,7 @@ class ComponentPlug(Plug):
         a rename still resolves (MObjectHandle-based identity, the same source
         :meth:`get_full_name` uses).
         """
-        node_name = str(type(self)._raw_get_node(self))
+        node_name = _name_of(type(self)._raw_get_node(self))
         name      = f"{node_name}.{self._comp_alias}" + "".join(f"[{c}]" for c in coords)
         mplug     = _maybe_translate_component(name)
         element   = _component_plug(
@@ -1766,7 +1765,7 @@ class ComponentPlug(Plug):
         Reads the *live* node name from the MPlug (rename-safe) -- not the
         cached ``_comp_node``.
         """
-        node_name = str(type(self)._raw_get_node(self))
+        node_name = _name_of(type(self)._raw_get_node(self))
         if cmds.nodeType(node_name) == "lattice":
             return (
                 cmds.getAttr(f"{node_name}.sDivisions"),
@@ -1774,7 +1773,7 @@ class ComponentPlug(Plug):
                 cmds.getAttr(f"{node_name}.uDivisions"),
             )
         sel = OpenMaya.MSelectionList()
-        sel.add(node_name)
+        sel.add(_name_of(node_name))
         fn       = OpenMaya.MFnNurbsSurface(sel.getDagPath(0))
         periodic = OpenMaya.MFnNurbsSurface.kPeriodic
         u        = fn.numCVsInU - (fn.degreeInU if fn.formInU == periodic else 0)
@@ -1798,7 +1797,7 @@ def _maybe_component_plug(
     if attr_name not in _MULTIDIM_ALIASES:
         return None
     try:
-        node_name = str(type(attr_obj)._raw_get_node(attr_obj))
+        node_name = _name_of(type(attr_obj)._raw_get_node(attr_obj))
         node_type = cmds.nodeType(node_name)
     except (RuntimeError, AttributeError):
         return None
@@ -1883,7 +1882,7 @@ def _disconnect_incoming(
     if type(dst) not in _PLUG_TYPES:
         # Allow raw strings only as a fallback path.
         try:
-            dst = Attribute(str(dst))
+            dst = Attribute(_name_of(dst))
         except Exception as e:
             LOGGER.debug("could not coerce %s to Attribute: %s", dst, e)
             return
@@ -1897,7 +1896,7 @@ def _disconnect_incoming(
             compound = top.isCompound
         except RuntimeError as e:
             raise InjectionError(
-                f"Cannot inspect incoming connections on {str(dst)!r}: {e}"
+                f"Cannot inspect incoming connections on {_name_of(dst)!r}: {e}"
             ) from e
         if compound:
             # a compound below a whole wire it cannot be split from refuses before
@@ -1936,7 +1935,7 @@ def _disconnect_incoming(
             sources = dst.get_connected_attrs(src=True, dst=False) or []
     except RuntimeError as e:
         raise InjectionError(
-            f"Cannot inspect incoming connections on {str(dst)!r}: {e}"
+            f"Cannot inspect incoming connections on {_name_of(dst)!r}: {e}"
         ) from e
 
     if not sources:
@@ -1960,7 +1959,7 @@ def _disconnect_incoming(
                     "%s %s: removing its own input %s; the input %s of its compound %s "
                     "has no matching children to split and stays its one driver "
                     "(one driver per channel)",
-                    what, str(dst), ", ".join(str(s) for s in sources),
+                    what, _name_of(dst), ", ".join(str(s) for s in sources),
                     str(_new_attr(Attribute, src)), str(_new_attr(Attribute, anc)),
                 )
             else:
@@ -2018,7 +2017,7 @@ def _free_children(dst: Any, what: str) -> bool:
                 continue
             LOGGER.info(
                 "%s %s: removing the input %s of its child %s (one driver per channel)",
-                what, str(dst), ", ".join(str(s) for s in sources), str(child),
+                what, _name_of(dst), ", ".join(str(s) for s in sources), _name_of(child),
             )
             _disconnect_sources_respecting_lock(child, sources)
     finally:
@@ -2093,12 +2092,12 @@ def _split_refusal(anc: Any, dst: Any, what: str, plan_out: "list | None" = None
     before any edit. With no refusal, ``plan_out`` (a list) is given this round's
     plan when the check's plan is it (no walk made for a later round only)."""
     src  = anc.sourceWithConversion()
-    name = str(_new_attr(Attribute, anc))
+    name = _name_of(_new_attr(Attribute, anc))
     free = f"free the compound first: {name} << None"
     if _no_matching_children(src, anc):
-        source = "nothing" if src.isNull else str(_new_attr(Attribute, src))
+        source = "nothing" if src.isNull else _name_of(_new_attr(Attribute, src))
         return (
-            f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
+            f"Cannot {what} {_name_of(dst)!r}: its compound {name!r} is connected whole "
             f"from {source!r}, which has no matching children to give each child of "
             f"{name!r} its own input; {free}. Nothing was changed"
         )
@@ -2107,10 +2106,10 @@ def _split_refusal(anc: Any, dst: Any, what: str, plan_out: "list | None" = None
     for _source, target in plan:
         # a child with an input of its own keeps it (`_split_into`): not in the plan
         if target.isLocked:
-            locked = str(_new_attr(Attribute, target))
+            locked = _name_of(_new_attr(Attribute, target))
             return (
-                f"Cannot {what} {str(dst)!r}: its compound {name!r} is connected whole "
-                f"from {str(_new_attr(Attribute, src))!r}, and giving each child its own "
+                f"Cannot {what} {_name_of(dst)!r}: its compound {name!r} is connected whole "
+                f"from {_name_of(_new_attr(Attribute, src))!r}, and giving each child its own "
                 f"input needs {locked!r} unlocked (a locked plug takes no connection): "
                 f"Plug({locked!r}).unlock(), or {free}. Nothing was changed"
             )
@@ -2255,14 +2254,14 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
         pairs  = [(_plug_path(s), _plug_path(t)) for s, t in plan if s is not None]
         whole_path = _plug_path(anc)
         kept   = [
-            str(Plug(anc.child(i))) for i in range(anc.numChildren())
+            _name_of(Plug(anc.child(i))) for i in range(anc.numChildren())
             if anc.child(i).isDestination
         ]
-        own    = str(dst)
+        own    = _name_of(dst)
         kept   = [name for name in kept if name != own]
         LOGGER.info(
             "%s %s: splitting the input %s of %s into one per child%s",
-            what, own, str(source), str(whole),
+            what, own, _name_of(source), _name_of(whole),
             f" ({', '.join(kept)} {'keeps its' if len(kept) == 1 else 'keep their'} own input)"
             if kept else "",
         )
@@ -2273,8 +2272,8 @@ def _free_of_whole_wire(dst: Any, what: str = "disconnect") -> bool:
             _rebind_element(dst, path)
         if _plug_at(whole_path).isDestination:
             raise InjectionError(
-                f"Cannot {what} {str(dst)!r}: the input {str(source)!r} of its compound "
-                f"{str(whole)!r} could not be removed; {whole} << None frees it"
+                f"Cannot {what} {_name_of(dst)!r}: the input {_name_of(source)!r} of its compound "
+                f"{_name_of(whole)!r} could not be removed; {_name_of(whole)} << None frees it"
             )
         _split_into(pairs)
         split = True
@@ -2317,7 +2316,7 @@ def _lock_chain_names(dst: Attribute) -> list:
     already-resolved Attribute whose connections the caller just inspected, so
     its plug chain is valid.
     """
-    names = [str(dst)]
+    names = [_name_of(dst)]
     cur   = dst._mplug
     while True:
         parent = None
@@ -2328,7 +2327,7 @@ def _lock_chain_names(dst: Attribute) -> list:
         if parent is None:
             break
         # named at once (``dst``'s node was just read), never held: no handle
-        names.append(str(_new_attr(Attribute, parent)))
+        names.append(_name_of(_new_attr(Attribute, parent)))
         cur = parent
     return names
 
@@ -2376,7 +2375,7 @@ def _unlock_lock_chain(dst: Attribute) -> list:
     except RuntimeError as e:
         _relock_chain(saved)  # never leave the chain partially unlocked
         raise InjectionError(
-            f"Cannot unlock {str(dst)!r} to break its driver: {e}"
+            f"Cannot unlock {_name_of(dst)!r} to break its driver: {e}"
         ) from e
     return saved
 
@@ -2437,7 +2436,7 @@ def _disconnect_sources(dst: Attribute, sources: list) -> None:
                 src_attr.disconnect(dst)
         except RuntimeError as e:
             raise InjectionError(
-                f"Cannot disconnect {str(dst)!r} from its driver: {e}"
+                f"Cannot disconnect {_name_of(dst)!r} from its driver: {e}"
             ) from e
         return
 
@@ -2447,7 +2446,7 @@ def _disconnect_sources(dst: Attribute, sources: list) -> None:
             src_attr.disconnect(dst)
     except RuntimeError as e:
         raise InjectionError(
-            f"Cannot disconnect {str(dst)!r} from its driver: {e}"
+            f"Cannot disconnect {_name_of(dst)!r} from its driver: {e}"
         ) from e
     finally:
         _relock_chain(saved)
@@ -2479,12 +2478,12 @@ def _locked_channels(dst: Any, leaves: list | None = None) -> list:
         leaf_attr = leaf if type(leaf) in _PLUG_TYPES else None
         if leaf_attr is None:
             try:
-                leaf_attr = Attribute(str(leaf))
+                leaf_attr = Attribute(_name_of(leaf))
             except Exception:
                 continue
         try:
             if type(leaf_attr)._raw_is_locked(leaf_attr):
-                locked.append(str(leaf_attr))
+                locked.append(_name_of(leaf_attr))
         except Exception:
             pass
     return locked
@@ -2517,7 +2516,7 @@ def _spec_slot_channels(dst: Any, src: Any) -> frozenset:
     # before broadcasting) so the exemption lines up channel-for-channel.
     slots = list(src)[: len(leaves)]
     return frozenset(
-        str(leaf)
+        _name_of(leaf)
         for slot, leaf in sequences(slots, leaves)
         if types._is_attribute_spec(slot)
     )
@@ -2542,7 +2541,7 @@ def _assert_settable(
     if locked:
         names = locked[0] if len(locked) == 1 else locked
         raise InjectionError(
-            f"Cannot set/connect {str(dst)!r}: locked attribute(s) {names}. "
+            f"Cannot set/connect {_name_of(dst)!r}: locked attribute(s) {names}. "
             f"Unlock first: {_unlock_hint(dst, locked)} (a locked plug takes no "
             f"value or connection, even the one it holds)."
         )
@@ -2557,7 +2556,7 @@ def _unlock_hint(dst: Any, locked: list) -> str:
     try:
         fn = OpenMaya.MFnDependencyNode(dst._mplug.node())
         if fn.isLocked:
-            return f"Node({str(dst).partition('.')[0]!r}).unlock(), then {plugs}"
+            return f"Node({_name_of(dst).partition('.')[0]!r}).unlock(), then {plugs}"
     except Exception:  # noqa: BLE001 -- a hint never hides the refusal
         pass
     return plugs
@@ -2615,7 +2614,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
             incoming = dst_attr.get_connected_attrs(src=True, dst=False) or []
         except RuntimeError as e:
             raise InjectionError(
-                f"Cannot inspect incoming connections on {str(dst_attr)!r}: {e}"
+                f"Cannot inspect incoming connections on {_name_of(dst_attr)!r}: {e}"
             ) from e
         if incoming:
             if _double_driven(dst_attr._mplug):
@@ -2625,7 +2624,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
                 _free_of_whole_wire(dst_attr, "set")
             LOGGER.info(
                 "set %s: breaking incoming connection(s) %s to assign value",
-                str(dst_attr),
+                _name_of(dst_attr),
                 [str(i) for i in incoming],
             )
             one_step()
@@ -2643,7 +2642,7 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
         if incoming:
             LOGGER.info(
                 "set %s: breaking incoming connection(s) %s to assign value",
-                str(dst_attr),
+                _name_of(dst_attr),
                 [str(i) for i in incoming],
             )
             _disconnect_incoming(dst_attr, "set", write_follows=True, one_driver=True)
@@ -2652,9 +2651,9 @@ def _do_set(dst_attr: Any, *set_args: Any, **set_kwargs: Any) -> None:
                 return
             except (RuntimeError, TypeError) as second:
                 raise InjectionError(
-                    f"Cannot set {str(dst_attr)!r}: {second}"
+                    f"Cannot set {_name_of(dst_attr)!r}: {second}"
                 ) from second
-        raise InjectionError(f"Cannot set {str(dst_attr)!r}: {first}") from first
+        raise InjectionError(f"Cannot set {_name_of(dst_attr)!r}: {first}") from first
 
 
 # NOTE: a former ``_attr_from_string(plug_string)`` helper was removed.
@@ -2714,7 +2713,7 @@ def _do_destroy(
     if strict and silent:
         raise ValueError("_do_destroy: strict=True and silent=True are incompatible")
 
-    plug_str = str(plug_str)
+    plug_str = _name_of(plug_str)
 
     # Step 0 -- native published-name teardown. With native container publishing,
     # ``container.<name>`` is a ``publishName`` / ``bindAttr`` ALIAS (single) or
@@ -2943,7 +2942,7 @@ def _inject_value(
         if type(src) in _PLUG_TYPES:
             _named_with_dot(src)
         elif not _is_generic_number(src):
-            _refuse_generic(str(dst), src)
+            _refuse_generic(_name_of(dst), src)
         _assert_settable(dst, leaves=[dst])
         _inject_generic(dst, src)
         return
@@ -2979,7 +2978,7 @@ def _inject_value(
     if _holds_text(src) and type(dst) in _PLUG_TYPES:
         is_array = dst._mplug.isArray
         if compound_dst or is_array or not isinstance(src, str):
-            _check_enum_names(type(dst)._raw_get_mobject(dst), src, str(dst), element=not is_array)
+            _check_enum_names(type(dst)._raw_get_mobject(dst), src, _name_of(dst), element=not is_array)
 
     # Resolve dst data type once (or `_FIXED_KIND`, see `_dst_data_type`).
     dst_data_type = _dst_data_type(dst, dst_facts)
@@ -2995,7 +2994,7 @@ def _inject_value(
         if type(src) in _PLUG_TYPES:
             _set_or_connect(src, dst)
             return
-        _do_set(dst, str(src), type="string")
+        _do_set(dst, _name_of(src), type="string")
         return
 
     # Bare multi-root with a sequence source -> element-wise write to
@@ -3037,7 +3036,7 @@ def _inject_value(
     try:
         is_bare_multi_root = (
             type(dst)._raw_is_multi(dst)
-            and not str(dst).endswith("]")
+            and not _name_of(dst).endswith("]")
             and dst_data_type != "matrix"
             and (_attribute_type_or_none(dst) if lazy_attr_type else dst_attr_type)
             != "matrix"
@@ -3058,7 +3057,7 @@ def _inject_value(
         # for the regression).
         if type(src) in _PLUG_TYPES:
             try:
-                src_is_multi = type(src)._raw_is_multi(src) and not str(src).endswith("]")
+                src_is_multi = type(src)._raw_is_multi(src) and not _name_of(src).endswith("]")
                 if src_is_multi and generic and _path_instance_number(src) is not None:
                     # an array of per-instance elements read without an index
                     # (``obj.wm``) is the element of its path's instance, one
@@ -3106,7 +3105,7 @@ def _inject_value(
     # read without an index it is the element of its path's instance, as cmds
     # resolves its name (``T2|S.worldMatrix`` is ``worldMatrix[1]``).
     try:
-        if type(dst)._raw_is_multi(dst) and not str(dst).endswith("]"):
+        if type(dst)._raw_is_multi(dst) and not _name_of(dst).endswith("]"):
             next_index = _path_instance_number(dst)
             if next_index is None:
                 try:
@@ -3185,7 +3184,7 @@ def _inject_value(
                     return
                 raise ValueError(
                     f"Cannot inject sequence of size {flat.size} into "
-                    f"matrix attribute {str(dst)!r} (expected 9 for 3x3 "
+                    f"matrix attribute {_name_of(dst)!r} (expected 9 for 3x3 "
                     f"or 16 for 4x4)."
                 )
 
@@ -3201,7 +3200,7 @@ def _inject_value(
                     raise ValueError(
                         f"Cannot inject sequence of size {flat.size} "
                         f"into {n}-channel compound attribute "
-                        f"{str(dst)!r}."
+                        f"{_name_of(dst)!r}."
                     )
             else:
                 # Scalar dst -- only size-1 sequences accepted.
@@ -3210,7 +3209,7 @@ def _inject_value(
                 else:
                     raise ValueError(
                         f"Cannot inject sequence of size {flat.size} "
-                        f"into scalar attribute {str(dst)!r} "
+                        f"into scalar attribute {_name_of(dst)!r} "
                         f"(expected 1 element)."
                     )
         # else: heterogeneous (list-with-Plugs etc.) -- fall through to
@@ -3281,7 +3280,7 @@ def _inject_value(
     ):
         LOGGER.info(
             "set %s: replacing its input %s (every channel is written)",
-            str(dst), str(Plug(dst._mplug.source())),
+            _name_of(dst), str(Plug(dst._mplug.source())),
         )
         _disconnect_incoming(dst, "set", write_follows=True)
 
@@ -3319,7 +3318,7 @@ def _inject_generic(dst: Any, src: Any) -> None:
     if _is_generic_number(src):
         _do_set(dst, float(src))
         return
-    _refuse_generic(str(dst), src)
+    _refuse_generic(_name_of(dst), src)
 
 
 def _is_generic_number(value: Any) -> bool:
@@ -3342,7 +3341,7 @@ def _check_generic_items(dst: Any, items: Any) -> None:
             or _is_generic_number(item)
             or types._is_attribute_spec(item)
         ):
-            _refuse_generic(f"{dst}[{i}]", item)
+            _refuse_generic(f"{_name_of(dst)}[{i}]", item)
 
 
 def _refuse_generic(name: str, src: Any) -> None:
@@ -3429,7 +3428,7 @@ def _fanout_channel(src: Any, dst: Any) -> None:
     elif types._is_membership(src):
         raise TypeError(
             f"{src!r} names a collection and cannot be fanned into channel "
-            f"{dst}; inject it into the node or its components"
+            f"{_name_of(dst)}; inject it into the node or its components"
         )
     else:
         _set_or_connect(src, dst)
@@ -3446,7 +3445,7 @@ def _named_with_dot(src: Any) -> bool:
         if owner is not None:
             _ensure_dg_named(src, owner)
             return True
-    return "." in str(src)
+    return "." in _name_of(src)
 
 
 def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> None:
@@ -3476,7 +3475,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     # Coerce dst to Attribute if it isn't already, so we can use the API.
     if type(dst) not in _PLUG_TYPES:
         try:
-            dst_attr = Attribute(str(dst))
+            dst_attr = Attribute(_name_of(dst))
         except Exception:
             dst_attr = None
         # The hint describes ``dst`` itself, not a coerced copy.
@@ -3499,11 +3498,11 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
                     container.absorb_unit_conversions(dst_attr)
                 else:
                     # Fallback for raw-string dst we couldn't coerce.
-                    cmds_edit.connectAttr(str(src), str(dst), force=True)
-                    container.absorb_unit_conversions(str(dst))
+                    cmds_edit.connectAttr(_name_of(src), _name_of(dst), force=True)
+                    container.absorb_unit_conversions(_name_of(dst))
             except RuntimeError as e:
                 raise InjectionError(
-                    f"Cannot connect {str(src)!r} -> {str(dst)!r}: {e}"
+                    f"Cannot connect {_name_of(src)!r} -> {_name_of(dst)!r}: {e}"
                 ) from e
         return
 
@@ -3512,9 +3511,9 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
         if dst_attr is None:
             # Raw-string dst we couldn't coerce to Attribute.
             try:
-                cmds_edit.setAttr(str(dst), src)
+                cmds_edit.setAttr(_name_of(dst), src)
             except (RuntimeError, TypeError) as e:
-                raise InjectionError(f"Cannot set {str(dst)!r}: {e}") from e
+                raise InjectionError(f"Cannot set {_name_of(dst)!r}: {e}") from e
             return
         # Compound-numeric dst: broadcast the scalar across children.
         # Lock was already checked upstream (all-or-nothing); failures here
@@ -3524,7 +3523,7 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
         if _dst_compound:
             for child in lazy.types._get_compound(dst_attr):
                 child_attr = (
-                    child if isinstance(child, Attribute) else Attribute(str(child))
+                    child if isinstance(child, Attribute) else Attribute(_name_of(child))
                 )
                 _do_set(child_attr, src)
         else:
@@ -3537,14 +3536,14 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
     if isinstance(src, str):
         if dst_attr is not None:
             if _is_enum_attr(dst_attr):
-                _do_set(dst_attr, _enum_value(dst_attr._mplug, src, str(dst_attr)))
+                _do_set(dst_attr, _enum_value(dst_attr._mplug, src, _name_of(dst_attr)))
             else:
                 _do_set(dst_attr, src, type="string")
         else:
             try:
-                cmds_edit.setAttr(str(dst), src, type="string")
+                cmds_edit.setAttr(_name_of(dst), src, type="string")
             except (RuntimeError, TypeError) as e:
-                raise InjectionError(f"Cannot set {str(dst)!r}: {e}") from e
+                raise InjectionError(f"Cannot set {_name_of(dst)!r}: {e}") from e
         return
 
     # Sequence (list / tuple).
@@ -3565,9 +3564,9 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
                 _do_set(dst_attr, *src, type="matrix")
             else:
                 try:
-                    cmds_edit.setAttr(str(dst), *src, type="matrix")
+                    cmds_edit.setAttr(_name_of(dst), *src, type="matrix")
                 except (RuntimeError, TypeError) as e:
-                    raise InjectionError(f"Cannot set {str(dst)!r}: {e}") from e
+                    raise InjectionError(f"Cannot set {_name_of(dst)!r}: {e}") from e
             return
 
         # Try a vector / quaternion fan-out.
@@ -3592,13 +3591,13 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
             dt = None
         if dt == "matrix":
             raise TypeError(
-                f"Cannot inject bare Node {str(src)!r} into matrix Plug {str(dst)!r}. "
+                f"Cannot inject bare Node {_name_of(src)!r} into matrix Plug {_name_of(dst)!r}. "
                 f"Specify the source explicitly: "
-                f"'{dst} << {src}.wm' (world matrix) or "
-                f"'{dst} << {src}.matrix' (local matrix)."
+                f"'{_name_of(dst)} << {_name_of(src)}.wm' (world matrix) or "
+                f"'{_name_of(dst)} << {_name_of(src)}.matrix' (local matrix)."
             )
 
-    raise TypeError(f"Don't know how to inject {type(src).__name__} into Plug({dst})")
+    raise TypeError(f"Don't know how to inject {type(src).__name__} into Plug({_name_of(dst)})")
 
 
 # The typed nodes' attribute lookup (``DGNode.__getattr__``) returns Plugs and
@@ -3628,10 +3627,9 @@ class _MethodPlug(Plug):
         return self.__dict__["_method"](*args, **kwargs)
 
     def __repr__(self) -> str:
-        handle = self.__dict__.get("_handle")
-        if handle is not None and not handle.isValid() and not _called_from_rig(1):
-            return _deleted_plug_repr(self, "Plug")
-        return f'Plug("{str(self)}")'
+        # a Plug's (`Attribute.__repr__`), named Plug: never raises
+        text = Attribute.__repr__(self)
+        return "Plug" + text[text.index("("):] if text[:1] != "<" else text
 
 
 _dg_node_module._METHOD_PLUG_CLASS       = _MethodPlug

@@ -8,6 +8,7 @@ from typing import Any, Iterator
 
 import numpy as np
 from maya import cmds
+from rig.nodetypes._base import _name_of
 from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes.dg_node import DGNode, get_clean_name, get_short_name
 from rig.nodetypes.transform import Transform
@@ -29,7 +30,7 @@ def _split_axis(axis: str) -> tuple[float, str]:
 
 def _world_matrix(node: str) -> np.ndarray:
     """Read a node's world matrix as a 4x4 array (row-vector convention)."""
-    return np.reshape(cmds.getAttr(f"{node}.worldMatrix[0]"), (4, 4))
+    return np.reshape(cmds.getAttr(f"{_name_of(node)}.worldMatrix[0]"), (4, 4))
 
 
 def replace_suffix(name: Any, suffix: str) -> str:
@@ -256,36 +257,36 @@ class Joint(Transform):
         # math, so importing rig must not pay for it.
         from cgmath.transforms import matrix_to_euler, XYZ
 
-        matrix = _world_matrix(str(self))
+        matrix = _world_matrix(_name_of(self))
         rot    = np.degrees(matrix_to_euler(matrix, XYZ))[0].tolist()
-        _cmds_edit.setAttr(f"{self}.jointOrient", 0, 0, 0)
-        _cmds_edit.xform(str(self), worldSpace=True, rotation=rot)
+        _cmds_edit.setAttr(f"{_name_of(self)}.jointOrient", 0, 0, 0)
+        _cmds_edit.xform(_name_of(self), worldSpace=True, rotation=rot)
 
     def convert_rotation_to_orients(self):
         """converts joint rotation into orients"""
         from cgmath.transforms import matrix_to_euler, XYZ
 
-        local_matrix = np.reshape(cmds.getAttr(f"{self}.matrix"), (4, 4))
+        local_matrix = np.reshape(cmds.getAttr(f"{_name_of(self)}.matrix"), (4, 4))
         rotation     = np.degrees(matrix_to_euler(local_matrix, XYZ))[0].tolist()
 
-        _cmds_edit.setAttr(f"{self}.r", 0, 0, 0)
-        _cmds_edit.setAttr(f"{self}.jo", rotation[0], rotation[1], rotation[2])
+        _cmds_edit.setAttr(f"{_name_of(self)}.r", 0, 0, 0)
+        _cmds_edit.setAttr(f"{_name_of(self)}.jo", rotation[0], rotation[1], rotation[2])
 
     def hierarchy_to_rotations(self):
         """converts joint orients into rotations"""
         child_joints = cmds.listRelatives(
-            str(self), c=True, ad=True, noIntermediate=True, type="joint"
+            _name_of(self), c=True, ad=True, noIntermediate=True, type="joint"
         )
-        child_joints.append(str(self))
+        child_joints.append(_name_of(self))
         for joint in child_joints:
             Joint._wrap(joint).convert_orients_to_rotation()
 
     def hierarchy_to_orients(self):
         """converts joint orients into rotations"""
         child_joints = cmds.listRelatives(
-            str(self), c=True, ad=True, noIntermediate=True, type="joint"
+            _name_of(self), c=True, ad=True, noIntermediate=True, type="joint"
         )
-        child_joints.append(str(self))
+        child_joints.append(_name_of(self))
         for joint in child_joints:
             Joint._wrap(joint).convert_rotation_to_orients()
 
@@ -297,15 +298,15 @@ class Joint(Transform):
 
         # check if end joint
         child_joints = cmds.listRelatives(
-            str(self), c=True, noIntermediate=True, type="joint"
+            _name_of(self), c=True, noIntermediate=True, type="joint"
         )
         if not child_joints:
             # no children, ju
-            _cmds_edit.setAttr(f"{self}.jo", 0, 0, 0)
-            _cmds_edit.setAttr(f"{self}.rx", 0)
-            _cmds_edit.setAttr(f"{self}.ry", 0)
-            _cmds_edit.setAttr(f"{self}.rz", 0)
-            print(f"{self} has no children, zeroing orients")
+            _cmds_edit.setAttr(f"{_name_of(self)}.jo", 0, 0, 0)
+            _cmds_edit.setAttr(f"{_name_of(self)}.rx", 0)
+            _cmds_edit.setAttr(f"{_name_of(self)}.ry", 0)
+            _cmds_edit.setAttr(f"{_name_of(self)}.rz", 0)
+            print(f"{_name_of(self)} has no children, zeroing orients")
             return
 
         # get list of all child joint parents
@@ -315,7 +316,7 @@ class Joint(Transform):
         _cmds_edit.parent(child_joints, w=True)
 
         # get the parent matrix
-        matrix       = _world_matrix(str(self))
+        matrix       = _world_matrix(_name_of(self))
         child_matrix = _world_matrix(child_joints[0])
 
         # make aim vector
@@ -326,7 +327,7 @@ class Joint(Transform):
         if root_joint:
             up_matrix = matrix
         else:
-            parent    = cmds.listRelatives(str(self), parent=True)
+            parent    = cmds.listRelatives(_name_of(self), parent=True)
             up_matrix = _world_matrix(parent[0]) if parent else matrix
 
         aim_sign, aim_key = _split_axis(aim_axis)
@@ -334,7 +335,7 @@ class Joint(Transform):
         up_vec = up_sign * (np.asarray(_AXIS_VECTOR[up_key]) @ up_matrix[:3, :3])
 
         # build the aim frame and read it back in the joint's own rotation order
-        rotation_order = cmds.getAttr(f"{self}.ro")
+        rotation_order = cmds.getAttr(f"{_name_of(self)}.ro")
         rotation = np.degrees(
             vector_to_euler(
                 aim_sign * aim_vec,
@@ -344,7 +345,7 @@ class Joint(Transform):
                 rotation_order,
             )
         )[0].tolist()
-        _cmds_edit.xform(str(self), worldSpace=True, rotation=rotation)
+        _cmds_edit.xform(_name_of(self), worldSpace=True, rotation=rotation)
         self.convert_orients_to_rotation()
 
         # reparent children

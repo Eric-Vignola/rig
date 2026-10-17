@@ -49,9 +49,26 @@ them -- but :meth:`List.get` DOES, so a query result reads as values.
 Both methods iterate elements directly rather than routing through
 :func:`sequences`, so an empty ``List`` yields an empty result.
 
-A node deleted or freed, or a plug of one, stays in its slot; every List
-operation skips it with one warning, and a List an operation derives holds
-``rig.skip`` there (see "deleted elements" below).
+A List holds what is in the scene (the List rule, user decisions 1A-4A and
+6C, 2026-10-17): while an element it holds -- a node, a plug or components of
+one, a membership token's node, a node's bound method or bare predicate, an
+element of a nested List -- is deleted (to the undo queue) or freed (a new
+scene, a file open, a reference unload, a flushed undo queue), every rig
+operation on the List raises one RuntimeError naming the first such element
+("List element [1] Transform("obj2", deleted) was deleted: this List can no
+longer be used; build a new List"): a broadcast, ``<<`` / ``>>``, ``get()``,
+lock / unlock, membership, ``in`` / ``index`` / ``count`` / ``remove``, every
+operator, truth, a copy (``List(lst)``, ``lst[:]``, ``copy``), a numpy
+conversion, a hash, every change, and rig's functions and wrappers given it.
+Python's own ``len()``, integer indexing and iteration never refuse it: Maya's
+argument readers go through them, and a refusal there crashes Maya. They give
+the elements as they are, and a deleted node's ``str()`` is its marked name
+(``"obj2 (deleted)"``), so raw ``maya.cmds`` given the List raises Maya's own
+clean error. An undo that brings the node back makes the List usable again.
+Its repr never raises (the element's marked repr). A List of values (numbers,
+vectors) is never invalid. Building a List from a deleted node raises too
+(``List([gone])``, ``append``, ``extend``, ``insert``, ``+=``, item
+assignment).
 
 ``in``, ``index``, ``count`` and ``remove`` never build a node: two plugs
 match when they are one Maya plug (``Node("|T1|S").v`` and
@@ -65,9 +82,9 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import reprlib
 import numbers
 import operator
+import reprlib
 from types import FunctionType, MethodType
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
@@ -75,10 +92,8 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig.nodetypes._base import (
-    _GETFRAME,
     _check_enum_names,
     _class_attr,
-    _user_view,
     _ensure_node_valid,
     _ensure_owner_alive,
     _enum_value,
@@ -90,6 +105,7 @@ from rig.nodetypes._base import (
     _METHOD_LOAD,
     _MethodAttribute,
     _MISSING,
+    _name_of,
     _GETFRAME,
     _BarePredicate,
     _is_predicate_name,
@@ -101,7 +117,8 @@ from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
-from rig._internal.journal import _in_rig, statement, user_call
+from rig._internal import journal as _journal
+from rig._internal.journal import statement, user_call
 from rig._internal.node import Node
 from rig._internal.operands import (
     _CAN_HOLD_STR,
@@ -119,237 +136,203 @@ from rig._internal.types import _is_attribute_spec, _is_components, _is_membersh
 from rig._internal.types import _lazy as _types_lazy
 from rig.nodetypes.errors import AmbiguousNodeError
 from rig._internal.undo import _undo_chunk
-from rig.spec.modifiers import skip as _skip_marker
 
 
-# --- deleted elements (user decision 2026-10-16) ------------------------------
+# --- the List rule (user decisions 1A-4A and 6C, 2026-10-17) ------------------
 #
-# A node deleted (to the undo queue) or freed (a new scene, a file open, a
-# reference unload) stays in its List slot, and so does a plug of one and a
-# Components selection on one: length, indices and zip pairing are unchanged.
-# rig's own List operations skip such an element and print ONE warning per
-# statement naming the skipped ones ("List element [0] obj1 was deleted;
-# skipped", `_warn`); a List an operation derives (an
-# attribute broadcast, an operator's results, get(), get_inputs()) holds
-# ``rig.skip`` in that slot, which every List operation leaves alone, so chained
-# broadcasts stay aligned and keep skipping. Every rig operation on the node or
-# plug itself still raises "... already deleted!".
+# A List is checked at its first rig use after the scene epoch moved
+# (`rig._internal.journal.EPOCH`: a node about to be removed, a scene replaced, a
+# reference unloaded): one pass over its elements, reading only handles (safe on a
+# freed node). Found valid, it keeps that epoch (``_epoch``) and every later use
+# costs one comparison, until the epoch moves again. Found invalid, it keeps
+# nothing: each use checks again and raises, until an undo brings the element back
+# (state-based). While a removal is in progress (a node announced removed is still
+# valid: a user's node-removed callback using a List) no epoch is kept.
 
-# ``rig.skip`` (rig.spec imports neither this module nor rig._internal.plug)
-_SKIP = _skip_marker
+# Python's len(), integer indexing and iteration are never checked (user decision
+# 6C: Maya's normal and String[...] flag argument readers read a List through them,
+# and a refusal in either crashes Maya); rig checks a List where it is given one
+# (`_guard`: the List's own methods, the outermost statement's arguments, rig's
+# wrappers and queries, `journal.check_lists`).
 
-
-# {an element's type: the name of the handle its __dict__ holds ("_handle" for a
-# plug, "_objhandle" for a node), or None}: one dict lookup per element instead
-# of two isinstance calls on classes with a metaclass
-_HANDLE_KEYS: dict = {}
-
-
-# the key of a Components selection (``__slots__``, no __dict__): its shape's
-# handle is read (`_element_handle`)
-_SHAPE_KEY = "_shape"
+# every List class (List, `_Methods`, a user's subclass): `journal.check_lists` reads
+# an argument's exact type here
+_LIST_TYPES: set = set()
 
 
-def _handle_key(t: type) -> Optional[str]:
-    key = _HANDLE_KEYS[t] = (
-        "_handle" if issubclass(t, Attribute)
-        else "_objhandle" if issubclass(t, Node)
-        else _SHAPE_KEY if issubclass(t, _types_lazy().members.Components)
-        else None
-    )
-    return key
+def _register_list_type() -> None:
+    _LIST_TYPES.add(List)
+    _journal.LIST_TYPE[:] = [_LIST_TYPES, _guard]
 
 
-def _element_handle(x: Any, key: str) -> Any:
-    """The handle `_gone` reads for `x`: its own (a node's), its owner's (a
-    plug's), or its shape's (a Components')."""
-    if key is _SHAPE_KEY:
+def _guard(lst: "List") -> None:
+    """The List rule's check of `lst`, a List a rig operation was given: one comparison
+    while the scene epoch it was last found valid at is the scene's (see `_check`)."""
+    if lst._epoch != _EPOCH[0]:
+        _check(lst)
+
+
+def _guarded(method: Callable[..., Any]) -> Callable[..., Any]:
+    """A List method that checks its List first (`_guard`)."""
+
+    @functools.wraps(method)
+    def guarded(self: "List", *args: Any, **kwargs: Any) -> Any:
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        return method(self, *args, **kwargs)
+
+    return guarded
+
+
+# the scene epoch and the doomed handles (`rig._internal.journal`)
+_EPOCH  = _journal.EPOCH
+_DOOMED = _journal.DOOMED
+
+# what an element's validity is read from (`_anchor`), by its exact type
+_NONE, _NODE, _PLUG, _COMPS, _LIST, _TOKEN, _BOUND, _PRED = range(8)
+_KIND: dict = {}
+
+
+def _kind_of(t: type) -> int:
+    members = _types_lazy().members
+    if issubclass(t, List):
+        k = _LIST
+    elif issubclass(t, Attribute):
+        k = _PLUG
+    elif issubclass(t, Node):
+        k = _NODE
+    elif issubclass(t, members.Components):
+        k = _COMPS
+    elif issubclass(t, members._MemberSpec):
+        k = _TOKEN
+    elif t is MethodType:
+        k = _BOUND
+    elif t is _BarePredicate:
+        k = _PRED
+    else:
+        k = _NONE  # a value (a number, a vector, a spec, keys ...): never invalid
+    _KIND[t] = k
+    return k
+
+
+def _anchor(x: Any, k: int) -> Any:
+    """The MObjectHandle `x`'s validity is read from (its node's), or None."""
+    if k is _NODE:
+        return x.__dict__.get("_objhandle")
+    if k is _PLUG:
+        return x.__dict__.get("_handle")
+    if k is _COMPS:
         return x._shape.__dict__.get("_objhandle")
-    return x.__dict__.get(key)
+    if k is _TOKEN:
+        d    = getattr(x, "__dict__", None) or {}
+        node = d.get("_layer") or d.get("_node")
+        return node.__dict__.get("_objhandle") if isinstance(node, Node) else None
+    # a bound method, or a bare predicate (``List(nodes).is_locked``: its method's)
+    owner = x.__self__ if k is _BOUND else getattr(x._bound, "__self__", None)
+    if isinstance(owner, Attribute):
+        return owner.__dict__.get("_handle")
+    if isinstance(owner, Node):
+        return owner.__dict__.get("_objhandle")
+    return None
 
 
-def _gone(x: Any) -> bool:
-    """True if `x` is a node deleted to the undo queue or freed, or a plug of
-    one (its handle, or its owner's, is not valid), or a Components selection
-    on one. Reads only the handle, which is safe on a freed node."""
-    t   = type(x)
-    key = _HANDLE_KEYS[t] if t in _HANDLE_KEYS else _handle_key(t)
-    if key is None:
-        return False
-    handle = _element_handle(x, key)
-    return handle is not None and not handle.isValid()
-
-
-def _gone_indices(items: Iterable[Any]) -> list:
-    """The indices of the deleted or freed elements of `items` (`_gone`), in
-    order; usually empty. A handle object met again (the plugs of one node
-    share their owner's) is read once."""
-    out  = []
-    seen = None
-    keys = _HANDLE_KEYS
-    for i, x in enumerate(items):
-        t   = type(x)
-        key = keys[t] if t in keys else _handle_key(t)
-        if key is None:
+def _first_gone(items: Iterable[Any], seen: Optional[set] = None) -> Optional[tuple]:
+    """``(path, element, handle)`` of the first deleted or freed element of `items`
+    (``path`` its index, ``[2][0]`` in a nested List), or None. Reads handles only;
+    a handle met again (the plugs of one node share their owner's) is read once."""
+    kinds = _KIND
+    last  = None
+    i     = -1
+    for x in items:
+        i += 1
+        k = kinds.get(type(x))
+        if k is None:
+            k = _kind_of(type(x))
+        if k == 0:  # _NONE: a value
             continue
-        handle = x.__dict__.get(key) if key is not _SHAPE_KEY else _element_handle(x, key)
-        if handle is None or handle is seen:
+        if k == 1:  # _NODE
+            h = x.__dict__.get("_objhandle")
+        elif k == 2:  # _PLUG
+            h = x.__dict__.get("_handle")
+        elif k == 4:  # _LIST: its own epoch first (one checked already costs nothing)
+            if x.__dict__.get("_epoch") == _EPOCH[0]:
+                continue
+            if seen is None:
+                seen = set()
+            if id(x) in seen:
+                continue  # a List that holds itself
+            seen.add(id(x))
+            found = _first_gone(list.__iter__(x), seen)
+            if found is not None:
+                return (f"[{i}]{found[0]}", found[1], found[2])
             continue
-        if handle.isValid():
-            seen = handle
         else:
-            out.append(i)
+            h = _anchor(x, k)
+        if h is last or h is None:
+            continue
+        if not h.isValid():
+            return (f"[{i}]", x, h)
+        last = h
+    return None
+
+
+def _settled() -> bool:
+    """True when no removal is in progress (every node announced removed is gone)
+    and the epoch's callbacks are registered: a List found valid may keep the epoch."""
+    if not _journal._SCENE_CALLBACKS_READY and not _journal._ensure_scene_callbacks():
+        return False  # (rig imported before Maya was initialised: registered once it is)
+    if _DOOMED:
+        for h in _DOOMED:
+            if h.isValid():
+                return False
+        del _DOOMED[:]
+    return True
+
+
+def _gone_text(path: str, x: Any, h: Any) -> str:
+    # (not alive: freed by a new scene, a file open, a reference unload or a
+    # flushed undo queue, which no undo brings back)
+    what = "was deleted" if h.isAlive() else "was deleted and freed"
+    if not isinstance(x, Node) or isinstance(x, Attribute):
+        what = "belongs to a node that " + what
+    return f"List element {path} {_safe_repr(x)} {what}"
+
+
+def _check(lst: "List") -> None:
+    """The List rule's check of `lst` (its epoch is not the scene's): raise if an
+    element it holds is deleted or freed, else keep the epoch (`_settled`)."""
+    epoch = _EPOCH[0]
+    found = _first_gone(list.__iter__(lst))
+    if found is not None:
+        raise RuntimeError(f"{_gone_text(*found)}: this List can no longer be used; build a new List")
+    if _settled():
+        lst.__dict__["_epoch"] = epoch
+
+
+def _check_new(items: list, start: Any) -> None:
+    """Building or adding to a List: an element deleted or freed raises."""
+    found = _first_gone(items)
+    if found is not None:
+        path, x, h = found
+        i    = int(path[1:path.index("]")])
+        path = f"[{_index(start, i)}]{path[path.index(']') + 1:]}"
+        raise RuntimeError(f"{_gone_text(path, x, h)}: a List holds what is in the scene")
+
+
+def _derived(out: "List", src: "List") -> "List":
+    """`out`, a List a broadcast just read from `src`'s elements (their plugs,
+    their methods): valid at the epoch `src` was found valid at, so its first
+    use costs no scan (its elements are `src`'s, or were read from them live)."""
+    if src._epoch == _EPOCH[0]:
+        out.__dict__["_epoch"] = src._epoch
     return out
 
 
-def _gone_name(x: Any) -> str:
-    """The name a skipped element is warned by: a node's last known name, a
-    plug's str buffer (the name it was built with), a Components' shape's last
-    known name and its ids, all without reading the freed node."""
-    if isinstance(x, Attribute):
-        return str.__str__(x)
-    if not isinstance(x, Node):
-        return x._gone_name()  # a Components
-    from rig.nodetypes.dg_node import _deleted_name
-
-    return _deleted_name(x)
-
-
-def _skipped_names(items: list, indices: list) -> list:
-    """``(label, element)`` of each skipped element `indices` of `items`: the
-    label a warning names it by (``[i] name``)."""
-    return [(f"[{i}] {_gone_name(items[i])}", items[i]) for i in indices]
-
-
-# the statement the last skip warning was for: ((id of the user's frame, its
-# code, its line), its instruction offset, the ids of the elements named), or
-# None. No frame and no element is kept (that would keep a user's objects
-# alive): ids only.
-_WARNED: list = [None]
-
-
-def _user_frame() -> Any:
-    """The frame of the user's code running the List operation (the first frame
-    up the stack that is not rig's own code), or None (C code called it)."""
+def _safe_repr(x: Any) -> str:
     try:
-        frame = _GETFRAME(2)
-    except ValueError:
-        return None
-    in_rig = _in_rig
-    while frame is not None and in_rig(frame.f_globals.get("__name__") or ""):
-        frame = frame.f_back
-    return frame
-
-
-def _warn(named: list) -> None:
-    """ONE warning per statement naming the skipped elements `named` (``(label,
-    element)``, the label ``[i] name``; user decision 2026-10-16): a statement
-    whose operations skip the same element (``lst.tx << lst.ty * 2 + lst.tz``,
-    ``lst.tx = lst.ty``) names it once. The statement is the user's frame and
-    line running it, at an instruction past the last warning's (a loop's next
-    pass is back at the same one: it warns again). Called from no user frame
-    (C code), every warning is printed."""
-    frame = _user_frame()
-    if frame is not None:
-        key  = (id(frame), frame.f_code, frame.f_lineno)
-        at   = frame.f_lasti
-        last = _WARNED[0]
-        if last is not None and last[0] == key and at > last[1]:
-            known = last[2]
-            fresh = [(label, x) for label, x in named if id(x) not in known]
-            known.update(id(x) for _, x in named)
-            _WARNED[0] = (key, at, known)
-            if not fresh:
-                return
-            named = fresh
-        else:
-            _WARNED[0] = (key, at, {id(x) for _, x in named})
-    else:
-        _WARNED[0] = None
-    if len(named) == 1:
-        cmds.warning(f"List element {named[0][0]} was deleted; skipped")
-    else:
-        cmds.warning(f"List elements {', '.join(label for label, _ in named)} were deleted; skipped")
-
-
-def _warn_skipped(items: list, indices: list) -> None:
-    """ONE warning naming the skipped elements `indices` of `items`."""
-    _warn(_skipped_names(items, indices))
-
-
-def _with_skips(items: Any, notes: Optional[list] = None) -> list:
-    """The elements of `items` (a List) with ``rig.skip`` in the slot of each
-    deleted or freed one, after one warning naming them (or, given `notes`,
-    their names appended to it, for the caller's one warning); the elements as
-    they are (a plain list) when none is."""
-    elements = list(list.__iter__(items) if isinstance(items, list) else items)
-    gone     = _gone_indices(elements)
-    if not gone:
-        return elements
-    if notes is None:
-        _warn_skipped(elements, gone)
-    else:
-        notes.extend(_skipped_names(elements, gone))
-    skip = _SKIP
-    for i in gone:
-        elements[i] = skip
-    return elements
-
-
-def _skip_rows(items: Any, other: Any) -> tuple:
-    """`items`' elements and `other` with ``rig.skip`` in the slot of every
-    deleted or freed element of either (`other` when it is a List), after ONE
-    warning naming them all (the operand's as ``operand [i] name``)."""
-    notes: list = []
-    if isinstance(other, List):
-        theirs = _with_skips(other, notes)
-        notes  = [(f"operand {label}", x) for label, x in notes]
-        if notes:
-            other = _values_list(theirs)
-    mine: list = []
-    elements = _with_skips(items, mine)
-    if mine or notes:
-        _warn(mine + notes)
-    return elements, other
-
-
-def _live(items: "List") -> "List":
-    """`items` without its deleted or freed elements and its skip slots, a
-    nested List's too (one warning names them), or `items` itself when it has
-    none: for an operation on the List as a whole (membership, a query), which
-    has no slot to keep."""
-    notes: list = []
-    live = _live_into(items, notes, "")
-    if notes:
-        _warn(notes)
-    return live
-
-
-def _live_into(items: "List", notes: list, where: str) -> "List":
-    """`_live` of `items` (at `where`, ``[i]`` of its parents), the names of
-    the elements left out appended to `notes`."""
-    elements = list(list.__iter__(items))
-    gone     = set(_gone_indices(elements))
-    skip     = _SKIP
-    out      = []
-    changed  = False
-    for i, x in enumerate(elements):
-        if i in gone:
-            notes.append((f"{where}[{i}] {_gone_name(x)}", x))
-            changed = True
-        elif x is skip:
-            changed = True  # a skip slot (a derived List's) is left alone too
-        elif isinstance(x, List):
-            y = _live_into(x, notes, f"{where}[{i}]")
-            changed = changed or y is not x
-            out.append(y)
-        else:
-            out.append(x)
-    return _values_list(out) if changed else items
-
-
-def _list_repr(items: "List") -> str:
-    return f"List({list.__repr__(items)})"
+        return repr(x)
+    except Exception:  # noqa: BLE001 (a repr never raises: the List's and Maya's error text)
+        return f"<{type(x).__name__} object at {id(x):#x}>"
 
 
 def _operand_rows(dunder: str, items: list, other: Any) -> list:
@@ -365,20 +348,18 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
     ``other`` raises TypeError, and an iterator ``other`` is read into a list
     first (see :mod:`rig._internal.operands`).
     """
+    if items._epoch != _EPOCH[0]:
+        _check(items)
+    if type(other) in _LIST_TYPES and other._epoch != _EPOCH[0]:
+        _check(other)
     if (
         not isinstance(other, _CAN_HOLD_STR)
         and not isinstance(other, _SCALARS)
         and isinstance(other, _RESHAPED)
     ):
         other = _prepared_operand(other, operator_where(dunder, _render(items), other))
-    # a deleted or freed element (of this List, or of a List operand) is a skip
-    # row, whose result is ``rig.skip`` (`_row_results`)
-    elements, other = _skip_rows(items, other)
-    rows = list(sequences(elements, other))
-    skip = _SKIP
+    rows = list(sequences(list(items), other))
     for row, (mine, theirs) in enumerate(rows):
-        if mine is skip or theirs is skip:
-            continue
         if isinstance(mine, Plug):
             if isinstance(theirs, _CAN_HOLD_STR) and not isinstance(theirs, Attribute):
                 found = _text_operand(theirs)
@@ -391,46 +372,6 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
                 _ensure_owner_alive(theirs)
                 raise operator_error(REFLECTED[dunder], theirs, mine, found, row)
     return rows
-
-
-def _live_rows(items: "List", other: Any) -> list:
-    """The broadcast rows ``(element, value)`` of ``items << other``
-    (``sequences``) without the rows of a deleted or freed element, of `items`
-    or of a List `other` (one warning names them), or of a skip slot: each is
-    left alone, as ``element << skip`` leaves it."""
-    skip = _SKIP
-    elements, other = _skip_rows(items, other)
-    return [
-        (mine, theirs) for mine, theirs in sequences(elements, other)
-        if mine is not skip and theirs is not skip
-    ]
-
-
-# what a deleted or freed element is to ``in`` / ``index`` / ``count`` /
-# ``remove``: no match, never read
-_NO_MATCH = object()
-
-
-def _unmatched_gone(items: "List") -> list:
-    """The elements of `items` with `_NO_MATCH` in the slot of each deleted or
-    freed one (one warning names them): ``in``, ``index``, ``count`` and
-    ``remove`` never match nor read it."""
-    elements = list(list.__iter__(items))
-    gone     = _gone_indices(elements)
-    if gone:
-        _warn_skipped(elements, gone)
-        for i in gone:
-            elements[i] = _NO_MATCH
-    return elements
-
-
-def _row_results(rows: list, op: Callable[[Any, Any], Any]) -> "List":
-    """The List of ``op(mine, theirs)`` per row of `_operand_rows`, ``rig.skip``
-    for a skip row (a deleted or freed element, or a skip slot, on either side)."""
-    skip = _SKIP
-    return _values_list(
-        skip if mine is skip or theirs is skip else op(mine, theirs) for mine, theirs in rows
-    )
 
 
 def _enum_rows(rows: Iterable) -> list:
@@ -485,24 +426,103 @@ class List(list):
         # is a journal statement, which a private name does not need.)
         object.__setattr__(self, "_parent_multi", _parent_multi)
         if items is not None:  # (an array has no truth value)
-            list.extend(self, _user_items(items, 0))
+            items = _user_items(items, 0)
+            _check_new(items, 0)
+            list.extend(self, items)
+        # every element was checked (an empty List holds none): valid at this epoch
+        if _settled():
+            self.__dict__["_epoch"] = _EPOCH[0]
+
+    # the scene epoch this List was last found valid at (the List rule)
+    _epoch = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _LIST_TYPES.add(cls)
+
+    # -- the List rule: every rig use checks the epoch first (`_guard`). Python's
+    # len(), integer indexing and iteration are list's own and never check (user
+    # decision 6C: Maya's argument readers go through them) -- #
+
+    def __bool__(self) -> bool:
+        # truth is a use (``if lst:``); Maya's argument readers never ask it
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        return list.__len__(self) > 0
+
+    def __array__(self, dtype: Any = None, copy: Any = None) -> np.ndarray:
+        # a numpy conversion is a use (numpy would otherwise read the List through
+        # len() and indexing, which never refuse); numpy 2 passes ``copy=False``
+        # when it must not copy, and a List has no buffer to view: ValueError, as
+        # numpy expects
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        if copy is False:
+            raise ValueError("a List cannot be viewed as an array without a copy: np.asarray(lst) copies it")
+        return np.array(list(list.__iter__(self)), dtype=dtype)
+
+    @_guarded
+    def __delitem__(self, key: Any) -> None:
+        list.__delitem__(self, key)
+
+    @_guarded
+    def __imul__(self, n: Any) -> "List":
+        return list.__imul__(self, n)
+
+    @_guarded
+    def pop(self, index: Any = -1) -> Any:
+        return list.pop(self, index)
+
+    @_guarded
+    def clear(self) -> None:
+        list.clear(self)
+
+    @_guarded
+    def sort(self, *, key: Any = None, reverse: bool = False) -> None:
+        list.sort(self, key=key, reverse=reverse)
+
+    @_guarded
+    def reverse(self) -> None:
+        list.reverse(self)
+
+    @_guarded
+    def copy(self) -> "List":
+        return _rebuild(type(self), list(list.__iter__(self)), dict(self.__dict__))
 
     # -- adding elements: each one cast as List(items) casts it -- #
 
     def append(self, value: Any) -> None:
-        if type(value) in _PLAIN or isinstance(value, _KEPT):
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        if type(value) in _PLAIN:
             list.append(self, value)
             return
-        list.extend(self, _user_items((value,), len(self)))
+        if isinstance(value, _KEPT):
+            # one node or plug: its handle (`_first_gone` for anything else)
+            d = getattr(value, "__dict__", None)  # (a numpy scalar has none)
+            h = None if d is None else d.get("_handle") or d.get("_objhandle")
+            if (h is not None and not h.isValid()) or isinstance(value, List):
+                _check_new((value,), list.__len__(self))
+            list.append(self, value)
+            return
+        items = _user_items((value,), list.__len__(self))
+        _check_new(items, list.__len__(self))
+        list.extend(self, items)
 
+    @_guarded
     def extend(self, values: Iterable[Any]) -> None:
-        list.extend(self, _user_items(values, len(self)))
+        items = _user_items(values, list.__len__(self))
+        _check_new(items, list.__len__(self))
+        list.extend(self, items)
 
+    @_guarded
     def insert(self, index: Any, value: Any) -> None:
         if type(value) in _PLAIN or isinstance(value, _KEPT):
+            _check_new((value,), index)
             list.insert(self, index, value)
             return
         items = _user_items((value,), index)
+        _check_new(items, index)
         if len(items) == 1:
             list.insert(self, index, items[0])
             return
@@ -510,14 +530,20 @@ class List(list):
         start, _, _ = slice(index, index).indices(len(self))
         list.__setitem__(self, slice(start, start), items)
 
+    @_guarded
     def __iadd__(self, values: Iterable[Any]) -> "List":
-        list.extend(self, _user_items(values, len(self)))
+        items = _user_items(values, list.__len__(self))
+        _check_new(items, list.__len__(self))
+        list.extend(self, items)
         return self
 
+    @_guarded
     def __setitem__(self, key: Any, value: Any) -> None:
         if isinstance(key, slice):
-            start = key.indices(len(self))[0]
-            list.__setitem__(self, key, _user_items(value, start))
+            start = key.indices(list.__len__(self))[0]
+            items = _user_items(value, start)
+            _check_new(items, start)
+            list.__setitem__(self, key, items)
             return
         try:
             operator.index(key)
@@ -525,6 +551,7 @@ class List(list):
             list.__setitem__(self, key, value)  # list's own error
             return
         items = _user_items((value,), key)
+        _check_new(items, key)
         if len(items) != 1:
             index = operator.index(key)
             if -len(self) <= index < 0:
@@ -538,24 +565,29 @@ class List(list):
     def __reduce_ex__(self, protocol: Any) -> tuple:
         # copy.copy / deepcopy / pickle rebuild a list subclass through append,
         # which casts: a copy keeps the elements as they are (`_rebuild`), and
-        # its state (`_parent_multi`, a `_Methods`' `_method`)
-        return _rebuild, (type(self), list(self), dict(self.__dict__))
+        # its state (`_parent_multi`, a `_Methods`' `_method`; not the epoch); a
+        # copy is a use (user decision 2A)
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        state = dict(self.__dict__)
+        state.pop("_epoch", None)
+        return _rebuild, (type(self), list(list.__iter__(self)), state)
 
     @reprlib.recursive_repr("List([...])")
     def __repr__(self) -> str:
-        # a deleted or freed element shows marked (user decision 2026-10-16:
-        # ``List([Transform("obj1", deleted), Transform("obj2")])``), whoever
-        # asks: its own repr raises in rig's code (`_called_from_rig`), so the
-        # List renders again as a user reads it (`_user_view`), which marks a
-        # node, a plug, a Components, a token or a method of one, nested too
+        # never raises (no check): a deleted element shows marked, as its own
+        # repr does (``List([Transform("obj1", deleted), Transform("obj2")])``),
+        # for debugging and for Maya's "Object [...] is invalid" error text
         try:
             return f"List({list.__repr__(self)})"
-        except RuntimeError:
-            return _user_view(_list_repr, self)
+        except Exception:  # noqa: BLE001
+            return f"List([{', '.join(_safe_repr(x) for x in list.__iter__(self))}])"
 
     # -- attribute access broadcasts -- #
 
     def __getattr__(self, name: str) -> "List":
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         if name.startswith("_"):
             # a Maya attr every element has (``nodes.__tag__``), else
             # AttributeError, which Python's probes (``__deepcopy__``) expect
@@ -563,12 +595,11 @@ class List(list):
             if found is None:
                 raise AttributeError(name)
             return found
-        # a deleted or freed element: rig.skip in its slot (`_with_skips`)
         found = _values_list(
-            getattr(x, name) if isinstance(x, (Plug, Node)) else x for x in _with_skips(self)
+            getattr(x, name) if isinstance(x, (Plug, Node)) else x for x in self
         )
-        if not found:
-            return found
+        if not list.__len__(found):
+            return _derived(found, self)
         # the plug-method rule over a List: with brackets it is the method
         # (``List(nodes).lock()``, the caller's frame on a method load: each
         # method plug stands for its method), bare it is the plugs if every
@@ -581,22 +612,20 @@ class List(list):
             found = _values_list(
                 x.__dict__["_method"] if isinstance(x, _METHOD_PLUGS) else x for x in found
             )
-        skip    = _SKIP
         methods = [
             type(x) is MethodType or type(x) is FunctionType or type(x) is _BarePredicate
             for x in found
-            if x is not skip
         ]
-        if methods and all(methods):
+        if all(methods):
             # a method of every element (``List(shapes).save``): a List of bound
             # methods, which a call refuses with the loop to write
-            return _Methods(found, name)
+            return _derived(_Methods(found, name), self)
         if any(methods):
             plugs = [k for k, x in enumerate(found) if isinstance(x, _METHOD_PLUGS)]
             if plugs:
                 # only some elements have the Maya attr: neither plugs nor methods
                 raise AttributeError(_mixed_methods_text(name, plugs, len(found)))
-        return found
+        return _derived(found, self)
 
     @statement
     def __setattr__(self, name: str, value: Any) -> None:
@@ -607,15 +636,19 @@ class List(list):
         declares), else a broadcast inject when every element is a node or plug
         that has a Maya attr of that name (``nodes.__tag__ = 5``). A name only
         some elements have raises AttributeError naming the first that lacks it,
-        in any order, and sets nothing; a deleted or freed element is skipped
-        (one warning), as every List operation skips it. A name no element has
-        raises AttributeError,
+        or its ``already deleted!`` when that one was deleted or freed, in any
+        order, and sets nothing. A name no element has raises AttributeError,
         as on a node (the '_' rule, user decision 2026-10-16: ``nodes._tga = 5``;
         an empty List has no element, so it raises too). A ``List`` subclass
         keeps private state under a ``_`` name by declaring it in its class body
         (``_extra = None``), as a node class does.
         """
         if name.startswith("_"):
+            if name in _LIST_STATE or name in self.__dict__:
+                object.__setattr__(self, name, value)
+                return
+            if self._epoch != _EPOCH[0]:
+                _check(self)
             if (
                 name in _LIST_STATE
                 or name in self.__dict__
@@ -645,12 +678,18 @@ class List(list):
 
     def __getitem__(self, key: Any) -> Any:
         # Slice / int / list of int -- preserve normal list behaviour but
-        # wrap in List where appropriate.
+        # wrap in List where appropriate. An integer index is list's own and
+        # never checks (user decision 6C: Maya's argument readers index); a
+        # slice is a copy and a name a broadcast: rig uses, checked.
+        if type(key) is int:
+            return list.__getitem__(self, key)
+        if self._epoch != _EPOCH[0] and not hasattr(key, "__index__"):
+            _check(self)
         if isinstance(key, slice):
             return _values_list(super().__getitem__(key))
         if isinstance(key, str):
             return _values_list(
-                getattr(x, key) if isinstance(x, (Plug, Node)) else x for x in _with_skips(self)
+                getattr(x, key) if isinstance(x, (Plug, Node)) else x for x in self
             )
         if isinstance(key, (list, tuple)):
             # ``list.__getitem__`` explicitly: a zero-argument ``super()``
@@ -663,6 +702,8 @@ class List(list):
 
     @statement
     def __lshift__(self, other: Any) -> Any:
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:
             raise TypeError(
@@ -686,33 +727,26 @@ class List(list):
 
         # Keys: one curve per plug (``List(ctrls).ry << AnimCurve([...])``), every
         # row planned first, then one undo step (``rig.animcurve``)
-        skip = _SKIP
         if type(other) is _Keys:
-            _anim_keys.inject_rows(_live_rows(self, other))
+            _anim_keys.inject_rows(list(sequences(list(self), other)))
             return self
 
         # Spec broadcast -- apply the same spec to every element node. An
         # element that cannot take an attribute is a TypeError naming it,
-        # raised before anything is applied; nothing is silently dropped (a
-        # deleted or freed element, a skip slot, is left alone: rig.skip in
-        # its slot of the result).
+        # raised before anything is applied; nothing is silently dropped.
         if _is_attribute_spec(other):
-            elements = _with_skips(self)
-            live     = [x for x in elements if x is not skip]
-            for i, x in enumerate(elements):
-                if x is not skip and not isinstance(x, (Plug, Node)):
+            for i, x in enumerate(self):
+                if not isinstance(x, (Plug, Node)):
                     raise TypeError(
                         f"element [{i}] ({x!r}) is not a Plug or a Node and cannot "
                         f"take an attribute spec"
                     )
             # every element's checks first: a refused one (another kind of
             # attribute, a setting that cannot apply) leaves every other as it was
-            if len(live) > 1:
-                for x in live:
+            if len(self) > 1:
+                for x in self:
                     user_call(other._precheck, x)
-            return _values_list(
-                x if x is skip else user_call(other.apply, x) for x in elements
-            )
+            return _values_list(user_call(other.apply, x) for x in self)
 
         # v4.F.b: empty List from ``multi[:]`` slicing on an
         # unpopulated multi + a sequence source -> route the write
@@ -722,7 +756,7 @@ class List(list):
         # asymmetric broadcast caps at the shorter side, which is
         # empty).
         parent = getattr(self, "_parent_multi", None)
-        if not self and parent is not None:
+        if not list.__len__(self) and parent is not None:
             from rig._internal.types import _is_sequence
 
             if isinstance(other, List) or (
@@ -735,15 +769,13 @@ class List(list):
         # ``List([cube.f[:2], cube.f[2:]]) << [Tag("a"), Tag("b")]``
         # pairs each selection with its own spec. Enum field names are read
         # for every row first, so a wrong one sets nothing.
-        # A deleted or freed element (of this List, or of a List operand) and
-        # a skip slot leave their row alone (`_live_rows`, one warning).
-        rows = _live_rows(self, other)
+        rows = sequences(list(self), other)
         if isinstance(other, (list, tuple)) and any(_is_membership(o) for o in other):
-            return self._membership_rows(rows)
+            return self._membership_rows(list(rows))
         if isinstance(other, (list, tuple)) and any(type(o) is _Keys for o in other):
             # pairs of keys: every pair planned first (a row of another kind is a
             # TypeError: one '<<' per kind), then one undo step
-            _anim_keys.inject_rows(rows)
+            _anim_keys.inject_rows(list(rows))
             return self
         if _holds_text(other):
             rows = _enum_rows(rows)
@@ -790,6 +822,8 @@ class List(list):
         Asymmetric broadcast follows the same :func:`sequences` rules as the
         other List operators (when ``other`` is itself iterable).
         """
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         # `>> None` short-circuit -- return numpy-aware stacked values.
         if other is None:
             return self.get()
@@ -803,13 +837,9 @@ class List(list):
                 "'<list> >> List' has been replaced by '<list>.get_outputs()'."
             )
 
-        results  = []
-        skip     = _SKIP
-        elements, other = _skip_rows(self, other)
-        for x, y in sequences(elements, other):
-            if x is skip or y is skip:
-                results.append(skip)
-            elif isinstance(x, (Plug, Node)) or _is_components(x):
+        results = []
+        for x, y in sequences(list(self), other):
+            if isinstance(x, (Plug, Node)) or _is_components(x):
                 results.append(x >> y)
             else:
                 results.append(x)
@@ -818,12 +848,10 @@ class List(list):
     # -- connection queries -- #
 
     def _query_each(self, method: str) -> "List":
-        out  = _values_list()
-        skip = _SKIP
-        for x in _with_skips(self):
-            if x is skip:
-                list.append(out, skip)
-                continue
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        out = _values_list()
+        for x in self:
             if not isinstance(x, Plug):
                 raise TypeError(
                     f"'{method}()' needs Plug elements; got "
@@ -848,12 +876,16 @@ class List(list):
         Defined explicitly because methods do not broadcast through
         :meth:`__getattr__` (``is_locked()`` is a method of a node and of a plug:
         ``[x.is_locked() for x in lst]``)."""
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         return _set_locks(self, True)
 
     def unlock(self) -> "List":
         """Unlocks every element and returns this List: ``lst.unlock()`` is
         ``lst << unlock``. The nodes first (one ``lockNode``), then the plugs;
         all or nothing, one undo step (``rig.unlock``), as :meth:`lock`."""
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         return _set_locks(self, False)
 
     def get_inputs(self) -> "List":
@@ -895,108 +927,102 @@ class List(list):
         # neither Plug nor Node, so it passes through unconverted -- and
         # because Plug subclasses str, a rectangular nesting would then stack
         # into an array of plug NAME STRINGS rather than raising.
-        # (a deleted or freed element gives rig.skip, `_with_skips`)
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         per_element = [
-            x >> None if isinstance(x, (Plug, Node, List)) else x for x in _with_skips(self)
+            x >> None if isinstance(x, (Plug, Node, List)) else x for x in list.__iter__(self)
         ]
-        skip = _SKIP
-        if any(x is skip for x in per_element):
-            # a skipped element's slot: a List of the values with rig.skip there
-            # (user decision 2026-10-16, a derived List; fix round 2026-10-17):
-            # it broadcasts as every derived List does (``lst.tx.get() + 1``
-            # keeps skip in that slot, ``lst.ty << lst.tx.get()`` leaves it)
-            return _values_list(per_element)
         return _stack_values(per_element)
 
     # -- arithmetic broadcast -- #
 
     def __add__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__add__", self, other), lambda s, o: s + o)
+        return _values_list(s + o for s, o in _operand_rows("__add__", self, other))
 
     def __radd__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__radd__", self, other), lambda s, o: o + s)
+        return _values_list(o + s for s, o in _operand_rows("__radd__", self, other))
 
     def __sub__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__sub__", self, other), lambda s, o: s - o)
+        return _values_list(s - o for s, o in _operand_rows("__sub__", self, other))
 
     def __rsub__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rsub__", self, other), lambda s, o: o - s)
+        return _values_list(o - s for s, o in _operand_rows("__rsub__", self, other))
 
     def __mul__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__mul__", self, other), lambda s, o: s * o)
+        return _values_list(s * o for s, o in _operand_rows("__mul__", self, other))
 
     def __rmul__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rmul__", self, other), lambda s, o: o * s)
+        return _values_list(o * s for s, o in _operand_rows("__rmul__", self, other))
 
     def __truediv__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__truediv__", self, other), lambda s, o: s / o)
+        return _values_list(s / o for s, o in _operand_rows("__truediv__", self, other))
 
     def __rtruediv__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rtruediv__", self, other), lambda s, o: o / s)
+        return _values_list(o / s for s, o in _operand_rows("__rtruediv__", self, other))
 
     def __pow__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__pow__", self, other), lambda s, o: s**o)
+        return _values_list(s**o for s, o in _operand_rows("__pow__", self, other))
 
     def __rpow__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rpow__", self, other), lambda s, o: o**s)
+        return _values_list(o**s for s, o in _operand_rows("__rpow__", self, other))
 
     def __floordiv__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__floordiv__", self, other), lambda s, o: s // o)
+        return _values_list(s // o for s, o in _operand_rows("__floordiv__", self, other))
 
     def __rfloordiv__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rfloordiv__", self, other), lambda s, o: o // s)
+        return _values_list(o // s for s, o in _operand_rows("__rfloordiv__", self, other))
 
     def __mod__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__mod__", self, other), lambda s, o: s % o)
+        return _values_list(s % o for s, o in _operand_rows("__mod__", self, other))
 
     def __rmod__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rmod__", self, other), lambda s, o: o % s)
+        return _values_list(o % s for s, o in _operand_rows("__rmod__", self, other))
 
     def __and__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__and__", self, other), lambda s, o: s & o)
+        return _values_list(s & o for s, o in _operand_rows("__and__", self, other))
 
     def __rand__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rand__", self, other), lambda s, o: o & s)
+        return _values_list(o & s for s, o in _operand_rows("__rand__", self, other))
 
     def __or__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__or__", self, other), lambda s, o: s | o)
+        return _values_list(s | o for s, o in _operand_rows("__or__", self, other))
 
     def __ror__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__ror__", self, other), lambda s, o: o | s)
+        return _values_list(o | s for s, o in _operand_rows("__ror__", self, other))
 
     def __xor__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__xor__", self, other), lambda s, o: s ^ o)
+        return _values_list(s ^ o for s, o in _operand_rows("__xor__", self, other))
 
     def __rxor__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__rxor__", self, other), lambda s, o: o ^ s)
+        return _values_list(o ^ s for s, o in _operand_rows("__rxor__", self, other))
 
+    @_guarded
     def __neg__(self) -> "List":
-        skip = _SKIP
-        return _values_list(x if x is skip else -x for x in _with_skips(self))
+        return _values_list(-x for x in list.__iter__(self))
 
+    @_guarded
     def __invert__(self) -> "List":
-        skip = _SKIP
-        return _values_list(x if x is skip else ~x for x in _with_skips(self))
+        return _values_list(~x for x in list.__iter__(self))
 
     # -- comparison broadcast -- #
 
     def __eq__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__eq__", self, other), lambda s, o: s == o)
+        return _values_list(s == o for s, o in _operand_rows("__eq__", self, other))
 
     def __ne__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__ne__", self, other), lambda s, o: s != o)
+        return _values_list(s != o for s, o in _operand_rows("__ne__", self, other))
 
     def __ge__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__ge__", self, other), lambda s, o: s >= o)
+        return _values_list(s >= o for s, o in _operand_rows("__ge__", self, other))
 
     def __le__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__le__", self, other), lambda s, o: s <= o)
+        return _values_list(s <= o for s, o in _operand_rows("__le__", self, other))
 
     def __gt__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__gt__", self, other), lambda s, o: s > o)
+        return _values_list(s > o for s, o in _operand_rows("__gt__", self, other))
 
     def __lt__(self, other: Any) -> "List":
-        return _row_results(_operand_rows("__lt__", self, other), lambda s, o: s < o)
+        return _values_list(s < o for s, o in _operand_rows("__lt__", self, other))
 
     # -- list protocol (must not route through __eq__) -- #
 
@@ -1017,30 +1043,22 @@ class List(list):
         when the first plug element is reached. A node element matches a str
         that names it, as ``Node(text) == element`` would (``"|a"`` and ``"a"``
         find ``Node("a")``; another instance path is another DAG node object),
-        and any other element as ``list`` does. A deleted or freed element (a
-        node, or a plug of one) matches nothing and is never read, with one
-        warning naming it (user decision 2026-10-16); a deleted or freed probe
-        raises ``already deleted!``, as its name does. The probe is
+        and any other element as ``list`` does. A plug element of a deleted or
+        freed node raises ``already deleted!``, as its name does. The probe is
         read once per call too (its name, its plug identity), at the first
         element; an element that is the probe object matches at once.
 
         ``index``, ``count`` and ``remove`` match elements the same way.
         """
-        if _gone(other):
-            # a deleted or freed probe is found by identity only, never read nor
-            # warned for (``ctls.remove(gone_ctl)``)
-            return any(x is other for x in list.__iter__(self))
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         match = _matcher(other)
-        return any(x is not _NO_MATCH and match(x) for x in _unmatched_gone(self))
+        return any(match(x) for x in list.__iter__(self))
 
     def index(self, value: Any, start: int = 0, stop: Optional[int] = None) -> int:
-        if _gone(value):
-            # a deleted or freed probe: by identity only (see `__contains__`)
-            items = list(list.__iter__(self))
-            match = lambda x: x is value  # noqa: E731
-        else:
-            items = _unmatched_gone(self)
-            match = None
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        items  = list(list.__iter__(self))
         length = len(items)
         if stop is None:
             stop = length
@@ -1048,31 +1066,27 @@ class List(list):
             start = max(length + start, 0)
         if stop < 0:
             stop = max(length + stop, 0)
-        if match is None:
-            match = _matcher(value)
-        for i in range(start, min(stop, length)):
-            if items[i] is not _NO_MATCH and match(items[i]):
-                return i
-        # (a deleted probe shows marked, as a user reads it: its repr raises here)
-        raise ValueError(f"{_user_view(repr, value)} is not in List")
-
-    def count(self, value: Any) -> int:
-        if _gone(value):
-            # a deleted or freed probe: by identity only (see `__contains__`)
-            return sum(1 for x in list.__iter__(self) if x is value)
         match = _matcher(value)
-        return sum(1 for x in _unmatched_gone(self) if x is not _NO_MATCH and match(x))
+        for i in range(start, min(stop, length)):
+            if match(items[i]):
+                return i
+        raise ValueError(f"{value!r} is not in List")
+
+    @_guarded
+    def count(self, value: Any) -> int:
+        match = _matcher(value)
+        return sum(1 for x in list.__iter__(self) if match(x))
 
     def remove(self, value: Any) -> None:
         list.__delitem__(self, self.index(value))
 
     # -- hashable (so List works in sets / dict keys) -- #
 
+    @_guarded
     def __hash__(self) -> int:
         try:
             return hash(tuple(hash(x) for x in self))
-        except (TypeError, RuntimeError):
-            # an unhashable element, or a deleted or freed node's (its name)
+        except TypeError:
             return id(self)
 
 
@@ -1101,11 +1115,7 @@ def _set_locks(items: "List", state: bool) -> "List":
     plugs: list = []
     seen_nodes: set = set()
     seen_plugs: dict = {}
-    skip = _SKIP
-    # a deleted or freed element, a skip slot: left alone (one warning)
-    for i, x in enumerate(_with_skips(items)):
-        if x is skip:
-            continue
+    for i, x in enumerate(items):
         if isinstance(x, Attribute) and not _is_components(x):
             _ensure_owner_alive(x)
             if x._mplug.isLocked == state:
@@ -1128,7 +1138,7 @@ def _set_locks(items: "List", state: bool) -> "List":
 
     # the checks, in the order of the edits
     for x, fn in nodes:
-        why = _node_lock_refusal(fn, str(x), state)
+        why = _node_lock_refusal(fn, _name_of(x), state)
         if why:
             raise _injection_error(why)
     for x in plugs:
@@ -1144,17 +1154,17 @@ def _set_locks(items: "List", state: bool) -> "List":
         return items
     with _undo_chunk("rig.lock" if state else "rig.unlock") if commands > 1 else contextlib.nullcontext():
         if not state and nodes:
-            cmds_edit.lockNode([str(x) for x, _ in nodes], lock=False)
+            cmds_edit.lockNode([_name_of(x) for x, _ in nodes], lock=False)
         for x in plugs:
-            cmds_edit.setAttr(str(x), lock=state)
+            cmds_edit.setAttr(_name_of(x), lock=state)
         if state and nodes:
-            cmds_edit.lockNode([str(x) for x, _ in nodes], lock=True)
+            cmds_edit.lockNode([_name_of(x) for x, _ in nodes], lock=True)
     return items
 
 
 # the List's own Python state (``_Methods`` keeps its method name): never a
 # Maya attr, whatever its elements have
-_LIST_STATE = frozenset(("_parent_multi", "_method"))
+_LIST_STATE = frozenset(("_parent_multi", "_method", "_epoch"))
 
 
 def _private_plugs(items: "List", name: str) -> Optional["List"]:
@@ -1165,57 +1175,33 @@ def _private_plugs(items: "List", name: str) -> Optional["List"]:
     `_private_plug`). A Python probe (``__deepcopy__``, ``__array__``) costs
     one lookup, on the first element.
 
-    Once a live element has it, every other must: a later element without it
-    raises AttributeError naming it before anything is read or set (no
-    partial broadcast). A deleted or freed element is skipped: rig.skip in
-    its slot, one warning when the broadcast is made."""
+    Once an element has it, every other must: a later element without it
+    raises AttributeError naming it, and one deleted or freed raises its
+    ``already deleted!``, before anything is read or set (no partial
+    broadcast)."""
     found = []
-    has   = None
-    gone  = []
-    skip  = _SKIP
-    elements = list(list.__iter__(items))
-    for i, x in enumerate(elements):
-        # a deleted or freed element, a skip slot: rig.skip in its slot
-        if x is skip:
-            found.append(skip)
-            continue
-        if _gone(x):
-            found.append(skip)
-            gone.append(i)
-            continue
+    for x in list.__iter__(items):
         plug = _private_plug(x, name)
         if plug is not None:
             found.append(plug)
-            if has is None:
-                has = i
             continue
-        if has is None:
+        if not found:
             return None
-        _raise_partial(x, i, name, has)
-    if has is None:
-        return None
-    if gone:
-        _warn_skipped(elements, gone)
-    return _values_list(found)
+        _raise_partial(x, len(found), name, 0)
+    return _values_list(found) if found else None
 
 
 def _refuse_partial(items: "List", name: str) -> None:
     """For an assignment `_private_plugs` found no broadcast for (its first
     element lacks `name`): raise as `_private_plugs` does for a later element
-    when any element has `name`, naming the first live element, which lacks it
-    (a deleted or freed element is skipped), and return when none has it
+    when any element has `name`, naming the first element, which lacks it (its
+    ``already deleted!`` when deleted or freed), and return when none has it
     (the caller raises: Node's '_' rule). So ``List([d, a]).__tag__ = 5``
     raises as ``List([a, d]).__tag__ = 5`` does, whatever the order. Every
     element is read: an assignment is no Python probe."""
-    first = None
-    skip  = _SKIP
     for i, x in enumerate(list.__iter__(items)):
-        if x is skip or _gone(x):
-            continue  # left alone, as every List operation leaves it
-        if first is None:
-            first = i
-        elif _private_plug(x, name) is not None:
-            _raise_partial(list.__getitem__(items, first), first, name, i)
+        if i and _private_plug(x, name) is not None:
+            _raise_partial(list.__getitem__(items, 0), 0, name, i)
 
 
 def _raise_partial(x: Any, index: int, name: str, has: int) -> None:
@@ -1322,6 +1308,8 @@ class _Methods(List):
         object.__setattr__(self, "_method", name)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         name = self._method
         raise TypeError(
             f"List(...).{name}(...): {name} is a method of each element, and a method does "
@@ -1333,6 +1321,8 @@ class _Methods(List):
         # a predicate of each element named without brackets (``if
         # List(plugs).is_locked:``) has no truth value, as an element's has none
         # (`_BarePredicate`); any other method List is a non-empty list
+        if self._epoch != _EPOCH[0]:
+            _check(self)
         name = self._method
         if _is_predicate_name(name):
             raise TypeError(
@@ -1459,7 +1449,10 @@ def _user_items(items: Iterable[Any], start: Any) -> list:
     ``List([List([...]), ...])``), a set or a dict, a class or a function, an
     object whose ``str`` names no node or plug."""
     if isinstance(items, List):
-        return list(items)
+        # its elements as they are; giving it is a use (a copy, user decision 2A)
+        if items._epoch != _EPOCH[0]:
+            _check(items)
+        return list(list.__iter__(items))
     out    = []
     append = out.append
     for i, x in enumerate(items):
@@ -1613,8 +1606,7 @@ class _SamePlug:
     """The element test of a plug probe, `_same_entity`'s rule with the probe
     read once, at the first element: named (a deleted or freed probe raises, as
     its name does), its node and plug identity kept. An element that is the
-    probe matches; another plug element is named (`List` passes no deleted
-    one, `_unmatched_gone`) and
+    probe matches; another plug element is named (a deleted one raises) and
     matches when it is the same Maya plug (see `_same_plug`); any other element
     compares by name."""
 
@@ -1627,26 +1619,26 @@ class _SamePlug:
     def __call__(self, item: Any) -> bool:
         probe = self.probe
         if self.name is None:
-            self.name     = str(probe)
+            self.name     = _name_of(probe)
             self.mnode    = probe.__dict__["_mplug"].node()
             self.identity = _plug_identity_name(probe)
         if item is probe:
             return True
         if isinstance(item, Attribute):
-            str(item)
+            _name_of(item)
             return item.__dict__["_mplug"].node() == self.mnode and (
                 _plug_identity_name(item) == self.identity
             )
         if isinstance(item, List):
             return False
-        return str(item) == self.name
+        return _name_of(item) == self.name
 
 
 class _SameNode:
     """The element test of a node probe, `_same_entity`'s rule with the probe's
     name read once, at the first element (a deleted or freed probe raises, as
     its name does): an element that is the probe matches, any other compares
-    by name (`List` passes no deleted element, `_unmatched_gone`)."""
+    by name (a deleted element raises)."""
 
     __slots__ = ("probe", "name")
 
@@ -1656,12 +1648,12 @@ class _SameNode:
 
     def __call__(self, item: Any) -> bool:
         if self.name is None:
-            self.name = str(self.probe)
+            self.name = _name_of(self.probe)
         if item is self.probe:
             return True
         if isinstance(item, List):
             return False
-        return str(item) == self.name
+        return _name_of(item) == self.name
 
 
 def _plug_named(text: str) -> Optional[Plug]:
@@ -1715,7 +1707,7 @@ class _NamedPlug:
     def __call__(self, item: Any) -> bool:
         if isinstance(item, Node):
             # its name raises for a deleted or freed node
-            name = str(item)
+            name = _name_of(item)
             if name == self.text:
                 return True
             if self.node_pending:
@@ -1730,7 +1722,7 @@ class _NamedPlug:
         if self.plug is None:
             # a deleted or freed element raises, as its name does (and as
             # `_same_plug` names both)
-            str(item)
+            _name_of(item)
             return False
         return _same_plug(item, self.plug)
 
@@ -1770,10 +1762,11 @@ def _same_entity(item: Any, probe: Any) -> bool:
     if isinstance(item, Attribute) and isinstance(probe, Attribute):
         return _same_plug(item, probe)
     if isinstance(item, (Attribute, Node)) or isinstance(probe, (Attribute, Node)):
-        return str(item) == str(probe)
+        return _name_of(item) == _name_of(probe)
     if isinstance(item, List) or isinstance(probe, List):
         return item is probe
     try:
         return bool(item == probe)
     except Exception:
         return False
+_register_list_type()
