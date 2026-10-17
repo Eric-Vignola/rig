@@ -2909,7 +2909,9 @@ def _inject_value(
         compound_dst = types._is_compound(dst)
     try:
         leaves = (
-            [type(dst).child(dst, i) for i in range(type(dst).get_num_children(dst))] if compound_dst else [dst]
+            [type(dst).child(dst, i) for i in range(type(dst).get_num_children(dst))]
+            if compound_dst
+            else [dst]
         )
     except Exception:
         leaves = None
