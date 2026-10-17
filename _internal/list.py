@@ -136,16 +136,28 @@ from rig.spec.modifiers import skip as _skip_marker
 _SKIP = _skip_marker
 
 
+# {an element's type: the name of the handle its __dict__ holds ("_handle" for a
+# plug, "_objhandle" for a node), or None}: one dict lookup per element instead
+# of two isinstance calls on classes with a metaclass
+_HANDLE_KEYS: dict = {}
+
+
+def _handle_key(t: type) -> Optional[str]:
+    key = _HANDLE_KEYS[t] = (
+        "_handle" if issubclass(t, Attribute) else "_objhandle" if issubclass(t, Node) else None
+    )
+    return key
+
+
 def _gone(x: Any) -> bool:
     """True if `x` is a node deleted to the undo queue or freed, or a plug of
     one (its handle, or its owner's, is not valid). Reads only the handle, which
     is safe on a freed node."""
-    if isinstance(x, Attribute):
-        handle = x.__dict__.get("_handle")
-    elif isinstance(x, Node):
-        handle = x.__dict__.get("_objhandle")
-    else:
+    t   = type(x)
+    key = _HANDLE_KEYS[t] if t in _HANDLE_KEYS else _handle_key(t)
+    if key is None:
         return False
+    handle = x.__dict__.get(key)
     return handle is not None and not handle.isValid()
 
 
@@ -155,13 +167,13 @@ def _gone_indices(items: Iterable[Any]) -> list:
     share their owner's) is read once."""
     out  = []
     seen = None
+    keys = _HANDLE_KEYS
     for i, x in enumerate(items):
-        if isinstance(x, Attribute):
-            handle = x.__dict__.get("_handle")
-        elif isinstance(x, Node):
-            handle = x.__dict__.get("_objhandle")
-        else:
+        t   = type(x)
+        key = keys[t] if t in keys else _handle_key(t)
+        if key is None:
             continue
+        handle = x.__dict__.get(key)
         if handle is None or handle is seen:
             continue
         if handle.isValid():
@@ -215,8 +227,7 @@ def _with_skips(items: Any, notes: Optional[list] = None) -> list:
     deleted or freed one, after one warning naming them (or, given `notes`,
     their names appended to it, for the caller's one warning); the elements as
     they are (a plain list) when none is."""
-    elements = list.__iter__(items) if isinstance(items, list) else items
-    elements = list(elements)
+    elements = list(list.__iter__(items) if isinstance(items, list) else items)
     gone     = _gone_indices(elements)
     if not gone:
         return elements
@@ -459,6 +470,8 @@ class List(list):
         # a deleted or freed element shows marked (user decision 2026-10-16:
         # ``List([Transform("obj1", deleted), Transform("obj2")])``), rendered
         # here: its own repr raises in rig's code (`_called_from_rig`)
+        if not _gone_indices(list.__iter__(self)):
+            return f"List({list.__repr__(self)})"
         return f"List([{', '.join(map(_element_repr, list.__iter__(self)))}])"
 
     # -- attribute access broadcasts -- #
