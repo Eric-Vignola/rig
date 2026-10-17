@@ -243,10 +243,22 @@ for probe in (lambda: a.tx, lambda: tz >> None):
 Its name is the one thing a deleted or freed node still answers: `str(node)`
 is the last name it was known by, marked (`"held (deleted)"`), and its repr
 `Transform("held", deleted)`; a plug of one has the marked repr
-`Plug("held.translateX", deleted)` (its `str` raises). The marked name names
-no Maya node, so `maya.cmds` given it, or given a `List` holding it, raises
-Maya's own error instead of crashing. Every rig operation on the node,
-`get_name()` included, still raises `already deleted!`.
+`Plug("held.translateX", deleted)` (its `str` raises), and so do a selection
+on one (`Components("heldShape.f[0:2]", deleted)`) and a membership token of
+a deleted layer or material (`-DisplayLayer("L", deleted)`, its str
+`"L (deleted)"`). The marked name names no Maya node, so `maya.cmds` given
+the node, or a `List` holding any of these, raises Maya's own error instead
+of crashing: called from your code, from rig's own wrappers that pass it on
+(`node.delete(nodes)`, `BlendShape.create(targets)`, `rc.select(...)`), or
+from a Qt button or a deferred call (`partial(cmds.select, ctls)`). Every rig
+operation on the node, `get_name()` included, still raises `already
+deleted!`.
+
+A plug is the exception for `maya.cmds`: a plug is a str whose text is the
+name it was built with, so a raw `cmds` call given an old plug (alone or in a
+`List`) reaches whichever node has that name now, a new one after a file open
+or a re-create. rig's own verbs check its node
+first: use them on held plugs.
 
 ```python
 gone = Node.create("transform", name="gone")
@@ -1011,29 +1023,41 @@ except TypeError as err:
 ```
 
 A deleted element stays in its slot: a node deleted (to the undo queue) or
-freed (a new scene, a file open, a reference unload), or a plug of one, keeps
-the List's length, indices and pairing, and its repr shows it marked. rig's
-own List operations skip it (attribute broadcasts, `<<`, `>>`, `get()`,
-`lock()` / `unlock()`, membership, `in` / `index` / `count` / `remove`, the
-operators) and print ONE warning per operation naming what they skipped
-(`List element [1] c3 was deleted; skipped`). A List an operation derives
-holds `rig.skip` in that slot, which every List operation leaves alone, so a
-chained broadcast stays aligned and keeps skipping. `maya.cmds` given such a
-List raises Maya's own error (the element's str is its marked name).
+freed (a new scene, a file open, a reference unload), a plug of one, or a
+`Components` selection on one, keeps the List's length, indices and pairing,
+and its repr shows it marked. rig's own List operations skip it (attribute
+broadcasts, `<<`, `>>`, `get()`, `lock()` / `unlock()`, membership, a nested
+List's elements included, `in` / `index` / `count` / `remove`, the operators)
+and print ONE warning per statement naming what they skipped (`List element
+[1] c3 was deleted; skipped`): `ctls.tx << ctls.ty * 2 + ctls.tz` warns once,
+and so does each pass of a loop. A List an operation derives holds
+`rig.skip` in that slot, which every List operation leaves alone, so a
+chained broadcast stays aligned and keeps skipping; `get()` then gives a List
+of the values with `rig.skip` in that slot (an array when nothing was
+skipped), which broadcasts the same way (`tx.get() + 1`). A derived List
+keeps its `skip` after an undo brings the node back: derive it again
+(`ctls.tx`). `in` / `index` / `count` / `remove` given the deleted element
+itself find it by identity, so `ctls.remove(gone)` drops it (another object
+of that node matches nothing). `maya.cmds` given such a List raises Maya's
+own error (the element's str is its marked name).
 
 ```python
 Node.create("transform", name="c3")
 ctls = List(["c0", "c3", "c2"])
+gone = ctls[1]
 cmds.delete("c3")
 print(repr(ctls))                         # List([Transform("c0"), Transform("c3", deleted), Transform("c2")])
 tx = ctls.tx                              # Warning: List element [1] c3 was deleted; skipped
 print(repr(tx))                           # List([Plug("c0.translateX"), <skip>, Plug("c2.translateX")])
 tx << [7, 8, 9]                           # c0 gets 7, c2 gets 9: the pairs stay aligned
-print(tx.get())                           # [7.0, <skip>, 9.0]
+print(tx.get())                           # List([7.0, <skip>, 9.0])
+print(tx.get() + 1)                       # List([8.0, <skip>, 10.0])
 try:
     cmds.select(ctls)                     # Maya's own error, no crash
 except TypeError as err:
     print(type(err).__name__)             # TypeError
+ctls.remove(gone)
+print(repr(ctls))                         # List([Transform("c0"), Transform("c2")])
 ```
 
 ---
