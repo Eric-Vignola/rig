@@ -4085,10 +4085,34 @@ class _ChildOrMethod:
 
 def _wrap_plug_methods(cls: type) -> None:
     """Make every public function `cls` defines a `_ChildOrMethod` (Attribute
-    and each subclass, through `Attribute.__init_subclass__`)."""
+    and each subclass, through `Attribute.__init_subclass__`), and refuse any
+    other public member its body declares: a property, a cached_property or
+    another descriptor, lowercase data, a nested class (the property ban, user
+    decision 2026-10-16: on a plug every public member is a method, so a bare
+    name is a child of that name or the method). A classmethod or staticmethod
+    passes, and so does an UPPER_CASE declaration (``UNITS = "cm"``)."""
     for name, value in list(vars(cls).items()):
-        if name[:1] != "_" and isinstance(value, _FunctionType):
+        if name[:1] == "_":
+            continue
+        if isinstance(value, _FunctionType):
             type.__setattr__(cls, name, _ChildOrMethod(value, name))
+        elif isinstance(value, (classmethod, staticmethod, _ChildOrMethod)):
+            continue
+        elif name.isupper() and not hasattr(type(value), "__get__") and not isinstance(value, type):
+            continue
+        else:
+            kind = (
+                "property" if isinstance(value, property)
+                else "class" if isinstance(value, type)
+                else "descriptor" if hasattr(type(value), "__get__")
+                else "data"
+            )
+            raise TypeError(
+                f"{cls.__name__}.{name}: a plug class has no public {kind} (every "
+                f"public member of a plug is a method, so that a bare name is the "
+                f"compound child of that name or the method): write a method "
+                f"(def get_{name}(self)), or keep state under _{name}"
+            )
 
 
 class _MethodAttribute(Attribute):
