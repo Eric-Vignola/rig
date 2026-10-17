@@ -204,7 +204,8 @@ class TestMaterialNodes(_Case):
         self.assertEqual(repr(-sg), '-ShadingEngine("redSG")')
         self.assertEqual(repr(-Default()), f"-{DEFAULT}")
         self.assertEqual(str(-red), "red")
-        self.assertTrue((-red).removes and Material().purges)
+        # re-pinned (user decision 2026-10-16): removes / purges are private; a token's name is str(token), it has no .name
+        self.assertTrue((-red)._remove and Material()._purges)
         for call, pattern in (
             (lambda: Blinn(None), r"^None is not a material name; Material\(\) removes all$"),
             (lambda: Material(None), r"^None is not a material name; Material\(\) removes all$"),

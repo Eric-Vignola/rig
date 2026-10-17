@@ -37,4 +37,4 @@ class Euler(Float):
     def __init__(self, name: str, **kargs: Any) -> None:
         super().__init__(name, **kargs)
         self.compound     = ["X", "Y", "Z"]
-        self.compoundType = "doubleAngle"
+        self._compound_type = "doubleAngle"

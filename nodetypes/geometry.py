@@ -23,7 +23,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes._base import _cast, Attribute
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _ensure_valid
@@ -252,12 +252,12 @@ class Geometry(DAGNode):
         attr               = self.find_attr(attr)
         args               = (type(self).get_node_type(self), type(attr).get_name(attr))
         kwargs["attrType"] = type(attr).get_data_type(attr)
-        cmds_edit.makePaintable(*args, **kwargs)
+        _cmds_edit.makePaintable(*args, **kwargs)
 
     @staticmethod
     def clear_all_paintable_attrs() -> None:
         """Clears all paintable attrs."""
-        cmds_edit.makePaintable(clearAll=True)
+        _cmds_edit.makePaintable(clearAll=True)
 
     # --- components
 
@@ -404,7 +404,7 @@ class Geometry(DAGNode):
         """
         element = self._editable_component_tag(tag)
         if element is not None:
-            cmds_edit.removeMultiInstance(str(element), b=True)
+            _cmds_edit.removeMultiInstance(str(element), b=True)
 
     def rename_component_tag(self, tag: str | int, new_key: str) -> None:
         """Renames a component tag with the given key the object.
@@ -505,7 +505,7 @@ class Geometry(DAGNode):
             key: Component tag key.
         """
         contents = self.get_component_tag_contents(key, full_name=True)
-        cmds_edit.select(contents, replace=True)
+        _cmds_edit.select(contents, replace=True)
 
     # --- component tags query
 

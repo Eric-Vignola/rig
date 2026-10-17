@@ -12,7 +12,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig._internal.journal import cmds_edit, statement
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal
@@ -307,7 +307,7 @@ class NurbsCurve(Geometry):
         self.serialize(world_space=world_space).save(path)
         return path
 
-    @statement
+    @_statement
     def _load_new(cls, curve, *, name=None, container=None, **kwargs):
         _files.creating_takes_no_space(cls.__name__, "curve", kwargs)
         from cgmath.geometry import BSplineData
@@ -316,7 +316,7 @@ class NurbsCurve(Geometry):
         with _undo_chunk("rig.NurbsCurve.load"):
             return cls.create(data, name=name, container=container, **kwargs)
 
-    @statement
+    @_statement
     def _load_into(self, curve, *args, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplineData
 
@@ -533,7 +533,7 @@ class NurbsSurface(Geometry):
         self.serialize(world_space=world_space).save(path)
         return path
 
-    @statement
+    @_statement
     def _load_new(cls, surface, *, name=None, container=None, **kwargs):
         _files.creating_takes_no_space(cls.__name__, "surface", kwargs)
         from cgmath.geometry import BSplinePatchData
@@ -542,7 +542,7 @@ class NurbsSurface(Geometry):
         with _undo_chunk("rig.NurbsSurface.load"):
             return cls.create(data, name=name, container=container, **kwargs)
 
-    @statement
+    @_statement
     def _load_into(self, surface, *args, world_space=_files.REQUIRED, **kwargs):
         from cgmath.geometry import BSplinePatchData
 
@@ -773,13 +773,13 @@ def _create_surface(data, name: str | None) -> str:
                 f"NurbsSurface.create(): Maya refused the surface ({cvs.shape[0]} CVs, degrees "
                 f"{degree_u} x {degree_v}): {error}"
             ) from None
-        cmds_edit.sets(xform, forceElement="initialShadingGroup")
+        _cmds_edit.sets(xform, forceElement="initialShadingGroup")
         if name:
             # the shape follows the transform (surfaceShape<N> -> <name>Shape)
-            xform = cmds_edit.rename(xform, name)
+            xform = _cmds_edit.rename(xform, name)
     except BaseException:
         if handle.isValid():
-            cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+            _cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
         raise
     return xform
 
@@ -954,9 +954,9 @@ def _create_curve(
             ) from None
         if name:
             # the shape follows the transform (curveShape<N> -> <name>Shape)
-            xform = cmds_edit.rename(xform, name)
+            xform = _cmds_edit.rename(xform, name)
     except BaseException:
         if handle.isValid():
-            cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+            _cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
         raise
     return xform

@@ -868,7 +868,8 @@ class TestTypedNodesSpeakTheDsl(MayaTestCase):
         self.assertEqual(str(Node(cube).vtx[3]), f"{shape}.controlPoints[3]")
         faces = Node(cube).f
         self.assertIsInstance(faces, Components)
-        self.assertTrue(faces.shape.get_mobject() == _mobject(shape))
+        # re-pinned (user decision 2026-10-16, a Components is a scene handle): methods
+        self.assertTrue(faces.get_shape().get_mobject() == _mobject(shape))
         self.assertIsInstance(Node(shape).e, Components)
         from rig._internal.plug import ComponentPlug
 
@@ -1324,7 +1325,8 @@ class TestTypedDslEdges(MayaTestCase):
             [f"{shape}.controlPoints[0]", f"{shape}.controlPoints[1]"],
         )
         self.assertEqual((Node(cube).e >> None).tolist(), list(range(12)))
-        self.assertEqual(Node(cube).f[1:3].count, 2)
+        # re-pinned (user decision 2026-10-16, a Components is a scene handle): methods
+        self.assertEqual(Node(cube).f[1:3].get_count(), 2)
         surf  = cmds.sphere(name="ball", ch=False)[0]
         shell = Node(cmds.listRelatives(surf, shapes=True)[0])
         cv    = shell.cv
@@ -2377,7 +2379,8 @@ class TestOwnerRule(MayaTestCase):
             with self.subTest(pattern=kind):
                 components = getattr(Node(cube), kind)
                 self.assertIsInstance(components, Components)
-                self.assertTrue(components.shape.get_mobject() == _mobject(mesh))
+                # re-pinned (user decision 2026-10-16, a Components is a scene handle): methods
+                self.assertTrue(components.get_shape().get_mobject() == _mobject(mesh))
 
     def test_name_property_that_raises_names_by_fn_set(self):
         # re-pinned (user decision 2026-10-16, the property ban): a node class

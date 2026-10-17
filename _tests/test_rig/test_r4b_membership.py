@@ -322,9 +322,10 @@ class TestTokens(_Case):
         self.assertEqual(repr(Tag()), "Tag()")
         self.assertEqual(str(Tag()), "Tag()")
         self.assertEqual(repr(-Tag("cap")), "-Tag('cap')")
-        self.assertTrue(DisplayLayer().purges)
-        self.assertFalse((-self.L).purges)
-        self.assertTrue((-self.L).removes)
+        # re-pinned (user decision 2026-10-16): removes / purges are private; a token's name is str(token), it has no .name
+        self.assertTrue(DisplayLayer()._purges)
+        self.assertFalse((-self.L)._purges)
+        self.assertTrue((-self.L)._remove)
 
     def test_double_negatives_and_invert(self):
         for pattern, call in (
@@ -515,7 +516,8 @@ class TestPlugLeftRefused(_Case):
                 with self.subTest(spec=repr(spec), plug=str(plug), verb="<<"):
                     with self.assertRaisesRegex(TypeError, f"^'{plug}' {PLUG}"):
                         plug << spec
-                if not getattr(spec, "removes", False):
+                # re-pinned (user decision 2026-10-16): removes is private
+                if not getattr(spec, "_remove", False):
                     with self.subTest(spec=repr(spec), plug=str(plug), verb=">>"):
                         with self.assertRaisesRegex(TypeError, f"^'{plug}' {PLUG}"):
                             plug >> spec

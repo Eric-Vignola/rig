@@ -176,7 +176,7 @@ class _AttrSpec:
 
     Subclasses set ``self.kargs['attributeType']`` or ``['dataType']`` and
     optionally provide ``self.compound`` (list of child suffixes like
-    ``['X', 'Y', 'Z']``) and ``self.compoundType`` (override child type).
+    ``['X', 'Y', 'Z']``) and ``self._compound_type`` (override child type).
 
     ``overwrite=True`` replaces an attribute the node has already (deleted,
     value and connections with it, and added again); by default, and with
@@ -216,7 +216,7 @@ class _AttrSpec:
             self.overwrite = True
 
         self.compound:     Optional[List[str]] = None  # e.g. ['X', 'Y', 'Z']
-        self.compoundType: Optional[str] = None        # override children's at=
+        self._compound_type: Optional[str] = None        # override children's at=
         self.notes:        Optional[str] = None        # set by Note
 
     @staticmethod
@@ -413,7 +413,7 @@ class _AttrSpec:
         children = ()
         if self.compound:
             name     = k["longName"]
-            children = tuple((f"{name}{s}", self.compoundType or at) for s in self.compound)
+            children = tuple((f"{name}{s}", self._compound_type or at) for s in self.compound)
             at       = f"{at}{len(self.compound)}"
         return at, dt, multi, children
 
@@ -595,8 +595,8 @@ class _AttrSpec:
             child_kargs.pop("m",     None)
             child_kargs.pop("size",  None)
 
-            if self.compoundType:
-                child_kargs["attributeType"] = self.compoundType
+            if self._compound_type:
+                child_kargs["attributeType"] = self._compound_type
 
             # Per-child default value, from a sequence given as dv= or
             # defaultValue= (never the sequence itself); a scalar is ignored.

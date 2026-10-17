@@ -35,6 +35,7 @@ from unittest import mock
 from maya import cmds
 from maya.api import OpenMaya
 
+import rig
 from rig import container, force_nodes, functions as F, List, Node
 from rig._internal import list as list_module
 from rig._internal.container import Container, ContainerOptions
@@ -78,7 +79,8 @@ class _SceneCase(MayaTestCase):
 
     def tearDown(self):
         for key, value in self._options.items():
-            setattr(ContainerOptions, key, value)
+            # re-pinned (user decision 2026-10-16, ContainerOptions is read-only): set_options
+            rig.set_options(**{key: value})
         cmds.namespace(set=":")
         # re-pinned (user decision 2026-10-16, the predicate guard): a method
         self.assertFalse(container.is_active())
@@ -396,7 +398,8 @@ class _PlugCase(_SceneCase):
         self.a, self.b = Node("a"), Node("b")
 
     def tearDown(self):
-        ContainerOptions.constant_folding = True
+        # re-pinned (user decision 2026-10-16, ContainerOptions is read-only): set_options
+        rig.set_options(constant_folding=True)
         super().tearDown()
 
 

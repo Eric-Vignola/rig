@@ -84,10 +84,12 @@ class TestLayerConstruction(MayaTestCase):
         self.assertEqual(repr(tokens[0]), "DisplayLayer()")
         self.assertEqual(repr(tokens[1]), '-DisplayLayer("x")')
         self.assertEqual(repr(tokens[2]), '-DisplayLayer("x")')
-        self.assertTrue(tokens[0].purges)
-        self.assertIsNone(tokens[0].name)
-        self.assertTrue(tokens[1].removes)
-        self.assertEqual(tokens[1].name, "x")
+        # re-pinned (user decision 2026-10-16): removes / purges are private; a token's name is str(token), it has no .name
+        self.assertTrue(tokens[0]._purges)
+        self.assertFalse(hasattr(tokens[0], "name"))
+        self.assertTrue(tokens[1]._remove)
+        self.assertFalse(hasattr(tokens[1], "name"))
+        self.assertEqual(str(tokens[1]), "x")
         # a reference is the node itself
         self.assertIsInstance(tokens[3], DisplayLayer)
         self.assertEqual(tokens[3], layer)

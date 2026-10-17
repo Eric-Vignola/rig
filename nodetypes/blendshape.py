@@ -12,7 +12,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
-from rig._internal.journal import cmds_edit, statement
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import _connected_attrs, Attribute
@@ -130,7 +130,7 @@ class BlendShape(Deformer):
         if "foc" in kwargs:
             kwargs.pop("foc")
 
-        name = cmds_edit.blendShape(*geoms, **kwargs)[0]
+        name = _cmds_edit.blendShape(*geoms, **kwargs)[0]
 
         if morphs:
             cls._wrap(name).set_targets_data(morphs)
@@ -520,14 +520,14 @@ class BlendShape(Deformer):
         self.serialize(match_name=match_name).save(path)
         return path
 
-    @statement
+    @_statement
     def _load_new(cls, targets, geometry, **kwargs):
         _files.check_order("BlendShape.load(targets, geometry)", targets, geometry)
         data = _read_targets("BlendShape.load", targets)
         with _undo_chunk("rig.BlendShape.load"):
             return cls.create(data, geometry, **kwargs)
 
-    @statement
+    @_statement
     def _load_into(self, targets, *args, **kwargs):
         method = f"BlendShape({str(self)!r}).load"
         if args or kwargs:

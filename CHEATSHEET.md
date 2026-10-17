@@ -29,7 +29,7 @@ for the node classes and their typed methods.
 | 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
 | 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, no truth value for an ordering, per-channel fan-out, `condition(...)`, `constant(...)` |
-| 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `.indices` / `.count` / `.names`, `>> None`, a lattice `pt[s]` refused |
+| 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `get_indices()` / `get_count()` / `get_names()`, `>> None`, a lattice `pt[s]` refused |
 | 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container`, locking a container |
 | 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection, a locked container kept |
 | 13 | [`memoize`, `vectorize`, `prune_memoize_caches`](#13-memoize-vectorize-prune_memoize_caches) | the two decorators and the cache sweep |
@@ -1171,15 +1171,20 @@ print(cmds.pointPosition("pCube1.vtx[6]", local=True))   # [4.0, 4.0, 4.0]
 
 Faces and edges have no plug, so `cube.f` / `cube.e` are a `Components`:
 an opaque, sorted, unique selection that costs no plugs. `>> None` reads
-the native ids.
+the native ids. It points into the scene, so, as on a node or a plug, you
+read it through methods: `get_indices()`, `get_count()`, `get_names()`,
+`get_kind()`, `get_shape()` (its type: `get_shape().get_node_type()`) and
+`is_all()`. On the whole kind (`cube.f`) the ids and the count are read
+from the shape at each call.
 
 ```python
 from rig import Components
 
 print(repr(cube.f), repr(cube.e[[4, 0]]))    # Components("|pCube1|pCube1Shape.f[*]") Components("|pCube1|pCube1Shape.e[0] e[4]")
 faces = cube.f[:3]
-print(faces.indices, faces.count, faces.names)                                    # [0 1 2] 3 ['|pCube1|pCube1Shape.f[0:2]']
-print(faces.kind, faces.geometry, str(faces.shape), faces.is_all(), cube.f.is_all())  # f mesh pCube1Shape False True
+print(faces.get_indices(), faces.get_count(), faces.get_names())                  # [0 1 2] 3 ['|pCube1|pCube1Shape.f[0:2]']
+print(faces.get_kind(), faces.get_shape().get_node_type(), str(faces.get_shape()))  # f mesh pCube1Shape
+print(faces.is_all(), cube.f.is_all())                                            # False True
 print(cube.e[[4, 0]] >> None, cube.f >> None)                                     # [0 4] [0 1 2 3 4 5]
 print(cube.f[[5, 2]] == cube.f[[2, 5]], bool(cube.f[6:]))                         # True False
 ```
@@ -1190,9 +1195,9 @@ reads a Maya component string.
 
 ```python
 verts = Components(cube, "vtx", np.array([4, 0, 2, 2]))
-print(repr(verts), verts.count)                                          # Components("|pCube1|pCube1Shape.vtx[0] vtx[2] vtx[4]") 3
-print(repr(Components("pCube1.f[0:3]")), Components(shape, "uv").count)  # Components("|pCube1|pCube1Shape.f[0:3]") 14
-cmds.select(cube.f[[0, 1, 2, 5]].names)                                  # names are selectable, compact tokens
+print(repr(verts), verts.get_count())                                          # Components("|pCube1|pCube1Shape.vtx[0] vtx[2] vtx[4]") 3
+print(repr(Components("pCube1.f[0:3]")), Components(shape, "uv").get_count())  # Components("|pCube1|pCube1Shape.f[0:3]") 14
+cmds.select(cube.f[[0, 1, 2, 5]].get_names())                                  # the names are selectable, compact tokens
 print(cmds.ls(selection=True))                                           # ['pCube1.f[0:2]', 'pCube1.f[5]']
 ```
 
@@ -1205,7 +1210,7 @@ flattened slab).
 ```python
 surface = Node(cmds.nurbsPlane(name="plane1")[0])
 print(repr(surface.cv[1, 2]), len(surface.cv[:, 0]), len(surface.cv[:]))  # ComponentPlug("plane1Shape.cv[1][2]") 4 16
-print(Components(surface, "cv")[:2].names)                                # ['|plane1|plane1Shape.cv[0][0:1]']
+print(Components(surface, "cv")[:2].get_names())                          # ['|plane1|plane1Shape.cv[0][0:1]']
 
 lat = Node(cmds.lattice("pCube1", divisions=(3, 4, 5), name="ffd")[1])
 print(repr(lat.pt[0, 1, 2]), len(lat.pt[0, 1]), len(lat.pt[0, :, :]))    # ComponentPlug("ffdLatticeShape.pt[0][1][2]") 5 20
@@ -1249,13 +1254,16 @@ print(repr(arm), fk, repr(ik), scratch)                          # Container("ar
 print(str(fk_ctrl), str(ik_ctrl), str(tmp))                      # fk_ctrl ctrl1 scratch_tmp
 print(sorted(cmds.container("arm", query=True, nodeList=True)))  # ['ctrl', 'fk_ctrl', 'ik', 'outside', 'scratch_tmp']
 print(cmds.container(query=True, findContainer="loose"))         # None
-print(container.is_active(), container.stack)                    # False []
+print(container.is_active(), container.get_stack())              # False ()
 ```
 
 Every scope prefixes the names it creates, the real sub-container `ik` is
 itself a member of `arm`, and a disabled scope makes no container of its
 own but still hands its nodes to the enclosing one. Containers are not
-DAG parents, so the second `ctrl` is `ctrl1`.
+DAG parents, so the second `ctrl` is `ctrl1`. Inside the blocks,
+`container.get_stack()` lists the open ones, outermost first, as read-only
+`(name, Container or None)` tuples (`(("arm", Container("arm")), ("fk",
+None))` in `fk`), and `container.is_active()` says whether one is open.
 
 A `Container` is a `Node`: it takes attribute specs, and a published name
 resolves to the real plug behind it (section 5).
@@ -1333,7 +1341,11 @@ print(palm.is_locked())                           # False
 
 `set_options` / `get_options` mirror numpy's print options: a setter that
 returns `None` and a getter that returns a snapshot. `ContainerOptions` is
-the class the flags live on.
+the class the flags live on, read-only: read a flag there
+(`ContainerOptions.create_containers`), set it with `set_options`. An
+assignment raises `AttributeError` naming `set_options`, the one route that
+keeps rig consistent (`maya_version` also retargets the dispatch and clears
+the caches).
 
 ```python
 from rig import ContainerOptions, get_options, set_options
@@ -1347,6 +1359,10 @@ with container("ghost") as ghost:
     Node.create("transform", name="free")
 print(ghost, cmds.ls(type="container"), ContainerOptions.create_containers)   # None ['arm', 'ik', 'leg', 'lerp1', 'offset1'] False
 set_options(create_containers=True)
+try:
+    ContainerOptions.create_containers = False
+except AttributeError as err:
+    print(err)   # ContainerOptions is read-only: write rig.set_options(create_containers=...) (rig.get_options() reads them all)
 ```
 
 | Option | Default | Effect |
@@ -2537,7 +2553,7 @@ def members(engine):
 
 
 sph = make(cmds.polySphere, "sph")      # a polySphere ships no procedural tags: safe for every example
-print(sph, sph.f.count, sph.vtx)        # sph 400 sphShape.controlPoints
+print(sph, sph.f.get_count(), sph.vtx)  # sph 400 sphShape.controlPoints
 ```
 
 Three kinds of collection ship: component tags (`Tag`, which live on a
@@ -2637,8 +2653,8 @@ for bad in (
 
 ## 33. Components as members
 
-Section 10 covers the `Components` carrier itself (`.indices`, `.count`,
-`.names`, `>> None`, the explicit constructor). On the left of a membership
+Section 10 covers the `Components` carrier itself (`get_indices()`,
+`get_count()`, `get_names()`, `>> None`, the explicit constructor). On the left of a membership
 operator the bare handle means the whole kind: `sph.f` is every face, and
 `sph.vtx`, the bare `controlPoints` multi, means **all points** at no cost,
 while `sph.vtx[:3]` is a `List` of element plugs. Surfaces index as
@@ -3027,7 +3043,7 @@ materialInfo); `cmds.delete("red")` deletes the shader alone.
 ```python
 print(shade.materials(cube))                    # List([StandardSurface("standardSurface1"), Lambert("decal")])
 for material, faces in shade.bindings(cube):
-    print(material, faces.indices)              # standardSurface1 [3 4 5] / decal [0 1 2]
+    print(material, faces.get_indices())        # standardSurface1 [3 4 5] / decal [0 1 2]
 
 decal.delete()                                  # material + engine + materialInfo; members go green
 print(Material.of(cube.f[0]))  # []
@@ -3469,7 +3485,9 @@ when they differ (`update=False` leaves it); a curve's Maya attributes go
 in as keywords, set after the keys. `AnimCurve.of(x)` lists the curves
 directly driving a plug, a compound's children, a node or a `List`.
 `get_keys()` reads a curve back as keys (UI units), so `other.tx <<
-curve.get_keys()` copies it. `set_keys` and a `define` that updates follow
+curve.get_keys()` copies it. Keys are a value: their data are attributes
+(`keys.values`, `keys.times`, `keys.out_tangents`), read-only arrays (a
+write into one raises; `keys.values.copy()` is yours to edit). `set_keys` and a `define` that updates follow
 the plug's rules: a curve that keys a locked plug refuses (D3), and the
 default out tangent is a step when every plug the curve keys is a bool or
 an enum. One plug in two rows of a `List` (`List([a, a]).tx << ...`) is

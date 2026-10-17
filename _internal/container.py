@@ -154,8 +154,49 @@ def _ensure_plugin_for_node_type(node_type: str) -> None:
 # --------------------------------------------------------------------- #
 
 
-class ContainerOptions:
-    """Mutable global flags for container behaviour."""
+class _ReadOnlyOptions(type):
+    """The metaclass of :class:`ContainerOptions`: the flags are read-only to
+    the user (user decision 2026-10-16). A write, on the class or on an
+    instance, raises AttributeError naming ``rig.set_options(...)``, which is
+    the one route that keeps rig consistent (``maya_version`` retargets the
+    dispatch and clears the caches there); rig's own writes go through
+    :func:`_write_option`."""
+
+    def __setattr__(cls, name: str, value: Any) -> None:
+        raise AttributeError(_read_only_text(name))
+
+    def __delattr__(cls, name: str) -> None:
+        raise AttributeError(_read_only_text(name))
+
+
+def _read_only_text(name: str) -> str:
+    if name in ContainerOptions.__annotations__:
+        return (
+            f"ContainerOptions is read-only: write rig.set_options({name}=...) "
+            f"(rig.get_options() reads them all)"
+        )
+    return (
+        f"ContainerOptions is read-only and has no option {name!r}: "
+        f"rig.set_options(...) takes {', '.join(ContainerOptions.__annotations__)}"
+    )
+
+
+def _write_option(name: str, value: Any) -> None:
+    """rig's own write of the option ``name`` (`set_options`, `force_nodes`,
+    the ``_defaults.toml`` loader): the class is read-only to the user."""
+    type.__setattr__(ContainerOptions, name, value)
+
+
+class ContainerOptions(metaclass=_ReadOnlyOptions):
+    """The global flags for container behaviour, read-only: read them here
+    (``ContainerOptions.create_containers``) or with ``rig.get_options()``,
+    and set them with ``rig.set_options(...)``; an assignment raises
+    AttributeError naming it."""
+
+    __slots__ = ()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(_read_only_text(name))
 
     create_containers:       bool = True           # if False, all `with container():` are no-ops
     use_shorthand:           bool = True           # type-aware shorthand (matrix->transform etc.)
@@ -208,26 +249,26 @@ def set_options(
     target.
     """
     if create_containers is not None:
-        ContainerOptions.create_containers = create_containers
+        _write_option("create_containers", create_containers)
     if use_shorthand is not None:
-        ContainerOptions.use_shorthand = use_shorthand
+        _write_option("use_shorthand", use_shorthand)
     if skip_selection is not None:
-        ContainerOptions.skip_selection = skip_selection
+        _write_option("skip_selection", skip_selection)
     if cleanup_on_exit is not None:
-        ContainerOptions.cleanup_on_exit = cleanup_on_exit
+        _write_option("cleanup_on_exit", cleanup_on_exit)
     if flatten_containers is not None:
-        ContainerOptions.flatten_containers = flatten_containers
+        _write_option("flatten_containers", flatten_containers)
     if publish_attributes is not None:
-        ContainerOptions.publish_attributes = publish_attributes
+        _write_option("publish_attributes", publish_attributes)
     if absorb_unit_conversions is not None:
-        ContainerOptions.absorb_unit_conversions = absorb_unit_conversions
+        _write_option("absorb_unit_conversions", absorb_unit_conversions)
     if native_multi_publish is not None:
-        ContainerOptions.native_multi_publish = native_multi_publish
+        _write_option("native_multi_publish", native_multi_publish)
     if constant_folding is not None:
-        ContainerOptions.constant_folding = constant_folding
+        _write_option("constant_folding", constant_folding)
     if maya_version is not _UNSET:
-        previous                      = get_target_version()
-        ContainerOptions.maya_version = maya_version
+        previous = get_target_version()
+        _write_option("maya_version", maya_version)
         set_target_version(maya_version)
         new = get_target_version()
         if new != previous:
@@ -283,12 +324,12 @@ class _ForceNodes:
     __slots__ = ("_previous",)
 
     def __enter__(self) -> "_ForceNodes":
-        self._previous                    = ContainerOptions.constant_folding
-        ContainerOptions.constant_folding = False
+        self._previous = ContainerOptions.constant_folding
+        _write_option("constant_folding", False)
         return self
 
     def __exit__(self, *exc: Any) -> bool:
-        ContainerOptions.constant_folding = self._previous
+        _write_option("constant_folding", self._previous)
         return False  # never suppress exceptions
 
 
@@ -366,8 +407,8 @@ def _load_defaults_from_file() -> None:
 
     options = data.get("options", {})
     for key, value in options.items():
-        if hasattr(ContainerOptions, key):
-            setattr(ContainerOptions, key, value)
+        if key in ContainerOptions.__annotations__:
+            _write_option(key, value)
             LOGGER.debug("Loaded default %s=%r from %s", key, value, config_path)
 
 
@@ -822,19 +863,13 @@ class _ContainerStack:
 
     # -- introspection -- #
 
-    @property
-    def stack(self) -> List[_StackFrame]:
-        """Read-only view of the active stack."""
-        return list(self._stack)
-
-    @property
-    def containers(self) -> List[Optional[Any]]:
-        """Compatibility shim mirroring Eric's ``container.containers`` list.
-
-        Returns a list of ``Container`` instances (one per real container in
-        the stack); flattened frames contribute ``None``.
-        """
-        return [f.container_node for f in self._stack]
+    def get_stack(self) -> tuple:
+        """The open ``with container(...)`` blocks, outermost first, as
+        read-only ``(name, Container or None)`` tuples: the name each block was
+        given, and its Maya container (None for a flattened nested block, or
+        under ``create_containers=False``). A snapshot: ``()`` outside any
+        block."""
+        return tuple((frame.name, frame.container_node) for frame in self._stack)
 
     @_scene_predicate
     def is_active(self) -> bool:

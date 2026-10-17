@@ -15,6 +15,7 @@ import textwrap
 import unittest
 from unittest import mock
 
+import rig
 from rig._internal import container as container_mod
 from rig._internal.container import _load_defaults_from_file, ContainerOptions
 
@@ -58,7 +59,8 @@ class TestDefaultsLoader(unittest.TestCase):
     def tearDown(self):
         # Restore to pre-test values.
         for k, v in self._snapshot.items():
-            setattr(ContainerOptions, k, v)
+            # re-pinned (user decision 2026-10-16, ContainerOptions is read-only): set_options
+            rig.set_options(**{k: v})
 
     def _run_loader_with_temp(self, contents):
         """Write ``contents`` to a temp file and trick the loader into
@@ -234,7 +236,8 @@ class TestShippedDefaultsFile(unittest.TestCase):
                 )
         finally:
             for key, before in snapshot.items():
-                setattr(ContainerOptions, key, before)
+                # re-pinned (user decision 2026-10-16, ContainerOptions is read-only): set_options
+                rig.set_options(**{key: before})
 
 
 if __name__ == "__main__":

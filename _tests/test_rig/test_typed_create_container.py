@@ -62,7 +62,8 @@ def _uuid(node):
 
 def _frame_uuids():
     """The uuids each open frame recorded, outermost first."""
-    return [list(frame.members) for frame in container.stack]
+    # re-pinned (user decision 2026-10-16, rig.container.get_stack()): the frames are rig's own bookkeeping
+    return [list(frame.members) for frame in container._stack]
 
 
 def _tagged(node):
@@ -93,7 +94,8 @@ class TestTypedCreateInContainer(MayaTestCase):
 
     def tearDown(self):
         for key, value in self._options.items():
-            setattr(ContainerOptions, key, value)
+            # re-pinned (user decision 2026-10-16, ContainerOptions is read-only): set_options
+            set_options(**{key: value})
         # drop any class a test registered, then the dispatch it cached
         _base._NODE_CLASS_DICT.clear()
         _base._NODE_CLASS_DICT.update(self._registered)

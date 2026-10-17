@@ -90,7 +90,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes import display_layer as _display_layer
 from rig.nodetypes._base import _cast
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
@@ -108,8 +108,9 @@ from rig._internal.members import (
     _ndims,
     _Selection,
     _single_geometry_shape,
+    _token_miss,
     Components,
-    normalise,
+    normalise as _normalise,
 )
 from rig._internal.node import Node
 from rig._internal.plug import Plug
@@ -379,7 +380,7 @@ def _group(selections: list[_Selection]) -> list[_TagGroup]:
 
 # ``Tag()``'s default: the kind token (``Tag(None)`` is refused, so a failed
 # lookup never means every tag)
-_KIND = object()
+_NO_NAME = object()
 
 
 class Tag(_MemberSpec):
@@ -453,13 +454,13 @@ class Tag(_MemberSpec):
     ``Components`` grid; read such tags through ``srf.cv[u, v]``.
     """
 
-    KIND        = "tag"
-    ACCEPTS     = frozenset({"whole", "vtx", "e", "f", "cv", "pt"})
-    WANT_SHAPES = True
+    _KIND        = "tag"
+    _ACCEPTS     = frozenset({"whole", "vtx", "e", "f", "cv", "pt"})
+    _WANT_SHAPES = True
 
     def __init__(
         self,
-        name:     Any  = _KIND,
+        name:     Any  = _NO_NAME,
         *members: Any,
         at:       Any  = None,
         force:    bool = False,
@@ -472,10 +473,18 @@ class Tag(_MemberSpec):
             )
         if name is None:
             raise TypeError("None is not a tag name; Tag() means every tag")
-        super().__init__(None if name is _KIND else name, at=at, force=force)
+        super().__init__(None if name is _NO_NAME else name, at=at, force=force)
         if self._name is not None:
             # the name Maya stores: ' ab ' is the tag 'ab', 'a b' the tag 'a_b'
             self._name = _check_component_tag_name(self._name)
+
+    @property
+    def name(self) -> str | None:
+        """The tag's name, as Maya stores it (``Tag(' ab ').name`` is
+        ``'ab'``); None for the kind token ``Tag()``. A value's field: a
+        ``Tag`` is a declaration, so it keeps the name it was made with
+        (``str(tag)`` gives it too)."""
+        return self._name
 
     def __repr__(self) -> str:
         return "Tag()" if self._name is None else super().__repr__()
@@ -731,7 +740,7 @@ class Tag(_MemberSpec):
     def _create(
         self, home: _Home, names: list[str], comps: list[_Selection] = ()
     ) -> None:
-        result = cmds_edit.componentTag(
+        result = _cmds_edit.componentTag(
             *names, create=True, newTagName=home.name, injectionLocation=home.node
         )
         if result != home.name or not home.holder.has_component_tag(home.name):
@@ -742,7 +751,7 @@ class Tag(_MemberSpec):
         self._verify_members(home, comps, present=True)
 
     def _modify(self, home: _Home, mode: str, names: list[str]) -> None:
-        if not cmds_edit.componentTag(
+        if not _cmds_edit.componentTag(
             *names, modify=mode, tagName=home.name, injectionLocation=home.node
         ):
             raise RuntimeError(
@@ -780,7 +789,7 @@ class Tag(_MemberSpec):
     def _delete(self, home: _Home) -> None:
         if home.state == _BAKED:
             home.holder.remove_component_tag(home.name)
-        elif not cmds_edit.componentTag(
+        elif not _cmds_edit.componentTag(
             home.path, delete=True, tagName=home.name, injectionLocation=home.node
         ):
             raise RuntimeError(
@@ -814,7 +823,7 @@ class Tag(_MemberSpec):
                     f"through the plug path; use {_short(home.path)}.cv[u, v]"
                 )
             if selection.is_all:
-                parts.append(Components(home.node, selection.kind).indices)
+                parts.append(Components(home.node, selection.kind).get_indices())
             else:
                 parts.append(selection.indices)
         ids = np.concatenate(parts)
@@ -842,7 +851,7 @@ class Tag(_MemberSpec):
                 # The holder's own count: with at= naming a node upstream
                 # of a topology change, ``vtx[*]`` tagged every point of THAT
                 # node, not of the shape the selection was read from.
-                count  = Components(home.node, selection.kind).count
+                count  = Components(home.node, selection.kind).get_count()
                 total += count
                 ok     = len(ids) == count if present else len(ids) == 0
             else:
@@ -941,7 +950,7 @@ class Tag(_MemberSpec):
         """Replace the tag's contents with ``members`` on their node
         (create-with-components when missing); the category may flip."""
         self._verb("set")
-        selections = normalise(members, want_shapes=True)
+        selections = _normalise(members, want_shapes=True)
         self._check_kinds(selections)
         steps = []
         for group in _group(selections):
@@ -964,7 +973,7 @@ class Tag(_MemberSpec):
                     lambda h=home, n=names, c=group.comps, k=category:
                         self._replace_members(h, c, n, k)
                 )
-        with _undo_chunk(f"rig.{self.KIND}"):
+        with _undo_chunk(f"rig.{self._KIND}"):
             for step in steps:
                 step()
 
@@ -979,7 +988,7 @@ class Tag(_MemberSpec):
             if home.state == _PROCEDURAL:
                 raise self._refuse_procedural(home, "cleared", shadow=False)
             steps.append(lambda h=home: self._clear(h))
-        with _undo_chunk(f"rig.{self.KIND}"):
+        with _undo_chunk(f"rig.{self._KIND}"):
             for step in steps:
                 step()
 
@@ -989,7 +998,7 @@ class Tag(_MemberSpec):
         self._verb("delete")
         force = force or self._options["force"]
         steps = [self._delete_step(home, force) for home in self._homes(node, "delete")]
-        with _undo_chunk(f"rig.{self.KIND}"):
+        with _undo_chunk(f"rig.{self._KIND}"):
             for step in steps:
                 step()
 
@@ -1029,12 +1038,12 @@ class Tag(_MemberSpec):
                     )
                 rewrites.append((plug, rewritten))
             steps.append(lambda h=home, r=rewrites: self._rename(h, new, r))
-        with _undo_chunk(f"rig.{self.KIND}"):
+        with _undo_chunk(f"rig.{self._KIND}"):
             for step in steps:
                 step()
 
     def _homes(self, node: Any, verb: str) -> list[_Home]:
-        selections = normalise(node, want_shapes=True)
+        selections = _normalise(node, want_shapes=True)
         homes      = []
         for group in _group(selections):
             self._check_geometry(group)
@@ -1050,7 +1059,7 @@ class Tag(_MemberSpec):
     def _clear(self, home: _Home) -> None:
         if home.state == _BAKED:
             home.holder.set_component_tag_contents(home.name, [], home.category)
-        elif not cmds_edit.componentTag(
+        elif not _cmds_edit.componentTag(
             home.path, modify="clear", tagName=home.name, injectionLocation=home.node
         ):
             raise RuntimeError(
@@ -1065,7 +1074,7 @@ class Tag(_MemberSpec):
     def _rename(self, home: _Home, new: str, rewrites: list[tuple[str, str]]) -> None:
         if home.state == _BAKED:
             home.holder.rename_component_tag(home.name, new)
-        elif not cmds_edit.componentTag(
+        elif not _cmds_edit.componentTag(
             home.path, rename=True, tagName=home.name, newTagName=new,
             injectionLocation=home.node,
         ):
@@ -1079,7 +1088,7 @@ class Tag(_MemberSpec):
                 f"{home.describe()}; history: {_cth_dump(home.geo)}"
             )
         for plug, expression in rewrites:
-            cmds_edit.setAttr(plug, expression, type="string")
+            _cmds_edit.setAttr(plug, expression, type="string")
 
 
 def _no_ids(group: _TagGroup) -> np.ndarray:
@@ -1129,7 +1138,7 @@ def _holds_all(group: _TagGroup, name: str, ids: np.ndarray) -> bool:
                 f"lattice tag; use {_short(group.path)}.cv[u, v] / .pt[s, t, u]"
             )
         if selection.is_all:
-            if len(ids) != Components(group.path, selection.kind).count:
+            if len(ids) != Components(group.path, selection.kind).get_count():
                 return False
         elif len(_rows_in(selection.indices, ids)) != len(selection.indices):
             return False
@@ -1194,11 +1203,11 @@ class _LayerMember(_MemberSpec):
     a ``TypeError`` naming ``in``.
     """
 
-    KIND        = "layer"
-    ACCEPTS     = frozenset({"whole"})
-    WANT_SHAPES = False
-    EXCLUSIVE   = True
-    HAS_IDS     = False
+    _KIND        = "layer"
+    _ACCEPTS     = frozenset({"whole"})
+    _WANT_SHAPES = False
+    _EXCLUSIVE   = True
+    _HAS_IDS     = False
 
     def __init__(self, layer: DisplayLayer | None = None, remove: bool = False) -> None:
         # the layer node (None: the kind token); its name is read at each use,
@@ -1212,7 +1221,7 @@ class _LayerMember(_MemberSpec):
         return None if self._layer is None else str(self._layer)
 
     @property
-    def purges(self) -> bool:
+    def _purges(self) -> bool:
         return self._layer is None
 
     @classmethod
@@ -1248,10 +1257,7 @@ class _LayerMember(_MemberSpec):
         if name.startswith("_"):
             raise AttributeError(name)
         what = "the kind token (every layer)" if self._layer is None else "a removal token"
-        raise AttributeError(
-            f"{self!r} is {what}, not a layer; {name} is the layer node's: "
-            f"Layer('x').{name}"
-        )
+        raise _token_miss(self, name, what, "layer", "Layer('x')")
 
     @staticmethod
     def _single(selections: list[_Selection], verb: str) -> str:
@@ -1297,7 +1303,7 @@ class _LayerMember(_MemberSpec):
         if not paths:
             return
         target = _display_layer._DEFAULT_ABSOLUTE if layer is None else str(layer)
-        cmds_edit.editDisplayLayerMembers(target, *paths, noRecurse=True)
+        _cmds_edit.editDisplayLayerMembers(target, *paths, noRecurse=True)
         for path in paths:
             if _holding_layer(path) != layer:
                 raise RuntimeError(

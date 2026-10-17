@@ -6,6 +6,7 @@ File named ``enum_attr`` instead of ``enum`` to avoid shadowing the stdlib
 
 from __future__ import annotations
 
+import copy
 from numbers import Integral
 from typing import Any
 
@@ -81,12 +82,17 @@ class Enum(_AttrSpec):
         """A new attribute's default given without ``en=`` (an attribute added,
         or added again with ``overwrite=True``) is read against the default
         fields (``False:True``) first: a wrong name or value raises TypeError
-        before the attribute is added (or deleted)."""
+        before the attribute is added (or deleted). The resolved default goes
+        into a copy of the spec: the spec itself keeps the default as given
+        (user decision 2026-10-16), so it applies the same way every time."""
         if self._dv_name is not None and (self.overwrite or not wrap_node.has_attr(self.kargs["longName"])):
             key, value = self._dv_name
-            self.kargs[key] = _default_of(
+            resolved            = copy.copy(self)
+            resolved.kargs      = dict(self.kargs)
+            resolved.kargs[key] = _default_of(
                 _parse_enum_names(self.kargs["en"]), value, f"Enum {self.kargs['longName']!r} {key}"
             )
+            return super(Enum, resolved)._apply_addattr(node_string, wrap_node)
         return super()._apply_addattr(node_string, wrap_node)
 
     def _existing_settings(self, plug_name: str, attribute: Any) -> dict:

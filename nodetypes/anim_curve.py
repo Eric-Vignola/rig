@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 from maya.api import OpenMaya, OpenMayaAnim
 
-from rig._internal.journal import cmds_edit, statement
+from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig.nodetypes._base import _check_attrs, _refuse_locked_node, _type_label
 from rig.nodetypes.dg_node import (
     _ABSTRACT_TYPES,
@@ -143,7 +143,7 @@ class AnimCurve(DGNode):
         )
 
     @classmethod
-    @statement
+    @_statement
     def create(
         cls,
         keys:      Any         = None,
@@ -203,14 +203,14 @@ class AnimCurve(DGNode):
                     getattr(node, attr) << v
             except BaseException:
                 try:
-                    cmds_edit.delete(str(node))
+                    _cmds_edit.delete(str(node))
                 except (RuntimeError, ValueError):
                     pass
                 raise
         return node
 
     @classmethod
-    @statement
+    @_statement
     def define(
         cls,
         name:      str,
@@ -360,7 +360,7 @@ class AnimCurve(DGNode):
             anim_keys.require_plugin(call)
         return entry
 
-    @statement
+    @_statement
     def set_keys(self, keys: Any, times: Any = None, **options: Any) -> "AnimCurve":
         """Replaces every key of this curve (one undo step, ``rig.AnimCurve.set_keys``) and
         returns it: ``keys`` is the values (with ``times`` and the key options of

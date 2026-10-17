@@ -73,7 +73,8 @@ class TestTagConstruction(MayaTestCase):
         # is a TypeError, so a failed lookup never means every tag
         before = set(cmds.ls())
         purge  = Tag()
-        self.assertTrue(purge.purges)
+        # re-pinned (user decision 2026-10-16): purges is private; Tag keeps its name (a value)
+        self.assertTrue(purge._purges)
         self.assertIsNone(purge.name)
         self.assertEqual(repr(purge), "Tag()")
         with self.assertRaisesRegex(TypeError, r"^None is not a tag name; Tag\(\) means every tag$"):
@@ -145,8 +146,9 @@ class TestTagConstruction(MayaTestCase):
     def test_negation_and_the_rejected_operators(self):
         spec    = Tag("cap", at="pCube1", force=True)
         removal = -spec
-        self.assertTrue(removal.removes)
-        self.assertFalse(spec.removes)
+        # re-pinned (user decision 2026-10-16): removes is private
+        self.assertTrue(removal._remove)
+        self.assertFalse(spec._remove)
         self.assertEqual(removal._options, {"at": "pCube1", "force": True})
         self.assertEqual(repr(removal), "-Tag('cap')")
         with self.assertRaises(TypeError):

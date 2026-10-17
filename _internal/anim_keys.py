@@ -212,6 +212,16 @@ def _per_key_2d(arr: Any) -> Any:
     return arr[:, None] if np.ndim(arr) == 1 else arr
 
 
+def _read_only(value: Any) -> Any:
+    """A read-only copy of the array ``value`` (a keys value's read); anything else (None,
+    a name) as it is."""
+    if not isinstance(value, np.ndarray):
+        return value
+    arr = np.array(value)
+    arr.flags.writeable = False
+    return arr
+
+
 class _Keys:
     """Keys waiting for a destination: what ``AnimCurve(values, ...)`` returns (not a node:
     ``isinstance(AnimCurve([0]), AnimCurve)`` is False). ``plug << keys`` keys the plug.
@@ -221,7 +231,8 @@ class _Keys:
     or None: the default), ``in_slopes`` / ``out_slopes`` (value units per frame, NaN where
     a key has none; None when none was given), ``weighted``, ``in_weights`` /
     ``out_weights``, ``pre_infinity`` / ``post_infinity`` (names). Plain numpy and str, so a
-    value pickles."""
+    value pickles. The arrays are read-only (user decision 2026-10-16: a write into one
+    raises instead of being lost): ``keys.values.copy()`` is a writable copy."""
 
     __slots__ = (
         "_values", "_times", "_names", "_itt", "_ott", "_islope", "_oslope", "_weighted",
@@ -376,11 +387,11 @@ class _Keys:
 
     @property
     def values(self) -> np.ndarray:
-        return self._names.copy() if self._names is not None else self._values.copy()
+        return _read_only(self._names if self._names is not None else self._values)
 
     @property
     def times(self) -> np.ndarray:
-        return self._times.copy()
+        return _read_only(self._times)
 
     @property
     def num_keys(self) -> int:
@@ -395,19 +406,19 @@ class _Keys:
 
     @property
     def in_tangents(self) -> Any:
-        return self._names_of(self._itt)
+        return _read_only(self._names_of(self._itt))
 
     @property
     def out_tangents(self) -> Any:
-        return self._names_of(self._ott)
+        return _read_only(self._names_of(self._ott))
 
     @property
     def in_slopes(self) -> Any:
-        return None if self._islope is None else np.array(self._islope)
+        return _read_only(self._islope)
 
     @property
     def out_slopes(self) -> Any:
-        return None if self._oslope is None else np.array(self._oslope)
+        return _read_only(self._oslope)
 
     @property
     def weighted(self) -> bool:
@@ -415,11 +426,11 @@ class _Keys:
 
     @property
     def in_weights(self) -> Any:
-        return None if self._iw is None else np.array(self._iw)
+        return _read_only(self._iw)
 
     @property
     def out_weights(self) -> Any:
-        return None if self._ow is None else np.array(self._ow)
+        return _read_only(self._ow)
 
     @property
     def pre_infinity(self) -> str:

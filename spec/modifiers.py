@@ -35,15 +35,37 @@ runs again.
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any, Optional
 
 from rig.spec._base import _AttrSpec
 
+
+class _Modifier(_AttrSpec):
+    """A shared modifier singleton (``lock``, ``unlock``, ``hide``,
+    ``unhide``): its ``kargs`` is a read-only mapping (user decision
+    2026-10-16), so no statement can change what every later ``x << lock``
+    does (``lock.kargs['lock'] = False`` raises TypeError). A copy or a pickle
+    is a modifier of the same flags."""
+
+    def __init__(self, **flags: Any) -> None:
+        super().__init__(**flags)
+        self.kargs = MappingProxyType(self.kargs)
+
+    def __reduce__(self) -> tuple:
+        return (_rebuild_modifier, (dict(self.kargs),))
+
+
+def _rebuild_modifier(flags: dict) -> _Modifier:
+    """[Internal] A copy's or an unpickled modifier's rebuild (`_Modifier.__reduce__`)."""
+    return _Modifier(**flags)
+
+
 # Singleton modifier instances. Lowercase per PEP 8 (these are not classes).
-lock   = _AttrSpec(lock=True)
-unlock = _AttrSpec(lock=False)
-hide   = _AttrSpec(keyable=False, channelBox=False)
-unhide = _AttrSpec(keyable=True, channelBox=False)
+lock   = _Modifier(lock=True)
+unlock = _Modifier(lock=False)
+hide   = _Modifier(keyable=False, channelBox=False)
+unhide = _Modifier(keyable=True, channelBox=False)
 
 
 class _SkipMarker(_AttrSpec):
@@ -99,7 +121,7 @@ class _DestroySpec(_AttrSpec):
         self.size:         Optional[int] = None
         self.overwrite:    bool = True
         self.compound:     Optional[list] = None
-        self.compoundType: Optional[str] = None
+        self._compound_type: Optional[str] = None
         self.notes:        Optional[str] = None
         # Destroy-specific state.
         self.attr_names = tuple(attr_names)
@@ -147,7 +169,7 @@ class _DestroyMarker(_AttrSpec):
         self.size:         Optional[int] = None
         self.overwrite:    bool = True
         self.compound:     Optional[list] = None
-        self.compoundType: Optional[str] = None
+        self._compound_type: Optional[str] = None
         self.notes:        Optional[str] = None
 
     def __call__(

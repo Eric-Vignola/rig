@@ -8,7 +8,7 @@ from typing import Any
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes._base import _cast
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import DGNode
@@ -56,16 +56,16 @@ class ObjectSet(DGNode):
 
     def add_members(self, objects: Any) -> None:
         """Adds a list of nodes to this set."""
-        cmds_edit.sets(objects, add=str(self))
+        _cmds_edit.sets(objects, add=str(self))
 
     def remove_members(self, objects: Any) -> None:
         """Removes object(s) from this set."""
-        cmds_edit.sets(objects, remove=str(self))
+        _cmds_edit.sets(objects, remove=str(self))
 
     def force_elements(self, objects: Any) -> None:
         """Force object(s) in this set."""
-        cmds_edit.sets(objects, forceElement=str(self))
+        _cmds_edit.sets(objects, forceElement=str(self))
 
     def clear(self) -> None:
         """Clear object(s) in this set."""
-        cmds_edit.sets(clear=str(self))
+        _cmds_edit.sets(clear=str(self))
