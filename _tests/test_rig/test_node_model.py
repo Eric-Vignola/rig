@@ -593,8 +593,7 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes.dg_node", "DGNode.__str__"),
         ("rig.nodetypes.dg_node", "_deleted_name"),
         ("rig.nodetypes.dg_node", "_is_deleted_node"),
-        ("rig._internal.list", "_gone"),
-        ("rig._internal.list", "_gone_indices"),
+        ("rig._internal.list", "_handle_key"),
     }
 )
 

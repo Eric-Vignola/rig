@@ -991,10 +991,13 @@ class DGNode(Node):
         # a deleted or freed node: its class and last known name, marked (user
         # decision 2026-10-16); in rig's own code it raises, as its name does
         # (`_called_from_rig`)
-        handle = self.__dict__.get("_objhandle")
-        if handle is not None and not handle.isValid() and not _called_from_rig(1):
+        try:
+            return f'{self.__class__.__name__}("{self._name()}")'
+        except RuntimeError:
+            handle = self.__dict__.get("_objhandle")
+            if handle is None or handle.isValid() or _called_from_rig(1):
+                raise
             return _deleted_repr(self)
-        return f'{self.__class__.__name__}("{self._name()}")'
 
     def __str__(self) -> str:
         # a deleted or freed node is its last known name, marked: "obj1
@@ -1003,11 +1006,15 @@ class DGNode(Node):
         # and a str() that raises there crashes Maya) raises a clean error
         # (user decision 2026-10-16). rig's own code reading the name is an
         # operation on the node, which raises "... already deleted!", as it
-        # always did (`_called_from_rig`: a guard, a message, a memo key)
-        handle = self.__dict__.get("_objhandle")
-        if handle is not None and not handle.isValid() and not _called_from_rig(1):
+        # always did (`_called_from_rig`: a guard, a message, a memo key). The
+        # name raises for such a node (`_name`), so a live node pays nothing
+        try:
+            return self._name()
+        except RuntimeError:
+            handle = self.__dict__.get("_objhandle")
+            if handle is None or handle.isValid() or _called_from_rig(1):
+                raise
             return _deleted_name(self) + _DELETED_MARK
-        return self._name()
 
     def __hash__(self) -> int:
         return hash(self._long_name())
