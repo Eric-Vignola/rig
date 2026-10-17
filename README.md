@@ -64,7 +64,7 @@ Two operators carry the language:
 | `slot << b` on a `Typed` (a typed attribute that holds any data, as a choice node's input) | a plug connects whole, whatever the slot held (no shorthand node, no split into channels); a number sets; any other value is a `TypeError`; `<< None` also drops the data the old input left | `slot`, so it chains |
 | `plug << AnimCurve([0, 90], times=[0, 24])` | **keys** the plug: one animation curve per channel, of the type the plug takes (`animCurveTL` / `TA` / `TU` / `TT`, Maya's rule), the values in the UI's units; an input the plug has is replaced (no pairBlend); a re-run updates the plug's own curve in place, and keys it holds already write nothing; one undo step | `plug`, so it chains |
 | `x.lock()`, `x << lock`; `x.unlock()`, `x << unlock` | lock a node (`lockNode`), a plug (`setAttr -lock`) or a `List` (its plugs, then its nodes, in one undo step); nothing is written when `x` already is; a refusal is an `InjectionError` that names the way out | `x`, so it chains |
-| `x << red`, `x << layer`, `x << Tag("cap")` | **membership**: `x` (a node, components, a `List`) joins a material, a display layer or a component tag; `x << -red` leaves it, `x << Material()` / `Layer()` / `Tag()` leaves every one of that kind | `x`, so it chains |
+| `x << red`, `x << layer`, `x << Tag("cap")` | **membership**: `x` (a node, components, a `List`) joins a material, a display layer or a component tag; `red.remove(x)` leaves it (shorthand `x << -red`; it returns `x` too), `x << Material()` / `Layer()` / `Tag()` leaves every one of that kind | `x`, so it chains |
 | `x in red`, `x not in layer` | yes or no: every member of `x` is in it | `bool` |
 | `x >> red`, `x >> Tag("cap")` | the ids of `x` that are in it (`cube >> red`: face ids); `x >> Material()` lists the collections holding `x` | an ndarray; a list |
 | `node.tx = 5` | sugar for `node.tx << 5` | |
@@ -421,7 +421,7 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   tag `a_b`. A non-ASCII name is a `ValueError`: Maya first maps it to
   the system code page and stores another name.
 - **A name on the right never creates.** `cube << Blinn("red")`,
-  `cube >> Blinn("red")`, `cube << -Layer("L")` and `cube in Layer("L")`
+  `cube >> Blinn("red")`, `Layer("L").remove(cube)` and `cube in Layer("L")`
   raise `NodeNotFoundError` (a `ValueError`) at the reference when the
   material or layer is missing, before anything is written; `define` is
   the verb that makes one. A tag lives on the node, so a missing tag is
@@ -429,8 +429,9 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   `cube >> Tag("nope")` reads no ids, as components do.
 - **Materials are exclusive, and removal leaves faces green.**
   `cube.f[:3] << decal` carves those faces out of `redSG`;
-  `cube.f[:3] << -decal` puts them in **no** engine (Maya draws them
-  green). `cube << Default()` is the way back to `initialShadingGroup`;
+  `decal.remove(cube.f[:3])` (shorthand `cube.f[:3] << -decal`) puts them
+  in **no** engine (Maya draws them green). `cube << Default()` is the way
+  back to `initialShadingGroup`;
   `shade.repair()` re-homes every green shape.
 - **Conversion parks, Maya's Type dropdown deletes.** `red =
   red.astype(Phong)` makes a phong that keeps the name, the engine, the
