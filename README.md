@@ -63,9 +63,12 @@ or `node.get_name()`, `plug.get_node()`, `plug.is_locked()`. Other objects
 follow what they are. One that points into the scene reads through methods:
 `Components` (`faces.get_indices()`), a `ColorSet`, `rig.container`
 (`get_stack()`), a membership token such as `-layer` (its name is
-`str(token)`). A value you hold keeps its data as attributes: keys
+`str(token)`; its `inject` / `query` / `contains` are the protocol `<<` /
+`>>` / `in` call). A value you hold keeps its data as attributes: keys
 (`keys.values`), a `Tag` (`Tag("cap").name`), a spec (`Float("w").kargs`),
-a shade `Conversion`, an error, cgmath data. The renames since 2.0.0a5 are
+a shade `Conversion`, an error, cgmath data; like cgmath's, it refuses a
+typo (`Tag("cap").nmae = 1`: "'Tag' has no attribute 'nmae'; public
+attributes must be declared"). The renames since 2.0.0a5 are
 listed in [CHEATSHEET section 2](CHEATSHEET.md#2-plug--read-set-connect).
 
 | Spelling | Meaning | Returns |

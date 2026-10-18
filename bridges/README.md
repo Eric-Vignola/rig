@@ -109,7 +109,8 @@ every positional and keyword argument is converted: a node becomes its name,
 a list or tuple that contains any node becomes a list of names. A `Plug` is
 already a `str` subclass and passes through as is, once its node is checked: a
 plug whose node was deleted or freed raises `already deleted!` instead of
-letting cmds read a node that took its name. So `rc.parent(child, root)`,
+letting cmds read a node that took its name, and a `List` holding a deleted
+or freed element raises the List rule's `RuntimeError` before Maya runs. So `rc.parent(child, root)`,
 `rc.parent([a, b], root)`, `rc.createNode("transform", parent=root)` and
 `rc.getAttr(node.tx)` all work with DSL objects in hand.
 
