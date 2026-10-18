@@ -325,12 +325,13 @@ Maya.
 The name is the one thing a deleted or freed node still answers: its `str`
 is the last name it was known by, marked (`"held (deleted)"`, a node a
 shader conversion replaced by the name it had), and its repr
-`Transform("held", deleted)`; an attribute of one has the repr
-`Attribute("held.translateY", deleted)`, and its `str` raises. The marked
-name names no Maya node, so `maya.cmds` given the node, or a `List` holding
-it, raises Maya's own error, whoever passes it on (rig's own wrappers, such
-as `node.delete(nodes)`, included). A `List` skips such an element (see the
-root cheatsheet's List section). rig's errors for a freed node name its class
+`Transform("held", deleted)`; an attribute of one is marked the same way
+(`"held.translateY (deleted)"`, `Attribute("held.translateY", deleted)`),
+for everyone: rig reads names through a private reader, never through `str()`.
+The marked name names no Maya node, so `maya.cmds` given the node, a plain
+list holding it, or a `List` raises Maya's own error instead of crashing. A
+`List` holding such an element raises on every rig operation (the List rule,
+in the root cheatsheet's List section). rig's errors for a freed node name its class
 (`Transform node (freed by ...) already deleted!`): the freed handle can no
 longer be read, while the str is the name rig last read. A plug's str is the
 text it was built with, so a raw `cmds` call given a held plug reaches

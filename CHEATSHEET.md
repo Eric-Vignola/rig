@@ -613,11 +613,30 @@ set with `set_options` (section 12). Up to v2.0.0a5:
 | `rig.container.stack`, `rig.container.containers` | `rig.container.get_stack()`: `(name, Container or None)` tuples |
 | `(-layer).name`, `(-red).name` | `str(-layer)`, `str(-red)` |
 | `ContainerOptions.flag = x` | `rig.set_options(flag=x)` |
+| `err.uuid`, `err.node_class` (`NodeNotFoundError`) | `err.by_uuid`; the class is private |
+| `sg.assign(members)` | `members << sg` (or `<< red`, the material): `assign` raises, naming it |
 
 An old spelling raises naming the new one here too (`faces.count`: `'Components'
 object has no attribute 'count'; c.count is now c.get_count()`). The one
 class nested in a handle is a set of constants, `ColorSet.Representation`
 (`ColorSet.Representation.RGBA`).
+
+A value refuses a typo, as cgmath's objects do: assigning a public attribute
+its class does not declare raises an `AttributeError` instead of making an
+attribute nobody reads. This holds for a `Tag`, the membership tokens, rig's
+errors, keys, the specs, `undo_chunk` and `NodeOp`; their real fields still
+take a value (`Float("w").notes = "..."`), and an error keeps Python's own
+(`args`, `add_note`, `raise ... from ...`). `TYPED_DATA_NAMES`
+(`rig.nodetypes.transform`) is a read-only mapping.
+
+```python
+from rig import Tag
+
+try:
+    Tag("cap").nmae = "lip"
+except AttributeError as err:
+    print(err)        # 'Tag' has no attribute 'nmae'; public attributes must be declared
+```
 
 A plug is owned by the node you read it from: `plug.get_node()` is that very
 node object, shared by the plug's children and elements. A node with two
@@ -2786,8 +2805,10 @@ the removal, and `x << -c` its shorthand: the same writes, the same
 refusals before any write, one undo step, and both return `x` (as every
 membership `<<` returns its left-hand side). The method also takes a plain
 list (`red.remove([a, b])`), which cannot sit on the left of `<<`. `-c` is
-the removal token of `c`. A token is no node: it has no attributes and no
-methods (`(-red).remove(x)` is an `AttributeError`), and its name is
+the removal token of `c`. A token is no node: it has no attributes, and its
+methods are the protocol the operators call, `token.inject(x)` (`x <<
+token`), `token.query(x)` (`x >> token`) and `token.contains(x)` (`x in
+token`): write the operators (`(-red).remove(x)` is an `AttributeError`). Its name is
 `str(token)` (`str(-red)` is `"red"`; the repr shows it too). `Tag("cap")`
 is a value, so `Tag("cap").name` is its name. `Tag("cap").remove(x)` takes
 members only: a node there is a `TypeError` naming `Tag("cap").delete(node)`,
