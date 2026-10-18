@@ -39,13 +39,13 @@ class Choice(DGNode):
                 src_attr = _connected_attrs(
                     in_attr, src=True, dst=False, first_only=True
                 )
-                if src_attr:
+                if src_attr is not None:
                     return type(src_attr)._raw_get_data_type(src_attr)
 
         # for input attrs, use its connected data type
         elif type(attr)._raw_get_name(attr).startswith("input"):
             src_attr = _connected_attrs(attr, src=True, dst=False, first_only=True)
-            if src_attr:
+            if src_attr is not None:
                 return type(src_attr)._raw_get_data_type(src_attr)
 
         return super()._attr_data_type_fallback(attr)

@@ -3032,6 +3032,36 @@ def _undeclared_plug_state(plug: Any, name: str) -> AttributeError:
     )
 
 
+def _no_truth_value(plug: Any) -> TypeError:
+    """The TypeError of the truth value of a plug (an Attribute or a Plug that
+    is no comparison of two plugs; user decision 8A): ``if ctl.is_locked:``,
+    ``if node.find_attr("speed", quiet=True):``, ``plug or 0``."""
+    return TypeError(
+        f"a plug has no truth value ({_name_of(plug)!r}): read its value with .get(), "
+        f"test for a missing plug with `is None`" + _method_hint(plug)
+    )
+
+
+def _method_hint(plug: Any) -> str:
+    """For a method plug (a Maya attr named like a method of its node,
+    ``ctl.is_locked``; a compound child named like a plug method), the ending
+    of a truth-value TypeError naming the method: ``; 'ctl.is_locked' is the
+    Maya attribute 'is_locked', the method is Transform.is_locked()``; else
+    ``""``."""
+    d      = getattr(plug, "__dict__", None) or {}
+    method = d.get("_method")
+    owner  = getattr(method, "__self__", None)
+    name   = getattr(method, "__name__", None)
+    if owner is None or not isinstance(name, str):
+        return ""
+    try:
+        text = _name_of(plug)
+    except Exception:  # noqa: BLE001 (a message must not fail: the marked name)
+        text = str(plug)
+    what = "child attribute" if isinstance(owner, Attribute) else "Maya attribute"
+    return f"; {text!r} is the {what} {name!r}, the method is {type(owner).__name__}.{name}()"
+
+
 # False until the plug descriptors exist (below Attribute): `_PlugMeta.__init__`
 # then wraps every new plug class, and Attribute itself is wrapped once there
 _PLUG_RULE_READY = False
@@ -3180,6 +3210,13 @@ class Attribute(str, metaclass=_PlugMeta):
         # the private name reader's (`_name_of`): "... already deleted!" for a
         # plug of a node deleted or freed
         return type(self)._raw_get_full_name(self)
+
+    def __bool__(self) -> bool:
+        # a plug has no truth value, a typed Attribute (a `find_attr` result) as
+        # a DSL Plug (user decision 8A, one rule): ``if node.find_attr("x",
+        # quiet=True):`` is ``... is not None``, ``if ctl.is_locked:`` reads
+        # ``.get()``. Only a Plug comparison of two plugs answers (`Plug.__bool__`)
+        raise _no_truth_value(self)
 
     def __hash__(self) -> int:
         # the Maya plug's identity, not the name: one key through every instance
@@ -4230,7 +4267,7 @@ class Attribute(str, metaclass=_PlugMeta):
         if ids is None:
             ids = d["_Attribute__child_id_dict"] = {}
         attr = ids.get(i)
-        if not attr:
+        if attr is None:
             _ensure_owner_alive(self)
             attr = _inherit_owner(self, _new_attr(Attribute, self._mplug.child(i)))
             ids[i] = attr
