@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import numbers
 import sys
+import weakref
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -499,14 +500,68 @@ def memoize(
 # The scene callbacks at the end of this module clear every cache before
 # a new scene or a file open and prune them after a reference unload.
 #
-# An in-place ``importlib.reload`` keeps both lists: the wrappers and
+# Both hold their members weakly: a memoized function or a NodeOp that
+# nothing else uses any more (made in a function body, or by a module of a
+# ``rig.run`` that ended) goes away with its cache.
+#
+# An in-place ``importlib.reload`` keeps both registries: the wrappers and
 # NodeOps made before it (and ``node_ops`` / ``random``, which imported
-# the lists) are still in use.
+# the registries) are still in use.
 # --------------------------------------------------------------------- #
 
 
-_ALL_MEMOIZED:      list[Callable[..., Any]] = globals().get("_ALL_MEMOIZED", [])
-_ALL_NODEOP_CACHES: list[Any]                = globals().get("_ALL_NODEOP_CACHES", [])
+class _WeakRegistry:
+    """An ordered list of weak references to what was appended (a list's
+    ``append`` / ``remove`` / ``len`` / iteration / indexing / ``+``, over the
+    members still alive)."""
+
+    __slots__ = ("_refs", "__weakref__")
+
+    def __init__(self, items=()) -> None:
+        self._refs: list[weakref.ref] = [weakref.ref(item) for item in items]
+
+    def _live(self) -> list[Any]:
+        live = [ref() for ref in self._refs]
+        if None in live:
+            self._refs = [ref for ref, item in zip(self._refs, live) if item is not None]
+            live = [item for item in live if item is not None]
+        return live
+
+    def append(self, item: Any) -> None:
+        self._refs.append(weakref.ref(item))
+
+    def remove(self, item: Any) -> None:
+        for i, ref in enumerate(self._refs):
+            if ref() is item:
+                del self._refs[i]
+                return
+        raise ValueError(f"{item!r} is not in the registry")
+
+    def __iter__(self):
+        return iter(self._live())
+
+    def __len__(self) -> int:
+        return len(self._live())
+
+    def __getitem__(self, index):
+        return self._live()[index]
+
+    def __contains__(self, item: Any) -> bool:
+        return any(ref() is item for ref in self._refs)
+
+    def __add__(self, other) -> list[Any]:
+        return self._live() + list(other)
+
+
+def _registry(name: str) -> _WeakRegistry:
+    existing = globals().get(name)
+    if existing is not None and hasattr(existing, "_refs"):
+        return existing
+    return _WeakRegistry(existing or ())
+
+
+_ALL_MEMOIZED:      _WeakRegistry = _registry("_ALL_MEMOIZED")
+_ALL_NODEOP_CACHES: _WeakRegistry = _registry("_ALL_NODEOP_CACHES")
 
 
 def prune_memoize_caches() -> int:

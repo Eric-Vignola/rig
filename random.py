@@ -108,7 +108,7 @@ class _SeedCacheHolder:
     """Wraps a cache dict with the attributes ``prune_memoize_caches``
     expects from a NodeOp (specifically ``._cache``)."""
 
-    __slots__ = ("_cache",)
+    __slots__ = ("_cache", "__weakref__")
 
     def __init__(self) -> None:
         self._cache: Dict[Tuple[Any, ...], _CacheEntry] = {}
@@ -164,7 +164,8 @@ def _memoize_on_seed(func: Callable[..., Any]) -> Callable[..., Any]:
         cache[key] = _CacheEntry(value=result, handles=_entry_handles(result, args, kwargs))
         return result
 
-    wrapper._cache = cache
+    wrapper._cache        = cache
+    wrapper._cache_holder = holder  # the registry holds it weakly: alive while the function is
     return _statement(wrapper)
 
 

@@ -153,6 +153,14 @@ Undo:
       function (the step is named after its ``__qualname__``), or
       ``@rig.undo_chunk("build arm")``.
 
+Running a file:
+    * ``rig.run("D:/chars/bob/arm.py", {"side": "L"})`` runs the file as
+      ``__main__``, as if in a fresh Python: your own modules are read from
+      disk again on every run (no reload), rig and the packages it uses are
+      shared, the code is never transformed. It returns the file's globals
+      (``result["ctrls"]``, read-only; ``result.call("main")``), and the run
+      is one undo step, ``rig.run arm.py``.
+
 Examples::
 
     from rig import Node, container, set_options, get_options
@@ -233,6 +241,7 @@ from rig._internal.node import lift, Node
 from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
 from rig._internal.undo import undo_chunk
+from rig._internal.run import run
 from rig.membership import Components, Layer, Tag
 from rig.nodetypes.anim_curve import AnimCurve, AnimCurveTA, AnimCurveTL, AnimCurveTT, AnimCurveTU
 from rig.nodetypes.errors import (
@@ -307,6 +316,8 @@ __all__ = [
     "lift",
     # Undo
     "undo_chunk",
+    # A file as if in a fresh Python
+    "run",
     # Helpers
     "condition",
     "constant",
