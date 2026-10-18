@@ -178,7 +178,7 @@ class BlendShape(Deformer):
             failfast: If True, raise error if target not found.
         """
         target_attr = self.find_alias(target_name, quiet=True)
-        if target_attr:
+        if target_attr is not None:
             return target_attr.logical_index()
         if failfast:
             raise RuntimeError(f"Target {_name_of(self)}.{target_name} not found.")

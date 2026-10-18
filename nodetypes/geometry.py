@@ -229,7 +229,7 @@ class Geometry(DAGNode):
     def get_local_shape_attr(self) -> Attribute:
         """Returns the local shape out attribute."""
         _ensure_valid(self)
-        if not self.__local_shape_attr:
+        if self.__local_shape_attr is None:
             attr_name               = cmds.deformableShape(_name_of(self), localShapeOutAttr=True)[0]
             self.__local_shape_attr = self.find_attr(attr_name)
         return self.__local_shape_attr
@@ -237,7 +237,7 @@ class Geometry(DAGNode):
     def get_world_shape_attr(self) -> Attribute:
         """Returns the world shape out attribute."""
         _ensure_valid(self)
-        if not self.__world_shape_attr:
+        if self.__world_shape_attr is None:
             attr_name               = cmds.deformableShape(_name_of(self), worldShapeOutAttr=True)[0]
             self.__world_shape_attr = self.find_attr(attr_name)[0]
         return self.__world_shape_attr

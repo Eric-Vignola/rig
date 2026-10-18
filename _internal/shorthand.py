@@ -261,7 +261,10 @@ def _matrix_to_transform(src: Any, dst: Any) -> bool:
     attr = _attr_path(dst)
     # Try `dst.ro` first; if dst is typed-atomic (e.g. transform.matrix) or
     # otherwise has no `.ro`, fall back to the owning node's rotateOrder.
-    rotate_order    = _safe_attr(dst, "ro") or _safe_attr(_node_of(dst), "ro")
+    # (a plug has no truth value, user decision 8A: a missing one is None)
+    rotate_order    = _safe_attr(dst, "ro")
+    if rotate_order is None:
+        rotate_order = _safe_attr(_node_of(dst), "ro")
     decomposed      = _decompose_matrix(src, rotate_order=rotate_order)
     decomposed_node = type(decomposed)._raw_get_node(decomposed)
 

@@ -126,10 +126,16 @@ Operator conventions:
     * ``== != < <= > >=`` -- build ``condition`` nodes (returns the output
       Plug, NOT a bool), except that ``==`` / ``!=`` of two objects of one
       Maya plug fold to ``True`` / ``False`` with no node (unless
-      ``force_nodes()``). An ordering result (``<`` ...) has no truth value:
-      ``if plug > 0:`` and ``sorted(plugs)`` raise TypeError. ``__hash__`` is
-      overridden to key the Maya plug (its node, attribute and logical
-      indices, kept across a rename) so dict / set membership still works.
+      ``force_nodes()``). Only ``==`` / ``!=`` between two plugs has a
+      truth value (the same Maya plug?); every other DSL result raises
+      TypeError in an ``if``: an ordering (``if plug > 0:``,
+      ``sorted(plugs)``), a comparison with a value (``if plug == 5:``), a
+      plug on its own (``if plug:``; test a missing one with ``is None``)
+      and a List of comparisons (``all()`` / ``any()`` on the values).
+      ``plug == None`` raises at once. rig never rewrites code: pick with
+      ``condition(test, a, b)``. ``__hash__`` is overridden to key the Maya
+      plug (its node, attribute and logical indices, kept across a rename)
+      so dict / set membership still works.
 
 Undo:
     * rig's edits are undoable. ``Mesh.create``, ``SkinCluster.create`` and

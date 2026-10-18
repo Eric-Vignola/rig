@@ -76,6 +76,35 @@ A plug's identity follows the Maya plug: ``Node("|T1|S").v`` and
 and a rename or an alias keeps the key. A plain str is not a plug's key:
 ``{plug: 1}["a.tx"]`` misses; a ``List`` reads a plain str as the Maya
 plug it names (``"a.tx" in List([a.translateX])``).
+
+Truth values (user decisions 7A-11A, 2026-10-17). Python asks a truth value
+once and runs one branch, while a DSL comparison is only known when Maya
+evaluates it, so the result of ``==`` / ``!=`` between two plugs is the ONLY
+DSL object with a truth value (are they the same Maya plug? what a plain
+list's ``in`` / ``.index`` / ``.remove``, a dict and a set ask). Everything
+else raises TypeError in ``if``, ``while``, ``and`` / ``or``, ``not``,
+``assert``, ``any()`` / ``all()``, as a numpy array does:
+
+* an ordering result (``a.tx > 0``, ``sorted(plugs)``, ``min`` / ``max``);
+* a comparison with a value (``if a.tx == 5:``): the message names
+  ``.get()``, ``rig.condition(...)`` and ``.equals()``, and the method when
+  the plug is a Maya attr named like one (``ctl.is_locked == True``: the
+  method is ``Transform.is_locked()``);
+* a plug on its own, a typed Attribute (a ``find_attr`` result) and every
+  other DSL result (``if ctl.is_locked:``, ``plug or 0``): "a plug has no
+  truth value", read it with ``.get()``, test a missing plug with ``is None``;
+* a List of comparisons (``ctls.tx > 0``, `rig._internal.list._Tests`):
+  ``all()`` / ``any()`` on the values.
+
+``plug == None`` / ``plug != None`` raise at once and build nothing. A
+refused comparison's node stays (undo removes it, as it removes any
+comparison: nothing is deleted while raising). Maya never asks a plug's truth: its
+boolean flags and OpenMaya's bool arguments refuse the type first.
+
+rig never rewrites user code, so a Python ``if`` cannot become a network
+(no folding): Python runs one branch, once, while a rig needs both branches
+alive in Maya. ``b.ty << condition(a.tx > 0, 1, 2)`` is that network, and the
+Script Editor and a sourced script behave the same.
 """
 
 from __future__ import annotations
@@ -96,6 +125,8 @@ from rig._internal.anim_keys import _Keys
 from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
     _name_of,
+    _method_hint,
+    _no_truth_value,
     _PLUG_TYPES,
     _NON_MATRIX_ATTR_API_TYPES,
     _OLD_PLUG_SETTERS,
@@ -1330,11 +1361,13 @@ class Plug(Attribute):
                 return True
             result = _condition_op(self, "==", other)
             if isinstance(result, Plug):
-                result._identity = same
+                result.__dict__["_identity"] = same
             return result
         if isinstance(other, Node):
             return False
-        return _condition_op(self, "==", other)
+        if other is None:
+            raise _never_none(self, "==")
+        return _value_test(_condition_op(self, "==", other), "==", self, other)
 
     def __ne__(self, other: Any) -> "Plug | bool":
         """``self != other``: the output of a ``condition`` node comparing the
@@ -1351,41 +1384,53 @@ class Plug(Attribute):
                 return False
             result = _condition_op(self, "!=", other)
             if isinstance(result, Plug):
-                result._identity = not same
+                result.__dict__["_identity"] = not same
             return result
         if isinstance(other, Node):
             return True
-        return _condition_op(self, "!=", other)
+        if other is None:
+            raise _never_none(self, "!=")
+        return _value_test(_condition_op(self, "!=", other), "!=", self, other)
 
     # ``list`` / ``set`` / ``dict`` containment calls ``PyObject_IsTrue()`` on
     # the ``__eq__`` result, so this is the only hook that can answer them.
-    # Ordinary plugs stay truthy; only a comparison RESULT reports whether its
-    # two operands denote the same Maya plug (the same node, attribute and
+    # Only the result of a comparison of two plugs has a truth value: whether
+    # its two operands denote the same Maya plug (the same node, attribute and
     # logical indices, whatever the instance path each is named through; see
-    # ``_same_plug``). With constant folding on, a comparison of one plug with
-    # itself returns the bool and no result exists, so a result built with it
-    # on is always False (``!=``: True). The class default keeps ``bool(plug)`` off
-    # ``__getattr__`` (a child / sibling / container lookup). An ordering result
-    # (``<``, ``<=``, ``>``, ``>=``) holds None: it has no truth value (see
-    # ``__bool__``).
-    _identity = True
+    # ``_same_plug``), kept in its ``__dict__`` as ``_identity`` (True / False).
+    # With constant folding on, a comparison of one plug with itself returns
+    # the bool and no result exists, so a result built with it on is always
+    # False (``!=``: True). An ordering result (``<``, ``<=``, ``>``, ``>=``)
+    # holds None, a comparison with a value (``== 5``) its `_ValueTest`, and
+    # any other plug nothing: none of these has a truth value (``__bool__``).
 
     def __bool__(self) -> bool:
-        """A plug is true, and a ``==`` / ``!=`` result says whether its two
-        operands are the same Maya plug (see ``_identity``). An ordering result
-        (``a.tx > 0``) raises TypeError, as a numpy array does: its value is
-        only known when Maya evaluates it, so ``if plug > 0:``, ``sorted(plugs)``,
-        ``min`` / ``max`` and chained comparisons would silently take it as
-        true."""
-        identity = getattr(self, "_identity", True)
-        if identity is None:
+        """Only the result of ``==`` / ``!=`` between two plugs has a truth
+        value: whether its two operands are the same Maya plug (``in``,
+        ``.index`` and ``.remove`` of a plain list, a dict or set lookup).
+
+        Anything else raises TypeError, as a numpy array does (user decisions
+        7A, 8A, 2026-10-17): Python asks a truth value once and runs one
+        branch, while the plug's value is only known when Maya evaluates it, so
+        ``if a.tx == 5:``, ``if a.tx > 0:``, ``sorted(plugs)``, ``min`` /
+        ``max`` and chained comparisons would silently take a branch for
+        good. The comparison's node stays (decision 10A: undo removes it).
+        A plain plug (``if ctl.is_locked:``, ``x = plug or 0``) has no truth
+        value either: read it with ``.get()``, test a missing one with
+        ``is None``."""
+        test = self.__dict__.get("_identity", _NO_TEST)
+        if test is True or test is False:
+            return test
+        if test is _NO_TEST:
+            raise _no_truth_value(self)
+        if test is None:
             raise TypeError(
                 f"the truth value of {_name_of(self)!r}, the output of an ordering "
                 f"comparison (<, <=, >, >=), is only known when Maya evaluates it; "
                 f"read it with .get(), pick with rig.condition(...), or order plugs "
                 f"by name with sorted(plugs, key=str)"
             )
-        return identity
+        raise _value_test_error(self, test)
 
     def __ge__(self, other: Any) -> "Plug":
         from rig._internal.math_nodes import _condition_op
@@ -1410,11 +1455,65 @@ class Plug(Attribute):
 
 def _ordering(result: Any) -> Any:
     """`result`, the output of an ordering comparison, marked as having no
-    truth value when it is a Plug (see `Plug.__bool__`); a folded number or a
-    List of results is returned as it is."""
+    truth value when it is a Plug (see `Plug.__bool__`); a folded number is
+    returned as it is."""
     if isinstance(result, Plug):
         result.__dict__["_identity"] = None
     return result
+
+
+# what `Plug.__bool__` finds in a plug that is no comparison result
+_NO_TEST = object()
+
+
+class _ValueTest(tuple):
+    """What the result of ``plug == value`` / ``plug != value`` keeps as its
+    ``_identity``: ``(op, plug, value)``, for the TypeError of its truth value
+    (user decision 7A)."""
+
+    __slots__ = ()
+
+
+def _value_test(result: Any, op: str, left: Any, right: Any) -> Any:
+    """`result`, the output of ``left <op> right`` (``==`` / ``!=``, `right` a
+    value), marked as having no truth value (`Plug.__bool__`); a folded value
+    is returned as it is."""
+    if isinstance(result, Plug):
+        result.__dict__["_identity"] = _ValueTest((op, left, right))
+    return result
+
+
+def _never_none(plug: Any, op: str) -> TypeError:
+    """The TypeError of ``plug == None`` / ``plug != None``, raised before
+    anything is built (user decision 11A)."""
+    test = "is None" if op == "==" else "is not None"
+    return TypeError(
+        f"{_name_of(plug)} {op} None: a plug is never None: test it with `{test}`"
+    )
+
+
+def _value_test_error(result: Any, test: tuple) -> TypeError:
+    """The TypeError of the truth value of `result`, the output of ``plug ==
+    value`` / ``plug != value`` (`test`: its `_ValueTest`), naming the ways to
+    an answer (user decision 7A): read the values, pick with ``condition``,
+    or compare plugs by identity; and the method, when the plug is a Maya
+    attr named like a method of its node (``ctl.is_locked``)."""
+    op, left, right = test
+    name  = _render_operand(left)
+    value = _render_operand(right)
+    read  = f"{name}.get() {op} {value}"
+    try:
+        whole = left._mplug.isCompound or left._mplug.isArray
+    except Exception:  # noqa: BLE001 (a message must not fail)
+        whole = False
+    if whole:
+        read = f"all({read})"
+    return TypeError(
+        f"the truth value of {_name_of(result)!r}, the output of a comparison with a "
+        f"value ({op} {value}), is only known when Maya evaluates it: read the values "
+        f"first ({read}), pick with rig.condition(...), or compare plugs by identity "
+        f"with .equals()" + _method_hint(left)
+    )
 
 
 # ``Plug`` inherits ``str`` so ``cmds`` calls accept it directly, but that also

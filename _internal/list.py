@@ -1007,22 +1007,22 @@ class List(list):
     # -- comparison broadcast -- #
 
     def __eq__(self, other: Any) -> "List":
-        return _values_list(s == o for s, o in _operand_rows("__eq__", self, other))
+        return _tests_list(s == o for s, o in _operand_rows("__eq__", self, other))
 
     def __ne__(self, other: Any) -> "List":
-        return _values_list(s != o for s, o in _operand_rows("__ne__", self, other))
+        return _tests_list(s != o for s, o in _operand_rows("__ne__", self, other))
 
     def __ge__(self, other: Any) -> "List":
-        return _values_list(s >= o for s, o in _operand_rows("__ge__", self, other))
+        return _tests_list(s >= o for s, o in _operand_rows("__ge__", self, other))
 
     def __le__(self, other: Any) -> "List":
-        return _values_list(s <= o for s, o in _operand_rows("__le__", self, other))
+        return _tests_list(s <= o for s, o in _operand_rows("__le__", self, other))
 
     def __gt__(self, other: Any) -> "List":
-        return _values_list(s > o for s, o in _operand_rows("__gt__", self, other))
+        return _tests_list(s > o for s, o in _operand_rows("__gt__", self, other))
 
     def __lt__(self, other: Any) -> "List":
-        return _values_list(s < o for s, o in _operand_rows("__lt__", self, other))
+        return _tests_list(s < o for s, o in _operand_rows("__lt__", self, other))
 
     # -- list protocol (must not route through __eq__) -- #
 
@@ -1769,4 +1769,61 @@ def _same_entity(item: Any, probe: Any) -> bool:
         return bool(item == probe)
     except Exception:
         return False
+
+
+class _Tests(List):
+    """A List of comparisons (``ctls.tx > 0``, ``List(a) == List(b)``, ``5 >
+    ctls.tx``): a List of results, with no truth value of its own, as a numpy
+    array of more than one element has none (user decision 9A, 2026-10-17).
+    ``&``, ``|``, ``^``, ``~``, a slice, a list of indices and a copy of it are
+    Lists of comparisons too; arithmetic and ``List(...)`` give a plain List."""
+
+    def __bool__(self) -> bool:
+        # the List rule first (an invalid List raises its RuntimeError)
+        if self._epoch != _EPOCH[0]:
+            _check(self)
+        raise TypeError(
+            "the truth value of a List of comparisons is ambiguous, as a numpy "
+            "array's is: use all() or any() on the values (all(ctls.tx.get() > 0)), "
+            "or pick per element with rig.condition(...)"
+        )
+
+    def __getitem__(self, key: Any) -> Any:
+        out = List.__getitem__(self, key)
+        if type(out) is List and isinstance(key, (slice, list, tuple)):
+            out.__class__ = _Tests
+        return out
+
+
+def _keeps_tests(name: str) -> Callable[..., Any]:
+    """`_Tests`' ``name`` operator: List's, whose result is a List of comparisons."""
+    base = getattr(List, name)
+
+    @functools.wraps(base)
+    def op(self: "List", *args: Any) -> Any:
+        out = base(self, *args)
+        if type(out) is List:
+            out.__class__ = _Tests
+        return out
+
+    return op
+
+
+# the logical operators of a List of comparisons keep it one (a plain List
+# ``&`` a List of comparisons: Python asks the subclass's reflected operator
+# first)
+for _operator in ("__and__", "__rand__", "__or__", "__ror__", "__xor__", "__rxor__", "__invert__"):
+    setattr(_Tests, _operator, _keeps_tests(_operator))
+del _operator
+
+
+def _tests_list(items: Iterable[Any]) -> "_Tests":
+    """[Internal] A List of comparisons (`_Tests`) holding `items`, the results
+    of a comparison broadcast, kept as `_values_list` keeps them."""
+    out = list.__new__(_Tests)
+    object.__setattr__(out, "_parent_multi", None)
+    _fill_values(out, items)
+    return out
+
+
 _register_list_type()

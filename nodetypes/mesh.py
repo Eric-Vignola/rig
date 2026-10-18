@@ -1143,7 +1143,7 @@ class Mesh(Geometry):
         """
         attr = self.find_attr(map_name)
         if (
-            attr
+            attr is not None
             and type(attr)._raw_get_data_type(attr) == MAP_DATATYPE
             and attr.has_category(MAP_DEFAULT_CATEGORY)
         ):

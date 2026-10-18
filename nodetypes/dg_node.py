@@ -2122,7 +2122,7 @@ class DGNode(Node):
 
             # set the attribute
             a = self.find_attr(attr)
-            if a:
+            if a is not None:
                 a.set(value)
 
     def add_attr(self, long_name: str, **kwargs) -> Attribute | None:
