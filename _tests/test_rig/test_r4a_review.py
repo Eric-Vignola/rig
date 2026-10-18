@@ -560,8 +560,10 @@ class TestOrderingHasNoTruthValue(_PlugCase):
         result = a.tx >= b.tx
         self.assertIsInstance(result, Plug)
         self.assertIsInstance(F.greater_than(a.tx, b.tx), Plug)
-        # == / != keep their identity truth, and a plain plug is true
-        self.assertTrue(a.tx)
+        # == / != of two plugs keep their identity truth; (re-pinned, user decision
+        # 8A, 2026-10-17) a plain plug has no truth value
+        with self.assertRaisesRegex(TypeError, r"^a plug has no truth value \('a\.translateX'\)"):
+            bool(a.tx)
         self.assertFalse(bool(a.tx == b.tx))
         self.assertTrue(bool(a.tx != b.tx))
         # numbers fold, and a List of results is a list

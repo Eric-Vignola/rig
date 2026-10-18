@@ -144,7 +144,9 @@ class TestMeshMaps(MayaTestCase):
         self.assertTrue(test_mesh.has_attr(self._map_01_name))
 
         # rename map, check old name doesn't exist anymore by trying to rename it again, check new name exists
-        self.assertTrue(
+        # (re-pinned, user decision 8A, 2026-10-17: a plug has no truth value; the
+        # renamed attr is found)
+        self.assertIsNotNone(
             test_mesh.rename_attr(
                 self._map_01_name,
                 self._map_01_rename_name,
@@ -170,7 +172,9 @@ class TestMeshMaps(MayaTestCase):
         )
         self.assertTrue(new_map_plug is not None)
         self.assertTrue(test_mesh.has_attr(self._map_01_name))
-        self.assertTrue(
+        # (re-pinned, user decision 8A, 2026-10-17: a plug has no truth value; the
+        # renamed attr is found)
+        self.assertIsNotNone(
             test_mesh.rename_attr(
                 new_map_plug,
                 self._map_01_rename_name,

@@ -106,13 +106,16 @@ class TestCommandsWrappers(MayaTestCase):
         try:
             cmds.loadPlugin(path, quiet=True)
             held = rc.rigTestRcReload
-            self.assertEqual(held(), 1)
+            # (re-pinned, user decision 9A, 2026-10-17: List([1]) == 1 is a List of
+            # comparisons with no truth value, and was always true: the command
+            # gives [1], as cmds does)
+            self.assertEqual(list(held()), [1])
             cmds.unloadPlugin("rig_test_rc_reload")
             with self.assertRaises(RuntimeError):
                 rc.rigTestRcReload()
             cmds.loadPlugin(path, quiet=True)
-            self.assertEqual(rc.rigTestRcReload(), 1)
-            self.assertEqual(held(), 1)
+            self.assertEqual(list(rc.rigTestRcReload()), [1])
+            self.assertEqual(list(held()), [1])
         finally:
             if cmds.pluginInfo("rig_test_rc_reload", query=True, loaded=True):
                 cmds.unloadPlugin("rig_test_rc_reload")

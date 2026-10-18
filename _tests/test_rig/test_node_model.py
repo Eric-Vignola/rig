@@ -2238,8 +2238,12 @@ class TestPlugQuickWins(MayaTestCase):
     def test_bool_makes_no_container_query(self):
         cmds.createNode("transform", name="a")
         plugs = (Node("a").tx, Plug("a.t"), Node("a").t[0])
+        # (re-pinned, user decision 8A, 2026-10-17: a plug has no truth value; its
+        # TypeError still makes no container query)
         with mock.patch.object(cmds, "container", wraps=cmds.container) as probe:
-            self.assertEqual([bool(plug) for plug in plugs], [True] * 3)
+            for plug in plugs:
+                with self.assertRaisesRegex(TypeError, r"^a plug has no truth value \('a\.translate"):
+                    bool(plug)
         self.assertEqual(probe.call_count, 0)
         # a comparison result still reports whether its operands match
         self.assertTrue(Node("a").tx == Plug("a.tx"))

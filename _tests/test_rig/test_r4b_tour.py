@@ -556,7 +556,8 @@ class TestTourW3(_Case):
         proxy  = Layer.define("proxy", displayType=2)
         self.assertEqual((repr(proxy), _scene() - before), ('DisplayLayer("proxy")', {"proxy"}))
         self.assertIs(Layer, DisplayLayer)
-        self.assertEqual(List(self.geos) << proxy, List(self.geos))
+        # (re-pinned, user decision 9A, 2026-10-17: a List == List has no truth value; compare the elements)
+        self.assertEqual(list(List(self.geos) << proxy), list(self.geos))
         self.assertEqual([geo in proxy for geo in self.geos], [True, True, True])
         self.assertTrue(self.geos[0].tx in proxy)     # a plug stands for its node
         self.assertEqual(self.geos[1] >> Layer(), proxy)
