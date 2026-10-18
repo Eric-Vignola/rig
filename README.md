@@ -89,6 +89,7 @@ listed in [CHEATSHEET section 2](CHEATSHEET.md#2-plug--read-set-connect).
 | `-a`, `~a` | negate; logical NOT | the output plug |
 | `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes; `==` / `!=` of a Maya plug with itself fold to a bool | the output plug; `True` / `False` for one plug |
 | `a & b`, `a \| b`, `a ^ b` | logical AND / OR / XOR networks | the output plug |
+| `rig.run("arm.py", {"side": "L"})` | **run a file** as `__main__`, as if in a fresh Python: your own modules are read from disk again on every run (no reload), rig and the packages it uses are shared, the code is never transformed; the run is one undo step, `rig.run arm.py` ([CHEATSHEET section 40](CHEATSHEET.md#40-rigrun-a-file-as-if-in-a-fresh-python)) | a read-only mapping of the file's globals (`result["ctrls"]`, `result.call("main")`) |
 
 
 ---
@@ -340,7 +341,7 @@ the cross-type math verbs, so most scripts import from `rig` directly.
 rig/
 ├── __init__.py          Node, Plug, List, Container, container, set_options / get_options,
 │                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant,
-│                        undo_chunk
+│                        undo_chunk, run (a file as if in a fresh Python)
 ├── spec/                attribute specs: Float Int Bool Angle Time, Vector Color Euler Quat, Enum,
 │                        Matrix MeshAttr Message NurbsCurveAttr NurbsSurfaceAttr String, Typed (any
 │                        data); modifiers lock unlock hide unhide skip destroy Note

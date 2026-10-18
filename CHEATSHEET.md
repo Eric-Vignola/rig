@@ -59,6 +59,7 @@ for the node classes and their typed methods.
 | 37 | [Shader conversion](#37-shader-conversion) | `mat = mat.astype(Phong)`, `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, the held old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_num_keys` / `evaluate` |
+| 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 
 ---
 
@@ -3784,6 +3785,124 @@ for spelling in (lambda: cube << AnimCurve([1]), lambda: AnimCurve(5), lambda: A
 # TypeError pCube1.worldMatrix[0] << AnimCurve(...): an anim
 # ValueError AnimCurve times must be strictly increasing (May
 ```
+
+---
+
+## 40. `rig.run`: a file as if in a fresh Python
+
+`rig.run(path, inputs=None, *, argv=(), shared=())` runs the Python file at
+`path` as `__main__`, the way `python arm.py` would, without leaving the
+session. Every module the file imports from **your own code** (a plain `.py`
+outside an install) is executed again from the file on disk, on every run:
+edit a helper module, run again, and the edit is there, with no
+`importlib.reload`. The session's own copies are never touched.
+
+```python
+import os, sys, tempfile
+import rig
+
+folder = tempfile.mkdtemp()
+
+def write(name, text):
+    path = os.path.join(folder, name)
+    with open(path, "w") as fh:
+        fh.write(text)
+    return path
+
+write("armlib.py", "SUFFIX = '_ctl'\n")
+arm = write("arm.py",
+    "import rig, armlib\n"
+    "from maya import cmds\n"
+    "ctrls = [rig.Node(cmds.createNode('transform', name=side + part + armlib.SUFFIX))\n"
+    "         for part in ('_shoulder', '_elbow')]\n"
+    "def names(count):\n"
+    "    return [str(c) for c in ctrls[:count]]\n")
+
+cmds.file(new=True, force=True)
+result = rig.run(arm, {"side": "L"})             # inputs: names the file starts with
+print([str(c) for c in result["ctrls"]])         # ['L_shoulder_ctl', 'L_elbow_ctl']
+print(result.call("names", 1))                   # ['L_shoulder_ctl']
+print(isinstance(result["ctrls"][0], rig.Node))  # True   rig is the session's rig
+print("armlib" in sys.modules)                   # False  the run's modules stay with the run
+
+write("armlib.py", "SUFFIX = '_CTL'\n")         # edit the helper: no reload
+second = rig.run(arm, {"side": "R"})
+print([str(c) for c in second["ctrls"]])         # ['R_shoulder_CTL', 'R_elbow_CTL']
+```
+
+| What | How |
+|---|---|
+| the file | runs through `runpy.run_path` as `__main__`: `__name__ == "__main__"`, `__file__` and `sys.argv[0]` are the path, `sys.path[0]` its folder, and `sys.modules["__main__"]` is the file while it runs (dataclasses, `typing.get_type_hints` and `pickle` of its classes work). rig never transforms your code: it runs as it would typed line by line in the Script Editor |
+| `inputs` | a mapping (a `dict`, or the `Run` of an earlier round) copied into the file's starting globals. Your dict is never rebound (a list in it is the same list). A module object is skipped (the file imports what it uses); a dunder name (`__author__`) raises `ValueError` |
+| `argv=["--fast"]` | `sys.argv[1:]` |
+| `shared=("studiolib",)` | top-level packages to share with the session instead of executing them again |
+| what it returns | a `Run`: the file's globals when it ended, as a read-only mapping (`result["ctrls"]`, `dict(result)`); `result.call("main", ...)` calls one of its functions with the run's modules shown; `result.path`, `result.modules` |
+| undo | the whole run is **one** step, named `rig.run arm.py`: one Ctrl+Z after a typo halfway through a build goes back to the start. A `rig.run` inside a run joins the outer step |
+| given back after a run | `sys.argv`, `sys.path`, `sys.stdin` / `stdout` / `stderr`, `sys.excepthook` / `displayhook`, and rig's options (`set_options` in the file) |
+| not given back | environment variables, the working folder, logging and warning settings, the scene, Maya callbacks, Qt windows, state held in a shared package |
+
+**Shared, never executed again**: the standard library, an install
+(site-packages, the interpreter, Maya, Program Files), a package with a
+compiled member (it cannot load twice in one process), `rig` and every
+package rig itself uses (cgmath), and the `shared=` names. An edit there
+needs a restart; the run says so on `stderr` (`rig.run: changed on disk, but
+shared with this session ...`).
+
+```python
+fails = write("typo.py",
+    "from maya import cmds\n"
+    "root = cmds.createNode('transform', name='root')\n"
+    "print(rooot)\n")
+try:
+    rig.run(fails)
+except NameError as err:
+    print(err.rig_run["root"])                   # root   what the file made before the error
+
+quits = write("quits.py", "import sys\nsys.exit(3)\n")
+try:
+    rig.run(quits)                               # the host keeps running
+except RuntimeError as err:
+    print(err.code)                              # 3
+
+args = write("args.py", "import sys\nARGS = sys.argv[1:]\n")
+print(rig.run(args, argv=["--fast"])["ARGS"])    # ['--fast']
+print(rig.run(args, second)["side"])             # R      a Run passes its names on, not its modules
+```
+
+An error in the file propagates as it is, with `err.rig_run` (the run so
+far); `sys.exit(0)` ends the file normally, and `sys.exit(n)` with a failure
+code raises a `RuntimeError` carrying `.code`, so `mayapy` does not exit.
+
+The path may use `~` (the user folder: USERPROFILE on Windows, never the
+Documents folder Maya sets `HOME` to; `$HOME` is the same), `$VAR`, `${VAR}`
+and, on Windows, `%VAR%`, expanded until nothing changes (a variable may hold
+`~` or another variable; `$USER` is the login name when USER is not set), and
+`..`. It comes out with forward slashes. A path that is no file raises
+`FileNotFoundError`, naming the variables in it that are not set.
+
+Limits:
+
+* **Which modules other code sees.** A run hides the session's copy of a
+  package only once the file imports it. While the run goes, code that is
+  not the file's (a session callback, a thread, `pkgutil`, `mock.patch`,
+  `exec`) sees the run's copy of the packages the file imported, and the
+  session's copy of every other.
+* **Callables, not strings, for Maya callbacks.** `cmds.button(command=build)`,
+  never `command="build()"`: a string runs in Maya's `__main__`, which is not
+  the file's after the run (and a session tool's string command fired during
+  the run finds the file's `__main__`).
+* **Code a run made keeps that run's modules** when it runs later (a
+  callback, a button): `from armlib import X` inside it gets the run's
+  `armlib`. Callbacks it registered keep firing after the next run: remove
+  them yourself. A thread the file started imports, after the run, what the
+  session shows (rig swaps modules only on Maya's thread).
+* **Your classes do not cross rounds.** An object made by one run is not an
+  instance of the next run's class of the same name (`isinstance` is
+  `False`); rig nodes and plugs cross rounds fine, rig being shared.
+* **Cost.** The first `rig.run` of a session reads the sources of rig and
+  of the packages it uses (about 0.1 s); a later one costs its file. The
+  import hook stays for the session, a few hundred nanoseconds per `import`
+  statement; a build after a run takes the same time as before.
 
 ---
 
