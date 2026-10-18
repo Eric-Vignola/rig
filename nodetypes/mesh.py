@@ -3400,3 +3400,14 @@ class ColorSet:
         clamping and colours (current again if it was)."""
         if self.is_valid():
             _ColorSetDeleteCommand(self._mesh, self._name)
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Axis",
+    "ColorSet",
+    "MAP_DATATYPE",
+    "MAP_DEFAULT_CATEGORY",
+    "MAP_DEFAULT_VALUE",
+    "Mesh",
+]

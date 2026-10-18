@@ -5093,7 +5093,7 @@ def _node_from_str(name: str, label: str = "node", probe: bool = False) -> Any:
             raise error
         if probe:
             return None
-        raise NodeNotFoundError(name, label, uuid=True)
+        raise NodeNotFoundError(name, label, by_uuid=True)
     if _lookup(name, label, probe) is None:
         return None
     # the lookup found the one node the cast failed on: its own error
@@ -5148,7 +5148,7 @@ def _refer(cls: Any, args: tuple, kwargs: dict) -> Any:
         try:
             node = _node_from_str(name, label)
         except NodeNotFoundError as error:
-            error.node_class = cls  # the message names its define (read when printed)
+            error._node_class = cls  # the message names its define (read when printed)
             raise
     else:
         # a plug gives its node, as in Node(x)

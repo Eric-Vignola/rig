@@ -51,6 +51,7 @@ from maya.api import OpenMaya, OpenMayaAnim
 from rig.nodetypes._base import _name_of
 from rig._internal import journal
 from rig._internal.undo import _undo_chunk
+from rig._internal.declared import Declared as _Declared
 
 LOGGER = logging.getLogger(__name__)
 
@@ -223,7 +224,7 @@ def _read_only(value: Any) -> Any:
     return arr
 
 
-class _Keys:
+class _Keys(_Declared):
     """Keys waiting for a destination: what ``AnimCurve(values, ...)`` returns (not a node:
     ``isinstance(AnimCurve([0]), AnimCurve)`` is False). ``plug << keys`` keys the plug.
 
@@ -239,6 +240,7 @@ class _Keys:
         "_values", "_times", "_names", "_itt", "_ott", "_islope", "_oslope", "_weighted",
         "_iw", "_ow", "_pre", "_post", "_mtimes",
     )
+    _SHOWN_NAME = "AnimCurve keys"
 
     def __init__(self, values: Any, times: Any = None, **options: Any) -> None:
         unknown = sorted(set(options) - OPTIONS)

@@ -133,3 +133,9 @@ class Follicle(DAGNode):
         """Sets the uv values of this follicle."""
         self.find_attr("parameterU").set(uv[0])
         self.find_attr("parameterV").set(uv[1])
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Follicle",
+]

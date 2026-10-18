@@ -555,14 +555,14 @@ class Material(DGNode):
         -red`` (its shorthand) does: those faces are in no engine (green); the
         same refusals, before any write; one undo step. Returns ``members``,
         as ``<<`` returns its left-hand side (user decision 2026-10-16)."""
-        return (-self)._member()._run_inject(members)
+        return (-self)._member().inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in red``: whether every face of every shadeable shape of ``x``
         (a node, faces, a plug, which stands for its node, or a list of them),
         or the whole object, wears this shader (through its engine, the
         ``<shader>SG`` rule of ``<<``)."""
-        return self._member()._run_contains(lhs)
+        return self._member().contains(lhs)
 
     @classmethod
     def of(cls, x: Any) -> list:
@@ -709,3 +709,16 @@ class OpenPBRSurface(Material):
 # the cast rule's fallback for a surface type without an exact class (D31:
 # _base reads it, this module sets it)
 _base._CLASSIFY = _classify
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Blinn",
+    "Lambert",
+    "Material",
+    "OpenPBRSurface",
+    "Phong",
+    "PhongE",
+    "StandardSurface",
+    "SurfaceShader",
+]

@@ -3,6 +3,9 @@ from rig import Node
 from rig.nodetypes import Mesh, ObjectSet, ShadingEngine
 from rig._tests._base import MayaTestCase
 
+# ShadingEngine.assign is private (_assign) since the user decision of 2026-10-17
+# (one way only: x << sg / x << material); these tests drive the private helper.
+
 
 def _cube(name: str) -> tuple[str, str]:
     """Makes a history-free cube and returns (transform, full shape path)."""
@@ -67,7 +70,7 @@ class TestShadingEngine(MayaTestCase):
         # a created engine accepts members
         sg.set_material(self.mat_a)
         self.assertEqual(sg.get_material(), Node(self.mat_a))
-        sg.assign([self.shape])
+        sg._assign([self.shape])
         self.assertEqual(_faces(sg), [(self.shape, None)])
 
         # a createNode'd one is dead
@@ -138,11 +141,11 @@ class TestShadingEngine(MayaTestCase):
     # --- get_face_members
 
     def test_face_members_childless(self):
-        self.sg_a.assign([self.shape])
+        self.sg_a._assign([self.shape])
         self.assertEqual(_faces(self.sg_a), [(self.shape, None)])
         self.assertEqual(_faces(Node(ShadingEngine.DEFAULT)), [])
 
-        self.sg_b.assign([f"{self.xform}.f[0:2]"])
+        self.sg_b._assign([f"{self.xform}.f[0:2]"])
         self.assertEqual(_faces(self.sg_b), [(self.shape, [0, 1, 2])])
         self.assertEqual(_faces(self.sg_a), [(self.shape, [3, 4, 5])])
         # the inherited reader drops the face entries
@@ -153,9 +156,9 @@ class TestShadingEngine(MayaTestCase):
         kid, _ = _cube("kid")
         cmds.parent(kid, par)
         kid_shape = "|par|kid|kidShape"
-        self.sg_a.assign([kid_shape])
+        self.sg_a._assign([kid_shape])
         self.assertEqual(_faces(self.sg_a), [(kid_shape, None)])
-        self.sg_b.assign(["kid.f[1]"])
+        self.sg_b._assign(["kid.f[1]"])
         self.assertEqual(_faces(self.sg_b), [(kid_shape, [1])])
         self.assertEqual(_faces(self.sg_a), [(kid_shape, [0, 2, 3, 4, 5])])
 
@@ -163,7 +166,7 @@ class TestShadingEngine(MayaTestCase):
         other, other_shape = _cube("other")
         cmds.parent(other_shape, self.xform, shape=True, relative=True)
         cmds.delete(other)
-        self.sg_a.assign([self.xform])
+        self.sg_a._assign([self.xform])
         self.assertEqual(
             _faces(self.sg_a), [("|cube|cubeShape", None), ("|cube|otherShape", None)]
         )
@@ -171,11 +174,11 @@ class TestShadingEngine(MayaTestCase):
     def test_face_members_instance(self):
         inst       = cmds.instance(self.xform)[0]
         inst_shape = f"|{inst}|cubeShape"
-        self.sg_a.assign([inst])
+        self.sg_a._assign([inst])
         self.assertEqual(_faces(self.sg_a), [(inst_shape, None)])
         self.assertEqual(_faces(Node(ShadingEngine.DEFAULT)), [(self.shape, None)])
 
-        self.sg_b.assign([f"{inst}.f[0:1]"])
+        self.sg_b._assign([f"{inst}.f[0:1]"])
         self.assertEqual(_faces(self.sg_b), [(inst_shape, [0, 1])])
         self.assertEqual(_faces(self.sg_a), [(inst_shape, [2, 3, 4, 5])])
         self.assertEqual(_faces(Node(ShadingEngine.DEFAULT)), [(self.shape, None)])
@@ -183,61 +186,61 @@ class TestShadingEngine(MayaTestCase):
     # --- assign
 
     def test_assign_object_level(self):
-        self.sg_a.assign([self.shape])
+        self.sg_a._assign([self.shape])
         self.assertEqual(_raw_members(self.sg_a), ["cubeShape"])
         self.assertEqual(_raw_members(Node(ShadingEngine.DEFAULT)), [])
-        self.sg_a.assign([self.shape])
+        self.sg_a._assign([self.shape])
         self.assertEqual(_raw_members(self.sg_a), ["cubeShape"])
-        self.sg_b.assign([self.xform])
+        self.sg_b._assign([self.xform])
         self.assertEqual(_raw_members(self.sg_b), ["cubeShape"])
         self.assertEqual(_raw_members(self.sg_a), [])
 
     def test_assign_per_face_carve(self):
-        self.sg_a.assign([self.shape])
-        self.sg_b.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
+        self.sg_a._assign([self.shape])
+        self.sg_b._assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
         self.assertEqual(_faces(self.sg_a),       [(self.shape, [2, 3, 4, 5])])
         self.assertEqual(_faces(self.sg_b),       [(self.shape, [0, 1])])
         self.assertEqual(_raw_members(self.sg_b), ["cube.f[0:1]"])
 
     def test_faces_into_owner_is_noop(self):
-        self.sg_a.assign([self.shape])
-        self.sg_a.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
+        self.sg_a._assign([self.shape])
+        self.sg_a._assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
         self.assertEqual(_raw_members(self.sg_a), ["cubeShape"])
         self.assertEqual(cmds.ls(type="groupId"), [])
 
     def test_all_faces_renormalise(self):
-        self.sg_a.assign([self.shape])
-        self.sg_b.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
+        self.sg_a._assign([self.shape])
+        self.sg_b._assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
         self.assertEqual(len(cmds.ls(type="groupId")), 3)
-        self.sg_a.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
+        self.sg_a._assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
         self.assertEqual(_raw_members(self.sg_a), ["cubeShape"])
         self.assertEqual(_raw_members(self.sg_b), [])
         self.assertEqual(cmds.ls(type="groupId"), [])
 
         # Maya alone never collapses the per-face form; the reader still does
-        self.sg_b.assign([f"{self.xform}.f[0:1]"])
-        self.sg_a.assign([f"{self.xform}.f[0:1]"], normalise=False)
+        self.sg_b._assign([f"{self.xform}.f[0:1]"])
+        self.sg_a._assign([f"{self.xform}.f[0:1]"], normalise=False)
         self.assertEqual(_raw_members(self.sg_a), ["cube.f[0:5]"])
         self.assertEqual(_faces(self.sg_a), [(self.shape, None)])
 
     def test_all_faces_renormalise_with_history(self):
         xform = cmds.polyCube(ch=True, name="hist")[0]
         shape = cmds.listRelatives(xform, shapes=True, fullPath=True)[0]
-        self.sg_a.assign([shape])
-        self.sg_b.assign([f"{xform}.f[0:1]"], touched=[shape], normalise=True)
+        self.sg_a._assign([shape])
+        self.sg_b._assign([f"{xform}.f[0:1]"], touched=[shape], normalise=True)
         self.assertEqual(len(cmds.ls(type="groupParts")), 2)
-        self.sg_a.assign([f"{xform}.f[0:1]"], touched=[shape], normalise=True)
+        self.sg_a._assign([f"{xform}.f[0:1]"], touched=[shape], normalise=True)
         self.assertEqual(_raw_members(self.sg_a),    ["histShape"])
         self.assertEqual(cmds.ls(type="groupId"),    [])
         self.assertEqual(cmds.ls(type="groupParts"), [])
         self.assertTrue(cmds.objExists("polyCube1"))
 
     def test_orphan_group_ids_constant(self):
-        self.sg_a.assign([self.shape])
+        self.sg_a._assign([self.shape])
         counts = []
         for _ in range(5):
-            self.sg_b.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
-            self.sg_a.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
+            self.sg_b._assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
+            self.sg_a._assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
             counts.append(len(cmds.ls(type="groupId")))
         self.assertEqual(counts, [0] * 5)
         self.assertEqual(_raw_members(self.sg_a), ["cubeShape"])
@@ -245,9 +248,9 @@ class TestShadingEngine(MayaTestCase):
     def test_instanced_not_renormalised(self):
         inst       = cmds.instance(self.xform)[0]
         inst_shape = f"|{inst}|cubeShape"
-        self.sg_a.assign([inst])
-        self.sg_b.assign([f"{inst}.f[0:1]"], touched=[inst_shape], normalise=True)
-        self.sg_a.assign([f"{inst}.f[0:1]"], touched=[inst_shape], normalise=True)
+        self.sg_a._assign([inst])
+        self.sg_b._assign([f"{inst}.f[0:1]"], touched=[inst_shape], normalise=True)
+        self.sg_a._assign([f"{inst}.f[0:1]"], touched=[inst_shape], normalise=True)
         self.assertEqual(_raw_members(self.sg_a), [f"{inst}.f[0:5]"])
         self.assertEqual(_raw_members(self.sg_b), [])
         self.assertEqual(_faces(self.sg_a), [(inst_shape, None)])
@@ -255,7 +258,7 @@ class TestShadingEngine(MayaTestCase):
 
     def test_assign_touched_must_be_unique(self):
         with self.assertRaises(ValueError):
-            self.sg_a.assign([self.shape], touched=["noSuchShape"])
+            self.sg_a._assign([self.shape], touched=["noSuchShape"])
 
     # --- ObjectSet.define (was get_or_create)
 
@@ -296,12 +299,12 @@ class TestShadingEngine(MayaTestCase):
 
     def test_mesh_get_materials_skips_shaderless_engine(self):
         bare = ShadingEngine.create(name="noMatSG")
-        bare.assign([self.shape])
+        bare._assign([self.shape])
         mesh = Mesh(self.shape)
         self.assertEqual(mesh.get_materials(), [])
         self.assertEqual(mesh.get_shading_engines(), [])
 
-        self.sg_a.assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
+        self.sg_a._assign([f"{self.xform}.f[0:1]"], touched=[self.shape], normalise=True)
         self.assertEqual(mesh.get_materials(), [Node(self.mat_a)])
         self.assertEqual(mesh.get_shading_engines(), [self.sg_a])
         self.assertIs(type(mesh.get_shading_engines()[0]), ShadingEngine)

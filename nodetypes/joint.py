@@ -362,3 +362,10 @@ class Joint(Transform):
 
         for c in child_joints:
             c.orient_joint(aim_axis, up_axis)
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Joint",
+    "replace_suffix",
+]

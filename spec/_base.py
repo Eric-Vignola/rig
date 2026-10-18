@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional
 
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.declared import Declared as _Declared
 from rig._internal.journal import cmds_edit
 # rig.nodetypes imports neither rig.spec nor rig._internal.plug
 from rig._internal.undo import _undo_chunk  # a leaf module: maya.cmds and rig._internal.journal
@@ -172,7 +173,7 @@ def _plug_of(node_string: str, long_name: str, node: Any = None, added: Any = No
     return _named_plug(f"{node_string}.{long_name}", node, added)
 
 
-class _AttrSpec:
+class _AttrSpec(_Declared):
     """Base class for all attribute-specification objects.
 
     Subclasses set ``self.kargs['attributeType']`` or ``['dataType']`` and
@@ -184,6 +185,9 @@ class _AttrSpec:
     ``overwrite=False`` written out, the attribute is re-declared: kept, the
     settings passed applied (``_redeclare``).
     """
+
+    # the public fields (a typo is refused, user decision 2026-10-17)
+    _FIELDS = ("kargs", "size", "overwrite", "compound", "notes")
 
     def __init__(self, name: Optional[str] = None, **kargs: Any) -> None:
         self.kargs: Dict[str, Any] = dict(kargs)

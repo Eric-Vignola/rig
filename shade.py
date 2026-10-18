@@ -144,7 +144,7 @@ from rig._internal.members import (
 from rig._internal.node import Node
 from rig._internal.plug import Plug
 from rig._internal.shade_convert import Conversion
-from rig._internal import shade_convert
+from rig._internal import shade_convert as _shade_convert
 from rig._internal.undo import _undo_chunk
 
 
@@ -771,6 +771,8 @@ class _MaterialMember(_MemberSpec):
     _ACCEPTS     = frozenset({"whole", "f"})
     _WANT_SHAPES = True
 
+    _SHOWN_NAME = "material token"
+
     def __init__(self, node: Any = None, remove: bool = False, kind: type = Material) -> None:
         # the shader or engine node (None: the kind token of ``kind``); its
         # name is read at each use, so a renamed node is followed and a
@@ -883,7 +885,7 @@ class _MaterialMember(_MemberSpec):
             # one permitted no-op: the state holds and nothing is rewritten.
             if not target.whole and _plain_owner(target.path) != _name_of(engine):
                 _make_explicit(target.path)
-        engine.assign([name for target in targets for name in target.names()])
+        engine._assign([name for target in targets for name in target.names()])
         for target in targets:
             _verify(engine, target, present=True)
 
@@ -1007,7 +1009,7 @@ def convert(
             f"{x!r} is a membership token, not a material; convert the material "
             f"node: mat.astype(...) or shade.convert(mat, ...)"
         )
-    return shade_convert.convert(
+    return _shade_convert.convert(
         Material(x), _target_type(to), strict=strict, dry_run=dry_run, park=park,
         attrs=attrs, update=update,
     )
@@ -1145,7 +1147,7 @@ def tidy(targets: Any = None) -> None:
                 continue
             for engine, held in _entries(_Target(item.path, "mesh", True, [])):
                 if held is None:
-                    engine.assign([item.path], touched=[item.path], normalise=True)
+                    engine._assign([item.path], touched=[item.path], normalise=True)
         for group_id in cmds.ls(type="groupId") or []:
             if _is_orphan_group_id(group_id):
                 _cmds_edit.delete(group_id)

@@ -26,7 +26,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips, `save` / `load` (files) |
 | 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild, `save` / `load` (files) |
 | 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
-| 14 | [`ShadingEngine` and the shaders](#14-shadingengine-and-the-shaders) | `for_material`, `assign`, `get_face_members`; `Blinn` / `Lambert` / ... / `Material`, the network verbs |
+| 14 | [`ShadingEngine` and the shaders](#14-shadingengine-and-the-shaders) | `for_material`, `x << sg`, `get_face_members`; `Blinn` / `Lambert` / ... / `Material`, the network verbs |
 | 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership, `Layer is DisplayLayer` |
 | 16 | [`Choice`](#16-choice) | data types that follow the selector; inputs that take any plug whole, and a number |
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
@@ -1030,7 +1030,7 @@ print(mesh.get_material_bindings())                      # standardSurface1
 print(mesh.get_material_bindings(verbose=True))          # [(StandardSurface("standardSurface1"), array([0, 1, 2, 3, 4, 5]))]
 
 red = cmds.shadingNode("blinn", asShader=True, name="red")
-ShadingEngine.for_material(red).assign(["cube.f[0:1]"], touched=[mesh.get_long_name()])
+cube.f[0:2] << Node(red)                                                              # faces 0 and 1 (a Python slice)
 print(sorted(mesh.get_materials()), sorted(mesh.get_shading_engines()))                # [Blinn("red"), StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup"), ShadingEngine("redSG")]
 print(mesh.get_material_bindings())                                                    # [(Blinn("red"), array([0, 1])), (StandardSurface("standardSurface1"), array([2, 3, 4, 5]))]
 print(mesh.get_materials(as_pairs=True)[0][0].get_material() in mesh.get_materials())  # True -- (engine, material) pairs
@@ -1370,9 +1370,10 @@ print(repr(ObjectSet.define("initialShadingGroup")))              # ShadingEngin
 A shading engine is an `ObjectSet` with render wiring, and only
 `cmds.sets(renderable=True)` builds one that accepts members — so
 `ShadingEngine.create` does that. `for_material` finds the engine a
-material feeds (or builds `<material>SG`), `assign` moves members in
-(`forceElement`), and `get_face_members` reads per-face entries that the
-inherited `get_members` drops.
+material feeds (or builds `<material>SG`), `x << sg` moves members in (from
+whatever engine held them; `sg.assign` is refused: one way only), and
+`get_face_members` reads per-face entries that the inherited `get_members`
+drops.
 
 ```python
 red = cmds.shadingNode("blinn", asShader=True, name="red")
@@ -1381,17 +1382,17 @@ sg = ShadingEngine.for_material("red")
 print(repr(sg), sg.get_material(), sg.get_material_info(), sg.get_face_members())                             # ShadingEngine("redSG") red ['materialInfo1'] []
 print(ShadingEngine.for_material("red") == sg, ShadingEngine.for_material("standardSurface1", create=False))  # True initialShadingGroup
 
-sg.assign(["cube.f[0:1]"], touched=[mesh.get_long_name()])
+cube.f[0:2] << sg
 print(sg.get_face_members())                                                                                  # [(Mesh("cubeShape"), array([0, 1]))]
 print(Node("initialShadingGroup").get_face_members())                                                         # [(Mesh("cubeShape"), array([2, 3, 4, 5]))] -- Maya carved the rest
 print(cmds.sets("redSG", query=True), sg.get_members())                                                       # ['cube.f[0:1]'] []
 
-sg.assign([mesh.get_long_name()], touched=[mesh.get_long_name()])                                                        # whole object; touched= lets it delete the orphan groupIds
+cube << sg                                                                                                    # the whole object
 print(sg.get_face_members(), cmds.sets("redSG", query=True), cmds.ls(type="groupId"))                         # [(Mesh("cubeShape"), None)] ['cubeShape'] []
 ```
 
-`normalise=True` collapses "every face" entries back to object level and
-deletes the orphan `groupId` nodes Maya leaves behind:
+Maya never collapses "every face" entries back to object level; `<<` of the
+whole object does:
 
 ```python
 blue = ShadingEngine.create(name="blueSG")                        # wired, but feeds from nothing yet
@@ -1399,10 +1400,12 @@ print(blue.get_material())                                      # None
 blue.set_material("lambert1")                                   # a node (its outColor) or a plug string
 print(blue.get_material())                                      # lambert1
 
-blue.assign(["cube.f[0:1]"], touched=[mesh.get_long_name()], normalise=True)
+cube.f[0:2] << blue
 print(sg.get_face_members(), blue.get_face_members())           # [(Mesh("cubeShape"), array([2, 3, 4, 5]))] [(Mesh("cubeShape"), array([0, 1]))]
-sg.assign(["cube.f[0:1]"], touched=[mesh.get_long_name()], normalise=True)
-print(cmds.sets("redSG", query=True), cmds.ls(type="groupId"))  # ['cubeShape'] []
+cube.f[0:2] << sg                                               # every face is in redSG again, still as faces
+print(cmds.sets("redSG", query=True))                           # ['cube.f[0:5]']
+cube << sg                                                      # the whole object: one entry
+print(cmds.sets("redSG", query=True))                           # ['cubeShape']
 print(mesh.get_material_bindings())                             # red
 ```
 

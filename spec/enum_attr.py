@@ -208,3 +208,9 @@ def _enum_pair(where: str, pair: Any) -> str:
             f"(not a bool); got {type(value).__name__} {value!r}"
         )
     return f"{field}={int(value)}"
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Enum",
+]

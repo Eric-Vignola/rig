@@ -37,12 +37,13 @@ import functools
 import inspect
 
 from maya import cmds
+from rig._internal.declared import Declared as _Declared
 from rig._internal.journal import barrier, cmds_edit
 
 DEFAULT_NAME = "rig.undo_chunk"
 
 
-class _Chunk:
+class _Chunk(_Declared):
     """One named chunk: a context manager (``with``) and a decorator.
 
     Holds only its name, so one object can be entered again while it is open
@@ -52,9 +53,10 @@ class _Chunk:
     """
 
     __slots__ = ("name",)
+    _SHOWN_NAME = "undo_chunk"
 
     def __init__(self, name: str | None) -> None:
-        self.name = name  # None: DEFAULT_NAME, or the decorated function's __qualname__
+        object.__setattr__(self, "name", name)  # (no typo check: rig opens many) None: DEFAULT_NAME, or the decorated function's __qualname__
 
     def __repr__(self) -> str:
         return f"undo_chunk({self.name!r})"

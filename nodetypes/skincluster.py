@@ -28,7 +28,7 @@ from rig.nodetypes.plugins import _run_undoable
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
-INF_TYPE = Union[str, DAGNode, List[Union[str, DAGNode]]]
+_INF_TYPE = Union[str, DAGNode, List[Union[str, DAGNode]]]
 
 
 _SKIN_LOAD_DOC = """Loads skin weights from a cgmath file (a SkinData): one name, two forms.
@@ -153,7 +153,7 @@ class SkinCluster(Deformer):
     # --- creation
 
     @classmethod
-    def _create(cls, geom: str, influences: INF_TYPE | SkinData, **kwargs) -> str:
+    def _create(cls, geom: str, influences: _INF_TYPE | SkinData, **kwargs) -> str:
         """[Internal] Creates a skin cluster node and return its name.
 
         Args:
@@ -226,7 +226,7 @@ class SkinCluster(Deformer):
         return name
 
     @classmethod
-    def _sanitize_influences(cls, infs: INF_TYPE) -> list[Joint]:
+    def _sanitize_influences(cls, infs: _INF_TYPE) -> list[Joint]:
         """The influences as Joints; a name no joint has raises RuntimeError
         naming every missing one, a name several nodes have
         AmbiguousNodeError (the reference raises it: "use a path"). Each name
@@ -272,7 +272,7 @@ class SkinCluster(Deformer):
         """Returns a list of influence objects."""
         return [_cast(x) for x in type(self)._raw_get_fn_set(self).influenceObjects()]
 
-    def add_influence_objects(self, infs: INF_TYPE) -> None:
+    def add_influence_objects(self, infs: _INF_TYPE) -> None:
         """Adds influence objects to this skincluster.
 
         Args:
@@ -293,7 +293,7 @@ class SkinCluster(Deformer):
             else:
                 _cmds_edit.select(clear=True)
 
-    def remove_influence_objects(self, infs: INF_TYPE) -> None:
+    def remove_influence_objects(self, infs: _INF_TYPE) -> None:
         """Removes influence objects from this skincluster.
 
         Args:
@@ -301,7 +301,7 @@ class SkinCluster(Deformer):
         """
         _cmds_edit.skinCluster(_name_of(self), edit=True, removeInfluence=infs)
 
-    def set_influence_objects(self, infs: INF_TYPE) -> None:
+    def set_influence_objects(self, infs: _INF_TYPE) -> None:
         """Sets the influence objects of this skincluster.
 
         Args:
@@ -789,3 +789,10 @@ class _SetSkinWeightsCommand:
         """Sets the requested weights, do NOT store old weights."""
         args = self._args + [self._weights, True, False]
         self._fn_set.setWeights(*args)
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "flatten_vertices",
+    "SkinCluster",
+]

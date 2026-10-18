@@ -716,7 +716,7 @@ class List(list):
         # BEFORE the attribute-spec fan-out so a Components element is never
         # fanned out element by element.
         if _is_membership(other):
-            return other._member()._run_inject(self)
+            return other._member().inject(self)
 
         # lock / unlock: the List's own verbs (every element checked first, the
         # plugs and the nodes in one undo step), not a fan-out per element
@@ -829,7 +829,7 @@ class List(list):
             return self.get()
 
         if _is_membership(other):
-            return other._member()._run_query(self)
+            return other._member().query(self)
 
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:

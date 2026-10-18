@@ -2334,3 +2334,11 @@ def _method_plug(node: Any, name: str, bound: Any) -> Any:
 
 
 _base_module._METHOD_PLUG_HOOK = _method_plug
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "DGNode",
+    "get_clean_name",
+    "get_short_name",
+]

@@ -61,3 +61,13 @@ class Time(_AttrSpec):
         self.kargs.pop("at",       None)
         self.kargs.pop("dataType", None)
         self.kargs.pop("dt",       None)
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Angle",
+    "Bool",
+    "Float",
+    "Int",
+    "Time",
+]

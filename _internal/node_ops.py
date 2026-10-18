@@ -40,6 +40,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from maya import cmds
 from rig._internal.container import container, ContainerOptions
+from rig._internal.declared import Declared as _Declared
 from rig._internal.generators import sequences
 from rig._internal.journal import statement, user_call
 from rig._internal.maya_version import get_target_version
@@ -64,7 +65,7 @@ ImplFn    = "Callable[..., Any]"
 ImplEntry = "Tuple[int, str, ImplFn]"
 
 
-class NodeOp:
+class NodeOp(_Declared):
     """Declarative description of a Maya node operation with version-keyed impls.
 
     Args:
@@ -77,6 +78,8 @@ class NodeOp:
             impl can run. The plugin is loaded lazily (idempotent) on the
             first call. Replaces module-import-time ``loadPlugin`` calls.
     """
+
+    _FIELDS = ("name", "scalar_fn", "requires_plugin")
 
     def __init__(
         self,

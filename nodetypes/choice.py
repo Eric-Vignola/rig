@@ -53,3 +53,9 @@ class Choice(DGNode):
 
 # the hook above only reads the scene before it calls DGNode's
 _QUERY_KEEPING_HOOKS[Choice] = Choice._attr_data_type_fallback
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Choice",
+]
