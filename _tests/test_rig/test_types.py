@@ -319,6 +319,9 @@ class TestAttributeKindFastPath(MayaTestCase):
         self.assertEqual(cmds.getAttr(f"{net}.mc", multiIndices=True), [2])
 
     def test_readded_attr_answers_with_its_new_kind(self):
+        # with undo off Maya frees the deleted attr and the held plug is deleted;
+        # a test that left undo off made this one fail (S2_finish, MayaTestCase.undo_on)
+        self.assertTrue(cmds.undoInfo(query=True, state=True), "an earlier test left undo off")
         net = cmds.createNode("network", name="st")
         for flags, compound, matrix in (
             ({"dt": "matrix"}, False, True),

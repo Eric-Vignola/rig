@@ -214,8 +214,7 @@ class TestDeletedNodeName(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        cmds.undoInfo(state=True, infinity=True)
-        self.addCleanup(cmds.undoInfo, state=False)
+        self.undo_on()  # puts back the undo state it found (S2_finish: no test leaves undo off)
 
     def test_a_node_deleted_to_the_undo_queue(self):
         node = Node(cmds.createNode("transform", name="obj1"))
@@ -287,8 +286,7 @@ class TestListSkipsDeletedElements(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        cmds.undoInfo(state=True, infinity=True)
-        self.addCleanup(cmds.undoInfo, state=False)
+        self.undo_on()  # puts back the undo state it found (S2_finish: no test leaves undo off)
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
         self.ctls = List([Node(n) for n in names])
         self.c0, self.c1, self.c2 = (Node(n) for n in names)
@@ -848,8 +846,7 @@ class TestNoPythonFrame(MayaTestCase):
         import _thread
         import time
 
-        cmds.undoInfo(state=True, infinity=True)
-        self.addCleanup(cmds.undoInfo, state=False)
+        self.undo_on()  # puts back the undo state it found (S2_finish: no test leaves undo off)
         node = Node(cmds.createNode("transform", name="obj1"))
         plug = node.tx
         cmds.delete("obj1")
@@ -892,8 +889,7 @@ class TestOneWarningPerStatement(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        cmds.undoInfo(state=True, infinity=True)
-        self.addCleanup(cmds.undoInfo, state=False)
+        self.undo_on()  # puts back the undo state it found (S2_finish: no test leaves undo off)
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]
         self.ctls = List([Node(n) for n in names])
         cmds.delete("c1")
@@ -944,8 +940,7 @@ class TestDeletedElementsFollowUps(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        cmds.undoInfo(state=True, infinity=True)
-        self.addCleanup(cmds.undoInfo, state=False)
+        self.undo_on()  # puts back the undo state it found (S2_finish: no test leaves undo off)
 
     def test_get_keeps_a_list_with_skip(self):
         names = [cmds.createNode("transform", name=f"c{i}") for i in range(3)]

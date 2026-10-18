@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 
 from maya import cmds
 
@@ -54,8 +55,7 @@ class _Case(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        cmds.undoInfo(state=True, infinity=True)
-        self.addCleanup(cmds.undoInfo, state=False)
+        self.undo_on()  # puts back the undo state it found (S2_finish: no test leaves undo off)
         self.a, self.b, self.c = (Node.create("transform", name=n) for n in "abc")
         self.ctl = Node.create("transform", name="ctl")
         cmds.addAttr("ctl", longName="is_locked", attributeType="bool")  # value False
@@ -456,3 +456,32 @@ class TestRawMayaNeverAsksATruth(MayaTestCase):
                 else:
                     # Maya and OpenMaya refuse the type (boolean expected) before any truth test
                     self.assertRegex(outcome, r"^TypeError: ")
+
+
+class TestTheUndoStateIsPutBack(MayaTestCase):
+    """S2_finish: a case that turns undo on puts back the state it found. These
+    cases once left undo off, and with undo off Maya frees a deleted dynamic
+    attribute, which failed test_types' readded-attr test when it ran after them."""
+
+    def test_every_undo_case_puts_the_undo_state_back(self):
+        from rig._tests.test_rig import test_list_rule, test_robustness
+
+        cases = (
+            TestTwoPlugsKeepTheirIdentity("test_identity_truth"),
+            test_list_rule.TestTheSceneEpoch(_first_test(test_list_rule.TestTheSceneEpoch)),
+            test_robustness.TestDeletedNodeName(_first_test(test_robustness.TestDeletedNodeName)),
+        )
+        found = cmds.undoInfo(query=True, state=True)
+        self.addCleanup(cmds.undoInfo, state=found)
+        for case in cases:
+            for state in (True, False):
+                with self.subTest(case=case.id(), state=state):
+                    cmds.undoInfo(state=state)
+                    result = unittest.TestResult()
+                    case.run(result)
+                    self.assertEqual(result.failures + result.errors, [])
+                    self.assertIs(cmds.undoInfo(query=True, state=True), state)
+
+
+def _first_test(case_class):
+    return unittest.defaultTestLoader.getTestCaseNames(case_class)[0]
