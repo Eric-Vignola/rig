@@ -3836,7 +3836,7 @@ print([str(c) for c in second["ctrls"]])         # ['R_shoulder_CTL', 'R_elbow_C
 | `inputs` | a mapping (a `dict`, or the `Run` of an earlier round) copied into the file's starting globals. Your dict is never rebound (a list in it is the same list). A module object is skipped (the file imports what it uses); a dunder name (`__author__`) raises `ValueError` |
 | `argv=["--fast"]` | `sys.argv[1:]` |
 | `shared=("studiolib",)` | top-level packages to share with the session instead of executing them again |
-| what it returns | a `Run`: the file's globals when it ended, as a read-only mapping (`result["ctrls"]`, `dict(result)`); `result.call("main", ...)` calls one of its functions with the run's modules shown; `result.path`, `result.modules` |
+| what it returns | a `Run`: the file's globals, as a read-only mapping (`result["ctrls"]`, `dict(result)`). It is the dict the file ran in, so a global its functions set later (`result.call("main", ...)`, a callback) shows. `result.call` calls one of its functions with the run's modules shown; `result.path`, `result.modules` |
 | undo | the whole run is **one** step, named `rig.run arm.py`: one Ctrl+Z after a typo halfway through a build goes back to the start. A `rig.run` inside a run joins the outer step |
 | given back after a run | `sys.argv`, `sys.path`, `sys.stdin` / `stdout` / `stderr`, `sys.excepthook` / `displayhook`, and rig's options (`set_options` in the file) |
 | not given back | environment variables, the working folder, logging and warning settings, the scene, Maya callbacks, Qt windows, state held in a shared package |
@@ -3872,6 +3872,8 @@ print(rig.run(args, second)["side"])             # R      a Run passes its names
 An error in the file propagates as it is, with `err.rig_run` (the run so
 far); `sys.exit(0)` ends the file normally, and `sys.exit(n)` with a failure
 code raises a `RuntimeError` carrying `.code`, so `mayapy` does not exit.
+`exit()` and `quit()` end the file as `sys.exit()` does, and the session gets
+its `sys.stdin` back open.
 
 The path may use `~` (the user folder: USERPROFILE on Windows, never the
 Documents folder Maya sets `HOME` to; `$HOME` is the same), `$VAR`, `${VAR}`
@@ -3893,16 +3895,24 @@ Limits:
   the run finds the file's `__main__`).
 * **Code a run made keeps that run's modules** when it runs later (a
   callback, a button): `from armlib import X` inside it gets the run's
-  `armlib`. Callbacks it registered keep firing after the next run: remove
-  them yourself. A thread the file started imports, after the run, what the
-  session shows (rig swaps modules only on Maya's thread).
+  `armlib`, and `importlib.reload(armlib)` reloads the run's copy from disk.
+  Callbacks it registered keep firing after the next run: remove them
+  yourself. A thread the file started imports, after the run, what the
+  session shows (rig swaps modules only on Maya's thread), and a `rig.run`
+  from another thread while a run goes on raises `RuntimeError`.
 * **Your classes do not cross rounds.** An object made by one run is not an
   instance of the next run's class of the same name (`isinstance` is
   `False`); rig nodes and plugs cross rounds fine, rig being shared.
 * **Cost.** The first `rig.run` of a session reads the sources of rig and
   of the packages it uses (about 0.1 s); a later one costs its file. The
   import hook stays for the session, a few hundred nanoseconds per `import`
-  statement; a build after a run takes the same time as before.
+  statement; a build after a run takes the same time as before. The hook is
+  one frame (`run.py`, `_import`) in an import's traceback, and a warning a
+  module body gives with `stacklevel=2` is reported at that frame, not the
+  importer (Python's own import machinery hides its frames; a hook in Python
+  cannot).
+* **Tracebacks show the file as it is now.** A traceback of an earlier
+  run's code shows the lines on disk now, as in Python after an edit.
 
 ---
 

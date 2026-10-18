@@ -13,7 +13,9 @@ import gc
 import getpass
 import importlib
 import importlib.machinery
+import importlib.util
 import io
+import linecache
 import logging
 import os
 import py_compile
@@ -437,6 +439,8 @@ _PROBES = {
     "lib/rqtd/deep.py": "VALUE = 'v1'\n",
     "lib/rqcb/__init__.py": "class Thing: pass\n",
     "lib/rqchain/__init__.py": "VERSION = 'v1'\n",
+    "lib/rqreload.py": "V = 'v1'\n",
+    "lib/rqlines.py": "def boom():\n    raise ValueError('v1')\n",
 }
 
 
@@ -450,7 +454,7 @@ def _session_worker(out):
 
 class TestProbes(_Tree):
     TOPS = {"rqpkg", "rqcirc", "rqres", "rqhelper", "rqbrandnew", "rqsessnew", "rqswapper", "rqvirt",
-            "rqwalk", "rqwithpyc", "rqinst", "rqstudio", "rqtd", "rqcb", "rqchain"}
+            "rqwalk", "rqwithpyc", "rqinst", "rqstudio", "rqtd", "rqcb", "rqchain", "rqreload", "rqlines"}
 
     @classmethod
     def setUpClass(cls):
@@ -744,6 +748,97 @@ class TestProbes(_Tree):
         with self.assertRaises(NameError) as caught:
             self.run_("b", "GOT = RESULT\nSEEN = rqchain.VERSION\n", first)
         self.assertEqual(caught.exception.rig_run["GOT"], {"joints": 3})
+
+    # P14: a button the run made reloads one of the run's modules, after the run
+    def test_p14_reload_in_a_callback_and_in_call(self):
+        result = self.run_("reloadbtn", """
+            import importlib, rqreload
+            def on_button():
+                import rqreload
+                return importlib.reload(rqreload).V
+        """)
+        _edit(self.WORK, "lib/rqreload.py", "'v1'", "'v2'")
+        self.assertEqual(result["on_button"](), "v2")
+        _edit(self.WORK, "lib/rqreload.py", "'v2'", "'v3'")
+        self.assertEqual(result.call("on_button"), "v3")
+        self.assertNotIn("rqreload", sys.modules)
+        self.assertEqual(result.modules["rqreload"].V, "v3")
+
+    # the Run shows the dict the file runs in: what run.call sets later shows
+    def test_call_sets_a_global_the_run_shows(self):
+        result = self.run_("liveglobals", """
+            OUT = None
+            def main(n):
+                global OUT
+                OUT = n * 2
+                return OUT
+        """)
+        self.assertEqual(result.call("main", 4), 8)
+        self.assertEqual(result["OUT"], 8)
+        self.assertNotIn(run_module._MARK, dict(result))
+        self.assertEqual(len(result), len(dict(result)))
+        with self.assertRaises(KeyError):
+            result[run_module._MARK]
+        nofunc = self.run_("nofunc", "A = 1\n")
+        self.assertEqual((nofunc["A"], run_module._MARK in nofunc), (1, False))
+
+    # exit() / quit() close sys.stdin before raising SystemExit: the session gets an open stdin back
+    def test_exit_keeps_stdin_open(self):
+        read_fd, write_fd = os.pipe()
+        stdin = open(read_fd, "r", encoding="utf-8", closefd=False)
+        saved = sys.stdin
+        sys.stdin = stdin
+        try:
+            self.run_("quitter", "A = 1\nexit()\nB = 2\n")
+            self.assertFalse(sys.stdin.closed)
+            self.assertEqual(sys.stdin.fileno(), read_fd)
+            os.write(write_fd, b"typed\n")
+            self.assertEqual(sys.stdin.readline(), "typed\n")
+        finally:
+            sys.stdin = saved
+            stdin.close()
+            os.close(read_fd)
+            os.close(write_fd)
+
+    # linecache: an entry a run wrote follows the disk, as Python's own do (a session reload, an edit)
+    def test_linecache_follows_the_disk(self):
+        self.run_("lines", "import rqlines\n")
+        path = os.path.join(self.WORK, "lib", "rqlines.py")
+        self.assertEqual(linecache.getline(path, 2).strip(), "raise ValueError('v1')")
+        time.sleep(0.02)
+        _write(self.WORK, "lib/rqlines.py", "# a line on top\ndef boom():\n    raise ValueError('v2')\n")
+        linecache.checkcache(path)
+        self.assertEqual(linecache.getline(path, 3).strip(), "raise ValueError('v2')")
+
+    # a thread calling rig.run while a run goes on gets an error at once instead of waiting for the run
+    def test_rig_run_from_another_thread_during_a_run(self):
+        tiny = self.script("tiny", "X = 1\n")
+        result = self.run_("threadrun", """
+            import threading, rig
+            box = []
+            def worker():
+                try:
+                    rig.run(TINY)
+                    box.append("ran")
+                except RuntimeError as err:
+                    box.append(str(err))
+            t = threading.Thread(target=worker, daemon=True)
+            t.start()
+            t.join(3.0)
+            alive = t.is_alive()
+        """, {"TINY": tiny})
+        self.assertFalse(result["alive"])
+        self.assertIn("another thread", result["box"][0])
+
+    # a Run made by an older copy of rig (a reload, a purge) still passes its names on
+    def test_a_run_from_a_reloaded_rig_chains(self):
+        spec = importlib.util.spec_from_file_location("_rig_run_copy", run_module.__file__)
+        copy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(copy)
+        old = copy.Run("old.py", set())
+        old._globals = {"__name__": "__main__", "__file__": "old.py", "SIDE": "L"}
+        self.assertNotIsInstance(old, run_module.Run)
+        self.assertEqual(self.run_("chain_old", "GOT = SIDE\n", old)["GOT"], "L")
 
     def test_undo_chunk_per_run(self):
         names = []
