@@ -241,7 +241,7 @@ from rig._internal.node import lift, Node
 from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
 from rig._internal.undo import undo_chunk
-from rig._internal.run import run
+from rig._internal.run import Run, RunExitError, run
 from rig.membership import Components, Layer, Tag
 from rig.nodetypes.anim_curve import AnimCurve, AnimCurveTA, AnimCurveTL, AnimCurveTT, AnimCurveTU
 from rig.nodetypes.errors import (
@@ -318,6 +318,8 @@ __all__ = [
     "undo_chunk",
     # A file as if in a fresh Python
     "run",
+    "Run",
+    "RunExitError",
     # Helpers
     "condition",
     "constant",

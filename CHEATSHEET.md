@@ -3861,7 +3861,7 @@ except NameError as err:
 quits = write("quits.py", "import sys\nsys.exit(3)\n")
 try:
     rig.run(quits)                               # the host keeps running
-except RuntimeError as err:
+except rig.RunExitError as err:                  # a RuntimeError
     print(err.code)                              # 3
 
 args = write("args.py", "import sys\nARGS = sys.argv[1:]\n")
@@ -3871,16 +3871,38 @@ print(rig.run(args, second)["side"])             # R      a Run passes its names
 
 An error in the file propagates as it is, with `err.rig_run` (the run so
 far); `sys.exit(0)` ends the file normally, and `sys.exit(n)` with a failure
-code raises a `RuntimeError` carrying `.code`, so `mayapy` does not exit.
+code raises `rig.RunExitError` (a `RuntimeError`) carrying `.code`, so
+`mayapy` does not exit. `rig.run` returns a `rig.Run`, a read-only mapping of
+the file's names.
 `exit()` and `quit()` end the file as `sys.exit()` does, and the session gets
 its `sys.stdin` back open.
 
-The path may use `~` (the user folder: USERPROFILE on Windows, never the
-Documents folder Maya sets `HOME` to; `$HOME` is the same), `$VAR`, `${VAR}`
-and, on Windows, `%VAR%`, expanded until nothing changes (a variable may hold
-`~` or another variable; `$USER` is the login name when USER is not set), and
-`..`. It comes out with forward slashes. A path that is no file raises
-`FileNotFoundError`, naming the variables in it that are not set.
+**Paths: `~` and environment variables.** The path is expanded before the run,
+again and again until nothing changes, so a variable may hold `~` or other
+variables; then `..` is walked. It comes out with forward slashes.
+
+| You write | It means |
+|---|---|
+| `~/rigs/arm.py`, `~\rigs\arm.py` | your user folder: `USERPROFILE` on Windows, never the Documents folder Maya sets `HOME` to |
+| `$HOME`, `${HOME}`, `%HOME%` | the same as `~` |
+| `$USER` | `USER`, or your login name when it is not set (mayapy) |
+| `$NAME`, `${NAME}`, `%NAME%` (Windows) | the variable; left as written when it is not set |
+| `~/../$NAME` | combined: `..` is walked after the expansion |
+
+```python
+hello = write("hello.py", "greeting = 'hi'\n")
+os.environ["RIG_SCRIPTS"] = os.path.dirname(hello)
+print(rig.run("$RIG_SCRIPTS/hello.py")["greeting"])       # hi
+os.environ["RIG_TOOLS"] = "${RIG_SCRIPTS}/sub/.."          # a variable holding a variable, and ..
+print(rig.run("$RIG_TOOLS/hello.py")["greeting"])         # hi
+try:
+    rig.run("$RIG_NOT_SET/hello.py")
+except FileNotFoundError as err:
+    print("RIG_NOT_SET is not set" in str(err))           # True   the message names the unset variable
+```
+
+A path that is no file raises `FileNotFoundError`, naming the variables in it
+that are not set; variables that refer to each other raise `ValueError`.
 
 Limits:
 
