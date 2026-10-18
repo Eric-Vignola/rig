@@ -3,7 +3,7 @@
 
     import rig
     result = rig.run("D:/chars/bob/arm.py", {"side": "L"})   # the file runs as __main__
-    result["ctrls"]                                          # its globals when it ended (read-only)
+    result["ctrls"]                                          # its globals (read-only)
     result.call("main", lastBuildStep=None)                  # one of its functions, inside the run
 
 The file runs through :func:`runpy.run_path` as ``__main__``, as ``python arm.py``
@@ -17,9 +17,10 @@ uses (cgmath), and the top-level names given in ``shared=``.
 
 A run hides a session package only once the file's own code imports it ("lazy
 claim"): code that is not the file's (a session callback, a thread) sees what
-``sys.modules`` shows. Code a run made keeps importing that run's modules when
-it runs later (a callback). Only Maya's thread (or the thread inside
-``rig.run``) swaps modules in and out of ``sys.modules``.
+``sys.modules`` shows. Code a run made keeps importing (and ``importlib.reload``
+-ing) that run's modules when it runs later (a callback). Only Maya's thread (or
+the thread inside ``rig.run``) swaps modules in and out of ``sys.modules``; a
+``rig.run`` from another thread while a run goes on raises RuntimeError.
 
 One run is one undo step, ``rig.run <file name>``; a run inside a run joins the
 outer step. Afterwards the session gets back ``sys.argv``, ``sys.path``, the std
@@ -66,6 +67,7 @@ _SEEN      = set()                  # session module names already stamped
 _PASS, _SWAP = object(), object()
 _original_import        = builtins.__import__
 _original_import_module = importlib.import_module
+_original_reload        = importlib.reload
 
 
 class RunExitError(RuntimeError):
@@ -95,43 +97,56 @@ def run(path, inputs=None, *, argv=(), shared=()):
         raise FileNotFoundError(errno.ENOENT, why, path)
     names = _inputs(inputs)
     argv, shared = _strings("argv", argv), set(_strings("shared", shared))
-    with _LOCK:
+    with _LOCK:                                              # never held while the file's code runs
+        _check_thread()
         _install()
-        result          = Run(path, shared)
-        result.sys_path = [os.path.normpath(os.path.dirname(path))] + sys.path
         _stamp()
-        options = get_options()
-        saved   = (sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook)
-        importlib.invalidate_caches()
-        try:
-            with undo_chunk(f"rig.run {os.path.basename(path)}"):
+    result          = Run(path, shared)
+    result.sys_path = [os.path.normpath(os.path.dirname(path))] + sys.path
+    options = get_options()
+    stdin   = _stdin_state()
+    saved   = (sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook)
+    entered = False
+    importlib.invalidate_caches()
+    try:
+        with undo_chunk(f"rig.run {os.path.basename(path)}"):
+            with _LOCK:
+                _check_thread()                              # re-checked with the view entered atomically
                 _enter(result)
-                try:
-                    sys.argv = [path, *argv]
-                    result._globals = _outputs(runpy.run_path(path, {**names, _MARK: result}, "__main__"))
-                finally:
+                entered = True
+            try:
+                sys.argv = [path, *argv]
+                result._bind(runpy.run_path(path, {**names, _MARK: result}, "__main__"))
+            finally:
+                with _LOCK:
                     _leave()
-        except SystemExit as err:
-            result._globals = _globals_of(err, result)
-            if err.code not in (None, 0):
-                exit_error = RunExitError(f"rig.run: {os.path.basename(path)} called sys.exit({err.code!r})")
-                exit_error.code, exit_error.rig_run = err.code, result
-                raise exit_error from err
-        except BaseException as err:
+    except SystemExit as err:
+        result._globals = _globals_of(err, result)
+        if err.code not in (None, 0):
+            exit_error = RunExitError(f"rig.run: {os.path.basename(path)} called sys.exit({err.code!r})")
+            exit_error.code, exit_error.rig_run = err.code, result
+            raise exit_error from err
+    except BaseException as err:
+        if entered:
             result._globals = _globals_of(err, result)
             with contextlib.suppress(Exception):
                 err.rig_run = result                       # post-mortem: sys.last_value.rig_run
-            raise
-        finally:
+        raise
+    finally:
+        if entered:
             sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook = saved
+            _reopen_stdin(stdin)
             if get_options() != options:
                 set_options(**options)
     return result
 
 
 class Run(collections.abc.Mapping):
-    """One run of a file: its globals when it ended (``run["name"]``, read-only; ``dict(run)``
-    for a copy) and the modules it executed (``run.modules``)."""
+    """One run of a file: its globals (``run["name"]``, read-only; ``dict(run)`` for a copy), the
+    very dict the file ran in, so what its functions set later shows, and the modules it executed
+    (``run.modules``)."""
+
+    _rig_run_result = True           # a Run, whichever copy of this module made it (a reload, a purge)
 
     def __init__(self, path, shared):
         self.path     = path
@@ -140,42 +155,102 @@ class Run(collections.abc.Mapping):
         self.modules  = {}           # this run's modules, while no view shows them
         self.sys_path = None
         self._extra   = shared
-        self._globals = {}
+        self._globals = {}           # the file's globals (with _MARK, hidden here)
 
     def __getitem__(self, key):
+        if key == _MARK:
+            raise KeyError(key)
         return self._globals[key]
 
     def __iter__(self):
-        return iter(self._globals)
+        return (key for key in list(self._globals) if key != _MARK)
 
     def __len__(self):
-        return len(self._globals)
+        return len(self._globals) - (_MARK in self._globals)
 
     def __repr__(self):
         return f"<rig.run {self.path!r}: {len(self.modules)} modules of its own>"
 
+    def _bind(self, scope):
+        """runpy returns a copy of the file's globals: keep the dict its functions write to."""
+        self._globals = _live_scope(scope, self) or scope
+
+    def _adopt(self, func):
+        scope = getattr(func, "__globals__", None) if isinstance(func, types.FunctionType) else None
+        if scope is not None and scope is not self._globals and _is_file_scope(scope, self):
+            self._globals = scope
+
     @contextlib.contextmanager
     def active(self):
         """Show this run's modules in ``sys.modules`` (and its ``sys.path``) for the duration."""
-        if not _may_swap():
+        with _LOCK:                                          # never held while the caller's code runs
+            entered = _may_swap() and not (_ACTIVE and _ACTIVE[-1][0] is self)
+            if entered:
+                _enter(self)
+        try:
             yield self
-            return
-        with _LOCK:
-            if _ACTIVE and _ACTIVE[-1][0] is self:           # re-checked under the lock
-                yield self
-                return
-            _enter(self)
-            try:
-                yield self
-            finally:
-                _leave()
+        finally:
+            if entered:
+                with _LOCK:
+                    _leave()
 
     def call(self, func, *args, **kwargs):
         """Call ``func`` (a name in the file's globals, or any callable) with this run's modules shown."""
         if isinstance(func, str):
-            func = self._globals[func]
+            func = self[func]
+        self._adopt(func)
         with self.active():
             return func(*args, **kwargs)
+
+
+def _is_file_scope(scope, run):
+    return isinstance(scope, dict) and scope.get(_MARK) is run and scope.get("__name__") == "__main__"
+
+
+def _live_scope(scope, run):
+    """The dict the file ran in, from a function (or a class's method) it defined, or None."""
+    for value in list(scope.values()):
+        members = list(vars(value).values()) if isinstance(value, type) else (value,)
+        for member in members:
+            if isinstance(member, (staticmethod, classmethod, types.MethodType)):
+                member = member.__func__
+            elif isinstance(member, property):
+                member = member.fget
+            if isinstance(member, types.FunctionType) and _is_file_scope(member.__globals__, run):
+                return member.__globals__
+    return None
+
+
+def _check_thread():
+    if _ACTIVE and _OWNER[0] != threading.get_ident():
+        raise RuntimeError("rig.run: a run is going on in another thread; start runs from the thread that runs "
+                           "them (Maya's), one after the other")
+
+
+def _stdin_state():
+    """sys.stdin as the run found it, to put back open: exit() / quit() close it before SystemExit."""
+    stdin = sys.stdin
+    try:
+        if stdin is None or stdin.closed:
+            return None
+        return stdin, stdin.fileno(), stdin.encoding, stdin.errors, sys.__stdin__ is stdin
+    except Exception:                                        # no fd (a GUI stream): nothing to put back
+        return None
+
+
+def _reopen_stdin(state):
+    if state is None:
+        return
+    stdin, fd, encoding, errors, dunder = state
+    if sys.stdin is not stdin or not getattr(stdin, "closed", False):
+        return
+    try:
+        fresh = open(fd, "r", encoding=encoding, errors=errors, closefd=False)
+    except (OSError, ValueError, LookupError):
+        return
+    sys.stdin = fresh
+    if dunder and sys.__stdin__ is stdin:
+        sys.__stdin__ = fresh
 
 
 def _inputs(inputs):
@@ -184,11 +259,12 @@ def _inputs(inputs):
     if not isinstance(inputs, collections.abc.Mapping):
         raise TypeError(f"rig.run: inputs is a mapping of names (a dict, a Run), not {type(inputs).__name__}")
     names = {}
+    is_run = getattr(type(inputs), "_rig_run_result", False) is True
     for key, value in inputs.items():
         if not isinstance(key, str):
             raise TypeError(f"rig.run: an input name is a str, not {key!r}")
         if key.startswith("__") and key.endswith("__"):
-            if isinstance(inputs, Run):
+            if is_run:
                 continue                                     # the earlier round's own __file__ ...
             raise ValueError(f"rig.run: the input {key!r} is a name Python sets for the file; use another name")
         if not isinstance(value, types.ModuleType):          # a module rides along stale: the file imports it
@@ -203,17 +279,13 @@ def _strings(what, values):
     return values
 
 
-def _outputs(scope):
-    return {key: value for key, value in scope.items() if key != _MARK}
-
-
 def _globals_of(err, run):
     """The file's globals at the error, from its frame in the traceback (none: it never started)."""
     tb = err.__traceback__
     while tb is not None:
         scope = tb.tb_frame.f_globals
-        if scope.get(_MARK) is run and scope.get("__name__") == "__main__":
-            return _outputs(scope)
+        if _is_file_scope(scope, run):
+            return scope
         tb = tb.tb_next
     return {}
 
@@ -465,13 +537,18 @@ def _compile(path):
     """Code for the file's current bytes: compiled once per version, never through __pycache__."""
     with open(path, "rb") as fh:
         data = fh.read()
+        try:
+            stamp = os.fstat(fh.fileno()).st_mtime
+        except OSError:
+            stamp = None
     digest = hashlib.blake2b(data, digest_size=16).digest()
     known  = _CODE.get(path)
     if known is not None and known[0] == digest:
         return known[1]
     code        = compile(data, path, "exec", dont_inherit=True)
     _CODE[path] = (digest, code)
-    linecache.cache[path] = (len(data), None, importlib.util.decode_source(data).splitlines(True), path)
+    if stamp is not None:                                    # the file's stamp: checkcache follows the disk
+        linecache.cache[path] = (len(data), stamp, importlib.util.decode_source(data).splitlines(True), path)
     return code
 
 
@@ -587,15 +664,17 @@ def _leave():
 # Import hooks: code a run made imports that run's modules
 
 def _install():
-    global _original_import, _original_import_module, _ROOTS
+    global _original_import, _original_import_module, _original_reload, _ROOTS
     if builtins.__import__ is _import:
         return
     previous, previous_module = builtins.__import__, importlib.import_module   # a reloaded copy's hooks
     _original_import        = getattr(previous, "_rig_run_original", previous)
     _original_import_module = getattr(previous_module, "_rig_run_original", previous_module)
+    _original_reload        = getattr(importlib.reload, "_rig_run_original", importlib.reload)
     sys.meta_path[:] = [finder for finder in sys.meta_path if not getattr(finder, "_rig_run_finder", False)]
     _import._rig_run_original, _import_module._rig_run_original = _original_import, _original_import_module
-    builtins.__import__, importlib.import_module = _import, _import_module
+    _reload._rig_run_original = _original_reload
+    builtins.__import__, importlib.import_module, importlib.reload = _import, _import_module, _reload
     _ROOTS = _install_roots()
     _RIG_TOPS.update(_rig_closure())
 
@@ -654,3 +733,18 @@ def _import_module(name, package=None):
         return route
     with run.active():
         return _original_import_module(name, package)
+
+
+def _reload(module):
+    """importlib.reload of one of a run's modules (a button the run made): reloaded with its run shown."""
+    try:
+        name = object.__getattribute__(module, "__dict__").get("__name__")
+        candidates = (object.__getattribute__(module, "__dict__").get(_MARK), sys._getframe(1).f_globals.get(_MARK))
+    except (AttributeError, TypeError):
+        return _original_reload(module)
+    for run in candidates:
+        modules = getattr(run, "modules", None) if getattr(type(run), "_rig_run_result", False) else None
+        if modules is not None and modules.get(name) is module and _shown() is not run:
+            with run.active():
+                return _original_reload(module)
+    return _original_reload(module)
