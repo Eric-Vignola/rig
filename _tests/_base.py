@@ -78,6 +78,28 @@ class MayaTestCase(unittest.TestCase):
     def tearDown(self):
         """Shared tear down functionailies."""
 
+    def undo_on(self):
+        """Turns undo on with an unlimited queue for this test, and puts back the
+        state and queue it found once the test is done.
+
+        A test must not leave undo off for the next one: with undo off, Maya frees
+        a deleted dynamic attribute at once instead of keeping it in the queue, so
+        a later test that holds a plug across `deleteAttr` sees another scene.
+        """
+        state    = cmds.undoInfo(query=True, state=True)
+        infinity = cmds.undoInfo(query=True, infinity=True)
+        length   = cmds.undoInfo(query=True, length=True)
+
+        def put_back():
+            if infinity:
+                cmds.undoInfo(infinity=True)
+            else:
+                cmds.undoInfo(infinity=False, length=length)
+            cmds.undoInfo(state=state)
+
+        cmds.undoInfo(state=True, infinity=True)
+        self.addCleanup(put_back)
+
     # -- assertion
 
     def assert_nodes_equal(self, a, b):

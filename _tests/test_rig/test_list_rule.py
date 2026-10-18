@@ -67,8 +67,7 @@ class _Case(MayaTestCase):
 
     def setUp(self):
         super().setUp()
-        cmds.undoInfo(state=True, infinity=True)
-        self.addCleanup(cmds.undoInfo, state=False)
+        self.undo_on()  # puts back the undo state it found (S2_finish: no test leaves undo off)
         self.c0, self.c1, self.c2 = (Node.create("transform", name=f"c{i}") for i in range(3))
         self.ctls = List([self.c0, self.c1, self.c2])
         self.ctls.tx << [1, 2, 3]
