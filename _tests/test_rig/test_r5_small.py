@@ -98,11 +98,13 @@ def _old_hook(self, attr):
         in_attr = self.find_attr(f"input[{sel_id}]", quiet=True)
         if in_attr is not None:
             src_attr = _base._connected_attrs(in_attr, src=True, dst=False, first_only=True)
-            if src_attr:
+            # (re-pinned, user decision 8A, 2026-10-17: a plug has no truth value;
+            # the hook tests `is not None`, as here)
+            if src_attr is not None:
                 return src_attr.get_data_type()
     elif attr.get_name().startswith("input"):
         src_attr = _base._connected_attrs(attr, src=True, dst=False, first_only=True)
-        if src_attr:
+        if src_attr is not None:
             return src_attr.get_data_type()
     return DGNode._attr_data_type_fallback(self, attr)
 

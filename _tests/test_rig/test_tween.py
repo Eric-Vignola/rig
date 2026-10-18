@@ -105,21 +105,23 @@ class TestTweenSpotChecks(MayaTestCase):
 
     def test_in_linear_endpoints(self):
         # in_linear is just clamp(t, 0, 1).
-        self.assertEqual(tw.in_linear(0.0), 0.0)
-        self.assertEqual(tw.in_linear(1.0), 1.0)
-        self.assertEqual(tw.in_linear(0.5), 0.5)
+        # (re-pinned, user decision 7A, 2026-10-17: each result is a plug, and
+        # plug == value has no truth value; these compared nothing: read .get())
+        self.assertAlmostEqual(tw.in_linear(0.0).get(), 0.0)
+        self.assertAlmostEqual(tw.in_linear(1.0).get(), 1.0)
+        self.assertAlmostEqual(tw.in_linear(0.5).get(), 0.5)
 
     def test_in_quad_t_squared(self):
-        self.assertAlmostEqual(tw.in_quad(0.5), 0.25)
+        self.assertAlmostEqual(tw.in_quad(0.5).get(), 0.25)  # (re-pinned, user decision 7A: .get())
 
     def test_in_cubic_t_cubed(self):
-        self.assertAlmostEqual(tw.in_cubic(0.5), 0.125)
+        self.assertAlmostEqual(tw.in_cubic(0.5).get(), 0.125)  # (re-pinned, user decision 7A: .get())
 
     def test_in_quart_t_to_4(self):
-        self.assertAlmostEqual(tw.in_quart(0.5), 0.0625)
+        self.assertAlmostEqual(tw.in_quart(0.5).get(), 0.0625)  # (re-pinned, user decision 7A: .get())
 
     def test_in_quint_t_to_5(self):
-        self.assertAlmostEqual(tw.in_quint(0.5), 0.03125)
+        self.assertAlmostEqual(tw.in_quint(0.5).get(), 0.03125)  # (re-pinned, user decision 7A: .get())
 
 
 # --------------------------------------------------------------------- #

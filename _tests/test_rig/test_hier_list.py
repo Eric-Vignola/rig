@@ -506,9 +506,13 @@ class TestValueLists(_Case):
             return (x, x * 2)
 
         self.assertEqual(list(pair(List([1, 2]))), [(1, 2), (2, 4)])
-        self.assertEqual(rc.getAttr("a.t"), [(0.0, 0.0, 0.0)])
+        # (re-pinned, user decision 9A, 2026-10-17: a List == list has no truth value, and these were
+        # always true; the last one was false: rc.ls gives the nodes, cmds.ls the names)
+        self.assertEqual(list(rc.getAttr("a.t")), [(0.0, 0.0, 0.0)])
         self.assertEqual(list(rc.getAttr("a.t")), cmds.getAttr("a.t"))
-        self.assertEqual(rc.ls("a", "b"), cmds.ls("a", "b"))
+        self.assertEqual(list(rc.ls("a", "b")), [Node("a"), Node("b")])
+        self.assertEqual([type(x).__name__ for x in rc.ls("a", "b")], ["Transform", "Transform"])
+        self.assertEqual([str(x) for x in rc.ls("a", "b")], cmds.ls("a", "b"))
 
     def test_the_value_list_keeps_its_elements_as_before(self):
         kept = list_module._values_list([(1, 2), {"x": 1}, OpenMaya.MObject(), "a"])

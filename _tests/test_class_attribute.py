@@ -261,8 +261,10 @@ class TestAttributeClass(MayaTestCase):
         self.assertEqual(obj.pnts._component_type,    "kMeshVertComponent")
         self.assertEqual(obj.pnts[0]._component_type, "kMeshVertComponent")
         self.assertEqual(len(obj.pnts[:]),            8)  # 8
+        # (re-pinned, user decision 9A, 2026-10-17: a List == list is a List of comparisons with no
+        # truth value; it was always true here, so compare the elements)
         self.assertEqual(
-            obj.pnts[:], [item.get_node().pnts[i] for i, item in enumerate(obj.pnts[:])]
+            list(obj.pnts[:]), [item.get_node().pnts[i] for i, item in enumerate(obj.pnts[:])]
         )
 
         # test nurbs curve, surf and lattice (all use "cp")
@@ -289,8 +291,9 @@ class TestAttributeClass(MayaTestCase):
             self.assertEqual(obj.cp._component_type,    att_type[i])
             self.assertEqual(obj.cp[0]._component_type, att_type[i])
             self.assertEqual(len(obj.cp[:]),            counts[i])
+            # (re-pinned, user decision 9A, 2026-10-17: compare the elements, see above)
             self.assertEqual(
-                obj.cp[:], [item.get_node().cp[i] for i, item in enumerate(obj.cp[:])]
+                list(obj.cp[:]), [item.get_node().cp[i] for i, item in enumerate(obj.cp[:])]
             )
 
 

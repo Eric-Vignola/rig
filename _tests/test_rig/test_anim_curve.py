@@ -372,7 +372,8 @@ class TestShapes(_Case):
         n << Float("arr", multi=True)
         for i in range(3):
             n.arr[i] << 0
-        self.assertEqual(n.arr[:] << AnimCurve([0, 1]), List([Plug("n.arr[0]"), Plug("n.arr[1]"), Plug("n.arr[2]")]))
+        # (re-pinned, user decision 9A, 2026-10-17: a List == List has no truth value; compare the elements)
+        self.assertEqual(list(n.arr[:] << AnimCurve([0, 1])), [Plug("n.arr[0]"), Plug("n.arr[1]"), Plug("n.arr[2]")])
         self.assertEqual(sorted(cmds.ls(type="animCurveTU")), ["n_arr_0_", "n_arr_1_", "n_arr_2_"])
         self.assertRefusesWithNothingChanged(TypeError, lambda: n.arr << AnimCurve([0, 1]), "multi attribute", "re-run")
 
