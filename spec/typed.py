@@ -132,3 +132,15 @@ class Typed(_AttrSpec):
         # 'string', is another kind)
         at, _, multi, children = super()._kind()
         return at, "Tdata", multi, children
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Matrix",
+    "MeshAttr",
+    "Message",
+    "NurbsCurveAttr",
+    "NurbsSurfaceAttr",
+    "String",
+    "Typed",
+]

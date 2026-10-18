@@ -982,29 +982,29 @@ class TestMemberSpecContract(MayaTestCase):
     def test_verbs_reach_the_kind_hooks(self):
         # The base normalises and checks the LHS, then hands over to the
         # per-kind hooks; a kind that implements none of them says so.
-        # Re-pinned (fix round 2026-10-16, one way only): the verbs a token runs
-        # are private (_run_inject / _run_query: the operators << / >> are the
-        # only public spelling)
+        # Re-pinned twice: private in the fix round 2026-10-16, public again by
+        # user decision 6B (2026-10-17): inject / query / contains are the
+        # tokens' protocol, the operators call them
         xform, _ = _cube()
         node     = Node(xform)
         with self.assertRaises(NotImplementedError):
-            _Spec("cap")._run_inject(node)
+            _Spec("cap").inject(node)
         with self.assertRaises(NotImplementedError):
-            _Spec("cap")._run_query(node)
+            _Spec("cap").query(node)
         with self.assertRaises(NotImplementedError):
             _Spec.of(node)
         with self.assertRaises(TypeError):
-            _Spec("cap")._run_inject(None)
+            _Spec("cap").inject(None)
         with self.assertRaises(TypeError):
-            (-_Spec("cap"))._run_query(node)
+            (-_Spec("cap")).query(node)
         # the purge on '>>' enumerates through the same hook as ``of``
         with self.assertRaises(NotImplementedError):
-            _Spec()._run_query(node)
+            _Spec().query(node)
         # ACCEPTS is applied before the hooks.
         with self.assertRaisesRegex(TypeError, "does not take 'f' components"):
-            _Strict("cap")._run_inject(node.f)
+            _Strict("cap").inject(node.f)
         with self.assertRaisesRegex(TypeError, "does not take 'whole' components"):
-            _Strict("cap")._run_query(node)
+            _Strict("cap").query(node)
         # an enumeration answers by contents (round 4b FIX): a left-hand side
         # the kind never holds is in none
-        self.assertEqual(_Strict()._run_query(node), [])
+        self.assertEqual(_Strict().query(node), [])

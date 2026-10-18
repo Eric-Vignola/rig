@@ -275,12 +275,13 @@ class TestDefineDoor(_Case):
         cmds.createNode("joint", name="spine_01")
         error = self.miss(lambda: Joint("spnie_01"))
         # the facts and the family are the reference's
-        self.assertEqual((error.name, error.label, error.uuid), ("spnie_01", "joint", False))
+        # re-pinned (user decision 2026-10-17): .uuid is .by_uuid, .node_class is ._node_class
+        self.assertEqual((error.name, error.label, error.by_uuid), ("spnie_01", "joint", False))
         self.assertEqual(error.args, ("spnie_01",))
         self.assertEqual(repr(error), "NodeNotFoundError('spnie_01')")
         for family in (NodeLookupError, LookupError, TypeError, ValueError):
             self.assertIsInstance(error, family)
-        self.assertIs(error.node_class, Joint)
+        self.assertIs(error._node_class, Joint)
         # the message is built once, then kept
         text = str(error)
         with mock.patch.object(cmds, "ls", wraps=cmds.ls) as ls:
@@ -353,12 +354,13 @@ class TestDefineDoor(_Case):
                 error = self.miss(lambda: cls("spnie_01"))
                 copy  = pickle.loads(pickle.dumps(error))
                 self.assertIs(type(copy), NodeNotFoundError)
-                self.assertEqual((copy.args, copy.name, copy.label, copy.uuid),
-                                 (error.args, error.name, error.label, error.uuid))
+                # re-pinned (user decision 2026-10-17): by_uuid, _node_class
+                self.assertEqual((copy.args, copy.name, copy.label, copy.by_uuid),
+                                 (error.args, error.name, error.label, error.by_uuid))
                 self.assertEqual((str(copy), copy.door), (str(error), error.door))
                 self.assertIn(f"; {cls.__name__}.define('spnie_01') finds or makes it", str(copy))
-                self.assertIsNone(copy.node_class)
-                self.assertIs(error.node_class, cls)
+                self.assertIsNone(copy._node_class)
+                self.assertIs(error._node_class, cls)
         # Node(x)'s error has no class: pickled as before, its message read when printed
         error = self.miss(lambda: Node("spnie_01"))
         copy  = pickle.loads(pickle.dumps(error))

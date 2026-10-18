@@ -81,3 +81,10 @@ class Deformer(DGNode):
             or []
         )
         return [_cast(x.split(".", 1)[0]) for x in geom]
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Deformer",
+    "tag_references",
+]

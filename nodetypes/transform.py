@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from types import MappingProxyType as _MappingProxyType
 from typing import Any, Union
 
 import numpy as np
@@ -70,8 +71,9 @@ _DATA_CREATE_FLAGS = frozenset({"name", "n", "parent", "p"})
 # a locator is a "transform" holding a locator shape.
 SERIALIZED_NODE_TYPES = ("transform", "joint")
 
-# cmds.addAttr(dataType=...) names of the typed attribute data kinds
-TYPED_DATA_NAMES = {
+# cmds.addAttr(dataType=...) names of the typed attribute data kinds (read-only,
+# user decision 2026-10-17)
+TYPED_DATA_NAMES = _MappingProxyType({
     OpenMaya.MFnData.kString:      "string",
     OpenMaya.MFnData.kStringArray: "stringArray",
     OpenMaya.MFnData.kDoubleArray: "doubleArray",
@@ -80,7 +82,7 @@ TYPED_DATA_NAMES = {
     OpenMaya.MFnData.kVectorArray: "vectorArray",
     OpenMaya.MFnData.kPointArray:  "pointArray",
     OpenMaya.MFnData.kMatrix:      "matrix",
-}
+})
 
 # array data types older serialized hierarchies stored under "attributeType",
 # cmds.addAttr() only accepts them as "dataType".
@@ -974,3 +976,12 @@ class Transform(DAGNode):
 
             except Exception as e:
                 LOGGER.warning(f"Skipped user defined attr {_name_of(node)}.{name} value: {e}")
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "LEGACY_DATA_TYPES",
+    "SERIALIZED_NODE_TYPES",
+    "Transform",
+    "TYPED_DATA_NAMES",
+]

@@ -87,3 +87,9 @@ class Reference(DGNode):
     def delete(self) -> None:
         """Deletes this reference."""
         _cmds_edit.file(type(self).get_file_path(self, copy_number=True), removeReference=True)
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Reference",
+]

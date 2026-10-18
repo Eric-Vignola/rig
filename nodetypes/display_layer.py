@@ -166,13 +166,13 @@ class DisplayLayer(DGNode):
         component, a DG node, an attribute plug, ``defaultLayer`` itself), one
         undo step. Returns ``members``, as ``<<`` returns its left-hand side
         (user decision 2026-10-16)."""
-        return (-self)._member()._run_inject(members)
+        return (-self)._member().inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in layer``: whether every node of ``x`` (a node, a plug, which
         stands for its node, or a list of them) is in this layer
         (``defaultLayer``: in no layer)."""
-        return self._member()._run_contains(lhs)
+        return self._member().contains(lhs)
 
     @classmethod
     def of(cls, x: Any) -> list[DisplayLayer]:
@@ -298,3 +298,9 @@ class DisplayLayer(DGNode):
             got = _cmds_edit.rename(old, new_name)
         if _leaf(got) != _leaf(new_name):
             raise RuntimeError(f"Maya renamed '{old}' to '{got}', not '{new_name}'")
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "DisplayLayer",
+]

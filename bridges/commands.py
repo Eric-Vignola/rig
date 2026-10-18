@@ -28,7 +28,7 @@ For occasional use without going through this module, use
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any as _Any, Callable as _Callable
 
 from maya import cmds as _mc
 
@@ -36,8 +36,8 @@ from maya import cmds as _mc
 from rig._internal.container import _call_tracking_creation
 from rig._internal import journal as _journal
 from rig._internal.journal import barrier as _barrier
-from rig._internal.node import Node
-from rig.nodetypes._base import _cast_node, _ensure_node_valid, Attribute, _name_of
+from rig._internal.node import Node as _Node
+from rig.nodetypes._base import _cast_node, _ensure_node_valid, Attribute as _Attribute, _name_of
 
 
 # Per-command wrapper cache. Built lazily by ``__getattr__``.
@@ -61,7 +61,7 @@ _NO_COERCE = frozenset(
 )
 
 
-def _coerce(value: Any) -> Any:
+def _coerce(value: _Any) -> _Any:
     """Convert :class:`Node` / list-of-Nodes back to bare strings.
 
     Maya commands take string node names; the DSL holds Node objects. This
@@ -69,27 +69,27 @@ def _coerce(value: Any) -> Any:
     str-subclasses so they pass through cmds directly without conversion, once
     their node is checked (see `_checked_plug`).
     """
-    if isinstance(value, Node):
+    if isinstance(value, _Node):
         return _name_of(value)
-    if isinstance(value, Attribute):
+    if isinstance(value, _Attribute):
         return _checked_plug(value)
     if isinstance(value, (list, tuple)) and value:
         # Only convert if the list contains Nodes -- otherwise pass through
         # unchanged to avoid mutating arbitrary list inputs.
-        if any(isinstance(x, Node) for x in value):
+        if any(isinstance(x, _Node) for x in value):
             return [
-                _name_of(x) if isinstance(x, Node)
-                else _checked_plug(x) if isinstance(x, Attribute)
+                _name_of(x) if isinstance(x, _Node)
+                else _checked_plug(x) if isinstance(x, _Attribute)
                 else x
                 for x in value
             ]
         for x in value:
-            if isinstance(x, Attribute):
+            if isinstance(x, _Attribute):
                 _checked_plug(x)
     return value
 
 
-def _checked_plug(plug: Attribute) -> Attribute:
+def _checked_plug(plug: _Attribute) -> _Attribute:
     """`plug`, once its node is checked: a plug whose node was deleted or freed
     raises its ``"... already deleted!"`` (see `_ensure_node_valid`) instead of
     cmds reading its str buffer, which then names the node that took the name.
@@ -98,7 +98,7 @@ def _checked_plug(plug: Attribute) -> Attribute:
     return plug
 
 
-def _wrap_result(result: Any) -> Any:
+def _wrap_result(result: _Any) -> _Any:
     """Wrap a cmds output: str -> :class:`Node`, list[str] -> :class:`List`,
     else passthrough (for booleans, numerics, dicts, None, etc.).
 
@@ -135,7 +135,7 @@ def _wrap_result(result: Any) -> Any:
     return result
 
 
-def _make_wrapper(name: str) -> Callable:
+def _make_wrapper(name: str) -> _Callable:
     """Build a wrapper function for ``maya.cmds.<name>``. Each call runs the
     function maya.cmds has NOW: a plug-in unloaded and loaded again gets a new
     one, and calling the old one crashes Maya."""
@@ -187,7 +187,7 @@ def _make_wrapper(name: str) -> Callable:
     return wrapper
 
 
-def __getattr__(name: str) -> Callable:
+def __getattr__(name: str) -> _Callable:
     """PEP 562: lazily wrap ``maya.cmds.<name>`` on first access.
 
     Picks up studio plugin commands automatically -- any time a plugin loads

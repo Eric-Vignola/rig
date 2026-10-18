@@ -439,3 +439,13 @@ class AnimCurveTT(AnimCurve):
 
 
 assert "animCurve" in _ABSTRACT_TYPES
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "AnimCurve",
+    "AnimCurveTA",
+    "AnimCurveTL",
+    "AnimCurveTT",
+    "AnimCurveTU",
+]

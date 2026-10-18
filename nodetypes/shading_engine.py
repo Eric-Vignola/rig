@@ -14,9 +14,9 @@ Usage::
     from rig.nodetypes import ShadingEngine
 
     sg = ShadingEngine.for_material("myBlinn")     # find, or build 'myBlinnSG'
-    sg.assign(["pCube1.f[0:1]"], touched=["|pCube1|pCubeShape1"])
+    Node("pCube1").f[0:1] << sg                    # faces into this engine
     sg.get_face_members()                          # [(Mesh("pCubeShape1"), array([0, 1]))]
-    sg.assign(["|pCube1|pCubeShape1"])             # whole object
+    Node("pCube1") << sg                           # whole object
     sg.get_face_members()                          # [(Mesh("pCubeShape1"), None)]
     sg.get_material()                              # Blinn("myBlinn")
 
@@ -120,12 +120,12 @@ class ShadingEngine(ObjectSet):
         (its shorthand) does: those faces are in no engine (green); the same
         refusals, before any write; one undo step. Returns ``members``, as
         ``<<`` returns its left-hand side (user decision 2026-10-16)."""
-        return (-self)._member()._run_inject(members)
+        return (-self)._member().inject(members)
 
     def __contains__(self, lhs: Any) -> bool:
         """``x in sg``: whether every face of every shadeable shape of ``x``
         (or the whole object) is in exactly this engine."""
-        return self._member()._run_contains(lhs)
+        return self._member().contains(lhs)
 
     # one way only (user decision 2026-10-16): an object set's raw verbs are
     # refused on an engine, naming the membership grammar, which checks its
@@ -324,14 +324,23 @@ class ShadingEngine(ObjectSet):
             result.append((_cast(dagpath), ids))
         return result
 
-    def assign(
+    def assign(self, *args: Any, **kwargs: Any) -> None:
+        """Refused (one way only, user decision 2026-10-17): ``cube.f[0:2] << sg``
+        (or ``<< red``, the material) assigns."""
+        raise TypeError(
+            f"sg.assign is not rig's form: write cube.f[0:2] << {self!r} (or << the "
+            f"material, cube << red); {self!r}.remove(...) takes members out"
+        )
+
+    def _assign(
         self,
         members:   Sequence[str],
         touched:   Sequence[str] = (),
         normalise: bool          = False,
     ) -> None:
-        """Moves objects and faces into this engine; a member leaves whatever
-        engine held it (``forceElement``).
+        """[Internal] Moves objects and faces into this engine; a member leaves
+        whatever engine held it (``forceElement``). The membership grammar
+        (``x << sg``, ``x << material``) runs it; ``sg.assign`` is refused.
 
         Maya carves a whole-object membership down to the complementary faces
         when some of its faces move elsewhere, but never collapses per-face
@@ -395,3 +404,9 @@ def _long_name(node: str | DAGNode) -> str:
     if len(found) != 1:
         raise ValueError(f"Shape must match one node: {_name_of(node)} -> {_name_of(found)}")
     return found[0]
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "ShadingEngine",
+]

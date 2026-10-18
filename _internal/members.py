@@ -80,6 +80,7 @@ from rig.nodetypes.errors import NodeNotFoundError
 from rig.nodetypes.geometry import iter_component_tokens
 from rig._internal import journal as _journal
 from rig._internal import types as _types
+from rig._internal.declared import Declared as _Declared
 from rig._internal.node import Node
 from rig._internal.plug import ComponentPlug, Plug
 from rig._internal.undo import _undo_chunk
@@ -511,7 +512,7 @@ class Components:
 
     def __lshift__(self, other: Any) -> Any:
         if isinstance(other, _types._MEMBERSHIP):
-            return other._member()._run_inject(self)
+            return other._member().inject(self)
         if other is None:
             raise TypeError(
                 "Components << None is not a clear; use members << -Spec('x') to "
@@ -527,7 +528,7 @@ class Components:
         if other is None:
             return self.get_indices()
         if isinstance(other, _types._MEMBERSHIP):
-            return other._member()._run_query(self)
+            return other._member().query(self)
         raise TypeError(
             f"'>>' on Components supports '>> None' (the native ids) or a "
             f"membership query (Tag('x'), Tag()), not {type(other).__name__}"
@@ -996,12 +997,6 @@ def _token_miss(token: Any, name: str, what: str, noun: str, example: str) -> At
             f"{head}; a token has no name attribute: str(token) is its name, "
             f"and {example}.get_name() the {noun} node's"
         )
-    if name in ("inject", "query", "contains"):
-        # the verbs are the operators only (one way only, fix round 2026-10-16)
-        return AttributeError(
-            f"{head}; a token has no methods: x << token, x >> token and x in token "
-            f"are its verbs ({noun}.remove(x) takes x out)"
-        )
     return AttributeError(f"{head}; {name} is the {noun} node's: {example}.{name}")
 
 
@@ -1036,7 +1031,7 @@ def _spec_repr(spec: Any) -> str:
     return f"{sign}{type(spec).__name__}({spec._name!r})"
 
 
-class _MemberSpec(metaclass=_SpecMeta):
+class _MemberSpec(_Declared, metaclass=_SpecMeta):
     """Protocol base of the collection spec ``Tag`` and of the private member
     of a membership node class (a display layer's ``_LayerMember``, a shader's
     or shading engine's ``rig.shade._MaterialMember``).
@@ -1051,16 +1046,18 @@ class _MemberSpec(metaclass=_SpecMeta):
     hook. :meth:`_member` is the spec itself (a membership node class answers
     its own member): the ``<<`` / ``>>`` slots run ``other._member()``'s verb.
 
-    The verbs are template methods. :meth:`_run_inject` (``lhs << spec``)
+    The verbs ``inject`` / ``query`` / ``contains`` are public: they are the
+    tokens' protocol, which the operators ``<<`` / ``>>`` / ``in`` call (user
+    decision 6B, 2026-10-17). They are template methods. :meth:`inject` (``lhs << spec``)
     normalises the left-hand side, applies :attr:`_ACCEPTS`, hands the
     selections to :meth:`_plan` -- which validates everything and raises
     BEFORE any scene write -- then runs :meth:`_apply` inside one undo chunk
     named ``rig.<kind>`` (``_KIND``) and returns the left-hand side unchanged.
-    :meth:`_run_query` (``lhs >> spec``) returns whatever :meth:`_query` reads: a
+    :meth:`query` (``lhs >> spec``) returns whatever :meth:`_query` reads: a
     plain value (ids), never a :class:`Components`. :meth:`of` enumerates the
     collections holding ``x``; an :attr:`_EXCLUSIVE` kind (a node is in at
     most one collection) answers ``lhs >> Spec()`` with that one or
-    ``None``. :meth:`_run_contains` (``lhs in spec``) answers whether every member
+    ``None``. :meth:`contains` (``lhs in spec``) answers whether every member
     of the left-hand side is in the collection (:meth:`_contains`); a kind or
     removal token there is a ``TypeError``.
 
@@ -1171,7 +1168,7 @@ class _MemberSpec(metaclass=_SpecMeta):
 
     # -- the verbs -- #
 
-    def _run_inject(self, lhs: Any) -> Any:
+    def inject(self, lhs: Any) -> Any:
         """``lhs << spec``: make the left-hand side a member (or, for a
         removal / kind token, not a member). Everything is validated before
         the first scene write; the writes run in one undo chunk; the
@@ -1201,7 +1198,7 @@ class _MemberSpec(metaclass=_SpecMeta):
             plan = self._plan(selections)
         return plan
 
-    def _run_query(self, lhs: Any) -> Any:
+    def query(self, lhs: Any) -> Any:
         """``lhs >> spec``: a plain value read out of the left-hand side --
         the native ids of its members that are in the collection.
         ``lhs >> Spec()`` enumerates instead: the collections :meth:`of`
@@ -1234,9 +1231,9 @@ class _MemberSpec(metaclass=_SpecMeta):
         return found
 
     def __contains__(self, lhs: Any) -> bool:
-        return self._run_contains(lhs)
+        return self.contains(lhs)
 
-    def _run_contains(self, lhs: Any) -> bool:
+    def contains(self, lhs: Any) -> bool:
         """``lhs in spec``: whether EVERY member of the left-hand side is in
         this collection (every node, every component; a ``List`` / list of
         them: every element). An attribute plug stands for its node. A member

@@ -69,3 +69,9 @@ class ObjectSet(DGNode):
     def clear(self) -> None:
         """Clear object(s) in this set."""
         _cmds_edit.sets(clear=_name_of(self))
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "ObjectSet",
+]

@@ -826,3 +826,12 @@ def deformed_refusal(
         f"{method}: {name!r} has history ({connected}: construction history), which would "
         f"compute over the {what} it sets; delete the history, or {door}"
     )
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "deformed_refusal",
+    "Geometry",
+    "iter_component_ranges",
+    "iter_component_tokens",
+]

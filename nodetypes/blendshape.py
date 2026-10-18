@@ -581,3 +581,9 @@ def _read_targets(method: str, targets):
 
     data = _files.read(targets, (MorphList, MorphData), method, "the targets")
     return MorphList([data.copy()]) if isinstance(data, MorphData) else MorphList([t.copy() for t in data])
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "BlendShape",
+]

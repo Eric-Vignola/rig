@@ -49,6 +49,7 @@ import difflib
 from typing import Callable, Iterable
 
 from maya import cmds
+from rig._internal.declared import Declared as _Declared
 
 
 # ``rig._internal.container`` sets it when it loads (the D31 pattern keeps
@@ -96,7 +97,7 @@ def _is_pattern(name: str) -> bool:
     return any(c in name for c in "*?[]")
 
 
-class NodeLookupError(LookupError, TypeError, ValueError):
+class NodeLookupError(_Declared, LookupError, TypeError, ValueError):
     """A name that does not give one node. The base of :class:`NodeNotFoundError`
     and :class:`AmbiguousNodeError`, raised as is for a pattern (``'red*'``): a
     pattern is a search (``cmds.ls('red*')``, ``Transform.find_all()``), never a
@@ -107,6 +108,8 @@ class NodeLookupError(LookupError, TypeError, ValueError):
         label: what the name was to be, ``"node"`` or a class's node type
             (``"joint"``).
     """
+
+    _FIELDS = ("name", "label")
 
     def __init__(self, name: str = "", label: str = "node") -> None:
         super().__init__(name)
@@ -142,7 +145,7 @@ class NodeLookupError(LookupError, TypeError, ValueError):
 
 
 class NodeNotFoundError(NodeLookupError):
-    """No node has the name (``uuid=True``: the uuid). The message is
+    """No node has the name (``by_uuid=True``: the uuid). The message is
     ``no joint named 'spnie_01'`` with its hints (did you mean, another
     namespace, the scope prefix), or ``no node has the uuid '...'``. A node
     class's reference ends it with the call that finds or makes the node
@@ -152,16 +155,20 @@ class NodeNotFoundError(NodeLookupError):
     so ``door`` always agrees with ``str(error)``."""
 
     # the node class whose reference raised the error (``Joint``), set by the
-    # reference; None for ``Node(x)`` and an error made directly
-    node_class = None
+    # reference; None for ``Node(x)`` and an error made directly (private: user
+    # decision 2026-10-17)
+    _node_class = None
 
-    def __init__(self, name: str = "", label: str = "node", uuid: bool = False) -> None:
+    _FIELDS = ("by_uuid", "scope_name")
+
+    def __init__(self, name: str = "", label: str = "node", by_uuid: bool = False) -> None:
         super().__init__(name, label)
-        self.uuid = uuid
+        # True: ``name`` is a uuid (was ``uuid`` before 2.0.0a6, user decision 2026-10-17)
+        self.by_uuid = by_uuid
         # the flattened scope's spelling of the name, read now (see _SCOPE_HINT_HOOK)
         self.scope_name = None
         hook = _SCOPE_HINT_HOOK
-        if hook is not None and not uuid and name and "|" not in name:
+        if hook is not None and not by_uuid and name and "|" not in name:
             try:
                 self.scope_name = hook(name)
             except Exception:  # noqa: BLE001 -- a hint must not fail the raise
@@ -180,7 +187,7 @@ class NodeNotFoundError(NodeLookupError):
         text, without the node class, which may not pickle (a class made in a
         function)."""
         state = dict(self.__dict__)
-        if state.pop("node_class", None) is not None:
+        if state.pop("_node_class", None) is not None:
             str(self)  # the message and the door, as text
             state["_message"] = self._message
             state["_door"]    = self._door
@@ -201,20 +208,20 @@ class NodeNotFoundError(NodeLookupError):
 
     def _read_door(self) -> str | None:
         """The door as the scene gives it now (see `door`)."""
-        if self.node_class is None or self.uuid:
+        if self._node_class is None or self.by_uuid:
             return None
         try:
-            return self.node_class._define_door(self.name)
+            return self._node_class._define_door(self.name)
         except Exception:  # noqa: BLE001 -- the scene changed or closed: no door
             return None
 
     def _text(self) -> str:
-        if self.uuid:
+        if self.by_uuid:
             return f"no node has the uuid {self.name!r}"
         return f"no {self.label} named {self.name!r}"
 
     def _hints(self) -> tuple[Callable[[], str | None], ...]:
-        if self.uuid or not self.name:
+        if self.by_uuid or not self.name:
             return ()
         return (self._scope_hint, self._namespace_hint, self._close_name_hint)
 
@@ -236,12 +243,12 @@ class NodeNotFoundError(NodeLookupError):
         """The scene names whose leaf is closest to the missing leaf, among
         the first ones ``cmds.ls`` lists (``_HINT_HEAD_TYPED``,
         ``_HINT_HEAD``): of the node type the class's reference takes
-        (``node_class._hint_type()``), else of every node. Of the names that
+        (``_node_class._hint_type()``), else of every node. Of the names that
         share a leaf, the one in the missing name's own namespace is shown
         (``'spine_01'`` rather than a reference's ``'char:spine_01'``)."""
         leaf      = _leaf(self.name)
         home      = _namespace(self.name)
-        node_type = None if self.node_class is None else self.node_class._hint_type()
+        node_type = None if self._node_class is None else self._node_class._hint_type()
         if node_type:
             names = cmds.ls(type=node_type, head=_HINT_HEAD_TYPED)
         else:
@@ -264,6 +271,8 @@ class AmbiguousNodeError(NodeLookupError):
     node. ``define`` raises it too, with its own ``message``, when the node it
     would make shares its name with nodes elsewhere (``'root' exists at
     |char_grp|root``): the name would then be ambiguous."""
+
+    _FIELDS = ("candidates", "namespaces")
 
     def __init__(
         self,
@@ -295,7 +304,7 @@ class AmbiguousNodeError(NodeLookupError):
         )
 
 
-class NodeTypeError(TypeError, ValueError):
+class NodeTypeError(_Declared, TypeError, ValueError):
     """The node a name gives is of another type than the class names:
     ``'grp' is a transform, not a joint`` and an optional ``hint`` (the
     spelling that works).
@@ -311,6 +320,8 @@ class NodeTypeError(TypeError, ValueError):
         node_type: the node's type (``"transform"``).
         hint: the text after the ``;``, or ``""``.
     """
+
+    _FIELDS = ("name", "label", "node_type", "hint")
 
     def __init__(
         self,

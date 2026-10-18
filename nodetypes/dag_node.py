@@ -379,3 +379,9 @@ class DAGNode(DGNode):
 # DAGNode's ``_create`` makes just the node too: its class's create takes no
 # positional argument
 _PLAIN_CREATES.add(DAGNode._create.__func__)
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "DAGNode",
+]

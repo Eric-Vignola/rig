@@ -38,3 +38,12 @@ class Euler(Float):
         super().__init__(name, **kargs)
         self.compound     = ["X", "Y", "Z"]
         self._compound_type = "doubleAngle"
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "Color",
+    "Euler",
+    "Quat",
+    "Vector",
+]

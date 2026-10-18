@@ -122,7 +122,7 @@ from rig.nodetypes.plugins import load_plugin
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
-| `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `assign`, `get_face_members`, `remove(x)` (the DSL's `x << -sg`); the raw `add_members` / `remove_members` / `force_elements` raise, naming `x << sg` / `sg.remove(x)` |
+| `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `get_face_members`, `x << sg`, `remove(x)` (the DSL's `x << -sg`); the raw `add_members` / `remove_members` / `force_elements` and `assign` raise, naming `x << sg` / `sg.remove(x)` |
 | `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `remove(x)` (the DSL's `x << -mat`), `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
 | `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `clear` / `delete`, `x << layer` and `remove(x)` (the DSL's `x << -layer`), the one way in and out (`add_members` / `remove_members` raise, naming them); the DSL's `Layer` |
@@ -504,16 +504,17 @@ slot, no `materialInfo` and no light-linker entries, and such a set refuses
 every member. `ShadingEngine.create` therefore goes through `cmds.sets`.
 `for_material(material)` finds the engine a material feeds through
 `surfaceShader` (or builds `<material>SG` and lists the material in
-`defaultShaderList1`, as the Hypershade does). `assign(members)` is
-`forceElement`, so a member leaves whatever engine held it; Maya carves a
+`defaultShaderList1`, as the Hypershade does). `x << sg` (or `x << material`)
+is `forceElement`, so a member leaves whatever engine held it; Maya carves a
 whole-object membership down to the remaining faces but never collapses
-per-face membership back, and `assign(..., touched=[shapes], normalise=True)`
-does that collapse and deletes the orphan `groupId` nodes. `get_face_members`
+per-face membership back (the faces moved back one by one stay
+`cube.f[0:5]`); `cube << sg` of the whole object collapses it. `sg.assign` raises a TypeError naming `x << sg` (one way
+only). `get_face_members`
 reads through `MFnSet` so per-face entries survive (`get_members` drops them).
 
 `Mesh.get_material_bindings()` is the mesh-side view: the one material when
 it covers the whole mesh, otherwise `(material, face ids)` pairs. The DSL's
-materials (`rig.shade`) sit on `for_material` and `assign`.
+materials (`rig.shade`) sit on `for_material` and a private assign.
 
 ### Shaders are node classes, one per exact type
 
@@ -753,7 +754,7 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
 - **`world_space=True` is the default** for points, matrices, pivots and
   bounding boxes; pass `world_space=False` for object space.
 - **`get_*` returns, verbs mutate.** `set_points`, `set_weights`,
-  `set_component_tag_contents`, `assign`, `freeze` edit the scene;
+  `set_component_tag_contents`, `freeze` edit the scene;
   `serialize`, `get_weights`, `duplicate_geometry` hand back something new.
 - **Points come back as `MPointArray`**; `np.array(points)` is `(N, 4)`,
   so slice `[:, :3]`. Matrices are `MMatrix`; `np.array(m).reshape(4, 4)`

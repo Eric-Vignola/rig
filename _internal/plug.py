@@ -122,6 +122,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
+from rig._internal.declared import Declared as _Declared
 from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
     _name_of,
@@ -229,7 +230,7 @@ def _lazy() -> SimpleNamespace:
     return _LAZY_MODULES
 
 
-class InjectionError(RuntimeError):
+class InjectionError(_Declared, RuntimeError):
     """Raised when ``<<`` cannot set / connect / disconnect a :class:`Plug`.
 
     The DSL's injection operator (``<<``) asserts the *desired state* of the
@@ -754,7 +755,7 @@ class Plug(Attribute):
         # shorthand and the string-plug set, which would read a node as a
         # value.
         if lazy.types._is_membership(other):
-            return other._member()._run_inject(self)
+            return other._member().inject(self)
 
         # Attribute spec (a user's spec class is code a user wrote).
         if lazy.types._is_attribute_spec(other):
@@ -899,7 +900,7 @@ class Plug(Attribute):
         # membership, before the clone onto a node: a layer node on the
         # right is a collection, not a clone target
         if _is_membership(other):
-            return other._member()._run_query(self)
+            return other._member().query(self)
 
         # Retired connection-query sentinels (the List class or Plug itself
         # on the right).

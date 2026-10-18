@@ -123,7 +123,7 @@ class TestErrorFamily(MayaTestCase):
 
     def test_facts(self):
         error = NodeNotFoundError("spnie_01", "joint")
-        self.assertEqual((error.name, error.label, error.uuid), ("spnie_01", "joint", False))
+        self.assertEqual((error.name, error.label, error.by_uuid), ("spnie_01", "joint", False))  # re-pinned: .uuid is .by_uuid (user decision 2026-10-17)
         self.assertEqual(error.args, ("spnie_01",))
         error = AmbiguousNodeError("a", ("|g1|a", "|g2|a"))
         self.assertEqual((error.name, error.label, error.candidates, error.namespaces),
@@ -136,7 +136,7 @@ class TestErrorFamily(MayaTestCase):
         cases = (
             (NodeNotFoundError("nosuch"), "no node named 'nosuch'"),
             (NodeNotFoundError("nosuch", "joint"), "no joint named 'nosuch'"),
-            (NodeNotFoundError("DEADBEEF-0000-4000-8000-000000000000", uuid=True),
+            (NodeNotFoundError("DEADBEEF-0000-4000-8000-000000000000", by_uuid=True),  # re-pinned: .uuid is .by_uuid (user decision 2026-10-17)
              "no node has the uuid 'DEADBEEF-0000-4000-8000-000000000000'"),
             (NodeNotFoundError(""), "no node named ''"),
             (AmbiguousNodeError("a", ["|g1|a", "|g2|a"]),
@@ -437,7 +437,7 @@ class TestLookupRule(MayaTestCase):
                 with self.subTest(uid=uid, current=current):
                     cmds.namespace(setNamespace=current)
                     error = self._refused(lambda: Node(uid), NodeNotFoundError)
-                    self.assertTrue(error.uuid)
+                    self.assertTrue(error.by_uuid)  # re-pinned: .uuid is .by_uuid (user decision 2026-10-17)
                     self.assertEqual(str(error), f"no node has the uuid {uid!r}")
                     self.assertEqual(Node(_uuid("|g1|a")).get_long_name(), "|g1|a")
                     self.assertEqual(Node(_uuid("char:x")).get_long_name(), "|char:x")

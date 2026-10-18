@@ -217,3 +217,9 @@ def run_tests(
 # the run: ``mayapy -m rig.utils test_plug.TestPlugBasics``
 if __name__ == "__main__":
     sys.exit(0 if run_tests(*sys.argv[1:2]).wasSuccessful() else 1)
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "run_tests",
+]

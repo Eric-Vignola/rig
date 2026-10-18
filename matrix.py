@@ -33,7 +33,7 @@ from rig._internal.math_nodes import (
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
 from rig._internal.operands import operands
-from rig._internal.types import _get_compound, X, Y
+from rig._internal.types import _get_compound, X as _X, Y as _Y
 from rig.functions import rev
 
 
@@ -198,9 +198,9 @@ def fourbyfour(
 @memoize
 def aim(
     aim_vector: Any,
-    up_vector:  Any = Y,
-    aim_axis:   Any = X,
-    up_axis:    Any = Y,
+    up_vector:  Any = _Y,
+    aim_axis:   Any = _X,
+    up_axis:    Any = _Y,
 ) -> Any:
     """``aim(aim, up=Y, aim_axis=X, up_axis=Y)`` -- build an orthonormal
     orientation matrix from an aim vector and an up vector via the Maya

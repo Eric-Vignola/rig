@@ -110,6 +110,8 @@ class _DestroySpec(_AttrSpec):
     ``_is_attribute_spec`` -> ``self.apply(target)`` automatically.
     """
 
+    _FIELDS = ("attr_names", "strict", "silent", "verbose")
+
     def __init__(
         self,
         attr_names: tuple,
@@ -243,3 +245,15 @@ class Note(_AttrSpec):
         self.kargs.pop("h", None)
         if text is not None:
             self.notes = text
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "destroy",
+    "hide",
+    "lock",
+    "Note",
+    "skip",
+    "unhide",
+    "unlock",
+]

@@ -17,8 +17,8 @@ failing on e69bae0 (the negative control).
   plug level too.
 * `TestSetNamespaceRefusal`: the locked-node refusal names set_namespace.
 * `TestHandleOldNames`: the scene handles' old member names name the method now.
-* `TestTokenVerbsArePrivate`: a token's inject / query / contains are private (one way
-  only: the operators).
+* `TestTokenVerbsArePrivate`: re-pinned by user decision 6B (2026-10-17): a token's inject /
+  query / contains are PUBLIC (the tokens' protocol; the operators call them).
 * `TestRemovalDetails`: user decisions "Removal methods details": Tag.remove takes
   members only; DisplayLayer / ShadingEngine refuse the raw set verbs.
 * `TestBareAttributeStrMethods`: a bare Attribute's str methods follow the name rule.
@@ -331,17 +331,25 @@ class TestTokenVerbsArePrivate(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_the_operators_are_the_only_spelling(self):
+        # Re-pinned by user decision 6B (2026-10-17): inject / query / contains
+        # are PUBLIC again, documented as the tokens' protocol; the operators
+        # << / >> / in call them (the id is kept, the class name is historical)
         cube  = Node(cmds.polyCube(name="cube", constructionHistory=False)[0])
         layer = Layer.define("L")
         red   = Blinn.define("red")
-        for token in (-layer, Layer(), -red, Blinn()):
+        for token in (-layer, Layer(), -red, Blinn(), Tag("cap")):
             for verb in ("inject", "query", "contains"):
                 with self.subTest(token=repr(token), verb=verb):
-                    with self.assertRaisesRegex(AttributeError, r"a token has no methods: x << token"):
-                        getattr(token, verb)
-        for verb in ("inject", "query", "contains"):
-            with self.subTest(tag=verb):
-                self.assertIs(hasattr(Tag("cap"), verb), False)
+                    self.assertTrue(callable(getattr(token, verb)))
+        self.assertIs(layer._member().inject(cube), cube)
+        self.assertIs(layer._member().contains(cube), True)
+        self.assertIs(cube in layer, True)
+        (-layer).inject(cube)
+        self.assertIs(cube in layer, False)
+        tag = Tag("cap")
+        self.assertIs(tag.inject(cube), cube)
+        self.assertIs(tag.contains(cube), True)
+        self.assertIs(cube in tag, True)
         cube << layer
         self.assertIn(cube, layer)
         layer.remove(cube)

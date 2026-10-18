@@ -35,3 +35,44 @@ from rig.nodetypes.reference import Reference
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.skincluster import SkinCluster
 from rig.nodetypes.transform import Transform
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "AmbiguousNodeError",
+    "AnimCurve",
+    "AnimCurveTA",
+    "AnimCurveTL",
+    "AnimCurveTT",
+    "AnimCurveTU",
+    "Attribute",
+    "Axis",
+    "BlendShape",
+    "Blinn",
+    "Choice",
+    "DAGNode",
+    "DGNode",
+    "DisplayLayer",
+    "Follicle",
+    "Geometry",
+    "Joint",
+    "Lambert",
+    "Material",
+    "Mesh",
+    "Node",
+    "NodeLookupError",
+    "NodeNotFoundError",
+    "NodeTypeError",
+    "NurbsCurve",
+    "NurbsSurface",
+    "ObjectSet",
+    "OpenPBRSurface",
+    "Phong",
+    "PhongE",
+    "Reference",
+    "ShadingEngine",
+    "SkinCluster",
+    "StandardSurface",
+    "SurfaceShader",
+    "Transform",
+]

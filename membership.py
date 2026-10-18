@@ -965,7 +965,7 @@ class Tag(_MemberSpec):
             )
         self._verb("remove")
         self._refuse_whole(members)
-        return (-self)._run_inject(members)
+        return (-self).inject(members)
 
     def _refuse_whole(self, members: Any) -> None:
         """`remove`'s members-only rule: a node (a whole object) among `members`
@@ -1252,6 +1252,8 @@ class _LayerMember(_MemberSpec):
     _WANT_SHAPES = False
     _EXCLUSIVE   = True
     _HAS_IDS     = False
+
+    _SHOWN_NAME = "layer token"
 
     def __init__(self, layer: DisplayLayer | None = None, remove: bool = False) -> None:
         # the layer node (None: the kind token); its name is read at each use,

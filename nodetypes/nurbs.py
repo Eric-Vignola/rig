@@ -961,3 +961,10 @@ def _create_curve(
             _cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
         raise
     return xform
+
+
+# the public names (user decision 2026-10-17: import leaks hidden)
+__all__ = [
+    "NurbsCurve",
+    "NurbsSurface",
+]

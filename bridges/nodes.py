@@ -57,8 +57,8 @@ available.
 
 from __future__ import annotations
 
-import keyword
-from typing import Any, Callable
+import keyword as _keyword
+from typing import Any as _Any, Callable as _Callable
 
 from maya import cmds as _mc
 from maya.api import OpenMaya as _om
@@ -120,7 +120,7 @@ def _resolve_alias(name: str) -> str:
     """
     if name.endswith("_") and not name.endswith("__"):
         bare = name[:-1]
-        if keyword.iskeyword(bare):
+        if _keyword.iskeyword(bare):
             return bare
     return name
 
@@ -161,10 +161,10 @@ def _enum_kwargs(node_type: str, kwargs: dict) -> dict:
     return resolved
 
 
-def _make_factory(node_type: str) -> Callable:
+def _make_factory(node_type: str) -> _Callable:
     """Build a factory function for ``cmds.createNode(node_type, ...)``."""
 
-    def factory(**kwargs: Any):
+    def factory(**kwargs: _Any):
         # Lazy imports to avoid circular dependency at module load.
         from rig._internal.container import container
 
@@ -224,7 +224,7 @@ def _make_factory(node_type: str) -> Callable:
     return _statement(factory)
 
 
-def __getattr__(name: str) -> Callable:
+def __getattr__(name: str) -> _Callable:
     """PEP 562: lazily build a factory for ``nodes.<name>`` on first access.
 
     Resolves Python-keyword aliases (``and_`` -> ``and`` nodetype) and
@@ -263,7 +263,7 @@ def __dir__() -> list:
     _ensure_node_types_loaded()
     names = []
     for t in _NODE_TYPES:
-        if keyword.iskeyword(t):
+        if _keyword.iskeyword(t):
             names.append(t + "_")
         else:
             names.append(t)
