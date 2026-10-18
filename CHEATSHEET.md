@@ -23,12 +23,12 @@ for the node classes and their typed methods.
 | 1 | [Node](#1-node) | the typed node, `str` / `repr`, hash and equality, `Node(plug)`, `>> None`, `Node.create` / `find_all`, the three verbs (refer / define / create) and the errors, `Node.wrap`, `lift`, a deleted or freed node, `lock()` / `unlock()` / `is_locked()` |
 | 2 | [Plug — read, set, connect](#2-plug--read-set-connect) | attribute access, sibling fallback, `>> None`, `<< value`, `<< plug`, `<< None`, chaining, `node.tx = 5` and Python state, enum field names, `plug.get_node()`, instance paths |
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, a `Typed` slot that holds any data, blendShape targets |
-| 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys |
+| 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys, the one truth value (two plugs), `plug == None` refused |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, a taken name refused, `plug >> container` |
 | 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes, `lock()` / `unlock()` |
 | 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
-| 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, no truth value for an ordering, per-channel fan-out, `condition(...)`, `constant(...)` |
+| 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, per-channel fan-out, `condition(...)`, `constant(...)`, Python's `if` and DSL comparisons (no truth value, no folding) |
 | 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `get_indices()` / `get_count()` / `get_names()`, `>> None`, a lattice `pt[s]` refused |
 | 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container`, locking a container |
 | 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection, a locked container kept |
@@ -815,6 +815,14 @@ plain `list` or `tuple` scan runs `==` against every element it passes, and
 each *other* plug builds an `equal` node: `x in [a, b, x]` builds two. `List`
 containment compares Maya plugs and builds nothing.
 
+That is the one truth value a DSL comparison has: the result of `==` / `!=`
+between two plugs answers "the same Maya plug?" (`False` for `ctrl.tx ==
+drv.tx`), which is what a plain list, a dict and a set ask. A comparison
+with a value (`ctrl.tx == 5`) has none: `if ctrl.tx == 5:` raises a
+`TypeError` that names `.get()`, `condition` and `.equals()` (section 9).
+`plug == None` and `plug != None` raise at once and build nothing: a plug
+is never `None`, test it with `is None`.
+
 ```python
 test = ctrl.tx == 5
 print(repr(test), cmds.nodeType(test.get_node()))                # Plug("equal1.output") equal
@@ -827,6 +835,11 @@ key = hash(ctrl.tx)
 cmds.rename("ctrl", "rig_ctrl")
 print(hash(Node("rig_ctrl").tx) == key, ctrl.tx.equals(Plug("rig_ctrl.tx")))      # True True  -- a rename keeps the key
 cmds.rename("rig_ctrl", "ctrl")
+print(bool(ctrl.tx == drv.tx), bool(ctrl.tx != drv.tx), ctrl.tx in [drv.tx, ctrl.tx])  # False True True  -- two plugs: the same plug?
+try:
+    ctrl.tx == None
+except TypeError as err:
+    print(err)                                                   # ctrl.translateX == None: a plug is never None: test it with `is None`
 ```
 
 A `Plug` is a `str` subclass, so `cmds` accepts it directly and `in` is
@@ -977,7 +990,9 @@ print(repr(nodes[-1]), repr(nodes["ty"][0]))  # Transform("c2") Plug("c0.transla
 
 `>> None` (or `.get()`) stacks the values into one array when the shapes
 agree and falls back to a plain list otherwise. Arithmetic and comparisons
-map element by element.
+map element by element. A comparison gives a List of comparisons, which has
+no truth value, as a numpy array has none: `if nodes.tx > 0:` raises a
+`TypeError`; write `all(nodes.tx.get() > 0)` (section 9).
 
 ```python
 print(nodes.tx >> None, (nodes.t >> None).shape, (nodes.matrix >> None).shape)  # [1. 2. 3.] (3, 3) (3, 4, 4)
@@ -1242,7 +1257,8 @@ An ordering result (`<`, `<=`, `>`, `>=`) has no truth value, as a numpy
 array has none: its value is only known when Maya evaluates it. `if a.tx >
 b.tx:`, `sorted(plugs)`, `min` / `max` and a chained `0 < a.tx < 1` raise a
 `TypeError`. Read the value with `>> None`, pick with `condition`, or order
-plugs by name with `key=str`.
+plugs by name with `key=str`. The same holds for every DSL result but one
+(the end of this section).
 
 ```python
 try:
@@ -1272,6 +1288,61 @@ k = constant(5.0)
 print(repr(k), k >> None, constant(5.0).equals(k))             # Plug("constant1.value") 5.0 True
 print(repr(constant([1, 2, 3])), constant([1, 2, 3]) >> None)  # Plug("constant2.value") [1. 2. 3.]
 print(repr(constant(np.eye(4))))                               # Plug("constant3.outMatrix")
+```
+
+**Python's `if` and DSL comparisons.** Python asks a truth value once, now,
+and runs one branch; a DSL comparison is only known when Maya evaluates it,
+every frame. So only the result of `==` / `!=` between two plugs has a truth
+value: whether they are the same Maya plug (section 4). Everything else
+raises a `TypeError` in `if`, `while`, `and`, `or`, `not`, `assert`, `any()`
+and `all()`, naming the way to an answer:
+
+- an ordering (above);
+- a comparison with a value (`a.tx == 6`, `a.tx != 0`): read the values
+  first (`a.tx.get() == 6`), pick with `condition`, or compare plugs by
+  identity with `.equals()`. On a Maya attr named like a method (`ctl` with
+  a Maya attr `is_locked`), the message names the method too:
+  `ctl.is_locked == True` is a plug, `ctl.is_locked()` is the method;
+- a plug on its own, a typed `Attribute` (a `find_attr` result) and any other
+  DSL result (`a.tx & b.tx`, `condition(...)`): "a plug has no truth value".
+  Read it with `.get()`; test a missing plug with `is None`
+  (`node.find_attr("speed", quiet=True) is None`, not `if
+  node.find_attr(...)`, and `getattr(node, "speed", None) is None`, not `...
+  or 0`);
+- a List of comparisons (`ctls.tx > 0`, `List(a) == List(b)`), as a numpy
+  array: use `all()` / `any()` on the values (`all(ctls.tx.get() > 0)`). Its
+  `&`, `|`, `^`, `~`, slices and copies are Lists of comparisons too;
+  arithmetic, `List(...)`, `len()`, indexing and iteration are as on any
+  List.
+
+The node a refused comparison built stays in the scene, as any comparison's
+does: undo removes it.
+
+rig never rewrites your code, so nothing can turn a Python `if` into a
+network: Python runs one branch, once, while a rig needs both branches alive
+in Maya, picked every frame. That is a `condition` node, one line: `b.ty <<
+condition(a.tx > 0, 1, 2)`. The Script Editor, line by line, and a sourced
+script behave the same.
+
+```python
+from rig import List
+
+ctl = Node.create("transform", name="ctl")
+cmds.addAttr("ctl", longName="is_locked", attributeType="bool")
+ctls = List([a, b])
+said = []
+for test in (lambda: a.tx != 0, lambda: ctl.is_locked == True, lambda: ctl.is_locked, lambda: ctls.tx > 0):
+    try:
+        if test():
+            said.append("then")
+    except TypeError as err:
+        said.append(str(err).split(":")[0])
+print(said[0])   # the truth value of 'not_equal3.outColorR', the output of a comparison with a value (!= 0), is only known when Maya evaluates it
+print(said[1])   # the truth value of 'equal6.output', the output of a comparison with a value (== True), is only known when Maya evaluates it
+print(said[2])   # a plug has no truth value ('ctl.is_locked')
+print(said[3])   # the truth value of a List of comparisons is ambiguous, as a numpy array's is
+print(a.tx.get() != 0, ctl.is_locked(), all(ctls.tx.get() > 0))   # True False True
+print(a.find_attr("speed", quiet=True) is None)                   # True
 ```
 
 ---

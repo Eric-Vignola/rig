@@ -238,8 +238,13 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   it anyway). `Plug.__hash__` is overridden so plugs still work as dict
   keys and set members, keyed by the Maya plug (a rename keeps the key,
   one plug read through two instance paths is one key, and a lookup
-  builds nothing). An ordering result (`<`, `>=`...) has no truth value:
-  `if plug > 0:` and `sorted(plugs)` are a `TypeError`.
+  builds nothing). Only `==` / `!=` between two plugs has a truth value
+  (the same Maya plug?). Every other DSL result raises a `TypeError` in an
+  `if`: an ordering (`if plug > 0:`, `sorted(plugs)`), a comparison with a
+  value (`if plug == 5:`), a plug on its own (`if ctl.is_locked:`; test a
+  missing plug with `is None`) and a List of comparisons (`all(...)` /
+  `any(...)` on the values). `plug == None` raises at once. Python runs one
+  branch, so `b.ty << condition(a.tx > 0, 1, 2)` is how a rig picks.
 - **A plug belongs to the node you read it from.** `node.tx.get_node()
   is node`. An instanced node names its plugs through the path you took
   (`Node("|T2|S").v` is `T2|S.visibility`, and its `worldMatrix` is T2's
@@ -414,13 +419,16 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   them, so `cube.f` / `cube.e` are `Components`; `cube.vtx` is
   `Plug("cubeShape.controlPoints")` and `cube.uv` is `uvpt`. `cube.cv` on
   a mesh is an `AttributeError` (CVs belong to NURBS).
-- **A comparison with a value is always truthy.** `cube.tx == 3` returns
-  the output plug of an `equal` node, and a `Plug` is a truthy object, so
-  `if cube.tx == 3:` always enters the branch and leaves a node behind.
-  Read values first: `(cube.tx >> None) == 3`. An ordering (`cube.tx > 3`)
-  has no truth value at all: `if cube.tx > 3:` is a `TypeError`. Between
-  two plugs `==` is identity: `a.tx == a.tx` is `True` with no node, and
+- **A comparison is not a Python test.** `cube.tx == 3` returns the output
+  plug of an `equal` node, known only when Maya evaluates it, so `if
+  cube.tx == 3:` is a `TypeError` naming the ways to an answer (the node it
+  built stays; undo removes it). Read values first: `cube.tx.get() == 3`,
+  or pick with `condition(...)`. So is an ordering (`if cube.tx > 3:`), a
+  plug on its own (`if ctl.is_locked:` where `is_locked` is a Maya attr:
+  `ctl.is_locked()` is the method) and a List of comparisons. Between two
+  plugs `==` is identity: `a.tx == a.tx` is `True` with no node, and
   `a.tx == b.tx` builds the `equal` node, whose truth value is `False`.
+  rig never rewrites a script, so a Python `if` never becomes a network.
 - **A string is not an operand.** A `Plug` is a `str`, but
   `cube.tx == "ball.ty"`, `cube.wm + "[0]"`, `"%s" % cube.tx` and
   `f.abs("ball.ty")` raise a `TypeError` before they build anything. Write
@@ -582,13 +590,15 @@ cube.f[:3] << Tag("top", at=cube)                    # an editable shadow on the
 print(cube >> Tag("top"))                            # [0 1 2]
 
 cond = cube.tx == 3
-print(cond, bool(cond))                              # equal1.output True
+print(cond, cube.tx.get() == 3)                      # equal1.output False
 print(cube.tx == Node("pCube1").translateX)          # True  -- one Maya plug: a bool, no node
-try:
-    if cube.tx > 3:
-        pass
-except TypeError:
-    print("no truth value")                          # no truth value
+said = []
+for test in (lambda: cube.tx == 3, lambda: cube.tx > 3):
+    try:
+        said.append("then" if test() else "else")
+    except TypeError:
+        said.append("no truth value")
+print(said)                                          # ['no truth value', 'no truth value']
 
 xf = rc.createNode("transform", name="xf")
 with container("c1"):
