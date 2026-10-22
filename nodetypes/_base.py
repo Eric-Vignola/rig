@@ -2396,6 +2396,43 @@ def _choice_output_type(attr: Any, node: Any) -> str | None:
         return None
 
 
+def _make_elements(mplug: OpenMaya.MPlug) -> bool:
+    """For a plug under an array element that a static cache hit answers: make
+    its missing elements as the getAttr -type query it replaces does (that
+    query creates a missing element, and the element stays after an undo), by
+    reading its first leaf from the API, which makes the same elements (round
+    6, S1; runs/r6/impl/s1s4/out/probe_phantom.txt). True if every element
+    exists now; False (the caller queries, as before) if a read cannot make it.
+    Never raises."""
+    try:
+        if _elements_exist(mplug):
+            return True
+        leaf = mplug
+        while leaf.isCompound:
+            leaf = leaf.child(0)
+        if leaf.isArray:
+            return False
+        leaf.asDouble()
+        return _elements_exist(mplug)
+    except Exception:
+        return False
+
+
+def _elements_exist(mplug: OpenMaya.MPlug) -> bool:
+    """True if every array element `mplug` is, or is under, exists."""
+    plug = mplug
+    while True:
+        if plug.isElement:
+            array = plug.array()
+            if plug.logicalIndex() not in array.getExistingArrayAttributeIndices():
+                return False
+            plug = array
+        elif plug.isChild:
+            plug = plug.parent()
+        else:
+            return True
+
+
 def _mplug_static_key(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> tuple | None:
     """The `_STATIC_DATA_TYPE` key of `mplug` (its attribute `mobject`), or None
     if its data type is not a property of its node class (see
@@ -3603,7 +3640,9 @@ class Attribute(str, metaclass=_PlugMeta):
         key = self._static_type_key()
         if key is not None:
             typ = _STATIC_DATA_TYPE.get(key)
-            if typ is not None:
+            # under an element, the query's side effect is kept: it makes a
+            # missing element (`_make_elements`)
+            if typ is not None and (not key[4] or _make_elements(self._mplug)):
                 return typ
         elif owner is not None and _CHOICE is not None:
             # a choice output: its selected input's source type, when that is

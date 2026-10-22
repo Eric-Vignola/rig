@@ -910,6 +910,34 @@ class TestStaticDataTypeCache(MayaTestCase):
         )
         self.assertEqual(self._data_type("mul.input")[1], 1)
 
+    def test_a_cache_hit_still_makes_a_missing_element(self):
+        # round 6, S1: getAttr -type makes a missing element (it stays after an
+        # undo); a cache hit makes the same elements, with no query
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.createNode("plusMinusAverage", name="warm")
+        for name in ("warm.input1D[0]", "warm.input3D[0]", "warm.input3D[0].input3Dx"):
+            self.assertEqual(self._data_type(name)[1], 1)
+        for ref, hit in (("ref", "hit"), ("ref2", "hit2")):
+            for node in (ref, hit):
+                cmds.createNode("plusMinusAverage", name=node)
+            for sub in ("input1D[4]", "input3D[7]", "input3D[9].input3Dx"):
+                with self.subTest(sub=sub, undo=ref == "ref2"):
+                    cmds.undoInfo(openChunk=True)
+                    try:
+                        expected = cmds.getAttr(f"{ref}.{sub}", type=True)
+                        self.assertEqual(self._data_type(f"{hit}.{sub}"), (expected, 0))
+                        cmds.setAttr(f"{ref}.nodeState", 0)
+                        cmds.setAttr(f"{hit}.nodeState", 0)
+                    finally:
+                        cmds.undoInfo(closeChunk=True)
+                    if ref == "ref2":
+                        cmds.undo()
+                    for array in ("input1D", "input3D"):
+                        self.assertEqual(
+                            cmds.getAttr(f"{hit}.{array}", multiIndices=True),
+                            cmds.getAttr(f"{ref}.{array}", multiIndices=True),
+                        )
+
     def test_element_other_kinds_still_query(self):
         # round 6, S1: matrix, generic, typed, message and dynamic kinds under
         # an element are never shared

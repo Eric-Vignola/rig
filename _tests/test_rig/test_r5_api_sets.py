@@ -587,6 +587,10 @@ class TestTheRoute(_SetCase):
         cmds.createNode("plusMinusAverage", name="p")
         counts = []
         for api in (True, False):
+            # re-pinned in place (round 6 S1): the static type cache now answers
+            # for a numeric element, so each route starts from an empty cache to
+            # make its one query
+            _base._STATIC_DATA_TYPE.clear()
             with self.watch(api) as record, mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as get:
                 _statement(lambda: Node("p").input1D[2].set(1.5))
             counts.append((len([c for c in get.call_args_list if c.kwargs.get("type")]), record["routes"]))
