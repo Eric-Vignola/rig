@@ -231,7 +231,10 @@ class TestNodeCreateTypedDispatch(_SceneCase):
                     Node.create(node_type, "grp")
                 self.assertEqual(set(cmds.ls(long=True)), before)
         with self.subTest(node_type="nurbsSurface"):
-            with self.assertRaisesRegex(TypeError, r"^NurbsSurface\.create\(\) takes a BSplinePatchData, got str"):
+            # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
+            with self.assertRaisesRegex(TypeError, r"^NurbsSurface\.create\('grp'\): the name is a keyword: "
+                                                   r"NurbsSurface\.create\(data, name='grp'\) makes one; a positional "
+                                                   r"argument is the BSplinePatchData a surface is built from$"):
                 Node.create("nurbsSurface", "grp")
             self.assertEqual(set(cmds.ls(long=True)), before)
 

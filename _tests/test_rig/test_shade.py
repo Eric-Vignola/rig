@@ -1,4 +1,6 @@
-"""Tests for ``rig.shade`` -- materials through the membership grammar.
+"""Tests for materials through the membership grammar (the shader node classes
+of ``rig.nodetypes``; the module these tests were named for, retired by the user
+decision of 2026-10-22, held them until then).
 
 Round 4b (NC7): a material is a node. ``Blinn("red")`` refers to a blinn
 that exists (NodeNotFoundError before any write when it does not),
@@ -21,12 +23,11 @@ from unittest import mock
 import numpy as np
 from maya import cmds
 import rig.nodetypes as nodetypes
-from rig import Components, container, List, Node, NodeNotFoundError, NodeTypeError, shade, Tag
+from rig import Components, container, Default, List, Node, NodeNotFoundError, NodeTypeError, Tag
 from rig.bridges import nodes as rn
 from rig.nodetypes import ShadingEngine
-from rig.shade import (
+from rig.nodetypes import (
     Blinn,
-    Default,
     Lambert,
     Material,
     OpenPBRSurface,
@@ -592,7 +593,8 @@ class TestMaterialAssign(MayaTestCase):
         self.assertIs(result, self.cube)
         self.assertEqual(_members("redSG"), ["cubeShape"])
         self.assertEqual(_names(Material.of(self.cube)), ['Blinn("red")'])
-        self.assertEqual([str(x) for x in shade.materials(self.cube)], ["red"])
+        # re-pinned (user decision 2026-10-22, the shade module retired): Material.of
+        self.assertEqual([str(x) for x in Material.of(self.cube)], ["red"])
         np.testing.assert_array_equal(self.cube >> self.red, np.arange(6))
         self.cube << -self.red
         self.assertEqual(_members("redSG"), [])
@@ -655,8 +657,9 @@ class TestMaterialAssign(MayaTestCase):
         """Historical id (v2.0.0a2): pinned an attribute plug standing for its
         node on '<<', '>>' and of; it now pins it refused there before any
         write (user decision Q4 option A: the node is the member), while 'in'
-        and shade.materials still read a plug as its node and component plugs
-        stay members."""
+        still reads a plug as its node and component plugs stay members (the
+        retired shade module's materials() read one too; re-pinned, user
+        decision 2026-10-22: Material.of reads the node)."""
         before = set(cmds.ls())
         joint  = Node.create("joint", name="joint1")
         for label, call in (
@@ -681,7 +684,7 @@ class TestMaterialAssign(MayaTestCase):
         self.cube << self.red
         self.assertEqual(_members("redSG"), ["cubeShape"])
         self.assertIn(self.cube.tx, self.red)
-        self.assertEqual([str(x) for x in shade.materials(self.cube.tx)], ["red"])
+        self.assertEqual([str(x) for x in Material.of(self.cube)], ["red"])
         # component plugs keep their meaning
         before = set(cmds.ls())
         with self.assertRaisesRegex(TypeError, "vertices"):
@@ -714,7 +717,7 @@ class TestMaterialRemove(MayaTestCase):
         np.testing.assert_array_equal(self.cube >> self.red, [3, 4, 5])
         self.assertEqual(_names(Material.of(self.cube.f[0])), [])
         # faces in no engine: repair re-homes exactly those
-        fixed = shade.repair(self.cube)
+        fixed = ShadingEngine.repair(self.cube)   # re-pinned (user decision 2026-10-22, the shade module retired)
         self.assertEqual([str(x) for x in fixed], ["cubeShape"])
         self.assertEqual(_members(ISG),           ["cube.f[0:2]"])
         self.assertEqual(_members("redSG"),       ["cube.f[3:5]"])
@@ -764,7 +767,8 @@ class TestMaterialRemove(MayaTestCase):
         self.assertEqual(_members("redSG"), [])
         self.assertEqual(_members("blueSG"), [])
         self.assertEqual(_names(Material.of(self.cube)), [])
-        self.assertEqual(shade.bindings(self.cube), [])
+        # re-pinned (user decision 2026-10-22, the shade module retired): the mesh's own bindings
+        self.assertEqual(Node(self.shape).get_material_bindings(), [])
         result = self.cube << Default()
         self.assertIs(result, self.cube)
         self.assertEqual(_members(ISG), ["cubeShape"])
@@ -978,36 +982,35 @@ class TestMaterialQuery(MayaTestCase):
         self.assertEqual(set(cmds.ls()) - {"other", "otherShape"}, before)
 
     def test_module_readers(self):
+        # re-pinned (user decision 2026-10-22, the shade module retired): its
+        # readers went (decision A): Material.of answers the handles << takes
+        # back, Default() for initialShadingGroup (whose shader is
+        # Default().get_material()); the mesh's get_material_bindings pairs each
+        # shader with its face ids
         self.cube.f[:3] << Blinn.define("red")
         self.cube.f[3]  << Blinn.define("blue")
         self.assertEqual(
-            [str(x) for x in shade.materials(self.cube)],
-            ["standardSurface1", "red", "blue"],
+            [str(x) for x in Material.of(self.cube)],
+            [ISG, "red", "blue"],
         )
-        self.assertIsInstance(shade.materials(self.cube), List)
-        self.assertEqual([str(x) for x in shade.materials(self.cube.f[:2])], ["red"])
-        self.assertEqual([str(x) for x in shade.materials(self.cube.f[[0, 3]])], ["red", "blue"])
-        found = shade.bindings(self.cube)
+        self.assertEqual(str(Default().get_material()), "standardSurface1")
+        self.assertEqual([str(x) for x in Material.of(self.cube.f[:2])], ["red"])
+        # Material.of lists what holds EVERY face of x (all-members semantics)
+        self.assertEqual([str(x) for x in Material.of(self.cube.f[[0, 3]])], [])
+        self.assertEqual([str(x) for x in Material.of(self.cube.f[3])], ["blue"])
+        found = Node(self.shape).get_material_bindings()
         self.assertEqual(
-            # re-pinned (user decision 2026-10-16, a Components is a scene handle): methods
-            sorted((str(m), f.get_indices().tolist()) for m, f in found),
+            sorted((str(m), ids.tolist()) for m, ids in found),
             [("blue", [3]), ("red", [0, 1, 2]), ("standardSurface1", [4, 5])],
         )
-        self.assertTrue(all(isinstance(f, Components) for _, f in found))
-        self.assertEqual(
-            [(str(m), f.get_indices().tolist()) for m, f in shade.bindings(self.cube.f[2:4])],
-            [("red", [2]), ("blue", [3])],
-        )
-        # object level is the whole kind
+        # object level: the one material
         self.cube << Blinn("red")
-        [(material, faces)] = shade.bindings(self.cube)
-        self.assertEqual(material, Blinn("red"))
-        # re-pinned (user decision 2026-10-16, the predicate guard): a method
-        self.assertTrue(faces.is_all())
-        self.assertEqual(faces.get_names(), [f"{self.shape}.f[*]"])
-        self.assertEqual(shade.bindings(_cube("other").f[:2])[0][1].get_indices().tolist(), [0, 1])
-        with self.assertRaisesRegex(TypeError, "per face"):
-            shade.bindings(Node(cmds.sphere(name="srf")[0]))
+        self.assertEqual(Node(self.shape).get_material_bindings(), Blinn("red"))
+        [(material, ids)] = Node(self.shape).get_material_bindings(verbose=True)
+        self.assertEqual((str(material), ids.tolist()), ("red", [0, 1, 2, 3, 4, 5]))
+        # a NURBS surface wears its engine whole
+        srf = Node(cmds.sphere(name="srf")[0])
+        self.assertEqual([str(x) for x in Material.of(srf)], [ISG])
 
 
 # --------------------------------------------------------------------- #
@@ -1034,13 +1037,13 @@ class TestMaterialMethods(MayaTestCase):
             self.assertFalse(cmds.objExists(name))
         self.assertEqual(_engines(self.shape), [])
         self.assertEqual(_names(Material.of(self.cube)), [])
-        fixed = shade.repair()
+        fixed = ShadingEngine.repair()   # re-pinned (user decision 2026-10-22, the shade module retired)
         self.assertIsInstance(fixed, List)
         self.assertEqual(sorted(str(x) for x in fixed),  ["cubeShape", "otherShape"])
         self.assertEqual(_names(Material.of(self.cube)), [DEFAULT])
         self.assertEqual(sorted(_members(ISG)),          ["cubeShape", "other.f[0:5]"])
         # nothing left to repair
-        self.assertEqual([str(x) for x in shade.repair()], [])
+        self.assertEqual([str(x) for x in ShadingEngine.repair()], [])
 
     def test_delete_refuses_default_and_referenced_nodes(self):
         self.cube << Default()
@@ -1086,17 +1089,17 @@ class TestMaterialMethods(MayaTestCase):
         inst      << x
         self.cube << Material()
         self.assertEqual(_members(ISG), [])
-        self.assertEqual([str(x) for x in shade.repair()], ["cube|cubeShape"])
+        self.assertEqual([str(x) for x in ShadingEngine.repair()], ["cube|cubeShape"])
         self.assertEqual(_members(ISG), ["cube|cubeShape"])
         self.assertEqual(_members("xSG"), ["cube1|cubeShape"])
         # the other way round: the scene walk reaches every instance path
         self.cube << x
         inst      << Material()
         self.assertEqual(_members("xSG"), ["cube|cubeShape"])
-        self.assertEqual([str(x) for x in shade.repair()], ["cube1|cubeShape"])
+        self.assertEqual([str(x) for x in ShadingEngine.repair()], ["cube1|cubeShape"])
         self.assertEqual(_members(ISG), ["cube1|cubeShape"])
         self.assertEqual(_members("xSG"), ["cube|cubeShape"])
-        self.assertEqual([str(x) for x in shade.repair()], [])
+        self.assertEqual([str(x) for x in ShadingEngine.repair()], [])
 
     def test_rename_refuses_a_taken_engine_name(self):
         red = Blinn.define("red")
@@ -1151,7 +1154,7 @@ class TestMaterialMethods(MayaTestCase):
             self.cube.f[:3] << blue
             self.cube.f[:3] << red
             self.assertEqual(_members("redSG"), ["cube.f[0:5]"])
-            self.assertIsNone(shade.tidy())
+            self.assertIsNone(ShadingEngine.tidy())
             self.assertEqual(_members("redSG"), ["cubeShape"])
             counts.append(len(cmds.ls(type="groupId")))
         self.assertEqual(counts, [0] * 5)
@@ -1162,7 +1165,7 @@ class TestMaterialMethods(MayaTestCase):
         self.cube.f[:3] << -blue
         cmds.createNode("groupId", name="stray")
         self.assertEqual(len(cmds.ls(type="groupId")), 2)
-        shade.tidy(self.cube)
+        ShadingEngine.tidy(self.cube)
         self.assertEqual(_members("redSG"), ["cube.f[3:5]"])
         self.assertEqual(len(cmds.ls(type="groupId")), 1)
         self.assertFalse(cmds.objExists("stray"))
@@ -1380,7 +1383,7 @@ class TestMaterialContainer(MayaTestCase):
         cmds.delete("look")
         self.assertFalse(cmds.objExists("red"))
         self.assertEqual(_engines(self.shape), [])
-        self.assertEqual([str(x) for x in shade.repair()], ["cubeShape"])
+        self.assertEqual([str(x) for x in ShadingEngine.repair()], ["cubeShape"])
         self.assertEqual(_members(ISG), ["cubeShape"])
 
 
@@ -1508,21 +1511,19 @@ class TestShadeExports(MayaTestCase):
 
     def test_exports(self):
         import rig
+        import rig.membership
 
-        self.assertIs(rig.shade, shade)
-        self.assertIn("shade", rig.__all__)
-        self.assertEqual(
-            sorted(shade.__all__),
-            sorted([
-                "Material", "Lambert", "Blinn", "Phong", "PhongE", "SurfaceShader",
-                "StandardSurface", "OpenPBRSurface", "Default", "Conversion", "convert",
-                "materials", "bindings", "repair", "tidy",
-            ]),
-        )
-        # re-pinned (round 4b NC7): the shader classes are the node classes
+        # re-pinned (user decision 2026-10-22, the shade module retired): the
+        # shader classes and Conversion are rig.nodetypes', Default rig.membership's
+        # (and rig's, beside Tag and Layer), repair / tidy ShadingEngine's
+        self.assertFalse(hasattr(rig, "shade"))
+        self.assertNotIn("shade", rig.__all__)
         for name in ("Material", "Lambert", "Blinn", "Phong", "PhongE", "SurfaceShader",
-                     "StandardSurface", "OpenPBRSurface"):
-            self.assertIs(getattr(shade, name), getattr(nodetypes, name))
-        for name in ("Material", "Blinn", "Lambert", "Default"):
+                     "StandardSurface", "OpenPBRSurface", "Conversion"):
+            self.assertIn(name, nodetypes.__all__)
+        self.assertIs(rig.Default, rig.membership.Default)
+        self.assertIn("Default", rig.membership.__all__)
+        self.assertTrue(callable(ShadingEngine.repair) and callable(ShadingEngine.tidy))
+        for name in ("Material", "Blinn", "Lambert"):
             self.assertFalse(hasattr(rig, name))
         self.assertIn("Material", rig.__doc__)

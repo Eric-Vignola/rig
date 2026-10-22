@@ -20,8 +20,10 @@ Usage::
     sg.get_face_members()                          # [(Mesh("pCubeShape1"), None)]
     sg.get_material()                              # Blinn("myBlinn")
 
-    cube << sg ; cube in sg ; cube >> sg           # the membership grammar (rig.shade)
+    cube << sg ; cube in sg ; cube >> sg           # the membership grammar
     sg.remove(faces)                               # out of sg (green); faces << -sg is the shorthand
+    ShadingEngine.repair()                         # the shapes no engine holds back in initialShadingGroup
+    ShadingEngine.tidy()                           # all-faces memberships collapsed to object level
 
 An engine node on the right of ``<<`` / ``>>`` / ``in`` names exactly that
 engine (``faces << ShadingEngine("altSG")``, while a shader node goes to the
@@ -91,7 +93,7 @@ class ShadingEngine(ObjectSet):
     # ``ShadingEngine(None)`` are refused, naming the kind token of materials
     _KIND_HINT = "Material() takes the members out of every shading engine"
 
-    # --- the membership grammar (rig.shade)
+    # --- the membership grammar (rig._internal.materials)
 
     def _member(self) -> Any:
         """The membership this engine runs on the right of ``<<`` / ``>>``:
@@ -153,6 +155,36 @@ class ShadingEngine(ObjectSet):
             f"<< the material): it moves them from any other engine"
         )
 
+    # --- the scene clean-ups (user decision 2026-10-22: the retired shade
+    # module's repair / tidy)
+
+    @classmethod
+    @_statement
+    def repair(cls, targets: Any = None) -> Any:
+        """Re-homes to ``initialShadingGroup`` (``Default()``) every shape, or
+        face, of ``targets`` (a node, faces, or a list of them; every
+        shadeable shape of the scene, each DAG path, when None) that no
+        shading engine holds, as a deleted network or ``cube << Material()``
+        leaves them (green). Each instance path is judged on its own: an
+        instance whose other path wears a material is still re-homed at object
+        level. Returns the ``List`` of the shapes touched (empty when nothing
+        was green); one undo step."""
+        from rig._internal import materials
+
+        return materials.repair(targets)
+
+    @classmethod
+    @_statement
+    def tidy(cls, targets: Any = None) -> None:
+        """Collapses to object level every mesh of ``targets`` (the whole
+        scene when None) whose faces all sit in one engine as a face component
+        (Maya never collapses that state itself), and deletes the groupId
+        nodes per-face memberships leave behind once no set holds them and no
+        groupParts carries them. Returns None; one undo step."""
+        from rig._internal import materials
+
+        materials.tidy(targets)
+
     def _refuse_default(self, verb: str) -> None:
         """A Maya default engine (``initialShadingGroup``, ``initialParticleSE``)
         takes no delete or rename: TypeError, nothing written (Maya itself
@@ -163,7 +195,7 @@ class ShadingEngine(ObjectSet):
 
     def delete(self, nodes=None, **kwargs) -> None:
         """Deletes this engine (its members are left in no engine: green;
-        ``rig.shade.repair()`` re-homes them), or ``nodes`` when given, as
+        ``ShadingEngine.repair()`` re-homes them), or ``nodes`` when given, as
         :meth:`DGNode.delete` does. Refuses a Maya default engine
         (``Default()``): TypeError."""
         if nodes is None:

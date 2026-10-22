@@ -27,7 +27,7 @@ from maya import cmds
 
 import rig._internal.members as _members
 import rig.membership as _membership
-import rig.shade as _shade
+import rig._internal.materials as _materials
 from rig import Container, Node, Plug, Tag, container
 from rig.bridges import commands as rc
 from rig.bridges import nodes as rn

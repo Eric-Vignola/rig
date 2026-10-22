@@ -410,8 +410,10 @@ try:
             findings.setdefault(where, new[0][:1500])
         del reads[before:]
 
+    # re-pinned (user decision 2026-10-22, the shade module retired: its
+    # repair / tidy are ShadingEngine's methods now)
     MODULES = ["functions", "vector", "matrix", "trigonometry", "interpolate", "euler",
-               "quaternion", "random", "tween", "utils", "membership", "shade"]
+               "quaternion", "random", "tween", "utils", "membership"]
     mods = {m: __import__("rig." + m, fromlist=["x"]) for m in MODULES}
     for label, obj in {**held, **nodes}.items():
         for name in sorted(dir(type(obj))):

@@ -46,11 +46,11 @@ Usage::
     red.delete()                                   # the shader, its engines and their materialInfos
     cmds.delete("blue")                            # the one-node escape
 
-    cube << red ; red.remove(cube) ; cube << Material()    # assign ; remove (shorthand: cube << -red) ; out of every engine (rig.shade)
+    cube << red ; red.remove(cube) ; cube << Material()    # assign ; remove (shorthand: cube << -red) ; out of every engine
     cube in red ; cube >> red ; Blinn.of(cube)     # every face? ; the face ids ; [Blinn("red")] or []
     red.astype(Phong)                              # red is Phong("red") now, in place; another blinn object raises
 
-A shader node is a membership collection (``rig.shade``): on the right of
+A shader node is a membership collection (``rig.membership``): on the right of
 ``<<`` it assigns, ``red.remove(x)`` takes ``x`` out (shorthand: ``x <<
 -red``, where ``-red`` is the removal token), ``Material()`` /
 ``Blinn()`` the kind token (out of every engine on ``<<``, the enumeration on
@@ -62,7 +62,9 @@ node raises from then on.
 
 from __future__ import annotations
 
+import math
 import re
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from maya import cmds
@@ -87,6 +89,7 @@ from rig.nodetypes.dg_node import (
     _define,
     _define_hook,
     _got,
+    _positional_name,
     DGNode,
 )
 from rig.nodetypes.errors import _article, NodeNotFoundError
@@ -104,18 +107,123 @@ _IS_SURFACE: dict = {}
 # A name ``rename`` takes: identifiers joined by namespace or path separators.
 _NAME_RE = re.compile(r"^\|?[A-Za-z_][A-Za-z0-9_]*(?:[:|][A-Za-z_][A-Za-z0-9_]*)*$")
 
-# ``rig.shade._MaterialMember``, the membership a shader or shading engine node
-# runs (its ``<<`` / ``>>`` / ``in`` / ``of``): set when ``rig.shade`` loads (the
-# D31 pattern keeps nodetypes free of imports of the DSL modules)
+# ``rig._internal.materials._MaterialMember``, the membership a shader or shading
+# engine node runs (its ``<<`` / ``>>`` / ``in`` / ``of``): set when that module
+# loads (the D31 pattern keeps nodetypes free of imports of the DSL modules)
 _MATERIAL_MEMBER = None
 
 
 def _material_member() -> Any:
-    """`_MATERIAL_MEMBER`, loading ``rig.shade`` first if it is not yet set
-    (mid-import only)."""
+    """`_MATERIAL_MEMBER`, loading ``rig._internal.materials`` first if it is
+    not yet set (mid-import only)."""
     if _MATERIAL_MEMBER is None:
-        import rig.shade  # noqa: F401 -- sets it
+        import rig._internal.materials  # noqa: F401 -- sets it
     return _MATERIAL_MEMBER
+
+
+# ---------- The conversion report (mat.astype) ------------------------- #
+
+
+@dataclass(frozen=True)
+class Conversion:
+    """What one conversion (``mat.astype(...)``, run by
+    ``rig._internal.shade_convert``) carried, parked and lost; exported from
+    ``rig.nodetypes``. ``bool(report)`` is
+    "something was parked or lost"; ``str(report)`` is the warning text,
+    lines in a fixed order: animation, wire, value, output, meaning, opaque.
+
+    ``lost_values`` are ``(attr, value, locked)``; ``lost_wires``
+    ``(source plug, attr, source node type)``; ``lost_animation``
+    ``(curve, attr)``; ``lost_outputs`` ``(attr, destination plug)``;
+    ``default_shift`` ``(attr, value, source default, target default)`` for a
+    non-default value that crossed between types whose factory defaults
+    differ; ``opaque`` the attributes whose value could not be compared
+    (ramp arrays, typed values); ``parked`` the entries of the lost lists
+    that are parked on the node instead of lost (their names as the lines
+    print them). A dry run returns it; a conversion warns its text and
+    converts the node object in place."""
+
+    name:           str
+    source:         str
+    target:         str
+    carried:        tuple = ()
+    dynamic:        tuple = ()
+    lost_values:    tuple = ()
+    lost_wires:     tuple = ()
+    lost_animation: tuple = ()
+    lost_outputs:   tuple = ()
+    default_shift:  tuple = ()
+    opaque:         tuple = ()
+    parked:         tuple = ()
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.lost_values or self.lost_wires or self.lost_animation
+            or self.lost_outputs or self.opaque or self.parked
+        )
+
+    def __str__(self) -> str:
+        if not self and not self.default_shift:
+            return ""
+        parked = set(self.parked)
+        verb   = "parks" if parked else "loses" if self else "notes"
+        lines  = [f"rig.astype: {self.name!r} {self.source} -> {self.target} {verb}:"]
+        for curve, attr in self.lost_animation:
+            note = (
+                f"restored when {self.name!r} next becomes a type with {attr}"
+                if attr in parked
+                else "curve kept in the scene with its keys, disconnected"
+            )
+            lines.append(f"   animation   {curve} -> {attr}   ({note})")
+        for src, attr, _ in self.lost_wires:
+            line = f"   wire        {src} -> {attr}"
+            if attr not in parked:
+                node  = src.split(".", 1)[0]
+                line += f"   ({node} kept in the scene, disconnected; rig.cleanup() never sweeps it)"
+            lines.append(line)
+        for attr, value, locked in self.lost_values:
+            lines.append(
+                f"   value       {attr} = {_fmt(value)}" + (" [locked]" if locked else "")
+            )
+        for attr, dst in self.lost_outputs:
+            lines.append(f"   output      {attr} -> {dst}   (disconnected)")
+        for attr, value, before, after in self.default_shift:
+            lines.append(
+                f"   meaning     {attr} = {_fmt(value)} carried; default differs "
+                f"({self.source} {_fmt_default(before)} -> {self.target} {_fmt_default(after)})"
+            )
+        for attr in self.opaque:
+            lines.append(f"   opaque      {attr}")
+        return "\n".join(lines)
+
+
+def _fmt(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_fmt(v) for v in value) + "]"
+    return repr(value)
+
+
+def _fmt_default(default: Any) -> str:
+    """A factory default as ``listDefault`` gives it; a uniform compound
+    prints as one number (``0.5`` for ``[0.5, 0.5, 0.5]``)."""
+    if isinstance(default, (list, tuple)) and default and all(
+        _close(v, default[0]) for v in default
+    ):
+        default = default[0]
+    return _fmt(default)
+
+
+def _close(a: Any, b: Any) -> bool:
+    try:
+        return math.isclose(float(a), float(b), rel_tol=1e-6, abs_tol=1e-7)
+    except (TypeError, ValueError):
+        return a == b
 
 
 def _is_surface_shader(node_type: str) -> bool:
@@ -276,7 +384,7 @@ class Material(DGNode):
     make any surface type, a plug-in's included
     (``type="aiStandardSurface"``).
 
-    A shader is a membership collection (``rig.shade``): ``cube << red``
+    A shader is a membership collection (``rig.membership``): ``cube << red``
     assigns, ``cube << -red`` removes, ``cube in red`` asks, ``cube >> red``
     reads the face ids; ``Material()`` / ``Blinn()`` is the kind token (out of
     every engine on ``<<``; ``cube >> Blinn()`` is ``Blinn.of(cube)``).
@@ -397,6 +505,9 @@ class Material(DGNode):
         materialInfo to the scope. The selection never changes.
         """
         call      = f"{cls.__name__}.create()"
+        named     = _positional_name(cls, inputs, extra="" if _own_type(cls) else ", type='blinn'")
+        if named is not None:
+            raise named
         node_type = cls._shader_type(type, "create", call)
         if "shared" in kwargs:
             exact = cls if _own_type(cls) else _NODE_CLASS_DICT.get(node_type)
@@ -526,7 +637,7 @@ class Material(DGNode):
         found = cmds.ls(*args, type=types, **kwargs) if types else []
         return [node for node in map(_cast, found or ()) if cls.is_type(_name_of(node))]
 
-    # --- the membership grammar (rig.shade)
+    # --- the membership grammar (rig._internal.materials)
 
     @classmethod
     def _kind(cls) -> Any:
@@ -596,7 +707,7 @@ class Material(DGNode):
         an undo puts the old node and class back on this object (and its
         plugs), a redo the new ones.
 
-        One undo chunk (``rig.shade.convert``) makes the new node, re-points
+        One undo chunk (``rig.Material.astype``) makes the new node, re-points
         this object and keeps
         the name, the engines, the materialInfo, the ``defaultShaderList1``
         slot, the container, the dynamic attributes and the locks, moves the
@@ -612,10 +723,11 @@ class Material(DGNode):
         write: the generic ``Material`` (it names no type), a type that is no
         surface shader, a Maya default, referenced or ``lockNode``'d
         shader."""
-        from rig.shade import convert
+        from rig._internal import shade_convert
 
-        return convert(
-            self, to, strict=strict, dry_run=dry_run, park=park, update=update, **attrs
+        return shade_convert.convert(
+            self, _target_type(to), strict=strict, dry_run=dry_run, park=park,
+            attrs=attrs, update=update,
         )
 
     # --- the network
@@ -636,7 +748,7 @@ class Material(DGNode):
     def delete(self, nodes: Any = None, **kwargs) -> None:
         """Deletes the shader network: the shader, the engines it feeds and
         their materialInfos, in one undo step (the members are left in no
-        engine: green; ``rig.shade.repair()`` re-homes them). ``nodes``, when
+        engine: green; ``ShadingEngine.repair()`` re-homes them). ``nodes``, when
         given, are deleted as :meth:`DGNode.delete` does. Refuses a Maya
         default (``lambert1``, ``standardSurface1``: TypeError), a
         referenced shader (RuntimeError) or a locked one (InjectionError).
@@ -662,6 +774,25 @@ class Material(DGNode):
                 f"[A-Za-z0-9_] not starting with a digit, joined by ':' or '|'"
             )
         _rename_network(_name_of(self), new_name, lambda: ShadingEngine.for_material(self, create=False))
+
+
+def _target_type(to: Any) -> str:
+    """The node type a conversion target names: a shader class of one type
+    (``Phong``) or a type name (``'phong'``)."""
+    if isinstance(to, type) and issubclass(to, Material):
+        node_type = _own_type(to)
+        if node_type is None:
+            raise TypeError(
+                f"{to.__name__} names no node type; convert to a class of one type "
+                f"(Phong) or a type name ('phong')"
+            )
+        return node_type
+    if isinstance(to, str) and to:
+        return to
+    raise TypeError(
+        f"a conversion target is a shader class (Phong) or a node type name "
+        f"('phong'), not {to!r}"
+    )
 
 
 class Lambert(Material):

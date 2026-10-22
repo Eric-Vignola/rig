@@ -48,7 +48,7 @@ from rig import (
     Tag,
 )
 from rig.nodetypes import DisplayLayer, ShadingEngine
-from rig.shade import Blinn, Material
+from rig.nodetypes import Blinn, Material
 from rig.spec import Float, String
 from rig._internal.members import _MemberSpec
 from rig._tests._base import MayaTestCase

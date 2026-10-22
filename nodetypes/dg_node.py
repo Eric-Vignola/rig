@@ -270,6 +270,45 @@ def _got(inputs: tuple) -> str:
     return ", ".join(repr(x) for x in inputs)
 
 
+def _positional_name(
+    cls:        type,
+    inputs:     tuple,
+    *,
+    needs:      str        = "",
+    extra:      str        = "",
+    built_from: str | None = None,
+    noun:       str        = "node",
+) -> TypeError | None:
+    """The refusal of a name given to ``create`` as its one positional
+    argument (``Transform.create("ctl")``), naming what to write: the keyword
+    form, and ``define`` when the class has one (user decision 2026-10-22).
+    ``needs`` is what the keyword form writes before ``name=`` (``mesh_data,
+    ``), ``extra`` after it (``, type='blinn'``); ``built_from`` the input
+    ``create``'s positionals are (``TransformData``), of a ``noun``. None
+    when ``inputs`` is not one plain str (a ``Plug``, a str too, is an input
+    the class's own checks refuse)."""
+    if len(inputs) != 1 or type(inputs[0]) is not str:
+        return None
+    name   = inputs[0]
+    call   = cls.__name__
+    forms  = f"{call}.create({needs}name={name!r}{extra}) makes one"
+    if not getattr(cls, "_DEFINE_REFUSED", None):
+        forms += f", {call}.define({name!r}{extra}) finds or makes it"
+    takes  = (
+        f"a positional argument is the {built_from} a {noun} is built from"
+        if built_from else "it takes no positional argument"
+    )
+    return TypeError(f"{call}.create({name!r}): the name is a keyword: {forms}; {takes}")
+
+
+def _abstract_create(cls: type) -> TypeError:
+    """The refusal of ``create`` on a class of an abstract Maya type."""
+    return TypeError(
+        f"{cls.__name__}.create() makes no node: {cls.NATIVE_NODE_TYPE!r} is an "
+        f"abstract Maya type; Node.create('<type>', name=...) makes a node of a type"
+    )
+
+
 def _attribute_keywords(node_type: str, kwargs: dict, flags: frozenset, call: str) -> dict:
     """The keywords of `kwargs` that are no flag in `flags`, taken out of it:
     the attributes of a create or define, each checked on `node_type` first (a
@@ -1590,7 +1629,11 @@ class DGNode(Node):
           ``Reference.create(path, namespace)``, ``DisplayLayer.create(*objects)``,
           ``Transform.create(transform_data)`` / ``Joint.create(joint_data)``);
           a class that makes just its node refuses any other before anything
-          is made (``Transform.create("test")``: TypeError). A DG class refuses
+          is made, and a name given there is told what to write
+          (``Transform.create("ctl")``: "Transform.create('ctl'): the name is
+          a keyword: Transform.create(name='ctl') makes one,
+          Transform.define('ctl') finds or makes it; ...", TypeError; user
+          decision 2026-10-22). A DG class refuses
           ``parent=``; a class whose command takes no name refuses ``name=``.
         * Every other keyword is a flag of the class's command when it is in
           ``_CREATE_FLAGS`` (``skipSelect`` / ``ss``; a DAG class's ``p``; a
@@ -1646,13 +1689,15 @@ class DGNode(Node):
             from_data = getattr(cls, "_create_from_data", None)
             if from_data is not None:
                 return from_data(inputs, name=name, parent=parent, container=container, **kwargs)
+            if cls.NATIVE_NODE_TYPE in _ABSTRACT_TYPES:
+                raise _abstract_create(cls)
+            named = _positional_name(cls, inputs)
+            if named is not None:
+                raise named
             keywords = "name= and parent= as keywords" if "parent" in flags else "name= as a keyword"
             raise TypeError(f"{cls.__name__}.create() takes {keywords} (got {_got(inputs)})")
         if cls.NATIVE_NODE_TYPE in _ABSTRACT_TYPES:
-            raise TypeError(
-                f"{cls.__name__}.create() makes no node: {cls.NATIVE_NODE_TYPE!r} is an "
-                f"abstract Maya type; Node.create('<type>', name=...) makes a node of a type"
-            )
+            raise _abstract_create(cls)
         if name is not None:
             if "name" not in flags:
                 raise TypeError(f"{cls.__name__}.create() takes no name=: its command names the node")

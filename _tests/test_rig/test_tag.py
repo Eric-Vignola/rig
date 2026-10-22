@@ -1321,7 +1321,10 @@ class TestTagExports(MayaTestCase):
         self.assertIs(rig.membership, membership)
         for name in ("Tag", "Layer", "Components", "membership"):
             self.assertIn(name, rig.__all__)
-        self.assertEqual(sorted(membership.__all__), ["Components", "Layer", "Tag"])
+        # re-pinned (user decision 2026-10-22, the shade module retired): Default
+        # moved here, beside Tag and Layer
+        self.assertEqual(sorted(membership.__all__), ["Components", "Default", "Layer", "Tag"])
+        self.assertIs(rig.Default, membership.Default)
         self.assertIsInstance(Tag("cap"), Tag)
         self.assertIsInstance(Node,       type)
         self.assertIsInstance(Plug,       type)

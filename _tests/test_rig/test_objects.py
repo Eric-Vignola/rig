@@ -49,7 +49,7 @@ from rig._internal import journal
 from rig._internal import members
 from rig.nodetypes import DisplayLayer, Joint, NodeNotFoundError
 from rig.nodetypes.mesh import ColorSet, Mesh
-from rig.shade import Blinn, Material
+from rig.nodetypes import Blinn, Material
 from rig._tests._base import MayaTestCase
 
 
@@ -340,7 +340,7 @@ def _public_modules():
 class TestPlumbingIsPrivate(MayaTestCase):
     def test_the_membership_kinds_constants(self):
         from rig.membership import _LayerMember
-        from rig.shade import _MaterialMember
+        from rig._internal.materials import _MaterialMember
 
         for cls in (members._MemberSpec, Tag, _LayerMember, _MaterialMember):
             for name in ("KIND", "ACCEPTS", "WANT_SHAPES", "EXCLUSIVE", "HAS_IDS"):

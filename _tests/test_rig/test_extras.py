@@ -28,7 +28,7 @@ from maya import cmds
 from rig import Layer, List, Node, Tag, container
 from rig import random as R
 from rig.nodetypes import Axis, DisplayLayer, Joint, NodeNotFoundError, ShadingEngine, Transform
-from rig.shade import Blinn
+from rig.nodetypes import Blinn
 from rig.spec import Float
 from rig._tests._base import MayaTestCase
 
@@ -287,8 +287,10 @@ class TestCreateFromData(MayaTestCase):
         jdata = Joint.create(name="j").serialize()
         before = _scene()
         rows = (
-            (TypeError, r"^Transform\.create\(\) takes name= and parent= as keywords, or one TransformData "
-                        r"\(got 'src'\)$", lambda: Transform.create("src")),
+            # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
+            (TypeError, r"^Transform\.create\('src'\): the name is a keyword: Transform\.create\(name='src'\) makes one, "
+                        r"Transform\.define\('src'\) finds or makes it; a positional argument is the "
+                        r"TransformData a node is built from$", lambda: Transform.create("src")),
             (TypeError, r"or one TransformData \(got ", lambda: Transform.create(tdata, tdata)),
             (TypeError, r"^Joint\.create\(\): the data describes a transform, which Joint does not make; "
                         r"Transform\.create\(data\) makes it$", lambda: Joint.create(tdata)),

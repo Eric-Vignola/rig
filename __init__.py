@@ -43,7 +43,7 @@ Names on nodes and plugs:
     * Other objects follow what they are: one that points into the scene
       (``Components``, ``ColorSet``, ``rig.container``, the membership
       tokens) reads through methods (``faces.get_indices()``); a value you
-      hold (keys, ``Tag``, a spec, a shade ``Conversion``, an error, cgmath
+      hold (keys, ``Tag``, a spec, an astype ``Conversion``, an error, cgmath
       data) keeps its data as attributes (``Tag("cap").name``).
 
 Operator conventions:
@@ -105,12 +105,18 @@ Operator conventions:
     * A node on the left of a per-node kind means the collection itself:
       ``cube << Tag("x")`` creates the tag, ``cube << -Tag("x")`` deletes
       it; its components (``cube.vtx[:5]``, ``cube.f``) mean membership.
-    * Materials (``rig.shade``) are node classes, and exclusive: ``cube <<
-      Blinn("x")`` moves the LHS into x's shading engine (x must exist;
-      ``Blinn.define("x")`` finds or makes it); ``-mat`` carves the LHS out;
-      ``Material()`` leaves it in no engine (green); ``Default()`` reverts to
-      initialShadingGroup; ``mat.astype(Phong)`` converts ``mat`` in place
-      (its class too) and returns it.
+    * Materials are node classes (``rig.nodetypes``: ``Blinn``, ``Lambert``,
+      ..., the generic ``Material``, ``ShadingEngine``), and exclusive:
+      ``cube << Blinn("x")`` moves the LHS into x's shading engine (x must
+      exist; ``Blinn.define("x")`` finds or makes it); ``-mat`` carves the
+      LHS out; ``Material()`` leaves it in no engine (green); ``Default()``
+      (``rig.membership``) reverts to initialShadingGroup; ``Material.of(x)``
+      lists what holds x; ``mat.astype(Phong)`` converts ``mat`` in place
+      (its class too) and returns it (``Material("x").astype(Phong)`` for a
+      name; ``dry_run=True`` returns the ``rig.nodetypes.Conversion``
+      report); ``ShadingEngine.repair()`` puts green shapes back in
+      initialShadingGroup and ``ShadingEngine.tidy()`` collapses all-faces
+      memberships to object level.
     * ``Layer`` is the display layer node class (``Layer is DisplayLayer``):
       ``Layer("x")`` refers to an existing layer, ``Layer.define("x")`` finds
       or makes it. Layers are exclusive and hold objects only, never
@@ -197,7 +203,6 @@ from rig import (
     membership,
     quaternion,
     random,
-    shade,
     trigonometry,
     tween,
     vector,
@@ -242,7 +247,7 @@ from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
 from rig._internal.undo import undo_chunk
 from rig._internal.run import Run, RunExitError, run
-from rig.membership import Components, Layer, Tag
+from rig.membership import Components, Default, Layer, Tag
 from rig.nodetypes.anim_curve import AnimCurve, AnimCurveTA, AnimCurveTL, AnimCurveTT, AnimCurveTU
 from rig.nodetypes.errors import (
     AmbiguousNodeError,
@@ -296,8 +301,10 @@ __all__ = [
     "NodeNotFoundError",
     "AmbiguousNodeError",
     "NodeTypeError",
-    # Membership (the layer node class, the Tag declaration, the component carrier)
+    # Membership (the layer node class, the Tag declaration, the component carrier,
+    # the default shading engine)
     "Components",
+    "Default",
     "Layer",
     "Tag",
     # Animation curves (the keys value and the curve node classes)
@@ -346,7 +353,6 @@ __all__ = [
     "random",
     # Membership grammar
     "membership",
-    "shade",
     # Cross-type dispatch verbs (Model A)
     "dist",
     "lerp",

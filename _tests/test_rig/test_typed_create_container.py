@@ -37,7 +37,7 @@ from rig.nodetypes import (
 )
 from rig.nodetypes import dg_node as dg_node_module
 from rig.nodetypes.dg_node import _typed_creator
-from rig.shade import Blinn
+from rig.nodetypes import Blinn
 from rig._tests._base import MayaTestCase
 
 

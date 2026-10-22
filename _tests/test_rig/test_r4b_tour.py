@@ -1,11 +1,12 @@
 """Round 4b, step NC9: one name per thing, and the construction rule end to end.
 
-* ``TestNames``: over the public names of ``rig``, ``rig.shade``,
-  ``rig.membership``, ``rig.spec`` and ``rig.nodetypes``, no name is bound both
+* ``TestNames``: over the public names of ``rig``, ``rig.membership``,
+  ``rig.spec`` and ``rig.nodetypes`` (the shade module retired on 2026-10-22),
+  no name is bound both
   to a node class and to a declaration (an attribute or membership spec, a
   class or an instance), none of those names is a ``cgmath.geometry`` public
   name, and a name two modules export is one object (``Layer`` is
-  ``DisplayLayer`` in both, a shader class is one class). The geometry data
+  ``DisplayLayer`` in both, ``Default`` is one function). The geometry data
   specs are ``MeshAttr``, ``NurbsCurveAttr`` and ``NurbsSurfaceAttr``, with no
   alias: ``rig.nodetypes.Mesh`` is the node class, ``rig.MeshAttr`` the
   attribute spec and ``cgmath.geometry.MeshData`` the data.
@@ -53,6 +54,7 @@ import rig._internal.members as _members
 from rig import (
     AmbiguousNodeError,
     container,
+    Default,
     Enum,
     Float,
     Layer,
@@ -64,7 +66,6 @@ from rig import (
     NodeTypeError,
     NurbsCurveAttr,
     NurbsSurfaceAttr,
-    shade,
     Tag,
 )
 from rig.bridges import nodes as rn
@@ -79,13 +80,14 @@ from rig.nodetypes import (
     ShadingEngine,
     Transform,
 )
-from rig.shade import Blinn, Default, Lambert, Material, Phong
+from rig.nodetypes import Blinn, Lambert, Material, Phong
 from rig.spec._base import _AttrSpec, _spec_from_attribute
 from rig._internal.members import _MemberSpec
 from rig._tests._base import MayaTestCase
 
 
-_MODULES = ("rig", "rig.shade", "rig.membership", "rig.spec", "rig.nodetypes")
+# re-pinned (user decision 2026-10-22, the shade module retired)
+_MODULES = ("rig", "rig.membership", "rig.spec", "rig.nodetypes")
 
 
 def _scene():
@@ -181,10 +183,9 @@ class TestNames(_Case):
         # the documented doubles
         self.assertIs(rig.Layer, rig.nodetypes.DisplayLayer)
         self.assertIs(rig.membership.Layer, rig.nodetypes.DisplayLayer)
-        for name in ("Material", "Lambert", "Blinn", "Phong", "PhongE", "SurfaceShader",
-                     "StandardSurface", "OpenPBRSurface"):
-            with self.subTest(name=name):
-                self.assertIs(getattr(rig.shade, name), getattr(rig.nodetypes, name))
+        # re-pinned (user decision 2026-10-22, the shade module retired): Default is
+        # rig's and rig.membership's
+        self.assertIs(rig.Default, rig.membership.Default)
         self.assertIs(rig.Tag, rig.membership.Tag)
         self.assertIs(rig.MeshAttr, rig.spec.MeshAttr)
 
@@ -471,8 +472,10 @@ class TestTourW2(_Case):
         self.assertEqual([m.get_long_name() for m in made], ["|rig|tmp", "|rig|tmp1"])
         # a transform class also takes one TransformData (user decision 2026-10-16,
         # "List casting details + Transform.create(data)"): its refusal names it
-        self.assertRefused(TypeError, r"^Transform\.create\(\) takes name= and parent= as keywords, or one "
-                                      r"TransformData \(got 'tmp'\)$",
+        # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
+        self.assertRefused(TypeError, r"^Transform\.create\('tmp'\): the name is a keyword: Transform\.create\("
+                                      r"name='tmp'\) makes one, Transform\.define\('tmp'\) finds or makes it; a "
+                                      r"positional argument is the TransformData a node is built from$",
                            lambda: Transform.create("tmp"))
         self.assertRefused(NodeNotFoundError, r"^no DAG node named 'nosuch'$",
                            lambda: Transform.define("x", parent="nosuch"))
@@ -917,7 +920,7 @@ class TestTourW7(_Case):
         self.assertEqual(repr(red), 'Phong("red")')
         self.assertTrue(cube in red)
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
-        back = shade.convert(red, Blinn)
+        back = red.astype(Blinn)
         self.assertIs(back, red)
         self.assertEqual((repr(back), cube in back), ('Blinn("red")', True))
         self.assertEqual(back, Blinn("red"))

@@ -48,7 +48,7 @@ from rig.nodetypes import (
 )
 from rig.bridges import commands as rc
 from rig.nodetypes._base import _lookup, set_custom_type
-from rig.shade import Blinn
+from rig.nodetypes import Blinn
 from rig._tests._base import MayaTestCase
 
 

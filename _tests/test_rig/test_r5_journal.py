@@ -266,7 +266,7 @@ class TestBarrierLint(unittest.TestCase):
         self.assertEqual(DUAL & EDIT, frozenset())
         self.assertLessEqual(NON_BARRIER, EDIT)
 
-    def lint(self, source, rel="shade.py"):
+    def lint(self, source, rel="_internal/materials.py"):
         return [msg for _, msg in lint_source(rel, source)]
 
     def test_each_violation_is_seen(self):

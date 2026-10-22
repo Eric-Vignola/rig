@@ -55,8 +55,8 @@ for the node classes and their typed methods.
 | 33 | [Components as members](#33-components-as-members) | the bare handle is the whole kind, `sph.vtx` is all points, no `__len__`, `List` pairing |
 | 34 | [Tag](#34-tag) | one category per tag, `.set` / `.clear` / `.rename` / `.delete`, `in` and queries as arrays, `componentTagExpression`, procedural `polyCube` tags and `at=` |
 | 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
-| 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `shade.repair` / `tidy`, the network verbs |
-| 37 | [Shader conversion](#37-shader-conversion) | `mat.astype(Phong)` (in place), `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, other objects of the old node, undo |
+| 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `ShadingEngine.repair` / `tidy`, the network verbs |
+| 37 | [Shader conversion](#37-shader-conversion) | `mat.astype(Phong)` (in place), `Material(name).astype`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, other objects of the old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_num_keys` / `evaluate` |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
@@ -600,7 +600,7 @@ they are. One that points into the scene reads through methods: a
 (`-layer`, `Blinn()`: a token's name is `str(token)`). A value you hold
 keeps its data as attributes, which never call Maya and read the same until
 you change the object: keys (`keys.values`, read-only arrays), a `Tag`
-(`Tag("cap").name`), a shade `Conversion` (`report.parked`), a spec
+(`Tag("cap").name`), an astype `Conversion` (`report.parked`), a spec
 (`Float("w").kargs`; the shared `lock` / `unlock` / `hide` / `unhide` keep a
 read-only one), an error (`err.door`, read once with the message). The
 process-wide options are read on `ContainerOptions`, which is read-only, and
@@ -2759,9 +2759,9 @@ membership the way `cmds.sets` prints it.
 ```python
 cmds.file(new=True, force=True)
 
-from rig import Components, Tag, Layer, container, lock, shade, NodeNotFoundError
+from rig import Components, Default, Tag, Layer, container, lock, NodeNotFoundError
 from rig.nodetypes import DisplayLayer, ShadingEngine
-from rig.shade import Blinn, Lambert, Phong, Material, Default
+from rig.nodetypes import Blinn, Lambert, Phong, Material
 from rig.bridges import nodes as rn
 
 
@@ -2782,7 +2782,8 @@ print(sph, sph.f.get_count(), sph.vtx)  # sph 400 sphShape.controlPoints
 Three kinds of collection ship: component tags (`Tag`, which live on a
 geometry node), display layers (`Layer`, the `DisplayLayer` node class)
 and materials (`Blinn`, `Lambert`, ..., the shader node classes of
-`rig.shade`; a `ShadingEngine` node names one engine exactly). A layer or a
+`rig.nodetypes`; a `ShadingEngine` node names one engine exactly; `Default()`,
+in `rig.membership`, is `initialShadingGroup`'s). A layer or a
 material is a node, and is named, defined or created like any other
 (section 1): `Blinn("red")` refers to an existing blinn and never creates
 one, `Blinn.define("red", color=...)` finds or makes it,
@@ -3256,7 +3257,7 @@ does it for every engine; `Default()` reverts to `initialShadingGroup` and
 decal.remove(cube.f[[0]])                       # face 0 is green (cube.f[[0]] << -decal is the shorthand)
 print(members("decalSG"), Material.of(cube.f[0]))    # ['cube.f[1:2]'] []
 cube << Material()                              # green everywhere
-print(Material.of(cube), shade.bindings(cube))  # [] []
+print(Material.of(cube))                        # []
 cube << Default()                               # initialShadingGroup again
 print(Material.of(cube))                        # [ShadingEngine("initialShadingGroup")]
 Default().remove(cube)                          # cube << -Default() is the shorthand
@@ -3279,27 +3280,30 @@ cube.f[cube >> red] << decal                    # the ids go back through the ha
 print(members("decalSG"))                       # ['cube.f[0:2]']
 ```
 
-The module readers, the network verbs and the two sweepers:
-`shade.repair()` re-homes anything green to `initialShadingGroup`,
-`shade.tidy()` collapses all-faces memberships to object level and
-deletes orphan groupIds. Both are off the operator path. `.delete()` and
+The readers, the network verbs and the two sweepers: `Material.of(x)` lists
+what holds `x` (`Default()` for the default engine, whose shader is
+`Default().get_material()`), a mesh's `get_material_bindings()` pairs each
+material with its faces, `ShadingEngine.repair()` re-homes anything green
+to `initialShadingGroup`, `ShadingEngine.tidy()` collapses all-faces
+memberships to object level and deletes orphan groupIds. Both are off the operator path. `.delete()` and
 `.rename()` act on the network (the shader, its engines and their
 materialInfo); `cmds.delete("red")` deletes the shader alone.
 
 ```python
-print(shade.materials(cube))                    # List([StandardSurface("standardSurface1"), Lambert("decal")])
-for material, faces in shade.bindings(cube):
-    print(material, faces.get_indices())        # standardSurface1 [3 4 5] / decal [0 1 2]
+print(Material.of(cube))                        # [ShadingEngine("initialShadingGroup"), Lambert("decal")]
+print(Default().get_material())                 # standardSurface1
+for material, faces in cube.get_shape().get_material_bindings():
+    print(material, faces)                      # decal [0 1 2] / standardSurface1 [3 4 5]
 
 decal.delete()                                  # material + engine + materialInfo; members go green
 print(Material.of(cube.f[0]))  # []
-print(shade.repair())          # List([Mesh("cubeShape")]) -- the shapes re-homed
+print(ShadingEngine.repair())  # List([Mesh("cubeShape")]) -- the shapes re-homed
 print(cube >> Default())       # [0 1 2 3 4 5]
 
 cube.f[:3] << red
 cube.f[3:] << red                               # every face, as face components
 print(sorted(members("redSG")))  # ['cube.f[0:5]', 'otherShape']
-shade.tidy()
+ShadingEngine.tidy()
 print(sorted(members("redSG")))  # ['cubeShape', 'otherShape']
 
 red.rename("crimson")            # the engine follows the <mat>SG convention; the node object follows the name
@@ -3328,8 +3332,8 @@ builds `xSG` beside it.
 ## 37. Shader conversion
 
 `mat.astype(Phong)` (a class, or a type name: `"phong"`) converts a
-material to another type **in place** and returns it; `shade.convert(mat,
-Phong)` is the same verb as a function. Maya cannot change a node's type,
+material to another type **in place** and returns it (a material known by
+its name: `Material("red").astype(Phong)`). Maya cannot change a node's type,
 so a new node is built and the old one deleted: the new node keeps the
 name, the engines and their members, the materialInfo, the
 `defaultShaderList1` slot, the container, the dynamic attributes and the
@@ -3373,9 +3377,9 @@ lossy.eccentricity    << 0.66 << lock                    # a blinn-only value
 lossy.specularRollOff << rn.ramp(name="ramp1").outAlpha  # a wire into a blinn-only attribute
 lossy.diffuse         << 0.33                            # shared: carried
 
-report = shade.convert(lossy, Phong, dry_run=True)
+report = lossy.astype(Phong, dry_run=True)
 print(str(report))
-# rig.shade: 'lossy' blinn -> phong parks:
+# rig.astype: 'lossy' blinn -> phong parks:
 #    wire        ramp1.outAlpha -> specularRollOff
 #    value       eccentricity = 0.66 [locked]
 print(report.parked, "diffuse" in report.carried)          # ('eccentricity', 'specularRollOff') True
@@ -3391,20 +3395,20 @@ scene, values lost); `strict=True` refuses anything lossy with the same
 text and writes nothing.
 
 ```python
-shade.convert(lossy, Blinn)                     # no warning
+lossy.astype(Blinn)                             # no warning
 print(repr(lossy), round(cmds.getAttr("lossy.eccentricity"), 2))                                            # Blinn("lossy") 0.66
 print(cmds.listConnections("lossy.specularRollOff", plugs=True), cmds.listAttr("lossy", userDefined=True))  # ['ramp1.outAlpha'] None
 
 try:
     lossy.astype(Phong, strict=True)
 except ValueError as err:
-    print(str(err).splitlines()[0], cmds.nodeType("lossy"))   # rig.shade: 'lossy' blinn -> phong parks: blinn
+    print(str(err).splitlines()[0], cmds.nodeType("lossy"))   # rig.astype: 'lossy' blinn -> phong parks: blinn
 
 drop = Blinn.define("drop")
 cube              << drop
 drop.eccentricity << 0.5
 drop.astype(Phong, park=False)
-# Warning: rig.shade: 'drop' blinn -> phong loses:
+# Warning: rig.astype: 'drop' blinn -> phong loses:
 #    value       eccentricity = 0.5
 print(cmds.listAttr("drop", userDefined=True))  # None
 ```
@@ -3419,7 +3423,7 @@ for bad in (
     lambda: lossy.astype("ramp"),                    # TypeError: 'ramp' is a texture, not a surface shader
     lambda: lossy.astype("aiStandardSurface"),       # ValueError: not a registered surface shader (load its plugin)
     lambda: Lambert("lambert1").astype(Phong),       # RuntimeError: a Maya default node
-    lambda: shade.convert(Default(), Phong),         # NodeTypeError: an engine is no surface shader
+    lambda: Material("initialShadingGroup"),         # NodeTypeError: an engine is no surface shader
     lambda: Phong(lossy),                            # NodeTypeError: a class call refers; astype converts
 ):
     try:
@@ -3437,7 +3441,7 @@ again.
 cmds.undoInfo(state=True, infinity=True)
 uuid = lossy.get_uuid()
 lossy.astype(Phong)                              # warns: parks again
-print(cmds.undoInfo(query=True, undoName=True))  # rig.shade.convert
+print(cmds.undoInfo(query=True, undoName=True))  # rig.Material.astype
 print(repr(lossy), round(lossy.diffuse >> None, 2))   # Phong("lossy") 0.33
 
 cmds.undo()
@@ -3460,7 +3464,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 |---|---|
 | a DSL statement (`<<`, an operator network, a `List` broadcast, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | its connects and plain value sets together are **one** step, made through the API and rig's plug-in command; every Maya command it runs (`createNode`, a container's member add, a lock or keyable flag, `addAttr`, a set the API does not take) is a step of its own, so an operator network is still several. A set or a connect that is the whole statement is one step either way. The hidden `__rig__` tag of a node rig creates is no step of its own: undoing the creation removes it with the node |
 | a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
-| a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.shade.convert` |
+| a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.Material.astype` |
 | `node.lock()`, `plug.lock()` and their `unlock()` (`x << lock`) | one, Maya's own (`lockNode`, `setAttr -lock`); **none** when the object already is in that state |
 | `slot << None` on a `Typed` slot (any typed attribute that holds any data) that held a matrix, a double3, geometry ... | one, named `rig.replace`: the disconnect and the drop of the data its input left (an API edit, journaled with the statement); one undo brings back the connection and the data together. A slot that held a number or nothing has no drop |
 | a statement that removes a plug's input and then writes it: a value over a keyed, constrained or wired plug, a rewire (`x << b` over `x << a`), a child of a compound connected whole (its input split per child), a plug or `None` on a compound whose children have inputs of their own (one driver per channel: those go too) | one, named `rig.replace`: the disconnects, the connects and the sets of the whole statement (a `List` broadcast included); its undo brings back a double drive that was there |

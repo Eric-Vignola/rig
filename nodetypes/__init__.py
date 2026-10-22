@@ -20,6 +20,7 @@ from rig.nodetypes.geometry import Geometry
 from rig.nodetypes.joint import Joint
 from rig.nodetypes.material_node import (
     Blinn,
+    Conversion,
     Lambert,
     Material,
     OpenPBRSurface,
@@ -50,6 +51,7 @@ __all__ = [
     "BlendShape",
     "Blinn",
     "Choice",
+    "Conversion",
     "DAGNode",
     "DGNode",
     "DisplayLayer",

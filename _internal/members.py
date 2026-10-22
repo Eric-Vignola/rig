@@ -1034,7 +1034,7 @@ def _spec_repr(spec: Any) -> str:
 class _MemberSpec(_Declared, metaclass=_SpecMeta):
     """Protocol base of the collection spec ``Tag`` and of the private member
     of a membership node class (a display layer's ``_LayerMember``, a shader's
-    or shading engine's ``rig.shade._MaterialMember``).
+    or shading engine's ``rig._internal.materials._MaterialMember``).
 
     ``Spec('x')`` names a collection; ``Spec()`` means no particular one (the
     kind token): on ``<<`` it is the purge (every collection of this kind,

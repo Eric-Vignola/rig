@@ -16,6 +16,7 @@ from rig.nodetypes._base import _name_of
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
+from rig.nodetypes.dg_node import _positional_name
 from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal
 from rig.nodetypes.plugins import _run_undoable
 
@@ -204,6 +205,11 @@ class NurbsCurve(Geometry):
         made; an error after the transform is made deletes it again before it
         propagates.
         """
+        named = _positional_name(
+            cls, (points,), needs="points, ", built_from="points or BSplineData", noun="curve"
+        )
+        if named is not None:
+            raise named
         with _undo_chunk("rig.NurbsCurve.create"):
             return super().create(
                 points, degree=degree, kv=kv, name=name, container=container, **kwargs
@@ -406,6 +412,11 @@ class NurbsSurface(Geometry):
         TypeError or ValueError before anything is made; an error after the
         transform is made deletes it again before it propagates.
         """
+        named = _positional_name(
+            cls, (data,), needs="data, ", built_from="BSplinePatchData", noun="surface"
+        )
+        if named is not None:
+            raise named
         with _undo_chunk("rig.NurbsSurface.create"):
             return super().create(data, name=name, container=container, **kwargs)
 

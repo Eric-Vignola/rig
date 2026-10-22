@@ -351,7 +351,7 @@ planes = cmds.ls(type="polyPlane")
 print([(round(cmds.getAttr(p + ".width"), 2), round(cmds.getAttr(p + ".height"), 2)) for p in planes])
 # [(7.26, 4.84), (10.89, 14.51), (21.77, 16.31), (29.03, 29.01), (36.29, 25.28)]
 
-from rig.shade import Material
+from rig.nodetypes import Material
 print(setup.shapes[0] >> Material(), cmds.ls(type="container"))   # [Lambert("sticker_layer_0")] ['sticker_layer_container']
 ```
 
@@ -434,7 +434,7 @@ Plug("defaultShaderList1.s") << material.msg
 rc.sets(shape, e=True, forceElement=sg)
 ```
 
-Now, with `rig.shade`:
+Now, with the shader node classes of `rig.nodetypes`:
 
 <!-- notest -->
 ```python

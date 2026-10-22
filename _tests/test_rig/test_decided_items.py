@@ -9,7 +9,7 @@ a350721 (the negative control):
   only); rig's membership runs the private helper.
 * `TestErrorFields`: NodeNotFoundError.uuid is by_uuid, node_class is _node_class.
 * `TestTypedDataNames`: TYPED_DATA_NAMES is a read-only mapping.
-* `TestImportLeaks`: rig.shade.shade_convert, rig.matrix.X / Y and the bridges' imports
+* `TestImportLeaks`: rig.nodetypes.material_node.shade_convert, rig.matrix.X / Y and the bridges' imports
   are gone; every public module declares __all__, so `from m import *` gives no
   typing name, no module and no import of another module.
 """
@@ -27,7 +27,7 @@ from rig._internal.node_ops import NodeOp, _ALL_NODEOP_CACHES
 from rig._internal.plug import InjectionError
 from rig.nodetypes import Joint, ShadingEngine
 from rig.nodetypes.errors import AmbiguousNodeError, NodeLookupError, NodeNotFoundError, NodeTypeError
-from rig.shade import Blinn
+from rig.nodetypes import Blinn
 from rig.spec import Float, destroy, lock
 from rig._tests._base import MayaTestCase
 
@@ -169,7 +169,8 @@ class TestTypedDataNames(MayaTestCase):
 
 _PUBLIC = (
     "rig.euler", "rig.functions", "rig.interpolate", "rig.matrix", "rig.membership",
-    "rig.quaternion", "rig.random", "rig.shade", "rig.trigonometry", "rig.tween", "rig.utils",
+    # re-pinned (user decision 2026-10-22, the shade module retired)
+    "rig.quaternion", "rig.random", "rig.trigonometry", "rig.tween", "rig.utils",
     "rig.vector", "rig.nodetypes", "rig.nodetypes.anim_curve", "rig.nodetypes.blendshape",
     "rig.nodetypes.choice", "rig.nodetypes.dag_node", "rig.nodetypes.deformer",
     "rig.nodetypes.dg_node", "rig.nodetypes.display_layer", "rig.nodetypes.errors",
@@ -187,9 +188,11 @@ class TestImportLeaks(MayaTestCase):
         import rig.bridges.commands as rc
         import rig.bridges.nodes as rn
         import rig.matrix
-        import rig.shade
+        import rig.nodetypes.material_node
 
-        self.assertFalse(hasattr(rig.shade, "shade_convert"))
+        # re-pinned (user decision 2026-10-22, the shade module retired): the
+        # converter stays private to astype's module
+        self.assertFalse(hasattr(rig.nodetypes.material_node, "shade_convert"))
         for name in ("X", "Y"):
             self.assertNotIn(name, vars(rig.matrix))
         for module, names in ((rc, ("Any", "Callable", "Node", "Attribute")),

@@ -22,6 +22,12 @@ exists (never creates it), ``Layer.define('x', ...)`` finds or makes it and
 side (its ``drawOverride`` input), never by enumerating layers, and a layer
 never joins the active rig container.
 
+Materials are node classes too (``rig.nodetypes``: ``Blinn``, ``Lambert``,
+..., ``Material`` the generic one, ``ShadingEngine`` one engine exactly):
+``cube << Blinn("red")`` moves cube into red's engine (exclusive),
+``Material.of(cube)`` lists what holds it, and :func:`Default` is
+``initialShadingGroup``'s engine (``cube << Default()`` reverts to it).
+
 The membership verbs are one grammar for every kind: ``<<`` adds,
 ``c.remove(x)`` removes (``x << -c`` is its shorthand; the kind token
 ``Tag()`` / ``Layer()`` purges), ``in`` / ``not in``
@@ -34,7 +40,8 @@ queries: faces in a vertex tag are simply not in it.
 
 Usage::
 
-    from rig import Node, List, Tag, Layer
+    from rig import Default, Layer, List, Node, Tag
+    from rig.nodetypes import Blinn, Material
 
     sph = Node("pSphere1")
     sph.vtx[:8] << Tag("cap")             # create 'cap' WITH vtx[0:7] at the injection node
@@ -80,6 +87,10 @@ Usage::
     geo.f[:3] << ref                      # TypeError: layers hold objects (Maya would store the shape)
     geo.f[:3] in ref                      # False: a query answers by contents (no layer holds faces)
     geo >> ref                            # TypeError: a layer has no ids; ask with geo in ref
+
+    cube << Blinn.define("red")           # materials: exclusive, faces or whole objects
+    cube.f[:2] << Default()               # initialShadingGroup again for faces 0-1
+    Material.of(cube)                     # what holds it: Blinn("red") and Default()
 """
 
 from __future__ import annotations
@@ -119,7 +130,7 @@ from rig._internal.plug import Plug
 from rig._internal.undo import _undo_chunk
 
 
-__all__ = ["Components", "Layer", "Tag"]
+__all__ = ["Components", "Default", "Layer", "Tag"]
 
 
 # ---------- Tables -------------------------------------------------------- #
@@ -1380,9 +1391,29 @@ class _LayerMember(_MemberSpec):
 # ``rig.Layer``: the display layer node class itself (``Layer is DisplayLayer``)
 Layer = DisplayLayer
 
+
+def Default(*args: Any, **kwargs: Any) -> ShadingEngine:
+    """``initialShadingGroup``, the default shading engine, as its node
+    (``ShadingEngine("initialShadingGroup")``): ``cube << Default()`` reverts to
+    it, ``cube << -Default()`` leaves it (green), ``cube.f[:6] >> Default()``
+    reads its faces, ``Material.of(x)`` lists it for the faces it holds (its
+    shader is ``Default().get_material()``). It takes no name: ``Default("x")``
+    is a ``TypeError``."""
+    if args or kwargs:
+        raise TypeError(
+            "Default() takes no name: it is initialShadingGroup. Material() removes "
+            "the members from every engine; Blinn('x') refers to a blinn"
+        )
+    return ShadingEngine._wrap(ShadingEngine.DEFAULT)
+
+
 # the membership right-hand sides of ``<<`` / ``>>``: the collection specs and
 # tokens, and the membership node classes (layers; shaders and shading engines,
-# whose membership ``rig.shade`` holds) (D31: ``_internal.types`` and
+# whose membership ``rig._internal.materials`` holds) (D31: ``_internal.types`` and
 # ``nodetypes`` cannot import this module; it binds them when it loads)
 _types._MEMBERSHIP           = (_MemberSpec, DisplayLayer, Material, ShadingEngine)
 _display_layer._LAYER_MEMBER = _LayerMember
+
+# the materials' membership binds itself into ``nodetypes.material_node`` when
+# it loads (the retired shade module loaded it before 2026-10-22)
+from rig._internal import materials as _materials  # noqa: E402,F401

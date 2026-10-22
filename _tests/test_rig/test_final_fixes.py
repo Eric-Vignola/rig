@@ -49,7 +49,7 @@ from rig.nodetypes import _base
 from rig.nodetypes import DisplayLayer, ObjectSet, ShadingEngine, Transform
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes._base import Attribute
-from rig.shade import Blinn
+from rig.nodetypes import Blinn
 from rig._tests._base import MayaTestCase
 
 

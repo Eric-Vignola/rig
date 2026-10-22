@@ -50,7 +50,7 @@ from rig._internal import list as list_module
 from rig.bridges import commands as rc
 from rig.nodetypes import _base
 from rig.nodetypes._base import _name_of
-from rig.shade import Blinn
+from rig.nodetypes import Blinn
 from rig.spec import Float
 from rig._tests._base import MayaTestCase
 

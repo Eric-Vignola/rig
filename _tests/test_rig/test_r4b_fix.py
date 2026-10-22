@@ -642,7 +642,7 @@ class TestMaterialEngines(_Case):
 
     def test_every_answer_round_trips(self):
         from rig.nodetypes import ShadingEngine
-        from rig.shade import Default  # noqa: F401
+        from rig import Default
 
         expected = {0: [self.red], 1: [ShadingEngine("altSG")], 2: [ShadingEngine("rampSG")],
                     3: [ShadingEngine("emptySG")]}
@@ -693,7 +693,7 @@ class TestMaterialEngines(_Case):
 
     def test_the_default_engine_with_relative_names(self):
         from rig.nodetypes import ShadingEngine, StandardSurface
-        from rig.shade import Default
+        from rig import Default
 
         other = Node(cmds.polyCube(name="other", constructionHistory=False)[0])
         cmds.namespace(add="lib")
@@ -934,7 +934,7 @@ class TestDefaultRefusals(_Case):
 
     def test_a_maya_default_refuses_with_a_type_error(self):
         from rig.nodetypes import Lambert, StandardSurface
-        from rig.shade import Default
+        from rig import Default
 
         for call in (
             lambda: Lambert("lambert1").delete(), lambda: Lambert("lambert1").rename("x"),

@@ -749,7 +749,7 @@ class TestEnumNamesReview(MayaTestCase):
         # go to Layer.define, which reads the enum names before the layer is
         # made (and, with update=True, before a found layer is edited)
         from rig import Layer
-        from rig.shade import Lambert
+        from rig.nodetypes import Lambert
 
         cube = Node(cmds.polyCube(name="ru_cube", ch=False)[0])
         layers = set(cmds.ls(type="displayLayer"))

@@ -36,6 +36,7 @@ from rig.nodetypes.dg_node import (
     _attribute_keywords,
     _define,
     _DEFINE_OWN,
+    _positional_name,
     DGNode,
 )
 from rig.nodetypes.errors import _article
@@ -168,6 +169,9 @@ class AnimCurve(DGNode):
         undo plug-in, keys raise RuntimeError before anything is made."""
         if cls is AnimCurve:
             raise cls._abstract("create")
+        named = _positional_name(cls, (keys,), built_from="keys", noun="curve")
+        if named is not None:
+            raise named
         if parent is not None:
             raise TypeError(f"{cls.__name__}.create() takes no parent=: an animation curve is a DG node")
         call    = f"{cls.__name__}.create()"

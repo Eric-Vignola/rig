@@ -1,7 +1,8 @@
 """
-Shader conversion: the engine behind ``mat.astype(Phong)`` and
-``shade.convert(mat, "phong")``, which convert the node object IN PLACE
-(user decision 2026-10-22, option A) and return it.
+Shader conversion: the engine behind ``mat.astype(Phong)`` (or
+``mat.astype("phong")``), which converts the node object IN PLACE (user
+decision 2026-10-22, option A) and returns it. Its report, :class:`Conversion`,
+lives in ``rig.nodetypes.material_node`` (exported from ``rig.nodetypes``).
 
 Maya has no node-type mutation. Its own Attribute Editor "Type" dropdown is
 ``createNode`` + MEL ``replaceNode`` + ``delete``: a brand-new node, the
@@ -12,7 +13,7 @@ and locks gone, and -- because ``cmds.delete`` cascades into every
 textures, utilities and animCurves behind those dropped wires destroyed.
 
 This engine is the same kind of replacement done carefully, in one undo
-chunk named ``rig.shade.convert``:
+chunk named ``rig.Material.astype``:
 
 * SCAN (pure reads): every attribute of the old node is classified against
   the target TYPE (``attributeQuery(type=...)``, no scratch node) -- present
@@ -72,7 +73,6 @@ from __future__ import annotations
 
 import gc
 import logging
-import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -86,13 +86,13 @@ from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
 from rig.nodetypes import plugins as _plugins
 from rig.nodetypes._base import _cast, _cast_node, _check_attrs, _refuse_locked_node, _name_of
-from rig.nodetypes.material_node import _gate_type, _leaf
+from rig.nodetypes.material_node import _close, _gate_type, _leaf, Conversion
 from rig.spec._base import _spec_from_attribute
 
 
 LOGGER = logging.getLogger(__name__)
 
-CHUNK  = "rig.shade.convert"
+CHUNK  = "rig.Material.astype"
 SUFFIX = "__rigconvert"
 
 # Housekeeping attributes that are never data (``message`` moves on its own).
@@ -114,102 +114,6 @@ _SCALARS = frozenset({
 
 _PARKED_RE = re.compile(r"__(.+)__")
 _DSL1_RE   = re.compile(r"defaultShaderList1\.shaders\[(\d+)\]")
-
-
-# ---------- The report ---------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class Conversion:
-    """What one conversion carried, parked and lost. ``bool(report)`` is
-    "something was parked or lost"; ``str(report)`` is the warning text,
-    lines in a fixed order: animation, wire, value, output, meaning, opaque.
-
-    ``lost_values`` are ``(attr, value, locked)``; ``lost_wires``
-    ``(source plug, attr, source node type)``; ``lost_animation``
-    ``(curve, attr)``; ``lost_outputs`` ``(attr, destination plug)``;
-    ``default_shift`` ``(attr, value, source default, target default)`` for a
-    non-default value that crossed between types whose factory defaults
-    differ; ``opaque`` the attributes whose value could not be compared
-    (ramp arrays, typed values); ``parked`` the entries of the lost lists
-    that are parked on the node instead of lost (their names as the lines
-    print them). A dry run returns it; a conversion warns its text and
-    converts the node object in place."""
-
-    name:           str
-    source:         str
-    target:         str
-    carried:        tuple = ()
-    dynamic:        tuple = ()
-    lost_values:    tuple = ()
-    lost_wires:     tuple = ()
-    lost_animation: tuple = ()
-    lost_outputs:   tuple = ()
-    default_shift:  tuple = ()
-    opaque:         tuple = ()
-    parked:         tuple = ()
-
-    def __bool__(self) -> bool:
-        return bool(
-            self.lost_values or self.lost_wires or self.lost_animation
-            or self.lost_outputs or self.opaque or self.parked
-        )
-
-    def __str__(self) -> str:
-        if not self and not self.default_shift:
-            return ""
-        parked = set(self.parked)
-        verb   = "parks" if parked else "loses" if self else "notes"
-        lines  = [f"rig.shade: {self.name!r} {self.source} -> {self.target} {verb}:"]
-        for curve, attr in self.lost_animation:
-            note = (
-                f"restored when {self.name!r} next becomes a type with {attr}"
-                if attr in parked
-                else "curve kept in the scene with its keys, disconnected"
-            )
-            lines.append(f"   animation   {curve} -> {attr}   ({note})")
-        for src, attr, _ in self.lost_wires:
-            line = f"   wire        {src} -> {attr}"
-            if attr not in parked:
-                node  = src.split(".", 1)[0]
-                line += f"   ({node} kept in the scene, disconnected; rig.cleanup() never sweeps it)"
-            lines.append(line)
-        for attr, value, locked in self.lost_values:
-            lines.append(
-                f"   value       {attr} = {_fmt(value)}" + (" [locked]" if locked else "")
-            )
-        for attr, dst in self.lost_outputs:
-            lines.append(f"   output      {attr} -> {dst}   (disconnected)")
-        for attr, value, before, after in self.default_shift:
-            lines.append(
-                f"   meaning     {attr} = {_fmt(value)} carried; default differs "
-                f"({self.source} {_fmt_default(before)} -> {self.target} {_fmt_default(after)})"
-            )
-        for attr in self.opaque:
-            lines.append(f"   opaque      {attr}")
-        return "\n".join(lines)
-
-
-def _fmt(value: Any) -> str:
-    if isinstance(value, bool):
-        return str(value)
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_fmt(v) for v in value) + "]"
-    return repr(value)
-
-
-def _fmt_default(default: Any) -> str:
-    """A factory default as ``listDefault`` gives it; a uniform compound
-    prints as one number (``0.5`` for ``[0.5, 0.5, 0.5]``)."""
-    if isinstance(default, (list, tuple)) and default and all(
-        _close(v, default[0]) for v in default
-    ):
-        default = default[0]
-    return _fmt(default)
 
 
 # ---------- Reads --------------------------------------------------------- #
@@ -305,13 +209,6 @@ def _normalise(value: Any) -> Any:
     if isinstance(value, list):
         return tuple(value)
     return value
-
-
-def _close(a: Any, b: Any) -> bool:
-    try:
-        return math.isclose(float(a), float(b), rel_tol=1e-6, abs_tol=1e-7)
-    except (TypeError, ValueError):
-        return a == b
 
 
 def _differs(value: Any, default: list) -> bool | None:
