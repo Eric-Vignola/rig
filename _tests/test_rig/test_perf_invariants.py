@@ -2560,6 +2560,184 @@ def _fn_set_full_name(plug):
     return f"{name}.{attr}"
 
 
+class TestChoiceOutputFromSource(MayaTestCase):
+    """Round 6, S4: a Choice's output takes its selected input's source type
+    when that source is a static cache hit (exact class, rig's own hook), with
+    the answer getAttr and the hook give; every other case queries."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        _base._STATIC_DATA_TYPE.clear()
+        self._registered = dict(_base._NODE_CLASS_DICT)
+
+    def tearDown(self):
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
+        super().tearDown()
+
+    def _data_type(self, plug):
+        """The data type outcome of `plug` and the type queries it made (not
+        the ones a selector read makes)."""
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            outcome = _data_type_outcome(plug)
+        return outcome, len(_attr_type_queries(probe))
+
+    def _legacy(self, name):
+        """The outcome with the rule off: getAttr, then the hook."""
+        with mock.patch.object(_base, "_CHOICE", None):
+            return _data_type_outcome(Node(name.split(".")[0]).output)
+
+    def _sources(self):
+        src = Node.create("transform", name="src")
+        cmds.addAttr("src", ln="dynDouble", at="double")
+        cmds.addAttr("src", ln="dynString", dt="string")
+        for node_type, name in (
+            ("multiplyDivide", "md"),
+            ("condition", "cond"),
+            ("plusMinusAverage", "pma"),
+            ("decomposeMatrix", "dm"),
+            ("multiply", "mul"),
+            ("sum", "sm"),
+            ("choice", "chain"),
+        ):
+            cmds.createNode(node_type, name=name)
+        cmds.connectAttr("src.translate", "chain.input[0]")
+        cmds.polyCube(name="cube")
+        cmds.circle(name="crv")
+        return src, (
+            "src.translate", "src.translateX", "src.rotate", "src.rotateX",
+            "src.scale", "src.visibility", "src.rotateOrder", "src.message",
+            "src.worldMatrix[0]", "src.matrix", "md.output", "md.outputX",
+            "md.operation", "cond.outColor", "cond.outColorR", "pma.output3D",
+            "pma.output1D", "pma.output2D", "dm.outputScale", "dm.outputQuat",
+            "dm.outputTranslateX", "mul.output", "sm.output", "time1.outTime",
+            "src.dynDouble", "src.dynString", "cubeShape.outMesh",
+            "crvShape.worldSpace[0]", "chain.output",
+        )
+
+    def test_source_kind_matrix_matches_getattr_and_hook(self):
+        _, sources = self._sources()
+        cmds.createNode("multiplyDivide", name="drv")
+        for index, source in enumerate(sources):
+            for driven in (False, True):
+                with self.subTest(source=source, driven=driven):
+                    name = f"pick{index}{'d' if driven else 's'}"
+                    Node.create("choice", name=name)
+                    cmds.connectAttr(source, f"{name}.input[0]")
+                    cmds.connectAttr("md.outputY", f"{name}.input[1]")
+                    cmds.connectAttr("src.scale", f"{name}.input[2]")
+                    if driven:
+                        cmds.connectAttr("drv.outputX", f"{name}.selector")
+
+                    def select(value, name=name, driven=driven):
+                        if driven:
+                            cmds.setAttr("drv.input1X", value)
+                        else:
+                            cmds.setAttr(f"{name}.selector", value)
+
+                    # the source's static entry, when it has one
+                    _data_type_outcome(Plug(source))
+                    cached = Plug(source)._static_type_key() is not None
+                    for value, evaluate in ((0, False), (0, True), (1, False), (2, True), (0, True)):
+                        select(value)
+                        if evaluate:
+                            cmds.getAttr(f"{name}.output")
+                        expected = self._legacy(f"{name}.output")
+                        outcome, queries = self._data_type(Node(name).output)
+                        self.assertEqual(outcome, expected)
+                        if value == 0:
+                            self.assertEqual(queries == 0, cached)
+
+    def test_cases_that_still_query(self):
+        Node.create("transform", name="src")
+        cmds.addAttr("src", ln="dynDouble", at="double")
+        pick  = Node.create("choice", name="pick")
+        chain = Node.create("choice", name="chain")
+        cmds.connectAttr("src.translate", "pick.input[0]")
+        cmds.connectAttr("src.dynDouble", "pick.input[1]")
+        cmds.connectAttr("pick.output", "chain.input[0]")
+        _data_type_outcome(Plug("src.translate"))
+        self.assertEqual(self._data_type(pick.output), ("double3", 0))
+        for selector in (1, 5):   # a dynamic source, an unmade input
+            with self.subTest(selector=selector):
+                pick.selector.set(selector)
+                outcome, queries = self._data_type(pick.output)
+                self.assertEqual(outcome, self._legacy("pick.output"))
+                self.assertGreaterEqual(queries, 1)
+        pick.selector.set(0)
+        # a selector below 0 (only a connection can drive it there)
+        cmds.createNode("multiplyDivide", name="drv")
+        cmds.setAttr("drv.input1X", -1)
+        cmds.connectAttr("drv.outputX", "pick.selector")
+        outcome, queries = self._data_type(pick.output)
+        self.assertEqual((outcome, queries > 0), (self._legacy("pick.output"), True))
+        cmds.disconnectAttr("drv.outputX", "pick.selector")
+        pick.selector.set(0)
+        # a chained choice: its source, a choice output, has no static entry
+        outcome, queries = self._data_type(chain.output)
+        self.assertEqual((outcome, queries > 0), (self._legacy("chain.output"), True))
+        # a plug with no owner queries as before
+        self.assertEqual(self._data_type(Plug("pick.output")), ("double3", 1))
+
+    def test_driven_selector_moves(self):
+        Node.create("transform", name="src")
+        cmds.createNode("multiplyDivide", name="drv")
+        pick = Node.create("choice", name="pick")
+        cmds.connectAttr("src.translate", "pick.input[0]")
+        cmds.connectAttr("src.translateX", "pick.input[1]")
+        cmds.connectAttr("drv.outputX", "pick.selector")
+        for plug in ("src.translate", "src.translateX"):
+            _data_type_outcome(Plug(plug))
+        for value, expected in ((0, "double3"), (1, "doubleLinear"), (0, "double3")):
+            with self.subTest(selector=value):
+                cmds.setAttr("drv.input1X", value)
+                self.assertEqual(self._data_type(pick.output), (expected, 0))
+                self.assertEqual(self._legacy("pick.output"), expected)
+
+    def test_user_hooks_still_query(self):
+        Node.create("transform", name="src")
+        _data_type_outcome(Plug("src.translate"))
+        calls = []
+
+        class _HookedChoice(Choice):
+            CUSTOM_NODE_TYPE = "r6s4HookedChoice"
+
+            def _attr_data_type_fallback(self, attr):
+                calls.append(str(attr))
+                return super()._attr_data_type_fallback(attr)
+
+        cmds.createNode("choice", name="sub")
+        set_custom_type("sub", "r6s4HookedChoice")
+        pick = Node.create("choice", name="pick")
+        for name in ("sub", "pick"):
+            cmds.connectAttr("src.translateX", f"{name}.input[0]")
+        _data_type_outcome(Plug("src.translateX"))
+        sub = Node("sub")
+        self.assertIs(type(sub), _HookedChoice)
+        outcome, queries = self._data_type(sub.output)
+        self.assertEqual((outcome, queries), ("doubleLinear", 1))
+        self.assertEqual(calls, ["sub.output"])
+        # a hook set on the node instance
+        hook = mock.patch.object(
+            pick, "_attr_data_type_fallback",
+            lambda attr: Choice._attr_data_type_fallback(pick, attr), create=True,
+        )
+        with hook:
+            self.assertEqual(self._data_type(pick.output), ("doubleLinear", 1))
+        # a class-level patch of Choice's hook
+        original = Choice.__dict__["_attr_data_type_fallback"]
+        with mock.patch.object(
+            Choice, "_attr_data_type_fallback",
+            lambda self, attr: original(self, attr),
+        ):
+            self.assertEqual(self._data_type(pick.output), ("doubleLinear", 1))
+        self.assertEqual(self._data_type(pick.output), ("doubleLinear", 0))
+
+
 class TestFullNameReadsTheOwner(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
