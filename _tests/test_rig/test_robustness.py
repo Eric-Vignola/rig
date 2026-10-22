@@ -56,7 +56,7 @@ import rig
 from rig import AnimCurve, Layer, List, Node, Plug, Tag
 from rig.nodetypes._base import _name_of
 from rig.nodetypes import Mesh
-from rig.shade import Blinn
+from rig.nodetypes import Blinn
 from rig.spec import Float
 from rig._tests._base import MayaTestCase
 
@@ -259,7 +259,7 @@ class TestDeletedNodeName(MayaTestCase):
         # named by the old node's aside name
         red  = Blinn.define("red")
         held = Blinn("red")
-        red.astype(rig.shade.Phong)
+        red.astype(rig.nodetypes.Phong)
         self.assertEqual((str(red), repr(red)), ("red", 'Phong("red")'))
         self.assertEqual((str(held), repr(held)), ("red__rigold (deleted)", 'Blinn("red__rigold", deleted)'))
         with self.assertRaisesRegex(RuntimeError, r"^red__rigold already deleted!$"):
@@ -604,7 +604,7 @@ class TestMeshPointsRefuseComponents(MayaTestCase):
 _CMDS_OTHER_KINDS = _HEAD + r"""
     from rig import Layer
     from rig.bridges import commands as rc
-    from rig.shade import Blinn
+    from rig.nodetypes import Blinn
     cmds.undoInfo(state=True, infinity=True)
     folder = tempfile.mkdtemp()
     path = os.path.join(folder, "s.ma").replace(os.sep, "/")
@@ -739,7 +739,7 @@ _WRAPPERS = _HEAD + r"""
     from rig.nodetypes.blendshape import BlendShape
     from rig.nodetypes.display_layer import DisplayLayer
     from rig.nodetypes.transform import Transform
-    from rig.shade import Material
+    from rig.nodetypes import Material
     cmds.undoInfo(state=True, infinity=True)
 
     def scene():

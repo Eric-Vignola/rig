@@ -23,7 +23,7 @@ from maya import cmds
 from rig import Node, List, container, Tag
 from rig.spec import Float, lock
 from rig.bridges import commands as rc
-from rig.shade import Blinn, Material
+from rig.nodetypes import Blinn, Material
 
 obj1, obj2, obj3 = [rc.polyCube(name=n)[0] for n in ("cube1", "cube2", "cube3")]
 obj2.t << [10, 0, 0]                             # setAttr
@@ -66,7 +66,7 @@ follow what they are. One that points into the scene reads through methods:
 `str(token)`; its `inject` / `query` / `contains` are the protocol `<<` /
 `>>` / `in` call). A value you hold keeps its data as attributes: keys
 (`keys.values`), a `Tag` (`Tag("cap").name`), a spec (`Float("w").kargs`),
-a shade `Conversion`, an error, cgmath data; like cgmath's, it refuses a
+an astype `Conversion`, an error, cgmath data; like cgmath's, it refuses a
 typo (`Tag("cap").nmae = 1`: "'Tag' has no attribute 'nmae'; public
 attributes must be declared"). The renames since 2.0.0a5 are
 listed in [CHEATSHEET section 2](CHEATSHEET.md#2-plug--read-set-connect).
@@ -361,13 +361,13 @@ rig/
 ├── tween.py             Penner easing curves: in_quad, out_bounce, in_out_elastic ...
 ├── random.py            LCG networks that live inside the DG
 │
-├── membership.py        Tag (component tags), Layer (the DisplayLayer node class), Components
-├── shade.py             materials: the shader node classes Blinn Lambert Phong PhongE SurfaceShader
-│                        StandardSurface OpenPBRSurface Material (from nodetypes), Default;
-│                        convert / repair / tidy / materials / bindings
+├── membership.py        Tag (component tags), Layer (the DisplayLayer node class), Components,
+│                        Default (the initialShadingGroup engine)
 │
 ├── nodetypes/           the node classes every node is: Node (the root), DGNode, Transform,
-│                        Mesh, the shaders, AnimCurve and AnimCurveTL TA TU TT ...; Attribute,
+│                        Mesh, the shaders (Material Blinn Lambert Phong PhongE SurfaceShader
+│                        StandardSurface OpenPBRSurface; astype's Conversion report),
+│                        ShadingEngine (repair / tidy), AnimCurve and AnimCurveTL TA TU TT ...; Attribute,
 │                        the MPlug wrapper; save / load of cgmath files; the lookup errors;
 │                        plugins/ (the undo plug-in)
 ├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
@@ -382,13 +382,13 @@ rig/
 The names most scripts start from:
 
 ```python
-from rig import Node, Plug, List, Container, container, Components, Tag, Layer, undo_chunk
+from rig import Node, Plug, List, Container, container, Components, Tag, Layer, Default, undo_chunk
 from rig import AnimCurve, AnimCurveTL, AnimCurveTA, AnimCurveTU, AnimCurveTT
 from rig import NodeNotFoundError, AmbiguousNodeError, NodeTypeError
 from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
 from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
 from rig import functions, trigonometry, matrix, vector, quaternion, euler, interpolate, tween
-from rig.shade import Blinn, Lambert, Phong, Material, Default
+from rig.nodetypes import Blinn, Lambert, Phong, Material, ShadingEngine
 from rig.bridges import commands as rc
 from rig.bridges import nodes as rn
 ```
@@ -466,7 +466,7 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   `decal.remove(cube.f[:3])` (shorthand `cube.f[:3] << -decal`) puts them
   in **no** engine (Maya draws them green). `cube << Default()` is the way
   back to `initialShadingGroup`;
-  `shade.repair()` re-homes every green shape.
+  `ShadingEngine.repair()` re-homes every green shape.
 - **Conversion parks, Maya's Type dropdown deletes.**
   `red.astype(Phong)` makes a phong that keeps the name, the engine, the
   container and the locks, and converts `red` itself in place (`type(red)`

@@ -322,7 +322,10 @@ class TestShaderCreate(_Case):
             (ValueError, r"'nope' is not a registered surface shader", lambda: Material.create(type="nope")),
             (TypeError, r"^Material\.create\(\) takes type=", lambda: Material.create(name="x")),
             (TypeError, r"^Material\.create\(\): type= is a node type name", lambda: Material.create(type=Blinn)),
-            (TypeError, r"^Blinn\.create\(\) takes name= as a keyword \(got 'x'\)$", lambda: Blinn.create("x")),
+            # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
+            (TypeError, r"^Blinn\.create\('x'\): the name is a keyword: Blinn\.create\(name='x'\) makes one, "
+                        r"Blinn\.define\('x'\) finds or makes it; it takes no positional argument$",
+             lambda: Blinn.create("x")),
             (TypeError, r"^Blinn\.create\(\) takes no parent=: a blinn is a DG node$", lambda: Blinn.create(parent=grp)),
             (TypeError, r"^Blinn\.create\(\) makes a blinn, not 'phong'", lambda: Blinn.create(type="phong")),
             (TypeError, r"create always makes a new node; Blinn\.define\('s'\) finds or makes it",
@@ -330,7 +333,8 @@ class TestShaderCreate(_Case):
             (TypeError, r"Node\.define\('anisotropic', 's'\) finds or makes it",
              lambda: Material.create(type="anisotropic", name="s", shared=True)),
             (TypeError, r"takes keyword arguments only", lambda: Node.create("anisotropic", "x")),
-            (TypeError, r"^Blinn\.create\(\) takes name= as a keyword", lambda: Node.create("blinn", "x")),
+            # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
+            (TypeError, r"^Blinn\.create\('x'\): the name is a keyword", lambda: Node.create("blinn", "x")),
         )
         for error, pattern, call in cases:
             with self.subTest(pattern=pattern):

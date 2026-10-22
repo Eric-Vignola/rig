@@ -81,13 +81,18 @@ class TestCreate(_SceneCase):
         before = _scene()
         # a transform class also takes one TransformData (user decision 2026-10-16,
         # "List casting details + Transform.create(data)"): its refusal names it
+        # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
         for cls, text in (
-            (Transform, r"^Transform\.create\(\) takes name= and parent= as keywords, or one TransformData "
-                        r"\(got 'test'\)$"),
-            (Joint,     r"^Joint\.create\(\) takes name= and parent= as keywords, or one TransformData "
-                        r"\(got 'test'\)$"),
-            (Choice,    r"^Choice\.create\(\) takes name= as a keyword \(got 'test'\)$"),
-            (ObjectSet, r"^ObjectSet\.create\(\) takes name= as a keyword \(got 'test'\)$"),
+            (Transform, r"^Transform\.create\('test'\): the name is a keyword: Transform\.create\(name='test'\) makes one, "
+                        r"Transform\.define\('test'\) finds or makes it; a positional argument is the "
+                        r"TransformData a node is built from$"),
+            (Joint,     r"^Joint\.create\('test'\): the name is a keyword: Joint\.create\(name='test'\) makes one, "
+                        r"Joint\.define\('test'\) finds or makes it; a positional argument is the "
+                        r"TransformData a node is built from$"),
+            (Choice,    r"^Choice\.create\('test'\): the name is a keyword: Choice\.create\(name='test'\) makes one, "
+                        r"Choice\.define\('test'\) finds or makes it; it takes no positional argument$"),
+            (ObjectSet, r"^ObjectSet\.create\('test'\): the name is a keyword: ObjectSet\.create\(name='test'\) makes one, "
+                        r"ObjectSet\.define\('test'\) finds or makes it; it takes no positional argument$"),
         ):
             with self.subTest(cls=cls.__name__):
                 with self.assertRaisesRegex(TypeError, text):

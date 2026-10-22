@@ -28,7 +28,7 @@ from rig.nodetypes._base import Attribute, _name_of
 from rig.nodetypes._base import _cast
 from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
-from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.dg_node import _positional_name, DGNode
 from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal, iter_component_tokens
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
@@ -340,6 +340,11 @@ class Mesh(Geometry):
         """
         from cgmath.geometry import UVData
 
+        named = _positional_name(
+            cls, (mesh_data,), needs="mesh_data, ", built_from="MeshData", noun="mesh"
+        )
+        if named is not None:
+            raise named
         normals = _restore_flag("Mesh.create()", "normals", normals)
         if _files.is_object(mesh_data):
             uv_data = _object_uvs(mesh_data, uv_data)

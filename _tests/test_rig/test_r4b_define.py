@@ -142,10 +142,10 @@ class TestDefine(_Case):
         # every define, and a same-type conversion, sets the values it is given
         import inspect
 
-        from rig import shade
         from rig.nodetypes.material_node import Material
 
-        for call in (DGNode.define, Node.define, Material.define, Material.astype, shade.convert):
+        # re-pinned (user decision 2026-10-22, the shade module retired): its convert went
+        for call in (DGNode.define, Node.define, Material.define, Material.astype):
             with self.subTest(call=call.__qualname__):
                 self.assertIs(inspect.signature(call).parameters["update"].default, True)
 

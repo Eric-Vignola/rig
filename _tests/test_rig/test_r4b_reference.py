@@ -449,9 +449,9 @@ _ALLOWED_SITES = {
         1, "user input: the other mesh"),
     ("nodetypes/skincluster.py", "SkinCluster.copy_skincluster", "Mesh"): (
         2, "user input: the source meshes"),
-    # round 4b NC7: the rig.shade specs retired; rig.shade.Material is the node class
-    ("shade.py", "convert", "Material"): (
-        1, "user input: the shader to convert, a node or a name"),
+    # round 4b NC7: the shade specs retired; Material is the node class.
+    # re-pinned (user decision 2026-10-22, the shade module retired): its
+    # convert(x, to), the one Material(x) of a user's input, went
 }
 
 

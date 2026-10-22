@@ -736,7 +736,10 @@ class TestNurbsCurveCreateErrors(_CurveCreateCase):
 
     # label, (points, kwargs), the error, a word of its message
     CASES = (
-        ("a name", ("grp", {}), TypeError, r"takes \(N, 3\) points or a BSplineData, got str"),
+        # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
+        ("a name", ("grp", {}), TypeError, r"^NurbsCurve\.create\('grp'\): the name is a keyword: "
+                                           r"NurbsCurve\.create\(points, name='grp'\) makes one; a positional "
+                                           r"argument is the points or BSplineData a curve is built from$"),
         ("None", (None, {}), TypeError, r"takes \(N, 3\) points or a BSplineData, got NoneType"),
         ("a number", (3.0, {}), TypeError, r"takes \(N, 3\) points or a BSplineData, got float"),
         ("ragged points", ([(0, 0, 0), (1, 0), (2, 0, 0), (3, 0, 0)], {}), TypeError, r"takes \(N, 3\) points"),

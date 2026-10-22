@@ -370,7 +370,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | Call | Builds with |
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
-| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` |
+| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')` |
 | `Mesh.create(mesh_data, *, name=, uv_data=, normals=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed); a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform |
 | `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own |
 | `NurbsSurface.create(data, *, name=)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees and forms; it holds no knots, so they are evenly spaced) |
@@ -515,7 +515,10 @@ reads through `MFnSet` so per-face entries survive (`get_members` drops them).
 
 `Mesh.get_material_bindings()` is the mesh-side view: the one material when
 it covers the whole mesh, otherwise `(material, face ids)` pairs. The DSL's
-materials (`rig.shade`) sit on `for_material` and a private assign.
+membership grammar (`x << red`, `Material.of(x)`) sits on `for_material` and a private
+assign; `ShadingEngine.repair()` puts the shapes no engine holds (green) back in
+`initialShadingGroup`, and `ShadingEngine.tidy()` collapses all-faces memberships to
+object level.
 
 ### Shaders are node classes, one per exact type
 

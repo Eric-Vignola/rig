@@ -1,16 +1,21 @@
 """
-Materials through the membership grammar.
+Materials through the membership grammar (private): the membership a shader
+or ``ShadingEngine`` node runs on the right of ``<<`` / ``>>`` / ``in`` /
+``of``, and the scene clean-ups ``ShadingEngine.repair()`` /
+``ShadingEngine.tidy()`` call. (It was the public shade module until the
+user decision of 2026-10-22 retired that module: the shader classes and
+``Conversion`` are in ``rig.nodetypes``, ``Default()`` is in
+``rig.membership``.)
 
-A surface shader is a node class like ``Transform`` (``rig.nodetypes``; the
-same classes are exported here): ``Blinn("red")`` refers to a blinn that
-exists and never writes the scene, ``Blinn.define("red", color=(1, 0, 0))``
-finds it or makes its network -- the shader (``cmds.shadingNode``, listed in
-``defaultShaderList1``), ``redSG`` (``cmds.sets(renderable=True)`` with its
-materialInfo, renderPartition and lightLinker wiring) -- and
-``Blinn.create(name="red")`` always makes a new one. ``Material`` is the
-generic class: ``Material("red")`` takes any surface shader, and
-``Material.define(name, type=...)`` / ``Material.create(type=...)`` make a
-type without a class of its own (a plug-in's shader).
+A surface shader is a node class like ``Transform`` (``rig.nodetypes``):
+``Blinn("red")`` refers to a blinn that exists and never writes the scene,
+``Blinn.define("red", color=(1, 0, 0))`` finds it or makes its network -- the
+shader (``cmds.shadingNode``, listed in ``defaultShaderList1``), ``redSG``
+(``cmds.sets(renderable=True)`` with its materialInfo, renderPartition and
+lightLinker wiring) -- and ``Blinn.create(name="red")`` always makes a new
+one. ``Material`` is the generic class: ``Material("red")`` takes any surface
+shader, and ``Material.define(name, type=...)`` / ``Material.create(type=...)``
+make a type without a class of its own (a plug-in's shader).
 
 A shader node on the right of ``<<`` assigns: the left-hand side moves into
 the shader's shading engine in ONE ``cmds.sets(forceElement)`` (a shader
@@ -36,9 +41,8 @@ node).
 
 Usage::
 
-    from rig import Node, List, shade
-    from rig.nodetypes import ShadingEngine
-    from rig.shade import Blinn, Lambert, Material, Phong, Default
+    from rig import Default, List, Node
+    from rig.nodetypes import Blinn, Lambert, Material, Phong, ShadingEngine
 
     cube = Node("pCube1")
     red  = Blinn.define("red", color=(1, 0, 0))   # Blinn("red"): found, or made now (red, redSG, materialInfo)
@@ -60,28 +64,17 @@ Usage::
     cube << Blinn("nope")                    # NodeNotFoundError before any write: a reference never creates
 
     red.delete()                             # red, redSG and its materialInfo; members go green
-    shade.repair()                           # List of the shapes re-homed to initialShadingGroup
-    shade.tidy()                             # all-faces memberships collapsed to object level
+    ShadingEngine.repair()                   # List of the shapes re-homed to initialShadingGroup
+    ShadingEngine.tidy()                     # all-faces memberships collapsed to object level
 
     red.astype(Phong)                        # red is Phong("red") now, in place, in one undo chunk
-    shade.convert("red", "lambert", dry_run=True)   # the Conversion report, nothing written
+    Material("red").astype("lambert", dry_run=True)   # the Conversion report, nothing written
 
-Conversion (``mat.astype(Phong)``, ``shade.convert(mat, "phong")``) makes a
-new node of the target type and converts ``mat`` IN PLACE: the object is
-re-pointed to the new node and its class switched, and it is returned;
+Conversion (``mat.astype(Phong)``, run by ``rig._internal.shade_convert``)
+makes a new node of the target type and converts ``mat`` IN PLACE: the object
+is re-pointed to the new node and its class switched, and it is returned;
 ``Phong(mat)`` is a reference, never a conversion (a blinn there is a
 ``NodeTypeError`` naming ``astype``).
-It keeps the name, the engines, the materialInfo, the ``defaultShaderList1``
-slot, the container, the dynamic attributes and the locks, moves every wire
-the target can hold, and PARKS what it cannot: each non-default value, wire
-or animCurve on an attribute the target lacks is cloned onto the same node as
-a hidden ``__attr__`` of the same type and given back the next time the
-material becomes a type that has it. One ``cmds.warning`` names what was
-parked (``park=False`` drops the values and disconnects the wires instead,
-sources kept; ``strict=True`` refuses anything lossy; ``dry_run=True`` writes
-nothing and returns the :class:`Conversion` report). Another object of the
-old node, and the plugs taken from ``mat`` before, then raise "... already
-deleted!"; an undo puts the old node and class back on ``mat``.
 
 Exclusive membership means faces into the engine that already owns their
 whole object is the one no-op of the grammar: the state already holds.
@@ -103,9 +96,10 @@ is a shared, scene-level asset, so a network made inside ``with
 container():`` stays OUT of the scope by default; ``create`` / ``define``
 with ``container=True`` enrol the shader, its engine and materialInfo (a
 per-asset look), in which case deleting that container later destroys the
-network and leaves the geometry green -- ``repair()`` fixes it. The engine an
-assignment builds for a shader without one joins the shader's container when
-it has one, never the active scope; the geometry is never captured.
+network and leaves the geometry green -- ``ShadingEngine.repair()`` fixes
+it. The engine an assignment builds for a shader without one joins the
+shader's container when it has one, never the active scope; the geometry is
+never captured.
 """
 
 from __future__ import annotations
@@ -118,17 +112,7 @@ from maya import cmds
 from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes import material_node as _material_node
-from rig.nodetypes.material_node import (
-    _own_type,
-    Blinn,
-    Lambert,
-    Material,
-    OpenPBRSurface,
-    Phong,
-    PhongE,
-    StandardSurface,
-    SurfaceShader,
-)
+from rig.nodetypes.material_node import Material
 from rig.nodetypes._base import _name_of
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig._internal.list import List
@@ -140,33 +124,11 @@ from rig._internal.members import (
     _render_tokens,
     _Selection,
     _token_miss,
-    Components,
     normalise as _normalise,
 )
 from rig._internal.node import Node
 from rig._internal.plug import Plug
-from rig._internal.shade_convert import Conversion
-from rig._internal import shade_convert as _shade_convert
 from rig._internal.undo import _undo_chunk
-
-
-__all__ = [
-    "Material",
-    "Lambert",
-    "Blinn",
-    "Phong",
-    "PhongE",
-    "SurfaceShader",
-    "StandardSurface",
-    "OpenPBRSurface",
-    "Default",
-    "Conversion",
-    "convert",
-    "materials",
-    "bindings",
-    "repair",
-    "tidy",
-]
 
 
 # ---------- Tables -------------------------------------------------------- #
@@ -951,81 +913,12 @@ class _MaterialMember(_MemberSpec):
             return []   # what a material never holds wears none
 
 
-def Default(*args: Any, **kwargs: Any) -> ShadingEngine:
-    """``initialShadingGroup``, the default shading engine, as its node
-    (``ShadingEngine("initialShadingGroup")``): ``cube << Default()`` reverts to
-    it, ``cube << -Default()`` leaves it (green), ``cube.f[:6] >> Default()``
-    reads its faces, ``Material.of(x)`` lists it for the faces it holds. It
-    takes no name: ``Default("x")`` is a ``TypeError``."""
-    if args or kwargs:
-        raise TypeError(
-            "Default() takes no name: it is initialShadingGroup. Material() removes "
-            "the members from every engine; Blinn('x') refers to a blinn"
-        )
-    return ShadingEngine._wrap(ShadingEngine.DEFAULT)
-
-
-# ---------- Conversion ---------------------------------------------------- #
-
-
-def _target_type(to: Any) -> str:
-    """The node type a conversion target names: a shader class of one type
-    (``Phong``) or a type name (``'phong'``)."""
-    if isinstance(to, type) and issubclass(to, Material):
-        node_type = _own_type(to)
-        if node_type is None:
-            raise TypeError(
-                f"{to.__name__} names no node type; convert to a class of one type "
-                f"(Phong) or a type name ('phong')"
-            )
-        return node_type
-    if isinstance(to, str) and to:
-        return to
-    raise TypeError(
-        f"a conversion target is a shader class (Phong) or a node type name "
-        f"('phong'), not {to!r}"
-    )
-
-
-def convert(
-    x:       Any,
-    to:      Any,
-    *,
-    strict:  bool = False,
-    dry_run: bool = False,
-    park:    bool = True,
-    update:  bool = True,
-    **attrs: Any,
-) -> Any:
-    """Make the material ``x`` -- a shader node or its name, read by
-    ``Material(x)`` (a missing name is a NodeNotFoundError, another type a
-    NodeTypeError) -- the node type ``to`` (a class such as ``Phong`` or a
-    type name) IN PLACE: a node object ``x`` is re-pointed to the new node,
-    its class switched (``Phong("red")``), and returned (a name gives a new
-    object of the node, converted); other objects of the old node raise
-    "... already deleted!". See
-    :meth:`rig.nodetypes.Material.astype` for the options; ``dry_run=True``
-    returns the :class:`Conversion` report instead (``bool(report)`` is
-    "something would be parked or lost", ``str(report)`` the warning text) and
-    writes nothing."""
-    if isinstance(x, _MemberSpec):
-        raise TypeError(
-            f"{x!r} is a membership token, not a material; convert the material "
-            f"node: mat.astype(...) or shade.convert(mat, ...)"
-        )
-    mat = Material(x)
-    return _shade_convert.convert(
-        x if isinstance(x, Material) else mat, _target_type(to), strict=strict,
-        dry_run=dry_run, park=park, attrs=attrs, update=update,
-    )
-
-
 # the membership a material node runs (D31: ``rig.nodetypes`` imports none of
 # the DSL modules; this module binds it when it loads)
 _material_node._MATERIAL_MEMBER = _MaterialMember
 
 
-# ---------- Module functions ---------------------------------------------- #
+# ---------- The scene clean-ups (ShadingEngine.repair / tidy) -------- #
 
 
 def _entries(target: _Target) -> list[tuple[ShadingEngine, Any]]:
@@ -1047,7 +940,7 @@ def _entries(target: _Target) -> list[tuple[ShadingEngine, Any]]:
 
 
 def _scene_targets(targets: Any) -> list[_Target]:
-    """The shapes a module function works on: every non-intermediate
+    """The shapes a clean-up works on: every non-intermediate
     shadeable shape in the scene, or the normalised ``targets``."""
     if targets is None:
         paths = cmds.ls(
@@ -1057,51 +950,6 @@ def _scene_targets(targets: Any) -> list[_Target]:
     selections = _normalise(targets, want_shapes=True)
     _check_kinds(selections)
     return _targets(selections)
-
-
-def materials(target: Any) -> List:
-    """The materials of ``target`` (a node, faces, or a list of them) as
-    material ``Node``s, in connection order, each once: the shaders
-    themselves (``initialShadingGroup``'s is ``standardSurface1``), where
-    ``Material.of(x)`` answers the handles ``<<`` takes back (``Default()``
-    for the default engine, the engine for one ``x << shader`` would not
-    pick)."""
-    found: list[Node] = []
-    for item in _scene_targets(target):
-        for engine, _ in _entries(item):
-            shader = engine.get_material()
-            if shader is None:
-                continue
-            node = Node(shader)
-            if node not in found:
-                found.append(node)
-    return List(found)
-
-
-def bindings(target: Any) -> list[tuple[Node, Components]]:
-    """``(material, faces)`` per engine holding faces of ``target``; an
-    object-level membership is reported as the whole-kind ``f[*]``
-    :class:`Components`. The material is the engine's shader, as
-    :func:`materials` answers it. Read through ``MFnSet``, never through the
-    strings ``cmds.sets(q=True)`` prints. Mesh only."""
-    result = []
-    for item in _scene_targets(target):
-        if item.node_type != "mesh":
-            raise TypeError(
-                f"bindings are per face and '{_short(item.path)}' is a "
-                f"{item.node_type}; shade.materials({Node(item.path)!r}) lists its materials"
-            )
-        shape = Node(item.path)
-        for engine, held in _entries(item):
-            shader = engine.get_material()
-            if shader is None:
-                continue
-            faces = (
-                Components(shape, "f") if held is None
-                else Components._from_ids(shape, "f", held)
-            )
-            result.append((Node(shader), faces))
-    return result
 
 
 def repair(targets: Any = None) -> List:

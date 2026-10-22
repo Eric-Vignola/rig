@@ -35,7 +35,7 @@ from rig import (
     trigonometry as trig,
 )
 from rig.bridges import commands as rc, nodes as rn
-from rig.shade import Lambert
+from rig.nodetypes import Lambert
 from rig.spec import Enum, Float, hide, Int, lock, String
 
 

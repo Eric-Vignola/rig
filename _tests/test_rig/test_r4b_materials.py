@@ -7,7 +7,7 @@ nodes, and a conversion returns the new node.
   ``-red``, ``-ShadingEngine("redSG")``; ``Blinn(None)`` and
   ``ShadingEngine()`` refused, naming ``Material()``); ``Material.of`` /
   ``Blinn.of`` answer live nodes (flat classes; ``Default()`` for the default
-  engine); ``rig.shade`` exports the node classes.
+  engine); ``rig.nodetypes`` exports the node classes.
 * ``TestNodeRhs``: a shader or engine node on the right of ``<<`` / ``>>``
   (the addendum's MN3b list): assign, remove, query, purge; one undo chunk
   per ``<<``; a dead, renamed or namespaced node; ``initialParticleSE`` and
@@ -18,7 +18,7 @@ nodes, and a conversion returns the new node.
 * ``TestMaterialIn``: ``x in red`` / ``x in ShadingEngine('altSG')``: every
   face (or the whole object) of every shape, all members of a list, a plug
   standing for its node; the tokens and wrong kinds refused.
-* ``TestConversionReturnsNode``: ``astype`` / ``shade.convert`` return the new
+* ``TestConversionReturnsNode``: ``astype`` (on a node, or ``Material(name)``) returns the new
   node (a class or a type name; a name converts too); ``dry_run`` returns the
   report; ``strict``; the generic ``Material`` and non-shader targets refused;
   a reference never converts; a shader already of the type comes back as is.
@@ -45,16 +45,15 @@ from rig import (
     Layer,
     List,
     Node,
+    Default,
     NodeNotFoundError,
     NodeTypeError,
-    shade,
 )
 from rig.bridges import nodes as rn
 from rig.nodetypes import ObjectSet, ShadingEngine, Transform
-from rig.shade import (
+from rig.nodetypes import (
     Blinn,
     Conversion,
-    Default,
     Lambert,
     Material,
     Phong,
@@ -259,13 +258,19 @@ class TestMaterialNodes(_Case):
         self.assertEqual(sorted(_members("redSG")), ["cube.f[0:1]", "otherShape"])
 
     def test_the_shade_exports_are_the_node_classes(self):
+        # re-pinned (user decision 2026-10-22, the shade module retired): the
+        # node classes and Conversion are rig.nodetypes' own, Default rig.membership's
+        import rig.membership
+
         for name in ("Material", "Lambert", "Blinn", "Phong", "PhongE", "SurfaceShader",
-                     "StandardSurface", "OpenPBRSurface"):
-            self.assertIs(getattr(shade, name), getattr(nodetypes, name))
+                     "StandardSurface", "OpenPBRSurface", "Conversion"):
+            self.assertIn(name, nodetypes.__all__)
         self.assertIsInstance(Default(), ShadingEngine)
         self.assertEqual(str(Default()), ISG)
-        self.assertIs(shade.Conversion, Conversion)
-        self.assertFalse(hasattr(shade, "_BY_TYPE"))
+        self.assertIs(Default, rig.membership.Default)
+        self.assertIs(nodetypes.Conversion, Conversion)
+        self.assertFalse(hasattr(nodetypes, "_BY_TYPE"))
+        self.assertFalse(hasattr(rig, "shade"))
         self.assertFalse(hasattr(rig, "Blinn"))
 
 
@@ -606,9 +611,9 @@ class TestConversionReturnsNode(_Case):
         self.assertEqual(new, Phong("red"))
         self.assertIn(self.cube, new)
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
-        lam = shade.convert("red", "lambert")         # a name, a type name
+        lam = Material("red").astype("lambert")         # a name, a type name
         self.assertEqual(repr(lam), 'Lambert("red")')
-        std = shade.convert(lam, StandardSurface)     # a node, a class
+        std = lam.astype(StandardSurface)     # a node, a class
         self.assertEqual(repr(std), 'StandardSurface("red")')
         ramp = std.astype("rampShader")               # a type without a class
         self.assertIs(type(ramp), Material)
@@ -620,13 +625,13 @@ class TestConversionReturnsNode(_Case):
         before = _scene()
         with mock.patch.object(cmds, "warning") as warn:
             report = self.red.astype(Phong, dry_run=True)
-            same   = shade.convert("red", "phong", dry_run=True)
+            same   = Material("red").astype("phong", dry_run=True)
         self.assertEqual(warn.call_count, 0)
         self.assertEqual(_scene(), before)
         self.assertIsInstance(report, Conversion)
         self.assertEqual(report, same)
         self.assertEqual(report.parked, ("eccentricity",))
-        self.assertEqual(str(report).splitlines()[0], "rig.shade: 'red' blinn -> phong parks:")
+        self.assertEqual(str(report).splitlines()[0], "rig.astype: 'red' blinn -> phong parks:")
         self.assertTrue(self.red.is_valid())
         self.assertEqual(cmds.nodeType("red"), "blinn")
         # a shader already of the type: an empty report
@@ -640,10 +645,10 @@ class TestConversionReturnsNode(_Case):
     def test_strict_refuses_a_lossy_conversion(self):
         self.red.eccentricity << 0.6
         report = self.red.astype(Phong, dry_run=True)
-        self.assertRefused(ValueError, "^rig.shade: 'red' blinn -> phong parks:",
+        self.assertRefused(ValueError, "^rig.astype: 'red' blinn -> phong parks:",
                            lambda: self.red.astype(Phong, strict=True))
         with self.assertRaises(ValueError) as caught:
-            shade.convert(self.red, "phong", strict=True)
+            self.red.astype("phong", strict=True)
         self.assertEqual(str(caught.exception), str(report))
         self.assertTrue(self.red.is_valid())
         self.red.eccentricity << 0.3
@@ -661,9 +666,12 @@ class TestConversionReturnsNode(_Case):
         ):
             with self.subTest(target=target):
                 self.assertRefused(error, pattern, lambda target=target: self.red.astype(target))
-        self.assertRefused(TypeError, "membership token", lambda: shade.convert(-self.red, Phong))
-        self.assertRefused(TypeError, "membership token", lambda: shade.convert(Blinn(), Phong))
-        self.assertRefused(RuntimeError, "default node", lambda: shade.convert("lambert1", Phong))
+        # re-pinned (user decision 2026-10-22, the shade module retired): a token
+        # has no astype (a token is no material)
+        self.assertRefused(AttributeError, "is a removal token, not a material", lambda: (-self.red).astype(Phong))
+        self.assertRefused(AttributeError, r"is the kind token \(every material\), not a material",
+                           lambda: (Blinn()).astype(Phong))
+        self.assertRefused(RuntimeError, "default node", lambda: Material("lambert1").astype(Phong))
         self.assertEqual(sorted(cmds.listConnections("red", connections=True, plugs=True) or []), wiring)
         self.assertTrue(self.red.is_valid())
 
@@ -720,7 +728,7 @@ class TestConvertedHandle(_Case):
             ("set", lambda: plug << (1, 0, 0)), ("engine", lambda: held.get_engine()),
             ("astype", lambda: held.astype(Lambert)), ("<<", lambda: self.cube << held),
             ("<< token", lambda: self.cube << token), ("in", lambda: self.cube in held),
-            ("refer", lambda: Phong(held)), ("convert", lambda: shade.convert(held, "lambert")),
+            ("refer", lambda: Phong(held)), ("convert", lambda: held.astype("lambert")),
             ("delete", lambda: held.delete()),
         ):
             with self.subTest(label):

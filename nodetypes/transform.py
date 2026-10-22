@@ -18,7 +18,7 @@ from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import _NODE_CLASS_DICT, _cast, _is_generic_slot, Attribute, _name_of
 from rig.nodetypes.dag_node import DAGNode, _parent_path
-from rig.nodetypes.dg_node import DGNode, _attribute_keywords, _got, _typed_creator
+from rig.nodetypes.dg_node import DGNode, _attribute_keywords, _got, _positional_name, _typed_creator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -677,7 +677,9 @@ class Transform(DAGNode):
         per-node code builds it.
 
         Refused before anything is made: anything but one TransformData
-        (TypeError, naming the keyword form), a node type the data cannot
+        (TypeError, naming the keyword form: a name given there,
+        ``Transform.create("ctl")``, names ``Transform.create(name='ctl')`` and
+        ``Transform.define('ctl')``), a node type the data cannot
         rebuild, data of a type the class does not make (``Joint.create`` of a
         transform's data: TypeError naming ``Transform.create``; a joint's
         data on ``Transform`` makes a ``Joint``), a missing ``parent=``
@@ -694,6 +696,9 @@ class Transform(DAGNode):
         from cgmath.hierarchy import SUPPORTED_NODE_TYPES, TransformData
 
         call = f"{cls.__name__}.create()"
+        named = _positional_name(cls, inputs, built_from="TransformData")
+        if named is not None:
+            raise named
         if len(inputs) != 1 or not isinstance(inputs[0], TransformData):
             raise TypeError(
                 f"{call} takes name= and parent= as keywords, or one TransformData "

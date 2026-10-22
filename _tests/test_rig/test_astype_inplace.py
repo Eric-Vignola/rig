@@ -1,5 +1,6 @@
-"""``mat.astype(Cls)`` and ``shade.convert(mat, Cls)`` convert the object they
-are called on IN PLACE (user decision 2026-10-22, option A).
+"""``mat.astype(Cls)`` (and ``Material(name).astype(Cls)``, which replaced the
+retired shade module's convert) converts the object it is called on IN PLACE
+(user decision 2026-10-22, option A).
 
 Maya cannot change a node's type: a new node is built and the old one deleted,
 as before. The same Python object is then re-pointed to the new node (its node
@@ -13,8 +14,8 @@ node, looked up separately, and plugs taken before, raise "already deleted"
 from unittest import mock
 
 from maya import cmds
-from rig import List, Node, memoize, shade
-from rig.shade import Blinn, Lambert, Material, Phong
+from rig import List, Node, memoize
+from rig.nodetypes import Blinn, Lambert, Material, Phong
 from rig._internal import shade_convert
 from rig._tests._base import MayaTestCase
 
@@ -127,9 +128,9 @@ class TestAstypeInPlace(MayaTestCase):
 
     def test_shade_convert_in_place(self):
         red = self.red
-        self.assertIs(shade.convert(red, "blinn"), red)
+        self.assertIs(red.astype("blinn"), red)
         self.assertIs(type(red), Blinn)
-        got = shade.convert("RED", Phong)   # a name: its own object, converted
+        got = Material("RED").astype(Phong)   # a name: its own object, converted
         self.assertIs(type(got), Phong)
         self.assertIs(type(red), Blinn)     # red was another object of the node
         with self.assertRaisesRegex(RuntimeError, r"already deleted!$"):

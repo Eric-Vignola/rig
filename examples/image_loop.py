@@ -34,7 +34,7 @@ from collections import namedtuple
 
 from rig import condition, container, functions as rf
 from rig.bridges import commands as rc, nodes as rn
-from rig.shade import Lambert
+from rig.nodetypes import Lambert
 from rig.spec import Float, Int, lock, String
 
 

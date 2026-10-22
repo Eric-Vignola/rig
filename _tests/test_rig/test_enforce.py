@@ -630,7 +630,7 @@ class TestScenePredicates(MayaTestCase):
 _VALUE_DATA = {
     # membership's selection groups (members._Selection / _Group), plain values
     ("membership.py", "selection", "is_all"),
-    ("shade.py", "selection", "is_all"),
+    ("_internal/materials.py", "selection", "is_all"),   # re-pinned (user decision 2026-10-22, the shade module retired)
     ("_internal/members.py", "self", "is_all"),
     # an operand's facts (shorthand._Facts), plain values
     ("_internal/plug.py", "dst_facts", "is_compound"),
