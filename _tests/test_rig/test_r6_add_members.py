@@ -144,19 +144,16 @@ class TestAddMembers(MayaTestCase):
         super().setUp()
         cmds.file(new=True, force=True)
         self.calls = []
-        edits, calls = container_module.cmds_edit, self.calls
+        # re-pinned (round 6 S2, user decision 1A): a non-made add goes through rig's one
+        # container route, journal.container_cmd, not cmds_edit.container
+        route, calls = container_module.container_cmd, self.calls
 
-        class _Edits:
-            def __getattr__(self, name):
-                return getattr(edits, name)
+        def container_cmd(*args, **kwargs):
+            if kwargs.get("addNode"):
+                calls.append(list(kwargs["addNode"]))
+            return route(*args, **kwargs)
 
-            @staticmethod
-            def container(*args, **kwargs):
-                if kwargs.get("addNode"):
-                    calls.append(list(kwargs["addNode"]))
-                return edits.container(*args, **kwargs)
-
-        patcher = mock.patch.object(container_module, "cmds_edit", _Edits())
+        patcher = mock.patch.object(container_module, "container_cmd", container_cmd)
         patcher.start()
         self.addCleanup(patcher.stop)
 
