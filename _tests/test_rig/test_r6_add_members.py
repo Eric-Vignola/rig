@@ -207,6 +207,20 @@ class TestAddMembers(MayaTestCase):
         self.assertEqual(self.calls, [["gone"]])
         self.assertIn("Failed to add ['gone'] to container B", logs.output[0])
 
+    def test_freed_leaf_is_a_debug_line(self):
+        # a container freed under its block (a new scene, a file open, its hyperLayout
+        # deleted): its name raises, and the add is skipped as before S0
+        from rig import Node
+        self._nodes("a", "b")
+        leaf = Node(cmds.container(name="B"))
+        cmds.delete("B")
+        with self.assertLogs(container_module.LOGGER, logging.DEBUG) as logs:
+            _add_members(leaf, ["a", "b"])
+        self.assertEqual(self.calls, [])
+        self.assertIn("Failed to add ['a', 'b'] to container", logs.output[0])
+        with self.assertRaises(RuntimeError):
+            _add_members(leaf, ["a"], strict=True)
+
     def test_strict_raises(self):
         self._nodes("a")
         cmds.container(name="B")

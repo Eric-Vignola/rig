@@ -1851,7 +1851,15 @@ def _add_members(leaf: Any, nodes: List[str], made: bool = False, strict: bool =
     edit, not a journal barrier. Else the calls go through ``cmds_edit``."""
     if not nodes:
         return
-    leaf_name = _name_of(leaf)
+    try:
+        # a leaf freed under the block (a new scene, a file open, its
+        # hyperLayout deleted) raises here: the same debug skip as Maya's own
+        leaf_name = _name_of(leaf)
+    except RuntimeError as e:
+        if strict:
+            raise
+        LOGGER.debug("Failed to add %s to container %s: %s", nodes, leaf, e)
+        return
     edit = cmds.container if made else cmds_edit.container
     if len(nodes) == 1:
         calls = [nodes]
