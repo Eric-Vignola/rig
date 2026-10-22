@@ -518,7 +518,8 @@ it covers the whole mesh, otherwise `(material, face ids)` pairs. The DSL's
 membership grammar (`x << red`, `Material.of(x)`) sits on `for_material` and a private
 assign; `ShadingEngine.repair()` puts the shapes no engine holds (green) back in
 `initialShadingGroup`, and `ShadingEngine.tidy()` collapses all-faces memberships to
-object level.
+object level. Both are scene-level class methods: called on an engine
+(`sg.repair()`) they ignore it, so call them on the class.
 
 ### Shaders are node classes, one per exact type
 

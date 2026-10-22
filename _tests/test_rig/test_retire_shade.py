@@ -248,3 +248,75 @@ class TestCreatePositionalName(MayaTestCase):
         self.assertEqual(str(Transform.create(name="ctl")), "ctl")
         self.assertEqual(str(Transform.define("ctl")), "ctl")
         self.assertEqual(str(Blinn.create(name="red")), "red")
+
+
+class TestRetireShadeReview(MayaTestCase):
+    """The review of the shade retirement (2026-10-22): ShadingEngine.create
+    refuses a positional name, a file path is told to load, Material names the
+    caller's type=, and repair / tidy say they are scene-level."""
+
+    TEST_START_NEW_SCENE = True
+
+    assertNamed = TestCreatePositionalName.assertNamed
+
+    def test_shading_engine_refuses_a_positional_name(self):
+        from rig.nodetypes import ShadingEngine
+
+        self.assertNamed(
+            lambda: ShadingEngine.create("mySG"),
+            "ShadingEngine.create('mySG'): the name is a keyword: ShadingEngine.create(name='mySG') "
+            "makes one, ShadingEngine.define('mySG') finds or makes it; it takes no positional argument",
+        )
+        self.assertNamed(
+            lambda: ShadingEngine.create("a", "b"),
+            "ShadingEngine.create() takes name= as a keyword (got 'a', 'b')",
+        )
+        self.assertEqual(str(ShadingEngine.create(name="mySG")), "mySG")
+
+    def test_a_file_path_is_told_to_load(self):
+        from rig.nodetypes import Mesh, NurbsCurve, NurbsSurface
+
+        self.assertNamed(
+            lambda: Mesh.create("body.obj"),
+            "Mesh.create('body.obj'): a file is read by Mesh.load('body.obj'); a positional "
+            "argument is the MeshData a mesh is built from",
+        )
+        self.assertNamed(
+            lambda: NurbsCurve.create("c.json"),
+            "NurbsCurve.create('c.json'): a file is read by NurbsCurve.load('c.json'); a "
+            "positional argument is the points or BSplineData a curve is built from",
+        )
+        self.assertNamed(
+            lambda: NurbsSurface.create("p.json"),
+            "NurbsSurface.create('p.json'): a file is read by NurbsSurface.load('p.json'); a "
+            "positional argument is the BSplinePatchData a surface is built from",
+        )
+
+    def test_material_names_the_given_type(self):
+        from rig.nodetypes import Material
+
+        self.assertNamed(
+            lambda: Material.create("m", type="phong"),
+            "Material.create('m'): the name is a keyword: Material.create(name='m', "
+            "type='phong') makes one, Material.define('m', type='phong') finds or makes it; "
+            "it takes no positional argument",
+        )
+
+    def test_repair_and_tidy_are_scene_level(self):
+        """Documented, not refused: a node class's public classmethod is a
+        plug-method descriptor (rig.nodetypes._base), so an engine's
+        ``sg.repair()`` is the class call; the docstrings say so."""
+        from rig.nodetypes import Blinn, ShadingEngine
+
+        cube = _cube()
+        red  = Blinn.define("red")
+        cube << red
+        red.delete()
+        Blinn.define("blue")
+        sg = ShadingEngine("blueSG")
+        self.assertEqual([str(x) for x in sg.repair()], ["cubeShape"])   # the scene, not blueSG
+        self.assertEqual(cmds.listConnections("cubeShape", type="shadingEngine"), ["initialShadingGroup"])
+        for method in (ShadingEngine.repair, ShadingEngine.tidy):
+            with self.subTest(method.__name__):
+                self.assertIn("scene-level class method", method.__doc__)
+                self.assertIn("ignores that engine", method.__doc__)

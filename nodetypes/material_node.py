@@ -505,7 +505,10 @@ class Material(DGNode):
         materialInfo to the scope. The selection never changes.
         """
         call      = f"{cls.__name__}.create()"
-        named     = _positional_name(cls, inputs, extra="" if _own_type(cls) else ", type='blinn'")
+        # the generic class names the caller's type= ('blinn' only stands in
+        # when none was given; review of the shade retirement, 2026-10-22)
+        shown     = type if isinstance(type, str) else "blinn"
+        named     = _positional_name(cls, inputs, extra="" if _own_type(cls) else f", type={shown!r}")
         if named is not None:
             raise named
         node_type = cls._shader_type(type, "create", call)

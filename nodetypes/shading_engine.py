@@ -43,7 +43,7 @@ from maya.api import OpenMaya
 from rig._internal.journal import cmds_edit as _cmds_edit, statement as _statement
 from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.dag_node import DAGNode
-from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes.dg_node import _NO_INPUT_CREATES, DGNode
 from rig.nodetypes.object_set import ObjectSet
 
 
@@ -161,7 +161,11 @@ class ShadingEngine(ObjectSet):
     @classmethod
     @_statement
     def repair(cls, targets: Any = None) -> Any:
-        """Re-homes to ``initialShadingGroup`` (``Default()``) every shape, or
+        """A scene-level class method: ``ShadingEngine.repair()``. Called on
+        an engine (``sg.repair()``) it ignores that engine and still does
+        every shape (or those of ``targets``), so call it on the class.
+
+        Re-homes to ``initialShadingGroup`` (``Default()``) every shape, or
         face, of ``targets`` (a node, faces, or a list of them; every
         shadeable shape of the scene, each DAG path, when None) that no
         shading engine holds, as a deleted network or ``cube << Material()``
@@ -176,7 +180,11 @@ class ShadingEngine(ObjectSet):
     @classmethod
     @_statement
     def tidy(cls, targets: Any = None) -> None:
-        """Collapses to object level every mesh of ``targets`` (the whole
+        """A scene-level class method: ``ShadingEngine.tidy()``. Called on an
+        engine (``sg.tidy()``) it ignores that engine and still does every
+        mesh (or those of ``targets``), so call it on the class.
+
+        Collapses to object level every mesh of ``targets`` (the whole
         scene when None) whose faces all sit in one engine as a face component
         (Maya never collapses that state itself), and deletes the groupId
         nodes per-face memberships leave behind once no set holds them and no
@@ -428,6 +436,11 @@ class ShadingEngine(ObjectSet):
         for shape in shapes:
             result.update(cmds.listConnections(shape, type="groupId") or [])
         return result
+
+
+# ``ShadingEngine.create("mySG")`` is refused naming the keyword form, never
+# silently made as 'shadingEngine' (its ``_create`` takes no input)
+_NO_INPUT_CREATES.add(ShadingEngine._create.__func__)
 
 
 def _long_name(node: str | DAGNode) -> str:
