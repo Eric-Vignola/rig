@@ -56,7 +56,7 @@ for the node classes and their typed methods.
 | 34 | [Tag](#34-tag) | one category per tag, `.set` / `.clear` / `.rename` / `.delete`, `in` and queries as arrays, `componentTagExpression`, procedural `polyCube` tags and `at=` |
 | 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `shade.repair` / `tidy`, the network verbs |
-| 37 | [Shader conversion](#37-shader-conversion) | `mat = mat.astype(Phong)`, `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, the held old node, undo |
+| 37 | [Shader conversion](#37-shader-conversion) | `mat.astype(Phong)` (in place), `shade.convert`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, other objects of the old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_num_keys` / `evaluate` |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
@@ -3328,28 +3328,33 @@ builds `xSG` beside it.
 ## 37. Shader conversion
 
 `mat.astype(Phong)` (a class, or a type name: `"phong"`) converts a
-material to another type and **returns the new node**; `shade.convert(mat,
-Phong)` is the same verb as a function. The new node keeps the name, the
-engines and their members, the materialInfo, the `defaultShaderList1`
-slot, the container, the dynamic attributes and the locks, in one undo
-step. The old node object raises from then on, naming the conversion (its
-`str` is its old name, marked: `"red (deleted)"`). A
-class call never converts: `Phong(mat)` on a blinn is a `NodeTypeError`
-that names `astype`.
+material to another type **in place** and returns it; `shade.convert(mat,
+Phong)` is the same verb as a function. Maya cannot change a node's type,
+so a new node is built and the old one deleted: the new node keeps the
+name, the engines and their members, the materialInfo, the
+`defaultShaderList1` slot, the container, the dynamic attributes and the
+locks, and `mat` itself is re-pointed to it, its class switched
+(`type(mat)` is then `Phong`), all in one undo step. A `List` holding
+`mat`, and `mat` as a dict or set key, keep working. Another object of the
+old node, looked up separately, and the plugs taken from `mat` before,
+raise `already deleted!` from then on (the old node's `str` is its aside
+name, marked: `"red__rigold (deleted)"`). A class call never converts:
+`Phong(mat)` on a blinn is a `NodeTypeError` that names `astype`.
 
 ```python
 cmds.file(new=True, force=True)
 cube = make(cmds.polyCube, "cube", ch=False)
 
-mat = Blinn.define("red", color=(1, 0, 0))
+mat  = Blinn.define("red", color=(1, 0, 0))
+held = Blinn("red")                             # another object of the same node
 cube << mat
 p = mat.astype(Phong)                           # nothing set beyond color: no warning
-print(repr(p), cmds.nodeType("red"), repr(p.get_engine()), members("redSG"))   # Phong("red") phong ShadingEngine("redSG") ['cubeShape']
+print(p is mat, repr(mat), cmds.nodeType("red"), repr(mat.get_engine()), members("redSG"))   # True Phong("red") phong ShadingEngine("redSG") ['cubeShape']
 try:
-    mat.get_name()                              # its str answers: red (deleted)
+    held.get_name()                             # its str answers: red__rigold (deleted)
 except RuntimeError as err:
-    print(str(err).split(" (")[0])              # 'red' was converted to a phong; use the node astype() returned
-mat = p.astype(Blinn, diffuse=0.4)              # attributes are checked against the target, then set in the same step
+    print(err)                                  # red__rigold already deleted!
+mat.astype(Blinn, diffuse=0.4)                  # attributes are checked against the target, then set in the same step
 print(repr(mat), round(cmds.getAttr("red.diffuse"), 2), cube in mat)   # Blinn("red") 0.4 True
 ```
 
@@ -3375,7 +3380,7 @@ print(str(report))
 #    value       eccentricity = 0.66 [locked]
 print(report.parked, "diffuse" in report.carried)          # ('eccentricity', 'specularRollOff') True
 
-lossy = lossy.astype(Phong)                                # the same text once, as a warning
+lossy.astype(Phong)                                        # the same text once, as a warning
 print(cmds.listAttr("lossy", userDefined=True))            # ['__eccentricity__', '__specularRollOff__'] -- hidden, typed like the originals
 print(cmds.listConnections("ramp1.outAlpha", plugs=True))  # ['lossy.__specularRollOff__'] -- the ramp survives, re-homed
 ```
@@ -3386,7 +3391,7 @@ scene, values lost); `strict=True` refuses anything lossy with the same
 text and writes nothing.
 
 ```python
-lossy = shade.convert(lossy, Blinn)             # no warning
+shade.convert(lossy, Blinn)                     # no warning
 print(repr(lossy), round(cmds.getAttr("lossy.eccentricity"), 2))                                            # Blinn("lossy") 0.66
 print(cmds.listConnections("lossy.specularRollOff", plugs=True), cmds.listAttr("lossy", userDefined=True))  # ['ramp1.outAlpha'] None
 
@@ -3398,7 +3403,7 @@ except ValueError as err:
 drop = Blinn.define("drop")
 cube              << drop
 drop.eccentricity << 0.5
-drop = drop.astype(Phong, park=False)
+drop.astype(Phong, park=False)
 # Warning: rig.shade: 'drop' blinn -> phong loses:
 #    value       eccentricity = 0.5
 print(cmds.listAttr("drop", userDefined=True))  # None
@@ -3424,23 +3429,22 @@ for bad in (
 print(cmds.nodeType("lossy"), cmds.ls(type="unknown"))   # blinn []
 ```
 
-One `cmds.undo()` restores the old node, its uuid included: the held old
-node object works again, and the node the conversion returned is the dead
-one.
+One `cmds.undo()` restores the old node, its uuid included, and puts it
+and its class back on the converted object; `cmds.redo()` converts it
+again.
 
 ```python
 cmds.undoInfo(state=True, infinity=True)
-old = lossy
-new = lossy.astype(Phong)                        # warns: parks again
+uuid = lossy.get_uuid()
+lossy.astype(Phong)                              # warns: parks again
 print(cmds.undoInfo(query=True, undoName=True))  # rig.shade.convert
-try:
-    old.get_name()
-except RuntimeError as err:
-    print(str(err).split(";")[0])                # 'lossy' was converted to a phong
-print(repr(new), round(new.diffuse >> None, 2))  # Phong("lossy") 0.33
+print(repr(lossy), round(lossy.diffuse >> None, 2))   # Phong("lossy") 0.33
 
 cmds.undo()
-print(cmds.nodeType("lossy"), repr(old))         # blinn Blinn("lossy")
+print(cmds.nodeType("lossy"), repr(lossy), lossy.get_uuid() == uuid)   # blinn Blinn("lossy") True
+cmds.redo()
+print(repr(lossy))                               # Phong("lossy")
+cmds.undo()
 ```
 
 ---

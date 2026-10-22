@@ -815,9 +815,8 @@ def _deleted_name(node: Any) -> str:
     """The last known name of `node`, a node object whose handle is not valid
     (deleted to the undo queue, or freed by a new scene, a file open or a
     reference unload), with no marker: a node deleted to the undo queue is
-    alive, and named by its MObject (as `DGNode.ensure_valid` names it), or, a
-    node a shader conversion replaced, by the name it had (the conversion's
-    record, `_base._CONVERTED`: 'red', not its aside name); a freed one cannot
+    alive, and named by its MObject (as `DGNode.ensure_valid` names it); a
+    freed one cannot
     be read, so it is the name `_name` last read (every node object reads it
     when it is built or cast by a name), else its class name."""
     d    = node.__dict__
@@ -827,11 +826,6 @@ def _deleted_name(node: Any) -> str:
         try:
             fn   = OpenMaya.MFnDependencyNode(d["_mobject"])
             name = fn.name()
-            converted = _base_module._CONVERTED
-            if converted:
-                record = converted.get(fn.uuid().asString())
-                if record is not None:
-                    name = record[0]
         except Exception:  # noqa: BLE001 (the cached name then)
             name = None
     return name or d.get("_last_name") or type(node).__name__
@@ -1338,7 +1332,7 @@ class DGNode(Node):
         if not handle.isValid():
             if handle.isAlive():
                 fn = OpenMaya.MFnDependencyNode(self._mobject)
-                raise _deleted_error(fn.name(), uuid=fn.uuid().asString())
+                raise _deleted_error(fn.name())
             raise _deleted_error(type(self).__name__, freed=True)
 
     def get_name(self) -> str:

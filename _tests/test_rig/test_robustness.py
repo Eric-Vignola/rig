@@ -254,11 +254,16 @@ class TestDeletedNodeName(MayaTestCase):
             node.get_name()
 
     def test_a_converted_material_shows_its_name(self):
-        red = Blinn.define("red")
+        # re-pinned (astype in place, user decision 2026-10-22, option A): the
+        # object converted is the new node; another object of the old one is
+        # named by the old node's aside name
+        red  = Blinn.define("red")
+        held = Blinn("red")
         red.astype(rig.shade.Phong)
-        self.assertEqual((str(red), repr(red)), ("red (deleted)", 'Blinn("red", deleted)'))
-        with self.assertRaisesRegex(RuntimeError, r"^'red' was converted to a phong"):
-            red.get_name()
+        self.assertEqual((str(red), repr(red)), ("red", 'Phong("red")'))
+        self.assertEqual((str(held), repr(held)), ("red__rigold (deleted)", 'Blinn("red__rigold", deleted)'))
+        with self.assertRaisesRegex(RuntimeError, r"^red__rigold already deleted!$"):
+            held.get_name()
 
     def test_the_marked_name_names_no_maya_node(self):
         node = Node(cmds.createNode("transform", name="obj1"))

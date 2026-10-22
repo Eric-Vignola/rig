@@ -123,7 +123,7 @@ from rig.nodetypes.plugins import load_plugin
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
 | `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `get_face_members`, `x << sg`, `remove(x)` (the DSL's `x << -sg`); the raw `add_members` / `remove_members` / `force_elements` and `assign` raise, naming `x << sg` / `sg.remove(x)` |
-| `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `remove(x)` (the DSL's `x << -mat`), `astype` (returns the new node), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
+| `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `remove(x)` (the DSL's `x << -mat`), `astype` (converts the object in place), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
 | `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `clear` / `delete`, `x << layer` and `remove(x)` (the DSL's `x << -layer`), the one way in and out (`add_members` / `remove_members` raise, naming them); the DSL's `Layer` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `get_namespace`, `get_file_path(copy_number=False)`, `get_nodes`, `delete` |
@@ -533,8 +533,8 @@ a type with no class. `rn.blinn()` makes only the shader, in the scope; the
 first assignment builds its engine. `get_engine()` is the engine the shader
 feeds (find-only), `delete()` / `rename()` act on the network (the shader,
 its engines and their materialInfo; `cmds.delete` is the one-node escape),
-and `astype(Phong)` converts, returning the new node, while the old node
-object raises from then on. `find_all(exact_type=False)` lists the
+and `astype(Phong)` converts the object in place (its node and its class,
+one undo step), while another object of the old node raises from then on. `find_all(exact_type=False)` lists the
 shaders Maya derives from the type, each typed by its own class.
 
 ### Display layers are exclusive and hold objects only

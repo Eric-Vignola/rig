@@ -1612,33 +1612,14 @@ def _ensure_dg_named(attr: Any, owner: Any) -> None:
         raise _deleted_error(str.__str__(attr))
 
 
-# The nodes a shader conversion deleted (``rig._internal.shade_convert``):
-# {the old node's uuid: (its name, the type it was converted to)}, so each
-# held node of a chain of conversions, in any namespace, names its own.
-# `_deleted_error` reads it, on the error path only; the conversion module
-# clears it before a new scene or a file open.
-_CONVERTED: dict = {}
-
-
-def _deleted_error(name: str, freed: bool = False, uuid: str | None = None) -> RuntimeError:
+def _deleted_error(name: str, freed: bool = False) -> RuntimeError:
     """The ``"... already deleted!"`` RuntimeError of the node `name`, deleted to
     the undo queue, or, `freed`, freed by a new scene, a file open or a reference
     unload: a freed node cannot be read, so `name` is then its class name (a node
     object, see `DGNode.ensure_valid`) or the name a plug with no owner was built
-    with (see `_raise_deleted`). Every guard raises through it. A node a shader
-    conversion replaced (`_CONVERTED`, by the node's `uuid`) names the
-    conversion: "'red' was converted to a phong; use the node astype() returned
-    (red__rigold already deleted!)"."""
+    with (see `_raise_deleted`). Every guard raises through it."""
     if freed:
         name = f"{name} node (freed by a new scene, a file open or a reference unload)"
-    elif _CONVERTED and uuid is not None:
-        converted = _CONVERTED.get(uuid)
-        if converted is not None:
-            old, node_type = converted
-            return RuntimeError(
-                f"'{old}' was converted to {_article(node_type)} {node_type}; use the "
-                f"node astype() returned ({name} already deleted!)"
-            )
     return RuntimeError(f"{name} already deleted!")
 
 
@@ -1652,7 +1633,7 @@ def _raise_deleted(attr: Any, handle: Any) -> None:
     buffer)."""
     if handle.isAlive():
         fn = OpenMaya.MFnDependencyNode(attr.__dict__["_mplug"].node())
-        raise _deleted_error(fn.name(), uuid=fn.uuid().asString())
+        raise _deleted_error(fn.name())
     raise _deleted_error(str.__str__(attr).split(".", 1)[0], freed=True)
 
 
@@ -1674,7 +1655,7 @@ def _mplug_handle(mplug: OpenMaya.MPlug) -> Any:
         return None
     if not handle.isValid():
         fn = OpenMaya.MFnDependencyNode(mobject)
-        raise _deleted_error(fn.name(), uuid=str(fn.uuid()))
+        raise _deleted_error(fn.name())
     return handle
 
 

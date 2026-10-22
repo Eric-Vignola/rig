@@ -48,15 +48,16 @@ Usage::
 
     cube << red ; red.remove(cube) ; cube << Material()    # assign ; remove (shorthand: cube << -red) ; out of every engine (rig.shade)
     cube in red ; cube >> red ; Blinn.of(cube)     # every face? ; the face ids ; [Blinn("red")] or []
-    red = red.astype(Phong)                        # Phong("red"): the new node; the held blinn raises
+    red.astype(Phong)                              # red is Phong("red") now, in place; another blinn object raises
 
 A shader node is a membership collection (``rig.shade``): on the right of
 ``<<`` it assigns, ``red.remove(x)`` takes ``x`` out (shorthand: ``x <<
 -red``, where ``-red`` is the removal token), ``Material()`` /
 ``Blinn()`` the kind token (out of every engine on ``<<``, the enumeration on
 ``>>``), ``x in red`` asks. ``Blinn(None)`` is a TypeError. ``astype``
-converts: it makes a new node of the target type, which it returns; the old
-node object raises from then on, naming the conversion.
+converts in place: it makes a new node of the target type and re-points the
+object to it (its class too), in one undo step; another object of the old
+node raises from then on.
 """
 
 from __future__ import annotations
@@ -279,7 +280,7 @@ class Material(DGNode):
     assigns, ``cube << -red`` removes, ``cube in red`` asks, ``cube >> red``
     reads the face ids; ``Material()`` / ``Blinn()`` is the kind token (out of
     every engine on ``<<``; ``cube >> Blinn()`` is ``Blinn.of(cube)``).
-    ``red.astype(Phong)`` converts it and returns the new node.
+    ``red.astype(Phong)`` converts it in place and returns it.
     """
 
     # no NATIVE_NODE_TYPE: unregistered, the class of the surface types
@@ -585,12 +586,18 @@ class Material(DGNode):
         **attrs: Any,
     ) -> Any:
         """Converts this shader to the node type ``to`` (a class such as
-        ``Phong``, or a type name, ``'phong'``) and returns THE NEW NODE
-        (``Phong("red")``): ``red = red.astype(Phong)``. From then on this
-        node object (and its plugs) raise "'red' was converted to a phong; use
-        the node astype() returned"; after an undo it is the live node again.
+        ``Phong``, or a type name, ``'phong'``) IN PLACE and returns this
+        object: Maya cannot change a node's type, so a new node is built and
+        the old one deleted, and this object is re-pointed to the new node,
+        its class switched (``red.astype(Phong)``: ``type(red)`` is
+        ``Phong``). A ``List`` holding it, and it as a dict or set key, keep
+        working. Another object of the old node, looked up separately, and
+        the plugs taken from this one before, raise "... already deleted!";
+        an undo puts the old node and class back on this object (and its
+        plugs), a redo the new ones.
 
-        One undo chunk (``rig.shade.convert``) makes the new node and keeps
+        One undo chunk (``rig.shade.convert``) makes the new node, re-points
+        this object and keeps
         the name, the engines, the materialInfo, the ``defaultShaderList1``
         slot, the container, the dynamic attributes and the locks, moves the
         wires the target can hold and parks the rest on the node as hidden
