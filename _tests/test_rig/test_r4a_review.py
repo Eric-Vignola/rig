@@ -320,7 +320,12 @@ class TestContainerFalseHasOneMeaning(_SceneCase):
         self.assertEqual(str(made[4].get_parent()), "inner_mesh")
         self.assertEqual(str(made[5].get_parent()), "inner_nmesh")
         self.assertEqual(_members(box), sorted([str(kept.get_parent()), str(kept)]))
-        self.assertTrue(cmds.attributeQuery("__rig__", node="inner_m", exists=True))
+        # re-pinned (round 6, user decision: the in-session cleanup registry):
+        # rig-owned through the registry, no __rig__ tag by default
+        from rig._internal.container import _is_rig_owned
+
+        self.assertTrue(_is_rig_owned("inner_m"))
+        self.assertFalse(cmds.attributeQuery("__rig__", node="inner_m", exists=True))
         # outside a scope nothing changes
         self.assertEqual(str(Transform.create(name="free", container=False)), "free")
         self.assertEqual(

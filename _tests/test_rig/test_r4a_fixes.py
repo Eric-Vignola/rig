@@ -2093,8 +2093,13 @@ class TestNodeOnly(_SceneCase):
         md = Node.create("multiplyDivide", name="md")
         self.assertIs(type(md), DGNode)
         self.assertEqual(str(md), "md")
-        # the GC tag of a utility type, as container.createNode gives it
-        self.assertTrue(cmds.attributeQuery("__rig__", node="md", exists=True))
+        # the GC ownership of a utility type, as container.createNode gives it
+        # (re-pinned, round 6 user decision: the in-session cleanup registry,
+        # no __rig__ tag by default)
+        from rig._internal.container import _is_rig_owned
+
+        self.assertTrue(_is_rig_owned("md"))
+        self.assertFalse(cmds.attributeQuery("__rig__", node="md", exists=True))
         # no positional argument after a type with no class, and nothing is made
         before = _scene()
         with self.assertRaisesRegex(TypeError, "takes keyword arguments only"):

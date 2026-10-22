@@ -32,7 +32,7 @@ from unittest import mock
 from maya import cmds
 from maya.api import OpenMaya
 
-from rig import cleanup, container, destroy, Node, prune_memoize_caches
+from rig import cleanup, container, destroy, Node, prune_memoize_caches, set_options
 from rig._internal import container as container_module
 from rig._internal.container import _GC_ELIGIBLE_TYPES, _RIG_TAG
 from rig.nodetypes import _base, DGNode
@@ -550,15 +550,22 @@ class TestTheTagAsTheCmdsRoute(UndoWalk, MayaTestCase):
 
 
 class TestTheTagInUse(UndoWalk, MayaTestCase):
-    """The tag the creators write, as rig and Maya use it."""
+    """The tag the creators write, as rig and Maya use it.
+
+    Re-pinned (round 6, user decision: the in-session cleanup registry): the
+    creators write the tag only under ``rig.set_options(cleanup_tags=True)``,
+    which every test here runs with (test_r6_cleanup_registry covers the
+    default)."""
 
     TEST_START_NEW_SCENE = True
 
     def setUp(self):
         super().setUp()
         self._registered = dict(_base._NODE_CLASS_DICT)
+        set_options(cleanup_tags=True)
 
     def tearDown(self):
+        set_options(cleanup_tags=False)
         # drop any class a test registered, then the dispatch it cached
         _base._NODE_CLASS_DICT.clear()
         _base._NODE_CLASS_DICT.update(self._registered)

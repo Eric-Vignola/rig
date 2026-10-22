@@ -30,6 +30,12 @@ skip_selection = true
 # default: cleanup deletes nodes, and that should be an explicit act.
 cleanup_on_exit = false
 
+# Stamp the hidden ``__rig__`` bool on every node ``cleanup()`` may delete, as
+# it is created. Off by default: rig remembers its nodes in memory for the
+# Maya session that built them, and the saved file carries no tag. Set true
+# to make ``cleanup()`` work on a file saved and reopened in a later session.
+cleanup_tags = false
+
 # Nested ``with container():`` blocks flatten into the outermost container
 # rather than creating real Maya sub-containers. Set false to get true
 # nesting, which also activates publish_input / publish_output.
