@@ -821,32 +821,31 @@ class TestConvertInANamespace(_Case):
 
 
 class TestConvertedRecord(_Case):
-    """Review minor (membership M7): each held node names its own conversion."""
+    """Review minor (membership M7), re-pinned (astype in place, user decision
+    2026-10-22, option A): a chain of conversions converts the one object; an
+    object of the node held from before raises the plain "already deleted!"."""
 
     def test_a_chain_and_a_namespace(self):
         from rig.nodetypes import Lambert, Phong
 
-        x   = Blinn.define("x")
-        p   = x.astype(Phong)
-        l_  = p.astype(Lambert)
-        l_.astype(Blinn)
-        for held, kind in ((x, "phong"), (p, "lambert"), (l_, "blinn")):
-            with self.subTest(kind):
-                # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-                # its marked name; an operation on it (get_name()) raises
-                with self.assertRaisesRegex(RuntimeError, rf"^'x' was converted to a {kind}; use the node astype"):
-                    held.get_name()
-                self.assertEqual(str(held), "x (deleted)")
+        x    = Blinn.define("x")
+        held = Blinn("x")
+        p    = x.astype(Phong)
+        l_   = p.astype(Lambert)
+        self.assertIs(l_.astype(Blinn), x)
+        self.assertIs(p, x)
+        self.assertIs(l_, x)
+        self.assertIs(type(x), Blinn)
+        self.assertEqual(x.get_name(), "x")
+        with self.assertRaisesRegex(RuntimeError, r"^x__rigold already deleted!$"):
+            held.get_name()
+        self.assertEqual(str(held), "x__rigold (deleted)")
         cmds.namespace(add="ns")
         root = Blinn.define("y")
         root.astype(Phong)
         ns_y = Blinn.define("ns:y")
         ns_y.astype(Lambert)
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        with self.assertRaisesRegex(RuntimeError, r"^'y' was converted to a phong"):
-            root.get_name()
-        self.assertEqual(str(root), "y (deleted)")
+        self.assertEqual((repr(root), repr(ns_y)), ('Phong("y")', 'Lambert("ns:y")'))
 
 
 class TestReferencedShaderEngine(_Case):

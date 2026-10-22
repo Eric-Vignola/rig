@@ -1,9 +1,11 @@
 """Tests for shader conversion: ``mat.astype(Phong)``, ``shade.convert()``
 and the parking engine behind them.
 
-Round 4b (NC7): a conversion makes a new node and RETURNS it (``red =
-red.astype(Phong)``); the old node object then raises, naming the
-conversion. ``Phong(mat)`` is a reference, never a conversion.
+A conversion makes a new node and converts the object IN PLACE (user
+decision 2026-10-22, option A): ``red.astype(Phong)`` re-points ``red`` to
+the new node, switches its class and returns it, in the one undo step; other
+objects of the old node raise "already deleted!". ``Phong(mat)`` is a
+reference, never a conversion.
 ``dry_run=True`` returns the :class:`Conversion` report.
 
 ``cmds.warning`` is monkeypatched to count and capture; every refusal
@@ -30,9 +32,6 @@ from rig.shade import (
 )
 from rig._internal import shade_convert
 from rig._tests._base import MayaTestCase
-
-
-CONVERTED = r"'red' was converted to a {}; use the node astype\(\) returned"
 
 
 def _cube(name):
@@ -167,7 +166,9 @@ class TestConversion(MayaTestCase):
         self.assertEqual(_dsl1_index("red"), slot)
         self.assertEqual(_members("redSG"), ["cubeShape"])
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
-        # the new node is returned; the held one names the conversion
+        # re-pinned (astype in place, user decision 2026-10-22, option A): the
+        # object converted is the new node, and is returned
+        self.assertIs(p, mat)
         self.assertIs(type(p), Phong)
         self.assertEqual(repr(p), 'Phong("red")')
         self.assertEqual(p, Node("red"))
@@ -175,11 +176,7 @@ class TestConversion(MayaTestCase):
         self.assertEqual([repr(m) for m in Material.of(self.cube)], ['Phong("red")'])
         p.cosinePower << 40
         self.assertEqual(cmds.getAttr("red.cosinePower"), 40)
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
-            mat.get_name()
-        self.assertEqual(str(mat), "red (deleted)")
+        self.assertEqual((mat.get_name(), str(mat)), ("red", "red"))
         with self.assertRaisesRegex(TypeError, r"Phong\('red'\)\.astype\(Blinn\) converts it"):
             Blinn("red")
         self.assertEqual(cmds.ls("*__rigconvert*"), [])
@@ -408,16 +405,13 @@ class TestConversion(MayaTestCase):
         self.assertTrue(cmds.objExists("look:red"))
         held = Material("look:red")
         new  = held.astype("phong")
+        self.assertIs(new, held)
         self.assertEqual(repr(new), 'Phong("look:red")')
         self.assertEqual(cmds.nodeType("look:red"), "phong")
         self.assertEqual(_sources("look:redSG.surfaceShader"), ["look:red.outColor"])
         self.assertEqual(cmds.ls("*__rigconvert*", recursive=True), [])
         self.assertEqual(cmds.ls("red*", recursive=True), ["look:red", "look:redSG"])
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        with self.assertRaisesRegex(RuntimeError, r"'look:red' was converted to a phong"):
-            held.get_name()
-        self.assertEqual(str(held), "look:red (deleted)")
+        self.assertEqual(str(held), "look:red")
 
     def test_strict_refuses_with_the_warning_text(self):
         red    = self._lossy_red()
@@ -668,14 +662,12 @@ class TestConversion(MayaTestCase):
         self.assertEqual(cmds.container(asset, query=True, nodeList=True).count("red"), 1)
         self.assertEqual(_sources("redSG.surfaceShader"), ["red.outColor"])
         self.assertEqual(_sources(f"{info}.material"), ["red.message"])
-        # the undo revives the old node; the new one is gone (plain message)
+        # the undo puts the old node and class back on the object (re-pinned:
+        # astype in place, user decision 2026-10-22, option A)
+        self.assertIs(new, red)
+        self.assertIs(type(red), Blinn)
         self.assertTrue(red.is_valid())
         self.assertEqual(red, Blinn("red"))
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        with self.assertRaisesRegex(RuntimeError, r"^red__rigconvert already deleted!$"):
-            new.get_name()
-        self.assertEqual(str(new), "red__rigconvert (deleted)")
         with mock.patch.object(cmds, "warning") as warn:
             self.assertIs(red.astype(Blinn), red)
         self.assertEqual(warn.call_count, 0)
@@ -686,12 +678,8 @@ class TestConversion(MayaTestCase):
             cmds.listAttr("red", userDefined=True),
             ["myNote", "__eccentricity__", "__specularRollOff__"],
         )
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
-            red.get_name()
-        self.assertEqual(str(red), "red (deleted)")
-        red = Phong("red")
+        self.assertIs(type(red), Phong)
+        self.assertEqual(str(red), "red")
         # the grammar interaction costs two entries: convert, then assign
         cmds.flushUndo()
         other = _cube("other")
@@ -774,14 +762,14 @@ class TestConversion(MayaTestCase):
         self.assertIs(type(red), Blinn)
         with mock.patch.object(cmds, "warning") as warn:
             real = shade.convert(red, "phong")
-        # re-pinned (round 4b NC7): the conversion returns the new node; its
-        # warning is the dry run's report text
+        # re-pinned (astype in place, user decision 2026-10-22, option A): the
+        # conversion returns the object it converted; its warning is the dry
+        # run's report text; another object of the old node is dead
         self.assertEqual(warn.call_args[0][0], str(dry))
+        self.assertIs(real, red)
         self.assertEqual(real, Node("red"))
         self.assertIs(type(real), Phong)
-        with self.assertRaisesRegex(RuntimeError, "already deleted"):
-            stale.get_name()
-        with self.assertRaisesRegex(RuntimeError, CONVERTED.format("phong")):
+        with self.assertRaisesRegex(RuntimeError, r"^red__rigold already deleted!$"):
             stale.get_name()
         self.assertEqual(str(Node("red")), "red")
         self.assertAlmostEqual(real.diffuse >> None, 0.33, places=5)

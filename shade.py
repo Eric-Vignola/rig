@@ -63,12 +63,14 @@ Usage::
     shade.repair()                           # List of the shapes re-homed to initialShadingGroup
     shade.tidy()                             # all-faces memberships collapsed to object level
 
-    red = red.astype(Phong)                  # Phong("red"): the new node, in one undo chunk
+    red.astype(Phong)                        # red is Phong("red") now, in place, in one undo chunk
     shade.convert("red", "lambert", dry_run=True)   # the Conversion report, nothing written
 
 Conversion (``mat.astype(Phong)``, ``shade.convert(mat, "phong")``) makes a
-new node of the target type and returns it; ``Phong(mat)`` is a reference,
-never a conversion (a blinn there is a ``NodeTypeError`` naming ``astype``).
+new node of the target type and converts ``mat`` IN PLACE: the object is
+re-pointed to the new node and its class switched, and it is returned;
+``Phong(mat)`` is a reference, never a conversion (a blinn there is a
+``NodeTypeError`` naming ``astype``).
 It keeps the name, the engines, the materialInfo, the ``defaultShaderList1``
 slot, the container, the dynamic attributes and the locks, moves every wire
 the target can hold, and PARKS what it cannot: each non-default value, wire
@@ -77,9 +79,9 @@ a hidden ``__attr__`` of the same type and given back the next time the
 material becomes a type that has it. One ``cmds.warning`` names what was
 parked (``park=False`` drops the values and disconnects the wires instead,
 sources kept; ``strict=True`` refuses anything lossy; ``dry_run=True`` writes
-nothing and returns the :class:`Conversion` report). The old node object, and
-its plugs, then raise "'red' was converted to a phong; use the node astype()
-returned"; after an undo it is the live node again.
+nothing and returns the :class:`Conversion` report). Another object of the
+old node, and the plugs taken from ``mat`` before, then raise "... already
+deleted!"; an undo puts the old node and class back on ``mat``.
 
 Exclusive membership means faces into the engine that already owns their
 whole object is the one no-op of the grammar: the state already holds.
@@ -998,8 +1000,10 @@ def convert(
     """Make the material ``x`` -- a shader node or its name, read by
     ``Material(x)`` (a missing name is a NodeNotFoundError, another type a
     NodeTypeError) -- the node type ``to`` (a class such as ``Phong`` or a
-    type name) and return THE NEW NODE (``Phong("red")``); the node object
-    ``x`` was then raises, naming the conversion. See
+    type name) IN PLACE: a node object ``x`` is re-pointed to the new node,
+    its class switched (``Phong("red")``), and returned (a name gives a new
+    object of the node, converted); other objects of the old node raise
+    "... already deleted!". See
     :meth:`rig.nodetypes.Material.astype` for the options; ``dry_run=True``
     returns the :class:`Conversion` report instead (``bool(report)`` is
     "something would be parked or lost", ``str(report)`` the warning text) and
@@ -1009,9 +1013,10 @@ def convert(
             f"{x!r} is a membership token, not a material; convert the material "
             f"node: mat.astype(...) or shade.convert(mat, ...)"
         )
+    mat = Material(x)
     return _shade_convert.convert(
-        Material(x), _target_type(to), strict=strict, dry_run=dry_run, park=park,
-        attrs=attrs, update=update,
+        x if isinstance(x, Material) else mat, _target_type(to), strict=strict,
+        dry_run=dry_run, park=park, attrs=attrs, update=update,
     )
 
 

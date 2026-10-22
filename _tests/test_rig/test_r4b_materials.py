@@ -22,17 +22,15 @@ nodes, and a conversion returns the new node.
   node (a class or a type name; a name converts too); ``dry_run`` returns the
   report; ``strict``; the generic ``Material`` and non-shader targets refused;
   a reference never converts; a shader already of the type comes back as is.
-* ``TestConvertedHandle``: the held old node (and its plugs) raise, naming the
-  conversion; an undo revives it and kills the new one (plain message); a new
-  scene or a file open clears the record; a chain of conversions; a
-  namespaced node.
+* ``TestConvertedHandle`` (re-pinned: astype converts in place, user decision
+  2026-10-22, option A): the object converted is the new node; another object
+  of the old node, and the plugs taken before, raise the plain "already
+  deleted!"; an undo brings the old node and class back on the object; a new
+  scene frees it; a chain of conversions; a namespaced node.
 
 Every refusal asserts a zero ``cmds.ls()`` delta.
 """
 
-import os
-import shutil
-import tempfile
 from unittest import mock
 
 import numpy as np
@@ -694,12 +692,13 @@ class TestConversionReturnsNode(_Case):
 
 
 # --------------------------------------------------------------------- #
-#  The held old node names the conversion
+#  astype converts in place; another object of the old node dies
+#  (re-pinned: user decision 2026-10-22, option A)
 # --------------------------------------------------------------------- #
 
 
 class TestConvertedHandle(_Case):
-    CONVERTED = r"^'red' was converted to a phong; use the node astype\(\) returned \(red__rigold already deleted!\)$"
+    DELETED = r"^red__rigold already deleted!$"
 
     def setUp(self):
         super().setUp()
@@ -707,13 +706,14 @@ class TestConvertedHandle(_Case):
         self.cube << self.red
 
     def test_the_held_node_names_the_conversion(self):
-        held  = self.red
-        plug  = held.color
+        red   = self.red
+        held  = Blinn("red")      # another object of the old node
+        plug  = red.color         # a plug taken before
         token = -held
-        new   = held.astype(Phong)
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name (a converted one by the name it had); an operation on it (get_name()) raises
-        self.assertEqual((str(held), repr(held)), ("red (deleted)", 'Blinn("red", deleted)'))
+        new   = red.astype(Phong)
+        self.assertIs(new, red)
+        self.assertIs(type(red), Phong)
+        self.assertEqual((str(held), repr(held)), ("red__rigold (deleted)", 'Blinn("red__rigold", deleted)'))
         for label, call in (
             ("name", lambda: held.get_name()),
             ("plug", lambda: held.color.get()), ("get", lambda: plug.get()),
@@ -724,99 +724,69 @@ class TestConvertedHandle(_Case):
             ("delete", lambda: held.delete()),
         ):
             with self.subTest(label):
-                self.assertRefused(RuntimeError, self.CONVERTED, call)
+                self.assertRefused(RuntimeError, self.DELETED, call)
         self.assertFalse(held.is_valid())
         self.assertEqual(held == new, False)
         # a node deleted another way keeps the plain message
         other = Blinn.define("other")
         cmds.delete("other")
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
         self.assertRefused(RuntimeError, r"^other already deleted!$", lambda: other.get_name())
         self.assertEqual(str(other), "other (deleted)")
-        self.assertIs(type(new), Phong)
-        self.assertIn(self.cube, new)
+        self.assertIn(self.cube, red)
+        self.assertIn(self.cube, Phong("red"))
 
     def test_an_undo_revives_the_old_node_and_kills_the_new(self):
-        held = self.red
-        new  = held.astype(Phong)
+        red   = self.red
+        red.astype(Phong)
+        taken = red.color         # the new node's plug
         cmds.undo()
-        self.assertTrue(held.is_valid())
-        self.assertEqual(held, Blinn("red"))
-        self.assertIn(self.cube, held)
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        self.assertRefused(RuntimeError, r"^red__rigconvert already deleted!$", lambda: new.get_name())
-        self.assertEqual(str(new), "red__rigconvert (deleted)")
+        self.assertIs(type(red), Blinn)
+        self.assertTrue(red.is_valid())
+        self.assertEqual(red, Blinn("red"))
+        self.assertIn(self.cube, red)
+        self.assertRefused(RuntimeError, r"^red__rigconvert\.color already deleted!$|^red__rigconvert already deleted!$",
+                           lambda: taken.get())
         cmds.redo()
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        self.assertRefused(RuntimeError, self.CONVERTED, lambda: held.get_name())
-        self.assertEqual(str(held), "red (deleted)")
-        self.assertEqual(Node("red"), Phong("red"))
+        self.assertIs(type(red), Phong)
+        self.assertEqual(Node("red"), red)
         self.assertIs(type(Node("red")), Phong)
+        taken.get()
 
     def test_a_new_scene_or_a_file_open_clears_the_record(self):
-        held = self.red
-        uuid = held.get_uuid()
-        held.astype(Phong)
-        self.assertEqual(_base._CONVERTED.get(uuid), ("red", "phong"))
+        red = self.red
+        red.astype(Phong)
+        self.assertFalse(hasattr(_base, "_CONVERTED"))
         cmds.file(new=True, force=True)
-        self.assertEqual(_base._CONVERTED, {})
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        self.assertRefused(RuntimeError, r"^Blinn node \(freed by a new scene", lambda: held.get_name())
-        self.assertRegex(str(held), r"^red(__rigold)? \(deleted\)$")
-        # a file open too
-        folder = tempfile.mkdtemp(prefix="rig_nc7_open_")
-        path   = os.path.join(folder, "nc7.ma")
-        try:
-            cmds.file(rename=path)
-            cmds.file(save=True, type="mayaAscii", force=True)
-            red = Blinn.define("red")
-            uuid = red.get_uuid()
-            red.astype(Phong)
-            self.assertIn(uuid, _base._CONVERTED)
-            cmds.file(path, open=True, force=True)
-            self.assertEqual(_base._CONVERTED, {})
-        finally:
-            cmds.file(new=True, force=True)
-            shutil.rmtree(folder, ignore_errors=True)
-        # a node later deleted under the old aside name keeps the plain message
-        cmds.createNode("transform", name="red__rigold")
-        node = Node("red__rigold")
-        cmds.delete("red__rigold")
-        self.assertRefused(RuntimeError, r"^red__rigold already deleted!$", lambda: node.get_name())
+        self.assertRefused(RuntimeError, r"^Phong node \(freed by a new scene", lambda: red.get_name())
+        self.assertEqual(str(red), "red (deleted)")
 
     def test_a_chain_of_conversions(self):
         first  = self.red
+        held   = Blinn("red")
         second = first.astype(Phong)
         third  = second.astype(Lambert)
+        self.assertIs(third, first)
         self.assertEqual(repr(third), 'Lambert("red")')
-        # each held node names its own conversion (round 4b FIX: the record
-        # is by uuid; by name both said 'a lambert')
-        for held, kind in ((first, "phong"), (second, "lambert")):
-            self.assertRefused(RuntimeError, rf"^'red' was converted to a {kind}; use the node astype\(\) returned",
-                               lambda held=held: held.get_name())
+        self.assertRefused(RuntimeError, self.DELETED, lambda: held.get_name())
         self.assertIn(self.cube, third)
         cmds.undo()
-        self.assertTrue(second.is_valid())
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        self.assertRefused(RuntimeError, "already deleted", lambda: third.get_name())
-        self.assertEqual((str(first), str(second)), ("red (deleted)", "red"))  # the undo revived second
+        self.assertIs(type(first), Phong)
+        self.assertTrue(first.is_valid())
+        self.assertEqual(str(first), "red")
+        cmds.undo()
+        self.assertIs(type(first), Blinn)
+        self.assertEqual(str(held), "red")  # the undo revived the old node
 
     def test_a_namespaced_node(self):
         cmds.namespace(add="look")
         cmds.shadingNode("blinn", asShader=True, name="look:red")
+        mat  = Blinn("look:red")
         held = Blinn("look:red")
-        new  = held.astype(Phong)
-        self.assertEqual(repr(new), 'Phong("look:red")')
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        self.assertRefused(RuntimeError, r"^'look:red' was converted to a phong; use the node astype\(\) returned",
-                           lambda: held.get_name())
-        self.assertEqual(str(held), "look:red (deleted)")
+        self.assertIs(mat.astype(Phong), mat)
+        self.assertEqual(repr(mat), 'Phong("look:red")')
+        # (Maya names a node deleted to the undo queue outside its namespace)
+        self.assertRefused(RuntimeError, r"^red__rigold already deleted!$", lambda: held.get_name())
+        self.assertEqual(str(held), "red__rigold (deleted)")
         # the root red is untouched
         self.assertTrue(self.red.is_valid())
         self.assertEqual(cmds.nodeType("red"), "blinn")

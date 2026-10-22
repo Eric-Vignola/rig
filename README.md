@@ -467,12 +467,13 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   in **no** engine (Maya draws them green). `cube << Default()` is the way
   back to `initialShadingGroup`;
   `shade.repair()` re-homes every green shape.
-- **Conversion parks, Maya's Type dropdown deletes.** `red =
-  red.astype(Phong)` makes a phong that keeps the name, the engine, the
-  container and the locks, and returns it; a value or an incoming wire the
-  new type cannot hold is parked on the node as a hidden `__attr__` and
-  comes back the next time the material becomes a type that has it. The
-  old node object raises from then on, naming the conversion. Maya's own
+- **Conversion parks, Maya's Type dropdown deletes.**
+  `red.astype(Phong)` makes a phong that keeps the name, the engine, the
+  container and the locks, and converts `red` itself in place (`type(red)`
+  is then `Phong`; one undo puts the blinn back on it); a value or an
+  incoming wire the new type cannot hold is parked on the node as a hidden
+  `__attr__` and comes back the next time the material becomes a type that
+  has it. Other objects of the old node raise `already deleted!`. Maya's own
   Attribute Editor dropdown makes a brand-new node and cascade-deletes any
   texture or animCurve whose only link was the shader; it also wipes
   parked state.

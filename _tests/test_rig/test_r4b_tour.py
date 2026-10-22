@@ -908,20 +908,17 @@ class TestTourW7(_Case):
         self.assertTrue(cube in Blinn("red"))
 
     def test_astype_returns_the_new_node(self):
+        # re-pinned (astype in place, user decision 2026-10-22, option A; the id is
+        # kept): the object converted is the new node, and is returned
         cube = _cube("cube")
         red  = Blinn.define("red", color=(1, 0, 0))
         cube << red
-        phong = red.astype(Phong)
-        self.assertEqual(repr(phong), 'Phong("red")')
-        # re-pinned (robustness run, user decision 2026-10-16 "Deleted nodes in a List"): str() of a deleted node answers
-        # its marked name; an operation on it (get_name()) raises
-        with self.assertRaisesRegex(RuntimeError,
-                                    r"^'red' was converted to a phong; use the node astype\(\) returned"):
-            red.get_name()
-        self.assertEqual((str(red), repr(red)), ("red (deleted)", 'Blinn("red", deleted)'))
-        self.assertTrue(cube in phong)
+        self.assertIs(red.astype(Phong), red)
+        self.assertEqual(repr(red), 'Phong("red")')
+        self.assertTrue(cube in red)
         self.assertEqual(cmds.getAttr("red.color")[0], (1.0, 0.0, 0.0))
-        back = shade.convert(phong, Blinn)
+        back = shade.convert(red, Blinn)
+        self.assertIs(back, red)
         self.assertEqual((repr(back), cube in back), ('Blinn("red")', True))
         self.assertEqual(back, Blinn("red"))
 

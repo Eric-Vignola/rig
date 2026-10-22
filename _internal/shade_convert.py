@@ -1,6 +1,7 @@
 """
 Shader conversion: the engine behind ``mat.astype(Phong)`` and
-``shade.convert(mat, "phong")``, which return the new node.
+``shade.convert(mat, "phong")``, which convert the node object IN PLACE
+(user decision 2026-10-22, option A) and return it.
 
 Maya has no node-type mutation. Its own Attribute Editor "Type" dropdown is
 ``createNode`` + MEL ``replaceNode`` + ``delete``: a brand-new node, the
@@ -27,8 +28,7 @@ chunk named ``rig.shade.convert``:
 * REPORT: a frozen :class:`Conversion`; ``bool(report)`` means something is
   parked or lost, ``str(report)`` is the warning text. ``dry_run`` returns
   it with zero writes; ``strict`` raises ``ValueError(str(report))``;
-  otherwise ONE ``cmds.warning`` before anything moves, and the conversion
-  returns the new node.
+  otherwise ONE ``cmds.warning`` before anything moves.
 * PARK (the default): every doomed value, wire and animCurve is cloned onto
   the SAME node as a hidden dynamic attribute of the same type
   (``cosinePower`` -> ``__cosinePower__``), the wire re-homed onto it. Parked
@@ -45,6 +45,12 @@ chunk named ``rig.shade.convert``:
   ``defaultShaderList1`` index and the container membership move exactly
   once), locks re-applied, the result verified BEFORE the old node is
   deleted, then the rename back to the old name asserted.
+* RE-POINT: the node object the conversion was called on is re-pointed to
+  the new node -- its node state, and its class (``type(red)`` is then
+  ``Phong``) -- through rig's undo command, inside the chunk (`_Repoint`):
+  the one undo step of the conversion gives the object its old node and
+  class back, its redo the new ones. Lists and dict / set keys holding the
+  object keep working (a node hashes by its name, which is kept).
 * ABORT: the chunk is closed and undone only when it recorded something
   (``undoInfo(undoName)`` is the chunk's name); an unguarded ``cmds.undo()``
   after an empty chunk would undo the user's previous action.
@@ -54,32 +60,31 @@ parked state survives rig-driven round trips and scene saves but not the
 artist's dropdown; ``duplicate`` copies parked attributes (harmless, a
 duplicate converted later restores them too); keyable / channelBox flags of
 built-in attributes are not preserved; an expression string driving a lost
-attribute is not rewritten. Live ``Node`` / ``Plug`` objects of the old
-node are poisoned and nothing is rebound: the old node, renamed
-``<name>__rigold`` and deleted, is recorded in ``_base._CONVERTED``, so its
-objects raise "'red' was converted to a phong; use the node astype()
-returned" (the record is read on that error path only, and cleared by a new
-scene or a file open); after an undo the old node is live again and the new
-one raises the plain ``already deleted!``.
+attribute is not rewritten. Other ``Node`` objects of the old node, looked
+up separately, are not re-pointed: the old node, renamed ``<name>__rigold``
+and deleted, makes them raise the plain ``<name>__rigold already deleted!``
+(they are live again after an undo), as do the plugs taken from the
+converted object before the conversion (those are its plugs again after an
+undo).
 """
 
 from __future__ import annotations
 
+import gc
 import logging
 import math
 import re
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal import callbacks as _callbacks
 from rig._internal.journal import cmds_edit
 from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
+from rig.nodetypes import plugins as _plugins
 from rig.nodetypes._base import _cast, _cast_node, _check_attrs, _refuse_locked_node, _name_of
 from rig.nodetypes.material_node import _gate_type, _leaf
 from rig.spec._base import _spec_from_attribute
@@ -129,7 +134,7 @@ class Conversion:
     (ramp arrays, typed values); ``parked`` the entries of the lost lists
     that are parked on the node instead of lost (their names as the lines
     print them). A dry run returns it; a conversion warns its text and
-    returns the new node."""
+    converts the node object in place."""
 
     name:           str
     source:         str
@@ -915,14 +920,15 @@ def convert(
     attrs:   dict,
     update:  bool,
 ) -> Any:
-    """Convert the shader ``node`` (a live material node) to the node type
-    ``dst`` in one undo chunk and return the new node (typed: ``Phong("red")``);
-    ``dry_run`` returns the :class:`Conversion` report with nothing written.
-    On a shader already of that type the node itself is returned, ``attrs``
-    written only under ``update``."""
+    """Convert the shader ``node`` (a live material node object) to the node
+    type ``dst`` in one undo chunk, IN PLACE: a new node is built and the old
+    one deleted, and ``node`` itself is re-pointed to the new node, its class
+    switched (``Phong("red")``), and returned (`_Repoint`, in the same undo
+    step). ``dry_run`` returns the :class:`Conversion` report with nothing
+    written. On a shader already of that type the node itself is returned,
+    ``attrs`` written only under ``update``."""
     _gate_type(dst)
-    old  = _name_of(node)   # a deleted node raises here (naming its conversion, if any)
-    uuid = type(node)._raw_get_uuid(node)
+    old  = _name_of(node)   # a deleted node raises here
     src  = cmds.nodeType(old)
     if cmds.ls(old, defaultNodes=True):
         raise RuntimeError(
@@ -954,16 +960,17 @@ def convert(
         raise ValueError(str(report))
     if str(report):
         cmds.warning(str(report))
-    name = _run(scan, park, attrs)
+    _run(scan, park, attrs, node)
     prune_memoize_caches()
-    _record(uuid, old, dst)
-    return _cast(name)
+    return node
 
 
-def _run(scan: _Scan, park: bool, attrs: dict) -> str:
-    """The chunk; returns the new node's name. The undo queue is on for its
-    duration (a rollback needs it) and put back afterwards; a failure closes
-    the chunk and undoes it only when the chunk recorded something."""
+def _run(scan: _Scan, park: bool, attrs: dict, node: Any) -> str:
+    """The chunk, which ends by re-pointing ``node`` to the new node
+    (`_Repoint`, through rig's undo command); returns the new node's name. The
+    undo queue is on for its duration (a rollback needs it) and put back
+    afterwards; a failure closes the chunk and undoes it only when the chunk
+    recorded something."""
     was_on = cmds.undoInfo(query=True, state=True)
     if not was_on:
         cmds_edit.undoInfo(state=True)
@@ -975,6 +982,7 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> str:
                 _restore(name, scan.dst)
                 for attr, value in attrs.items():
                     Plug(f"{name}.{_name_of(attr)}") << value
+                _plugins._run_undoable(_Repoint(node, _cast(name)))
         except Exception:
             if cmds.undoInfo(query=True, undoName=True) == CHUNK:
                 cmds_edit.undo()
@@ -985,46 +993,100 @@ def _run(scan: _Scan, park: bool, attrs: dict) -> str:
     return name
 
 
-# ---------- The converted-node record -------------------------------------- #
+# ---------- The in-place re-point ---------------------------------------- #
 #
-# ``_base._CONVERTED`` maps the uuid of a converted node (read before the
-# conversion; a node deleted to the undo queue keeps it) to ``(its name, the
-# target type)``, so ``_base._deleted_error`` names the conversion when an
-# object of the old node is used: each held node of a chain names its own,
-# whatever other conversion reuses its name. Read on that error path only; cleared before
-# a new scene or a file open (the old scene's nodes are freed then, and a freed
-# node never reaches the record). Registered once per Maya session through
-# rig._internal.callbacks, like the memo caches.
+# Maya cannot change a node's type, so a conversion builds a new node; the
+# object it was called on is then re-pointed to that node (user decision
+# 2026-10-22, option A): its node state and its class. The swap is an edit of
+# rig's undo command (``rigUndoableAPICommand``), inside the conversion's
+# chunk, so the one undo step of the conversion swaps the object back and its
+# redo forward again.
+#
+# Each incarnation (the old node, the new one) keeps a stand-in object of its
+# class that holds its state while the object holds the other one. A plug
+# taken from the object holds the handle of the node it was taken on and the
+# object as its owner (``_node``), and asks its owner whether that node is
+# alive; at each swap the plugs the object owns move to the stand-in of the
+# incarnation they were taken on, and the stand-in's plugs come back to the
+# object. A plug of the old node then raises "... already deleted!" (through
+# its stand-in) while the object holds the new node, and is the object's plug
+# again after an undo. The plugs an object owns are found by its referrers
+# (``gc.get_referrers``: a scan of Python's tracked objects at each swap, a
+# conversion and its undo or redo only).
+
+# the node state an incarnation keeps (`rig.nodetypes.dg_node._NODE_STATE`,
+# bound at the first swap); the plug cache (``_attr_dict``) moves with its plugs
+_STATE: list = []
 
 
-def _record(uuid: str, old: str, dst: str) -> None:
-    """Remember that the node of ``uuid`` was ``old``, converted to a
-    ``dst``."""
-    if not _CALLBACKS_READY[0]:
-        _CALLBACKS_READY[0] = _callbacks.ensure(
-            __name__, _THIS_MODULE, _callback_specs(), release=_clear
-        )
-    _base._CONVERTED[uuid] = (old, dst)
+def _state_keys() -> list:
+    if not _STATE:
+        from rig.nodetypes.dg_node import _NODE_STATE
+
+        _STATE.extend(sorted(_NODE_STATE))
+    return _STATE
 
 
-def _clear(*args: Any) -> None:
-    """kBeforeNew / kBeforeOpen: forget every converted node. A callback never
-    raises into Maya."""
-    try:
-        _base._CONVERTED.clear()
-    except Exception:  # noqa: BLE001
-        pass
+def _owned_plugs(*owners: Any) -> list:
+    """The ``__dict__`` of every plug each of ``owners`` owns (``_node``), one
+    list per owner, from one scan."""
+    found = [[] for _ in owners]
+    for ref in gc.get_referrers(*owners):
+        d = ref if type(ref) is dict else getattr(ref, "__dict__", None) if isinstance(ref, _base.Attribute) else None
+        if type(d) is dict and "_mplug" in d:
+            owner = d.get("_node")
+            for index, each in enumerate(owners):
+                if owner is each:
+                    found[index].append(d)
+    return found
 
 
-def _callback_specs() -> list:
-    msg = OpenMaya.MSceneMessage
-    return [
-        (msg.addCallback, msg.kBeforeNew,  _clear),
-        (msg.addCallback, msg.kBeforeOpen, _clear),
-    ]
+class _Repoint:
+    """Re-points the node object ``node`` from its old node to the new one
+    ``new`` (a fresh typed object of it): ``doIt`` / ``redoIt`` give it the new
+    node's state and class, ``undoIt`` the old ones (see the section above)."""
 
+    __slots__ = ("node", "stand_ins", "classes")
 
-_THIS_MODULE     = sys.modules.get(__name__)
-_CALLBACKS_READY = [
-    _callbacks.register(__name__, _THIS_MODULE, _callback_specs(), release=_clear)
-]
+    # what a failed load of rig's plug-in names (`rig.nodetypes.plugins._run_undoable`)
+    UNDO_EDIT = "a shader conversion in place"
+    # its undoIt / redoIt make no cmds call
+    RECORDS_NO_CMDS = True
+
+    def __init__(self, node: Any, new: Any) -> None:
+        old_cls        = type(node)
+        self.node      = node
+        self.stand_ins = (object.__new__(old_cls), new)
+        self.classes   = (old_cls, type(new))
+
+    def _swap(self, src: int, dst: int) -> None:
+        node, keys = self.node, _state_keys()
+        d          = node.__dict__
+        held, back = self.stand_ins[src], self.stand_ins[dst]
+        hd, bd     = held.__dict__, back.__dict__
+        # the object's incarnation goes to its stand-in, with its plugs
+        mine, theirs = _owned_plugs(node, back)
+        for key in keys:
+            if key in d:
+                hd[key] = d[key]
+        for plug in mine:
+            plug["_node"] = held
+        # the other one comes back from its stand-in, with its plugs
+        for plug in theirs:
+            plug["_node"] = node
+        for key in keys:
+            if key in bd:
+                d[key] = bd[key]
+            else:
+                d.pop(key, None)
+        bd["_attr_dict"] = {}
+        object.__setattr__(node, "__class__", self.classes[dst])
+
+    def doIt(self) -> None:  # noqa: N802 (the undo command's object protocol)
+        self._swap(0, 1)
+
+    def redoIt(self) -> None:  # noqa: N802
+        self._swap(0, 1)
+
+    def undoIt(self) -> None:  # noqa: N802
+        self._swap(1, 0)
