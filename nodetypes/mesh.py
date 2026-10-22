@@ -341,7 +341,7 @@ class Mesh(Geometry):
         from cgmath.geometry import UVData
 
         named = _positional_name(
-            cls, (mesh_data,), needs="mesh_data, ", built_from="MeshData", noun="mesh"
+            cls, (mesh_data,), needs="mesh_data, ", built_from="MeshData", noun="mesh", loads=True
         )
         if named is not None:
             raise named

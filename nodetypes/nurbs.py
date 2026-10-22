@@ -206,7 +206,7 @@ class NurbsCurve(Geometry):
         propagates.
         """
         named = _positional_name(
-            cls, (points,), needs="points, ", built_from="points or BSplineData", noun="curve"
+            cls, (points,), needs="points, ", built_from="points or BSplineData", noun="curve", loads=True
         )
         if named is not None:
             raise named
@@ -413,7 +413,7 @@ class NurbsSurface(Geometry):
         transform is made deletes it again before it propagates.
         """
         named = _positional_name(
-            cls, (data,), needs="data, ", built_from="BSplinePatchData", noun="surface"
+            cls, (data,), needs="data, ", built_from="BSplinePatchData", noun="surface", loads=True
         )
         if named is not None:
             raise named

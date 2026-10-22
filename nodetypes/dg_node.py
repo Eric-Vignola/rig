@@ -193,6 +193,11 @@ _ABSTRACT_TYPES = frozenset({"entity", "dagNode", "geometryShape", "animCurve"})
 # positional argument.
 _PLAIN_CREATES = set()
 
+# The other ``_create``s whose class's create takes no positional argument
+# (ShadingEngine's ``cmds.sets``): refused as for a plain create, never
+# dropped (review of the shade retirement, 2026-10-22).
+_NO_INPUT_CREATES = set()
+
 # The container scope's define hook (the D31 pattern): ``rig._internal.container``
 # sets it when it loads, to the object `_define` reads the scope through (its
 # ``_DefineScope``: the flatten prefix, the stack's frames, the node-added
@@ -278,6 +283,7 @@ def _positional_name(
     extra:      str        = "",
     built_from: str | None = None,
     noun:       str        = "node",
+    loads:      bool       = False,
 ) -> TypeError | None:
     """The refusal of a name given to ``create`` as its one positional
     argument (``Transform.create("ctl")``), naming what to write: the keyword
@@ -286,18 +292,26 @@ def _positional_name(
     ``), ``extra`` after it (``, type='blinn'``); ``built_from`` the input
     ``create``'s positionals are (``TransformData``), of a ``noun``. None
     when ``inputs`` is not one plain str (a ``Plug``, a str too, is an input
-    the class's own checks refuse)."""
+    the class's own checks refuse). ``loads``: the class has a ``load``, and
+    a str that looks like a file (``"body.obj"``) is told to use it instead."""
     if len(inputs) != 1 or type(inputs[0]) is not str:
         return None
     name   = inputs[0]
     call   = cls.__name__
-    forms  = f"{call}.create({needs}name={name!r}{extra}) makes one"
-    if not getattr(cls, "_DEFINE_REFUSED", None):
-        forms += f", {call}.define({name!r}{extra}) finds or makes it"
     takes  = (
         f"a positional argument is the {built_from} a {noun} is built from"
         if built_from else "it takes no positional argument"
     )
+    if loads:
+        from rig.nodetypes import _files
+
+        if _files.looks_like_file(name):
+            return TypeError(
+                f"{call}.create({name!r}): a file is read by {call}.load({name!r}); {takes}"
+            )
+    forms  = f"{call}.create({needs}name={name!r}{extra}) makes one"
+    if not getattr(cls, "_DEFINE_REFUSED", None):
+        forms += f", {call}.define({name!r}{extra}) finds or makes it"
     return TypeError(f"{call}.create({name!r}): the name is a keyword: {forms}; {takes}")
 
 
@@ -1683,7 +1697,8 @@ class DGNode(Node):
                 cls,
             )
         flags = cls._CREATE_FLAGS
-        if inputs and getattr(cls._create, "__func__", None) in _PLAIN_CREATES:
+        make = getattr(cls._create, "__func__", None)
+        if inputs and (make in _PLAIN_CREATES or make in _NO_INPUT_CREATES):
             # a class built from data as well (``Transform.create(transform_data)``,
             # user decision 2026-10-16) takes its data there, with its own checks
             from_data = getattr(cls, "_create_from_data", None)
