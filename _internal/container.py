@@ -1860,7 +1860,6 @@ def _add_members(leaf: Any, nodes: List[str], made: bool = False, strict: bool =
             raise
         LOGGER.debug("Failed to add %s to container %s: %s", nodes, leaf, e)
         return
-    edit = cmds.container if made else cmds_edit.container
     if len(nodes) == 1:
         calls = [nodes]
     else:
@@ -1874,7 +1873,7 @@ def _add_members(leaf: Any, nodes: List[str], made: bool = False, strict: bool =
         calls = ([free] if free else []) + moved
     for names in calls:
         try:
-            edit(leaf_name, edit=True, addNode=names, force=True)
+            _send_members(leaf_name, names, made)
         except RuntimeError as e:
             if strict:
                 raise
@@ -1883,9 +1882,18 @@ def _add_members(leaf: Any, nodes: List[str], made: bool = False, strict: bool =
                 continue
             for name in names:
                 try:
-                    edit(leaf_name, edit=True, addNode=[name], force=True)
+                    _send_members(leaf_name, [name], made)
                 except RuntimeError as one:
                     LOGGER.debug("Failed to add %s to container %s: %s", [name], leaf, one)
+
+
+def _send_members(leaf_name: str, names: List[str], made: bool) -> None:
+    """One ``container -edit -addNode -force`` call of `_add_members`: raw for
+    nodes made just now (``made``), else through ``cmds_edit``."""
+    if made:
+        cmds.container(leaf_name, edit=True, addNode=names, force=True)
+    else:
+        cmds_edit.container(leaf_name, edit=True, addNode=names, force=True)
 
 
 def _get_or_create_attributes_node(container_node) -> "Node":

@@ -87,10 +87,12 @@ EDIT = frozenset({
 NON_BARRIER = frozenset({"createNode", "loadPlugin"})
 
 # (file, enclosing function, command) allowed to call an EDIT / DUAL command raw: the member
-# add of a node container.createNode just made (`_add` registers first for any other node);
-# an undo chunk's close, which runs after its own barrier() whatever that barrier does
+# add of a node container.createNode just made (`_add` registers first for any other node;
+# round 6 S0 moved the call from `_ContainerStack._add` into `_send_members`, rig's one
+# addNode route); an undo chunk's close, which runs after its own barrier() whatever that
+# barrier does
 RAW_SITES = frozenset({
-    ("_internal/container.py", "_ContainerStack._add", "container"),
+    ("_internal/container.py", "_send_members", "container"),
     ("_internal/undo.py", "_Chunk.__exit__", "undoInfo"),
 })
 
@@ -323,16 +325,17 @@ class TestBarrierLint(unittest.TestCase):
                 self.assertEqual(self.lint(source), [])
         # a literal query=False is an edit
         self.assertEqual(len(self.lint("def f():\n    cmds.sets('s', query=False)\n")), 1)
-        # the allowed places
-        self.assertEqual(self.lint("class _ContainerStack:\n    def _add(self):\n"
-                                   "        cmds.container('c', edit=True, addNode=['n'])\n",
+        # the allowed places (round 6 S0, rig's one addNode route: the raw member add moved
+        # from _ContainerStack._add into _send_members, re-pinned here)
+        self.assertEqual(self.lint("def _send_members(leaf, names, made):\n"
+                                   "    cmds.container('c', edit=True, addNode=['n'])\n",
                                    rel="_internal/container.py"), [])
         self.assertEqual(self.lint("def f():\n    getattr(cmds, 'x')\n", rel="bridges/commands.py"), [])
         self.assertEqual(self.lint("def _apply(m):\n    m.doIt()\n", rel="_internal/api_edits.py"), [])
         self.assertEqual(self.lint("def _relink(m):\n    m.doIt()\n", rel="nodetypes/mesh.py"), [])
-        self.assertEqual(self.lint("class _ContainerStack:\n    def _add(self):\n"
-                                   "        cmds.container('c', edit=True, addNode=['n'])\n",
-                                   rel="_internal/container.py"), [])
+        self.assertEqual(len(self.lint("class _ContainerStack:\n    def _add(self):\n"
+                                       "        cmds.container('c', edit=True, addNode=['n'])\n",
+                                       rel="_internal/container.py")), 1)
         self.assertEqual(self.lint("class _Chunk:\n    def __exit__(self, *exc):\n"
                                    "        cmds.undoInfo(closeChunk=True)\n", rel="_internal/undo.py"), [])
         # a mel.eval in get_deformers is no query site any more; a doIt elsewhere in those files is not
