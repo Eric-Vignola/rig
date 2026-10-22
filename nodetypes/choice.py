@@ -4,6 +4,7 @@ Choice node class
 
 from __future__ import annotations
 
+from rig.nodetypes import _base
 from rig.nodetypes._base import _connected_attrs, Attribute
 from rig.nodetypes.dg_node import _QUERY_KEEPING_HOOKS, DGNode
 
@@ -53,6 +54,9 @@ class Choice(DGNode):
 
 # the hook above only reads the scene before it calls DGNode's
 _QUERY_KEEPING_HOOKS[Choice] = Choice._attr_data_type_fallback
+# `Attribute.get_data_type` answers this class's output from its selected
+# source's static type before it queries (`_base._choice_output_type`, round 6 S4)
+_base._CHOICE = Choice
 
 
 # the public names (user decision 2026-10-17: import leaks hidden)

@@ -1253,6 +1253,10 @@ _USER_CODE_RUNS = [0]
 # of them can exist
 _KEEPS_QUERY = None
 _DG_NAMING   = None
+# Bound by `rig.nodetypes.choice` when it loads: the `Choice` class, whose
+# output `Attribute.get_data_type` answers from its selected source's static
+# type when it can (`_choice_output_type`)
+_CHOICE = None
 
 
 # The handle of a node (`_objhandle`, an `MObjectHandle`) is the one object
@@ -2353,6 +2357,71 @@ def _hook_node(node: Any) -> Any:
         return None if "_attr_data_type_fallback" in vars(node) else node
     except Exception:
         return None
+
+
+def _choice_output_type(attr: Any, node: Any) -> str | None:
+    """The data type of `attr` when it is the output of `node`, a node of class
+    `Choice` exactly whose hook is rig's own (no instance hook, no class patch),
+    and the selected input has a source whose data type is a static cache hit:
+    the answer the Choice hook gives (`Choice._attr_data_type_fallback`),
+    computed before the getAttr query instead of after it (round 6, S4). None
+    in every other case (no source, a selector below 0, an unmade input, a
+    dynamic, generic or matrix element source, a chained choice, a user hook),
+    which queries as before. Reads only the scene; never raises."""
+    cls = type(node)
+    if cls is not _CHOICE:
+        return None
+    try:
+        if (
+            _hook_node(node) is None
+            or not _vouched_hook(cls)
+            or type(attr)._raw_get_name(attr) != "output"
+        ):
+            return None
+        # the hook's own reads, from the API: the selector (MPlug.asInt, as
+        # the hook), the source of the selected input
+        fn  = OpenMaya.MFnDependencyNode(attr._mplug.node())
+        sel = fn.findPlug("selector", False).asInt()
+        if sel < 0:
+            return None
+        inp = fn.findPlug("input", False).elementByLogicalIndex(sel)
+        if not inp.isDestination:
+            return None
+        src = inp.source()
+        if src.isNull:
+            return None
+        key = _mplug_static_key(src, src.attribute())
+        return None if key is None else _STATIC_DATA_TYPE.get(key)
+    except Exception:
+        return None
+
+
+def _mplug_static_key(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> tuple | None:
+    """The `_STATIC_DATA_TYPE` key of `mplug` (its attribute `mobject`), or None
+    if its data type is not a property of its node class (see
+    `Attribute._static_type_key`, which caches it per Attribute)."""
+    fn = OpenMaya.MFnDependencyNode(mplug.node())
+    # a dynamic or extension attr can be re-added with another type
+    if fn.attributeClass(mobject) != OpenMaya.MFnDependencyNode.kNormalAttr:
+        return None
+    api   = mobject.apiType()
+    under = _plug_under_element(mplug)
+    # under an element, only a kind whose type string its definition fixes
+    # (numeric, unit, enum, their compounds, compound, light data): a matrix,
+    # typed, generic or message one still queries (round 6, S1)
+    if (
+        api in _ELEMENT_STATIC_API_TYPES
+        if under
+        else (api in _STATIC_DATA_API_TYPES or _is_static_typed_root(mplug, mobject))
+    ):
+        return (
+            fn.typeName,
+            fn.typeId.id(),
+            OpenMaya.MFnAttribute(mobject).name,
+            mplug.isArray,
+            under,
+        )
+    return None
 
 
 def _vouched_hook(node_cls: type) -> bool:
@@ -3536,6 +3605,12 @@ class Attribute(str, metaclass=_PlugMeta):
             typ = _STATIC_DATA_TYPE.get(key)
             if typ is not None:
                 return typ
+        elif owner is not None and _CHOICE is not None:
+            # a choice output: its selected input's source type, when that is
+            # a static cache hit (round 6, S4)
+            typ = _choice_output_type(self, owner)
+            if typ is not None:
+                return typ
         if full_name is None:
             full_name = _name_of(self)
 
@@ -3583,34 +3658,8 @@ class Attribute(str, metaclass=_PlugMeta):
             # a freed node's MPlug is never read ("already deleted!")
             _ensure_owner_alive(self)
             try:
-                mplug   = self._mplug
-                fn      = OpenMaya.MFnDependencyNode(mplug.node())
-                normal  = OpenMaya.MFnDependencyNode.kNormalAttr
                 # `data_type`, the caller, named the attr first
-                mobject = _attr_mobject(self)
-                # a dynamic or extension attr can be re-added with another type
-                if fn.attributeClass(mobject) == normal:
-                    api   = mobject.apiType()
-                    under = _plug_under_element(mplug)
-                    # under an element, only a kind whose type string its
-                    # definition fixes (numeric, unit, enum, their compounds,
-                    # compound, light data): a matrix, typed, generic or
-                    # message one still queries (round 6, S1)
-                    if (
-                        api in _ELEMENT_STATIC_API_TYPES
-                        if under
-                        else (
-                            api in _STATIC_DATA_API_TYPES
-                            or _is_static_typed_root(mplug, mobject)
-                        )
-                    ):
-                        key = (
-                            fn.typeName,
-                            fn.typeId.id(),
-                            OpenMaya.MFnAttribute(mobject).name,
-                            mplug.isArray,
-                            under,
-                        )
+                key = _mplug_static_key(self._mplug, _attr_mobject(self))
             except Exception:
                 key = None
             self.__dict__["_static_key_cache"] = key
