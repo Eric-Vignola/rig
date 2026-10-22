@@ -16,8 +16,12 @@ same leaf (through S0's `_add_members`), the names read then, an invalid node dr
   a note of the statement's own exception.
 * ``TestUndoInsideAContainer``: the one-undo-step checks run INSIDE ``with
   container()`` (the critic's fix: the flush at an undo chunk's close).
+* ``TestContainerRoute``: the lint that every rig ``cmds.container`` /
+  ``cmds_edit.container`` call goes through ``journal.container_cmd``.
 """
 
+import ast
+import os
 from unittest import mock
 
 from maya import cmds
@@ -340,3 +344,83 @@ class TestUndoInsideAContainer(_Case):
             self.assertEqual(_scene(), before)
             cmds.redo()
             self.assertEqual(len(_members("ctn")), 5)
+
+
+# --------------------------------------------------------------------------------------- #
+#  The container route lint
+# --------------------------------------------------------------------------------------- #
+
+# the names a rig module binds maya.cmds or the journal's proxy to
+_CMDS = frozenset({"cmds", "_cmds", "mc", "_mc", "cmds_edit", "_cmds_edit"})
+
+# (file, enclosing function): the raw calls allowed: the wrapper's own query, and the
+# deferred adds' send (`_send_members`, made=True), which `container_cmd`'s flush runs
+_ALLOWED = frozenset({
+    ("_internal/journal.py", "container_cmd"),
+    ("_internal/container.py", "_send_members"),
+})
+
+
+def container_route_violations(rel, source):
+    """``[(line, message), ...]``: the ``<cmds>.container(...)`` calls and the
+    ``getattr(<cmds>, "container")`` lookups of ``source`` outside `_ALLOWED`."""
+    tree    = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+    def where(node):
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node.name
+        return ""
+
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "container" \
+                and isinstance(node.value, ast.Name) and node.value.id in _CMDS:
+            if (rel, where(node)) not in _ALLOWED:
+                out.append((node.lineno, f"{node.value.id}.container in {where(node)}: use container_cmd"))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr" \
+                and len(node.args) >= 2 and isinstance(node.args[0], ast.Name) and node.args[0].id in _CMDS \
+                and isinstance(node.args[1], ast.Constant) and node.args[1].value == "container":
+            out.append((node.lineno, f"getattr({node.args[0].id}, 'container') in {where(node)}"))
+    return out
+
+
+class TestContainerRoute(MayaTestCase):
+
+    def test_every_rig_container_call_goes_through_the_wrapper(self):
+        root = os.path.dirname(os.path.abspath(rig.__file__))
+        violations, read = [], []
+        for folder, dirs, files in os.walk(root):
+            rel_dir = os.path.relpath(folder, root).replace("\\", "/")
+            if rel_dir.split("/")[0] in ("_tests", "examples") or "__pycache__" in rel_dir:
+                dirs[:] = []
+                continue
+            for name in files:
+                if name.endswith(".py"):
+                    path = os.path.join(folder, name)
+                    rel  = os.path.relpath(path, root).replace("\\", "/")
+                    read.append(rel)
+                    with open(path, encoding="utf-8") as handle:
+                        violations += [f"{rel}:{line}: {msg}" for line, msg in
+                                       container_route_violations(rel, handle.read())]
+        self.assertIn("_internal/journal.py", read)
+        self.assertIn("_internal/shade_convert.py", read)
+        self.assertEqual(violations, [])
+
+    def test_the_lint_sees_a_raw_call(self):
+        for source in (
+            "def f():\n    cmds.container('c', query=True, nodeList=True)\n",
+            "def f():\n    cmds_edit.container('c', edit=True, publishName='x')\n",
+            "def f():\n    _cmds_edit.container('c', edit=True, addNode=['n'])\n",
+            "def f():\n    g = cmds.container\n",
+            "def f():\n    getattr(cmds, 'container')('c', q=True, nodeList=True)\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(len(container_route_violations("_internal/plug.py", source)), 1)
+        self.assertEqual(container_route_violations(
+            "_internal/container.py",
+            "def _send_members(leaf, names, made):\n    cmds.container(leaf, edit=True, addNode=names)\n"), [])
+        self.assertEqual(container_route_violations(
+            "_internal/plug.py", "def f():\n    container_cmd(query=True, findContainer=['n'])\n"), [])
