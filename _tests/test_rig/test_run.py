@@ -398,7 +398,9 @@ _PROBES = {
         import sys
         class _M:
             VALUE = "v1"
-        sys.modules[__name__] = _M()
+            def __init__(self, name):
+                self.__name__ = name   # a real replacement keeps its name (an import hook reads it)
+        sys.modules[__name__] = _M(__name__)
     """,
     "lib/rqvirt/__init__.py": """
         import sys, types
