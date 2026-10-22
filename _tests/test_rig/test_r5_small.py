@@ -218,7 +218,10 @@ class TestTheChoiceHook(UndoWalk, MayaTestCase):
     def test_the_hook_reads_the_selector_without_getattr(self):
         _choice_scene()
         cmds.setAttr("ch.selector", 1)
-        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+        # re-pinned in place (round 6 S4): the hook path is measured with the
+        # rule that answers a choice output from its source's static entry off
+        with mock.patch.object(_base, "_CHOICE", None), \
+                mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
             typ = Node("ch").output.get_data_type()
         self.assertEqual(typ, "doubleLinear")
         # only data_type's own query (ee03336: then a type and a value query of
@@ -227,6 +230,10 @@ class TestTheChoiceHook(UndoWalk, MayaTestCase):
             [(call.args, call.kwargs) for call in probe.call_args_list],
             [(("ch.output",), {"type": True})],
         )
+        # with the rule (S4), the source's static entry the hook filled answers
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            self.assertEqual(Node("ch").output.get_data_type(), "doubleLinear")
+        self.assertEqual(probe.call_args_list, [])
         self.assertEqual(cmds.getAttr("ch.output", type=True), "typed")
         node = Node("ch")
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
