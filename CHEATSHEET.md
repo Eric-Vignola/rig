@@ -1573,7 +1573,7 @@ from rig import ContainerOptions, get_options, set_options
 
 print(get_options())
 # {'create_containers': True, 'use_shorthand': True, 'skip_selection': True, 'cleanup_on_exit': False,
-#  'maya_version': None, 'flatten_containers': True, 'publish_attributes': True,
+#  'cleanup_tags': False, 'maya_version': None, 'flatten_containers': True, 'publish_attributes': True,
 #  'absorb_unit_conversions': False, 'native_multi_publish': False, 'constant_folding': True}
 set_options(create_containers=False)          # every with container(): becomes scope-only
 with container("ghost") as ghost:
@@ -1592,6 +1592,7 @@ except AttributeError as err:
 | `use_shorthand` | `True` | type-aware translation (`t << wm` inserts a `decomposeMatrix`) |
 | `skip_selection` | `True` | `createNode(skipSelect=True)` |
 | `cleanup_on_exit` | `False` | run `cleanup()` when a `with container():` block exits |
+| `cleanup_tags` | `False` | stamp the hidden `__rig__` tag, so `cleanup()` works after a save / reopen |
 | `maya_version` | `None` | target an older Maya's node set (section 15) |
 | `flatten_containers` | `True` | `False`: nested blocks create real sub-containers and publish |
 | `publish_attributes` | `True` | `False`: every publish is a passthrough |
@@ -1615,20 +1616,28 @@ print(get_options()["constant_folding"])     # True
 
 `cleanup()` garbage-collects the utility nodes the DSL created that have no
 downstream consumer, iterating until a fixpoint, and deletes containers it
-has emptied. Three filters keep it safe: only nodes carrying the hidden
-`__rig__` tag that `Node.create` / the operators stamp, only DG utility
-types (never a transform, joint, shape, light, set, layer or shading node),
-and only when every consumer is also going. User-made nodes, locked nodes
-and referenced nodes are never touched, and a locked container is kept,
-even an empty one. The tag is written through the
-API and has no undo step of its own: undoing the node's creation removes
-it with the node.
+has emptied. Three filters keep it safe: only nodes rig made
+(`Node.create` / the operators), only DG utility types (never a
+transform, joint, shape, light, set, layer or shading node), and only
+when every consumer is also going. User-made nodes, locked nodes and
+referenced nodes are never touched, and a locked container is kept, even
+an empty one.
+
+rig remembers the nodes it made in memory, so **`cleanup()` works within
+the Maya session that built the nodes**: nothing is written to the scene,
+an undone create stops counting and a redone one counts again, and a new
+or opened scene starts with none. `set_options(cleanup_tags=True)` (off
+by default) also stamps a hidden, locked `__rig__` bool on each of them,
+which the file keeps, so **`cleanup()` works after a save and a reopen**
+too; a node that carries the tag (a file an older rig built) is always a
+candidate. The tag is written through the API and has no undo step of
+its own: undoing the node's creation removes it with the node.
 
 ```python
 from rig import cleanup
 
 cmds.file(new=True, force=True)
-cmds.createNode("multiplyDivide", name="user_mul")     # made outside the DSL: no tag
+cmds.createNode("multiplyDivide", name="user_mul")     # made outside the DSL: never a candidate
 with container("gc") as gc:
     keep = Node.create("transform",      name="keep")
     live = Node.create("multiplyDivide", name="live")
@@ -1649,6 +1658,14 @@ cmds.container(name="shelf")                                   # an empty contai
 Node("shelf").lock()
 print(cleanup()["deleted_containers"], cmds.objExists("shelf"))  # [] True
 Node("shelf").unlock()
+```
+
+```python
+set_options(cleanup_tags=True)                      # for cleanup() in a later session
+tagged = Node.create("multiplyDivide", name="tagged")
+set_options(cleanup_tags=False)
+print([cmds.attributeQuery("__rig__", node=n, exists=True) for n in ("tagged", "live")])   # [True, False]
+cmds.delete("tagged")
 ```
 
 `cleanup_on_exit=True` (per block or globally) runs it as the block exits,
@@ -3600,7 +3617,7 @@ Where the per-statement step meets the rest of Maya:
   then raises as before.
 * Echo All Commands in the Script Editor shows no `connectAttr` /
   `setAttr` line for the edits that went through the API, and no
-  `addAttr` / `setAttr` for the `__rig__` tag.
+  `addAttr` / `setAttr` for the `__rig__` tag (`cleanup_tags=True`).
 * `rig.undo_chunk` and container membership are unchanged: a chunk still
   makes its block one step, and a member add is still a `cmds.container`
   edit.

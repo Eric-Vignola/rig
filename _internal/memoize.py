@@ -814,9 +814,16 @@ def vectorize(
 
 def _clear_before_new_scene(*args: Any) -> None:
     """kBeforeNew / kBeforeOpen: clear every memo cache (see above). A callback
-    never raises into Maya."""
+    never raises into Maya. The cleanup registry (round 6) goes with them: its
+    nodes belong to the scene going away."""
     try:
         _clear_all_caches()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from rig._internal.container import _clear_gc_registry
+
+        _clear_gc_registry()
     except Exception:  # noqa: BLE001
         pass
 

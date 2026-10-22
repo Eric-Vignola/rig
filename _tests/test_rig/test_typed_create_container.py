@@ -43,7 +43,7 @@ from rig._tests._base import MayaTestCase
 
 RIG_TAG = "__rig__"
 
-_OPTIONS = ("skip_selection", "create_containers", "flatten_containers", "cleanup_on_exit")
+_OPTIONS = ("skip_selection", "create_containers", "flatten_containers", "cleanup_on_exit", "cleanup_tags")
 
 
 def _members(ctn):
@@ -68,6 +68,12 @@ def _frame_uuids():
 
 def _tagged(node):
     return cmds.attributeQuery(RIG_TAG, node=str(node), exists=True)
+
+
+def _owned(node):
+    """A cleanup() candidate. Re-pinned (round 6, user decision: the in-session
+    cleanup registry): the tests that read the tag as ownership read this."""
+    return container_module._is_rig_owned(str(node))
 
 
 def _tag_state(node):
@@ -408,8 +414,8 @@ class TestTypedCreateInContainer(MayaTestCase):
         for node in made + [mesh, mesh.get_parent(), helped, "helper"]:
             for frame in frames:
                 self.assertIn(_uuid(node), frame)
-        self.assertTrue(_tagged(made[2]))
-        self.assertFalse(_tagged(made[0]))
+        self.assertTrue(_owned(made[2]))
+        self.assertFalse(_owned(made[0]))
         self.assertEqual(cmds.ls(selection=True), [])
 
     def test_create_hierarchy_keeps_its_names_and_registers_every_node(self):
@@ -494,6 +500,19 @@ class TestTypedCreateInContainer(MayaTestCase):
             NATIVE_NODE_TYPE = "network"
             CUSTOM_NODE_TYPE = "m5Meta"
 
+        # re-pinned (round 6, user decision: the in-session cleanup registry):
+        # with cleanup_tags off (the default) the same nodes are owned through
+        # the registry and none is tagged; the option on stamps the tag as before
+        with container("box0"):
+            made = [
+                md_cls.create(name="typed_md0"),
+                Node.create("multiplyDivide", name="dsl_md0"),
+                _Meta.create(name="meta0"),
+                Transform.create(name="xform0"),
+            ]
+        self.assertEqual([_owned(n) for n in made], [True, True, False, False])
+        self.assertEqual([_tag_state(n) for n in made], [(False,)] * 4)
+        set_options(cleanup_tags=True)
         with container("box") as box:
             typed = md_cls.create(name="typed_md")
             dsl   = Node.create("multiplyDivide", name="dsl_md")
@@ -526,7 +545,7 @@ class TestTypedCreateInContainer(MayaTestCase):
         self.assertEqual(str(loose), "inner_loose")
         self.assertEqual(str(fol), "inner_folShape")
         self.assertEqual(str(md), "inner_md")
-        self.assertTrue(_tagged(md))
+        self.assertTrue(_owned(md))
         for node in (loose, fol, fol.get_parent(), md):
             self.assertIsNone(_owner(node))
             for frame in frames:
@@ -568,14 +587,14 @@ class TestTypedCreateInContainer(MayaTestCase):
         self.assertEqual(str(typed), "inner_t")
         self.assertEqual(str(plain), "inner_md")
         self.assertIs(type(plain), type(Node(cmds.createNode("multiplyDivide"))))
-        self.assertTrue(_tagged(plain))
+        self.assertTrue(_owned(plain))
         self.assertEqual(_members(outer), ["inner_md", "inner_t"])
         # outside a scope: container.createNode, as Node.create always did (the
         # GC tag, no selection; PyNode.create's plain cmds.createNode is gone)
         cmds.select(clear=True)
         free = Node.create("multiplyDivide", name="free")
         self.assertEqual(str(free), "free")
-        self.assertTrue(_tagged(free))
+        self.assertTrue(_owned(free))
         self.assertEqual(cmds.ls(selection=True), [])
 
     def test_node_create_inside_a_typed_create(self):
@@ -602,7 +621,7 @@ class TestTypedCreateInContainer(MayaTestCase):
         # itself (prefix, GC tag), as Node.create always did (R2: the nested
         # plain path of PyNode.create, D13b, is gone)
         self.assertFalse(cmds.objExists("deep"))
-        self.assertTrue(_tagged("inner_deep"))
+        self.assertTrue(_owned("inner_deep"))
         self.assertEqual(_members(outer), ["deep_t", "inner_deep", "inner_first", "inner_top"])
 
     # -- 10 neutral scopes -- #

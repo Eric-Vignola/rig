@@ -214,6 +214,7 @@ class ContainerOptions(metaclass=_ReadOnlyOptions):
     use_shorthand:           bool = True           # type-aware shorthand (matrix->transform etc.)
     skip_selection:          bool = True           # createNode(skipSelect=True)
     cleanup_on_exit:         bool = False          # auto-call ``cleanup()`` on container exit
+    cleanup_tags:            bool = False          # if True, every node cleanup() may delete also gets the hidden ``__rig__`` bool at creation, so a saved and reopened file stays cleanable in a later Maya session. Off (default): rig remembers its nodes in memory only (the in-session registry), so cleanup() works within the Maya session that built them and the file carries no tag.
     maya_version:            Optional[int] = None  # target Maya version; None = actual
     flatten_containers:      bool = True           # if False, nested `with container():` create real Maya sub-containers AND publish_input/publish_output activate
     publish_attributes:      bool = True           # if False, publish_input/publish_output passthrough -- return source unchanged (no addAttr / no wiring)
@@ -227,6 +228,7 @@ def set_options(
     use_shorthand:           Optional[bool] = None,
     skip_selection:          Optional[bool] = None,
     cleanup_on_exit:         Optional[bool] = None,
+    cleanup_tags:            Optional[bool] = None,
     maya_version:            Any            = _UNSET,
     flatten_containers:      Optional[bool] = None,
     publish_attributes:      Optional[bool] = None,
@@ -247,6 +249,7 @@ def set_options(
         rig.set_options(maya_version=2022)         # target Maya 2022 (legacy paths)
         rig.set_options(maya_version=None)         # revert to actual Maya version
         rig.set_options(constant_folding=False)    # debug: literal math builds nodes
+        rig.set_options(cleanup_tags=True)         # tag nodes: cleanup() after save / reopen
 
         vals = rig.get_options()                   # introspect current settings
 
@@ -268,6 +271,8 @@ def set_options(
         _write_option("skip_selection", skip_selection)
     if cleanup_on_exit is not None:
         _write_option("cleanup_on_exit", cleanup_on_exit)
+    if cleanup_tags is not None:
+        _write_option("cleanup_tags", cleanup_tags)
     if flatten_containers is not None:
         _write_option("flatten_containers", flatten_containers)
     if publish_attributes is not None:
@@ -307,6 +312,7 @@ def get_options() -> dict:
         "use_shorthand":           ContainerOptions.use_shorthand,
         "skip_selection":          ContainerOptions.skip_selection,
         "cleanup_on_exit":         ContainerOptions.cleanup_on_exit,
+        "cleanup_tags":            ContainerOptions.cleanup_tags,
         "maya_version":            ContainerOptions.maya_version,
         "flatten_containers":      ContainerOptions.flatten_containers,
         "publish_attributes":      ContainerOptions.publish_attributes,
@@ -729,12 +735,13 @@ class _ContainerStack:
         node_name = cmds.createNode(node_type, **create_kwargs)
         node      = _cast_node(node_name)
 
-        # GC ownership tag -- only on types we'd ever consider deleting.
+        # GC ownership (the session registry, plus the ``__rig__`` tag under
+        # ``cleanup_tags``) -- only on types we'd ever consider deleting.
         # See ``_GC_ELIGIBLE_TYPES`` for the whitelist; transforms / joints /
         # shapes / lights / objectSets are deliberately excluded so they're
-        # never tagged and never eligible for cleanup().
+        # never owned and never eligible for cleanup().
         if node_type in _GC_ELIGIBLE_TYPES:
-            _gc_tag(node_name, node)
+            _gc_own(node_name, node)
 
         # Add to the leaf real container (and record on every frame) by default.
         if container is None or container:
@@ -1299,9 +1306,125 @@ def _returned(result: Any, long_name: str, short_name: str) -> bool:
     )
 
 
+# The cleanup registry (round 6, user decision: it replaces the build-time
+# ``__rig__`` tag by default). The nodes rig made that :func:`cleanup` may
+# delete, as ``{MObjectHandle.hashCode(): [MObjectHandle, ...]}``: in memory
+# only, no node and no attribute written. It is kept on ``sys`` (as
+# `rig._internal.callbacks` keeps its ids), so a purge and re-import of rig
+# keeps it for the rest of the Maya session, and cleared on a new or opened
+# scene with the memo caches (`rig._internal.memoize`'s kBeforeNew /
+# kBeforeOpen callback, `_clear_gc_registry`). An entry counts while its handle
+# is valid: an undone create does not, the same node redone does again, a
+# deleted one does not; a freed one is dropped when met.
+_GC_REGISTRY_ATTR = "_rig_gc_registry"
+
+
+def _gc_registry_dict() -> Dict[int, list]:
+    """The session's registry dict, made on ``sys`` the first time."""
+    import sys
+
+    found = getattr(sys, _GC_REGISTRY_ATTR, None)
+    if not isinstance(found, dict):
+        found = {}
+        setattr(sys, _GC_REGISTRY_ATTR, found)
+    return found
+
+
+_GC_REGISTRY: Dict[int, list] = _gc_registry_dict()
+
+# True once memoize's scene callbacks (which clear the registry) are
+# registered; an import before Maya was initialised leaves them pending.
+_GC_CALLBACKS_READY = False
+
+
+def _ensure_gc_callbacks() -> None:
+    """Make the scene callbacks that clear the registry, once (lazily: memoize
+    imports this module)."""
+    global _GC_CALLBACKS_READY
+    from rig._internal import memoize as _memoize
+
+    _GC_CALLBACKS_READY = bool(_memoize._ensure_scene_callbacks())
+
+
+def _clear_gc_registry() -> None:
+    """Forget every registered node (kBeforeNew / kBeforeOpen)."""
+    _GC_REGISTRY.clear()
+
+
+def _gc_own(node_name: str, node: Any) -> None:
+    """Make ``node`` (rig just created it, of a GC-eligible type) a
+    :func:`cleanup` candidate: it joins the session registry, and with
+    ``rig.set_options(cleanup_tags=True)`` it also gets the ``__rig__`` tag
+    (`_gc_tag`), which a saved and reopened file keeps."""
+    d = node.__dict__ if isinstance(node, DGNode) else None
+    handle = d.get("_objhandle") if d is not None else None
+    if handle is None:
+        handle = _handle_of_name(node_name)
+    if handle is not None and handle.isValid():
+        if not _GC_CALLBACKS_READY:
+            _ensure_gc_callbacks()
+        key    = handle.hashCode()
+        bucket = _GC_REGISTRY.get(key)
+        if bucket is None:
+            _GC_REGISTRY[key] = [handle]
+        else:
+            obj = handle.object()
+            bucket[:] = [h for h in bucket if h.isAlive() and h.object() != obj]
+            bucket.append(handle)
+    if ContainerOptions.cleanup_tags:
+        _gc_tag(node_name, node)
+
+
+def _handle_of_name(name: str) -> Optional[Any]:
+    """An ``MObjectHandle`` of the node ``name``, or None."""
+    sel = OpenMaya.MSelectionList()
+    try:
+        sel.add(name)
+        return OpenMaya.MObjectHandle(sel.getDependNode(0))
+    except (RuntimeError, TypeError):
+        return None
+
+
+def _is_registered(name: str) -> bool:
+    """True if the node ``name`` is in the session registry and valid."""
+    if not _GC_REGISTRY:
+        return False
+    handle = _handle_of_name(name)
+    if handle is None:
+        return False
+    bucket = _GC_REGISTRY.get(handle.hashCode())
+    if not bucket:
+        return False
+    obj = handle.object()
+    return any(h.isValid() and h.object() == obj for h in bucket)
+
+
+def _registered_names() -> List[str]:
+    """The names of the valid registered nodes; a freed entry is dropped."""
+    names: List[str] = []
+    for key in list(_GC_REGISTRY):
+        bucket = _GC_REGISTRY[key]
+        live   = [h for h in bucket if h.isAlive()]
+        if not live:
+            del _GC_REGISTRY[key]
+            continue
+        if len(live) != len(bucket):
+            bucket[:] = live
+        for h in live:
+            if not h.isValid():
+                continue  # undone or deleted: counts again once redone / undone
+            obj = h.object()
+            if obj.hasFn(OpenMaya.MFn.kDagNode):
+                names.append(OpenMaya.MFnDagNode(obj).partialPathName())
+            else:
+                names.append(OpenMaya.MFnDependencyNode(obj).name())
+    return names
+
+
 def _gc_tag(node_name: str, node: Any = None) -> None:
     """Give ``node_name`` the hidden, locked ``__rig__`` bool that makes it a
-    :func:`cleanup` candidate. The caller checks the type against
+    :func:`cleanup` candidate in a later session too (`_gc_own` calls it under
+    ``rig.set_options(cleanup_tags=True)``). The caller checks the type against
     ``_GC_ELIGIBLE_TYPES``. Some node types reject addAttr; without the tag
     the node just won't be GC-eligible, a safe failure mode.
 
@@ -1503,7 +1626,7 @@ def _typed_create(
             and not cls.CUSTOM_NODE_TYPE
             and isinstance(result, DGNode)
         ):
-            _gc_tag(_name_of(result), result)
+            _gc_own(_name_of(result), result)
         if registers:
             if created and not _made_only(result, created):
                 container.add(created)
@@ -2994,13 +3117,17 @@ def _name_from_uuid(uid: str) -> Optional[str]:
 #
 # Safety is enforced by THREE filters:
 #
-#  1. **Per-node ``__rig__`` tag** -- every node ``container.createNode``
-#     creates carries a hidden bool attr. Without the tag, cleanup ignores
-#     the node entirely (e.g. user-authored controllers).
+#  1. **Rig ownership** -- every node of an eligible type that
+#     ``container.createNode`` (or a typed create) makes joins the in-session
+#     registry (``_GC_REGISTRY``: MObjectHandles, nothing written to the
+#     scene). ``rig.set_options(cleanup_tags=True)`` also stamps the hidden
+#     ``__rig__`` bool, and a node carrying one (made with the option on, or
+#     by an older rig) is owned in any session. Without either, cleanup
+#     ignores the node entirely (e.g. user-authored controllers).
 #
 #  2. **Type whitelist** (:data:`_GC_ELIGIBLE_TYPES`) -- only utility DG
 #     types are eligible. ``transform``, ``joint``, shapes, lights,
-#     ``objectSet``, etc. are NEVER tagged in :meth:`createNode` and so
+#     ``objectSet``, etc. are NEVER owned by :meth:`createNode` and so
 #     never become candidates.
 #
 #  3. **Downstream-connection check** -- a candidate is only deleted when
@@ -3013,12 +3140,13 @@ def _name_from_uuid(uid: str) -> Optional[str]:
 # --------------------------------------------------------------------- #
 
 
-# Hidden-attr name used as the rig-ownership marker.
+# Hidden-attr name used as the rig-ownership marker that outlives the session
+# (stamped under ``cleanup_tags``; older rig versions stamped it always).
 _RIG_TAG = "__rig__"
 
 # Node types we'll ever consider deleting. Strictly DG utility types --
 # nothing DAG, nothing geometry, nothing scene-default. Created nodes of
-# OTHER types are never tagged, so even if a user adds something exotic
+# OTHER types are never owned, so even if a user adds something exotic
 # via ``Node.create("locator", ...)`` it's safe.
 _GC_ELIGIBLE_TYPES: frozenset = frozenset(
     {
@@ -3112,7 +3240,10 @@ _GC_ELIGIBLE_TYPES: frozenset = frozenset(
 
 
 def _is_rig_owned(node: str) -> bool:
-    """True iff ``node`` carries the ``__rig__`` ownership tag."""
+    """True iff ``node`` is in the session registry or carries the
+    ``__rig__`` ownership tag."""
+    if _is_registered(node):
+        return True
     try:
         return _has_attr_or_alias(node, _RIG_TAG)
     except (RuntimeError, ValueError):
@@ -3163,7 +3294,7 @@ def _all_rig_owned(
     ``"(scene root)"`` if the node isn't inside any container.
 
     If ``scope`` is given, restrict to nodes inside that container
-    (still filtered by the ``__rig__`` tag).
+    (still filtered by ownership: the registry or the ``__rig__`` tag).
     """
     pairs: List[Tuple[str, str]] = []
     if scope is not None:
@@ -3172,10 +3303,15 @@ def _all_rig_owned(
                 pairs.append((n, scope))
         return pairs
 
-    # Scene-wide: enumerate every node whose ``__rig__`` plug exists.
-    # ``cmds.ls('*.__rig__', objectsOnly=True)`` is the fast path.
-    tagged = cmds.ls(f"*.{_RIG_TAG}", objectsOnly=True, recursive=True) or []
-    for n in tagged:
+    # Scene-wide: the valid registered nodes, then every node whose
+    # ``__rig__`` plug exists (``cmds.ls('*.__rig__', objectsOnly=True)``).
+    owned = _registered_names()
+    seen  = set(owned)
+    for n in cmds.ls(f"*.{_RIG_TAG}", objectsOnly=True, recursive=True) or []:
+        if n not in seen:
+            seen.add(n)
+            owned.append(n)
+    for n in owned:
         try:
             owner = container_cmd(q=True, findContainer=n) or "(scene root)"
         except RuntimeError:
@@ -3246,13 +3382,18 @@ def cleanup(
     """Garbage-collect rig-owned utility nodes that no longer have any
     downstream consumer.
 
+    Rig-owned: made by rig in this Maya session (the in-session registry),
+    or carrying the ``__rig__`` tag. The registry is not saved: after a save
+    and a reopen only tagged nodes are found, so build with
+    ``rig.set_options(cleanup_tags=True)`` to clean a file in a later session.
+
     Args:
         container: If given, restrict cleanup to a single Maya container's
             tagged contents. ``None`` (default) means scene-wide.
         extra_types: Additional node types to add to the GC whitelist for
             this call (e.g. plugin types this codebase doesn't know about).
         aggressive: If ``True``, bypass the type whitelist (still requires
-            the ``__rig__`` ownership tag and the connection check).
+            rig ownership and the connection check).
         memoize_caches: If ``True`` (default), prune stale entries from
             every ``@memoize`` cache after deletion.
         dry_run: If ``True``, compute the obsolete set and report it but

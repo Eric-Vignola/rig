@@ -597,6 +597,10 @@ _HANDLE_SITES = frozenset(
         ("rig._internal.list", "_anchor"),
         ("rig._internal.list", "_first_gone"),
         ("rig._internal.list", "List.append"),
+        # re-pinned (round 6, user decision: the in-session cleanup registry in
+        # place of the build-time __rig__ tag): the registry keeps the handle of
+        # a node rig just made, its validity read when cleanup() runs
+        ("rig._internal.container", "_gc_own"),
     }
 )
 

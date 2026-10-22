@@ -26,11 +26,24 @@ class TestCleanupOwnership(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_rig_created_math_node_is_tagged(self):
+        # re-pinned (round 6, user decision: the in-session cleanup registry):
+        # the node is rig-owned through the registry and carries no __rig__ tag
+        # by default; set_options(cleanup_tags=True) stamps it as before
+        from rig._internal.container import _is_rig_owned
+
         with container("ctn"):
             n = Node.create("multiplyDivide", name="mul1")
+        self.assertTrue(_is_rig_owned(n.get_name()), f"{n.get_name()} not rig-owned")
+        self.assertFalse(cmds.attributeQuery(_RIG_TAG, node=n.get_name(), exists=True))
+        set_options(cleanup_tags=True)
+        try:
+            with container("ctn"):
+                t = Node.create("multiplyDivide", name="mul2")
+        finally:
+            set_options(cleanup_tags=False)
         self.assertTrue(
-            cmds.attributeQuery(_RIG_TAG, node=n.get_name(), exists=True),
-            f"{n.get_name()} missing __rig__ tag",
+            cmds.attributeQuery(_RIG_TAG, node=t.get_name(), exists=True),
+            f"{t.get_name()} missing __rig__ tag",
         )
 
     def test_rig_created_transform_is_NOT_tagged(self):

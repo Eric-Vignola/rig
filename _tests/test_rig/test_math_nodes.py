@@ -106,9 +106,13 @@ class TestConstantMatrix(MayaTestCase):
 
         plug      = constant(np.eye(4), name="gc_test_const")
         node_name = str(plug).split(".")[0]
-        # Rig-owned tag is set so cleanup() can find it.
-        self.assertTrue(cmds.attributeQuery("__rig__", node=node_name, exists=True))
-        self.assertTrue(cmds.getAttr(f"{node_name}.__rig__"))
+        # Rig-owned so cleanup() can find it. Re-pinned (round 6, user decision:
+        # the in-session cleanup registry): owned through the registry, no
+        # __rig__ tag by default.
+        from rig._internal.container import _is_rig_owned
+
+        self.assertTrue(_is_rig_owned(node_name))
+        self.assertFalse(cmds.attributeQuery("__rig__", node=node_name, exists=True))
 
     def test_matrix_constant_memoized(self):
         import numpy as np
