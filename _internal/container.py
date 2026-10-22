@@ -779,14 +779,7 @@ class _ContainerStack:
         if leaf is not None:
             # a locked container takes no member: a refusal, not a debug line
             self._refuse_locked_leaf(leaf)
-            if not made:
-                barrier()
-            try:
-                cmds.container(_name_of(leaf), edit=True, addNode=node_names, force=True)
-            except RuntimeError as e:
-                LOGGER.debug(
-                    "Failed to add %s to container %s: %s", node_names, leaf, e
-                )
+            _add_members(leaf, node_names, made=made)
 
     def _refuse_locked_leaf(self, leaf: Any = None) -> None:
         """InjectionError (``cannot add a node to 'arm': it is locked; ...``)
@@ -1825,6 +1818,68 @@ def _is_attributes_node(node: str) -> bool:
         return False
 
 
+def _in_a_container(name: str) -> bool:
+    """True when the node ``name`` is a member of a container already: its
+    ``.message`` feeds a hyperLayout (one API read, no command). False for a
+    name that resolves to no single node (the add itself raises then)."""
+    sel = OpenMaya.MSelectionList()
+    try:
+        sel.add(name)
+        obj = sel.getDependNode(0)
+    except RuntimeError:
+        return False
+    plug = OpenMaya.MFnDependencyNode(obj).findPlug("message", False)
+    return any(dst.node().hasFn(OpenMaya.MFn.kHyperLayout) for dst in plug.destinations())
+
+
+def _add_members(leaf: Any, nodes: List[str], made: bool = False, strict: bool = False) -> None:
+    """Adds the nodes named ``nodes`` to the container ``leaf``: every
+    ``container -edit -addNode -force`` rig sends goes through here.
+
+    Maya 2025 crashes (TdnContainerBase::canBeAddedToContainer) on one call
+    whose list holds the last member of another container followed by more
+    nodes; a single node per call never crashes. So for a list, the nodes
+    already in a container (`_in_a_container`) are sent one call each, after
+    one call for all the others. A single node is sent as it is, unchecked.
+
+    A RuntimeError drops the call's whole list (``Cannot find node 'x'``), so
+    a list that raises falls back to one call per node, and a node that still
+    raises is skipped with a debug line. ``strict``: the RuntimeError is
+    raised instead, as the caller's own handling expects.
+
+    ``made``: the nodes were made just now (`container._add`): a raw ``cmds``
+    edit, not a journal barrier. Else the calls go through ``cmds_edit``."""
+    if not nodes:
+        return
+    leaf_name = _name_of(leaf)
+    edit = cmds.container if made else cmds_edit.container
+    if len(nodes) == 1:
+        calls = [nodes]
+    else:
+        free: List[str] = []
+        moved: List[List[str]] = []
+        for name in nodes:
+            if _in_a_container(name):
+                moved.append([name])
+            else:
+                free.append(name)
+        calls = ([free] if free else []) + moved
+    for names in calls:
+        try:
+            edit(leaf_name, edit=True, addNode=names, force=True)
+        except RuntimeError as e:
+            if strict:
+                raise
+            if len(names) == 1:
+                LOGGER.debug("Failed to add %s to container %s: %s", names, leaf, e)
+                continue
+            for name in names:
+                try:
+                    edit(leaf_name, edit=True, addNode=[name], force=True)
+                except RuntimeError as one:
+                    LOGGER.debug("Failed to add %s to container %s: %s", [name], leaf, one)
+
+
 def _get_or_create_attributes_node(container_node) -> "Node":
     """Return the per-container ``<ctn>_attributes`` ``network`` node, creating
     it lazily.
@@ -1870,7 +1925,7 @@ def _get_or_create_attributes_node(container_node) -> "Node":
     except RuntimeError as e:
         LOGGER.debug("Failed to tag attributes node %s: %s", node_name, e)
     try:
-        cmds_edit.container(ctn, edit=True, addNode=[node_name], force=True)
+        _add_members(ctn, [node_name], strict=True)
     except RuntimeError as e:
         LOGGER.debug(
             "Failed to add attributes node %s to %s: %s", node_name, ctn, e

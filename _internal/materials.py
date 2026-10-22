@@ -607,10 +607,10 @@ def _adopt(material: str) -> ShadingEngine:
     engine = ShadingEngine.for_material(material, create=True)
     owner  = cmds.container(query=True, findContainer=[material])
     if owner:
-        _cmds_edit.container(
-            owner, edit=True, force=True,
-            addNode=[_name_of(engine), *engine.get_material_info()],
-        )
+        # rig's one addNode route (a Maya 2025 crash on some lists); a failure
+        # raises, as before
+        from rig._internal.container import _add_members
+        _add_members(owner, [_name_of(engine), *engine.get_material_info()], strict=True)
     shader = engine.get_material()
     if shader is None or _name_of(shader) != material:
         raise RuntimeError(
