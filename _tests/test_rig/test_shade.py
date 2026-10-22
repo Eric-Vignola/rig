@@ -1505,6 +1505,30 @@ class TestShadeExamples(MayaTestCase):
             )
             self.assertIn(shape, Lambert(f"sticker_layer_{i}"))
 
+    def test_perspective_image_planes_transparency_without_lookdevkit(self):
+        # round 6, user decision 3B: the example drops lookdevKit; its colorCorrect is
+        # rig math, transparency = texture.outTransparency * gain + offset per channel
+        import inspect
+
+        from rig.examples import perspective_image_planes
+
+        self.assertNotIn("lookdevKit", inspect.getsource(perspective_image_planes))
+        setup = perspective_image_planes.create_setup("camera1", 3)
+        shape = setup.shapes[0]
+        # the planes keep their spacing (the create_setup ``offset`` argument)
+        self.assertEqual([round(t, 6) for t in setup.planes.tz.get()], [-10.0, -20.0, -30.0])
+        self.assertEqual(cmds.ls(type="negate"), [])
+        source = cmds.listConnections(
+            "sticker_layer_0.transparency", source=True, destination=False
+        )
+        self.assertEqual(cmds.nodeType(source[0]), "plusMinusAverage")
+        # no image: outTransparency is 0, so the result is the offset, rev(opacity)
+        for alpha, opacity in ((0.25, 0.5), (0.0, 1.0), (1.0, 0.0)):
+            shape.alpha << alpha
+            shape.opacity << opacity
+            for value in cmds.getAttr("sticker_layer_0.transparency")[0]:
+                self.assertAlmostEqual(value, 1.0 - opacity, places=6)
+
 
 class TestShadeExports(MayaTestCase):
     TEST_START_NEW_SCENE = True

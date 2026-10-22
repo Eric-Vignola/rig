@@ -77,13 +77,6 @@ def create_setup(
         ``sequenceStart`` / ``sequenceEnd`` / ``sequenceOffset`` /
         ``alpha`` / ``opacity`` attrs).
     """
-    # ``colorCorrect`` lives in the lookdevKit plugin; load it lazily and
-    # refresh the bridges-nodes type cache so ``rn.colorCorrect()`` resolves.
-    from maya import cmds as _mc
-
-    _mc.loadPlugin("lookdevKit", quiet=True)
-    rn._refresh_node_types()
-
     output = namedtuple("output", "camera planes shapes")
 
     # Camera + camera shape.
@@ -180,14 +173,13 @@ def create_setup(
                 selector=shape.sequenceType,
             )
 
-            # Remap transparency.
-            remap = rn.colorCorrect()
-            remap.inColor         << texture.outTransparency
+            # Remap transparency through two dials, per channel:
+            # out = in * gain + bias (plain math nodes, no plugin).
             shape                 << Float("alpha", dv=0, min=0, max=1)
             shape                 << Float("opacity", dv=1, min=0, max=1)
-            remap.colGain         << rf.rev(rf.rev(shape.alpha) * shape.opacity)
-            remap.colOffset       << rf.rev(shape.opacity)
-            material.transparency << remap.outColor
+            gain                  = rf.rev(rf.rev(shape.alpha) * shape.opacity)
+            bias                  = rf.rev(shape.opacity)
+            material.transparency << texture.outTransparency * gain + bias
 
             # Math node setup driving plane scale.
             # Proxy file node to retrieve image size (otherwise circular).
