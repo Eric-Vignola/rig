@@ -305,7 +305,8 @@ builds a camera and `count` poly planes parented under it, one every
   directly; the radian ones would insert conversion nodes.
 - gets a `Lambert` of its own, full-bright (`diffuse=0, ambientColor=1`
   at creation, then `color` and `ambientColor` wired to the texture), with
-  a `colorCorrect` remapping the texture's transparency through two dials.
+  its transparency remapped through two dials, `alpha` and `opacity`
+  (`texture.outTransparency * gain + offset`, plain math nodes).
 - carries its controls **on the shape**, so selecting the mesh shows them
   in the channel box:
 
@@ -488,11 +489,12 @@ Verified on Maya 2025; not bugs to work around blindly.
 - `periodic=True` with `degree=2` raises in `rail_spine`; 1, 3, 5 and 7
   are the supported degrees, and the CV roll that puts `u = 0` on the
   first control is keyed on the degree.
-- Both image scripts load the `lookdevKit` plugin for `colorCorrect` and
-  then call `rn._refresh_node_types()`: `rig.bridges.nodes` caches Maya's
+- `image_loop` loads the `lookdevKit` plugin for `colorCorrect` and
+  then calls `rn._refresh_node_types()`: `rig.bridges.nodes` caches Maya's
   node-type list on first use, so a plugin loaded afterwards is invisible
   to `rn.colorCorrect()` until the cache is refreshed. Private name, but
-  it is what the scripts do.
+  it is what the script does. `perspective_image_planes` needs no plug-in:
+  it remaps the transparency with rig math.
 - `create_setup` runs without any image on disk — until `image` is set
   the planes are square, sized by the angle of view alone (`7.26` at ten
   units from a 35 mm camera), because an `outSizeX` / `outSizeY` of `0`
