@@ -25,7 +25,7 @@ from rig._internal import callbacks as _callbacks
 from rig._internal import journal as _journal
 from rig._internal.api_edits import api_connect as _api_connect
 from rig._internal.api_edits import api_set as _api_set
-from rig._internal.journal import cmds_edit, outside, rig_code, statement
+from rig._internal.journal import cmds_edit, container_cmd, outside, rig_code, statement
 from rig.nodetypes.errors import (
     _article,
     AmbiguousNodeError,
@@ -1311,14 +1311,14 @@ def _locking_container(name: str) -> "str | None":
     locks its members, and the members of its sub-containers), or None. Read on
     a refusal's path only (``container -q``, about 13 us)."""
     holder  = None
-    current = cmds.container(query=True, findContainer=name)
+    current = container_cmd(query=True, findContainer=name)
     seen    = set()
     while current and current not in seen:
         seen.add(current)
         mobject = _node_by_name(current)
         if mobject is not None and OpenMaya.MFnDependencyNode(mobject).isLocked:
             holder = current
-        parents = cmds.container(current, query=True, parentContainer=True)
+        parents = container_cmd(current, query=True, parentContainer=True)
         current = parents[0] if isinstance(parents, list) and parents else parents or None
     return holder
 

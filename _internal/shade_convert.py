@@ -79,7 +79,7 @@ from typing import Any
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit
+from rig._internal.journal import cmds_edit, container_cmd
 from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
@@ -518,13 +518,13 @@ def _is_published(plug: str) -> bool:
     node, _, attr = plug.partition(".")
     return (
         cmds.nodeType(node) == "container"
-        and attr in (cmds.container(node, query=True, publishName=True) or [])
+        and attr in (container_cmd(node, query=True, publishName=True) or [])
     )
 
 
 def _bound(container: str) -> list:
     """The ``(plug, published name)`` pairs bound on a container."""
-    pairs = cmds.container(container, query=True, bindAttr=True) or []
+    pairs = container_cmd(container, query=True, bindAttr=True) or []
     return list(zip(pairs[0::2], pairs[1::2]))
 
 
@@ -533,7 +533,7 @@ def _unbind(scan: _Scan) -> None:
     releases its children with it)."""
     for node, leaf, attr, _ in scan.bindings:
         if (f"{_name_of(scan.old)}.{leaf}", attr) in _bound(node):
-            cmds_edit.container(node, edit=True, unbindAttr=[f"{_name_of(scan.old)}.{leaf}", attr])
+            container_cmd(node, edit=True, unbindAttr=[f"{_name_of(scan.old)}.{leaf}", attr])
 
 
 def _rebind(scan: _Scan, name: str) -> None:
@@ -541,7 +541,7 @@ def _rebind(scan: _Scan, name: str) -> None:
     children with it)."""
     for node, leaf, attr, carried in scan.bindings:
         if carried and (f"{name}.{leaf}", attr) not in _bound(node):
-            cmds_edit.container(node, edit=True, bindAttr=[f"{name}.{leaf}", attr])
+            container_cmd(node, edit=True, bindAttr=[f"{name}.{leaf}", attr])
 
 
 def _scan_locks(scan: _Scan) -> None:
@@ -561,7 +561,7 @@ def _scan_locks(scan: _Scan) -> None:
 
 
 def _scan_topology(scan: _Scan) -> None:
-    scan.container = cmds.container(query=True, findContainer=[scan.old]) or None
+    scan.container = container_cmd(query=True, findContainer=[scan.old]) or None
 
 
 # ---------- The writes ---------------------------------------------------- #
@@ -740,11 +740,11 @@ def _verify(scan: _Scan, new: str) -> None:
                 f"defaultShaderList1 lists the new {_name_of(dst)} at {slots}, not at the old "
                 f"index {scan.dsl1_index}"
             )
-    owner = cmds.container(query=True, findContainer=[new]) or None
+    owner = container_cmd(query=True, findContainer=[new]) or None
     if owner != scan.container:
         raise RuntimeError(f"the new {_name_of(dst)} sits in container {owner!r}, not {scan.container!r}")
     if owner is not None:
-        members = cmds.container(owner, query=True, nodeList=True) or []
+        members = container_cmd(owner, query=True, nodeList=True) or []
         if members.count(new) != 1:
             raise RuntimeError(f"'{_name_of(owner)}' lists the new {_name_of(dst)} {members.count(new)} times")
     left = cmds.listConnections(old, plugs=True, connections=True) or []

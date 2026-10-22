@@ -39,7 +39,16 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import barrier, cmds_edit, cmds_route, statement
+from rig._internal.journal import (
+    _S as _JS,
+    barrier,
+    cmds_edit,
+    cmds_route,
+    container_cmd,
+    defer_member,
+    flush_members,
+    statement,
+)
 from rig.nodetypes import (
     _base as _nodetypes_base,
     dg_node as _dg_node_module,
@@ -744,11 +753,17 @@ class _ContainerStack:
         ``made``: `createNode` made the node just now. Its member add then
         stays a raw ``cmds`` edit, not a journal barrier: no pending API edit
         can reference a node made after it, and membership is state no
-        journaled edit reads or writes. Every other add registers the pending
-        journal first (a node the journal made, such as a unitConversion, is
-        added after it)."""
+        journaled edit reads or writes. It is deferred (round 6 S2, user
+        decision 1A: `journal.defer_member`) and sent with the other nodes the
+        statement made, at its end or at the next flush point
+        (`_flush_members`); the frame bookkeeping and the locked-leaf refusal
+        happen now. Every other add sends the deferred adds, then registers
+        the pending journal (a node the journal made, such as a
+        unitConversion, is added after it)."""
         if not self._stack:
             return
+        if not made and _JS.members:
+            flush_members()
 
         items      = list(node) if isinstance(node, (list, tuple)) else [node]
         node_names = [_name_of(n) for n in items]
@@ -779,7 +794,11 @@ class _ContainerStack:
         if leaf is not None:
             # a locked container takes no member: a refusal, not a debug line
             self._refuse_locked_leaf(leaf)
-            _add_members(leaf, node_names, made=made)
+            if made:
+                for item in items:
+                    defer_member(leaf, item)
+            else:
+                _add_members(leaf, node_names)
 
     def _refuse_locked_leaf(self, leaf: Any = None) -> None:
         """InjectionError (``cannot add a node to 'arm': it is locked; ...``)
@@ -1670,7 +1689,7 @@ class _DefineScope:
     @staticmethod
     def owner(node_name: str) -> Optional[str]:
         """The container that holds ``node_name``, or None."""
-        return cmds.container(query=True, findContainer=[node_name])
+        return container_cmd(query=True, findContainer=[node_name])
 
     @staticmethod
     def create_node(node_type: str, **kwargs: Any) -> Any:
@@ -1889,11 +1908,35 @@ def _add_members(leaf: Any, nodes: List[str], made: bool = False, strict: bool =
 
 def _send_members(leaf_name: str, names: List[str], made: bool) -> None:
     """One ``container -edit -addNode -force`` call of `_add_members`: raw for
-    nodes made just now (``made``), else through ``cmds_edit``."""
+    nodes made just now (``made``: the deferred adds, `_flush_members`), else
+    through `container_cmd`."""
     if made:
         cmds.container(leaf_name, edit=True, addNode=names, force=True)
     else:
-        cmds_edit.container(leaf_name, edit=True, addNode=names, force=True)
+        container_cmd(leaf_name, edit=True, addNode=names, force=True)
+
+
+def _flush_members(pairs: List[Tuple[Any, Any]]) -> None:
+    """Sends the deferred member adds ``[(leaf, node), ...]`` (`journal.flush_members`,
+    round 6 S2): one `_add_members` call per run of consecutive pairs with the same leaf,
+    in their order, each node's name read now (a rename in the statement is seen). A node
+    no longer valid (deleted, freed) is dropped."""
+    leaf  = None
+    names: List[str] = []
+    for owner, node in pairs:
+        try:
+            if isinstance(node, DGNode) and not type(node)._raw_is_valid(node):
+                continue
+            name = _name_of(node)
+        except (RuntimeError, ValueError):
+            continue
+        if owner is not leaf:
+            if names:
+                _add_members(leaf, names, made=True)
+            leaf, names = owner, []
+        names.append(name)
+    if names:
+        _add_members(leaf, names, made=True)
 
 
 def _get_or_create_attributes_node(container_node) -> "Node":
@@ -1921,7 +1964,7 @@ def _get_or_create_attributes_node(container_node) -> "Node":
 
     # Fall back to scanning the container's members for an existing
     # attributes node.
-    for member in cmds.container(ctn, query=True, nodeList=True) or []:
+    for member in container_cmd(ctn, query=True, nodeList=True) or []:
         if _is_attributes_node(member):
             if uuid is not None:
                 _ATTRIBUTES_NODE_CACHE[uuid] = member
@@ -1961,8 +2004,8 @@ def _publish_native(container_node, inner_plug, name: str) -> str:
     raising. Returns the actual published name.
     """
     ctn       = _name_of(container_node)
-    published = cmds_edit.container(ctn, edit=True, publishName=name) or name
-    cmds_edit.container(ctn, edit=True, bindAttr=(_name_of(inner_plug), published))
+    published = container_cmd(ctn, edit=True, publishName=name) or name
+    container_cmd(ctn, edit=True, bindAttr=(_name_of(inner_plug), published))
     return published
 
 
@@ -2014,7 +2057,7 @@ def _resolve_published(container_node, name: str):
 
     ctn = _name_of(container_node)
     try:
-        bind = cmds.container(ctn, query=True, bindAttr=True) or []
+        bind = container_cmd(ctn, query=True, bindAttr=True) or []
     except Exception:
         bind = []
     # bind is flat: [innerPlug, publishedName, innerPlug, publishedName, ...]
@@ -2073,14 +2116,14 @@ def _is_direct_member(container_name: str, node_name: str) -> bool:
                 instanced = False
                 listed    = OpenMaya.MFnDependencyNode(mobj).name()
             if sel.length() == 1 and not instanced and listed == node_name:
-                found = cmds.container(query=True, findContainer=[node_name])
+                found = container_cmd(query=True, findContainer=[node_name])
                 if not found:
                     return False
                 return found == container_name or _same_node(found, container_name)
     except (RuntimeError, ValueError):
         pass
     try:
-        members = cmds.container(container_name, query=True, nodeList=True) or []
+        members = container_cmd(container_name, query=True, nodeList=True) or []
     except (RuntimeError, ValueError):
         return False
     return node_name in members
@@ -2123,7 +2166,7 @@ def _plug_is_bound(container_node, plug) -> bool:
     """
     ctn = _name_of(container_node)
     try:
-        bind = cmds.container(ctn, query=True, bindAttr=True) or []
+        bind = container_cmd(ctn, query=True, bindAttr=True) or []
     except (RuntimeError, ValueError):
         return False
     plug_str = _name_of(plug)
@@ -2152,7 +2195,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
 
     # Native single: locate the plug bound to ``name`` and unbind it.
     try:
-        bind = cmds.container(ctn, query=True, bindAttr=True) or []
+        bind = container_cmd(ctn, query=True, bindAttr=True) or []
     except Exception:
         bind = []
     bound_plug = None
@@ -2162,7 +2205,7 @@ def _destroy_published_name(container_node, name: str) -> bool:
             break
     if bound_plug is not None:
         try:
-            cmds_edit.container(ctn, edit=True, unbindAttr=(bound_plug, name))
+            container_cmd(ctn, edit=True, unbindAttr=(bound_plug, name))
             found = True
         except RuntimeError as e:
             LOGGER.debug("unbindAttr %s.%s failed: %s", ctn, name, e)
@@ -2172,12 +2215,12 @@ def _destroy_published_name(container_node, name: str) -> bool:
     # must fall through to a plain ``deleteAttr``). Catches the dangling case
     # too (publishName persists even after its bindAttr was auto-cleared).
     try:
-        published = cmds.container(ctn, query=True, publishName=True) or []
+        published = container_cmd(ctn, query=True, publishName=True) or []
     except Exception:
         published = []
     if name in published:
         try:
-            cmds_edit.container(ctn, edit=True, unpublishName=name)
+            container_cmd(ctn, edit=True, unpublishName=name)
             found = True
         except (
             RuntimeError,
@@ -3124,7 +3167,7 @@ def _all_rig_owned(
     """
     pairs: List[Tuple[str, str]] = []
     if scope is not None:
-        for n in cmds.container(scope, q=True, nodeList=True) or []:
+        for n in container_cmd(scope, q=True, nodeList=True) or []:
             if _is_rig_owned(n):
                 pairs.append((n, scope))
         return pairs
@@ -3134,7 +3177,7 @@ def _all_rig_owned(
     tagged = cmds.ls(f"*.{_RIG_TAG}", objectsOnly=True, recursive=True) or []
     for n in tagged:
         try:
-            owner = cmds.container(q=True, findContainer=n) or "(scene root)"
+            owner = container_cmd(q=True, findContainer=n) or "(scene root)"
         except RuntimeError:
             owner = "(scene root)"
         pairs.append((n, owner))
@@ -3241,7 +3284,7 @@ def cleanup(
             if not _is_gc_eligible(n, extra_types, aggressive):
                 continue
             try:
-                owner = cmds.container(q=True, findContainer=n) or "(scene root)"
+                owner = container_cmd(q=True, findContainer=n) or "(scene root)"
             except RuntimeError:
                 owner = "(scene root)"
             by_owner.setdefault(owner, set()).add(n)
@@ -3267,7 +3310,7 @@ def cleanup(
             continue
         if _is_locked_node(ctn):
             continue  # a locked container is never deleted, nor reported
-        members = set(cmds.container(ctn, q=True, nodeList=True) or [])
+        members = set(container_cmd(ctn, q=True, nodeList=True) or [])
         if members and members.issubset(obsolete):
             empty_ctns.add(ctn)
         elif not members:

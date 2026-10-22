@@ -38,7 +38,7 @@ import inspect
 
 from maya import cmds
 from rig._internal.declared import Declared as _Declared
-from rig._internal.journal import barrier, cmds_edit
+from rig._internal.journal import _S, barrier, cmds_edit, flush_members
 
 DEFAULT_NAME = "rig.undo_chunk"
 
@@ -65,10 +65,15 @@ class _Chunk(_Declared):
         cmds_edit.undoInfo(openChunk=True, chunkName=self.name or DEFAULT_NAME)
 
     def __exit__(self, exc_type, exc, tb) -> bool:
-        # the journal's barrier, then the close, which runs whatever the barrier does (a
-        # registration that fails raises, or is a note of the block's own exception)
+        # the deferred member adds (round 6 S2: inside the chunk's one step), the journal's
+        # barrier, then the close, which runs whatever they do (a failure raises, or is a
+        # note of the block's own exception)
         try:
-            barrier(exc)
+            try:
+                if _S.members:
+                    flush_members(exc)
+            finally:
+                barrier(exc)
         finally:
             cmds.undoInfo(closeChunk=True)
         return False
