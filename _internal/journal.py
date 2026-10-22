@@ -13,7 +13,8 @@ Order with ``cmds``: Maya records a ``cmds`` edit at once, so rig registers the 
 before it (a *barrier*). rig's own ``cmds`` edits go through `cmds_edit`
 (``cmds_edit.setAttr(...)``) and `mel_eval`, which register first. ``createNode``,
 ``loadPlugin`` and the member add of a node a container scope just made commute with the
-pending edits and stay raw (the lint test ``test_r5_journal.TestBarrierLint`` holds the list).
+pending edits and stay raw (the lint test ``test_r5_journal.TestBarrierLint`` holds the list);
+that member add is deferred to the statement's end and other flush points (`flush_members`).
 Code a user wrote that rig calls inside a statement (a ``_create`` / ``post_create`` override,
 a spec subclass's ``apply``, a fallback hook, an iterator operand ...) runs through
 `user_call` / `outside`: the pending list is registered first and the scope is closed while it
@@ -68,7 +69,7 @@ class _State:
     and ``redo``: True when Maya's redo queue may hold entries (an undo or a redo ran since,
     or since this import), see `add`. Maya runs rig on its main thread only."""
 
-    __slots__ = ("open", "pending", "entry", "redo", "chunk")
+    __slots__ = ("open", "pending", "entry", "redo", "chunk", "members")
 
     def __init__(self) -> None:
         self.open    = False
@@ -77,6 +78,9 @@ class _State:
         self.redo    = True
         # True while the open statement holds an undo chunk (`one_step`)
         self.chunk   = False
+        # the deferred member adds: ``[(leaf container, node), ...]`` of the nodes
+        # container.createNode made in the open statement (`defer_member`)
+        self.members = []
 
 
 _S = _State()
@@ -230,12 +234,86 @@ def one_step() -> None:
 
 def _close_chunk(outer: bool) -> None:
     """Closes the chunk `one_step` opened for the statement ending, and gives back the
-    state of the statement it ran inside (`outside`), ``outer``."""
+    state of the statement it ran inside (`outside`), ``outer``. The deferred member adds
+    go inside the chunk first (`flush_members`)."""
     try:
         if _S.chunk:
-            _cmds.undoInfo(closeChunk=True)
+            try:
+                if _S.members:
+                    flush_members()
+            finally:
+                _cmds.undoInfo(closeChunk=True)
     finally:
         _S.chunk = outer
+
+
+# --------------------------------------------------------------------- #
+# The deferred member adds (round 6 S2, user decision 1A): the ``container -addNode`` of a
+# node container.createNode made just now waits in ``_S.members`` and is sent once per run
+# of consecutive nodes with the same leaf container (`rig._internal.container._flush_members`,
+# through S0's `_add_members`), the names read then. FLUSH POINTS: the outermost
+# statement's end (normal or raising: an error mid-statement leaves today's membership),
+# an undo chunk's close (`undo._Chunk.__exit__`, `_close_chunk`: the membership stays in
+# the chunk's one undo step), every rig ``container`` call (`container_cmd`), `outside`
+# (before user code), and every `cmds_edit` / `mel_eval` of a command not in
+# `NO_MEMBERSHIP`. So the pending nodes were made in this statement, and no user code ran
+# since: nothing but rig's own code, which reads membership only through these points,
+# runs while one is pending.
+# --------------------------------------------------------------------- #
+
+# the commands that never change or read container membership: no flush before them
+NO_MEMBERSHIP = frozenset({
+    "setAttr", "addAttr", "deleteAttr", "connectAttr", "disconnectAttr", "aliasAttr",
+    "parent", "xform",
+})
+
+# rig._internal.container, bound on the first flush (it imports this module)
+_CONTAINER = None
+
+
+def defer_member(leaf: Any, node: Any) -> None:
+    """Defers the member add of ``node`` (made just now) to the container ``leaf`` until
+    the next flush point (see above). Outside a statement it is sent at once."""
+    if _S.open:
+        _S.members.append((leaf, node))
+    else:
+        _send_deferred([(leaf, node)])
+
+
+def _send_deferred(pairs: list) -> None:
+    global _CONTAINER
+    module = _CONTAINER
+    if module is None:
+        from rig._internal import container as module
+
+        _CONTAINER = module
+    module._flush_members(pairs)
+
+
+def flush_members(error: BaseException | None = None) -> None:
+    """Sends the deferred member adds now (see above). With ``error``, an exception
+    propagating, a failure is a note of it, never a replacement (as `barrier`)."""
+    pairs, _S.members = _S.members, []
+    if not pairs:
+        return
+    try:
+        _send_deferred(pairs)
+    except Exception as failure:  # noqa: BLE001 (re-raised or noted)
+        if error is None:
+            raise
+        error.add_note(f"rig: the member add of {len(pairs)} new node(s) failed: {failure}")
+
+
+def container_cmd(*args: Any, **kwargs: Any) -> Any:
+    """rig's one route to ``maya.cmds.container`` (the lint
+    ``test_r6_deferred_members.TestContainerRoute``): the deferred member adds are sent
+    first, so a query sees them; an edit (no true ``q`` / ``query``) goes through
+    `cmds_edit` (the journal's barrier), a query is raw."""
+    if _S.members:
+        flush_members()
+    if kwargs.get("query") or kwargs.get("q"):
+        return _cmds.container(*args, **kwargs)
+    return cmds_edit.container(*args, **kwargs)
 
 
 def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
@@ -258,15 +336,24 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
         _S.open  = False
         _S.entry = None
         try:
-            barrier(error)
+            try:
+                # the members first: today's membership, never replacing ``error``
+                if _S.members:
+                    flush_members(error)
+            finally:
+                barrier(error)
         finally:
             _close_chunk(outer)
         raise
     _S.open  = False
     _S.entry = None
     try:
-        if _S.pending:
-            _flush()
+        try:
+            if _S.members:
+                flush_members()
+        finally:
+            if _S.pending:
+                _flush()
     finally:
         _close_chunk(outer)
     return result
@@ -298,6 +385,9 @@ class outside:
     def __enter__(self) -> None:
         self.was_open = _S.open
         if self.was_open:
+            # the deferred member adds before user code (it may read membership)
+            if _S.members:
+                flush_members()
             if _S.pending:
                 _flush()
             _S.open = False
@@ -396,9 +486,14 @@ class _Edits:
         if name.startswith("_"):
             raise AttributeError(name)
 
+        # a command that can change or read membership sends the deferred member adds first
+        flushes = name not in NO_MEMBERSHIP
+
         def command(*args: Any, **kwargs: Any) -> Any:
             if LIST_TYPE:
                 check_lists(args, kwargs)
+            if flushes and _S.members:
+                flush_members()
             if _S.pending:
                 _flush()
             if kwargs:
@@ -415,7 +510,10 @@ cmds_edit = _Edits()
 
 
 def mel_eval(script: str) -> Any:
-    """``maya.mel.eval(script)`` once the pending list is registered."""
+    """``maya.mel.eval(script)`` once the deferred member adds are sent and the pending list
+    is registered."""
+    if _S.members:
+        flush_members()
     if _S.pending:
         _flush()
     return _mel.eval(script)
@@ -468,9 +566,10 @@ def _settle(*_args: Any) -> None:
 
 def _discard(*_args: Any) -> None:
     """kBeforeNew / kBeforeOpen: the scene epoch moves (first, see `_node_removed`); drop the
-    pending list (see above)."""
+    pending list and the deferred member adds (see above)."""
     EPOCH[0] += 1
     _S.pending = []
+    _S.members = []
 
 
 def _undone_or_redone(*_args: Any) -> None:

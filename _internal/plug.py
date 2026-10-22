@@ -123,7 +123,7 @@ from maya.api import OpenMaya
 from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.declared import Declared as _Declared
-from rig._internal.journal import cmds_edit, one_step, run_statement, statement, user_call
+from rig._internal.journal import cmds_edit, container_cmd, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
     _name_of,
     _method_hint,
@@ -455,7 +455,7 @@ class Plug(Attribute):
         #    (which ``findPlug`` cannot resolve directly) and genuine
         #    on-container attrs.
         try:
-            owner = cmds.container(query=True, findContainer=_name_of(type(self)._raw_get_node(self)))
+            owner = container_cmd(query=True, findContainer=_name_of(type(self)._raw_get_node(self)))
         except (
             RuntimeError,
             ValueError,

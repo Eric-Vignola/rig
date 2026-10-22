@@ -110,7 +110,7 @@ from typing import Any, Callable
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig._internal.journal import cmds_edit as _cmds_edit
+from rig._internal.journal import cmds_edit as _cmds_edit, container_cmd
 from rig.nodetypes import material_node as _material_node
 from rig.nodetypes.material_node import Material
 from rig.nodetypes._base import _name_of
@@ -605,7 +605,7 @@ def _adopt(material: str) -> ShadingEngine:
     ``rn.blinn(name=...)``) next to the shader: in its container when it has
     one, never in the active scope (a found node is never moved)."""
     engine = ShadingEngine.for_material(material, create=True)
-    owner  = cmds.container(query=True, findContainer=[material])
+    owner  = container_cmd(query=True, findContainer=[material])
     if owner:
         # rig's one addNode route (a Maya 2025 crash on some lists); a failure
         # raises, as before
