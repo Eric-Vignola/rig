@@ -861,17 +861,99 @@ class TestStaticDataTypeCache(MayaTestCase):
         self.assertIsNotNone(Plug(f"{md}.input1X")._static_type_key())
 
     def test_element_subtree_not_cached(self):
+        # re-pinned in place by round 6 step S1 (the static type cache answers
+        # for a numeric kind under an element): these plugs are now shared, one
+        # query for the first, none after it, made element or new
         pma = cmds.createNode("plusMinusAverage", name="pma")
         cmds.setAttr("pma.input3D[2]", 1, 2, 3)
-        for name in ("pma.input3D[2]", "pma.input3D[2].input3Dx", "pma.input1D[0]"):
+        for name, other in (
+            ("pma.input3D[2]", "pma.input3D[7]"),
+            ("pma.input3D[2].input3Dx", "pma.input3D[5].input3Dx"),
+            ("pma.input1D[0]", "pma.input1D[3]"),
+        ):
             with self.subTest(plug=name):
-                self.assertIsNone(Plug(name)._static_type_key())
+                self.assertIsNotNone(Plug(name)._static_type_key())
                 expected = cmds.getAttr(name, type=True)
-                for _ in range(2):
-                    self.assertEqual(self._data_type(name), (expected, 1))
+                self.assertEqual(self._data_type(name), (expected, 1))
+                self.assertEqual(self._data_type(name), (expected, 0))
+                self.assertEqual(cmds.getAttr(other, type=True), expected)
+                self.assertEqual(self._data_type(other), (expected, 0))
         self.assertIsNotNone(Plug(f"{pma}.input3D")._static_type_key())
         self.assertEqual(self._data_type("pma.input3D"), ("compound", 1))
         self.assertEqual(self._data_type("pma.input3D"), ("compound", 0))
+
+    def test_element_numeric_kinds_answer_from_the_cache(self):
+        # round 6, S1: a new and a made element, and a numeric child under an
+        # element, answer as getAttr does, with no query after the first
+        mul = cmds.createNode("multiply", name="mul")
+        add = cmds.createNode("sum", name="add")
+        pma = cmds.createNode("plusMinusAverage", name="pma")
+        cmds.setAttr("mul.input[1]", 2.0)
+        cmds.setAttr("add.input[0]", 1.0)
+        cmds.setAttr("pma.input3D[0]", 1, 2, 3)
+        groups = (
+            ("mul.input[1]", "mul.input[4]"),     # made, then new
+            ("add.input[6]", "add.input[0]"),     # new, then made
+            ("pma.input3D[3]", "pma.input3D[0]"),
+            ("pma.input3D[0].input3Dy", "pma.input3D[9].input3Dy"),
+        )
+        for first, second in groups:
+            with self.subTest(plug=first):
+                expected = cmds.getAttr(first, type=True)
+                self.assertEqual(cmds.getAttr(second, type=True), expected)
+                self.assertEqual(self._data_type(first), (expected, 1))
+                self.assertEqual(self._data_type(second), (expected, 0))
+                self.assertEqual(self._data_type(first), (expected, 0))
+        # the element key is not the root's
+        self.assertNotEqual(
+            Plug("mul.input")._static_type_key(), Plug("mul.input[0]")._static_type_key()
+        )
+        self.assertEqual(self._data_type("mul.input")[1], 1)
+
+    def test_element_other_kinds_still_query(self):
+        # round 6, S1: matrix, generic, typed, message and dynamic kinds under
+        # an element are never shared
+        mm = cmds.createNode("multMatrix", name="mm")
+        cmds.createNode("choice", name="pick")
+        net = cmds.createNode("network", name="net")
+        cmds.addAttr(net, ln="dyn", at="double", multi=True)
+        cmds.setAttr("net.dyn[0]", 1.0)
+        cmds.polyCube(name="cube")
+        cluster = cmds.cluster("cube")[0]
+        objset = cmds.sets(empty=True, name="objs")
+        for name in (
+            f"{mm}.matrixIn[0]",
+            "pick.input[0]",
+            f"{cluster}.input[0].inputGeometry",
+            f"{objset}.dagSetMembers[0]",
+            "net.dyn[0]",
+        ):
+            with self.subTest(plug=name):
+                self.assertIsNone(Plug(name)._static_type_key())
+                expected = _legacy_data_type_outcome(Plug(name))
+                for _ in range(2):
+                    self.assertEqual(_data_type_outcome(Plug(name)), expected)
+                    if not isinstance(expected, tuple):
+                        self.assertEqual(self._data_type(name), (expected, 1))
+
+    def test_plugin_load_clears_the_element_entries(self):
+        for plugin in ("invertShape", "curveWarp", "quatNodes"):
+            if not cmds.pluginInfo(plugin, query=True, loaded=True):
+                break
+        else:
+            self.skipTest("no unloaded plug-in to load")
+        cmds.createNode("multiply", name="mul")
+        try:
+            self.assertEqual(self._data_type("mul.input[0]")[1], 1)
+            self.assertTrue(any(key[-1] for key in _base._STATIC_DATA_TYPE))
+            cmds.loadPlugin(plugin, quiet=True)
+            self.assertEqual(_base._STATIC_DATA_TYPE, {})
+            self.assertEqual(self._data_type("mul.input[0]")[1], 1)
+            self.assertEqual(self._data_type("mul.input[2]")[1], 0)
+        finally:
+            cmds.unloadPlugin(plugin)
+        self.assertEqual(_base._STATIC_DATA_TYPE, {})
+        self.assertEqual(self._data_type("mul.input[2]")[1], 1)
 
     def test_deleted_plug_raises_despite_cache(self):
         def outcome(plug):

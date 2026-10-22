@@ -1203,14 +1203,23 @@ _NON_MATRIX_ATTR_API_TYPES = _SCALAR_ATTR_API_TYPES | {
 
 # Attribute kinds whose `cmds.getAttr(..., type=True)` string is a property of
 # the node class, so `Attribute.get_data_type` shares it across instances in
-# `_STATIC_DATA_TYPE`, keyed by (typeName, typeId, attr long name, isArray).
-# Typed attrs are shared only as a top-level array root (`_is_static_typed_root`).
-# Dynamic and extension attrs and plugs under an array element are never
+# `_STATIC_DATA_TYPE`, keyed by (typeName, typeId, attr long name, isArray,
+# under an element). Typed attrs are shared only as a top-level array root
+# (`_is_static_typed_root`). Under an array element only the kinds of
+# `_ELEMENT_STATIC_API_TYPES` are shared. Dynamic and extension attrs are never
 # cached; the cache is cleared when a plug-in is loaded or unloaded (it can
 # redefine a type).
 _STATIC_DATA_API_TYPES = _NON_MATRIX_ATTR_API_TYPES | {
     OpenMaya.MFn.kMatrixAttribute,
     OpenMaya.MFn.kFloatMatrixAttribute,
+}
+# The kinds whose getAttr -type string comes from the attribute's definition,
+# so a plug under an element (``multiply.input[3]``, ``plusMinusAverage.
+# input3D[0].input3Dx``) answers as any other element of it, made or new:
+# numeric, unit, enum, their compounds, compound and light data. Message is left
+# out with matrix, typed and generic (round 6, S1).
+_ELEMENT_STATIC_API_TYPES = _NON_MATRIX_ATTR_API_TYPES - {
+    OpenMaya.MFn.kMessageAttribute,
 }
 _STATIC_DATA_TYPE = {}
 _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
@@ -3580,20 +3589,28 @@ class Attribute(str, metaclass=_PlugMeta):
                 # `data_type`, the caller, named the attr first
                 mobject = _attr_mobject(self)
                 # a dynamic or extension attr can be re-added with another type
-                if (
-                    fn.attributeClass(mobject) == normal
-                    and (
-                        mobject.apiType() in _STATIC_DATA_API_TYPES
-                        or _is_static_typed_root(mplug, mobject)
-                    )
-                    and not _plug_under_element(mplug)
-                ):
-                    key = (
-                        fn.typeName,
-                        fn.typeId.id(),
-                        OpenMaya.MFnAttribute(mobject).name,
-                        mplug.isArray,
-                    )
+                if fn.attributeClass(mobject) == normal:
+                    api   = mobject.apiType()
+                    under = _plug_under_element(mplug)
+                    # under an element, only a kind whose type string its
+                    # definition fixes (numeric, unit, enum, their compounds,
+                    # compound, light data): a matrix, typed, generic or
+                    # message one still queries (round 6, S1)
+                    if (
+                        api in _ELEMENT_STATIC_API_TYPES
+                        if under
+                        else (
+                            api in _STATIC_DATA_API_TYPES
+                            or _is_static_typed_root(mplug, mobject)
+                        )
+                    ):
+                        key = (
+                            fn.typeName,
+                            fn.typeId.id(),
+                            OpenMaya.MFnAttribute(mobject).name,
+                            mplug.isArray,
+                            under,
+                        )
             except Exception:
                 key = None
             self.__dict__["_static_key_cache"] = key
