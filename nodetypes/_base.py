@@ -2390,7 +2390,9 @@ def _choice_output_type(attr: Any, node: Any) -> str | None:
         ):
             return None
         # the hook's own reads, from the API: the selector (MPlug.asInt, as
-        # the hook), the source of the selected input
+        # the hook), the source of the selected input, as the hook's
+        # `connectedTo` gives it: a unit conversion node's output, not the plug
+        # behind it (`MPlug.source` skips conversion nodes)
         fn  = OpenMaya.MFnDependencyNode(attr._mplug.node())
         sel = fn.findPlug("selector", False).asInt()
         if sel < 0:
@@ -2398,7 +2400,7 @@ def _choice_output_type(attr: Any, node: Any) -> str | None:
         inp = fn.findPlug("input", False).elementByLogicalIndex(sel)
         if not inp.isDestination:
             return None
-        src = inp.source()
+        src = inp.sourceWithConversion()
         if src.isNull:
             return None
         key = _mplug_static_key(src, src.attribute())
@@ -2421,19 +2423,15 @@ def _source_static_type(src: OpenMaya.MPlug, key: tuple) -> str | None:
     one whose query says typed or Tdata (its hook would run), gives None, and
     the choice output queries as before. The query reads only the type: it
     evaluates nothing (the output query evaluates the source) and makes
-    nothing (a connected source exists). Raises what the query raises (the
-    caller reads it as None)."""
+    nothing (a connected source exists). The source is named as the hook names
+    it (its node cast, as `Attribute.get_full_name` casts it): a node rig
+    cannot cast raises here, and the output query raises it as before. Raises
+    what the naming or the query raises (the caller reads it as None)."""
     if src.attribute().apiType() not in _ELEMENT_STATIC_API_TYPES:
         return None
     if not (_PLUGIN_CALLBACKS_READY or _ensure_plugin_callbacks()):
         return None
-    node = src.node()
-    if node.hasFn(OpenMaya.MFn.kDagNode):
-        node_name = OpenMaya.MDagPath.getAPathTo(node).partialPathName()
-    else:
-        node_name = OpenMaya.MFnDependencyNode(node).name()
-    # long names, every index (an instanced element's too, which cmds honours)
-    name   = f"{node_name}.{src.partialName(False, False, True, False, False, True)}"
+    name   = _name_of(_new_attr(Attribute, src))
     before = _element_state(src) if key[4] else None
     typ    = cmds.getAttr(name, type=True)
     if typ == "TdataCompound":
