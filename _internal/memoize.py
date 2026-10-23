@@ -36,7 +36,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig._internal.journal import rig_code, statement
+from rig._internal.journal import IDS as _IDS, _S as _JS, rig_code, statement
 from rig.nodetypes._base import (
     _name_of,
     _PLUG_TYPES,
@@ -138,13 +138,22 @@ def _named_dg_identity(attr: Attribute, node_str: Optional[str]) -> Optional[Tup
     """
     node = attr._node
     try:
+        if _JS.open:
+            hit = _IDS.get(id(node))
+            if hit is not None and hit[0] is node and node._objhandle.isValid():
+                if node_str is None or node._fn_set.name() == node_str:
+                    return hit[1]
+                return None
         if (
             isinstance(node, DGNode)
             and node._objhandle.isValid()
             and not node._mobject.hasFn(OpenMaya.MFn.kDagNode)
             and (node_str is None or node._fn_set.name() == node_str)
         ):
-            return (node._fn_set.uuid().asString(), node._objhandle.hashCode())
+            identity = (node._fn_set.uuid().asString(), node._objhandle.hashCode())
+            if _JS.open:
+                _IDS[id(node)] = (node, identity)
+            return identity
     except Exception:
         pass
     return None
