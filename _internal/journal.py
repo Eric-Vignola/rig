@@ -85,6 +85,9 @@ class _State:
 
 _S = _State()
 
+# S7 prototype: {id(node object): (node object, identity)} for the open statement
+IDS: dict = {}
+
 
 def _walk(ops: Any, method: str) -> None:
     """Calls ``method`` on every op of ``ops`` in order, also after one raises; then
@@ -329,12 +332,14 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
         check_lists(args, kwargs)
     _S.open  = True
     _S.entry = args
+    IDS.clear()
     outer, _S.chunk = _S.chunk, False
     try:
         result = func(*args, **kwargs)
     except BaseException as error:
         _S.open  = False
         _S.entry = None
+        IDS.clear()
         try:
             try:
                 # the members first: today's membership, never replacing ``error``
@@ -347,6 +352,7 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
         raise
     _S.open  = False
     _S.entry = None
+    IDS.clear()
     try:
         try:
             if _S.members:
@@ -391,6 +397,7 @@ class outside:
             if _S.pending:
                 _flush()
             _S.open = False
+            IDS.clear()
 
     def __exit__(self, *exc: Any) -> bool:
         if self.was_open:
@@ -488,6 +495,7 @@ class _Edits:
 
         # a command that can change or read membership sends the deferred member adds first
         flushes = name not in NO_MEMBERSHIP
+        renames = name == "rename"
 
         def command(*args: Any, **kwargs: Any) -> Any:
             if LIST_TYPE:
@@ -496,6 +504,8 @@ class _Edits:
                 flush_members()
             if _S.pending:
                 _flush()
+            if renames:
+                IDS.clear()
             if kwargs:
                 return getattr(_cmds, name)(*args, **kwargs)
             # a maya.cmds function given an empty keyword dict costs about 1 us more
@@ -578,6 +588,7 @@ def _undone_or_redone(*_args: Any) -> None:
     EPOCH[0] += 1
     del DOOMED[:]
     _S.redo = True
+    IDS.clear()
 
 
 class _Untrusted:
