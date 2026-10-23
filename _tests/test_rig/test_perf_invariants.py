@@ -3045,6 +3045,61 @@ class TestChoiceSourceFill(MayaTestCase):
         self.assertEqual(self._queries(pick.output), ("double3", ["s.output"]))
         self.assertEqual(self._queries(pick.output), ("double3", []))
 
+    def test_conversion_node_source_is_the_source(self):
+        # the hook's source is the conversion node's output, not the plug
+        # behind it: a time / double unit output is that output's type, a
+        # unitConversion's generic output queries the choice output, with the
+        # plug behind it cached or not
+        cases = (
+            ("transform", "translateX", "unitToTimeConversion", "time"),
+            ("time", "outTime", "timeToUnitConversion", "double"),
+            ("transform", "rotateX", "unitConversion", None),
+            ("transform", "translateX", "unitConversion", None),
+            ("transform", "visibility", "unitConversion", None),
+            ("multiplyDivide", "operation", "unitConversion", None),
+        )
+        for node_type, attr, conversion, filled in cases:
+            for warm in (False, True):
+                with self.subTest(source=f"{node_type}.{attr}", via=conversion, warm=warm):
+                    cmds.file(new=True, force=True)
+                    _base._STATIC_DATA_TYPE.clear()
+                    _base._ELEMENT_MADE.clear()
+                    cmds.createNode("multiplyDivide", name="md")
+                    cmds.createNode(node_type, name="s")
+                    cmds.createNode(conversion, name="uc")
+                    cmds.connectAttr(f"s.{attr}", "uc.input")
+                    pick = self._choice("uc.output", "pick")
+                    legacy = self._legacy("pick.output")
+                    _base._STATIC_DATA_TYPE.clear()
+                    if warm:
+                        # the plug behind the conversion node is a static hit
+                        Plug(f"s.{attr}").get_data_type()
+                    outcome, queried = self._queries(pick.output)
+                    self.assertEqual(outcome, legacy)
+                    self.assertEqual(outcome, _getattr_type("uc.output"))
+                    if filled is None:
+                        self.assertEqual(queried, ["pick.output", "uc.output"])
+                    else:
+                        self.assertEqual((outcome, queried), (filled, ["uc.output"]))
+
+    def test_uncastable_source_raises_as_before(self):
+        # an empty nurbsCurve shape: rig's cast of it raises, and so does the
+        # hook that names the source; the output query raises it as before
+        for attr in ("spans", "degree", "form"):
+            with self.subTest(attr=attr):
+                cmds.file(new=True, force=True)
+                _base._STATIC_DATA_TYPE.clear()
+                cmds.createNode("multiplyDivide", name="md")
+                cmds.createNode("nurbsCurve", name="s")
+                pick = self._choice(f"s.{attr}", "pick")
+                legacy = self._legacy("pick.output")
+                self.assertIs(legacy[0], RuntimeError)
+                _base._STATIC_DATA_TYPE.clear()
+                outcome, queried = self._queries(pick.output)
+                self.assertEqual(outcome, legacy)
+                self.assertEqual(queried, ["pick.output"])
+                self.assertEqual(_base._STATIC_DATA_TYPE, {})
+
 
 class TestFullNameReadsTheOwner(MayaTestCase):
     TEST_START_NEW_SCENE = True
