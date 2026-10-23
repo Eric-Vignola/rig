@@ -306,7 +306,7 @@ builds a camera and `count` poly planes parented under it, one every
 - gets a `Lambert` of its own, full-bright (`diffuse=0, ambientColor=1`
   at creation, then `color` and `ambientColor` wired to the texture), with
   its transparency remapped through two dials, `alpha` and `opacity`
-  (`texture.outTransparency * gain + offset`, plain math nodes).
+  (`texture.outTransparency * gain + bias`, plain math nodes).
 - carries its controls **on the shape**, so selecting the mesh shows them
   in the channel box:
 

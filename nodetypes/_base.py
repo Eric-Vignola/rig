@@ -709,6 +709,7 @@ class NodeMeta(type):
         _CLASS_BY_TYPE.clear()
         _CASTABLE_TYPES.clear()
         _STATIC_DATA_TYPE.clear()
+        _ELEMENT_MADE.clear()
 
         if node_type:
             _NODE_CLASS_DICT[node_type] = cls_obj
@@ -1223,6 +1224,13 @@ _ELEMENT_STATIC_API_TYPES = _NON_MATRIX_ATTR_API_TYPES - {
 }
 _STATIC_DATA_TYPE = {}
 _STATIC_KEY_UNSET = object()  # `Attribute._static_type_key` not yet computed
+# What the getAttr -type query that a static hit under an element replaces did
+# to the missing elements, as each real query saw it: (static key, which
+# elements existed before) -> which existed after. A plusMinusAverage
+# input3D[7] query makes the element; a geometryFilter weightList[3].weights[2]
+# query makes none. A hit repeats only what was seen (`_replay_elements`), and
+# queries a state it has not seen. Cleared with `_STATIC_DATA_TYPE`.
+_ELEMENT_MADE = {}
 
 # The epoch of the kind memo a plug keeps (`_fixed_attr_kind`): a new token at
 # every plug-in load and unload (`_clear_static_data_type`), which can redefine
@@ -2346,6 +2354,7 @@ def _clear_static_data_type(*args) -> None:
     """Drops every cached static data type, and starts a new epoch of the plugs'
     kind memos (`_KIND_EPOCH`) (MSceneMessage callback)."""
     _STATIC_DATA_TYPE.clear()
+    _ELEMENT_MADE.clear()
     _KIND_EPOCH[0] = object()
 
 
@@ -2396,41 +2405,58 @@ def _choice_output_type(attr: Any, node: Any) -> str | None:
         return None
 
 
-def _make_elements(mplug: OpenMaya.MPlug) -> bool:
-    """For a plug under an array element that a static cache hit answers: make
-    its missing elements as the getAttr -type query it replaces does (that
-    query creates a missing element, and the element stays after an undo), by
-    reading its first leaf from the API, which makes the same elements (round
-    6, S1; runs/r6/impl/s1s4/out/probe_phantom.txt). True if every element
-    exists now; False (the caller queries, as before) if a read cannot make it.
-    Never raises."""
+def _replay_elements(key: tuple, mplug: OpenMaya.MPlug) -> bool:
+    """For a plug under an array element that a static cache hit answers: leave
+    its elements as the getAttr -type query it replaces would (that query can
+    create a missing element, and the element stays after an undo), as
+    recorded in `_ELEMENT_MADE` for `key` and the elements that exist now. A
+    query that made them is repeated by reading the plug's first leaf from the
+    API, which makes the same elements (round 6, S1;
+    runs/r6/impl/s1s4/out/probe_phantom.txt); a query that made none is
+    repeated by doing nothing. True if the hit may answer; False (the caller
+    queries, which records the state) for a state not seen yet, or one a read
+    cannot repeat. Never raises."""
     try:
-        if _elements_exist(mplug):
+        state = _element_state(mplug)
+        if all(state):
             return True
+        after = _ELEMENT_MADE.get((key, state))
+        if after is None or not all(after):
+            # not seen yet, or the query made only some of them
+            return after == state
         leaf = mplug
         while leaf.isCompound:
             leaf = leaf.child(0)
         if leaf.isArray:
             return False
         leaf.asDouble()
-        return _elements_exist(mplug)
+        return all(_element_state(mplug))
     except Exception:
         return False
 
 
-def _elements_exist(mplug: OpenMaya.MPlug) -> bool:
-    """True if every array element `mplug` is, or is under, exists."""
-    plug = mplug
+def _element_state(mplug: OpenMaya.MPlug) -> tuple:
+    """For each array element `mplug` is, or is under (innermost first): True
+    if it exists. Read from the outermost: under a missing element no inner
+    array is read (reading its indices makes the missing outer element)."""
+    elements = []
+    plug     = mplug
     while True:
         if plug.isElement:
             array = plug.array()
-            if plug.logicalIndex() not in array.getExistingArrayAttributeIndices():
-                return False
+            elements.append((plug.logicalIndex(), array))
             plug = array
         elif plug.isChild:
             plug = plug.parent()
         else:
-            return True
+            break
+    state = [False] * len(elements)
+    for i in range(len(elements) - 1, -1, -1):
+        index, array = elements[i]
+        if index not in array.getExistingArrayAttributeIndices():
+            break
+        state[i] = True
+    return tuple(state)
 
 
 def _mplug_static_key(mplug: OpenMaya.MPlug, mobject: OpenMaya.MObject) -> tuple | None:
@@ -3640,9 +3666,9 @@ class Attribute(str, metaclass=_PlugMeta):
         key = self._static_type_key()
         if key is not None:
             typ = _STATIC_DATA_TYPE.get(key)
-            # under an element, the query's side effect is kept: it makes a
-            # missing element (`_make_elements`)
-            if typ is not None and (not key[4] or _make_elements(self._mplug)):
+            # under an element, the query's side effect is kept: the missing
+            # elements it made, or none (`_replay_elements`)
+            if typ is not None and (not key[4] or _replay_elements(key, self._mplug)):
                 return typ
         elif owner is not None and _CHOICE is not None:
             # a choice output: its selected input's source type, when that is
@@ -3652,6 +3678,15 @@ class Attribute(str, metaclass=_PlugMeta):
                 return typ
         if full_name is None:
             full_name = _name_of(self)
+
+        # under an element: what the query does to the missing elements is
+        # recorded for the hits that replace it (`_ELEMENT_MADE`)
+        before = None
+        if key is not None and key[4]:
+            try:
+                before = _element_state(self._mplug)
+            except Exception:
+                before = None
 
         typ = cmds.getAttr(full_name, type=True)
 
@@ -3686,6 +3721,11 @@ class Attribute(str, metaclass=_PlugMeta):
             and (_PLUGIN_CALLBACKS_READY or _ensure_plugin_callbacks())
         ):
             _STATIC_DATA_TYPE[key] = typ
+            if before is not None and not all(before):
+                try:
+                    _ELEMENT_MADE[(key, before)] = _element_state(self._mplug)
+                except Exception:
+                    pass
         return typ
 
     def _static_type_key(self) -> tuple | None:
