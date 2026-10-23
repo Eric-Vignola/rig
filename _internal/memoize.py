@@ -36,7 +36,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
-from rig._internal.journal import IDS as _IDS, _S as _JS, rig_code, statement
+from rig._internal.journal import NODE_IDS as _NODE_IDS, _S as _JS, rig_code, statement
 from rig.nodetypes._base import (
     _name_of,
     _PLUG_TYPES,
@@ -138,12 +138,16 @@ def _named_dg_identity(attr: Attribute, node_str: Optional[str]) -> Optional[Tup
     """
     node = attr._node
     try:
+        # within a statement, the identity read before for this node object
+        # (`journal.NODE_IDS`), while it holds the same handle and that handle is valid
         if _JS.open:
-            hit = _IDS.get(id(node))
-            if hit is not None and hit[0] is node and node._objhandle.isValid():
-                if node_str is None or node._fn_set.name() == node_str:
-                    return hit[1]
-                return None
+            hit = _NODE_IDS.get(id(node))
+            if hit is not None and hit[0] is node:
+                handle = node._objhandle
+                if hit[1] is handle and handle.isValid():
+                    if node_str is None or node._fn_set.name() == node_str:
+                        return hit[2]
+                    return None
         if (
             isinstance(node, DGNode)
             and node._objhandle.isValid()
@@ -152,7 +156,7 @@ def _named_dg_identity(attr: Attribute, node_str: Optional[str]) -> Optional[Tup
         ):
             identity = (node._fn_set.uuid().asString(), node._objhandle.hashCode())
             if _JS.open:
-                _IDS[id(node)] = (node, identity)
+                _NODE_IDS[id(node)] = (node, node._objhandle, identity)
             return identity
     except Exception:
         pass
