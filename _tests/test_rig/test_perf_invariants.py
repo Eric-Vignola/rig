@@ -915,7 +915,10 @@ class TestStaticDataTypeCache(MayaTestCase):
         # undo); a cache hit makes the same elements, with no query
         cmds.undoInfo(state=True, infinity=True)
         cmds.createNode("plusMinusAverage", name="warm")
-        for name in ("warm.input1D[0]", "warm.input3D[0]", "warm.input3D[0].input3Dx"):
+        # re-pinned in place (round 6 final fix, review finding 2): a hit repeats
+        # what a query did in the same element state, so each warm query starts
+        # from a missing element (input3D[1], not the input3D[0] just made)
+        for name in ("warm.input1D[0]", "warm.input3D[0]", "warm.input3D[1].input3Dx"):
             self.assertEqual(self._data_type(name)[1], 1)
         for ref, hit in (("ref", "hit"), ("ref2", "hit2")):
             for node in (ref, hit):
@@ -937,6 +940,52 @@ class TestStaticDataTypeCache(MayaTestCase):
                             cmds.getAttr(f"{hit}.{array}", multiIndices=True),
                             cmds.getAttr(f"{ref}.{array}", multiIndices=True),
                         )
+
+    def test_a_cache_hit_makes_no_element_the_query_did_not_make(self):
+        # round 6 final fix (review finding 2): getAttr -type on a deformer's
+        # weightList[i].weights[j] makes no weightList element; a cache hit
+        # makes none either (it made one through MPlug.asDouble)
+        def deformer(kind):
+            cube = cmds.polyCube()[0]
+            if kind == "cluster":
+                return cmds.cluster(cube)[0]
+            if kind == "softMod":
+                return cmds.softMod(cube)[0]
+            if kind == "blendShape":
+                return cmds.blendShape(cube)[0]
+            return cmds.deformer(cube, type=kind)[0]
+
+        for kind in ("cluster", "deltaMush", "softMod", "blendShape", "tension"):
+            with self.subTest(kind=kind):
+                warm = deformer(kind)
+                self._data_type(f"{warm}.weightList[3].weights[2]")
+                for sub in ("weightList[5].weights[2]", "weightList[0].weights[7]"):
+                    ref, hit = deformer(kind), deformer(kind)
+                    expected = cmds.getAttr(f"{ref}.{sub}", type=True)
+                    self.assertEqual(Plug(f"{hit}.{sub}").get_data_type(), expected)
+                    self.assertEqual(
+                        cmds.getAttr(f"{hit}.weightList", multiIndices=True),
+                        cmds.getAttr(f"{ref}.weightList", multiIndices=True),
+                    )
+                # a state seen before answers with no query
+                ref, again = deformer(kind), deformer(kind)
+                sub = "weightList[6].weights[2]"
+                expected = cmds.getAttr(f"{ref}.{sub}", type=True)
+                self.assertEqual(self._data_type(f"{again}.{sub}"), (expected, 0))
+                self.assertEqual(
+                    cmds.getAttr(f"{again}.weightList", multiIndices=True),
+                    cmds.getAttr(f"{ref}.weightList", multiIndices=True),
+                )
+        # a bare cluster (no geometry): the same
+        for node in ("bare_warm", "bare_ref", "bare_hit"):
+            cmds.createNode("cluster", name=node)
+        self._data_type("bare_warm.weightList[3].weights[2]")
+        expected = cmds.getAttr("bare_ref.weightList[4].weights[1]", type=True)
+        self.assertEqual(self._data_type("bare_hit.weightList[4].weights[1]"), (expected, 0))
+        self.assertEqual(
+            cmds.getAttr("bare_hit.weightList", multiIndices=True),
+            cmds.getAttr("bare_ref.weightList", multiIndices=True),
+        )
 
     def test_element_other_kinds_still_query(self):
         # round 6, S1: matrix, generic, typed, message and dynamic kinds under
@@ -976,7 +1025,11 @@ class TestStaticDataTypeCache(MayaTestCase):
             self.assertTrue(any(key[-1] for key in _base._STATIC_DATA_TYPE))
             cmds.loadPlugin(plugin, quiet=True)
             self.assertEqual(_base._STATIC_DATA_TYPE, {})
-            self.assertEqual(self._data_type("mul.input[0]")[1], 1)
+            self.assertEqual(_base._ELEMENT_MADE, {})
+            # re-pinned in place (round 6 final fix, review finding 2): a hit
+            # repeats what a query did in the same element state, so the warm
+            # query is on a missing element (input[1], not the input[0] made above)
+            self.assertEqual(self._data_type("mul.input[1]")[1], 1)
             self.assertEqual(self._data_type("mul.input[2]")[1], 0)
         finally:
             cmds.unloadPlugin(plugin)
