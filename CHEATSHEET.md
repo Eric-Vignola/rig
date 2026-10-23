@@ -1186,6 +1186,12 @@ print(cmds.nodeType((a.tx + Plug("b.tx")).get_node()), f"{a.tx}.x")  # sum a.tra
 are wrapped in their own container (`floordiv1`, `modulo1`) with published
 `input1` / `input2` / `output`.
 
+The sign of a `%` result on a plug follows the node that computes it. On
+2024+ it is Maya's `modulo` node, a truncating remainder with the sign of
+the left operand: `x % 4` is `-1` at `x = -5`. The legacy network floors,
+as Python does, and gives `3`. For a remainder that is never negative on
+either path, write `(x % n + n) % n`.
+
 ---
 
 ## 8. Matrices and quaternions
@@ -1556,15 +1562,21 @@ hand.unlock()
 print(palm.is_locked())                           # False
 ```
 
-**When a new node joins.** A node made in a statement joins its container
-when the statement ends: one `container -edit -addNode` for all the nodes
-the statement made. Your code runs between statements, so it and every
-query it makes always see the node as a member, and so do rig's own
-container calls (they send the pending adds first). Only your own Maya API
-callbacks (`MDGMessage`, `MNodeMessage`, `MDagMessage`) that fire inside
-the statement see the node outside its container; a `nodeAdded` callback
-always did, since Maya runs it as the node is made. In a script with no
-undo chunk, single undo steps take the membership back first, then the
+**When a new node joins.** A node rig makes with `createNode` in a
+statement (an `rc` / `rn` call, an operator or function network, a `List`
+broadcast) joins its container when the statement ends: one
+`container -edit -addNode` for all the nodes the statement made. A typed
+create such as `Transform.create` or `Lambert.create(container=True)` adds
+its nodes as soon as it has made them, in the same undo step as the
+create. Code you run between statements, and every query it makes, sees
+the node as a member, and so do rig's own container calls (they send the
+pending adds first). Code of yours that runs inside the statement can see
+the node outside its container: a callback (an `MMessage` callback such
+as `MDGMessage` / `MNodeMessage` / `MDagMessage`, or a `scriptJob`) that
+fires there, as a `nodeAdded` callback always did since Maya runs it as
+the node is made, and a `_create` / `post_create` override, which runs
+before its own node joins. In a script with no undo chunk, single undo
+steps take an end-of-statement membership back first, then the
 node (section 38).
 
 ```python
@@ -3509,7 +3521,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 
 | What | Undo steps |
 |---|---|
-| a DSL statement (`<<`, an operator network, a `List` broadcast, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | its connects and plain value sets together are **one** step, made through the API and rig's plug-in command; every Maya command it runs (`createNode`, a container's member add, a lock or keyable flag, `addAttr`, a set the API does not take) is a step of its own, so an operator network is still several. A set or a connect that is the whole statement is one step either way. The hidden `__rig__` tag of a node rig creates is no step of its own: undoing the creation removes it with the node |
+| a DSL statement (`<<`, an operator network, a `List` broadcast, `node << Float("w")`), an `rc` / `rn` call, `Node.create` | its connects and plain value sets together are **one** step, made through the API and rig's plug-in command; every Maya command it runs (`createNode`, a container's member add, a lock or keyable flag, `addAttr`, a set the API does not take) is a step of its own, so an operator network is still several. A set or a connect that is the whole statement is one step either way. With `cleanup_tags=True`, the hidden `__rig__` tag a node gets is no step of its own: undoing the creation removes it with the node |
 | a typed `create` with attributes, a `define` that makes its node or sets values, a re-declaration that runs several commands | one, named `rig.create`, `rig.define`, `rig.attr` |
 | a membership edit (`<< Tag("x")`, `<< layer`, `<< red`, a `List` of pairs), a shader conversion | one, named `rig.tag`, `rig.layer`, `rig.material`, `rig.membership`, `rig.Material.astype` |
 | `node.lock()`, `plug.lock()` and their `unlock()` (`x << lock`) | one, Maya's own (`lockNode`, `setAttr -lock`); **none** when the object already is in that state |
@@ -3648,11 +3660,13 @@ Where the per-statement step meets the rest of Maya:
 * Echo All Commands in the Script Editor shows no `connectAttr` /
   `setAttr` line for the edits that went through the API, and no
   `addAttr` / `setAttr` for the `__rig__` tag (`cleanup_tags=True`).
-* A node a statement makes inside `with container()` joins its container
-  when the statement ends (section 11): one `cmds.container` edit, a step
-  of its own, for all the nodes the statement made. In a script with no
-  undo chunk, single undo steps take the membership back first, then the
-  node. Inside a `rig.undo_chunk` the block is still one step, members
+* A node a statement makes with `createNode` inside `with container()`
+  joins its container when the statement ends (section 11): one
+  `cmds.container` edit, a step of its own, for all the nodes the
+  statement made. In a script with no undo chunk, single undo steps take
+  the membership back first, then the node. A typed create
+  (`Transform.create`, `Lambert.create(container=True)`) adds its nodes
+  as it makes them, in its own step. Inside a `rig.undo_chunk` the block is still one step, members
   included.
 
 ```python

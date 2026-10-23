@@ -303,8 +303,8 @@ builds a camera and `count` poly planes parented under it, one every
   of view, `trig.atand(aperture / (2 * fl))`, into a width at that
   distance. The degree variants `atand` / `sind` feed Maya's angle plugs
   directly; the radian ones would insert conversion nodes.
-- gets a `Lambert` of its own, full-bright (`diffuse=0, ambientColor=1`
-  at creation, then `color` and `ambientColor` wired to the texture), with
+- gets a `Lambert` of its own, full-bright (`diffuse=1`, with `color`
+  and `ambientColor` both wired to the texture at creation), with
   its transparency remapped through two dials, `alpha` and `opacity`
   (`texture.outTransparency * gain + bias`, plain math nodes).
 - carries its controls **on the shape**, so selecting the mesh shows them
@@ -377,6 +377,13 @@ cycle  = sequenceEnd - sequenceStart + 1
 looped = (frame() + sequenceOffset - sequenceStart) % cycle + sequenceStart
 texture.frameExtension << looped
 ```
+
+On Maya 2024+ `%` is the `modulo` node, whose remainder takes the sign
+of `frame() + sequenceOffset - sequenceStart` (CHEATSHEET section 7).
+Before `sequenceStart` (shifted by the offset) the plane asks for frame
+numbers below the sequence: a `3..6` sequence with offset 0 reads frames
+`1, 2, 3, 0, 1, 2` over scene frames `-3..2`, and loops `3..6` from frame
+3 on. `(x % cycle + cycle) % cycle` would loop on every frame.
 
 The plane's largest side is `target_size`; the other side follows the
 image's aspect, read from a probe `file` node so a sequence with uneven
@@ -477,6 +484,12 @@ Verified on Maya 2025; not bugs to work around blindly.
   a counter, the transform gets your name with its trailing digits
   stripped and Maya's own counter appended (`name="cam7"` gives `cam1` and
   `cam7Shape1`). Use `setup.camera`, not the string you passed in.
+- A second `create_setup` in the same scene needs another `name=`. With
+  the same name the new plane's shape shares its short name with the
+  first setup's, `rc.listRelatives` hands back a plain string for it,
+  and `shape << material` raises `TypeError`. `image_loop.create_plane`
+  can be called twice with the same name (`loop_container1`, material
+  `loop1`).
 - The riders of both rails are created with `container=False` and then
   `rc.parent`ed under the rail. Maya renames a node when it is reparented,
   which would confuse the container's membership tracking; the maths sits
@@ -492,7 +505,8 @@ Verified on Maya 2025; not bugs to work around blindly.
 - Neither image script needs a plug-in: both remap the transparency with
   rig math (`texture.outTransparency * gain + bias`), with no `lookdevKit`
   `colorCorrect`. At `opacity` 0 the plane is fully transparent, whatever
-  `alpha` and the image say.
+  `alpha` and the image say: the material's transparency is 1 or more
+  (the sum is not clamped, `1 + outTransparency`).
 - `create_setup` runs without any image on disk — until `image` is set
   the planes are square, sized by the angle of view alone (`7.26` at ten
   units from a 35 mm camera), because an `outSizeX` / `outSizeY` of `0`

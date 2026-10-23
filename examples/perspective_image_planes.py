@@ -132,7 +132,9 @@ def create_setup(
             # File texture for color, and the material it feeds:
             # Lambert.create always makes a new network (the lambert, its
             # shading engine and materialInfo, with the attributes set), so a
-            # rebuild gets its OWN material; container=True makes this
+            # rebuild under another name= gets its OWN material (the same
+            # name= twice in one scene raises: see the examples README);
+            # container=True makes this
             # per-plane look part of the planes' container. The node on the
             # right of << assigns the shape.
             texture  = rn.file()
