@@ -85,8 +85,14 @@ class _State:
 
 _S = _State()
 
-# S7 prototype: {id(node object): (node object, identity)} for the open statement
-IDS: dict = {}
+# The memo keys' node identities of the open statement (S7, rig_round6_plan item 10):
+# ``{id(node object): (node object, its handle, (uuid, hashCode))}``, filled and read by
+# `rig._internal.memoize._named_dg_identity` only while a statement is open, each use checked
+# against the node's handle (``isValid``). Emptied where a node's uuid or handle can change
+# under it: the outermost statement's start and end, `outside` (user code), every
+# ``cmds_edit.rename`` (``rename -uuid``), the Undo / Redo events and every scene event
+# (`_settle`, `_discard`). The node object is kept in the value, so its ``id`` is not reused.
+NODE_IDS: dict = globals().get("NODE_IDS", {})  # one dict across an importlib.reload
 
 
 def _walk(ops: Any, method: str) -> None:
@@ -332,14 +338,14 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
         check_lists(args, kwargs)
     _S.open  = True
     _S.entry = args
-    IDS.clear()
+    NODE_IDS.clear()
     outer, _S.chunk = _S.chunk, False
     try:
         result = func(*args, **kwargs)
     except BaseException as error:
         _S.open  = False
         _S.entry = None
-        IDS.clear()
+        NODE_IDS.clear()
         try:
             try:
                 # the members first: today's membership, never replacing ``error``
@@ -352,7 +358,7 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
         raise
     _S.open  = False
     _S.entry = None
-    IDS.clear()
+    NODE_IDS.clear()
     try:
         try:
             if _S.members:
@@ -397,10 +403,11 @@ class outside:
             if _S.pending:
                 _flush()
             _S.open = False
-            IDS.clear()
+            NODE_IDS.clear()
 
     def __exit__(self, *exc: Any) -> bool:
         if self.was_open:
+            NODE_IDS.clear()
             _S.open = True
         return False
 
@@ -505,7 +512,7 @@ class _Edits:
             if _S.pending:
                 _flush()
             if renames:
-                IDS.clear()
+                NODE_IDS.clear()
             if kwargs:
                 return getattr(_cmds, name)(*args, **kwargs)
             # a maya.cmds function given an empty keyword dict costs about 1 us more
@@ -572,6 +579,7 @@ def _settle(*_args: Any) -> None:
     removed): the epoch moves and the doomed handles are dropped."""
     EPOCH[0] += 1
     del DOOMED[:]
+    NODE_IDS.clear()
 
 
 def _discard(*_args: Any) -> None:
@@ -580,6 +588,7 @@ def _discard(*_args: Any) -> None:
     EPOCH[0] += 1
     _S.pending = []
     _S.members = []
+    NODE_IDS.clear()
 
 
 def _undone_or_redone(*_args: Any) -> None:
@@ -588,7 +597,7 @@ def _undone_or_redone(*_args: Any) -> None:
     EPOCH[0] += 1
     del DOOMED[:]
     _S.redo = True
-    IDS.clear()
+    NODE_IDS.clear()
 
 
 class _Untrusted:
