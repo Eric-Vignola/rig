@@ -6,8 +6,9 @@ Creates one poly plane that:
   * Loops the sequence forever via Maya's file-node ``useFrameExtension``.
   * Shapes itself to the image's exact aspect ratio (largest side ==
     ``target_size``; the other side scales down).
-  * Honors per-frame transparency via a ``colorCorrect`` remap, gated by
-    two channel-box dials (``alpha`` + ``opacity``).
+  * Honors per-frame transparency through a remap in rig math
+    (``texture.outTransparency * gain + bias``, plain math nodes, no
+    plugin), gated by two channel-box dials (``alpha`` + ``opacity``).
 
 Companion to ``perspective_image_planes.py`` -- same primitives, simpler
 setup. No camera math, no perspective scaling.
@@ -99,13 +100,6 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
         ``alpha`` / ``opacity`` attrs), the lambert material Node, and
         the animated file-texture Node.
     """
-    # ``colorCorrect`` lives in the lookdevKit plugin; load it lazily and
-    # refresh the bridges-nodes type cache so ``rn.colorCorrect()`` resolves.
-    from maya import cmds as _mc
-
-    _mc.loadPlugin("lookdevKit", quiet=True)
-    rn._refresh_node_types()
-
     first_frame, start, end = _find_sequence(image_dir)
     Output = namedtuple("Output", "transform shape material texture")
 
@@ -164,11 +158,10 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
         # ---- Transparency remap (alpha * opacity gate) ----------------------
         # alpha   = how much PNG transparency to honor   (0=ignore, 1=full)
         # opacity = global multiplier on visibility      (1=opaque, 0=hidden)
-        remap = rn.colorCorrect()
-        remap.inColor         << texture.outTransparency
-        remap.colGain         << rf.rev(rf.rev(shape.alpha) * shape.opacity)
-        remap.colOffset       << rf.rev(shape.opacity)
-        material.transparency << remap.outColor
+        # per channel: out = in * gain + bias (plain math nodes, no plugin)
+        gain                  = rf.rev(rf.rev(shape.alpha) * shape.opacity)
+        bias                  = rf.rev(shape.opacity)
+        material.transparency << texture.outTransparency * gain + bias
 
         # ---- Auto-shape the plane to image aspect ---------------------------
         # Probe file node (separate from the animated one) so the plane

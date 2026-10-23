@@ -30,7 +30,7 @@ for the node classes and their typed methods.
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
 | 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, per-channel fan-out, `condition(...)`, `constant(...)`, Python's `if` and DSL comparisons (no truth value, no folding) |
 | 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `get_indices()` / `get_count()` / `get_names()`, `>> None`, a lattice `pt[s]` refused |
-| 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container`, locking a container |
+| 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container`, locking a container, when a new node joins |
 | 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection, a locked container kept |
 | 13 | [`memoize`, `vectorize`, `prune_memoize_caches`](#13-memoize-vectorize-prune_memoize_caches) | the two decorators and the cache sweep |
 | 14 | [`sequences` and `arguments`](#14-sequences-and-arguments) | the asymmetric generators behind every broadcast |
@@ -57,7 +57,7 @@ for the node classes and their typed methods.
 | 35 | [Layer](#35-layer) | `Layer is DisplayLayer`: `define` / refer / `create`, exclusive, `in`, `Layer.of`, `defaultLayer` as no layer, the layer node's verbs |
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `ShadingEngine.repair` / `tidy`, the network verbs |
 | 37 | [Shader conversion](#37-shader-conversion) | `mat.astype(Phong)` (in place), `Material(name).astype`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, other objects of the old node, undo |
-| 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it |
+| 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it, a container's member add |
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_num_keys` / `evaluate` |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 
@@ -1554,6 +1554,36 @@ except InjectionError as err:
     print(str(err).split(":")[0])                 # 'palm' is locked by its container 'hand' (a locked container locks its members)
 hand.unlock()
 print(palm.is_locked())                           # False
+```
+
+**When a new node joins.** A node made in a statement joins its container
+when the statement ends: one `container -edit -addNode` for all the nodes
+the statement made. Your code runs between statements, so it and every
+query it makes always see the node as a member, and so do rig's own
+container calls (they send the pending adds first). Only your own Maya API
+callbacks (`MDGMessage`, `MNodeMessage`, `MDagMessage`) that fire inside
+the statement see the node outside its container; a `nodeAdded` callback
+always did, since Maya runs it as the node is made. In a script with no
+undo chunk, single undo steps take the membership back first, then the
+node (section 38).
+
+```python
+from maya.api import OpenMaya
+from rig import functions as rf
+
+cmds.file(new=True, force=True)
+knob = Node.create("transform", name="knob")
+
+def on_connect(msg, plug, other, _):
+    if msg & OpenMaya.MNodeMessage.kConnectionMade:
+        name = OpenMaya.MFnDependencyNode(other.node()).name()
+        print("callback:", name, cmds.container(query=True, findContainer=name))
+
+cid = OpenMaya.MNodeMessage.addAttributeChangedCallback(knob.get_mobject(), on_connect)
+with container("limit"):
+    out = rf.clamp(knob.tx, 0, 1)                 # callback: clamp1 None  -- inside the statement
+    print(cmds.container(query=True, findContainer=str(out.get_node())))   # limit  -- the statement has ended
+OpenMaya.MMessage.removeCallback(cid)
 ```
 
 ---
@@ -3618,9 +3648,28 @@ Where the per-statement step meets the rest of Maya:
 * Echo All Commands in the Script Editor shows no `connectAttr` /
   `setAttr` line for the edits that went through the API, and no
   `addAttr` / `setAttr` for the `__rig__` tag (`cleanup_tags=True`).
-* `rig.undo_chunk` and container membership are unchanged: a chunk still
-  makes its block one step, and a member add is still a `cmds.container`
-  edit.
+* A node a statement makes inside `with container()` joins its container
+  when the statement ends (section 11): one `cmds.container` edit, a step
+  of its own, for all the nodes the statement made. In a script with no
+  undo chunk, single undo steps take the membership back first, then the
+  node. Inside a `rig.undo_chunk` the block is still one step, members
+  included.
+
+```python
+from rig import functions as rf
+
+cmds.file(new=True, force=True)
+cmds.undoInfo(state=True, infinity=True)
+knob = Node.create("transform", name="knob")
+with container("limit"):
+    clamp = str(rf.clamp(knob.tx, 0, 1).get_node())
+for _ in range(3):
+    cmds.undo()
+    print(cmds.ls(clamp), cmds.container(query=True, findContainer=clamp) if cmds.ls(clamp) else None)
+# ['clamp1'] limit    -- the connects
+# ['clamp1'] None     -- the membership
+# [] None             -- the node
+```
 
 ## 39. Animation curves
 
