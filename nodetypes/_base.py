@@ -2373,10 +2373,12 @@ def _choice_output_type(attr: Any, node: Any) -> str | None:
     `Choice` exactly whose hook is rig's own (no instance hook, no class patch),
     and the selected input has a source whose data type is a static cache hit:
     the answer the Choice hook gives (`Choice._attr_data_type_fallback`),
-    computed before the getAttr query instead of after it (round 6, S4). None
-    in every other case (no source, a selector below 0, an unmade input, a
-    dynamic, generic or matrix element source, a chained choice, a user hook),
-    which queries as before. Reads only the scene; never raises."""
+    computed before the getAttr query instead of after it (round 6, S4). A
+    source with a static key but no entry yet is queried itself, once, and
+    stored (`_source_static_type`, S4b). None in every other case (no source,
+    a selector below 0, an unmade input, a dynamic, generic, matrix, typed or
+    message source, a chained choice, a user hook), which queries as before.
+    Reads only the scene; never raises."""
     cls = type(node)
     if cls is not _CHOICE:
         return None
@@ -2400,9 +2402,48 @@ def _choice_output_type(attr: Any, node: Any) -> str | None:
         if src.isNull:
             return None
         key = _mplug_static_key(src, src.attribute())
-        return None if key is None else _STATIC_DATA_TYPE.get(key)
+        if key is None:
+            return None
+        typ = _STATIC_DATA_TYPE.get(key)
+        return _source_static_type(src, key) if typ is None else typ
     except Exception:
         return None
+
+
+def _source_static_type(src: OpenMaya.MPlug, key: tuple) -> str | None:
+    """The data type of `src`, the source of a choice's selected input whose
+    static key `key` has no `_STATIC_DATA_TYPE` entry yet, queried once as
+    `Attribute.get_data_type` queries it (``getAttr -type``, ``TdataCompound``
+    read as ``compound``, what the query does to missing elements recorded) and
+    stored under `key` (round 6, S4b). Only for a kind whose type string its
+    definition fixes (`_ELEMENT_STATIC_API_TYPES`: numeric, unit, enum, their
+    compounds, compound, light data): a matrix, typed or message source, or
+    one whose query says typed or Tdata (its hook would run), gives None, and
+    the choice output queries as before. The query reads only the type: it
+    evaluates nothing (the output query evaluates the source) and makes
+    nothing (a connected source exists). Raises what the query raises (the
+    caller reads it as None)."""
+    if src.attribute().apiType() not in _ELEMENT_STATIC_API_TYPES:
+        return None
+    if not (_PLUGIN_CALLBACKS_READY or _ensure_plugin_callbacks()):
+        return None
+    node = src.node()
+    if node.hasFn(OpenMaya.MFn.kDagNode):
+        node_name = OpenMaya.MDagPath.getAPathTo(node).partialPathName()
+    else:
+        node_name = OpenMaya.MFnDependencyNode(node).name()
+    # long names, every index (an instanced element's too, which cmds honours)
+    name   = f"{node_name}.{src.partialName(False, False, True, False, False, True)}"
+    before = _element_state(src) if key[4] else None
+    typ    = cmds.getAttr(name, type=True)
+    if typ == "TdataCompound":
+        typ = "compound"
+    elif typ in ("typed", "Tdata") or not isinstance(typ, str):
+        return None
+    _STATIC_DATA_TYPE[key] = typ
+    if before is not None and not all(before):
+        _ELEMENT_MADE[(key, before)] = _element_state(src)
+    return typ
 
 
 def _replay_elements(key: tuple, mplug: OpenMaya.MPlug) -> bool:
