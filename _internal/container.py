@@ -548,8 +548,10 @@ class _ContainerStack:
     ) -> "_ContainerStack":
         """Configure the next ``with container("name", ...) as ctn:`` block.
 
-        A node made inside joins the container when the statement that made
-        it ends (see :meth:`createNode`).
+        A node rig makes inside with ``createNode`` joins the container when
+        the statement that made it ends (see :meth:`createNode`); a typed
+        create (``Transform.create``, ``Lambert.create(container=True)``)
+        adds its nodes as it makes them (:func:`_typed_create`).
 
         Args:
             name: The container's name (also used for prefixing nodes
@@ -645,7 +647,8 @@ class _ContainerStack:
             parent._member_set.update(frame.members)
 
         # ---- Auto-cleanup on exit ----
-        # Decide whether to garbage-collect this scope's tagged orphans.
+        # Decide whether to garbage-collect this scope's rig-owned orphans
+        # (in the session registry, or tagged under ``cleanup_tags``).
         # Per-block ``cleanup_on_exit=True/False`` overrides the global
         # ``ContainerOptions.cleanup_on_exit`` flag; ``None`` (the default)
         # inherits the global.
@@ -670,7 +673,7 @@ class _ContainerStack:
                     cleanup(_explicit_candidates=set(names))
             else:
                 # No container, no members -- fall back to the scene-wide
-                # sweep (catches anything tagged outside a containerised
+                # sweep (catches anything rig-owned outside a containerised
                 # scope, e.g. when ``create_containers=False``).
                 cleanup()
 
@@ -1563,8 +1566,8 @@ def _typed_create(
     plain (``run`` alone) when no scope is open, when a typed create is already
     running (the depth counts every typed create, acting or not), or on a scene
     registry (``_CONTAINER_AWARE = False``) that is not registered. Otherwise,
-    in one undo chunk (one ``cmds.undo()`` reverts the create, the tag and the
-    registration):
+    in one undo chunk (one ``cmds.undo()`` reverts the create, the
+    ``cleanup_tags`` tag and the container registration):
 
     * on a ``_CONTAINER_AWARE`` class, an explicit ``name=`` / ``n=`` (or the
       positional name at ``name_index``) takes the flattened scope's prefix on
@@ -1574,8 +1577,9 @@ def _typed_create(
     * ``skipSelect=True`` is added when ``ContainerOptions.skip_selection`` is
       on, neither ``ss`` nor ``skipSelect`` was given, and ``run`` is
       `DGNode.create`'s template on a class whose ``_create`` forwards it;
-    * the returned node is tagged for :func:`cleanup` when
-      ``cls.NATIVE_NODE_TYPE`` is GC-eligible and the class has no
+    * the returned node is made a :func:`cleanup` candidate (:func:`_gc_own`:
+      the session registry, plus the ``__rig__`` tag under ``cleanup_tags``)
+      when ``cls.NATIVE_NODE_TYPE`` is GC-eligible and the class has no
       ``CUSTOM_NODE_TYPE`` (a user's metadata node is never collected);
     * when registered, ``run`` runs inside :func:`_call_tracking_creation`,
       unless it makes only the node it returns (:func:`_makes_only_its_node`:
@@ -2080,7 +2084,8 @@ def _get_or_create_attributes_node(container_node) -> "Node":
     It holds the attributes that belong to the container itself (created
     knobs, external-source inputs, unpublished multis) -- they have no real
     inner home. Created via raw ``cmds.createNode`` (NOT
-    ``container.createNode``) so it never gets the ``__rig__`` GC tag, then
+    ``container.createNode``) so it is never rig-owned (neither in the GC
+    session registry nor given the ``__rig__`` tag), then
     added as a member so ``bindAttr`` can bind its attrs to the container.
     """
     ctn = _name_of(container_node)
@@ -2104,8 +2109,8 @@ def _get_or_create_attributes_node(container_node) -> "Node":
                 _ATTRIBUTES_NODE_CACHE[uuid] = member
             return _cast_node(member)
 
-    # Create a fresh attributes node. Raw createNode => no ``__rig__`` tag =>
-    # GC-safe.
+    # Create a fresh attributes node. Raw createNode => not in the GC registry
+    # and no ``__rig__`` tag => GC-safe.
     node_name = cmds.createNode(
         "network", name=f"{_name_of(ctn)}_attributes", skipSelect=True
     )
@@ -3400,7 +3405,7 @@ def cleanup(
 
     Args:
         container: If given, restrict cleanup to a single Maya container's
-            tagged contents. ``None`` (default) means scene-wide.
+            rig-owned contents. ``None`` (default) means scene-wide.
         extra_types: Additional node types to add to the GC whitelist for
             this call (e.g. plugin types this codebase doesn't know about).
         aggressive: If ``True``, bypass the type whitelist (still requires

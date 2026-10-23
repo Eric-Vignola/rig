@@ -61,6 +61,43 @@ def _names(nodes):
     return [repr(node) for node in nodes]
 
 
+def _check_transparency_remap(test, shape, material):
+    """Feed a driver double3 wherever the texture's outTransparency (or a child) feeds the
+    image examples' remap, then check material.transparency = tex * gain + bias per channel,
+    gain = 1 - (1 - alpha) * opacity, bias = 1 - opacity (user decision 3A)."""
+    texture = cmds.listConnections(f"{material}.color", source=True, destination=False)[0]
+    driver = cmds.createNode("transform", name="transparency_driver")
+    cmds.addAttr(driver, longName="tr", attributeType="double3")
+    for axis in "XYZ":
+        cmds.addAttr(driver, longName="tr" + axis, attributeType="double", parent="tr")
+    rerouted = 0
+    for dest in cmds.listConnections(f"{texture}.outTransparency", source=False, destination=True, plugs=True) or []:
+        cmds.connectAttr(f"{driver}.tr", dest, force=True)
+        rerouted += 1
+    for channel, axis in zip("RGB", "XYZ"):
+        for dest in cmds.listConnections(
+            f"{texture}.outTransparency{channel}", source=False, destination=True, plugs=True
+        ) or []:
+            cmds.connectAttr(f"{driver}.tr{axis}", dest, force=True)
+            rerouted += 1
+    test.assertTrue(rerouted)
+    for alpha, opacity, tex in (
+        (0.5, 0.5, (0.2, 0.5, 0.8)),        # -> (0.65, 0.875, 1.1)
+        (0.0, 1.0, (0.3, 0.6, 1.0)),        # gain 0: alpha 0 at full opacity is opaque
+        (1.0, 1.0, (0.3, 0.6, 1.0)),        # gain 1, bias 0: the image's own transparency
+        (0.25, 0.8, (0.1, 0.4, 0.9)),
+        (1.0, 0.0, (0.1, 0.4, 0.9)),        # opacity 0: 1 + tex, fully transparent
+    ):
+        shape.alpha << alpha
+        shape.opacity << opacity
+        cmds.setAttr(f"{driver}.tr", *tex, type="double3")
+        gain = 1.0 - (1.0 - alpha) * opacity
+        expected = [t * gain + (1.0 - opacity) for t in tex]
+        got = cmds.getAttr(f"{material}.transparency")[0]
+        for value, want in zip(got, expected):
+            test.assertAlmostEqual(value, want, places=6, msg=(alpha, opacity, tex, got))
+
+
 def _cube(name):
     return Node(cmds.polyCube(name=name, ch=False)[0])
 
@@ -1528,6 +1565,8 @@ class TestShadeExamples(MayaTestCase):
             shape.opacity << opacity
             for value in cmds.getAttr("sticker_layer_0.transparency")[0]:
                 self.assertAlmostEqual(value, 1.0 - opacity, places=6)
+        # an image's transparency goes through the gain term too
+        _check_transparency_remap(self, shape, "sticker_layer_0")
 
     def test_image_loop_transparency_without_lookdevkit(self):
         # round 6, user decision 2A / 3A: image_loop drops lookdevKit as
@@ -1556,6 +1595,8 @@ class TestShadeExamples(MayaTestCase):
             setup.shape.opacity << opacity
             for value in cmds.getAttr(f"{setup.material}.transparency")[0]:
                 self.assertAlmostEqual(value, 1.0 - opacity, places=6)
+        # an image's transparency goes through the gain term too
+        _check_transparency_remap(self, setup.shape, str(setup.material))
 
 
 class TestShadeExports(MayaTestCase):
