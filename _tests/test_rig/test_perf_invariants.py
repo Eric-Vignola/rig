@@ -2242,23 +2242,32 @@ class TestFallbackQueryReuse(MayaTestCase):
             return self._data_type(plug)
 
     def test_unresolved_choice_queries_once(self):
+        # from an empty cache, whatever an earlier test stored (round 6, S4b)
+        _base._STATIC_DATA_TYPE.clear()
         Node.create("transform", name="src")
         pick = Node.create("choice", name="pick")
         cmds.connectAttr("src.translate", "pick.input[1]")
         for selector in (0, 3, 1):
             pick.selector.set(selector)
-            for plug in (
+            for index, plug in enumerate((
                 pick.output,
                 pick.input[0],
                 pick.input[4],
                 Plug("pick.input[2]"),
                 _base.Attribute("pick.output"),
                 _base.Attribute("pick.input[5]"),
-            ):
+            )):
                 with self.subTest(selector=selector, plug=str(plug)):
                     resolved = selector == 1 and plug.get_name() == "output"
                     requery  = self._requery(plug)
-                    if resolved:
+                    if resolved and index == 0:
+                        # re-pinned (round 6, S4b): the Choice-owned output is
+                        # answered from its source, which the first read stored
+                        # (patching `_keeps_query` leaves the rule's vouch, bound
+                        # at load, on): one source query, then none
+                        self.assertEqual(requery, ("double3", 1))
+                        self.assertEqual(self._data_type(plug), ("double3", 0))
+                    elif resolved:
                         self.assertEqual(requery[0], "double3")
                         self.assertEqual(self._data_type(plug), requery)
                     else:
@@ -2817,6 +2826,224 @@ class TestChoiceOutputFromSource(MayaTestCase):
         ):
             self.assertEqual(self._data_type(pick.output), ("doubleLinear", 1))
         self.assertEqual(self._data_type(pick.output), ("doubleLinear", 0))
+
+
+def _getattr_type(name):
+    """``getAttr -type`` of `name` as `Attribute.get_data_type` reads it."""
+    typ = cmds.getAttr(name, type=True)
+    return "compound" if typ == "TdataCompound" else typ
+
+
+class TestChoiceSourceFill(MayaTestCase):
+    """Round 6, S4b: a Choice's output whose selected input's source has a
+    static key but no `_STATIC_DATA_TYPE` entry queries the source once,
+    stores it and answers from it; every other case queries the output."""
+
+    TEST_START_NEW_SCENE = True
+
+    # covered source kinds: (node type, attr) on a node named "s"
+    COVERED = (
+        ("normalize", "output"),
+        ("decomposeMatrix", "outputScale"),
+        ("plusMinusAverage", "output3D"),
+        ("condition", "outColor"),
+        ("transform", "translate"),
+        ("transform", "translateX"),
+        ("transform", "visibility"),
+        ("multiplyDivide", "operation"),
+        ("curveInfo", "knots[3]"),
+        ("curveInfo", "controlPoints[1]"),
+        ("curveInfo", "controlPoints[2].xValue"),
+    )
+
+    def setUp(self):
+        super().setUp()
+        _base._STATIC_DATA_TYPE.clear()
+        _base._ELEMENT_MADE.clear()
+        self._registered = dict(_base._NODE_CLASS_DICT)
+
+    def tearDown(self):
+        _base._NODE_CLASS_DICT.clear()
+        _base._NODE_CLASS_DICT.update(self._registered)
+        _base._CLASS_BY_TYPE.clear()
+        _base._CASTABLE_TYPES.clear()
+        super().tearDown()
+
+    def _queries(self, plug):
+        """The outcome of `plug`'s data type and the plugs it queried the type
+        of (not the selector)."""
+        with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as probe:
+            outcome = _data_type_outcome(plug)
+        return outcome, [call.args[0] for call in _attr_type_queries(probe)]
+
+    def _legacy(self, name):
+        """The outcome with the rule off: getAttr on the output, then the hook."""
+        with mock.patch.object(_base, "_CHOICE", None):
+            return _data_type_outcome(Node(name.split(".")[0]).output)
+
+    def _choice(self, source, name):
+        Node.create("choice", name=name)
+        cmds.connectAttr(source, f"{name}.input[0]")
+        cmds.connectAttr("md.outputY", f"{name}.input[1]")
+        return Node(name)
+
+    def test_covered_kinds_fill_from_the_source(self):
+        for node_type, attr in self.COVERED:
+            with self.subTest(source=f"{node_type}.{attr}"):
+                cmds.file(new=True, force=True)
+                _base._STATIC_DATA_TYPE.clear()
+                _base._ELEMENT_MADE.clear()
+                cmds.createNode("multiplyDivide", name="md")
+                for name in ("s", "t"):
+                    cmds.createNode(node_type, name=name)
+                source = f"s.{attr}"
+                pick = self._choice(source, "pick")
+                cmds.getAttr("pick.output")
+                key = Plug(source)._static_type_key()
+                self.assertIsNotNone(key)
+                self.assertNotIn(key, _base._STATIC_DATA_TYPE)
+                raw = _getattr_type("pick.output")
+                outcome, queried = self._queries(pick.output)
+                # one query, on the source, stored under its key
+                self.assertEqual(queried, [source])
+                self.assertEqual(_base._STATIC_DATA_TYPE.get(key), outcome)
+                self.assertEqual(outcome, _getattr_type(source))
+                self.assertEqual(_base._ELEMENT_MADE, {})
+                # the answer getAttr gives (or, where it says typed, the hook)
+                if raw not in ("typed", "Tdata"):
+                    self.assertEqual(outcome, raw)
+                self.assertEqual(outcome, self._legacy("pick.output"))
+                # a second choice on the same source kind makes no query
+                other = self._choice(f"t.{attr}", "other")
+                self.assertEqual(self._queries(other.output), (outcome, []))
+                # the source itself is now a static hit
+                self.assertEqual(self._queries(Plug(source)), (outcome, []))
+
+    def test_source_query_makes_nothing(self):
+        # the source exists (it is connected); the query adds no node, no
+        # element, no undo entry, and evaluates nothing
+        cmds.createNode("multiplyDivide", name="md")
+        cmds.createNode("transform", name="drv")
+        cmds.createNode("normalize", name="s")
+        cmds.createNode("curveInfo", name="ci")
+        cmds.connectAttr("drv.translate", "s.input")
+        pick = self._choice("s.output", "pick")
+        cmds.getAttr("pick.output")
+        knot = self._choice("ci.knots[3]", "knot")
+        cmds.undoInfo(state=True, infinity=True)
+        cmds.flushUndo()
+
+        def state():
+            return (
+                sorted(cmds.ls()),
+                list(
+                    OpenMaya.MSelectionList().add("ci.knots").getPlug(0)
+                    .getExistingArrayAttributeIndices()
+                ),
+                cmds.undoInfo(q=True, undoName=True),
+            )
+
+        before = state()
+        cmds.setAttr("drv.translateX", 2.0)
+        self.assertTrue(cmds.isDirty("s.output"))
+        self.assertEqual(self._queries(pick.output), ("double3", ["s.output"]))
+        self.assertEqual(self._queries(knot.output)[1], ["ci.knots[3]"])
+        # (the setAttr is not undoable here: flushUndo emptied the queue)
+        cmds.flushUndo()
+        self.assertEqual(state(), before)
+        self.assertTrue(cmds.isDirty("s.output"))
+        # the output query evaluates the source
+        cmds.getAttr("pick.output", type=True)
+        self.assertFalse(cmds.isDirty("s.output"))
+
+    def test_uncovered_cases_query_the_output(self):
+        cmds.createNode("multiplyDivide", name="md")
+        Node.create("transform", name="src")
+        cmds.addAttr("src", ln="dynDouble", at="double")
+        cmds.createNode("network", name="net")
+        cmds.addAttr("net", ln="value", at="double3")
+        for axis in "XYZ":
+            cmds.addAttr("net", ln=f"value{axis}", at="double", parent="value")
+        cmds.polyCube(name="cube")
+        cmds.circle(name="crv")
+        cmds.createNode("choice", name="chain")
+        cmds.connectAttr("src.translate", "chain.input[0]")
+        cases = (
+            "chain.output",            # generic (a chained choice)
+            "cubeShape.outMesh",       # typed
+            "crvShape.worldSpace[0]",  # typed under an element
+            "src.matrix",              # matrix (with a static key)
+            "src.worldMatrix[0]",      # matrix under an element
+            "src.message",             # message
+            "src.dynDouble",           # dynamic
+            "net.value",               # dynamic compound (rail_spine's network.value)
+        )
+        for index, source in enumerate(cases):
+            with self.subTest(source=source):
+                _base._STATIC_DATA_TYPE.clear()
+                name = f"pick{index}"
+                pick = self._choice(source, name)
+                outcome, queried = self._queries(pick.output)
+                self.assertIn(f"{name}.output", queried)
+                self.assertEqual(outcome, self._legacy(f"{name}.output"))
+        # an unconnected selected input, a selector out of range, below 0
+        pick = self._choice("src.translate", "pick")
+        cmds.connectAttr("src.translateY", "pick.input[2]")
+        cmds.disconnectAttr("src.translateY", "pick.input[2]")
+        cmds.createNode("multiplyDivide", name="drv")
+        cmds.setAttr("drv.input1X", -1)
+        for selector in (2, 7, -1):
+            with self.subTest(selector=selector):
+                _base._STATIC_DATA_TYPE.clear()
+                if selector < 0:
+                    cmds.connectAttr("drv.outputX", "pick.selector")
+                else:
+                    pick.selector.set(selector)
+                outcome, queried = self._queries(pick.output)
+                self.assertEqual(queried[:1], ["pick.output"])
+                self.assertEqual(outcome, self._legacy("pick.output"))
+
+    def test_user_hooks_query_the_output(self):
+        cmds.createNode("multiplyDivide", name="md")
+        cmds.createNode("normalize", name="s")
+
+        class _HookedChoice(Choice):
+            CUSTOM_NODE_TYPE = "r6s4bHookedChoice"
+
+            def _attr_data_type_fallback(self, attr):
+                return super()._attr_data_type_fallback(attr)
+
+        cmds.createNode("choice", name="sub")
+        set_custom_type("sub", "r6s4bHookedChoice")
+        cmds.connectAttr("s.output", "sub.input[0]")
+        sub = Node("sub")
+        self.assertIs(type(sub), _HookedChoice)
+        # (an unevaluated output can say typed: the hook then reads the source)
+        outcome, queried = self._queries(sub.output)
+        self.assertEqual((outcome, queried[:1]), ("double3", ["sub.output"]))
+        _base._STATIC_DATA_TYPE.clear()
+        pick = self._choice("s.output", "pick")
+        hook = mock.patch.object(
+            pick, "_attr_data_type_fallback",
+            lambda attr: Choice._attr_data_type_fallback(pick, attr), create=True,
+        )
+        with hook:
+            outcome, queried = self._queries(pick.output)
+            self.assertEqual((outcome, queried[:1]), ("double3", ["pick.output"]))
+        _base._STATIC_DATA_TYPE.clear()
+        original = Choice.__dict__["_attr_data_type_fallback"]
+        with mock.patch.object(
+            Choice, "_attr_data_type_fallback",
+            lambda self, attr: original(self, attr),
+        ):
+            outcome, queried = self._queries(pick.output)
+            self.assertEqual((outcome, queried[:1]), ("double3", ["pick.output"]))
+        _base._STATIC_DATA_TYPE.clear()
+        key = Plug("s.output")._static_type_key()
+        self.assertNotIn(key, _base._STATIC_DATA_TYPE)
+        # rig's own hook: the source, once
+        self.assertEqual(self._queries(pick.output), ("double3", ["s.output"]))
+        self.assertEqual(self._queries(pick.output), ("double3", []))
 
 
 class TestFullNameReadsTheOwner(MayaTestCase):
