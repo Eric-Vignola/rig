@@ -548,6 +548,9 @@ class _ContainerStack:
     ) -> "_ContainerStack":
         """Configure the next ``with container("name", ...) as ctn:`` block.
 
+        A node made inside joins the container when the statement that made
+        it ends (see :meth:`createNode`).
+
         Args:
             name: The container's name (also used for prefixing nodes
                 created inside a flattened sub-scope).
@@ -684,6 +687,14 @@ class _ContainerStack:
         **kwargs:   Any,
     ) -> Any:
         """Create a Maya node and register it with the active scope.
+
+        The node joins the leaf real container when the outermost statement
+        ends (one ``container -edit -addNode`` for every node it made): code
+        and queries between statements, and rig's own container calls, always
+        see it as a member; a Maya API callback (``MDGMessage`` /
+        ``MNodeMessage`` / ``MDagMessage``) that fires inside the statement
+        sees it outside, as a ``nodeAdded`` callback always did. With no undo
+        chunk, single undo steps take the membership back before the node.
 
         Returns the typed node (the name Maya returned, cast as Maya resolves
         it: ``_cast_node``). If ``name`` is given and we're inside a flattened

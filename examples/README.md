@@ -75,7 +75,7 @@ node, a `namedtuple` of nodes and `List`s for the image rigs.
 | `with container("name"):` — a scoped utility graph | yes | yes | yes | yes |
 | `container.add(node)` — enrol a node made outside the scope | | | yes | yes |
 | `rc.*` — `maya.cmds` returning nodes / `List` (`rc.curve`, `rc.polyPlane`, `rc.parent`) | yes | yes | yes | yes |
-| `rn.*` — node factories with attribute kwargs (`rn.motionPath()`, `rn.file()`, `rn.colorCorrect()`) | yes | yes | yes | yes |
+| `rn.*` — node factories with attribute kwargs (`rn.motionPath()`, `rn.file()`, `rn.curveInfo()`) | yes | yes | yes | yes |
 | `node << Float("x", min=0, max=1) << value << lock` spec injection | `Float` | `Float`, `Enum` | `Float`, `Int`, `Enum`, `String` | `Float`, `Int`, `String` |
 | `plug << lock`, `plug << hide` | `hide` | both | both | `lock` |
 | `List(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | |
@@ -448,7 +448,7 @@ material = Lambert.create(
     ambientColor = texture.outColor,
 )
 shape                 << material
-material.transparency << remap.outColor      # the material is the node: its attributes are plugs
+material.transparency << texture.outTransparency * gain + bias   # the material is the node: its attributes are plugs
 ```
 
 `Lambert.create(name=...)` builds the shader, `<name>SG`, its
@@ -489,12 +489,10 @@ Verified on Maya 2025; not bugs to work around blindly.
 - `periodic=True` with `degree=2` raises in `rail_spine`; 1, 3, 5 and 7
   are the supported degrees, and the CV roll that puts `u = 0` on the
   first control is keyed on the degree.
-- `image_loop` loads the `lookdevKit` plugin for `colorCorrect` and
-  then calls `rn._refresh_node_types()`: `rig.bridges.nodes` caches Maya's
-  node-type list on first use, so a plugin loaded afterwards is invisible
-  to `rn.colorCorrect()` until the cache is refreshed. Private name, but
-  it is what the script does. `perspective_image_planes` needs no plug-in:
-  it remaps the transparency with rig math.
+- Neither image script needs a plug-in: both remap the transparency with
+  rig math (`texture.outTransparency * gain + bias`), with no `lookdevKit`
+  `colorCorrect`. At `opacity` 0 the plane is fully transparent, whatever
+  `alpha` and the image say.
 - `create_setup` runs without any image on disk — until `image` is set
   the planes are square, sized by the angle of view alone (`7.26` at ten
   units from a 35 mm camera), because an `outSizeX` / `outSizeY` of `0`

@@ -226,7 +226,11 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   (`Transform.create(name="x")`, `Joint.create(...)`). Geometry, display
   layers, sets and materials never join (`Lambert.create(...,
   container=True)` opts a per-asset look in); `container=False` opts any
-  `rc` / `rn` call or typed create out.
+  `rc` / `rn` call or typed create out. A new node joins when the
+  statement that made it ends: your code, its queries and rig's own
+  container calls always see it as a member; only a Maya API callback of
+  yours that fires inside the statement (`MDGMessage`, `MNodeMessage`,
+  `MDagMessage`) sees it outside, as a `nodeAdded` callback always did.
 - **Memoization.** A function or operator called twice with the same
   plugs and the same literals returns the same output plug; the cache
   forgets nodes that were deleted, and a new scene or a file open clears

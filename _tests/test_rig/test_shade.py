@@ -1529,6 +1529,34 @@ class TestShadeExamples(MayaTestCase):
             for value in cmds.getAttr("sticker_layer_0.transparency")[0]:
                 self.assertAlmostEqual(value, 1.0 - opacity, places=6)
 
+    def test_image_loop_transparency_without_lookdevkit(self):
+        # round 6, user decision 2A / 3A: image_loop drops lookdevKit as
+        # perspective_image_planes did; transparency = outTransparency * gain + bias
+        import inspect
+
+        from rig.examples import image_loop
+
+        source_text = inspect.getsource(image_loop)
+        self.assertNotIn("lookdevKit", source_text)
+        self.assertNotIn("colorCorrect", source_text)
+        frames = tempfile.mkdtemp(prefix="rig_frames_")
+        for i in (1, 2):
+            with open(os.path.join(frames, f"frame.{i:04d}.png"), "wb"):
+                pass
+        setup = image_loop.create_plane(frames, name="loop")
+        self.assertEqual(cmds.ls(type="colorCorrect"), [])
+        source = cmds.listConnections(
+            f"{setup.material}.transparency", source=True, destination=False
+        )
+        self.assertEqual(cmds.nodeType(source[0]), "plusMinusAverage")
+        # no readable image: outTransparency is 0, so the result is the bias, rev(opacity);
+        # opacity 0 is fully transparent (decision 3A)
+        for alpha, opacity in ((0.25, 0.5), (0.0, 1.0), (1.0, 0.0)):
+            setup.shape.alpha << alpha
+            setup.shape.opacity << opacity
+            for value in cmds.getAttr(f"{setup.material}.transparency")[0]:
+                self.assertAlmostEqual(value, 1.0 - opacity, places=6)
+
 
 class TestShadeExports(MayaTestCase):
     TEST_START_NEW_SCENE = True
