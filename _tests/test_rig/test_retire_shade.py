@@ -90,7 +90,12 @@ class TestShadeRetired(MayaTestCase):
 
         cube = _cube()
         self.assertEqual(Material.of(cube), [Default()])
-        self.assertEqual(str(Default().get_material()), "standardSurface1")
+        # the live default shader: standardSurface1 up to Maya 2026, openPBR_shader1 from 2027
+        live = cmds.listConnections("initialShadingGroup.surfaceShader", source=True, destination=False)
+        self.assertEqual(len(live), 1)
+        self.assertEqual(str(Default().get_material()), live[0])
+        if int(cmds.about(majorVersion=True)) < 2027:
+            self.assertEqual(live[0], "standardSurface1")
 
     def test_shading_engine_repair(self):
         from rig.nodetypes import Blinn, ShadingEngine
