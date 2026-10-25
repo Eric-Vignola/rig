@@ -632,7 +632,8 @@ print(cmds.listConnections("ctl.ty", source=True))   # ['ctl_parentConstraint1']
 Autodesk Maya (the suite runs on 2025; version-keyed dispatch builds the
 legacy networks on older releases), with numpy and scipy installed for
 mayapy, and cgmath 1.0.4 or later for the data paths (`serialize`, `save` /
-`load`, `create(data)`; imported lazily, so `rig` loads without it).
+`load`, `create(data)`; imported lazily, so `rig` loads without it; the
+suite runs on cgmath 2.0.0 and 3.0.0).
 
 ## Author
 

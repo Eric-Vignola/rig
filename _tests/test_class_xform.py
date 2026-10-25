@@ -314,7 +314,8 @@ class TestXformNodes(MayaTestCase):
                 self.assertAlmostEqual(a, b, places=6)
 
     def test_serialize_hierarchy_writes_parents_without_deprecation_warnings(self):
-        # cgmath 2.0.0 names a parent parent_uuid; parent_node is its deprecated alias
+        # cgmath 2.0.0 names a parent parent_uuid; parent_node, the 1.0.4 name, is its deprecated
+        # alias there and gone on 3.0.0
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
             hierarchy = self.root.serialize_hierarchy()

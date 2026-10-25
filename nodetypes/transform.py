@@ -157,8 +157,9 @@ def _typed_nodes(names: list[str]) -> List:
 
 def _set_parent_uuid(node: TransformData, uuid: str | None) -> None:
     """Sets the uuid of the parent of the TransformData `node` (None: a root):
-    its ``parent_uuid`` since cgmath 2.0.0 (where ``parent_node`` is a
-    deprecated alias that takes a uuid only), its ``parent_node`` before."""
+    its ``parent_uuid`` since cgmath 2.0.0, its ``parent_node`` on 1.0.4
+    (``parent_node`` is the 1.0.4 name: a deprecated alias that takes a uuid
+    only on 2.0.0, gone on 3.0.0)."""
     field = "parent_uuid" if hasattr(type(node), "parent_uuid") else "parent_node"
     setattr(node, field, uuid)
 

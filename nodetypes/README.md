@@ -579,7 +579,10 @@ data to a `cgmath` file and `load` reads it back.
 Never load a `.pkl` you did not write: a pickle runs code when it is read. A
 mesh is two files, its `MeshData` and, with `uvs=`, its `UVList` (`save`
 without `uvs=` writes no UVs: a `MeshData` holds none). `load` reads a
-`cgmath` file whatever its extension (by its header), and for a mesh the
+`cgmath` `.npz` or `.json` file whatever its extension (by its first bytes)
+and a pickle by its `.pkl` or `.pickle` extension (cgmath 3.0.0, which
+refuses a pickle under another name with its own `ValueError`; 1.0.4 and
+2.0.0 read any other file as a pickle), and for a mesh the
 assets `cgmath`'s `MeshData` reads (`.obj`, `.fbx`, `.glb`, `.usd`); in place
 of a path (a `str` or an `os.PathLike`, `~` expanded) it takes the data
 object itself, which it never changes. A file holding a
