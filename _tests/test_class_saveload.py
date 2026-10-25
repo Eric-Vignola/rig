@@ -2,8 +2,9 @@
 2026-10-15): cgmath files for Mesh, NurbsCurve, NurbsSurface, SkinCluster, BlendShape and
 the hierarchy.
 
-* A file is cgmath's own (``.npz`` / ``.json`` / ``.pkl``, by extension on a save, by its
-  header on a load), or for a mesh an asset cgmath's MeshData reads (``.obj``). Every
+* A file is cgmath's own (``.npz`` / ``.json`` / ``.pkl``, by extension on a save; on a
+  load an npz or a json by its header, a pickle by its extension on cgmath 3.0.0), or for
+  a mesh an asset cgmath's MeshData reads (``.obj``). Every
   input is a path (str, ``pathlib.Path``, ``~``) or the data object itself.
 * ``Cls.load(path, ...)`` from the class CREATES a new node, always, as ``Cls.create`` does
   (D2). ``node.load(path)`` from a node UPDATES that node in place, the inverse of
@@ -255,6 +256,49 @@ class TestFiles(_Case):
             got = _files.check_save_path("~/x.npz", "X.save")
         self.assertEqual(os.path.normpath(got), os.path.join(self.dir, "x.npz"))
 
+    def test_a_path_load_reaches_cgmaths_reader_whichever_cgmath(self):
+        # rig takes get_file_type from the installed cgmath (cgmath.data on 3.0.0,
+        # cgmath.geometry._base on 1.0.4 and 2.0.0; the import is not mocked): a file of
+        # cgmath's own goes to cgmath's Data.load, an npz or a json under any name (by its
+        # first bytes), a pickle by its .pkl / .pickle name on 3.0.0, under any other name
+        # too before; an .obj goes to the slot's MeshData.load
+        from cgmath.geometry import Data, MeshData
+
+        try:
+            from cgmath.data import get_file_type  # noqa: F401
+            pickle_by_name = True
+        except ImportError:
+            pickle_by_name = False
+        data = Mesh(_cube()).serialize(include_uvs=False)
+        data.save_obj(self.path("body.obj"))
+        for fmt in FORMATS:
+            data.save(self.path(f"b.{fmt}"))
+            shutil.copy(self.path(f"b.{fmt}"), self.path(f"{fmt}_as.dat"))
+        shutil.copy(self.path("b.pkl"), self.path("b.pickle"))
+        cases = [(f"b.{fmt}", Data) for fmt in FORMATS] + [
+            ("b.pickle", Data), ("npz_as.dat", Data), ("json_as.dat", Data), ("body.obj", MeshData)]
+        if not pickle_by_name:
+            cases.append(("pkl_as.dat", Data))
+        real = Data.load.__func__
+        calls = []
+
+        def spy(cls, path, *args, **kwargs):
+            calls.append((cls, path))
+            return real(cls, path, *args, **kwargs)
+
+        for name, reader in cases:
+            with self.subTest(name=name):
+                del calls[:]
+                with mock.patch.object(Data, "load", classmethod(spy)):
+                    got = _files.read(self.path(name), (MeshData,), "Mesh.load", "the mesh")
+                self.assertIsInstance(got, MeshData)
+                self.assertEqual(len(got.points), len(data.points))
+                self.assertEqual(calls[0], (reader, self.path(name)))
+        if pickle_by_name:
+            with self.subTest(name="pkl_as.dat"):
+                self.assert_refused(ValueError, "^MeshData has no reader for dat files: ",
+                                    lambda: Mesh.load(self.path("pkl_as.dat")))
+
 
 # ---------------------------------------------------------------------------------------------
 class TestMesh(_Case):
@@ -364,7 +408,7 @@ class TestMesh(_Case):
         return self.path("c.npz")
 
     def test_an_older_cgmath_file_raises_cgmaths_error(self):
-        from cgmath.geometry._base import LegacyFileError
+        from cgmath.geometry import LegacyFileError
 
         t, path, _ = self.saved()
         with mock.patch("cgmath.geometry.Data.load", side_effect=LegacyFileError("an older cgmath's file")):

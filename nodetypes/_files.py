@@ -1,10 +1,12 @@
 """[Internal] The file side of the typed ``load`` / ``save`` methods.
 
 cgmath writes and reads the files: its own ``.npz`` / ``.json`` / ``.pkl``, the
-format chosen by the extension on a save and read from the file's header on a
-load; ``load`` also takes the assets the slot's cgmath class reads (``.obj``,
-``.fbx``, ``.glb``, ``.usd``). rig checks what a file holds before anything is
-made, and a save path before anything is serialized.
+format chosen by the extension on a save; on a load an npz or a json is read
+from the file's header, a pickle by its ``.pkl`` / ``.pickle`` extension on
+cgmath 3.0.0 (1.0.4 and 2.0.0 read any other file as a pickle); ``load`` also
+takes the assets the slot's cgmath class reads (``.obj``, ``.fbx``, ``.glb``,
+``.usd``). rig checks what a file holds before anything is made, and a save
+path before anything is serialized.
 
 `load` is one name with two forms (`creates_or_updates`): from the class it is
 the creator, ``Mesh.load(path)`` (a new node, as ``create`` makes one); from a
@@ -170,7 +172,11 @@ def read(
         raise TypeError(f"{method}: {slot} is a file (a path) or its data, not the node {_name_of(src)!r}")
     if is_path(src):
         from cgmath.geometry import Data
-        from cgmath.geometry._base import get_file_type
+
+        try:  # cgmath 3.0.0 has the file code in cgmath.data, 1.0.4 and 2.0.0 in cgmath.geometry._base
+            from cgmath.data import get_file_type
+        except ImportError:
+            from cgmath.geometry._base import get_file_type
 
         path = os.path.expanduser(os.fspath(src))
         if not os.path.isfile(path):
