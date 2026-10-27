@@ -1044,11 +1044,11 @@ class TestSpineExampleRegression(MayaTestCase):
 
 
 class TestLimbTwistExample(MayaTestCase):
-    """The ``limb_twist`` example: five joints between an upper arm at the
-    origin and a lower arm ten units down X, with the upper arm's Z and the
-    lower arm's -Y as the poles (the lower arm turned -90 degrees in X, so
-    the two agree at rest). A joint's twist is measured about the limb, X,
-    from the world Z its up axis starts on."""
+    """The ``limb_twist`` example: five twist nodes between an upper arm at
+    the origin and a lower arm ten units down X, with the upper arm's Z and
+    the lower arm's -Y as the poles (the lower arm turned -90 degrees in X,
+    so the two agree at rest). A node's twist is measured about the limb,
+    X, from the world Z its up axis starts on."""
 
     TEST_START_NEW_SCENE = True
 
@@ -1061,14 +1061,17 @@ class TestLimbTwistExample(MayaTestCase):
         self.lowerarm = Node.create("joint", name="lowerarm")
         self.lowerarm.t << (10, 0, 0)
         self.lowerarm.r << (-90, 0, 0)
-        self.twist = create_limb_twist(self.upperarm.wm, self.lowerarm.wm, count=5, start_axis=2, end_axis=1,
-                                       end_invert=True)
+        self.twist = self.build()
 
-    def twists(self):
-        """each joint's twist about the limb, in degrees"""
+    def build(self, **kwargs):
+        """the example between the two arms, with the upper arm's Z and the lower arm's -Y as the poles"""
+        return self.create(self.upperarm.wm, self.lowerarm.wm, start_axis=2, end_axis=1, end_invert=True, **kwargs)
+
+    def twists(self, twist=None):
+        """each twist node's twist about the limb, in degrees"""
         angles = []
-        for joint in self.twist.joints:
-            y_axis = cmds.getAttr(f"{joint}.worldMatrix[0]")[4:7]
+        for node in (twist or self.twist).twists:
+            y_axis = cmds.getAttr(f"{node}.worldMatrix[0]")[4:7]
             angles.append(math.degrees(math.atan2(-y_axis[1], y_axis[2])))
         return angles
 
@@ -1077,19 +1080,23 @@ class TestLimbTwistExample(MayaTestCase):
         for a, b in zip(got, want):
             self.assertAlmostEqual(a, b, places=6)
 
-    def test_at_rest_the_joints_are_even_and_untwisted(self):
-        self.assert_close(self.twist.joints.u.get(), [0, 0.25, 0.5, 0.75, 1])
-        self.assert_close(self.twist.joints.tx.get(), [0, 2.5, 5, 7.5, 10])
+    def test_at_rest_the_nodes_are_even_and_untwisted(self):
+        self.assert_close(self.twist.twists.u.get(), [0, 0.25, 0.5, 0.75, 1])
+        self.assert_close(self.twist.twists.tx.get(), [0, 2.5, 5, 7.5, 10])
         self.assert_close(self.twists(), [0] * 5)
+
+    def test_a_twist_node_is_a_transform_by_default(self):
+        self.assertEqual([cmds.nodeType(str(node)) for node in self.twist.twists], ["transform"] * 5)
+        self.assertEqual([cmds.listRelatives(str(node), shapes=True) for node in self.twist.twists], [None] * 5)
 
     def test_the_twist_spreads_by_u(self):
         self.lowerarm.rx << 0
         self.assert_close(self.twists(), [0, 22.5, 45, 67.5, 90])
 
-    def test_u_moves_and_retwists_a_joint(self):
+    def test_u_moves_and_retwists_a_node(self):
         self.lowerarm.rx       << 0
-        self.twist.joints[1].u << 0.5
-        self.assertAlmostEqual(self.twist.joints[1].tx.get(), 5)
+        self.twist.twists[1].u << 0.5
+        self.assertAlmostEqual(self.twist.twists[1].tx.get(), 5)
         self.assertAlmostEqual(self.twists()[1], 45)
 
     def test_the_pole_toggles_are_live(self):
@@ -1103,22 +1110,42 @@ class TestLimbTwistExample(MayaTestCase):
         root.endAxis     << 2                        # the end's -Z, world -Y at rest: a quarter turn
         self.assert_close(self.twists(), [0, 22.5, 45, 67.5, 90])
 
-    def test_weights_give_each_joint_its_u(self):
-        twist = self.create(self.upperarm.wm, self.lowerarm.wm, count=3, name="limbTwist2", weights=[0, 0.1, 1],
-                            debug=False)
-        self.assert_close(twist.joints.u.get(), [0, 0.1, 1])
-        self.assert_close(twist.joints.tx.get(), [0, 1, 10])
+    def test_every_node_type_twists_the_same_outside_the_container(self):
+        kinds = {"transform": ("transform", None), "locator": ("transform", "locator"), "joint": ("joint", None),
+                 "cube": ("transform", "mesh")}
+        built = {node_type: self.build(node_type=node_type, name=f"limbTwist{index}")
+                 for index, node_type in enumerate(kinds, start=2)}
+        self.lowerarm.rx << 0
+        for index, (node_type, (kind, shape_kind)) in enumerate(kinds.items(), start=2):
+            twist = built[node_type]
+            with self.subTest(node_type=node_type):
+                # full paths: every build names its first node twist1, under its own root
+                nodes  = cmds.ls([str(node) for node in twist.twists], long=True)
+                shapes = cmds.listRelatives(nodes, shapes=True, fullPath=True) or []
+                members = set(cmds.ls(cmds.container(f"limbTwist{index}Setup", query=True, nodeList=True) or [],
+                                      long=True))
+                self.assertEqual(cmds.nodeType(nodes[0]), kind)
+                self.assertEqual(shapes and cmds.nodeType(shapes[0]) or None, shape_kind)
+                self.assertEqual(members & set(nodes + shapes), set())
+                self.assert_close(self.twists(twist), [0, 22.5, 45, 67.5, 90])
 
-    def test_debug_cubes(self):
-        cubes = [cmds.listRelatives(str(joint), children=True, type="transform") or [] for joint in self.twist.joints]
-        self.assertEqual([len(found) for found in cubes], [1] * 5)
-        bare = self.create(self.upperarm.wm, self.lowerarm.wm, count=2, name="limbTwist2", debug=False)
-        self.assertEqual([cmds.listRelatives(str(joint), children=True) for joint in bare.joints], [None, None])
+    def test_a_cube_is_a_flat_fin_with_no_history(self):
+        cube  = cmds.ls(str(self.build(node_type="cube", name="limbTwist2").twists[0]), long=True)[0]
+        shape = cmds.listRelatives(cube, shapes=True, fullPath=True)[0]
+        box   = cmds.exactWorldBoundingBox(cube)
+        self.assertEqual(cmds.ls(cmds.listHistory(shape), long=True), [shape])
+        # along the limb, across it, and along its up axis (world Z at rest)
+        self.assert_close([box[i + 3] - box[i] for i in range(3)], [1.0, 0.2, 2.0])
+
+    def test_weights_give_each_node_its_u(self):
+        twist = self.create(self.upperarm.wm, self.lowerarm.wm, count=3, name="limbTwist2", weights=[0, 0.1, 1])
+        self.assert_close(twist.twists.u.get(), [0, 0.1, 1])
+        self.assert_close(twist.twists.tx.get(), [0, 1, 10])
 
     def test_bad_arguments_raise_before_building(self):
         before = len(cmds.ls())
-        for kwargs in (dict(count=0), dict(weights=[0, 1]), dict(count=2, weights=[0, 1.5]), dict(start_axis=3),
-                       dict(aim_axis=1)):
+        for kwargs in (dict(count=0), dict(node_type="sphere"), dict(weights=[0, 1]), dict(count=2, weights=[0, 1.5]),
+                       dict(start_axis=3), dict(aim_axis=1)):
             with self.subTest(**{key: str(value) for key, value in kwargs.items()}):
                 with self.assertRaises(ValueError):
                     self.create(self.upperarm.wm, self.lowerarm.wm, **kwargs)
