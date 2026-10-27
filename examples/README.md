@@ -1,8 +1,8 @@
-# `rig.examples` — four rigs, built end to end
+# `rig.examples` — five rigs, built end to end
 
-Four scripts that each build something complete with the DSL: two rail
-spines (a tutorial one and the full one), a camera sticker rig and a
-looping image plane. Each is a plain module with one build function; the
+Five scripts that each build something complete with the DSL: two rail
+spines (a tutorial one and the full one), a limb twist, a camera sticker
+rig and a looping image plane. Each is a plain module with one build function; the
 `__main__` block at the bottom is its demo. The module docstrings say what
 each script does and which features it leans on — read those first, then
 run one.
@@ -47,6 +47,7 @@ print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 | The language these scripts are written in | [`../README.md`](../README.md) · [`../CHEATSHEET.md`](../CHEATSHEET.md) |
 | The tutorial spine, one feature at a time | [`rail_spine_simple.py`](rail_spine_simple.py) — about 100 lines of rig code |
 | The full spine: closed loops, any odd degree, projection modes | [`rail_spine.py`](rail_spine.py) |
+| Twist joints between two matrices, the limb's twist shared out by each joint's `u` | [`limb_twist.py`](limb_twist.py) |
 | Image planes that hold their aspect and their size in frame | [`perspective_image_planes.py`](perspective_image_planes.py) |
 | One plane that loops a numbered image sequence | [`image_loop.py`](image_loop.py) |
 | The docstring of any of them, from a Maya prompt | `help(rail_spine_simple)` after the import |
@@ -59,6 +60,7 @@ print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 |---|---|---|
 | `rail_spine_simple.py` | a cubic curve driven by N controls, M rider joints along it, four knobs | `create_simple_rail(position_controls, riders=10, ...)` |
 | `rail_spine.py` | the same rail with closed loops, degree 1/3/5/7, per-control orient and scale, three projection modes | `create_rail(position_controls, u, ...)` |
+| `limb_twist.py` | N twist joints between a start and an end matrix, slerping the two end frames by each joint's `u`, with live pole axes and flips | `create_limb_twist(start_matrix, end_matrix, count=5, ...)` |
 | `perspective_image_planes.py` | a camera plus N image planes under it, each shaped to its image and sized by its distance | `create_setup(camera, count, ...)` |
 | `image_loop.py` | one plane facing +Z that loops a numbered image sequence forever | `create_plane(image_dir, name="image_loop", target_size=10.0)` |
 | `images/` | `dog1.jpg` … `dog5.jpg` — a fixture both image scripts can eat | |
@@ -66,34 +68,36 @@ print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 | `__init__.py` | empty; it makes `rig.examples` importable | |
 
 Every builder returns rig objects, never strings: the rail's `Transform`
-node, a `namedtuple` of nodes and `List`s for the image rigs.
+node, a `namedtuple` of nodes and `List`s for the limb twist and the
+image rigs.
 
 ### Which language features each one showcases
 
-| Feature | `rail_spine_simple` | `rail_spine` | `perspective_image_planes` | `image_loop` |
-|---|---|---|---|---|
-| `with container("name"):` — a scoped utility graph | yes | yes | yes | yes |
-| `container.add(node)` — enrol a node made outside the scope | | | yes | yes |
-| `rc.*` — `maya.cmds` returning nodes / `List` (`rc.curve`, `rc.polyPlane`, `rc.parent`) | yes | yes | yes | yes |
-| `rn.*` — node factories with attribute kwargs (`rn.motionPath()`, `rn.file()`, `rn.curveInfo()`) | yes | yes | yes | yes |
-| `node << Float("x", min=0, max=1) << value << lock` spec injection | `Float` | `Float`, `Enum` | `Float`, `Int`, `Enum`, `String` | `Float`, `Int`, `String` |
-| `plug << lock`, `plug << hide` | `hide` | both | both | `lock` |
-| `List(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | |
-| `rail_shape.cv[:] << matrices` — matrix-to-CV shorthand | yes | yes | | |
-| `rider << matrix_plug` — matrix-to-transform shorthand (t / r / s + shear) | yes | yes | | |
-| `plug.get()` — the `getAttr` idiom | yes | yes | | demo |
-| `matrix.axis`, `matrix.multiply(local=True)`, `matrix.decompose` | axis, multiply | multiply, decompose | | |
-| `normalize`, `dist` — cross-type dispatch verbs | `normalize` | both | `dist` | |
-| `lerp`, `slerp`, `elerp`, `interpolate.sequence(method=...)` | `lerp`, `slerp` | `slerp`, `elerp`, `sequence` | | |
-| `condition(a > b, x, y)` — comparisons build `condition` nodes | `rf.condition` | yes | yes | yes |
-| `rf.choice`, `rf.clamp`, `rf.cumsum`, `rf.rev`, `rf.max`, `rf.abs` | | choice, clamp, cumsum, rev | choice, clamp, rev, max, abs | rev |
-| `rf.frame()` and `%` — scene time and modulo | | `%` | both | both |
-| `trigonometry.atand`, `trigonometry.sind` — degree variants, no conversion nodes | | | yes | |
-| `constant(0)` — a literal that must be a plug | | yes | yes | |
-| `Lambert.create(name=..., ...)` — a new material network; `shape << material` | | | yes | yes |
-| `set_options(create_containers=...)` | | demo | | |
-| `container=False` on a factory, then `rc.parent` | yes | yes | yes | `container=False` only |
-| `Lambert.create(..., container=True)` — a per-plane look opts into the container | | | yes | yes |
+| Feature | `rail_spine_simple` | `rail_spine` | `limb_twist` | `perspective_image_planes` | `image_loop` |
+|---|---|---|---|---|---|
+| `with container("name"):` — a scoped utility graph | yes | yes | yes | yes | yes |
+| `container.add(node)` — enrol a node made outside the scope | | | | yes | yes |
+| `rc.*` — `maya.cmds` returning nodes / `List` (`rc.curve`, `rc.polyPlane`, `rc.parent`) | yes | yes | yes | yes | yes |
+| `rn.*` — node factories with attribute kwargs (`rn.motionPath()`, `rn.file()`, `rn.curveInfo()`) | yes | yes | yes | yes | yes |
+| `node << Float("x", min=0, max=1) << value << lock` spec injection | `Float` | `Float`, `Enum` | `Float`, `Enum` | `Float`, `Int`, `Enum`, `String` | `Float`, `Int`, `String` |
+| `plug << lock`, `plug << hide` | `hide` | both | | both | `lock` |
+| `List(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | | |
+| `rail_shape.cv[:] << matrices` — matrix-to-CV shorthand | yes | yes | | | |
+| `rider << matrix_plug` — matrix-to-transform shorthand (t / r / s + shear) | yes | yes | yes | | |
+| `plug.get()` — the `getAttr` idiom | yes | yes | yes | | demo |
+| `matrix.axis`, `matrix.multiply(local=True)`, `matrix.decompose` | axis, multiply | multiply, decompose | multiply | | |
+| `matrix.aim`, `to_quaternion`, `matrix.compose`, `matrix.translation` — an aim frame, and a matrix from a quaternion and a point | | | yes | | |
+| `normalize`, `dist` — cross-type dispatch verbs | `normalize` | both | `normalize` | `dist` | |
+| `lerp`, `slerp`, `elerp`, `interpolate.sequence(method=...)` | `lerp`, `slerp` | `slerp`, `elerp`, `sequence` | `lerp`, `slerp` (quaternions) | | |
+| `condition(a > b, x, y)` — comparisons build `condition` nodes | `rf.condition` | yes | `rf.condition` | yes | yes |
+| `rf.choice`, `rf.clamp`, `rf.cumsum`, `rf.rev`, `rf.max`, `rf.abs` | | choice, clamp, cumsum, rev | choice | choice, clamp, rev, max, abs | rev |
+| `rf.frame()` and `%` — scene time and modulo | | `%` | | both | both |
+| `trigonometry.atand`, `trigonometry.sind` — degree variants, no conversion nodes | | | | yes | |
+| `constant(0)` — a literal that must be a plug | | yes | | yes | |
+| `Lambert.create(name=..., ...)` — a new material network; `shape << material` | | | | yes | yes |
+| `set_options(create_containers=...)` | | demo | | | |
+| `container=False` on a factory, then `rc.parent` | yes | yes | yes | yes | `container=False` only |
+| `Lambert.create(..., container=True)` — a per-plane look opts into the container | | | | yes | yes |
 
 `rc` is `rig.bridges.commands`, `rn` is `rig.bridges.nodes`, `rf` is
 `rig.functions`.
@@ -110,27 +114,30 @@ nodes or a `List` of either.
 ```python
 from rig import Node, List
 from rig.bridges import commands as rc
-from rig.examples import rail_spine_simple, rail_spine, perspective_image_planes, image_loop
+from rig.examples import rail_spine_simple, rail_spine, limb_twist, perspective_image_planes, image_loop
 
 controls = rc.ls(selection=True)                                # a List of the selected controls
 rail     = rail_spine_simple.create_simple_rail(controls, riders=10)
 rail     = rail_spine.create_rail(controls, 20, orient_controls=controls, scale_controls=controls)
+twist    = limb_twist.create_limb_twist(controls[0].wm, controls[1].wm, count=5)  # .root .joints
 setup    = perspective_image_planes.create_setup("camera1", 5)  # .camera .planes .shapes
 loop     = image_loop.create_plane("D:/frames/run_cycle")       # .transform .shape .material .texture
 ```
 
 The `__main__` block at the bottom of each file is a demo: open the file
 in the Script Editor and run it, and `__name__` is `"__main__"` there, so
-the demo builds. The two rail demos need nothing; the two image demos
+the demo builds. The two rail demos and the limb twist demo need nothing;
+the two image demos
 look for pictures at paths on the author's machine and only print a
 message when they find none — point them at the `images/` folder instead
 (the blocks below do). Under `mayapy` the demos are not the way in:
 initialise `maya.standalone` first, as the setup block at the top of this
 page does, then import and call.
 
-`debug=True` is the default on both rail builders and parents a
-`polyCube` under every rider so you can see them; pass `debug=False` for
-a production build.
+`debug=True` is the default on both rail builders and on the limb twist,
+and parents a `polyCube` under every rider or twist joint so you can see
+them (the twist joints' cubes are flat, standing along the up axis, so the
+twist shows); pass `debug=False` for a production build.
 
 ---
 
@@ -287,6 +294,72 @@ v2.0.0a4 release on the same machine. Undoing the whole build takes
 about 4,300 steps (v2.0.0a4: about 13,400), since a statement's connects
 and value sets are one step. The container holds the maths; the joints
 sit under the rail, outside it.
+
+---
+
+## `limb_twist.py` — twist joints between two matrices
+
+`create_limb_twist(start_matrix, end_matrix, count=5, name="limbTwist1", joint_name="twist1", start_axis=1, start_invert=False, end_axis=1, end_invert=False, aim_axis=0, up_axis=1, weights=None, debug=True)`
+spreads `count` twist joints from one matrix to the other (an upper arm's
+`wm` and its elbow's, say) and shares the limb's twist out between them,
+in five steps:
+
+1. A root transform: the joints' parent, and the home of the live pole
+   knobs.
+2. Each end's pole: `rf.choice([[1,0,0],[0,1,0],[0,0,1]], selector=root.startAxis)`
+   times `rf.condition(root.startInvert, -1, 1)`, turned into world space
+   by `matrix.multiply(..., local=True)` and normalized.
+3. Each end's frame, built once: `matrix.aim(end - start, pole, ...)`, an
+   `aimMatrix` aiming down the limb with its up axis toward that pole, as
+   a quaternion (`to_quaternion`). The two frames differ only by a roll
+   about the limb: the twist the joints share.
+4. Per joint: a `u` attribute, 0 on the start and 1 on the end, from
+   `weights=` or spread evenly.
+5. `slerp(start_frame, end_frame, joint.u)` (one `quatSlerp`) and
+   `lerp(start, end, joint.u)`, composed and injected:
+   `joint << matrix.compose(rotate=..., translate=...) * root.wim`.
+
+| Knob | On | Default | Does |
+|---|---|---|---|
+| `startAxis`, `endAxis` | the root | `Y` | which axis of the start / end matrix is its pole |
+| `startInvert`, `endInvert` | the root | off | flips that axis |
+| `u` | each joint | 0 to 1, evenly | where the joint sits on the line, and how much of the twist it takes |
+
+The joints' own aim and up axes are baked in at build time (`aim_axis=0`,
+`up_axis=1`: aim X, up Y). It returns a `LimbTwist` namedtuple, `.root`
+and `.joints` (a `List`). Each joint costs ten nodes with `debug=False`.
+The twist between the two ends is taken the short way, as with any slerp:
+past 180 degrees it flips.
+
+```python
+cmds.file(new=True, force=True)
+from rig.bridges import nodes as rn
+from rig.examples import limb_twist
+
+upperarm = rn.joint(name="upperarm")
+lowerarm = rn.joint(name="lowerarm")
+lowerarm.t << (10, 0, 0)
+lowerarm.r << (-90, 0, 0)                                     # its -Y lines up with the upper arm's Z: no twist yet
+
+twist = limb_twist.create_limb_twist(upperarm.wm, lowerarm.wm, count=5, start_axis=2, end_axis=1, end_invert=True)
+print(twist.root, [str(joint) for joint in twist.joints])  # limbTwist1 ['twist1', 'twist2', 'twist3', 'twist4', 'twist5']
+print(cmds.listAttr(str(twist.root), userDefined=True))    # ['startAxis', 'startInvert', 'endAxis', 'endInvert']
+print(twist.joints.u.get())                                # [0.   0.25 0.5  0.75 1.  ]
+print(twist.joints.tx.get())                               # [ 0.   2.5  5.   7.5 10. ]
+print(twist.joints.rx.get())                               # [90. 90. 90. 90. 90.]
+
+lowerarm.rx << 0                                              # twist the end 90 degrees about the limb
+print(twist.joints.rx.get())                               # [ 90.  112.5 135.  157.5 180. ]
+
+twist.joints[1].u << 0.5                                      # slide twist2 to the middle
+print(twist.joints.tx.get())                               # [ 0.   5.   5.   7.5 10. ]
+print(twist.joints.rx.get())                               # [ 90.  135.  135.  157.5 180. ]
+```
+
+Each joint takes its `u`'s share of the twist: none on `twist1`, a
+quarter on `twist2`, all of it on `twist5`. With `twist2` at `u = 0.5` it
+sits on `twist3` and takes the same half. Flip `endInvert` and the end's
+`+Y` becomes its pole: the twist runs the other way.
 
 ---
 
@@ -495,6 +568,14 @@ Verified on Maya 2025; not bugs to work around blindly.
   which would confuse the container's membership tracking; the maths sits
   inside `railNode1` / `simpleRail1`, the joints and their debug cubes sit
   outside, and `rc.parent` keeps the node object pointing at the renamed joint.
+  The limb twist does the same with its root and joints: its maths sits in
+  `limbTwist1Setup`.
+- `limb_twist` takes the twist between its two ends the short way:
+  twisting the end 170 degrees gives the last joint 170, and 190 gives it
+  -170. `create_limb_twist` checks its arguments before it builds
+  anything: a count below one, an axis that is not 0, 1 or 2, the same
+  aim and up axis, or weights that are not `count` numbers from 0 to 1
+  raise `ValueError` with the scene untouched.
 - `rail_spine_simple` snapshots the default arc length with `.get()` at
   build time, so editing the controls after the build changes the stretch
   ratio; `rail_spine` keeps a hidden proxy curve shape under the rail so

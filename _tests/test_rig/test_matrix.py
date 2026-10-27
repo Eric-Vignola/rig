@@ -1,5 +1,7 @@
 """Smoke tests for ``rig.matrix``."""
 
+import math
+
 from maya import cmds
 from rig import (
     dist,
@@ -1039,3 +1041,85 @@ class TestSpineExampleRegression(MayaTestCase):
             controls[i].ty << i * 5.0
         rail = create_simple_rail(controls, riders=8)
         self.assertIsNotNone(rail)
+
+
+class TestLimbTwistExample(MayaTestCase):
+    """The ``limb_twist`` example: five joints between an upper arm at the
+    origin and a lower arm ten units down X, with the upper arm's Z and the
+    lower arm's -Y as the poles (the lower arm turned -90 degrees in X, so
+    the two agree at rest). A joint's twist is measured about the limb, X,
+    from the world Z its up axis starts on."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        from rig.examples.limb_twist import create_limb_twist
+
+        self.create   = create_limb_twist
+        self.upperarm = Node.create("joint", name="upperarm")
+        self.lowerarm = Node.create("joint", name="lowerarm")
+        self.lowerarm.t << (10, 0, 0)
+        self.lowerarm.r << (-90, 0, 0)
+        self.twist = create_limb_twist(self.upperarm.wm, self.lowerarm.wm, count=5, start_axis=2, end_axis=1,
+                                       end_invert=True)
+
+    def twists(self):
+        """each joint's twist about the limb, in degrees"""
+        angles = []
+        for joint in self.twist.joints:
+            y_axis = cmds.getAttr(f"{joint}.worldMatrix[0]")[4:7]
+            angles.append(math.degrees(math.atan2(-y_axis[1], y_axis[2])))
+        return angles
+
+    def assert_close(self, got, want):
+        self.assertEqual(len(got), len(want))
+        for a, b in zip(got, want):
+            self.assertAlmostEqual(a, b, places=6)
+
+    def test_at_rest_the_joints_are_even_and_untwisted(self):
+        self.assert_close(self.twist.joints.u.get(), [0, 0.25, 0.5, 0.75, 1])
+        self.assert_close(self.twist.joints.tx.get(), [0, 2.5, 5, 7.5, 10])
+        self.assert_close(self.twists(), [0] * 5)
+
+    def test_the_twist_spreads_by_u(self):
+        self.lowerarm.rx << 0
+        self.assert_close(self.twists(), [0, 22.5, 45, 67.5, 90])
+
+    def test_u_moves_and_retwists_a_joint(self):
+        self.lowerarm.rx       << 0
+        self.twist.joints[1].u << 0.5
+        self.assertAlmostEqual(self.twist.joints[1].tx.get(), 5)
+        self.assertAlmostEqual(self.twists()[1], 45)
+
+    def test_the_pole_toggles_are_live(self):
+        root = self.twist.root
+        self.assertEqual(cmds.listAttr(str(root), userDefined=True), ["startAxis", "startInvert", "endAxis", "endInvert"])
+        self.lowerarm.rx << 0
+        root.endInvert   << 0                      # the end's +Y: the twist runs the other way
+        self.assert_close(self.twists(), [0, -22.5, -45, -67.5, -90])
+        root.endInvert   << 1
+        self.lowerarm.rx << -90
+        root.endAxis     << 2                        # the end's -Z, world -Y at rest: a quarter turn
+        self.assert_close(self.twists(), [0, 22.5, 45, 67.5, 90])
+
+    def test_weights_give_each_joint_its_u(self):
+        twist = self.create(self.upperarm.wm, self.lowerarm.wm, count=3, name="limbTwist2", weights=[0, 0.1, 1],
+                            debug=False)
+        self.assert_close(twist.joints.u.get(), [0, 0.1, 1])
+        self.assert_close(twist.joints.tx.get(), [0, 1, 10])
+
+    def test_debug_cubes(self):
+        cubes = [cmds.listRelatives(str(joint), children=True, type="transform") or [] for joint in self.twist.joints]
+        self.assertEqual([len(found) for found in cubes], [1] * 5)
+        bare = self.create(self.upperarm.wm, self.lowerarm.wm, count=2, name="limbTwist2", debug=False)
+        self.assertEqual([cmds.listRelatives(str(joint), children=True) for joint in bare.joints], [None, None])
+
+    def test_bad_arguments_raise_before_building(self):
+        before = len(cmds.ls())
+        for kwargs in (dict(count=0), dict(weights=[0, 1]), dict(count=2, weights=[0, 1.5]), dict(start_axis=3),
+                       dict(aim_axis=1)):
+            with self.subTest(**{key: str(value) for key, value in kwargs.items()}):
+                with self.assertRaises(ValueError):
+                    self.create(self.upperarm.wm, self.lowerarm.wm, **kwargs)
+                self.assertEqual(len(cmds.ls()), before)
