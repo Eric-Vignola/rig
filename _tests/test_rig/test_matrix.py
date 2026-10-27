@@ -1020,9 +1020,10 @@ class TestMatrixInterpExtrapolation(MayaTestCase):
 class TestSpineExampleRegression(MayaTestCase):
     """End-to-end regression for the slerp(orientation-only) / blend(TRS)
     refactor: the ``rail_spine_simple`` example must still build cleanly.
-    It uses vector ``slerp`` for the up-vector blend (vector code path,
-    unaffected by the matrix changes), so this proves the public surface
-    is intact for downstream rigs."""
+    It turns each rider's up vector by its share of one quaternion
+    (``quaternion.pow``, a ``quatSlerp``), so this proves the public surface
+    is intact for downstream rigs. The other tests pin the two rails' end
+    tangents and the riders' shared twist."""
 
     TEST_START_NEW_SCENE = True
 
@@ -1041,6 +1042,85 @@ class TestSpineExampleRegression(MayaTestCase):
             controls[i].ty << i * 5.0
         rail = create_simple_rail(controls, riders=8)
         self.assertIsNotNone(rail)
+
+    def controls(self, count):
+        """``count`` locators stacked five units apart along Y"""
+        from rig import List
+
+        controls = List()
+        for i in range(count):
+            controls.append(Node(cmds.spaceLocator()[0]))
+            controls[i].ty << i * 5.0
+        return controls
+
+    @staticmethod
+    def unit(vector):
+        length = math.sqrt(sum(c * c for c in vector))
+        return [c / length for c in vector]
+
+    def assert_extrapolates_from_the_ends(self, rail):
+        """riders pushed to u = -0.3 and 1.3 sit 0.3 of the curve's length past
+        its ends, along its end tangents; crossing an end does not jump"""
+        import maya.api.OpenMaya as om
+
+        selection = om.MSelectionList()
+        selection.add(cmds.listRelatives(str(rail), type="nurbsCurve")[0])
+        curve  = om.MFnNurbsCurve(selection.getDagPath(0))
+        length = curve.length()
+        riders = cmds.listRelatives(str(rail), type="joint")
+        for shift, rider, param in ((-0.3, riders[0], curve.knotDomain[0]), (0.3, riders[-1], curve.knotDomain[1])):
+            rail.shift << shift
+            end     = curve.getPointAtParam(param, om.MSpace.kWorld)
+            tangent = curve.tangent(param, om.MSpace.kWorld).normal()
+            want    = end + tangent * (shift * length)
+            got     = cmds.xform(rider, query=True, worldSpace=True, translation=True)
+            for a, b in zip(got, want):
+                self.assertAlmostEqual(a, b, places=3)
+        rail.shift << 0
+        on_the_end = cmds.xform(riders[0], query=True, worldSpace=True, translation=True)
+        rail.shift << -1e-9
+        just_past  = cmds.xform(riders[0], query=True, worldSpace=True, translation=True)
+        self.assertLess(math.dist(on_the_end, just_past), 1e-6)
+
+    def test_rail_spine_simple_extrapolates_from_the_curve_ends(self):
+        from rig.examples.rail_spine_simple import create_simple_rail
+
+        controls = self.controls(4)
+        rail     = create_simple_rail(controls, riders=3, debug=False)
+        rail.stretch   << 1   # locked: each rider's u is its default u plus shift
+        controls[1].tx << 10  # bend the spine
+        self.assert_extrapolates_from_the_ends(rail)
+
+    def test_rail_spine_extrapolates_from_the_curve_ends_whatever_invert_aim(self):
+        from rig.examples.rail_spine import create_rail
+
+        controls = self.controls(5)
+        rail     = create_rail(controls, 3, debug=False)  # stretch is 1 by default
+        controls[1].tx << 10
+        for invert in (0, 1):
+            with self.subTest(invertAim=invert):
+                rail.invertAim << invert  # flips the riders' aim axis, never the curve's tangent
+                self.assert_extrapolates_from_the_ends(rail)
+
+    def test_rail_spine_simple_twist_is_the_slerp_of_the_end_ups(self):
+        """on a straight rail along Y, each rider's up axis (X) is the slerp of
+        the end controls' X axes by its default u, flattened across the rail"""
+        from rig.examples.rail_spine_simple import create_simple_rail
+
+        controls = self.controls(4)
+        rail     = create_simple_rail(controls, riders=5, debug=False)
+        controls[0].r  << (0, 40, 0)
+        controls[-1].r << (0, -70, 30)  # tips the last up out of the plane across the rail
+        first = self.unit(cmds.getAttr(f"{controls[0]}.worldMatrix[0]")[0:3])
+        last  = self.unit(cmds.getAttr(f"{controls[-1]}.worldMatrix[0]")[0:3])
+        theta = math.acos(sum(a * b for a, b in zip(first, last)))
+        for rider in cmds.listRelatives(str(rail), type="joint"):
+            u    = cmds.getAttr(f"{rider}.uDefault")
+            up   = [(math.sin((1 - u) * theta) * a + math.sin(u * theta) * b) / math.sin(theta) for a, b in zip(first, last)]
+            want = self.unit([up[0], 0, up[2]])
+            got  = self.unit(cmds.getAttr(f"{rider}.worldMatrix[0]")[0:3])
+            for a, b in zip(got, want):
+                self.assertAlmostEqual(a, b, places=5)
 
 
 class TestLimbTwistExample(MayaTestCase):

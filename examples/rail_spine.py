@@ -314,43 +314,34 @@ def create_rail(
                         scale_weights,
                     )
 
-        # Tangent extrapolation at curve ends (open rails only).
+        # Tangent extrapolation at curve ends (open rails only). A
+        # ``pointOnCurveInfo`` at each end gives the end point and the unit
+        # tangent there: the curve's own tangent, whatever the rider axes.
+        # ``uTangentStart`` / ``uTangentEnd`` are 0..1 of the curve's
+        # parameter range (``turnOnPercentage``); 0 and 1 are its two ends.
         if not periodic:
             rail << Enum("translateProjection", en="Clamped:Infinite", dv=1)
-            rail << Float("uTangentStart", dv=0.001, min=0, max=1) << hide
-            rail << Float("uTangentEnd", dv=0.999, min=0, max=1) << hide
+            rail << Float("uTangentStart", dv=0, min=0, max=1) << hide
+            rail << Float("uTangentEnd", dv=1, min=0, max=1) << hide
 
-            tangent_aim = rf.choice(
-                [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-                selector=rail.aimAxis,
-            )
-
-            tangent0 = rn.motionPath()
-            tangent0.fractionMode << 1
-            tangent0.uValue       << rail.uTangentStart
-            tangent0.geometryPath << rail_shape.worldSpace[0]
-            tangent0.frontAxis    << rail.aimAxis
-            tangent0.upAxis       << rail.upAxis
-            tangent0.inverseFront << rail.invertAim
-            tangent0.inverseUp    << rail.invertUp
-            edge0 = tangent0.allCoordinates
+            tangent0 = rn.pointOnCurveInfo()
+            tangent0.turnOnPercentage << 1
+            tangent0.parameter        << rail.uTangentStart
+            tangent0.inputCurve       << rail_shape.worldSpace[0]
+            edge0    = tangent0.position
             tangent0 = (
-                normalize(tangent_aim * tangent0.orientMatrix)
+                tangent0.normalizedTangent
                 * current_length
                 * rail.translateProjection
             )
 
-            tangent1 = rn.motionPath()
-            tangent1.fractionMode << 1
-            tangent1.uValue       << rail.uTangentEnd
-            tangent1.geometryPath << rail_shape.worldSpace[0]
-            tangent1.frontAxis    << rail.aimAxis
-            tangent1.upAxis       << rail.upAxis
-            tangent1.inverseFront << rail.invertAim
-            tangent1.inverseUp    << rail.invertUp
-            edge1 = tangent1.allCoordinates
+            tangent1 = rn.pointOnCurveInfo()
+            tangent1.turnOnPercentage << 1
+            tangent1.parameter        << rail.uTangentEnd
+            tangent1.inputCurve       << rail_shape.worldSpace[0]
+            edge1    = tangent1.position
             tangent1 = (
-                normalize(tangent_aim * tangent1.orientMatrix)
+                tangent1.normalizedTangent
                 * current_length
                 * rail.translateProjection
             )

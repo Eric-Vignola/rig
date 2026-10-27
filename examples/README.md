@@ -86,9 +86,10 @@ image rigs.
 | `rider << matrix_plug` — matrix-to-transform shorthand (t / r / s + shear) | yes | yes | yes | | |
 | `plug.get()` — the `getAttr` idiom | yes | yes | yes | | demo |
 | `matrix.axis`, `matrix.multiply(local=True)`, `matrix.decompose` | axis, multiply | multiply, decompose | multiply | | |
-| `matrix.aim`, `to_quaternion`, `matrix.compose`, `matrix.translation` — an aim frame, and a matrix from a quaternion and a point | | | yes | | |
+| `matrix.aim`, `to_quaternion`, `matrix.compose`, `matrix.translation` — an aim frame, and a matrix from a quaternion and a point | `compose` | | yes | | |
+| `quaternion.from_axis_angle`, `quaternion.pow` — a turn as a quaternion, and a share of it | yes | | | | |
 | `normalize`, `dist` — cross-type dispatch verbs | `normalize` | both | `normalize` | `dist` | |
-| `lerp`, `slerp`, `elerp`, `interpolate.sequence(method=...)` | `lerp`, `slerp` | `slerp`, `elerp`, `sequence` | `lerp`, `slerp` (quaternions) | | |
+| `lerp`, `slerp`, `elerp`, `interpolate.sequence(method=...)` | `lerp` | `slerp`, `elerp`, `sequence` | `lerp`, `slerp` (quaternions) | | |
 | `condition(a > b, x, y)` — comparisons build `condition` nodes | `rf.condition` | yes | `rf.condition` | yes | yes |
 | `rf.choice`, `rf.clamp`, `rf.cumsum`, `rf.rev`, `rf.max`, `rf.abs` | | choice, clamp, cumsum, rev | choice | choice, clamp, rev, max, abs | rev |
 | `rf.frame()` and `%` — scene time and modulo | | `%` | | both | both |
@@ -158,16 +159,20 @@ feature at a time, in eight numbered steps you can read in one sitting:
    snapshots the build-time length as a Python float, and
    `default_length / current_length` builds the stretch ratio plug.
 4. `matrix.axis(controls[0].wm, up_axis)` and `normalize(...)` give the
-   first and last control's up vector.
-5. Two helper `motionPath` nodes sample the curve just inside `u = 0` and
-   `u = 1`; `matrix.multiply(aim_vec, mp.orientMatrix, local=True)` turns
-   the aim axis through that frame into a world-space end tangent.
+   first and last control's up vector. An `angleBetween` gives the axis
+   and angle from one to the other, and `quaternion.from_axis_angle(...)`
+   turns them into one quaternion, `turn`.
+5. Two `pointOnCurveInfo` nodes sit on the curve's two ends
+   (`turnOnPercentage`, `parameter` 0 and 1): `position` is the end point
+   and `normalizedTangent` the end tangent, scaled by the live length.
 6. Per rider: a joint (`container=False`, then `rc.parent`), a `uDefault`
    attribute, and the u maths — `lerp(anchored, uDefault, rail.stretch)`
    between glide and locked, then `Scale` around `pivot`, then `shift`.
-7. A `motionPath` per rider with `worldUpVector << slerp(first_up, last_up, rider.uDefault)`
-   — the twist is frozen on the rider's *default* u so it does not drift
-   as the spine deforms.
+7. A `motionPath` per rider whose `worldUpVector` is `first_up` turned by
+   `quaternion.pow(turn, rider.uDefault)`: the rider's share of the turn,
+   one `quatSlerp`, which slerps `first_up` to `last_up` along the great
+   circle. The twist is frozen on the rider's *default* u so it does not
+   drift as the spine deforms.
 8. `rf.condition(u < 0, tangent_start * u + edge_start, ...)` extrapolates
    along the end tangents outside `[0, 1]`; `composeMatrix` assembles
    translate + rotate; `rider << rider_matrix.outputMatrix * rail.wim`
@@ -196,7 +201,7 @@ controls[1].tx << 10                                       # bend the spine: the
 print([round(v, 3) for v in mid.t.get()])                 # [4.29, 6.12, 0.0]
 
 rail.shift << 0.5                                          # push the last rider past u = 1 ...
-print([round(v, 3) for v in Node(riders[-1]).t.get()])    # [-0.028, 20.908, 0.0]  -- on the end tangent
+print([round(v, 3) for v in Node(riders[-1]).t.get()])    # [0.0, 20.926, 0.0]  -- on the end tangent
 ```
 
 The last rider is past the end of the curve and keeps going along its
@@ -232,7 +237,9 @@ Everything the tutorial omits on purpose, from the original rig
   `Frozen:Infinite:Clamped` enums: sample at the rider's default u, at its
   live u, or at its live u clamped to the first and last control.
   `translateProjection` (`Clamped:Infinite`, open rails only) is the
-  end-tangent extrapolation, with `uTangentStart` / `uTangentEnd` hidden.
+  end-tangent extrapolation, along the curve's own tangent at each end;
+  the hidden `uTangentStart` / `uTangentEnd` (0 and 1) say where the
+  tangents are read, as 0..1 of the curve's parameter range.
 - **`u` as a count or a list.** `u=20` spreads twenty riders evenly; a
   list gives each rider its own u, and a string in that list names a plug.
 

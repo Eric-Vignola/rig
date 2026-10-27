@@ -16,7 +16,8 @@ What this version does
       - ``Scale``   -- spread (>1) or squeeze (<1) riders around pivot.
       - ``shift``   -- slide all riders along the curve.
   * Slerp each rider's up vector between the FIRST and LAST control's
-    up axis, frozen on the rider's default u (so the up axis doesn't
+    up axis -- its share of one quaternion turn from the first to the
+    last -- frozen on the rider's default u (so the up axis doesn't
     drift as the spine deforms).
   * Infinite end-tangent projection -- riders whose computed u falls
     outside [0, 1] extrapolate along the curve's end tangents instead
@@ -38,13 +39,15 @@ DSL features showcased here
   * ``with container("..."):``                -- scoped utility graph
   * ``List(controls).wm * rail.wim``          -- broadcast matrix mul
   * ``rail_shape.cv[:] << matrices``          -- matrix -> CV shorthand
-  * ``rn.curveInfo / motionPath / composeMatrix`` -- node-type bridges
+  * ``rn.curveInfo / pointOnCurveInfo / motionPath`` -- node-type bridges
   * ``Float("pivot", min=0, max=1)``          -- spec-object injection
   * ``plug.get()``                            -- read-value idiom
   * ``matrix.axis(wm, up_axis)``              -- extract basis vector
+  * ``quaternion.from_axis_angle / pow``      -- a turn, and a share of it
+  * ``matrix.compose(rotate=quat)``           -- quaternion -> rotation matrix
   * ``matrix.multiply(vec, m, local=True)``   -- vec x matrix (rotation only)
   * ``normalize / functions.condition``       -- dispatch verb + ternary
-  * ``lerp / slerp``                          -- top-level interpolation verbs
+  * ``lerp``                                  -- top-level interpolation verb
   * ``rider << matrix_plug``                  -- matrix -> t/r/s decompose
 
 Run from inside Maya / mayapy::
@@ -66,7 +69,7 @@ from rig import (
     matrix,
     Node,
     normalize,
-    slerp,
+    quaternion,
 )
 from rig.bridges import commands as rc, nodes as rn
 from rig.spec import Float, hide
@@ -149,43 +152,40 @@ def create_simple_rail(
         # ---- 4. Frozen up-vector endpoints (first and last controls). ----
         # ``matrix.axis(wm, up_axis)`` extracts the rotation-only basis
         # vector for the chosen axis (``vectorProduct`` op=3 pre-2024,
-        # ``axisFromMatrix`` on 2024+). ``rv.normalize`` normalises in case
+        # ``axisFromMatrix`` on 2024+). ``normalize`` normalises in case
         # controls have non-unit scale.
         first_up = normalize(matrix.axis(position_controls[0].wm, up_axis))
         last_up  = normalize(matrix.axis(position_controls[-1].wm, up_axis))
 
+        # The turn from ``first_up`` to ``last_up`` as one quaternion: an
+        # ``angleBetween`` gives the axis and the angle between them (the
+        # short way, 0 to 180 degrees), ``quaternion.from_axis_angle``
+        # makes the quaternion. Each rider takes its share in step 7.
+        between = rn.angleBetween()
+        between.vector1 << first_up
+        between.vector2 << last_up
+        turn = quaternion.from_axis_angle(between.axis, between.angle)
+
         # ---- 5. End-tangent setup (infinite projection). ----
-        # Sample the curve just inside u=0 and u=1 with two helper
-        # motionPath nodes. Their ``allCoordinates`` give the edge
-        # positions; ``orientMatrix`` carries the local frame at that
-        # point. Rotating the aim-axis vector through that frame yields
-        # the world-space tangent direction. Scale by ``current_length``
-        # so one unit of u-overshoot ~= one curve-length of travel.
-        aim_vec  = [[1, 0, 0], [0, 1, 0], [0, 0, 1]][aim_axis]
+        # A ``pointOnCurveInfo`` on each end of the curve: ``position`` is
+        # the end point, ``normalizedTangent`` the unit tangent there.
+        # ``turnOnPercentage`` reads ``parameter`` as 0..1 of the curve's
+        # parameter range, so 0 and 1 are its two ends. Scale by
+        # ``current_length`` so one unit of u-overshoot ~= one
+        # curve-length of travel.
+        curve_start = rn.pointOnCurveInfo()
+        curve_start.turnOnPercentage << 1
+        curve_start.parameter        << 0
+        curve_start.inputCurve       << rail_shape.worldSpace[0]
+        edge_start    = curve_start.position
+        tangent_start = curve_start.normalizedTangent * current_length
 
-        mp_start = rn.motionPath()
-        mp_start.fractionMode << 1
-        mp_start.uValue       << 0.001
-        mp_start.geometryPath << rail_shape.worldSpace[0]
-        mp_start.frontAxis    << aim_axis
-        mp_start.upAxis       << up_axis
-        edge_start = mp_start.allCoordinates
-        tangent_start = (
-            normalize(matrix.multiply(aim_vec, mp_start.orientMatrix, local=True))
-            * current_length
-        )
-
-        mp_end = rn.motionPath()
-        mp_end.fractionMode << 1
-        mp_end.uValue       << 0.999
-        mp_end.geometryPath << rail_shape.worldSpace[0]
-        mp_end.frontAxis    << aim_axis
-        mp_end.upAxis       << up_axis
-        edge_end = mp_end.allCoordinates
-        tangent_end = (
-            normalize(matrix.multiply(aim_vec, mp_end.orientMatrix, local=True))
-            * current_length
-        )
+        curve_end = rn.pointOnCurveInfo()
+        curve_end.turnOnPercentage << 1
+        curve_end.parameter        << 1
+        curve_end.inputCurve       << rail_shape.worldSpace[0]
+        edge_end    = curve_end.position
+        tangent_end = curve_end.normalizedTangent * current_length
 
         # ---- 6. Build evenly-spaced riders. ----
         for i in range(riders):
@@ -222,8 +222,12 @@ def create_simple_rail(
             # Frozen up-vector blend -- slerps between the spine's start
             # and end up axes by the rider's DEFAULT u (not u_value), so
             # the rider's twist stays put as the spine stretches.
+            # ``quaternion.pow(turn, w)`` is one ``quatSlerp`` from identity:
+            # the rider's share of the turn, which carries ``first_up``
+            # along the great circle to ``last_up`` as w goes 0 -> 1.
+            twist = matrix.compose(rotate=quaternion.pow(turn, rider.uDefault))
             mp.worldUpType   << 3  # 3 = Vector (use the connected worldUpVector)
-            mp.worldUpVector << slerp(first_up, last_up, rider.uDefault)
+            mp.worldUpVector << matrix.multiply(first_up, twist, local=True)
             mp.uValue        << u_value
 
             # ---- 8. Compose translate+rotate, demote to local, inject. ----
