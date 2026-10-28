@@ -622,3 +622,17 @@ Verified on Maya 2025; not bugs to work around blindly.
 - `set_options(create_containers=False)` before a build leaves the whole
   graph loose in the scene — handy for reading it in the Node Editor, and
   what the `rail_spine` demo's comment invites you to try.
+
+The rails read their curve with two nodes, each for the job it does best
+(measured on the demos):
+
+| Job | Node | Why |
+|---|---|---|
+| Spread riders evenly along the curve | `motionPath` with `fractionMode` | its `uValue` is a fraction of the arc length, within 5e-5 of it; `pointOnCurveInfo`'s `turnOnPercentage` is a fraction of the parameter range, up to 11.7 % of the length off on a bent rail |
+| Place and orient a rider in one node | `motionPath` | position and frame come out of one node; `pointOnCurveInfo` plus `matrix.aim` is one more node per rider |
+| Read the end point and the end tangent | `pointOnCurveInfo` | `position` and `normalizedTangent` come straight out, and at 0 and 1 the parameter and the length fraction agree |
+| A tangent, normal or curvature at a given parameter | `pointOnCurveInfo` | it outputs them; `motionPath` doesn't |
+
+Between the ends the two agree only where the parameter runs evenly along
+the curve: the tutorial's straight four-CV rail does, the full rail's
+straight five-CV rail is already off by 4.8 % of its length.
