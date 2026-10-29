@@ -1182,7 +1182,7 @@ print(weights.shape, weights.sum(axis=1))                         # (8, 2) [1. 1
 split        = np.zeros_like(weights)
 split[:4, 0] = 1
 split[4:, 1] = 1
-skin.set_weights(split)                                          # undoable; Maya may warn about normalisation
+skin.set_weights(split)                                          # undoable; each row as given (normalize_weights=True scales it to 1)
 print(skin.get_weights()[:, 0])                                  # [1. 1. 1. 1. 0. 0. 0. 0.]
 skin.set_weights(np.array([[0.5, 0.5]]), indices=np.array([0]))  # a subset of vertices
 print(skin.get_weights()[0])                                     # [0.5 0.5]

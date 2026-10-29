@@ -1,5 +1,6 @@
 import numpy as np
 from maya import cmds
+from maya.api import OpenMaya
 from rig.nodetypes import Joint, Node, SkinCluster
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
@@ -465,9 +466,112 @@ class TestBakeDeformation(UndoWalk, MayaTestCase):
 # --- undo (round U2, step S3) ------------------------------------------------------------
 
 
+class TestSetWeightsNormalization(MayaTestCase):
+    """``set_weights`` and ``create(geo, SkinData)`` set each row as given, or scaled
+    to sum 1 with ``normalize_weights=True``, in every ``normalizeWeights`` mode, and
+    put the mode back: Maya neither rescales a row nor warns "Specified weights
+    required modification for normalization", which an interactive skin (mode 1)
+    does as it sets them, even for rows a rounding off 1."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        self.plane = cmds.polyPlane(name="p", width=10, height=10, subdivisionsX=4, subdivisionsY=4,
+                                    constructionHistory=False)[0]
+        self.joints = []
+        for i, x in enumerate((-5, 0, 5)):
+            cmds.select(clear=True)
+            self.joints.append(cmds.joint(name=f"j{i}", position=(x, 0, 0)))
+        # normalized by division, as cgmath normalizes: some rows sum to 1 only within a rounding
+        rows          = np.random.default_rng(7).random((25, 3))
+        self.rounded  = rows / rows.sum(axis=1, keepdims=True)
+        self.half     = np.tile([0.2, 0.2, 0.1], (25, 1))
+        self.warnings = []
+        callback      = OpenMaya.MCommandMessage.addCommandOutputCallback(self.on_output)
+        self.addCleanup(OpenMaya.MMessage.removeCallback, callback)
+
+    def on_output(self, message, kind, _):
+        if kind == OpenMaya.MCommandMessage.kWarning:
+            self.warnings.append(message)
+
+    def skin(self, mode):
+        skin = SkinCluster.create(self.plane, self.joints, normalizeWeights=mode)
+        del self.warnings[:]
+        return skin
+
+    def assert_mode(self, skin, mode):
+        self.assertEqual(cmds.getAttr(f"{skin}.normalizeWeights"), mode)
+
+    def test_rows_are_set_as_given_in_every_mode(self):
+        for mode in (0, 1, 2):
+            for label, rows in (("rounded", self.rounded), ("summing to 0.5", self.half)):
+                with self.subTest(mode=mode, rows=label):
+                    skin = self.skin(mode)
+                    skin.set_weights(rows)
+                    self.assertTrue(np.array_equal(skin.get_weights(), rows))
+                    self.assertEqual(self.warnings, [])
+                    self.assert_mode(skin, mode)
+
+    def test_skin_data_rows_are_set_as_given(self):
+        from cgmath.geometry import SkinData
+
+        skin = self.skin(1)
+        skin.set_weights(SkinData(weights=self.rounded, influences=self.joints))
+        self.assertTrue(np.array_equal(skin.get_weights(), self.rounded))
+        self.assertEqual(self.warnings, [])
+        self.assert_mode(skin, 1)
+
+    def test_create_from_skin_data_sets_the_rows_as_given(self):
+        from cgmath.geometry import SkinData
+
+        skin = SkinCluster.create(self.plane, SkinData(weights=self.rounded, influences=self.joints),
+                                  normalizeWeights=1)
+        self.assertTrue(np.array_equal(skin.get_weights(), self.rounded))
+        self.assertEqual(self.warnings, [])
+        self.assert_mode(skin, 1)
+
+    def test_normalize_weights_scales_each_row_to_one(self):
+        from cgmath.geometry import SkinData
+
+        rows    = self.half.copy()
+        rows[0] = 0.0
+        for mode in (0, 1, 2):
+            for label, data in (("array", rows), ("skin data", SkinData(weights=rows, influences=self.joints))):
+                with self.subTest(mode=mode, data=label):
+                    skin = self.skin(mode)
+                    skin.set_weights(data, normalize_weights=True)
+                    weights = skin.get_weights()
+                    self.assertTrue(np.array_equal(weights[0], [0.0, 0.0, 0.0]))  # a row of zeros stays zeros
+                    self.assertTrue(np.allclose(weights[1:], self.half[1:] * 2, rtol=0.0, atol=1e-15))
+                    self.assertEqual(self.warnings, [])
+                    self.assert_mode(skin, mode)
+
+    def test_undo_and_redo_set_the_rows_as_given(self):
+        self.undo_on()
+        skin = self.skin(1)
+        skin.set_weights(self.half)
+        skin.set_weights(self.rounded)
+        cmds.undo()
+        self.assertTrue(np.array_equal(skin.get_weights(), self.half))
+        cmds.redo()
+        self.assertTrue(np.array_equal(skin.get_weights(), self.rounded))
+        self.assertEqual(self.warnings, [])
+        self.assert_mode(skin, 1)
+
+    def test_a_locked_mode_is_left_alone(self):
+        skin  = self.skin(1)
+        exact = np.tile([0.5, 0.25, 0.25], (25, 1))
+        cmds.setAttr(f"{skin}.normalizeWeights", lock=True)
+        skin.set_weights(exact)
+        self.assertTrue(np.array_equal(skin.get_weights(), exact))
+        self.assertTrue(cmds.getAttr(f"{skin}.normalizeWeights", lock=True))
+        self.assert_mode(skin, 1)
+
+
 class TestSkinClusterUndo(UndoWalk, MayaTestCase):
     """``SkinCluster.set_weights`` and ``SkinCluster.create`` are one undo step each:
-    the weights are one ``MFnSkinCluster.setWeights`` (normalised) through rig's
+    the weights are one ``MFnSkinCluster.setWeights`` (each row as given) through rig's
     plug-in command; with a SkinData the influence edits join it in a step named
     ``rig.SkinCluster.set_weights``, and a create is a step named
     ``rig.SkinCluster.create``. Checked on the scene, never on ``cmds.undo()``'s return."""

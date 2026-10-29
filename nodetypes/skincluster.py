@@ -336,9 +336,10 @@ class SkinCluster(Deformer):
 
     def set_weights(
         self,
-        data:     np.ndarray | SkinData,
-        additive: bool                    = False,
-        indices:  None       | np.ndarray = None,
+        data:              np.ndarray | SkinData,
+        additive:          bool                    = False,
+        indices:           None       | np.ndarray = None,
+        normalize_weights: bool                    = False,
     ) -> None:
         """Sets the weights of this skincluster.
         If weights is a SkinData object, update influence objects to match the data.
@@ -350,6 +351,15 @@ class SkinCluster(Deformer):
                 Otherwise, replaces the existing influences.
                 Ignored if `data` is not a SkinData object.
             indices: A 1D array of vertex indices to set the weights. If None, set all weights.
+            normalize_weights: If True, scales each row to sum 1 before it is set (a row
+                of zeros stays zeros; locked influences are not read). Otherwise each
+                row is set as given.
+
+        Maya does not rewrite the rows: a skin that normalizes as it is painted
+        (``normalizeWeights`` 1, interactive) gets them with that mode off, put
+        back after, unless the attribute is locked or driven. Left on, it
+        rescales them as they are set and warns "Specified weights required
+        modification for normalization", even for rows a rounding off 1.
 
         One undo step: an array is one ``MFnSkinCluster.setWeights``; with a
         SkinData, the influences it adds, the weights and the influences it
@@ -362,7 +372,7 @@ class SkinCluster(Deformer):
         from cgmath.geometry import SkinData
 
         if not isinstance(data, SkinData):
-            _SetSkinWeightsCommand(self, data, indices=indices)
+            _SetSkinWeightsCommand(self, data, indices=indices, normalize_weights=normalize_weights)
             return
 
         # make sure incoming data has long inf names,
@@ -391,7 +401,7 @@ class SkinCluster(Deformer):
                 self.add_influence_objects(to_add)
 
             # apply weights
-            _SetSkinWeightsCommand(self, new_data.weights, indices=indices)
+            _SetSkinWeightsCommand(self, new_data.weights, indices=indices, normalize_weights=normalize_weights)
 
             # remove excessive influences that might be introduced by conforming
             if not additive:
@@ -738,16 +748,18 @@ class _SetSkinWeightsCommand:
     """
     A set skin weights command with undo/redo support: one undo step (rig's
     plug-in command). Raises ValueError, before any edit, when the weights are
-    not one per point per influence.
+    not one per point per influence. Each row is set as given, or scaled to sum
+    1 first with `normalize_weights`, and Maya never rewrites it (`_set`).
     """
 
     UNDO_EDIT = "SkinCluster.set_weights"
 
     def __init__(
         self,
-        skincluster: SkinCluster,
-        weights:     np.ndarray,
-        indices:     None | np.ndarray = None,
+        skincluster:       SkinCluster,
+        weights:           np.ndarray,
+        indices:           None | np.ndarray = None,
+        normalize_weights: bool              = False,
     ) -> None:
         super().__init__()
 
@@ -767,28 +779,46 @@ class _SetSkinWeightsCommand:
                 f"SkinCluster.set_weights: {len(weights)} weights for {count} points "
                 f"x {inf_count} influences of {_name_of(skincluster)}"
             )
+        if normalize_weights:
+            rows    = weights.reshape(count, inf_count)
+            sums    = rows.sum(axis=1, keepdims=True)
+            weights = np.divide(rows, sums, out=np.zeros_like(rows), where=sums != 0).ravel()
 
         # internal vars
         self._weights     = OpenMaya.MDoubleArray(weights)
         self._old_weights = None
         self._args        = [geom_path, comps, inf_ids]
+        self._mode        = self._fn_set.findPlug("normalizeWeights", False)
 
         _run_undoable(self)
 
+    def _set(self, weights: OpenMaya.MDoubleArray, return_old: bool):
+        """``MFnSkinCluster.setWeights`` of `weights` (each row as given), and the
+        old weights when `return_old`. Its ``normalize`` flag never rescales a row
+        that sets every influence, and a skin that normalizes as it is painted
+        (``normalizeWeights`` 1, interactive) rescales and warns whatever the flag
+        says, so that mode is off while Maya sets them and put back after (unless
+        the attribute is locked or driven: Maya then normalizes as before)."""
+        interactive = self._mode.asInt() == 1 and not (self._mode.isLocked or self._mode.isDestination)
+        if interactive:
+            self._mode.setInt(0)
+        try:
+            return self._fn_set.setWeights(*self._args, weights, False, return_old)
+        finally:
+            if interactive:
+                self._mode.setInt(1)
+
     def doIt(self) -> None:
         """Sets the requested weights and store the old weights for undo()."""
-        args              = self._args + [self._weights, True, True]
-        self._old_weights = self._fn_set.setWeights(*args)
+        self._old_weights = self._set(self._weights, True)
 
     def undoIt(self) -> None:
         """Sets the weights back to the old weights, prior to callign doIt()."""
-        args = self._args + [self._old_weights, True, False]
-        self._fn_set.setWeights(*args)
+        self._set(self._old_weights, False)
 
     def redoIt(self) -> None:
         """Sets the requested weights, do NOT store old weights."""
-        args = self._args + [self._weights, True, False]
-        self._fn_set.setWeights(*args)
+        self._set(self._weights, False)
 
 
 # the public names (user decision 2026-10-17: import leaks hidden)
