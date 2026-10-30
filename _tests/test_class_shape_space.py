@@ -426,13 +426,13 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
         with self.assertRaisesRegex(ValueError, refusal):
             target.load(path)
         np.testing.assert_array_equal(_local(target), before)
-        # data that holds no knots (an older cgmath's): the surface keeps its own
+        # re-pinned (user decision 2026-10-30, test_class_shape_decisions): data that holds no knots
+        # (an older cgmath's) on a surface uneven at degree 3 is refused too, the same words
         with _older_cgmath("BSplinePatchData", PATCH_FIELDS):
             data = source.serialize()
-        knots = list(target.get_fn_set().knotsInV())
-        target.load(data)
-        np.testing.assert_array_equal(_local(target), _local(source))
-        self.assertEqual(list(target.get_fn_set().knotsInV()), knots)
+        with self.assertRaisesRegex(ValueError, refusal):
+            target.load(data)
+        np.testing.assert_array_equal(_local(target), before)
 
     def test_evenly_spaced_knots_keep_their_range(self):
         """The counterpart of test_class_nurbs_create's 0..spans: knots that take another range

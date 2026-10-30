@@ -19,6 +19,9 @@
   now refuses with the loop to write.
 
 Each test failed at 8286cb8 (negative control), except the guards.
+
+Re-pinned for the user's decision of 2026-10-30: the class form takes ``world_space=`` itself (True
+freezes a new shape at its world positions), so it names no other form.
 """
 
 import logging
@@ -137,24 +140,18 @@ class TestTheArguments(_Case):
         geo, _skin = self.skinned()
         self.assert_refused(FileNotFoundError, "no file", lambda: SkinCluster.load(self.path("none.npz"), geo))
 
-    def test_the_class_form_names_the_instance_form(self):
+    def test_the_class_form_takes_a_space_of_its_own(self):
+        """Re-pinned (user decision 2026-10-30): world_space= of the class form says where a new
+        shape's points land, so it names no other form: only what it holds is refused."""
         t = cmds.polyCube(name="body", ch=False)[0]
         md = Mesh("bodyShape").serialize(include_uvs=False)
         crv = cmds.curve(name="crv", degree=1, point=[(0, 0, 0), (1, 0, 0)])
         cmds.rename(cmds.listRelatives(crv, shapes=True)[0], "crvShape")
         cd = NurbsCurve("crvShape").serialize()
-        for cls, data, what in ((Mesh, md, "mesh"), (NurbsCurve, cd, "curve")):
+        for cls, data in ((Mesh, md), (NurbsCurve, cd)):
             with self.subTest(cls=cls.__name__):
-                # re-pinned (user decision 2026-10-29: world_space= goes with transform=)
-                self.assert_refused(
-                    TypeError,
-                    rf"^{cls.__name__}.load\(...\) creates a new {what}: world_space= goes with transform= "
-                    rf"\({cls.__name__}.load\(path, transform='x', world_space=...\) makes the shape under the "
-                    rf"transform 'x'\); {cls.__name__}\('x'\).load\(path, world_space=...\) updates an existing "
-                    rf"{what} in place$",
-                    lambda: cls.load(data, world_space=False),
-                )
-        self.assert_refused(TypeError, r"^NurbsSurface.load\(...\) creates a new surface",
+                self.assertIsInstance(cls.load(data, world_space=False), cls)
+        self.assert_refused(TypeError, r"^NurbsSurface.load: the surface: got a BSplineData",
                             lambda: NurbsSurface.load(cd, world_space=True))
 
     def test_the_qualname_is_the_class_called(self):

@@ -375,9 +375,9 @@ Subclasses override `_create`, and that is where the signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')` |
-| `Mesh.create(mesh_data, *, name=, uv_data=, normals=True, transform=None, world_space=False)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and its matrix goes on the transform (the source's world matrix, as `serialize` writes it by default); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed); a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform. With `transform=`, the shape alone, under that transform (below) |
-| `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=, transform=None, world_space=False)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own, and its name and matrix as a `MeshData` does (on the `cgmath` that adds them). With `transform=`, the shape alone |
-| `NurbsSurface.create(data, *, name=, transform=None, world_space=False)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; its name and matrix as a curve's). With `transform=`, the shape alone |
+| `Mesh.create(mesh_data, uv_data=None, *, name=, normals=True, transform=None, world_space=False)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and its matrix goes on the transform (the source's world matrix, as `serialize` writes it by default); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed); a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform. With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
+| `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=, transform=None, world_space=False)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own, and its name and matrix as a `MeshData` does (on the `cgmath` that adds them). `transform=` and `world_space=` as `Mesh.create` takes them |
+| `NurbsSurface.create(data, *, name=, transform=None, world_space=False)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; its name and matrix as a curve's). `transform=` and `world_space=` as `Mesh.create` takes them |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
 | `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
@@ -388,15 +388,23 @@ Subclasses override `_create`, and that is where the signatures diverge:
 
 **A shape under an existing transform: `transform=`.** `Mesh.create`,
 `NurbsCurve.create` and `NurbsSurface.create` (and their class-form `load`)
-given `transform=` (a transform or a joint, by name or node) make the shape
-alone, under it: no transform is made. The shape is named `<transform>Shape`
-(the target's name without its namespace; Maya numbers it when a sibling has
-it: `ctlShape1`) or `name=` as given (Maya numbers only a sibling's name:
-`name='ctl'` under `ctl` makes `|ctl|ctl`, and `'ctl'` then names two nodes),
-and returned by its path under the target as the call named it (`Mesh('ctl')`
-would read the transform's first mesh; a joint is no transform to that
-lookup, so a shape under one is read by its own name). `world_space=`, a
-keyword, says how the data's points go there:
+given `transform=` (by name or node) make the shape alone, under it: no
+transform is made. `transform=` takes any node derived from transform: a
+transform, a joint, an `ikHandle`, a constraint, a `dagContainer`, a plug-in's
+`MPxTransform` control.
+
+The shape is named `<transform>Shape` in the target's namespace, whatever the
+current one (`transform='char:ctl'` makes `|char:ctl|char:ctlShape`; Maya
+numbers it when a sibling has it: `ctlShape1`), or `name=` as given (Maya
+numbers only a sibling's name: `name='ctl'` under `ctl` makes `|ctl|ctl`, and
+`'ctl'` then names two nodes). Under a referenced target it is a local node in
+the reference's namespace, which keeps its name through a save, a reopen, an
+unload and a reload of the reference (should the referenced file come to hold
+that name, Maya numbers the local one at the next open, and nothing is lost).
+The shape is returned by its path under the target as the call named it
+(`Mesh('ctl')` would read the transform's first mesh; a joint is no transform
+to that lookup, so a shape under one is read by its own name). `world_space=`,
+a keyword, says how the data's points go under it:
 
 | `world_space=` | The points (a mesh's normals with them) |
 |---|---|
@@ -421,18 +429,61 @@ is taken, as Maya's `parent` takes it, and so is a referenced one (the
 `parent` is recorded as a reference edit). An instanced target gets the
 shape under every instance: with `world_space=True` that is a `ValueError`
 before anything is made, since one set of points cannot sit where the data
-puts them under each. Under a mirrored target (a negative scale),
-`world_space=True` puts the points where the data does, but locks every
-normal of a mesh (Maya's own normals face the other way) and leaves a
-surface inside out against the source (its normals reversed), as
-`Mesh('x').load(path, world_space=True)` and `NurbsSurface('x').load(...)` do
-into a mirrored transform. Under a target scaled to 0 (Maya keeps 1e-12 in
-its world matrix), `world_space=True` still lands the points, through object
-points about 1e12 times out: setting the scale back blows the shape up. An
-error once the shape is under the target (a value an attribute keyword
-refuses) deletes it. `world_space=True` without `transform=` is a
-`TypeError` naming it: a new transform takes the data's matrix, so the shape
-lands where the data puts it either way.
+puts them under each. So is a singular target with `world_space=True`, naming
+it and its world scale, X, Y, Z (a scale of 0 on it or on a parent, which Maya
+keeps as 1e-12: its world 3x3 scales some direction by less than 1e-9, and the
+shape's object points would come out about 1e12 times out; a rotated child of
+a flat parent has no short axis, and the message adds that direction's scale);
+`world_space=False` takes the data's points there, and a scale of 1e-6 is
+taken either way. Under a mirrored target (a negative scale),
+`world_space=True` puts the points where the data does, but leaves a surface
+inside out against the source (its normals reversed), as
+`NurbsSurface('x').load(path, world_space=True)` does into a mirrored
+transform; a mesh's normals lock (below). An error once the shape is under the
+target (a value an attribute keyword refuses) deletes it.
+
+**Frozen at its world positions: `world_space=True` without `transform=`.**
+By default a new transform takes the data's matrix and the points stay the
+shape's own. `world_space=True` puts the matrix in the points instead (a
+mesh's normals through its inverse transpose, as under `transform=`) and the
+new transform sits at the origin with identity channels: the same world
+positions, frozen. So, for a `polyCube` named `box` moved to `(0, 10, 0)`, with
+`data, uvs = Mesh('box').serialize()`:
+
+| Call | The new transform | `vtx[0]`, object | `vtx[0]`, world |
+|---|---|---|---|
+| `Mesh.create(data, uvs, name='copyA')` | `t = (0, 10, 0)` | `(-0.5, -0.5, 0.5)` | `(-0.5, 9.5, 0.5)` |
+| `Mesh.create(data, uvs, name='copyB', world_space=True)` | `t = (0, 0, 0)` | `(-0.5, 9.5, 0.5)` | `(-0.5, 9.5, 0.5)` |
+
+The class-form `load` takes it the same way (`Mesh.load(path,
+world_space=True)` is `copyB` from a file), and so do `NurbsCurve` and
+`NurbsSurface`, their knots and forms kept. Data without a matrix (points,
+B-spline data of a `cgmath` without the field) or at the identity (world-space
+data) has nothing to freeze: the points stay as they are. An `Object`'s
+transform goes in the points the same way; its rotate order, and a lone
+`Object`'s visibility, which move nothing, still go on the new transform. From
+a mirrored matrix (a negative scale) a surface comes out inside out, as under
+a mirrored target. A matrix that is exactly singular (only data made by hand
+holds one: Maya keeps 1e-12 for a scale of 0) has no inverse for a mesh's
+normals: a `ValueError` before anything is made, and `normals=False` takes it.
+A matrix that is not finite is a `ValueError` before anything is made, for
+every class, under `transform=` too.
+
+**`world_space=True` can lock a mesh's normals**, under a target, frozen, and
+in `Mesh('x').load(path, world_space=True)`: they land where the data's do, and
+one that Maya's own normal of the moved points misses by more than 1e-4 is
+set, which locks it, whether the source locked it or not. What locks depends
+on the matrix the normals go through:
+
+| The matrix | What locks |
+|---|---|
+| A mirror (a negative scale) | every normal: Maya's own face the other way |
+| A non-uniform scale, a shear | nearly every soft normal: 988 of 994 on a 32 x 32 `polySphere` at a scale of `(1, 2, 3)`, 192 at `(1, 1.1, 1)` |
+| A move, a rotation, a uniform scale | only what float noise puts that far, on a dense or a far mesh: of those 994, none at `(1, 2, 3)`, 2 at `(100, 50, 30)`; 2,978 of 16,258 on a 128 x 128 `polySphere` there |
+
+The hard edges come through, and a hard-edged cube locks none but through a
+mirror. A locked normal stays as it is under a deformer: `normals=False` locks
+none, and loses the hard edges.
 
 A class built from a `cgmath` file has a `load` beside its `create`:
 `Mesh.load(path, ...)`, `NurbsCurve.load`, `NurbsSurface.load`,
@@ -664,16 +715,14 @@ From a node it updates that node in place, the inverse of its `save`:
   its other sets stay);
 - a `NurbsCurve` of the same CV count, degree, form and knots, a
   `NurbsSurface` of the same CV counts, degrees and forms (it keeps its own
-  knots: data that holds knots must hold these), with no history, gets its
-  CVs, in the same spaces: the file's CVs as its own by default,
-  `world_space=True` where the data's matrix puts them in the world (a
-  `BSplineData` of a `cgmath` without the field holds no matrix: its CVs are
-  taken as world positions). The space is a bool, by keyword only:
-  `load(path, True)`, or `world_space=` anything but a bool, is a `TypeError`
-  before the file is read. A file saved in world space,
-  `save(world_space=True)`, loads with `world_space=True`: the default would
-  take its world positions as the shape's own, moved by the transform,
-  silently;
+  knots: data that holds knots must hold these, and data that holds none in a
+  direction, a `cgmath` without the fields or Maya's default ones, says even
+  knots there: the surface's must be, or of degree 1, whose uneven knots only
+  reparametrize; of degree 2 or more they would make another shape, the same
+  `ValueError` as other knots), with no history, gets its CVs, in the same
+  spaces: the file's CVs as its own by default, `world_space=True` where the
+  data's matrix puts them in the world (a `BSplineData` of a `cgmath` without
+  the field holds no matrix: its CVs are taken as world positions);
 - a `SkinCluster` gets the file's weights as `set_weights(SkinData)` sets
   them (influences by name, the missing ones added, the ones the file does
   not name removed); the influences and the weights it holds already (within
@@ -683,16 +732,22 @@ From a node it updates that node in place, the inverse of its `save`:
   target mesh (its `inputGeomTarget` input, logged at INFO), whose offsets
   would replace the file's at the next evaluation.
 
+The space of a `Mesh`, `NurbsCurve` or `NurbsSurface` update is a bool, by
+keyword only: `world_space=` anything but a bool is a `TypeError` before the
+file is read, and `load(path, True)` is a `TypeError` too (a mesh takes the
+`True` for `uvs`), nothing changed. A file saved in world space,
+`save(world_space=True)`, loads with `world_space=True`: the default would
+take its world positions as the shape's own, moved by the transform, silently.
+
 Another topology or CV layout, or a shape with history, is a `ValueError`
 naming `Cls.load(path)` for a new node. A deformed shape (a skin, a
 blendShape, a cluster) names the shape under its deformers instead, its
 intermediate `...Orig` shape: `Mesh('bodyShapeOrig').load(path)` updates the
 mesh a skin deforms, and the deformed shape follows (deleting the history
 would delete the deformers); a deformed curve or surface names
-`NurbsCurve('crvShapeOrig').load(path)` the same way. The class form takes `world_space=` only with
-`transform=` (the shape under an existing transform, read before the file is): without it, either
-value is a `TypeError` naming both, `Mesh.load(path, transform='x', world_space=...)` and
-`Mesh('x').load(path, world_space=...)`. A hierarchy is never updated in place
+`NurbsCurve('crvShapeOrig').load(path)` the same way. The class form takes `world_space=` as
+`create` does: under `transform=` (read before the file is), or without it frozen at the world
+positions. A hierarchy is never updated in place
 (its transforms are what the rig hangs off: constraints, skins, children):
 `Transform('root').load_hierarchy(...)` is a `TypeError` before anything is
 read, naming `Transform.load_hierarchy(path, parent='root')`.
@@ -748,7 +803,10 @@ transform-derived types with a warning; `create_hierarchy` does the same
 on the way back and creates parents first. A user attribute that holds any
 data (a `rig.Typed`) is written as `attributeType: "typed"`, its value
 only the numbers it holds (`[[index, value], ...]` for a multi): what a
-connection fed it is not saved, as no connection is.
+connection fed it is not saved, as no connection is. A user attribute that
+holds geometry (typed `mesh`, `nurbsCurve`, `nurbsSurface`, `lattice` ...
+data, empty or not) is skipped, with a warning: its value never loads back
+(a compound keeps its other children, and goes when it has none left).
 
 `serialize_hierarchy(bindpose=True)` reads the hierarchy at its bind pose:
 the result is what `serialize_hierarchy()` would return after Maya's own
@@ -828,8 +886,7 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
 - **Local / object space is the default**, as in Maya's API: points,
   matrices, pivots, bounding boxes, hierarchies, shape data and its files.
   World space is always asked for, with `world_space=True` by keyword (a
-  bool given by position is a `TypeError`); one query is world space and
-  takes no keyword, `Mesh.get_per_face_vertex_normals()`. A local matrix is
+  bool given by position is a `TypeError`). A local matrix is
   `.matrix`, in the parent's space without the offset parent matrix; a
   pivot is a point in the node's object space; a bounding box is in the
   parent's space; a shape's data holds its object-space points and its
@@ -1052,8 +1109,8 @@ Verified on Maya 2025; not bugs to work around blindly.
   and its bind pose (a load binds at the joints' current pose, as
   `cmds.skinCluster` does); a blendShape's weights (they come back 0), its
   in-betweens and its live target meshes (they come back as offsets); a
-  hierarchy's constraints (skipped with a warning), connections, and shapes
-  other than locators.
+  hierarchy's constraints and user attributes that hold geometry (both skipped
+  with a warning), connections, and shapes other than locators.
 - **A mesh's shading comes back as normals, and an edge's smoothing flag where
   it shades nothing may not.** A border edge reads hard in Maya and comes back
   smooth; a hard edge whose two faces' normals agree anyway comes back smooth.

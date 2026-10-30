@@ -572,7 +572,9 @@ print(DisplayLayer.for_node(clean), cube.duplicate_geometry(parent=grp).get_long
 Serialisation goes through `cgmath.hierarchy`: one node to a
 `TransformData`, a whole branch to a `HierarchyData`. Only `transform` and
 `joint` nodes (and a transform holding a locator) are captured; constraints
-and the like are skipped with a warning.
+and the like are skipped with a warning, and so is a user attribute that
+holds geometry (typed `mesh`, `nurbsCurve`, `nurbsSurface`, `lattice` ...
+data: its value never loads back).
 
 ```python
 cube.add_attr("weight", attributeType="double").set(0.5)
@@ -904,7 +906,7 @@ try:
     mesh.get_closest_point(Node("persp").t)                                         # a point is a value: .t.get()
 except TypeError as e:
     print(e)                                                                        # Mesh.get_closest_point takes a point (an MPoint, or 3 numbers), not the plug 'persp.translate': pass its value, Plug('persp.translate').get()
-print(mesh.get_vertex_normals()[0], len(mesh.get_per_face_vertex_normals()))        # (-0.57735, -0.57735, 0.57735) 24
+print(mesh.get_vertex_normals()[0], len(mesh.get_per_face_vertex_normals()))        # (-0.57735, -0.57735, 0.57735) 24 -- object space; world_space=True for the world's
 print(mesh.get_vertices_above_plane(np.array([0.0, 0, 0]), np.array([0.0, 1, 0])))  # [2 3 4 5]
 print(mesh.get_faces_above_plane(np.array([0.0, 0, 0]), np.array([0.0, 1, 0])))     # [1]
 ```
@@ -957,16 +959,18 @@ hero = Mesh.create(Object(name="hero", mesh=data, uv=uv_list[0], translate=(5, 0
 print(repr(hero), hero.get_parent().t.get(), hero.get_uv_sets())   # Mesh("heroShape") [5. 0. 0.] ('map1',)
 ```
 
-`transform=` makes the shape alone, under a transform (or a joint) that
-exists: no transform is made. The shape is named `<transform>Shape` (or
-`name=`, as given) and returned by its path; the call is one undo step that
-keeps the selection and the hilite list, and the UV sets and the shading
-come as they do without it. `world_space=` (a keyword, False by default)
-says how the data's points go there: False takes them as the shape's own
-(an `Object`'s transform is not used), True puts them where the data puts
-them in the world (through its matrix, an `Object`'s transform), in the
-transform's space. Without `transform=`, `world_space=True` is a
-`TypeError` naming it.
+`transform=` makes the shape alone, under any node derived from transform
+that exists (a transform, a joint, an `ikHandle`, a constraint ...): no
+transform is made. The shape is named `<transform>Shape` in the target's
+namespace (`transform="char:ctl"` makes `|char:ctl|char:ctlShape`), or `name=`,
+as given, and returned by its path; the call is one undo step that keeps the
+selection and the hilite list, and the UV sets and the shading come as they
+do without it. `world_space=` (a keyword, False by default) says how the
+data's points go there: False takes them as the shape's own (an `Object`'s
+transform is not used), True puts them where the data puts them in the world
+(through its matrix, an `Object`'s transform), in the transform's space. A
+singular target (a scale of 0) with True is a `ValueError`: no object points
+land there.
 
 ```python
 def first(shape, world_space=False):
@@ -983,10 +987,30 @@ print(first(put, world_space=True), first(put))                   # [-0.5 -0.5  
 hard = sum(not own.get_fn_set().isEdgeSmooth(e) for e in range(12))
 cmds.undo()                    # one step: the last shape goes, ctl stays
 print(ctl.get_shapes(), hard)  # [Mesh("ctlShape")] 12 -- the data's hard edges came too
+flat = Transform.create(name="flat", sy=0)
 try:
-    Mesh.create(data, world_space=True)
-except TypeError as e:
-    print(str(e).split(" (")[0])  # Mesh.create(): world_space=True goes with transform=
+    Mesh.create(data, transform=flat, world_space=True)
+except ValueError as e:
+    print(str(e).split(", so ")[0])  # Mesh.create(): 'flat' is singular (its world scale is (1, 1e-12, 1))
+```
+
+Without `transform=`, the new transform takes the data's matrix by default.
+`world_space=True` freezes the shape at its world positions instead: the
+matrix goes in the points (the normals through its inverse transpose) and the
+new transform sits at the origin with identity channels. `Mesh.load(path,
+world_space=True)` is the same from a file. Normals that land away from what
+Maya computes for the moved points lock: nearly every soft one through a
+non-uniform scale, as under `transform=` (the README has the numbers).
+
+```python
+Node(cmds.polyCube(name="box", ch=False)[0]).t.set(0, 10, 0)
+box_data, box_uvs = Mesh("box").serialize()
+copy_a = Mesh.create(box_data, box_uvs, name="copyA")                    # the matrix on the transform
+copy_b = Mesh.create(box_data, box_uvs, name="copyB", world_space=True)  # the matrix in the points
+print(copy_a.get_parent().t.get(), first(copy_a), first(copy_a, world_space=True))  # [ 0. 10.  0.] [-0.5 -0.5  0.5] [-0.5  9.5  0.5]
+print(copy_b.get_parent().t.get(), first(copy_b), first(copy_b, world_space=True))  # [0. 0. 0.] [-0.5  9.5  0.5] [-0.5  9.5  0.5]
+under = Mesh.create(box_data, box_uvs, transform=ctl, world_space=True)  # unchanged: where the box is, under ctl
+print(first(under, world_space=True))                                              # [-0.5  9.5  0.5]
 ```
 
 To and from files: `save` writes the `MeshData` to one `cgmath` file and, with
@@ -1016,6 +1040,8 @@ copy.load(*paths)                                            # ... and updated i
 print(sum(not copy.get_fn_set().isEdgeSmooth(e) for e in range(12)))    # 12
 fast = Mesh.load(*paths, name="fast", normals=False)         # creates, the shading skipped
 print(sum(not fast.get_fn_set().isEdgeSmooth(e) for e in range(12)))    # 0
+frozen = Mesh.load(Mesh("box").save(os.path.join(folder, "box.npz")), world_space=True)  # copyB, from a file
+print(frozen.get_parent().t.get(), first(frozen), first(frozen, world_space=True))       # [0. 0. 0.] [-0.5  9.5  0.5] [-0.5  9.5  0.5]
 try:
     Mesh.load(paths[1], paths[0])                            # the two files swapped
 except TypeError as e:
@@ -1175,8 +1201,10 @@ shape is, and a surface's knots come back evenly spaced, over `0..spans`
 only reparametrized, one of degree 2 or more comes back another shape). Both
 classes save and load `cgmath` files: from the class `load` creates, from a
 shape it updates the CVs in place (the same CV layout; a surface keeps its
-own knots), object space by default, or where the data's matrix puts them in
-the world with `world_space=True`, a keyword.
+own knots, and takes data without knots only in a direction whose own are
+even, or of degree 1: uneven ones of degree 2 or more are refused, the CVs
+would make another shape), object space by default, or where the data's
+matrix puts them in the world with `world_space=True`, a keyword.
 
 ```python
 import os
@@ -1206,8 +1234,9 @@ except TypeError as e:
 
 Both classes take `transform=` and `world_space=`, on `create` and on the
 class-form `load`, as `Mesh.create` does: a shape under a joint, more shapes
-under one control. The class-form `load` takes `world_space=` only with
-`transform=`.
+under one control, and without `transform=`, `world_space=True` freezes the
+CVs at their world positions, the new transform at the origin (data without
+a matrix, a `cgmath` without the field, has nothing to freeze).
 
 ```python
 hand = Joint.create(name="hand", t=(2, 0, 0), r=(0, 0, 45))
@@ -1217,10 +1246,8 @@ pad  = NurbsSurface.create(ball.serialize(), transform="hand", name="pad")      
 print(repr(ring), repr(tip), repr(pad), ring.get_parent())  # NurbsCurve("handShape") NurbsCurve("handShape1") NurbsSurface("pad") hand
 ends = np.round([np.array(ring.get_points(world_space=True))[1, :3], np.array(tip.get_points())[1, :3]], 6)
 print(ends[0], ends[1])  # [1. 0. 0.] [1. 0. 0.] -- crv's second CV in the world; the file's own, moved with hand
-try:
-    NurbsCurve.load(saved, world_space=True)  # no transform=: a TypeError naming both forms
-except TypeError as e:
-    print(str(e).split(" (")[0])  # NurbsCurve.load(...) creates a new curve: world_space= goes with transform=
+frozen = NurbsCurve.create(again.serialize(), name="frozen", world_space=True)  # again is at (0, 0, 5)
+print(frozen.get_parent().t.get())  # [0. 0. 0.] -- its CVs hold the matrix
 ```
 
 ---

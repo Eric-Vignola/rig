@@ -1520,9 +1520,11 @@ So do the typed creators of [`rig.nodetypes`](nodetypes/README.md)
 subclass of your own), by the rules of `Node.create`: an explicit name takes
 the flattened prefix, and `container=False` leaves the node out. A shape made
 under an existing transform (`Mesh.create(data, transform="ctl")`, the same
-for `NurbsCurve` and `NurbsSurface`) joins alone: the transform stays out.
-Display layers, sets, shading engines, materials and references are scene
-registries, found again by name: they stay out unless `container=True`.
+for `NurbsCurve` and `NurbsSurface`) joins alone: the transform stays out,
+and its default name, `ctlShape`, is the transform's, in the transform's
+namespace, without the prefix. Display layers, sets, shading engines,
+materials and references are scene registries, found again by name: they stay
+out unless `container=True`.
 `Transform.define("x")` in a scope keys the name the create would make (with
 the prefix), and finds only a node the containers of the scope own: a
 re-run of a build in the same scene is refused, naming the container to

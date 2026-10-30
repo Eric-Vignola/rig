@@ -29,9 +29,9 @@ OWN_TYPES = ("npz", "json", "pkl")
 # the extensions of the assets cgmath's classes read
 ASSET_TYPES = ("obj", "fbx", "glb", "gltf", "usd", "usda", "usdc", "usdz")
 
-# what ``world_space=`` says beside ``transform=`` (a shape's create, its class-form load), for
-# the TypeError of a value that is no bool (`space_flag`)
-UNDER_TRANSFORM = "how the data's points go under transform="
+# what ``world_space=`` says on a shape's create and its class-form load, for the TypeError of a
+# value that is no bool (`space_flag`)
+CREATING_SPACE = "where the data's points land: in the world, or as the shape's own"
 
 
 def is_path(src) -> bool:
@@ -79,38 +79,6 @@ def check_order(call: str, first, second) -> None:
             f"{call} takes the file first, then the geometry: got {_shown(first)} first "
             f"and {_shown(second)} second"
         )
-
-
-def creating_space_needs_transform(cls_name: str, what: str, kwargs: dict, transform=None) -> None:
-    """The class form of ``load`` creates: ``world_space=`` goes with ``transform=``
-    (the new shape under an existing transform, `transform`), else it is the
-    update's keyword (``Mesh('x').load(path, world_space=True)``). Given without
-    ``transform=``, it is a TypeError naming both, before any file is read."""
-    if "world_space" in kwargs and transform is None:
-        raise TypeError(
-            f"{cls_name}.load(...) creates a new {what}: world_space= goes with transform= "
-            f"({cls_name}.load(path, transform='x', world_space=...) makes the shape under the "
-            f"transform 'x'); {cls_name}('x').load(path, world_space=...) updates an existing "
-            f"{what} in place"
-        )
-
-
-def creating_space(cls_name: str, transform, world_space) -> bool:
-    """``world_space=`` of a shape's ``create`` (`cls_name`'s), checked before anything
-    is made: a bool (`space_flag`), and True only with ``transform=`` (`transform`),
-    whose space the data's points are taken into: without it a new transform takes
-    the data's matrix, and True is a TypeError naming ``transform=``. False, the
-    default, is never refused."""
-    method      = f"{cls_name}.create()"
-    world_space = space_flag(method, world_space, UNDER_TRANSFORM)
-    if world_space and transform is None:
-        raise TypeError(
-            f"{method}: world_space=True goes with transform= ({cls_name}.create(data, "
-            f"transform='x', world_space=True) makes the shape under the transform 'x', its points "
-            f"where the data puts them in the world); without it, the new transform takes the "
-            f"data's matrix"
-        )
-    return world_space
 
 
 def space_flag(method: str, world_space, meaning: str = "the space the file was saved in") -> bool:

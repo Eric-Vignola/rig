@@ -88,6 +88,19 @@ TYPED_DATA_NAMES = _MappingProxyType({
     OpenMaya.MFnData.kMatrix:      "matrix",
 })
 
+# the typed data that is geometry: a user attribute of these reads back an MFn set (None while it
+# is empty), which no file takes and no cmds.setAttr() sets, so serialize() skips it
+_GEOMETRY_DATA = frozenset({
+    OpenMaya.MFnData.kMesh,
+    OpenMaya.MFnData.kNurbsCurve,
+    OpenMaya.MFnData.kNurbsSurface,
+    OpenMaya.MFnData.kLattice,
+    OpenMaya.MFnData.kSubdSurface,
+    OpenMaya.MFnData.kSphere,
+    OpenMaya.MFnData.kDynSweptGeometry,
+    OpenMaya.MFnData.kPluginGeometry,
+})
+
 # array data types older serialized hierarchies stored under "attributeType",
 # cmds.addAttr() only accepts them as "dataType".
 # "matrix" is left out, it is valid as both.
@@ -99,6 +112,19 @@ LEGACY_DATA_TYPES = (
     "vectorArray",
     "pointArray",
 )
+
+
+def _holds_geometry(attribute: OpenMaya.MObject) -> bool:
+    """True for an attribute (its MObject) of a `_GEOMETRY_DATA` type, or a compound whose
+    children all are (nothing of it loads back). A generic slot, of any data, is not: only the
+    numbers it holds are written."""
+    if attribute.hasFn(OpenMaya.MFn.kTypedAttribute):
+        return OpenMaya.MFnTypedAttribute(attribute).attrType() in _GEOMETRY_DATA
+    if not attribute.hasFn(OpenMaya.MFn.kCompoundAttribute):
+        return False
+    compound = OpenMaya.MFnCompoundAttribute(attribute)
+    children = [compound.child(i) for i in range(compound.numChildren())]
+    return bool(children) and all(_holds_geometry(child) for child in children)
 
 
 def _create_nested(node_type: str, **kwargs) -> DAGNode:
@@ -574,8 +600,15 @@ class Transform(DAGNode):
     def _serialize_user_attr(att: Attribute) -> dict:
         """Returns the cmds.addAttr() spec of a user defined attr, with its value,
         keyable and channel box states. Compound parents carry no value, their
-        children do. Multi values are [logical index, value] pairs.
+        children do. Multi values are [logical index, value] pairs. An attr that
+        holds geometry (`_holds_geometry`) raises, whatever it holds right now:
+        `serialize` skips it, with a warning (a compound's spec counts the
+        children that load back).
         """
+        mobject = type(att)._raw_get_mobject(att)
+        if _holds_geometry(mobject):
+            raise ValueError("it holds geometry, whose value never loads back")
+
         data = {}
 
         # a typed attr that holds any data (a Typed spec's): addAttr(attributeType=
@@ -622,7 +655,10 @@ class Transform(DAGNode):
                 data["attributeType"] = type(att)._raw_get_data_type(att)
 
             if att._mplug.isCompound:
-                data["numberOfChildren"] = type(att)._raw_get_num_children(att)
+                compound = OpenMaya.MFnCompoundAttribute(mobject)
+                data["numberOfChildren"] = sum(
+                    not _holds_geometry(compound.child(i)) for i in range(compound.numChildren())
+                )
             else:
                 data["value"] = att.get()
 
@@ -661,6 +697,10 @@ class Transform(DAGNode):
         every node the pose does not hold (an end joint that is no influence,
         a helper added after the bind) keep the scene's values. At the bind
         pose the result is bit-identical to ``bindpose=False``.
+
+        A user attribute that holds geometry (typed ``mesh``, ``nurbsCurve``,
+        ``nurbsSurface``, ``lattice`` ... data) is skipped, with a warning: its
+        value never loads back.
 
         Raises (every check runs before anything is read into the result):
             TypeError: ``bindpose`` is not False, True, a str or a node.

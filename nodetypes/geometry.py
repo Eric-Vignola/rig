@@ -169,6 +169,10 @@ def _data_matrix(shape, world_space: bool) -> np.ndarray:
 # -relative``), the ride deleted and the shape named, inside the typed create, so in its one
 # undo step and its container frame
 
+# the least a target's world 3x3 may scale along any direction with ``world_space=True``: Maya
+# keeps 1e-12 for a scale of 0 (under it a shape's object points would come out 1e12 times out)
+_SINGULAR_SCALE = 1e-9
+
 
 def _shape_target(method: str, transform: Any, world_space: bool) -> OpenMaya.MDagPath:
     """The transform ``transform=`` names for a new shape (`method`: ``"Mesh.create()"``), read
@@ -178,7 +182,10 @@ def _shape_target(method: str, transform: Any, world_space: bool) -> OpenMaya.MD
     joint, or another node type derived from transform, is one. A locked or a referenced target
     is taken, as Maya's ``parent`` takes it. With `world_space`, an instanced target (itself or
     a parent) is a ValueError: the shape goes under every instance, and one set of points
-    cannot sit where the data puts them under each."""
+    cannot sit where the data puts them under each. So is a singular one (`_SINGULAR_SCALE`, a
+    scale of 0 on it or on a parent, read off its world 3x3's singular values: a rotated child
+    of a flat parent has no short axis, and is as flat): no object points land there. The
+    message gives its axes' lengths, X, Y, Z, and the flat direction's when no axis is short."""
     from rig.nodetypes.transform import Transform
 
     try:
@@ -186,7 +193,8 @@ def _shape_target(method: str, transform: Any, world_space: bool) -> OpenMaya.MD
     except NodeTypeError as error:
         raise NodeTypeError(
             error.name, "transform", error.node_type,
-            message=f"{method}: transform= is the transform (or joint) the new shape goes under: {error}",
+            message=f"{method}: transform= is the transform (or a node derived from one) the new "
+                    f"shape goes under: {error}",
         ) from None
     path = OpenMaya.MDagPath(type(node).get_mdagpath(node))
     if world_space and OpenMaya.MFnDagNode(path).isInstanced(True):
@@ -196,28 +204,45 @@ def _shape_target(method: str, transform: Any, world_space: bool) -> OpenMaya.MD
             f"goes under every instance, so world_space=True has no one place to put the points; "
             f"world_space=False (the default) takes the data's points as the shape's own"
         )
+    if world_space:
+        world = np.array(path.inclusiveMatrix()).reshape(4, 4)[:3, :3]
+        least = np.linalg.svd(world, compute_uv=False)[-1]
+        if least < _SINGULAR_SCALE:
+            axes = np.linalg.norm(world, axis=1)
+            flat = "" if axes.min() < _SINGULAR_SCALE else f", but it scales one direction by {least:.3g}"
+            raise ValueError(
+                f"{method}: {path.partialPathName()!r} is singular (its world scale is "
+                f"({', '.join(f'{axis:.3g}' for axis in axes)}){flat}), so world_space=True has no "
+                f"object points that land where the data puts them; world_space=False (the default) "
+                f"takes the data's points as the shape's own"
+            )
     return path
 
 
-def _target_space(matrix: Any, target: OpenMaya.MDagPath) -> np.ndarray:
+def _target_space(method: str, matrix: Any, target: OpenMaya.MDagPath | None) -> np.ndarray:
     """``(4, 4)``, row vectors as Maya's: from where data puts its points in the world, through
     its `matrix` (None: the identity, data without one), into the space of the transform
-    `target`, ``matrix @ inverse(the target's world matrix)`` (``world_space=True``). Maya's
-    world matrix always has one: a scale of 0 is 1e-12 in it."""
-    inverse = np.linalg.inv(np.array(target.inclusiveMatrix()).reshape(4, 4))
-    if matrix is None:
-        return inverse
-    return np.asarray(matrix, dtype=np.float64).reshape(4, 4) @ inverse
+    `target`, ``matrix @ inverse(the target's world matrix)``; with no `target`, a new transform
+    that stays at the origin, the world itself (``world_space=True``, either way). `_shape_target`
+    refused a target whose world matrix has no inverse to speak of; a `matrix` that is not finite
+    is a ValueError naming `method`, before anything is made."""
+    matrix = np.eye(4) if matrix is None else np.asarray(matrix, dtype=np.float64).reshape(4, 4)
+    if not np.isfinite(matrix).all():
+        raise ValueError(f"{method}: the data's matrix must be finite (got nan or inf)")
+    if target is None:
+        return matrix
+    return matrix @ np.linalg.inv(np.array(target.inclusiveMatrix()).reshape(4, 4))
 
 
 def _shape_name(target: OpenMaya.MDagPath, name: str | None) -> str:
     """The name of a new shape under `target`: `name` as given (no transform is made, so it
-    names the shape), else the target's own name without its namespace, then ``Shape``
-    (``ctlShape``; Maya numbers it when a sibling has it: ``ctlShape1``). The shape is named in
-    the current namespace, as every new node is."""
+    names the shape), else the target's own absolute name, its namespace with it, then ``Shape``
+    (``:char:ctlShape``, whatever the current namespace; Maya numbers it when a sibling has it:
+    ``ctlShape1``). Under a referenced target that is a local node in the reference's namespace,
+    which comes back with the scene."""
     if name:
         return name
-    return f"{OpenMaya.MFnDagNode(target).name().rpartition(':')[2]}Shape"
+    return f"{OpenMaya.MFnDagNode(target).absoluteName()}Shape"
 
 
 def _put_under(shape: OpenMaya.MObject, ride: OpenMaya.MObject, target: OpenMaya.MDagPath, name: str) -> str:

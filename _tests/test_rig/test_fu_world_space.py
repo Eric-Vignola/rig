@@ -18,6 +18,10 @@ space by default, so a default save and a default load pair up (and a BSplineDat
 matrix, as a MeshData does, on the cgmath that adds it). The required keyword is gone; its bool
 check stays (anything but a bool is a TypeError, before the file is read): the tests pin the
 default, the keyword, the check and each space's round trip.
+
+Re-pinned for the user's decision of 2026-10-30: the class forms take ``world_space=`` without
+``transform=`` too, where True freezes the new shape at its world positions; the bool check is
+theirs as well.
 """
 
 import inspect
@@ -157,11 +161,13 @@ class TestTheOtherFormsKeepTheirRules(_SpaceCase):
         Mesh(t).load(path)
         np.testing.assert_allclose(np.array(Mesh(t).get_points())[:, :3], local, atol=1e-6)
 
-    def test_the_class_forms_take_none(self):
-        """guard: creating takes no world_space= without transform=."""
+    def test_the_class_forms_take_a_bool(self):
+        """Re-pinned (user decision 2026-10-30: world_space= without transform= freezes the shape
+        at its world positions, test_class_shape_decisions): a bool, by keyword."""
         for cls, shape, _data in self.cases():
             with self.subTest(cls=cls.__name__):
                 path = cls(shape).save(self.path(f"{shape}.npz"))
-                self.assert_refused(TypeError, rf"^{cls.__name__}.load\(...\) creates a new ",
-                                    lambda: cls.load(path, world_space=True))
+                self.assert_refused(TypeError, rf"^{cls.__name__}\.load: world_space= takes True or False",
+                                    lambda: cls.load(path, world_space=None))
+                self.assertIsInstance(cls.load(path, world_space=True), cls)
                 self.assertIsInstance(cls.load(path), cls)

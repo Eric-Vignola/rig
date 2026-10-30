@@ -7,8 +7,8 @@ with ``world_space=`` (keyword-only, False by default) saying how the data's poi
   data's matrix is not used.
 * True: they land where the data puts them in the world, through its matrix, taken into the
   target's space (the inverse of its world matrix; the normals through the inverse transpose).
-  Without ``transform=`` it is a TypeError naming it, on create and on the class-form load (whose
-  ``world_space=`` given without ``transform=`` stays refused, whatever its value).
+  Without ``transform=`` it freezes the shape there (test_class_shape_decisions, commit 3, as for
+  a singular target and the shape's namespace).
 
 The shape rides the usual recorded ``createNode`` transform, then goes under the target (as
 ``parent -shape -relative``: a journaled API edit, the selection and the hilite list never
@@ -295,7 +295,8 @@ class TestLockedAndReferencedTargets(_Case):
         source = _cube()
         cmds.flushUndo()
         shape = Mesh.create(*_args(source), transform="ref:refctl", world_space=True)
-        self.assertEqual(shape.get_long_name(), "|ref:refctl|refctlShape")
+        # re-pinned (user decision 2026-10-30): the default name is in the target's namespace
+        self.assertEqual(shape.get_long_name(), "|ref:refctl|ref:refctlShape")
         np.testing.assert_allclose(_world(shape), _world(source), atol=1e-5)
         node  = cmds.referenceQuery("ref:refctl", referenceNode=True)
         edits = cmds.referenceQuery(node, editStrings=True)
@@ -305,7 +306,7 @@ class TestLockedAndReferencedTargets(_Case):
         self.assertEqual(_children("|ref:refctl"), [])
         self.assertEqual(cmds.referenceQuery(node, editStrings=True), [])
         self.redo_steps(1)
-        self.assertEqual(cmds.ls(uuid, long=True), ["|ref:refctl|refctlShape"])
+        self.assertEqual(cmds.ls(uuid, long=True), ["|ref:refctl|ref:refctlShape"])
         self.assertEqual(cmds.referenceQuery(node, editStrings=True), edits)
 
 
@@ -379,8 +380,9 @@ class TestTheTargetIsReadFirst(_Case):
                 with self.subTest(cls=cls.__name__, target=str(target)):
                     self.assert_nothing_made(
                         TypeError,
-                        rf"^{cls.__name__}\.create\(\): transform= is the transform \(or joint\) the new shape "
-                        rf"goes under: '{shown}' is an? {kind}, not a transform",
+                        # re-pinned (user decision 2026-10-30): any node derived from transform is one
+                        rf"^{cls.__name__}\.create\(\): transform= is the transform \(or a node derived from one\) "
+                        rf"the new shape goes under: '{shown}' is an? {kind}, not a transform",
                         lambda: cls.create(*args[cls], transform=target),
                     )
         with self.assertRaises(NodeTypeError):
@@ -393,8 +395,9 @@ class TestTheTargetIsReadFirst(_Case):
             with self.subTest(value=value):
                 self.assert_nothing_made(
                     TypeError,
-                    rf"^Mesh\.create\(\): world_space= takes True or False \(how the data's points go under "
-                    rf"transform=\), not {value!r}$",
+                    # re-pinned (user decision 2026-10-30): world_space= says this without transform= too
+                    rf"^Mesh\.create\(\): world_space= takes True or False \(where the data's points land: in the "
+                    rf"world, or as the shape's own\), not {value!r}$",
                     lambda: Mesh.create(*args, transform=target, world_space=value),
                 )
 
@@ -409,8 +412,8 @@ class TestTheTargetIsReadFirst(_Case):
                 with self.subTest(cls=cls.__name__, value=value):
                     self.assert_nothing_made(
                         TypeError,
-                        rf"^{cls.__name__}\.load: world_space= takes True or False \(how the data's points go "
-                        rf"under transform=\), not {value!r}$",
+                        rf"^{cls.__name__}\.load: world_space= takes True or False \(where the data's points "
+                        rf"land: in the world, or as the shape's own\), not {value!r}$",
                         lambda: cls.load(path, transform=target, world_space=value),
                     )
 
@@ -560,13 +563,14 @@ class TestTheShapeName(_Case):
         made   = [Mesh.create(*args, transform=target, name=name) for name in ("petal", "ctlShape7", "petal")]
         self.assertEqual([s.get_long_name() for s in made], ["|ctl|petal", "|ctl|ctlShape7", "|ctl|petal1"])
 
-    def test_the_target_s_namespace_is_left_out(self):
+    def test_the_target_s_namespace_goes_with_the_default_name(self):
+        """Re-pinned (user decision 2026-10-30): it was left out, the current namespace's instead."""
         cmds.namespace(add="char")
         target = cmds.createNode("transform", name="char:ctl")
         source = _cube()
-        self.assertEqual(Mesh.create(*_args(source), transform=target).get_long_name(), "|char:ctl|ctlShape")
-        cmds.namespace(set=":char")
         self.assertEqual(Mesh.create(*_args(source), transform=target).get_long_name(), "|char:ctl|char:ctlShape")
+        cmds.namespace(set=":char")
+        self.assertEqual(Mesh.create(*_args(source), transform=target).get_long_name(), "|char:ctl|char:ctlShape1")
 
 
 class TestInAContainer(_Case):
@@ -730,36 +734,25 @@ class TestTheClassFormLoad(_Case):
                 self.assertEqual((parameter.kind, parameter.default), (inspect.Parameter.KEYWORD_ONLY, None))
 
 
-class TestWorldSpaceGoesWithTransform(_Case):
-    def test_create_refuses_true_without_transform(self):
+class TestTheKeywords(_Case):
+    def test_create_takes_the_space_without_transform(self):
+        """Re-pinned (user decision 2026-10-30): True was refused; it freezes the shape now
+        (test_class_shape_decisions), and False stays the default: a new transform either way."""
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 args = _args(_source(cls))
-                self.assert_nothing_made(
-                    TypeError,
-                    rf"^{cls.__name__}\.create\(\): world_space=True goes with transform= \({cls.__name__}\.create\("
-                    r"data, transform='x', world_space=True\) makes the shape under the transform 'x', its "
-                    r"points where the data puts them in the world\); without it, the new transform takes the "
-                    r"data's matrix$",
-                    lambda: cls.create(*args, world_space=True),
-                )
-                # False is the default: a new transform, as without it
+                self.assertIsInstance(cls.create(*args, world_space=True), cls)
                 self.assertIsInstance(cls.create(*args, world_space=False), cls)
+                np.testing.assert_array_equal(_local(cls.create(*args, world_space=False)), _local(cls.create(*args)))
 
-    def test_the_class_form_load_refuses_it_without_transform(self):
+    def test_the_class_form_load_takes_it_without_transform(self):
+        """Re-pinned (user decision 2026-10-30): it was refused whatever its value."""
         folder = self.folder()
         for cls, what in ((Mesh, "mesh"), (NurbsCurve, "curve"), (NurbsSurface, "surface")):
             path = _source(cls).save(os.path.join(folder, f"{what}.npz"))
             for value in (False, True):
                 with self.subTest(cls=cls.__name__, world_space=value):
-                    self.assert_nothing_made(
-                        TypeError,
-                        rf"^{cls.__name__}\.load\(\.\.\.\) creates a new {what}: world_space= goes with transform= "
-                        rf"\({cls.__name__}\.load\(path, transform='x', world_space=\.\.\.\) makes the shape under "
-                        rf"the transform 'x'\); {cls.__name__}\('x'\)\.load\(path, world_space=\.\.\.\) updates an "
-                        rf"existing {what} in place$",
-                        lambda: cls.load(path, world_space=value),
-                    )
+                    self.assertIsInstance(cls.load(path, world_space=value), cls)
 
     def test_the_create_signatures(self):
         for cls in CLASSES:
