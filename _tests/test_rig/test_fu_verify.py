@@ -16,6 +16,11 @@
   each under Maya's import hook); they read the modules bound once.
 
 Each test failed at 878ba98 (negative control), except the guards.
+
+Re-pinned for the user's decision of 2026-10-29 (object space by default, world space by
+``world_space=True`` alone, by keyword): the NURBS updates in place take no required space, so
+the deformed hint names ``load(path)``, as the mesh's does, and a positional argument is
+Python's own TypeError, which names the method, ``NurbsCurve.load()``.
 """
 
 import builtins
@@ -88,7 +93,8 @@ class _Deformed(_Case):
 
 
 class TestTheDeformedHint(_Deformed):
-    def test_a_curve_and_a_surface_name_the_required_space(self):
+    def test_a_curve_and_a_surface_name_the_load_under_the_deformers(self):
+        # re-pinned (2026-10-29): the load the default save pairs with, load(path), as the mesh's
         for cls, make, file in (
             (NurbsCurve, self.deformed_curve, "crv.npz"),
             (NurbsSurface, self.deformed_surface, "patch.npz"),
@@ -99,15 +105,15 @@ class TestTheDeformedHint(_Deformed):
                 self.assert_refused(
                     ValueError,
                     rf"is deformed \(cluHandleCluster\).*: {cls.__name__}\('{shape}Orig'\)"
-                    r"\.load\(path, world_space=\.\.\.\) updates the shape under them",
-                    lambda: cls(shape).load(self.path(file), world_space=True),
+                    r"\.load\(path\) updates the shape under them",
+                    lambda: cls(shape).load(self.path(file)),
                 )
                 # the route it names works: the shape under the cluster takes the file,
                 # and the deformed one follows
                 cmds.xform(f"{shape}Orig.cv[1]" if cls is NurbsCurve else f"{shape}Orig.cv[1][1]",
                            translation=(0, 7, 0), relative=True)
                 moved = _cvs(f"{shape}Orig")
-                cls(f"{shape}Orig").load(self.path(file), world_space=True)
+                cls(f"{shape}Orig").load(self.path(file))
                 self.assertFalse(np.allclose(_cvs(f"{shape}Orig"), moved))
                 np.testing.assert_allclose(_cvs(shape)[1], _cvs(f"{shape}Orig")[1], atol=1e-6)
                 cmds.file(new=True, force=True)
@@ -133,7 +139,9 @@ class TestAPositionalSpace(_Case):
             (NurbsSurface, cmds.listRelatives(patch, shapes=True)[0]),
         ]
 
-    def test_by_position_is_a_type_error_naming_the_keyword(self):
+    def test_by_position_is_a_type_error_naming_the_method(self):
+        # re-pinned (2026-10-29): Python's own TypeError, which names the method (not the
+        # _load_into it runs), before the file is read
         for cls, shape in self.cases():
             path = cls(shape).save(self.path(f"{shape}.npz"))
             data = cls(shape).serialize()
@@ -145,9 +153,8 @@ class TestAPositionalSpace(_Case):
                     with mock.patch.object(_files, "read", wraps=_files.read) as read:
                         self.assert_refused(
                             TypeError,
-                            f"^{re.escape(cls.__name__)}\\('{shape}'\\)\\.load takes the file, then "
-                            f"world_space= by keyword: load\\(path, world_space=\\.\\.\\.\\), not "
-                            f"load\\(path, {re.escape(shown)}\\)$",
+                            f"^{re.escape(cls.__name__)}\\.load\\(\\) takes 2 positional arguments but "
+                            f"{2 + len(args)} were given$",
                             lambda: cls(shape).load(path, *args),
                         )
                     read.assert_not_called()
@@ -156,12 +163,13 @@ class TestAPositionalSpace(_Case):
             self.assert_kept_selection()
 
     def test_by_keyword_still_loads(self):
-        """guard: the keyword form, and the signature, as before."""
+        """guard: the keyword form, and the signature, as before (re-pinned: the default loads
+        too, in object space; a world-space file by keyword for the world load)."""
         for cls, shape in self.cases():
             with self.subTest(cls=cls.__name__):
-                path = cls(shape).save(self.path(f"{shape}.npz"))
+                path = cls(shape).save(self.path(f"{shape}.npz"), world_space=True)
                 self.assertIs(cls(shape).load(path, world_space=True).__class__, cls)
-                self.assert_refused(TypeError, "needs world_space=", lambda: cls(shape).load(path))
+                self.assertIs(cls(shape).load(cls(shape).save(path)).__class__, cls)
 
 
 class TestNoImportPerStatement(MayaTestCase):

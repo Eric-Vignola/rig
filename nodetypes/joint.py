@@ -221,17 +221,38 @@ class Joint(Transform):
         for c in self.get_children(allDescendents=True):
             c.rename(replace_suffix(c, suffix))
 
-    def match_hierarchy(self, target: "Joint", world_space: bool = False) -> None:
-        """Matches the matrix positions of hierarchy of two joints."""
+    def match_hierarchy(self, target: "Joint", *, world_space: bool = False) -> None:
+        """Matches the skeleton of this joint onto the target's, joint by joint
+        (`match_matrix`): the root joints of both (found through any of their
+        joints, a root included), then the joints below them, paired in
+        ``listRelatives`` order (the skeletons must have the same layout),
+        parents before children.
+
+        Args:
+            target: A joint of the skeleton to match, or its name.
+            world_space: By keyword only. False (the default): each joint takes
+                the local matrix of its pair, a pose copy (the skeleton lands on
+                the target's when the roots' parents are at the same place).
+                True: each joint lands on the world matrix of its pair, its
+                parent placed first.
+
+        Raises:
+            RuntimeError: the skeletons hold different numbers of joints.
+
+        One undo step per joint, as each is set: Maya's redo of one step around
+        them all solves each joint with the inverse scale it had before the
+        redo, which misplaces the joints under a parent whose scale the match
+        changed.
+        """
 
         if isinstance(target, str):
             target = Joint(target)
 
-        # get root joints
-        root        = self.get_root_joint()
-        target_root = target.get_root_joint()
+        # get root joints (a root joint has none above it: it is its own)
+        root        = self.get_root_joint() or self
+        target_root = target.get_root_joint() or target
 
-        # check num of children
+        # every joint, parents first (listRelatives -ad lists the deepest first)
         child_joints = root.get_children(
             allDescendents=True, noIntermediate=True, type="joint"
         )
@@ -242,14 +263,10 @@ class Joint(Transform):
         if len(child_joints) != len(target_child_joints):
             raise RuntimeError("mismatch in number of joints")
 
-        # match root matrix
-        self.match_matrix(target_root, world_space=world_space)
-
-        # match children matrices
-        for i in range(len(target_child_joints)):
-            child_joints[i].match_matrix(
-                target_child_joints[i], world_space=world_space
-            )
+        joints        = [root] + child_joints[::-1]
+        target_joints = [target_root] + target_child_joints[::-1]
+        for joint, target_joint in zip(joints, target_joints):
+            joint.match_matrix(target_joint, world_space=world_space)
 
     def convert_orients_to_rotation(self):
         """converts joint orientation into rotations"""

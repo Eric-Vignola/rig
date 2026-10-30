@@ -29,7 +29,7 @@ from rig.nodetypes._base import _cast
 from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _positional_name, DGNode
-from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal, iter_component_tokens
+from rig.nodetypes.geometry import Geometry, _data_matrix, _shape_create_name, deformed_refusal, iter_component_tokens
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.plugins import _run_undoable
@@ -44,7 +44,7 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
         body = Mesh.load("body_mesh.npz", "body_uv.npz", name="body")
 
-    ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=True, normals=True)``,
+    ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=False, normals=True)``,
     from a mesh, UPDATES that mesh in place, the inverse of
     ``Mesh('bodyShape').save(...)``::
 
@@ -62,10 +62,11 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
         name, container, attrs: (creating) as `create` takes them. None: the
             data's name (``cubeShape`` names the transform ``cube``), else
             ``polySurface<N>``.
-        world_space: (updating) True: the points land where the data puts them
-            in the world (through its matrix, or an Object's transform); the
-            transform is not moved. False: the data's points become the mesh's
-            own, object space (the inverse of ``save(world_space=False)``).
+        world_space: (updating) By keyword only. False (the default): the
+            data's points become the mesh's own, object space (the inverse of
+            ``save()``). True: the points land where the data puts them in the
+            world (through its matrix, or an Object's transform; the inverse of
+            ``save(world_space=True)`` too); the transform is not moved.
         normals: (both forms) a restore flag, as `create` takes it. True: the
             data's normals bring back the hard edges and locked normals.
             False: skipped, for speed: a new mesh is all smooth, an updated
@@ -181,8 +182,9 @@ def _refuse_rig_points(points: Any, method: str, many: bool = False) -> None:
         what = f"the plug {name!r}"
     else:
         fix  = (
-            f"pass a position: Node({_name_of(bad)!r}).get_rotate_pivot() (world space) "
-            f"or its translate's value, .t.get()"
+            f"pass a position: Node({_name_of(bad)!r}).get_rotate_pivot(world_space=True), in "
+            f"world space (then world_space=True here too: object space is the default), or its "
+            f"translate's value, .t.get(), in its parent's space"
         )
         what = f"the node {_name_of(bad)!r}"
     raise TypeError(f"Mesh.{method} takes {takes}, not {what}: {fix}")
@@ -276,13 +278,18 @@ class Mesh(Geometry):
         """Creates a mesh object from a mesh data object.
 
         Args:
-            mesh_data: A MeshData object. Or a ``cgmath.render.scene.Object``,
-                which stands for the mesh and its UVs: the mesh is built from
-                its ``mesh``, with its ``uv`` (a UVData is one UV set, a UVList
-                every set), named after it, and its transform (scale, rotate,
-                translate, rotate order, rotate axis, visibility) goes on the
-                new transform node. Its render settings (texture, colours,
-                wireframe ...) and its skin are not used.
+            mesh_data: A MeshData object: its points are the new shape's own,
+                and its matrix (the world matrix of the transform they are
+                relative to, `serialize`'s by default; the identity for
+                world-space points) goes on the new transform node, so the
+                mesh lands where the data puts it in the world. Or a
+                ``cgmath.render.scene.Object``, which stands for the mesh and
+                its UVs: the mesh is built from its ``mesh``, with its ``uv``
+                (a UVData is one UV set, a UVList every set), named after it,
+                and its transform (scale, rotate, translate, rotate order,
+                rotate axis, visibility) goes on the new transform node. Its
+                render settings (texture, colours, wireframe ...) and its skin
+                are not used.
             uv_data: One or more UVData objects. The first one fills the default
                 set (``map1``, renamed to its name when that differs); each
                 other one becomes a new set of its name, in order. Given with
@@ -322,7 +329,8 @@ class Mesh(Geometry):
         differ at one of its ends, and a normal Maya then computes away from
         the data's is set and locked (a locked normal of the source). So
         ``Mesh.create(*m.serialize())`` gives back ``m``'s hard edges and
-        locked normals. Data without normals (an ``.obj``, a MeshData built by
+        locked normals, its points as ``m``'s own and its transform at ``m``'s
+        world matrix. Data without normals (an ``.obj``, a MeshData built by
         hand) is all smooth. The restore costs, over a create without it
         (2.0.0a5's): within 1.5x for a mostly smooth mesh, 1.75x to 2.6x for
         a faceted or heavily locked one; ``normals=False`` skips it.
@@ -372,11 +380,12 @@ class Mesh(Geometry):
         """Returns the number of faces."""
         return type(self)._raw_get_fn_set(self).numPolygons
 
-    def get_points(self, world_space: bool = True) -> OpenMaya.MPointArray:
+    def get_points(self, *, world_space: bool = False) -> OpenMaya.MPointArray:
         """Get the vertex points of the mesh.
 
         Args:
-            world_space: If True, query points in world space, otherwise object space.
+            world_space: By keyword only. False (the default): object space;
+                True: world space.
 
         Returns:
             A MPointArray of the mesh's vertices.
@@ -385,7 +394,7 @@ class Mesh(Geometry):
         return type(self)._raw_get_fn_set(self).getPoints(space)
 
     def set_points(
-        self, points: OpenMaya.MPointArray, world_space: bool = False
+        self, points: OpenMaya.MPointArray, *, world_space: bool = False
     ) -> None:
         """Set the vertex points of the mesh: one undo step.
 
@@ -393,8 +402,8 @@ class Mesh(Geometry):
             points: One point per vertex: an MPointArray, a point sequence (list
                 or numpy array) or a MeshData (its points). Copied: changing it
                 afterwards changes nothing.
-            world_space: If True, the points are in world space, otherwise in
-                object space.
+            world_space: By keyword only. False (the default): the points are
+                in object space; True: in world space.
 
         Raises:
             ValueError: before any edit, when there is not one point per vertex.
@@ -428,9 +437,16 @@ class Mesh(Geometry):
     def get_closest_point(
         self,
         point:       OpenMaya.MPoint | list[float] | np.ndarray,
-        world_space: bool                                       = True,
+        *,
+        world_space: bool                                       = False,
     ) -> OpenMaya.MPoint:
-        """Returns the closest mesh surface point to a given point in space."""
+        """Returns the closest mesh surface point to a given point in space.
+
+        Args:
+            point: The point, in the space `world_space` names.
+            world_space: By keyword only. False (the default): `point` and the
+                closest point are in object space; True: in world space.
+        """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         if not isinstance(point, OpenMaya.MPoint):
             _refuse_rig_points(point, "get_closest_point")
@@ -442,9 +458,15 @@ class Mesh(Geometry):
         point:       np.ndarray,
         normal:      np.ndarray,
         offset:      float | None = None,
-        world_space: bool         = True,
+        *,
+        world_space: bool         = False,
     ) -> list[int]:
-        """Returns list of vertex numbers that are above the provided point and normal."""
+        """Returns list of vertex numbers that are above the provided point and normal.
+
+        Args:
+            world_space: By keyword only. False (the default): the plane is in
+                object space; True: in world space.
+        """
         _point = point.copy()
         if offset:
             _point += offset * normal
@@ -464,9 +486,15 @@ class Mesh(Geometry):
         point:       np.ndarray,
         normal:      np.ndarray,
         offset:      float | None = None,
-        world_space: bool         = True,
+        *,
+        world_space: bool         = False,
     ) -> list[int]:
-        """Returns list of face numbers that are above the provided point and normal."""
+        """Returns list of face numbers that are above the provided point and normal.
+
+        Args:
+            world_space: By keyword only. False (the default): the plane is in
+                object space; True: in world space.
+        """
         vert_indices = self.get_vertices_above_plane(
             point, normal, offset=offset, world_space=world_space
         )
@@ -492,9 +520,17 @@ class Mesh(Geometry):
         self,
         point:       OpenMaya.MPoint | list[float] | np.ndarray,
         uv_set:      str             | None,
-        world_space: bool                                       = True,
+        *,
+        world_space: bool                                       = False,
     ) -> OpenMaya.MPoint:
-        """Returns the UV coordinates of the mesh at a given point."""
+        """Returns the UV coordinates of the mesh at a given point.
+
+        Args:
+            point: The point, in the space `world_space` names.
+            uv_set: The UV set; None: the current one.
+            world_space: By keyword only. False (the default): `point` is in
+                object space; True: in world space.
+        """
         space  = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         uv_set = uv_set or type(self).get_current_uv_set(self)
         if not isinstance(point, OpenMaya.MPoint):
@@ -503,15 +539,24 @@ class Mesh(Geometry):
         return type(self)._raw_get_fn_set(self).getUVAtPoint(point, space, uv_set)
 
     def get_vertex_normals(
-        self, angle_weighted: bool = False, world_space: bool = True
+        self, angle_weighted: bool = False, *, world_space: bool = False
     ) -> OpenMaya.MFloatVectorArray:
-        """Returns the vertex normals of the mesh."""
+        """Returns the vertex normals of the mesh.
+
+        Args:
+            angle_weighted: If True, each face's normal weighs by its angle at
+                the vertex.
+            world_space: By keyword only. False (the default): object space;
+                True: world space.
+        """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         return type(self)._raw_get_fn_set(self).getVertexNormals(angle_weighted, space)
 
     def get_per_face_vertex_normals(self):
         """
-        For a given mesh, return a list of per face vertex normals.
+        For a given mesh, return a list of per face vertex normals, in world
+        space (it takes no world_space=: the one query that does not default
+        to object space).
         Return:
             OpenMaya.MFloatVectorArray:  list of normals
         """
@@ -841,13 +886,19 @@ class Mesh(Geometry):
         )
 
     def serialize(
-        self, world_space: bool = True, include_uvs: bool = True
+        self, *, world_space: bool = False, include_uvs: bool = True
     ) -> MeshData | tuple[MeshData, UVList]:
-        """Serialize this mesh.
+        """Serialize this mesh, the inverse of `create`.
 
         Args:
-            world_space: If True, stores the worldSpace matrix
-            include_uvs: If True, serialize all uv sets. Otherwise skip them.
+            world_space: By keyword only. False (the default): the points and
+                normals in object space, and in ``matrix`` the world matrix of
+                the transform they are relative to (its ``worldMatrix[0]``;
+                for an instanced shape, the instance the points are read
+                through): `create` puts it on its new transform. True: in
+                world space, with the identity matrix.
+            include_uvs: By keyword only. If True, serialize all uv sets.
+                Otherwise skip them.
 
         Returns:
             A MeshData object or (MeshData, [UVData]).
@@ -884,10 +935,7 @@ class Mesh(Geometry):
             )
 
         # record desired matrix
-        if world_space:
-            mesh_data.matrix = np.eye(4)
-        else:
-            mesh_data.matrix = np.array(self.get_parent().find_attr("wm").get()).reshape(4, 4)
+        mesh_data.matrix = _data_matrix(self, world_space)
 
         if include_uvs:
             uv_list = UVList([self.serialize_uv(x) for x in type(self).get_uv_sets(self)])
@@ -900,10 +948,10 @@ class Mesh(Geometry):
 
     def save(
         self,
-        path:        str | os.PathLike,
-        uvs:         str | os.PathLike | None = None,
+        path:        str  | os.PathLike,
+        uvs:         str  | os.PathLike | None = None,
         *,
-        world_space: bool                     = True,
+        world_space: bool                      = False,
     ) -> str | tuple[str, str]:
         """Saves this mesh to a cgmath file: its MeshData (`serialize`), and with
         `uvs` its UV sets (a UVList) to a second file. The inverse of `load`.
@@ -915,8 +963,10 @@ class Mesh(Geometry):
                 runs code when it is read).
             uvs: The UVs' file (same rules), another path than `path`. None:
                 the UVs are not saved (a MeshData holds none).
-            world_space: True: world-space points; False: object-space points
-                and the transform's world matrix (as `serialize`).
+            world_space: By keyword only. False (the default): object-space
+                points and the transform's world matrix; True: world-space
+                points (as `serialize`). The update in place,
+                ``Mesh('x').load(path)``, takes the same one.
 
         Returns:
             `path`, or ``(path, uvs)``, each as written (``~`` expanded).
@@ -951,7 +1001,7 @@ class Mesh(Geometry):
             return cls.create(data, uv_data, name=name, container=container, normals=normals, **kwargs)
 
     @_statement
-    def _load_into(self, mesh, uvs=None, *, world_space=True, normals=True, **kwargs):
+    def _load_into(self, mesh, uvs=None, *, world_space=False, normals=True, **kwargs):
         method = f"Mesh({_name_of(self)!r}).load"
         if kwargs:
             raise TypeError(
@@ -1471,9 +1521,12 @@ def _resampler(src, dst, mode=None):
     "UV data not supplied.")."""
     from cgmath.geometry.resample import MeshDataResampler, ResampleMode
 
+    # world space: cgmath samples the points as they are (it never reads a MeshData's matrix)
     if mode != ResampleMode.UV:
-        return MeshDataResampler(src.serialize(include_uvs=False), dst.serialize(include_uvs=False))
-    (src_data, src_uvs), (dst_data, dst_uvs) = src.serialize(), dst.serialize()
+        return MeshDataResampler(
+            src.serialize(world_space=True, include_uvs=False), dst.serialize(world_space=True, include_uvs=False)
+        )
+    (src_data, src_uvs), (dst_data, dst_uvs) = src.serialize(world_space=True), dst.serialize(world_space=True)
     src_uv, dst_uv = (uvs[0] if uvs and np.size(uvs[0].points) else None for uvs in (src_uvs, dst_uvs))
     return MeshDataResampler(src_data, dst_data, src_uv, dst_uv)
 

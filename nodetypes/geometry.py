@@ -147,6 +147,18 @@ def _shape_create_name(name: str | None) -> str | None:
     return name or None
 
 
+def _data_matrix(shape, world_space: bool) -> np.ndarray:
+    """The ``matrix`` a shape's `serialize` writes (a MeshData's, and a cgmath
+    BSplineData's or BSplinePatchData's that has the field), ``(4, 4)``: the
+    identity for world-space points, else the world matrix of the transform
+    the object-space points are relative to, read through the shape's path,
+    as the points are (no ``getAttr``): its ``worldMatrix[0]``, unless the
+    shape is instanced (the path's own instance then)."""
+    if world_space:
+        return np.eye(4)
+    return np.array(type(shape).get_mdagpath(shape).inclusiveMatrix()).reshape(4, 4)
+
+
 class Geometry(DAGNode):
     """
     Base geometry node class
@@ -782,7 +794,7 @@ class Geometry(DAGNode):
 
 def deformed_refusal(
     method: str, name: str, node: OpenMaya.MObject, kind: int, cls_name: str,
-    connected: str, what: str, door: str, load_args: str = "path",
+    connected: str, what: str, door: str,
 ) -> str:
     """Why a node's ``load`` refuses shape ``name`` (MObject ``node``) with history,
     which would compute over the ``what`` it sets. A deformed shape (a skin, a
@@ -790,9 +802,7 @@ def deformed_refusal(
     intermediate ``...Orig`` shape of the kind ``kind`` (``cls_name('x').load``:
     the deformed shape follows its load), since deleting the history would delete
     the deformers; construction history names the delete. `door` names the
-    creating form, `load_args` the arguments of the named load as its caller must
-    give them (``path, world_space=...`` for a NURBS shape, whose instance load
-    requires the space). Read only."""
+    creating form. Read only."""
     upstream = OpenMaya.MItDependencyGraph(
         node,
         OpenMaya.MFn.kInvalid,
@@ -812,7 +822,7 @@ def deformed_refusal(
         upstream.next()
     if deformers:
         under = (
-            f"{cls_name}({orig!r}).load({load_args}) updates the shape under them (the deformed one "
+            f"{cls_name}({orig!r}).load(path) updates the shape under them (the deformed one "
             f"follows)"
             if orig is not None
             else "load the shape under them"

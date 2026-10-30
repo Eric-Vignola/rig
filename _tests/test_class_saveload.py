@@ -540,8 +540,9 @@ class TestMesh(_Case):
         world = _world_points("bodyShape")
         Mesh.load(path, uvs, name="copy")
         cmds.xform("copy", translation=(0, 10, 0), rotation=(0, 90, 0))
-        # world_space=True (the default): the points land where the file puts them
-        Mesh("copy").load(path)
+        # world_space=True (re-pinned, user decision 2026-10-29: by keyword; object space is the
+        # default): the points land where the file puts them
+        Mesh("copy").load(path, world_space=True)
         np.testing.assert_allclose(_world_points("copyShape"), world, atol=1e-5)
         self.assertEqual(cmds.getAttr("copy.t")[0], (0.0, 10.0, 0.0))  # the transform is not moved
         # world_space=False: the file's points become the mesh's own
@@ -648,7 +649,8 @@ class TestMesh(_Case):
         cmds.polyUVSet("copy", delete=True, uvSet="second")
         cmds.delete("copy", constructionHistory=True)
         world = _world_points("copyShape")
-        copy.load(self.path("hero.npz"))
+        # re-pinned (user decision 2026-10-29): the world route by keyword, object space the default
+        copy.load(self.path("hero.npz"), world_space=True)
         self.assertEqual(list(copy.get_uv_sets()), ["map1", "second"])
         # world space: the Object's transform places the points (the copy is where it is)
         self.assertFalse(np.allclose(_world_points("copyShape"), world, atol=1e-5))
@@ -691,36 +693,48 @@ class TestNurbsCurve(_Case):
         return {k: cmds.listRelatives(v, shapes=True)[0] for k, v in out.items()}
 
     def test_the_round_trip_in_each_format(self):
+        # re-pinned (user decision 2026-10-29): a world-space file by keyword (the default, object
+        # space, round-trips through the data's matrix: test_class_shape_space); the sources by
+        # their paths, since a new curve takes the data's name (curveShape2 makes another one)
         for label, shape in self.sources().items():
-            fn = NurbsCurve(shape).get_fn_set()
+            shape = cmds.ls(shape, long=True)[0]
+            fn    = NurbsCurve(shape).get_fn_set()
             for ext in FORMATS:
                 with self.subTest(label=label, ext=ext):
                     path = self.path(f"{label}.{ext}")
-                    self.assertEqual(NurbsCurve(shape).save(path), path)
+                    self.assertEqual(NurbsCurve(shape).save(path, world_space=True), path)
                     self.ready()
                     curve = NurbsCurve.load(path)
                     self.assertIsInstance(curve, NurbsCurve)
                     got = curve.get_fn_set()
                     self.assertEqual((got.numCVs, got.degree, got.form), (fn.numCVs, fn.degree, fn.form))
                     np.testing.assert_allclose(np.array(got.knots()), np.array(fn.knots()), atol=1e-9)
-                    np.testing.assert_allclose(_cvs(str(curve)), _cvs(shape), atol=1e-9)
+                    np.testing.assert_allclose(_cvs(curve.get_long_name()), _cvs(shape), atol=1e-9)
                     self.assert_kept_selection()
                     self.assertEqual(self.undo_name(), "rig.NurbsCurve.load")
 
     def test_world_space_false_loads_at_the_origin(self):
-        # a BSplineData has no matrix: the default world_space=True keeps where the curve is
-        shape = self.sources()["moved"]
-        NurbsCurve(shape).save(self.path("local.npz"), world_space=False)
+        # an older cgmath's BSplineData has no matrix (3.0.1's, stood in here): an object-space
+        # file loads at the origin, save in world space there to keep where the curve is (re-pinned:
+        # one with a matrix keeps it, test_class_shape_space)
+        from rig._tests.test_class_nurbs_create import CURVE_FIELDS, _older_cgmath
+
+        shape = cmds.ls(self.sources()["moved"], long=True)[0]
+        with _older_cgmath("BSplineData", CURVE_FIELDS):
+            NurbsCurve(shape).save(self.path("local.npz"), world_space=False)
         curve = NurbsCurve.load(self.path("local.npz"))
-        np.testing.assert_allclose(_cvs(str(curve)), _cvs(shape, world_space=False), atol=1e-9)
+        np.testing.assert_allclose(_cvs(curve.get_long_name()), _cvs(shape, world_space=False), atol=1e-9)
 
     def test_data_objects_paths_and_names(self):
         shape = self.sources()["circle"]
         data = NurbsCurve(shape).serialize()
         NurbsCurve(shape).save(self.path("c.npz"))
         first = NurbsCurve.load(data)
-        self.assertEqual(str(first.get_parent()), "curve1")
-        self.assertEqual(str(NurbsCurve.load(pathlib.Path(self.path("c.npz"))).get_parent()), "curve2")
+        # re-pinned: the data's name names it (circShape: circ1, circ2) on a cgmath whose
+        # BSplineData has one, else Maya's curve<N>
+        stem = "circ" if getattr(data, "name", None) else "curve"
+        self.assertEqual(str(first.get_parent()), f"{stem}1")
+        self.assertEqual(str(NurbsCurve.load(pathlib.Path(self.path("c.npz"))).get_parent()), f"{stem}2")
         self.assertEqual(str(NurbsCurve.load(self.path("c.npz"), name="ctl").get_parent()), "ctl")
         self.assertEqual(str(NurbsCurve.load(self.path("c.npz"), name="ctl").get_parent()), "ctl1")
         hidden = NurbsCurve.load(self.path("c.npz"), name="h", visibility=False)
@@ -819,12 +833,13 @@ class TestNurbsSurface(_Case):
         return {k: cmds.listRelatives(v, shapes=True)[0] for k, v in out.items()}
 
     def test_the_round_trip_in_each_format(self):
+        # re-pinned (user decision 2026-10-29): a world-space file by keyword, as the curve's
         for label, shape in self.sources().items():
             fn = NurbsSurface(shape).get_fn_set()
             for ext in FORMATS:
                 with self.subTest(label=label, ext=ext):
                     path = self.path(f"{label}.{ext}")
-                    self.assertEqual(NurbsSurface(shape).save(path), path)
+                    self.assertEqual(NurbsSurface(shape).save(path, world_space=True), path)
                     self.ready()
                     surface = NurbsSurface.load(path)
                     self.assertIsInstance(surface, NurbsSurface)
@@ -841,7 +856,9 @@ class TestNurbsSurface(_Case):
     def test_names_flags_and_wrong_inputs(self):
         shape = self.sources()["plane"]
         NurbsSurface(shape).save(self.path("p.npz"))
-        self.assertEqual(str(NurbsSurface.load(self.path("p.npz")).get_parent()), "surface1")
+        # re-pinned: the data's name names it on a cgmath whose BSplinePatchData has one
+        default = "plane1" if getattr(NurbsSurface(shape).serialize(), "name", None) else "surface1"
+        self.assertEqual(str(NurbsSurface.load(self.path("p.npz")).get_parent()), default)
         self.assertEqual(str(NurbsSurface.load(self.path("p.npz"), name="patch").get_parent()), "patch")
         self.assertFalse(cmds.getAttr(f"{NurbsSurface.load(self.path('p.npz'), name='h', visibility=False)}.visibility"))
         NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)]).save(self.path("c.npz"))
@@ -859,7 +876,8 @@ class TestNurbsSurface(_Case):
 
     def test_the_node_form_updates_the_cvs(self):
         shape = self.sources()["sphere"]
-        NurbsSurface(shape).save(self.path("s.npz"))
+        # re-pinned (user decision 2026-10-29): the world-space file the load below reads
+        NurbsSurface(shape).save(self.path("s.npz"), world_space=True)
         source = _cvs(shape)
         copy = NurbsSurface.load(self.path("s.npz"), name="copy")
         cmds.xform("copy.cv[0][0:3]", translation=(0, 2, 0), relative=True)
@@ -874,11 +892,12 @@ class TestNurbsSurface(_Case):
         np.testing.assert_allclose(_cvs(str(copy)), source, atol=1e-9)
 
     def test_the_node_form_keeps_its_knots(self):
-        # a BSplinePatchData holds no knots: an update keeps the surface's own
+        # an update keeps the surface's own knots (re-pinned: data that holds knots, on a cgmath
+        # whose BSplinePatchData takes them, holds these; an older one's holds none)
         shape = self.sources()["plane"]
         knots = np.array(NurbsSurface(shape).get_fn_set().knotsInU())
         NurbsSurface(shape).save(self.path("p.npz"))
-        NurbsSurface(shape).load(self.path("p.npz"), world_space=True)
+        NurbsSurface(shape).load(self.path("p.npz"))
         np.testing.assert_array_equal(np.array(NurbsSurface(shape).get_fn_set().knotsInU()), knots)
 
     def test_the_node_form_refuses_another_layout(self):
@@ -888,8 +907,8 @@ class TestNurbsSurface(_Case):
         self.assert_refused(
             ValueError,
             f"^NurbsSurface\\('planeShape'\\).load: {q} holds another CV layout than 'planeShape' \\(7 x 11 CVs of "
-            f"degrees 3 x 3 against its 6 x 5 of degrees 3 x 3, or other forms\\); a load updates the CVs of the "
-            f"same layout: NurbsSurface.load\\({q}\\) makes a new surface$",
+            f"degrees 3 x 3 against its 6 x 5 of degrees 3 x 3, or other forms or knots\\); a load updates the CVs "
+            f"of the same layout: NurbsSurface.load\\({q}\\) makes a new surface$",
             lambda: NurbsSurface(shapes["plane"]).load(self.path("s.npz"), world_space=True),
         )
 
@@ -1195,12 +1214,20 @@ class TestHierarchy(_Case):
         matrices = _world_matrices(["root", "spine"])
         rig_grp = Transform.create(name="rig_grp")
         rig_grp.t.set(10, 0, 0)
-        kept = Transform.load_hierarchy(self.path("skel.npz"), parent="rig_grp")
+        # re-pinned (user decision 2026-10-29: local by default): the world matrices by keyword
+        kept = Transform.load_hierarchy(self.path("skel.npz"), parent="rig_grp", world_space=True)
         self.assertEqual(kept[0].get_long_name(), "|rig_grp|root")
         np.testing.assert_allclose(_world_matrices([kept[1].get_long_name()])["spine"], matrices["spine"], atol=1e-9)
         local = Transform.load_hierarchy(self.path("skel.npz"), parent=rig_grp, world_space=False)
         self.assertEqual(local[0].get_long_name(), "|rig_grp|root1")
         self.assertEqual(cmds.getAttr(f"{local[0].get_long_name()}.t")[0], (0.0, 0.0, 0.0))
+        # the default: the file's values as local values, the branch moved with rig_grp
+        moved = Transform.load_hierarchy(self.path("skel.npz"), parent=rig_grp)
+        self.assertEqual(moved[0].get_long_name(), "|rig_grp|root2")
+        self.assertEqual(cmds.getAttr(f"{moved[0].get_long_name()}.t")[0], (0.0, 0.0, 0.0))
+        spine = _world_matrices([moved[1].get_long_name()])["spine"]
+        np.testing.assert_allclose(spine[:12], matrices["spine"][:12], atol=1e-9)
+        np.testing.assert_allclose(spine[12:15] - matrices["spine"][12:15], (10, 0, 0), atol=1e-9)
 
     def test_data_objects_paths_and_a_clip(self):
         root = _skeleton()

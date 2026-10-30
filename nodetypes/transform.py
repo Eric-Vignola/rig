@@ -25,7 +25,7 @@ LOGGER = logging.getLogger(__name__)
 
 _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData): it CREATES the nodes.
 
-    ``Transform.load_hierarchy(hierarchy, *, parent=None, world_space=True,
+    ``Transform.load_hierarchy(hierarchy, *, parent=None, world_space=False,
     container=None)`` (and ``Joint.load_hierarchy``, the same), from the class,
     makes the file's transforms, joints and locators, as `create_hierarchy`
     does, always (a second load of one file makes ``root1``)::
@@ -39,8 +39,12 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
             ClipData too: its frames are not used).
         parent: An existing node to make the roots under (`create_hierarchy`'s
             ``parent``). None: the world.
-        world_space: With `parent`: True keeps the roots' world matrices from
-            the file, False their local values (`create_hierarchy`'s).
+        world_space: With `parent` (without, it changes nothing), as
+            `create_hierarchy` takes it: False (the default), the roots' values
+            from the file as local values under `parent` (the file holds local
+            values: under the node it was saved under, it lands where it was,
+            as far as the channels it holds place it); True, the roots' world
+            matrices in the file (their values read as world values).
         container: Inside ``with container()``, whether the new nodes join the
             scope (None: yes), as for every typed create.
 
@@ -164,6 +168,25 @@ def _set_parent_uuid(node: TransformData, uuid: str | None) -> None:
     setattr(node, field, uuid)
 
 
+def _compensated_inverse_scale(node: DAGNode) -> np.ndarray | None:
+    """The inverse scale `Transform.set_matrix` takes out of the matrix of a
+    joint whose segment scale compensate is on and whose inverse scale is not
+    uniform and positive (a joint under a non-uniformly or negatively scaled
+    parent joint): ``xform -m`` misplaces the first, and flips the scale and
+    rotate of the second (which moves its compensated children, whose inverse
+    scale is its scale). None for every other node (a uniform positive
+    inverse scale, (2, 2, 2) say, ``xform -m`` sets exactly, its channels
+    kept)."""
+    if not type(node)._raw_get_mobject(node).hasFn(OpenMaya.MFn.kJoint):
+        return None
+    if not node.find_attr("segmentScaleCompensate").get():
+        return None
+    inverse_scale = node.find_attr("inverseScale").get()[0]
+    if inverse_scale[0] == inverse_scale[1] == inverse_scale[2] > 0:
+        return None
+    return np.array(inverse_scale, dtype=float)
+
+
 class Transform(DAGNode):
     """
     Transform node class
@@ -189,8 +212,9 @@ class Transform(DAGNode):
             parent: Parent of the duplicated geometry.
                 If None, parent to world.
             clean_sets: If True, remove the duplicate from display layers and sets.
-            clean_xform: If True, cleans xform by moving pivots
-                to origin and clean xform channels.
+            clean_xform: If True, freezes the duplicate's xform channels and
+                moves its pivots to its own origin (`set_pivots`' object
+                space: under a moved parent, the parent's origin).
 
         Returns:
             The duplicated geometry name.
@@ -338,13 +362,23 @@ class Transform(DAGNode):
         _cmds_edit.makeIdentity(_name_of(self), *args, **kwargs)
 
     def get_matrix(
-        self, world_space: bool = True, as_transform_matrix: bool = False
+        self, *, world_space: bool = False, as_transform_matrix: bool = False
     ) -> OpenMaya.MMatrix | OpenMaya.MTransformationMatrix:
-        """Returns the matrix of this node.
+        """Returns the matrix of this node: its local matrix by default, its
+        world matrix with ``world_space=True``.
+
+        The local matrix is ``.matrix`` (``xform -q -os -m``): the node's own
+        channels (a joint's orient, rotate axis and inverse scale too), in its
+        parent's space. It EXCLUDES ``offsetParentMatrix``: on a node with an
+        offset it is not relative to the parent (``.dagLocalMatrix`` is
+        ``.matrix`` times the offset). The world matrix is ``worldMatrix[0]``
+        (``.matrix`` times ``.parentMatrix``, the offset included).
 
         Args:
-            world_space: If True return world space matrix, otherwise object space.
-            as_transform_matrix: If True return MTransformationMatrix.
+            world_space: By keyword only. If True return the world matrix,
+                otherwise the local one.
+            as_transform_matrix: By keyword only. If True return an
+                MTransformationMatrix.
         """
         if world_space:
             attr = self.find_attr("worldMatrix")[0]
@@ -358,44 +392,131 @@ class Transform(DAGNode):
     def set_matrix(
         self,
         matrix:      OpenMaya.MMatrix | OpenMaya.MTransformationMatrix | list[float],
-        world_space: bool                                                            = True,
+        *,
+        world_space: bool                                                            = False,
     ) -> None:
-        """Sets the matrix of this node.
+        """Sets the matrix of this node, the inverse of `get_matrix`: its local
+        matrix by default (``xform -os -m``, so ``.matrix``, the offset parent
+        matrix left as it is), its world matrix with ``world_space=True``,
+        taken into the parent's space first (the offset parent matrix
+        included) and set as the local one: placed as ``xform -ws -m`` places
+        it, and redone exactly (Maya's redo of ``xform -ws -m`` takes the
+        parent's matrix out twice).
+
+        The matrix is exact, not every channel: a transform with pivots gets
+        its translate and pivot translates rewritten, and a negative scale can
+        come back on another axis, its rotate solved again (the node is placed
+        exactly, but a joint's segment scale compensated children, whose
+        inverse scale is its scale, move). A joint keeps its orient and rotate
+        axis: its rotate, scale and translate are solved. A joint holds no
+        shear, so a matrix that needs one (a world matrix under a non-uniformly
+        scaled parent, say) lands near, not on. A joint whose segment scale
+        compensate is on, under a non-uniformly or negatively scaled parent
+        joint (its inverse scale wired, as ``cmds.parent`` and the joint tools
+        leave it), is set exactly as well: ``xform -m`` alone misplaces it
+        (2.24 world units for its own matrix) or flips its scale and rotate;
+        its segment scale compensate is turned off for the set and back on,
+        also when the set fails, in one undo step (locked or driven, it is
+        Maya's RuntimeError, nothing set).
 
         Args:
-            matrix: The matrix to set.
-            world_space: If True set world space matrix, otherwise object space.
+            matrix: The matrix to set (16 numbers, an MMatrix or an
+                MTransformationMatrix).
+            world_space: By keyword only. If True set the world matrix,
+                otherwise the local one.
         """
         if isinstance(matrix, OpenMaya.MTransformationMatrix):
             matrix = matrix.asMatrix()
+        if world_space:
+            # into the parent's space, its offset parent matrix included: the local matrix
+            to_local = np.array(type(self).get_mdagpath(self).exclusiveMatrixInverse()).reshape(4, 4)
+            matrix   = (np.array(matrix, dtype=float).reshape(4, 4) @ to_local).ravel().tolist()
 
-        _cmds_edit.xform(
-            _name_of(self),
-            worldSpace  = world_space,
-            objectSpace = not world_space,
-            matrix      = matrix,
-        )
+        inverse_scale = _compensated_inverse_scale(self)
+        if inverse_scale is None:
+            _cmds_edit.xform(_name_of(self), objectSpace=True, matrix=matrix)
+            return
 
-    def get_rotate_pivot(self, world_space: bool = True) -> OpenMaya.MPoint:
-        """Returns the rotation pivot."""
+        # the segment scale compensated joint: the local matrix, its 3x3 times
+        # diag(inverse scale), set with the compensation off, gives the channels
+        # that hold the matrix once it is back on
+        local = np.array(matrix, dtype=float).reshape(4, 4)
+        local[:3, :3] *= inverse_scale
+        name = _name_of(self)
+        with _undo_chunk(f"rig.{type(self).__name__}.set_matrix"):
+            _cmds_edit.setAttr(f"{name}.segmentScaleCompensate", False)
+            try:
+                _cmds_edit.xform(name, objectSpace=True, matrix=local.ravel().tolist())
+            finally:
+                _cmds_edit.setAttr(f"{name}.segmentScaleCompensate", True)
+
+    def get_rotate_pivot(self, *, world_space: bool = False) -> OpenMaya.MPoint:
+        """Returns the rotate pivot, a point in this node's object space (its
+        own frame, as a point of a shape under it: ``xform -q -os -rp``), or
+        in world space with ``world_space=True`` (``xform -q -ws -rp``). The
+        object-space point times the world matrix is the world one. It is not
+        always the ``rotatePivot`` attribute's value (``xform -q -rp``).
+
+        Args:
+            world_space: By keyword only. If True, in world space.
+        """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         return type(self)._raw_get_fn_set(self).rotatePivot(space)
 
-    def get_scale_pivot(self, world_space: bool = True) -> OpenMaya.MPoint:
-        """Returns the scale pivot."""
+    def get_scale_pivot(self, *, world_space: bool = False) -> OpenMaya.MPoint:
+        """Returns the scale pivot, a point in this node's object space
+        (``xform -q -os -sp``), or in world space with ``world_space=True``
+        (``xform -q -ws -sp``), as `get_rotate_pivot`.
+
+        Args:
+            world_space: By keyword only. If True, in world space.
+        """
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         return type(self)._raw_get_fn_set(self).scalePivot(space)
 
     def set_pivots(
-        self, pivot: OpenMaya.MVector | list[float], world_space: bool = True
+        self, pivot: OpenMaya.MPoint | OpenMaya.MVector | list[float], *, world_space: bool = False
     ) -> None:
-        """Sets both the scale and rotate pivots."""
-        _cmds_edit.xform(_name_of(self), pivots=pivot, worldSpace=world_space)
+        """Sets both the scale and rotate pivots to one point, in this node's
+        object space (``xform -os -piv``) or, with ``world_space=True``, in
+        world space (``xform -ws -piv``): the spaces `get_rotate_pivot` and
+        `get_scale_pivot` read, so ``set_pivots(node.get_rotate_pivot())``
+        leaves the rotate pivot where it is, in either space. The node does
+        not move (Maya writes the pivot translates that keep it). A joint's
+        pivots are not set: Maya ignores ``xform -piv`` on a joint.
 
-    def match_matrix(
-        self, target_transform: Transform, world_space: bool = False
-    ) -> None:
-        """matches the matrix of another transform node"""
+        Args:
+            pivot: The point: an MPoint (as the getters return it), an
+                MVector or 3 numbers.
+            world_space: By keyword only. If True, in world space.
+        """
+        if isinstance(pivot, (OpenMaya.MPoint, OpenMaya.MFloatPoint)):
+            # 4 values, which xform refuses: the point's x, y, z (anything else goes to
+            # xform as given: OpenMaya would read a plug as a sequence and crash)
+            point = OpenMaya.MPoint(pivot).cartesianize()
+            pivot = (point.x, point.y, point.z)
+        _cmds_edit.xform(
+            _name_of(self),
+            pivots      = pivot,
+            worldSpace  = world_space,
+            objectSpace = not world_space,
+        )
+
+    def match_matrix(self, target_transform: Transform, *, world_space: bool = False) -> None:
+        """Matches the matrix of another transform node: its local matrix,
+        set as this node's (`get_matrix` / `set_matrix`), by default; its world
+        matrix with ``world_space=True``.
+
+        The local match is a pose copy: it puts this node on the target only
+        when both have the same parent space (siblings, say), as the values
+        are the same. ``world_space=True`` snaps this node onto the target
+        wherever their parents are (a joint holds no shear: under a
+        non-uniformly scaled parent it lands near).
+
+        Args:
+            target_transform: The transform node to match.
+            world_space: By keyword only. If True, match the world matrix.
+        """
         matrix = target_transform.get_matrix(world_space=world_space)
         self.set_matrix(matrix, world_space=world_space)
 
@@ -618,9 +739,10 @@ class Transform(DAGNode):
     @_typed_creator
     def create_hierarchy(
         cls,
-        hierarchy:  HierarchyData,
-        parent:     Union[str, None] = None,
-        world_space                  = True,
+        hierarchy:   HierarchyData,
+        parent:      Union[str, None] = None,
+        *,
+        world_space: bool             = False,
     ) -> List:
         """Creates a hierarchy from a HierarchyData object.
 
@@ -628,8 +750,21 @@ class Transform(DAGNode):
             hierarchy: A HierarchyData object (`serialize_hierarchy`); it is
                 left as it was.
             parent: An existing node to make the roots under. None: the world.
-            world_space: With `parent`: True keeps the roots' world matrices
-                from the data, False their local values.
+            world_space: By keyword only; it changes nothing without `parent`.
+                The data is local by nature: it holds each node's channels, no
+                matrix, and not where its root's parent was. False (the
+                default): the roots take their values as local values under
+                `parent`, so a hierarchy made again under the node it was
+                serialized under lands where it was, as far as the channels
+                place it (the data holds no offset parent matrix, pivot or
+                shear, and a joint made from it has no inverse scale wired).
+                True: each root keeps its world matrix in the data, its values
+                read as world values (its place in the scene it came from only
+                if its root sat at the world). A joint root lands off under a
+                scaled parent when its segment scale compensate is on (its
+                values take the parent's scale out as an inverse scale would,
+                and none is wired), and under a non-uniformly scaled one in any
+                case (it holds no shear).
 
         Returns:
             A List of the new nodes, typed as ``Transform.create`` types its
@@ -763,7 +898,8 @@ class Transform(DAGNode):
         cls,
         hierarchy:   HierarchyData,
         parent:      Union[str, None] = None,
-        world_space: bool             = True,
+        *,
+        world_space: bool             = False,
     ) -> list:
         """[Internal] `load_hierarchy`'s create, a typed creator (so it joins the
         container scope as `create_hierarchy` does): the new nodes, typed,
@@ -904,7 +1040,7 @@ class Transform(DAGNode):
         hierarchy,
         *,
         parent:      Union[str, DAGNode, None] = None,
-        world_space: bool                      = True,
+        world_space: bool                      = False,
         container:   bool | None               = None,
     ):
         from cgmath.hierarchy import HierarchyData
@@ -915,7 +1051,7 @@ class Transform(DAGNode):
         if isinstance(parent, DAGNode):
             parent = type(parent).get_long_name(parent)
         with _undo_chunk(f"rig.{cls.__name__}.load_hierarchy"):
-            return cls._load_built(data, parent, world_space, **kwargs)
+            return cls._load_built(data, parent, world_space=world_space, **kwargs)
 
     def _load_hierarchy_refused(self, *args, **kwargs):
         name = type(self).__name__

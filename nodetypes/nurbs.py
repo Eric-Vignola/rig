@@ -17,7 +17,7 @@ from rig._internal.journal import cmds_edit as _cmds_edit, statement as _stateme
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes.dg_node import _positional_name
-from rig.nodetypes.geometry import Geometry, _shape_create_name, deformed_refusal
+from rig.nodetypes.geometry import Geometry, _data_matrix, _shape_create_name, deformed_refusal
 from rig.nodetypes.plugins import _run_undoable
 
 LOGGER = logging.getLogger(__name__)
@@ -30,26 +30,26 @@ _CURVE_LOAD_DOC = """Loads a curve from a cgmath file (a BSplineData): one name,
 
         ctl = NurbsCurve.load("ctl.npz", name="ctl")
 
-    ``NurbsCurve('ctlShape').load(curve, *, world_space)``, from a curve,
+    ``NurbsCurve('ctlShape').load(curve, *, world_space=False)``, from a curve,
     UPDATES that curve's CVs in place, the inverse of
     ``NurbsCurve('ctlShape').save(...)``::
 
-        NurbsCurve("ctlShape").load("ctl.npz", world_space=True)
+        NurbsCurve("ctlShape").load("ctl.npz")
 
     Args:
         curve: The file (a str or os.PathLike, ``~`` expanded; a cgmath
             ``.npz`` / ``.json`` / ``.pkl``), or the BSplineData itself.
-        name, container, attrs: (creating) as `create` takes them. A
-            BSplineData carries no name: None gives Maya's ``curve<N>``.
-        world_space: (updating, REQUIRED: no default) the space the file was
-            saved in. True: the CVs are world-space positions (``save()``'s
-            default); False: object space (``save(world_space=False)``). A
-            BSplineData holds no space (a MeshData holds its matrix, a
-            BSplineData nothing), so the wrong one would move the CVs
-            silently: a load without it, or with anything but a bool, or
-            with the space given by position (``load(path, True)``), is a
-            TypeError naming it, before the file is read. The transform is
-            never moved.
+        name, container, attrs: (creating) as `create` takes them. None: the
+            data's name (``ctlShape`` names the transform ``ctl``), else
+            Maya's ``curve<N>`` (an older cgmath's BSplineData has no name).
+        world_space: (updating) By keyword only, a bool (anything else is a
+            TypeError, before the file is read). False (the default): the
+            data's CVs become the curve's own, object space (the inverse of
+            ``save()``). True: the CVs land where the data puts them in the
+            world, through its matrix (the inverse of
+            ``save(world_space=True)``, whose data holds the identity; an
+            older cgmath's BSplineData has no matrix: its CVs are taken as
+            world positions). The transform is never moved.
 
     Returns:
         The new NurbsCurve (creating), or this NurbsCurve (updating).
@@ -61,8 +61,8 @@ _CURVE_LOAD_DOC = """Loads a curve from a cgmath file (a BSplineData): one name,
     degree, the form and the knots) and a curve without history, else a
     ValueError naming ``NurbsCurve.load(...)`` for a new curve; a deformed
     curve (a cluster, a wire ... upstream) names the curve under its
-    deformers instead, ``NurbsCurve('ctlShapeOrig').load(path,
-    world_space=...)``, whose update the deformed curve follows.
+    deformers instead, ``NurbsCurve('ctlShapeOrig').load(path)``, whose
+    update the deformed curve follows.
 
     Each call is ONE undo step named ``rig.NurbsCurve.load`` and leaves the
     selection as it was.
@@ -75,35 +75,36 @@ _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a BSplinePatchData): 
 
         patch = NurbsSurface.load("patch.npz", name="patch")
 
-    ``NurbsSurface('patchShape').load(surface, *, world_space)``, from a
+    ``NurbsSurface('patchShape').load(surface, *, world_space=False)``, from a
     surface, UPDATES that surface's CVs in place, the inverse of
     ``NurbsSurface('patchShape').save(...)``::
 
-        NurbsSurface("patchShape").load("patch.npz", world_space=True)
+        NurbsSurface("patchShape").load("patch.npz")
 
     Args:
         surface: The file (a str or os.PathLike, ``~`` expanded; a cgmath
             ``.npz`` / ``.json`` / ``.pkl``), or the BSplinePatchData itself.
-        name, container, attrs: (creating) as `create` takes them. A
-            BSplinePatchData carries no name: None gives ``surface<N>``.
-        world_space: (updating, REQUIRED: no default) the space the file was
-            saved in. True: the CVs are world-space positions (``save()``'s
-            default); False: object space. A BSplinePatchData holds no space
-            (see `NurbsCurve.load`): a load without it, or with anything but
-            a bool, or by position, is a TypeError naming it, before the file
-            is read. The transform is never moved.
+        name, container, attrs: (creating) as `create` takes them. None: the
+            data's name (``patchShape`` names the transform ``patch``), else
+            ``surface<N>`` (an older cgmath's BSplinePatchData has no name).
+        world_space: (updating) By keyword only, a bool (see
+            `NurbsCurve.load`). False (the default): the data's CVs become the
+            surface's own, object space (the inverse of ``save()``). True: the
+            CVs land where the data puts them in the world, through its matrix
+            (see `NurbsCurve.load`). The transform is never moved.
 
     Returns:
         The new NurbsSurface (creating), or this NurbsSurface (updating).
 
     The file is read, and what it holds checked, before anything is made or
-    changed (the errors of `NurbsCurve.load`). A BSplinePatchData holds no
-    knots: a new surface gets evenly spaced ones (``0..spans`` in each
-    direction), and an updated one keeps its own. Updating needs the same CV
-    layout (the CV counts, the degrees and the forms in U and V) and a surface
-    without history, else a ValueError naming ``NurbsSurface.load(...)`` for a
-    new surface (a deformed one names its ``...Orig`` shape's load, with
-    ``world_space=``).
+    changed (the errors of `NurbsCurve.load`). A new surface gets the data's
+    knots (``knots_u`` / ``knots_v``; data without them, an older cgmath's,
+    gives evenly spaced ones, ``0..spans`` in each direction), and an updated
+    one keeps its own: data that holds knots must hold its. Updating needs
+    the same CV layout (the CV counts, the degrees and the forms in U and V,
+    and those knots) and a surface without history, else a ValueError naming
+    ``NurbsSurface.load(...)`` for a new surface (a deformed one names its
+    ``...Orig`` shape's load).
 
     Each call is ONE undo step named ``rig.NurbsSurface.load`` and leaves the
     selection as it was.
@@ -167,9 +168,13 @@ class NurbsCurve(Geometry):
                 the curve's object space. Or a BSplineData: the curve is built
                 from its ``points``, ``degree`` and ``kv``, and is periodic
                 when the data is (its first ``degree`` points are then repeated
-                at the end, as Maya stores a periodic curve). The data's
-                ``uniform`` and ``registered`` settings have no Maya
-                equivalent and are not used.
+                at the end, as Maya stores a periodic curve); its ``matrix``
+                (`serialize`'s: the world matrix of the transform its points
+                are relative to, the identity for world-space points) goes on
+                the new transform node, as `Mesh.create` puts a MeshData's (an
+                older cgmath's BSplineData has none). The data's ``uniform``
+                and ``registered`` settings have no Maya equivalent and are
+                not used.
             degree: The degree of a curve given as points. None: 3.
             kv: The knots of a curve given as points, in Maya's layout:
                 ``N + degree - 1`` values that never decrease, none repeated
@@ -179,7 +184,8 @@ class NurbsCurve(Geometry):
                 points of degree 3).
             name: The name of the curve to create, a keyword (a trailing
                 ``Shape<digits>`` is dropped: ``"cShape2"`` names the transform
-                ``c2`` and the shape ``cShape2``). None: ``curve<N>``.
+                ``c2`` and the shape ``cShape2``). None: a BSplineData's
+                ``name`` (when it has one), else ``curve<N>``.
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
@@ -228,11 +234,12 @@ class NurbsCurve(Geometry):
             cv_count -= type(self)._raw_get_fn_set(self).degree
         return cv_count
 
-    def get_points(self, world_space: bool = True) -> OpenMaya.MPointArray:
+    def get_points(self, *, world_space: bool = False) -> OpenMaya.MPointArray:
         """Get the cv points of the nurbsCurve.
 
         Args:
-            world_space: If True, query points in world space, otherwise object space.
+            world_space: By keyword only. False (the default): object space;
+                True: world space.
 
         Returns:
             A MPointArray of the cvs.
@@ -243,7 +250,7 @@ class NurbsCurve(Geometry):
     # --- serialization
 
     def serialize(
-        self, world_space: bool = True, include_uvs: bool = True
+        self, *, world_space: bool = False, include_uvs: bool = True
     ) -> BSplineData:
         """Serialize this nurbsCurve to BSplineData, the inverse of `create`.
 
@@ -255,11 +262,20 @@ class NurbsCurve(Geometry):
         BSplineData takes them (cgmath 2.0.0), which keeps them as they are
         (to rounding): the same curve over the same parameter range. An
         older one (1.0.4) has no such field: the knots are dropped and the
-        data has uniform ones, which is the same curve only when the knots
-        were evenly spaced (a warning says so otherwise).
+        data has uniform ones, which is the same curve when the knots were
+        evenly spaced; else a warning says what comes back (of degree 1 the
+        same shape, only reparametrized; of degree 2 or more another shape).
+
+        As a MeshData does, the data holds the shape's ``name`` and a
+        ``matrix`` (on a cgmath whose BSplineData has the fields; an older
+        one keeps neither): in object space the world matrix of the
+        transform the points are relative to (`create` puts it on its new
+        transform), in world space the identity.
 
         Args:
-            world_space: If True, query points in world space, otherwise object space.
+            world_space: By keyword only. False (the default): object-space
+                points and the transform's world matrix; True: world-space
+                points.
             include_uvs: Unused; kept for signature parity with `Mesh.serialize`.
 
         Returns:
@@ -274,22 +290,23 @@ class NurbsCurve(Geometry):
         if periodic:
             points = points[: len(points) - degree]
 
-        custom  = {}
+        fields  = _fields(BSplineData)
+        custom  = _placement(self, fields, world_space)
         knots   = np.array(fn.knots())
         uniform = _default_knots(len(points), degree, periodic)
         if not np.array_equal(knots, uniform):
-            if "knots" in getattr(BSplineData, "__dataclass_fields__", ()):
+            if "knots" in fields:
                 custom["knots"] = knots
             elif not _same_spacing(knots, uniform, degree):
                 LOGGER.warning(
                     f"{_name_of(self)}: this cgmath's BSplineData takes no knots, so the "
-                    f"curve's uneven knots are dropped and its data has another shape"
+                    f"curve's uneven knots are dropped: {_without_knots(degree)}"
                 )
         return BSplineData(points=points, degree=degree, periodic=periodic, **custom)
 
     # --- files
 
-    def save(self, path: str | os.PathLike, *, world_space: bool = True) -> str:
+    def save(self, path: str | os.PathLike, *, world_space: bool = False) -> str:
         """Saves this curve to a cgmath file: its BSplineData (`serialize`), the
         inverse of `load`.
 
@@ -297,11 +314,12 @@ class NurbsCurve(Geometry):
             path: A str or os.PathLike (``~`` expanded). The extension sets the
                 format: ``.npz`` (recommended), ``.json`` or ``.pkl`` (never
                 load a ``.pkl`` you did not write).
-            world_space: True: world-space CVs; False: object space. A
-                BSplineData has no name and no matrix: save in world space to
-                keep where the curve is. The update in place,
-                ``NurbsCurve('x').load(path, world_space=...)``, takes the same
-                one (it has no default).
+            world_space: By keyword only. False (the default): object-space
+                CVs, with the shape's name and its transform's world matrix
+                (an older cgmath's BSplineData keeps neither: save in world
+                space there to keep where the curve is); True: world-space
+                CVs. The update in place, ``NurbsCurve('x').load(path)``,
+                takes the same one.
 
         Returns:
             `path`, as written (``~`` expanded).
@@ -324,15 +342,14 @@ class NurbsCurve(Geometry):
             return cls.create(data, name=name, container=container, **kwargs)
 
     @_statement
-    def _load_into(self, curve, *args, world_space=_files.REQUIRED, **kwargs):
+    def _load_into(self, curve, *, world_space=False, **kwargs):
         from cgmath.geometry import BSplineData
 
         method = f"NurbsCurve({_name_of(self)!r}).load"
-        _files.space_by_keyword(method, args)
         _updates_only(method, kwargs, "NurbsCurve.load(path, ...) makes a new curve")
-        world_space = _files.required_space(method, "BSplineData", world_space)
-        data   = _files.read(curve, (BSplineData,), method, "the curve")
-        points = _curve_update(self, method, curve, data)
+        world_space = _files.space_flag(method, world_space)
+        data        = _files.read(curve, (BSplineData,), method, "the curve")
+        points      = _curve_update(self, method, curve, data, world_space)
         with _undo_chunk("rig.NurbsCurve.load"):
             _SetCVsCommand(self, points, world_space)
         return self
@@ -387,15 +404,19 @@ class NurbsSurface(Geometry):
             data: A BSplinePatchData: the surface is built from its control
                 points (``cv``: a periodic direction's first ``degree`` rows or
                 columns repeated at its end, as Maya stores it), its degrees,
-                its forms (periodic or open) and its knots. A BSplinePatchData
-                holds no knots: they are evenly spaced (``kv_u`` / ``kv_v``,
-                the parameter range ``0..spans`` in each direction), so a
-                surface whose knots were not comes back another shape. Its
-                ``uniform`` and ``registered`` settings have no Maya
-                equivalent and are not used.
+                its forms (periodic or open) and its knots (``kv_u`` /
+                ``kv_v``: its ``knots_u`` / ``knots_v``, else evenly spaced
+                ones, the parameter range ``0..spans`` in each direction; an
+                older cgmath's BSplinePatchData holds none, so a surface whose
+                knots were not evenly spaced comes back reparametrized, or
+                another shape in a direction of degree 2 or more). Its
+                ``matrix`` goes on the new transform node, as for
+                `NurbsCurve.create`. Its ``uniform`` and ``registered``
+                settings have no Maya equivalent and are not used.
             name: The name of the surface to create, a keyword (a trailing
                 ``Shape<digits>`` is dropped: ``"sShape2"`` names the transform
-                ``s2`` and the shape ``sShape2``). None: ``surface<N>``.
+                ``s2`` and the shape ``sShape2``). None: the data's ``name``
+                (when it has one), else ``surface<N>``.
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
@@ -434,11 +455,12 @@ class NurbsSurface(Geometry):
             cv_count_v -= type(self)._raw_get_fn_set(self).degreeInV
         return cv_count_u * cv_count_v
 
-    def get_points(self, world_space: bool = True) -> OpenMaya.MPointArray:
+    def get_points(self, *, world_space: bool = False) -> OpenMaya.MPointArray:
         """Get the cv points of the nurbsSurface.
 
         Args:
-            world_space: If True, query points in world space, otherwise object space.
+            world_space: By keyword only. False (the default): object space;
+                True: world space.
 
         Returns:
             A MPointArray of the cvs.
@@ -449,18 +471,26 @@ class NurbsSurface(Geometry):
     # --- serialization
 
     def serialize(
-        self, world_space: bool = True, include_uvs: bool = True
+        self, *, world_space: bool = False, include_uvs: bool = True
     ) -> BSplinePatchData:
         """Serialize this nurbsSurface to BSplinePatchData, the inverse of `create`.
 
         A direction is periodic when the surface is in it (Maya's ``kPeriodic``
         form); a ``kClosed`` direction, whose ends only meet, is open and keeps
-        every CV. BSplinePatchData holds no knots: its knots are evenly spaced,
-        which is the same surface only when this one's were (to their range);
-        a warning says so otherwise.
+        every CV. Knots other than Maya's default ones go in its ``knots_u`` /
+        ``knots_v`` when the installed cgmath's BSplinePatchData takes them,
+        as they are: the same surface over the same parameter ranges. An
+        older one (3.0.1) has no such fields: the knots are dropped and the
+        data has evenly spaced ones, which is the same surface when this
+        one's were (to their range); else a warning says what comes back in
+        each direction (of degree 1 the same shape, only reparametrized; of
+        degree 2 or more another shape). The ``name`` and the ``matrix`` are
+        written as `NurbsCurve.serialize` writes them.
 
         Args:
-            world_space: If True, query points in world space, otherwise object space.
+            world_space: By keyword only. False (the default): object-space
+                points and the transform's world matrix; True: world-space
+                points.
             include_uvs: Unused; kept for signature parity with `Mesh.serialize`
                 and `NurbsCurve.serialize`. BSplinePatchData does not store UVs.
 
@@ -478,19 +508,28 @@ class NurbsSurface(Geometry):
         degree_v   = fn.degreeInV
         periodic_u = fn.formInU == OpenMaya.MFnNurbsSurface.kPeriodic
         periodic_v = fn.formInV == OpenMaya.MFnNurbsSurface.kPeriodic
-        uneven = [
-            axis
-            for axis, knots, count, degree, periodic in (
-                ("U", fn.knotsInU(), num_cvs_u, degree_u, periodic_u),
-                ("V", fn.knotsInV(), num_cvs_v, degree_v, periodic_v),
-            )
-            if not _even_knots(np.array(knots), count - degree if periodic else count, degree, periodic)
-        ]
+
+        # each direction's knots as the curve's (Maya's layout, kept when not its default ones)
+        fields = _fields(BSplinePatchData)
+        custom = _placement(self, fields, world_space)
+        uneven = []
+        for axis, knots, count, degree, periodic in (
+            ("u", fn.knotsInU(), num_cvs_u, degree_u, periodic_u),
+            ("v", fn.knotsInV(), num_cvs_v, degree_v, periodic_v),
+        ):
+            knots = np.array(knots)
+            count = count - degree if periodic else count
+            if np.array_equal(knots, _default_knots(count, degree, periodic)):
+                continue
+            if f"knots_{axis}" in fields:
+                custom[f"knots_{axis}"] = knots
+            elif not _even_knots(knots, count, degree, periodic):
+                uneven.append((axis.upper(), degree))
         if uneven:
+            each = "; ".join(f"in {axis}, {_without_knots(degree)}" for axis, degree in uneven)
             LOGGER.warning(
                 f"{_name_of(self)}: this cgmath's BSplinePatchData takes no knots, so the "
-                f"surface's uneven knots in {' and '.join(uneven)} are dropped and its "
-                f"data has another shape"
+                f"surface's uneven knots are dropped: {each}"
             )
 
         # Maya's cvPositions() returns a flat MPointArray of length
@@ -516,11 +555,12 @@ class NurbsSurface(Geometry):
             degree_v   = degree_v,
             periodic_u = periodic_u,
             periodic_v = periodic_v,
+            **custom,
         )
 
     # --- files
 
-    def save(self, path: str | os.PathLike, *, world_space: bool = True) -> str:
+    def save(self, path: str | os.PathLike, *, world_space: bool = False) -> str:
         """Saves this surface to a cgmath file: its BSplinePatchData
         (`serialize`), the inverse of `load`.
 
@@ -528,11 +568,13 @@ class NurbsSurface(Geometry):
             path: A str or os.PathLike (``~`` expanded). The extension sets the
                 format: ``.npz`` (recommended), ``.json`` or ``.pkl`` (never
                 load a ``.pkl`` you did not write).
-            world_space: True: world-space CVs; False: object space. A
-                BSplinePatchData has no name, no matrix and no knots (uneven
-                knots are dropped, with a warning: `serialize`). The update in
-                place, ``NurbsSurface('x').load(path, world_space=...)``, takes
-                the same one (it has no default).
+            world_space: By keyword only. False (the default): object-space
+                CVs, with the shape's name, its transform's world matrix and
+                its knots; True: world-space CVs. An older cgmath's
+                BSplinePatchData keeps no name, matrix or knots (save in world
+                space there to keep where the surface is; uneven knots are
+                dropped, with a warning: `serialize`). The update in place,
+                ``NurbsSurface('x').load(path)``, takes the same one.
 
         Returns:
             `path`, as written (``~`` expanded).
@@ -555,15 +597,14 @@ class NurbsSurface(Geometry):
             return cls.create(data, name=name, container=container, **kwargs)
 
     @_statement
-    def _load_into(self, surface, *args, world_space=_files.REQUIRED, **kwargs):
+    def _load_into(self, surface, *, world_space=False, **kwargs):
         from cgmath.geometry import BSplinePatchData
 
         method = f"NurbsSurface({_name_of(self)!r}).load"
-        _files.space_by_keyword(method, args)
         _updates_only(method, kwargs, "NurbsSurface.load(path, ...) makes a new surface")
-        world_space = _files.required_space(method, "BSplinePatchData", world_space)
-        data   = _files.read(surface, (BSplinePatchData,), method, "the surface")
-        points = _surface_update(self, method, surface, data)
+        world_space = _files.space_flag(method, world_space)
+        data        = _files.read(surface, (BSplinePatchData,), method, "the surface")
+        points      = _surface_update(self, method, surface, data, world_space)
         with _undo_chunk("rig.NurbsSurface.load"):
             _SetCVsCommand(self, points, world_space)
         return self
@@ -592,7 +633,6 @@ def _no_history(node, method: str, door: str) -> None:
             deformed_refusal(
                 method, _name_of(node), fn.object(), kind, type(node).__name__,
                 "its create input is connected", "CVs", door,
-                load_args="path, world_space=...",
             )
         )
 
@@ -602,18 +642,27 @@ def _label(src) -> str:
     return repr(os.fspath(src)) if _files.is_path(src) else f"the {type(src).__name__}"
 
 
-def _cv_points(cvs: np.ndarray, method: str) -> OpenMaya.MPointArray:
+def _cv_points(cvs: np.ndarray, method: str, placed=None) -> OpenMaya.MPointArray:
+    """The CVs `cvs` checked (3D, finite) as an MPointArray; with `placed`, a
+    BSplineData or BSplinePatchData, taken through its ``matrix`` (row vectors, as
+    Maya's): where it puts them in the world (as they are for data without one, an
+    older cgmath's, whose world-space CVs are positions already)."""
     cvs = np.asarray(cvs, dtype=np.float64).reshape(-1, np.asarray(cvs).shape[-1])
     if cvs.shape[1] != 3:
         raise ValueError(f"{method}: the CVs are {cvs.shape[1]}D, not 3D")
+    matrix = getattr(placed, "matrix", None)
+    if matrix is not None:
+        matrix = np.asarray(matrix, dtype=np.float64).reshape(4, 4)
+        cvs    = cvs @ matrix[:3, :3] + matrix[3, :3]
     if not np.isfinite(cvs).all():
         raise ValueError(f"{method}: the CVs must be finite (got nan or inf)")
     return OpenMaya.MPointArray(cvs.tolist())
 
 
-def _curve_update(curve: NurbsCurve, method: str, src, data) -> OpenMaya.MPointArray:
+def _curve_update(curve: NurbsCurve, method: str, src, data, world_space: bool) -> OpenMaya.MPointArray:
     """`NurbsCurve('x').load`'s CVs, checked before anything changes: the data's
-    CV layout (count, degree, form, knots) is the curve's."""
+    CV layout (count, degree, form, knots) is the curve's. With `world_space`,
+    the CVs where the data puts them in the world (`_cv_points`)."""
     door = f"NurbsCurve.load({_label(src)}) makes a new curve"
     _no_history(curve, method, door)
     fn       = type(curve)._raw_get_fn_set(curve)
@@ -635,13 +684,14 @@ def _curve_update(curve: NurbsCurve, method: str, src, data) -> OpenMaya.MPointA
             f"{fn.numCVs} of degree {fn.degree}, {'periodic' if fn.form == OpenMaya.MFnNurbsCurve.kPeriodic else 'open'}"
             f", or other knots); a load updates the CVs of the same layout: {_name_of(door)}"
         )
-    return _cv_points(cvs, method)
+    return _cv_points(cvs, method, data if world_space else None)
 
 
-def _surface_update(surface: NurbsSurface, method: str, src, data) -> OpenMaya.MPointArray:
+def _surface_update(surface: NurbsSurface, method: str, src, data, world_space: bool) -> OpenMaya.MPointArray:
     """`NurbsSurface('x').load`'s CVs, checked before anything changes: the data's
-    CV layout (counts, degrees and forms in U and V) is the surface's; the
-    surface keeps its knots (the data holds none)."""
+    CV layout (counts, degrees and forms in U and V, and the knots it holds) is
+    the surface's; the surface keeps its knots. With `world_space`, the CVs where
+    the data puts them in the world (`_cv_points`)."""
     door = f"NurbsSurface.load({_label(src)}) makes a new surface"
     _no_history(surface, method, door)
     fn  = type(surface)._raw_get_fn_set(surface)
@@ -652,16 +702,28 @@ def _surface_update(surface: NurbsSurface, method: str, src, data) -> OpenMaya.M
         and cvs.shape[:2] == (fn.numCVsInU, fn.numCVsInV)
         and (int(data.degree_u), int(data.degree_v)) == (fn.degreeInU, fn.degreeInV)
         and (bool(data.periodic_u), bool(data.periodic_v)) == (fn.formInU == kp, fn.formInV == kp)
+        and _same_knots(getattr(data, "knots_u", None), fn.knotsInU())
+        and _same_knots(getattr(data, "knots_v", None), fn.knotsInV())
     )
     if not same:
         raise ValueError(
             f"{method}: {_label(src)} holds another CV layout than {_name_of(surface)!r} "
             f"({' x '.join(str(n) for n in cvs.shape[:2])} CVs of degrees {int(data.degree_u)} x "
             f"{int(data.degree_v)} against its {fn.numCVsInU} x {fn.numCVsInV} of degrees "
-            f"{fn.degreeInU} x {fn.degreeInV}, or other forms); a load updates the CVs of the "
-            f"same layout: {_name_of(door)}"
+            f"{fn.degreeInU} x {fn.degreeInV}, or other forms or knots); a load updates the CVs of "
+            f"the same layout: {_name_of(door)}"
         )
-    return _cv_points(cvs, method)
+    return _cv_points(cvs, method, data if world_space else None)
+
+
+def _same_knots(knots, now) -> bool:
+    """True when a patch's knots in one direction (`knots`, Maya's layout) are the
+    surface's there (`now`) to 1e-9, or the data holds none there (an older
+    cgmath's, or Maya's default ones): the surface keeps its own."""
+    if knots is None:
+        return True
+    knots, now = np.asarray(knots, dtype=np.float64), np.asarray(now, dtype=np.float64)
+    return knots.shape == now.shape and bool(np.allclose(knots, now, rtol=0.0, atol=1e-9))
 
 
 class _SetCVsCommand:
@@ -754,13 +816,16 @@ def _create_surface(data, name: str | None) -> str:
     2. ``cmds.createNode("transform", name="surface#", skipSelect=True)``, the
        recorded node the surface rides with;
     3. ``MFnNurbsSurface.create(..., parent=<transform>)``: the shape, under it;
-    4. ``cmds.sets`` into ``initialShadingGroup`` and ``cmds.rename`` of the
-       transform (Maya renames the shape after it).
+    4. ``cmds.sets`` into ``initialShadingGroup``, ``cmds.rename`` of the
+       transform (Maya renames the shape after it; None: the data's name) and
+       ``cmds.xform`` of the data's matrix (skipped for none or the identity,
+       which the new transform already has).
 
     Any error after step 2 deletes the transform before it propagates.
     """
     cvs, knots_u, knots_v, degree_u, degree_v, form_u, form_v = _surface_inputs(data)
-    name = _shape_create_name(name)
+    name   = _shape_create_name(name or getattr(data, "name", None))
+    matrix = _new_transform_matrix(data)
 
     xform  = cmds.createNode("transform", name="surface#", skipSelect=True)
     sel    = OpenMaya.MSelectionList()
@@ -789,6 +854,8 @@ def _create_surface(data, name: str | None) -> str:
         if name:
             # the shape follows the transform (surfaceShape<N> -> <name>Shape)
             xform = _cmds_edit.rename(xform, name)
+        if matrix is not None:
+            _cmds_edit.xform(xform, matrix=matrix)
     except BaseException:
         if handle.isValid():
             _cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
@@ -824,6 +891,47 @@ def _same_spacing(knots: np.ndarray, other: np.ndarray, degree: int) -> bool:
         return (k - k[degree - 1]) / (k[-degree] - k[degree - 1])
 
     return bool(np.allclose(unit(knots), unit(other), rtol=0.0, atol=1e-9))
+
+
+def _without_knots(degree: int) -> str:
+    """What data that dropped the uneven knots of a curve or a surface direction of
+    `degree` (an older cgmath's data takes none) comes back as: of degree 1 the same
+    polyline through the same CVs, its knots only spacing its parameters; of degree
+    2 or more another shape."""
+    if degree == 1:
+        return "of degree 1, it keeps its shape and is only reparametrized"
+    return f"of degree {degree}, it comes back another shape"
+
+
+def _fields(cls) -> frozenset:
+    """The fields of a cgmath data class as its installed version has them: a field
+    a later cgmath added (``knots``, ``knots_u``, ``name``, ``matrix``) is written
+    only where it is."""
+    return frozenset(getattr(cls, "__dataclass_fields__", ()))
+
+
+def _placement(shape, fields: frozenset, world_space: bool) -> dict:
+    """The ``name`` and ``matrix`` of `shape`'s data, as `Mesh.serialize` writes a
+    MeshData's (the shape's name, `_data_matrix`), for those of `fields` the data
+    class has: keywords for it."""
+    custom = {}
+    if "name" in fields:
+        custom["name"] = type(shape).get_clean_name(shape)
+    if "matrix" in fields:
+        custom["matrix"] = _data_matrix(shape, world_space)
+    return custom
+
+
+def _new_transform_matrix(data) -> list | None:
+    """The 16 values ``cmds.xform`` puts on the new transform of `data` (a
+    BSplineData or BSplinePatchData; None for points): its ``matrix``, as
+    `Mesh.create` places a MeshData's. None for no matrix (points, an older
+    cgmath's data) or the identity, which a new transform has already."""
+    matrix = getattr(data, "matrix", None)
+    if matrix is None:
+        return None
+    matrix = np.asarray(matrix, dtype=np.float64).ravel()
+    return None if np.array_equal(matrix, np.eye(4).ravel()) else matrix.tolist()
 
 
 def _curve_inputs(
@@ -933,13 +1041,17 @@ def _create_curve(
     2. ``cmds.createNode("transform", name="curve#", skipSelect=True)``, the
        recorded node the curve rides with (``cmds.curve``'s default name);
     3. ``MFnNurbsCurve.create(..., parent=<transform>)``: the shape, under it;
-    4. ``cmds.rename`` of the transform (Maya renames the shape after it).
+    4. ``cmds.rename`` of the transform (Maya renames the shape after it;
+       None: a BSplineData's name) and ``cmds.xform`` of a BSplineData's
+       matrix (skipped for none or the identity, as `_create_surface` does).
 
     Any error after step 2 deletes the transform before it propagates.
     """
+    data = points if hasattr(type(points), "kv") and hasattr(type(points), "cv") else None
     cvs, knots, degree, periodic = _curve_inputs(points, degree, kv)
-    name = _shape_create_name(name)
-    form = OpenMaya.MFnNurbsCurve.kPeriodic if periodic else OpenMaya.MFnNurbsCurve.kOpen
+    name   = _shape_create_name(name or getattr(data, "name", None))
+    matrix = _new_transform_matrix(data)
+    form   = OpenMaya.MFnNurbsCurve.kPeriodic if periodic else OpenMaya.MFnNurbsCurve.kOpen
 
     xform  = cmds.createNode("transform", name="curve#", skipSelect=True)
     sel    = OpenMaya.MSelectionList()
@@ -967,6 +1079,8 @@ def _create_curve(
         if name:
             # the shape follows the transform (curveShape<N> -> <name>Shape)
             xform = _cmds_edit.rename(xform, name)
+        if matrix is not None:
+            _cmds_edit.xform(xform, matrix=matrix)
     except BaseException:
         if handle.isValid():
             _cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())

@@ -509,8 +509,10 @@ except AttributeError as e:
 
 `get()` on a geometry plug never calls `cmds.getAttr` (which errors on
 mesh data). A shape's own geometry plug gives back the shape serialised,
-a consumer's plug gives the consumer, a dangling output gives an
-OpenMaya fn set.
+a consumer's plug gives the consumer serialised, a dangling output gives an
+OpenMaya fn set. The space is the plug's: `worldMesh[0]` / `worldSpace[0]`
+world space, every other plug (`outMesh`, `local`, a deformer's output)
+object space, with the transform's world matrix.
 
 ```python
 data, uv_list = mesh.outMesh.get()                             # a Mesh's outMesh -> (MeshData, UVList)
@@ -536,21 +538,21 @@ cube.set_xfrom_attrs_locked(True)                               # sic -- the met
 print(cube.tx.is_locked())                                      # True
 cube.set_xfrom_attrs_locked(False)
 
-world = cube.get_matrix()                                        # MMatrix, world space by default
-print(type(world).__name__, np.array(world).reshape(4, 4)[3, :3])         # MMatrix [2. 2. 3.]
-print(np.array(cube.get_matrix(world_space=False)).reshape(4, 4)[3, :3])  # [1. 0. 0.]
-print(type(cube.get_matrix(as_transform_matrix=True)).__name__)           # MTransformationMatrix
+local = cube.get_matrix()                                        # MMatrix, local by default (.matrix)
+print(type(local).__name__, np.array(local).reshape(4, 4)[3, :3])        # MMatrix [1. 0. 0.]
+print(np.array(cube.get_matrix(world_space=True)).reshape(4, 4)[3, :3])  # [2. 2. 3.]
+print(type(cube.get_matrix(as_transform_matrix=True)).__name__)          # MTransformationMatrix
 
 other = Transform.create(name="other")
-other.match_matrix(cube, world_space=True)
-print(other.t.get(), np.round(other.r.get(), 3))                         # [2. 2. 3.] [ 0. 90.  0.]
-other.set_matrix(np.eye(4).ravel().tolist())
-print(other.t.get())                                                     # [0. 0. 0.]
+other.match_matrix(cube, world_space=True)                              # onto cube; the default copies its local matrix
+print(other.t.get(), np.round(other.r.get(), 3))                        # [2. 2. 3.] [ 0. 90.  0.]
+other.set_matrix(np.eye(4).ravel().tolist())                            # its local matrix by default
+print(other.t.get())                                                    # [0. 0. 0.]
 
-print(cube.get_rotate_pivot(), cube.get_scale_pivot(world_space=False))  # (2, 2, 3, 1) (0, 0, 0, 1)
-cube.set_pivots((0.5, 0.5, 0.5), world_space=False)
-cube.freeze(t=True, r=True, s=True)                                      # cmds.makeIdentity(apply=True, ...)
-print(cube.t.get(), cube.r.get())                                        # [0. 0. 0.] [0. 0. 0.]
+print(cube.get_rotate_pivot(), cube.get_scale_pivot(world_space=True))  # (0, 0, 0, 1) (2, 2, 3, 1) -- object, world
+cube.set_pivots((0.5, 0.5, 0.5))                                        # in object space; takes the getters' MPoint too
+cube.freeze(t=True, r=True, s=True)                                     # cmds.makeIdentity(apply=True, ...)
+print(cube.t.get(), cube.r.get())                                       # [0. 0. 0.] [0. 0. 0.]
 ```
 
 Shapes under a transform, and a clean duplicate of its geometry:
@@ -561,7 +563,7 @@ print(list(grp.iter_shapes("mesh")), grp.find_shape("mesh", "cu"))            # 
 print(list(grp.iter_shapes("mesh", as_transform=False)))                      # [Mesh("cubeShape")]
 
 cube << DisplayLayer.define("geo")
-clean = cube.duplicate_geometry(name="cube_clean")           # no history, no sets or layers, zeroed xform, pivots at origin
+clean = cube.duplicate_geometry(name="cube_clean")  # no history, sets or layers, xform zeroed, pivots at its own origin
 print(repr(clean), clean.get_parent(), clean.get_shapes(), clean.t.get())           # Transform("cube_clean") None [Mesh("cube_cleanShape")] [0. 0. 0.]
 print(DisplayLayer.for_node(clean), cube.duplicate_geometry(parent=grp).get_long_name())  # None |grp|cube2
 ```
@@ -651,7 +653,9 @@ try:
     root.load_hierarchy(path)                                 # from a node: never an update in place
 except TypeError as e:
     print(str(e).split(";")[1].strip())                       # Joint.load_hierarchy(path, parent='root') makes a new one under it
-print(Transform.load_hierarchy(path, parent="grp")[0].get_long_name())  # |grp|root
+under = Transform.load_hierarchy(path, parent="grp")                    # the file's values, local under grp
+kept  = Transform.load_hierarchy(path, parent="grp", world_space=True)  # the root's world matrix in the file kept
+print(under[0].get_long_name(), under[0].t.get(), kept[0].t.get())      # |grp|root [0. 0. 0.] [-1. -2. -3.]
 try:
     Joint.load_hierarchy(cube.get_shape().save(os.path.join(folder, "cube.npz")))   # a mesh's file
 except TypeError as e:
@@ -757,8 +761,9 @@ print(repr(part), list(part.iter_joints()))  # Joint("root1") [Joint("root1|hip_
 ctl.rename_skeleton("fk")
 print(repr(ctl), list(ctl.iter_joints()))    # Joint("root_fk") [Joint("hip_fk"), Joint("knee_fk"), Joint("ankle_fk")]
 
+# from any joint of either chain, a root too: root onto root, then the joints below, parents first
 hip.t.set(3, 0, 0)
-ctl.get_children(type="joint")[0].match_hierarchy(hip)           # from a child joint: the roots are found through it
+ctl.match_hierarchy(hip)
 print(np.round(ctl.get_children(type="joint")[0].t.get(), 3))    # [3. 0. 0.]
 ```
 
@@ -884,7 +889,7 @@ mesh = cube.get_shape()
 print(repr(Mesh("cube")), Mesh("cubeShape") == mesh)                 # Mesh("cubeShape") True -- a transform name finds its mesh
 print(mesh.get_num_vertices(), mesh.get_num_polygons(), mesh.get_num_weight_points())  # 8 6 8
 
-points = mesh.get_points()                                       # MPointArray, world space by default
+points = mesh.get_points()                                       # MPointArray, object space by default
 print(type(points).__name__, np.array(points).shape, np.array(points)[0])   # MPointArray (8, 4) [-0.5 -0.5  0.5  1. ]
 lifted = np.array(points)[:, :3]
 lifted[:, 1] += 1
@@ -925,9 +930,14 @@ To and from `cgmath.geometry.MeshData`; `Mesh.create` is undoable and puts
 the new shape in `initialShadingGroup`:
 
 ```python
-data, uv_list = mesh.serialize()                                 # world space, with every UV set
+data, uv_list = mesh.serialize()                                 # object space (and its matrix), every UV set
 print(type(data).__name__, data.point_count, data.face_count, type(uv_list).__name__, uv_list[0].name)  # MeshData 8 6 UVList map1
-print(mesh.serialize(include_uvs=False, world_space=False).matrix.shape)                                # (4, 4) -- the parent's world matrix
+# moved: the points stay, the matrix moves; in world space the points move
+cube.t.set(0, 2, 0)
+local, world = mesh.serialize(include_uvs=False), mesh.serialize(include_uvs=False, world_space=True)
+print(local.points[0], local.matrix[3, :3])  # [-0.5 -0.5  0.5] [0. 2. 0.]
+print(world.points[0], world.matrix[3, :3])  # [-0.5  1.5  0.5] [0. 0. 0.]
+cube.t.set(0, 0, 0)
 
 rebuilt = Mesh.create(data, uv_data=uv_list, name="rebuilt")
 print(repr(rebuilt), rebuilt.get_num_vertices(), rebuilt.get_parent(), rebuilt.get_uv_sets())  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
@@ -1107,8 +1117,8 @@ selection alone; the points are stored as given, in Maya's internal unit
 (`cmds.curve` reads them in the scene's linear unit). `serialize` is its
 inverse: a periodic curve's own points (Maya's repeated CVs left out), and
 its knots when they are not Maya's default ones and the installed `cgmath`'s
-`BSplineData` takes them (it keeps their spacing, so the shape, but not
-their range):
+`BSplineData` takes them (as they are: the same curve over the same
+parameter range):
 
 ```python
 points = [(0, 0, 0), (1, 0, 1), (2, 0, 0), (3, 0, 1), (4, 0, 0)]
@@ -1121,16 +1131,19 @@ print(repr(twin), twin.get_num_cvs(), twin.get_fn_set().degree, np.array(twin.ge
 ```
 
 `NurbsSurface.create` builds a surface from a `BSplinePatchData`: its points,
-degrees and forms (a `kClosed` direction serializes open, keeping its CVs). A
-`BSplinePatchData` holds no knots, so they come back evenly spaced, over
-`0..spans`: the same surface when they were evenly spaced, and `serialize`
-warns when they were not. Both classes save and load `cgmath` files: from the
-class `load` creates, from a shape it updates the CVs in place (the same CV
-layout; a surface keeps its own knots). A `BSplineData` holds no name and no
-matrix: save in world space (the default) to keep where the shape is. The
-update takes `world_space=` with no default, the space the file was saved in
-(the wrong one would move the CVs), by keyword: without it, or given by
-position (`load(path, True)`), a `TypeError` naming it.
+degrees, forms (a `kClosed` direction serializes open, keeping its CVs) and
+knots, `knots_u` / `knots_v` (`serialize` writes Maya's when they are not its
+default ones). As a `MeshData` does, the data of both classes holds the
+shape's name and, in object space (the default), its transform's world
+matrix, which `create` puts on its new transform. A `cgmath` without those
+fields (3.0.1) holds neither: save in world space there to keep where the
+shape is, and a surface's knots come back evenly spaced, over `0..spans`
+(`serialize` warns when they were not: a degree-1 direction keeps its shape,
+only reparametrized, one of degree 2 or more comes back another shape). Both
+classes save and load `cgmath` files: from the class `load` creates, from a
+shape it updates the CVs in place (the same CV layout; a surface keeps its
+own knots), object space by default, or where the data's matrix puts them in
+the world with `world_space=True`, a keyword.
 
 ```python
 import os
@@ -1140,15 +1153,16 @@ sheet = NurbsSurface.create(ball.serialize(), name="sheet")
 print(repr(sheet), sheet.get_num_cvs(), sheet.get_fn_set().knotDomainInU)    # NurbsSurface("sheetShape") 77 (0.0, 4.0)
 
 folder = tempfile.mkdtemp()
-saved  = crv.save(os.path.join(folder, "crv.json"))
-again = NurbsCurve.load(saved, name="again")                     # creates
+saved  = crv.save(os.path.join(folder, "crv.json"))  # object space, the default
+again  = NurbsCurve.load(saved, name="again")        # creates
 cmds.xform("again.cv[0]", translation=(0, 3, 0))
-again.load(saved, world_space=True)                              # the CVs back from the file
-print(repr(again), np.array(again.get_points())[0, :3])          # NurbsCurve("againShape") [0. 0. 0.]
-try:
-    again.load(saved)                                            # no world_space=
-except TypeError as e:
-    print(str(e).split(":")[0])                                  # NurbsCurve('againShape').load needs world_space=
+again.load(saved)                                        # the CVs back from the file, as its own
+print(repr(again), np.array(again.get_points())[0, :3])  # NurbsCurve("againShape") [0. 0. 0.]
+# moved: with world_space=True the CVs land where the file puts them in the world
+cmds.xform("again", translation=(0, 0, 5))
+again.load(saved, world_space=True)
+print(np.array(again.get_points())[0, :3])                  # [ 0.  0. -5.]
+print(np.array(again.get_points(world_space=True))[0, :3])  # [0. 0. 0.]
 patch = NurbsSurface.load(ball.save(os.path.join(folder, "ball.npz")), name="patch")
 print(repr(patch), patch.get_num_cvs())                          # NurbsSurface("patchShape") 77
 try:

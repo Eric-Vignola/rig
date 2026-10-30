@@ -236,9 +236,10 @@ class TestMeshCreateNames(_MeshCreateCase):
 
     def test_world_space_data_leaves_the_transform_at_rest(self):
         # world-space data carries the identity matrix: no xform, the points are world points
+        # (re-pinned, user decision 2026-10-29: object space by default, world by keyword)
         t = cmds.polyCube(name="src", constructionHistory=False)[0]
         cmds.xform(t, translation=(1, 2, 3), rotation=(10, 20, 30))
-        data, uvs = Mesh(t).serialize()
+        data, uvs = Mesh(t).serialize(world_space=True)
         cmds.delete(t)
         self.ready()
         mesh = Mesh.create(data, uv_data=uvs, name="m")

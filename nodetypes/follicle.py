@@ -78,8 +78,8 @@ class Follicle(DAGNode):
         if uv_set:
             follicle.find_attr("mapSetName").set(uv_set)
 
-        # move follicle to the desired location
-        uv = mesh.get_uv_at_point(t, uv_set=uv_set)
+        # move follicle to the desired location (t is a world position)
+        uv = mesh.get_uv_at_point(t, uv_set=uv_set, world_space=True)
         follicle.set_uv_values(uv)
 
         # Oh fun, if closestPointOnMesh finds a UV edge (and edge isn't sharing another uv shell)

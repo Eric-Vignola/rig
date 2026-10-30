@@ -2606,13 +2606,36 @@ GEOMETRY_FN_MAP = {
 
 # Maps a geometry data MObject's apiType() to the SHAPE node MFn that would
 # natively own that data. Used by `Attribute.get()` to recognize plugs whose
-# owning shape *is* the geometry (e.g. mesh.outMesh -> return the Mesh node,
-# not an MFnMesh wrapping the data).
+# owning shape *is* the geometry (e.g. mesh.outMesh -> the Mesh's serialized
+# data, not an MFnMesh wrapping the plug's data).
 SHAPE_FN_FOR_GEOMETRY_DATA = {
     OpenMaya.MFn.kMeshData: OpenMaya.MFn.kMesh,
     OpenMaya.MFn.kNurbsCurveData: OpenMaya.MFn.kNurbsCurve,
     OpenMaya.MFn.kNurbsSurfaceData: OpenMaya.MFn.kNurbsSurface,
 }
+
+# The plugs of a shape that hold its geometry in world space, one element per
+# instance (``worldMesh[0]``, ``worldSpace[0]``): `Attribute.get()` serializes
+# the shape in world space for them, in object space for every other plug
+# (``outMesh``, ``local``, an upstream output), as the plug's data is. It
+# serializes through the shape's first path: every element gives instance 0's
+# world (``worldMesh[1]`` of an instanced shape too).
+WORLD_GEOMETRY_PLUGS = frozenset({"worldMesh", "worldSpace"})
+
+
+def _reads_world(plug: OpenMaya.MPlug) -> bool:
+    """True for an element of a shape's world-space geometry (`WORLD_GEOMETRY_PLUGS`)."""
+    return OpenMaya.MFnAttribute(plug.attribute()).name in WORLD_GEOMETRY_PLUGS
+
+
+def _serialized_through(node: OpenMaya.MObject, plug: OpenMaya.MPlug) -> Any:
+    """`Attribute.get()`'s data of a geometry plug read through `node`: its
+    ``serialize()``, a shape's (a mesh, a curve or a surface) in the space of
+    `plug` (`_reads_world`); any other node's (a skinCluster's, a blendShape's)
+    takes no space."""
+    if any(node.hasFn(kind) for kind in SHAPE_FN_FOR_GEOMETRY_DATA.values()):
+        return _cast(node).serialize(world_space=_reads_world(plug))
+    return _cast(node).serialize()
 
 
 def _trace_choice_source(plug: OpenMaya.MPlug) -> OpenMaya.MPlug | None:
@@ -4259,17 +4282,28 @@ class Attribute(str, metaclass=_PlugMeta):
         -- see `_is_geometry_typed_attr`). Resolution order is:
 
           1. If the owning node is a SHAPE matching the plug's geometry type,
-             returns the shape itself (e.g. ``mesh.outMesh`` -> ``Mesh`` node).
+             returns the shape's ``serialize()`` (e.g. ``mesh.outMesh`` -> the
+             Mesh's ``(MeshData, UVList)``).
           2. Otherwise, if the plug has a downstream consumer, returns that
-             node (e.g. ``skinCluster.outputGeometry[0]`` -> ``Mesh`` of the
-             consuming shape).
+             node's ``serialize()`` (e.g. ``skinCluster.outputGeometry[0]`` ->
+             the consuming shape's).
           2.5. Otherwise, if the owning node is a known geometry-routing node
              (see ``GEOMETRY_ROUTING_TRACERS``, e.g. ``choice``), walks
              upstream via the registered tracer to find the source shape and
-             returns it.
+             returns its ``serialize()``.
           3. Otherwise, returns the matching OpenMaya fn set wrapping the
              plug's computed data (``MFnMesh``, ``MFnNurbsCurve``, ...).
           4. Otherwise returns None.
+
+        A shape serializes in the space of the plug its data comes from
+        (`WORLD_GEOMETRY_PLUGS`): world space for an element of
+        ``worldMesh`` / ``worldSpace`` (the routed source plug in 2.5;
+        through the shape's first path, so ``worldMesh[1]`` of an instanced
+        shape gives instance 0's world), object space for every other plug
+        (``outMesh``, ``local``, ``inMesh``, a deformer's output), as
+        `serialize` writes it by default (a MeshData with its transform's
+        world matrix). Another consumer (a skinCluster, a blendShape)
+        serializes as it does.
 
         Note: case 3 uses `MPlug.asMObject()` because it forces DG evaluation,
         ensuring the returned data contains real values rather than the
@@ -4364,24 +4398,24 @@ class Attribute(str, metaclass=_PlugMeta):
         )
 
         # 1. If the owning node IS the geometry of this plug's data type,
-        #    return the shape itself (e.g. mesh.outMesh -> Mesh node).
+        #    the shape serialized, in the plug's space (e.g. mesh.outMesh -> Mesh data).
         if is_shape and expected_shape_fn and owner_obj.hasFn(expected_shape_fn):
-            return _cast(owner_obj).serialize()
+            return _serialized_through(owner_obj, self._mplug)
 
         # 2. Prefer a real downstream node consumer.
         dests = self._mplug.destinations()
         if dests:
-            return _cast(dests[0].node()).serialize()
+            return _serialized_through(dests[0].node(), self._mplug)
 
         # 2.5. Known geometry-routing nodes (e.g. choice node): walk upstream via
-        #      the registered tracer to find the source shape.
+        #      the registered tracer to find the source shape (in its plug's space).
         if expected_shape_fn:
             owner_type = OpenMaya.MFnDependencyNode(owner_obj).typeName
             tracer     = GEOMETRY_ROUTING_TRACERS.get(owner_type)
             if tracer is not None:
                 src_plug = tracer(self._mplug)
                 if src_plug is not None and src_plug.node().hasFn(expected_shape_fn):
-                    return _cast(src_plug.node()).serialize()
+                    return _serialized_through(src_plug.node(), src_plug)
 
         # 3. Wrap the computed data via the matching MFn fn set.
         if data is None or data.isNull() or data.apiType() == OpenMaya.MFn.kInvalid:

@@ -525,16 +525,17 @@ class SkinCluster(Deformer):
                 else:
                     raise RuntimeError(f"No skinCluster found on {_name_of(mesh)}")
 
-            # serialize + combined the source data
-            source_mesh_data = sum([x.serialize()[0] for x in source_meshes])
+            # serialize + combined the source data (in world space: the meshes are
+            # summed and sampled as their points are, cgmath never reads the matrix)
+            source_mesh_data = sum([x.serialize(world_space=True)[0] for x in source_meshes])
             source_skin_data = sum([x.serialize() for x in source_skins])
             source_skin_data.remove_unused()
 
             # process each target
             target_data = flatten_vertices(target_vertices)
             for target_mesh, indices in target_data.items():
-                # serialize target_mesh
-                target_mesh_data = target_mesh.serialize()[0]
+                # serialize target_mesh (in world space, as the sources)
+                target_mesh_data = target_mesh.serialize(world_space=True)[0]
 
                 # make a copy of the source_skin_data before it gets conformed
                 skin_data = source_skin_data.copy()

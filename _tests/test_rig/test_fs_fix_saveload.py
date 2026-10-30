@@ -107,10 +107,12 @@ class TestADeformedShape(_Case):
         NurbsCurve("crvShape").save(self.path("crv.npz"))
         cmds.cluster("crv.cv[0]", name="clu")
         self.ready()
+        # re-pinned (user decision 2026-10-29): the curve's update takes no required space, so
+        # the hint names load(path), as the mesh's does
         self.assert_refused(
             ValueError, r"^NurbsCurve\('crvShape'\).load: 'crvShape' is deformed \(cluHandleCluster\).*"
-            r"NurbsCurve\('crvShapeOrig'\).load\(path, world_space=\.\.\.\) updates the shape under them",
-            lambda: NurbsCurve("crvShape").load(self.path("crv.npz"), world_space=True),
+            r"NurbsCurve\('crvShapeOrig'\).load\(path\) updates the shape under them",
+            lambda: NurbsCurve("crvShape").load(self.path("crv.npz")),
         )
 
 

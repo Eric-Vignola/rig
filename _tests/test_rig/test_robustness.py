@@ -194,7 +194,7 @@ class TestMeshPointsRefuseRigObjects(MayaTestCase):
             with self.subTest(method=method, arg="node"):
                 self.assertRegex(result[f"{method} node"],
                                  rf"^TypeError: Mesh\.{name} takes a point .* not the node 'loc': pass a "
-                                 rf"position: Node\('loc'\)\.get_rotate_pivot\(\)")
+                                 rf"position: Node\('loc'\)\.get_rotate_pivot\(world_space=True\)")
         for label in ("plugs", "List", "rows", "plug"):
             with self.subTest(set_points=label):
                 self.assertRegex(result[f"set_points {label}"],

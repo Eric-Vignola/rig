@@ -79,7 +79,7 @@ def check_order(call: str, first, second) -> None:
 
 def creating_takes_no_space(cls_name: str, what: str, kwargs: dict) -> None:
     """The class form of ``load`` creates: ``world_space=`` (the update's keyword,
-    ``Mesh('x').load(path, world_space=False)``) is a TypeError naming the
+    ``Mesh('x').load(path, world_space=True)``) is a TypeError naming the
     instance form, before any file is read."""
     if "world_space" in kwargs:
         raise TypeError(
@@ -89,32 +89,11 @@ def creating_takes_no_space(cls_name: str, what: str, kwargs: dict) -> None:
         )
 
 
-class _Required:
-    """The default of a keyword the call must give (`REQUIRED`), shown as
-    ``<required>`` in a signature: the method raises its own TypeError, naming
-    the keyword and why, when it is missing."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "<required>"
-
-
-REQUIRED = _Required()
-
-
-def required_space(method: str, data: str, world_space) -> bool:
+def space_flag(method: str, world_space) -> bool:
     """``world_space=`` of a curve's or a surface's update in place (`method`,
-    ``"NurbsCurve('ctlShape').load"``), which has no default: its file (`data`, a
-    ``BSplineData``) holds no space, so an object-space file loaded as world space
-    (or the reverse) would move the CVs silently. A TypeError naming the keyword
-    when it is missing or not a bool, before any file is read."""
-    if world_space is REQUIRED:
-        raise TypeError(
-            f"{method} needs world_space=: a {data} holds no space, so give the one the "
-            f"file was saved in (world_space=True for save()'s default, world_space=False for "
-            f"save(world_space=False)); the other one moves the CVs"
-        )
+    ``"NurbsCurve('ctlShape').load"``) as a bool: anything but a bool (None,
+    ``0``, ``"world"``) is a TypeError naming it, before any file is read (the
+    user's decision 2 of 2026-10-16: the wrong space moves the CVs silently)."""
     import numpy as np
 
     if not isinstance(world_space, (bool, np.bool_)):
@@ -123,22 +102,6 @@ def required_space(method: str, data: str, world_space) -> bool:
             f"not {world_space!r}"
         )
     return bool(world_space)
-
-
-def space_by_keyword(method: str, args: tuple) -> None:
-    """A curve's or a surface's update in place (`method`) takes the file, then
-    ``world_space=`` by keyword only: a positional argument after the file (`args`,
-    ``load(path, True)``, a likely first try of the required space) is a TypeError
-    naming the keyword, before any file is read."""
-    if args:
-        shown = ", ".join(
-            repr(arg) if isinstance(arg, (bool, int, float, str)) else f"a {type(arg).__name__}"
-            for arg in args
-        )
-        raise TypeError(
-            f"{method} takes the file, then world_space= by keyword: "
-            f"load(path, world_space=...), not load(path, {shown})"
-        )
 
 
 def _shown(value) -> str:
@@ -260,8 +223,12 @@ class creates_or_updates:
     def __set_name__(self, owner, name: str) -> None:
         self.owner = owner
         for fn in (self.create, self.update):
-            fn.__name__     = name
-            fn.__qualname__ = f"{owner.__name__}.{name}"
+            # the function a statement wraps too: Python's own errors for its arguments
+            # name the method, ``NurbsCurve.load() takes 2 positional arguments ...``
+            for named in (fn, getattr(fn, "__wrapped__", None)):
+                if named is not None:
+                    named.__name__     = name
+                    named.__qualname__ = f"{owner.__name__}.{name}"
 
     def _named_for(self, cls, fn):
         """``fn``, or for a subclass of the class that defines it a copy named after

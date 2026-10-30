@@ -203,13 +203,38 @@ class DAGNode(DGNode):
             )
         return False
 
-    def get_bounding_box(self, world_space: bool = True) -> OpenMaya.MBoundingBox:
-        """Returns the bounding box of this dag node."""
+    def get_bounding_box(self, *, world_space: bool = False) -> OpenMaya.MBoundingBox:
+        """Returns the bounding box of this dag node.
+
+        By default the box Maya keeps for the node (``MFnDagNode.boundingBox``),
+        in its parent's space: a transform's with its own channels applied (for
+        a transform, what ``xform -q -bb -os`` gives; a joint's spans its
+        radius, where xform gives its position), a shape's in its transform's
+        object space. Maya builds a transform's box from channels alone: it
+        leaves out the offset parent matrices, the node's own and those below
+        it (a group whose children sit at their offsets has its box where
+        their channels are).
+
+        With ``world_space=True`` the world box of the visible geometry at or
+        below the node (``cmds.exactWorldBoundingBox(ignoreInvisible=True)``):
+        every matrix counted, the offsets too, intermediate shapes left out as
+        from the default box. It bounds each shape's own box carried into the
+        world, not its points: a rotated shape that is no box (a sphere) gets
+        a looser box than its points'. A node with none (a joint, an empty
+        group) gives its default box in world space (through its parent
+        matrix).
+
+        Args:
+            world_space: By keyword only. If True, in world space.
+        """
+        if world_space:
+            box = cmds.exactWorldBoundingBox(_name_of(self), ignoreInvisible=True)
+            # no geometry: min above max (1e+20, -1e+20)
+            if box[0] <= box[3]:
+                return OpenMaya.MBoundingBox(OpenMaya.MPoint(box[:3]), OpenMaya.MPoint(box[3:]))
         bbx = type(self)._raw_get_fn_set(self).boundingBox
         if world_space:
-            parent = self.get_parent()
-            if parent:
-                bbx.transformUsing(type(parent).get_mdagpath(parent).exclusiveMatrix())
+            bbx.transformUsing(type(self).get_mdagpath(self).exclusiveMatrix())
         return bbx
 
     # --- hierarchy methods
