@@ -59,7 +59,7 @@ for the node classes and their typed methods.
 | 37 | [Shader conversion](#37-shader-conversion) | `mat.astype(Phong)` (in place), `Material(name).astype`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, other objects of the old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it, a container's member add |
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate`; a `ClipData` built and keyed |
-| 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
+| 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 
 ---
 
@@ -3986,10 +3986,12 @@ print(cmds.ls(type="animCurve"), cmds.ls(type="joint"))             # [] []
 
 `rig.run(path, inputs=None, *, argv=(), shared=())` runs the Python file at
 `path` as `__main__`, the way `python arm.py` would, without leaving the
-session. Every module the file imports from **your own code** (a plain `.py`
-outside an install) is executed again from the file on disk, on every run:
-edit a helper module, run again, and the edit is there, with no
-`importlib.reload`. The session's own copies are never touched.
+session; a list of paths runs several files, one after the other, in one
+namespace (**Several files**, below). Every module the file imports from
+**your own code** (a plain `.py` outside an install) is executed again from
+the file on disk, on every run: edit a helper module, run again, and the edit
+is there, with no `importlib.reload`. The session's own copies are never
+touched.
 
 ```python
 import os, sys, tempfile
@@ -4026,12 +4028,13 @@ print([str(c) for c in second["ctrls"]])         # ['R_shoulder_CTL', 'R_elbow_C
 
 | What | How |
 |---|---|
-| the file | runs through `runpy.run_path` as `__main__`: `__name__ == "__main__"`, `__file__` and `sys.argv[0]` are the path, `sys.path[0]` its folder, and `sys.modules["__main__"]` is the file while it runs (dataclasses, `typing.get_type_hints` and `pickle` of its classes work). rig never transforms your code: it runs as it would typed line by line in the Script Editor |
+| the file | runs as `__main__`, as `python arm.py` would: `__name__ == "__main__"`, `__file__` and `sys.argv[0]` are the path, `sys.path[0]` its folder, and `sys.modules["__main__"]` is the file while it runs (dataclasses, `typing.get_type_hints` and `pickle` of its classes work). rig executes the code itself, as `runpy.run_path` does, and never transforms it: it runs as it would typed line by line in the Script Editor |
+| a list of files | `rig.run(["lib.py", "arm.py"])`: the files run one after the other in **one** namespace, as one long file would (**Several files**, below). Every file's folder goes first on `sys.path`, once each, in order. `rig.run("arm.py")` is `rig.run(["arm.py"])`; a path is a str or a `pathlib.Path`; an empty list raises `ValueError` |
 | `inputs` | a mapping (a `dict`, or the `Run` of an earlier round) copied into the file's starting globals. Your dict is never rebound (a list in it is the same list). A module object is skipped (the file imports what it uses); a dunder name (`__author__`) raises `ValueError` |
 | `argv=["--fast"]` | `sys.argv[1:]` |
 | `shared=("studiolib",)` | top-level packages to share with the session instead of executing them again |
-| what it returns | a `Run`: the file's globals, as a read-only mapping (`result["ctrls"]`, `dict(result)`). It is the dict the file ran in, so a global its functions set later (`result.call("main", ...)`, a callback) shows. `result.call` calls one of its functions with the run's modules shown; `result.path`, `result.modules` |
-| undo | the whole run is **one** step, named `rig.run arm.py`: one Ctrl+Z after a typo halfway through a build goes back to the start. A `rig.run` inside a run joins the outer step |
+| what it returns | a `Run`: the file's globals, as a read-only mapping (`result["ctrls"]`, `dict(result)`). It is the dict the file ran in, so a global its functions set later (`result.call("main", ...)`, a callback) shows. `result.call` calls one of its functions with the run's modules shown; `result.path` (the first file), `result.paths` (every file, in order), `result.modules` |
+| undo | the whole run is **one** step, named `rig.run arm.py` (`rig.run lib.py, arm.py` for a list): one Ctrl+Z after a typo halfway through a build goes back to the start. A `rig.run` inside a run joins the outer step |
 | given back after a run | `sys.argv`, `sys.path`, `sys.stdin` / `stdout` / `stderr`, `sys.excepthook` / `displayhook`, and rig's options (`set_options` in the file) |
 | not given back | environment variables, the working folder, logging and warning settings, the scene, Maya callbacks, Qt windows, state held in a shared package |
 
@@ -4071,9 +4074,44 @@ the file's names.
 `exit()` and `quit()` end the file as `sys.exit()` does, and the session gets
 its `sys.stdin` back open.
 
-**Paths: `~` and environment variables.** The path is expanded before the run,
-again and again until nothing changes, so a variable may hold `~` or other
-variables; then `..` is walked. It comes out with forward slashes.
+**Several files.** A list of paths runs the files one after the other in
+**one** namespace, as if they were one long file: a later file uses what an
+earlier one defined, with no import, and `result.call` reaches every function
+they define. Here `script2.py` never imports `script1.py`:
+
+```python
+script1 = write("script1.py", "def foo():\n    return True\n")
+script2 = write("script2.py", "def bar():\n    return foo()\n")
+test    = rig.run([script1, script2])
+print(test.call("bar"))                           # True
+print([os.path.basename(p) for p in test.paths])  # ['script1.py', 'script2.py']
+```
+
+* **Every path is checked before any file runs**: a missing one raises
+  `FileNotFoundError`, and no file has run.
+* **Each file** sees its own `__file__` and `sys.argv[0]` while it runs, but
+  `sys.path[0]` is the first file's folder in every file: a file finds its
+  own folder with `os.path.dirname(__file__)`. `argv` is every file's
+  `sys.argv[1:]`; `inputs` are copied in once, before the first file.
+* **The same name in two files**: the later one wins, silently, as with MEL
+  `source` or one long file.
+* **A module two files import** runs once: `isinstance` holds across the
+  files.
+* **Don't import a listed file** from a later one (`import lib` in
+  `arm.py`): it runs a second time, as a module, and its classes are not the
+  ones the run already made (`isinstance` is `False`). Use its names
+  directly.
+* **An error** in a file stops the run there: the files after it never run,
+  and `err.rig_run` holds what the run made up to the error. `sys.exit(0)`
+  in a file ends the run there, normally; a failure code raises
+  `rig.RunExitError`, which names the file: `rig.run: b.py called sys.exit(3)`.
+* **`__file__` is shared too.** It is each file's own path while that file
+  runs, but a function from the first file that reads `__file__` when it is
+  called later sees the path of the last file that ran.
+
+**Paths: `~` and environment variables.** Each path is expanded before the
+run, again and again until nothing changes, so a variable may hold `~` or
+other variables; then `..` is walked. It comes out with forward slashes.
 
 | You write | It means |
 |---|---|

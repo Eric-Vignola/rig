@@ -166,6 +166,10 @@ Running a file:
       shared, the code is never transformed. It returns the file's globals
       (``result["ctrls"]``, read-only; ``result.call("main")``), and the run
       is one undo step, ``rig.run arm.py``.
+    * ``rig.run(["D:/chars/lib.py", "D:/chars/bob/arm.py"])`` runs the files
+      one after the other in one namespace, as one long file would: arm.py
+      uses what lib.py defined, and the run is one undo step,
+      ``rig.run lib.py, arm.py``.
 
 Examples::
 

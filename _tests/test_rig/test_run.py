@@ -4,11 +4,14 @@
   (one ``inputs`` mapping, ``shared=``, the file as ``__main__``, lazy claim, the narrower restore).
 * `TestProbes`: every probe of the evaluation (runs/features/regen_eval: review P1-P24, the
   synthesis view probe, the critic's C1-C3) as a regression test.
+* `TestRunList`: ``rig.run([a, b])``, several files in turn in one namespace (the 15 checks of
+  the 2026-10-27 handoff, and a compiled file); one path is a list of one.
 * `TestWeakRegistries`: ``_ALL_MEMOIZED`` / ``_ALL_NODEOP_CACHES`` hold their members weakly.
 
 The Maya side (undo, rig shared, cgmath, options, callbacks) is in ``test_run_maya.py``.
 """
 
+import contextlib
 import gc
 import getpass
 import importlib
@@ -18,6 +21,7 @@ import io
 import linecache
 import logging
 import os
+import pathlib
 import py_compile
 import shutil
 import sys
@@ -627,18 +631,23 @@ class TestProbes(_Tree):
 
     def test_p18_keyboard_interrupt(self):
         path = list(sys.path)
+        main = sys.modules["__main__"]
         with self.assertRaises(KeyboardInterrupt):
             _quiet(self.script("kbi", "import rqpkg.deep\nraise KeyboardInterrupt\n"))
         self.assertEqual((run_module._ACTIVE, sys.path), ([], path))
         self.assertIs(sys.modules["rqpkg.deep"], self.session["rqpkg.deep"])
+        self.assertIs(sys.modules["__main__"], main)
 
     def test_p19_sys_exit(self):
+        main = sys.modules["__main__"]
         with self.assertRaises(RuntimeError) as caught:
             _quiet(self.script("exit1", "import sys\nA = 1\nsys.exit(3)\n"))
         self.assertEqual((caught.exception.code, caught.exception.rig_run["A"]), (3, 1))
         self.assertIsInstance(caught.exception.__cause__, SystemExit)
+        self.assertIs(sys.modules["__main__"], main)
         result, _ = _quiet(self.script("exit0", "import sys\nA = 1\nsys.exit()\nB = 2\n"))
         self.assertEqual((result["A"], "B" in result), (1, False))
+        self.assertIs(sys.modules["__main__"], main)
 
     def test_p20_a_folder(self):
         with self.assertRaisesRegex(FileNotFoundError, "Not a file"):
@@ -837,7 +846,7 @@ class TestProbes(_Tree):
         spec = importlib.util.spec_from_file_location("_rig_run_copy", run_module.__file__)
         copy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(copy)
-        old = copy.Run("old.py", set())
+        old          = copy.Run(("old.py",), set())
         old._globals = {"__name__": "__main__", "__file__": "old.py", "SIDE": "L"}
         self.assertNotIsInstance(old, run_module.Run)
         self.assertEqual(self.run_("chain_old", "GOT = SIDE\n", old)["GOT"], "L")
@@ -859,6 +868,225 @@ class TestProbes(_Tree):
         self.assertIs(result["NODE"], rig.Node)
         self.assertEqual((result.shared["rig"], result.shared["cgmath"]), ("rig", "rig"))
         self.assertIn("cgmath", run_module._RIG_TOPS)
+
+
+# ---------------------------------------------------------------------------------------------
+# Several files in one namespace (the 2026-10-27 handoff's 15 checks, and a compiled file)
+
+_LIST = {
+    "lib/rlhelper.py":  """
+        import sys
+        sys._rl_runs = getattr(sys, "_rl_runs", 0) + 1
+
+        class Thing:
+            pass
+    """,
+    "one/rlbeside1.py": 'VALUE = "beside one"\n',
+    "one/rllate1.py":   'VALUE = "late one"\n',
+    "two/rlbeside2.py": 'VALUE = "beside two"\n',
+}
+
+
+class TestRunList(_Tree):
+    """``rig.run([a, b])``: the files run in turn in ONE namespace, as one long file would."""
+
+    TOPS = {"rlhelper", "rlbeside1", "rllate1", "rlbeside2"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.make(_LIST)
+
+    def script(self, name, body, folder="scripts"):
+        return _write(self.WORK, f"{folder}/{name}.py", body)
+
+    def run_(self, paths, inputs=None, **kwargs):
+        return _quiet(paths, inputs, **kwargs)[0]
+
+    @staticmethod
+    def fwd(path):
+        return path.replace("\\", "/") if WIN else path
+
+    def test_01_the_users_example(self):
+        script1 = self.script("script1", "def foo():\n    return True\n")
+        script2 = self.script("script2", "def bar():\n    return foo()\n")  # no import of script1
+        self.assertIs(self.run_([script1, script2]).call("bar"), True)
+
+    def test_02_a_forward_call(self):
+        early = self.script("early", "def early():\n    return later()\n")
+        late  = self.script("late", "def later():\n    return 'from the second file'\n")
+        self.assertEqual(self.run_([early, late]).call("early"), "from the second file")
+
+    def test_03_one_path_is_a_list_of_one(self):
+        path  = self.script("alone", """
+            import sys
+            SEEN = {"file": __file__, "argv": list(sys.argv), "path0": sys.path[0],
+                    "main_is_me": sys.modules["__main__"].__dict__ is globals()}
+        """)
+        names = []
+        with mock.patch.object(run_module, "undo_chunk", side_effect=lambda name: names.append(name) or
+                               contextlib.nullcontext()):
+            forms = (path, [path], (path,), pathlib.Path(path), os.fsencode(path))
+            runs  = [self.run_(form, argv=["x"]) for form in forms] + [_quiet(path=path, argv=["x"])[0]]
+        fwd = self.fwd(path)
+        self.assertEqual(runs[0]["SEEN"], {"file": fwd, "argv": [fwd, "x"], "path0": os.path.dirname(path),
+                                          "main_is_me": True})
+        self.assertEqual(names, ["rig.run alone.py"] * 6)
+        for result in runs:
+            self.assertEqual(dict(result), dict(runs[0]))
+            self.assertEqual((result.path, result.paths), (fwd, (fwd,)))
+
+    def test_04_each_file_sees_its_own_path(self):
+        one    = self.script("own1", '''
+            """File one."""
+            import sys
+            SEEN = [(__file__, sys.argv[0])]
+
+            def where():
+                return __file__
+        ''')
+        two    = self.script("own2", """
+            import sys
+            SEEN.append((__file__, sys.argv[0]))
+            DUNDERS = (__package__, __cached__, __loader__, __spec__, __doc__)
+        """)
+        result = self.run_([one, two])
+        self.assertEqual(result["SEEN"],       [(self.fwd(one),) * 2, (self.fwd(two),) * 2])
+        self.assertEqual(result["DUNDERS"],    ("", None, None, None, None))  # as runpy sets them, per file
+        self.assertEqual(result.call("where"), self.fwd(two))                 # one namespace: the last file's
+
+    def test_05_every_files_folder_on_sys_path(self):
+        one    = self.script("near1", """
+            import rlbeside1
+            ONE = rlbeside1.VALUE
+
+            def late():
+                import rllate1
+                return rllate1.VALUE
+        """, folder="one")
+        two    = self.script("near2", "import rlbeside2\nTWO = rlbeside2.VALUE\n", folder="two")
+        again  = self.script("near3", "AGAIN = ONE\n", folder="one")
+        path   = list(sys.path)
+        result = self.run_([one, two, again])
+        self.assertEqual((result["ONE"], result["TWO"]), ("beside one", "beside two"))
+        self.assertEqual(result.call("late"), "late one")
+        self.assertEqual(result.sys_path[:3], [os.path.join(self.WORK, name) for name in ("one", "two")] + path[:1])
+        self.assertEqual(sys.path, path)
+
+    def test_06_the_later_file_wins(self):
+        one    = self.script("wins1", "X = 1\n\ndef foo():\n    return 'one'\n")
+        two    = self.script("wins2", "X = X + 1\n\ndef foo():\n    return 'two'\n")
+        result = self.run_([one, two])
+        self.assertEqual((result.call("foo"), result["X"]), ("two", 2))
+
+    def test_07_inputs_copied_in_once_argv_for_every_file(self):
+        mine   = {"SIDE": "L", "LOG": []}
+        one    = self.script("in1", "import sys\nLOG.append(('one', SIDE, sys.argv[1:]))\nSIDE = 'R'\n")
+        two    = self.script("in2", "import sys\nLOG.append(('two', SIDE, sys.argv[1:]))\n")
+        result = self.run_([one, two], mine, argv=["--fast"])
+        self.assertEqual(mine["LOG"],    [("one", "L", ["--fast"]), ("two", "R", ["--fast"])])
+        self.assertEqual(mine,           {"SIDE": "L", "LOG": mine["LOG"]})  # your dict: no name rebound or added
+        self.assertEqual(result["SIDE"], "R")
+
+    def test_08_a_module_both_files_import_runs_once(self):
+        self.addCleanup(vars(sys).pop, "_rl_runs", None)
+        before = getattr(sys, "_rl_runs", 0)
+        one    = self.script("helped1", "import rlhelper\nOBJ = rlhelper.Thing()\n")
+        two    = self.script("helped2", "import rlhelper\nSAME = isinstance(OBJ, rlhelper.Thing)\n")
+        result = self.run_([one, two])
+        self.assertEqual((sys._rl_runs - before, result["SAME"]), (1, True))
+        self.assertNotIn("rlhelper", sys.modules)
+
+    def test_09_the_namespace_is_main(self):
+        main = sys.modules["__main__"]
+        one  = self.script("main1", "import sys\nMAIN = [sys.modules['__main__'].__dict__ is globals()]\n")
+        two  = self.script("main2", """
+            from __future__ import annotations
+            import dataclasses, pickle, sys
+            from typing import ClassVar
+            MAIN.append(sys.modules["__main__"].__dict__ is globals())
+
+            @dataclasses.dataclass
+            class Cfg:
+                count: ClassVar[int] = 3
+                name: str = "x"
+
+            FIELDS = [f.name for f in dataclasses.fields(Cfg)]
+            PICKLE = type(pickle.loads(pickle.dumps(Cfg()))) is Cfg
+        """)
+        result = self.run_([one, two])
+        self.assertEqual((result["MAIN"], result["FIELDS"], result["PICKLE"]), ([True, True], ["name"], True))
+        self.assertIs(sys.modules["__main__"], main)
+
+    def test_10_annotations_as_written(self):
+        plain  = self.script("annotated", "def f(x: int):\n    return x\n")
+        future = self.script("annotated_future", "from __future__ import annotations\n\ndef g(x: int):\n    return x\n")
+        self.assertIs(self.run_(plain)["f"].__annotations__["x"], int)  # not run.py's __future__ flags
+        result = self.run_([future, plain])
+        self.assertEqual(result["g"].__annotations__["x"], "int")  # the file that asks for it
+        self.assertIs(result["f"].__annotations__["x"], int)       # never the next file
+
+    def test_11_an_error_in_the_second_file(self):
+        one   = self.script("good1", "A = 1\n")
+        three = self.script("never3", "C = 3\n")
+        path, argv, main = list(sys.path), list(sys.argv), sys.modules["__main__"]
+        for name, body, error in (("raises2", "B = 2\n1 / 0\n", ZeroDivisionError),
+                                  ("syntax2", "B = (\n", SyntaxError)):
+            with self.subTest(file=name):
+                with self.assertRaises(error) as caught:
+                    self.run_([one, self.script(name, body), three])
+                ran = caught.exception.rig_run
+                self.assertEqual((ran["A"], "C" in ran), (1, False))
+                self.assertEqual((sys.path, sys.argv, run_module._ACTIVE), (path, argv, []))
+                self.assertIs(sys.modules["__main__"], main)
+
+    def test_12_sys_exit_ends_the_run_in_its_file(self):
+        main   = sys.modules["__main__"]
+        after  = self.script("after", "B = 2\n")
+        result = self.run_([self.script("quits1", "import sys\nA = 1\nsys.exit(0)\n"), after])
+        self.assertEqual((result["A"], "B" in result), (1, False))
+        self.assertIs(sys.modules["__main__"], main)
+        with self.assertRaises(rig.RunExitError) as caught:
+            self.run_([self.script("fine1", "A = 1\n"), self.script("fails2", "import sys\nsys.exit(3)\n"), after])
+        err = caught.exception
+        self.assertEqual((err.code, err.rig_run["A"], "B" in err.rig_run), (3, 1, False))
+        self.assertEqual(str(err), "rig.run: fails2.py called sys.exit(3)")
+        self.assertIs(sys.modules["__main__"], main)
+
+    def test_13_every_path_checked_before_any_file_runs(self):
+        marker = os.path.join(self.WORK, "ran.txt")
+        one    = self.script("marks1", f"open({marker!r}, 'w').close()\n")
+        with self.assertRaises(FileNotFoundError):
+            rig.run([one, os.path.join(self.WORK, "scripts", "missing2.py")])
+        self.assertFalse(os.path.exists(marker))
+        with self.assertRaises(ValueError):
+            rig.run([])
+        with self.assertRaisesRegex(TypeError, r"not None$"):
+            rig.run(None)
+        with self.assertRaisesRegex(TypeError, r"not 3$"):
+            rig.run([one, 3])
+        self.assertFalse(os.path.exists(marker))
+
+    def test_14_one_undo_step_named_after_every_file(self):
+        names = []
+        with mock.patch.object(run_module, "undo_chunk", side_effect=lambda name: names.append(name) or
+                               contextlib.nullcontext()):
+            self.run_([self.script("a", "X = 1\n"), self.script("b", "Y = 2\n")])
+        self.assertEqual(names, ["rig.run a.py, b.py"])
+
+    def test_15_a_generator_of_paths(self):
+        order  = []
+        paths  = [self.script(name, f"ORDER.append({name!r})\n") for name in ("gen1", "gen2", "gen3")]
+        result = self.run_((path for path in reversed(paths)), {"ORDER": order})
+        self.assertEqual(order, ["gen3", "gen2", "gen1"])
+        self.assertEqual(result.paths, tuple(self.fwd(path) for path in reversed(paths)))
+        self.assertIn(" and 2 more files: ", repr(result))
+
+    def test_16_a_compiled_file(self):
+        source = self.script("compiled", "FILE = __file__\n")
+        pyc    = py_compile.compile(source, cfile=source + "c", doraise=True)
+        result = self.run_([pyc, self.script("after_pyc", "AFTER = FILE\n")])
+        self.assertEqual(result["AFTER"], self.fwd(pyc))  # its code, read as runpy reads it, not its bytes as source
 
 
 class TestWeakRegistries(unittest.TestCase):

@@ -1,19 +1,23 @@
 """
-``rig.run``: run a Python file as if in a fresh Python, without leaving Maya.
+``rig.run``: run a Python file as if in a fresh Python, without leaving Maya; or
+several files, one after the other, in one namespace.
 
     import rig
     result = rig.run("D:/chars/bob/arm.py", {"side": "L"})   # the file runs as __main__
     result["ctrls"]                                          # its globals (read-only)
     result.call("main", lastBuildStep=None)                  # one of its functions, inside the run
+    rig.run(["D:/chars/lib.py", "D:/chars/bob/arm.py"])      # in turn, in one namespace
 
-The file runs through :func:`runpy.run_path` as ``__main__``, as ``python arm.py``
-runs it; rig never transforms its code. Every module it imports from your own
-code (plain ``.py`` outside an install) is executed again from the file's
-current bytes, so an edit is picked up with no reload, and the session's own
-copies are never touched. Shared with the session, never re-executed: the
-standard library, an install (site-packages, the interpreter, Maya, Program
-Files), a package with a compiled member, ``rig`` and the packages rig itself
-uses (cgmath), and the top-level names given in ``shared=``.
+The file runs as ``__main__``, as ``python arm.py`` runs it: rig executes its code
+itself, as :func:`runpy.run_path` does, and never transforms it. Several files run
+one after the other in one ``__main__`` namespace, as one long file would, each
+with its own ``__file__`` and ``sys.argv[0]`` while it runs. Every module they
+import from your own code (plain ``.py`` outside an install) is executed again
+from the file's current bytes, so an edit is picked up with no reload, and the
+session's own copies are never touched. Shared with the session, never
+re-executed: the standard library, an install (site-packages, the interpreter,
+Maya, Program Files), a package with a compiled member, ``rig`` and the packages
+rig itself uses (cgmath), and the top-level names given in ``shared=``.
 
 A run hides a session package only once the file's own code imports it ("lazy
 claim"): code that is not the file's (a session callback, a thread) sees what
@@ -22,9 +26,10 @@ claim"): code that is not the file's (a session callback, a thread) sees what
 the thread inside ``rig.run``) swaps modules in and out of ``sys.modules``; a
 ``rig.run`` from another thread while a run goes on raises RuntimeError.
 
-One run is one undo step, ``rig.run <file name>``; a run inside a run joins the
-outer step. Afterwards the session gets back ``sys.argv``, ``sys.path``, the std
-streams, ``sys.excepthook`` / ``displayhook`` and rig's options.
+One run is one undo step, ``rig.run a.py`` (``rig.run a.py, b.py`` for several
+files); a run inside a run joins the outer step. Afterwards the session gets back
+``sys.argv``, ``sys.path``, the std streams, ``sys.excepthook`` / ``displayhook``
+and rig's options.
 """
 
 from __future__ import annotations
@@ -38,10 +43,11 @@ import hashlib
 import importlib
 import importlib.machinery
 import importlib.util
+import io
 import linecache
 import os
+import pkgutil
 import re
-import runpy
 import sys
 import sysconfig
 import threading
@@ -80,55 +86,56 @@ class RunExitError(RuntimeError):
 def run(path, inputs=None, *, argv=(), shared=()):
     """Run the Python file at ``path`` as ``__main__``, as if in a fresh Python, and return its :class:`Run`.
 
-    ``inputs`` (a mapping, or the :class:`Run` of an earlier round) is copied into the file's
-    starting globals: module objects are skipped, and a dunder name raises ValueError. ``argv``
-    becomes ``sys.argv[1:]``; ``shared`` names top-level packages to share with the session
-    instead of re-executing them. The run is one undo step, ``rig.run <file name>``.
+    ``path`` (``str | os.PathLike | list``) is one path (a str, a :class:`pathlib.Path`), or a
+    list of paths that run one after the other in ONE namespace, as one long file would: a later
+    file uses what an earlier one defined (the same name: the later one wins), and
+    :meth:`Run.call` reaches every function they define. Each file sees its own ``__file__`` and
+    ``sys.argv[0]`` while it runs; every file's folder is first on ``sys.path`` (once each, in
+    order) for the whole run and for :meth:`Run.call`. ``rig.run("a.py")`` is
+    ``rig.run(["a.py"])``.
 
-    ``path`` may use ``~`` and environment variables (``$VAR``, ``${VAR}``, ``%VAR%`` on Windows),
-    expanded until nothing changes, and ``..``; it comes out with forward slashes. A path that is
-    no file raises FileNotFoundError, naming any variable in it that isn't set. An error in the
-    file propagates with ``err.rig_run``, the run so far; ``sys.exit(n)`` with a failure code
-    raises :class:`RunExitError` carrying ``.code``.
+    ``inputs`` (a mapping, or the :class:`Run` of an earlier round) is copied into the starting
+    globals, once: module objects are skipped, and a dunder name raises ValueError. ``argv``
+    becomes every file's ``sys.argv[1:]``; ``shared`` names top-level packages to share with the
+    session instead of re-executing them. The run is one undo step, ``rig.run a.py``
+    (``rig.run a.py, b.py`` for several).
+
+    A path may use ``~`` and environment variables (``$VAR``, ``${VAR}``, ``%VAR%`` on Windows),
+    expanded until nothing changes, and ``..``; it comes out with forward slashes. Every path is
+    checked before any file runs: one that is no file raises FileNotFoundError, naming any
+    variable in it that isn't set; an empty list raises ValueError; an item that is no path
+    raises TypeError. Then the files run in order. An error in one (a SyntaxError
+    too) propagates with ``err.rig_run``, the run so far, and the files after it never run;
+    ``sys.exit()`` ends the run in the file that calls it: normally with 0 or None, else as
+    :class:`RunExitError` carrying ``.code`` and naming that file.
     """
-    path = _resolve(path)
-    if not os.path.isfile(path):
-        why = "Not a file" if os.path.exists(path) else _missing(path)
-        raise FileNotFoundError(errno.ENOENT, why, path)
+    paths = _paths(path)
     names = _inputs(inputs)
     argv, shared = _strings("argv", argv), set(_strings("shared", shared))
     with _LOCK:                                              # never held while the file's code runs
         _check_thread()
         _install()
         _stamp()
-    result          = Run(path, shared)
-    result.sys_path = [os.path.normpath(os.path.dirname(path))] + sys.path
-    options = get_options()
-    stdin   = _stdin_state()
-    saved   = (sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook)
-    entered = False
+    result          = Run(paths, shared)
+    result.sys_path = list(dict.fromkeys(os.path.normpath(os.path.dirname(p)) for p in paths)) + sys.path
+    options         = get_options()
+    stdin           = _stdin_state()
+    saved           = (sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook)
+    entered         = False
     importlib.invalidate_caches()
     try:
-        with undo_chunk(f"rig.run {os.path.basename(path)}"):
+        with undo_chunk(f"rig.run {', '.join(map(os.path.basename, paths))}"):
             with _LOCK:
                 _check_thread()                              # re-checked with the view entered atomically
                 _enter(result)
                 entered = True
             try:
-                sys.argv = [path, *argv]
-                result._bind(runpy.run_path(path, {**names, _MARK: result}, "__main__"))
+                _run_files(paths, names, result, argv)
             finally:
                 with _LOCK:
                     _leave()
-    except SystemExit as err:
-        result._globals = _globals_of(err, result)
-        if err.code not in (None, 0):
-            exit_error = RunExitError(f"rig.run: {os.path.basename(path)} called sys.exit({err.code!r})")
-            exit_error.code, exit_error.rig_run = err.code, result
-            raise exit_error from err
     except BaseException as err:
         if entered:
-            result._globals = _globals_of(err, result)
             with contextlib.suppress(Exception):
                 err.rig_run = result                       # post-mortem: sys.last_value.rig_run
         raise
@@ -142,20 +149,22 @@ def run(path, inputs=None, *, argv=(), shared=()):
 
 
 class Run(collections.abc.Mapping):
-    """One run of a file: its globals (``run["name"]``, read-only; ``dict(run)`` for a copy), the
-    very dict the file ran in, so what its functions set later shows, and the modules it executed
-    (``run.modules``)."""
+    """One run of a file, or of several in one namespace: its globals (``run["name"]``, read-only;
+    ``dict(run)`` for a copy), the very dict the files ran in, so what their functions set later
+    shows; the modules it executed (``run.modules``); and its files, ``run.path`` (the first) and
+    ``run.paths`` (every one given, in order: one for a single path)."""
 
     _rig_run_result = True           # a Run, whichever copy of this module made it (a reload, a purge)
 
-    def __init__(self, path, shared):
-        self.path     = path
-        self.owned    = set()        # top-level packages this run executes itself
-        self.shared   = {}           # top-level name -> why the session's copy is used
-        self.modules  = {}           # this run's modules, while no view shows them
+    def __init__(self, paths, shared):
+        self.path     = paths[0]
+        self.paths    = paths
+        self.owned    = set()  # top-level packages this run executes itself
+        self.shared   = {}     # top-level name -> why the session's copy is used
+        self.modules  = {}     # this run's modules, while no view shows them
         self.sys_path = None
         self._extra   = shared
-        self._globals = {}           # the file's globals (with _MARK, hidden here)
+        self._globals = {}     # the files' namespace (with _MARK, hidden here)
 
     def __getitem__(self, key):
         if key == _MARK:
@@ -169,16 +178,9 @@ class Run(collections.abc.Mapping):
         return len(self._globals) - (_MARK in self._globals)
 
     def __repr__(self):
-        return f"<rig.run {self.path!r}: {len(self.modules)} modules of its own>"
-
-    def _bind(self, scope):
-        """runpy returns a copy of the file's globals: keep the dict its functions write to."""
-        self._globals = _live_scope(scope, self) or scope
-
-    def _adopt(self, func):
-        scope = getattr(func, "__globals__", None) if isinstance(func, types.FunctionType) else None
-        if scope is not None and scope is not self._globals and _is_file_scope(scope, self):
-            self._globals = scope
+        more = len(self.paths) - 1
+        also = f" and {more} more file{'s' if more > 1 else ''}" if more else ""
+        return f"<rig.run {self.path!r}{also}: {len(self.modules)} modules of its own>"
 
     @contextlib.contextmanager
     def active(self):
@@ -195,30 +197,11 @@ class Run(collections.abc.Mapping):
                     _leave()
 
     def call(self, func, *args, **kwargs):
-        """Call ``func`` (a name in the file's globals, or any callable) with this run's modules shown."""
+        """Call ``func`` (a name in the files' globals, or any callable) with this run's modules shown."""
         if isinstance(func, str):
             func = self[func]
-        self._adopt(func)
         with self.active():
             return func(*args, **kwargs)
-
-
-def _is_file_scope(scope, run):
-    return isinstance(scope, dict) and scope.get(_MARK) is run and scope.get("__name__") == "__main__"
-
-
-def _live_scope(scope, run):
-    """The dict the file ran in, from a function (or a class's method) it defined, or None."""
-    for value in list(scope.values()):
-        members = list(vars(value).values()) if isinstance(value, type) else (value,)
-        for member in members:
-            if isinstance(member, (staticmethod, classmethod, types.MethodType)):
-                member = member.__func__
-            elif isinstance(member, property):
-                member = member.fget
-            if isinstance(member, types.FunctionType) and _is_file_scope(member.__globals__, run):
-                return member.__globals__
-    return None
 
 
 def _check_thread():
@@ -279,19 +262,52 @@ def _strings(what, values):
     return values
 
 
-def _globals_of(err, run):
-    """The file's globals at the error, from its frame in the traceback (none: it never started)."""
-    tb = err.__traceback__
-    while tb is not None:
-        scope = tb.tb_frame.f_globals
-        if _is_file_scope(scope, run):
-            return scope
-        tb = tb.tb_next
-    return {}
+def _run_files(paths, names, result, argv):
+    """What :func:`runpy.run_path` does for a file, for each file in turn, in ONE namespace: the
+    ``__dict__`` of one ``__main__`` module, ``sys.modules["__main__"]`` for the whole run and put
+    back after, as runpy does for one file. ``sys.exit()`` ends the run in the file that calls it:
+    normally with 0 or None, else as :class:`RunExitError` naming that file."""
+    main  = types.ModuleType("__main__")
+    saved = sys.modules.get("__main__")
+    scope = result._globals = main.__dict__
+    scope.update(names)
+    scope[_MARK]            = result
+    sys.modules["__main__"] = main
+    try:
+        for path in paths:
+            sys.argv = [path, *argv]
+            scope.update(__name__="__main__", __file__=path, __cached__=None, __doc__=None, __loader__=None,
+                         __package__="", __spec__=None)
+            try:
+                exec(_code_of(path), scope)
+            except SystemExit as err:
+                if err.code in (None, 0):
+                    return
+                exit_error      = RunExitError(f"rig.run: {os.path.basename(path)} called sys.exit({err.code!r})")
+                exit_error.code = err.code
+                raise exit_error from err
+    finally:
+        if saved is None:
+            sys.modules.pop("__main__", None)
+        else:
+            sys.modules["__main__"] = saved
+
+
+def _code_of(path):
+    """The file's code, read as runpy reads it: a compiled file as it is, else its source, compiled
+    without this module's ``__future__`` flags (``annotations`` would make the file's annotations
+    strings)."""
+    with io.open_code(path) as fh:
+        code = pkgutil.read_code(fh)
+        if code is None:
+            fh.seek(0)
+            code = compile(fh.read(), path, "exec", dont_inherit=True)
+    return code
 
 
 # ---------------------------------------------------------------------------
-# The path: ~ and variables expanded until nothing changes, .. walked, forward slashes
+# The paths: one or several, each with ~ and variables expanded until nothing changes, .. walked,
+# forward slashes
 
 _WINDOWS    = os.name == "nt"
 _SEPARATORS = "/\\" if _WINDOWS else "/"
@@ -307,6 +323,26 @@ def _reference(name):
 
 
 _HOME_REF, _USER_REF = _reference("HOME"), _reference("USER")
+
+
+def _paths(path):
+    """The files to run, resolved, in order, each checked to be a file before any runs: one path (a
+    str, bytes or os.PathLike), or a list of them."""
+    if isinstance(path, (str, bytes)) or not isinstance(path, collections.abc.Iterable):
+        path = [path]  # one path; a pathlib.Path is no iterable
+    items = tuple(path)
+    if not items:
+        raise ValueError("rig.run: no file to run: the list of paths is empty")
+    paths = []
+    for item in items:
+        if not isinstance(item, (str, bytes, os.PathLike)):
+            raise TypeError(f"rig.run: a path is a str, bytes or os.PathLike, not {item!r}")
+        path = _resolve(item)
+        if not os.path.isfile(path):
+            why = "Not a file" if os.path.exists(path) else _missing(path)
+            raise FileNotFoundError(errno.ENOENT, why, path)
+        paths.append(path)
+    return tuple(paths)
 
 
 def _resolve(path):
