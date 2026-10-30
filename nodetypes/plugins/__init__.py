@@ -19,19 +19,19 @@ again only after an unload.
 rig's own API edits go through the command: `_run_undoable` (an object with
 ``doIt`` / ``undoIt`` / ``redoIt``, one unnamed undo step), and the journals of
 the API fast paths (`rig._internal.api_edits`: the connects and the single
-numeric value sets of a build, each an ``MDGModifier`` applied by
-``api_edits._apply`` and journaled by ``journal.add``: one undo step per
-statement, see `rig._internal.journal`; `_fast_path_ready` says whether they may
-run, else the caller takes its ``cmds`` route). rig loads its plug-in at the
-first such edit of a session.
+numeric value sets of a build, and a new shape's move under ``transform=``, each
+a modifier applied by ``api_edits._apply`` and journaled by ``journal.add``: one
+undo step per statement, see `rig._internal.journal`; `_fast_path_ready` says
+whether they may run, else the caller takes its ``cmds`` route). rig loads its
+plug-in at the first such edit of a session.
 
 If rig's plug-in cannot be loaded (neither from this folder nor by name), the
 edits that have no other undoable route (`_run_undoable`: the mesh point, UV and
 colour set edits, skin weights, an attribute's default or hidden flag
-re-declared) raise a clear ``RuntimeError``; the connects and value sets take
-their ``cmds`` route, with one warning per session that builds run slower. When
-Maya refuses to initialise the file, the fast paths do not try it again in that
-session (each try prints Maya's error again).
+re-declared) raise a clear ``RuntimeError``; the connects, the value sets and
+the shape's move take their ``cmds`` route, with one warning per session that
+builds run slower. When Maya refuses to initialise the file, the fast paths do
+not try it again in that session (each try prints Maya's error again).
 
 While a build's journals are on the undo queue, Maya refuses
 ``unloadPlugin('undoable_api_command')``: ``cmds.flushUndo()`` first. An unload

@@ -6,7 +6,7 @@ and loaded with the old default (True) put its object-space CVs in the world, mo
 transform, silently. A load without ``world_space=``, or with anything but a bool, is now a
 TypeError naming the argument, raised before the file is read (nothing read, nothing
 changed, no undo step). ``Mesh('x').load`` keeps its default (a MeshData holds its matrix),
-and the class forms (creating) still take no ``world_space=``.
+and the class forms (creating) still take no ``world_space=`` without ``transform=``.
 
 Each test failed at fc692b9 (negative control: the default True moved the CVs), except the
 guards.
@@ -158,7 +158,7 @@ class TestTheOtherFormsKeepTheirRules(_SpaceCase):
         np.testing.assert_allclose(np.array(Mesh(t).get_points())[:, :3], local, atol=1e-6)
 
     def test_the_class_forms_take_none(self):
-        """guard: creating takes no world_space=."""
+        """guard: creating takes no world_space= without transform=."""
         for cls, shape, _data in self.cases():
             with self.subTest(cls=cls.__name__):
                 path = cls(shape).save(self.path(f"{shape}.npz"))

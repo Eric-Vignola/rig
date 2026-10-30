@@ -1518,8 +1518,10 @@ print(sorted(cmds.nodeType(n) for n in cmds.container("offset1", query=True, nod
 So do the typed creators of [`rig.nodetypes`](nodetypes/README.md)
 (`Transform.create`, `Joint.create`, `Mesh.create`, `SkinCluster.create`, a
 subclass of your own), by the rules of `Node.create`: an explicit name takes
-the flattened prefix, and `container=False` leaves the node out. Display
-layers, sets, shading engines, materials and references are scene
+the flattened prefix, and `container=False` leaves the node out. A shape made
+under an existing transform (`Mesh.create(data, transform="ctl")`, the same
+for `NurbsCurve` and `NurbsSurface`) joins alone: the transform stays out.
+Display layers, sets, shading engines, materials and references are scene
 registries, found again by name: they stay out unless `container=True`.
 `Transform.define("x")` in a scope keys the name the create would make (with
 the prefix), and finds only a node the containers of the scope own: a
@@ -3529,7 +3531,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | a statement that removes a plug's input and then writes it: a value over a keyed, constrained or wired plug, a rewire (`x << b` over `x << a`), a child of a compound connected whole (its input split per child), a plug or `None` on a compound whose children have inputs of their own (one driver per channel: those go too) | one, named `rig.replace`: the disconnects, the connects and the sets of the whole statement (a `List` broadcast included); its undo brings back a double drive that was there |
 | `List.lock()` / `List.unlock()` (`List << lock`) over more than one command | one, named `rig.lock` / `rig.unlock` |
 | `plug << AnimCurve(...)`, a compound, a `List` broadcast or pairs of keys, a per-channel list holding keys (section 39) | one, named `rig.animcurve`: the new curves, their keys and their connects; **none** when every curve holds those keys already. `AnimCurveTL.create(keys)` is one `rig.create`, a `define` that makes or updates a curve one `rig.define`, `curve.set_keys(...)` one `rig.AnimCurve.set_keys` |
-| `Mesh.create`, `NurbsCurve.create`, `NurbsSurface.create`, `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.NurbsSurface.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
+| `Mesh.create`, `NurbsCurve.create`, `NurbsSurface.create` (with `transform=` too: the shape goes under the transform in that step), `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.NurbsSurface.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | a load of a cgmath file: `Mesh.load(...)` (creates) and `Mesh('x').load(...)` (updates), the same for `NurbsCurve`, `NurbsSurface`, `SkinCluster`, `BlendShape`; `Joint.load_hierarchy(...)` | one, named `rig.Mesh.load`, `rig.NurbsCurve.load`, `rig.NurbsSurface.load`, `rig.SkinCluster.load`, `rig.BlendShape.load`, `rig.Joint.load_hierarchy` (`rig.Transform.load_hierarchy`); a `save` is a read: **none** |
 | the transfers: `Mesh.transfer_maps`, `Mesh.transfer_component_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.copy_skincluster` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.copy_skincluster` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |

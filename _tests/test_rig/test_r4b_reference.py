@@ -429,6 +429,9 @@ _ALLOWED_SITES = {
            "resolved by the reference rule define reads parent= with (FIX)"),
     ("nodetypes/follicle.py", "Follicle.create_on_mesh", "Transform"): (
         1, "user input: the mesh transform to attach to"),
+    ("nodetypes/geometry.py", "_shape_target", "Transform"): (
+        1, "user input: a shape create's transform=, the transform the new shape goes under, read "
+           "by the reference rule before anything is made"),
     ("nodetypes/joint.py", "Joint.match_hierarchy", "Joint"): (
         1, "user input: the target joint, by name"),
     ("nodetypes/mesh.py", "Mesh.transfer_component_tags", "Mesh"): (

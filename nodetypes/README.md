@@ -116,8 +116,8 @@ from rig.nodetypes.plugins import load_plugin
 | `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `Transform.create(transform_data)` (one node; `Joint.create(joint_data)`), `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
 | `Geometry` | `geometryShape` | component tags: `get_injection_node`, `get_component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `get_local_shape_attr` / `get_world_shape_attr`, `get_component_mobject`, paintable attrs |
-| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
-| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `get_num_cvs`, `get_num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`), `save` / `load` (files: the class creates, a node updates its CVs) |
+| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back; `transform=`: the shape under an existing transform), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
+| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `get_num_cvs`, `get_num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`; both take `transform=`, as `Mesh.create`), `save` / `load` (files: the class creates, a node updates its CVs) |
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
@@ -209,7 +209,9 @@ creates, `define` makes sure, `create` makes new.
   in one undo step (`rig.define`). A typo in an attribute name raises on a
   hit and on a miss.
 - **Create, `Cls.create(*inputs, name=None, parent=None, container=None,
-  **kwargs)`.** Always a new node; Maya picks the final name.
+  **kwargs)`.** Always a new node; Maya picks the final name. A shape class
+  built from data (`Mesh`, `NurbsCurve`, `NurbsSurface`) takes `transform=`,
+  not `parent=`: the new shape under an existing transform.
 
 `define` never makes a second node under a name you can already refer to,
 and every refusal writes nothing:
@@ -360,7 +362,9 @@ shares the handle.
 calls the class's `_create` (which must return a node name), stamps a
 custom type when there is one, casts the result and sets the attribute
 keywords. `name=` and `parent=` are keywords; the positional arguments are
-the inputs a class is built from. A keyword in the class's
+the inputs a class is built from. A shape class built from data (`Mesh`,
+`NurbsCurve`, `NurbsSurface`) takes `transform=`, not `parent=`: its new
+shape under an existing transform. A keyword in the class's
 `_CREATE_FLAGS` goes to its command (a name that is both a flag and an
 attribute, such as a skinCluster's `normalizeWeights`, is the flag); every
 other keyword is an attribute, checked on the node type before anything is
@@ -371,9 +375,9 @@ Subclasses override `_create`, and that is where the signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')` |
-| `Mesh.create(mesh_data, *, name=, uv_data=, normals=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and its matrix goes on the transform (the source's world matrix, as `serialize` writes it by default); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed); a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform |
-| `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own, and its name and matrix as a `MeshData` does (on the `cgmath` that adds them) |
-| `NurbsSurface.create(data, *, name=)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; its name and matrix as a curve's) |
+| `Mesh.create(mesh_data, *, name=, uv_data=, normals=True, transform=None, world_space=False)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and its matrix goes on the transform (the source's world matrix, as `serialize` writes it by default); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed); a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform. With `transform=`, the shape alone, under that transform (below) |
+| `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=, transform=None, world_space=False)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own, and its name and matrix as a `MeshData` does (on the `cgmath` that adds them). With `transform=`, the shape alone |
+| `NurbsSurface.create(data, *, name=, transform=None, world_space=False)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; its name and matrix as a curve's). With `transform=`, the shape alone |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
 | `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
@@ -381,6 +385,54 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | `DisplayLayer.create(*objects, name=, empty= / noRecurse= / number= / makeCurrent=)` | `cmds.createDisplayLayer`, empty unless objects are given, which join as themselves (`noRecurse`) |
 | `Reference.create(file_path, namespace)` | `cmds.file(reference=True)`; no `name=` |
 | `AnimCurveTL.create(keys=None, times=None, *, <key options>, name=, **attrs)`, `TA` / `TU` / `TT` | `cmds.createNode` (the selection kept), then the keys through the API (`MFnAnimCurve`), then the attributes, one `rig.create` step; `keys` is values or an `AnimCurve(...)` value (then no times or options); `define(name, keys, ...)` replaces a found curve's keys when they differ (`update=True`) |
+
+**A shape under an existing transform: `transform=`.** `Mesh.create`,
+`NurbsCurve.create` and `NurbsSurface.create` (and their class-form `load`)
+given `transform=` (a transform or a joint, by name or node) make the shape
+alone, under it: no transform is made. The shape is named `<transform>Shape`
+(the target's name without its namespace; Maya numbers it when a sibling has
+it: `ctlShape1`) or `name=` as given (Maya numbers only a sibling's name:
+`name='ctl'` under `ctl` makes `|ctl|ctl`, and `'ctl'` then names two nodes),
+and returned by its path under the target as the call named it (`Mesh('ctl')`
+would read the transform's first mesh; a joint is no transform to that
+lookup, so a shape under one is read by its own name). `world_space=`, a
+keyword, says how the data's points go there:
+
+| `world_space=` | The points (a mesh's normals with them) |
+|---|---|
+| `False` (the default) | the shape's own, as the data holds them; its matrix (an `Object`'s transform) is not used |
+| `True` | where the data puts them in the world, through its matrix (an `Object`'s transform; points, or B-spline data of a `cgmath` without the field, are world positions), taken into the transform's space: `data.matrix @ inverse(its world matrix)`, the normals through the inverse transpose |
+
+The shape rides the same recorded transform as without it, then goes under
+the target (as `parent -shape -relative`, through the API: the selection and
+the hilite list are never touched, whatever is selected), and the ride is
+deleted and the shape named, in the create's one undo step: `cmds.undo()`
+removes the shape and leaves the target as it was, `cmds.redo()` brings back
+the same shape (its UUID), and the selection is kept through all three.
+Under an instanced target, or without rig's undo plug-in, the move is Maya's
+recorded `parent` (only the command puts the shape's other instances in its
+shading group): the selection is put back, the hilite list is cleared. What
+the ride gives comes too: `initialShadingGroup`, every UV set, the hard edges
+and locked normals, holed faces, a curve's form and knots, a surface's knots.
+The target is read before anything is made, by the reference rule: a missing
+name is a `NodeNotFoundError`, a node that is no transform (a shape, a DG
+node) a `NodeTypeError` (a `TypeError`) naming `transform=`. A locked target
+is taken, as Maya's `parent` takes it, and so is a referenced one (the
+`parent` is recorded as a reference edit). An instanced target gets the
+shape under every instance: with `world_space=True` that is a `ValueError`
+before anything is made, since one set of points cannot sit where the data
+puts them under each. Under a mirrored target (a negative scale),
+`world_space=True` puts the points where the data does, but locks every
+normal of a mesh (Maya's own normals face the other way) and leaves a
+surface inside out against the source (its normals reversed), as
+`Mesh('x').load(path, world_space=True)` and `NurbsSurface('x').load(...)` do
+into a mirrored transform. Under a target scaled to 0 (Maya keeps 1e-12 in
+its world matrix), `world_space=True` still lands the points, through object
+points about 1e12 times out: setting the scale back blows the shape up. An
+error once the shape is under the target (a value an attribute keyword
+refuses) deletes it. `world_space=True` without `transform=` is a
+`TypeError` naming it: a new transform takes the data's matrix, so the shape
+lands where the data puts it either way.
 
 A class built from a `cgmath` file has a `load` beside its `create`:
 `Mesh.load(path, ...)`, `NurbsCurve.load`, `NurbsSurface.load`,
@@ -391,7 +443,8 @@ A class built from a `cgmath` file has a `load` beside its `create`:
 
 Inside `with container()` a typed create joins the scope as `Node.create`
 does: an explicit `name=` takes the flattened scope's prefix, every node the
-call made for itself is registered (`Mesh.create`'s transform and shape,
+call made for itself is registered (`Mesh.create`'s transform and shape, with
+`transform=` the shape alone, never the transform it goes under;
 `SkinCluster.create`'s skin and bind pose, not the `Orig` shape it puts
 under your mesh), `skipSelect` defaults to the `skip_selection` option, and
 the call is one undo step. `container=False` leaves the nodes unregistered.
@@ -573,9 +626,9 @@ data to a `cgmath` file and `load` reads it back.
 | Node | `serialize()` | Back in | Save | Load |
 |---|---|---|---|---|
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create(transform_data)` / `Joint.create(joint_data)` (one node), `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=False, container=None)` creates, a typed `List`, parents first |
-| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`: object space and the transform's world matrix (`world_space=True`: world space, the identity); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, **attrs)` creates; `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True)` updates |
+| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`: object space and the transform's world matrix (`world_space=True`: world space, the identity); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, transform=None, world_space=False, **attrs)` creates (with `transform=`, the shape under it); `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True)` updates |
 | `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` | | |
-| `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` (its knots likewise, `knots_u` / `knots_v`); each with the shape's name and the transform's world matrix as a `MeshData`, on the `cgmath` that adds those fields | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=False)` | `NurbsCurve.load(path, *, name=, container=, **attrs)` creates; `NurbsCurve('x').load(path, *, world_space=False)` updates its CVs (the same for `NurbsSurface`) |
+| `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` (its knots likewise, `knots_u` / `knots_v`); each with the shape's name and the transform's world matrix as a `MeshData`, on the `cgmath` that adds those fields | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=False)` | `NurbsCurve.load(path, *, name=, container=, transform=None, world_space=False, **attrs)` creates (with `transform=`, the shape under it); `NurbsCurve('x').load(path, *, world_space=False)` updates its CVs (the same for `NurbsSurface`) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` | `skin.save(path, *, full_path=False, optimize=False)` | `SkinCluster.load(path, geo, **flags)` creates; `SkinCluster('x').load(path)` sets its weights |
 | `BlendShape` | `MorphList`; `get_target_data()` a `MorphData` | `set_target_data`, `BlendShape.create` | `bs.save(path, *, match_name=None)` | `BlendShape.load(path, base, **flags)` creates; `BlendShape('x').load(path)` sets its targets by name |
 
@@ -596,7 +649,8 @@ one (its `uvs=` then a `TypeError`).
 
 **`load` has two forms, told apart by where it is called.** From the class
 it creates, always, as `create` does: `Mesh.load(...)` a second time makes
-`body1`, `BlendShape.load(...)` stacks a second blendShape, and
+`body1` (`Mesh.load(path, transform='ctl')` one more shape under `ctl`),
+`BlendShape.load(...)` stacks a second blendShape, and
 `SkinCluster.load(...)` replaces the geometry's own skin (`create`'s rule).
 From a node it updates that node in place, the inverse of its `save`:
 
@@ -635,8 +689,10 @@ blendShape, a cluster) names the shape under its deformers instead, its
 intermediate `...Orig` shape: `Mesh('bodyShapeOrig').load(path)` updates the
 mesh a skin deforms, and the deformed shape follows (deleting the history
 would delete the deformers); a deformed curve or surface names
-`NurbsCurve('crvShapeOrig').load(path)` the same way. The class form takes no `world_space=`: it is a
-`TypeError` naming `Mesh('x').load(path, world_space=...)`. A hierarchy is never updated in place
+`NurbsCurve('crvShapeOrig').load(path)` the same way. The class form takes `world_space=` only with
+`transform=` (the shape under an existing transform, read before the file is): without it, either
+value is a `TypeError` naming both, `Mesh.load(path, transform='x', world_space=...)` and
+`Mesh('x').load(path, world_space=...)`. A hierarchy is never updated in place
 (its transforms are what the rig hangs off: constraints, skins, children):
 `Transform('root').load_hierarchy(...)` is a `TypeError` before anything is
 read, naming `Transform.load_hierarchy(path, parent='root')`.
@@ -733,7 +789,10 @@ colour set is made, renamed and deleted through `MFnMesh` too, never
 vertex edits restores broken sets. `Mesh.create`, `NurbsCurve.create` and
 `NurbsSurface.create` need no command (the shape rides a recorded `createNode`
 transform, and the mesh's shading is set on it before any recorded command
-touches it); they, `SkinCluster.create` and `set_weights(SkinData)` are one
+touches it; with `transform=` the shape then goes under the target, an API
+edit through the command when it is loaded, else a recorded `parent -shape
+-relative`, and the ride is deleted, so undo and redo follow the same
+records); they, `SkinCluster.create` and `set_weights(SkinData)` are one
 step each, named `rig.Mesh.create`, `rig.NurbsCurve.create`,
 `rig.NurbsSurface.create`, `rig.SkinCluster.create`,
 `rig.SkinCluster.set_weights`. A node's `load` puts its points, shading or

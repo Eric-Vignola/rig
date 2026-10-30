@@ -21,8 +21,8 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `save_hierarchy` / `load_hierarchy` (files), `serialize_hierarchy(bindpose=True)` |
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `get_injection_node()`, add / set / query / serialize, `tag_references` |
-| 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back; a `cgmath` `Object`), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
-| 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create`, `NurbsSurface.create`, `save` / `load` (files) |
+| 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back; a `cgmath` `Object`; `transform=`: a shape under an existing transform), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
+| 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create`, `NurbsSurface.create` (`transform=`: a shape under an existing transform), `save` / `load` (files) |
 | 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips, `save` / `load` (files) |
 | 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild, `save` / `load` (files) |
 | 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
@@ -211,7 +211,8 @@ there, never a second node under a name `Cls("x")` already refers to; the
 attributes given are set either way, so the script is the source of truth
 (`update=False` leaves a found node as it is).
 `Cls.create(name="x", ...)` always makes a new node; `name=` and
-`parent=` are keywords. The key is the node `create` would make: the
+`parent=` are keywords (a shape class built from data takes `transform=`,
+not `parent=`: section 9). The key is the node `create` would make: the
 namespace (the name's own, else the current one), the flattened scope's
 prefix, and `parent=` (the world without it). Every refusal writes
 nothing: a name that exists elsewhere (pass `parent=`), a namespace that
@@ -956,6 +957,38 @@ hero = Mesh.create(Object(name="hero", mesh=data, uv=uv_list[0], translate=(5, 0
 print(repr(hero), hero.get_parent().t.get(), hero.get_uv_sets())   # Mesh("heroShape") [5. 0. 0.] ('map1',)
 ```
 
+`transform=` makes the shape alone, under a transform (or a joint) that
+exists: no transform is made. The shape is named `<transform>Shape` (or
+`name=`, as given) and returned by its path; the call is one undo step that
+keeps the selection and the hilite list, and the UV sets and the shading
+come as they do without it. `world_space=` (a keyword, False by default)
+says how the data's points go there: False takes them as the shape's own
+(an `Object`'s transform is not used), True puts them where the data puts
+them in the world (through its matrix, an `Object`'s transform), in the
+transform's space. Without `transform=`, `world_space=True` is a
+`TypeError` naming it.
+
+```python
+def first(shape, world_space=False):
+    """The first point of `shape`, rounded."""
+    return np.round(np.array(shape.get_points(world_space=world_space))[0, :3], 6)
+
+
+ctl = Transform.create(name="ctl", t=(0, 0, 4), r=(0, 90, 0))
+own = Mesh.create(data, uv_data=uv_list, transform=ctl)   # the data's points as the shape's own
+put = Mesh.create(data, transform=ctl, world_space=True)  # where the data puts them in the world
+print(repr(own), repr(put), own.get_parent(), own.get_uv_sets())  # Mesh("ctlShape") Mesh("ctlShape1") ctl ('map1',)
+print(first(own), first(own, world_space=True))                   # [-0.5 -0.5  0.5] [ 0.5 -0.5  4.5] -- its own, moved with ctl
+print(first(put, world_space=True), first(put))                   # [-0.5 -0.5  0.5] [ 3.5 -0.5 -0.5] -- where the cube is
+hard = sum(not own.get_fn_set().isEdgeSmooth(e) for e in range(12))
+cmds.undo()                    # one step: the last shape goes, ctl stays
+print(ctl.get_shapes(), hard)  # [Mesh("ctlShape")] 12 -- the data's hard edges came too
+try:
+    Mesh.create(data, world_space=True)
+except TypeError as e:
+    print(str(e).split(" (")[0])  # Mesh.create(): world_space=True goes with transform=
+```
+
 To and from files: `save` writes the `MeshData` to one `cgmath` file and, with
 `uvs=`, the UV sets to a second (`.npz` recommended, `.json`, `.pkl`; by the
 extension). `Mesh.load(...)` from the class creates, as `create` does;
@@ -1169,6 +1202,25 @@ try:
     NurbsSurface.load(saved)                                     # a curve's file
 except TypeError as e:
     print(str(e).split(" holds ")[1])                            # a BSplineData; the surface is a BSplinePatchData
+```
+
+Both classes take `transform=` and `world_space=`, on `create` and on the
+class-form `load`, as `Mesh.create` does: a shape under a joint, more shapes
+under one control. The class-form `load` takes `world_space=` only with
+`transform=`.
+
+```python
+hand = Joint.create(name="hand", t=(2, 0, 0), r=(0, 0, 45))
+ring = NurbsCurve.create(crv.serialize(world_space=True), transform=hand, world_space=True)  # where crv is
+tip  = NurbsCurve.load(saved, transform=hand)                                                # the file's CVs as its own
+pad  = NurbsSurface.create(ball.serialize(), transform="hand", name="pad")                   # name= names the shape
+print(repr(ring), repr(tip), repr(pad), ring.get_parent())  # NurbsCurve("handShape") NurbsCurve("handShape1") NurbsSurface("pad") hand
+ends = np.round([np.array(ring.get_points(world_space=True))[1, :3], np.array(tip.get_points())[1, :3]], 6)
+print(ends[0], ends[1])  # [1. 0. 0.] [1. 0. 0.] -- crv's second CV in the world; the file's own, moved with hand
+try:
+    NurbsCurve.load(saved, world_space=True)  # no transform=: a TypeError naming both forms
+except TypeError as e:
+    print(str(e).split(" (")[0])  # NurbsCurve.load(...) creates a new curve: world_space= goes with transform=
 ```
 
 ---
@@ -1700,11 +1752,14 @@ each: `Mesh.set_points`, the UV set edits (`add_uv_set`, `rename_uv_set`,
 `delete_uv_set`, `set_uv_data`), the colour set edits (`add_color_set`,
 `ColorSet.set_data`, `ColorSet.delete`) and `SkinCluster.set_weights`.
 `Mesh.create` and `NurbsCurve.create` need no command: their shape rides a
-recorded `createNode` transform. The DSL's connects and value sets use the
-command too, one step per statement ([root CHEATSHEET section 38](../CHEATSHEET.md#38-undo)),
+recorded `createNode` transform (with `transform=`, the shape then goes
+under the target through the command, the selection and the hilite list
+untouched, and the ride is deleted). The DSL's connects and value sets use
+the command too, one step per statement ([root CHEATSHEET section 38](../CHEATSHEET.md#38-undo)),
 and rig loads the plug-in itself at its first edit of a session. Without
 it, the edits above raise a `RuntimeError` that names the missing plug-in,
-where rig looked and Maya's reason; the connects and sets take `cmds`.
+where rig looked and Maya's reason; the connects, the sets and the move
+under `transform=` (a recorded `parent -shape`) take `cmds`.
 While those steps are on the undo queue, Maya refuses to unload the
 plug-in (a `load_plugin(..., unload_on_exit=True)` that loaded it warns) until
 `cmds.flushUndo()`.

@@ -29,6 +29,10 @@ OWN_TYPES = ("npz", "json", "pkl")
 # the extensions of the assets cgmath's classes read
 ASSET_TYPES = ("obj", "fbx", "glb", "gltf", "usd", "usda", "usdc", "usdz")
 
+# what ``world_space=`` says beside ``transform=`` (a shape's create, its class-form load), for
+# the TypeError of a value that is no bool (`space_flag`)
+UNDER_TRANSFORM = "how the data's points go under transform="
+
 
 def is_path(src) -> bool:
     """True for a path: a str or an os.PathLike, never a plug (a str subclass)."""
@@ -77,30 +81,47 @@ def check_order(call: str, first, second) -> None:
         )
 
 
-def creating_takes_no_space(cls_name: str, what: str, kwargs: dict) -> None:
-    """The class form of ``load`` creates: ``world_space=`` (the update's keyword,
-    ``Mesh('x').load(path, world_space=True)``) is a TypeError naming the
-    instance form, before any file is read."""
-    if "world_space" in kwargs:
+def creating_space_needs_transform(cls_name: str, what: str, kwargs: dict, transform=None) -> None:
+    """The class form of ``load`` creates: ``world_space=`` goes with ``transform=``
+    (the new shape under an existing transform, `transform`), else it is the
+    update's keyword (``Mesh('x').load(path, world_space=True)``). Given without
+    ``transform=``, it is a TypeError naming both, before any file is read."""
+    if "world_space" in kwargs and transform is None:
         raise TypeError(
-            f"{cls_name}.load(...) creates a new {what}, and takes no world_space=; "
-            f"{cls_name}('x').load(path, world_space=...) updates an existing {what} "
-            f"in place"
+            f"{cls_name}.load(...) creates a new {what}: world_space= goes with transform= "
+            f"({cls_name}.load(path, transform='x', world_space=...) makes the shape under the "
+            f"transform 'x'); {cls_name}('x').load(path, world_space=...) updates an existing "
+            f"{what} in place"
         )
 
 
-def space_flag(method: str, world_space) -> bool:
-    """``world_space=`` of a curve's or a surface's update in place (`method`,
-    ``"NurbsCurve('ctlShape').load"``) as a bool: anything but a bool (None,
-    ``0``, ``"world"``) is a TypeError naming it, before any file is read (the
-    user's decision 2 of 2026-10-16: the wrong space moves the CVs silently)."""
+def creating_space(cls_name: str, transform, world_space) -> bool:
+    """``world_space=`` of a shape's ``create`` (`cls_name`'s), checked before anything
+    is made: a bool (`space_flag`), and True only with ``transform=`` (`transform`),
+    whose space the data's points are taken into: without it a new transform takes
+    the data's matrix, and True is a TypeError naming ``transform=``. False, the
+    default, is never refused."""
+    method      = f"{cls_name}.create()"
+    world_space = space_flag(method, world_space, UNDER_TRANSFORM)
+    if world_space and transform is None:
+        raise TypeError(
+            f"{method}: world_space=True goes with transform= ({cls_name}.create(data, "
+            f"transform='x', world_space=True) makes the shape under the transform 'x', its points "
+            f"where the data puts them in the world); without it, the new transform takes the "
+            f"data's matrix"
+        )
+    return world_space
+
+
+def space_flag(method: str, world_space, meaning: str = "the space the file was saved in") -> bool:
+    """``world_space=`` of a load or a create (`method`, ``"NurbsCurve('ctlShape').load"``)
+    as a bool: anything but a bool (None, ``0``, ``"world"``) is a TypeError naming it
+    and its `meaning`, before any file is read (the user's decision 2 of 2026-10-16:
+    the wrong space moves the CVs silently)."""
     import numpy as np
 
     if not isinstance(world_space, (bool, np.bool_)):
-        raise TypeError(
-            f"{method}: world_space= takes True or False (the space the file was saved in), "
-            f"not {world_space!r}"
-        )
+        raise TypeError(f"{method}: world_space= takes True or False ({meaning}), not {world_space!r}")
     return bool(world_space)
 
 

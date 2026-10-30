@@ -3,7 +3,9 @@ The API fast paths of rig's edits (round 5, phase D): a connect (`api_connect`) 
 single numeric value set (`api_set`), each made through an ``MDGModifier`` and journaled
 (`rig._internal.journal.add`), so that a statement's API edits are one undo step. The
 data drop of a typed plug that holds any data (`api_clear_data`, after ``slot << None``)
-is journaled the same way; it has no cmds route. Locks,
+is journaled the same way; it has no cmds route. So is a new shape's move under an
+existing transform (`api_reparent`, a shape create's ``transform=``), whose cmds route
+(``parent -shape -relative``) replaces the selection and clears the hilite list. Locks,
 keyable and channelBox flags, disconnects and every other edit stay on ``cmds``.
 
 Each fast path takes the API route only where its guards prove the edit is the one the
@@ -435,3 +437,29 @@ def api_clear_data(mplug: Any) -> bool:
     except Exception:  # noqa: BLE001 (no data to read: nothing to drop)
         return False
     return _apply(op)
+
+
+# --------------------------------------------------------------------------- a new shape's parent
+
+
+def api_reparent(shape: Any, transform: Any) -> bool:
+    """The new shape ``shape`` (an MObject) moved under the transform ``transform`` (an
+    MObject) through an ``MDagModifier``, journaled: what ``parent -shape -relative`` makes
+    under a transform that is not instanced (the shape's points stay its own; a referenced
+    transform records the same ``parent -s -r`` reference edit), without the command's side
+    effects: it replaces the selection with the shape and clears the hilite list, which its
+    undo does not bring back. Under an instanced transform the command also puts the shape's
+    other instances in its shading group, the modifier does not: the caller takes the
+    command there (`rig.nodetypes.geometry._put_under`). True if it was made; False, with
+    nothing changed, when the caller must take its ``cmds`` route (``journal.API_EDITS``
+    off, rig's undo command not ready, or the modifier refused)."""
+    if not _BOUND:
+        _bind()
+    if not journal.API_EDITS or not _ready():
+        return False
+    modifier = OpenMaya.MDagModifier()
+    try:
+        modifier.reparentNode(shape, transform)
+    except Exception:  # noqa: BLE001 (nothing done: the cmds route)
+        return False
+    return _apply(modifier)

@@ -30,6 +30,7 @@ from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _positional_name, DGNode
 from rig.nodetypes.geometry import Geometry, _data_matrix, _shape_create_name, deformed_refusal, iter_component_tokens
+from rig.nodetypes.geometry import _discard, _put_under, _shape_name, _shape_target, _target_space
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.plugins import _run_undoable
@@ -38,11 +39,13 @@ from scipy.spatial import cKDTree
 
 _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
-    ``Mesh.load(mesh, uvs=None, *, name=None, container=None, normals=True, **attrs)``,
-    from the class, CREATES a new mesh, always (as `create` does: a second load of
-    one file makes ``body1``)::
+    ``Mesh.load(mesh, uvs=None, *, name=None, container=None, normals=True,
+    transform=None, world_space=False, **attrs)``, from the class, CREATES a new
+    mesh, always (as `create` does: a second load of one file makes ``body1``;
+    with ``transform=``, a new shape under that transform)::
 
         body = Mesh.load("body_mesh.npz", "body_uv.npz", name="body")
+        Mesh.load("body_mesh.npz", transform="body_ctl", world_space=True)
 
     ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=False, normals=True)``,
     from a mesh, UPDATES that mesh in place, the inverse of
@@ -61,12 +64,18 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             carries its UVs: `uvs` with one is a TypeError.
         name, container, attrs: (creating) as `create` takes them. None: the
             data's name (``cubeShape`` names the transform ``cube``), else
-            ``polySurface<N>``.
-        world_space: (updating) By keyword only. False (the default): the
-            data's points become the mesh's own, object space (the inverse of
-            ``save()``). True: the points land where the data puts them in the
-            world (through its matrix, or an Object's transform; the inverse of
-            ``save(world_space=True)`` too); the transform is not moved.
+            ``polySurface<N>``; with ``transform=``, ``<transform>Shape``.
+        transform: (creating) By keyword only, as `create` takes it: the
+            existing transform (or joint) the new shape goes under, no
+            transform made; read before the files are.
+        world_space: By keyword only, a bool. Updating: False (the default):
+            the data's points become the mesh's own, object space (the inverse
+            of ``save()``). True: the points land where the data puts them in
+            the world (through its matrix, or an Object's transform; the
+            inverse of ``save(world_space=True)`` too); the transform is not
+            moved. Creating, only with ``transform=`` (as `create` takes it):
+            False, the data's points become the new shape's own; True, they
+            land where the data puts them in the world, under the transform.
         normals: (both forms) a restore flag, as `create` takes it. True: the
             data's normals bring back the hard edges and locked normals.
             False: skipped, for speed: a new mesh is all smooth, an updated
@@ -87,8 +96,8 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
     points), else a ValueError naming ``Mesh.load(...)`` for a new mesh; for a
     deformed mesh (a skin, a blendShape ...) it names the mesh under its
     deformers, ``Mesh('bodyShapeOrig').load(...)``, whose load the deformed
-    mesh follows. The class form takes no ``world_space=`` (a TypeError
-    naming this form). It
+    mesh follows. The class form takes ``world_space=`` only with
+    ``transform=`` (without it, a TypeError naming both forms). It
     sets every point, then, from data with normals (and ``normals=True``), the
     hard edges and locked normals, then each UV set of the file by name (made
     when the mesh has none of that name; its other sets, and the current set,
@@ -228,7 +237,7 @@ class Mesh(Geometry):
 
     # the keywords ``_create`` takes (the restore flags among them); ``create``'s
     # other keywords are the mesh's attributes
-    _CREATE_FLAGS = frozenset({"name", "uv_data", *_RESTORE_FLAGS})
+    _CREATE_FLAGS = frozenset({"name", "uv_data", "transform", "world_space", *_RESTORE_FLAGS})
 
     _DEFINE_REFUSED = (
         "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
@@ -253,26 +262,33 @@ class Mesh(Geometry):
     @classmethod
     def _create(
         cls,
-        mesh_data: MeshData,
-        name:      str | None          = None,
-        uv_data:   list[UVData] | None = None,
-        normals:   bool                = True,
+        mesh_data:   MeshData,
+        name:        str               | None = None,
+        uv_data:     list[UVData]      | None = None,
+        normals:     bool                     = True,
+        transform:   OpenMaya.MDagPath | None = None,
+        world_space: bool                     = False,
         **kwargs,
     ) -> str:
         """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uv_data`
         (a list, or None), its shading when `normals`, and returns the
-        transform's name. `Mesh.create` wraps it in its undo chunk; see there."""
-        return _create_mesh(mesh_data, name, uv_data, normals)
+        transform's name; with `transform` (the DAG path of the transform
+        `create` checked), the shape alone under it, its points taken in
+        `world_space` or not, and returns the shape's full path. `Mesh.create`
+        wraps it in its undo chunk; see there."""
+        return _create_mesh(mesh_data, name, uv_data, normals, transform, world_space)
 
     @classmethod
     def create(
         cls,
-        mesh_data: MeshData,
-        uv_data:   UVData   | UVList | list[UVData] | None = None,
+        mesh_data:   MeshData,
+        uv_data:     UVData   | UVList  | list[UVData] | None = None,
         *,
-        name:      str      | None                         = None,
-        container: bool     | None                         = None,
-        normals:   bool                                    = True,
+        name:        str      | None                          = None,
+        container:   bool     | None                          = None,
+        normals:     bool                                     = True,
+        transform:   str      | DAGNode | None                = None,
+        world_space: bool                                     = False,
         **kwargs,
     ) -> "Mesh":
         """Creates a mesh object from a mesh data object.
@@ -297,7 +313,9 @@ class Mesh(Geometry):
             name: The name of the mesh to create, a keyword (a trailing
                 ``Shape<digits>`` is dropped: ``"mShape2"`` names the transform
                 ``m2`` and the shape ``mShape2``). None: ``mesh_data.name``
-                (an Object's own name), else ``polySurface<N>``.
+                (an Object's own name), else ``polySurface<N>``. With
+                ``transform=`` it names the shape, as given; None:
+                ``<transform>Shape``, the data's name unused.
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
@@ -305,6 +323,17 @@ class Mesh(Geometry):
                 bring back its hard / soft edges and locked normals. False:
                 they are skipped, for speed (not read: every edge smooth,
                 none locked, as for data without normals).
+            transform: By keyword only: an existing transform (or joint), by
+                name or node, that the new shape goes under; no transform is
+                made (see below). None, the default: a new transform.
+            world_space: By keyword only, with ``transform=``. False (the
+                default): the data's points and normals become the shape's
+                own, as they are, and its matrix (an Object's transform) is not
+                used. True: they land where the data puts them in the world,
+                through its matrix (an Object's transform), taken into the
+                transform's space. True without ``transform=`` is a TypeError
+                naming it (a new transform takes the data's matrix: the mesh
+                lands there either way); anything but a bool is one too.
             kwargs: attributes of the mesh, checked by type before anything
                 is made and set once it exists (see `DGNode.create`).
 
@@ -317,6 +346,33 @@ class Mesh(Geometry):
         and its UVs are written through the API before any recorded command
         touches the mesh. It never changes the selection and leaves no
         construction history.
+
+        **With** ``transform=`` only the shape is made, and returned (by its
+        path under the target as the call named it: ``Mesh('ctl')`` would
+        read the transform's first mesh). It rides the same recorded
+        transform, then goes under the target (as ``parent -shape -relative``,
+        through the API: the selection and the hilite list are never touched;
+        under an instanced target, or without rig's undo plug-in, through the
+        recorded command, which clears the hilite list), the ride is deleted
+        and the shape named, in the same one undo step: ``cmds.undo()``
+        removes the shape (and, in a scope, its registration; the target is
+        never registered) and leaves the target as it was, ``cmds.redo()``
+        brings back the same shape. The target is read before anything is
+        made, by the reference rule: a missing name is a NodeNotFoundError, a
+        node that is no transform (a shape, a DG node) a NodeTypeError (a
+        TypeError). A locked or a referenced target is taken, as Maya's
+        ``parent`` takes it (a referenced one records the ``parent`` as a
+        reference edit). An instanced target gets the shape under every
+        instance; with ``world_space=True`` it is a ValueError, before anything
+        is made. Under a mirrored target (a negative scale),
+        ``world_space=True`` locks every normal (48 of 48 on a 2 x 2 x 2
+        cube), as ``Mesh('x').load(path, world_space=True)`` does into a
+        mirrored transform. Under a target scaled to 0 (Maya keeps 1e-12 in
+        its world matrix), ``world_space=True`` still puts the points where
+        the data does, through object points about 1e12 times out: setting
+        the scale back blows the shape up. A shape under a joint is reachable
+        by its own name: ``Mesh('jnt')`` reads transforms only (a
+        NodeTypeError).
 
         A face with holes is built as its outer loop, its hole loops added
         through the API (``MFnMesh.addHoles``, before any recorded command):
@@ -343,8 +399,8 @@ class Mesh(Geometry):
 
         Invalid mesh data (normals that do not fit the faces too, unless
         ``normals=False``) raises RuntimeError before anything is made; an
-        error after the transform is made deletes it again before it
-        propagates.
+        error after the transform is made deletes what the call made (the
+        transform, or the shape under the target) before it propagates.
         """
         from cgmath.geometry import UVData
 
@@ -353,7 +409,10 @@ class Mesh(Geometry):
         )
         if named is not None:
             raise named
-        normals = _restore_flag("Mesh.create()", "normals", normals)
+        normals     = _restore_flag("Mesh.create()", "normals", normals)
+        world_space = _files.creating_space("Mesh", transform, world_space)
+        if transform is not None:
+            transform = _shape_target("Mesh.create()", transform, world_space)
         if _files.is_object(mesh_data):
             uv_data = _object_uvs(mesh_data, uv_data)
         if uv_data:
@@ -363,7 +422,8 @@ class Mesh(Geometry):
             uv_data = None
         with _undo_chunk("rig.Mesh.create"):
             return super().create(
-                mesh_data, uv_data=uv_data, name=name, container=container, normals=normals, **kwargs
+                mesh_data, uv_data=uv_data, name=name, container=container, normals=normals,
+                transform=transform, world_space=world_space, **kwargs
             )
 
     # --- mesh geometry data methods
@@ -993,12 +1053,18 @@ class Mesh(Geometry):
         return path
 
     @_statement
-    def _load_new(cls, mesh, uvs=None, *, name=None, container=None, normals=True, **kwargs):
-        _files.creating_takes_no_space(cls.__name__, "mesh", kwargs)
-        normals = _restore_flag("Mesh.load", "normals", normals)
+    def _load_new(cls, mesh, uvs=None, *, name=None, container=None, normals=True, transform=None, **kwargs):
+        _files.creating_space_needs_transform(cls.__name__, "mesh", kwargs, transform)
+        normals     = _restore_flag("Mesh.load", "normals", normals)
+        world_space = _files.space_flag("Mesh.load", kwargs.pop("world_space", False), _files.UNDER_TRANSFORM)
+        if transform is not None:
+            transform = _shape_target("Mesh.load", transform, world_space)  # before the files are read
         data, uv_data = _read_mesh_files("Mesh.load", mesh, uvs)
         with _undo_chunk("rig.Mesh.load"):
-            return cls.create(data, uv_data, name=name, container=container, normals=normals, **kwargs)
+            return cls.create(
+                data, uv_data, name=name, container=container, normals=normals, transform=transform,
+                world_space=world_space, **kwargs
+            )
 
     @_statement
     def _load_into(self, mesh, uvs=None, *, world_space=False, normals=True, **kwargs):
@@ -2366,16 +2432,23 @@ def _restore_shading(fn: OpenMaya.MFnMesh, shading: _Shading) -> None:
 
 
 def _create_mesh(
-    mesh_data: MeshData, name: str | None, uv_data: list[UVData] | None, normals: bool = True
+    mesh_data:   MeshData,
+    name:        str               | None,
+    uv_data:     list[UVData]      | None,
+    normals:     bool                     = True,
+    target:      OpenMaya.MDagPath | None = None,
+    world_space: bool                     = False,
 ) -> str:
-    """`Mesh._create`'s body: the ride. Returns the transform's name.
+    """`Mesh._create`'s body: the ride. Returns the transform's name, or with
+    `target` the shape's full path.
 
     In this order (`Mesh.create` holds the one undo chunk around it):
 
     1. check the data and that the UV set names differ, split the holed faces
        into their outer loop and hole loops and hand their UVs to the faces as
-       they will be built (`_mesh_topology`, `_holed_uvs`): nothing is made
-       yet;
+       they will be built (`_mesh_topology`, `_holed_uvs`); with `target` and
+       `world_space`, take the points, and the normals, into the target's
+       space (`_target_space`): nothing is made yet;
     2. ``cmds.createNode("transform", name="polySurface#", skipSelect=True)``,
        the recorded node the mesh rides with (today's default name);
     3. ``MFnMesh.create(..., parent=<transform>)``: the shape, under it; with
@@ -2384,12 +2457,15 @@ def _create_mesh(
     4. the UV sets through the API (`_write_uv_set`): the first into the
        current set (renamed to its name when that differs), each other one
        into a new set of its name;
-    5. ``cmds.sets`` into ``initialShadingGroup``, ``cmds.rename`` of the
+    5. ``cmds.sets`` into ``initialShadingGroup``, then ``cmds.rename`` of the
        transform (Maya renames the shape after it, as it always did) and
        ``cmds.xform`` of the data's matrix (skipped for the identity, which
-       the new transform already has).
+       the new transform already has); with `target` (``transform=``)
+       instead, the shape moved under it, the transform deleted and the
+       shape named (`_put_under`).
 
-    Any error after step 2 deletes the transform before it propagates.
+    Any error after step 2 deletes what it made (`_discard`: the transform, or
+    the shape under the target) before it propagates.
 
     The data's normals (when it has them, and with `normals`, the restore flag)
     give the shape its hard edges and locked normals in step 4, after the UV
@@ -2402,7 +2478,16 @@ def _create_mesh(
     if _files.is_object(mesh_data):
         obj, mesh_data = mesh_data, mesh_data.mesh
     counts, indices, holes = _mesh_topology(mesh_data)
-    shading = _shading_of(mesh_data, holes) if normals else None
+    points = np.asarray(mesh_data.points)
+    linear = None
+    if target is not None and world_space:
+        # where the data puts its points in the world, in the target's space; the normals follow
+        placed = obj.world_matrix if obj is not None else mesh_data.matrix
+        space  = _target_space(placed, target)
+        points = np.asarray(points, dtype=np.float64) @ space[:3, :3] + space[3, :3]
+        if not np.allclose(space[:3, :3], np.eye(3), rtol=0.0, atol=1e-12):
+            linear = space[:3, :3]
+    shading = _shading_of(mesh_data, holes, linear) if normals else None
     uv_sets = list(uv_data or ())
     names   = [uv.name for uv in uv_sets]
     for i, uv_name in enumerate(names):
@@ -2410,15 +2495,18 @@ def _create_mesh(
             raise RuntimeError(f"UV set {uv_name} already exists.")
     if holes:
         uv_sets = [_holed_uvs(mesh_data, uv, holes) for uv in uv_sets]
-    name = _shape_create_name(name or (obj.name if obj is not None else mesh_data.name))
+    if target is not None:
+        name = _shape_name(target, name)
+    else:
+        name = _shape_create_name(name or (obj.name if obj is not None else mesh_data.name))
 
-    xform  = cmds.createNode("transform", name="polySurface#", skipSelect=True)
-    sel    = OpenMaya.MSelectionList()
+    xform = cmds.createNode("transform", name="polySurface#", skipSelect=True)
+    sel   = OpenMaya.MSelectionList()
     sel.add(_name_of(xform))
     parent = sel.getDependNode(0)
     handle = OpenMaya.MObjectHandle(parent)
+    moved  = None
     try:
-        points = np.asarray(mesh_data.points)
         if holes:
             shape = Mesh.FN_SET().copy(_holed_mesh(points, counts, indices, holes), parent)
         else:
@@ -2439,6 +2527,9 @@ def _create_mesh(
         if shading is not None:
             _restore_shading(fn, shading)
         _cmds_edit.sets(xform, forceElement="initialShadingGroup")
+        if target is not None:
+            moved = OpenMaya.MObjectHandle(shape)
+            return _put_under(shape, parent, target, name)
         if name:
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
             xform = _cmds_edit.rename(xform, name)
@@ -2450,8 +2541,7 @@ def _create_mesh(
                 # a new transform is at rest already (world-space data has no matrix)
                 _cmds_edit.xform(xform, matrix=matrix)
     except BaseException:
-        if handle.isValid():
-            _cmds_edit.delete(OpenMaya.MFnDagNode(parent).fullPathName())
+        _discard(handle, moved)
         raise
     return xform
 

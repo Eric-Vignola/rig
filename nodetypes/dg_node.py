@@ -1649,6 +1649,9 @@ class DGNode(Node):
           Transform.define('ctl') finds or makes it; ...", TypeError; user
           decision 2026-10-22). A DG class refuses
           ``parent=``; a class whose command takes no name refuses ``name=``.
+          A shape class built from data (``Mesh``, ``NurbsCurve``,
+          ``NurbsSurface``) refuses ``parent=`` too, naming its
+          ``transform=``: the new shape under an existing transform.
         * Every other keyword is a flag of the class's command when it is in
           ``_CREATE_FLAGS`` (``skipSelect`` / ``ss``; a DAG class's ``p``; a
           display layer's ``empty`` / ``noRecurse`` / ``number`` /
@@ -1724,6 +1727,9 @@ class DGNode(Node):
                     if issubclass(cls.FN_SET, OpenMaya.MFnDagNode)
                     else f"a {_type_label(cls)} is a DG node"
                 )
+                if "transform" in flags:
+                    # a shape class built from data: its new shape goes under an existing transform
+                    why += "; transform= makes the shape under an existing transform"
                 raise TypeError(f"{cls.__name__}.create() takes no parent=: {why}")
             kwargs["parent"] = parent
         if kwargs and not flags.issuperset(kwargs):

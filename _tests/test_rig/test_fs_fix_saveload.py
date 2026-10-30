@@ -145,10 +145,13 @@ class TestTheArguments(_Case):
         cd = NurbsCurve("crvShape").serialize()
         for cls, data, what in ((Mesh, md, "mesh"), (NurbsCurve, cd, "curve")):
             with self.subTest(cls=cls.__name__):
+                # re-pinned (user decision 2026-10-29: world_space= goes with transform=)
                 self.assert_refused(
                     TypeError,
-                    rf"^{cls.__name__}.load\(...\) creates a new {what}, and takes no world_space=; "
-                    rf"{cls.__name__}\('x'\).load\(path, world_space=...\) updates an existing {what} in place$",
+                    rf"^{cls.__name__}.load\(...\) creates a new {what}: world_space= goes with transform= "
+                    rf"\({cls.__name__}.load\(path, transform='x', world_space=...\) makes the shape under the "
+                    rf"transform 'x'\); {cls.__name__}\('x'\).load\(path, world_space=...\) updates an existing "
+                    rf"{what} in place$",
                     lambda: cls.load(data, world_space=False),
                 )
         self.assert_refused(TypeError, r"^NurbsSurface.load\(...\) creates a new surface",

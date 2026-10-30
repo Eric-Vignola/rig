@@ -23,10 +23,13 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from numpy.typing import ArrayLike
+from rig._internal.api_edits import api_reparent as _api_reparent
 from rig._internal.journal import cmds_edit as _cmds_edit
+from rig.nodetypes import _files
 from rig.nodetypes._base import _cast, Attribute, _name_of
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _ensure_valid
+from rig.nodetypes.errors import NodeTypeError
 
 if TYPE_CHECKING:
     from cgmath.geometry import GeomSubsetData
@@ -157,6 +160,97 @@ def _data_matrix(shape, world_space: bool) -> np.ndarray:
     if world_space:
         return np.eye(4)
     return np.array(type(shape).get_mdagpath(shape).inclusiveMatrix()).reshape(4, 4)
+
+
+# --- a new shape under an existing transform: ``transform=`` of `Mesh.create`,
+# `NurbsCurve.create`, `NurbsSurface.create` and their class-form ``load``. The shape is built
+# on the usual ride (a recorded ``createNode`` transform, the shape made under it through the
+# API), then moved under the target (a journaled ``MDagModifier``, as ``parent -shape
+# -relative``), the ride deleted and the shape named, inside the typed create, so in its one
+# undo step and its container frame
+
+
+def _shape_target(method: str, transform: Any, world_space: bool) -> OpenMaya.MDagPath:
+    """The transform ``transform=`` names for a new shape (`method`: ``"Mesh.create()"``), read
+    before anything is made: its DAG path. By the reference rule, ``Transform(x)``: a missing
+    name is a NodeNotFoundError, a name several nodes have an AmbiguousNodeError, a node that is
+    no transform (a shape, a DG node) a NodeTypeError (a TypeError) naming ``transform=``; a
+    joint, or another node type derived from transform, is one. A locked or a referenced target
+    is taken, as Maya's ``parent`` takes it. With `world_space`, an instanced target (itself or
+    a parent) is a ValueError: the shape goes under every instance, and one set of points
+    cannot sit where the data puts them under each."""
+    from rig.nodetypes.transform import Transform
+
+    try:
+        node = Transform(transform)
+    except NodeTypeError as error:
+        raise NodeTypeError(
+            error.name, "transform", error.node_type,
+            message=f"{method}: transform= is the transform (or joint) the new shape goes under: {error}",
+        ) from None
+    path = OpenMaya.MDagPath(type(node).get_mdagpath(node))
+    if world_space and OpenMaya.MFnDagNode(path).isInstanced(True):
+        count = len(OpenMaya.MDagPath.getAllPathsTo(path.node()))
+        raise ValueError(
+            f"{method}: {path.partialPathName()!r} is instanced ({count} paths) and the new shape "
+            f"goes under every instance, so world_space=True has no one place to put the points; "
+            f"world_space=False (the default) takes the data's points as the shape's own"
+        )
+    return path
+
+
+def _target_space(matrix: Any, target: OpenMaya.MDagPath) -> np.ndarray:
+    """``(4, 4)``, row vectors as Maya's: from where data puts its points in the world, through
+    its `matrix` (None: the identity, data without one), into the space of the transform
+    `target`, ``matrix @ inverse(the target's world matrix)`` (``world_space=True``). Maya's
+    world matrix always has one: a scale of 0 is 1e-12 in it."""
+    inverse = np.linalg.inv(np.array(target.inclusiveMatrix()).reshape(4, 4))
+    if matrix is None:
+        return inverse
+    return np.asarray(matrix, dtype=np.float64).reshape(4, 4) @ inverse
+
+
+def _shape_name(target: OpenMaya.MDagPath, name: str | None) -> str:
+    """The name of a new shape under `target`: `name` as given (no transform is made, so it
+    names the shape), else the target's own name without its namespace, then ``Shape``
+    (``ctlShape``; Maya numbers it when a sibling has it: ``ctlShape1``). The shape is named in
+    the current namespace, as every new node is."""
+    if name:
+        return name
+    return f"{OpenMaya.MFnDagNode(target).name().rpartition(':')[2]}Shape"
+
+
+def _put_under(shape: OpenMaya.MObject, ride: OpenMaya.MObject, target: OpenMaya.MDagPath, name: str) -> str:
+    """The new `shape` moved from its `ride` transform under `target` (as ``parent -shape
+    -relative``: its points stay its own; under every instance of an instanced target), the
+    ride deleted and the shape renamed `name`, in the create's undo step after the ride's own
+    records. The move is a journaled ``MDagModifier`` (`_api_reparent`): the selection and the
+    hilite list are never touched, at no cost per selected item. Under an instanced target, or
+    without rig's undo command, it is the recorded ``parent`` (only the command puts the
+    shape's other instances in its shading group), which selects the shape and clears the
+    hilite list: the selection is put back (`_files.kept_selection`), the hilite list is not.
+    The delete and the rename are recorded ``cmds`` (Maya's own name rules: ``#`` numbers, a
+    sibling's name is numbered). Returns the shape's full path under `target`, the instance
+    the caller named."""
+    if OpenMaya.MFnDagNode(target).isInstanced(True) or not _api_reparent(shape, target.node()):
+        with _files.kept_selection():
+            _cmds_edit.parent(
+                OpenMaya.MFnDagNode(shape).fullPathName(), target.fullPathName(), shape=True, relative=True
+            )
+    _cmds_edit.delete(OpenMaya.MFnDagNode(ride).fullPathName())
+    _cmds_edit.rename(OpenMaya.MFnDagNode(shape).fullPathName(), name)
+    path = OpenMaya.MDagPath(target)
+    path.push(shape)
+    return path.fullPathName()
+
+
+def _discard(*handles: OpenMaya.MObjectHandle | None) -> None:
+    """After an error in a shape's create, what it made that is still in the scene deleted, in
+    the order of `handles`: the ride transform first (its shape goes with it while under it),
+    then a shape already put under its target (None: not made yet)."""
+    for handle in handles:
+        if handle is not None and handle.isValid():
+            _cmds_edit.delete(OpenMaya.MFnDagNode(handle.object()).fullPathName())
 
 
 class Geometry(DAGNode):
