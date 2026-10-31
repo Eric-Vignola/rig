@@ -589,7 +589,7 @@ were methods of that name:
 | `curve.num_cvs` / `num_weight_points` | `curve.get_cv_count()` / `get_weight_point_count()` |
 | `material.engine`, `blendShape.num_targets`, `animCurve.num_keys` | `material.get_engine()`, `get_target_count()`, `get_key_count()` |
 | `ref.file_path` / `ref.file_path_with_copy_number` | `ref.get_file_path()` / `ref.get_file_path(copy_number=True)` |
-| `node.ensure_valid()` | `node.is_valid()`, which answers False where this raised |
+| `node.ensure_valid()` | `node.is_valid(failfast=True)`, a statement: `node.is_valid()` answers False where this raised |
 | `node.get_clean_name()` | `node.get_short_name(namespace=False)` |
 | `dg_node.get_clean_name(name)` | `dg_node.get_short_name(name, namespace=False)` |
 | `DisplayLayer.for_node(node)`, `for_node(name)` | `DisplayLayer.of(node)`, a list: `[layer]` or `[]`, never None; a node, not a name: `DisplayLayer.of(Node(name))` |
@@ -634,8 +634,9 @@ were methods of that name:
 | `joint.orient_chain(aim_axis, up_axis)` | `joint.orient(aim_axis, up_axis, hierarchy=True)` |
 | `blendShape.target_data_attrs(index)` | `blendShape.get_target_data_attrs(index)` |
 | `blendShape.get_num_targets()` | `blendShape.get_target_count()` |
+| `blendShape.set_targets_data(morphs)` | `blendShape.set_target_data(morphs)`, as it takes one `MorphData` |
 | `SkinCluster.copy_skincluster(source_meshes, target_vertices)` | `SkinCluster.transfer_from_meshes(source_meshes, target_vertices)` |
-| `skin.connect_bind_pre_matrices(search_func)` | `skin.connect_bind_pre_matrix(search_func)` |
+| `skin.connect_bind_pre_matrices(search_func)` | `skin.connect_bind_pre_matrix(drivers)`, a mapping `{influence: driver}`: `{j: "drv_" + j.get_short_name() for j in skin.get_influence_objects()}` |
 | `transform.set_xfrom_attrs_locked(locked)` | `transform.set_xform_attrs_locked(locked)` |
 
 An old spelling raises naming the new one, unless the node has a Maya attr of
@@ -3595,7 +3596,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | a statement that removes a plug's input and then writes it: a value over a keyed, constrained or wired plug, a rewire (`x << b` over `x << a`), a child of a compound connected whole (its input split per child), a plug or `None` on a compound whose children have inputs of their own (one driver per channel: those go too) | one, named `rig.replace`: the disconnects, the connects and the sets of the whole statement (a `List` broadcast included); its undo brings back a double drive that was there |
 | `List.lock()` / `List.unlock()` (`List << lock`) over more than one command | one, named `rig.lock` / `rig.unlock` |
 | `plug << AnimCurve(...)`, a compound, a `List` broadcast or pairs of keys, a per-channel list holding keys (section 39) | one, named `rig.animcurve`: the new curves, their keys and their connects; **none** when every curve holds those keys already. `AnimCurveTL.create(keys)` is one `rig.create`, a `define` that makes or updates a curve one `rig.define`, `curve.set_keys(...)` one `rig.AnimCurve.set_keys` |
-| `Mesh.create`, `NurbsCurve.create`, `NurbsSurface.create` (with `transform=` too: the shape goes under the transform in that step), `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.NurbsSurface.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
+| `Mesh.create`, `NurbsCurve.create`, `NurbsSurface.create` (with `transform=` too: the shape goes under the transform in that step), `SkinCluster.create`, `BlendShape.create`, `SkinCluster.set_weights(skin_data)`, `BlendShape.set_target_data`, `SkinCluster.connect_bind_pre_matrix` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.NurbsSurface.create`, `rig.SkinCluster.create`, `rig.BlendShape.create`, `rig.SkinCluster.set_weights`, `rig.BlendShape.set_target_data`, `rig.SkinCluster.connect_bind_pre_matrix` |
 | a load of a cgmath file: `Mesh.load(...)` (creates) and `Mesh('x').load(...)` (updates), the same for `NurbsCurve`, `NurbsSurface`, `SkinCluster`, `BlendShape`; `Joint.load_hierarchy(...)` | one, named `rig.Mesh.load`, `rig.NurbsCurve.load`, `rig.NurbsSurface.load`, `rig.SkinCluster.load`, `rig.BlendShape.load`, `rig.Joint.load_hierarchy` (`rig.Transform.load_hierarchy`); a `save` is a read: **none** |
 | the transfers: `Mesh.transfer_maps`, `Mesh.transfer_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.transfer_from_meshes` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.transfer_from_meshes` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |

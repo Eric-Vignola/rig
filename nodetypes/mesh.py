@@ -870,7 +870,7 @@ class Mesh(Geometry):
         return type(self)._raw_get_fn_set(self).getAssignedUVs(uv_set)
 
     def set_uv_data(self, uv_data: UVData, uv_set: str | None = None) -> None:
-        """Sets the data of an uv set.
+        """Sets the data of a UV set.
 
         The set's UVs and their assignment are replaced by `uv_data`'s (the UV
         count may change; data without UVs empties the set), then the set is
@@ -971,7 +971,7 @@ class Mesh(Geometry):
     # --- serialization
 
     def serialize_uv(self, uv_set: str | None = None) -> UVData:
-        """Serialize an UV set.
+        """Serialize a UV set.
 
         Args:
             uv_set: A uv set name to query. If None, use current uv set.
@@ -1140,7 +1140,7 @@ class Mesh(Geometry):
     # --- paintable map methods
 
     def get_map_names(self) -> list[str]:
-        """Returns a list of paintable maps."""
+        """Returns the names of every map of this mesh, paintable or not."""
         return [type(x)._raw_get_name(x) for x in self.get_map_attrs()]
 
     def get_map_data(self, map_name: Attribute | str, sparse: bool = True) -> MapData:
@@ -1148,6 +1148,9 @@ class Mesh(Geometry):
 
         Args:
             map_name: The map attr name or plug to get the data from.
+            sparse: If True, only the values that differ from the map's default,
+                with their vertex ids. If False, one value per vertex, as
+                `get_map_values` reads them.
 
         Returns:
             A  MapData object
@@ -1155,11 +1158,16 @@ class Mesh(Geometry):
         from cgmath.geometry import MapData
 
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
-        # cap filtered ids & values using vert count,
-        # since Maya doesn't auto-clear stale map values...
-        ids, values = map_attr.filter_array_values(
-            MAP_DEFAULT_VALUE, sparse=sparse, cap_count=type(self).get_vertex_count(self)
-        )
+        if sparse:
+            # cap filtered ids & values using vert count, since Maya doesn't
+            # auto-clear stale map values; what a short map lacks is the
+            # default, which a sparse read leaves out
+            ids, values = map_attr.filter_array_values(
+                MAP_DEFAULT_VALUE, cap_count=type(self).get_vertex_count(self)
+            )
+        else:
+            values = self.get_map_values(map_attr)
+            ids    = range(len(values))
         # remove default category as all maps has it
         categories = set(map_attr.get_categories())
         categories.remove(MAP_DEFAULT_CATEGORY)
@@ -1186,6 +1194,7 @@ class Mesh(Geometry):
                 If None, serialize all maps.
             category: One or more categories to filter maps by.
                 If None use MAP_DEFAULT_CATEGORY
+            sparse: As `get_map_data` takes it.
 
         Returns:
             A list of MapData objects.
@@ -1245,21 +1254,12 @@ class Mesh(Geometry):
         return map_attr
 
     def get_map_values(self, map_name: Attribute | str) -> list[float]:
-        """Returns the values of a given map."""
+        """Returns the values of a given map, one per vertex: Maya never resizes
+        a map when the topology changes, so one stored at another vertex count
+        reads back trimmed or padded with the map's default, and a map never set
+        reads as the default."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
-        values     = map_attr.get()
-        vert_count = type(self).get_vertex_count(self)
-
-        # cap values using vert count
-        # since Maya doesn't auto-clear stale map values...
-        if values and len(values) > vert_count:
-            return values[:vert_count]
-
-        # return defaults
-        if not values:
-            return [MAP_DEFAULT_VALUE] * vert_count
-
-        return values
+        return self._fit_map_values(map_attr.get())
 
     def set_map_values(
         self, map_attr: Attribute | str, values: list[float] | float | MapData | None
@@ -1396,8 +1396,9 @@ class Mesh(Geometry):
         Args:
             values: Values to fit.
                 Value list: resize it to match vert count by pruning extras
-                    or padding with 0s.
+                    or padding with the map's default.
                 Single value: create a list of mesh vert size of that value.
+                None (a map never set): the map's default, as a single value.
 
         Returns:
             fitted values.
@@ -1422,7 +1423,9 @@ class Mesh(Geometry):
             return val_array.tolist()
 
     def enter_paint_tool(self, map_name: Attribute | str) -> None:
-        """Enable painting mode on the given map."""
+        """Enters Maya's Paint Attributes Tool on the given map: the map is made
+        paintable and this mesh selected. There is no off: you leave the tool
+        by picking another. It writes no values."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
         paint_attr = f"{type(self).NATIVE_NODE_TYPE}.{_name_of(type(self).get_long_name(self))}.{type(map_attr)._raw_get_name(map_attr)}"
@@ -3615,27 +3618,35 @@ class ColorSet:
         return self._mesh
 
     @_scene_predicate
-    def is_valid(self) -> bool:
+    def is_valid(self, *, failfast: bool = False) -> bool:
         """Does the underlying colorset still exist? A method (named without
-        brackets, ``cset.is_valid`` has no truth value: the predicate guard)."""
-        return self._name in type(self._mesh)._raw_get_fn_set(self._mesh).getColorSetNames()
+        brackets, ``cset.is_valid`` has no truth value: the predicate guard).
+        False too once its mesh is gone.
+
+        Args:
+            failfast: By keyword only. If True, raise a RuntimeError naming this
+                colour set instead of returning False. It then never returns
+                False, so it is a statement, not a condition (as
+                ``DGNode.is_valid(failfast=True)``).
+        """
+        mesh = self._mesh
+        if type(mesh)._raw_is_valid(mesh) and self._name in type(mesh)._raw_get_fn_set(mesh).getColorSetNames():
+            return True
+        if failfast:
+            # (the mesh's str, marked once it is gone: its name would raise instead)
+            raise RuntimeError(f"{self._name} is not a valid color set for {mesh}!")
+        return False
 
     def get_representation(self) -> ColorSet.Representation:
         """The representation of the color set (ie the data type Alpha|RGB|RGBA)"""
-        if not self.is_valid():
-            raise RuntimeError(
-                f"{self._name} is not a valid color set for {_name_of(self._mesh)}!"
-            )
+        self.is_valid(failfast=True)
         return self.Representation(type(self._mesh)._raw_get_fn_set(self._mesh).getColorRepresentation(self._name))
 
     def get_data(self) -> np.ndarray:
         """The colours of the set, one per vertex, as a ``(V, 4)`` numpy array.
         A read: the current colour set is left as it is, and the scene is not
         marked modified."""
-        if not self.is_valid():
-            raise RuntimeError(
-                f"{self._name} is not a valid color set for {_name_of(self._mesh)}!"
-            )
+        self.is_valid(failfast=True)
         return np.array(type(self._mesh)._raw_get_fn_set(self._mesh).getVertexColors(self._name))
 
     def set_data(self, data: np.ndarray) -> None:
@@ -3652,10 +3663,7 @@ class ColorSet:
     @contextlib.contextmanager
     def as_current(self) -> Generator[None, None, None]:
         """Context manager that sets the current color set to this one"""
-        if not self.is_valid():
-            raise RuntimeError(
-                f"{self._name} is not a valid color set for {_name_of(self._mesh)}!"
-            )
+        self.is_valid(failfast=True)
 
         try:
             current_colorset = type(self._mesh)._raw_get_fn_set(self._mesh).currentColorSetName()

@@ -125,6 +125,7 @@ _OLD_METHODS = {
     # a blendShape's
     "target_data_attrs": ("BlendShape", "get_target_data_attrs"),
     "get_num_targets":   ("BlendShape", "get_target_count"),
+    "set_targets_data":  ("BlendShape", "set_target_data"),
     # a skinCluster's
     "copy_skincluster":          ("SkinCluster", "transfer_from_meshes"),
     "connect_bind_pre_matrices": ("SkinCluster", "connect_bind_pre_matrix"),
@@ -149,6 +150,7 @@ _OLD_NAMES = {"as_current_color_set": "as_current"}
 # the hints that need their keyword to reach the same member: `_OLD_METHODS` reads a
 # hint up to its bracket
 _OLD_KEYWORDS = {
+    "ensure_valid":         "is_valid(failfast=True)",
     "clean_name":           "get_short_name(namespace=False)",
     "get_clean_name":       "get_short_name(namespace=False)",
     "world_shape_attr":     "get_output_attr(world_space=True)",
@@ -665,7 +667,8 @@ class TestBarePredicates(MayaTestCase):
         self.assertIs(bare.__self__, t)
         self.assertIs(bare.__func__, DGNode.is_valid)
         self.assertEqual(bare.__doc__, DGNode.is_valid.__doc__)
-        self.assertEqual(list(inspect.signature(bare).parameters), [])
+        # re-pinned (user decision 2026-10-30): `is_valid(*, failfast=False)`
+        self.assertEqual(list(inspect.signature(bare).parameters), ["failfast"])
         self.assertIs(t.is_type("t"), True)  # a classmethod's call
 
     def test_an_attr_named_like_a_predicate_is_the_plug(self):

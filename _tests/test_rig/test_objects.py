@@ -11,6 +11,7 @@ private.
 * `TestColorSetReadsThroughMethods`: ``get_name()``, ``get_mesh()``, ``is_valid()``,
   ``get_representation()``, ``get_data()`` / ``set_data(colours)``; a read writes nothing
   (the current set stays, the scene is not marked modified).
+* `TestColorSetIsValidFailfast`: ``is_valid(failfast=True)``, the contract of a node's.
 * `TestContainerStack`: ``rig.container.get_stack()`` is read-only ``(name, Container or
   None)`` tuples; ``stack`` and ``containers`` are gone.
 * `TestTheDoorIsStored`: ``NodeNotFoundError.door`` is read once, with the message.
@@ -428,3 +429,69 @@ class TestValuesFrozenWhereItBites(MayaTestCase):
             node << spec
             self.assertEqual(cmds.addAttr(f"{name}.mode", query=True, defaultValue=True), 1.0)
             self.assertEqual(spec.kargs["defaultValue" if "defaultValue" in spec.kargs else "dv"], "True")
+
+
+class TestColorSetIsValidFailfast(MayaTestCase):
+    """``ColorSet.is_valid(*, failfast=False)``: the contract of ``DGNode.is_valid`` (user
+    decision 2026-10-30). It answers, False once the colour set or its mesh is gone; with
+    ``failfast=True`` it raises a RuntimeError naming the colour set, and never returns False.
+    A test named ``guard`` holds on the tree before it too: what stays."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        _cube()
+        self.mesh = Mesh("cubeShape")
+        self.cset = self.mesh.add_color_set("tint", ColorSet.Representation.RGBA)
+
+    def test_a_live_colour_set(self):
+        self.assertIs(self.cset.is_valid(failfast=True), True)
+
+    def test_a_colour_set_that_is_gone(self):
+        self.cset.delete()
+        self.assertIs(self.cset.is_valid(), False)
+        with self.assertRaisesRegex(RuntimeError, "^tint is not a valid color set for cubeShape!$"):
+            self.cset.is_valid(failfast=True)
+
+    def test_a_name_the_mesh_never_had(self):
+        with self.assertRaisesRegex(RuntimeError, "^nope is not a valid color set for cubeShape!$"):
+            ColorSet(self.mesh, "nope").is_valid(failfast=True)
+
+    def test_a_deleted_mesh(self):
+        cmds.delete("cube")
+        self.assertIs(self.cset.is_valid(), False)
+        with self.assertRaisesRegex(RuntimeError, r"^tint is not a valid color set for cubeShape \(deleted\)!$"):
+            self.cset.is_valid(failfast=True)
+
+    def test_a_freed_mesh(self):
+        cmds.file(new=True, force=True)
+        self.assertIs(self.cset.is_valid(), False)
+        with self.assertRaisesRegex(RuntimeError, r"^tint is not a valid color set for cubeShape \(deleted\)!$"):
+            self.cset.is_valid(failfast=True)
+
+    def test_delete_does_nothing_once_the_mesh_is_gone(self):
+        cmds.delete("cube")
+        self.cset.delete()
+
+    def test_it_is_a_keyword(self):
+        with self.assertRaises(TypeError):
+            self.cset.is_valid(True)
+        self.assertIs(self.cset.is_valid(failfast=False), True)
+
+    def test_the_bare_predicate_takes_it(self):
+        bare = self.cset.is_valid
+        self.assertIs(bare(failfast=True), True)
+        with self.assertRaisesRegex(TypeError, "is_valid is a method"):
+            bool(bare)
+
+    def test_guard_the_readers_raise_the_same_error(self):
+        self.cset.delete()
+        for label, call in (
+            ("get_representation", self.cset.get_representation),
+            ("get_data", self.cset.get_data),
+            ("as_current", lambda: self.cset.as_current().__enter__()),
+        ):
+            with self.subTest(label):
+                with self.assertRaisesRegex(RuntimeError, "^tint is not a valid color set for cubeShape!$"):
+                    call()

@@ -1,7 +1,7 @@
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig.nodetypes import Joint, Node, SkinCluster
+from rig.nodetypes import AmbiguousNodeError, Joint, Node, NodeNotFoundError, NodeTypeError, SkinCluster, Transform
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
 
@@ -813,3 +813,207 @@ class TestSkinClusterUndo(UndoWalk, MayaTestCase):
             lambda: skin.transfer_to_mesh(f"{target}Shape"),
             meshes=["tShape"], skins=["tShape_skincluster"],
         )
+
+
+class TestConnectBindPreMatrix(UndoWalk, MayaTestCase):
+    """``connect_bind_pre_matrix(drivers)`` takes a mapping {influence: driver} (user decision
+    2026-10-30). Each slot is found by its influence, never by its place in the influence
+    list: a skin that lost an influence has sparse logical indices, and wiring by position
+    made the wrong slots jump. Everything is checked first; one undo step leaves the skin as
+    it was (Maya drops an element whose value was never written)."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        parent = None
+        for name, height in (("j1", 0), ("j2", 2), ("j3", 4)):
+            cmds.select(clear=True)
+            joint = cmds.joint(name=name, position=(0, height, 0))
+            if parent:
+                cmds.parent(joint, parent)
+            parent = joint
+        cmds.polyCube(name="cube", width=1, height=6, depth=1, subdivisionsHeight=6, constructionHistory=False)
+        cmds.move(0, 3, 0, "cube")
+        cmds.makeIdentity("cube", apply=True, translate=True)
+        self.skin = SkinCluster.create("cube", ["j1", "j2", "j3"], name="skin")
+        for name in ("j1", "j2", "j3"):
+            driver = cmds.createNode("joint", name=f"drv_{name}")
+            cmds.xform(driver, worldSpace=True, matrix=cmds.xform(name, query=True, worldSpace=True, matrix=True))
+        cmds.flushUndo()
+
+    @staticmethod
+    def points():
+        return np.array(cmds.xform("cube.vtx[*]", query=True, worldSpace=True, translation=True)).reshape(-1, 3)
+
+    @staticmethod
+    def sources():
+        """{logical index of each bindPreMatrix element: the plug driving it, or ''}."""
+        slots = cmds.getAttr("skin.bindPreMatrix", multiIndices=True) or []
+        return {i: cmds.connectionInfo(f"skin.bindPreMatrix[{i}]", sourceFromDestination=True) for i in slots}
+
+    @staticmethod
+    def values():
+        slots = cmds.getAttr("skin.bindPreMatrix", multiIndices=True) or []
+        return np.array([cmds.getAttr(f"skin.bindPreMatrix[{i}]") for i in slots])
+
+    @staticmethod
+    def slot_of(influence):
+        """The logical index Maya holds `influence` at: its worldMatrix's slot of skin.matrix."""
+        plug = cmds.listConnections(f"{influence}.worldMatrix[0]", source=False, plugs=True, type="skinCluster")[0]
+        return int(plug.split("[")[1].rstrip("]"))
+
+    def test_each_slot_is_found_by_its_influence_after_a_removal(self):
+        self.skin.remove_influence_objects("j1")
+        self.assertEqual((self.slot_of("j2"), self.slot_of("j3")), (1, 2))
+        before = self.points()
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j2", "j3": "drv_j3"})
+        self.assertEqual(
+            self.sources(), {0: "", 1: "drv_j2.worldInverseMatrix[0]", 2: "drv_j3.worldInverseMatrix[0]"}
+        )
+        np.testing.assert_allclose(self.points(), before, atol=1e-6)
+
+    def test_each_slot_is_found_on_a_skin_rebuilt_by_set_influence_objects(self):
+        cmds.select(clear=True)
+        cmds.joint(name="j4", position=(0, 6, 0))
+        self.skin.set_influence_objects(["j1", "j2", "j3", "j4"])
+        slot = self.slot_of("j3")
+        self.assertNotEqual(slot, 2)
+        self.skin.connect_bind_pre_matrix({"j3": "drv_j3"})
+        self.assertEqual({i: s for i, s in self.sources().items() if s}, {slot: "drv_j3.worldInverseMatrix[0]"})
+
+    def test_influences_not_listed_are_left_alone(self):
+        values = self.values()
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j2"})
+        self.assertEqual(self.sources(), {0: "", 1: "drv_j2.worldInverseMatrix[0]", 2: ""})
+        np.testing.assert_allclose(self.values(), values, atol=1e-9)
+
+    def test_keys_and_drivers_are_names_or_nodes(self):
+        self.skin.connect_bind_pre_matrix(
+            {Joint("j1"): "drv_j1", "j2": Joint("drv_j2"), Joint("j3"): Node("drv_j3")}
+        )
+        self.assertEqual(self.sources(), {i: f"drv_j{i + 1}.worldInverseMatrix[0]" for i in range(3)})
+
+    def test_any_transform_is_a_driver(self):
+        group   = cmds.group(empty=True, name="grp")
+        locator = cmds.spaceLocator(name="loc")[0]
+        self.skin.connect_bind_pre_matrix({"j1": group, "j2": locator})
+        self.assertEqual(
+            self.sources(), {0: "grp.worldInverseMatrix[0]", 1: "loc.worldInverseMatrix[0]", 2: ""}
+        )
+
+    def test_an_influence_of_any_transform(self):
+        cmds.group(empty=True, name="grp")
+        cmds.skinCluster("skin", edit=True, addInfluence="grp", weight=0.0)
+        self.skin.connect_bind_pre_matrix({"grp": "drv_j1"})
+        self.assertEqual(self.sources()[self.slot_of("grp")], "drv_j1.worldInverseMatrix[0]")
+
+    def test_a_naming_convention_is_one_line(self):
+        self.skin.connect_bind_pre_matrix(
+            {j: "drv_" + j.get_short_name() for j in self.skin.get_influence_objects()}
+        )
+        self.assertEqual(self.sources(), {i: f"drv_j{i + 1}.worldInverseMatrix[0]" for i in range(3)})
+
+    def test_the_mesh_rides_its_drivers(self):
+        before = self.points()
+        self.skin.connect_bind_pre_matrix({"j1": "drv_j1", "j2": "drv_j2", "j3": "drv_j3"})
+        cmds.move(0, 0, 5, "j1", "drv_j1", "drv_j2", "drv_j3", relative=True, worldSpace=True)
+        np.testing.assert_allclose(self.points(), before, atol=1e-5)
+
+    def test_everything_is_checked_before_the_first_edit(self):
+        good = {"j1": "drv_j1"}
+        gone = Transform.create(name="gone")
+        key  = {**good, gone: "drv_j2"}  # (a deleted node has no hash: the mapping came first)
+        gone.delete()
+        cmds.createNode("joint", name="other")
+        cmds.group(empty=True, name="twice", parent="j1")
+        cmds.group(empty=True, name="twice", parent="j2")
+        before = self.sources()
+        for label, error, pattern, drivers in (
+            ("off the skin", ValueError, "^other is not an influence of skin; ", {**good, "other": "drv_j2"}),
+            ("a missing influence", NodeNotFoundError, "no DAG node named 'nope'", {**good, "nope": "drv_j2"}),
+            ("a DG influence", NodeTypeError, "'skin' is a skinCluster", {**good, "skin": "drv_j2"}),
+            ("a freed influence", RuntimeError, r"^Transform node \(freed", key),
+            ("a missing driver", NodeNotFoundError, "no transform named 'nope'", {**good, "j2": "nope"}),
+            ("a shape driver", NodeTypeError, "'cubeShape' is a mesh", {**good, "j2": "cubeShape"}),
+            ("two drivers of that name", AmbiguousNodeError, "twice", {**good, "j2": "twice"}),
+            ("a freed driver", RuntimeError, r"^Transform node \(freed", {**good, "j2": gone}),
+        ):
+            with self.subTest(label):
+                cmds.flushUndo()  # (which frees a node deleted to the queue)
+                with self.assertRaisesRegex(error, pattern):
+                    self.skin.connect_bind_pre_matrix(drivers)
+                self.assertEqual(self.sources(), before)
+                self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
+    def test_a_node_deleted_to_the_undo_queue_is_refused_first(self):
+        good = {"j1": "drv_j1"}
+        gone = Transform.create(name="gone")
+        key  = {**good, gone: "drv_j2"}  # (a deleted node has no hash: the mapping came first)
+        gone.delete()
+        before = self.sources()
+        for drivers in (key, {**good, "j2": gone}):
+            with self.assertRaisesRegex(RuntimeError, "^gone already deleted!$"):
+                self.skin.connect_bind_pre_matrix(drivers)
+            self.assertEqual(self.sources(), before)
+
+    def test_a_locked_slot_is_refused_first(self):
+        cmds.setAttr("skin.bindPreMatrix[1]", lock=True)
+        cmds.flushUndo()
+        before = self.sources()
+        with self.assertRaisesRegex(RuntimeError, r"^skin.bindPreMatrix\[1\] is locked; nothing was changed$"):
+            self.skin.connect_bind_pre_matrix({"j1": "drv_j1", "j2": "drv_j2"})
+        self.assertEqual(self.sources(), before)
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
+    def test_a_locked_slot_wired_to_its_driver_is_left_as_it_is(self):
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j2"})
+        cmds.setAttr("skin.bindPreMatrix[1]", lock=True)
+        self.skin.connect_bind_pre_matrix({"j1": "drv_j1", "j2": "drv_j2"})
+        self.assertEqual(
+            self.sources(), {0: "drv_j1.worldInverseMatrix[0]", 1: "drv_j2.worldInverseMatrix[0]", 2: ""}
+        )
+
+    def test_a_function_is_a_type_error_naming_the_mapping(self):
+        before = self.sources()
+        with self.assertRaisesRegex(
+            TypeError, r"takes a mapping {influence: driver}, not a function: .*get_short_name"
+        ):
+            self.skin.connect_bind_pre_matrix(lambda name: "drv_" + name)
+        self.assertEqual(self.sources(), before)
+
+    def test_an_empty_mapping_changes_nothing(self):
+        before = self.sources()
+        self.skin.connect_bind_pre_matrix({})
+        self.assertEqual(self.sources(), before)
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
+    def test_one_undo_step_leaves_the_skin_as_it_was(self):
+        self.skin.remove_influence_objects("j1")
+        cmds.flushUndo()
+        points, values, sources = self.points(), self.values(), self.sources()
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j2", "j3": "drv_j3"})
+        wired = self.sources()
+        self.assertEqual(self.undo_name(), "rig.SkinCluster.connect_bind_pre_matrix")
+        self.assertEqual(self.undo_all(),  1)
+        self.assertEqual(self.sources(),   sources)
+        np.testing.assert_allclose(self.values(), values, atol=1e-9)
+        np.testing.assert_allclose(self.points(), points, atol=1e-6)
+        self.assertEqual(self.redo_all(), 1)
+        self.assertEqual(self.sources(), wired)
+        np.testing.assert_allclose(self.points(), points, atol=1e-6)
+
+    def test_a_slot_wired_before_is_rewired_and_one_undo_puts_it_back(self):
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j2"})
+        cmds.flushUndo()
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j3"})
+        self.assertEqual(self.sources()[1], "drv_j3.worldInverseMatrix[0]")
+        self.assertEqual(self.undo_all(),   1)
+        self.assertEqual(self.sources()[1], "drv_j2.worldInverseMatrix[0]")
+
+    def test_the_same_wiring_again_adds_no_undo_step(self):
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j2"})
+        cmds.flushUndo()
+        self.skin.connect_bind_pre_matrix({"j2": "drv_j2"})
+        self.assertEqual(self.sources()[1], "drv_j2.worldInverseMatrix[0]")
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))

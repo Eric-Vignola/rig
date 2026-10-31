@@ -442,8 +442,10 @@ _ALLOWED_SITES = {
         2, "user input: the names of the vertex strings given"),
     ("nodetypes/skincluster.py", "SkinCluster._sanitize_influences", "Joint"): (
         1, "user input: an influence name, looked up once (a miss or another type is missing)"),
-    ("nodetypes/skincluster.py", "SkinCluster.connect_bind_pre_matrix", "Joint"): (
-        1, "user input: the driver the caller's search function names"),
+    ("nodetypes/skincluster.py", "SkinCluster.connect_bind_pre_matrix", "DAGNode"): (
+        1, "user input: an influence, a key of the mapping (any DAG node a skin can have)"),
+    ("nodetypes/skincluster.py", "SkinCluster.connect_bind_pre_matrix", "Transform"): (
+        1, "user input: a driver, a value of the mapping (any transform)"),
     ("nodetypes/skincluster.py", "SkinCluster.set_influence_objects", "Joint"): (
         1, "user input: the influences given"),
     ("nodetypes/skincluster.py", "SkinCluster.get_mesh", "Mesh"): (

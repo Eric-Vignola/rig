@@ -355,7 +355,7 @@ class Transform(DAGNode):
         return self.get_children(children=False, shapes=True, noIntermediate=no_interm)
 
     def get_shape(self) -> DAGNode | None:
-        """Returns the first non-intermidiate shape node under this transform."""
+        """Returns the first non-intermediate shape node under this transform."""
         shapes = self.get_shapes(no_interm=True)
         if shapes:
             return shapes[0]
@@ -553,7 +553,8 @@ class Transform(DAGNode):
     # --- serialization
 
     def serialize(self) -> TransformData:
-        """creates a TransformData object from a given string"""
+        """Serialize this node to a TransformData, the inverse of
+        ``Transform.create(transform_data)``."""
         from cgmath.hierarchy import TransformData
 
         node   = TransformData(name=type(self).get_short_name(self), uuid=type(self)._raw_get_uuid(self))

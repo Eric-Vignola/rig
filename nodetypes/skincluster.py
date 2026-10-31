@@ -7,7 +7,8 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Callable, List, Union
+from collections.abc import Mapping
+from typing import List, Union
 
 import numpy as np
 from maya import cmds
@@ -24,6 +25,7 @@ from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
 from rig.nodetypes.joint import Joint
 from rig.nodetypes.mesh import Mesh, _resampler, _skincluster_of, _skinclusters_of
 from rig.nodetypes.plugins import _run_undoable
+from rig.nodetypes.transform import Transform
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
@@ -253,20 +255,64 @@ class SkinCluster(Deformer):
 
         return out
 
-    def connect_bind_pre_matrix(self, search_func: Callable) -> None:
-        """For each influence joint, finds a driver joint and connect its
-        worldInverseMatrix to the corresponding bindPreMatrix of this skincluster.
+    def connect_bind_pre_matrix(self, drivers: Mapping[str | DAGNode, str | Transform]) -> None:
+        """Connects each driver's worldInverseMatrix to the bindPreMatrix of its
+        influence. Each slot is found by its influence (its logical index, sparse
+        on a skin that lost an influence), and a slot wired before is rewired.
+        Influences not listed are left alone. A naming convention is one line::
+
+            skin.connect_bind_pre_matrix({j: "drv_" + j.get_short_name() for j in skin.get_influence_objects()})
 
         Args:
-            A function that takes a joint name and returns a driver joint name.
+            drivers: A mapping {influence: driver}, each a name or a node, by the
+                reference rule. Any transform is a driver.
+
+        One undo step, named ``rig.SkinCluster.connect_bind_pre_matrix``; undoing
+        it leaves the skin as it was: each slot's own value is written before it
+        is connected (Maya otherwise drops the element with the connection, and
+        the mesh jumps). A slot already wired to its driver is left as it is.
+
+        Raises:
+            TypeError: before any edit, when `drivers` is no mapping.
+            ValueError: before any edit, for an influence that is not on this
+                skin, and the reference's errors: a name no node has
+                (NodeNotFoundError), a name several nodes have
+                (AmbiguousNodeError), a node of another type (NodeTypeError).
+            RuntimeError: before any edit, for a node object that was deleted
+                (``... already deleted!``) and for a locked slot to wire.
         """
-        for i, inf in enumerate(self.get_influence_objects()):
-            driver = search_func(_name_of(inf))
-            if not Joint.exists(driver):
-                raise RuntimeError(f"Driver joint not found: {_name_of(driver)}.")
-            Joint(driver).find_attr("worldInverseMatrix")[0] >> self.find_attr(
-                "bindPreMatrix"
-            )[i]
+        if not isinstance(drivers, Mapping):
+            raise TypeError(
+                f"SkinCluster.connect_bind_pre_matrix takes a mapping {{influence: driver}}, not a "
+                f"{type(drivers).__name__}: a naming convention is one line: "
+                f"{{j: 'drv_' + j.get_short_name() for j in skin.get_influence_objects()}}"
+            )
+        fn    = type(self)._raw_get_fn_set(self)
+        slots = []
+        for influence, driver in drivers.items():
+            influence = DAGNode(influence)
+            path      = type(influence).get_mdagpath(influence)
+            try:
+                index = fn.indexForInfluenceObject(path)
+            except RuntimeError:
+                raise ValueError(
+                    f"{_name_of(influence)} is not an influence of {_name_of(self)}; nothing was changed"
+                ) from None
+            # (the name of a node that was deleted raises: nothing is wired yet)
+            driver = Transform(driver)
+            slot   = f"{_name_of(self)}.bindPreMatrix[{index}]"
+            source = f"{_name_of(driver)}.worldInverseMatrix[0]"
+            if cmds.getAttr(slot, lock=True) and not cmds.isConnected(source, slot):
+                raise RuntimeError(f"{slot} is locked; nothing was changed")
+            slots.append((slot, source))
+
+        with _undo_chunk("rig.SkinCluster.connect_bind_pre_matrix"):
+            for slot, source in slots:
+                if cmds.isConnected(source, slot):
+                    continue
+                if not cmds.connectionInfo(slot, isDestination=True):
+                    _cmds_edit.setAttr(slot, cmds.getAttr(slot), type="matrix")
+                _cmds_edit.connectAttr(source, slot, force=True)
 
     def get_influence_objects(self) -> list[DAGNode]:
         """Returns a list of influence objects."""

@@ -3993,8 +3993,8 @@ class Attribute(str, metaclass=_PlugMeta):
         return list(it)
 
     def list_connections(self, **kwargs) -> list[Any]:
-        """Lists connected attrs on this node. Thin wrapper of
-        cmds.listConnections()."""
+        """Lists what is connected to this attribute: the nodes at the other end,
+        or their attrs with ``plugs=True``. Thin wrapper of cmds.listConnections()."""
         casted = {}
         result = []
         for each in cmds.listConnections(_name_of(self), **kwargs) or []:

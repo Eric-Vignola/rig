@@ -13,6 +13,9 @@
 * Every page and every python file of rig, its tests included: no method the
   names review retired is named, called or not, outside the hint tables, the Was
   cell of a ``| Was | Now |`` row and the tables of the tests that pin them.
+* The review's docstrings, its keyword rule and its undo steps
+  (`TestDocstringsSayWhatTheMethodsDo`, `TestTheKeywordRule`,
+  `TestTheUndoTablesNameTheNewSteps`).
 """
 
 import ast
@@ -225,7 +228,7 @@ _OLD_METHODS = (
     # Joint, BlendShape, SkinCluster, Transform
     "convert_orients_to_rotation convert_rotation_to_orients hierarchy_to_rotations "
     "hierarchy_to_orients orient_joint orient_chain target_data_attrs get_num_targets "
-    "copy_skincluster connect_bind_pre_matrices set_xfrom_attrs_locked").split()
+    "set_targets_data copy_skincluster connect_bind_pre_matrices set_xfrom_attrs_locked").split()
 # the class-route mirror of a retired name is caught with it, and so is a family spelled
 # with a wildcard; `_ensure_valid`, the hot readers' inline check, is another name
 _OLD_METHOD = re.compile(r"\b(?:_raw_)?(?:" + "|".join(_OLD_METHODS) + r"|element_by_\w*)\b")
@@ -383,3 +386,111 @@ class TestDocsSpeakTheNewSpellings(MayaTestCase):
             with self.subTest(where=where, rule="per object"):
                 for words in ("points into the scene", "keeps its data as attributes"):
                     self.assertTrue(words in text, f"{where} does not say {words!r}")
+
+
+class TestDocstringsSayWhatTheMethodsDo(MayaTestCase):
+    """The docstrings the names review found wrong, each with the words that were wrong and
+    the words it holds now, and its typos (user decision 2026-10-30)."""
+
+    def test_no_docstring_keeps_its_wrong_words(self):
+        from rig.nodetypes import Mesh
+        from rig.nodetypes._base import Attribute
+        from rig.nodetypes.dag_node import DAGNode
+        from rig.nodetypes.dg_node import DGNode
+        from rig.nodetypes.transform import Transform
+
+        for cls, name, wrong, right in (
+            (Attribute, "list_connections", "on this node", "connected to this attribute"),
+            (DGNode, "list_connections", "connected attrs on this node", "connected to this node"),
+            (DAGNode, "get_children", "shape objects", "shapes and transforms"),
+            (Transform, "serialize", "from a given string", "TransformData"),
+            (Mesh, "get_map_names", "paintable maps", "paintable or not"),
+            (Mesh, "enter_paint_tool", "Enable painting", "Paint Attributes Tool"),
+        ):
+            with self.subTest(method=f"{cls.__name__}.{name}"):
+                doc = getattr(cls, name).__doc__
+                self.assertNotIn(wrong, doc)
+                self.assertIn(right, " ".join(doc.split()))
+
+    def test_no_typo_of_the_review_is_left(self):
+        typo = re.compile(r"\b(?:Deletse|erros|Rebuils|intermidiate|identifyer|an [Uu][Vv])\b")
+        root = os.path.dirname(rig.__file__)
+        for relpath in _rig_files(".py"):
+            if relpath.startswith("_tests"):
+                continue
+            with open(os.path.join(root, relpath), encoding="utf-8") as fh:
+                found = typo.findall(fh.read())
+            with self.subTest(file=relpath):
+                self.assertEqual(found, [])
+
+
+class TestTheKeywordRule(MayaTestCase):
+    """``failfast=`` where the default answers, ``quiet=`` where the default raises: both stay,
+    and the conventions state the rule (user decision 2026-10-30). A test named ``guard`` holds
+    on the tree before it too: what stays."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_the_conventions_state_it(self):
+        page    = _text(os.path.join("nodetypes", "README.md"))
+        section = page.split("\n## Conventions\n")[1].split("\n---\n")[0]
+        for words in (
+            "`failfast=` where the default answers, `quiet=` where the default raises",
+            "`is_type`", "`is_valid`", "`get_target_index`", "`find_map_attr`", "`find_attr`", "`find_alias`",
+        ):
+            with self.subTest(words=words):
+                self.assertIn(words, " ".join(section.split()))
+
+    def test_failfast_raises_where_the_default_answers(self):
+        from rig.nodetypes import BlendShape, Mesh, Node
+        from rig.nodetypes.transform import Transform
+
+        cube = Node(cmds.polyCube(name="cube", ch=False)[0])
+        mesh = Mesh("cubeShape")
+        bs   = BlendShape.create(Node(cmds.polyCube(name="target", ch=False)[0]), cube)
+        gone = Transform.create(name="gone")
+        gone.delete()
+        for label, answer, default, error, failfast in (
+            ("is_type", lambda: Transform.is_type("cubeShape"), False, ValueError,
+             lambda: Transform.is_type("cubeShape", failfast=True)),
+            ("get_target_index", lambda: bs.get_target_index("nope"), -1, RuntimeError,
+             lambda: bs.get_target_index("nope", failfast=True)),
+            ("find_map_attr", lambda: mesh.find_map_attr("visibility"), None, ValueError,
+             lambda: mesh.find_map_attr("visibility", failfast=True)),
+            ("is_valid", lambda: gone.is_valid(), False, RuntimeError,
+             lambda: gone.is_valid(failfast=True)),
+        ):
+            with self.subTest(label):
+                self.assertEqual(answer(), default)
+                with self.assertRaises(error):
+                    failfast()
+
+    def test_guard_quiet_answers_where_the_default_raises(self):
+        from rig.nodetypes.transform import Transform
+
+        box = Transform.create(name="box")
+        for label, error, raises, quiet in (
+            ("find_attr", AttributeError, lambda: box.find_attr("nope"), lambda: box.find_attr("nope", quiet=True)),
+            ("find_alias", RuntimeError, lambda: box.find_alias("nope"), lambda: box.find_alias("nope", quiet=True)),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(quiet())
+                with self.assertRaises(error):
+                    raises()
+
+
+class TestTheUndoTablesNameTheNewSteps(MayaTestCase):
+    """The one-step calls the names review added are in both pages' undo paragraphs (user
+    decision 2026-10-30): the root CHEATSHEET's table with their step names."""
+
+    def test_both_pages_name_them(self):
+        rows    = [line for line in _text("CHEATSHEET.md").splitlines() if line.startswith("| `Mesh.create`")]
+        methods = "BlendShape.create", "BlendShape.set_target_data", "SkinCluster.connect_bind_pre_matrix"
+        self.assertEqual(len(rows), 1)
+        for method in methods:
+            with self.subTest(method):
+                self.assertIn(f"`rig.{method}`", rows[0])
+        self.assertIn(
+            "`{}`, `{}` and `{}` are one step each".format(*methods),
+            " ".join(_text(os.path.join("nodetypes", "README.md")).split()),
+        )

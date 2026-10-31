@@ -23,6 +23,12 @@ from rig.nodetypes.transform import Transform
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
+# what Maya refuses in the alias of a target, whatever the code page (test_class_blendshape
+# asks Maya for each ASCII symbol and digit, first and further in): a digit or a "-" first, a
+# "<" further in, a space and any other symbol but "_". A list of what it takes would refuse
+# working names, a letter of the code page for one; a letter outside it stays Maya's own error.
+_NOT_AN_ALIAS = re.compile(r"^[-0-9]|.<|[ !-,./:;=-@\[-^`{-~]")
+
 
 _BLENDSHAPE_LOAD_DOC = """Loads blendShape targets from a cgmath file (a MorphList): one name, two forms.
 
@@ -57,8 +63,10 @@ _BLENDSHAPE_LOAD_DOC = """Loads blendShape targets from a cgmath file (a MorphLi
     The file is read, and what it holds checked, before anything is made or
     changed: a missing file is a FileNotFoundError, a file of another class a
     TypeError naming what it holds, a file from an older cgmath cgmath's
-    LegacyFileError. A MorphData holds a target's sparse offsets and its name
-    only: the weights come back 0, and in-betweens are not carried.
+    LegacyFileError, a morph with no name, or with a new target's name Maya
+    refuses (`set_target_data`), a ValueError. A MorphData holds a target's
+    sparse offsets and its name only: the weights come back 0, and in-betweens
+    are not carried.
 
     Each call is ONE undo step named ``rig.BlendShape.load`` and leaves the
     selection as it was.
@@ -110,6 +118,10 @@ class BlendShape(Deformer):
                 immediately after the node is created.
             kwargs: the ``_CREATE_FLAGS`` given to ``create``, for
                 cmds.blendShape()
+
+        One undo step named ``rig.BlendShape.create``: the blendShape and the
+        morphs' targets. A morph with no name, or with a name Maya refuses
+        (`set_target_data`), is a ValueError before anything is made.
         """
         from cgmath.geometry import MorphData, MorphList
 
@@ -124,16 +136,19 @@ class BlendShape(Deformer):
                 morphs.extend(arg)
             else:
                 geoms.append(arg)
+        _check_morph_names("BlendShape.create", morphs)
+        _check_target_names("BlendShape.create", [m.name for m in morphs], OpenMaya.MNodeClass(cls.NATIVE_NODE_TYPE))
 
         # default frontOfChain to True
         kwargs["frontOfChain"] = kwargs.get("frontOfChain", kwargs.get("foc", True))
         if "foc" in kwargs:
             kwargs.pop("foc")
 
-        name = _cmds_edit.blendShape(*geoms, **kwargs)[0]
+        with _undo_chunk("rig.BlendShape.create"):
+            name = _cmds_edit.blendShape(*geoms, **kwargs)[0]
 
-        if morphs:
-            cls._wrap(name).set_targets_data(morphs)
+            if morphs:
+                cls._wrap(name).set_target_data(morphs)
 
         return name
 
@@ -267,7 +282,7 @@ class BlendShape(Deformer):
         target: int | str | MorphData,
         name:   str | None            = None,
     ) -> Transform:
-        """Rebuils a geometry from data stored in a given target."""
+        """Rebuilds a geometry from data stored in a given target."""
         from cgmath.geometry import MorphData
 
         target_id = -1
@@ -385,42 +400,74 @@ class BlendShape(Deformer):
 
     def set_target_data(
         self,
-        target:    str       | int,
-        data:      MorphData | tuple[ArrayLike, ArrayLike],
-        tolerance: float     | None                        = None,
-        force:     bool                                    = True,
+        target:    str       | int | MorphData | MorphList | list[MorphData],
+        data:      MorphData | tuple[ArrayLike, ArrayLike] | None            = None,
+        *,
+        tolerance: float     | None                                          = None,
+        force:     bool                                                      = True,
     ) -> None:
-        """Sets the offset data of a given target.
+        """Sets the offset data of a target, or of the targets some morphs
+        name: the inverse of `get_target_data` and `serialize`::
+
+            morph.set_target_data("smile", data)            # one target, by name
+            morph.set_target_data(1, (indices, offsets))    # one target, by index
+            morph.set_target_data(data)                     # a MorphData: the target of its name
+            morph.set_target_data(other.serialize())        # a MorphList: each onto the target of its name
+
         Using index is faster than name.
 
         Args:
-            target: A target name or index to set.
-            data: A MorphData object or (indices, offsets).
+            target: A target name or index to set, with `data`. Or, with no
+                `data`, what `get_target_data` or `serialize` returns: a
+                MorphData (set onto the target of its name), a MorphList or a
+                list of MorphData (each onto the target of its name).
+            data: For a target name or index, a MorphData object (its own name
+                is not read) or (indices, offsets).
             tolerance: Tolerance for removing tiny offsets.
                 If None use MorphData's default tolerance.
-            force: If True, a new target will be added if no target exists.
-        """
-        from cgmath.geometry import MorphData
+            force: If True, a new target will be added if no target exists. If
+                False, every name is checked before the first edit.
 
+        The data is copied: the caller's object is never changed. One undo step,
+        named ``rig.BlendShape.set_target_data``, however many targets it sets.
+
+        Raises:
+            TypeError: before any edit: `data` given with a MorphData or a
+                MorphList, a target name or index without `data`, a MorphList or
+                a list of MorphData as its `data`, a list of anything but
+                MorphData.
+            ValueError: before any edit: a morph with no name to set it by, or
+                a new target's name Maya refuses: a space, a symbol, a digit
+                first, an attribute of the blendShape. ``weight[1]`` is one:
+                `serialize`'s name for a weight element that has no name.
+            RuntimeError: before any edit: with ``force=False``, a name no
+                target has.
+        """
+        morphs = _target_morphs(target, data)
+        new    = []
+        for name, morph in morphs:
+            # remove tiny offsets first
+            morph.prune_offsets(tolerance=tolerance)
+            if not isinstance(name, int) and self.get_target_index(name, failfast=not force) < 0:
+                new.append(name)
+        _check_target_names("BlendShape.set_target_data", new, type(self)._raw_get_fn_set(self))
+
+        with _undo_chunk("rig.BlendShape.set_target_data"):
+            for name, morph in morphs:
+                self._set_target_morph(name, morph)
+
+    def _set_target_morph(self, target: str | int, data: MorphData) -> None:
+        """Writes the offsets of `data` to a target by name or index, added when
+        the name has none (`set_target_data`, which has checked ``force=``)."""
         if not isinstance(target, int):
-            target_id = self.get_target_index(target, failfast=(not force))
+            target_id = self.get_target_index(target)
 
             # if the shape doesn't exist, add a new entry
-            if target_id < 0 and force:
+            if target_id < 0:
                 target_id = self.add_empty_target(target)
 
         else:
             target_id = target
-
-        # remove tiny offsets first
-        if not isinstance(data, MorphData):
-            data = MorphData(
-                name="name", indices=np.array(data[0]), offsets=np.array(data[1])
-            )
-        if tolerance is None:
-            data.prune_offsets()
-        else:
-            data.prune_offsets(tolerance=tolerance)
 
         _, offset_attr, comp_attr = self.get_target_data_attrs(target_id)
         offset_attr.set(len(data.offsets), *data.offsets.tolist(), type="pointArray")
@@ -470,29 +517,6 @@ class BlendShape(Deformer):
 
         return MorphList(target_data_list)
 
-    def set_targets_data(
-        self,
-        data:      MorphList,
-        tolerance: float | None = None,
-        force:     bool         = True,
-    ) -> None:
-        """Sets the offset data of a given target.
-        Using index is faster than name.
-
-        Args:
-            target: A target name or index to set.
-            data: A MorphList object.
-            tolerance: Tolerance for removing tiny offsets.
-                If None use MorphData's default tolerance.
-            force: If True, a new target will be added if no target exists.
-        """
-        from cgmath.geometry import MorphList
-
-        for target in data:
-            self.set_target_data(
-                target=target.name, data=target, tolerance=tolerance, force=force
-            )
-
     # --- files
 
     def save(self, path: str | os.PathLike, *, match_name: list[str] | str | None = None) -> str:
@@ -537,9 +561,11 @@ class BlendShape(Deformer):
                 f"too); BlendShape.load(path, geometry, ...) makes a new blendShape"
             )
         data = _read_targets(method, targets)
+        new  = [t.name for t in data if self.get_target_index(t.name) < 0]
+        _check_target_names(method, new, type(self)._raw_get_fn_set(self))
         with _undo_chunk("rig.BlendShape.load"):
             self._free_live_targets(method, [t.name for t in data])
-            self.set_targets_data(data)
+            self.set_target_data(data)
         return self
 
     def _free_live_targets(self, method: str, names: list) -> None:
@@ -574,13 +600,76 @@ class BlendShape(Deformer):
 
 
 def _read_targets(method: str, targets):
-    """`BlendShape.load`'s targets, read and checked (`_files.read`): a MorphList,
-    a copy (a set prunes the offsets in place, and the caller's object is never
-    changed)."""
+    """`BlendShape.load`'s targets, read and checked (`_files.read`) before any
+    edit, each with a name: a MorphList (`set_target_data` copies it, so the
+    caller's object is never changed)."""
     from cgmath.geometry import MorphData, MorphList
 
     data = _files.read(targets, (MorphList, MorphData), method, "the targets")
-    return MorphList([data.copy()]) if isinstance(data, MorphData) else MorphList([t.copy() for t in data])
+    data = MorphList([data]) if isinstance(data, MorphData) else data
+    _check_morph_names(method, data)
+    return data
+
+
+def _check_morph_names(method: str, morphs) -> None:
+    """A morph with no name has no target to go to: a ValueError from `method`,
+    read before any edit."""
+    for i, morph in enumerate(morphs):
+        if not morph.name:
+            raise ValueError(
+                f"{method}: the morph at position {i} has no name, so no target to go to: "
+                f"name it, or give its target: set_target_data(target, morph)"
+            )
+
+
+def _check_target_names(method: str, names: list[str], attrs) -> None:
+    """Each of `names` is a new target's: a name Maya would refuse for its alias is
+    a ValueError from `method`, read before any edit (the refusal comes after the
+    edits of the targets before it otherwise, and `BlendShape.create` leaves its
+    node behind). `attrs` answers ``hasAttribute(name)``: the blendShape's fn set,
+    or its MNodeClass before it exists."""
+    for name in names:
+        if _NOT_AN_ALIAS.search(name) or attrs.hasAttribute(name):
+            raise ValueError(
+                f"{method}: a new target cannot be named {name!r}: Maya takes no space, no symbol "
+                f"but _ and -, no digit or - first and no attribute of a blendShape"
+            )
+
+
+def _target_morphs(target, data) -> list[tuple[str | int, MorphData]]:
+    """`BlendShape.set_target_data`'s arguments, checked before any edit: a
+    (target name or index, MorphData) pair for each target to set, the MorphData
+    a copy of the caller's data."""
+    from cgmath.geometry import MorphData, MorphList
+
+    method = "BlendShape.set_target_data"
+    if isinstance(target, (MorphData, MorphList, list)):
+        if data is not None:
+            raise TypeError(
+                f"{method}: a {type(target).__name__} goes alone, onto the targets of its names; "
+                f"data= goes with a target name or index: set_target_data(target, data)"
+            )
+        morphs = [target] if isinstance(target, MorphData) else list(target)
+        for morph in morphs:
+            if not isinstance(morph, MorphData):
+                raise TypeError(f"{method}: a list of MorphData holds no {type(morph).__name__}")
+        _check_morph_names(method, morphs)
+        return [(morph.name, morph.copy()) for morph in morphs]
+
+    if data is None:
+        raise TypeError(
+            f"{method}({target!r}): a target name or index takes its data: "
+            f"set_target_data(target, data); a MorphData, a MorphList or a list of MorphData "
+            f"goes alone: set_target_data(morphs)"
+        )
+    if isinstance(data, MorphData):
+        return [(target, data.copy())]
+    if isinstance(data, MorphList) or (isinstance(data, (list, tuple)) and any(isinstance(d, MorphData) for d in data)):
+        raise TypeError(
+            f"{method}({target!r}, ...): a target name or index takes one MorphData or "
+            f"(indices, offsets); a MorphList or a list of MorphData goes alone: set_target_data(morphs)"
+        )
+    return [(target, MorphData(name="name", indices=np.array(data[0]), offsets=np.array(data[1])))]
 
 
 # the public names (user decision 2026-10-17: import leaks hidden)

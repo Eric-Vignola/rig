@@ -119,8 +119,8 @@ from rig.nodetypes.plugins import load_plugin
 | `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back; `transform=`: the shape under an existing transform), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_tags`, `apply_skin_data` |
 | `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `get_cv_count`, `get_weight_point_count`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`; both take `transform=`, as `Mesh.create`), `save` / `load` (files: the class creates, a node updates its CVs) |
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
-| `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `transfer_from_meshes`, `connect_bind_pre_matrix` |
-| `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
+| `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `transfer_from_meshes`, `connect_bind_pre_matrix` (a mapping `{influence: driver}`, each slot found by its influence) |
+| `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` (`MorphData`), `serialize` (`MorphList`), `set_target_data` (a name or index and its data, or what those two return), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
 | `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `get_face_members`, `x << sg`, `remove(x)` (the DSL's `x << -sg`); the raw `add_members` / `remove_members` / `force_elements` and `assign` raise, naming `x << sg` / `sg.remove(x)` |
 | `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `remove(x)` (the DSL's `x << -mat`), `astype` (converts the object in place), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
@@ -297,7 +297,8 @@ other type.
 A node object holds an `MObject` (a DAG node also an `MDagPath`). Its name
 (`str(node)`, `get_name()`) is read back from the handle each time, so the
 object survives renames and reparenting; `is_valid()` says whether the node
-still exists and any method
+still exists (`is_valid(failfast=True)` raises instead of answering False)
+and any method
 after deletion raises `RuntimeError("... already deleted!")`. A handle never
 falls back to its name: a new node that takes the name is not picked up, and
 an undo of the delete brings the old one back. A new scene, a file open or a
@@ -379,7 +380,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | `NurbsCurve.create(points_or_BSplineData, degree=, kv=, *, name=, transform=None, world_space=False)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `BSplineData` brings its own, and its name and matrix as a `MeshData` does (on the `cgmath` that adds them). `transform=` and `world_space=` as `Mesh.create` takes them |
 | `NurbsSurface.create(data, *, name=, transform=None, world_space=False)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `BSplinePatchData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; its name and matrix as a curve's). `transform=` and `world_space=` as `Mesh.create` takes them |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
-| `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags |
+| `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags, then the targets of a `MorphData` or a `MorphList` (`set_target_data`), one undo step; a morph with no name, or with a name Maya refuses, is a `ValueError` before anything is made |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
 | `Blinn.create(name=, ...)`, `Material.create(type=, name=, ...)` | `cmds.shadingNode(asShader=True)`, its `<shader>SG` engine and materialInfo, out of a scope unless `container=True` |
 | `DisplayLayer.create(*objects, name=, empty= / noRecurse= / number= / makeCurrent=)` | `cmds.createDisplayLayer`, empty unless objects are given, which join as themselves (`noRecurse`) |
@@ -877,8 +878,10 @@ step each, named `rig.Mesh.create`, `rig.NurbsCurve.create`,
 `rig.SkinCluster.set_weights`. A node's `load` puts its points, shading or
 CVs through the command too; every `load` is one step, `rig.Mesh.load` ...
 `rig.Joint.load_hierarchy`. The transfers (`Mesh.transfer_maps`, `transfer_tags`,
-`SkinCluster.transfer_to_mesh`, `transfer_from_meshes`) are one step each too,
-named after the method (`rig.Mesh.transfer_maps` ...).
+`SkinCluster.transfer_to_mesh`, `transfer_from_meshes`),
+`BlendShape.create`, `BlendShape.set_target_data` and
+`SkinCluster.connect_bind_pre_matrix` are one step each too, named after the
+method (`rig.Mesh.transfer_maps` ...).
 
 Your own API edits take the same command: [CHEATSHEET section 21](CHEATSHEET.md#21-plugins--load_plugin-and-undo)
 has the recipe and the object's rules (apply the change first, in `doIt`;
@@ -937,6 +940,14 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
 - **`match_name` arguments are regexes** (`iter_joints`, `iter_shapes`,
   `serialize_maps`, `serialize_tags`, `BlendShape.serialize`),
   anchored with `exact_match=True`.
+- **`failfast=` where the default answers, `quiet=` where the default
+  raises.** A method that answers when there is nothing to find or the
+  node is gone takes `failfast=True` to raise instead: `is_type` (False, for
+  a node of another type), `is_valid` (False), `get_target_index` (-1),
+  `find_map_attr` (None, for an attribute that is no map). A method that
+  raises takes `quiet=True` to answer None instead: `find_attr`, `find_alias`.
+  `is_type(failfast=True)` and `is_valid(failfast=True)` never return False,
+  so they are statements, not conditions.
 
 ---
 
@@ -1141,7 +1152,14 @@ Verified on Maya 2025; not bugs to work around blindly.
   normals.
 - **Undoing a target a blendShape load added keeps its weight element**: the
   blendShape keeps an unnamed `weight[i]` at 0 (as the undo of
-  `set_target_data` on a new target always has).
+  `set_target_data` on a new target always has). `serialize` names it
+  `weight[i]`, which Maya takes for no alias: `set_target_data` and `load`
+  refuse such a morph, a `ValueError` before any edit.
+- **Maya never resizes a map when the topology changes**: the stored
+  `doubleArray` keeps the old count. Every read fits it to the vertex count
+  (`get_map_values`, `get_map_data(sparse=False)`, `serialize_maps`, and so
+  `mirror_map`), padded with the map's default or trimmed; the stored array
+  stays as it is until something sets the map.
 - **Undoing `Mesh('x').load` brings back the points, the hard edges and the
   locked normals, and the mesh's stored normal array may come back longer**:
   a `.ma` saved after the undo lists more `.n` entries (unset ones), with the
@@ -1149,8 +1167,6 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **`create_hierarchy` (so `load_hierarchy`) does not connect a joint's
   `inverseScale`** to its parent's `scale`: a joint with segment scale
   compensate under a scaled parent comes back at another world matrix.
-- **Method names are spelled as they are**: `BlendShape.set_targets_data`
-  beside `set_target_data`.
 - `Mesh.bake_deformation` hard-codes `root_joint` as the skeleton. Its
   `max_influences` is the influence cap (below 1 is a `ValueError`), and
   `None` (the default) is no cap. It is one undo step.

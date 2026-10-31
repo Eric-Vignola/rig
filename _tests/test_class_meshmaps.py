@@ -622,3 +622,85 @@ class TestMeshTransferUndo(UndoWalk, MayaTestCase):
             lambda: self.src.transfer_tags(["xfer_new", "xfer_old"], self.dst),
             read,
         )
+
+
+class TestMapReadsFitTheVertexCount(MayaTestCase):
+    """Maya never resizes a stored map when the topology changes, so every read fits it to
+    the vertex count, in one place (user decision 2026-10-30): ``get_map_values`` through
+    ``_fit_map_values``, which ``get_map_data(sparse=False)``, ``serialize_maps`` and
+    ``mirror_map`` read. A test named ``guard`` holds on the tree before it too: what stays."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        cmds.polyCube(name="box", constructionHistory=False)
+        self.mesh   = mesh_api.Mesh("boxShape")
+        self.stored = [0.1 * (i + 1) for i in range(8)]
+        self.mesh.add_map("stale", values=self.stored)
+        cmds.polySmooth("box", constructionHistory=False, divisions=1)
+        self.padded = self.stored + [0.0] * 18
+
+    def test_guard_maya_keeps_the_stored_count(self):
+        self.assertEqual(self.mesh.get_vertex_count(), 26)
+        self.assertEqual(len(cmds.getAttr("boxShape.stale")), 8)
+
+    def test_get_map_values_pads_with_the_default(self):
+        self.assertEqual(self.mesh.get_map_values("stale"), self.padded)
+
+    def test_get_map_values_reads_a_plug_too(self):
+        self.assertEqual(self.mesh.get_map_values(self.mesh.stale), self.padded)
+
+    def test_a_read_writes_nothing(self):
+        self.assertEqual(len(self.mesh.get_map_values("stale")), 26)
+        self.assertEqual(len(cmds.getAttr("boxShape.stale")), 8)
+
+    def test_get_map_data_reads_one_value_per_vertex(self):
+        data = self.mesh.get_map_data("stale", sparse=False)
+        self.assertEqual(data.indices.tolist(), list(range(26)))
+        self.assertEqual(data.values.tolist(),  self.padded)
+        self.assertEqual(data.indices.dtype,    np.int32)
+        self.assertEqual(data.values.dtype,     np.float64)
+
+    def test_serialize_maps_reads_the_same(self):
+        data = self.mesh.serialize_maps(sparse=False)
+        self.assertEqual([d.values.tolist() for d in data], [self.padded])
+
+    def test_a_map_never_set_reads_the_defaults_from_both(self):
+        self.mesh.add_attr(
+            "never", storable=True, dataType=mesh_api.MAP_DATATYPE, category=mesh_api.MAP_DEFAULT_CATEGORY
+        )
+        self.assertIsNone(cmds.getAttr("boxShape.never"))
+        self.assertEqual(self.mesh.get_map_values("never"), [0.0] * 26)
+        data = self.mesh.get_map_data("never", sparse=False)
+        self.assertEqual(data.indices.tolist(), list(range(26)))
+        self.assertEqual(data.values.tolist(), [0.0] * 26)
+
+    def test_mirror_map_after_a_topology_change(self):
+        self.mesh.add_map("fitted", values=self.padded)
+        self.mesh.mirror_map("fitted")
+        self.mesh.mirror_map("stale")
+        self.assertEqual(len(cmds.getAttr("boxShape.stale")), 26)
+        self.assertEqual(self.mesh.get_map_values("stale"), self.mesh.get_map_values("fitted"))
+
+    def test_guard_a_sparse_read_needs_no_padding(self):
+        data = self.mesh.get_map_data("stale")
+        self.assertEqual(data.indices.tolist(), list(range(8)))
+        self.assertEqual(data.values.tolist(), self.stored)
+
+    def test_guard_a_map_stored_longer_is_trimmed(self):
+        cmds.polyPlane(name="sheet", subdivisionsWidth=2, subdivisionsHeight=2, constructionHistory=False)
+        sheet = mesh_api.Mesh("sheetShape")
+        sheet.add_map("long", values=list(range(9)))
+        cmds.delete("sheet.f[3]")
+        self.assertEqual(len(cmds.getAttr("sheetShape.long")), 9)
+        self.assertEqual(sheet.get_map_values("long"), [float(i) for i in range(8)])
+        self.assertEqual(sheet.get_map_data("long", sparse=False).values.tolist(), [float(i) for i in range(8)])
+        self.assertEqual(sheet.get_map_data("long").indices.tolist(), list(range(1, 8)))
+
+    def test_guard_a_map_that_fits_reads_as_stored(self):
+        cmds.polyCube(name="fits", constructionHistory=False)
+        fits = mesh_api.Mesh("fitsShape")
+        fits.add_map("whole", values=self.stored)
+        self.assertEqual(fits.get_map_values("whole"), self.stored)
+        self.assertEqual(fits.get_map_data("whole", sparse=False).values.tolist(), self.stored)

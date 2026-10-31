@@ -240,7 +240,8 @@ class DAGNode(DGNode):
     # --- hierarchy methods
 
     def get_children(self, **kwargs) -> list[DGNode]:
-        """Returns a list of shape objects.
+        """Returns the nodes under this one, shapes and transforms alike, as
+        cmds.listRelatives() lists them (``shapes=True``: the shapes only).
 
         Args:
             kwargs: kwargs supported by cmds.listRelatives()

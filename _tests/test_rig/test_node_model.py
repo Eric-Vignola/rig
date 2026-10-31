@@ -62,6 +62,7 @@ from rig._internal.math_nodes import _decompose_matrix
 from rig._internal.members import Components
 from rig._internal.memoize import _attribute_key
 from rig._tests._base import MayaTestCase
+from rig._tests._undo import UndoWalk
 
 
 def _mobject(name):
@@ -231,7 +232,7 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             cmds.select(clear=True)
             Node.create("joint", name="drv_j1")
             Node.create("joint", name="drv_j2")
-            skin.connect_bind_pre_matrix(lambda name: "drv_" + name)
+            skin.connect_bind_pre_matrix({j: "drv_" + j.get_short_name() for j in skin.get_influence_objects()})
 
         def choices():
             cmds.createNode("transform", name="src")
@@ -3231,3 +3232,76 @@ class TestNoWrapperLeft(MayaTestCase):
             xf << matrix
         with self.assertRaisesRegex(RuntimeError, freed):
             decompose._node_is_transform(xf)
+
+
+class TestIsValidFailfast(UndoWalk, MayaTestCase):
+    """``is_valid(*, failfast=False)`` (user decision 2026-10-30): False is what the default
+    answers; ``failfast=True`` calls ``_check_valid``, so a node that is gone raises its
+    RuntimeError, and it never returns False. rig's own guards still call ``_check_valid``. A
+    test named ``guard`` holds on the tree before it too: what stays."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_a_live_node(self):
+        self.assertIs(Transform.create(name="box").is_valid(failfast=True), True)
+
+    def test_a_deleted_node(self):
+        box = Transform.create(name="box")
+        box.delete()
+        self.assertIs(box.is_valid(), False)
+        with self.assertRaisesRegex(RuntimeError, "^box already deleted!$"):
+            box.is_valid(failfast=True)
+
+    def test_an_undone_delete(self):
+        box = Transform.create(name="box")
+        box.delete()
+        self.undo_steps(1)
+        self.assertIs(box.is_valid(failfast=True), True)
+
+    def test_an_undone_create(self):
+        box = Transform.create(name="box")
+        self.undo_steps(1)
+        self.assertIs(box.is_valid(), False)
+        with self.assertRaisesRegex(RuntimeError, "^box already deleted!$"):
+            box.is_valid(failfast=True)
+        self.redo_steps(1)
+        self.assertIs(box.is_valid(failfast=True), True)
+
+    def test_a_freed_node(self):
+        box = Transform.create(name="box")
+        cmds.file(new=True, force=True)
+        self.assertIs(box.is_valid(), False)
+        with self.assertRaisesRegex(RuntimeError, r"^Transform node \(freed by a new scene"):
+            box.is_valid(failfast=True)
+
+    def test_it_is_a_keyword(self):
+        box = Transform.create(name="box")
+        with self.assertRaises(TypeError):
+            box.is_valid(True)
+        self.assertIs(box.is_valid(failfast=False), True)
+
+    def test_it_runs_the_check_hook(self):
+        box = Transform.create(name="box")
+        with mock.patch.object(DGNode, "_check_valid") as check:
+            self.assertIs(box.is_valid(failfast=True), True)
+            check.assert_called_once_with()
+
+    def test_a_node_with_a_maya_attr_of_that_name(self):
+        box = Transform.create(name="box")
+        cmds.addAttr("box", longName="is_valid", attributeType="bool")
+        bare = box.is_valid
+        self.assertIs(bare(failfast=True), True)
+        box.delete()
+        with self.assertRaisesRegex(RuntimeError, "already deleted!"):
+            bare(failfast=True)
+
+    def test_the_bare_predicate_takes_it(self):
+        box  = Transform.create(name="box")
+        bare = box.is_valid
+        self.assertIs(bare(failfast=True), True)
+
+    def test_guard_the_class_route_mirror(self):
+        box = Transform.create(name="box")
+        self.assertIs(type(box)._raw_is_valid(box), True)
+        box.delete()
+        self.assertIs(type(box)._raw_is_valid(box), False)

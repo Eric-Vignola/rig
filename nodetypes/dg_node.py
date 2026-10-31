@@ -804,7 +804,7 @@ _OLD_NODE_NAMES = {
     "file_path":                  "node.get_file_path()",
     "file_path_with_copy_number": "node.get_file_path(copy_number=True)",
     # the methods the names review retired
-    "ensure_valid":   "node.is_valid()",
+    "ensure_valid":   "node.is_valid(failfast=True)",
     "get_clean_name": "node.get_short_name(namespace=False)",
     "for_node":       "DisplayLayer.of(node), a list: [layer] or [], never None; a node, not a name",
     "get_num_keys":   "node.get_key_count()",
@@ -856,9 +856,10 @@ _OLD_NODE_NAMES = {
     # a blendShape's
     "target_data_attrs": "node.get_target_data_attrs(index)",
     "get_num_targets":   "node.get_target_count()",
+    "set_targets_data":  "node.set_target_data(morphs)",
     # a skinCluster's
     "copy_skincluster":          "SkinCluster.transfer_from_meshes(source_meshes, target_vertices)",
-    "connect_bind_pre_matrices": "node.connect_bind_pre_matrix(search_func)",
+    "connect_bind_pre_matrices": "node.connect_bind_pre_matrix(drivers)",
     # a transform's
     "set_xfrom_attrs_locked": "node.set_xform_attrs_locked(locked)",
 }
@@ -1424,13 +1425,23 @@ class DGNode(Node):
         _ensure_valid(self)
         return self.__dict__["_fn_set"]
 
-    def is_valid(self) -> bool:
+    def is_valid(self, *, failfast: bool = False) -> bool:
         """Check if this node is valid (not deleted, not freed by a new scene, a
-        file open or a reference unload). False for a half-built node."""
+        file open or a reference unload). False for a half-built node.
+
+        Args:
+            failfast: By keyword only. If True, a node that is gone raises the
+                RuntimeError its every method raises (``"box already deleted!"``)
+                instead of answering False. It then never returns False, so it
+                is a statement, not a condition (as ``is_type(failfast=True)``).
+        """
+        if failfast:
+            self._check_valid()
+            return True
         return _handle_valid(self.__dict__)
 
     def _check_valid(self) -> None:
-        """Raise erros if an object is deleted.
+        """Raise errors if an object is deleted.
 
         A node deleted to the undo queue is still alive, and is named (through a
         fn set of its MObject, which is safe while it is alive). A node a new
@@ -1455,7 +1466,7 @@ class DGNode(Node):
         return self._long_name()
 
     def get_uuid(self) -> str:
-        """Returns the node's universally unique identifyer as a string."""
+        """Returns the node's universally unique identifier as a string."""
         return str(type(self)._raw_get_fn_set(self).uuid())
 
     def get_short_name(self, *, namespace: bool = True) -> str:
@@ -2265,7 +2276,7 @@ class DGNode(Node):
         return type(self)._raw_find_attr(self, long_name, quiet=True)
 
     def delete_attr(self, attr: Attribute | str) -> bool:
-        """Deletse an attribute of a given name. Thin wrapper of cmds.deleteAttr()."""
+        """Deletes an attribute of a given name. Thin wrapper of cmds.deleteAttr()."""
         if self.has_attr(attr):
             if type(attr) in _PLUG_TYPES:
                 attr = type(attr)._raw_get_name(attr)
@@ -2315,8 +2326,8 @@ class DGNode(Node):
         return [a for a in attrs if a is not None]
 
     def list_connections(self, **kwargs) -> list[DGNode | Attribute]:
-        """Lists connected attrs on this node. Thin wrapper of
-        cmds.listConnections()."""
+        """Lists what is connected to this node: the nodes at the other end, or
+        their attrs with ``plugs=True``. Thin wrapper of cmds.listConnections()."""
         casted = {}
         result = []
         for each in cmds.listConnections(_name_of(self), **kwargs) or []:

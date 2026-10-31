@@ -23,8 +23,8 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `get_injection_node()`, add / set / query / serialize, `tag_references` |
 | 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back; a `cgmath` `Object`; `transform=`: a shape under an existing transform), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
 | 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create`, `NurbsSurface.create` (`transform=`: a shape under an existing transform), `save` / `load` (files) |
-| 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips, `save` / `load` (files) |
-| 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild, `save` / `load` (files) |
+| 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips, `connect_bind_pre_matrix`, `save` / `load` (files) |
+| 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` and `MorphList` in and out, rebuild, `save` / `load` (files) |
 | 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
 | 14 | [`ShadingEngine` and the shaders](#14-shadingengine-and-the-shaders) | `for_material`, `x << sg`, `get_face_members`; `Blinn` / `Lambert` / ... / `Material`, the network verbs |
 | 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `of`, exclusive membership, `Layer is DisplayLayer` |
@@ -316,6 +316,11 @@ try:
     copy.get_name()                                       # every operation on it raises
 except RuntimeError as e:
     print(e)                                              # copy already deleted!
+try:
+    copy.is_valid(failfast=True)                          # a statement: it raises that, or passes
+except RuntimeError as e:
+    print(e)                                              # copy already deleted!
+print(box.is_valid(failfast=True))                        # True -- never False
 
 s = ObjectSet.create(name="s1")
 s.add_members(box)
@@ -1054,7 +1059,10 @@ except TypeError as e:
 ```
 
 Paintable maps are `doubleArray` attributes in the `PaintableMap`
-category, one value per vertex, padded or trimmed to the vertex count:
+category, one value per vertex, padded or trimmed to the vertex count, as
+they are set and as they are read: Maya never resizes a map when the topology
+changes, so one stored before reads back at the mesh's vertex count, padded
+with the default (0.0) or trimmed, and a map never set reads as the default:
 
 ```python
 mask = mesh.add_map("mask", values=0.5, category="weights")
@@ -1075,13 +1083,24 @@ mesh.mirror_map("mask2", CgmathAxis.X)                              # cgmath's A
 print(mesh.get_map_values("mask2") == mesh.get_map_values("mask"))  # True
 mesh.delete_map("mask2")
 print(mesh.get_map_names())                                         # ['mask']
+
+ball = Node(cmds.polyCube(name="ball", ch=False)[0]).get_shape()
+ball.add_map("stale", values=[0.5] * 8)
+cmds.polySmooth("ball", constructionHistory=False, divisions=1)              # 26 vertices, the map still holds 8 values
+print(len(cmds.getAttr("ballShape.stale")), ball.get_vertex_count())         # 8 26
+print(len(ball.get_map_values("stale")), ball.get_map_values("stale")[7:9])  # 26 [0.5, 0.0]
+print(ball.get_map_data("stale", sparse=False).values.size)                  # 26
+ball.mirror_map("stale")                                                     # read and written at 26
+print(len(cmds.getAttr("ballShape.stale")))                                  # 26
+cmds.delete("ball")
 ```
 
 Colour sets are `ColorSet` handles on the scene, so every member is a
 method: `get_name()`, `get_mesh()`, `is_valid()`, `get_representation()`,
 and `get_data()` / `set_data(colours)`, an `(V, 4)` array. `get_data()` is a
 read (the current colour set stays, the scene is not marked modified);
-`set_data` is one undo step.
+`set_data` is one undo step. `is_valid()` answers as a node's does, False once
+the set or its mesh is gone, and `is_valid(failfast=True)` raises instead.
 
 ```python
 print(mesh.get_color_sets())                                     # []
@@ -1091,6 +1110,10 @@ cset.set_data(np.tile([1.0, 0.0, 0.0, 1.0], (8, 1)))
 print(cset.get_data().shape, cset.get_data()[0])   # (8, 4) [1. 0. 0. 1.]
 cset.delete()
 print(cset.is_valid(), mesh.get_color_sets())  # False []
+try:
+    cset.is_valid(failfast=True)               # a statement, as a node's
+except RuntimeError as e:
+    print(e)                                   # tint is not a valid color set for cubeShape!
 ```
 
 Materials, read from the shading engines the shape belongs to.
@@ -1316,6 +1339,29 @@ print(skin.get_influence_objects(), skin.serialize() == data)                   
 print(repr(Node.create("skinCluster", Node(cmds.polyCube(name="c2", ch=False)[0]), j1)))      # SkinCluster("c2_skincluster")
 ```
 
+`connect_bind_pre_matrix` wires each driver's `worldInverseMatrix` into the
+`bindPreMatrix` of its influence: `drivers` is a mapping `{influence: driver}`,
+each a name or a node, any transform a driver. Each slot is found by its
+influence (a skin that lost one has sparse slots), influences not listed are
+left alone, and everything is checked before the first edit. One undo step
+leaves the skin as it was:
+
+```python
+plate = Node(cmds.polyCube(name="plate", ch=False, height=2)[0])
+wired = SkinCluster.create(plate, [j1, j2, j3])
+wired.remove_influence_objects(j1)                        # the slots left: 1 and 2
+drv_j2 = Transform.create(name="drv_j2")
+drv_j3 = Joint.create(name="drv_j3")
+wired.connect_bind_pre_matrix({j: "drv_" + j.get_short_name() for j in wired.get_influence_objects()})
+print(cmds.listConnections(f"{wired}.bindPreMatrix[1]"))  # ['drv_j2']
+print(cmds.listConnections(f"{wired}.bindPreMatrix[2]"))  # ['drv_j3']
+try:
+    wired.connect_bind_pre_matrix({j2: drv_j3, j1: drv_j2})   # nothing changes: j1 left this skin
+except ValueError as e:
+    print(str(e).split(";")[0])                               # j1 is not an influence of plate_skincluster
+cmds.delete("plate")
+```
+
 To and from a `cgmath` file: `save` writes the `SkinData` (the weights and the
 influences, by name; not the skin's settings nor its bind pose).
 `SkinCluster.load(path, geo, ...)` from the class creates, as `create` does
@@ -1367,7 +1413,8 @@ print(copied.get_influence_objects(), copied.get_weights()[:, 1])              #
 ## 12. `BlendShape`
 
 Targets are addressed by alias or logical index (index is faster); offsets
-go in and out as `cgmath` `MorphData` (sparse: `indices` + `offsets`).
+go in and out as `cgmath` `MorphData` (sparse: `indices` + `offsets`), a whole
+blendShape as a `MorphList`.
 
 ```python
 cmds.file(new=True, force=True)
@@ -1398,6 +1445,18 @@ print([repr(a) for a in morph.get_target_data_attrs(1)][1])                     
 
 morphs = morph.serialize()                                        # a cgmath MorphList
 print(type(morphs).__name__, [m.name for m in morphs], [m.name for m in morph.serialize(match_name="sm.*")])   # MorphList ['smile', 'sad'] ['smile']
+
+# what serialize returned goes back in: each onto the target of its name
+morph.set_target_data("sad", (np.array([7]), np.array([[0, 2, 0]])))
+morph.set_target_data(morphs)
+print(morph.get_target_data("sad").indices)                     # [0 1]
+morph.set_target_data(morphs[1], tolerance=2.0)                 # one MorphData, onto its target; offsets of 1 pruned
+print(morph.get_target_data("sad").indices, morphs[1].indices)  # [] [0 1] -- your data is copied, never changed
+morph.set_target_data(morphs)
+try:
+    morph.set_target_data("sad")                                  # a name takes its data
+except TypeError as e:
+    print(str(e).split(":")[1].strip())                           # a target name or index takes its data
 
 geo = morph.rebuild_target("sad", name="sad_geo")                 # a clean duplicate of the base with the offsets applied
 print(repr(geo), np.round(np.array(geo.get_shape().get_points())[0, :3], 2))   # Transform("sad_geo") [-0.5 -1.5  0.5]
