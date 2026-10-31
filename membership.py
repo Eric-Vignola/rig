@@ -108,7 +108,7 @@ from rig.nodetypes import display_layer as _display_layer
 from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.deformer import _GLOB_TOKEN_RE, tag_references
 from rig.nodetypes.display_layer import DisplayLayer
-from rig.nodetypes.geometry import _check_component_tag_name, Geometry
+from rig.nodetypes.geometry import _check_tag_name, Geometry
 from rig.nodetypes.material_node import Material
 from rig.nodetypes.mesh import _own_history
 from rig.nodetypes.shading_engine import ShadingEngine
@@ -214,7 +214,7 @@ def _cth_dump(geo: Geometry) -> str:
     return "; ".join(
         f"{e['key']} @ {e['node']} (editable={e['editable']}, "
         f"procedural={e['procedural']}, final={e['final']})"
-        for e in geo.get_component_tag_history() or []
+        for e in geo.get_tag_history() or []
     ) or "no component tags"
 
 
@@ -267,7 +267,7 @@ class _Home:
 
     def ids(self) -> np.ndarray:
         """What the holder's own output resolves for the tag."""
-        return self.holder.get_component_tag_indices(self.name)
+        return self.holder.get_tag_component_indices(self.name)
 
     def describe(self) -> str:
         return f"'{self.name}' on {_short(self.node)}"
@@ -293,7 +293,7 @@ def _state_of(geo: Geometry, path: str, name: str, entry: dict, node: str) -> _H
     )
     if answer["modReplace"]:
         state = _EDITABLE
-    elif _cast(node).get_component_tag_index(name) != -1:
+    elif _cast(node).get_tag_index(name) != -1:
         state = _BAKED
     else:
         state = _PROCEDURAL
@@ -304,7 +304,7 @@ def _resolve(geo: Geometry, path: str, name: str, at: str | None) -> _Home:
     """Resolve the home of ``name`` for the shape at ``path``: the entry
     that resolves (``final``), or the entry at ``at`` when given (``at`` is
     also where a new tag goes, the consent to shadow a procedural one)."""
-    entries = [e for e in geo.get_component_tag_history() or [] if e["key"] == name]
+    entries = [e for e in geo.get_tag_history() or [] if e["key"] == name]
     if at is not None:
         mine = _final([e for e in entries if _full_path(e["node"], path) == at])
         if mine is not None:
@@ -429,7 +429,7 @@ class Tag(_MemberSpec):
     or components of another kind, answer False; an attribute plug stands
     for its node there. ``Tag()`` is the kind token; ``Tag(None)`` is a
     ``TypeError`` (a failed lookup must not mean every tag). Names are
-    validated at construction by Maya's rule, the one ``add_component_tag``
+    validated at construction by Maya's rule, the one ``add_tag``
     checks: at least two characters, letters, digits and ``_``, starting
     with a letter or ``_``, with single ``.`` or ``:`` between characters,
     once the whitespace at the ends is trimmed and a space inside is made
@@ -437,7 +437,7 @@ class Tag(_MemberSpec):
     ``Tag(' ab ')`` is ``Tag('ab')`` and ``Tag('a b')`` is ``Tag('a_b')``.
     A name with a non-ASCII character is a ``ValueError``: Maya first maps it
     to the system code page and stores another name, which Tag would not find
-    (``add_component_tag`` leaves it to Maya).
+    (``add_tag`` leaves it to Maya).
     ``at=`` (a Node or name) is where a NEW tag is injected and the consent
     to shadow a procedural one: a shape of its geometry chain
     (``deformableShape -tagInjectionList``): the shape, its ``Orig`` and every
@@ -491,7 +491,7 @@ class Tag(_MemberSpec):
         super().__init__(None if name is _NO_NAME else name, at=at, force=force)
         if self._name is not None:
             # the name Maya stores: ' ab ' is the tag 'ab', 'a b' the tag 'a_b'
-            self._name = _check_component_tag_name(self._name)
+            self._name = _check_tag_name(self._name)
 
     @property
     def name(self) -> str | None:
@@ -519,9 +519,9 @@ class Tag(_MemberSpec):
 
     def _validate_name(self, name: Any) -> None:
         super()._validate_name(name)
-        _check_component_tag_name(name)
+        _check_tag_name(name)
         if not name.isascii():
-            # add_component_tag leaves it to Maya; Tag finds a tag by the name
+            # add_tag leaves it to Maya; Tag finds a tag by the name
             # it holds, which is not the one Maya stores (runs/r5/REBIND/verify/probe_nonascii_head.txt)
             raise ValueError(
                 f"{name!r} is not a component tag name for Tag: a non-ASCII "
@@ -699,9 +699,9 @@ class Tag(_MemberSpec):
     def _plan_purge(self, group: _TagGroup, geo: Geometry, category: str | None) -> list:
         # Only names that still resolve: a deleted baked tag leaves a dead,
         # unresolvable history entry behind that nothing can edit.
-        live   = set(type(geo).get_component_tags(geo))
+        live   = set(type(geo).get_tag_names(geo))
         finals = {}
-        for entry in geo.get_component_tag_history() or []:
+        for entry in geo.get_tag_history() or []:
             if entry["final"] and entry["key"] in live:
                 finals[entry["key"]] = entry
         steps, blocked = [], []
@@ -758,7 +758,7 @@ class Tag(_MemberSpec):
         result = _cmds_edit.componentTag(
             *names, create=True, newTagName=home.name, injectionLocation=home.node
         )
-        if result != home.name or not home.holder.has_component_tag(home.name):
+        if result != home.name or not home.holder.has_tag(home.name):
             raise RuntimeError(
                 f"creating {home.describe()} failed (componentTag returned "
                 f"{result!r}); history: {_cth_dump(home.geo)}"
@@ -794,7 +794,7 @@ class Tag(_MemberSpec):
         self, home: _Home, comps: list[_Selection], names: list[str], category: str
     ) -> None:
         if home.state == _BAKED:
-            home.holder.set_component_tag_contents(
+            home.holder.set_tag_contents(
                 home.name, self._requested(home, comps), category
             )
         else:
@@ -803,7 +803,7 @@ class Tag(_MemberSpec):
 
     def _delete(self, home: _Home) -> None:
         if home.state == _BAKED:
-            home.holder.remove_component_tag(home.name)
+            home.holder.delete_tag(home.name)
         elif not _cmds_edit.componentTag(
             home.path, delete=True, tagName=home.name, injectionLocation=home.node
         ):
@@ -811,7 +811,7 @@ class Tag(_MemberSpec):
                 f"componentTag -delete on {home.describe()} returned False; "
                 f"history: {_cth_dump(home.geo)}"
             )
-        if home.holder.get_component_tag_index(home.name) != -1:
+        if home.holder.get_tag_index(home.name) != -1:
             raise RuntimeError(
                 f"{home.describe()} survived its deletion; history: {_cth_dump(home.geo)}"
             )
@@ -826,7 +826,7 @@ class Tag(_MemberSpec):
             merged = np.unique(merged, axis=0) if merged.ndim > 1 else np.unique(merged)
         else:
             merged = current[~_rows_mask(current, requested)]
-        home.holder.set_component_tag_contents(home.name, merged, home.category)
+        home.holder.set_tag_contents(home.name, merged, home.category)
 
     @staticmethod
     def _requested(home: _Home, comps: list[_Selection]) -> np.ndarray:
@@ -911,9 +911,9 @@ class Tag(_MemberSpec):
             )
         group, geo = self._single(selections, "'>>' queries")
         name       = self._name
-        if not geo.has_component_tag(name):
+        if not geo.has_tag(name):
             return _no_ids(group)   # a tag the node does not have holds nothing
-        ids = geo.get_component_tag_indices(name)
+        ids = geo.get_tag_component_indices(name)
         if group.whole:
             return ids
         return _rows_of(group, geo, name, ids)
@@ -928,15 +928,15 @@ class Tag(_MemberSpec):
         for group in _group(selections):
             self._check_geometry(group)
             geo = _cast(group.path)
-            if not geo.has_component_tag(name):
+            if not geo.has_tag(name):
                 return False
             if not group.comps:
                 continue   # a node on the left: it has the tag
-            ids = geo.get_component_tag_indices(name)
+            ids = geo.get_tag_component_indices(name)
             if not ids.size:
                 return False
             # untyped for queries: components of another kind are not in it
-            category = geo.get_component_tag_category(name)
+            category = geo.get_tag_category(name)
             if any(_CATEGORY_OF_KIND[s.kind] != category for s in group.comps):
                 return False
             if not _holds_all(group, name, ids):
@@ -946,15 +946,15 @@ class Tag(_MemberSpec):
     @classmethod
     def _of(cls, selections: list[_Selection]) -> list["Tag"]:
         group, geo = cls._single(selections, "Tag.of takes")
-        names      = type(geo).get_component_tags(geo)
+        names      = type(geo).get_tag_names(geo)
         if group.whole:
             return [cls._unchecked(name) for name in names]
         category = _CATEGORY_OF_KIND[group.comps[0].kind]
         found    = []
         for name in names:
-            if geo.get_component_tag_category(name) != category:
+            if geo.get_tag_category(name) != category:
                 continue
-            ids = geo.get_component_tag_indices(name)
+            ids = geo.get_tag_component_indices(name)
             if ids.size and _holds_all(group, name, ids):
                 found.append(cls._unchecked(name))
         return found
@@ -1071,7 +1071,7 @@ class Tag(_MemberSpec):
                 raise self._refuse_missing(home)
             if home.state == _PROCEDURAL:
                 raise self._refuse_procedural(home, "renamed", shadow=False)
-            if home.geo.has_component_tag(new):
+            if home.geo.has_tag(new):
                 raise ValueError(f"'{new}' already exists on {_short(home.path)}")
             references = _references(home.name, home.node)
             if references and not force:
@@ -1113,7 +1113,7 @@ class Tag(_MemberSpec):
 
     def _clear(self, home: _Home) -> None:
         if home.state == _BAKED:
-            home.holder.set_component_tag_contents(home.name, [], home.category)
+            home.holder.set_tag_contents(home.name, [], home.category)
         elif not _cmds_edit.componentTag(
             home.path, modify="clear", tagName=home.name, injectionLocation=home.node
         ):
@@ -1128,7 +1128,7 @@ class Tag(_MemberSpec):
 
     def _rename(self, home: _Home, new: str, rewrites: list[tuple[str, str]]) -> None:
         if home.state == _BAKED:
-            home.holder.rename_component_tag(home.name, new)
+            home.holder.rename_tag(home.name, new)
         elif not _cmds_edit.componentTag(
             home.path, rename=True, tagName=home.name, newTagName=new,
             injectionLocation=home.node,
@@ -1137,7 +1137,7 @@ class Tag(_MemberSpec):
                 f"componentTag -rename on {home.describe()} returned False; "
                 f"history: {_cth_dump(home.geo)}"
             )
-        if not home.holder.has_component_tag(new):
+        if not home.holder.has_tag(new):
             raise RuntimeError(
                 f"'{new}' did not appear on {_short(home.node)} after renaming "
                 f"{home.describe()}; history: {_cth_dump(home.geo)}"
@@ -1168,7 +1168,7 @@ def _rows_of(group: _TagGroup, geo: Geometry, name: str, ids: np.ndarray) -> np.
     category = _CATEGORY_OF_KIND[group.comps[0].kind]
     if ids.size == 0:
         return ids
-    if geo.get_component_tag_category(name) != category:
+    if geo.get_tag_category(name) != category:
         return _no_ids(group)
     parts = []
     for selection in group.comps:
@@ -1206,7 +1206,11 @@ def _holds_all(group: _TagGroup, name: str, ids: np.ndarray) -> bool:
 def _holding_layer(path: str) -> DisplayLayer | None:
     """The display layer holding the node at ``path``, read from the node's
     own ``drawOverride`` input; ``None`` in ``defaultLayer``."""
-    return DisplayLayer.for_node(path)
+    layers = cmds.listConnections(
+        f"{path}.drawOverride", source=True, destination=False,
+        type=DisplayLayer.NATIVE_NODE_TYPE,
+    )
+    return DisplayLayer._wrap(layers[0]) if layers else None
 
 
 def _component_message(selection: _Selection) -> str:

@@ -768,39 +768,99 @@ def _file_method_hint(node, name: str) -> str | None:
     return f"{short!r} is a {kind}: {own}{branch}"
 
 
-# The node properties rig had before the property ban (user decision 2026-10-16),
-# and their spelling now: the miss path of ``DGNode.__getattr__`` names it
+# The node properties rig had before the property ban (user decision 2026-10-16)
+# and the node methods the names review retired (user decision 2026-10-30), and
+# their spelling now: the miss path of ``DGNode.__getattr__`` names it
 # (``node.uuid`` is a Maya attr lookup, which misses unless the node has an attr
-# ``uuid``); the hot path never reads it. The predicates (``is_locked``,
-# ``is_valid``, ``is_shape``, ``is_default``) kept their names: a bare one is
-# guarded (``_BarePredicate``).
+# ``uuid``); the hot path never reads it. The miss path is an instance's: a call
+# through the class (``Mesh.old(mesh)``) is the plain AttributeError of a name the
+# class does not have. The predicates (``is_locked``, ``is_valid``, ``is_shape``,
+# ``is_default``) kept their names: a bare one is guarded (``_BarePredicate``).
 _OLD_NODE_NAMES = {
     "name":                       "node.get_name() or str(node)",
     "long_name":                  "node.get_long_name()",
     "short_name":                 "node.get_short_name()",
-    "clean_name":                 "node.get_clean_name()",
+    "clean_name":                 "node.get_short_name(namespace=False)",
     "uuid":                       "node.get_uuid()",
     "namespace":                  "node.get_namespace() / node.set_namespace(ns)",
     "node_type":                  "node.get_node_type()",
     "mobject":                    "node.get_mobject()",
     "fn_set":                     "node.get_fn_set()",
     "mdagpath":                   "node.get_mdagpath()",
-    "local_shape_attr":           "node.get_local_shape_attr()",
-    "world_shape_attr":           "node.get_world_shape_attr()",
+    "local_shape_attr":           "node.get_output_attr()",
+    "world_shape_attr":           "node.get_output_attr(world_space=True)",
     "injection_node":             "node.get_injection_node()",
-    "component_tags":             "node.get_component_tags()",
-    "num_vertices":               "node.get_num_vertices()",
-    "num_polygons":               "node.get_num_polygons()",
-    "num_weight_points":          "node.get_num_weight_points()",
-    "num_cvs":                    "node.get_num_cvs()",
+    "component_tags":             "node.get_tag_names()",
+    "num_vertices":               "node.get_vertex_count()",
+    "num_polygons":               "node.get_face_count()",
+    "num_weight_points":          "node.get_weight_point_count()",
+    "num_cvs":                    "node.get_cv_count()",
     "uv_sets":                    "node.get_uv_sets()",
     "current_uv_set":             "node.get_current_uv_set()",
-    "paintable_maps":             "node.get_paintable_maps()",
+    "paintable_maps":             "node.get_map_names()",
     "engine":                     "node.get_engine()",
-    "num_targets":                "node.get_num_targets()",
-    "num_keys":                   "node.get_num_keys()",
+    "num_targets":                "node.get_target_count()",
+    "num_keys":                   "node.get_key_count()",
     "file_path":                  "node.get_file_path()",
     "file_path_with_copy_number": "node.get_file_path(copy_number=True)",
+    # the methods the names review retired
+    "ensure_valid":   "node.is_valid()",
+    "get_clean_name": "node.get_short_name(namespace=False)",
+    "for_node":       "DisplayLayer.of(node), a list: [layer] or [], never None; a node, not a name",
+    "get_num_keys":   "node.get_key_count()",
+    # a geometry's component tags
+    "add_component_tag":             "node.add_tag(key)",
+    "remove_component_tag":          "node.delete_tag(tag)",
+    "rename_component_tag":          "node.rename_tag(tag, new_key)",
+    "set_component_tag_contents":    "node.set_tag_contents(tag, contents)",
+    "select_component_tag_contents": "node.select_tag_contents(key)",
+    "get_component_tags":            "node.get_tag_names()",
+    "has_component_tag":             "node.has_tag(tag)",
+    "get_component_tag_index":       "node.get_tag_index(key)",
+    "get_component_tag_name":        "node.get_tag_name(i)",
+    "get_component_tag_history":     "node.get_tag_history()",
+    "get_component_tag_category":    "node.get_tag_category(tag)",
+    "set_component_tag_category":    "node.set_tag_category(tag, category)",
+    "get_component_tag_contents":    "node.get_tag_contents(tag)",
+    "get_component_tag_indices":     "node.get_tag_component_indices(tag)",
+    "is_component_tag_empty":        "node.is_tag_empty(tag)",
+    "get_component_tag_data":        "node.get_tag_data(tag)",
+    "serialize_component_tags":      "node.serialize_tags()",
+    "transfer_component_tags":       "node.transfer_tags(tags, other)",
+    # the component tag read that had no verb
+    "component_tag_expression_subset_state": "node.get_tag_subset_state(expr)",
+    # a shape's output and its normals
+    "get_local_shape_attr":        "node.get_output_attr()",
+    "get_world_shape_attr":        "node.get_output_attr(world_space=True)",
+    "get_per_face_vertex_normals": "node.get_face_vertex_normals()",
+    # the counts
+    "get_num_vertices":      "node.get_vertex_count()",
+    "get_num_polygons":      "node.get_face_count()",
+    "get_num_weight_points": "node.get_weight_point_count()",
+    "get_num_cvs":           "node.get_cv_count()",
+    # the maps
+    "get_paintable_maps":  "node.get_map_names()",
+    "paint_map":           "node.enter_paint_tool(map_name)",
+    "sanitize_map_values": "node.set_map_values(map_attr, values), which fits them to the vertex count",
+    "merge_maps":          "gone: a stub, never implemented",
+    "merge_maps_list":     "gone: a stub, never implemented",
+    # a follicle's
+    "set_uv_values": "node.set_uv(uv)",
+    # a joint's
+    "convert_orients_to_rotation": "node.orients_to_rotations()",
+    "convert_rotation_to_orients": "node.rotations_to_orients()",
+    "hierarchy_to_rotations":      "node.orients_to_rotations(hierarchy=True)",
+    "hierarchy_to_orients":        "node.rotations_to_orients(hierarchy=True)",
+    "orient_joint":                "node.orient(aim_axis, up_axis)",
+    "orient_chain":                "node.orient(aim_axis, up_axis, hierarchy=True)",
+    # a blendShape's
+    "target_data_attrs": "node.get_target_data_attrs(index)",
+    "get_num_targets":   "node.get_target_count()",
+    # a skinCluster's
+    "copy_skincluster":          "SkinCluster.transfer_from_meshes(source_meshes, target_vertices)",
+    "connect_bind_pre_matrices": "node.connect_bind_pre_matrix(search_func)",
+    # a transform's
+    "set_xfrom_attrs_locked": "node.set_xform_attrs_locked(locked)",
 }
 
 # ``node.<name> = value`` of a node property before the ban: its spelling now
@@ -812,8 +872,8 @@ _OLD_NODE_SETTERS = {
 
 
 def _old_node_hint(name: str) -> str:
-    """``"; node.uuid is now node.get_uuid()"`` for an old node property name, else
-    ``""``: the end of a lookup miss's AttributeError."""
+    """``"; node.uuid is now node.get_uuid()"`` for an old node name, else ``""``:
+    the end of a lookup miss's AttributeError."""
     new = _OLD_NODE_NAMES.get(name)
     return f"; node.{name} is now {new}" if new else ""
 
@@ -853,8 +913,8 @@ _NODE_STATE = frozenset(
         "_fn_set",
         "_objhandle",
         "_attr_dict",
-        "_Geometry__local_shape_attr",
-        "_Geometry__world_shape_attr",
+        "_Geometry__local_output_attr",
+        "_Geometry__world_output_attr",
         # round 3: the node's plug hash serial and a DAG node's taken path
         "_node_serial",
         "_taken_mdagpath",
@@ -868,7 +928,7 @@ def _deleted_name(node: Any) -> str:
     """The last known name of `node`, a node object whose handle is not valid
     (deleted to the undo queue, or freed by a new scene, a file open or a
     reference unload), with no marker: a node deleted to the undo queue is
-    alive, and named by its MObject (as `DGNode.ensure_valid` names it); a
+    alive, and named by its MObject (as `DGNode._check_valid` names it); a
     freed one cannot
     be read, so it is the name `_name` last read (every node object reads it
     when it is built or cast by a name), else its class name."""
@@ -909,14 +969,11 @@ def _filtered(
     return None
 
 
-def get_short_name(name: Any) -> str:
-    """Returns the short name of a given node."""
-    return _name_of(name).rsplit("|", 1)[-1]
-
-
-def get_clean_name(name: Any) -> str:
-    """Returns clean name of a given node (no namespace)"""
-    return get_short_name(name).rsplit(":", 1)[-1]
+def get_short_name(name: Any, *, namespace: bool = True) -> str:
+    """Returns the short name of a given node, without its namespace if
+    `namespace` is False."""
+    short = _name_of(name).rsplit("|", 1)[-1]
+    return short if namespace else short.rsplit(":", 1)[-1]
 
 
 @total_ordering
@@ -1161,7 +1218,7 @@ class DGNode(Node):
             # a node a new scene freed: its cached MPlug points at freed memory
             # (a miss raised through the fn set). `_attr_dict` is set last by
             # every constructor, so the handle is there.
-            self.ensure_valid()
+            self._check_valid()
         plug_cls = _PLUG_CLASS
         if plug_cls is None:
             return attr
@@ -1372,7 +1429,7 @@ class DGNode(Node):
         file open or a reference unload). False for a half-built node."""
         return _handle_valid(self.__dict__)
 
-    def ensure_valid(self) -> None:
+    def _check_valid(self) -> None:
         """Raise erros if an object is deleted.
 
         A node deleted to the undo queue is still alive, and is named (through a
@@ -1401,13 +1458,10 @@ class DGNode(Node):
         """Returns the node's universally unique identifyer as a string."""
         return str(type(self)._raw_get_fn_set(self).uuid())
 
-    def get_short_name(self) -> str:
-        """Returns the short name (the part after the last ``|``)."""
-        return get_short_name(self._name())
-
-    def get_clean_name(self) -> str:
-        """Returns the clean node name (no namespace)."""
-        return get_clean_name(self._name())
+    def get_short_name(self, *, namespace: bool = True) -> str:
+        """Returns the short name (the part after the last ``|``), without its
+        namespace if `namespace` is False."""
+        return get_short_name(self._name(), namespace=namespace)
 
     def rename(self, new_name: Any) -> None:
         """Renames the node. A locked node is refused (InjectionError, nothing
@@ -1891,7 +1945,7 @@ class DGNode(Node):
         if not cmds.namespace(exists=namespace):
             _one_step()  # the namespace and the rename: one undo step
             _cmds_edit.namespace(add=namespace)
-        self.rename(f"{namespace}:{get_clean_name(self._name())}")
+        self.rename(f"{namespace}:{get_short_name(self._name(), namespace=False)}")
 
     # --- attribute methods
 
@@ -2322,23 +2376,22 @@ _DG_POST_CREATE = DGNode.post_create.__func__
 # it, see `_raw_function`)
 _FIND_ATTR           = _raw_function(DGNode.__dict__["find_attr"])
 _OBJECT_GETATTRIBUTE = object.__dict__["__getattribute__"]
-_ENSURE_VALID        = _raw_function(DGNode.__dict__["ensure_valid"])
+_CHECK_VALID         = DGNode.__dict__["_check_valid"]
 
 
 def _ensure_valid(node: Any) -> None:
-    """``node.ensure_valid()`` for rig's hot readers (``fn_set``, ``mobject``,
+    """``node._check_valid()`` for rig's hot readers (``fn_set``, ``mobject``,
     ``mdagpath`` ...): DGNode's own check inline (the handle), else the method
-    the node's class or the node itself has, read off the class (a public
-    method's instance access is a plug method's check)."""
+    the node's class or the node itself has."""
     d      = node.__dict__
     handle = d.get("_objhandle")
     if (
         handle is None
         or not handle.isValid()
-        or type(node)._raw_ensure_valid is not _ENSURE_VALID
-        or "ensure_valid" in d
+        or type(node)._check_valid is not _CHECK_VALID
+        or "_check_valid" in d
     ):
-        node.ensure_valid()
+        node._check_valid()
 
 # Node classes whose data type fallback hook only reads the scene before it calls
 # DGNode's, mapped to that hook. With DGNode's own hook nothing runs in between.
@@ -2368,7 +2421,7 @@ _base_module._KEEPS_QUERY = _keeps_query
 _base_module._DG_NAMING   = (
     DGNode.__dict__["_name"],
     DGNode.__dict__["__str__"],
-    _ENSURE_VALID,
+    _CHECK_VALID,
 )
 
 
@@ -2399,6 +2452,5 @@ _base_module._METHOD_PLUG_HOOK = _method_plug
 # the public names (user decision 2026-10-17: import leaks hidden)
 __all__ = [
     "DGNode",
-    "get_clean_name",
     "get_short_name",
 ]

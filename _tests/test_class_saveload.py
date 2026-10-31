@@ -375,7 +375,7 @@ class TestMesh(_Case):
         data = Mesh(t).serialize(include_uvs=False)
         data.save_obj(self.path("body.obj"))
         mesh = Mesh.load(self.path("body.obj"), self.path("body.obj"), name="from_obj")
-        self.assertEqual(mesh.get_num_vertices(), 8)
+        self.assertEqual(mesh.get_vertex_count(), 8)
         self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
 
     def test_wrong_and_swapped_inputs_make_nothing(self):

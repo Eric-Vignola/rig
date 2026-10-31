@@ -10,7 +10,7 @@ import numpy as np
 from maya import cmds
 from rig.nodetypes._base import _name_of
 from rig._internal.journal import cmds_edit as _cmds_edit
-from rig.nodetypes.dg_node import DGNode, get_clean_name, get_short_name
+from rig.nodetypes.dg_node import DGNode, get_short_name
 from rig.nodetypes.transform import Transform
 
 
@@ -163,7 +163,7 @@ class Joint(Transform):
         Returns:
             The duplicated joint.
         """
-        name = type(self).get_clean_name(self) if not name else name
+        name = type(self).get_short_name(self, namespace=False) if not name else name
         if suffix:
             name = replace_suffix(name, suffix)
 
@@ -180,12 +180,12 @@ class Joint(Transform):
         # create a set of joint names to use as a filter
         include_set = None
         if include_list:
-            include_set = {get_clean_name(x) for x in include_list}
+            include_set = {get_short_name(x, namespace=False) for x in include_list}
         for child in dup.get_children(allDescendents=True, type="transform"):
             # delete non-joint xforms and unwanted joints, matched on the name
             # the copy was made with, before any suffix or prefix
             if type(child).get_node_type(child) != "joint" or (
-                include_set and type(child).get_clean_name(child) not in include_set
+                include_set and type(child).get_short_name(child, namespace=False) not in include_set
             ):
                 p = child.get_parent()
                 for each in child.get_children(type="transform"):
@@ -200,7 +200,7 @@ class Joint(Transform):
                 child.rename(_add_prefix(child, prefix))
 
             # unlock joint xform attrs
-            child.set_xfrom_attrs_locked(False)
+            child.set_xform_attrs_locked(False)
 
         # clean up skeleton
         dup.freeze(translate=False, rotate=clean_rotations, scale=clean_scales)
@@ -268,8 +268,27 @@ class Joint(Transform):
         for joint, target_joint in zip(joints, target_joints):
             joint.match_matrix(target_joint, world_space=world_space)
 
-    def convert_orients_to_rotation(self):
-        """converts joint orientation into rotations"""
+    def _iter_hierarchy(self) -> Iterator[Joint]:
+        """The joints below this one, deepest first, then this one; a leaf joint
+        has none below (``listRelatives`` answers None). Each is read as the walk
+        reaches it, so a short name two joints share raises there."""
+        child_joints = cmds.listRelatives(
+            _name_of(self), c=True, ad=True, noIntermediate=True, type="joint"
+        )
+        for joint in (child_joints or []) + [_name_of(self)]:
+            yield Joint._wrap(joint)
+
+    def orients_to_rotations(self, *, hierarchy: bool = False) -> None:
+        """Converts joint orientation into rotations.
+
+        Args:
+            hierarchy: By keyword only. True: this joint and every joint below it.
+        """
+        if hierarchy:
+            for joint in self._iter_hierarchy():
+                joint.orients_to_rotations()
+            return
+
         # Imported lazily: ``cgmath.transforms`` is only needed for orientation
         # math, so importing rig must not pay for it.
         from cgmath.transforms import matrix_to_euler, XYZ
@@ -279,8 +298,17 @@ class Joint(Transform):
         _cmds_edit.setAttr(f"{_name_of(self)}.jointOrient", 0, 0, 0)
         _cmds_edit.xform(_name_of(self), worldSpace=True, rotation=rot)
 
-    def convert_rotation_to_orients(self):
-        """converts joint rotation into orients"""
+    def rotations_to_orients(self, *, hierarchy: bool = False) -> None:
+        """Converts joint rotation into orients.
+
+        Args:
+            hierarchy: By keyword only. True: this joint and every joint below it.
+        """
+        if hierarchy:
+            for joint in self._iter_hierarchy():
+                joint.rotations_to_orients()
+            return
+
         from cgmath.transforms import matrix_to_euler, XYZ
 
         local_matrix = np.reshape(cmds.getAttr(f"{_name_of(self)}.matrix"), (4, 4))
@@ -289,29 +317,39 @@ class Joint(Transform):
         _cmds_edit.setAttr(f"{_name_of(self)}.r", 0, 0, 0)
         _cmds_edit.setAttr(f"{_name_of(self)}.jo", rotation[0], rotation[1], rotation[2])
 
-    def hierarchy_to_rotations(self):
-        """converts joint orients into rotations"""
-        child_joints = cmds.listRelatives(
-            _name_of(self), c=True, ad=True, noIntermediate=True, type="joint"
-        )
-        child_joints.append(_name_of(self))
-        for joint in child_joints:
-            Joint._wrap(joint).convert_orients_to_rotation()
+    def orient(
+        self,
+        aim_axis:   str  = "x",
+        up_axis:    str  = "y",
+        *,
+        root_joint: bool = False,
+        hierarchy:  bool = False,
+    ) -> None:
+        """Sets joint orient based on axis and up vector.
 
-    def hierarchy_to_orients(self):
-        """converts joint orients into rotations"""
-        child_joints = cmds.listRelatives(
-            _name_of(self), c=True, ad=True, noIntermediate=True, type="joint"
-        )
-        child_joints.append(_name_of(self))
-        for joint in child_joints:
-            Joint._wrap(joint).convert_rotation_to_orients()
+        Args:
+            aim_axis: The axis aimed at the first child joint (``"-y"`` negates it).
+            up_axis: The axis kept toward the same axis of the parent's frame, or
+                of this joint's own with no parent (``"-y"`` negates it).
+            root_joint: By keyword only. True: `up_axis` reads this joint's own
+                frame, parent or not.
+            hierarchy: By keyword only. True: this joint and every joint below it.
+                This joint is the chain's root, as if `root_joint` were True; each
+                joint below reads its parent's frame.
+        """
+        if hierarchy:
+            child_joints = self.get_children(
+                allDescendents=True, noIntermediate=True, type="joint"
+            )
+            self.orient(aim_axis, up_axis, root_joint=True)
 
-    def orient_joint(self, aim_axis="x", up_axis="y", root_joint=False):
-        """sets joint orient based on axis and up vector"""
+            for c in child_joints:
+                c.orient(aim_axis, up_axis)
+            return
+
         from cgmath.transforms import vector_to_euler
 
-        self.convert_orients_to_rotation()
+        self.orients_to_rotations()
 
         # check if end joint
         child_joints = cmds.listRelatives(
@@ -363,22 +401,11 @@ class Joint(Transform):
             )
         )[0].tolist()
         _cmds_edit.xform(_name_of(self), worldSpace=True, rotation=rotation)
-        self.convert_orients_to_rotation()
+        self.orients_to_rotations()
 
         # reparent children
         for i in range(len(child_joints)):
             _cmds_edit.parent(child_joints[i], child_joint_parents[i])
-
-    def orient_chain(self, aim_axis="x", up_axis="y"):
-        """orients chain given aim axis and up axis"""
-
-        child_joints = self.get_children(
-            allDescendents=True, noIntermediate=True, type="joint"
-        )
-        self.orient_joint(aim_axis, up_axis, root_joint=True)
-
-        for c in child_joints:
-            c.orient_joint(aim_axis, up_axis)
 
 
 # the public names (user decision 2026-10-17: import leaks hidden)

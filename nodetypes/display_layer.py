@@ -5,7 +5,7 @@ A display layer holds DAG objects, exclusively: a node is in one layer, and
 ``defaultLayer`` (which cannot be deleted) is where a node sits when it is
 in no layer. Membership is a connection from the layer's ``drawInfo`` into
 the member's ``drawOverride``, so it is read from the node side
-(:meth:`for_node`) without enumerating layers; children of a member draw
+(:meth:`of`) without enumerating layers; children of a member draw
 with its override through the DAG without being members themselves.
 Handing a component to ``editDisplayLayerMembers`` silently stores its
 shape, and a DG node is refused by Maya.
@@ -23,10 +23,10 @@ Usage::
 
     layer = DisplayLayer.define("geometry")          # found, or made (empty) in the current namespace
     cube << layer ; cube in layer                    # the membership grammar (rig.Layer): the node itself
-    DisplayLayer.for_node(cube)                      # DisplayLayer("geometry"); None in defaultLayer
+    DisplayLayer.of(cube)                            # [DisplayLayer("geometry")]; [] in defaultLayer
     layer.get_members()                              # [Transform("cube")]
     layer.remove(cube)                               # back to defaultLayer; cube << -layer is the shorthand
-    cube >> DisplayLayer() ; DisplayLayer.of(cube)   # the layer holding cube, or None ; [layer] or []
+    cube >> DisplayLayer()                           # the layer holding cube, or None
     layer.rename("geo") ; layer.clear() ; layer.delete()
 
 There is one way in and out of a layer (user decision 2026-10-16): the raw
@@ -182,16 +182,6 @@ class DisplayLayer(DGNode):
 
     # --- membership
 
-    @classmethod
-    def for_node(cls, node: DAGNode | str) -> DisplayLayer | None:
-        """Returns the display layer holding a DAG node, read from the node's own
-        ``drawOverride`` input, or None when it is in ``defaultLayer``."""
-        layers = cmds.listConnections(
-            f"{_name_of(node)}.drawOverride", source=True, destination=False,
-            type=cls.NATIVE_NODE_TYPE,
-        )
-        return cls._wrap(layers[0]) if layers else None
-
     def get_members(self, no_recurse: bool = True) -> list[DAGNode]:
         """Returns a list of objects in this layer."""
         objs = cmds.editDisplayLayerMembers(
@@ -228,12 +218,14 @@ class DisplayLayer(DGNode):
             objects = [objects]
         _cmds_edit.editDisplayLayerMembers(_name_of(self), *objects, noRecurse=no_recurse)
 
-    def _remove_members(self, objects: DAGNode | str | list[DAGNode | str]) -> None:
+    def _remove_members(self, objects: DAGNode | list[DAGNode]) -> None:
         """Removes object(s) from this layer (they go to ``defaultLayer``);
         an object in another layer is left there (rig's own use)."""
         if not isinstance(objects, (list, tuple)):
             objects = [objects]
-        mine = [_name_of(x) for x in objects if self.for_node(x) == self]
+        # by name: `of` answers a plain DisplayLayer, which a subclass's layer never equals
+        name = _name_of(self)
+        mine = [_name_of(x) for x in objects if [_name_of(layer) for layer in self.of(x)] == [name]]
         if mine:
             _cmds_edit.editDisplayLayerMembers(_DEFAULT_ABSOLUTE, *mine, noRecurse=True)
 

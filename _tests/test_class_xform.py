@@ -30,10 +30,10 @@ class TestXformNodes(MayaTestCase):
         self.joint3 = Node.create("joint", name=self.c_name, parent=self.joint2)
 
     def test_attr(self):
-        self.root.set_xfrom_attrs_locked(True)
+        self.root.set_xform_attrs_locked(True)
         for attr in self.root.iter_xform_attrs():
             self.assertTrue(attr.is_locked())
-        self.root.set_xfrom_attrs_locked(False)
+        self.root.set_xform_attrs_locked(False)
         for attr in self.root.iter_xform_attrs():
             self.assertFalse(attr.is_locked())
 

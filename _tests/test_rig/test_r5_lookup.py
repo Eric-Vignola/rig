@@ -946,10 +946,10 @@ class TestMemoKeys(MayaTestCase):
         self._scene()
         plug     = Node("md").input1X
         key      = memoize._attribute_key(plug)
-        original = DGNode.__dict__["ensure_valid"]
+        original = DGNode.__dict__["_check_valid"]
         checked  = []
 
-        def ensure_valid(node):
+        def _check_valid(node):
             checked.append(node)
             return original(node)
 
@@ -957,8 +957,8 @@ class TestMemoKeys(MayaTestCase):
         # DGNode's __str__ and private `_name` (the name and fn_set properties are
         # the methods get_name / get_fn_set, which naming does not read)
         for owner, name, value in (
-            (DGNode, "ensure_valid", ensure_valid),
-            (DGNode, "_name", lambda node: (node.ensure_valid(), node._fn_set.name())[1]),
+            (DGNode, "_check_valid", _check_valid),
+            (DGNode, "_name", lambda node: (node._check_valid(), node._fn_set.name())[1]),
             (DGNode, "__str__", lambda node: node._name()),
             (Attribute, "get_full_name", lambda attr, f=Attribute.get_full_name: f(attr)),
         ):
@@ -968,7 +968,7 @@ class TestMemoKeys(MayaTestCase):
                     self.assertEqual(memoize._attribute_key(plug), key)
         self.assertTrue(checked)  # through the name
         node = Node("md")
-        node.__dict__["ensure_valid"] = lambda: checked.append("instance")
+        node.__dict__["_check_valid"] = lambda: checked.append("instance")
         own = node.input1X
         self.assertIsNone(_base._dg_named_owner(own))
         del checked[:]

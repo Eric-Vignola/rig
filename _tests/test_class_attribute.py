@@ -160,7 +160,7 @@ class TestAttributeClass(MayaTestCase):
         c_attr = self.node.c0
         self.assertEqual(c_attr.get_parent(), attr)
         self.assertEqual(attr.c0,             c_attr)
-        self.assertEqual(attr.get_num_children(),   num_c)
+        self.assertEqual(attr.get_child_count(), num_c)
 
     def test_array_attr(self):
         attr_name = "test_array"
@@ -170,7 +170,7 @@ class TestAttributeClass(MayaTestCase):
         attr[1].set(1)
         attr[4].set(4)
         self.assert_list_equal(attr.get_logical_indices(), [1, 4])
-        self.assertEqual(attr.get_num_elements(), 2)
+        self.assertEqual(attr.get_element_count(), 2)
 
     def test_typed_attr(self):
         attr_name = "test_typed"

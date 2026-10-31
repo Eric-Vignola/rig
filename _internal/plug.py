@@ -365,7 +365,7 @@ class Plug(Attribute):
     or the handle of its node it took).
     """
 
-    # elements (``element_by_*``, so ``plug[i]``) are Plugs, built once (D29)
+    # elements (``get_element``, so ``plug[i]``) are Plugs, built once (D29)
     _CHILD_CLASS = None  # set to Plug below the class
 
     # -- construction / lookup -- #
@@ -514,7 +514,7 @@ class Plug(Attribute):
         # canonical :meth:`MPlug.child` API. NumPy-style: ``int`` returns
         # a single Plug, ``slice`` returns a List of children.
         try:
-            n = type(self)._raw_get_num_children(self)
+            n = type(self)._raw_get_child_count(self)
         except (RuntimeError, TypeError):
             n = 0
 
@@ -524,7 +524,7 @@ class Plug(Attribute):
                     key += n
                 if not 0 <= key < n:
                     raise IndexError(
-                        f"{_name_of(self)} child index {key} out of range (num_children={n})"
+                        f"{_name_of(self)} child index {key} out of range (child_count={n})"
                     )
                 return _inherit_owner(self, _new_attr(Plug, self._mplug.child(key)))
             if isinstance(key, slice):
@@ -1685,7 +1685,7 @@ class ComponentPlug(Plug):
     divisions). No flatten arithmetic is hand-rolled here.
     """
 
-    # an element by index (``element_by_*`` of the handle: the flat
+    # an element by index (``get_element`` of the handle: the flat
     # ``controlPoints[k]``) is a Plug, as a Plug's is (D29)
     _CHILD_CLASS = Plug
 
@@ -2983,7 +2983,7 @@ def _inject_value(
     """Inject ``src`` into ``dst`` -- set / connect with compound-aware logic.
 
     Mirrors the original ``Container.inject`` (Eric's _language.py:1158-1294)
-    but adapted to use ``Attribute.is_multi()`` / ``get_num_children()`` /
+    but adapted to use ``Attribute.is_multi()`` / ``get_child_count()`` /
     ``get_data_type()`` instead of his ``__data__`` namespace.
 
     Source-shape rules (NumPy-style strict, plus matrix-source routing):
@@ -3062,7 +3062,7 @@ def _inject_value(
         compound_dst = types._is_compound(dst)
     try:
         leaves = (
-            [type(dst)._raw_child(dst, i) for i in range(type(dst)._raw_get_num_children(dst))]
+            [type(dst)._raw_child(dst, i) for i in range(type(dst)._raw_get_child_count(dst))]
             if compound_dst
             else [dst]
         )
@@ -3291,7 +3291,7 @@ def _inject_value(
             # 4. Compound dst (vector / quat / euler) -- must match channel
             #    count exactly OR be a 1-element broadcast.
             if compound_dst:
-                n = type(dst)._raw_get_num_children(dst)
+                n = type(dst)._raw_get_child_count(dst)
                 if flat.size == n:
                     src = flat.tolist()
                 elif flat.size == 1:

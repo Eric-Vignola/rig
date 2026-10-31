@@ -434,7 +434,7 @@ _ALLOWED_SITES = {
            "by the reference rule before anything is made"),
     ("nodetypes/joint.py", "Joint.match_hierarchy", "Joint"): (
         1, "user input: the target joint, by name"),
-    ("nodetypes/mesh.py", "Mesh.transfer_component_tags", "Mesh"): (
+    ("nodetypes/mesh.py", "Mesh.transfer_tags", "Mesh"): (
         1, "user input: the other mesh (a transform stands for its shape)"),
     ("nodetypes/mesh.py", "Mesh.transfer_maps", "Mesh"): (
         1, "user input: the other mesh (a transform stands for its shape)"),
@@ -442,7 +442,7 @@ _ALLOWED_SITES = {
         2, "user input: the names of the vertex strings given"),
     ("nodetypes/skincluster.py", "SkinCluster._sanitize_influences", "Joint"): (
         1, "user input: an influence name, looked up once (a miss or another type is missing)"),
-    ("nodetypes/skincluster.py", "SkinCluster.connect_bind_pre_matrices", "Joint"): (
+    ("nodetypes/skincluster.py", "SkinCluster.connect_bind_pre_matrix", "Joint"): (
         1, "user input: the driver the caller's search function names"),
     ("nodetypes/skincluster.py", "SkinCluster.set_influence_objects", "Joint"): (
         1, "user input: the influences given"),
@@ -450,7 +450,7 @@ _ALLOWED_SITES = {
         1, "the deformed geometry may be another type: the reference type-checks it"),
     ("nodetypes/skincluster.py", "SkinCluster.transfer_to_mesh", "Mesh"): (
         1, "user input: the other mesh"),
-    ("nodetypes/skincluster.py", "SkinCluster.copy_skincluster", "Mesh"): (
+    ("nodetypes/skincluster.py", "SkinCluster.transfer_from_meshes", "Mesh"): (
         2, "user input: the source meshes"),
     # round 4b NC7: the shade specs retired; Material is the node class.
     # re-pinned (user decision 2026-10-22, the shade module retired): its
@@ -544,7 +544,7 @@ class TestInternalSites(MayaTestCase):
             Transform.create(name="made")
             Joint.find_all()
             ShadingEngine.for_material("red")
-            DisplayLayer.for_node("body")
+            DisplayLayer.of(Node("body"))
             self.assertEqual(calls, [])
             Transform("grp")
             self.assertEqual(calls, ["Transform"])

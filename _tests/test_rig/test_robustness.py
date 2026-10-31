@@ -168,7 +168,7 @@ _POINTS = _HEAD + r"""
     ):
         out["closest " + label] = outcome(lambda: mesh.get_closest_point(arg))
         out["uv " + label] = outcome(lambda: mesh.get_uv_at_point(arg, "map1"))
-    count = mesh.get_num_vertices()
+    count = mesh.get_vertex_count()
     out["set_points plugs"] = outcome(lambda: mesh.set_points([loc.t] * count))
     out["set_points List"] = outcome(lambda: mesh.set_points(List([loc.t] * count)))
     out["set_points rows"] = outcome(lambda: mesh.set_points([[loc.tx, 0, 0]] * count))
@@ -571,7 +571,7 @@ _POINT_COMPONENTS = _HEAD + r"""
     ):
         out["closest " + label] = outcome(lambda: mesh.get_closest_point(make()))
         out["uv " + label] = outcome(lambda: mesh.get_uv_at_point(make(), "map1"))
-    count = mesh.get_num_vertices()
+    count = mesh.get_vertex_count()
     out["set_points row"] = outcome(lambda: mesh.set_points([[0, 0, 0]] * (count - 1) + [mesh.f[0]]))
     out["set_points List"] = outcome(lambda: mesh.set_points(List([mesh.f[0], mesh.f[1], mesh.f[2]])))
     out["points after"] = cmds.getAttr("pcShape.vt[0]")[0][0]

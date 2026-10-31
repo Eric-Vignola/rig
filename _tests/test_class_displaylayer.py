@@ -1,6 +1,7 @@
 from maya import cmds
 from rig.nodetypes import DisplayLayer, Node
 from rig._tests._base import MayaTestCase
+from rig._tests.test_rig.test_enforce import _keep_registry
 
 
 class TestDisplayLayer(MayaTestCase):
@@ -24,13 +25,28 @@ class TestDisplayLayer(MayaTestCase):
         self.layer.clear()
         self.assertEqual(self.layer.get_members(), [])
 
+    def test_clear_on_a_custom_node_type_subclass(self):
+        # `of` answers a plain DisplayLayer, which a subclass's layer never equals
+        _keep_registry(self)
+
+        class _TeamLayer(DisplayLayer):
+            CUSTOM_NODE_TYPE = "rigTestTeamLayer"
+
+        team   = _TeamLayer.define("team")
+        member = Node(cmds.group(empty=True, name="member"))
+        cmds.editDisplayLayerMembers("team", "member", noRecurse=True)
+        team.clear()
+        self.assertEqual(team.get_members(), [])
+        self.assertEqual(DisplayLayer.of(member), [])
+        # a member of another layer stays there
+        self.assertEqual(DisplayLayer.of(self.xform), [self.layer])
+
     def test_find(self):
         self.assertEqual(DisplayLayer.find_all(), [self.default_layer, self.layer])
 
-    def test_get_or_create_and_for_node(self):
-        """Historical id (v2.0.0a2): pinned DisplayLayer.get_or_create and for_node; it
-        now pins DisplayLayer.define (get_or_create's replacement, round 4b NC4) and
-        for_node."""
+    def test_get_or_create_and_of(self):
+        """Historical id (v2.0.0a2): pinned DisplayLayer.get_or_create; it now pins
+        DisplayLayer.define (get_or_create's replacement, round 4b NC4) and of."""
         self.assertEqual(DisplayLayer.define(self.layer.get_name()), self.layer)
         cmds.select(self.xform.get_name())
         fresh = DisplayLayer.define("fresh")
@@ -39,9 +55,9 @@ class TestDisplayLayer(MayaTestCase):
         self.assertEqual(DisplayLayer.define("fresh"), fresh)
         with self.assertRaisesRegex(TypeError, "not a displayLayer"):
             DisplayLayer.define(self.xform.get_name())
-        self.assertEqual(DisplayLayer.for_node(self.xform), self.layer)
+        self.assertEqual(DisplayLayer.of(self.xform), [self.layer])
         other = Node(cmds.group(empty=True, name="other"))
-        self.assertIsNone(DisplayLayer.for_node(other))
+        self.assertEqual(DisplayLayer.of(other), [])
         self.assertFalse(fresh.is_default())
         self.assertTrue(self.default_layer.is_default())
         cmds.namespace(add="ns")
@@ -63,17 +79,17 @@ class TestDisplayLayer(MayaTestCase):
             fresh.add_members(other)
         with self.assertRaisesRegex(TypeError, r"layer\.remove_members is not rig's form: write .*\.remove\(cube\)"):
             self.layer.remove_members(self.xform)
-        self.assertEqual(DisplayLayer.for_node(self.xform), self.layer)
+        self.assertEqual(DisplayLayer.of(self.xform), [self.layer])
         other << fresh
         # a node held by another layer is left there
         self.layer.remove(other)
-        self.assertEqual(DisplayLayer.for_node(other), fresh)
+        self.assertEqual(DisplayLayer.of(other), [fresh])
         self.layer.remove(self.xform)
-        self.assertIsNone(DisplayLayer.for_node(self.xform))
+        self.assertEqual(DisplayLayer.of(self.xform), [])
         self.assertEqual(self.layer.get_members(), [])
         fresh.delete()
         self.assertFalse(cmds.objExists("fresh"))
-        self.assertIsNone(DisplayLayer.for_node(other))
+        self.assertEqual(DisplayLayer.of(other), [])
         with self.assertRaises(TypeError):
             self.default_layer.delete()
         self.assertTrue(cmds.objExists("defaultLayer"))

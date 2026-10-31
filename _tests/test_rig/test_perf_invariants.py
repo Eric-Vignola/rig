@@ -1782,8 +1782,8 @@ class TestPlugNodeReuse(MayaTestCase):
         shape = cmds.listRelatives(cube, shapes=True)[0]
         Node(_mobject(shape))
         mesh  = Node(shape)
-        local = (mesh >> None).get_local_shape_attr()
-        self.assertIs((mesh.outMesh.get_node() >> None).get_local_shape_attr(), local)
+        local = (mesh >> None).get_output_attr()
+        self.assertIs((mesh.outMesh.get_node() >> None).get_output_attr(), local)
 
     def test_plug_node_finds_a_readded_extension_attr(self):
         node = Node(self._known_type("transform"))

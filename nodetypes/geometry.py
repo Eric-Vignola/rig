@@ -7,10 +7,10 @@ Usage::
 
     mesh = Node("pSphereShape1")
     mesh.get_injection_node()                    # the node holding editable tags
-    mesh.add_component_tag("cap")
-    mesh.set_component_tag_contents("cap", [0, 1, 2])
-    mesh.get_component_tag_contents("cap")       # ['vtx[0:2]']
-    mesh.get_component_tag_indices("cap")        # array([0, 1, 2])
+    mesh.add_tag("cap")
+    mesh.set_tag_contents("cap", [0, 1, 2])
+    mesh.get_tag_contents("cap")                 # ['vtx[0:2]']
+    mesh.get_tag_component_indices("cap")        # array([0, 1, 2])
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ _TAG_NAME_RULE = (
 _ASCII_WHITESPACE = " \t\n\v\f\r"
 
 
-def _check_component_tag_name(key: Any) -> Any:
+def _check_tag_name(key: Any) -> Any:
     """The name Maya stores for `key` as a component tag name ('ab' for
     ' ab', 'a_b' for 'a b'). Raises a ValueError naming Maya's rule for a
     name Maya refuses (it refuses ``setAttr`` of one with a bare "Maya
@@ -286,7 +286,7 @@ class Geometry(DAGNode):
     All sub classes must implement the following:
         - NATIVE_NODE_TYPE
         - POINT_COMP_TYPE
-        - get_num_weight_points()
+        - get_weight_point_count()
     """
 
     # the maya native node type string
@@ -318,9 +318,9 @@ class Geometry(DAGNode):
             node = shapes[0]
 
         super().__init__(node)
-        d                                = self.__dict__
-        d["_Geometry__local_shape_attr"] = None
-        d["_Geometry__world_shape_attr"] = None
+        d                                 = self.__dict__
+        d["_Geometry__local_output_attr"] = None
+        d["_Geometry__world_output_attr"] = None
 
     @classmethod
     def _coerce(cls, node: Any) -> Any:
@@ -358,21 +358,24 @@ class Geometry(DAGNode):
 
     # --- attr helpers
 
-    def get_local_shape_attr(self) -> Attribute:
-        """Returns the local shape out attribute."""
-        _ensure_valid(self)
-        if self.__local_shape_attr is None:
-            attr_name               = cmds.deformableShape(_name_of(self), localShapeOutAttr=True)[0]
-            self.__local_shape_attr = self.find_attr(attr_name)
-        return self.__local_shape_attr
+    def get_output_attr(self, *, world_space: bool = False) -> Attribute:
+        """Returns the shape out attribute.
 
-    def get_world_shape_attr(self) -> Attribute:
-        """Returns the world shape out attribute."""
+        Args:
+            world_space: By keyword only. False (the default): the local shape
+                out attribute (a mesh's ``outMesh``); True: the world one (a
+                mesh's ``worldMesh[0]``).
+        """
         _ensure_valid(self)
-        if self.__world_shape_attr is None:
-            attr_name               = cmds.deformableShape(_name_of(self), worldShapeOutAttr=True)[0]
-            self.__world_shape_attr = self.find_attr(attr_name)[0]
-        return self.__world_shape_attr
+        if world_space:
+            if self.__world_output_attr is None:
+                attr_name                = cmds.deformableShape(_name_of(self), worldShapeOutAttr=True)[0]
+                self.__world_output_attr = self.find_attr(attr_name)[0]
+            return self.__world_output_attr
+        if self.__local_output_attr is None:
+            attr_name                = cmds.deformableShape(_name_of(self), localShapeOutAttr=True)[0]
+            self.__local_output_attr = self.find_attr(attr_name)
+        return self.__local_output_attr
 
     def set_attr_paintable(self, attr: Attribute | str, **kwargs) -> None:
         """Set the attribute paintable states. Thin wrapper of cmds.makePaintable()
@@ -442,14 +445,14 @@ class Geometry(DAGNode):
             return self
         return _cast(nodes[0])
 
-    def _component_tag_owner(self, key: str) -> tuple[str, bool] | None:
+    def _tag_owner(self, key: str) -> tuple[str, bool] | None:
         """Returns (node, procedural) for the entry of a tag that resolves, or None."""
-        for entry in self.get_component_tag_history() or []:
+        for entry in self.get_tag_history() or []:
             if entry["key"] == key and entry["final"]:
                 return entry["node"], entry["procedural"]
         return None
 
-    def _editable_component_tag(self, tag: str | int) -> Attribute | None:
+    def _editable_tag(self, tag: str | int) -> Attribute | None:
         """Returns the injection node's componentTags element holding a tag.
 
         A tag that resolves on this geometry but has no element at the
@@ -466,9 +469,9 @@ class Geometry(DAGNode):
             tags = injection.find_attr("componentTags").get_logical_indices()
             i    = tag if tag in tags else -1
         else:
-            i = self.get_component_tag_index(tag)
-            if i == -1 and self.has_component_tag(tag):
-                owner = self._component_tag_owner(tag)
+            i = self.get_tag_index(tag)
+            if i == -1 and self.has_tag(tag):
+                owner = self._tag_owner(tag)
                 kind  = "procedural" if owner and owner[1] else "injected"
                 node  = owner[0] if owner else "another node"
                 cmds.error(
@@ -483,7 +486,7 @@ class Geometry(DAGNode):
 
     # --- component tags editing
 
-    def add_component_tag(self, key: str, force: bool = False) -> int:
+    def add_tag(self, key: str, force: bool = False) -> int:
         """Adds a component tag with the given key to the object.
 
         The tag is created on the injection node, where Maya's own
@@ -505,16 +508,16 @@ class Geometry(DAGNode):
                 refused; 'ab', '_1', 'a.b' and 'a b', stored 'a_b', are
                 taken). A name with a non-ASCII character is left to Maya.
             TypeError: before anything else, for a name that is not a str
-                (``add_component_tag(5)`` is not the tag at index 5).
+                (``add_tag(5)`` is not the tag at index 5).
             RuntimeError: when a tag of the name Maya stores exists ('ab'
                 for ' ab') and `force` is False.
         """
-        stored = _check_component_tag_name(key)
-        if self.has_component_tag(stored):
+        stored = _check_tag_name(key)
+        if self.has_tag(stored):
             if force:
-                self.remove_component_tag(stored)
+                self.delete_tag(stored)
             else:
-                owner = self._component_tag_owner(stored)
+                owner = self._tag_owner(stored)
                 if owner and owner[1]:
                     cmds.error(
                         f"Component tag '{stored}' already exists (procedural, owned by {_name_of(owner[0])})."
@@ -528,17 +531,18 @@ class Geometry(DAGNode):
         name_attr.set(key, type="string")
         return i
 
-    def remove_component_tag(self, tag: str | int) -> None:
-        """Removes a component tag from the object.
+    def delete_tag(self, tag: str | int) -> None:
+        """Deletes a component tag from the object. Skips the check of
+        ``Tag.delete``, which refuses a tag a deformer expression references.
 
         Args:
             tag: Component tag key or index.
         """
-        element = self._editable_component_tag(tag)
+        element = self._editable_tag(tag)
         if element is not None:
             _cmds_edit.removeMultiInstance(_name_of(element), b=True)
 
-    def rename_component_tag(self, tag: str | int, new_key: str) -> None:
+    def rename_tag(self, tag: str | int, new_key: str) -> None:
         """Renames a component tag with the given key the object.
 
         Args:
@@ -547,16 +551,16 @@ class Geometry(DAGNode):
 
         Raises:
             ValueError: before anything is renamed, for a name Maya refuses
-                (the rule ``add_component_tag`` names).
+                (the rule ``add_tag`` names).
             TypeError: before anything is renamed, for a name that is not a
                 str.
         """
-        _check_component_tag_name(new_key)
-        element = self._editable_component_tag(tag)
+        _check_tag_name(new_key)
+        element = self._editable_tag(tag)
         if element is not None:
             element.componentTagName.set(new_key, type="string")
 
-    def set_component_tag_contents(
+    def set_tag_contents(
         self,
         tag:      str       | int,
         contents: ArrayLike | list[str] | list[int] | GeomSubsetData,
@@ -574,15 +578,15 @@ class Geometry(DAGNode):
             category: The component tag category. "v", "f", "e", etc.
                 Only used when contents is a list of index.
         """
-        element = self._editable_component_tag(tag)
+        element = self._editable_tag(tag)
         if element is None:
             return
 
-        contents  = self._component_tag_tokens(contents, category)
+        contents  = self._tag_tokens(contents, category)
         comp_attr = element.componentTagContents
         comp_attr.set(len(contents), *contents, type="componentList")
 
-    def _component_tag_tokens(
+    def _tag_tokens(
         self,
         contents: ArrayLike | list[str] | list[int] | GeomSubsetData,
         category: str,
@@ -630,18 +634,18 @@ class Geometry(DAGNode):
 
         return list(iter_component_tokens(prefix, indices))
 
-    def select_component_tag_contents(self, key: str) -> None:
+    def select_tag_contents(self, key: str) -> None:
         """Selects component members of the component tag with the given key.
 
         Args:
             key: Component tag key.
         """
-        contents = self.get_component_tag_contents(key, full_name=True)
+        contents = self.get_tag_contents(key, full_name=True)
         _cmds_edit.select(contents, replace=True)
 
     # --- component tags query
 
-    def get_component_tags(self) -> list[str]:
+    def get_tag_names(self) -> list[str]:
         """Returns the component tag keys this geometry resolves.
 
         Editable tags at the injection node come first, in index order; names
@@ -657,13 +661,13 @@ class Geometry(DAGNode):
                 tags.append(name)
 
         visible = cmds.geometryAttrInfo(
-            f"{_name_of(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_output_attr(self))}",
             componentTagNames=True,
         )
         tags.extend(name for name in visible or [] if name not in tags)
         return tags
 
-    def has_component_tag(self, tag: str | int) -> bool:
+    def has_tag(self, tag: str | int) -> bool:
         """Returns True if a component tag exists.
 
         A key is looked up on the evaluated geometry (so procedural and
@@ -677,10 +681,10 @@ class Geometry(DAGNode):
             tags = type(self).get_injection_node(self).find_attr("componentTags")
             return tag in tags.get_logical_indices()
         else:
-            data_fn = type(self).get_local_shape_attr(self).get_data_fn_set()
+            data_fn = type(self).get_output_attr(self).get_data_fn_set()
             return data_fn.hasComponentTag(tag)
 
-    def get_component_tag_index(self, key: str) -> int:
+    def get_tag_index(self, key: str) -> int:
         """Returns the logical index of a component tag in the injection node's
         componentTags multi, or -1 if not found (or not editable there)."""
         injection = type(self).get_injection_node(self)
@@ -690,7 +694,7 @@ class Geometry(DAGNode):
                 return i
         return -1
 
-    def get_component_tag_name(self, i: int) -> str | None:
+    def get_tag_name(self, i: int) -> str | None:
         """Returns the name of a component tag, or None if not found."""
         injection = type(self).get_injection_node(self)
         if i not in injection.find_attr("componentTags").get_logical_indices():
@@ -698,7 +702,7 @@ class Geometry(DAGNode):
         name_attr = injection.find_attr("componentTags")[i].componentTagName
         return name_attr.get() or None
 
-    def component_tag_expression_subset_state(self, expr: str) -> int:
+    def get_tag_subset_state(self, expr: str) -> int:
         """Returns the subset state for the component tag expression.
 
         [0: no geometry points, 1: some geometry points, 2: all geometry points]
@@ -707,12 +711,12 @@ class Geometry(DAGNode):
             expr: Component tag expression. (E.g. '*', 'top', 'top+bottom', etc.)
         """
         return cmds.geometryAttrInfo(
-            f"{_name_of(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_output_attr(self))}",
             componentTagExpression = expr,
             subsetState            = True,
         )
 
-    def get_component_tag_history(self) -> list[dict[str, Any]]:
+    def get_tag_history(self) -> list[dict[str, Any]]:
         """Returns verbose descriptions of all historical component tags.
 
         Example:
@@ -729,11 +733,11 @@ class Geometry(DAGNode):
         ```
         """
         return cmds.geometryAttrInfo(
-            f"{_name_of(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_output_attr(self))}",
             componentTagHistory=True,
         )
 
-    def get_component_tag_category(self, tag: str | int) -> str:
+    def get_tag_category(self, tag: str | int) -> str:
         """Returns the category of a given component tag.
 
         [v: verts, e: edges, f: faces]
@@ -741,14 +745,14 @@ class Geometry(DAGNode):
         Args:
             tag: Component tag key or index.
         """
-        tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
+        tag_name = self.get_tag_name(tag) if isinstance(tag, int) else tag
         return cmds.geometryAttrInfo(
-            f"{_name_of(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_output_attr(self))}",
             componentTagExpression = tag_name,
             componentTagCategory   = True,
         )
 
-    def set_component_tag_category(self, tag: str | int, category: str) -> None:
+    def set_tag_category(self, tag: str | int, category: str) -> None:
         """Sets the category of a given component tag and convert its content.
 
         [v: verts, e: edges, f: faces]
@@ -759,7 +763,7 @@ class Geometry(DAGNode):
         """
         import maya.internal.common.utils.componenttag as ctag_utils
 
-        cat = self.get_component_tag_category(tag)
+        cat = self.get_tag_category(tag)
         if cat != category:
             if category == "f":
                 c = OpenMaya.MFnGeometryData.kFaces
@@ -767,10 +771,10 @@ class Geometry(DAGNode):
                 c = OpenMaya.MFnGeometryData.kVerts
             else:
                 c = OpenMaya.MFnGeometryData.kEdges
-            tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
+            tag_name = self.get_tag_name(tag) if isinstance(tag, int) else tag
             ctag_utils.convertTagCategory(_name_of(self), tag_name, c)
 
-    def get_component_tag_contents(
+    def get_tag_contents(
         self, tag: str | int, full_name: bool = False
     ) -> list[str]:
         """Returns a component list store in a given tag.
@@ -781,9 +785,9 @@ class Geometry(DAGNode):
                 (['pSphereShape.f[1:9]']).
                 Otherwise return a component list (e.g. ['f[1:9]']).
         """
-        tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
+        tag_name = self.get_tag_name(tag) if isinstance(tag, int) else tag
         components = cmds.geometryAttrInfo(
-            f"{_name_of(type(self).get_local_shape_attr(self))}",
+            f"{_name_of(type(self).get_output_attr(self))}",
             componentTagExpression = tag_name,
             components             = True,
         )
@@ -792,7 +796,7 @@ class Geometry(DAGNode):
             return [f"{_name_of(self)}.{_name_of(component)}" for component in components]
         return components
 
-    def get_component_tag_indices(self, tag: str | int) -> np.ndarray:
+    def get_tag_component_indices(self, tag: str | int) -> np.ndarray:
         """Returns the native ids of the components in a given tag.
 
         Face tags give face ids and edge tags edge ids, never the vertex cast
@@ -803,11 +807,11 @@ class Geometry(DAGNode):
         Args:
             tag: Component tag key or index.
         """
-        tag_name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
+        tag_name = self.get_tag_name(tag) if isinstance(tag, int) else tag
         if tag_name is None:
             cmds.error(f"Component tag {tag} does not exist.")
 
-        comp_fn  = self._resolve_component_tag_expression(tag_name)
+        comp_fn  = self._resolve_tag_expression(tag_name)
         elements = np.array(list(comp_fn.getElements()), dtype=int)
         if isinstance(comp_fn, OpenMaya.MFnTripleIndexedComponent):
             return elements.reshape(-1, 3)
@@ -815,17 +819,17 @@ class Geometry(DAGNode):
             return elements.reshape(-1, 2)
         return elements
 
-    def is_component_tag_empty(self, tag: str | int) -> bool:
+    def is_tag_empty(self, tag: str | int) -> bool:
         """Returns True if a tag is empty.
 
         Args:
             key: Component tag key or index.
         """
-        if not self.has_component_tag(tag):
+        if not self.has_tag(tag):
             cmds.error(f"Component tag {tag} does not exist.")
-        return not bool(self.get_component_tag_contents(tag))
+        return not bool(self.get_tag_contents(tag))
 
-    def _resolve_component_tag_expression(
+    def _resolve_tag_expression(
         self, expr: str
     ) -> (
         OpenMaya.MFnSingleIndexedComponent
@@ -845,14 +849,14 @@ class Geometry(DAGNode):
                 is one name); unknown names inside an expression are left to
                 Maya, which ignores them.
         """
-        data_fn = type(self).get_local_shape_attr(self).get_data_fn_set()
+        data_fn = type(self).get_output_attr(self).get_data_fn_set()
         if _TAG_NAME_RE.match(expr) and not data_fn.hasComponentTag(expr):
             cmds.error(f"Component tag {expr} does not exist.")
 
         component = data_fn.resolveComponentTagExpression(expr)
         if component.isNull():
             types             = _EMPTY_COMPONENT_TYPES[data_fn.object().apiType()]
-            fn_cls, comp_type = types.get(self.get_component_tag_category(expr), types["v"])
+            fn_cls, comp_type = types.get(self.get_tag_category(expr), types["v"])
             comp_fn           = fn_cls()
             comp_fn.create(comp_type)
             return comp_fn
@@ -865,7 +869,7 @@ class Geometry(DAGNode):
 
     # --- component tags serialization
 
-    def get_component_tag_data(
+    def get_tag_data(
         self, tag: str | int, category: str | None = None
     ) -> GeomSubsetData:
         """Serialize a given tag.
@@ -878,17 +882,17 @@ class Geometry(DAGNode):
         """
         from cgmath.geometry import GeomSubsetData
 
-        name = self.get_component_tag_name(tag) if isinstance(tag, int) else tag
-        if name is None or not self.has_component_tag(name):
+        name = self.get_tag_name(tag) if isinstance(tag, int) else tag
+        if name is None or not self.has_tag(name):
             cmds.error(f"Component tag {tag} does not exist.")
 
         return GeomSubsetData(
             name           = name,
-            indices        = self.get_component_tag_indices(name),
-            component_type = self.get_component_tag_category(name),
+            indices        = self.get_tag_component_indices(name),
+            component_type = self.get_tag_category(name),
         )
 
-    def serialize_component_tags(
+    def serialize_tags(
         self,
         match_name: list[str] | str | None = None,
         category:   str       | None       = None,
@@ -905,9 +909,9 @@ class Geometry(DAGNode):
         data      = []
         names     = [match_name] if isinstance(match_name, str) else match_name
         tag_regex = re.compile(r"|".join([rf"^{_name_of(x)}$" for x in names])) if names else None
-        for name in type(self).get_component_tags(self):
+        for name in type(self).get_tag_names(self):
             if not tag_regex or tag_regex.match(name):
-                data.append(self.get_component_tag_data(name, category=category))
+                data.append(self.get_tag_data(name, category=category))
 
         return data
 

@@ -152,7 +152,7 @@ class _Facts:
 
     ``is_matrix``, ``is_compound``, ``is_quaternion`` and ``is_vector`` answer
     exactly like the ``rig._internal.types`` predicates of the same names, but
-    share one ``data_type`` and one ``num_children`` query between them. Only
+    share one ``data_type`` and one ``get_child_count`` query between them. Only
     valid for the duration of one ``<<`` (the ``shorthand`` call and the
     ``_inject_value`` after it): the type of a generic plug follows its
     connections.
@@ -167,14 +167,14 @@ class _Facts:
     which changes what a target connected to it afterwards reads.
     """
 
-    __slots__ = ("_obj", "_data_type", "_num_children", "_is_compound", "_reusable")
+    __slots__ = ("_obj", "_data_type", "_child_count", "_is_compound", "_reusable")
 
     def __init__(self, obj: Any) -> None:
-        self._obj          = obj
-        self._data_type    = _UNSET
-        self._num_children = _UNSET
-        self._is_compound  = _UNSET
-        self._reusable     = True
+        self._obj         = obj
+        self._data_type   = _UNSET
+        self._child_count = _UNSET
+        self._is_compound = _UNSET
+        self._reusable    = True
 
     def _get_data_type(self) -> str | None:
         """Returns the operand's ``data_type``, or None if the query raised."""
@@ -193,14 +193,14 @@ class _Facts:
                 self._reusable = False
         return self._data_type
 
-    def _get_num_children(self) -> int | None:
-        """Returns the operand's ``num_children``, or None if the query raised."""
-        if self._num_children is _UNSET:
+    def _get_child_count(self) -> int | None:
+        """Returns the operand's ``get_child_count``, or None if the query raised."""
+        if self._child_count is _UNSET:
             try:
-                self._num_children = type(self._obj)._raw_get_num_children(self._obj)
+                self._child_count = type(self._obj)._raw_get_child_count(self._obj)
             except Exception:
-                self._num_children = None
-        return self._num_children
+                self._child_count = None
+        return self._child_count
 
     @property
     def is_matrix(self) -> bool:
@@ -226,12 +226,12 @@ class _Facts:
     @property
     def is_quaternion(self) -> bool:
         """True if the operand is a compound attribute with 4 children."""
-        return self.is_compound and self._get_num_children() == 4
+        return self.is_compound and self._get_child_count() == 4
 
     @property
     def is_vector(self) -> bool:
         """True if the operand is a compound attribute with 3 children."""
-        return self.is_compound and self._get_num_children() == 3
+        return self.is_compound and self._get_child_count() == 3
 
     def _query_is_compound(self) -> bool:
         """The ``_is_compound`` rule, on the shared queries."""
@@ -246,8 +246,8 @@ class _Facts:
                 return False
         except Exception:
             return False
-        num_children = self._get_num_children()
-        if num_children is not None and num_children > 0:
+        child_count = self._get_child_count()
+        if child_count is not None and child_count > 0:
             return True
         # generic-typed compound (e.g. choice.output typed by its input)
         return self._get_data_type() in _COMPOUND_DATA_TYPES

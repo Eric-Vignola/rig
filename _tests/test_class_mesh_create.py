@@ -351,7 +351,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
             cmds.redo()
             self.assertTrue(handle.isValid())
             self.assertEqual(cmds.ls("mShape", uuid=True)[0], uuid)
-            self.assertEqual(mesh.get_num_vertices(), 8)
+            self.assertEqual(mesh.get_vertex_count(), 8)
             self.assertEqual([tuple(p) for p in mesh.get_points(world_space=False)], points)
             self.assertEqual(str(mesh), "mShape")
 

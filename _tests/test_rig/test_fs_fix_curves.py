@@ -90,7 +90,7 @@ class TestALockedPlugsCurve(_Case):
         """guard: a curve that keys nothing takes new keys."""
         free = AnimCurveTU.create([0, 1], name="free")
         free.set_keys([2, 3])
-        self.assertEqual(free.get_num_keys(), 2)
+        self.assertEqual(free.get_key_count(), 2)
 
 
 class TestASteppedCurve(_Case):

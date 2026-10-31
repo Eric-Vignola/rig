@@ -220,7 +220,7 @@ def _collect_handles(obj: Any, out: list[OpenMaya.MObjectHandle]) -> None:
     attribute was freed.
 
     A plug owned by a live DG node object, whose naming can raise only through
-    its owner's `ensure_valid` and its attribute handle (`_dg_named_owner`, the
+    its owner's `_check_valid` and its attribute handle (`_dg_named_owner`, the
     rule `_attribute_key` follows), appends its owner's handle (which it holds):
     its full name would name that node, and naming it raises exactly when that
     handle is not valid or the plug's attribute handle is not alive. A node

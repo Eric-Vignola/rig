@@ -97,7 +97,7 @@ def no_uvs(mesh, name="map1"):
 
 
 def colours(mesh, rgba):
-    return np.tile(rgba, (mesh.get_num_vertices(), 1))
+    return np.tile(rgba, (mesh.get_vertex_count(), 1))
 
 
 def tweaks(mesh):
@@ -158,7 +158,7 @@ class _UndoCase(UndoWalk, MayaTestCase):
     @staticmethod
     def read_through(mesh):
         """Reads through a held Mesh and its ColorSets (a stale MFnMesh would crash)."""
-        mesh.get_num_vertices()
+        mesh.get_vertex_count()
         for uv_set in mesh.get_uv_sets():
             mesh.get_uv_coords(uv_set)
             mesh.get_assigned_uvs(uv_set)
@@ -249,7 +249,7 @@ class TestMeshEditRules(MayaTestCase):
         cmds.polyColorSet(cube.get_name(), create=True, colorSet="cs")
         cube.set_uv_data(uv_data(cube, "map1", "uv2"), "uv2")
         self.assertEqual(cube.get_fn_set().numUVs("uv2"), 14)
-        self.assertEqual(cube.get_num_vertices(), 8)
+        self.assertEqual(cube.get_vertex_count(), 8)
 
 
 # --- set_points ---------------------------------------------------------------------------
@@ -632,6 +632,14 @@ class TestColorSetUndo(_UndoCase):
                     lambda: ColorSet(mesh, "part").set_data(ramp),
                     lambda: ColorSet(mesh, "pre").set_data(ramp),   # the current set
                 ], msg=kind)
+                self.assertEqual(mesh.get_fn_set().currentColorSetName(), "pre")
+
+    def test_as_current_is_current_inside_its_block_only(self):
+        for kind in MESH_KINDS:
+            with self.subTest(kind):
+                mesh = self.build(kind)
+                with ColorSet(mesh, "part").as_current():
+                    self.assertEqual(mesh.get_fn_set().currentColorSetName(), "part")
                 self.assertEqual(mesh.get_fn_set().currentColorSetName(), "pre")
 
     def test_delete_keeps_the_place_and_the_current_set(self):

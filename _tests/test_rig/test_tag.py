@@ -27,18 +27,18 @@ def _geo(node):
 
 
 def _tags(node):
-    return _geo(node).get_component_tags()
+    return _geo(node).get_tag_names()
 
 
 def _contents(node, name):
-    return _geo(node).get_component_tag_contents(name)
+    return _geo(node).get_tag_contents(name)
 
 
 def _entries(node, name):
     """``(node, editable, final)`` of every history entry for ``name``."""
     return [
         (e["node"], e["editable"], e["final"])
-        for e in _geo(node).get_component_tag_history() or []
+        for e in _geo(node).get_tag_history() or []
         if e["key"] == name
     ]
 
@@ -85,7 +85,7 @@ class TestTagConstruction(MayaTestCase):
 
     def test_name_validation(self):
         # re-pinned (runs/r5/REBIND, lead decision of 2026-10-15): Tag checks
-        # Maya's rule, the one add_component_tag checks. 'a.b' is taken and
+        # Maya's rule, the one add_tag checks. 'a.b' is taken and
         # 'bad name' is the tag Maya stores, 'bad_name'; 'a:' and 'a::b', which
         # the old [A-Za-z0-9_:] rule let through, are refused (Maya refuses them)
         for bad in ("t", "q", "1bad", "bad-name", "a:", "a::b", "a..b", ":a", "a.", " ", "a\tb"):
@@ -104,18 +104,18 @@ class TestTagConstruction(MayaTestCase):
                 self.assertEqual(-Tag(given), -Tag(stored))
         self.assertEqual(repr(Tag("cap")), "Tag('cap')")
 
-    def test_the_tag_name_rule_is_add_component_tags(self):
-        """One rule: Tag refuses what add_component_tag refuses, and names the
+    def test_the_tag_name_rule_is_add_tags(self):
+        """One rule: Tag refuses what add_tag refuses, and names the
         tag Maya stores for the rest (its rule is checked against Maya in
         test_class_comptags.TestComponentTagNames.test_the_name_rule_is_mayas)."""
         import itertools
-        from rig.nodetypes.geometry import _check_component_tag_name
+        from rig.nodetypes.geometry import _check_tag_name
 
         for n in (1, 2, 3):
             for chars in itertools.product("a_1.: -", repeat=n):
                 name = "".join(chars)
                 try:
-                    stored = _check_component_tag_name(name)
+                    stored = _check_tag_name(name)
                 except ValueError:
                     with self.assertRaises(ValueError, msg=repr(name)):
                         Tag(name)
@@ -128,7 +128,7 @@ class TestTagConstruction(MayaTestCase):
         name it holds: << Tag of that name made 'Ab' and raised, and every
         later write found no tag of it (runs/r5/REBIND/review/probe_tag_review_head.txt N1,
         runs/r5/REBIND/verify/probe_nonascii_head.txt). Tag refuses it, as it
-        did before it took add_component_tag's rule, which leaves it to Maya."""
+        did before it took add_tag's rule, which leaves it to Maya."""
         for bad in ("Āb", "éb", "abé", " Āb "):
             with self.subTest(bad=ascii(bad)), self.assertRaisesRegex(
                 ValueError, "not a component tag name for Tag: a non-ASCII"
@@ -269,7 +269,7 @@ class TestTagOnSphere(MayaTestCase):
         self.sph.e[[0, 4]] << Tag("ed")
         self.assertEqual(_contents(self.sph, "ed"), ["e[0]", "e[4]"])
         np.testing.assert_array_equal(self.sph >> Tag("ed"), [0, 4])
-        self.assertEqual(_geo(self.sph).get_component_tag_category("ed"), "e")
+        self.assertEqual(_geo(self.sph).get_tag_category("ed"), "e")
 
     def test_bare_handles_mean_every_component(self):
         self.sph.vtx << Tag("allv")
@@ -307,7 +307,7 @@ class TestTagOnSphere(MayaTestCase):
         # an empty tag takes any category on its first population
         self.sph.f[:2] << Tag("cap")
         np.testing.assert_array_equal(self.sph >> Tag("cap"), [0, 1])
-        self.assertEqual(_geo(self.sph).get_component_tag_category("cap"), "f")
+        self.assertEqual(_geo(self.sph).get_tag_category("cap"), "f")
         # removing from an empty tag is a no-op whatever the category
         self.sph.f << -Tag("cap")
         self.assertEqual((self.sph >> Tag("cap")).shape, (0,))
@@ -506,7 +506,7 @@ class TestTagOnSphere(MayaTestCase):
         self.sph.vtx[:8] << Tag("cap")
         self.assertIsNone(Tag("cap").set(self.sph.f[:2]))
         self.assertEqual(_contents(self.sph, "cap"), ["f[0:1]"])
-        self.assertEqual(_geo(self.sph).get_component_tag_category("cap"), "f")
+        self.assertEqual(_geo(self.sph).get_tag_category("cap"), "f")
         Tag("cap").set(self.sph.vtx[[1, 3]])
         self.assertEqual(_contents(self.sph, "cap"), ["vtx[1]", "vtx[3]"])
         Tag("fresh").set(self.sph.e[:2])
@@ -650,8 +650,8 @@ class TestTagOnSphere(MayaTestCase):
         lhs << Tag("mixed")
         np.testing.assert_array_equal(self.sph >> Tag("mixed"), [0, 1, 5])
         np.testing.assert_array_equal(cube >> Tag("mixed"), [0, 1])
-        self.assertEqual(_geo(self.sph).get_component_tag_category("mixed"), "v")
-        self.assertEqual(_geo(cube).get_component_tag_category("mixed"), "f")
+        self.assertEqual(_geo(self.sph).get_tag_category("mixed"), "v")
+        self.assertEqual(_geo(cube).get_tag_category("mixed"), "f")
         with self.assertRaisesRegex(TypeError, "one node at a time"):
             List([self.sph, cube]) >> Tag("mixed")
         with self.assertRaises(TypeError):
@@ -765,10 +765,10 @@ class TestTagOnClusteredMesh(MayaTestCase):
     def test_at_upstream_of_a_topology_change_verifies_against_the_holder(self):
         cmds.polySmooth("sph")                       # 382 Orig points, 1562 on the shape
         self.sph.vtx << Tag("up", at=self.orig)      # every point of the ORIG, not the LHS
-        self.assertEqual(Node(self.orig).get_component_tag_indices("up").size, 382)
+        self.assertEqual(Node(self.orig).get_tag_component_indices("up").size, 382)
         self.sph.vtx[:5] << Tag("up2", at=self.orig)
         np.testing.assert_array_equal(
-            Node(self.orig).get_component_tag_indices("up2"), np.arange(5)
+            Node(self.orig).get_tag_component_indices("up2"), np.arange(5)
         )
         with self.assertRaisesRegex(TypeError, "at= places a tag"):
             self.sph >> Tag("up", at=self.orig)
@@ -1193,7 +1193,7 @@ class TestTagOnBakedCube(MayaTestCase):
         self.assertEqual(set(cmds.ls()), before)
         Tag("front").set(self.cube.vtx[:2])
         self.assertEqual(_contents(self.cube, "front"), ["vtx[0:1]"])
-        self.assertEqual(_geo(self.cube).get_component_tag_category("front"), "v")
+        self.assertEqual(_geo(self.cube).get_tag_category("front"), "v")
         Tag("left").clear(self.cube)
         self.assertEqual((self.cube >> Tag("left")).shape, (0,))
         Tag("right").rename(self.cube, "east")

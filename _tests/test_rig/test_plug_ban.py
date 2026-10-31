@@ -18,8 +18,9 @@ and ``lock()`` / ``unlock()``; ``next_index`` is ``get_next_available_index()``.
 * `TestTheResidues`: the regressions the prototypes left (shorthand's
   quaternion routing, a Typed child of a compound in serialize, Node()'s
   defensive cast, the clone spec's type queries, an aliased channel's routing).
-* `TestOldNames`: an old spelling raises naming the new one; a bare Attribute has
-  no public state; ``hasattr`` answers on a bare Attribute.
+* `TestOldNames`: an old spelling raises naming the new one (a property before the
+  ban, or a method the names review retired, user decision 2026-10-30); a bare
+  Attribute has no public state; ``hasattr`` answers on a bare Attribute.
 * `TestBarePredicates`: a predicate named without brackets has no truth value
   (user decision: the guard), on a plug and over a List.
 * `TestPlugClassEnforcement`: a plug class declares no public member but methods
@@ -59,13 +60,25 @@ _RENAMED = {
     "default_value": "get_default_value", "enums": "get_enums", "fn_set": "get_fn_set",
     "mobject": "get_mobject", "is_dynamic": "is_dynamic", "is_locked": "is_locked",
     "is_keyable": "is_keyable", "is_channel_box": "is_channel_box", "is_connected": "is_connected",
-    "is_free_to_change": "is_free_to_change", "num_children": "get_num_children",
-    "is_typed": "is_typed", "is_multi": "is_multi", "num_elements": "get_num_elements",
+    "is_free_to_change": "is_free_to_change", "num_children": "get_child_count",
+    "is_typed": "is_typed", "is_multi": "is_multi", "num_elements": "get_element_count",
     "next_index": "get_next_available_index",
 }
 _SETTERS = ("set_alias", "set_keyable", "set_channel_box", "set_default_value")
 _PREDICATES = ("is_dynamic", "is_locked", "is_keyable", "is_channel_box", "is_connected",
                "is_free_to_change", "is_typed", "is_multi")
+# the plug methods the names review retired (user decision 2026-10-30), and their spelling now
+_OLD_METHODS = {
+    "logical_index":             "get_logical_index",
+    "element_by_logical_index":  "get_element",
+    "element_by_physical_index": "get_element",
+    "delete_logical_index":      "delete_element",
+    "get_num_children":          "get_child_count",
+    "get_num_elements":          "get_element_count",
+}
+# the hint that needs its keyword to reach the same element: `_OLD_METHODS` reads a hint
+# up to its bracket
+_OLD_KEYWORDS = {"element_by_physical_index": "get_element(i, physical=True)"}
 
 
 def _plugins():
@@ -111,12 +124,12 @@ class TestRenamedReads(MayaTestCase):
         self.assertFalse(tx.is_channel_box())
         self.assertFalse(tx.is_connected())
         self.assertTrue(tx.is_free_to_change())
-        self.assertEqual(t.t.get_num_children(), 3)
+        self.assertEqual(t.t.get_child_count(), 3)
         self.assertTrue(t.txt.is_typed())
         self.assertFalse(tx.is_typed())
         self.assertTrue(t.w.is_multi())
         self.assertFalse(tx.is_multi())
-        self.assertEqual(t.w.get_num_elements(), 2)
+        self.assertEqual(t.w.get_element_count(), 2)
         self.assertEqual(t.w.get_next_available_index(), 1)
 
     def test_the_setters(self):
@@ -144,6 +157,43 @@ class TestRenamedReads(MayaTestCase):
         self.assertTrue(t.tx.is_locked())
         t.tx.unlock()
         self.assertFalse(t.tx.is_locked())
+
+    def test_get_element_both_ways_on_a_sparse_multi(self):
+        for w in (self.t.w, self.t.find_attr("w")):
+            with self.subTest(cls=type(w).__name__):
+                self.assertEqual(list(w.get_logical_indices()), [0, 3])
+                self.assertEqual(w.get_element_count(), 2)  # physical: the highest index is 3
+                # logical by default, as w[i]: i names the slot
+                self.assertEqual(str(w.get_element(3)), "t.w[3]")
+                self.assertEqual(str(w.get_element(3)), str(w[3]))
+                self.assertEqual(w.get_element(3).get_logical_index(), 3)
+                # physical: i counts the elements there are
+                self.assertEqual(str(w.get_element(1, physical=True)), "t.w[3]")
+                self.assertEqual(w.get_element(1, physical=True).get_logical_index(), 3)
+                self.assertEqual(str(w.get_element(0, physical=True)), "t.w[0]")
+                self.assertIs(type(w.get_element(1, physical=True)), type(w.get_element(3)))
+                self.assertIs(w.get_element(1, physical=True).get_node(), self.t)
+                # a logical index is a slot, there or not; a physical one past the last element raises
+                self.assertEqual(str(w.get_element(1)), "t.w[1]")
+                self.assertEqual(w.get_element_count(), 2)
+                with self.assertRaises(RuntimeError):
+                    w.get_element(2, physical=True)
+
+    def test_get_element_refuses_a_plug_that_is_no_multi(self):
+        for kwargs in ({}, {"physical": True}):
+            with self.subTest(**kwargs):
+                with self.assertRaisesRegex(RuntimeError, r"^t\.translateX is not an multi attr\.$"):
+                    self.t.tx.get_element(0, **kwargs)
+
+    def test_physical_is_keyword_only(self):
+        with self.assertRaises(TypeError):
+            self.t.w.get_element(1, True)
+
+    def test_delete_element(self):
+        self.t.w.delete_element(0)
+        self.assertEqual(list(self.t.w.get_logical_indices()), [3])
+        del self.t.w[3]
+        self.assertEqual(list(self.t.w.get_logical_indices()), [])
 
     def test_a_bare_attribute_answers_too(self):
         attr = self.t.find_attr("tx")
@@ -316,6 +366,42 @@ class TestOldNames(MayaTestCase):
                     getattr(tx, old)
         with self.assertRaisesRegex(AttributeError, re.escape("str(plug) or plug.get_full_name()")):
             tx.full_name
+
+    def test_an_old_method_raises_naming_a_new_spelling_that_exists(self):
+        cmds.addAttr("t", ln="w", at="double", multi=True)
+        cmds.setAttr("t.w[2]", 1)
+        for label, plug in (
+            ("a channel", self.t.tx),
+            ("a compound", self.t.t),
+            ("a multi", self.t.w),
+            ("an element", self.t.w[2]),
+            ("a bare Attribute", self.t.find_attr("tx")),
+            ("a bare compound", self.t.find_attr("t")),
+            ("a compound multi", self.t.instObjGroups),
+            ("a bare compound multi", self.t.find_attr("instObjGroups")),
+            ("a component", Node(cmds.nurbsPlane(ch=False)[0]).cv),
+        ):
+            for old, new in _OLD_METHODS.items():
+                with self.subTest(plug=label, old=old):
+                    self.assertFalse(hasattr(type(plug), old), old)
+                    self.assertTrue(inspect.isfunction(getattr(type(plug), new)), new)
+                    with self.assertRaises(AttributeError) as caught:
+                        getattr(plug, old)()
+                    self.assertIn(f"; plug.{old} is now plug.{new}(", str(caught.exception))
+
+    def test_a_hint_keeps_its_keyword(self):
+        tx = self.t.tx
+        for old, new in _OLD_KEYWORDS.items():
+            with self.subTest(old=old):
+                with self.assertRaises(AttributeError) as caught:
+                    getattr(tx, old)
+                self.assertEqual(str(caught.exception).split("; ", 1)[1], f"plug.{old} is now plug.{new}")
+
+    def test_every_hint_names_a_method_that_exists(self):
+        for old, hint in _base._OLD_PLUG_NAMES.items():
+            for name in set(re.findall(r"(\w+)\(", hint)) - {"str"}:
+                with self.subTest(old=old, name=name):
+                    self.assertTrue(inspect.isfunction(getattr(Plug, name, None)), hint)
 
     def test_an_old_setter_raises_naming_the_new_spelling(self):
         tx = self.t.tx

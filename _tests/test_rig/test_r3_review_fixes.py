@@ -380,9 +380,9 @@ class TestTypedChildrenShareTheOwner(MayaTestCase):
             ("child(0)", lp.child(0), "T2|S.localPositionX"),
             ("child by name", lp.localPositionY, "T2|S.localPositionY"),
             ("parent", node.find_attr("lpz").get_parent(), "T2|S.localPosition"),
-            ("logical element", node.find_attr("worldMatrix").element_by_logical_index(1),
+            ("logical element", node.find_attr("worldMatrix").get_element(1),
              "T2|S.worldMatrix"),
-            ("physical element", node.find_attr("arr").element_by_physical_index(0),
+            ("physical element", node.find_attr("arr").get_element(0, physical=True),
              "T2|S.arr[3]"),
             ("index", node.find_attr("instObjGroups")[1], "T2|S.instObjGroups"),
         ):
@@ -577,7 +577,7 @@ class TestCmdsReadsTheHeldInstance(MayaTestCase):
 class TestComponentSliceOnAChosenClass(MayaTestCase):
     """A component slice on a shape wrapped in a generic class reads the point
     count through the node's own class. The owner rule (C2) keeps the class the
-    user chose, which has no num_weight_points: slices raised AttributeError
+    user chose, which has no get_weight_point_count: slices raised AttributeError
     'Attribute not found: pcShape.num_weight_points'."""
 
     TEST_START_NEW_SCENE = True

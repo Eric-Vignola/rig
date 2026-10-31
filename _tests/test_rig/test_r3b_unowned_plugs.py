@@ -93,7 +93,7 @@ def _unowned(prefix):
         "typed child by name":        (Attribute(f"{held}.t").translateY, held),
         "typed child(1)":             (Attribute(f"{held}.t").child(1), held),
         "typed element [0]":          (Attribute(f"{pma}.input1D")[0], pma),
-        "typed element physical 0":   (Attribute(f"{pma}.input1D").element_by_physical_index(0), pma),
+        "typed element physical 0":   (Attribute(f"{pma}.input1D").get_element(0, physical=True), pma),
         "typed get_parent":           (Attribute(f"{held}.tx").get_parent(), held),
         "spec apply":                 (Node(held) << Float("added"), held),
         "find_alias":                 (Node(held).find_alias("hoist"), held),

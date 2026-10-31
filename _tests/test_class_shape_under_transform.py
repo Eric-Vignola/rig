@@ -631,9 +631,9 @@ class TestWhatTheRideGives(_Case):
                                 (NurbsSurface, np.array([[1, 0], [1, 1]]), "cv[1][0:1]")):
             with self.subTest(cls=cls.__name__):
                 shape = cls.create(*_args(_source(cls)), transform=target)
-                shape.add_component_tag("cap")
-                shape.set_component_tag_contents("cap", ids)
-                self.assertEqual(shape.get_component_tag_contents("cap"), [token])
+                shape.add_tag("cap")
+                shape.set_tag_contents("cap", ids)
+                self.assertEqual(shape.get_tag_contents("cap"), [token])
 
     def test_a_holed_face(self):
         from cgmath.geometry import MeshData

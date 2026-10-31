@@ -660,7 +660,7 @@ class TestPlugRshiftNamedClone(MayaTestCase):
         np.testing.assert_array_almost_equal(plug >> None, [0.1, 0.2, 0.3])
         same = self.src.tint >> "__tint__"
         self.assertEqual(str(same), "src.__tint__")
-        self.assertEqual(same.get_num_children(), 3)
+        self.assertEqual(same.get_child_count(), 3)
         np.testing.assert_array_almost_equal(same >> None, [0.1, 0.2, 0.3])
 
     def test_underscore_names_work(self):
@@ -987,7 +987,7 @@ class TestPlugCompoundFanOut(MayaTestCase):
 
         t = self._src.t
         self.assertTrue(_is_compound(t))
-        for i in range(t.get_num_children()):
+        for i in range(t.get_child_count()):
             child = t.child(i)
             self.assertIsInstance(child, Plug)
 

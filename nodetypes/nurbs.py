@@ -280,12 +280,15 @@ class NurbsCurve(Geometry):
 
     # --- curve geometry data methods
 
-    def get_num_cvs(self) -> int:
+    def get_cv_count(self) -> int:
         """Returns the number of CVs."""
         return type(self)._raw_get_fn_set(self).numCVs
 
-    def get_num_weight_points(self) -> int:
-        """Returns the number of points in this geometry that can be skin weighted."""
+    def get_weight_point_count(self) -> int:
+        """Returns the number of points a deformer weights: the distinct CVs. A
+        periodic curve's repeated CVs count once, as in ``cv[*]`` and a
+        skinCluster's weight list, so this is not ``len(get_points())`` there (a
+        circle has 11 CVs and 8 weight points)."""
         cv_count = type(self)._raw_get_fn_set(self).numCVs
         if type(self)._raw_get_fn_set(self).form == OpenMaya.MFnNurbsCurve.kPeriodic:
             cv_count -= type(self)._raw_get_fn_set(self).degree
@@ -536,12 +539,15 @@ class NurbsSurface(Geometry):
                 data, name=name, container=container, transform=transform, world_space=world_space, **kwargs
             )
 
-    def get_num_cvs(self) -> int:
+    def get_cv_count(self) -> int:
         """Returns the number of cvs."""
         return type(self)._raw_get_fn_set(self).numCVsInU * type(self)._raw_get_fn_set(self).numCVsInV
 
-    def get_num_weight_points(self) -> int:
-        """Returns the number of points in this geometry that can be skin weighted."""
+    def get_weight_point_count(self) -> int:
+        """Returns the number of points a deformer weights: the distinct CVs. A
+        periodic surface's repeated CVs count once, as in ``cv[*]`` and a
+        skinCluster's weight list, so this is not ``len(get_points())`` there (a
+        torus has 77 CVs and 32 weight points)."""
         cv_count_u = type(self)._raw_get_fn_set(self).numCVsInU
         if type(self)._raw_get_fn_set(self).formInU == OpenMaya.MFnNurbsSurface.kPeriodic:
             cv_count_u -= type(self)._raw_get_fn_set(self).degreeInU
@@ -1039,7 +1045,7 @@ def _placement(shape, fields: frozenset, world_space: bool) -> dict:
     class has: keywords for it."""
     custom = {}
     if "name" in fields:
-        custom["name"] = type(shape).get_clean_name(shape)
+        custom["name"] = type(shape).get_short_name(shape, namespace=False)
     if "matrix" in fields:
         custom["matrix"] = _data_matrix(shape, world_space)
     return custom

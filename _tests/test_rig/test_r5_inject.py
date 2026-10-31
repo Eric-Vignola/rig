@@ -13,7 +13,7 @@
   fallback hook rig does not vouch for, a node constructor); the element an
   auto-index reaches gets its own facts.
 * H2: ``Attribute.data_type`` answers a static hit of a plug whose naming can
-  raise only through its owner's ``ensure_valid`` and its attribute-handle
+  raise only through its owner's ``_check_valid`` and its attribute-handle
   check (``_dg_named_owner``) after those two checks, without the name.
 * H7: ``_set_or_connect``'s ``"." in str(src)`` runs those two checks for such
   a plug.
@@ -44,7 +44,7 @@ Tests:
   code are not reused, so the user's hook runs as often as before.
 * ``TestDgNamedOwner``: the owner test (DG classes only; a DAG node, a plug
   with no owner, a component plug, a class with its own name or a patched
-  method, a node with its own ``ensure_valid`` fail it, read at every call);
+  method, a node with its own ``_check_valid`` fail it, read at every call);
   ``data_type`` and ``_named_with_dot`` raise as the name does, for a deleted
   node, a freed one and a freed dynamic attribute, and build no name for a
   valid one; a deleted source raises before the destination is disconnected.
@@ -1272,7 +1272,7 @@ class TestDgNamedOwner(MayaTestCase):
         set_custom_type("ownName", "r5injectOwnName")
         self.assertIsNone(_base._dg_named_owner(Node("ownName").input1X))
         node = N["md2"]
-        node.__dict__["ensure_valid"] = node.ensure_valid
+        node.__dict__["_check_valid"] = node._check_valid
         self.assertIsNone(_base._dg_named_owner(node.input1X))
 
     def test_a_component_plug_is_never_such_a_plug(self):
@@ -1287,14 +1287,14 @@ class TestDgNamedOwner(MayaTestCase):
         N        = _build()
         plug     = N["md"].input1X
         checked  = []
-        original = DGNode.__dict__["ensure_valid"]
+        original = DGNode.__dict__["_check_valid"]
 
-        def ensure_valid(node):
+        def _check_valid(node):
             checked.append(node)
             return original(node)
 
         self.assertIs(_base._dg_named_owner(plug), N["md"])
-        with mock.patch.object(DGNode, "ensure_valid", ensure_valid):
+        with mock.patch.object(DGNode, "_check_valid", _check_valid):
             self.assertIsNone(_base._dg_named_owner(plug))
             self.assertEqual(plug.get_data_type(), "float")
             self.assertTrue(checked)  # through the name, as before

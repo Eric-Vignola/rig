@@ -90,7 +90,7 @@ def flatten_vertices(seq):
         # use all vertices as indices
         if m is None:
             name = Mesh(item)
-            rng  = list(range(type(name).get_num_vertices(name)))
+            rng  = list(range(type(name).get_vertex_count(name)))
         else:
             name, comp = m.group(1).split(".")
             if comp != "vtx":
@@ -253,7 +253,7 @@ class SkinCluster(Deformer):
 
         return out
 
-    def connect_bind_pre_matrices(self, search_func: Callable) -> None:
+    def connect_bind_pre_matrix(self, search_func: Callable) -> None:
         """For each influence joint, finds a driver joint and connect its
         worldInverseMatrix to the corresponding bindPreMatrix of this skincluster.
 
@@ -332,7 +332,7 @@ class SkinCluster(Deformer):
         comps = geom.get_component_mobject()
         weights, inf_count = type(self)._raw_get_fn_set(self).getWeights(type(geom).get_mdagpath(geom), comps)
         weights = np.array(weights)
-        return np.reshape(weights, (type(geom).get_num_weight_points(geom), inf_count))
+        return np.reshape(weights, (type(geom).get_weight_point_count(geom), inf_count))
 
     def set_weights(
         self,
@@ -487,12 +487,12 @@ class SkinCluster(Deformer):
             return other.apply_skin_data(skin_data_b)
 
     @staticmethod
-    def copy_skincluster(
+    def transfer_from_meshes(
         source_meshes: list[str] | str, target_vertices: list[str]
     ) -> None:
         """Many to One skincluster transfer: each target vertex gets the
         weights sampled at its closest point on the source meshes. One undo
-        step (``rig.SkinCluster.copy_skincluster``).
+        step (``rig.SkinCluster.transfer_from_meshes``).
 
         Args:
             source_meshes: One or more skinned meshes. With several
@@ -509,7 +509,7 @@ class SkinCluster(Deformer):
         """
         from cgmath.geometry import SkinData
 
-        with _undo_chunk("rig.SkinCluster.copy_skincluster"):
+        with _undo_chunk("rig.SkinCluster.transfer_from_meshes"):
             # process source_meshes
             if isinstance(source_meshes, str):
                 source_meshes = [Mesh(source_meshes)]

@@ -150,7 +150,7 @@ def _legacy_is_compound(obj):
         if obj.get_mplug().isCompound:
             return True
         try:
-            if obj.get_num_children() > 0:
+            if obj.get_child_count() > 0:
                 return True
         except Exception:
             pass
@@ -380,7 +380,7 @@ class TestMathTypeResolver(MayaTestCase):
     @staticmethod
     def _quat_output():
         """A ``quatProd.outputQuat`` plug: a TdataCompound whose ``data_type``
-        is the useless string 'compound' but whose ``num_children`` is 4."""
+        is the useless string 'compound' but whose ``get_child_count`` is 4."""
         cmds.loadPlugin("quatNodes", quiet=True)
         return Node(cmds.createNode("quatProd")).outputQuat
 
@@ -424,7 +424,7 @@ class TestMathTypeResolver(MayaTestCase):
     def test_quatprod_output_is_quaternion_despite_compound_data_type(self):
         quat = self._quat_output()
         # The data_type string is the useless 'compound' -- only structure
-        # (num_children == 4) reveals it is a quaternion.
+        # (get_child_count == 4) reveals it is a quaternion.
         self.assertEqual(quat.get_data_type(), "compound")
         self.assertEqual(math_type(quat), "quaternion")
 
@@ -504,7 +504,7 @@ class TestArityHelpers(MayaTestCase):
         cmds.setAttr(f"{ch}.selector", 1)
         src = _selected_choice_source(Node(ch).output)
         self.assertIsNotNone(src)
-        self.assertEqual(src.get_num_children(), 3)
+        self.assertEqual(src.get_child_count(), 3)
 
     def test_selected_choice_source_none_for_non_choice(self):
         node = Node.create("transform", name="t1")
@@ -512,7 +512,7 @@ class TestArityHelpers(MayaTestCase):
         self.assertIsNone(_selected_choice_source(5))
 
     def test_arity_of_choice_over_scalars_is_none(self):
-        # The walked source is a scalar, so num_children raises on both the
+        # The walked source is a scalar, so get_child_count raises on both the
         # generic choice.output AND the source -- arity stays None.
         Node.create("transform", name="a")
         Node.create("transform", name="b")

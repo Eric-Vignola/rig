@@ -262,13 +262,13 @@ class TestTagIdiomsStay(MayaTestCase):
     def test_face_members_add_idempotently_and_remove(self):
         faces = self.cube.f[:3]
         self.assertIs(faces << Tag("cap"), faces)
-        self.assertEqual(self.shape.get_component_tag_contents("cap"), ["f[0:2]"])
+        self.assertEqual(self.shape.get_tag_contents("cap"), ["f[0:2]"])
         # adding again asserts a state that already holds: nothing written
         before = set(cmds.ls())
         again  = self.cube.f[:3]
         self.assertIs(again << Tag("cap"), again)
         self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(self.shape.get_component_tag_contents("cap"), ["f[0:2]"])
+        self.assertEqual(self.shape.get_tag_contents("cap"), ["f[0:2]"])
         face = self.cube.f[0]
         self.assertIs(face << -Tag("cap"), face)
         ids = self.cube >> Tag("cap")
@@ -279,10 +279,10 @@ class TestTagIdiomsStay(MayaTestCase):
 
     def test_node_on_the_left_creates_and_deletes_the_tag(self):
         self.assertIs(self.cube << Tag("empty"), self.cube)
-        self.assertIn("empty", self.shape.get_component_tags())
+        self.assertIn("empty", self.shape.get_tag_names())
         self.assertEqual((self.cube >> Tag("empty")).shape, (0,))
         self.assertIs(self.cube << -Tag("empty"), self.cube)
-        self.assertNotIn("empty", self.shape.get_component_tags())
+        self.assertNotIn("empty", self.shape.get_tag_names())
         # the deleted tag holds nothing: no ids, not in it (round 4b follow-up
         # F4; it was a ValueError)
         self.assertEqual((self.cube >> Tag("empty")).shape, (0,))

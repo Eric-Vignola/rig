@@ -253,7 +253,7 @@ class Transform(DAGNode):
         dup.set_parent(parent or None)
         dup.rename(name or type(self).get_short_name(self))
         dup.delete(ch=True)
-        dup.set_xfrom_attrs_locked(False)
+        dup.set_xform_attrs_locked(False)
 
         # clean shapes
         nodes = [dup]
@@ -378,7 +378,7 @@ class Transform(DAGNode):
             for attr in (at + ax for ax in "xyz"):
                 yield self.find_attr(attr)
 
-    def set_xfrom_attrs_locked(self, locked: bool) -> None:
+    def set_xform_attrs_locked(self, locked: bool) -> None:
         """Locks or Unlocks all transform attributes on this node."""
         for attr in self.iter_xform_attrs():
             if locked:

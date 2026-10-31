@@ -521,12 +521,12 @@ def _raw_function(value: Any) -> Any:
 _MIRRORED = frozenset(
     {
         # node methods
-        "ensure_valid", "get_fn_set", "find_attr", "is_valid", "get_uuid",
-        "get_name", "get_mobject", "is_type", "set",
+        "get_fn_set", "find_attr", "is_valid", "get_uuid", "get_name",
+        "get_mobject", "is_type", "set",
         # plug methods
         "get_full_name", "is_multi", "child", "is_locked", "get_data_type",
         "get_node", "get_connected_attrs", "iter_connected_attrs", "connect",
-        "get_num_children", "element_by_logical_index",
+        "get_child_count", "get_element",
         # node class data the typed cast reads (`_ClassData`: the value)
         "FN_SET", "CUSTOM_NODE_TYPE",
     }
@@ -1257,7 +1257,7 @@ _USER_CODE_RUNS = [0]
 
 # Bound by `rig.nodetypes.dg_node` when it loads (it imports this module):
 # `_keeps_query`, and DGNode's naming: its private reader `_name`, its `__str__`
-# and its `ensure_valid` function (see `_dg_named_owner`), read before any patch
+# and its `_check_valid` function (see `_dg_named_owner`), read before any patch
 # of them can exist
 _KEEPS_QUERY = None
 _DG_NAMING   = None
@@ -1501,7 +1501,7 @@ def _ensure_owner_alive(attr: Any) -> None:
     `_objhandle` object, bound with the owner), else the one it took when it was
     built from a name or an MPlug (see `_mplug_handle`). A node deleted to the
     undo queue is still alive and passes. A freed owner raises through its
-    `ensure_valid`. The children, elements and parent of an attr share its owner
+    `_check_valid`. The children, elements and parent of an attr share its owner
     and that handle (see `_inherit_owner`).
 
     The attribute of a dynamic attr is also freed on its own, once a delete of
@@ -1515,7 +1515,7 @@ def _ensure_owner_alive(attr: Any) -> None:
     if handle is not None and not handle.isAlive():
         node = d.get("_node")
         if node is not None:
-            node.ensure_valid()
+            node._check_valid()
         else:
             _raise_deleted(attr, handle)
     handle = d.get("_attrh")
@@ -1542,7 +1542,7 @@ def _ensure_node_castable(attr: Any) -> None:
 
 def _ensure_node_valid(attr: Any) -> None:
     """Raise ``"... already deleted!"`` if the node of `attr` was deleted or freed,
-    without naming it: through its owner (`DGNode.ensure_valid`), or, with none,
+    without naming it: through its owner (`DGNode._check_valid`), or, with none,
     the handle of its node it took (see `_ensure_node_castable`). For a caller
     that hands `attr`'s str buffer to cmds, which would name the node that took
     the name (see `rig.bridges.commands`)."""
@@ -1553,7 +1553,7 @@ def _ensure_node_valid(attr: Any) -> None:
         return
     handle = d.get("_handle")  # the owner's
     if handle is None or not handle.isValid():
-        node.ensure_valid()
+        node._check_valid()
     handle = d.get("_attrh")
     if handle is not None and not handle.isAlive():
         raise _deleted_error(str.__str__(attr))
@@ -1569,17 +1569,18 @@ def _dg_named_owner(attr: Any) -> Any:
 
     That holds when `attr`'s class keeps Attribute's `get_full_name` and its owner's
     class keeps DGNode's naming (``__str__``, the private `_name`) and
-    `ensure_valid` (and Python's own attribute lookup), with no `ensure_valid`
-    set on the owner itself: the name is then the owner's `ensure_valid()`, the
+    `_check_valid` (and Python's own attribute lookup), with no `_check_valid`
+    set on the owner itself: the name is then the owner's `_check_valid()`, the
     `name()` of its held fn set (which a valid node answers), the check of a
     dynamic attr's attribute handle, and the MPlug's own name, which a valid
     node's plug answers, a deleted dynamic attribute's too. So a caller that
     needs only the raise runs the two checks and builds no name. A DAG node's
     class names it through its path (`DAGNode._name` re-binds a stale one), so
     it is never such an owner. The classes are read at every call, so a patched
-    method is seen at once (``ensure_valid`` and ``get_full_name`` through their
-    class-route mirrors, `_MIRRORED`: no descriptor runs). The owner test is
-    `_dg_named_node`'s, written out here (the hot path)."""
+    method is seen at once (``_check_valid`` is private, a plain class read, and
+    ``get_full_name`` comes through its class-route mirror, `_MIRRORED`: no
+    descriptor runs). The owner test is `_dg_named_node`'s, written out here (the
+    hot path)."""
     node = attr.__dict__.get("_node")
     if node is None or type(attr)._raw_get_full_name is not _ATTRIBUTE_FULL_NAME:
         return None
@@ -1590,9 +1591,9 @@ def _dg_named_owner(attr: Any) -> Any:
             naming is None
             or cls._name is not naming[0]
             or cls.__str__ is not naming[1]
-            or cls._raw_ensure_valid is not naming[2]
+            or cls._check_valid is not naming[2]
             or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
-            or "ensure_valid" in node.__dict__
+            or "_check_valid" in node.__dict__
         ):
             return None
     except AttributeError:
@@ -1603,10 +1604,10 @@ def _dg_named_owner(attr: Any) -> Any:
 def _dg_named_node(node: Any) -> bool:
     """True if `node` (a node object) is named as a DGNode is, the owner test of
     `_dg_named_owner`: its class keeps DGNode's naming (``__str__``, `_name`) and
-    `ensure_valid` (and Python's own attribute lookup), with no `ensure_valid`
+    `_check_valid` (and Python's own attribute lookup), with no `_check_valid`
     set on the node itself. Its name is then its fn set's, which names that node
     while it is valid, and naming it raises exactly when its handle is not valid
-    (`DGNode.ensure_valid`)."""
+    (`DGNode._check_valid`)."""
     naming = _DG_NAMING
     cls    = type(node)
     try:
@@ -1614,9 +1615,9 @@ def _dg_named_node(node: Any) -> bool:
             naming is None
             or cls._name is not naming[0]
             or cls.__str__ is not naming[1]
-            or cls._raw_ensure_valid is not naming[2]
+            or cls._check_valid is not naming[2]
             or cls.__getattribute__ is not _OBJECT_GETATTRIBUTE
-            or "ensure_valid" in node.__dict__
+            or "_check_valid" in node.__dict__
         )
     except AttributeError:
         return False
@@ -1624,10 +1625,10 @@ def _dg_named_node(node: Any) -> bool:
 
 def _ensure_dg_named(attr: Any, owner: Any) -> None:
     """Raise what naming `attr` raises, `owner` being its `_dg_named_owner`: the
-    owner's ``"... already deleted!"`` (`ensure_valid`), then the freed dynamic
+    owner's ``"... already deleted!"`` (`_check_valid`), then the freed dynamic
     attribute's ``"<plug> already deleted!"`` (see `_ensure_owner_alive`), the
     two checks `Attribute.get_full_name` makes, in its order and with its texts."""
-    _DG_NAMING[2](owner)  # its class keeps DGNode's ensure_valid (`_dg_named_owner`)
+    _DG_NAMING[2](owner)  # its class keeps DGNode's _check_valid (`_dg_named_owner`)
     handle = attr.__dict__.get("_attrh")
     if handle is not None and not handle.isAlive():
         raise _deleted_error(str.__str__(attr))
@@ -1637,7 +1638,7 @@ def _deleted_error(name: str, freed: bool = False) -> RuntimeError:
     """The ``"... already deleted!"`` RuntimeError of the node `name`, deleted to
     the undo queue, or, `freed`, freed by a new scene, a file open or a reference
     unload: a freed node cannot be read, so `name` is then its class name (a node
-    object, see `DGNode.ensure_valid`) or the name a plug with no owner was built
+    object, see `DGNode._check_valid`) or the name a plug with no owner was built
     with (see `_raise_deleted`). Every guard raises through it."""
     if freed:
         name = f"{name} node (freed by a new scene, a file open or a reference unload)"
@@ -1647,7 +1648,7 @@ def _deleted_error(name: str, freed: bool = False) -> RuntimeError:
 def _raise_deleted(attr: Any, handle: Any) -> None:
     """Raise the ``"... already deleted!"`` of `attr`, a plug with no owner whose
     node (`handle`, the handle of it the plug took) was deleted or freed. A
-    deleted node is named as `DGNode.ensure_valid` names it, through the node
+    deleted node is named as `DGNode._check_valid` names it, through the node
     of its MPlug (alive; a handle gives no MObject for a deleted node). A freed
     one cannot be read, and the class it would be cast to was never known, so
     it is named by the node part of the name the plug was built with (its str
@@ -1905,9 +1906,9 @@ def _point_count(attr: Any) -> int:
     a component slice). Read through the node's own class: the owner can be a
     class the user chose (``DAGNode(mesh).vtx[0:2]``), which has none."""
     node = type(attr)._raw_get_node(attr)
-    if not hasattr(type(node), "get_num_weight_points"):
+    if not hasattr(type(node), "get_weight_point_count"):
         node = _cast(attr._mplug.node())
-    return type(node).get_num_weight_points(node)
+    return type(node).get_weight_point_count(node)
 
 
 def _instanced_element_alias(mplug: OpenMaya.MPlug, node: Any, alias: str) -> str:
@@ -3300,7 +3301,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     """
 
-    # the class of the elements `element_by_*` builds (D29): a Plug's elements
+    # the class of the elements `get_element` builds (D29): a Plug's elements
     # are Plugs, built once. The child caches (`child`, child by name) hold
     # Attributes, which a Plug's lookups turn into new Plugs (plugs are never
     # cached, D30), and `get_parent` returns an Attribute
@@ -3441,7 +3442,7 @@ class Attribute(str, metaclass=_PlugMeta):
         _ensure_owner_alive(self)
 
         if isinstance(key, (int, np.integer)):
-            return type(self)._raw_element_by_logical_index(self, int(key))
+            return type(self)._raw_get_element(self, int(key))
 
         elif isinstance(key, (list, tuple, np.ndarray)):
             # Fancy indexing with the ids a membership query returns
@@ -3466,7 +3467,7 @@ class Attribute(str, metaclass=_PlugMeta):
                 ids   = np.where(ids < 0, ids + count, ids)
                 if ids.size and (ids.min() < 0 or ids.max() >= count):
                     raise IndexError(f"{_name_of(self)} index out of range for {count} points")
-            return [self.element_by_logical_index(int(index)) for index in ids]
+            return [self.get_element(int(index)) for index in ids]
 
         elif isinstance(key, slice):
             # figure out the maximum range of the slice
@@ -3512,7 +3513,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
             attribute_list = []
             for index in range(start, stop, step):
-                attribute_list.append(type(self)._raw_element_by_logical_index(self, index))
+                attribute_list.append(type(self)._raw_get_element(self, index))
             return attribute_list
 
         else:
@@ -3528,7 +3529,7 @@ class Attribute(str, metaclass=_PlugMeta):
         del mesh.componentTags[1]
         ```
         """
-        return self.delete_logical_index(i)
+        return self.delete_element(i)
 
     def __iter__(self, i: int) -> Iterator[Attribute]:
         """Iterating over attrs at each logical index, if this is a multi-attr.
@@ -3540,7 +3541,7 @@ class Attribute(str, metaclass=_PlugMeta):
         ```
         """
         for i in self.get_logical_indices():
-            yield self.element_by_logical_index(i)
+            yield self.get_element(i)
 
     def __getattr__(self, attr_name: str) -> Attribute:
         """Implemented to return child attribute by name, if this is a compound attr.
@@ -3572,6 +3573,13 @@ class Attribute(str, metaclass=_PlugMeta):
                 raise AttributeError(
                     f"{str.__str__(self)} is not a compound: it has no child "
                     f"{attr_name!r}" + _old_name_hint(attr_name)
+                )
+            if mplug.isArray and attr_name in _OLD_PLUG_METHODS:
+                # a retired method, on a compound multi's root, which had it: the walk
+                # below would raise MPlug.child's RuntimeError, an array root having
+                # no child plugs
+                raise AttributeError(
+                    f"{str.__str__(self)} has no child {attr_name!r}" + _old_name_hint(attr_name)
                 )
             count = mplug.numChildren()
             names = d.setdefault("_Attribute__child_name_dict", {})
@@ -4444,7 +4452,7 @@ class Attribute(str, metaclass=_PlugMeta):
 
     # --- compound attr methods
 
-    def get_num_children(self) -> int:
+    def get_child_count(self) -> int:
         """Returns this number of children of this compound attr."""
         _ensure_owner_alive(self)
         return self._mplug.numChildren()
@@ -4536,13 +4544,15 @@ class Attribute(str, metaclass=_PlugMeta):
         _ensure_owner_alive(self)
         return self._mplug.isArray
 
-    def get_num_elements(self) -> int:
-        """Number of elements / physical indices in the multi attr."""
+    def get_element_count(self) -> int:
+        """Number of elements / physical indices in the multi attr: the PHYSICAL
+        count, not the highest logical index plus one on a sparse multi. Iterate
+        with `get_logical_indices()` or ``get_element(i, physical=True)``."""
         if not type(self)._raw_is_multi(self):
             raise RuntimeError(f"{_name_of(self)} is not an multi attr.")
         return self._mplug.numElements()
 
-    def logical_index(self) -> int:
+    def get_logical_index(self) -> int:
         """Returns the logical index if this attr is a child of a multi attr."""
         _ensure_owner_alive(self)
         return self._mplug.logicalIndex()
@@ -4560,30 +4570,24 @@ class Attribute(str, metaclass=_PlugMeta):
             if index not in ids:
                 return index
 
-    def element_by_physical_index(self, i: int) -> Attribute:
-        """Returns the element attribute at the given physical index: an
-        instance of `_CHILD_CLASS` (a Plug's element is a Plug), owned by the
-        node object this attr holds (see `_inherit_owner`)."""
+    def get_element(self, i: int, *, physical: bool = False) -> Attribute:
+        """Returns the element attribute at the given logical index, or with
+        `physical` at the given physical index: an instance of `_CHILD_CLASS`
+        (a Plug's element is a Plug, which ``plug[i]`` returns as built), owned
+        by the node object this attr holds (see `_inherit_owner`)."""
         if not type(self)._raw_is_multi(self):
             raise RuntimeError(f"{_name_of(self)} is not an multi attr.")
-        element = self._mplug.elementByPhysicalIndex(i)
-        return _inherit_owner(
-            self, _new_attr(self._CHILD_CLASS, element), element.logicalIndex()
-        )
-
-    def element_by_logical_index(self, i: int) -> Attribute:
-        """Returns the element attribute at the given logical index: an
-        instance of `_CHILD_CLASS` (a Plug's element is a Plug, which
-        ``plug[i]`` returns as built), owned by the node object this attr holds
-        (see `_inherit_owner`)."""
-        if not type(self)._raw_is_multi(self):
-            raise RuntimeError(f"{_name_of(self)} is not an multi attr.")
+        if physical:
+            element = self._mplug.elementByPhysicalIndex(i)
+            return _inherit_owner(
+                self, _new_attr(self._CHILD_CLASS, element), element.logicalIndex()
+            )
         element = self._mplug.elementByLogicalIndex(i)
         return _inherit_owner(self, _new_attr(self._CHILD_CLASS, element), i)
 
-    def delete_logical_index(self, i: int, **kwargs) -> None:
+    def delete_element(self, i: int, **kwargs) -> None:
         """Deletes the element attribute at the given logical index."""
-        cmds_edit.removeMultiInstance(_name_of(self.element_by_logical_index(i)), **kwargs)
+        cmds_edit.removeMultiInstance(_name_of(self.get_element(i)), **kwargs)
 
     # --- component type info
     # TODO make a proper Component class
@@ -4644,10 +4648,25 @@ Attribute._CHILD_CLASS = Attribute
 # Plug (``rig._internal.plug._StrRoute``).
 
 
+# The plug methods the names review retired (user decision 2026-10-30), and
+# their spelling now. A compound multi's root had them, so
+# ``Attribute.__getattr__`` reads this table before it walks that root's children
+_OLD_PLUG_METHODS = {
+    "logical_index":             "plug.get_logical_index()",
+    "element_by_logical_index":  "plug.get_element(i)",
+    "element_by_physical_index": "plug.get_element(i, physical=True)",
+    "delete_logical_index":      "plug.delete_element(i)",
+    "get_num_children":          "plug.get_child_count()",
+    "get_num_elements":          "plug.get_element_count()",
+}
+
 # The plug properties rig had before the property ban (user decision
-# 2026-10-16), and their spelling now: the miss path of ``Plug.__getattr__`` and
-# ``Attribute.__getattr__`` names it (``plug.get_node()`` is a plug lookup, which
-# misses unless the node has an attr ``node``); the hot path never reads it
+# 2026-10-16) and `_OLD_PLUG_METHODS`, and their spelling now: the miss path of
+# ``Plug.__getattr__`` and ``Attribute.__getattr__`` names it
+# (``plug.get_node()`` is a plug lookup, which misses unless the node has an
+# attr ``node``); the hot path never reads it. The miss path is an instance's:
+# a call through the class (``Plug.old(plug)``) is the plain AttributeError of
+# a name the class does not have
 _OLD_PLUG_NAMES = {
     "plug":           "plug.get_mplug()",
     "full_name":      "str(plug) or plug.get_full_name()",
@@ -4660,9 +4679,10 @@ _OLD_PLUG_NAMES = {
     "enums":          "plug.get_enums()",
     "fn_set":         "plug.get_fn_set()",
     "mobject":        "plug.get_mobject()",
-    "num_children":   "plug.get_num_children()",
-    "num_elements":   "plug.get_num_elements()",
+    "num_children":   "plug.get_child_count()",
+    "num_elements":   "plug.get_element_count()",
     "next_index":     "plug.get_next_available_index()",
+    **_OLD_PLUG_METHODS,
 }
 
 # ``plug.<predicate> = state``, a setter before the ban: its spelling now
@@ -4675,7 +4695,7 @@ _OLD_PLUG_SETTERS = {
 
 def _old_name_hint(name: str) -> str:
     """The end of a lookup miss's AttributeError: ``"; plug.node is now
-    plug.get_node()"`` for an old plug property name, else ``"."``."""
+    plug.get_node()"`` for an old plug name, else ``"."``."""
     new = _OLD_PLUG_NAMES.get(name)
     return f"; plug.{name} is now {new}" if new else "."
 
@@ -4832,11 +4852,11 @@ class _ScenePredicate:
 
 
 def _old_handle_name(obj: Any, name: str, table: dict) -> AttributeError:
-    """The AttributeError of a scene handle's attribute miss (``faces.count``,
-    ``cset.data``, ``rig.container.stack``): Python's text, plus the spelling
-    now when `name` is one of the handle's members before the per-object rule
-    (user decision 2026-10-16), from `table` ({old name: hint}). The miss path
-    only: a hit never reads it."""
+    """The AttributeError of an attribute miss on a scene handle (``faces.count``,
+    ``cset.data``, ``rig.container.stack``) or a keys value: Python's text, plus
+    the spelling now when `name` is a member it had before the per-object rule
+    (user decision 2026-10-16) or the names review (2026-10-30), from `table`
+    ({old name: hint}). The miss path only: a hit never reads it."""
     hint = table.get(name)
     return AttributeError(
         f"{type(obj).__name__!r} object has no attribute {name!r}"

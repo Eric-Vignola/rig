@@ -453,7 +453,7 @@ Not bugs to work around blindly; things a rigger meets in the first hour.
   `TypeError` with nothing written; `Tag("x").set(cube.f[:2])` replaces
   and may flip the category. A query answers by contents: faces are not
   in a vertex tag (`cube.f[:2] in Tag("x")` is `False`). A tag name follows
-  Maya's rule, the one `add_component_tag` checks: at least two characters,
+  Maya's rule, the one `add_tag` checks: at least two characters,
   letters, digits and `_`, starting with a letter or `_`, with single `.`
   or `:` between characters (`Tag("b")`, `Tag("a:")` and `Tag("a-b")` are a
   `ValueError`). Maya trims the whitespace at the ends of a name and makes a

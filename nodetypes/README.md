@@ -27,7 +27,7 @@ from rig.bridges import commands as rc
 cube = rc.polyCube(name="cube", ch=False)[0]  # a Transform
 mesh = cube.get_shape()                       # a typed method, on the same object
 print(repr(cube), (cube >> None) is cube, repr(mesh))  # Transform("cube") True Mesh("cubeShape")
-print(mesh.get_materials(), mesh.get_num_vertices())   # [StandardSurface("standardSurface1")] 8
+print(mesh.get_materials(), mesh.get_vertex_count())   # [StandardSurface("standardSurface1")] 8
 ```
 
 You rarely import from `rig.nodetypes` at all: `Node(x)` and the `rc` / `rn`
@@ -35,7 +35,7 @@ bridges already hand back these classes. You do when you want a class to
 name a node of its type (`Mesh("cubeShape")`, which refuses anything but a
 mesh), to define or create one (`Transform.define("rig")`,
 `SkinCluster.create(...)`), a classmethod (`ShadingEngine.for_material`,
-`DisplayLayer.for_node`), or a subclass of your own.
+`DisplayLayer.of`), or a subclass of your own.
 
 ---
 
@@ -57,7 +57,7 @@ rig/nodetypes/
 │                      the custom-type stamp; Attribute -- the MPlug wrapper: get / set / connect,
 │                      slicing, components
 ├── errors.py          NodeLookupError, NodeNotFoundError, AmbiguousNodeError, NodeTypeError
-├── dg_node.py         DGNode                 entity          refer / define / create; get_short_name(), get_clean_name()
+├── dg_node.py         DGNode                 entity          refer / define / create; get_short_name()
 ├── dag_node.py        DAGNode                dagNode
 ├── transform.py       Transform              transform
 ├── _bindpose.py       (private) the dagPose read of serialize_hierarchy(bindpose=...)
@@ -97,7 +97,7 @@ from rig.nodetypes import (
     NodeLookupError, NodeNotFoundError, AmbiguousNodeError, NodeTypeError,
 )
 from rig.nodetypes.deformer import Deformer, tag_references
-from rig.nodetypes.dg_node import get_clean_name, get_short_name
+from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.geometry import iter_component_ranges, iter_component_tokens
 from rig.nodetypes.joint import replace_suffix
 from rig.nodetypes.mesh import ColorSet
@@ -111,25 +111,25 @@ from rig.nodetypes.plugins import load_plugin
 | Class | Wraps | What it adds |
 |---|---|---|
 | `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.define(type, name, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
-| `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); `str(node)` / `get_name`, `get_long_name` / `get_short_name` / `get_clean_name`, `get_uuid`, `rename`, `get_namespace` / `set_namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
+| `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); `str(node)` / `get_name`, `get_long_name` / `get_short_name` (`namespace=False` drops the namespace), `get_uuid`, `rename`, `get_namespace` / `set_namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `get_mdagpath`, `get_bounding_box`, `get_deformers` |
-| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xfrom_attrs_locked`, `duplicate_geometry`, `serialize` / `Transform.create(transform_data)` (one node; `Joint.create(joint_data)`), `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
-| `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient_joint` / `orient_chain`, orient <-> rotation conversions, `find_skinclusters` |
-| `Geometry` | `geometryShape` | component tags: `get_injection_node`, `get_component_tags`, `add` / `remove` / `rename_component_tag`, `set_` / `get_component_tag_contents`, `get_component_tag_indices` / `_category` / `_data` / `_history`, `serialize_component_tags`, `get_local_shape_attr` / `get_world_shape_attr`, `get_component_mobject`, paintable attrs |
-| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back; `transform=`: the shape under an existing transform), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_component_tags`, `apply_skin_data` |
-| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `get_num_cvs`, `get_num_weight_points`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`; both take `transform=`, as `Mesh.create`), `save` / `load` (files: the class creates, a node updates its CVs) |
+| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xform_attrs_locked`, `duplicate_geometry`, `serialize` / `Transform.create(transform_data)` (one node; `Joint.create(joint_data)`), `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
+| `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient`, `orients_to_rotations` / `rotations_to_orients` (`hierarchy=True`: the joints below too), `find_skinclusters` |
+| `Geometry` | `geometryShape` | component tags: `get_injection_node`, `get_tag_names`, `add_tag` / `delete_tag` / `rename_tag`, `set_tag_contents` / `get_tag_contents`, `get_tag_component_indices` / `get_tag_category` / `get_tag_data` / `get_tag_history`, `serialize_tags`, `get_output_attr` (`world_space=True`: the world one), `get_component_mobject`, paintable attrs |
+| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back; `transform=`: the shape under an existing transform), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_tags`, `apply_skin_data` |
+| `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `get_cv_count`, `get_weight_point_count`, `get_points`, `serialize` (`BSplineData` / `BSplinePatchData`), `NurbsCurve.create` (points, or a `BSplineData`), `NurbsSurface.create` (a `BSplinePatchData`; both take `transform=`, as `Mesh.create`), `save` / `load` (files: the class creates, a node updates its CVs) |
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
-| `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `copy_skincluster`, `connect_bind_pre_matrices` |
+| `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `transfer_from_meshes`, `connect_bind_pre_matrix` |
 | `BlendShape` | `blendShape` | `create(*geos_or_morphs)`, targets by name or index, weights, `get_target_data` / `set_target_data` (`MorphData`), `serialize` (`MorphList`), `save` / `load` (files: `BlendShape.load(path, base)` creates, `bs.load(path)` sets its targets by name), `add_empty_target`, `rebuild_target` |
 | `ObjectSet` | `objectSet` | `define`, `get_members(as_components=)`, `add_members` / `remove_members` / `force_elements` / `clear` |
 | `ShadingEngine` | `shadingEngine` | `create` (wired through `cmds.sets(renderable=True)`), `for_material`, `get_material` / `set_material`, `get_face_members`, `x << sg`, `remove(x)` (the DSL's `x << -sg`); the raw `add_members` / `remove_members` / `force_elements` and `assign` raise, naming `x << sg` / `sg.remove(x)` |
 | `Material` | any surface shader (`shader/surface`), and the types with no class below | `create` / `define` build the network (the shader, `<shader>SG`, its materialInfo; `type=` for a type with no class), `get_engine`, `of`, `remove(x)` (the DSL's `x << -mat`), `astype` (converts the object in place), the network `rename` / `delete`, `find_all(exact_type=False)`; the DSL's materials |
 | `Lambert`, `Blinn`, `Phong`, `PhongE`, `SurfaceShader`, `StandardSurface`, `OpenPBRSurface` | exactly `lambert`, `blinn`, `phong`, `phongE`, `surfaceShader`, `standardSurface`, `openPBRSurface` | everything `Material` has, for their one type |
-| `DisplayLayer` | `displayLayer` | `define`, `for_node`, `of`, `is_default`, `get_members` / `clear` / `delete`, `x << layer` and `remove(x)` (the DSL's `x << -layer`), the one way in and out (`add_members` / `remove_members` raise, naming them); the DSL's `Layer` |
+| `DisplayLayer` | `displayLayer` | `define`, `of`, `is_default`, `get_members` / `clear` / `delete`, `x << layer` and `remove(x)` (the DSL's `x << -layer`), the one way in and out (`add_members` / `remove_members` raise, naming them); the DSL's `Layer` |
 | `Reference` | `reference` | `create(path, namespace)`, `find_by_path`, `get_namespace`, `get_file_path(copy_number=False)`, `get_nodes`, `delete` |
 | `Choice` | `choice` | `input[i]` takes any plug whole and a number (a typed attribute that holds any data, as a `rig.Typed` one: no shorthand node, no split into channels, whatever it held); `output` reads as what is selected; `get_data_type()` of both follows the wiring and the selector |
-| `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv_values` |
-| `AnimCurve` | any animation curve (the abstract `animCurve`), and the types with no class below (a driven key's `animCurveU*`) | `AnimCurve.of(x)` (the curves driving a plug, a node, a `List`), `get_keys` / `set_keys`, `get_num_keys`, `evaluate`; called with values, `AnimCurve([...])` makes the keys `plug << ...` takes (a value, not a node); `create` / `define` are refused (abstract) |
+| `Follicle` | `follicle` | `create_on_mesh`, `constrain`, `set_uv` |
+| `AnimCurve` | any animation curve (the abstract `animCurve`), and the types with no class below (a driven key's `animCurveU*`) | `AnimCurve.of(x)` (the curves driving a plug, a node, a `List`), `get_keys` / `set_keys`, `get_key_count`, `evaluate`; called with values, `AnimCurve([...])` makes the keys `plug << ...` takes (a value, not a node); `create` / `define` are refused (abstract) |
 | `AnimCurveTL`, `AnimCurveTA`, `AnimCurveTU`, `AnimCurveTT` | exactly `animCurveTL`, `animCurveTA`, `animCurveTU`, `animCurveTT` | everything `AnimCurve` has; `create(keys, ...)` / `define(name, keys, ...)`; called with values a `TypeError` naming `AnimCurve([...])` |
 
 Each class inherits everything above it in its column, so a `Mesh` has
@@ -613,7 +613,7 @@ the shape itself until a deformer exists, its intermediate `Orig` shape
 from then on. `Geometry.get_injection_node()` answers that (uncached, since a
 deformer moves it) and every editor writes there, so the shape you hold
 and the tag editor never disagree. Readers go through the evaluated
-geometry (`get_local_shape_attr()`), so procedural tags — a history `polyCube`'s
+geometry (`get_output_attr()`), so procedural tags — a history `polyCube`'s
 six face tags are outputs of `polyCube1` — are visible and serialisable,
 but any edit to one raises.
 
@@ -672,9 +672,9 @@ shaders Maya derives from the type, each typed by its own class.
 ### Display layers are exclusive and hold objects only
 
 Membership is a connection from the layer's `drawInfo` into the member's
-`drawOverride`, so `DisplayLayer.for_node(node)` reads it from the node
+`drawOverride`, so `DisplayLayer.of(node)` reads it from the node
 side without enumerating layers. A node is in one layer; `defaultLayer`
-(undeletable) is where it sits when in none, and `for_node` answers `None`
+(undeletable) is where it sits when in none, and `of` answers `[]`
 there. Children draw with a member's override through the DAG without
 being members, and `x << layer` never recurses. The DSL's `Layer` is this
 class (`rig.Layer is DisplayLayer`): a layer node on the right of `<<`,
@@ -697,7 +697,7 @@ data to a `cgmath` file and `load` reads it back.
 |---|---|---|---|---|
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create(transform_data)` / `Joint.create(joint_data)` (one node), `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=False, container=None)` creates, a typed `List`, parents first |
 | `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`: object space and the transform's world matrix (`world_space=True`: world space, the identity); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, transform=None, world_space=False, **attrs)` creates (with `transform=`, the shape under it); `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True)` updates |
-| `Geometry` | `serialize_component_tags()` -> `GeomSubsetData`s | `set_component_tag_contents` | | |
+| `Geometry` | `serialize_tags()` -> `GeomSubsetData`s | `set_tag_contents` | | |
 | `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` (its knots likewise, `knots_u` / `knots_v`); each with the shape's name and the transform's world matrix as a `MeshData`, on the `cgmath` that adds those fields | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=False)` | `NurbsCurve.load(path, *, name=, container=, transform=None, world_space=False, **attrs)` creates (with `transform=`, the shape under it); `NurbsCurve('x').load(path, *, world_space=False)` updates its CVs (the same for `NurbsSurface`) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` | `skin.save(path, *, full_path=False, optimize=False)` | `SkinCluster.load(path, geo, **flags)` creates; `SkinCluster('x').load(path)` sets its weights |
 | `BlendShape` | `MorphList`; `get_target_data()` a `MorphData` | `set_target_data`, `BlendShape.create` | `bs.save(path, *, match_name=None)` | `BlendShape.load(path, base, **flags)` creates; `BlendShape('x').load(path)` sets its targets by name |
@@ -876,8 +876,8 @@ step each, named `rig.Mesh.create`, `rig.NurbsCurve.create`,
 `rig.NurbsSurface.create`, `rig.SkinCluster.create`,
 `rig.SkinCluster.set_weights`. A node's `load` puts its points, shading or
 CVs through the command too; every `load` is one step, `rig.Mesh.load` ...
-`rig.Joint.load_hierarchy`. The transfers (`Mesh.transfer_maps`, `transfer_component_tags`,
-`SkinCluster.transfer_to_mesh`, `copy_skincluster`) are one step each too,
+`rig.Joint.load_hierarchy`. The transfers (`Mesh.transfer_maps`, `transfer_tags`,
+`SkinCluster.transfer_to_mesh`, `transfer_from_meshes`) are one step each too,
 named after the method (`rig.Mesh.transfer_maps` ...).
 
 Your own API edits take the same command: [CHEATSHEET section 21](CHEATSHEET.md#21-plugins--load_plugin-and-undo)
@@ -913,13 +913,13 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
   parent's space; a shape's data holds its object-space points and its
   transform's world matrix, which `create` puts on its new transform.
 - **`get_*` returns, verbs mutate.** `set_points`, `set_weights`,
-  `set_component_tag_contents`, `freeze` edit the scene;
+  `set_tag_contents`, `freeze` edit the scene;
   `serialize`, `get_weights`, `duplicate_geometry` hand back something new.
 - **Points come back as `MPointArray`**; `np.array(points)` is `(N, 4)`,
   so slice `[:, :3]`. Matrices are `MMatrix`; `np.array(m).reshape(4, 4)`
   is row-major with translation in row 3.
 - **Weights are `(V, I)` numpy arrays**, rows are points in
-  `get_num_weight_points()` order, columns follow `get_influence_objects()`.
+  `get_weight_point_count()` order, columns follow `get_influence_objects()`.
 - **Component ids are native**: `(N,)`, `(N, 2)` or `(N, 3)` integer
   arrays; strings are the shape-local `vtx[a:b]` / `cv[u][v0:v1]` /
   `f[a:b]` tokens `geometry.iter_component_tokens` renders.
@@ -935,7 +935,7 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
   pattern is refused. `define` keys a bare name in the current namespace,
   because that is where `create` puts a new node.
 - **`match_name` arguments are regexes** (`iter_joints`, `iter_shapes`,
-  `serialize_maps`, `serialize_component_tags`, `BlendShape.serialize`),
+  `serialize_maps`, `serialize_tags`, `BlendShape.serialize`),
   anchored with `exact_match=True`.
 
 ---
@@ -945,7 +945,7 @@ unload forced anyway leaves those steps inert (undoing them does nothing).
 - You need a **result as data**: skin weights as an array, a mesh as a
   `MeshData`, a hierarchy as a `HierarchyData`, a target as a `MorphData`.
 - You need a **classmethod**: `ShadingEngine.for_material`,
-  `DisplayLayer.for_node`, `Transform.define`, `Reference.find_by_path`,
+  `DisplayLayer.of`, `Transform.define`, `Reference.find_by_path`,
   `Follicle.create_on_mesh`, `Transform.create_hierarchy`.
 - You are **writing a tool**, not a network: a duplicate-clean-geometry
   step, a skeleton duplicate with a suffix, an orient pass, a map mirror.
@@ -992,15 +992,15 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **`duplicate_skeleton(prefix=..., include_list=[...])` deletes every joint**:
   children are renamed with the prefix before the include check compares
   their short names against the un-prefixed list. Use one or the other.
-- **`orient_chain` leaves the result in `rotate`** (each `orient_joint` ends
-  in `convert_orients_to_rotation`); call `hierarchy_to_orients()` after it
-  to bake into `jointOrient`.
-- **`orient_joint` / `orient_chain` address joints by short name**
+- **`orient` leaves the result in `rotate`** (each joint ends in
+  `orients_to_rotations`); call `rotations_to_orients(hierarchy=True)` after
+  `orient(hierarchy=True)` to bake into `jointOrient`.
+- **`orient` addresses joints by short name**
   (`cmds.listRelatives` without `fullPath`), so a second joint of the same
   short name anywhere in the scene — a `duplicate_skeleton(include_list=...)`
-  copy, say — makes them raise `More than one object matches name`. Orient
+  copy, say — makes it raise `More than one object matches name`. Orient
   first, duplicate after.
-- **`Mesh.transfer_maps` and `transfer_component_tags` sample the data
+- **`Mesh.transfer_maps` and `transfer_tags` sample the data
   themselves.** `cgmath`'s `MeshDataResampler.resample_map` (1.0.4 and
   2.0.0) makes the map a one-influence `SkinData`, and the weight
   resampler normalises every row, so every map comes back `1.0` and every
@@ -1034,7 +1034,7 @@ Verified on Maya 2025; not bugs to work around blindly.
   `SkinCluster.transfer_to_mesh` (many influences) is fine.
 - **Several skinClusters on one mesh: the one nearest the shape.**
   `Mesh.apply_skin_data`, `Mesh.bake_deformation` and
-  `SkinCluster.copy_skincluster` (each source and the target) act on the
+  `SkinCluster.transfer_from_meshes` (each source and the target) act on the
   first skinCluster `get_deformers` lists, which is normally the last one
   applied. The mesh's other skinClusters are left alone. A skinCluster
   that reaches the mesh only from the side is not the mesh's: that of a
@@ -1077,18 +1077,18 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **`Mesh.outMesh.get()` returns `(MeshData, UVList)`**: the shape's
   `serialize()` with its default `include_uvs=True`, in object space
   (`mesh.worldMesh[0].get()`: in world space).
-- **`set_component_tag_category` converts nothing on a deformed mesh**: it
+- **`set_tag_category` converts nothing on a deformed mesh**: it
   hands the visible shape to Maya's converter while the tag lives on the
-  `Orig`. Use `set_component_tag_contents(tag, ids, category=...)`, which
+  `Orig`. Use `set_tag_contents(tag, ids, category=...)`, which
   rewrites the contents in the new category.
 - **Maya refuses some component tag names**, with a bare "Maya command
   error". Maya trims the whitespace at the ends of a name and makes a space
   inside `_`. It then takes at least two characters, letters, digits and
   `_`, starting with a letter or `_`, with single `.` or `:` between
   characters. So `b`, `1a`, `a-b` and `a..b` are refused, and `ab`, `_1`
-  and `a.b` are taken; `a b` is stored as `a_b`. `add_component_tag` and
-  `rename_component_tag` raise a `ValueError` naming this rule before
-  anything is made, and `add_component_tag` looks an existing tag up by the
+  and `a.b` are taken; `a b` is stored as `a_b`. `add_tag` and
+  `rename_tag` raise a `ValueError` naming this rule before
+  anything is made, and `add_tag` looks an existing tag up by the
   name Maya stores (`" ab"` finds `ab`). `rig.Tag` checks the same rule and
   means the same stored name (`Tag(" ab")` is `Tag("ab")`). A name with a
   non-ASCII character is left to Maya, which first maps it to the system
@@ -1149,8 +1149,8 @@ Verified on Maya 2025; not bugs to work around blindly.
 - **`create_hierarchy` (so `load_hierarchy`) does not connect a joint's
   `inverseScale`** to its parent's `scale`: a joint with segment scale
   compensate under a scaled parent comes back at another world matrix.
-- **Method names are spelled as they are**: `set_xfrom_attrs_locked`
-  (sic), and `BlendShape.set_targets_data` beside `set_target_data`.
+- **Method names are spelled as they are**: `BlendShape.set_targets_data`
+  beside `set_target_data`.
 - `Mesh.bake_deformation` hard-codes `root_joint` as the skeleton. Its
   `max_influences` is the influence cap (below 1 is a `ValueError`), and
-  `None` (the default) is no cap. It is one undo step. `merge_maps` / `merge_maps_list` raise `NotImplementedError`.
+  `None` (the default) is no cap. It is one undo step.

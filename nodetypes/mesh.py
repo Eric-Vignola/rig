@@ -471,15 +471,15 @@ class Mesh(Geometry):
 
     # --- mesh geometry data methods
 
-    def get_num_vertices(self) -> int:
+    def get_vertex_count(self) -> int:
         """Returns the number of vertices."""
         return type(self)._raw_get_fn_set(self).numVertices
 
-    def get_num_weight_points(self) -> int:
-        """Returns the number of points in this geometry that can be skin weighted."""
-        return type(self).get_num_vertices(self)
+    def get_weight_point_count(self) -> int:
+        """Returns the number of points a deformer weights: on a mesh, its vertices."""
+        return type(self).get_vertex_count(self)
 
-    def get_num_polygons(self) -> int:
+    def get_face_count(self) -> int:
         """Returns the number of faces."""
         return type(self)._raw_get_fn_set(self).numPolygons
 
@@ -529,7 +529,7 @@ class Mesh(Geometry):
             _refuse_rig_points(points, "set_points", many=True)
         points = OpenMaya.MPointArray(points)
 
-        count = type(self).get_num_vertices(self)
+        count  = type(self).get_vertex_count(self)
         if len(points) != count:
             raise ValueError(
                 f"Mesh.set_points: {len(points)} points for the {count} vertices of {_name_of(self)}"
@@ -603,7 +603,7 @@ class Mesh(Geometry):
         )
 
         # Convert indices to True/False array.
-        is_vert_above_plane = np.isin(np.arange(type(self).get_num_vertices(self)), vert_indices)
+        is_vert_above_plane = np.isin(np.arange(type(self).get_vertex_count(self)), vert_indices)
 
         # Loop over each face and check if all vertices are above the plane.
         face_indices = []
@@ -655,7 +655,7 @@ class Mesh(Geometry):
         space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
         return type(self)._raw_get_fn_set(self).getVertexNormals(angle_weighted, space)
 
-    def get_per_face_vertex_normals(self, *, world_space: bool = False) -> list[OpenMaya.MVector]:
+    def get_face_vertex_normals(self, *, world_space: bool = False) -> list[OpenMaya.MVector]:
         """Returns the normal of every face-vertex of the mesh, face by face.
 
         Args:
@@ -741,7 +741,7 @@ class Mesh(Geometry):
             if verbose is True the output will always be (material, face_indices) pairs.
         """
         bindings          = {}
-        face_count        = type(self).get_num_polygons(self)
+        face_count        = type(self).get_face_count(self)
         whole_mesh_mat    = None  # used to record the material assigned to the entire mesh
         assigned_face_ids = set()
         for sg, mat in self.get_materials(as_pairs=True):
@@ -1027,7 +1027,7 @@ class Mesh(Geometry):
             points         = np.asarray(points)[:, :-1],
             normals        = np.asarray(normals),
             normal_indices = np.asarray(normal_ids),
-            name           = type(self).get_clean_name(self),
+            name           = type(self).get_short_name(self, namespace=False),
         )
 
         # extract hole data from faces with interior boundaries
@@ -1139,7 +1139,7 @@ class Mesh(Geometry):
 
     # --- paintable map methods
 
-    def get_paintable_maps(self) -> list[str]:
+    def get_map_names(self) -> list[str]:
         """Returns a list of paintable maps."""
         return [type(x)._raw_get_name(x) for x in self.get_map_attrs()]
 
@@ -1158,7 +1158,7 @@ class Mesh(Geometry):
         # cap filtered ids & values using vert count,
         # since Maya doesn't auto-clear stale map values...
         ids, values = map_attr.filter_array_values(
-            MAP_DEFAULT_VALUE, sparse=sparse, cap_count=type(self).get_num_vertices(self)
+            MAP_DEFAULT_VALUE, sparse=sparse, cap_count=type(self).get_vertex_count(self)
         )
         # remove default category as all maps has it
         categories = set(map_attr.get_categories())
@@ -1248,7 +1248,7 @@ class Mesh(Geometry):
         """Returns the values of a given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         values     = map_attr.get()
-        vert_count = type(self).get_num_vertices(self)
+        vert_count = type(self).get_vertex_count(self)
 
         # cap values using vert count
         # since Maya doesn't auto-clear stale map values...
@@ -1274,9 +1274,9 @@ class Mesh(Geometry):
 
         attr: Attribute = self.find_map_attr(map_attr, failfast=True)
         if isinstance(values, MapData):
-            vals = values.to_dense_array(type(self).get_num_vertices(self))
+            vals = values.to_dense_array(type(self).get_vertex_count(self))
         else:
-            vals = self.sanitize_map_values(values)
+            vals = self._fit_map_values(values)
         attr.set(vals)
 
     def duplicate_map(
@@ -1390,30 +1390,22 @@ class Mesh(Geometry):
 
         self.set_map_values(map_name, cur_map_vals)
 
-    def merge_maps(self, map_source: str, map_target: str):
-        raise NotImplementedError
-
-    def merge_maps_list(
-        self, map_merge_from_list: list[str], map_merge_to: str | None = None
-    ):
-        raise NotImplementedError
-
-    def sanitize_map_values(self, values: list[float] | float | None) -> list[float]:
-        """Returns a sanitized value list that matches vert count of this mesh.
+    def _fit_map_values(self, values: list[float] | float | None) -> list[float]:
+        """Returns a value list fitted to the vert count of this mesh.
 
         Args:
-            values: Values to sanitize.
+            values: Values to fit.
                 Value list: resize it to match vert count by pruning extras
                     or padding with 0s.
                 Single value: create a list of mesh vert size of that value.
 
         Returns:
-            sanitized values.
+            fitted values.
         """
         values = MAP_DEFAULT_VALUE if values is None else values
 
         # a single value
-        vert_count = type(self).get_num_vertices(self)
+        vert_count = type(self).get_vertex_count(self)
         if isinstance(values, Number):
             return [float(values)] * vert_count
 
@@ -1429,7 +1421,7 @@ class Mesh(Geometry):
             )
             return val_array.tolist()
 
-    def paint_map(self, map_name: Attribute | str) -> None:
+    def enter_paint_tool(self, map_name: Attribute | str) -> None:
         """Enable painting mode on the given map."""
         map_attr: Attribute = self.find_map_attr(map_name, failfast=True)
         self.set_attr_paintable(map_name)
@@ -1468,7 +1460,7 @@ class Mesh(Geometry):
 
     # --- data transfer
 
-    def transfer_component_tags(
+    def transfer_tags(
         self, tags: str | list[str], other: Mesh | str, **kwargs
     ) -> None:
         """Transfer component tags from this mesh to the other mesh: a
@@ -1499,7 +1491,7 @@ class Mesh(Geometry):
         and an edge tag too unless it holds both ends of an edge it does not
         hold. Where UVs overlap (stacked or mirrored shells) a component lands
         on one of the faces there, as above. One undo step
-        (``rig.Mesh.transfer_component_tags``).
+        (``rig.Mesh.transfer_tags``).
 
         Args:
             tags: One or more component tags to transfer.
@@ -1512,18 +1504,18 @@ class Mesh(Geometry):
         other     = Mesh(other)
         resampler = _resampler(self, other, kwargs.get("mode"))
 
-        with _undo_chunk("rig.Mesh.transfer_component_tags"):
+        with _undo_chunk("rig.Mesh.transfer_tags"):
             for t in tags if isinstance(tags, (list, tuple)) else [tags]:
-                if not other.has_component_tag(t):
-                    other.add_component_tag(t)
+                if not other.has_tag(t):
+                    other.add_tag(t)
 
-                data = self.get_component_tag_data(t)
+                data = self.get_tag_data(t)
 
                 new_data = []
                 if data.indices.size > 0:
                     new_data = _land_tag(resampler, self, other, data, **kwargs)
 
-                other.set_component_tag_contents(t, new_data)
+                other.set_tag_contents(t, new_data)
 
     def transfer_maps(self, maps: str | list[str], other: Mesh | str, **kwargs) -> None:
         """Transfer a mesh map from this mesh to the other mesh.
@@ -1558,7 +1550,7 @@ def _skincluster_of(mesh):
     when it has none of its own (``_skinclusters_of``): with several, the one
     nearest the shape, the first ``get_deformers`` lists (normally the last
     one applied). ``Mesh.apply_skin_data``, ``Mesh.bake_deformation`` and
-    ``SkinCluster.copy_skincluster`` (each source and each target) all take
+    ``SkinCluster.transfer_from_meshes`` (each source and each target) all take
     it from here."""
     skins = _skinclusters_of(mesh)
     return skins[0] if skins else None
@@ -1676,7 +1668,7 @@ def _resample_map(resampler, data, mode=None, method="bilinear"):
 def _land_tag(resampler, src, dst, data, mode=None, method="bilinear"):
     """The contents the tag `data` (a cgmath GeomSubsetData of the mesh `src`, the
     resampler's source) has on the mesh `dst` (its destination), by where they land
-    in `mode` (see ``Mesh.transfer_component_tags``): a GeomSubsetData, or for an
+    in `mode` (see ``Mesh.transfer_tags``): a GeomSubsetData, or for an
     edge tag the edge strings ``polyListComponentConversion`` gives.
 
     Face and edge ids are Maya's: cgmath's ``MeshData`` numbers its edges its own
@@ -3587,13 +3579,16 @@ class ColorSet:
         RGB   = OpenMaya.MFnMesh.kRGB
         RGBA  = OpenMaya.MFnMesh.kRGBA
 
-    # the members before the per-object rule (user decision 2026-10-16): a miss,
-    # or an assignment, names the method now (`_old_handle_name`)
+    # the members before the per-object rule (user decision 2026-10-16) and the
+    # method the names review retired (user decision 2026-10-30): a miss, or an
+    # assignment, names the method now (`_old_handle_name`)
     _OLD_NAMES = {
         "name":           "cset.name is now cset.get_name()",
         "mesh":           "cset.mesh is now cset.get_mesh()",
         "representation": "cset.representation is now cset.get_representation()",
         "data":           "cset.data is now cset.get_data() / cset.set_data(colours)",
+        # the method the names review retired
+        "as_current_color_set": "cset.as_current_color_set is now cset.as_current()",
     }
 
     def __init__(self, mesh: Mesh, name: str):
@@ -3649,13 +3644,13 @@ class ColorSet:
         face-vertex. The current colour set is unchanged."""
         mesh = self._mesh
         data = np.asarray(data)
-        if data.shape[0] != type(mesh).get_num_vertices(mesh):
-            raise RuntimeError(f"shape of data is not ({type(mesh).get_num_vertices(mesh)}, 4): !")
+        if data.shape[0] != type(mesh).get_vertex_count(mesh):
+            raise RuntimeError(f"shape of data is not ({type(mesh).get_vertex_count(mesh)}, 4): !")
         rep = self.get_representation().value  # raises for a colour set that is gone
         _ColorSetDataCommand(mesh, self._name, rep, OpenMaya.MColorArray(data))
 
     @contextlib.contextmanager
-    def as_current_color_set(self) -> Generator[None, None, None]:
+    def as_current(self) -> Generator[None, None, None]:
         """Context manager that sets the current color set to this one"""
         if not self.is_valid():
             raise RuntimeError(

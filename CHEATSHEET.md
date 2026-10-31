@@ -58,7 +58,7 @@ for the node classes and their typed methods.
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `ShadingEngine.repair` / `tidy`, the network verbs |
 | 37 | [Shader conversion](#37-shader-conversion) | `mat.astype(Phong)` (in place), `Material(name).astype`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, other objects of the old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it, a container's member add |
-| 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_num_keys` / `evaluate` |
+| 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate` |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 
 ---
@@ -514,9 +514,9 @@ print(total >> None)                         # 11.0
 Plug introspection you will reach for:
 
 ```python
-print(a.tx.get_alias(), a.tx.get_data_type(), a.t.get_num_children())  # translateX doubleLinear 3
-print(a.wm.is_multi(), a.wm.get_data_type())                           # True matrix
-print(str(a.tx), a.tx.get_full_name(), repr(a.tx.get_node()))          # a.translateX a.translateX Transform("a")
+print(a.tx.get_alias(), a.tx.get_data_type(), a.t.get_child_count())  # translateX doubleLinear 3
+print(a.wm.is_multi(), a.wm.get_data_type())                          # True matrix
+print(str(a.tx), a.tx.get_full_name(), repr(a.tx.get_node()))         # a.translateX a.translateX Transform("a")
 ```
 
 A plug has no properties: every member is a method, under the rule above
@@ -524,8 +524,9 @@ A plug has no properties: every member is a method, under the rule above
 the method; with brackets, the method). A predicate named without brackets
 has no truth value: `if a.tx.is_locked:` raises `TypeError` (`is_locked is a
 method: call it (is_locked())`), where it would always pass, and so does a
-comparison (`a.tx.is_locked == False`). Up to v2.0.0a5 these were
-properties:
+comparison (`a.tx.is_locked == False`). Up to v2.0.0a5 the rows without
+brackets were properties, and up to v2.0.0a9 the rows with brackets were
+methods of that name:
 
 | Was | Now |
 |---|---|
@@ -536,11 +537,17 @@ properties:
 | `plug.attribute_type` / `plug.data_type` / `plug.enums` | `plug.get_attribute_type()` / `plug.get_data_type()` / `plug.get_enums()` |
 | `plug.default_value`, `= v` | `plug.get_default_value()`, `plug.set_default_value(v)` |
 | `plug.fn_set` / `plug.mobject` | `plug.get_fn_set()` / `plug.get_mobject()` |
-| `plug.num_children` / `plug.num_elements` | `plug.get_num_children()` / `plug.get_num_elements()` |
+| `plug.num_children` / `plug.num_elements` | `plug.get_child_count()` / `plug.get_element_count()` |
 | `plug.is_locked`, `plug.is_locked = b` | `plug.is_locked()`, `plug.lock()` / `plug.unlock()` |
 | `plug.is_keyable`, `= b` / `plug.is_channel_box`, `= b` | `plug.is_keyable()`, `plug.set_keyable(b)` / `plug.is_channel_box()`, `plug.set_channel_box(b)` |
 | `plug.is_dynamic` / `is_connected` / `is_free_to_change` / `is_typed` / `is_multi` | the same names, called: `plug.is_multi()` |
 | `multi.next_index` | `multi.get_next_available_index()` |
+| `plug.get_num_children()` | `plug.get_child_count()` |
+| `plug.get_num_elements()` | `plug.get_element_count()` |
+| `plug.logical_index()` | `plug.get_logical_index()` |
+| `plug.element_by_logical_index(i)` | `plug.get_element(i)` |
+| `plug.element_by_physical_index(i)` | `plug.get_element(i, physical=True)` |
+| `plug.delete_logical_index(i)` | `plug.delete_element(i)` |
 
 An old spelling raises `AttributeError` naming the new one (`'a.translateX'
 has no child or sibling attribute 'node'; plug.node is now
@@ -565,25 +572,77 @@ Maya attribute of that name if it has one, else the method). `str(node)` is
 its name, with no check. A bare predicate has no truth value (`if
 ctl.is_locked:` and `ctl.is_valid == True` raise `TypeError`), and
 `node.namespace = "ns"` is the `=
-of a Maya attr `namespace` like any other name. Up to v2.0.0a5 these were
-properties:
+of a Maya attr `namespace` like any other name. Up to v2.0.0a5 the rows
+without brackets were properties, and up to v2.0.0a9 the rows with brackets
+were methods of that name:
 
 | Was | Now |
 |---|---|
 | `node.name` | `str(node)` or `node.get_name()` |
-| `node.long_name` / `short_name` / `clean_name` | `node.get_long_name()` / `get_short_name()` / `get_clean_name()` |
+| `node.long_name` / `short_name` / `clean_name` | `node.get_long_name()` / `get_short_name()` / `get_short_name(namespace=False)` |
 | `node.uuid` / `node.node_type` | `node.get_uuid()` / `node.get_node_type()` |
 | `node.namespace`, `node.namespace = ns` | `node.get_namespace()`, `node.set_namespace(ns)` |
 | `node.mobject` / `fn_set` / `mdagpath` | `node.get_mobject()` / `get_fn_set()` / `get_mdagpath()` |
 | `node.is_valid` / `is_shape` / `is_default` | the same names, called: `node.is_valid()` (and the new `node.is_locked()`) |
-| `geo.local_shape_attr` / `world_shape_attr` / `injection_node` / `component_tags` | `geo.get_local_shape_attr()` / `get_world_shape_attr()` / `get_injection_node()` / `get_component_tags()` |
-| `mesh.num_vertices` / `num_polygons` / `num_weight_points` / `uv_sets` / `current_uv_set` / `paintable_maps` | `mesh.get_num_vertices()` / ... (`get_` before each) |
-| `curve.num_cvs` / `num_weight_points` | `curve.get_num_cvs()` / `get_num_weight_points()` |
-| `material.engine`, `blendShape.num_targets`, `animCurve.num_keys` | `material.get_engine()`, `get_num_targets()`, `get_num_keys()` |
+| `geo.local_shape_attr` / `world_shape_attr` / `injection_node` / `component_tags` | `geo.get_output_attr()` / `get_output_attr(world_space=True)` / `get_injection_node()` / `get_tag_names()` |
+| `mesh.num_vertices` / `num_polygons` / `num_weight_points` / `uv_sets` / `current_uv_set` / `paintable_maps` | `mesh.get_vertex_count()` / `get_face_count()` / `get_weight_point_count()` / `get_uv_sets()` / `get_current_uv_set()` / `get_map_names()` |
+| `curve.num_cvs` / `num_weight_points` | `curve.get_cv_count()` / `get_weight_point_count()` |
+| `material.engine`, `blendShape.num_targets`, `animCurve.num_keys` | `material.get_engine()`, `get_target_count()`, `get_key_count()` |
 | `ref.file_path` / `ref.file_path_with_copy_number` | `ref.get_file_path()` / `ref.get_file_path(copy_number=True)` |
+| `node.ensure_valid()` | `node.is_valid()`, which answers False where this raised |
+| `node.get_clean_name()` | `node.get_short_name(namespace=False)` |
+| `dg_node.get_clean_name(name)` | `dg_node.get_short_name(name, namespace=False)` |
+| `DisplayLayer.for_node(node)`, `for_node(name)` | `DisplayLayer.of(node)`, a list: `[layer]` or `[]`, never None; a node, not a name: `DisplayLayer.of(Node(name))` |
+| `animCurve.get_num_keys()` | `animCurve.get_key_count()` |
+| `follicle.set_uv_values(uv)` | `follicle.set_uv(uv)` |
+| `geo.get_local_shape_attr()` | `geo.get_output_attr()` |
+| `geo.get_world_shape_attr()` | `geo.get_output_attr(world_space=True)` |
+| `geo.add_component_tag(key)` | `geo.add_tag(key)` |
+| `geo.remove_component_tag(tag)` | `geo.delete_tag(tag)` |
+| `geo.rename_component_tag(tag, new_key)` | `geo.rename_tag(tag, new_key)` |
+| `geo.set_component_tag_contents(tag, contents)` | `geo.set_tag_contents(tag, contents)` |
+| `geo.select_component_tag_contents(key)` | `geo.select_tag_contents(key)` |
+| `geo.get_component_tags()` | `geo.get_tag_names()` |
+| `geo.has_component_tag(tag)` | `geo.has_tag(tag)` |
+| `geo.get_component_tag_index(key)` | `geo.get_tag_index(key)` |
+| `geo.get_component_tag_name(i)` | `geo.get_tag_name(i)` |
+| `geo.component_tag_expression_subset_state(expr)` | `geo.get_tag_subset_state(expr)` |
+| `geo.get_component_tag_history()` | `geo.get_tag_history()` |
+| `geo.get_component_tag_category(tag)` | `geo.get_tag_category(tag)` |
+| `geo.set_component_tag_category(tag, category)` | `geo.set_tag_category(tag, category)` |
+| `geo.get_component_tag_contents(tag)` | `geo.get_tag_contents(tag)` |
+| `geo.get_component_tag_indices(tag)` | `geo.get_tag_component_indices(tag)` |
+| `geo.is_component_tag_empty(tag)` | `geo.is_tag_empty(tag)` |
+| `geo.get_component_tag_data(tag)` | `geo.get_tag_data(tag)` |
+| `geo.serialize_component_tags()` | `geo.serialize_tags()` |
+| `geo.get_num_weight_points()` | `geo.get_weight_point_count()` |
+| `mesh.transfer_component_tags(tags, other)` | `mesh.transfer_tags(tags, other)` |
+| `mesh.get_num_vertices()` | `mesh.get_vertex_count()` |
+| `mesh.get_num_polygons()` | `mesh.get_face_count()` |
+| `mesh.get_per_face_vertex_normals()` | `mesh.get_face_vertex_normals()` |
+| `mesh.get_paintable_maps()` | `mesh.get_map_names()` |
+| `mesh.paint_map(map_name)` | `mesh.enter_paint_tool(map_name)` |
+| `mesh.sanitize_map_values(values)` | `mesh.set_map_values(map_attr, values)` fits them to the vertex count |
+| `mesh.merge_maps(...)` | gone: a stub, never implemented |
+| `mesh.merge_maps_list(...)` | gone: a stub, never implemented |
+| `curve.get_num_cvs()` | `curve.get_cv_count()` |
+| `joint.convert_orients_to_rotation()` | `joint.orients_to_rotations()` |
+| `joint.convert_rotation_to_orients()` | `joint.rotations_to_orients()` |
+| `joint.hierarchy_to_rotations()` | `joint.orients_to_rotations(hierarchy=True)` |
+| `joint.hierarchy_to_orients()` | `joint.rotations_to_orients(hierarchy=True)` |
+| `joint.orient_joint(aim_axis, up_axis, root_joint)` | `joint.orient(aim_axis, up_axis, root_joint=root_joint)` |
+| `joint.orient_chain(aim_axis, up_axis)` | `joint.orient(aim_axis, up_axis, hierarchy=True)` |
+| `blendShape.target_data_attrs(index)` | `blendShape.get_target_data_attrs(index)` |
+| `blendShape.get_num_targets()` | `blendShape.get_target_count()` |
+| `SkinCluster.copy_skincluster(source_meshes, target_vertices)` | `SkinCluster.transfer_from_meshes(source_meshes, target_vertices)` |
+| `skin.connect_bind_pre_matrices(search_func)` | `skin.connect_bind_pre_matrix(search_func)` |
+| `transform.set_xfrom_attrs_locked(locked)` | `transform.set_xform_attrs_locked(locked)` |
 
 An old spelling raises naming the new one, unless the node has a Maya attr of
-that name (an `aiAOV`'s `name`, a rigger's `uuid`): then it is that plug.
+that name (an `aiAOV`'s `name`, a rigger's `uuid`): then it is that plug. The
+hint comes on a node (`node.old()`); a method called through its class
+(`Mesh.old(mesh)`) and the `dg_node` function above raise the plain
+`AttributeError` of a name they lack.
 
 ```python
 try:
@@ -604,7 +663,8 @@ you change the object: keys (`keys.values`, read-only arrays), a `Tag`
 (`Float("w").kargs`; the shared `lock` / `unlock` / `hide` / `unhide` keep a
 read-only one), an error (`err.door`, read once with the message). The
 process-wide options are read on `ContainerOptions`, which is read-only, and
-set with `set_options` (section 12). Up to v2.0.0a5:
+set with `set_options` (section 12). Up to v2.0.0a5, and for the last two
+rows up to v2.0.0a9:
 
 | Was | Now |
 |---|---|
@@ -616,6 +676,8 @@ set with `set_options` (section 12). Up to v2.0.0a5:
 | `ContainerOptions.flag = x` | `rig.set_options(flag=x)` |
 | `err.uuid`, `err.node_class` (`NodeNotFoundError`) | `err.by_uuid`; the class is private |
 | `sg.assign(members)` | `members << sg` (or `<< red`, the material): `assign` raises, naming it |
+| `cset.as_current_color_set()` | `cset.as_current()` |
+| `keys.num_keys` | `keys.key_count` |
 
 An old spelling raises naming the new one here too (`faces.count`: `'Components'
 object has no attribute 'count'; c.count is now c.get_count()`). The one
@@ -896,7 +958,7 @@ src << Color("tint") << [0.1, 0.2, 0.3]
 
 print(repr(src.blend >> dst),       dst.blend >> None)      # Plug("dst.blend") 0.0
 print(repr(src.blend >> "blend2"),  src.blend2 >> None)     # Plug("src.blend2") 0.25
-print(repr(src.tint >> "dst.tint"), dst.tint.get_num_children())  # Plug("dst.tint") 3
+print(repr(src.tint >> "dst.tint"), dst.tint.get_child_count())  # Plug("dst.tint") 3
 try:
     src.blend >> "tint"
 except TypeError as err:
@@ -3022,7 +3084,7 @@ print(sph >> Tag("cap"))                        # [0 1]
 Tag("cap").set(sph.vtx[:8])                     # and back
 ```
 
-A name follows Maya's rule (the one `add_component_tag` checks): at least
+A name follows Maya's rule (the one `add_tag` checks): at least
 two characters, letters, digits and `_`, starting with a letter or `_`,
 with single `.` or `:` between characters. A name Maya stores otherwise is
 the tag Maya stores: the ends trimmed, a space inside made `_`.
@@ -3535,7 +3597,7 @@ Edit menu. How many steps a statement makes depends on what it runs. A
 | `plug << AnimCurve(...)`, a compound, a `List` broadcast or pairs of keys, a per-channel list holding keys (section 39) | one, named `rig.animcurve`: the new curves, their keys and their connects; **none** when every curve holds those keys already. `AnimCurveTL.create(keys)` is one `rig.create`, a `define` that makes or updates a curve one `rig.define`, `curve.set_keys(...)` one `rig.AnimCurve.set_keys` |
 | `Mesh.create`, `NurbsCurve.create`, `NurbsSurface.create` (with `transform=` too: the shape goes under the transform in that step), `SkinCluster.create`, `SkinCluster.set_weights(skin_data)` | one, named `rig.Mesh.create`, `rig.NurbsCurve.create`, `rig.NurbsSurface.create`, `rig.SkinCluster.create`, `rig.SkinCluster.set_weights` |
 | a load of a cgmath file: `Mesh.load(...)` (creates) and `Mesh('x').load(...)` (updates), the same for `NurbsCurve`, `NurbsSurface`, `SkinCluster`, `BlendShape`; `Joint.load_hierarchy(...)` | one, named `rig.Mesh.load`, `rig.NurbsCurve.load`, `rig.NurbsSurface.load`, `rig.SkinCluster.load`, `rig.BlendShape.load`, `rig.Joint.load_hierarchy` (`rig.Transform.load_hierarchy`); a `save` is a read: **none** |
-| the transfers: `Mesh.transfer_maps`, `Mesh.transfer_component_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.copy_skincluster` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.copy_skincluster` |
+| the transfers: `Mesh.transfer_maps`, `Mesh.transfer_tags`, `SkinCluster.transfer_to_mesh`, `SkinCluster.transfer_from_meshes` | one, named after the method: `rig.Mesh.transfer_maps` ... `rig.SkinCluster.transfer_from_meshes` |
 | an API edit: `Mesh.set_points`, the UV and colour set edits, `SkinCluster.set_weights(array)` | one each, through rig's plug-in command `rigUndoableAPICommand`; [`nodetypes` section 21](nodetypes/CHEATSHEET.md#21-plugins--load_plugin-and-undo) puts your own API edit through it |
 
 `rig.undo_chunk` makes any run of statements one named step:
@@ -3843,7 +3905,7 @@ print(keys)                                              # AnimCurve([7.0, 8.0],
 ctrls[1].tx << keys                                      # copies the animation
 curve = AnimCurve.of(ctrls[1].tx)[0]
 curve.set_keys([0, 3], times=[0, 10])
-print(curve.get_num_keys(), curve.evaluate([0, 5, 10]))  # 2 [0.  1.5 3. ]
+print(curve.get_key_count(), curve.evaluate([0, 5, 10]))  # 2 [0.  1.5 3. ]
 ```
 
 **Refused, with nothing written:**

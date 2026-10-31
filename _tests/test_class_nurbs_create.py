@@ -196,7 +196,7 @@ class TestNurbsCurveCreatePoints(_CurveCreateCase):
         self.assertEqual(state["form"], OPEN)
         self.assertEqual(state["knots"], (0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 3.0))
         self.assertEqual(state["cvs"], _rows(POINTS))
-        self.assertEqual(curve.get_num_cvs(), 6)
+        self.assertEqual(curve.get_cv_count(), 6)
         self.assertEqual(state, curve_state(cmds.curve(point=POINTS)))
 
     def test_each_degree_matches_cmds_curve(self):
@@ -412,8 +412,8 @@ class TestNurbsCurveCreateBSpline(_CurveCreateCase):
                 self.assertEqual(state["form"], PERIODIC)
                 self.assertEqual(state["cvs"], _rows(ring + ring[:degree]))
                 self.assertEqual(state["knots"], tuple(float(k) for k in range(1 - degree, 8 + degree)))
-                self.assertEqual(curve.get_num_cvs(), 8 + degree)
-                self.assertEqual(curve.get_num_weight_points(), 8)
+                self.assertEqual(curve.get_cv_count(), 8 + degree)
+                self.assertEqual(curve.get_weight_point_count(), 8)
 
     def test_periodic_data_rebuilds_a_maya_circle(self):
         circle = cmds.circle(sections=8, degree=3, constructionHistory=False)[0]
@@ -687,7 +687,7 @@ class TestNurbsCurveCreateUndo(_CurveCreateCase):
             cmds.redo()
             self.assertTrue(handle.isValid())
             self.assertEqual(cmds.ls("cShape", uuid=True)[0], uuid)
-            self.assertEqual(curve.get_num_cvs(), 6)
+            self.assertEqual(curve.get_cv_count(), 6)
             self.assertEqual([tuple(p) for p in curve.get_points(world_space=False)], points)
             self.assertEqual(str(curve), "cShape")
 

@@ -1,5 +1,6 @@
 import logging
 import os
+from unittest import mock
 
 import maya.cmds as cmds
 import numpy as np
@@ -399,6 +400,16 @@ class TestMeshMaps(MayaTestCase):
             negative_z_mirror_values, self._mirror_negative_dir_z_map_values
         )
 
+    def test_enter_paint_tool_selects_the_mesh_and_names_the_map(self):
+        test_mesh = self.open_scene_and_get_test_mesh(self._scene_test_object_name)
+        test_mesh.add_map(self._map_01_name)
+        with mock.patch.object(mesh_api, "_mel_eval") as mel:
+            test_mesh.enter_paint_tool(self._map_01_name)
+        self.assertEqual(cmds.ls(selection=True, long=True), [test_mesh.get_long_name()])
+        self.assertIn(
+            f'"artAttrCtx", "mesh.{test_mesh.get_long_name()}.{self._map_01_name}"', mel.call_args.args[0]
+        )
+
     def test_add_map_leaves_the_callers_category_list_alone(self):
         """add_map used to append PaintableMap to the list it was given."""
         test_mesh = self.open_scene_and_get_test_mesh(self._scene_test_object_name)
@@ -427,8 +438,8 @@ class TestMeshMapTransfer(MayaTestCase):
 
     def test_transfer_maps_onto_the_same_plane_keeps_every_value(self):
         src, dst = self._plane("src", 4), self._plane("dst", 4)
-        ramp       = np.linspace(0.0, 1.0, src.get_num_vertices())
-        ramp[::3]  = 0.0
+        ramp      = np.linspace(0.0, 1.0, src.get_vertex_count())
+        ramp[::3] = 0.0
         src.add_map("XFER_RAMP", category="xfer", values=ramp.tolist())
         src.add_map("XFER_PART", values=[0.0] * 10 + [0.5, 0.25])  # the rest padded with 0
         src.add_map("XFER_ZERO", values=0.0)
@@ -462,23 +473,23 @@ class TestMeshMapTransfer(MayaTestCase):
         self.assertFalse(any(cmds.makePaintable("mesh", "XFER_UNPAINTED", query=True) or []))
 
     def _transfer_all(self, src, dst, **kwargs):
-        """transfer_maps, transfer_component_tags and SkinCluster.transfer_to_mesh
+        """transfer_maps, transfer_tags and SkinCluster.transfer_to_mesh
         from src onto dst: the map values, the tag contents, the skin's influences."""
         from rig.nodetypes import Joint, SkinCluster
 
         if not src.has_attr("XFER_UV"):
-            src.add_map("XFER_UV", values=np.linspace(0.0, 1.0, src.get_num_vertices()).tolist())
-            src.add_component_tag("xfer_uv")
-            src.set_component_tag_contents("xfer_uv", [0, 1, 5], "v")
+            src.add_map("XFER_UV", values=np.linspace(0.0, 1.0, src.get_vertex_count()).tolist())
+            src.add_tag("xfer_uv")
+            src.set_tag_contents("xfer_uv", [0, 1, 5], "v")
             skin = SkinCluster.create(src, Joint.create(name="xfer_uv_j"))
         else:
             skin = src.get_deformers(node_type="skinCluster")[0]
         src.transfer_maps("XFER_UV", dst, **kwargs)
-        src.transfer_component_tags("xfer_uv", dst, **kwargs)
+        src.transfer_tags("xfer_uv", dst, **kwargs)
         target = skin.transfer_to_mesh(dst, **kwargs)
         return (
             dst.get_map_values("XFER_UV"),
-            dst.get_component_tag_indices("xfer_uv").tolist(),
+            dst.get_tag_component_indices("xfer_uv").tolist(),
             [x.get_name() for x in target.get_influence_objects()],
         )
 
@@ -532,17 +543,17 @@ class TestMeshMapTransfer(MayaTestCase):
         self.assertEqual(cmds.polyEvaluate(bare.get_name(), uvcoord=True), 0)
         self._transfer_all(src, bare)
         skin = src.get_deformers(node_type="skinCluster")[0]
-        bare.add_component_tag("xfer_face")
-        bare.set_component_tag_contents("xfer_face", [5], "f")
-        src.add_component_tag("xfer_face")
-        src.set_component_tag_contents("xfer_face", [5], "f")
+        bare.add_tag("xfer_face")
+        bare.set_tag_contents("xfer_face", [5], "f")
+        src.add_tag("xfer_face")
+        src.set_tag_contents("xfer_face", [5], "f")
         uv = {"mode": ResampleMode.UV}
         for label, call in (
             ("map onto", lambda: src.transfer_maps("XFER_UV", bare, **uv)),
             ("map from", lambda: bare.transfer_maps("XFER_UV", src, **uv)),
-            ("vertex tag onto", lambda: src.transfer_component_tags("xfer_uv", bare, **uv)),
-            ("face tag onto", lambda: src.transfer_component_tags("xfer_face", bare, **uv)),
-            ("face tag from", lambda: bare.transfer_component_tags("xfer_face", src, **uv)),
+            ("vertex tag onto", lambda: src.transfer_tags("xfer_uv", bare, **uv)),
+            ("face tag onto", lambda: src.transfer_tags("xfer_face", bare, **uv)),
+            ("face tag from", lambda: bare.transfer_tags("xfer_face", src, **uv)),
             ("skin onto", lambda: skin.transfer_to_mesh(bare, **uv)),
         ):
             with self.subTest(label):
@@ -551,7 +562,7 @@ class TestMeshMapTransfer(MayaTestCase):
 
 
 class TestMeshTransferUndo(UndoWalk, MayaTestCase):
-    """transfer_maps and transfer_component_tags are ONE undo step each
+    """transfer_maps and transfer_tags are ONE undo step each
     (runs/r5/XFER/review/probe_undo.py: onto an existing map, transfer_maps was four
     unnamed steps and one undo left the map recreated at 0.0)."""
 
@@ -592,22 +603,22 @@ class TestMeshTransferUndo(UndoWalk, MayaTestCase):
 
         self.one_step("rig.Mesh.transfer_maps", lambda: self.src.transfer_maps(["XFER_A", "XFER_B"], self.dst), read)
 
-    def test_transfer_component_tags_is_one_step(self):
-        self.src.add_component_tag("xfer_new")
-        self.src.set_component_tag_contents("xfer_new", [0, 1, 2], "v")
-        self.src.add_component_tag("xfer_old")
-        self.src.set_component_tag_contents("xfer_old", [7], "v")
-        self.dst.add_component_tag("xfer_old")
-        self.dst.set_component_tag_contents("xfer_old", [3, 4], "v")
+    def test_transfer_tags_is_one_step(self):
+        self.src.add_tag("xfer_new")
+        self.src.set_tag_contents("xfer_new", [0, 1, 2], "v")
+        self.src.add_tag("xfer_old")
+        self.src.set_tag_contents("xfer_old", [7], "v")
+        self.dst.add_tag("xfer_old")
+        self.dst.set_tag_contents("xfer_old", [3, 4], "v")
 
         def read():
             return [
-                self.dst.get_component_tag_indices(t).tolist() if self.dst.has_component_tag(t) else None
+                self.dst.get_tag_component_indices(t).tolist() if self.dst.has_tag(t) else None
                 for t in ("xfer_new", "xfer_old")
             ]
 
         self.one_step(
-            "rig.Mesh.transfer_component_tags",
-            lambda: self.src.transfer_component_tags(["xfer_new", "xfer_old"], self.dst),
+            "rig.Mesh.transfer_tags",
+            lambda: self.src.transfer_tags(["xfer_new", "xfer_old"], self.dst),
             read,
         )

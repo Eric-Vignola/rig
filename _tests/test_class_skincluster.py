@@ -107,7 +107,7 @@ class TestSkinCluster(MayaTestCase):
         skin.set_weights(org_data)
         data = skin.serialize()
         self.assertEqual(org_data, data)
-        self.assertFalse(extra_joint.get_clean_name() in data.influences)
+        self.assertFalse(extra_joint.get_short_name(namespace=False) in data.influences)
 
         # test apply skin data to a skincluster with more influences (additive)
         skin.delete()
@@ -117,7 +117,7 @@ class TestSkinCluster(MayaTestCase):
         skin.set_weights(org_data, additive=True)
         data = skin.serialize()
         self.assertNotEqual(org_data, data)
-        self.assertTrue(extra_joint.get_clean_name() in data.influences)
+        self.assertTrue(extra_joint.get_short_name(namespace=False) in data.influences)
 
     def test_create_from_skin_data(self):
         # rebuild a skincluster directly from a SkinData object: influences are
@@ -129,19 +129,19 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(skin.get_influence_objects(), [self.joint1, self.joint2])
         self.assertEqual(skin.serialize(), data)
 
-    # --- copy_skincluster
+    # --- transfer_from_meshes
 
     def _skin_of(self, node):
         return node.get_shape().get_deformers(node_type="skinCluster")[0]
 
-    def test_copy_skincluster_adds_the_influences_the_target_lacks(self):
+    def test_transfer_from_meshes_adds_the_influences_the_target_lacks(self):
         """The target's skin gains the source joints; the vertices not copied keep
         their weights."""
         extra  = Joint.create(name="extra_joint")
         target = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
         SkinCluster.create(target, extra)
 
-        SkinCluster.copy_skincluster(str(self.cube), [f"{target}.vtx[0:3]"])
+        SkinCluster.transfer_from_meshes(str(self.cube), [f"{target}.vtx[0:3]"])
 
         skin = self._skin_of(target)
         self.assertEqual(skin.get_influence_objects(), [extra, self.joint1, self.joint2])
@@ -149,16 +149,16 @@ class TestSkinCluster(MayaTestCase):
             skin.get_weights(), [[0, 1, 0]] * 4 + [[1, 0, 0]] * 4, rtol=0, atol=1e-12
         )
 
-    def test_copy_skincluster_onto_an_unskinned_mesh(self):
+    def test_transfer_from_meshes_onto_an_unskinned_mesh(self):
         target = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
 
-        SkinCluster.copy_skincluster([str(self.cube)], [f"{target}.vtx[0:7]"])
+        SkinCluster.transfer_from_meshes([str(self.cube)], [f"{target}.vtx[0:7]"])
 
         skin = self._skin_of(target)
         self.assertEqual(skin.get_influence_objects(), [self.joint1, self.joint2])
         np.testing.assert_allclose(skin.get_weights(), self.skin.get_weights(), rtol=0, atol=1e-12)
 
-    def test_copy_skincluster_onto_a_mesh_by_name_copies_every_vertex(self):
+    def test_transfer_from_meshes_onto_a_mesh_by_name_copies_every_vertex(self):
         """A mesh name without components stands for every vertex (not the first ten)."""
         source = Node(cmds.polySphere(name="source", ch=False)[0])
         target = Node(cmds.polySphere(name="target", ch=False)[0])
@@ -167,7 +167,7 @@ class TestSkinCluster(MayaTestCase):
         source_skin.set_weights(weights / weights.sum(axis=1, keepdims=True))
         SkinCluster.create(target, [self.joint1, self.joint2])
 
-        SkinCluster.copy_skincluster(str(source), [str(target)])
+        SkinCluster.transfer_from_meshes(str(source), [str(target)])
 
         np.testing.assert_allclose(
             self._skin_of(target).get_weights(), source_skin.get_weights(), rtol=0, atol=1e-12
@@ -182,24 +182,24 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(node.get_shape().get_deformers(node_type="skinCluster")[0], skin)
         return skin
 
-    def test_copy_skincluster_reads_the_source_skin_nearest_the_shape(self):
+    def test_transfer_from_meshes_reads_the_source_skin_nearest_the_shape(self):
         top    = Joint.create(name="top_joint")
         self._skin_on_top(self.cube, top, "top_skin")
         target = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
 
-        SkinCluster.copy_skincluster(str(self.cube), [f"{target}.vtx[0:7]"])
+        SkinCluster.transfer_from_meshes(str(self.cube), [f"{target}.vtx[0:7]"])
 
         skin = self._skin_of(target)
         self.assertEqual(skin.get_influence_objects(), [top])
         np.testing.assert_allclose(skin.get_weights(), np.ones((8, 1)), rtol=0, atol=1e-12)
 
-    def test_copy_skincluster_writes_the_target_skin_nearest_the_shape(self):
+    def test_transfer_from_meshes_writes_the_target_skin_nearest_the_shape(self):
         under, over = Joint.create(name="under_joint"), Joint.create(name="over_joint")
         target      = Node(cmds.polyCube(name="target", height=2, ch=False)[0])
         first       = SkinCluster.create(target, under)
         nearest     = self._skin_on_top(target, over, "nearest_skin")
 
-        SkinCluster.copy_skincluster(str(self.cube), [f"{target}.vtx[0:3]"])
+        SkinCluster.transfer_from_meshes(str(self.cube), [f"{target}.vtx[0:3]"])
 
         self.assertEqual(nearest.get_influence_objects(), [over, self.joint1, self.joint2])
         np.testing.assert_allclose(
@@ -252,14 +252,14 @@ class TestSkinCluster(MayaTestCase):
                 self._assert_own_skin(self.cube, self.skin)
                 self._assert_own_skin(driven, skin)
 
-    def test_copy_skincluster_onto_a_driven_mesh_keeps_the_drivers_skin(self):
+    def test_transfer_from_meshes_onto_a_driven_mesh_keeps_the_drivers_skin(self):
         source = Node(cmds.polyCube(name="source", height=2, ch=False)[0])
         SkinCluster.create(source, self.joint2)
         for how in ("blendShape", "wrap"):
             with self.subTest(how=how):
                 driven = self._driven(how)
 
-                SkinCluster.copy_skincluster(str(source), [str(driven)])
+                SkinCluster.transfer_from_meshes(str(source), [str(driven)])
 
                 self.assertTrue(cmds.objExists(self.skin.get_name()))
                 self._assert_own_skin(self.cube, self.skin)
@@ -379,18 +379,18 @@ class TestSkinCluster(MayaTestCase):
         self.assertEqual(skin.get_influence_objects(), [self.joint1, self.joint2])
         self.assertCountEqual(mesh.get_shape().get_deformers(node_type="skinCluster"), [skin, target_skin])
 
-    def test_copy_skincluster_reads_no_skin_from_a_blendshape_target(self):
+    def test_transfer_from_meshes_reads_no_skin_from_a_blendshape_target(self):
         mesh, _ = self._skinned_intermediate_target()
         other   = Node(cmds.polyCube(name="other", height=2, ch=False)[0])
 
         with self.assertRaisesRegex(RuntimeError, "No skinCluster found on"):
-            SkinCluster.copy_skincluster(str(mesh), [str(other)])
+            SkinCluster.transfer_from_meshes(str(mesh), [str(other)])
 
-    def test_copy_skincluster_needs_the_target_vertices(self):
+    def test_transfer_from_meshes_needs_the_target_vertices(self):
         """No default: None was a TypeError from sorted(None) (runs/r5/XFER/review/probe_skin.py)."""
         before = cmds.ls()
         with self.assertRaisesRegex(TypeError, "target_vertices"):
-            SkinCluster.copy_skincluster(str(self.cube))
+            SkinCluster.transfer_from_meshes(str(self.cube))
         self.assertEqual(cmds.ls(), before)
 
 
@@ -763,7 +763,7 @@ class TestSkinClusterUndo(UndoWalk, MayaTestCase):
         j = cmds.joint(name="j1")
         skin = SkinCluster.create(cube, [j])
         self.assertTrue(np.allclose(skin.get_weights(), 1.0))
-    # --- copy / transfer: one step each (runs\r5\XFER\review\probe_undo.py: copy_skincluster
+    # --- copy / transfer: one step each (runs\r5\XFER\review\probe_undo.py: transfer_from_meshes
     # onto an unskinned mesh was two rig steps and three findRelatedDeformer entries, and
     # one undo left the new skin bound to the first joint only)
 
@@ -789,20 +789,20 @@ class TestSkinClusterUndo(UndoWalk, MayaTestCase):
         target = cmds.polyCube(name="t", height=2, constructionHistory=False)[0]
         return skin, target
 
-    def test_copy_skincluster_onto_an_unskinned_mesh_is_one_step(self):
+    def test_transfer_from_meshes_onto_an_unskinned_mesh_is_one_step(self):
         _, target = self.source()
         self.one_step(
-            "rig.SkinCluster.copy_skincluster",
-            lambda: SkinCluster.copy_skincluster(self.cube, [f"{target}.vtx[0:7]"]),
+            "rig.SkinCluster.transfer_from_meshes",
+            lambda: SkinCluster.transfer_from_meshes(self.cube, [f"{target}.vtx[0:7]"]),
             meshes=["tShape"], skins=["tShape_skincluster"],
         )
 
-    def test_copy_skincluster_adding_influences_is_one_step(self):
+    def test_transfer_from_meshes_adding_influences_is_one_step(self):
         _, target = self.source()
         SkinCluster.create(target, [self.j3])
         self.one_step(
-            "rig.SkinCluster.copy_skincluster",
-            lambda: SkinCluster.copy_skincluster(self.cube, [f"{target}.vtx[0:3]"]),
+            "rig.SkinCluster.transfer_from_meshes",
+            lambda: SkinCluster.transfer_from_meshes(self.cube, [f"{target}.vtx[0:3]"]),
             meshes=["tShape"], skins=["t_skincluster"],
         )
 

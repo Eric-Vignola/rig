@@ -212,7 +212,7 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             bls.get_target_weight_attr(0)
             bls.get_target_data(0)
             bls.serialize()
-            self.assertEqual(bls.get_num_targets(), 2)
+            self.assertEqual(bls.get_target_count(), 2)
             self.assertEqual(list(bls.get_target_indices()), [0, 1])
 
         def follicles():
@@ -220,7 +220,7 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             ref   = cmds.spaceLocator(name="ref")[0]
             cmds.xform(ref, t=(0.1, 0, 0.2), ws=True)
             follicle = Follicle.create_on_mesh(plane, ref, name="fol")
-            follicle.set_uv_values([0.25, 0.75])
+            follicle.set_uv([0.25, 0.75])
 
         def skinclusters():
             j1   = Node.create("joint", name="j1")
@@ -231,7 +231,7 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
             cmds.select(clear=True)
             Node.create("joint", name="drv_j1")
             Node.create("joint", name="drv_j2")
-            skin.connect_bind_pre_matrices(lambda name: "drv_" + name)
+            skin.connect_bind_pre_matrix(lambda name: "drv_" + name)
 
         def choices():
             cmds.createNode("transform", name="src")
@@ -248,16 +248,16 @@ class TestNodetypesReadsThroughFindAttr(MayaTestCase):
         def component_tags():
             ball = Node(cmds.polySphere(name="ball", ch=False)[0])
             mesh = ball.get_children(type="mesh")[0]
-            mesh.add_component_tag("t1")
-            mesh.set_component_tag_contents("t1", [2, 3], category="v")
-            self.assertEqual(mesh.get_component_tags(), ["t1"])
-            self.assertTrue(mesh.has_component_tag(0))
-            self.assertEqual(mesh.get_component_tag_index("t1"), 0)
-            self.assertEqual(mesh.get_component_tag_name(0), "t1")
-            mesh.rename_component_tag("t1", "t2")
-            self.assertEqual(mesh.get_component_tags(), ["t2"])
-            mesh.remove_component_tag("t2")
-            self.assertEqual(mesh.get_component_tags(), [])
+            mesh.add_tag("t1")
+            mesh.set_tag_contents("t1", [2, 3], category="v")
+            self.assertEqual(mesh.get_tag_names(), ["t1"])
+            self.assertTrue(mesh.has_tag(0))
+            self.assertEqual(mesh.get_tag_index("t1"), 0)
+            self.assertEqual(mesh.get_tag_name(0), "t1")
+            mesh.rename_tag("t1", "t2")
+            self.assertEqual(mesh.get_tag_names(), ["t2"])
+            mesh.delete_tag("t2")
+            self.assertEqual(mesh.get_tag_names(), [])
 
         for label, func in (
             ("transforms", transforms),
@@ -334,7 +334,7 @@ class TestPackageTypedDottedSites(MayaTestCase):
 # or freed node's marked str
 _DG_KEYS  = ["_mobject", "_fn_set", "_objhandle", "_last_name", "_attr_dict"]
 _DAG_KEYS = ["_mdagpath", "_mobject", "_fn_set", "_objhandle", "_last_name", "_attr_dict"]
-_GEO_KEYS = ["_Geometry__local_shape_attr", "_Geometry__world_shape_attr"]
+_GEO_KEYS = ["_Geometry__local_output_attr", "_Geometry__world_output_attr"]
 
 
 def _base_module():
@@ -488,7 +488,7 @@ class TestPrivateProbeOnAFreedNode(MayaTestCase):
                 self.assertIs(vars(dup)["_objhandle"], vars(node)["_objhandle"])
                 self.assertFalse(dup.is_valid())
                 with self.assertRaisesRegex(RuntimeError, "already deleted!$"):
-                    node.ensure_valid()
+                    node._check_valid()
                 self.assertEqual(probe.mock_calls, [])
 
     def test_new_scene(self):
@@ -554,10 +554,10 @@ _HANDLE_SITES = frozenset(
         ("rig.nodetypes._base", "_construct_checked_type"),
         # the names of the node state the `=` sugar stores (M3)
         ("rig.nodetypes.dg_node", "<module>"),
-        # hot: `DGNode.ensure_valid`, the plug hash and node serial, the memo
+        # hot: `DGNode._check_valid`, the plug hash and node serial, the memo
         # identity and handles of a DG node, the cache hit of a typed node's
         # attribute lookup
-        ("rig.nodetypes.dg_node", "DGNode.ensure_valid"),
+        ("rig.nodetypes.dg_node", "DGNode._check_valid"),
         ("rig.nodetypes._base", "_node_serial"),
         ("rig.nodetypes._base", "_plug_hash"),
         ("rig._internal.memoize", "_named_dg_identity"),
@@ -581,8 +581,8 @@ _HANDLE_SITES = frozenset(
         # the plug shares its handle, compared by identity only
         ("rig._internal.list", "_private_plug"),
         # plug methods (user decision 2026-10-16, name clashes): the attr check
-        # of a public method's lookup on a node, and the inline ensure_valid
-        # rig's hot readers call instead of the public name on the node
+        # of a public method's lookup on a node, and the inline check rig's hot
+        # readers call
         ("rig.nodetypes._base", "_node_has_attr"),
         ("rig.nodetypes._base", "_PlugMethod.__get__"),
         ("rig.nodetypes.dg_node", "_ensure_valid"),
@@ -1083,7 +1083,7 @@ class TestMergeReviewFixes(MayaTestCase):
     def test_owner_propagation_of_typed_accessors(self):
         # the accessors of a node's plugs and attrs keep the node as their owner,
         # through the cast core and (M4) through the Node factory, which give the
-        # same typed node; a Plug's element_by_* result is a Plug (M4B, D29)
+        # same typed node; a Plug's get_element result is a Plug (M4B, D29)
         attribute_cls = _base_module().Attribute
         for factory in (_base._cast, Node):
             with self.subTest(factory=factory.__name__):
@@ -1100,11 +1100,11 @@ class TestMergeReviewFixes(MayaTestCase):
                 element = pma.input1D[0]
                 self.assertIs(type(element), Plug)
                 self.assertIs(element.get_node(), pma)
-                element = pma.input1D.element_by_physical_index(0)
+                element = pma.input1D.get_element(0, physical=True)
                 # M4B (D29): a Plug's element is a Plug
                 self.assertIs(type(element), Plug)
                 self.assertIs(element.get_node(), pma)
-                element = pma.find_attr("input1D").element_by_physical_index(0)
+                element = pma.find_attr("input1D").get_element(0, physical=True)
                 self.assertIs(type(element), attribute_cls)
                 self.assertIs(element.get_node(), pma)
                 # plugs are not cached (D30)
@@ -1887,8 +1887,8 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
                     lambda: parent[[2, 0]],
                     [(mplug.elementByLogicalIndex(i), cls) for i in (2, 0)],
                 ),
-                "element_by_logical_index(2)": (
-                    lambda: parent.element_by_logical_index(2),
+                "get_element(2)": (
+                    lambda: parent.get_element(2),
                     [(mplug.elementByLogicalIndex(2), cls)],
                 ),
             }
@@ -1897,8 +1897,8 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
             except RuntimeError:
                 physical = None  # no element yet, or component storage (controlPoints)
             if physical is not None:
-                cases["element_by_physical_index(0)"] = (
-                    lambda: parent.element_by_physical_index(0),
+                cases["get_element(0, physical=True)"] = (
+                    lambda: parent.get_element(0, physical=True),
                     [(physical, cls)],
                 )
             return cases
@@ -1981,12 +1981,12 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         for _ in range(50):
             cmds.createNode("multiplyDivide")  # reuse the freed memory
         ops = {
-            "[1]":                          lambda p: p[1],
-            "[0:2]":                        lambda p: p[0:2],
-            "child(0)":                     lambda p: p.child(0),
-            "element_by_logical_index(0)":  lambda p: p.element_by_logical_index(0),
-            "element_by_physical_index(0)": lambda p: p.element_by_physical_index(0),
-            "get_parent()":                 lambda p: p.get_parent(),
+            "[1]":                           lambda p: p[1],
+            "[0:2]":                         lambda p: p[0:2],
+            "child(0)":                      lambda p: p.child(0),
+            "get_element(0)":                lambda p: p.get_element(0),
+            "get_element(0, physical=True)": lambda p: p.get_element(0, physical=True),
+            "get_parent()":                  lambda p: p.get_parent(),
         }
         for label, parent in held.items():
             for op_label, op in ops.items():
@@ -2005,7 +2005,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         # a component handle's element by index is the flat storage, a Plug;
         # its element by coordinates stays the ComponentPlug element
         handle = Node("surf").cv
-        flat   = handle.element_by_logical_index(3)
+        flat   = handle.get_element(3)
         self.assertIs(type(handle), ComponentPlug)
         self.assertIs(type(flat), Plug)
         self.assertIs(flat.get_node(), handle.get_node())
@@ -2013,8 +2013,8 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
         self.assertIs(type(handle[1, 2]), ComponentPlug)
         self.assertIs(handle[1, 2].get_node(), handle.get_node())
         # a Plug's element by index is a Plug, a typed attr's an Attribute
-        self.assertIs(type(Node("pma").input1D.element_by_physical_index(0)), Plug)
-        self.assertIs(type(Node("pma").find_attr("input1D").element_by_physical_index(0)), Attribute)
+        self.assertIs(type(Node("pma").input1D.get_element(0, physical=True)), Plug)
+        self.assertIs(type(Node("pma").find_attr("input1D").get_element(0, physical=True)), Attribute)
 
     def test_plugs_are_never_cached(self):
         # D30: every lookup builds a new Plug; the child caches hold Attributes
@@ -2063,7 +2063,7 @@ class TestOwnerPropagatingConstruction(MayaTestCase):
             ("pma.input1D[[0, 2]]", lambda: multi[[0, 2]], 2),
             ("unowned[3]", lambda: unowned[3], 1),
             ("typed[3]", lambda: typed[3], 1),
-            ("element_by_logical_index", lambda: multi.element_by_logical_index(3), 1),
+            ("get_element", lambda: multi.get_element(3), 1),
             ("t[0]", lambda: compound[0], 1),
             ("t[:]", lambda: compound[:], 3),
             ("t.child(1) (cached child)", lambda: compound.child(1), 1),

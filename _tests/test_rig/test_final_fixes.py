@@ -384,7 +384,7 @@ class TestRemovalDetails(MayaTestCase):
     def test_a_layer_and_an_engine_refuse_the_raw_set_verbs(self):
         layer = Layer.define("L")
         sg    = Node("initialShadingGroup")
-        before = (cmds.sets("initialShadingGroup", query=True), DisplayLayer.for_node(self.cube))
+        before = (cmds.sets("initialShadingGroup", query=True), DisplayLayer.of(self.cube))
         rows = (
             (lambda: layer.add_members(self.cube), r"layer\.add_members is not rig's form: write cube << "),
             (lambda: layer.remove_members(self.cube), r"layer\.remove_members is not rig's form: write .*\.remove\(cube\)"),
@@ -397,7 +397,7 @@ class TestRemovalDetails(MayaTestCase):
                 with self.assertRaisesRegex(TypeError, pattern):
                     fn()
                 self.assertEqual(
-                    (cmds.sets("initialShadingGroup", query=True), DisplayLayer.for_node(self.cube)), before
+                    (cmds.sets("initialShadingGroup", query=True), DisplayLayer.of(self.cube)), before
                 )
         self.assertIsInstance(sg, ShadingEngine)
         # the rig forms, and a layer's own clear / delete
@@ -406,7 +406,7 @@ class TestRemovalDetails(MayaTestCase):
         self.assertNotIn(self.cube, layer)
         self.cube << layer
         layer.delete()
-        self.assertIsNone(DisplayLayer.for_node(self.cube))
+        self.assertEqual(DisplayLayer.of(self.cube), [])
         # a plain object set keeps them
         group = ObjectSet.define("group")
         group.add_members(self.cube)
@@ -510,13 +510,20 @@ class TestClassRouteMirrors(MayaTestCase):
                 self._assert_mirrors(cls)
 
     def test_a_patch_and_its_restore_are_mirrored(self):
-        original = DGNode.ensure_valid
-        with mock.patch.object(DGNode, "ensure_valid") as patched:
-            self.assertIs(Transform._raw_ensure_valid, patched)
+        # the guard hook is private: a plain class read, with no mirror to keep
+        original = DGNode._check_valid
+        self.assertNotIn("_check_valid", _base._MIRRORED)
+        with mock.patch.object(DGNode, "_check_valid") as patched:
+            self.assertIs(Transform._check_valid, patched)
             t = Node(cmds.createNode("transform", name="t"))
             t.get_fn_set()           # a hot reader runs the patched method
             self.assertTrue(patched.called)
-        self.assertIs(Transform._raw_ensure_valid, original)
+        self.assertIs(Transform._check_valid, original)
+        # a mirrored name patched on the base class: the inherited mirror follows
+        original = DGNode.get_uuid
+        with mock.patch.object(DGNode, "get_uuid") as patched:
+            self.assertIs(Transform._raw_get_uuid, patched)
+        self.assertIs(Transform._raw_get_uuid, original)
         # a subclass that inherits the member: the restore deletes its mirror
         with mock.patch.object(Transform, "get_uuid", return_value="uuid") as patched:
             self.assertIs(Transform._raw_get_uuid, patched)

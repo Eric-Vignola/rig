@@ -139,7 +139,7 @@ class BlendShape(Deformer):
 
     # --- attr helpers
 
-    def target_data_attrs(self, index: int) -> tuple[Attribute, Attribute, Attribute]:
+    def get_target_data_attrs(self, index: int) -> tuple[Attribute, Attribute, Attribute]:
         """Returns 2 attribute objects pointing to the 2 data attrs of a given target:
 
         .inputTarget[0].inputTargetGroup[x].inputTargetItem[6000].inputGeomTarget
@@ -157,10 +157,10 @@ class BlendShape(Deformer):
 
     # --- target operations
 
-    def get_num_targets(self) -> int:
+    def get_target_count(self) -> int:
         """Returns the number of targets"""
         weight = self.find_attr("weight")
-        return type(weight).get_num_elements(weight)
+        return type(weight).get_element_count(weight)
 
     def get_targets(self) -> list[str]:
         """Returns a list of targets in this node."""
@@ -179,7 +179,7 @@ class BlendShape(Deformer):
         """
         target_attr = self.find_alias(target_name, quiet=True)
         if target_attr is not None:
-            return target_attr.logical_index()
+            return target_attr.get_logical_index()
         if failfast:
             raise RuntimeError(f"Target {_name_of(self)}.{target_name} not found.")
         return -1
@@ -331,7 +331,7 @@ class BlendShape(Deformer):
         weight_attr = self.get_target_weight_attr(target)
         target_name = type(weight_attr).get_alias(weight_attr)
         # get target attributes
-        geom_attr, offset_attr, comp_attr = self.target_data_attrs(target_id)
+        geom_attr, offset_attr, comp_attr = self.get_target_data_attrs(target_id)
 
         # if a live target mesh is connected, compute target data from mesh data
         # (the blendshape offsets attr is empty when a live mesh is connected)
@@ -422,7 +422,7 @@ class BlendShape(Deformer):
         else:
             data.prune_offsets(tolerance=tolerance)
 
-        _, offset_attr, comp_attr = self.target_data_attrs(target_id)
+        _, offset_attr, comp_attr = self.get_target_data_attrs(target_id)
         offset_attr.set(len(data.offsets), *data.offsets.tolist(), type="pointArray")
 
         # convert indices to range strings

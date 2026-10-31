@@ -30,7 +30,7 @@ class Choice(DGNode):
             # the attr first, so the node is valid; a direct call on a deleted
             # or freed node raises the "already deleted!" `get()` raises, and
             # never reads its plug
-            type(self)._raw_ensure_valid(self)
+            type(self)._check_valid(self)
             sel_id = selector._mplug.asInt()
             # quiet=True: an unresolvable selection must degrade to the base
             # "Tdata" answer, not raise (this hook runs inside

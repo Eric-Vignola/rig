@@ -8,7 +8,7 @@ plug's own curve in place (the same UUID) and unchanged keys write nothing; a lo
 refuses, even with the keys its curve holds (D3 = b); one undo step ``rig.animcurve``; the
 statement returns its left-hand side. ``AnimCurve('x')`` refers to a curve, ``AnimCurveTL`` /
 ``TA`` / ``TU`` / ``TT`` are the typed classes (``create`` / ``define`` with keys), and
-``get_keys`` / ``set_keys`` / ``num_keys`` / ``evaluate`` / ``AnimCurve.of`` read and write
+``get_keys`` / ``set_keys`` / ``get_key_count`` / ``evaluate`` / ``AnimCurve.of`` read and write
 them.
 
 * `TestTheValue`: construction checks (shapes, times, options, refusals), the repr, pickling,
@@ -60,6 +60,10 @@ from rig.spec import Angle, Color, Euler, Quat, Time, Vector, lock, skip
 from rig._internal import anim_keys, journal
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
+
+# the keys value's read the names review renamed (user decision 2026-10-30), and its
+# spelling now
+_OLD_NAMES = {"num_keys": "key_count"}
 
 
 def _inputs(name):
@@ -136,8 +140,24 @@ class TestTheValue(_Case):
         self.assertEqual(_nodes(), before)
         np.testing.assert_array_equal(k.times, [0, 1, 2, 3])
         np.testing.assert_array_equal(k.values, [0, 1, 0, 2])
-        self.assertEqual(k.num_keys, 4)
+        self.assertEqual(k.key_count, 4)
         self.assertEqual((k.pre_infinity, k.post_infinity), ("constant", "constant"))
+
+    def test_an_old_read_raises_naming_the_new_one(self):
+        k = AnimCurve([0, 1])
+        for old, new in _OLD_NAMES.items():
+            with self.subTest(old=old):
+                self.assertFalse(hasattr(type(k), old))
+                self.assertEqual(getattr(k, new), 2)
+                with self.assertRaises(AttributeError) as caught:
+                    getattr(k, old)
+                self.assertEqual(
+                    str(caught.exception), f"'_Keys' object has no attribute {old!r}; keys.{old} is now keys.{new}"
+                )
+        # any other miss is Python's own text, and a probe's answer
+        with self.assertRaisesRegex(AttributeError, r"^'_Keys' object has no attribute 'nope'$"):
+            k.nope
+        self.assertFalse(hasattr(k, "nope"))
 
     def test_every_sequence_kind_makes_keys(self):
         for values in ([1, 2], (1, 2), range(1, 3), np.array([1.0, 2.0]), (x for x in (1, 2))):
@@ -255,7 +275,7 @@ class TestDetection(_Case):
                 plug << AnimCurve([0, 1])
                 kinds = {cmds.nodeType(c) for c in AnimCurve.of(plug)}
                 self.assertEqual(kinds, {kind})
-                self.assertEqual(len(AnimCurve.of(plug)), plug.get_num_children())
+                self.assertEqual(len(AnimCurve.of(plug)), plug.get_child_count())
         self.assertEqual(n.arr[2] << AnimCurve([0, 1]), Plug("n.arr[2]"))
         self.assertEqual(cmds.nodeType(_curve_of("n.arr[2]")), "animCurveTU")
         self.assertEqual(_curve_of("n.arr[2]"), "n_arr_2_")
@@ -868,10 +888,10 @@ class TestNodeClasses(_Case):
         self.assertRefusesWithNothingChanged(
             TypeError, lambda: AnimCurveTU.create(AnimCurve([0, 1]), tangents="step", name="x"), "holds its own")
         empty = AnimCurveTL.create(name="empty")
-        self.assertEqual(empty.get_num_keys(), 0)
+        self.assertEqual(empty.get_key_count(), 0)
         by_type = Node.create("animCurveTU", name="byType")
         self.assertIs(type(by_type), AnimCurveTU)
-        self.assertEqual(by_type.get_num_keys(), 0)
+        self.assertEqual(by_type.get_key_count(), 0)
         # attributes are set after the keys: an attribute wins over the keys' infinity
         c3 = AnimCurveTA.create([0, 1], infinity="cycle", preInfinity=1, name="spin")
         self.assertEqual((cmds.getAttr("spin.preInfinity"), cmds.getAttr("spin.postInfinity")), (1, 3))
@@ -906,12 +926,12 @@ class TestNodeClasses(_Case):
         Node.define("animCurveTA", "spin")
         self.assertIs(type(Node("spin")), AnimCurveTA)
 
-    def test_set_keys_num_keys_evaluate(self):
+    def test_set_keys_key_count_evaluate(self):
         c = AnimCurveTL.create([0, 1], name="c")
         cmds.flushUndo()
         self.assertIs(c.set_keys([0, 3], times=[0, 10]), c)
         self.assertEqual(self.undo_name(), "rig.AnimCurve.set_keys")
-        self.assertEqual(c.get_num_keys(), 2)
+        self.assertEqual(c.get_key_count(), 2)
         np.testing.assert_allclose(c.evaluate([0, 5, 10]), [0, 1.5, 3])
         self.assertIsInstance(c.evaluate(5), float)
         cmds.flushUndo()
@@ -996,7 +1016,7 @@ class TestReadBack(_Case):
         n, drv = _cube("n"), _cube("drv")
         cmds.setDrivenKeyframe("n.sy", currentDriver="drv.tx", driverValue=0, value=1)
         uu = AnimCurve(_curve_of("n.sy"))
-        self.assertEqual(uu.get_num_keys(), 1)
+        self.assertEqual(uu.get_key_count(), 1)
         for fn in (uu.get_keys, lambda: uu.set_keys([1]), lambda: uu.evaluate(1)):
             with self.assertRaises(TypeError):
                 fn()

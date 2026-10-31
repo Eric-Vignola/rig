@@ -48,7 +48,7 @@ import numpy as np
 from maya import cmds
 from maya.api import OpenMaya, OpenMayaAnim
 
-from rig.nodetypes._base import _name_of
+from rig.nodetypes._base import _name_of, _old_handle_name
 from rig._internal import journal
 from rig._internal.undo import _undo_chunk
 from rig._internal.declared import Declared as _Declared
@@ -242,6 +242,10 @@ class _Keys(_Declared):
     )
     _SHOWN_NAME = "AnimCurve keys"
 
+    # the read the names review renamed (user decision 2026-10-30): a miss names
+    # it now (`_old_handle_name`)
+    _OLD_NAMES = {"num_keys": "keys.num_keys is now keys.key_count"}
+
     def __init__(self, values: Any, times: Any = None, **options: Any) -> None:
         unknown = sorted(set(options) - OPTIONS)
         if unknown:
@@ -386,6 +390,9 @@ class _Keys(_Declared):
         self._post     = post
         self._mtimes   = None
 
+    def __getattr__(self, name: str) -> Any:
+        raise _old_handle_name(self, name, _Keys._OLD_NAMES)
+
     # -- reads -- #
 
     @property
@@ -397,7 +404,7 @@ class _Keys(_Declared):
         return _read_only(self._times)
 
     @property
-    def num_keys(self) -> int:
+    def key_count(self) -> int:
         return len(self._times)
 
     def _names_of(self, codes: Any) -> Any:
@@ -755,10 +762,10 @@ def _plan_values(keys: _Keys, curve_type: str, column: int, stepped: bool, where
     (no plug, no curve yet: those are the caller's)."""
     from rig.nodetypes._base import _enum_value
 
-    e = _Leaf()
-    n = keys.num_keys
+    e            = _Leaf()
+    n            = keys.key_count
     e.curve_type = curve_type
-    e.times = keys._times
+    e.times      = keys._times
     if keys._names is not None:
         if enum_plug is None:
             raise TypeError(

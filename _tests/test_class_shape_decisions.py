@@ -7,7 +7,7 @@ commits 3 and 4), one test class each:
   (it only reparametrizes), and the surface keeps its knots.
 * Q2, ``Mesh('x').load(path, world_space=...)``: anything but a bool is a TypeError, before the
   files are read, with the message of the NURBS node-form loads.
-* Q3, ``Mesh.get_per_face_vertex_normals(*, world_space=False)``: object space by default.
+* Q3, ``Mesh.get_face_vertex_normals(*, world_space=False)``: object space by default.
 * Q5, ``serialize_hierarchy`` skips user attributes that hold geometry, with a warning: their
   value never loads back (no file takes it; it broke every save of the hierarchy).
 * Q6, ``world_space=True`` without ``transform=`` freezes the shape at its world positions, on
@@ -262,7 +262,7 @@ class TestQ3PerFaceVertexNormals(_Case):
         cmds.xform("box", rotation=(0, 0, 90), scale=(2, 1, 3))
 
     def read(self, **keywords):
-        return np.array([list(normal) for normal in self.box.get_per_face_vertex_normals(**keywords)])
+        return np.array([list(normal) for normal in self.box.get_face_vertex_normals(**keywords)])
 
     def test_object_space_by_default(self):
         normals = self.read()
@@ -275,10 +275,10 @@ class TestQ3PerFaceVertexNormals(_Case):
         np.testing.assert_allclose(self.read(world_space=False), _normals(self.box, OBJECT), atol=1e-6)
 
     def test_by_keyword_only(self):
-        parameter = inspect.signature(self.box.get_per_face_vertex_normals).parameters["world_space"]
+        parameter = inspect.signature(self.box.get_face_vertex_normals).parameters["world_space"]
         self.assertEqual((parameter.kind, parameter.default), (inspect.Parameter.KEYWORD_ONLY, False))
         with self.assertRaisesRegex(TypeError, "takes 1 positional argument but 2 were given"):
-            self.box.get_per_face_vertex_normals(True)
+            self.box.get_face_vertex_normals(True)
 
     def test_the_readme_names_no_world_only_query(self):
         with open(README, encoding="utf-8") as fh:

@@ -132,7 +132,7 @@ class TestNodeMembers(_Case):
         self.assertEqual(Transform.serialize.__qualname__, "Transform.serialize")
         self.assertTrue(inspect.ismethod(Transform.create))
         self.assertIs(Transform.create.__self__, Transform)
-        self.assertTrue(inspect.isfunction(type(self.t).ensure_valid))
+        self.assertTrue(inspect.isfunction(type(self.t).is_valid))
         # the class dict entry still runs as the function
         self.assertEqual(type(Transform.__dict__["serialize"](self.t)).__name__, "TransformData")
         self.assertTrue(_is_plug_method(Transform, "serialize"))
@@ -347,7 +347,8 @@ class TestPlugMembers(_Case):
         self.assertIn(type(self.t.serialize), api_edits._API_CLASSES)
         self.assertIn(type(self.t.pair.get), api_edits._API_CLASSES)
         # the node identity constants hold the functions class access gives
-        self.assertIs(api_edits._ENSURE, Transform.ensure_valid)
+        self.assertIs(api_edits._CHECK, Transform._check_valid)
+        self.assertIs(_base._DG_NAMING[2], Transform._check_valid)
 
 
 class TestIntrospection(_Case):

@@ -190,10 +190,10 @@ def _is_compound(obj: Any) -> bool:
         # a numeric / unit / enum / message kind is never a compound
         if _fixed_attr_kind(obj) in _SCALAR_ATTR_API_TYPES:
             return False
-        # ``num_children`` raises TypeError on non-compound plugs (incl.
+        # ``get_child_count`` raises TypeError on non-compound plugs (incl.
         # generic / kGeneric attributes like choice.output). Guard.
         try:
-            if type(obj)._raw_get_num_children(obj) > 0:
+            if type(obj)._raw_get_child_count(obj) > 0:
                 return True
         except Exception:
             pass
@@ -299,7 +299,7 @@ def _is_quaternion(obj: Any) -> bool:
     if not _is_compound(obj):
         return False
     try:
-        return type(obj)._raw_get_num_children(obj) == 4
+        return type(obj)._raw_get_child_count(obj) == 4
     except Exception:
         return False
 
@@ -311,7 +311,7 @@ def _is_vector(obj: Any) -> bool:
     if not _is_compound(obj):
         return False
     try:
-        return type(obj)._raw_get_num_children(obj) == 3
+        return type(obj)._raw_get_child_count(obj) == 3
     except Exception:
         return False
 
@@ -348,7 +348,7 @@ def _get_compound(obj: Any) -> list:
     not a compound (or ``obj`` itself if it's already a sequence).
     """
     if _is_compound(obj):
-        return [obj.child(i) for i in range(type(obj)._raw_get_num_children(obj))]
+        return [obj.child(i) for i in range(type(obj)._raw_get_child_count(obj))]
     if _is_sequence(obj):
         return list(obj)
     return [obj]
@@ -365,7 +365,7 @@ def _get_compound(obj: Any) -> list:
 # ``quatNodes`` outputs (``quatProd`` / ``eulerToQuat``) report ``data_type ==
 # "compound"`` (Maya's ``TdataCompound``), which says nothing about the channel
 # count, and a value behind a ``choice`` node reports the choice's own generic
-# type. We read ``num_children`` off the plug (or off the selected ``choice``
+# type. We read ``get_child_count`` off the plug (or off the selected ``choice``
 # source) instead. Euler-vs-vector (both ``double3``) is split by the unit of
 # the first child (``doubleAngle`` => euler).
 #
@@ -427,13 +427,13 @@ def _arity_of(obj: Any) -> int | None:
 
     Resolution order, all structural:
       1. well-typed ``get_data_type()`` fast path (``double4`` => 4, ``double3`` => 3);
-      2. the plug's own ``get_num_children()`` -- handles ``TdataCompound``
+      2. the plug's own ``get_child_count()`` -- handles ``TdataCompound``
          outputs whose data type is the useless ``"compound"``;
-      3. the ``get_num_children()`` of the selected ``choice`` source -- handles a
+      3. the ``get_child_count()`` of the selected ``choice`` source -- handles a
          compound hidden behind a ``choice`` node, whose own generic output
          reports no children.
 
-    ``get_num_children()`` raises ``TypeError`` on non-compound plugs (and
+    ``get_child_count()`` raises ``TypeError`` on non-compound plugs (and
     ``RuntimeError`` on some generic plugs); both are swallowed so scalars and
     unresolved generics fall through to ``None``.
     """
@@ -443,7 +443,7 @@ def _arity_of(obj: Any) -> int | None:
     if arity:
         return arity
     try:
-        arity = type(obj)._raw_get_num_children(obj)
+        arity = type(obj)._raw_get_child_count(obj)
     except (TypeError, RuntimeError):
         arity = None
     if arity:
@@ -452,7 +452,7 @@ def _arity_of(obj: Any) -> int | None:
     if src is None:
         return None
     try:
-        arity = type(src)._raw_get_num_children(src)
+        arity = type(src)._raw_get_child_count(src)
     except (TypeError, RuntimeError):
         arity = None
     if arity:

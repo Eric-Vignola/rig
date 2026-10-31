@@ -3,7 +3,7 @@
 A file open (or a new scene, a reference unload) frees the nodes of the old
 scene; the MPlugs, MObjects and fn sets a held plug or node object keeps then
 point at freed memory, and only its MObjectHandle may be read. Every entry
-point checks that handle (`_ensure_owner_alive`, `DGNode.ensure_valid`) before
+point checks that handle (`_ensure_owner_alive`, `DGNode._check_valid`) before
 its first API read. `Plug.get` read the MPlug (``isArray``, then the generic
 slot test's ``attribute()``) before its check, which crashed Maya (2000 held
 plugs: 48 crashes in 48 runs, runs/features/r3b); a membership left-hand side

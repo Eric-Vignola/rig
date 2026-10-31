@@ -10,6 +10,9 @@
 * Every page: each name a block imports from ``rig`` exists, and no page names
   ``PlugList`` or ``PyNode``, which round 4a removed (``List`` and ``Node`` are
   the names).
+* Every page and every python file of rig, its tests included: no method the
+  names review retired is named, called or not, outside the hint tables, the Was
+  cell of a ``| Was | Now |`` row and the tables of the tests that pin them.
 """
 
 import ast
@@ -195,6 +198,137 @@ def _prose_spans(relpath):
     text = "\n".join(lines)
     for m in _PROSE_SPAN.finditer(text):
         yield text.count("\n", 0, m.start()) + 1, " ".join(m.group(1).split())
+
+
+# The methods the names review retired (user decision 2026-10-30), and the keys value's
+# count: `TestRetiredMethods` sees them called, where the lint above reads only a name
+# with no brackets, only in prose, and blanks every Was | Now row. Each name has its
+# hint (`_OLD_NODE_NAMES`, `_OLD_PLUG_NAMES`, the `_OLD_NAMES` of a handle or of the keys
+# value), which keeps the spelling on purpose.
+_OLD_METHODS = (
+    # Attribute
+    "logical_index element_by_logical_index element_by_physical_index delete_logical_index "
+    "get_num_children get_num_elements "
+    # DGNode, DisplayLayer, AnimCurve and the keys value
+    "ensure_valid get_clean_name for_node get_num_keys num_keys "
+    # Geometry
+    "add_component_tag remove_component_tag rename_component_tag set_component_tag_contents "
+    "select_component_tag_contents get_component_tags has_component_tag get_component_tag_index "
+    "get_component_tag_name component_tag_expression_subset_state get_component_tag_history "
+    "get_component_tag_category set_component_tag_category get_component_tag_contents "
+    "get_component_tag_indices is_component_tag_empty get_component_tag_data "
+    "serialize_component_tags get_local_shape_attr get_world_shape_attr "
+    # Mesh, its ColorSet, NurbsCurve, NurbsSurface, Follicle
+    "get_per_face_vertex_normals get_num_vertices get_num_polygons get_num_weight_points "
+    "merge_maps merge_maps_list sanitize_map_values paint_map get_paintable_maps "
+    "transfer_component_tags as_current_color_set get_num_cvs set_uv_values "
+    # Joint, BlendShape, SkinCluster, Transform
+    "convert_orients_to_rotation convert_rotation_to_orients hierarchy_to_rotations "
+    "hierarchy_to_orients orient_joint orient_chain target_data_attrs get_num_targets "
+    "copy_skincluster connect_bind_pre_matrices set_xfrom_attrs_locked").split()
+# the class-route mirror of a retired name is caught with it, and so is a family spelled
+# with a wildcard; `_ensure_valid`, the hot readers' inline check, is another name
+_OLD_METHOD = re.compile(r"\b(?:_raw_)?(?:" + "|".join(_OLD_METHODS) + r"|element_by_\w*)\b")
+# the statements that keep an old spelling on purpose: the hint tables, the tables of
+# the tests that pin them, and the pattern above
+_PIN_TABLES = {
+    "_OLD_NODE_NAMES", "_OLD_PLUG_NAMES", "_OLD_PLUG_METHODS", "_OLD_NAMES", "_OLD_METHODS", "_OLD_METHOD",
+    "_OLD_KEYWORDS", "_RENAMED", "_RENAMED_NODE",
+}
+
+
+def _rig_files(*suffixes):
+    """The path, relative to rig, of every file of rig that ends in one of `suffixes`."""
+    root = os.path.dirname(rig.__file__)
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        for name in sorted(files):
+            if name.endswith(suffixes):
+                yield os.path.relpath(os.path.join(base, name), root)
+
+
+def _pin_lines(source):
+    """The line numbers of the `_PIN_TABLES` statements of the python `source`."""
+    lines = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) in _PIN_TABLES for t in node.targets):
+            lines.update(range(node.lineno, node.end_lineno + 1))
+    return lines
+
+
+def _was_cells(relpath):
+    """The Was cell of every ``| Was | Now |`` row of the page `relpath`."""
+    cells, in_table = [], False
+    for line in _text(relpath).split("\n"):
+        if line.startswith("| Was | Now"):
+            in_table = True
+        elif not line.startswith("|"):
+            in_table = False
+        elif in_table:
+            cells.append(line.split(" | ", 1)[0])
+    return cells
+
+
+def _old_method_lines(relpath, text):
+    """The (line number, line) of each line of `text`, the file `relpath`, that names an
+    old method: a page's prose and code, or a python file's code, comments and docstrings.
+    A Was | Now row is read from its Now cell (only the Was cell keeps the old spelling)."""
+    python   = relpath.endswith(".py")
+    pinned   = _pin_lines(text) if python else ()
+    in_table = False
+    found    = []
+    for n, line in enumerate(text.split("\n"), 1):
+        if not python:
+            if line.startswith("| Was | Now"):
+                in_table = True
+            elif not line.startswith("|"):
+                in_table = False
+        read = line.split(" | ", 1)[-1] if in_table else line
+        if n not in pinned and _OLD_METHOD.search(read):
+            found.append((n, line.strip()))
+    return found
+
+
+class TestRetiredMethods(MayaTestCase):
+    """No page or python file of rig names a method the names review retired."""
+
+    def test_no_file_names_an_old_method(self):
+        root = os.path.dirname(rig.__file__)
+        for relpath in _rig_files(".py", ".md"):
+            with open(os.path.join(root, relpath), encoding="utf-8") as fh:
+                found = _old_method_lines(relpath, fh.read())
+            with self.subTest(file=relpath):
+                self.assertEqual(found, [], f"{relpath} names a retired method")
+
+    def test_the_check_sees_what_the_prose_lint_cannot(self):
+        # the negative control: a call, a Now cell, a comment, a docstring, a mirror and a
+        # family's wildcard are found; a Was cell, a hint table and a longer name are not
+        old  = _OLD_METHODS[0]
+        page = (
+            f"| Was | Now |\n|---|---|\n| `node.{old}()` | `node.new()` |\n| `node.x` | `node.{old}()` |\n"
+            f"\n`node.{old}()`\n"
+        )
+        self.assertEqual([n for n, _ in _old_method_lines("page.md", page)], [4, 6])
+        wild   = _OLD_METHODS[1].replace(old, "*")
+        source = (
+            f"_OLD_NODE_NAMES = {{\n    '{old}': 'new',\n}}\nnode.{old}()\n# {old}\n"
+            f"type(x)._raw_{old}(x)\nnode.my_{old}()\n"
+            f'def f():\n    """Reads the {old}."""\n# {wild}\n'
+        )
+        self.assertEqual([n for n, _ in _old_method_lines("code.py", source)], [4, 5, 6, 9, 10])
+
+    def test_every_old_method_has_its_row(self):
+        was = " ".join(_was_cells("CHEATSHEET.md"))
+        self.assertEqual([name for name in _OLD_METHODS if not re.search(rf"\b{name}\b", was)], [])
+
+    def test_every_old_method_has_its_hint(self):
+        from rig._internal.anim_keys import _Keys
+        from rig.nodetypes._base import _OLD_PLUG_NAMES
+        from rig.nodetypes.dg_node import _OLD_NODE_NAMES
+        from rig.nodetypes.mesh import ColorSet
+
+        hinted = set(_OLD_NODE_NAMES) | set(_OLD_PLUG_NAMES) | set(ColorSet._OLD_NAMES) | set(_Keys._OLD_NAMES)
+        self.assertEqual(set(_OLD_METHODS) - hinted, set())
 
 
 class TestDocsSpeakTheNewSpellings(MayaTestCase):

@@ -21,7 +21,7 @@ shapes; the transforms are in test_class_xform.
 * On a cgmath whose data takes no knots, the warning says what comes back: a degree-1
   direction keeps its shape and is only reparametrized (the user's cylinder.ma, testShape: V
   of degree 1 with knots 0, 0.554, 1.554, 2.108), one of degree 2 or more another shape.
-* rig's own callers that sample across meshes keep world space by keyword: copy_skincluster
+* rig's own callers that sample across meshes keep world space by keyword: transfer_from_meshes
   and a follicle's UV at a world position (the transfers' resampler: test_class_comptags).
 
 Each test failed against the source files of 65eb6f4 (negative control), except the guards.
@@ -165,7 +165,7 @@ class TestTheShapeSpaceKeyword(_Case):
             Mesh.get_faces_above_plane, Mesh.get_uv_at_point, Mesh.get_vertex_normals, Mesh.serialize, Mesh.save,
             NurbsCurve.get_points, NurbsCurve.serialize, NurbsCurve.save,
             NurbsSurface.get_points, NurbsSurface.serialize, NurbsSurface.save,
-            cube.load, crv.load, plane.load,
+            cube.load, crv.load, plane.load, Mesh.get_output_attr,
         ):
             with self.subTest(function.__qualname__):
                 parameter = inspect.signature(function).parameters["world_space"]
@@ -588,7 +588,7 @@ class TestAPlugReadFollowsThePlug(_Case):
 class TestTheCallersThatSampleAcrossMeshes(_Case):
     """guards: rig's own callers that measure across meshes keep world space, by keyword."""
 
-    def test_copy_skincluster_samples_in_world_space(self):
+    def test_transfer_from_meshes_samples_in_world_space(self):
         joint1 = Joint.create(name="j1")
         joint2 = Joint.create(name="j2", parent=joint1)
         joint2.t.set(0, 1, 0)
@@ -603,7 +603,7 @@ class TestTheCallersThatSampleAcrossMeshes(_Case):
         target = Node(cmds.polyCube(name="target", height=2, constructionHistory=False)[0])
         cmds.xform(str(target), translation=(10, 0, 0))
         cmds.move(-10, 0, 0, f"{target}.vtx[*]", relative=True, objectSpace=True)
-        SkinCluster.copy_skincluster(str(source), [str(target)])
+        SkinCluster.transfer_from_meshes(str(source), [str(target)])
         copied = target.get_shape().get_deformers(node_type="skinCluster")[0]
         np.testing.assert_allclose(copied.get_weights(), skin.get_weights(), rtol=0, atol=1e-9)
 

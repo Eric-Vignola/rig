@@ -537,7 +537,7 @@ class TestTheDeletedMessagesShareOneText(MayaTestCase):
         for label, op in (
             # (re-pinned, user decision 6C 2026-10-17: a plug's name read as rig
             # reads it, `_name_of`; its str() is the marked name)
-            ("node", node.ensure_valid), ("owned", lambda: _base._name_of(owned)),
+            ("node", node._check_valid), ("owned", lambda: _base._name_of(owned)),
             ("unowned", lambda: _base._name_of(unowned)),
         ):
             with self.subTest(target=label, free="delete"):
@@ -547,7 +547,7 @@ class TestTheDeletedMessagesShareOneText(MayaTestCase):
         cmds.undo()
         cmds.file(new=True, force=True)
         for label, op, name in (
-            ("node", node.ensure_valid, "Transform"),
+            ("node", node._check_valid, "Transform"),
             ("owned", lambda: _base._name_of(owned), "Transform"),
             ("unowned", lambda: _base._name_of(unowned), "held"),
         ):

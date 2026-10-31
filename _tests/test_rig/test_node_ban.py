@@ -17,7 +17,9 @@ is the method. The 30 node properties became methods (``node.get_name()`` /
   the node's private naming, never a public method.
 * `TestIntrospection`: ``inspect.getmembers`` on an unassigned Lambert and on a
   deleted node.
-* `TestOldNames`: an old spelling raises naming the new one, on the miss path.
+* `TestOldNames`: an old spelling raises naming the new one, on the miss path: a
+  property before the ban, or a method the names review retired (user decision
+  2026-10-30), which also leaves its class.
 * `TestBarePredicates`: a node predicate named without brackets has no truth
   value (user decision: the guard), a classmethod's too, and over a List.
 * `TestSetNamespace`: one undo step; a locked node is refused before anything
@@ -30,6 +32,7 @@ import ast
 import functools
 import inspect
 import os
+import re
 import tempfile
 
 from maya import cmds
@@ -38,8 +41,8 @@ from maya.api import OpenMaya
 import rig
 from rig import List, Node
 from rig._internal.plug import Plug
-from rig.nodetypes import _base
-from rig.nodetypes.dg_node import DGNode
+from rig.nodetypes import _base, AnimCurveTL, dg_node, DisplayLayer
+from rig.nodetypes.dg_node import _OLD_NODE_NAMES, DGNode
 from rig.nodetypes.transform import Transform
 from rig._tests._base import MayaTestCase
 
@@ -51,20 +54,106 @@ _BarePredicate = getattr(_base, "_BarePredicate", _ABSENT)
 # the node properties before the ban, by class, and their methods
 _RENAMED = {
     "name": "get_name", "long_name": "get_long_name", "short_name": "get_short_name",
-    "clean_name": "get_clean_name", "uuid": "get_uuid", "namespace": "get_namespace",
+    "clean_name": "get_short_name", "uuid": "get_uuid", "namespace": "get_namespace",
     "node_type": "get_node_type", "is_locked": "is_locked", "is_valid": "is_valid",
     "mobject": "get_mobject", "fn_set": "get_fn_set", "mdagpath": "get_mdagpath",
-    "is_shape": "is_shape", "local_shape_attr": "get_local_shape_attr",
-    "world_shape_attr": "get_world_shape_attr", "injection_node": "get_injection_node",
-    "component_tags": "get_component_tags", "num_vertices": "get_num_vertices",
-    "num_polygons": "get_num_polygons", "num_weight_points": "get_num_weight_points",
-    "num_cvs": "get_num_cvs", "uv_sets": "get_uv_sets", "current_uv_set": "get_current_uv_set",
-    "paintable_maps": "get_paintable_maps", "engine": "get_engine", "is_default": "is_default",
-    "num_targets": "get_num_targets", "num_keys": "get_num_keys", "file_path": "get_file_path",
+    "is_shape": "is_shape", "local_shape_attr": "get_output_attr",
+    "world_shape_attr": "get_output_attr", "injection_node": "get_injection_node",
+    "component_tags": "get_tag_names", "num_vertices": "get_vertex_count",
+    "num_polygons": "get_face_count", "num_weight_points": "get_weight_point_count",
+    "num_cvs": "get_cv_count", "uv_sets": "get_uv_sets", "current_uv_set": "get_current_uv_set",
+    "paintable_maps": "get_map_names", "engine": "get_engine", "is_default": "is_default",
+    "num_targets": "get_target_count", "num_keys": "get_key_count", "file_path": "get_file_path",
     "file_path_with_copy_number": "get_file_path",
 }
 _PREDICATES = ("is_locked", "is_valid", "is_shape", "is_default")
 _RIG_DIR    = os.path.dirname(rig.__file__)
+
+# the node methods the names review retired (user decision 2026-10-30): the classes
+# that had one (keys of `_SAMPLES`, which builds a node of each) and the new spelling
+# (None: a stub that went, with no new spelling)
+_OLD_METHODS = {
+    "ensure_valid":   ("DGNode", "is_valid"),
+    "get_clean_name": ("DGNode", "get_short_name"),
+    "for_node":       ("DisplayLayer", "of"),
+    "get_num_keys":   ("AnimCurve", "get_key_count"),
+    # a geometry's component tags
+    "add_component_tag":             ("Mesh NurbsCurve NurbsSurface", "add_tag"),
+    "remove_component_tag":          ("Mesh NurbsCurve NurbsSurface", "delete_tag"),
+    "rename_component_tag":          ("Mesh NurbsCurve NurbsSurface", "rename_tag"),
+    "set_component_tag_contents":    ("Mesh NurbsCurve NurbsSurface", "set_tag_contents"),
+    "select_component_tag_contents": ("Mesh NurbsCurve NurbsSurface", "select_tag_contents"),
+    "get_component_tags":            ("Mesh NurbsCurve NurbsSurface", "get_tag_names"),
+    "has_component_tag":             ("Mesh NurbsCurve NurbsSurface", "has_tag"),
+    "get_component_tag_index":       ("Mesh NurbsCurve NurbsSurface", "get_tag_index"),
+    "get_component_tag_name":        ("Mesh NurbsCurve NurbsSurface", "get_tag_name"),
+    "get_component_tag_history":     ("Mesh NurbsCurve NurbsSurface", "get_tag_history"),
+    "get_component_tag_category":    ("Mesh NurbsCurve NurbsSurface", "get_tag_category"),
+    "set_component_tag_category":    ("Mesh NurbsCurve NurbsSurface", "set_tag_category"),
+    "get_component_tag_contents":    ("Mesh NurbsCurve NurbsSurface", "get_tag_contents"),
+    "get_component_tag_indices":     ("Mesh NurbsCurve NurbsSurface", "get_tag_component_indices"),
+    "is_component_tag_empty":        ("Mesh NurbsCurve NurbsSurface", "is_tag_empty"),
+    "get_component_tag_data":        ("Mesh NurbsCurve NurbsSurface", "get_tag_data"),
+    "serialize_component_tags":      ("Mesh NurbsCurve NurbsSurface", "serialize_tags"),
+    "transfer_component_tags":       ("Mesh", "transfer_tags"),
+    # the component tag read that had no verb
+    "component_tag_expression_subset_state": ("Mesh NurbsCurve NurbsSurface", "get_tag_subset_state"),
+    # a shape's output and its normals
+    "get_local_shape_attr":        ("Mesh NurbsCurve NurbsSurface", "get_output_attr"),
+    "get_world_shape_attr":        ("Mesh NurbsCurve NurbsSurface", "get_output_attr"),
+    "get_per_face_vertex_normals": ("Mesh", "get_face_vertex_normals"),
+    # the counts
+    "get_num_vertices":      ("Mesh", "get_vertex_count"),
+    "get_num_polygons":      ("Mesh", "get_face_count"),
+    "get_num_weight_points": ("Mesh NurbsCurve NurbsSurface", "get_weight_point_count"),
+    "get_num_cvs":           ("NurbsCurve NurbsSurface", "get_cv_count"),
+    # the maps
+    "get_paintable_maps":  ("Mesh", "get_map_names"),
+    "paint_map":           ("Mesh", "enter_paint_tool"),
+    "sanitize_map_values": ("Mesh", "set_map_values"),
+    "merge_maps":          ("Mesh", None),
+    "merge_maps_list":     ("Mesh", None),
+    # a follicle's
+    "set_uv_values": ("Follicle", "set_uv"),
+    # a joint's
+    "convert_orients_to_rotation": ("Joint", "orients_to_rotations"),
+    "convert_rotation_to_orients": ("Joint", "rotations_to_orients"),
+    "hierarchy_to_rotations":      ("Joint", "orients_to_rotations"),
+    "hierarchy_to_orients":        ("Joint", "rotations_to_orients"),
+    "orient_joint":                ("Joint", "orient"),
+    "orient_chain":                ("Joint", "orient"),
+    # a blendShape's
+    "target_data_attrs": ("BlendShape", "get_target_data_attrs"),
+    "get_num_targets":   ("BlendShape", "get_target_count"),
+    # a skinCluster's
+    "copy_skincluster":          ("SkinCluster", "transfer_from_meshes"),
+    "connect_bind_pre_matrices": ("SkinCluster", "connect_bind_pre_matrix"),
+    # a transform's, which a joint inherits
+    "set_xfrom_attrs_locked": ("Transform Joint", "set_xform_attrs_locked"),
+}
+_SAMPLES = {
+    "DGNode":       lambda: Node(cmds.createNode("multiplyDivide", name="md")),
+    "DisplayLayer": lambda: DisplayLayer.define("layer"),
+    "AnimCurve":    lambda: AnimCurveTL.create([0, 1], name="curve"),
+    "Mesh":         lambda: _cube(),
+    "NurbsCurve":   lambda: Node(cmds.curve(p=[(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], d=3)).get_shape(),
+    "NurbsSurface": lambda: Node(cmds.nurbsPlane(ch=False)[0]).get_shape(),
+    "Follicle":     lambda: Node(cmds.createNode("follicle")),
+    "Transform":    lambda: Node(cmds.createNode("transform", name="xform")),
+    "Joint":        lambda: Node(cmds.createNode("joint", name="jnt")),
+    "BlendShape":   lambda: _blendshape(),
+    "SkinCluster":  lambda: _skincluster(),
+}
+# a handle's method the names review retired: its table is the handle's, not the nodes'
+_OLD_NAMES = {"as_current_color_set": "as_current"}
+# the hints that need their keyword to reach the same member: `_OLD_METHODS` reads a
+# hint up to its bracket
+_OLD_KEYWORDS = {
+    "clean_name":           "get_short_name(namespace=False)",
+    "get_clean_name":       "get_short_name(namespace=False)",
+    "world_shape_attr":     "get_output_attr(world_space=True)",
+    "get_world_shape_attr": "get_output_attr(world_space=True)",
+}
 
 
 def _is_plug_method(cls, name):
@@ -97,6 +186,16 @@ def _node_classes():
 
 def _cube(name="cube"):
     return Node(cmds.polyCube(name=name, ch=False)[0]).get_shape()
+
+
+def _blendshape():
+    target = cmds.polyCube(name="target", ch=False)[0]
+    return Node(cmds.blendShape(target, cmds.polyCube(name="base", ch=False)[0], name="morph")[0])
+
+
+def _skincluster():
+    joint = cmds.createNode("joint", name="bone")
+    return Node(cmds.skinCluster(joint, cmds.polyCube(name="skinned", ch=False)[0], name="skin")[0])
 
 
 _AOV_CODE = """
@@ -175,8 +274,32 @@ class TestRenamedReads(MayaTestCase):
         ns = Node(cmds.createNode("multiplyDivide", name="ns:md"))
         self.assertEqual(ns.get_name(), "ns:md")
         self.assertEqual(ns.get_long_name(), "ns:md")  # a DG node's long name is its name
-        self.assertEqual(ns.get_clean_name(), "md")
+        self.assertEqual(ns.get_short_name(namespace=False), "md")
         self.assertEqual(ns.get_namespace(), "ns")
+
+    def test_the_short_name_and_its_namespace(self):
+        cmds.namespace(add="ns")
+        cmds.namespace(add="deep", parent="ns")
+        cmds.createNode("transform", name="ns:g1")
+        cmds.createNode("transform", name="ns:g2")
+        cmds.createNode("transform", name="ns:deep:box", parent="ns:g1")
+        cmds.createNode("transform", name="ns:deep:box", parent="ns:g2")
+        box = Node("|ns:g1|ns:deep:box")
+        self.assertEqual(box.get_name(), "ns:g1|ns:deep:box")
+        self.assertEqual(box.get_short_name(), "ns:deep:box")
+        self.assertEqual(box.get_short_name(namespace=True), "ns:deep:box")
+        self.assertEqual(box.get_short_name(namespace=False), "box")
+        self.assertEqual(Transform.get_short_name(box, namespace=False), "box")
+        self.assertEqual(Node(cmds.createNode("transform", name="plain")).get_short_name(namespace=False), "plain")
+        # the module's function, on a name or a node
+        self.assertEqual(dg_node.get_short_name("|grp|ns:cube"), "ns:cube")
+        self.assertEqual(dg_node.get_short_name("|grp|ns:cube", namespace=False), "cube")
+        self.assertEqual(dg_node.get_short_name(box, namespace=False), "box")
+        # the keyword is keyword-only, both ways
+        with self.assertRaises(TypeError):
+            box.get_short_name(False)
+        with self.assertRaises(TypeError):
+            dg_node.get_short_name(box, False)
 
     def test_the_node_queries(self):
         t     = Transform.create(name="t")
@@ -197,22 +320,40 @@ class TestRenamedReads(MayaTestCase):
 
     def test_the_geometry_members(self):
         mesh = _cube()
-        self.assertEqual(mesh.get_num_vertices(), 8)
-        self.assertEqual(mesh.get_num_polygons(), 6)
-        self.assertEqual(mesh.get_num_weight_points(), 8)
+        self.assertEqual(mesh.get_vertex_count(), 8)
+        self.assertEqual(mesh.get_face_count(), 6)
+        self.assertEqual(mesh.get_weight_point_count(), 8)
         self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
         self.assertEqual(mesh.get_current_uv_set(), "map1")
-        self.assertEqual(mesh.get_paintable_maps(), [])
-        self.assertEqual(str(mesh.get_local_shape_attr()), "cubeShape.outMesh")
-        self.assertEqual(str(mesh.get_world_shape_attr()), "cubeShape.worldMesh")  # its instance's element
+        self.assertEqual(mesh.get_map_names(), [])
+        self.assertEqual(str(mesh.get_output_attr()), "cubeShape.outMesh")
+        self.assertEqual(str(mesh.get_output_attr(world_space=True)), "cubeShape.worldMesh")  # its instance's element
         self.assertEqual(str(mesh.get_injection_node()), "cubeShape")
-        self.assertEqual(mesh.get_component_tags(), ["back", "bottom", "front", "left", "right", "top"])
+        self.assertEqual(mesh.get_tag_names(), ["back", "bottom", "front", "left", "right", "top"])
         curve = Node(cmds.curve(p=[(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], d=3)).get_shape()
-        self.assertEqual(curve.get_num_cvs(), 4)
-        self.assertEqual(curve.get_num_weight_points(), 4)
+        self.assertEqual(curve.get_cv_count(), 4)
+        self.assertEqual(curve.get_weight_point_count(), 4)
         surface = Node(cmds.nurbsPlane(ch=False, u=1, v=1, d=1)[0]).get_shape()
-        self.assertEqual(surface.get_num_cvs(), 4)
-        self.assertEqual(surface.get_num_weight_points(), 4)
+        self.assertEqual(surface.get_cv_count(), 4)
+        self.assertEqual(surface.get_weight_point_count(), 4)
+
+    def test_a_shape_output_and_its_space(self):
+        for shape, local, world in (
+            (_cube(), "outMesh", "worldMesh"),
+            (_SAMPLES["NurbsCurve"](), "local", "worldSpace"),
+            (_SAMPLES["NurbsSurface"](), "local", "worldSpace"),
+        ):
+            with self.subTest(shape=type(shape).__name__):
+                self.assertEqual(shape.get_output_attr().get_name(), local)
+                self.assertEqual(shape.get_output_attr(world_space=False).get_name(), local)
+                self.assertEqual(shape.get_output_attr(world_space=True).get_name(), world)
+                self.assertEqual(shape.get_output_attr(world_space=True).get_logical_index(), 0)
+                # each is read once, and held
+                self.assertIs(shape.get_output_attr(), shape.get_output_attr())
+                self.assertIs(shape.get_output_attr(world_space=True), shape.get_output_attr(world_space=True))
+                # the keyword is keyword-only
+                with self.assertRaises(TypeError):
+                    shape.get_output_attr(True)
 
     def test_material_layer_deformer_and_curve(self):
         from rig.nodetypes import AnimCurve, DisplayLayer, Lambert
@@ -225,12 +366,12 @@ class TestRenamedReads(MayaTestCase):
         self.assertIs(DisplayLayer.create(name="L").is_default(), False)
         target = cmds.polyCube(name="smile", ch=False)[0]
         morph  = Node(cmds.blendShape(target, "box", name="morph")[0])
-        self.assertEqual(morph.get_num_targets(), 1)
+        self.assertEqual(morph.get_target_count(), 1)
         cmds.setKeyframe("box.tx", time=1, value=0)
         cmds.setKeyframe("box.tx", time=5, value=2)
         curve = Node(cmds.listConnections("box.tx", source=True)[0])
         self.assertIsInstance(curve, AnimCurve)
-        self.assertEqual(curve.get_num_keys(), 2)
+        self.assertEqual(curve.get_key_count(), 2)
 
     def test_a_reference_file_path(self):
         from rig.nodetypes import Reference
@@ -273,7 +414,7 @@ class TestNoPublicProperty(MayaTestCase):
                     self.assertIs(_base._class_attr(cls, old), _base._MISSING)
         for cls, names in (
             (DGNode, ("get_name", "get_long_name", "get_uuid", "set_namespace", "is_valid", "is_locked")),
-            (Mesh, ("get_fn_set", "get_num_vertices", "get_uv_sets", "is_shape")),
+            (Mesh, ("get_fn_set", "get_vertex_count", "get_uv_sets", "is_shape")),
             (Reference, ("get_file_path",)),
         ):
             for name in names:
@@ -441,6 +582,50 @@ class TestOldNames(MayaTestCase):
                     str(caught.exception), f"Attribute not found: t.{old}; node.{old} is now {new}"
                 )
         self.assertFalse(hasattr(t, "uuid"))
+
+    def test_an_old_method_raises_naming_a_new_spelling_that_exists(self):
+        nodes = {owner: build() for owner, build in _SAMPLES.items()}
+        for old, (owners, new) in _OLD_METHODS.items():
+            for owner in owners.split():
+                node = nodes[owner]
+                with self.subTest(old=old, owner=owner):
+                    self.assertIs(_base._class_attr(type(node), old), _base._MISSING)
+                    with self.assertRaises(AttributeError) as caught:
+                        getattr(node, old)()
+                    self.assertIn(f"; node.{old} is now ", str(caught.exception))
+                    if new is not None:
+                        self.assertTrue(_is_plug_method(type(node), new), new)
+                        self.assertIn(f"{new}(", str(caught.exception).split(" is now ")[1])
+
+    def test_a_hint_keeps_its_keyword(self):
+        mesh = _cube()
+        for old, new in _OLD_KEYWORDS.items():
+            with self.subTest(old=old):
+                with self.assertRaises(AttributeError) as caught:
+                    getattr(mesh, old)
+                self.assertEqual(str(caught.exception).split("; ", 1)[1], f"node.{old} is now node.{new}")
+
+    def test_a_colour_set_names_the_method_it_retired(self):
+        from rig.nodetypes.mesh import ColorSet
+
+        cset = _cube().add_color_set("tint", ColorSet.Representation.RGBA)
+        for old, new in _OLD_NAMES.items():
+            with self.subTest(old=old):
+                self.assertFalse(hasattr(ColorSet, old))
+                self.assertTrue(inspect.isfunction(getattr(ColorSet, new)), new)
+                with self.assertRaises(AttributeError) as caught:
+                    getattr(cset, old)()
+                self.assertIn(f"; cset.{old} is now cset.{new}()", str(caught.exception))
+
+    def test_every_hint_names_a_method_that_exists(self):
+        classes = _node_classes()
+        for old, hint in _OLD_NODE_NAMES.items():
+            for name in set(re.findall(r"(\w+)\(", hint)) - {"str"}:
+                with self.subTest(old=old, name=name):
+                    self.assertTrue(any(_is_plug_method(cls, name) for cls in classes), hint)
+        for old, new in _RENAMED.items():
+            with self.subTest(old=old, new=new):
+                self.assertTrue(any(_is_plug_method(cls, new) for cls in classes), new)
 
     def test_an_old_setter_raises_naming_the_new_spelling(self):
         t = Transform.create(name="t")

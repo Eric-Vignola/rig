@@ -446,7 +446,7 @@ class TestIn(_Case):
 
     def test_a_missing_tag_is_false(self):
         shape  = Node(cmds.listRelatives("sph", shapes=True, fullPath=True)[0])
-        tags   = shape.get_component_tags()
+        tags   = shape.get_tag_names()
         before = _scene()
         self.assertFalse(self.sph in Tag("ghost"))
         self.assertFalse(self.sph.vtx[0] in Tag("ghost"))
@@ -454,7 +454,7 @@ class TestIn(_Case):
         self.assertFalse(self.sph.tx in Tag("ghost"))
         self.assertFalse(List([self.sph.vtx[0], self.sph.f[0]]) in Tag("ghost"))
         self.assertEqual(_scene(), before)
-        self.assertEqual(shape.get_component_tags(), tags)
+        self.assertEqual(shape.get_tag_names(), tags)
 
     def test_other_kinds_are_false(self):
         before = _scene()

@@ -301,7 +301,7 @@ class TestOneNamingRule(MayaTestCase):
         # DGNode's __str__ and private `_name` (the fn_set and name properties are
         # the methods get_fn_set / get_name, which naming does not read)
         for owner, name, value in (
-            (DGNode, "ensure_valid", lambda node: None),
+            (DGNode, "_check_valid", lambda node: None),
             (DGNode, "_name", lambda node: node._fn_set.name()),
             (DGNode, "__str__", lambda node: node._fn_set.name()),
             (type(dg), "__getattribute__", lambda node, name: object.__getattribute__(node, name)),
@@ -311,12 +311,12 @@ class TestOneNamingRule(MayaTestCase):
                     self.assertIs(_base._dg_named_node(dg), False)
                     agree()
                 self.assertIs(_base._dg_named_node(dg), True)
-        vars(dg)["ensure_valid"] = dg.ensure_valid
+        vars(dg)["_check_valid"] = dg._check_valid
         try:
             self.assertIs(_base._dg_named_node(dg), False)
             agree()
         finally:
-            del vars(dg)["ensure_valid"]
+            del vars(dg)["_check_valid"]
 
     def test_a_class_naming_through_its_own_lookup_is_collected_by_name(self):
         held  = Node(cmds.createNode("multiplyDivide", name="held"))

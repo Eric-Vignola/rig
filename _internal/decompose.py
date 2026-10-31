@@ -132,7 +132,7 @@ def _node_is_transform(node: Any) -> bool:
     MSelectionList / MFn introspection.
     """
     if hasattr(type(node), "has_base_type"):  # the class: no plug-method check
-        type(node)._raw_ensure_valid(node)
+        type(node)._check_valid(node)
     else:
         try:
             node = _cast(_name_of(node))
@@ -197,7 +197,7 @@ def _disconnect_compound(plug_str: str) -> None:
     doesn't immediately overwrite the value (or block the setAttr outright).
     Uses ``_connected_attrs`` (``Attribute.get_connected_attrs`` for sources
     read at once) + :meth:`Attribute.disconnect`
-    + :meth:`Attribute.get_num_children`/:meth:`Attribute.child` for compound
+    + :meth:`Attribute.get_child_count`/:meth:`Attribute.child` for compound
     enumeration (no string-parsing, no ``cmds.attributeQuery``).
     """
     try:
@@ -209,7 +209,7 @@ def _disconnect_compound(plug_str: str) -> None:
     # Walk compound children via the canonical Attribute API.
     try:
         if not type(root_attr)._raw_is_multi(root_attr):
-            for i in range(type(root_attr)._raw_get_num_children(root_attr)):
+            for i in range(type(root_attr)._raw_get_child_count(root_attr)):
                 targets.append(root_attr.child(i))
     except (RuntimeError, AttributeError, TypeError):
         pass  # Non-compound attr (e.g. matrix data) -- no children to enumerate.

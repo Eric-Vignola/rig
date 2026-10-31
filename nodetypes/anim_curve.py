@@ -392,7 +392,7 @@ class AnimCurve(DGNode):
         identically from the same keys). ValueError for a curve with no key."""
         return _anim_keys().read_keys(type(self)._raw_get_fn_set(self), self._timed_type("get_keys()"))
 
-    def get_num_keys(self) -> int:
+    def get_key_count(self) -> int:
         """The number of keys."""
         return type(self)._raw_get_fn_set(self).numKeys
 

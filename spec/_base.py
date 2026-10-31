@@ -1076,7 +1076,7 @@ def _clone_attribute(
 
     Returns the new :class:`Plug`. Slimmed from Eric's 160-line version by
     leaning on ``rig.nodetypes.Attribute``'s ``get_data_type()`` /
-    ``get_attribute_type()`` / ``is_multi()`` / ``get_num_children()``.
+    ``get_attribute_type()`` / ``is_multi()`` / ``get_child_count()``.
     """
     from rig._internal.node import Node
     from rig._internal.plug import Plug
@@ -1183,7 +1183,7 @@ def _spec_from_attribute(src_plug: Any, attr_name: str, multi: bool) -> "_AttrSp
 
     # Compound first (Vector / Color / Euler / Quat).
     try:
-        nchildren = type(src_plug)._raw_get_num_children(src_plug)
+        nchildren = type(src_plug)._raw_get_child_count(src_plug)
     except Exception:
         nchildren = 0
 

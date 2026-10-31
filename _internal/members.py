@@ -159,7 +159,7 @@ def _axis_sizes(shape: DAGNode, kind: str) -> tuple[int, ...]:
     """
     node_type = type(shape).get_node_type(shape)
     if kind == "f":
-        return (type(shape).get_num_polygons(shape),)
+        return (type(shape).get_face_count(shape),)
     if kind == "e":
         return (type(shape)._raw_get_fn_set(shape).numEdges,)
     if kind == "uv":
@@ -173,7 +173,7 @@ def _axis_sizes(shape: DAGNode, kind: str) -> tuple[int, ...]:
     if node_type == "lattice":
         name = type(shape).get_long_name(shape)
         return tuple(cmds.getAttr(f"{name}.{axis}Divisions") for axis in "stu")
-    return (type(shape).get_num_weight_points(shape),)
+    return (type(shape).get_weight_point_count(shape),)
 
 
 def _grid(sizes: tuple[int, ...]) -> np.ndarray:

@@ -27,14 +27,14 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` in and out, rebuild, `save` / `load` (files) |
 | 13 | [`ObjectSet`](#13-objectset) | `define`, members and components |
 | 14 | [`ShadingEngine` and the shaders](#14-shadingengine-and-the-shaders) | `for_material`, `x << sg`, `get_face_members`; `Blinn` / `Lambert` / ... / `Material`, the network verbs |
-| 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `for_node`, exclusive membership, `Layer is DisplayLayer` |
+| 15 | [`DisplayLayer`](#15-displaylayer) | `define`, `of`, exclusive membership, `Layer is DisplayLayer` |
 | 16 | [`Choice`](#16-choice) | data types that follow the selector; inputs that take any plug whole, and a number |
 | 17 | [`Follicle`](#17-follicle) | rivet a transform to a mesh |
 | 18 | [`Reference`](#18-reference) | file references and their namespaces, locks on reference and referenced nodes |
-| 19 | [Name helpers](#19-name-helpers) | short / clean names, suffixes, component range strings |
+| 19 | [Name helpers](#19-name-helpers) | short names, suffixes, component range strings |
 | 20 | [`cmds` results as typed nodes, and `Axis`](#20-cmds-results-as-typed-nodes-and-axis) | casting `maya.cmds` results with `Node`; the mirror axis |
 | 21 | [`plugins` — `load_plugin` and undo](#21-plugins--load_plugin-and-undo) | `rigUndoableAPICommand`: your own API edit as one undo step, and its rules |
-| 22 | [`AnimCurve` and the curve classes](#22-animcurve-and-the-curve-classes) | refer, the cast, `create` / `define` with keys, `get_keys` / `set_keys` / `get_num_keys` / `evaluate`, `AnimCurve.of`, keys from the class call |
+| 22 | [`AnimCurve` and the curve classes](#22-animcurve-and-the-curve-classes) | refer, the cast, `create` / `define` with keys, `get_keys` / `set_keys` / `get_key_count` / `evaluate`, `AnimCurve.of`, keys from the class call |
 
 ---
 
@@ -62,7 +62,7 @@ from rig.nodetypes import (
     ShadingEngine, SkinCluster, Transform,
 )
 from rig.nodetypes.deformer import Deformer, tag_references
-from rig.nodetypes.dg_node import get_clean_name, get_short_name
+from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.geometry import iter_component_ranges, iter_component_tokens
 from rig.nodetypes.joint import replace_suffix
 from rig.nodetypes.mesh import ColorSet
@@ -273,13 +273,13 @@ as a method, a predicate is called (`node.is_valid()`).
 ```python
 cmds.file(new=True, force=True)
 box = Transform.create(name="cube")
-print(box.get_name(), box.get_long_name(), box.get_short_name(), box.get_clean_name(), box.get_node_type())  # cube |cube cube cube transform
-print(box.is_valid(), len(box.get_uuid()), box.has_base_type("dagNode"))       # True 36 True
+print(box.get_name(), box.get_long_name(), box.get_short_name(), box.get_short_name(namespace=False), box.get_node_type())  # cube |cube cube cube transform
+print(box.is_valid(), len(box.get_uuid()), box.has_base_type("dagNode"))                                                    # True 36 True
 
 box.rename("box")
-box.set_namespace("asset")                 # creates the namespace when missing: one undo step
-print(box, box.get_namespace(), box.get_clean_name())  # asset:box asset box
-print(str(box), repr(box), cmds.getAttr(f"{box}.tx"))  # asset:box Transform("asset:box") 0.0
+box.set_namespace("asset")                                                                                                  # creates the namespace when missing: one undo step
+print(box, box.get_namespace(), box.get_short_name(namespace=False))                                                        # asset:box asset box
+print(str(box), repr(box), cmds.getAttr(f"{box}.tx"))                                                                       # asset:box Transform("asset:box") 0.0
 ```
 
 Attributes: `find_attr` returns the typed `Attribute` (`node.<name>` is the
@@ -415,7 +415,7 @@ cube.t.set([4, 5, 6])                                                           
 cube.tx.set(7)
 t = cube.find_attr("t")
 print(t.get(), cube.t.get(), cube.tx.get())                                                       # [(7.0, 5.0, 6.0)] [7. 5. 6.] 7.0 -- the cmds.getAttr shape, the Plug's numpy
-print(t.get_num_children(), repr(t.translateX), repr(t.child(1)), a.get_parent())                 # 3 Attribute("cube.translateX") Attribute("cube.translateY") cube.translate
+print(t.get_child_count(), repr(t.translateX), repr(t.child(1)), a.get_parent())                  # 3 Attribute("cube.translateX") Attribute("cube.translateY") cube.translate
 print(cube.tx.get_default_value(), cube.t.get_default_value())                                    # 0.0 [0.0, 0.0, 0.0]
 
 print(cube.tx.is_locked(), cube.tx.is_keyable(), cube.tx.is_channel_box(), cube.tx.is_dynamic())  # False True False False
@@ -481,10 +481,10 @@ ints gives a list of elements, `del attr[i]` removes one.
 multi = cube.add_attr("multi", attributeType="double", multi=True)
 multi[0].set(1)
 multi[3].set(3)
-print(multi.is_multi(), multi.get_num_elements(), list(multi.get_logical_indices()), multi.get_next_available_index())  # True 2 [0, 3] 1
-print(multi[[0, 3]])                                                                                            # [Attribute("cube.multi[0]"), Attribute("cube.multi[3]")]
-print(len(multi[:]), multi[3].logical_index(), multi.element_by_physical_index(1))                              # 4 3 cube.multi[3] -- [:] creates the gaps
-print([x.get() for x in multi[:]])                                                                              # [1.0, 0.0, 0.0, 3.0]
+print(multi.is_multi(), multi.get_element_count(), list(multi.get_logical_indices()), multi.get_next_available_index())  # True 2 [0, 3] 1
+print(multi[[0, 3]])                                                                                                     # [Attribute("cube.multi[0]"), Attribute("cube.multi[3]")]
+print(len(multi[:]), multi[3].get_logical_index(), multi.get_element(1, physical=True))                                  # 4 3 cube.multi[3] -- [:] creates the gaps
+print([x.get() for x in multi[:]])                                                                                       # [1.0, 0.0, 0.0, 3.0]
 del multi[0]
 print(list(multi.get_logical_indices()))                   # [1, 2, 3]
 ```
@@ -535,9 +535,9 @@ cube.t.set(1, 0, 0)
 cube.r.set(0, 90, 0)
 
 print([a.get_name() for a in cube.iter_xform_attrs(axis_only=True)])  # ['translateX', 'translateY', 'translateZ', 'rotateX', 'rotateY', 'rotateZ', 'scaleX', 'scaleY', 'scaleZ']
-cube.set_xfrom_attrs_locked(True)                               # sic -- the method is spelled xfrom
-print(cube.tx.is_locked())                                      # True
-cube.set_xfrom_attrs_locked(False)
+cube.set_xform_attrs_locked(True)
+print(cube.tx.is_locked())                                            # True
+cube.set_xform_attrs_locked(False)
 
 local = cube.get_matrix()                                        # MMatrix, local by default (.matrix)
 print(type(local).__name__, np.array(local).reshape(4, 4)[3, :3])        # MMatrix [1. 0. 0.]
@@ -566,7 +566,7 @@ print(list(grp.iter_shapes("mesh", as_transform=False)))                      # 
 cube << DisplayLayer.define("geo")
 clean = cube.duplicate_geometry(name="cube_clean")  # no history, sets or layers, xform zeroed, pivots at its own origin
 print(repr(clean), clean.get_parent(), clean.get_shapes(), clean.t.get())           # Transform("cube_clean") None [Mesh("cube_cleanShape")] [0. 0. 0.]
-print(DisplayLayer.for_node(clean), cube.duplicate_geometry(parent=grp).get_long_name())  # None |grp|cube2
+print(DisplayLayer.of(clean), cube.duplicate_geometry(parent=grp).get_long_name())  # [] |grp|cube2
 ```
 
 Serialisation goes through `cgmath.hierarchy`: one node to a
@@ -733,20 +733,21 @@ print(list(root.iter_joints()))                                                 
 print(list(root.iter_joints(match_name="knee")), root.find_joint("ankle"))        # [Joint("knee_jnt")] ankle_jnt
 ```
 
-Orientation: `orient_chain` aims each joint at its first child and leaves
-the result in `rotate`; `hierarchy_to_orients` bakes it into
-`jointOrient` (and `hierarchy_to_rotations` goes the other way). These
-address joints by short name, so run them before the scene holds a second
-`hip_jnt`.
+Orientation: `orient(hierarchy=True)` aims each joint at its first child and
+leaves the result in `rotate`; `rotations_to_orients(hierarchy=True)` bakes
+it into `jointOrient` (and `orients_to_rotations(hierarchy=True)` goes the
+other way). Without `hierarchy=True` each acts on the one joint. `orient`
+and the `hierarchy=True` forms address joints by short name, so run them
+before the scene holds a second `hip_jnt`.
 
 ```python
-root.orient_chain(aim_axis="x", up_axis="y")                                            # prints once for the end joint
+root.orient(aim_axis="x", up_axis="y", hierarchy=True)                                  # prints once for the end joint
 print(np.round(hip.jo.get(), 3), np.round(hip.r.get(), 3))                              # [0. 0. 0.] [ 0.    -0.    26.565]
-root.hierarchy_to_orients()
+root.rotations_to_orients(hierarchy=True)
 print(np.round(hip.jo.get(), 3), np.round(hip.r.get(), 3), np.round(knee.jo.get(), 3))  # [ 0.    -0.    26.565] [0. 0. 0.] [  0.      0.    -26.565]
-hip.convert_orients_to_rotation()
+hip.orients_to_rotations()
 print(np.round(hip.jo.get(), 3), np.round(hip.r.get(), 3))                              # [0. 0. 0.] [ 0.    -0.    26.565]
-hip.convert_rotation_to_orients()
+hip.rotations_to_orients()
 print(np.round(hip.r.get(), 3), np.round(hip.jo.get(), 3))                              # [0. 0. 0.] [ 0.    -0.    26.565]
 ```
 
@@ -790,66 +791,66 @@ deformer exists, the intermediate `Orig` shape from then on.
 ```python
 cmds.file(new=True, force=True)
 ball = Node(cmds.polySphere(name="ball", ch=False)[0]).get_shape()
-print(ball.get_injection_node() == ball, ball.get_component_tags())                                                              # True []
+print(ball.get_injection_node() == ball, ball.get_tag_names())                                                                     # True []
 
 cmds.cluster("ball")
 print(repr(ball.get_injection_node()))                                                                                             # Mesh("ballShapeOrig")
 
-ball.add_component_tag("cap")                                                                                                      # returns the new multi index
-ball.set_component_tag_contents("cap", [0, 1, 2, 3])                                                                               # ids, category "v" by default
-print(ball.get_component_tags(), ball.has_component_tag("cap"), ball.get_component_tag_index("cap"))                               # ['cap'] True 0
-print(ball.get_component_tag_contents("cap"), ball.get_component_tag_indices("cap"))                                               # ['vtx[0:3]'] [0 1 2 3]
-print(ball.get_component_tag_category("cap"), ball.get_component_tag_name(0))                                                      # v cap
+ball.add_tag("cap")                                                                                                                # returns the new multi index
+ball.set_tag_contents("cap", [0, 1, 2, 3])                                                                                         # ids, category "v" by default
+print(ball.get_tag_names(), ball.has_tag("cap"), ball.get_tag_index("cap"))                                                        # ['cap'] True 0
+print(ball.get_tag_contents("cap"), ball.get_tag_component_indices("cap"))                                                         # ['vtx[0:3]'] [0 1 2 3]
+print(ball.get_tag_category("cap"), ball.get_tag_name(0))                                                                          # v cap
 print(cmds.getAttr("ballShapeOrig.componentTags", multiIndices=True), cmds.getAttr("ballShape.componentTags", multiIndices=True))  # [0] None
-print(ball.get_component_tag_contents("cap", full_name=True))                                                                      # ['ballShape.vtx[0:3]']
+print(ball.get_tag_contents("cap", full_name=True))                                                                                # ['ballShape.vtx[0:3]']
 ```
 
 A name Maya refuses is a `ValueError` naming Maya's rule, before anything
 is made. Maya takes at least two characters, letters, digits and `_`,
 starting with a letter or `_`, with single `.` or `:` between characters.
 It trims the whitespace at the ends and makes a space inside `_`. A name
-that is not a `str` is a `TypeError` (`add_component_tag(5)` is not the
+that is not a `str` is a `TypeError` (`add_tag(5)` is not the
 tag at index 5):
 
 ```python
 try:
-    ball.add_component_tag("b")
+    ball.add_tag("b")
 except ValueError as e:
     print(str(e)[:59])                                        # 'b' is not a component tag name: Maya takes a component tag
 try:
-    ball.add_component_tag(5)
+    ball.add_tag(5)
 except TypeError as e:
     print(str(e)[:46])                                        # 5 is not a component tag name: a name is a str
-print(ball.get_component_tag_name(ball.add_component_tag("lid rim")))  # lid_rim
-ball.remove_component_tag("lid_rim")
+print(ball.get_tag_name(ball.add_tag("lid rim")))  # lid_rim
+ball.delete_tag("lid_rim")
 ```
 
 Contents can be ids with a category, component strings, or a
-`GeomSubsetData`; `set_component_tag_contents` renders ranges for you.
+`GeomSubsetData`; `set_tag_contents` renders ranges for you.
 
 ```python
-ball.set_component_tag_contents("cap", [4, 6, 5], category="f")
-print(ball.get_component_tag_contents("cap"), ball.get_component_tag_category("cap"))  # ['f[4:6]'] f
-ball.set_component_tag_contents("cap", ["e[3]", "e[5]", "e[6]"])
-print(ball.get_component_tag_contents("cap"))                                          # ['e[3]', 'e[5:6]']
+ball.set_tag_contents("cap", [4, 6, 5], category="f")
+print(ball.get_tag_contents("cap"), ball.get_tag_category("cap"))  # ['f[4:6]'] f
+ball.set_tag_contents("cap", ["e[3]", "e[5]", "e[6]"])
+print(ball.get_tag_contents("cap"))                                # ['e[3]', 'e[5:6]']
 
-subset = ball.get_component_tag_data("cap")                      # a cgmath GeomSubsetData
-print(subset.name, subset.component_type, subset.indices)                         # cap e [3 5 6]
-ball.set_component_tag_contents("cap", subset)
-print([s.name for s in ball.serialize_component_tags()])                          # ['cap']
+subset = ball.get_tag_data("cap")                      # a cgmath GeomSubsetData
+print(subset.name, subset.component_type, subset.indices)               # cap e [3 5 6]
+ball.set_tag_contents("cap", subset)
+print([s.name for s in ball.serialize_tags()])                          # ['cap']
 
-ball.set_component_tag_contents("cap", [])
-print(ball.is_component_tag_empty("cap"), ball.get_component_tag_indices("cap"))  # True []
+ball.set_tag_contents("cap", [])
+print(ball.is_tag_empty("cap"), ball.get_tag_component_indices("cap"))  # True []
 ```
 
 Expressions and history, the way deformers see them:
 
 ```python
-ball.set_component_tag_contents("cap", [0, 1, 2, 3])
+ball.set_tag_contents("cap", [0, 1, 2, 3])
 cmds.setAttr("cluster1.input[0].componentTagExpression", "cap", type="string")
-print(tag_references("cap"), tag_references("lid"))                                                        # [('cluster1', 0)] []
-print(ball.component_tag_expression_subset_state("cap"), ball.component_tag_expression_subset_state("*"))  # 1 2 -- some / all points
-entry = ball.get_component_tag_history()[0]
+print(tag_references("cap"), tag_references("lid"))                      # [('cluster1', 0)] []
+print(ball.get_tag_subset_state("cap"), ball.get_tag_subset_state("*"))  # 1 2 -- some / all points
+entry = ball.get_tag_history()[0]
 print(entry["key"], entry["node"], entry["affectCount"], entry["procedural"], entry["editable"])   # cap ballShapeOrig 4 False True
 ```
 
@@ -858,26 +859,26 @@ on the output plug (procedural, such as a history `polyCube`'s six face
 tags) is readable but refuses every edit:
 
 ```python
-ball.rename_component_tag("cap", "lid")
-print(ball.has_component_tag("cap"), ball.has_component_tag("lid"))  # False True
-ball.remove_component_tag("lid")
-print(ball.get_component_tags())                                     # []
+ball.rename_tag("cap", "lid")
+print(ball.has_tag("cap"), ball.has_tag("lid"))  # False True
+ball.delete_tag("lid")
+print(ball.get_tag_names())                      # []
 
 hist = Node(cmds.polyCube(name="hist")[0]).get_shape()    # ch=True: the tags are polyCube1's outputs
-print(hist.get_component_tags(), hist.get_component_tag_index("top"), hist.get_component_tag_contents("top"))   # ['back', 'bottom', 'front', 'left', 'right', 'top'] -1 ['f[1]']
+print(hist.get_tag_names(), hist.get_tag_index("top"), hist.get_tag_contents("top"))   # ['back', 'bottom', 'front', 'left', 'right', 'top'] -1 ['f[1]']
 try:
-    hist.set_component_tag_contents("top", [0], category="f")
+    hist.set_tag_contents("top", [0], category="f")
 except RuntimeError as e:
     print(str(e)[:64])                                           # Component tag 'top' on histShape is procedural (owned by polyCub
-hist.add_component_tag("lid")   # a new name is editable next to them
-print(hist.get_component_tags()[:2])  # ['lid', 'back']
+hist.add_tag("lid")              # a new name is editable next to them
+print(hist.get_tag_names()[:2])  # ['lid', 'back']
 ```
 
 The plugs Maya evaluates tags on, and the component `MObject`s the
 OpenMaya calls want:
 
 ```python
-print(ball.get_local_shape_attr(), ball.get_world_shape_attr())                                                    # ballShape.outMesh ballShape.worldMesh
+print(ball.get_output_attr(), ball.get_output_attr(world_space=True))                                         # ballShape.outMesh ballShape.worldMesh
 print(ball.get_component_mobject().apiTypeStr, ball.get_component_mobject("f", np.array([0, 1])).apiTypeStr)  # kMeshVertComponent kMeshPolygonComponent
 ```
 
@@ -889,8 +890,8 @@ print(ball.get_component_mobject().apiTypeStr, ball.get_component_mobject("f", n
 cmds.file(new=True, force=True)
 cube = Node(cmds.polyCube(name="cube", ch=False)[0])
 mesh = cube.get_shape()
-print(repr(Mesh("cube")), Mesh("cubeShape") == mesh)                 # Mesh("cubeShape") True -- a transform name finds its mesh
-print(mesh.get_num_vertices(), mesh.get_num_polygons(), mesh.get_num_weight_points())  # 8 6 8
+print(repr(Mesh("cube")), Mesh("cubeShape") == mesh)                                  # Mesh("cubeShape") True -- a transform name finds its mesh
+print(mesh.get_vertex_count(), mesh.get_face_count(), mesh.get_weight_point_count())  # 8 6 8
 
 points = mesh.get_points()                                       # MPointArray, object space by default
 print(type(points).__name__, np.array(points).shape, np.array(points)[0])   # MPointArray (8, 4) [-0.5 -0.5  0.5  1. ]
@@ -906,7 +907,7 @@ try:
     mesh.get_closest_point(Node("persp").t)                                         # a point is a value: .t.get()
 except TypeError as e:
     print(e)                                                                        # Mesh.get_closest_point takes a point (an MPoint, or 3 numbers), not the plug 'persp.translate': pass its value, Plug('persp.translate').get()
-print(mesh.get_vertex_normals()[0], len(mesh.get_per_face_vertex_normals()))        # (-0.57735, -0.57735, 0.57735) 24 -- object space; world_space=True for the world's
+print(mesh.get_vertex_normals()[0], len(mesh.get_face_vertex_normals()))            # (-0.57735, -0.57735, 0.57735) 24 -- object space; world_space=True for the world's
 print(mesh.get_vertices_above_plane(np.array([0.0, 0, 0]), np.array([0.0, 1, 0])))  # [2 3 4 5]
 print(mesh.get_faces_above_plane(np.array([0.0, 0, 0]), np.array([0.0, 1, 0])))     # [1]
 ```
@@ -943,9 +944,9 @@ print(world.points[0], world.matrix[3, :3])  # [-0.5  1.5  0.5] [0. 0. 0.]
 cube.t.set(0, 0, 0)
 
 rebuilt = Mesh.create(data, uv_data=uv_list, name="rebuilt")
-print(repr(rebuilt), rebuilt.get_num_vertices(), rebuilt.get_parent(), rebuilt.get_uv_sets())  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
-print(rebuilt.get_shading_engines())                                               # [ShadingEngine("initialShadingGroup")]
-print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                  # 12 -- the data's normals bring back the cube's hard edges
+print(repr(rebuilt), rebuilt.get_vertex_count(), rebuilt.get_parent(), rebuilt.get_uv_sets())  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
+print(rebuilt.get_shading_engines())                                                           # [ShadingEngine("initialShadingGroup")]
+print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                        # 12 -- the data's normals bring back the cube's hard edges
 ```
 
 `create` also takes a `cgmath.render.scene.Object`, for the mesh and its UVs:
@@ -1057,11 +1058,11 @@ category, one value per vertex, padded or trimmed to the vertex count:
 
 ```python
 mask = mesh.add_map("mask", values=0.5, category="weights")
-print(repr(mask), mask.get_data_type(), mask.get_categories(), mesh.get_paintable_maps())  # Attribute("cubeShape.mask") doubleArray ['weights', 'PaintableMap'] ['mask']
-mesh.set_map_values("mask", [1, 0, 1])                                         # short lists are padded with 0.0
-print(mesh.get_map_values("mask"))                                             # [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+print(repr(mask), mask.get_data_type(), mask.get_categories(), mesh.get_map_names())  # Attribute("cubeShape.mask") doubleArray ['weights', 'PaintableMap'] ['mask']
+mesh.set_map_values("mask", [1, 0, 1])                                                # short lists are padded with 0.0
+print(mesh.get_map_values("mask"))                                                    # [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 mesh.set_map_values("mask", np.linspace(0, 1, 8))
-print(np.round(mesh.get_map_values("mask"), 2))                                # [0.   0.14 0.29 0.43 0.57 0.71 0.86 1.  ]
+print(np.round(mesh.get_map_values("mask"), 2))                                       # [0.   0.14 0.29 0.43 0.57 0.71 0.86 1.  ]
 
 map_data = mesh.get_map_data("mask")                             # a cgmath MapData, sparse: zeros dropped
 print(map_data.name, map_data.categories, map_data.indices.tolist())                       # mask ['weights'] [1, 2, 3, 4, 5, 6, 7]
@@ -1070,10 +1071,10 @@ print(mesh.get_map_attrs(category="weights"), mesh.find_map_attr("visibility")) 
 mesh.mirror_map("mask", Axis.X)                                                            # +X values onto their -X partners
 print(np.round(mesh.get_map_values("mask"), 2))                                            # [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
 from cgmath.geometry.mesh import Axis as CgmathAxis
-mesh.mirror_map("mask2", CgmathAxis.X)                                                     # cgmath's Axis names the same planes
-print(mesh.get_map_values("mask2") == mesh.get_map_values("mask"))                         # True
+mesh.mirror_map("mask2", CgmathAxis.X)                              # cgmath's Axis names the same planes
+print(mesh.get_map_values("mask2") == mesh.get_map_values("mask"))  # True
 mesh.delete_map("mask2")
-print(mesh.get_paintable_maps(), mesh.sanitize_map_values([1, 2]))                               # ['mask'] [1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+print(mesh.get_map_names())                                         # ['mask']
 ```
 
 Colour sets are `ColorSet` handles on the scene, so every member is a
@@ -1124,17 +1125,17 @@ overlapping) a tag comes back as it was, but for those rungs.
 ```python
 dst = Node(cmds.polyCube(name="dst", ch=False)[0]).get_shape()
 mesh.transfer_maps("mask", dst)
-print(dst.get_paintable_maps(), np.round(dst.get_map_values("mask"), 2))   # ['mask'] [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
-print(dst.get_map_data("mask").categories)                           # ['weights']
+print(dst.get_map_names(), np.round(dst.get_map_values("mask"), 2))   # ['mask'] [0.14 0.14 0.43 0.43 0.71 0.71 1.   1.  ]
+print(dst.get_map_data("mask").categories)                            # ['weights']
 
-mesh.add_component_tag("cap")
-mesh.set_component_tag_contents("cap", [0, 1, 2, 3])
-mesh.transfer_component_tags("cap", dst)                             # written at dst's injection node
-print(dst.get_component_tags()[-1], dst.get_component_tag_indices("cap"))  # cap [0 1 2 3]
-mesh.add_component_tag("lid")
-mesh.set_component_tag_contents("lid", [1], "f")
-mesh.transfer_component_tags("lid", dst)                             # where dst's face centres land
-print(dst.get_component_tag_indices("lid"))                          # [1]
+mesh.add_tag("cap")
+mesh.set_tag_contents("cap", [0, 1, 2, 3])
+mesh.transfer_tags("cap", dst)                                        # written at dst's injection node
+print(dst.get_tag_names()[-1], dst.get_tag_component_indices("cap"))  # cap [0 1 2 3]
+mesh.add_tag("lid")
+mesh.set_tag_contents("lid", [1], "f")
+mesh.transfer_tags("lid", dst)                                        # where dst's face centres land
+print(dst.get_tag_component_indices("lid"))                           # [1]
 
 jnt  = Joint.create(name="jnt")
 skin = SkinCluster.create(cube, jnt)
@@ -1151,24 +1152,24 @@ Both are `Geometry`, so the tag methods above apply; their class data
 ```python
 cmds.file(new=True, force=True)
 crv = Node(cmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)], name="crv")).get_shape()
-print(repr(crv), crv.get_num_cvs(), crv.get_num_weight_points(), np.array(crv.get_points())[1, :3])   # NurbsCurve("curveShape1") 5 5 [1. 0. 0.]
+print(repr(crv), crv.get_cv_count(), crv.get_weight_point_count(), np.array(crv.get_points())[1, :3])   # NurbsCurve("curveShape1") 5 5 [1. 0. 0.]
 spline = crv.serialize()                                          # cgmath BSplineData
 print(type(spline).__name__, spline.points.shape, spline.degree, spline.periodic)  # BSplineData (5, 3) 3 False
 print(crv.cv, len(crv.cv[:]), crv.cv[[0, 2]])                                      # curveShape1.controlPoints 5 List([Plug("curveShape1.controlPoints[0]"), Plug("curveShape1.controlPoints[2]")])
 
-crv.add_component_tag("root")
-crv.set_component_tag_contents("root", [0, 1])
-print(crv.get_component_tag_contents("root"))                                      # ['cv[0:1]']
+crv.add_tag("root")
+crv.set_tag_contents("root", [0, 1])
+print(crv.get_tag_contents("root"))                                                # ['cv[0:1]']
 
 ball = Node(cmds.sphere(name="ball")[0]).get_shape()
-print(repr(ball), ball.get_num_cvs(), ball.get_num_weight_points())   # NurbsSurface("ballShape") 77 56 -- periodic in V: 3 wrapped rows per column
+print(repr(ball), ball.get_cv_count(), ball.get_weight_point_count())   # NurbsSurface("ballShape") 77 56 -- periodic in V: 3 wrapped rows per column
 patch = ball.serialize()                                          # cgmath BSplinePatchData, wrapped CVs trimmed
-print(type(patch).__name__, patch.points.shape, patch.periodic_u, patch.periodic_v)            # BSplinePatchData (7, 8, 3) False True
+print(type(patch).__name__, patch.points.shape, patch.periodic_u, patch.periodic_v)  # BSplinePatchData (7, 8, 3) False True
 
-ball.add_component_tag("rim")
-ball.set_component_tag_contents("rim", np.array([[1, 0], [1, 1]]))
-print(ball.get_component_tag_contents("rim"), ball.get_component_tag_indices("rim").tolist())  # ['cv[1][0:1]'] [[1, 0], [1, 1]]
-print(ball.get_component_tag_indices("rim").shape)                                             # (2, 2)
+ball.add_tag("rim")
+ball.set_tag_contents("rim", np.array([[1, 0], [1, 1]]))
+print(ball.get_tag_contents("rim"), ball.get_tag_component_indices("rim").tolist())  # ['cv[1][0:1]'] [[1, 0], [1, 1]]
+print(ball.get_tag_component_indices("rim").shape)                                   # (2, 2)
 ```
 
 `NurbsCurve.create` builds a curve from its control points, with a degree
@@ -1190,7 +1191,7 @@ print(repr(arc), arc.get_parent(), arc.get_fn_set().degree, list(arc.get_fn_set(
 zig = NurbsCurve.create(points, degree=1, kv=[0, 1, 2, 4, 8], name="zig")         # a degree and knots of your own
 print(zig.get_fn_set().degree, list(zig.get_fn_set().knots()))                          # 1 [0.0, 1.0, 2.0, 4.0, 8.0]
 twin = NurbsCurve.create(crv.serialize(), name="twin")                            # from a BSplineData
-print(repr(twin), twin.get_num_cvs(), twin.get_fn_set().degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
+print(repr(twin), twin.get_cv_count(), twin.get_fn_set().degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
 ```
 
 `NurbsSurface.create` builds a surface from a `BSplinePatchData`: its points,
@@ -1215,7 +1216,7 @@ import os
 import tempfile
 
 sheet = NurbsSurface.create(ball.serialize(), name="sheet")
-print(repr(sheet), sheet.get_num_cvs(), sheet.get_fn_set().knotDomainInU)    # NurbsSurface("sheetShape") 77 (0.0, 4.0)
+print(repr(sheet), sheet.get_cv_count(), sheet.get_fn_set().knotDomainInU)    # NurbsSurface("sheetShape") 77 (0.0, 4.0)
 
 folder = tempfile.mkdtemp()
 saved  = crv.save(os.path.join(folder, "crv.json"))  # object space, the default
@@ -1229,7 +1230,7 @@ again.load(saved, world_space=True)
 print(np.array(again.get_points())[0, :3])                  # [ 0.  0. -5.]
 print(np.array(again.get_points(world_space=True))[0, :3])  # [0. 0. 0.]
 patch = NurbsSurface.load(ball.save(os.path.join(folder, "ball.npz")), name="patch")
-print(repr(patch), patch.get_num_cvs())                          # NurbsSurface("patchShape") 77
+print(repr(patch), patch.get_cv_count())                          # NurbsSurface("patchShape") 77
 try:
     NurbsSurface.load(saved)                                     # a curve's file
 except TypeError as e:
@@ -1339,12 +1340,12 @@ except TypeError as e:
 ```
 
 Transfer to another mesh (pass the shape or a name, not a `Transform`).
-`copy_skincluster` copies from one or more skinned meshes onto vertices
+`transfer_from_meshes` copies from one or more skinned meshes onto vertices
 (or whole meshes, by name), by closest point; the joints the target's
 skin lacks are added, and its other vertices keep their weights. The
 copied rows are the sampled weights as they are: the target's locked
 influences and its `maxInfluences` are not applied to them. On a mesh with
-several skinClusters, `copy_skincluster`, `apply_skin_data` and
+several skinClusters, `transfer_from_meshes`, `apply_skin_data` and
 `bake_deformation` use the one nearest the shape, normally
 `get_deformers(node_type="skinCluster")[0]` (the skin of a blendShape's
 intermediate target, which that lists too, is not the mesh's own):
@@ -1356,7 +1357,7 @@ print(repr(moved), moved.get_influence_objects(), moved.get_weights().shape)   #
 
 third = Node(cmds.polyCube(name="third", ch=False, height=2)[0])
 SkinCluster.create(third, j1)
-SkinCluster.copy_skincluster(str(cube), ["third.vtx[4:7]"])
+SkinCluster.transfer_from_meshes(str(cube), ["third.vtx[4:7]"])
 copied = third.get_shape().get_deformers()[0]
 print(copied.get_influence_objects(), copied.get_weights()[:, 1])              # [Joint("j1"), Joint("j2")] [0. 0. 0. 0. 1. 1. 1. 1.]
 ```
@@ -1375,7 +1376,7 @@ smile = Node(cmds.polyCube(name="smile", ch=False)[0])
 cmds.xform("smile.vtx[3]", ws=True, t=(10, 2, 3))
 
 morph = BlendShape.create(smile, base, name="morph")              # cmds.blendShape(frontOfChain=True)
-print(repr(morph), morph.get_num_targets(), morph.get_targets(), morph.get_target_indices())                   # BlendShape("morph") 1 ['smile'] [0]
+print(repr(morph), morph.get_target_count(), morph.get_targets(), morph.get_target_indices())            # BlendShape("morph") 1 ['smile'] [0]
 print(morph.get_target_index("smile"), morph.get_target_name(0), repr(morph.get_target_weight_attr(0)))  # 0 smile Attribute("morph.smile")
 morph.set_target_weight("smile", 1.0)
 print(morph.get_target_weight(0), morph.smile.get())                                                     # 1.0 1.0 -- the alias resolves as an attribute too
@@ -1393,7 +1394,7 @@ morph.set_target_data("frown", (np.array([0, 1]), np.array([[0, -1, 0], [0, -1, 
 print(i, morph.get_targets(), morph.get_target_data(i).indices)                         # 1 ['smile', 'frown'] [0 1]
 morph.set_target_name("frown", "sad")
 print(morph.get_targets(), repr(morph.find_alias("sad")))                               # ['smile', 'sad'] Attribute("morph.sad")
-print([repr(a) for a in morph.target_data_attrs(1)][1])                                 # Attribute("morph.inputTarget[0].inputTargetGroup[1].inputTargetItem[6000].inputPointsTarget")
+print([repr(a) for a in morph.get_target_data_attrs(1)][1])                             # Attribute("morph.inputTarget[0].inputTargetGroup[1].inputTargetItem[6000].inputPointsTarget")
 
 morphs = morph.serialize()                                        # a cgmath MorphList
 print(type(morphs).__name__, [m.name for m in morphs], [m.name for m in morph.serialize(match_name="sm.*")])   # MorphList ['smile', 'sad'] ['smile']
@@ -1544,7 +1545,7 @@ print(cmds.ls("amber*"), gold.is_valid())          # [] False
 ## 15. `DisplayLayer`
 
 Exclusive, objects only, read from the node's own `drawOverride` input.
-`defaultLayer` means "no layer": `for_node` answers `None` there.
+`defaultLayer` means "no layer": `of` answers `[]` there.
 `DisplayLayer` is also the DSL's `Layer` (`rig.Layer is DisplayLayer`): a
 layer node on the right of `<<` or `in` is the membership collection
 (`cube << layer`, `cube in layer`, `layer.remove(cube)`, whose shorthand is
@@ -1557,7 +1558,7 @@ layer = DisplayLayer.define("geometry")                           # empty; never
 print(repr(layer), layer.is_default(), DisplayLayer("defaultLayer").is_default())     # DisplayLayer("geometry") False True
 
 cube << layer                                                                         # the node itself, never the subtree
-print(layer.get_members(), DisplayLayer.for_node(cube), DisplayLayer.for_node(mesh))  # [Transform("cube")] geometry None
+print(layer.get_members(), DisplayLayer.of(cube), DisplayLayer.of(mesh))              # [Transform("cube")] [DisplayLayer("geometry")] []
 
 grp = Transform.create(name="grp")
 cube.set_parent(grp)
@@ -1566,9 +1567,9 @@ print(layer.get_members(), layer.get_members(no_recurse=False))   # [Transform("
 
 ref = DisplayLayer.define("ref")
 cube << ref                                                                                      # exclusive: cube leaves geometry
-print(DisplayLayer.for_node(cube), layer.get_members())                                          # ref [Transform("grp")]
-layer.remove(cube)                                                                               # not ours: left alone
-print(DisplayLayer.for_node(cube))                                                               # ref
+print(DisplayLayer.of(cube), layer.get_members())  # [DisplayLayer("ref")] [Transform("grp")]
+layer.remove(cube)                                 # not ours: left alone
+print(DisplayLayer.of(cube))                       # [DisplayLayer("ref")]
 try:
     layer.add_members(cube)
 except TypeError as e:
@@ -1579,7 +1580,7 @@ ref.visibility.set(False)
 print(DisplayLayer.find_all(), Node("cube").v >> None, cmds.getAttr("cube.overrideVisibility"))  # [DisplayLayer("defaultLayer"), DisplayLayer("geometry"), DisplayLayer("reference")] True False
 ref.clear()
 ref.delete()                                                                                     # members go back to defaultLayer
-print(DisplayLayer.for_node(cube), cmds.objExists("reference"))                                  # None False
+print(DisplayLayer.of(cube), cmds.objExists("reference"))                                        # [] False
 from rig import Layer
 print(Layer is DisplayLayer, cube in layer, DisplayLayer.of(grp))                                # True False [DisplayLayer("geometry")]
 try:
@@ -1644,7 +1645,7 @@ print(rivet.inputMesh.get_connected_attrs(src=True, dst=False))                 
 target = Transform.create(name="target")
 rivet.constrain(target)
 print(cmds.listRelatives("target", type="constraint"))  # ['target_pointConstraint1', 'target_orientConstraint1']
-rivet.set_uv_values([0.1, 0.2])
+rivet.set_uv([0.1, 0.2])
 print(rivet.parameterU.get(), rivet.parameterV.get())   # 0.1 0.2
 ```
 
@@ -1695,12 +1696,12 @@ print(cmds.objExists("hero:cube"), Reference.find_by_path(path))                
 ## 19. Name helpers
 
 Pure string functions; nothing here touches the scene. Each lives beside the
-class that uses it: `dg_node` (short and clean names), `joint`
+class that uses it: `dg_node` (short names), `joint`
 (`replace_suffix`) and `geometry` (component range strings).
 
 ```python
-print(get_short_name("|grp|ns:cube"), get_clean_name("|grp|ns:cube"))    # ns:cube cube
-print(replace_suffix("arm_L_jnt", "ctl"), replace_suffix("arm", "ctl"))  # arm_L_ctl arm_ctl
+print(get_short_name("|grp|ns:cube"), get_short_name("|grp|ns:cube", namespace=False))  # ns:cube cube
+print(replace_suffix("arm_L_jnt", "ctl"), replace_suffix("arm", "ctl"))                 # arm_L_ctl arm_ctl
 ```
 
 Component ids to the range strings Maya stores. `iter_component_ranges`
@@ -1853,8 +1854,8 @@ from rig import AnimCurve, AnimCurveTL, AnimCurveTU, NodeTypeError
 cmds.file(new=True, force=True)
 cmds.undoInfo(state=True, infinity=True)
 blink = AnimCurveTU.create([0, 1, 0], times=[0, 2, 4], name="blink")   # new, unconnected
-print(repr(blink), blink.get_num_keys())                 # AnimCurveTU("blink") 3
-print(repr(Node("blink")), repr(AnimCurve("blink")))     # AnimCurveTU("blink") AnimCurveTU("blink")
+print(repr(blink), blink.get_key_count())             # AnimCurveTU("blink") 3
+print(repr(Node("blink")), repr(AnimCurve("blink")))  # AnimCurveTU("blink") AnimCurveTU("blink")
 try:
     AnimCurveTL("blink")
 except NodeTypeError as err:
@@ -1870,8 +1871,8 @@ print(cmds.keyTangent("lid", query=True, outTangentType=True), cmds.getAttr("lid
 cmds.flushUndo()
 again = AnimCurveTU.define("lid", [0, 1], tangents="step", post_infinity="cycle_relative")   # found, the same keys
 print(again == lid, cmds.undoInfo(query=True, undoQueueEmpty=True))   # True True
-AnimCurveTU.define("lid", [0, 1, 0], tangents="step")    # found: its keys replaced in place
-print(lid.get_num_keys(), cmds.undoInfo(query=True, undoName=True))   # 3 rig.define
+AnimCurveTU.define("lid", [0, 1, 0], tangents="step")                 # found: its keys replaced in place
+print(lid.get_key_count(), cmds.undoInfo(query=True, undoName=True))  # 3 rig.define
 ```
 
 ```python

@@ -1211,7 +1211,7 @@ def _raise_partial(x: Any, index: int, name: str, has: int) -> None:
     if isinstance(x, Plug):
         _ensure_node_valid(x)
     elif isinstance(x, Node):
-        ensure = getattr(type(x), "ensure_valid", None)
+        ensure = getattr(type(x), "_check_valid", None)
         if ensure is not None:
             ensure(x)
     raise AttributeError(

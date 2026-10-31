@@ -345,7 +345,7 @@ ctrl << Quat("q")
 print(at("ctrl.aim"), cmds.attributeQuery("aim", node="ctrl", listChildren=True), at("ctrl.aimX"))  # double3 ['aimX', 'aimY', 'aimZ'] double
 print(cmds.attributeQuery("tint", node="ctrl", listChildren=True))                                  # ['tintR', 'tintG', 'tintB']
 print(at("ctrl.rot"), at("ctrl.rotX"))                                                              # double3 doubleAngle
-print(at("ctrl.q"), ctrl.q.get_num_children())                                                      # double4 4
+print(at("ctrl.q"), ctrl.q.get_child_count())                                                       # double4 4
 ```
 
 A compound takes a sequence, a plug of the same width, or a per-channel

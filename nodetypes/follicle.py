@@ -80,7 +80,7 @@ class Follicle(DAGNode):
 
         # move follicle to the desired location (t is a world position)
         uv = mesh.get_uv_at_point(t, uv_set=uv_set, world_space=True)
-        follicle.set_uv_values(uv)
+        follicle.set_uv(uv)
 
         # Oh fun, if closestPointOnMesh finds a UV edge (and edge isn't sharing another uv shell)
         # that u,v has a 50/50 chance of actually registering with follicle.  It might not find any mesh
@@ -94,13 +94,13 @@ class Follicle(DAGNode):
             if is_at_origin(fTranform):
                 follicle.find_attr("parameterU").set(uv[0] + fudge_factor)
             if is_at_origin(fTranform):
-                follicle.set_uv_values(uv)
+                follicle.set_uv(uv)
                 follicle.find_attr("parameterU").set(uv[0] - fudge_factor)
             if is_at_origin(fTranform):
-                follicle.set_uv_values(uv)
+                follicle.set_uv(uv)
                 follicle.find_attr("parameterV").set(uv[1] + fudge_factor)
             if is_at_origin(fTranform):
-                follicle.set_uv_values(uv)
+                follicle.set_uv(uv)
                 follicle.find_attr("parameterV").set(uv[1] - fudge_factor)
             if is_at_origin(fTranform):
                 raise Exception(
@@ -129,7 +129,7 @@ class Follicle(DAGNode):
         if rotation:
             _cmds_edit.orientConstraint(_name_of(parent), _name_of(constrainee), mo=True)
 
-    def set_uv_values(self, uv: list[float]) -> None:
+    def set_uv(self, uv: list[float]) -> None:
         """Sets the uv values of this follicle."""
         self.find_attr("parameterU").set(uv[0])
         self.find_attr("parameterV").set(uv[1])
