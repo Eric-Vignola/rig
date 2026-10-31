@@ -34,7 +34,7 @@ from unittest import mock
 import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
-from rig import List, Node, container
+from rig import AnimCurve, List, Node, container
 from rig._internal import journal
 from rig.nodetypes import BlendShape, Joint, Mesh, NurbsCurve, NurbsSurface, SkinCluster, Transform
 from rig.nodetypes import _files
@@ -1250,8 +1250,15 @@ class TestHierarchy(_Case):
         self.assertEqual(Transform.load_hierarchy(pathlib.Path(self.path("skel.npz")))[0].get_short_name(), "root2")
         from cgmath.hierarchy import ClipData
 
+        # re-pinned (user decision 2026-10-30: a clip is built and keyed): one that stands still
+        # is its plain values, one that moves has a curve for what moves
         clip = ClipData(data, frames=3)
         self.assertEqual(Transform.load_hierarchy(clip)[0].get_short_name(), "root3")
+        self.assertEqual(cmds.ls(type="animCurve"), [])
+        clip.frames["spine"].translate_y = [5, 6, 7]
+        keyed                            = Transform.load_hierarchy(clip)
+        self.assertEqual(keyed[0].get_short_name(), "root4")
+        self.assertEqual(cmds.keyframe(str(AnimCurve.of(keyed[1])[0]), query=True, valueChange=True), [5, 6, 7])
 
     def test_wrong_inputs_make_nothing(self):
         Mesh(cmds.polyCube(name="m", constructionHistory=False)[0]).save(self.path("m.npz"))

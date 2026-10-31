@@ -35,8 +35,13 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
 
     Args:
         hierarchy: The file (a str or os.PathLike, ``~`` expanded; a cgmath
-            ``.npz`` / ``.json`` / ``.pkl``), or the HierarchyData itself (a
-            ClipData too: its frames are not used).
+            ``.npz`` / ``.json`` / ``.pkl``), or the HierarchyData itself. A
+            ClipData, the object or a file that holds one, is built and keyed,
+            no keyword, as `create_hierarchy` says; a plain HierarchyData
+            (``clip.rest_pose``, when the clip has one) makes no keys. An asset
+            (``.fbx``, ``.glb``) reads as one pose, no keys and no warning: a
+            keyed one is ``ClipData.load_fbx`` or ``ClipData.load_glb``, then
+            `create_hierarchy`.
         parent: An existing node to make the roots under (`create_hierarchy`'s
             ``parent``). None: the world.
         world_space: A bool (anything else is a TypeError, before the file is
@@ -45,7 +50,8 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
             from the file as local values under `parent` (the file holds local
             values: under the node it was saved under, it lands where it was,
             as far as the channels it holds place it); True, the roots' world
-            matrices in the file (their values read as world values).
+            matrices in the file (their values read as world values), on every
+            frame of a clip.
         container: Inside ``with container()``, whether the new nodes join the
             scope (None: yes), as for every typed create.
 
@@ -56,8 +62,10 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
     The file is read, and what it holds checked, before anything is made: a
     missing file is a FileNotFoundError, a file of another class a TypeError
     naming what it holds, a file from an older cgmath cgmath's
-    LegacyFileError. Constraints and other types derived from transform are
-    skipped with a warning (`create_hierarchy`'s).
+    LegacyFileError, a NaN or an infinity in a column of a clip that is keyed
+    a ValueError, a missing undo plug-in, for a clip with keys, a RuntimeError.
+    Constraints and other types derived from transform are skipped with a
+    warning (`create_hierarchy`'s).
 
     From a node, ``Transform('root').load_hierarchy(...)`` is a TypeError: rig
     does not update a hierarchy in place (its transforms hold the rig's
@@ -65,11 +73,16 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
     parent='root')`` makes one under it.
 
     Each call is ONE undo step named ``rig.Transform.load_hierarchy`` (or
-    ``rig.Joint.load_hierarchy``) and leaves the selection as it was.
+    ``rig.Joint.load_hierarchy``), a clip's curves and keys in it, and leaves
+    the selection as it was.
     """
 
-# what ``load_hierarchy``'s world_space= says (`_files.space_flag`)
+# what ``create_hierarchy``'s and ``load_hierarchy``'s world_space= says (`_files.space_flag`)
 _HIERARCHY_SPACE = "how the roots' values read under parent: local, or world"
+
+# what a difference across a clip's frames may be, per 1 of the value, and still be the round-off
+# of a root's solve under a parent (`_clip_rows`): 2000 frames of a turning root leave 7e-16
+_SOLVE_GRAIN = 1e-12
 
 # the keywords ``Transform.create(transform_data)`` reads itself (`_create_from_data`):
 # every other keyword is an attribute of the new node
@@ -168,6 +181,107 @@ def _set_values(node: DAGNode, data: TransformData) -> None:
     compensate, radius and draw style): what `create_hierarchy` and
     ``Transform.create(data)`` set once the node exists."""
     node.set_attrs(skip_missing=True, **data.to_attributes())
+
+
+def _clip_rows(hierarchy: HierarchyData, solved: dict) -> list[tuple]:
+    """The keys a ClipData needs, ``(node data, attribute, keys)`` per column of its (F, N, 3)
+    blocks with any difference across the frames, each with a key on every frame. A flat
+    column has no row: `_set_values` sets it as a plain value (so a one-frame clip has
+    none, and a plain HierarchyData none at all). `solved` holds the roots solved under a
+    parent (`_build_hierarchy`), whose round-off is no difference: a turning root's scale, 1
+    in the clip, comes back 1 give or take 1e-15 (`_SOLVE_GRAIN`). A joint that has to take
+    out a scale no plug gives it (`_held_scale`) has its own rows, on ``inverseScale``.
+
+    Key k lands on frame ``start_frame + k`` whatever the scene's rate: another rate logs
+    one warning, keys or none, and the scene's time unit and playback range are not touched.
+    The tangents are Maya's global default, read once and given to every curve, as
+    ``AnimCurve(...)`` alone is linear. Read before any node is made, so a NaN (no key takes
+    one) or a missing undo plug-in refuses with nothing made."""
+    from cgmath.hierarchy import MAYA_ATTRIBUTE_MAP, ClipData
+    from rig.nodetypes import plugins
+    from rig.nodetypes.anim_curve import AnimCurve
+
+    if not isinstance(hierarchy, ClipData) or not hierarchy.frame_count:
+        return []
+    frames = hierarchy.frames
+    times  = hierarchy.start_frame + np.arange(hierarchy.frame_count)
+    tangents = {
+        "in_tangents":  cmds.keyTangent(query=True, g=True, inTangentType=True)[0],
+        "out_tangents": cmds.keyTangent(query=True, g=True, outTangentType=True)[0],
+    }
+    grain = np.array([_SOLVE_GRAIN if id(node) in solved else 0.0 for node in hierarchy])[:, None]
+    rows  = []
+    for channel in ClipData.FRAMED_CHANNELS:
+        attr  = MAYA_ATTRIBUTE_MAP[channel]
+        block = getattr(frames, channel.lstrip("_"))
+        moved = ~(np.abs(block - block[0]) <= grain * (1.0 + np.abs(block[0])))
+        for node, axis in np.argwhere(moved.any(axis=0)).tolist():
+            keys = AnimCurve(block[:, node, axis], times=times, **tangents)
+            rows.append((hierarchy[node], f"{attr}{'XYZ'[axis]}", keys))
+    for node in hierarchy:
+        held = _held_scale(node, solved)
+        for axis in () if held is None else np.flatnonzero(np.ptp(held, axis=0)).tolist():
+            keys = AnimCurve(held[:, axis], times=times, **tangents)
+            rows.append((node, f"inverseScale{'XYZ'[axis]}", keys))
+    if rows and not plugins._fast_path_ready():
+        raise RuntimeError(
+            f"rig needs its undo plug-in 'undoable_api_command' to key a clip, and it could "
+            f"not be loaded ({plugins._plugin_whereabouts()}); nothing was made"
+        )
+    scene = OpenMaya.MTime(1.0, OpenMaya.MTime.kSeconds).asUnits(OpenMaya.MTime.uiUnit())
+    if abs(hierarchy.fps - scene) > 1e-3:  # a clip's 23.976 is the scene's 24000 / 1001
+        LOGGER.warning(
+            f"The clip is at {hierarchy.fps:g} fps and the scene at {scene:g} fps: its frames "
+            f"land frame for frame, on the clip's frame numbers, and play at the scene's rate"
+        )
+    return rows
+
+
+def _key_rows(rows: list[tuple]) -> None:
+    """Keys the channels of `rows` (`_clip_rows`, its nodes made) in one statement: every row
+    planned, then every curve written. A channel the node has not (a transform's joint
+    orient) is left out, as `_set_values` leaves out its value."""
+    from rig._internal.list import List
+
+    found = [(data.name.find_attr(attr, quiet=True), keys) for data, attr, keys in rows]
+    found = [row for row in found if row[0] is not None]
+    if found:
+        plugs, keys = zip(*found)
+        List(plugs) << list(keys)
+
+
+def _held_scale(node: Any, solved: dict) -> np.ndarray | None:
+    """The (F, 3) scale in the clip of the parent of `node`, for a joint that compensates and
+    whose parent's plug no longer holds it: a joint root that does not compensate, solved
+    under a scaled node, takes that node's scale into its own (`_build_hierarchy`). None for
+    any other node."""
+    parent = node.get_parent()
+    if id(parent) not in solved or parent.node_type != "joint":
+        return None
+    return solved[id(parent)][1] if node.node_type == "joint" and node.segment_scale_compensate else None
+
+
+def _clip_inverse_scales(hierarchy: HierarchyData, solved: dict) -> None:
+    """Makes the joints of a ClipData evaluate what its world matrices hold (its nodes made):
+    cgmath takes the parent's scale out of a joint whose segment scale compensate is on, on
+    every frame, and Maya only out of a joint whose ``inverseScale`` holds it. A joint under
+    a joint of the clip is wired, ``parent.scale >> joint.inverseScale``, as ``cmds.parent``
+    wires one, or takes `_held_scale` as its plain value (its keys are `_clip_rows`'). A root
+    solved under a node outside the clip takes that node's world scale: the value its solve
+    took out, which no plug of that node holds when the scale comes from above it. A joint
+    under a transform of the clip is left as Maya leaves it, unwired."""
+    for node in hierarchy:
+        if node.node_type != "joint" or not node.segment_scale_compensate:
+            continue
+        inverse = node.name.find_attr("inverseScale")
+        parent  = node.get_parent()
+        held    = _held_scale(node, solved)
+        if id(node) in solved:
+            inverse.set(*solved[id(node)][0].tolist())
+        elif held is not None:
+            inverse.set(*held[0].tolist())
+        elif getattr(parent, "node_type", None) == "joint":
+            parent.name.find_attr("scale").connect(inverse)
 
 
 def _put_back_selection(before: list[str]) -> None:
@@ -789,27 +903,30 @@ class Transform(DAGNode):
         *,
         world_space: bool             = False,
     ) -> List:
-        """Creates a hierarchy from a HierarchyData object.
+        """Creates a hierarchy from a HierarchyData object, and keys a ClipData.
 
         Args:
-            hierarchy: A HierarchyData object (`serialize_hierarchy`); it is
-                left as it was.
+            hierarchy: A HierarchyData object (`serialize_hierarchy`), or a
+                ClipData, built and keyed (below); it is left as it was.
             parent: An existing node to make the roots under. None: the world.
-            world_space: By keyword only; it changes nothing without `parent`.
+            world_space: By keyword only, a bool (anything else is a TypeError,
+                before anything is made); it changes nothing without `parent`.
                 The data is local by nature: it holds each node's channels, no
                 matrix, and not where its root's parent was. False (the
                 default): the roots take their values as local values under
                 `parent`, so a hierarchy made again under the node it was
                 serialized under lands where it was, as far as the channels
                 place it (the data holds no offset parent matrix, pivot or
-                shear, and a joint made from it has no inverse scale wired).
+                shear, and a joint made from it has no inverse scale wired; a
+                ClipData's has, below).
                 True: each root keeps its world matrix in the data, its values
                 read as world values (its place in the scene it came from only
                 if its root sat at the world). A joint root lands off under a
                 scaled parent when its segment scale compensate is on (its
                 values take the parent's scale out as an inverse scale would,
                 and none is wired), and under a non-uniformly scaled one in any
-                case (it holds no shear).
+                case (it holds no shear); a ClipData's compensating joints hold
+                both, below.
 
         Returns:
             A List of the new nodes, typed as ``Transform.create`` types its
@@ -821,14 +938,53 @@ class Transform(DAGNode):
                 skel = Transform.create_hierarchy(Node("root").serialize_hierarchy())
                 skel[1].tx.get()
 
-        Inside ``with container()`` every node the call made joins the scope
-        (``container=False`` leaves them unregistered); the nodes keep the
-        hierarchy's names (the creates inside this one are nested, so they add
-        no prefix).
+        A ClipData is built and keyed, no keyword: the type decides. Only what
+        changes gets keys: a column (x, y or z) of a node's scale, rotate,
+        translate, rotate axis or joint orient with any difference across the
+        frames gets one curve, with a key on every frame; a flat one is a plain
+        value, with no curve, so a one-frame clip makes no curve. Frame for
+        frame: key k lands on frame ``start_frame + k`` whatever the scene's
+        rate; a clip at another fps logs one warning naming both, keys or none,
+        and the scene's time unit and playback range are not touched. A clip
+        defines no tangents: the keys take Maya's global default (``keyTangent
+        -query -global``). With `parent` and ``world_space=True`` the roots are
+        solved on every frame, against the parent's matrix as it is now, so
+        each frame's world matrix is the clip's, and their solved channels are
+        keyed where they change; a parent with shear, and a non-uniformly
+        scaled one over a root that is a transform, or a joint that does not
+        compensate, stay off (the channels hold no shear). A NaN or an infinity
+        in a column that is keyed is a ValueError, and a missing undo plug-in,
+        with keys to write, a RuntimeError, before anything is made.
 
-        One undo step; it selects the nodes it made. `load_hierarchy` (from a
-        file or the data, the selection kept) returns the same List.
+        A clip's joints evaluate what its world matrices hold, scale included:
+        a joint with segment scale compensate on takes its parent's scale out,
+        on every frame. Under a joint of the clip it is wired,
+        ``parent.scale >> joint.inverseScale``, as ``cmds.parent`` wires one;
+        a root solved under a scaled parent holds that parent's world scale in
+        ``inverseScale``, a plain value; under a root that does not compensate
+        and gave its scale to that solve, it holds that root's scale in the
+        clip, plain, or keyed where it moves. Under a transform of the clip it
+        is left unwired, as Maya leaves it (it lands where Maya puts it, not
+        where cgmath's ``world_matrix`` says when that transform is scaled). A
+        plain HierarchyData wires nothing.
+
+        To build a clip without keys, pass a plain HierarchyData:
+        ``clip.rest_pose``, when the clip has one::
+
+            clip = ClipData.load_fbx("walk.fbx")
+            walk = Transform.create_hierarchy(clip)            # nodes and keys
+            pose = Transform.create_hierarchy(clip.rest_pose)  # nodes only
+
+        Inside ``with container()`` every node the call made joins the scope,
+        a clip's curves too (``container=False`` leaves them all unregistered);
+        the nodes keep the hierarchy's names (the creates inside this one are
+        nested, so they add no prefix).
+
+        One undo step, a clip's curves and keys in it; it selects the nodes it
+        made. `load_hierarchy` (from a file or the data, the selection kept)
+        returns the same List.
         """
+        world_space = _files.space_flag(f"{cls.__name__}.create_hierarchy", world_space, _HIERARCHY_SPACE)
         with _undo_chunk(f"rig.{cls.__name__}.create_hierarchy"):
             return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True))
 
@@ -960,10 +1116,10 @@ class Transform(DAGNode):
         select:      bool,
     ) -> list[str]:
         """[Internal] The body of `create_hierarchy` and `load_hierarchy`: makes
-        the nodes of `hierarchy` and returns their names, parents first. With
-        `select` they end selected; without, the selection is put back as it was
-        before (in its order)."""
-        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, HierarchyData
+        the nodes of `hierarchy` (a ClipData keyed, `_clip_rows`) and returns their
+        names, parents first. With `select` they end selected; without, the
+        selection is put back as it was before (in its order)."""
+        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, ClipData, HierarchyData, generate_uuid
 
         before = None if select else (cmds.ls(orderedSelection=True, long=True) or [])
 
@@ -989,7 +1145,8 @@ class Transform(DAGNode):
             LOGGER.warning(f"Skipped nodes that can't be created: {counts}")
 
         # if a parent is specified, make set the transforms relative to it
-        under = {}  # id of a root -> the long name of the node outside the data it goes under
+        under  = {}  # id of a root -> the long name of the node outside the data it goes under
+        solved = {}  # id of a root solved under it -> its world scale, and the root's `_held_scale` or None
         if parent is not None:
             if parent in hierarchy:
                 for node in hierarchy.get_roots():
@@ -997,19 +1154,37 @@ class Transform(DAGNode):
 
             # if the parent is not in the hierarchy, add it to compute matrices
             else:
-                # (the data keeps the outside node's uuid: a parent is a uuid since
+                # (the data keeps the stand-in's uuid: a parent is a uuid since
                 # cgmath 2.0.0, so the name it is created under is kept here)
                 # its own parent is not in the data, so it stands in as a root that
-                # carries its world matrix: the roots are solved against that
-                outside = _cast(parent)
-                obj     = outside.serialize()
+                # carries its world matrix: the roots are solved against that. It takes
+                # a new uuid: a clip's columns go by uuid, and a clip taken from the
+                # outside node's own branch holds a column, animated, under the old one
+                outside  = _cast(parent)
+                obj      = outside.serialize()
+                obj.uuid = generate_uuid()
+                scales   = {}
                 _set_parent_uuid(obj, None)
                 hierarchy.list.insert(0, obj)
                 obj.matrix = cmds.xform(type(outside).get_long_name(outside), q=True, matrix=True, worldSpace=True)
+                if isinstance(hierarchy, ClipData):
+                    # its columns now: cgmath lines a node up when a solve first reads
+                    # it, and that read takes its scale from the blocks before the line-up
+                    hierarchy.frame = hierarchy.frame
+                    if world_space and hierarchy.frame_count:  # each node's scale, before a solve writes it
+                        scales = dict(zip(map(id, hierarchy), np.array(hierarchy.frames.scale).swapaxes(0, 1)))
                 for node in hierarchy.get_roots()[1:]:
                     node.set_parent(obj, world_space=world_space)
                     under[id(node)] = type(outside).get_long_name(outside)
+                    if world_space:
+                        # a root keeps its scale when it compensates or the parent has none to
+                        # give it; any other takes the parent's in, and its joints hold its own
+                        kept             = node.segment_scale_compensate or np.allclose(obj.scale, 1.0)
+                        solved[id(node)] = (np.array(obj.scale, dtype=float), None if kept else scales.get(id(node)))
                 hierarchy.list.pop(0)
+
+        # a clip's keys, of the channels as solved: checked before any node is made
+        rows = _clip_rows(hierarchy, solved)
 
         # create the hierarchy at identity before setting any attributes,
         # this is to avoid any default attrs being set by Maya.
@@ -1045,6 +1220,10 @@ class Transform(DAGNode):
             specs = hierarchy[i].user_defined_attributes
             if specs:
                 cls._create_user_attrs(node, specs)
+
+        if isinstance(hierarchy, ClipData) and hierarchy.frame_count:
+            _clip_inverse_scales(hierarchy, solved)
+        _key_rows(rows)
 
         # return the created nodes
         created = [str(x.name) for x in hierarchy]

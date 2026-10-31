@@ -1528,6 +1528,11 @@ def _has_dynamic_attribute(fn: Any) -> bool:
 # runs plain and is tracked by the outer one).
 _TYPED_DEPTH = 0
 
+# True while that outermost create settles what joins the scope for everything
+# it makes: what it tracked, or nothing with ``container=False`` (a create that
+# makes only its node does not: `_joins_by_itself`).
+_TYPED_SETTLES = False
+
 # The ``_create``s that forward ``skipSelect`` to ``cmds.createNode``; the
 # others (the mesh command, skinCluster, blendShape, displayLayer, the shading
 # engine's sets, the reference's file) take no such flag.
@@ -1590,7 +1595,7 @@ def _typed_create(
 
     Every other keyword reaches ``run`` untouched.
     """
-    global _TYPED_DEPTH
+    global _TYPED_DEPTH, _TYPED_SETTLES
     joins     = kwargs.pop("container", None)
     aware     = cls._CONTAINER_AWARE
     registers = aware if joins is None else bool(joins)
@@ -1626,15 +1631,18 @@ def _typed_create(
     ):
         kwargs["skipSelect"] = True
 
+    alone = registers and _makes_only_its_node(cls, run)
     with _undo_chunk("rig.create"):
         _TYPED_DEPTH += 1
+        _TYPED_SETTLES = not alone
         try:
-            if not registers or _makes_only_its_node(cls, run):
+            if alone or not registers:
                 result, created = run(cls, args, kwargs), None
             else:
                 result, created = _call_tracking_creation(run, (cls, args, kwargs), {})
         finally:
             _TYPED_DEPTH -= 1
+            _TYPED_SETTLES = False
 
         if (
             cls.NATIVE_NODE_TYPE in _GC_ELIGIBLE_TYPES
@@ -1648,6 +1656,13 @@ def _typed_create(
             elif result is not None:
                 container.add(result)
     return result
+
+
+def _joins_by_itself() -> bool:
+    """True when a node no create makes (a curve ``<<`` makes for its keys,
+    `rig._internal.anim_keys`) registers itself with the open scope, which no typed
+    create around it settles for it (`_TYPED_SETTLES`)."""
+    return bool(container._stack) and not _TYPED_SETTLES
 
 
 def _flattened_name(prefix: str, name: Any) -> str:

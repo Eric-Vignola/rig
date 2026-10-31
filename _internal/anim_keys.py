@@ -914,9 +914,10 @@ def _plan_plug(keys: _Keys, dst: Any, where: "str | None" = None) -> _Plan:
     if any(not e.same for e in entries):
         require_plugin()
         if any(e.curve is None for e in entries):
-            from rig._internal.container import container
+            from rig._internal import container as scope
 
-            container._refuse_locked_leaf()
+            if scope._joins_by_itself():
+                scope.container._refuse_locked_leaf()
     return plan
 
 
@@ -1017,18 +1018,20 @@ def _write(fn: Any, e: _Leaf) -> None:
 
 def _new_curve(curve_type: str, name: str) -> Any:
     """A new unconnected curve (``cmds.createNode``, raw: a node made after the pending
-    journal commutes with it), joining the open ``with container()`` scope; returns its
-    MObject. The name is not given the scope's prefix: it comes from the keyed node."""
-    from rig._internal.container import container
+    journal commutes with it), joining the open ``with container()`` scope, unless a typed
+    create around it settles that (it registers what it made, or nothing with
+    ``container=False``); returns its MObject. The name is not given the scope's prefix: it
+    comes from the keyed node."""
+    from rig._internal import container as scope
 
     made = cmds.createNode(curve_type, name=name, skipSelect=True)
     sel = OpenMaya.MSelectionList()
     sel.add(_name_of(made))
     mobj = sel.getDependNode(0)
-    if container._stack:
+    if scope._joins_by_itself():
         from rig.nodetypes._base import _cast
 
-        container._add(_cast(mobj), made=True)
+        scope.container._add(_cast(mobj), made=True)
     return mobj
 
 

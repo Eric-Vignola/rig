@@ -113,7 +113,7 @@ from rig.nodetypes.plugins import load_plugin
 | `Node` | every node (the root) | the factory: `Node(x)`, `Node.create(type, ...)`, `Node.define(type, name, ...)`, `Node.find_all(type)`, `Node.wrap`; `isinstance(x, Node)` holds for every node object |
 | `DGNode` | any dependency node | the three verbs every class has: `Cls("x")` (refer), `Cls.define("x", ...)`, `Cls.create(name="x", ...)`, and `Cls.exists`, `Cls.find_all`; the DSL (`node.<attr>` plugs, `<<`, `>>`, `node.tx = 5`); `str(node)` / `get_name`, `get_long_name` / `get_short_name` (`namespace=False` drops the namespace), `get_uuid`, `rename`, `get_namespace` / `set_namespace`, `find_attr` / `add_attr` / `delete_attr` / `rename_attr` / `list_attr`, `set_attrs`, `list_connections`, `find_connected_nodes`, `duplicate`, `delete`, `is_valid`, `remove_from_all_sets`, `lock` / `unlock` / `is_locked` |
 | `DAGNode` | any DAG node | `get_parent(s)` / `iter_parents`, `get_children`, `set_parent`, `is_shape`, `get_mdagpath`, `get_bounding_box`, `get_deformers` |
-| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xform_attrs_locked`, `duplicate_geometry`, `serialize` / `Transform.create(transform_data)` (one node; `Joint.create(joint_data)`), `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files) |
+| `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xform_attrs_locked`, `duplicate_geometry`, `serialize` / `Transform.create(transform_data)` (one node; `Joint.create(joint_data)`), `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files; a `ClipData` is built and keyed) |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient`, `orients_to_rotations` / `rotations_to_orients` (`hierarchy=True`: the joints below too), `find_skinclusters` |
 | `Geometry` | `geometryShape` | component tags: `get_injection_node`, `get_tag_names`, `add_tag` / `delete_tag` / `rename_tag`, `set_tag_contents` / `get_tag_contents`, `get_tag_component_indices` / `get_tag_category` / `get_tag_data` / `get_tag_history`, `serialize_tags`, `get_output_attr` (`world_space=True`: the world one), `get_component_mobject`, paintable attrs |
 | `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back; `transform=`: the shape under an existing transform), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_tags`, `apply_skin_data` |
@@ -696,7 +696,7 @@ data to a `cgmath` file and `load` reads it back.
 
 | Node | `serialize()` | Back in | Save | Load |
 |---|---|---|---|---|
-| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create(transform_data)` / `Joint.create(joint_data)` (one node), `Transform.create_hierarchy` | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=False, container=None)` creates, a typed `List`, parents first |
+| `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create(transform_data)` / `Joint.create(joint_data)` (one node), `Transform.create_hierarchy` (a `ClipData`: built and keyed) | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=False, container=None)` creates, a typed `List`, parents first (a file that holds a `ClipData`: built and keyed) |
 | `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`: object space and the transform's world matrix (`world_space=True`: world space, the identity); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, transform=None, world_space=False, **attrs)` creates (with `transform=`, the shape under it); `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True)` updates |
 | `Geometry` | `serialize_tags()` -> `GeomSubsetData`s | `set_tag_contents` | | |
 | `NurbsCurve` / `NurbsSurface` | `BSplineData` (a periodic curve's own points; its knots when not Maya's default ones and the installed `cgmath` takes them) / `BSplinePatchData` (its knots likewise, `knots_u` / `knots_v`); each with the shape's name and the transform's world matrix as a `MeshData`, on the `cgmath` that adds those fields | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=False)` | `NurbsCurve.load(path, *, name=, container=, transform=None, world_space=False, **attrs)` creates (with `transform=`, the shape under it); `NurbsCurve('x').load(path, *, world_space=False)` updates its CVs (the same for `NurbsSurface`) |
@@ -759,7 +759,8 @@ file is read, and `load(path, True)` is a `TypeError` too (a mesh takes the
 `save(world_space=True)`, loads with `world_space=True`: the default would
 take its world positions as the shape's own, moved by the transform, silently.
 `Transform.load_hierarchy` takes its `world_space=` the same way: a bool, before
-the file is read.
+the file is read, and so does `Transform.create_hierarchy`, before anything is
+made.
 
 Another topology or CV layout, or a shape with history, is a `ValueError`
 naming `Cls.load(path)` for a new node. A deformed shape (a skin, a
@@ -829,6 +830,37 @@ connection fed it is not saved, as no connection is. A user attribute that
 holds geometry (typed `mesh`, `nurbsCurve`, `nurbsSurface`, `lattice` ...
 data, empty or not) is skipped, with a warning: its value never loads back
 (a compound keeps its other children, and goes when it has none left).
+
+**A `ClipData` is built and keyed.** `Transform.create_hierarchy(clip)` (the
+object) and `Transform.load_hierarchy(clip)` (the object, or a file that holds
+one) build the hierarchy and key it, with no keyword: the type decides.
+
+| | |
+|---|---|
+| What gets keys | only what changes: a column (x, y or z) of a node's scale, rotate, translate, rotate axis or joint orient with any difference across the frames gets one curve, with a key on every frame. A flat column is a plain value, with no curve and no key, so a one-frame clip makes no curve. A channel the node has not (a transform's joint orient) is left out, as its plain value is. Rotate axis and joint orient plugs are not keyable, so Maya's node-wide key tools pass over their curves (`cmds.keyframe("root", query=True, name=True)` leaves them out, `cmds.cutKey("root", clear=True)` leaves them on): name the plug (`cmds.keyframe("root.jointOrientY", ...)`), or use `AnimCurve.of(...)` |
+| Which frame | frame for frame: key k lands on frame `start_frame + k` whatever the scene's rate. A clip at another fps logs one warning naming both, keys or none; the scene's time unit and playback range are not touched |
+| Tangents | a clip defines none, so Maya's global default (`keyTangent -query -global`), as it is when the clip is built, given explicitly: a plain `AnimCurve(...)` is linear |
+| The statement | one `List(plugs) << [AnimCurve(...), ...]`: every row planned, then every curve written. Refused before any node is made: a NaN in a column that is keyed, a missing undo plug-in |
+| Undo, scope, selection | the curves and keys are in the build's one undo step. Inside `with container()` they join as the nodes do (`container=False`: neither). The selection behaves as it does without keys: `create_hierarchy` selects the new nodes, `load_hierarchy` keeps it |
+| `parent=` | the values as local values under it; with `world_space=True` the roots are solved on every frame, against the parent's matrix as it is now, so each frame's world matrix is the clip's, and their solved channels are keyed where they change (a difference within the solve's round-off, 1e-12 times 1 plus the value, is none: a turning root's scale stays a plain value). What the channels cannot hold stays off: a parent with shear, its own or from a non-uniform scale above it, and a non-uniformly scaled one over a root that is a transform, or a joint that does not compensate. Under a non-uniformly scaled parent a locator or a box also keeps the shear `cmds.parent` gives it, as in a plain build. A parent that moves is taken where it is at the build |
+| Joints that compensate | a clip's joints evaluate what its world matrices hold, scale included. A joint with segment scale compensate on takes its parent's scale out on every frame: under a joint of the clip it is wired, `parent.scale >> joint.inverseScale`, as `cmds.parent` wires one; a root solved under a scaled parent holds that parent's world scale in `inverseScale`, a plain value; under a root that does not compensate and gave its scale to that solve, it holds that root's scale in the clip, plain, or keyed where it moves. Under a transform of the clip it is left unwired, as Maya leaves it: it lands where Maya puts it, the source scene's place, which is not cgmath's `world_matrix` when that transform is scaled. A plain `HierarchyData` wires nothing (the gotcha below) |
+| Files | `load_hierarchy` reads a cgmath file; `create_hierarchy` takes the object. An asset (`.fbx`, `.glb`) reads as one pose, with no keys and no warning: a keyed one is `ClipData.load_fbx` or `ClipData.load_glb`, then `create_hierarchy` |
+| Without keys | pass a plain `HierarchyData`: `clip.rest_pose`, when the clip has one (`ClipData.load_fbx` sets it) |
+
+```python
+from cgmath.hierarchy import ClipData
+
+cmds.file(new=True, force=True)
+ball                            = Transform.create(name="ball")
+clip                            = ClipData(ball.serialize_hierarchy(), frames=3, start_frame=1001, fps=24.0)
+clip.frames["ball"].translate_y = [0, 4, 0]  # every frame of one channel
+cmds.delete("ball")
+
+made = Transform.create_hierarchy(clip)  # built and keyed: the type decides
+print(AnimCurve.of(made), AnimCurve.of(made[0].tx))                   # List([AnimCurveTL("ball_translateY")]) List([])
+print(cmds.keyframe("ball_translateY", query=True, timeChange=True))  # [1001.0, 1002.0, 1003.0]
+print(cmds.getAttr("ball.ty", time=1002), made[0].tx.get())           # 4.0 0.0
+```
 
 `serialize_hierarchy(bindpose=True)` reads the hierarchy at its bind pose:
 the result is what `serialize_hierarchy()` would return after Maya's own
@@ -1167,8 +1199,9 @@ Verified on Maya 2025; not bugs to work around blindly.
   a `.ma` saved after the undo lists more `.n` entries (unset ones), with the
   same shading.
 - **`create_hierarchy` (so `load_hierarchy`) does not connect a joint's
-  `inverseScale`** to its parent's `scale`: a joint with segment scale
-  compensate under a scaled parent comes back at another world matrix.
+  `inverseScale`** to its parent's `scale`, from a plain `HierarchyData`: a
+  joint with segment scale compensate under a scaled parent comes back at
+  another world matrix. The joints of a `ClipData` take it out as the clip does.
 - `Mesh.bake_deformation` hard-codes `root_joint` as the skeleton. Its
   `max_influences` is the influence cap (below 1 is a `ValueError`), and
   `None` (the default) is no cap. It is one undo step.

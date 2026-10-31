@@ -454,6 +454,8 @@ _ALLOWED_SITES = {
         1, "user input: the other mesh"),
     ("nodetypes/skincluster.py", "SkinCluster.transfer_from_meshes", "Mesh"): (
         2, "user input: the source meshes"),
+    ("nodetypes/transform.py", "_clip_rows", "AnimCurve"): (
+        2, "no reference: the class call with a sequence makes keys, of a clip's column"),
     # round 4b NC7: the shade specs retired; Material is the node class.
     # re-pinned (user decision 2026-10-22, the shade module retired): its
     # convert(x, to), the one Material(x) of a user's input, went

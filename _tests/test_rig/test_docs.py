@@ -7,6 +7,8 @@
   ``//`` on a DSL ``Plug`` build nodes, or raise, where the typed ``Attribute``
   spelling does not), and each ``print(...)  # expected`` comment must match the
   line it printed, in blocks where every printed line is annotated.
+* The clip block of the root page (``rig/CHEATSHEET.md``), which does not run whole:
+  that block alone runs, and every line it prints must be its comment.
 * Every page: each name a block imports from ``rig`` exists, and no page names
   ``PlugList`` or ``PyNode``, which round 4a removed (``List`` and ``Node`` are
   the names).
@@ -117,6 +119,15 @@ class TestTypedDocsRun(MayaTestCase):
 
     def test_nodetypes_readme(self):
         self._run(os.path.join("nodetypes", "README.md"))
+
+    def test_the_clip_example_of_the_root_cheatsheet(self):
+        """The root page does not run whole; this example does, and prints what it says."""
+        blocks = [src for _, src in _blocks("CHEATSHEET.md") if "ClipData" in src]
+        self.assertEqual(len(blocks), 1)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            exec(compile(blocks[0], "CHEATSHEET.md#clip", "exec"), {"__name__": "__doc__"})
+        self.assertEqual([line.rstrip() for line in out.getvalue().splitlines()], _expected(blocks[0]))
 
 
 class TestDocsNameLiveNames(MayaTestCase):

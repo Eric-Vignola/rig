@@ -64,7 +64,7 @@ QUERY = frozenset({
 
 DUAL = frozenset({
     "addAttr", "aliasAttr", "componentTag", "container", "currentTime", "currentUnit", "dagPose",
-    "deformer", "editDisplayLayerMembers", "file", "lockNode", "namespace", "optionVar",
+    "deformer", "editDisplayLayerMembers", "file", "keyTangent", "lockNode", "namespace", "optionVar",
     "playbackOptions", "sets", "skinCluster", "skinPercent", "undoInfo", "xform",
 })
 
@@ -76,7 +76,7 @@ QUERY_ONLY_FLAGS = {
 
 EDIT = frozenset({
     "bakeDeformer", "blendShape", "connectAttr", "copyAttr", "createDisplayLayer", "createNode", "curve",
-    "delete", "deleteAttr", "disconnectAttr", "displaySmoothness", "duplicate", "flushUndo", "keyTangent",
+    "delete", "deleteAttr", "disconnectAttr", "displaySmoothness", "duplicate", "flushUndo",
     "loadPlugin", "makeIdentity", "makePaintable", "orientConstraint", "parent", "pointConstraint",
     "polyCube", "polyDelEdge", "redo", "removeMultiInstance", "rename", "renameAttr", "select", "setAttr",
     "setKeyframe", "shadingNode", "spaceLocator", "undo", "unloadPlugin",

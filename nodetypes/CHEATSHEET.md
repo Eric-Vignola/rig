@@ -18,7 +18,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 3 | [`DGNode`](#3-dgnode) | identity, rename, namespace, attributes, connections, lifecycle, `lock()` / `unlock()` / `is_locked()`, equality |
 | 4 | [`DAGNode`](#4-dagnode) | parents, children, shapes, bounding box, deformers |
 | 5 | [`Attribute`](#5-attribute) | get / set, `lock()` / `unlock()`, `>>` and `//` on `find_attr` results, typed arrays, multis, slicing with list keys, components |
-| 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `save_hierarchy` / `load_hierarchy` (files), `serialize_hierarchy(bindpose=True)` |
+| 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `save_hierarchy` / `load_hierarchy` (files), a `ClipData` built and keyed, `serialize_hierarchy(bindpose=True)` |
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `get_injection_node()`, add / set / query / serialize, `tag_references` |
 | 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back; a `cgmath` `Object`; `transform=`: a shape under an existing transform), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
@@ -668,6 +668,61 @@ try:
     Joint.load_hierarchy(cube.get_shape().save(os.path.join(folder, "cube.npz")))   # a mesh's file
 except TypeError as e:
     print(str(e).split(" holds ")[1])                         # a MeshData; the hierarchy is a HierarchyData
+```
+
+A `ClipData` (a `HierarchyData` that holds many frames) is built **and keyed**,
+by `create_hierarchy` (the object) and `load_hierarchy` (the object, or a file
+that holds one; an asset reads as one pose: a keyed `.fbx` is
+`ClipData.load_fbx`, then `create_hierarchy`), with no keyword: the type
+decides. Only what changes gets keys: a column (x, y or z) of a node's scale,
+rotate, translate, rotate axis or joint orient with any difference across the
+frames gets one curve, with a key on every frame; a flat one is a plain value,
+with no curve, so a one-frame clip makes no curve. Key k lands on frame
+`start_frame + k` whatever the scene's rate: a clip at another fps logs one
+warning naming both, keys or none, and the scene's time unit and playback range
+are not touched. A clip defines no tangents, so the keys take Maya's global
+default (`keyTangent -query -global`). The curves are one
+`List(plugs) << [AnimCurve(...), ...]`, in the build's one undo step; they join
+a `with container()` scope as the nodes do (`container=False`: neither), and
+the selection behaves as it does without keys. With `parent=` and
+`world_space=True` the roots are solved on every frame, against the parent's
+matrix as it is now, so each frame's world matrix is the clip's (a difference
+that is a solve's round-off is no difference); a parent with shear, and a
+non-uniformly scaled one over a root that is a transform, or a joint that does
+not compensate, stay off: the channels hold no shear. A joint with segment
+scale compensate on takes its parent's scale out as the clip does: under a
+joint of the clip it is wired, `parent.scale >> joint.inverseScale`, as
+`cmds.parent` wires one, and a root solved under a scaled parent holds that
+scale in `inverseScale`, a plain value (a plain `HierarchyData` wires nothing;
+a joint under a transform of the clip stays as Maya leaves it). To build a clip
+without keys, pass a plain `HierarchyData`: `clip.rest_pose`, when the clip has
+one (`ClipData.load_fbx` sets it).
+
+```python
+from cgmath.hierarchy import ClipData
+from rig import AnimCurve
+
+pose                             = root.serialize_hierarchy()
+clip                             = ClipData(pose, frames=4, start_frame=101, fps=24.0)
+clip.frames["root"].rotate_y     = [0, 10, 20, 30]  # every frame of one channel
+clip.frames["child"].translate_y = [5, 6, 7, 5]
+cmds.file(new=True, force=True)
+
+made = Transform.create_hierarchy(clip)  # built and keyed: the type decides
+print(AnimCurve.of(made))  # List([AnimCurveTA("root_rotateY"), AnimCurveTL("child_translateY")])
+curve = AnimCurve.of(made[1])[0]
+print(cmds.keyframe(str(curve), query=True, timeChange=True))                          # [101.0, 102.0, 103.0, 104.0]
+print(cmds.getAttr("child.ty", time=103), made[1].tx.get(), AnimCurve.of(made[1].tx))  # 7.0 0.0 List([])
+print(cmds.listConnections("child.inverseScale", plugs=True))                          # ['root.scale']
+tangent = cmds.keyTangent(query=True, g=True, outTangentType=True)
+print(cmds.keyTangent(str(curve), query=True, outTangentType=True)[:1] == tangent)  # True
+grp  = Transform.create(name="grp", tx=10)
+kept = Transform.create_hierarchy(clip, parent=grp, world_space=True)  # the roots solved on every frame
+print(kept[0].get_long_name(), kept[0].tx.get(), len(AnimCurve.of(kept)))  # |grp|root -10.0 2
+path = clip.save(os.path.join(folder, "walk.npz"))
+print(len(AnimCurve.of(Joint.load_hierarchy(path))))  # 2
+still = Transform.create_hierarchy(pose)  # a plain HierarchyData, as clip.rest_pose is: no keys
+print(still[1].ty.get(), AnimCurve.of(still))  # 5.0 List([])
 ```
 
 At its bind pose: `serialize_hierarchy(bindpose=True)` is what a serialize

@@ -58,7 +58,7 @@ for the node classes and their typed methods.
 | 36 | [Materials](#36-materials) | the shader node classes: `define` / refer / `create`, `Material`, `Default`, attributes, containers, per-face carving, green faces, `in` and face ids, `ShadingEngine.repair` / `tidy`, the network verbs |
 | 37 | [Shader conversion](#37-shader-conversion) | `mat.astype(Phong)` (in place), `Material(name).astype`, the `Conversion` report (`dry_run=`), parked attributes, `strict=` / `park=`, other objects of the old node, undo |
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it, a container's member add |
-| 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate` |
+| 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate`; a `ClipData` built and keyed |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 
 ---
@@ -1581,9 +1581,10 @@ print(sorted(cmds.nodeType(n) for n in cmds.container("offset1", query=True, nod
 So do the typed creators of [`rig.nodetypes`](nodetypes/README.md)
 (`Transform.create`, `Joint.create`, `Mesh.create`, `SkinCluster.create`, a
 subclass of your own), by the rules of `Node.create`: an explicit name takes
-the flattened prefix, and `container=False` leaves the node out. A shape made
-under an existing transform (`Mesh.create(data, transform="ctl")`, the same
-for `NurbsCurve` and `NurbsSurface`) joins alone: the transform stays out,
+the flattened prefix, and `container=False` leaves the node out, and the curves
+its keywords key (`Transform.create(container=False, tx=AnimCurve([0, 1]))`). A
+shape made under an existing transform (`Mesh.create(data, transform="ctl")`,
+the same for `NurbsCurve` and `NurbsSurface`) joins alone: the transform stays out,
 and its default name, `ctlShape`, is the transform's, in the transform's
 namespace, without the prefix. Display layers, sets, shading engines,
 materials and references are scene registries, found again by name: they stay
@@ -3939,6 +3940,44 @@ for spelling in (lambda: cube << AnimCurve([1]), lambda: AnimCurve(5), lambda: A
 # TypeError AnimCurveTL([...]) refers to a curve by name: An
 # TypeError pCube1.worldMatrix[0] << AnimCurve(...): an anim
 # ValueError AnimCurve times must be strictly increasing (May
+```
+
+**A clip keys a whole hierarchy.** `Transform.create_hierarchy(clip)` (the
+object) and `Transform.load_hierarchy(clip)` (the object, or a file that holds
+one) build a `cgmath` `ClipData` and key it, with no keyword: the type decides.
+Only what changes gets keys: a column of a node's scale, rotate, translate,
+rotate axis or joint orient with any difference across the frames gets one
+curve, with a key on every frame, and a flat one is a plain value, with no
+curve. Key k lands on frame `start_frame + k` whatever the scene's rate; a clip
+at another fps logs one warning naming both, keys or none, and the scene's time
+unit and playback range are not touched. The keys take Maya's global default
+tangents, given explicitly (`AnimCurve(...)` alone is linear), in one
+`List(plugs) << [AnimCurve(...), ...]` inside the build's one undo step. A plain
+`HierarchyData` (`clip.rest_pose`) builds a clip without keys ([`nodetypes`
+section 6](nodetypes/CHEATSHEET.md#6-transform)).
+
+```python
+from cgmath.hierarchy import ClipData
+from maya import cmds
+from rig import AnimCurve
+from rig.nodetypes import Joint, Transform
+
+cmds.file(new=True, force=True)
+cmds.undoInfo(state=True, infinity=True)
+root = Joint.create(name="root")
+Joint.create(name="tip", parent=root).t.set(0, 5, 0)
+clip                        = ClipData(root.serialize_hierarchy(), frames=3, start_frame=1001, fps=24.0)
+clip.frames["tip"].rotate_z = [0, 45, 90]  # every frame of one channel
+cmds.delete("root")
+
+made = Transform.create_hierarchy(clip)  # built and keyed: the type decides
+print(AnimCurve.of(made))                                           # List([AnimCurveTA("tip_rotateZ")])
+print(cmds.keyframe("tip_rotateZ", query=True, timeChange=True))    # [1001.0, 1002.0, 1003.0]
+print(cmds.getAttr("tip.rz", time=1002))                            # 45.0
+print(cmds.getAttr("tip.ty", time=1002), AnimCurve.of(made[1].ty))  # 5.0 List([])
+print(cmds.undoInfo(query=True, undoName=True))                     # rig.Transform.create_hierarchy
+cmds.undo()
+print(cmds.ls(type="animCurve"), cmds.ls(type="joint"))             # [] []
 ```
 
 ---
