@@ -221,11 +221,12 @@ def _shape_target(method: str, transform: Any, world_space: bool) -> OpenMaya.MD
 
 def _target_space(method: str, matrix: Any, target: OpenMaya.MDagPath | None) -> np.ndarray:
     """``(4, 4)``, row vectors as Maya's: from where data puts its points in the world, through
-    its `matrix` (None: the identity, data without one), into the space of the transform
-    `target`, ``matrix @ inverse(the target's world matrix)``; with no `target`, a new transform
-    that stays at the origin, the world itself (``world_space=True``, either way). `_shape_target`
-    refused a target whose world matrix has no inverse to speak of; a `matrix` that is not finite
-    is a ValueError naming `method`, before anything is made."""
+    its `matrix` (None: the identity, data without one), into the space of `target`, a transform
+    or the mesh an update lands on, ``matrix @ inverse(its world matrix)``; with no `target`, a
+    new transform that stays at the origin, the world itself (``world_space=True``, either way).
+    For a create `_shape_target` refused a target whose world matrix has no inverse to speak of
+    (an update refuses no mesh); a `matrix` that is not finite is a ValueError naming `method`,
+    before anything is made."""
     matrix = np.eye(4) if matrix is None else np.asarray(matrix, dtype=np.float64).reshape(4, 4)
     if not np.isfinite(matrix).all():
         raise ValueError(f"{method}: the data's matrix must be finite (got nan or inf)")

@@ -6,7 +6,8 @@ with ``world_space=`` (keyword-only, False by default) saying how the data's poi
 * False: the data's points (and a mesh's normals) become the shape's own, as they are; the
   data's matrix is not used.
 * True: they land where the data puts them in the world, through its matrix, taken into the
-  target's space (the inverse of its world matrix; the normals through the inverse transpose).
+  target's space (the inverse of its world matrix; a mesh's locked normals through the inverse
+  transpose).
   Without ``transform=`` it freezes the shape there (test_class_shape_decisions, commit 3, as for
   a singular target and the shape's namespace).
 
@@ -210,11 +211,16 @@ class TestBothSpaces(_Case):
                     cmds.delete(source.get_parent().get_long_name())
 
     def test_a_mesh_s_normals_follow_its_points(self):
+        """Re-pinned ("lock only real locks", they were all set): a flat face's and a locked normal
+        land where the source's are; a soft fan's is Maya's own for the points under the target."""
         target = _sheared()
         source = _cube()
         shape  = Mesh.create(*_args(source), transform=target, world_space=True)
-        np.testing.assert_allclose(_normals(shape), _normals(source), atol=1e-5)
-        self.assertEqual(_shading(shape)[0], _shading(source)[0])
+        ids    = list(shape.get_fn_set().getNormalIds()[1])
+        away   = np.abs(_normals(shape) - _normals(source)).max(axis=1) > 1e-5
+        self.assertEqual(int(np.count_nonzero(away)), 6)
+        self.assertTrue((np.bincount(ids)[ids] > 1)[away].all())  # a soft fan's normal has several face-vertices
+        self.assertEqual(_shading(shape), _shading(source))
 
     def test_false_keeps_a_mesh_s_normals_as_its_own(self):
         """world_space=False: the data's normals are the shape's own, as its points are (in object

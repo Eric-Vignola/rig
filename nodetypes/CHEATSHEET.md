@@ -996,11 +996,15 @@ except ValueError as e:
 
 Without `transform=`, the new transform takes the data's matrix by default.
 `world_space=True` freezes the shape at its world positions instead: the
-matrix goes in the points (the normals through its inverse transpose) and the
-new transform sits at the origin with identity channels. `Mesh.load(path,
-world_space=True)` is the same from a file. Normals that land away from what
-Maya computes for the moved points lock: nearly every soft one through a
-non-uniform scale, as under `transform=` (the README has the numbers).
+matrix goes in the points and the new transform sits at the origin with
+identity channels. `Mesh.load(path, world_space=True)` is the same from a file.
+A normal locks, through the matrix's inverse transpose, only where Maya computes
+another one on the data's own points and on the moved points too: the source's
+locks. Every other one is Maya's own for the moved points, as `makeIdentity`
+leaves them. Through a mirror every normal locks, as under `transform=`, and so
+do the soft ones of world-space data landing anywhere but where it was saved,
+where a non-uniform scale, a shear or float noise moved them (the README has
+the numbers).
 
 ```python
 Node(cmds.polyCube(name="box", ch=False)[0]).t.set(0, 10, 0)

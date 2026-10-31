@@ -78,8 +78,12 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             moved. Creating (as `create` takes it): False, the data's points
             become the new shape's own; True, they land where the data puts
             them in the world: under ``transform=``, or else frozen there, the
-            new transform at the origin. In both forms True can lock normals
-            the source never locked (`create` says which).
+            new transform at the origin. In both forms True locks a normal
+            only where Maya computes another one on the data's own points and
+            where it lands too: the source's locks, every normal through a
+            mirror, and the soft ones of world-space data landing anywhere but
+            where it was saved, where a non-uniform scale, a shear or float
+            noise moved them (`create` says how).
         normals: (both forms) a restore flag, as `create` takes it. True: the
             data's normals bring back the hard edges and locked normals.
             False: skipped, for speed: a new mesh is all smooth, an updated
@@ -334,11 +338,12 @@ class Mesh(Geometry):
                 TypeError). False (the default): the data's points and normals
                 become the shape's own, as they are: a new transform takes its
                 matrix (an Object's transform), and ``transform=`` does not use
-                it. True: they land where the data puts them in the world,
-                through its matrix (an Object's transform): taken into the
-                space of ``transform=``, or without it frozen there (see
-                below). Without ``transform=``, world-space data, its matrix
-                the identity, comes out the same either way.
+                it. True: the points land where the data puts them in the
+                world, through its matrix (an Object's transform): taken into
+                the space of ``transform=``, or without it frozen there, and
+                the normals follow (see below). Without ``transform=``,
+                world-space data, its matrix the identity, comes out the same
+                either way.
             kwargs: attributes of the mesh, checked by type before anything
                 is made and set once it exists (see `DGNode.create`).
 
@@ -378,27 +383,36 @@ class Mesh(Geometry):
 
         **With** ``world_space=True`` and no ``transform=`` the mesh is frozen
         at its world positions: the data's matrix (an Object's transform) goes
-        into the points, and the normals through its inverse transpose, and
-        the new transform stays at the origin with identity channels (an
-        Object's rotate order and a lone Object's visibility, which move
-        nothing, still go on it), where ``world_space=False`` gives the same
-        world positions from the shape's own points under a transform at the
-        matrix.
+        into the points, and the new transform stays at the origin with
+        identity channels (an Object's rotate order and a lone Object's
+        visibility, which move nothing, still go on it), where
+        ``world_space=False`` gives the same world positions from the shape's
+        own points under a transform at the matrix.
 
         **Locked normals**: with ``world_space=True``, under ``transform=`` or
-        frozen, as in ``Mesh('x').load(path, world_space=True)``, the normals
-        land where the data's do, and one that Maya's own normal of the moved
-        points misses by more than 1e-4 is set, which locks it, whether the
-        source locked it or not. Through a mirror (a negative scale) every
-        normal locks (48 of 48 on a 2 x 2 x 2 cube: Maya's own face the other
-        way). Through a non-uniform scale or a shear nearly every soft one
-        does (988 of 994 on a 32 x 32 sphere at a scale of (1, 2, 3)). Through
-        a move, a rotation or a uniform scale only those float noise puts that
-        far do, on a dense or a far mesh (of those 994, none at (1, 2, 3) and 2
-        at (100, 50, 30); 2,978 of 16,258 on a 128 x 128 sphere there). The
-        hard edges come through, and a hard-edged cube locks none but through
-        a mirror. A locked normal stays as it is under a deformer:
-        ``normals=False`` locks none, and loses the hard edges.
+        frozen, as in ``Mesh('x').load(path, world_space=True)``, data holds
+        no lock flag, so a normal counts as locked when Maya computes it more
+        than 1e-4 from the data's on the data's own points, as a plain create
+        decides it, and where it lands too (what Maya computes there needs no
+        lock). Only those go through the matrix (its inverse transpose) and
+        are set, which locks them, and their world normals are the source's.
+        Every other normal is Maya's own for the points where they land, as
+        ``makeIdentity`` leaves them, and follows a deformer: a flat face's is
+        the source's, and under a non-uniform scale or a shear a soft one comes
+        out off the inverse transpose (at most 0.04 degrees on a 32 x 32
+        sphere at a scale of (1, 2, 1), 0.5 at (1, 2, 3), 13 at a soft corner
+        of a 2 x 2 x 2 cube under a shear). The hard edges come through.
+        Through a mirror (a negative scale) every normal locks instead (54 of
+        54 on a 2 x 2 x 2 cube): Maya's own would face the other way, and the
+        world normals stay the source's. World-space data
+        (``serialize(world_space=True)``) holds normals through the source's
+        matrix, which Maya does not compute from its points: back on the
+        source's own points only its locks lock, anywhere else the soft normals
+        do too where a non-uniform scale, a shear or float noise moved them
+        (988 of 994 on that sphere at (1, 2, 3)). A cluster leaves a
+        locked normal as it is, a skinCluster turns it with the skin
+        (``deformUserNormals``), neither recomputes it: ``normals=False`` locks
+        none, and loses the hard edges. The identity is a plain create.
 
         A face with holes is built as its outer loop, its hole loops added
         through the API (``MFnMesh.addHoles``, before any recorded command):
@@ -413,9 +427,12 @@ class Mesh(Geometry):
         ``Mesh.create(*m.serialize())`` gives back ``m``'s hard edges and
         locked normals, its points as ``m``'s own and its transform at ``m``'s
         world matrix. Data without normals (an ``.obj``, a MeshData built by
-        hand) is all smooth. The restore costs, over a create without it
-        (2.0.0a5's): within 1.5x for a mostly smooth mesh, 1.75x to 2.6x for
-        a faceted or heavily locked one; ``normals=False`` skips it.
+        hand) is all smooth. The restore costs, in a plain create, over one
+        without it (2.0.0a5's): within 1.5x for a mostly smooth mesh, 1.75x to
+        2.6x for a faceted or heavily locked one; with ``world_space=True``
+        through a matrix, whatever differs where it lands costs a second
+        compare: 2.3x on a mostly smooth 20k-face mesh, 3x on 100k.
+        ``normals=False`` skips it.
 
         ``normals`` is a *restore flag*: one keyword per part of the data a
         create or a load brings back at a cost of its own, the same on
@@ -1971,19 +1988,52 @@ _IDENTITY_16 = np.eye(4).ravel()
 #
 # * the edges: an edge between two faces is smooth when the two faces' normals agree at both
 #   its ends (to _SPLIT_TOL), else hard (``setEdgeSmoothings``);
-# * the locked normals: once the edges are set, a normal Maya computes that still differs
-#   from the data's (by more than _LOCK_TOL) is set (``setFaceVertexNormals``, which locks it).
-#   On the data's own points that is a locked normal of the source. On points taken through a
-#   matrix (``world_space=True``, `_shading_of`'s `linear`) Maya computes from other points:
-#   a mirror, a non-uniform scale or a shear set normals the source never locked, and so does
-#   float noise on a dense or a far mesh.
+# * the locked normals: once the edges are set, a normal Maya computes on the data's own points
+#   that still differs from the data's (by more than _LOCK_TOL) is a locked normal of the source,
+#   and is set (``setFaceVertexNormals``, which locks it).
 #
 # The edges are paired in numpy from the faces' loops, and Maya's edge ids are looked up only
 # for the hard edges, so a mostly smooth mesh costs little more than its create.
+#
+# Data holds no lock flag, and on points taken through a matrix (``world_space=True``,
+# `_shading_of`'s `space`) no one compare tells a locked normal:
+#
+# * where it lands: a non-uniform scale, a shear, or float noise on a far or a dense mesh put
+#   soft normals the source never locked away from the data's (988 of 994 on a 32 x 32 sphere at
+#   a scale of (1, 2, 3), about 54,000 of 89,702 on a 300 x 300 one at (100, 50, 30)), and a lock
+#   keeps Maya from recomputing a normal under a deformer;
+# * on the data's own points: world-space data holds normals through the source's matrix, which
+#   Maya does not compute there. A file of it back on its own mesh (the README's round trip)
+#   finds the same 988.
+#
+# So a normal is locked when it differs on both. `_lock_differing` compares on the mesh itself,
+# and where nothing differs it stops: a rigid matrix near the origin, world-space data back where
+# it was. Otherwise it compares on a copy of the shape, as data, put back on the data's own points
+# (``_Shading.own``). Only the normals both find go through the matrix and are set; every other
+# one stays Maya's own, as ``makeIdentity`` leaves them. A lock Maya computes where it lands is
+# not set: it needs none, its value is there. World-space data that lands elsewhere, where a
+# non-uniform scale, a shear or float noise moved it, or a source on another
+# ``vertexNormalMethod`` than a new shape's, differs on both, and nothing tells it.
+#
+# Of the ways to Maya's normals of the data's points, on 89,702 points, each on top of the 120 ms
+# their ``MPointArray`` takes from a list (which is why it waits for the first compare):
+#
+# * a copy of the shape takes 17 ms: 2 to copy, 3 for its points, 12 for its normals. Nothing in
+#   the scene, nothing on the undo queue, and it computes as the shape does (its
+#   ``vertexNormalMethod``);
+# * a mesh built as data takes 28 ms and computes otherwise (960 of the 32 x 32 sphere's 994, up
+#   to 0.027 away);
+# * the ride before its points move takes 33 ms and leaves the shape a tweak on every point and a
+#   cached input mesh (as `_holed_mesh` says).
+#
+# A mirror is the exception: Maya's own normals of the mirrored points face the other way.
+# Nothing is copied (``own`` is None), every normal differs on the mesh itself and every one is
+# set, which keeps the world normals the source's.
 
 # two normals of one vertex further apart than this split the edge between their faces
 _SPLIT_TOL = 1e-5
-# a normal Maya computes this far from the data's is set, which locks it
+# a normal Maya computes this far from the data's differs (through a matrix, on both sets of
+# points: above), and is a locked one
 _LOCK_TOL = 1e-4
 
 
@@ -2384,11 +2434,11 @@ def _set_normals(fn: OpenMaya.MFnMesh, faces, vertices, normals, hard) -> None:
     fn.updateSurface()
 
 
-def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) -> tuple:
-    """Sets the face-vertex normals Maya computes away from the data's `shading`
-    (its locked normals; on points taken through a matrix, any Maya computes
-    elsewhere: the section's comment), the mesh's edges `hard` (ids) being its
-    hard ones. Returns them as ``(faces, vertices)``.
+def _differing(fn: OpenMaya.MFnMesh, shading: _Shading, normals: np.ndarray) -> tuple:
+    """The face-vertices of the mesh `fn` whose normal Maya computes away from the
+    data's `normals` (one for each of `shading`'s normal ids), as ``(rows, ids)``:
+    their rows in `fn`'s face-vertex order and the data's normal of each, both empty
+    when there are none.
 
     First normal by normal: Maya numbers a mesh's normals by its topology and its
     smooth fans, so on data a Maya mesh was serialized to (the same faces, the
@@ -2402,10 +2452,11 @@ def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) ->
     data's normal of its face-vertices when they all have one, and each
     face-vertex on its own when they have several."""
     now = _normals_now(fn)
-    if len(now) == len(shading.normals):
-        d = now - shading.normals
+    if len(now) == len(normals):
+        d = now - normals
         if not (np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL).any():
-            return (), ()
+            none = np.empty(0, dtype=np.int64)
+            return none, none
     now_ids = _normal_ids_now(fn)
     rows    = _rows_now(fn, shading.indices, shading.counts) if shading.holes else None
     want    = shading.ids if rows is None else shading.ids[rows]
@@ -2415,32 +2466,57 @@ def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) ->
     far     = np.zeros(len(now), dtype=bool)
     known   = np.flatnonzero(link >= 0)
     if len(known):
-        d = now[known] - shading.normals[link[known]]
+        d          = now[known] - normals[link[known]]
         far[known] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
     differs = far[now_ids] & one
     if not one.all():
-        other = np.flatnonzero(~one)
-        d = now[now_ids[other]] - shading.normals[want[other]]
+        other          = np.flatnonzero(~one)
+        d              = now[now_ids[other]] - normals[want[other]]
         differs[other] = np.einsum("ij,ij->i", d, d) > _LOCK_TOL * _LOCK_TOL
     diff = np.flatnonzero(differs)
-    if not len(diff):
+    return diff, want[diff]
+
+
+def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) -> tuple:
+    """Sets the data's locked normals on the mesh `fn`, its edges `hard` (ids) being
+    its hard ones and no normal locked. Returns them as ``(faces, vertices)``.
+
+    They are the face-vertices Maya computes away from the data's normals (`_differing`)
+    on `fn`'s points, and with ``shading.own`` on the data's own points too: a copy of
+    `fn` put back on them, only once `fn` has found something (the section's comment).
+    Each takes its normal of ``shading.normals``."""
+    rows, ids = _differing(fn, shading, shading.normals)
+    if len(rows) and shading.own is not None:
+        points, normals = shading.own
+        data = OpenMaya.MFnMeshData().create()
+        OpenMaya.MFnMesh().copy(fn.object(), data)
+        copy = OpenMaya.MFnMesh(data)
+        copy.setPoints(OpenMaya.MPointArray(points.tolist()))
+        both      = np.isin(rows, _differing(copy, shading, normals)[0])
+        rows, ids = rows[both], ids[both]
+    if not len(rows):
         return (), ()
-    faces, verts = _face_vertices(fn, diff, None if shading.holes else (shading.counts, shading.indices))
-    _set_normals(fn, faces, verts, shading.normals[want[diff]], hard)
+    faces, verts = _face_vertices(fn, rows, None if shading.holes else (shading.counts, shading.indices))
+    _set_normals(fn, faces, verts, shading.normals[ids], hard)
     return faces, verts
 
 
-# the data's shading, checked: its lists, its normals and the normal of each face-vertex,
-# and its hard edges as vertex pairs
-_Shading = namedtuple("_Shading", "counts indices holes normals ids hard")
+# the data's shading, checked: its lists, its normals (where they land) and the normal of each
+# face-vertex, its hard edges as vertex pairs, and `own`: the data's own points and normals, when
+# what it locks is decided on a copy of the mesh at those points too; else None
+_Shading = namedtuple("_Shading", "counts indices holes normals ids hard own")
 
 
-def _shading_of(mesh_data: MeshData, holes: dict, linear: np.ndarray | None = None) -> _Shading | None:
+def _shading_of(mesh_data: MeshData, holes: dict, space: np.ndarray | None = None) -> _Shading | None:
     """The data's shading (`_Shading`), or None for data with no normals. Raises
     RuntimeError, before anything is made, when its normals do not fit its faces.
-    With `linear` (3x3, row vectors), the normals are taken through it (as normals
-    are: its inverse transpose, normalised): into another mesh's object space, or
-    the world's; a `linear` with no inverse is a ValueError, before anything is made."""
+
+    With `space` (4x4, row vectors), the matrix that takes the data's points where
+    they land (into another mesh's object space, or the world's), the normals are
+    taken through it (as normals are: its inverse transpose, normalised) and the
+    data's own points and normals stay in ``own``, unless it mirrors (the section's
+    comment); a `space` with no inverse is a ValueError, before anything is made.
+    The identity takes nothing anywhere: the data's shading, as with no `space`."""
     counts  = np.asarray(mesh_data.counts, dtype=np.int64).ravel()
     indices = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
     found   = _data_normals(mesh_data, len(indices))
@@ -2448,7 +2524,11 @@ def _shading_of(mesh_data: MeshData, holes: dict, linear: np.ndarray | None = No
         return None
     normals, ids = found
     hard = _hard_edges(counts, indices, holes, normals, ids, len(mesh_data.points))
-    if linear is not None:
+    if space is None or np.allclose(space.ravel(), _IDENTITY_16, rtol=0.0, atol=1e-12):
+        return _Shading(counts, indices, holes, normals, ids, hard, None)
+    own    = (np.array(mesh_data.points, dtype=np.float64).reshape(-1, 3), normals)
+    linear = space[:3, :3]
+    if not np.allclose(linear, np.eye(3), rtol=0.0, atol=1e-12):
         try:
             normals = normals @ np.linalg.inv(linear).T
         except np.linalg.LinAlgError:
@@ -2458,7 +2538,8 @@ def _shading_of(mesh_data: MeshData, holes: dict, linear: np.ndarray | None = No
             ) from None
         length  = np.linalg.norm(normals, axis=1, keepdims=True)
         normals = np.divide(normals, length, out=np.zeros_like(normals), where=length > 0)
-    return _Shading(counts, indices, holes, normals, ids, hard)
+    mirror = np.linalg.det(linear) < 0.0
+    return _Shading(counts, indices, holes, normals, ids, hard, None if mirror else own)
 
 
 def _restore_shading(fn: OpenMaya.MFnMesh, shading: _Shading) -> None:
@@ -2489,9 +2570,9 @@ def _create_mesh(
     1. check the data and that the UV set names differ, split the holed faces
        into their outer loop and hole loops and hand their UVs to the faces as
        they will be built (`_mesh_topology`, `_holed_uvs`); with `world_space`,
-       take the points, and the normals, where the data puts them in the world
-       (`_target_space`), in the target's space when there is one: nothing is
-       made yet;
+       take the points where the data puts them in the world (`_target_space`),
+       in the target's space when there is one, and the normals with them
+       (`_shading_of`): nothing is made yet;
     2. ``cmds.createNode("transform", name="polySurface#", skipSelect=True)``,
        the recorded node the mesh rides with (today's default name);
     3. ``MFnMesh.create(..., parent=<transform>)``: the shape, under it; with
@@ -2522,15 +2603,13 @@ def _create_mesh(
         obj, mesh_data = mesh_data, mesh_data.mesh
     counts, indices, holes = _mesh_topology(mesh_data)
     points = np.asarray(mesh_data.points)
-    linear = None
+    space  = None
     if world_space:
         # where the data puts its points in the world, in the target's space if any; the normals follow
         placed = obj.world_matrix if obj is not None else mesh_data.matrix
         space  = _target_space("Mesh.create()", placed, target)
         points = np.asarray(points, dtype=np.float64) @ space[:3, :3] + space[3, :3]
-        if not np.allclose(space[:3, :3], np.eye(3), rtol=0.0, atol=1e-12):
-            linear = space[:3, :3]
-    shading = _shading_of(mesh_data, holes, linear) if normals else None
+    shading = _shading_of(mesh_data, holes, space) if normals else None
     uv_sets = list(uv_data or ())
     names   = [uv.name for uv in uv_sets]
     for i, uv_name in enumerate(names):
@@ -2620,7 +2699,7 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, nor
     shading, uv_sets)`` for `_MeshUpdateCommand` and the UV sets (the shading None
     without `normals`: the mesh keeps its own). Raises ValueError for a mesh with
     history or data of another topology, and the errors of `_mesh_topology` /
-    `_shading_of` / `_check_uv_fit`."""
+    `_target_space` / `_shading_of` / `_check_uv_fit`."""
     obj = None
     if _files.is_object(data):
         obj, data, uvs = data, data.mesh, data.uv
@@ -2652,20 +2731,17 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, nor
             f"and the UVs of the same topology: Mesh.load({_source_label(src)}) makes a new mesh"
         )
     points = np.asarray(data.points, dtype=np.float64).reshape(-1, 3)
-    linear = None
+    taken  = None
     if world_space:
         matrix = np.asarray(obj.world_matrix if obj is not None else data.matrix, dtype=np.float64).reshape(4, 4)
         points = points @ matrix[:3, :3] + matrix[3, :3]
-        world  = np.array(type(mesh).get_mdagpath(mesh).inclusiveMatrix()).reshape(4, 4)
-        linear = matrix[:3, :3] @ np.linalg.inv(world[:3, :3])
-        if np.allclose(linear, np.eye(3), rtol=0.0, atol=1e-12):
-            linear = None
-        space = OpenMaya.MSpace.kWorld
+        taken  = _target_space(method, matrix, type(mesh).get_mdagpath(mesh))
+        space  = OpenMaya.MSpace.kWorld
     else:
         space = OpenMaya.MSpace.kObject
     if not np.isfinite(points).all():
         raise ValueError(f"{method}: the points must be finite (got nan or inf)")
-    shading = _shading_of(data, holes, linear) if normals else None
+    shading = _shading_of(data, holes, taken) if normals else None
     uv_sets = [] if uvs is None else [uvs] if _is_uv_data(uvs) else list(uvs)
     names   = [uv.name for uv in uv_sets]
     for i, uv in enumerate(uv_sets):

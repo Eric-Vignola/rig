@@ -39,7 +39,8 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
             ClipData too: its frames are not used).
         parent: An existing node to make the roots under (`create_hierarchy`'s
             ``parent``). None: the world.
-        world_space: With `parent` (without, it changes nothing), as
+        world_space: A bool (anything else is a TypeError, before the file is
+            read). With `parent` (without, it changes nothing), as
             `create_hierarchy` takes it: False (the default), the roots' values
             from the file as local values under `parent` (the file holds local
             values: under the node it was saved under, it lands where it was,
@@ -66,6 +67,9 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
     Each call is ONE undo step named ``rig.Transform.load_hierarchy`` (or
     ``rig.Joint.load_hierarchy``) and leaves the selection as it was.
     """
+
+# what ``load_hierarchy``'s world_space= says (`_files.space_flag`)
+_HIERARCHY_SPACE = "how the roots' values read under parent: local, or world"
 
 # the keywords ``Transform.create(transform_data)`` reads itself (`_create_from_data`):
 # every other keyword is an attribute of the new node
@@ -1085,9 +1089,10 @@ class Transform(DAGNode):
     ):
         from cgmath.hierarchy import HierarchyData
 
-        method = f"{cls.__name__}.load_hierarchy"
-        data = _files.read(hierarchy, (HierarchyData,), method, "the hierarchy")
-        kwargs = {} if container is None else {"container": container}
+        method      = f"{cls.__name__}.load_hierarchy"
+        world_space = _files.space_flag(method, world_space, _HIERARCHY_SPACE)
+        data        = _files.read(hierarchy, (HierarchyData,), method, "the hierarchy")
+        kwargs      = {} if container is None else {"container": container}
         if isinstance(parent, DAGNode):
             parent = type(parent).get_long_name(parent)
         with _undo_chunk(f"rig.{cls.__name__}.load_hierarchy"):

@@ -406,10 +406,10 @@ The shape is returned by its path under the target as the call named it
 to that lookup, so a shape under one is read by its own name). `world_space=`,
 a keyword, says how the data's points go under it:
 
-| `world_space=` | The points (a mesh's normals with them) |
+| `world_space=` | The points (a mesh's locked normals with them) |
 |---|---|
 | `False` (the default) | the shape's own, as the data holds them; its matrix (an `Object`'s transform) is not used |
-| `True` | where the data puts them in the world, through its matrix (an `Object`'s transform; points, or B-spline data of a `cgmath` without the field, are world positions), taken into the transform's space: `data.matrix @ inverse(its world matrix)`, the normals through the inverse transpose |
+| `True` | where the data puts them in the world, through its matrix (an `Object`'s transform; points, or B-spline data of a `cgmath` without the field, are world positions), taken into the transform's space: `data.matrix @ inverse(its world matrix)`, a mesh's locked normals through the inverse transpose (below) |
 
 The shape rides the same recorded transform as without it, then goes under
 the target (as `parent -shape -relative`, through the API: the selection and
@@ -439,14 +439,14 @@ taken either way. Under a mirrored target (a negative scale),
 `world_space=True` puts the points where the data does, but leaves a surface
 inside out against the source (its normals reversed), as
 `NurbsSurface('x').load(path, world_space=True)` does into a mirrored
-transform; a mesh's normals lock (below). An error once the shape is under the
-target (a value an attribute keyword refuses) deletes it.
+transform; every normal of a mesh locks (below). An error once the shape is
+under the target (a value an attribute keyword refuses) deletes it.
 
 **Frozen at its world positions: `world_space=True` without `transform=`.**
 By default a new transform takes the data's matrix and the points stay the
 shape's own. `world_space=True` puts the matrix in the points instead (a
-mesh's normals through its inverse transpose, as under `transform=`) and the
-new transform sits at the origin with identity channels: the same world
+mesh's locked normals through its inverse transpose, as under `transform=`) and
+the new transform sits at the origin with identity channels: the same world
 positions, frozen. So, for a `polyCube` named `box` moved to `(0, 10, 0)`, with
 `data, uvs = Mesh('box').serialize()`:
 
@@ -467,23 +467,42 @@ a mirrored target. A matrix that is exactly singular (only data made by hand
 holds one: Maya keeps 1e-12 for a scale of 0) has no inverse for a mesh's
 normals: a `ValueError` before anything is made, and `normals=False` takes it.
 A matrix that is not finite is a `ValueError` before anything is made, for
-every class, under `transform=` too.
+every class, under `transform=` too, and in `Mesh('x').load(path,
+world_space=True)`.
 
-**`world_space=True` can lock a mesh's normals**, under a target, frozen, and
-in `Mesh('x').load(path, world_space=True)`: they land where the data's do, and
-one that Maya's own normal of the moved points misses by more than 1e-4 is
-set, which locks it, whether the source locked it or not. What locks depends
-on the matrix the normals go through:
+**`world_space=True` locks a normal that differs on both sets of points**, under
+a target, frozen, and in `Mesh('x').load(path, world_space=True)`. A `MeshData`
+holds no lock flag, so a normal counts as locked when Maya computes it more
+than 1e-4 from the data's on the data's own points, as a plain create decides
+it, and where it lands too (what Maya computes there needs no lock). Only those
+go through the matrix (its inverse transpose) and are set, which locks them;
+every other normal is Maya's own for the points where they land, as
+`makeIdentity` leaves them, and follows a deformer. The hard edges come through.
+What the matrix changes:
 
-| The matrix | What locks |
-|---|---|
-| A mirror (a negative scale) | every normal: Maya's own face the other way |
-| A non-uniform scale, a shear | nearly every soft normal: 988 of 994 on a 32 x 32 `polySphere` at a scale of `(1, 2, 3)`, 192 at `(1, 1.1, 1)` |
-| A move, a rotation, a uniform scale | only what float noise puts that far, on a dense or a far mesh: of those 994, none at `(1, 2, 3)`, 2 at `(100, 50, 30)`; 2,978 of 16,258 on a 128 x 128 `polySphere` there |
+| The matrix | Locked | Every other normal |
+|---|---|---|
+| The identity | as in a plain create | |
+| A move, a rotation, a uniform scale | the source's locked normals | Maya's own, within float noise of the source's: at most 0.6 degrees on a 300 x 300 `polySphere` at `(100, 50, 30)`, none of its 89,702 normals locked |
+| A non-uniform scale, a shear | the source's locked normals | a flat face's where the source's is; a soft one Maya's own, off the inverse transpose: at most 0.04 degrees on a 32 x 32 `polySphere` at a scale of `(1, 2, 1)`, 0.5 at `(1, 2, 3)`, 13 at a soft corner of a 2 x 2 x 2 `polyCube` under a shear |
+| A mirror (a negative scale) | every normal (54 of 54 on a 2 x 2 x 2 `polyCube`): Maya's own would face the other way, and the world normals stay the source's | |
 
-The hard edges come through, and a hard-edged cube locks none but through a
-mirror. A locked normal stays as it is under a deformer: `normals=False` locks
-none, and loses the hard edges.
+That is data saved in object space (`save()`, `serialize()`). World-space data
+(`save(world_space=True)`) holds normals through the source's matrix, which
+Maya does not compute from its points, so only the points they were computed
+on tell them from locks. Landing back there (on the mesh it was saved from, or
+under a target at its matrix) only the source's locks lock. Anywhere else,
+frozen or under another target, the soft ones lock too where a non-uniform
+scale, a shear or float noise moved them: 988 of 994 on a 32 x 32 `polySphere`
+at a scale of `(1, 2, 3)`, about 54,000 of 89,702 on a 300 x 300 one at
+`(100, 50, 30)`, none on a rigid move near the origin. So do normals computed
+another way: a source on another
+`vertexNormalMethod` than a new mesh's 3 (960 of those 994 in a plain create;
+an update into the mesh itself computes as it does, and locks none).
+
+A cluster leaves a locked normal as it is, and a skinCluster turns it with the
+skin (`deformUserNormals`, on by default); neither recomputes it.
+`normals=False` locks none, and loses the hard edges.
 
 A class built from a `cgmath` file has a `load` beside its `create`:
 `Mesh.load(path, ...)`, `NurbsCurve.load`, `NurbsSurface.load`,
@@ -738,6 +757,8 @@ file is read, and `load(path, True)` is a `TypeError` too (a mesh takes the
 `True` for `uvs`), nothing changed. A file saved in world space,
 `save(world_space=True)`, loads with `world_space=True`: the default would
 take its world positions as the shape's own, moved by the transform, silently.
+`Transform.load_hierarchy` takes its `world_space=` the same way: a bool, before
+the file is read.
 
 Another topology or CV layout, or a shape with history, is a `ValueError`
 naming `Cls.load(path)` for a new node. A deformed shape (a skin, a

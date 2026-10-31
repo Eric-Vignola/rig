@@ -1229,6 +1229,18 @@ class TestHierarchy(_Case):
         np.testing.assert_allclose(spine[:12], matrices["spine"][:12], atol=1e-9)
         np.testing.assert_allclose(spine[12:15] - matrices["spine"][12:15], (10, 0, 0), atol=1e-9)
 
+    def test_world_space_takes_a_bool(self):
+        """Anything but a bool is a TypeError, before the file is read, as in the other loads."""
+        for cls in (Transform, Joint):
+            for value in (None, 1, "world"):
+                with self.subTest(cls=cls.__name__, value=value):
+                    with self.assertRaisesRegex(
+                        TypeError,
+                        rf"^{cls.__name__}\.load_hierarchy: world_space= takes True or False \(how the roots' values "
+                        rf"read under parent: local, or world\), not {value!r}$",
+                    ):
+                        cls.load_hierarchy(self.path("no_such_file.npz"), world_space=value)
+
     def test_data_objects_paths_and_a_clip(self):
         root = _skeleton()
         data = root.serialize_hierarchy()

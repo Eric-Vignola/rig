@@ -1,5 +1,5 @@
 """The user's decisions of 2026-10-30 on shapes and their spaces (feat/shape-under-transform,
-commit 3), one test class each:
+commits 3 and 4), one test class each:
 
 * Q1, a surface update: data without knots in a direction (an older cgmath's, or Maya's default
   ones) says even knots there. It is refused, as other knots are, when the surface is uneven
@@ -11,19 +11,26 @@ commit 3), one test class each:
 * Q5, ``serialize_hierarchy`` skips user attributes that hold geometry, with a warning: their
   value never loads back (no file takes it; it broke every save of the hierarchy).
 * Q6, ``world_space=True`` without ``transform=`` freezes the shape at its world positions, on
-  ``create`` and on the class-form ``load``: the data's matrix goes in the points, a mesh's normals
-  through its inverse transpose, and the new transform sits at the origin with identity channels.
-  False, the default, is the new transform at the matrix, the points the shape's own.
+  ``create`` and on the class-form ``load``: the data's matrix goes in the points, a mesh's locked
+  normals through its inverse transpose, and the new transform sits at the origin with identity
+  channels. False, the default, is the new transform at the matrix, the points the shape's own.
 * Q7, ``transform=`` takes any node derived from transform (the README says so).
 * Q8, ``transform=`` with ``world_space=True`` refuses a singular target (its world 3x3 scales some
   direction by less than 1e-9), before anything is built; ``world_space=False`` stays taken.
 * Q9, the default shape name under ``transform=`` is in the target's namespace, whatever the
   current one: a referenced target's shape is a local node in the reference's namespace, which
   survives a save and a reopen. ``name=`` is used as given.
+* "Lock only real locks" (commit 4), with ``world_space=True`` on a mesh: a normal is locked when
+  Maya computes it away from the data's on the data's own points, as a plain create decides it,
+  and where it lands too. Only those normals go through the matrix and are set; every other one
+  stays Maya's own for the points where they land. A mirror keeps locking every normal.
 
 Q4 (a locked or driven segmentScaleCompensate keeps raising) changes nothing.
 
-Each test failed against the source files of 4c53f99 (negative control), except the guards.
+Each test failed against the source files of 4c53f99 (negative control), except the guards;
+`TestOnlyRealLocks`' against those of e949d38; `TestWorldSpaceDataBack`'s against commit 4's first
+version, which compared on the data's own points alone (e949d38 compared where they land: all but
+its last test pass there). The tests of commit 3 that pinned the old locks say "re-pinned".
 """
 
 import inspect
@@ -33,9 +40,11 @@ from unittest import mock
 
 import numpy as np
 from maya import cmds
+from maya.api import OpenMaya
 
 from rig import container
 from rig.nodetypes import Mesh, NurbsCurve, NurbsSurface, Transform
+from rig._tests.test_class_mesh_create import _grid, _hard_edges, _locked_rows
 from rig._tests.test_class_nurbs_create import CURVE_FIELDS, PATCH_FIELDS, _older_cgmath
 from rig._tests.test_class_shape_space import NEW_FIELDS, NO_FIELDS, OPEN, PERIODIC, _cylinder, _surface, _uneven
 from rig._tests.test_class_shape_under_transform import (
@@ -73,6 +82,43 @@ def _quiet_serialize(shape):
 def _new_transform(shape):
     """The transform `shape` was made under, by its long name."""
     return shape.get_parent().get_long_name()
+
+
+def _soft_sphere(subdivisions=32, **placed):
+    """A sphere of `subdivisions` each way, every edge soft and no normal locked, at `placed`
+    (xform's keywords): its Mesh."""
+    t = cmds.polySphere(name="ball", subdivisionsAxis=subdivisions, subdivisionsHeight=subdivisions,
+                        constructionHistory=False)[0]
+    cmds.polySoftEdge(t, angle=180, constructionHistory=False)
+    cmds.xform(t, **placed)
+    return Mesh(t)
+
+
+def _locked_sphere(**placed):
+    """A 32 x 32 sphere, soft but for 20 hard edges, the normals of 5 vertices locked (20
+    face-vertices), at `placed`: its Mesh."""
+    t = cmds.polySphere(name="ball", subdivisionsAxis=32, subdivisionsHeight=32, constructionHistory=False)[0]
+    cmds.polySoftEdge(t, angle=180, constructionHistory=False)
+    cmds.polySoftEdge(f"{t}.e[40:59]", angle=0, constructionHistory=False)
+    cmds.polyNormalPerVertex(f"{t}.vtx[200]", xyz=(0.0, 1.0, 0.0))
+    cmds.polyNormalPerVertex(f"{t}.vtx[500:503]", xyz=(1.0, 0.0, 0.0))
+    cmds.delete(t, constructionHistory=True)
+    cmds.xform(t, **placed)
+    return Mesh(t)
+
+
+def _among(mesh, rows):
+    """For each face-vertex of `mesh`, in `_normals`' order, whether it is one of `rows` (as
+    `_locked_rows` gives them)."""
+    fn = mesh.get_fn_set()
+    return np.array([(f, v) in rows for f in range(fn.numPolygons) for v in fn.getPolygonVertices(f)])
+
+
+def _turn(normals, others):
+    """The largest angle between the normals of two (N, 3) arrays, in degrees."""
+    lengths = np.linalg.norm(normals, axis=1) * np.linalg.norm(others, axis=1)
+    cosines = np.einsum("ij,ij->i", normals, others) / lengths
+    return float(np.degrees(np.arccos(np.clip(cosines, -1.0, 1.0))).max())
 
 
 class TestQ1ASurfaceUpdateOfDataWithoutKnots(_Case):
@@ -651,53 +697,54 @@ class TestQ6FrozenAtWorldPositions(_Case):
             np.testing.assert_allclose(_world(flipped), _world(ball), rtol=0, atol=1e-9)
             np.testing.assert_allclose(_surface_normals(flipped), -_surface_normals(ball), rtol=0, atol=1e-6)
 
-    def soft_sphere(self, **placed):
-        """A 32 x 32 sphere, every edge soft and no normal locked, at `placed` (xform's keywords): its Mesh."""
-        t = cmds.polySphere(name="ball", subdivisionsAxis=32, subdivisionsHeight=32, constructionHistory=False)[0]
-        cmds.polySoftEdge(t, angle=180, constructionHistory=False)
-        cmds.xform(t, **placed)
-        return Mesh(t)
-
-    def test_a_non_uniform_scale_locks_soft_normals(self):
-        """Pinned as documented, not fixed: Maya computes other normals for the frozen points than
-        the inverse transpose gives the data's, so those are set, which locks them, where the
-        source and a plain create lock none. They land, and normals=False locks none."""
-        source = self.soft_sphere(scale=(1, 2, 3))
+    def test_a_non_uniform_scale_locks_no_soft_normal(self):
+        """Re-pinned (it locked nearly every soft normal): Maya computes other normals for the frozen
+        points than the inverse transpose gives the data's, and they stay Maya's own, those of
+        normals=False, a little off the source's world normals; the source locks none, nor does a
+        plain create."""
+        source = _soft_sphere(scale=(1, 2, 3))
         args   = _args(source)
         frozen = Mesh.create(*args, world_space=True)
-        self.assertEqual(_shading(source)[1], 0)
+        self.assertEqual(_shading(source)[1],             0)
         self.assertEqual(_shading(Mesh.create(*args))[1], 0)
-        self.assertGreater(_shading(frozen)[1], 0.9 * frozen.get_fn_set().numNormals)
-        np.testing.assert_allclose(_normals(frozen), _normals(source), rtol=0, atol=1e-5)
-        self.assertEqual(_shading(Mesh.create(*args, world_space=True, normals=False))[1], 0)
+        self.assertEqual(_shading(frozen)[1],             0)
+        self.assertLess(_turn(_normals(frozen), _normals(source)), 0.5)
+        bare = Mesh.create(*args, world_space=True, normals=False)
+        self.assertEqual(_shading(bare)[1], 0)
+        np.testing.assert_allclose(_normals(frozen), _normals(bare), rtol=0, atol=1e-6)
 
     def test_a_rigid_matrix_near_the_origin_locks_nothing(self):
-        """A move, a rotation and a uniform scale: Maya computes the data's normals, there."""
-        source = self.soft_sphere(translation=(1, 2, 3), rotation=(30, 40, 50), scale=(2, 2, 2))
+        """guard: a move, a rotation and a uniform scale: Maya computes the data's normals, there."""
+        source = _soft_sphere(translation=(1, 2, 3), rotation=(30, 40, 50), scale=(2, 2, 2))
         self.assertEqual(_shading(Mesh.create(*_args(source), world_space=True))[1], 0)
 
     def test_a_hard_edged_cube_locks_nothing(self):
-        """A non-uniform scale and a shear: a flat face's normal is what Maya computes."""
+        """guard: a non-uniform scale and a shear: a flat face's normal is what Maya computes."""
         box = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
         cmds.xform("box", translation=(1, 2, 3), rotation=(10, 20, 30), scale=(1, 2, 3), shear=(0.5, 0.2, -0.3))
         self.assertEqual(_shading(Mesh.create(*_args(box), world_space=True)), (12, 0))
 
     def test_the_same_goes_under_a_target_and_in_an_update(self):
-        """guard: what locks is the matrix the normals go through, whichever call takes them there."""
-        source = self.soft_sphere()
+        """Re-pinned (both locked nearly every soft normal): whichever call takes the points there,
+        none locks."""
+        source = _soft_sphere()
         args   = _args(source, True)
         target = cmds.createNode("transform", name="ctl")
         cmds.xform(target, scale=(1, 2, 3))
         under = Mesh.create(*args, transform=target, world_space=True)
-        self.assertGreater(_shading(under)[1], 0.9 * under.get_fn_set().numNormals)
+        self.assertEqual(_shading(under)[1], 0)
         cmds.xform("ball", scale=(1, 2, 3))
         source.load(*args, world_space=True)
-        self.assertGreater(_shading(source)[1], 0.9 * source.get_fn_set().numNormals)
+        self.assertEqual(_shading(source)[1], 0)
 
     def test_the_readme_says_what_locks(self):
+        """Re-pinned: the paragraph that said ``world_space=True`` can lock a mesh's normals."""
         with open(README, encoding="utf-8") as fh:
             text = " ".join(fh.read().split())
-        self.assertIn("**`world_space=True` can lock a mesh's normals**", text)
+        self.assertIn("**`world_space=True` locks a normal that differs on both sets of points**", text)
+        self.assertIn("Anywhere else, frozen or under another target, the soft ones lock too where a "
+                      "non-uniform scale, a shear or float noise moved them", text)
+        self.assertNotIn("can lock a mesh's normals", text)
 
     def test_a_matrix_with_no_inverse(self):
         """Exactly singular, which only data made by hand holds: a mesh's normals cannot follow it,
@@ -718,6 +765,21 @@ class TestQ6FrozenAtWorldPositions(_Case):
             with self.subTest(label):
                 self.assert_nothing_made(ValueError, refusal, lambda: Mesh.create(data, world_space=True, **keywords))
 
+    def test_a_matrix_that_is_not_finite_in_an_update(self):
+        """Its last column too, which no point goes through: the normals' matrix is read whole."""
+        box     = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
+        data    = box.serialize(include_uvs=False)
+        before  = _local(box)
+        refusal = r"^Mesh\('boxShape'\)\.load: the data's matrix must be finite \(got nan or inf\)$"
+        for row, column in ((0, 0), (0, 3)):
+            with self.subTest(row=row, column=column):
+                matrix              = np.eye(4)
+                matrix[row, column] = np.nan
+                data.matrix         = matrix
+                with self.assertRaisesRegex(ValueError, refusal):
+                    box.load(data, world_space=True)
+                np.testing.assert_array_equal(_local(box), before)
+
     def test_a_matrix_that_is_not_finite_on_nurbs_data(self):
         if not NEW_FIELDS:
             self.skipTest(NO_FIELDS)
@@ -727,6 +789,339 @@ class TestQ6FrozenAtWorldPositions(_Case):
                 data.matrix = np.full((4, 4), np.inf)
                 self.assert_nothing_made(ValueError, rf"^{cls.__name__}\.create\(\): the data's matrix must be finite",
                                          lambda: cls.create(data, world_space=True))
+
+
+class TestOnlyRealLocks(_Case):
+    """"Lock only real locks": with ``world_space=True`` a normal the moved points alone put away from
+    the data's, which Maya computes on the data's own points, stays Maya's own, and follows a
+    deformer. At e949d38 a soft sphere's 994 normals locked 988 at a scale of (1, 2, 3), 192 at
+    (1, 1.1, 1), 2 at (100, 50, 30)."""
+
+    def shapes(self, source):
+        """Each call that takes `source`'s data where it lands: ``(its label, the Mesh it gives)``."""
+        args   = _args(source)
+        target = _sheared()
+        path   = source.save(os.path.join(self.folder(), "source.npz"))
+        yield "frozen", Mesh.create(*args, world_space=True)
+        yield "under a target", Mesh.create(*args, transform=target, world_space=True)
+        yield "the class-form load", Mesh.load(path, world_space=True)
+        yield "the class-form load under a target", Mesh.load(path, transform=target, world_space=True)
+        yield "an update", Mesh.create(*args, transform=target).load(*args, world_space=True)
+
+    def assert_stays_soft(self, source):
+        for label, shape in self.shapes(source):
+            with self.subTest(label):
+                self.assertEqual(_shading(shape), (0, 0))
+
+    def test_a_non_uniform_scale(self):
+        self.assert_stays_soft(_soft_sphere(scale=(1, 2, 3)))
+
+    def test_a_small_one(self):
+        self.assert_stays_soft(_soft_sphere(scale=(1, 1.1, 1)))
+
+    def test_a_shear(self):
+        self.assert_stays_soft(_soft_sphere(shear=(0.5, 0.2, -0.3)))
+
+    def test_float_noise_on_a_far_mesh(self):
+        self.assert_stays_soft(_soft_sphere(translation=(100, 50, 30)))
+
+    def test_float_noise_on_a_far_and_dense_mesh(self):
+        frozen = Mesh.create(*_args(_soft_sphere(128, translation=(100, 50, 30))), world_space=True)
+        self.assertEqual(_shading(frozen), (0, 0))
+
+    def test_an_object_s_transform(self):
+        from cgmath.render.scene import Object
+
+        data = _soft_sphere().serialize(include_uvs=False)
+        hero = Object(name="hero", mesh=data, translate=(5, 1, 2), rotate=(10, 45, 0), scale=(2, 1, 3))
+        self.assertEqual(_shading(Mesh.create(hero, world_space=True)), (0, 0))
+
+    def test_the_source_s_locks_are_the_ones_locked(self):
+        """Exactly those, at the source's world normals, in every call; the hard edges come through."""
+        source = _locked_sphere(translation=(4, 5, 6), rotation=(10, 20, 30), scale=(1, 2, 3))
+        rows   = _locked_rows(source.get_long_name())
+        self.assertEqual(len(rows), 20)
+        for label, shape in self.shapes(source):
+            with self.subTest(label):
+                self.assertEqual(_locked_rows(shape.get_long_name()), rows)
+                self.assertEqual(_hard_edges(shape.get_long_name()), _hard_edges(source.get_long_name()))
+                locked = _among(shape, rows)
+                np.testing.assert_allclose(_normals(shape)[locked], _normals(source)[locked], rtol=0, atol=1e-5)
+
+    def test_data_numbered_another_way(self):
+        """Each face-vertex its own normal, as a file of another program holds them: the same locks."""
+        source      = _locked_sphere(scale=(1, 2, 3))
+        data, uvs   = _args(source)
+        normals     = np.asarray(data.normals)[np.asarray(data.normal_indices)]
+        data.normals, data.normal_indices = normals, np.arange(len(normals))
+        frozen      = Mesh.create(data, uvs, world_space=True)
+        self.assertEqual(_locked_rows(frozen.get_long_name()), _locked_rows(source.get_long_name()))
+        self.assertEqual(_hard_edges(frozen.get_long_name()), _hard_edges(source.get_long_name()))
+
+    def test_a_move_has_no_matrix_for_the_normals_to_go_through(self):
+        """Its locks are the data's normals, as they are; float noise locks nothing more."""
+        source = _locked_sphere(translation=(100, 50, 30))
+        frozen = Mesh.create(*_args(source), world_space=True)
+        rows   = _locked_rows(source.get_long_name())
+        self.assertEqual(_locked_rows(frozen.get_long_name()), rows)
+        locked = _among(frozen, rows)
+        np.testing.assert_allclose(_normals(frozen)[locked], _normals(source)[locked], rtol=0, atol=1e-5)
+        self.assertLess(_turn(_normals(frozen), _normals(source)), 0.02)
+
+    def test_a_holed_mesh(self):
+        """Its vertices keep their numbers: what the copy finds is what the mesh sets, in every call."""
+        t = _grid()
+        cmds.polySoftEdge(t, angle=180, constructionHistory=False)
+        cmds.move(0, 0.5, 0, f"{t}.vtx[0]", f"{t}.vtx[3]", f"{t}.vtx[12]", f"{t}.vtx[15]", relative=True)
+        cmds.polyNormalPerVertex(f"{t}.vtx[1]", xyz=(1.0, 0.0, 0.0))
+        cmds.delete(t, constructionHistory=True)
+        cmds.xform(t, translation=(1, 2, 3), scale=(1, 2, 3))
+        source = Mesh(t)
+        rows   = _locked_rows(source.get_long_name())
+        self.assertEqual(len(rows), 2)
+        for label, shape in self.shapes(source):
+            with self.subTest(label):
+                self.assertEqual(shape.get_fn_set().getHoles(), source.get_fn_set().getHoles())
+                self.assertEqual(_locked_rows(shape.get_long_name()), rows)
+
+    def test_the_normals_follow_a_deformer_as_make_identity_s(self):
+        """What it is for: the frozen mesh and the same mesh through makeIdentity, each under one
+        cluster, turn their normals alike."""
+        source = _soft_sphere(translation=(1, 2, 3), scale=(1, 2, 3))
+        frozen = Mesh.create(*_args(source), name="frozen", world_space=True)
+        cmds.duplicate("ball", name="baked")
+        cmds.makeIdentity("baked", apply=True, translate=True, rotate=True, scale=True)
+        cmds.delete("baked", constructionHistory=True)
+        baked = Mesh("baked")
+        rest  = _normals(baked)
+        for node in ("frozen", "baked"):
+            cmds.xform(cmds.cluster(f"{node}.vtx[300:419]")[1], translation=(0.25, 0.5, 0), rotation=(30, 0, 40))
+        self.assertGreater(_turn(_normals(baked), rest), 10)
+        self.assertLess(_turn(_normals(frozen), _normals(baked)), 0.01)
+
+    def test_a_mesh_s_own_vertex_normal_method(self):
+        """The copy computes as the mesh does (a mesh built as data computes otherwise), as an update
+        at the identity compares on the mesh itself: its own data locks nothing."""
+        source = _soft_sphere(scale=(1, 2, 3))
+        cmds.setAttr("ballShape.vertexNormalMethod", 1)
+        args = _args(source)
+        cmds.xform("ball", scale=(3, 2, 1))
+        source.load(*args, world_space=True)
+        self.assertEqual(_shading(source), (0, 0))
+
+    def test_a_create_is_one_undo_step(self):
+        source = _locked_sphere(scale=(1, 2, 3))
+        args   = _args(source)
+        rows   = _locked_rows(source.get_long_name())
+        for label, keywords in (("frozen", {}), ("under a target", {"transform": _sheared()})):
+            with self.subTest(label):
+                cmds.flushUndo()
+                before = self.scene_state()
+                path   = Mesh.create(*args, world_space=True, **keywords).get_long_name()
+                self.assertEqual(self.undo_name(), "rig.Mesh.create")
+                self.undo_steps(1)
+                self.assert_state_equal(self.scene_state(), before)
+                self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+                self.redo_steps(1)
+                self.assertEqual(_locked_rows(path), rows)
+
+    def test_an_update_is_one_undo_step(self):
+        """Undo gives the mesh its own locks back, redo the source's."""
+        source = _locked_sphere(scale=(1, 2, 3))
+        args   = _args(source)
+        rows   = _locked_rows(source.get_long_name())
+        mesh   = Mesh.create(*args, name="copy", normals=False)
+        cmds.polyNormalPerVertex("copy.vtx[7]", xyz=(0.0, 0.0, 1.0))
+        cmds.delete("copy", constructionHistory=True)
+        cmds.xform("copy", scale=(2, 1, 1))
+        path   = mesh.get_long_name()
+        own    = _locked_rows(path)
+        before = self.scene_state(meshes=[path])
+        self.assertEqual(len(own), 4)
+        cmds.flushUndo()
+        mesh.load(*args, world_space=True)
+        self.assertEqual(self.undo_name(), "rig.Mesh.load")
+        self.assertEqual(_locked_rows(path), rows)
+        self.undo_steps(1)
+        self.assertEqual(_locked_rows(path), own)
+        self.assert_state_equal(self.scene_state(meshes=[path]), before)
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+        self.redo_steps(1)
+        self.assertEqual(_locked_rows(path), rows)
+
+    def test_a_mirror_keeps_locking_every_normal(self):
+        """guard: as at e949d38, a soft mesh too: Maya's own would face the other way, and the world
+        normals stay the source's."""
+        target = cmds.createNode("transform", name="mirror")
+        cmds.xform(target, translation=(3, 0, 0), rotation=(0, 30, 0), scale=(-1, 1, 1))
+        source = _soft_sphere(16, translation=(1, 2, 3), rotation=(10, 20, 30))
+        args   = _args(source)
+        update = Mesh.create(*args, transform=target)
+        under  = Mesh.create(*args, transform=target, world_space=True)
+        for label, shape in (("under a target", under), ("an update", update.load(*args, world_space=True))):
+            with self.subTest(label):
+                self.assertEqual(_shading(shape), (0, shape.get_fn_set().numNormals))
+                self.assertLess(_turn(_normals(shape), _normals(source)), 1e-3)
+        cmds.xform("ball", scale=(-1, 1, 1))
+        frozen = Mesh.create(*_args(source), world_space=True)
+        self.assertEqual(_shading(frozen), (0, frozen.get_fn_set().numNormals))
+        self.assertLess(_turn(_normals(frozen), _normals(source)), 1e-3)
+
+    def test_two_mirrors_make_none(self):
+        """guard: a mirrored source under a mirrored target: nothing locks, as at e949d38."""
+        target = cmds.createNode("transform", name="mirror")
+        cmds.xform(target, translation=(3, 0, 0), rotation=(0, 30, 0), scale=(-1, 1, 1))
+        source = _soft_sphere(scale=(-1, 1, 1))
+        self.assertEqual(_shading(Mesh.create(*_args(source), transform=target, world_space=True)), (0, 0))
+
+    def test_the_identity_is_a_plain_create(self):
+        """guard: the data's points are the mesh's, and what it locks is decided there, as ever."""
+        source = _locked_sphere()
+        args   = _args(source)
+        plain  = Mesh.create(*args)
+        frozen = Mesh.create(*args, world_space=True)
+        self.assertEqual(_locked_rows(frozen.get_long_name()), _locked_rows(plain.get_long_name()))
+        self.assertEqual(_shading(frozen), _shading(plain))
+        np.testing.assert_allclose(_normals(frozen), _normals(plain), rtol=0, atol=1e-6)
+
+    def test_false_keeps_the_data_s_own_locks(self):
+        """guard: world_space=False takes the data's normals as the shape's own, as ever."""
+        source = _locked_sphere(scale=(1, 2, 3))
+        args   = _args(source)
+        shape  = Mesh.create(*args, transform=_sheared())
+        self.assertEqual(_locked_rows(shape.get_long_name()), _locked_rows(source.get_long_name()))
+        np.testing.assert_allclose(_normals(shape, OBJECT), _normals(source, OBJECT), rtol=0, atol=1e-5)
+
+    def test_normals_false_locks_none_and_loses_the_hard_edges(self):
+        """guard: nothing of the data's normals is read, as ever."""
+        source = _locked_sphere(scale=(1, 2, 3))
+        self.assertEqual(_shading(Mesh.create(*_args(source), world_space=True, normals=False)), (0, 0))
+
+    def test_nothing_else_comes_with_it(self):
+        """guard: the copy is data: no node, no tweak, no cached input mesh on the shape (which the
+        ride would have, with its points moved by ``setPoints``), as a plain create."""
+        source = _locked_sphere(scale=(1, 2, 3))
+        args   = _args(source)
+        before = set(cmds.ls(long=True))
+        frozen = Mesh.create(*args, name="frozen", world_space=True)
+        self.assertEqual(set(cmds.ls(long=True)) - before, {"|frozen", "|frozen|frozenShape"})
+        self.assertEqual(cmds.getAttr(f"{frozen.get_long_name()}.pnts", size=True), 0)
+        with self.assertRaises(RuntimeError):
+            OpenMaya.MFnMesh(frozen.get_fn_set().findPlug("cachedInMesh", False).asMObject())
+
+    def test_nothing_differing_where_it_lands_makes_no_copy(self):
+        """guard (it failed against commit 4's first version): the copy, and the array of the data's own
+        points, wait for the compare on the mesh itself."""
+        args = _args(_soft_sphere(translation=(1, 2, 3), rotation=(30, 40, 50), scale=(2, 2, 2)))
+        with mock.patch("rig.nodetypes.mesh.OpenMaya.MFnMeshData", side_effect=AssertionError("a copy")):
+            self.assertEqual(_shading(Mesh.create(*args, world_space=True)), (0, 0))
+
+
+class TestWorldSpaceDataBack(_Case):
+    """World-space data (``serialize`` / ``save(world_space=True)``) holds normals through the source's
+    matrix, which Maya does not compute from its world points, so the data's own points take nearly
+    every soft one for a lock. Back on the points they were computed on, nothing differs, and only
+    what the source locked locks. Compared on the data's own points alone, a file saved in world
+    space and loaded with ``world_space=True``, which the README asks for, locked 988 of a soft
+    sphere's 994 normals at a scale of (1, 2, 3); at e949d38, none."""
+
+    def back(self, source):
+        """Each call that lands `source`'s world-space data back on its points, `source` itself
+        last: ``(its label, the Mesh it gives)``."""
+        args   = _args(source, True)
+        path   = source.save(os.path.join(self.folder(), "world.npz"), world_space=True)
+        target = cmds.createNode("transform", name="ctl")
+        cmds.xform(target, matrix=cmds.xform(_new_transform(source), query=True, matrix=True))
+        other  = Mesh.create(*_args(source), name="other", normals=False)
+        yield "under a target at its matrix", Mesh.create(*args, transform=target, world_space=True)
+        yield "the class-form load under it", Mesh.load(path, transform=target, world_space=True)
+        yield "an update of a mesh at its matrix", other.load(*args, world_space=True)
+        yield "an update of itself", source.load(*args, world_space=True)
+        yield "an update of itself from its file", source.load(path, world_space=True)
+
+    def assert_stays_soft(self, source):
+        for label, shape in self.back(source):
+            with self.subTest(label):
+                self.assertEqual(_shading(shape), (0, 0))
+
+    def test_a_non_uniform_scale(self):
+        self.assert_stays_soft(_soft_sphere(scale=(1, 2, 3)))
+
+    def test_a_small_one(self):
+        self.assert_stays_soft(_soft_sphere(scale=(1, 1.1, 1)))
+
+    def test_a_shear(self):
+        self.assert_stays_soft(_soft_sphere(shear=(0.5, 0.2, -0.3)))
+
+    def test_float_noise_on_a_far_mesh(self):
+        self.assert_stays_soft(_soft_sphere(translation=(100, 50, 30)))
+
+    def test_float_noise_on_a_far_and_dense_mesh(self):
+        self.assert_stays_soft(_soft_sphere(128, translation=(100, 50, 30)))
+
+    def test_a_mirrored_source(self):
+        """guard: the mirror's path: back on its own points every normal is what Maya computes."""
+        self.assert_stays_soft(_soft_sphere(16, scale=(-1, 1, 1)))
+
+    def test_the_source_s_locks_are_the_ones_locked(self):
+        """Exactly those, every normal where the source's is, the hard edges too, in every call."""
+        source  = _locked_sphere(translation=(4, 5, 6), rotation=(10, 20, 30), scale=(1, 2, 3))
+        rows    = _locked_rows(source.get_long_name())
+        hard    = _hard_edges(source.get_long_name())
+        normals = _normals(source)
+        self.assertEqual(len(rows), 20)
+        for label, shape in self.back(source):
+            with self.subTest(label):
+                self.assertEqual(_locked_rows(shape.get_long_name()), rows)
+                self.assertEqual(_hard_edges(shape.get_long_name()), hard)
+                np.testing.assert_allclose(_normals(shape), normals, rtol=0, atol=1e-5)
+
+    def test_a_mesh_moved_since(self):
+        """A move leaves its own points as they were, once the data's are taken back through it."""
+        source = _soft_sphere(scale=(1, 2, 3))
+        args   = _args(source, True)
+        cmds.xform("ball", translation=(9, 8, 7))
+        self.assertEqual(_shading(source.load(*args, world_space=True)), (0, 0))
+
+    def test_a_restore_after_an_edit_follows_a_deformer(self):
+        """What it is for: the file brings the points back, Maya's normals with them, and they turn
+        under a cluster, which leaves a locked normal as it is."""
+        source = _soft_sphere(scale=(1, 2, 3))
+        args   = _args(source, True)
+        cmds.move(0.2, 0.1, 0, "ball.vtx[10:60]", relative=True)
+        cmds.delete("ball", constructionHistory=True)
+        source.load(*args, world_space=True)
+        self.assertEqual(_shading(source), (0, 0))
+        rest = _normals(source)
+        cmds.xform(cmds.cluster("ball.vtx[300:419]")[1], translation=(0.25, 0.5, 0), rotation=(30, 0, 40))
+        self.assertGreater(_turn(_normals(source), rest), 10)
+
+    def test_elsewhere_its_soft_normals_lock(self):
+        """guard: the README's limit, as at e949d38: frozen (the identity, a plain create) or under
+        another target, no points the data knows of tell them from locks."""
+        args   = _args(_soft_sphere(scale=(1, 2, 3)), True)
+        target = cmds.createNode("transform", name="ctl")
+        cmds.xform(target, translation=(1, 2, 3))
+        self.assertEqual(_shading(Mesh.create(*args, name="plain")), (0, 988))
+        self.assertEqual(_shading(Mesh.create(*args, name="frozen", world_space=True)), (0, 988))
+        self.assertEqual(_shading(Mesh.create(*args, transform=target, world_space=True)), (0, 988))
+
+    def test_a_lock_maya_computes_where_it_lands_is_not_set(self):
+        """What the compare where it lands gives up: one normal away from Maya's on the data's own
+        points, a lock in a plain create, is what Maya computes under the target. Its value is
+        there and it needs no lock, as in the data above."""
+        data, uvs = _args(_soft_sphere())
+        target    = cmds.createNode("transform", name="ctl")
+        cmds.xform(target, scale=(1, 2, 3))
+        landed = Mesh.create(data, uvs, transform=target, world_space=True, normals=False)
+        taken  = np.array([list(n) for n in landed.get_fn_set().getNormals()]) / (1, 2, 3)
+        taken /= np.linalg.norm(taken, axis=1, keepdims=True)
+        away   = np.linalg.norm(taken - data.normals, axis=1)
+        self.assertGreater(away.max(), 1e-3)
+        data.normals                = np.array(data.normals)
+        data.normals[away.argmax()] = taken[away.argmax()]
+        self.assertEqual(_shading(Mesh.create(data, uvs, name="plain")), (0, 1))
+        self.assertEqual(_shading(Mesh.create(data, uvs, transform=target, world_space=True)), (0, 0))
 
 
 class TestQ7AnyNodeDerivedFromTransform(_Case):
