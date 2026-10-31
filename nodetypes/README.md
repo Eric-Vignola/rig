@@ -1152,9 +1152,11 @@ Verified on Maya 2025; not bugs to work around blindly.
   normals.
 - **Undoing a target a blendShape load added keeps its weight element**: the
   blendShape keeps an unnamed `weight[i]` at 0 (as the undo of
-  `set_target_data` on a new target always has). `serialize` names it
-  `weight[i]`, which Maya takes for no alias: `set_target_data` and `load`
-  refuse such a morph, a `ValueError` before any edit.
+  `set_target_data` on a new target always has). It holds nothing, so
+  `serialize` and `save` leave it out; `get_targets` and `get_target_count`
+  still list it. An unnamed element with offsets comes out named `weight[i]`,
+  which Maya takes for no alias: `set_target_data` and `load` refuse such a
+  morph, a `ValueError` before any edit.
 - **Maya never resizes a map when the topology changes**: the stored
   `doubleArray` keeps the old count. Every read fits it to the vertex count
   (`get_map_values`, `get_map_data(sparse=False)`, `serialize_maps`, and so

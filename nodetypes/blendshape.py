@@ -439,7 +439,8 @@ class BlendShape(Deformer):
             ValueError: before any edit: a morph with no name to set it by, or
                 a new target's name Maya refuses: a space, a symbol, a digit
                 first, an attribute of the blendShape. ``weight[1]`` is one:
-                `serialize`'s name for a weight element that has no name.
+                `serialize`'s name for a weight element with offsets and no
+                name.
             RuntimeError: before any edit: with ``force=False``, a name no
                 target has.
         """
@@ -488,7 +489,10 @@ class BlendShape(Deformer):
                 If None, use all targets.
 
         Returns:
-            A list of `MorphData` objects.
+            A list of `MorphData` objects. A weight element with no name and no
+            offsets, what the undo of a new target leaves, holds nothing and
+            is left out (`get_targets` still lists it). One with offsets comes
+            as ``weight[i]``, a name `set_target_data` and `load` refuse.
         """
         from cgmath.geometry import MorphList
 
@@ -511,9 +515,9 @@ class BlendShape(Deformer):
                 if not regex.match(target_name):
                     continue
 
-            target_data_list.append(
-                self.get_target_data(i, original_mesh_data=org_mesh)
-            )
+            target_data = self.get_target_data(i, original_mesh_data=org_mesh)
+            if target_data.name != f"weight[{i}]" or len(target_data.indices):
+                target_data_list.append(target_data)
 
         return MorphList(target_data_list)
 

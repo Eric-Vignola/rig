@@ -1,4 +1,7 @@
+import os
+import shutil
 import string
+import tempfile
 
 import numpy as np
 from cgmath.geometry import MorphData, MorphList
@@ -161,9 +164,8 @@ class TestSetTargetDataTakesWhatSerializeReturns(UndoWalk, MayaTestCase):
         return MorphData(name=name, indices=np.array([index]), offsets=np.array([[0.0, height, 0.0]]))
 
     def read(self):
-        """The named targets' indices. (The undo of a target set_target_data added leaves its
-        weight element, unnamed: an older behaviour, left out here.)"""
-        return {m.name: np.asarray(m.indices).tolist() for m in self.bs.serialize() if not m.name.startswith("weight[")}
+        """The targets' indices."""
+        return {m.name: np.asarray(m.indices).tolist() for m in self.bs.serialize()}
 
     def assert_refused(self, error, pattern, call):
         """`call` raises `error` matching `pattern`, and nothing changed: the targets, the
@@ -336,21 +338,62 @@ class TestSetTargetDataTakesWhatSerializeReturns(UndoWalk, MayaTestCase):
         self.assertEqual(np.asarray(self.bs.get_target_data(1).indices).tolist(), [3])
 
     def undone_target(self):
-        """`serialize` after the undo of a new target: it keeps its weight element (an older
-        behaviour, documented), which `serialize` names ``weight[1]``."""
+        """The undo of a new target keeps its weight element (an older behaviour, documented):
+        no name, no offsets."""
         self.bs.set_target_data(self.morph("new", 2))
         cmds.undo()
+        self.assertEqual(list(self.bs.get_target_indices()), [0, 1])
+
+    def unnamed_with_offsets(self):
+        """A weight element with no name that holds offsets: `serialize` names it ``weight[1]``."""
+        self.undone_target()
+        self.bs.set_target_data(1, self.morph("ignored", 2))
         morphs = self.bs.serialize()
         self.assertEqual([m.name for m in morphs], ["smile", "weight[1]"])
+        cmds.flushUndo()
         return morphs
 
+    def test_serialize_leaves_out_an_undone_target(self):
+        self.undone_target()
+        self.assertEqual([m.name for m in self.bs.serialize()], ["smile"])
+        self.assertEqual(self.bs.get_target_count(),            2)
+        self.assertEqual(list(self.bs.get_target_indices()),    [0, 1])
+
+    def test_match_name_leaves_it_out_too(self):
+        self.undone_target()
+        self.assertEqual(len(self.bs.serialize(match_name=r"weight\[1\]")), 0)
+        self.assertEqual([m.name for m in self.bs.serialize(match_name="smile")], ["smile"])
+
+    def test_an_undone_target_round_trips(self):
+        self.undone_target()
+        before = self.read()
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = self.bs.save(os.path.join(folder, "face.npz"))
+        for label, call in (
+            ("set_target_data", lambda: self.bs.set_target_data(self.bs.serialize())),
+            ("load the data",   lambda: self.bs.load(self.bs.serialize())),
+            ("load the file",   lambda: self.bs.load(path)),
+        ):
+            with self.subTest(label):
+                call()
+                self.assertEqual(self.read(), before)
+
+    def test_an_undone_target_loads_onto_another_mesh(self):
+        self.undone_target()
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = self.bs.save(os.path.join(folder, "face.npz"))
+        made = BlendShape.load(path, Node(cmds.polyCube(name="other", ch=False)[0]), name="other_bs")
+        self.assertEqual(made.get_targets(), ["smile"])
+
     def test_a_weight_element_with_no_name_is_refused_before_any_edit(self):
-        unnamed = self.undone_target()[1]
+        unnamed = self.unnamed_with_offsets()[1]
         morphs  = MorphList([self.morph("smile", 5), unnamed])
         self.assert_refused(ValueError, r"cannot be named 'weight\[1\]'", lambda: self.bs.set_target_data(morphs))
 
     def test_a_weight_element_with_no_name_is_refused_by_another_blendshape(self):
-        morphs = self.undone_target()
+        morphs = self.unnamed_with_offsets()
         other  = BlendShape.create(self.morph("first"), Node(cmds.polyCube(name="other", ch=False)[0]), name="other_bs")
         cmds.flushUndo()
         with self.assertRaisesRegex(ValueError, r"cannot be named 'weight\[1\]'"):
