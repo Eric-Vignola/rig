@@ -171,7 +171,9 @@ def _make_from_data(data: TransformData, name: Any, parent: str | None) -> DAGNo
     else:
         return _create_nested(data.node_type, name=name, parent=parent)
     if parent is not None:
-        _cmds_edit.parent(type(obj).get_long_name(obj), parent)
+        # relative: its values go on as local values, and a parent that kept its world
+        # place would leave a shear under a non-uniformly scaled node, which no value undoes
+        _cmds_edit.parent(type(obj).get_long_name(obj), parent, relative=True)
     return obj
 
 
@@ -982,8 +984,13 @@ class Transform(DAGNode):
 
         One undo step, a clip's curves and keys in it; it selects the nodes it
         made. `load_hierarchy` (from a file or the data, the selection kept)
-        returns the same List.
+        returns the same List. A path here is a TypeError naming it.
         """
+        if isinstance(hierarchy, (str, os.PathLike)):
+            raise TypeError(
+                f"{cls.__name__}.create_hierarchy() takes the data, not a file: "
+                f"{cls.__name__}.load_hierarchy({os.fspath(hierarchy)!r}) reads one"
+            )
         world_space = _files.space_flag(f"{cls.__name__}.create_hierarchy", world_space, _HIERARCHY_SPACE)
         with _undo_chunk(f"rig.{cls.__name__}.create_hierarchy"):
             return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True))
@@ -1167,12 +1174,10 @@ class Transform(DAGNode):
                 _set_parent_uuid(obj, None)
                 hierarchy.list.insert(0, obj)
                 obj.matrix = cmds.xform(type(outside).get_long_name(outside), q=True, matrix=True, worldSpace=True)
-                if isinstance(hierarchy, ClipData):
-                    # its columns now: cgmath lines a node up when a solve first reads
-                    # it, and that read takes its scale from the blocks before the line-up
-                    hierarchy.frame = hierarchy.frame
-                    if world_space and hierarchy.frame_count:  # each node's scale, before a solve writes it
-                        scales = dict(zip(map(id, hierarchy), np.array(hierarchy.frames.scale).swapaxes(0, 1)))
+                if isinstance(hierarchy, ClipData) and world_space and hierarchy.frame_count:
+                    # each node's scale, before a solve writes it. This read also lines the new node
+                    # up in the blocks: a solve that did would take its scale from before the line-up
+                    scales = dict(zip(map(id, hierarchy), np.array(hierarchy.frames.scale).swapaxes(0, 1)))
                 for node in hierarchy.get_roots()[1:]:
                     node.set_parent(obj, world_space=world_space)
                     under[id(node)] = type(outside).get_long_name(outside)

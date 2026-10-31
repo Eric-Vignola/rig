@@ -142,6 +142,15 @@ class _Case(MayaTestCase):
 class TestTheTypeDecides(_Case):
     """A ClipData, the object or a file that holds one, is built and keyed, with no keyword."""
 
+    def test_create_takes_no_path(self):
+        """A file is load_hierarchy's: an error that says so, before anything is made."""
+        before = cmds.ls()
+        for path in ("walk.npz", pathlib.Path("walk.npz")):
+            with self.subTest(type(path).__name__):
+                with self.assertRaisesRegex(TypeError, r"Joint\.load_hierarchy\('walk\.npz'\) reads one"):
+                    Joint.create_hierarchy(path)
+        self.assertEqual(cmds.ls(), before)
+
     def test_the_object(self):
         calls = (
             ("Transform.create_hierarchy", Transform.create_hierarchy),
@@ -924,6 +933,24 @@ class TestCompensation(UndoWalk, _Case):
         held = cmds.keyframe("spine_inverseScaleX", query=True, valueChange=True)
         np.testing.assert_allclose(held, clip.frames["root"].scale_x.ravel())
 
+    def test_a_held_scale_that_moves_late_takes_the_global_tangents(self):
+        """Keyed on every frame, the held ones too, with the tangents every key takes."""
+        kept = {
+            "inTangentType":  cmds.keyTangent(query=True, g=True, inTangentType=True)[0],
+            "outTangentType": cmds.keyTangent(query=True, g=True, outTangentType=True)[0],
+        }
+        self.addCleanup(cmds.keyTangent, g=True, **kept)
+        cmds.keyTangent(g=True, inTangentType="flat", outTangentType="step")
+        clip = self._chain_without_its_root_s_compensation()
+        clip.frames["root"].scale_x = [1, 1, 1, 1, 1, 2]
+        up    = Transform.create(name="up", sx=2, sy=2, sz=2)
+        nodes = Joint.create_hierarchy(clip, parent=up, world_space=True)
+        self.assert_worlds(nodes, clip)
+        curve = "spine_inverseScaleX"
+        self.assertEqual(cmds.keyframe(curve, query=True, valueChange=True),           [1, 1, 1, 1, 1, 2])
+        self.assertEqual(set(cmds.keyTangent(curve, query=True, inTangentType=True)),  {"flat"})
+        self.assertEqual(set(cmds.keyTangent(curve, query=True, outTangentType=True)), {"step"})
+
     def test_a_parent_that_leaves_the_scale_alone_keeps_the_wire(self):
         """Under no scale a root that does not compensate keeps its scale: its plug holds it."""
         clip  = self._chain_without_its_root_s_compensation()
@@ -997,6 +1024,16 @@ class TestTheClipIsLeftAsItWas(_Case):
 class TestWithoutKeys(_Case):
     """A plain HierarchyData builds a clip without keys."""
 
+    def test_a_locator_under_a_non_uniform_scale_takes_no_shear(self):
+        """A plain build too: it goes under its parent as it is, so no solve of cmds.parent's
+        leaves a shear that no value sets back (a turned parent over a non-uniform scale)."""
+        root = _skeleton()
+        data = root.serialize_hierarchy()
+        cmds.delete("root")
+        Transform.create_hierarchy(data, parent=Transform.create(name="up", sx=2, sy=1, sz=3, ry=40, rz=30))
+        self.assertEqual(cmds.getAttr("probe.shear")[0], (0.0, 0.0, 0.0))
+        self.assertEqual(cmds.getAttr("probe.t")[0], (0.0, 1.0, 1.0))
+
     @unittest.skipUnless(hasattr(ClipData, "rest_pose"), "a ClipData of this cgmath holds no rest pose")
     def test_the_rest_pose(self):
         """guard: a plain HierarchyData, as ever."""
@@ -1017,6 +1054,27 @@ class TestWithoutKeys(_Case):
         nodes                        = Transform.create_hierarchy(clip.frames[1:2])
         self.assertEqual(_curves(), [])
         self.assertEqual(nodes[0].tx.get(), 2.0)
+
+
+# ---------------------------------------------------------------------------------------------
+class TestUnderANonUniformScale(_Case):
+    """A locator of a clip goes under its parent as it is: its values are its local values."""
+
+    def test_it_takes_no_shear_in_either_space(self):
+        for world_space in (False, True):
+            with self.subTest(world_space=world_space):
+                self.new_scene()
+                clip = _clip()
+                up   = Transform.create(name="up", sx=2, sy=1, sz=3, ry=40, rz=30)
+                Transform.create_hierarchy(clip, parent=up, world_space=world_space)
+                self.assertEqual(cmds.getAttr("probe.shear")[0], (0.0, 0.0, 0.0))
+
+    def test_its_world_matrix_is_the_clip_s(self):
+        clip  = _clip()
+        up    = Transform.create(name="up", sx=2, sy=1, sz=3, ry=40, rz=30)
+        nodes = Transform.create_hierarchy(clip, parent=up, world_space=True)
+        probe = [node.get_long_name().endswith("|probe") for node in nodes].index(True)
+        self.assert_worlds(nodes[probe:probe + 1], clip, clip.frames.world_matrix[:, probe:probe + 1])
 
 
 # ---------------------------------------------------------------------------------------------
