@@ -6,6 +6,8 @@
   synthesis view probe, the critic's C1-C3) as a regression test.
 * `TestRunList`: ``rig.run([a, b])``, several files in turn in one namespace (the 15 checks of
   the 2026-10-27 handoff, and a compiled file); one path is a list of one.
+* `TestSharedImports`: a plain package that code of a ``shared=`` package imports for the first
+  time during a run is the session's; the run's own imports stay the run's.
 * `TestWeakRegistries`: ``_ALL_MEMOIZED`` / ``_ALL_NODEOP_CACHES`` hold their members weakly.
 
 The Maya side (undo, rig shared, cgmath, options, callbacks) is in ``test_run_maya.py``.
@@ -17,11 +19,13 @@ import getpass
 import importlib
 import importlib.machinery
 import importlib.util
+import inspect
 import io
 import linecache
 import logging
 import os
 import pathlib
+import pickle
 import py_compile
 import shutil
 import sys
@@ -1087,6 +1091,55 @@ class TestRunList(_Tree):
         pyc    = py_compile.compile(source, cfile=source + "c", doraise=True)
         result = self.run_([pyc, self.script("after_pyc", "AFTER = FILE\n")])
         self.assertEqual(result["AFTER"], self.fwd(pyc))  # its code, read as runpy reads it, not its bytes as source
+
+
+# ---------------------------------------------------------------------------------------------
+# What code of a shared= package imports during a run
+
+_SHARED_IMPORTS = {
+    "lib/rsshared/__init__.py": "",
+    "lib/rsshared/uses.py": "import rsthird\nTHING = rsthird.Thing\n",
+    "lib/rsthird/__init__.py": "class Thing:\n    pass\n",
+    "lib/rsplain/__init__.py": "import rsfourth\n",
+    "lib/rsfourth/__init__.py": "X = 1\n",
+    "scripts/shared.py": "import rsshared.uses\n",
+    "scripts/own.py": "import rsthird\nMINE = rsthird\n",
+    "scripts/plain.py": "import rsplain\n",
+}
+
+
+class TestSharedImports(_Tree):
+    """A plain package that code of a ``shared=`` package imports for the first time during a run
+    is the session's, so the shared copy never holds a module the run takes away (``pickle`` and
+    ``inspect.getmodule`` find its classes by name); the run's own code still gets fresh copies."""
+
+    TOPS = {"rsshared", "rsthird", "rsplain", "rsfourth"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.make(_SHARED_IMPORTS)
+        cls.SCRIPTS = os.path.join(cls.WORK, "scripts")
+
+    def test_a_new_package_a_shared_package_imports_is_the_sessions(self):
+        result, _ = _quiet(os.path.join(self.SCRIPTS, "shared.py"), shared=("rsshared",))
+        uses = sys.modules["rsshared.uses"]
+        self.assertNotIn("rsthird", result.owned)
+        self.assertIs(sys.modules.get("rsthird"), uses.rsthird, "the session lists the module the shared copy holds")
+        self.assertIs(inspect.getmodule(uses.THING), uses.rsthird)
+        self.assertIs(pickle.loads(pickle.dumps(uses.THING)), uses.THING, "pickle finds the class by its name")
+
+    def test_the_runs_own_import_still_gets_a_fresh_copy(self):
+        import rsthird  # the session has it
+        result, _ = _quiet(os.path.join(self.SCRIPTS, "own.py"))
+        self.assertIn("rsthird", result.owned)
+        self.assertIsNot(result["MINE"], sys.modules["rsthird"])
+        self.assertIs(sys.modules["rsthird"], rsthird, "the session's copy is back after the run")
+
+    def test_a_package_that_isnt_shared_keeps_its_imports_in_the_run(self):
+        result, _ = _quiet(os.path.join(self.SCRIPTS, "plain.py"))
+        self.assertIn("rsfourth", result.owned)
+        self.assertNotIn("rsfourth", sys.modules)
 
 
 class TestWeakRegistries(unittest.TestCase):

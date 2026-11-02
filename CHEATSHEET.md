@@ -4032,7 +4032,7 @@ print([str(c) for c in second["ctrls"]])         # ['R_shoulder_CTL', 'R_elbow_C
 | a list of files | `rig.run(["lib.py", "arm.py"])`: the files run one after the other in **one** namespace, as one long file would (**Several files**, below). Every file's folder goes first on `sys.path`, once each, in order. `rig.run("arm.py")` is `rig.run(["arm.py"])`; a path is a str or a `pathlib.Path`; an empty list raises `ValueError` |
 | `inputs` | a mapping (a `dict`, or the `Run` of an earlier round) copied into the file's starting globals. Your dict is never rebound (a list in it is the same list). A module object is skipped (the file imports what it uses); a dunder name (`__author__`) raises `ValueError` |
 | `argv=["--fast"]` | `sys.argv[1:]` |
-| `shared=("studiolib",)` | top-level packages to share with the session instead of executing them again |
+| `shared=("studiolib",)` | top-level packages to share with the session instead of executing them again, with every plain package their code imports for the first time during the run |
 | what it returns | a `Run`: the file's globals, as a read-only mapping (`result["ctrls"]`, `dict(result)`). It is the dict the file ran in, so a global its functions set later (`result.call("main", ...)`, a callback) shows. `result.call` calls one of its functions with the run's modules shown; `result.path` (the first file), `result.paths` (every file, in order), `result.modules` |
 | undo | the whole run is **one** step, named `rig.run arm.py` (`rig.run lib.py, arm.py` for a list): one Ctrl+Z after a typo halfway through a build goes back to the start. A `rig.run` inside a run joins the outer step |
 | given back after a run | `sys.argv`, `sys.path`, `sys.stdin` / `stdout` / `stderr`, `sys.excepthook` / `displayhook`, and rig's options (`set_options` in the file) |
@@ -4043,7 +4043,9 @@ print([str(c) for c in second["ctrls"]])         # ['R_shoulder_CTL', 'R_elbow_C
 compiled member (it cannot load twice in one process), `rig` and every
 package rig itself uses (cgmath), and the `shared=` names. An edit there
 needs a restart; the run says so on `stderr` (`rig.run: changed on disk, but
-shared with this session ...`).
+shared with this session ...`). A plain package that a `shared=` package's code
+imports for the first time during a run is the session's too, so `pickle` and
+`inspect.getmodule` still find its classes after the run.
 
 ```python
 fails = write("typo.py",

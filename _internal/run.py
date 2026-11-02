@@ -17,7 +17,10 @@ from the file's current bytes, so an edit is picked up with no reload, and the
 session's own copies are never touched. Shared with the session, never
 re-executed: the standard library, an install (site-packages, the interpreter,
 Maya, Program Files), a package with a compiled member, ``rig`` and the packages
-rig itself uses (cgmath), and the top-level names given in ``shared=``.
+rig itself uses (cgmath), and the top-level names given in ``shared=``. A plain
+package that code of a ``shared=`` package imports for the first time during a
+run is the session's too, so the session's copy never holds a module the run
+takes away.
 
 A run hides a session package only once the file's own code imports it ("lazy
 claim"): code that is not the file's (a session callback, a thread) sees what
@@ -70,6 +73,7 @@ _ROOTS     = ()                     # install folders (see _install_roots)
 _CODE      = {}                     # path -> (digest, code object)
 _STAMPS    = {}                     # path -> (mtime_ns, size) when first seen
 _SEEN      = set()                  # session module names already stamped
+_IMPORTER  = threading.local()      # .shared: code of a shared= package is importing, on this thread
 _PASS, _SWAP = object(), object()
 _original_import        = builtins.__import__
 _original_import_module = importlib.import_module
@@ -97,7 +101,8 @@ def run(path, inputs=None, *, argv=(), shared=()):
     ``inputs`` (a mapping, or the :class:`Run` of an earlier round) is copied into the starting
     globals, once: module objects are skipped, and a dunder name raises ValueError. ``argv``
     becomes every file's ``sys.argv[1:]``; ``shared`` names top-level packages to share with the
-    session instead of re-executing them. The run is one undo step, ``rig.run a.py``
+    session instead of re-executing them, with every plain package their code imports for the
+    first time during the run. The run is one undo step, ``rig.run a.py``
     (``rig.run a.py, b.py`` for several).
 
     A path may use ``~`` and environment variables (``$VAR``, ``${VAR}``, ``%VAR%`` on Windows),
@@ -616,6 +621,8 @@ class _Finder:
         top = name.partition(".")[0]
         new = top not in run.owned
         if new:
+            if getattr(_IMPORTER, "shared", False):
+                return None                                  # a shared= package's code imports it: the session's
             why = None if top in run.shared else _rule(run, top)
             if why:
                 run.shared[top] = why
@@ -735,10 +742,29 @@ def _route(run, absolute, fromlist, whole, fast=True):
     return _SWAP if _may_swap() else _PASS
 
 
+def _from_shared(scope):
+    """Whether ``scope`` is the globals of a module of a package the shown run names in ``shared=``."""
+    run  = _shown()
+    name = scope.get("__name__") if run is not None and isinstance(scope, dict) else None
+    return isinstance(name, str) and name.partition(".")[0] in run._extra
+
+
+def _imported(shared, do, *args):
+    """``do(*args)``, an import, with this thread marked as importing for a ``shared=`` package's code, or not."""
+    before = getattr(_IMPORTER, "shared", False)
+    _IMPORTER.shared = shared
+    try:
+        return do(*args)
+    finally:
+        _IMPORTER.shared = before
+
+
 def _import(name, globals=None, locals=None, fromlist=(), level=0):
     scope = globals or sys._getframe(1).f_globals
     run   = scope.get(_MARK) if isinstance(scope, dict) else None
     if run is None:
+        if _ACTIVE and _from_shared(scope):
+            return _imported(True, _original_import, name, globals, locals, fromlist, level)
         return _original_import(name, globals, locals, fromlist, level)
     try:
         absolute = importlib._bootstrap._resolve_name(name, importlib._bootstrap._calc___package__(scope), level) \
@@ -747,16 +773,19 @@ def _import(name, globals=None, locals=None, fromlist=(), level=0):
         return _original_import(name, globals, locals, fromlist, level)
     route = _route(run, absolute, fromlist or (), False, fast=bool(fromlist) or not level)
     if route is _PASS:
-        return _original_import(name, globals, locals, fromlist, level)
+        return _imported(False, _original_import, name, globals, locals, fromlist, level)
     if route is not _SWAP:
         return route
     with run.active():
-        return _original_import(name, globals, locals, fromlist, level)
+        return _imported(False, _original_import, name, globals, locals, fromlist, level)
 
 
 def _import_module(name, package=None):
-    run = sys._getframe(1).f_globals.get(_MARK)
+    scope = sys._getframe(1).f_globals
+    run   = scope.get(_MARK)
     if run is None:
+        if _ACTIVE and _from_shared(scope):
+            return _imported(True, _original_import_module, name, package)
         return _original_import_module(name, package)
     try:
         absolute = importlib.util.resolve_name(name, package)
@@ -764,11 +793,11 @@ def _import_module(name, package=None):
         return _original_import_module(name, package)
     route = _route(run, absolute, (), True)
     if route is _PASS:
-        return _original_import_module(name, package)
+        return _imported(False, _original_import_module, name, package)
     if route is not _SWAP:
         return route
     with run.active():
-        return _original_import_module(name, package)
+        return _imported(False, _original_import_module, name, package)
 
 
 def _reload(module):
