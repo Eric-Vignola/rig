@@ -421,7 +421,8 @@ def atan(token: Any) -> Any:
     the native ``atan`` node (v3.T); on older Maya it uses an
     ``angleBetween`` triangle. Either way ``radians()`` handles the
     final degree -> radian conversion correctly via Maya's working-unit
-    auto-conversion at the multiplyDivide consumer.
+    auto-conversion at the node ``radians()`` builds (a ``lerp`` on Maya
+    2024+, a ``multiplyDivide`` before).
     """
     if ContainerOptions.constant_folding and isinstance(token, numbers.Real):
         return math.atan(token)

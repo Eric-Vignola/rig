@@ -19,7 +19,8 @@ Op               Meaning
                  return new Plug.
 ``a + b``        plusMinusAverage / matrix add / quat add
 ``a - b``        plusMinusAverage(op=2) / matrix subtract / quat subtract
-``a * b``        multiplyDivide / multMatrix / pointMatrixMult / quatProd
+``a * b``        multiply (lerp with a literal) / multiplyDivide /
+                 multMatrix / pointMatrixMult / quatProd
 ``a / b``        multiplyDivide(op=2)
 ``a ** b``       multiplyDivide(op=3)
 ``a // b``       integer floor-div (NOT PyMel-style disconnect)

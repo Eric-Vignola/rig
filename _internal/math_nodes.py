@@ -20,6 +20,7 @@ import numbers
 from typing import Any, List, Optional
 
 from maya import cmds
+from maya.api import OpenMaya
 from rig._internal.container import container
 from rig._internal.generators import sequences
 from rig._internal.maya_version import is_at_least
@@ -34,6 +35,7 @@ from rig._internal.types import (
     _is_matrix,
     _is_node,
     _is_plug,
+    _is_real,
     _is_sequence,
 )
 
@@ -200,12 +202,61 @@ def _plus_minus_average_2024(*args: Any, operation: int = 1, name: str = "add1")
         return node.output
 
     if operation == 3:  # average
+        if any(_is_real(a) for a in args):
+            return _average_with_literals(args, name)
         node = container.createNode("average", name=name)
         for i, item in enumerate(args):
             node.input[i] << item
         return node.output
 
     raise NotImplementedError(f"unsupported operation={operation}")
+
+
+def _average_with_literals(args: tuple, name: str) -> Any:
+    """``avg`` on Maya 2024+ when some operands are literals, with no literal
+    in ``average.input[]`` (Maya does not save an element of a numeric array
+    that holds its default, 0, so after a reopen ``avg([x, 0])`` would read
+    ``x``).
+
+    The plugs' average blends toward the literals' mean by the literals' share
+    of the count, on one ``lerp`` (plain double attributes):
+    ``lerp(avg(plugs), mean(literals), m / n)``. The plugs' average is the
+    plug itself when there is one, else an ``average`` of the plugs alone.
+    With no plug (``force_nodes()``), the first literal stands in for them.
+    """
+    plugs    = [a for a in args if not _is_real(a)]
+    literals = [a for a in args if _is_real(a)]
+    if not plugs:
+        plugs, literals = literals[:1], literals[1:]
+
+    if len(plugs) == 1:
+        base = plugs[0]
+    else:
+        node = container.createNode("average", name=name)
+        for i, item in enumerate(plugs):
+            node.input[i] << item
+        base = node.output
+
+    node = container.createNode("lerp", name=name)
+    node.input1 << base
+    node.input2 << (math.fsum(literals) / len(literals) if literals else 0.0)
+    node.weight << _ratio(len(literals) / len(args))
+    return node.output
+
+
+def _ratio(value: float) -> float:
+    """The number to write so a distance-typed attribute holds ``value`` itself.
+
+    The 2024+ math nodes' attributes are ``doubleLinear``, and rig, like
+    ``cmds.setAttr``, reads a number written there in the scene's working
+    unit: right for a distance (an operand, a bound), but a ratio (a
+    ``lerp`` weight) would come out scaled by the unit's size in centimetres
+    (0.5 in a metre scene would weigh 50).
+    """
+    unit = OpenMaya.MDistance.uiUnit()
+    if unit == OpenMaya.MDistance.kCentimeters:
+        return value
+    return OpenMaya.MDistance(value, OpenMaya.MDistance.kCentimeters).asUnits(unit)
 
 
 @_plus_minus_average_op.impl(since=0, scope=SCOPE_COMPOUND)
@@ -265,12 +316,26 @@ def _multiply_divide_2024(
     """Maya 2024+ native scalar path for multiply (op=1), divide (op=2),
     and power (op=3). Falls through to the legacy compound impl via
     ``NotImplementedError`` for unsupported cases (incl. compound inputs).
+
+    A literal operand of a multiply never goes into ``multiply.input[]``:
+    Maya does not save an element of a numeric array that holds its default
+    (0), so after a reopen ``x * 0`` would read ``x``. The product is a
+    ``lerp`` instead, which computes ``input1 + (input2 - input1) * weight``:
+    with ``input1`` at its default 0 that is exactly ``input2 * weight``, in
+    double precision, on plain attributes that keep any value.
     """
 
     # Bail on compound inputs -- legacy ``multiplyDivide`` handles them
     # natively via ``input1`` / ``input2`` compounds returning ``output``.
     if _is_compound(input1) or _is_compound(input2):
         raise NotImplementedError("compound inputs use legacy multiplyDivide")
+
+    if operation == 1 and (_is_real(input1) or _is_real(input2)):
+        factor, literal = (input1, input2) if _is_real(input2) else (input2, input1)
+        node = container.createNode("lerp", name=name)
+        node.input2 << factor
+        node.weight << literal
+        return node.output
 
     if operation == 1:  # multiply
         node = container.createNode("multiply", name=name)

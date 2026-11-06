@@ -124,10 +124,12 @@ Operator conventions:
       the DAG without joining); ``-layer`` and ``Layer()`` both land in
       defaultLayer, which reads as "no layer" (``cube >> Layer()`` is
       ``None`` there).
-    * ``+ - * / ** // %`` -- Pythonic math (build ``plusMinusAverage``,
-      ``multiplyDivide``, ``modulo``, ...). Matrix and quaternion are
-      detected and routed to the right node type. A plain ``str`` operand
-      raises ``TypeError`` before anything is built: write ``Plug("a.tx")``.
+    * ``+ - * / ** // %`` -- Pythonic math (build ``sum``, ``multiply``,
+      ``modulo``, ... on Maya 2024+, never with a literal in a node's array
+      input; ``plusMinusAverage``, ``multiplyDivide`` before). Matrix and
+      quaternion are detected and routed to the right node type. A plain
+      ``str`` operand raises ``TypeError`` before anything is built: write
+      ``Plug("a.tx")``.
     * ``& | ^`` -- logical AND/OR/XOR networks.
     * ``== != < <= > >=`` -- build ``condition`` nodes (returns the output
       Plug, NOT a bool), except that ``==`` / ``!=`` of two objects of one

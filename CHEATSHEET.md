@@ -89,6 +89,15 @@ target one (section 15), they build the classic `plusMinusAverage` /
 `multiplyDivide` / `condition` networks. The result plugs below are the
 2024+ spellings.
 
+On 2024+ a literal never goes into the array input of `multiply`, `average`,
+`max` or `min`: Maya does not save an element of a numeric array that holds
+its default (0), so `x * 0` would read `x` once the scene is saved and
+opened again. With a literal operand, `x * 2` builds a `lerp`
+(input1 = 0, input2 = `x`, weight = 2, exactly `x * 2` in double precision),
+`f.avg([x, 3])` a `lerp` with weight 0.5, and `f.max([x, 0])` /
+`f.min([x, 0])` a `clampRange` bounded by the literal. `x + 0` keeps the
+`sum` node, which adds a lost 0 just the same.
+
 ---
 
 ## 1. Node
@@ -1240,7 +1249,7 @@ print(cmds.nodeType((a.tx + Plug("b.tx")).get_node()), f"{a.tx}.x")  # sum a.tra
 |---|---|---|
 | `+` | `sum` / `plusMinusAverage` | `plusMinusAverage.output3D` |
 | `-` | `subtract` / `plusMinusAverage` | `plusMinusAverage.output3D` |
-| `*` `/` `**` | `multiply` `divide` `power` / `multiplyDivide` | `multiplyDivide.output` |
+| `*` `/` `**` | `multiply` (`lerp` with a literal) `divide` `power` / `multiplyDivide` | `multiplyDivide.output` |
 | `//` | a `floordiv` network: divide, subtract, cast to `long` | the same network, compound-wise |
 | `%` | `modulo` / a divide-floor-multiply network | one `modulo` per channel / the network compound-wise |
 | `-x` | `negate` / `multiplyDivide` by `-1` | `multiplyDivide` by `-1` |
@@ -1575,7 +1584,7 @@ whole expression lands in one container:
 ```python
 with container("offset1") as box:
     outside.ty << ctrl.tx * 2 + 1
-print(sorted(cmds.nodeType(n) for n in cmds.container("offset1", query=True, nodeList=True)))   # ['multiply', 'sum']
+print(sorted(cmds.nodeType(n) for n in cmds.container("offset1", query=True, nodeList=True)))   # ['lerp', 'sum']
 ```
 
 So do the typed creators of [`rig.nodetypes`](nodetypes/README.md)

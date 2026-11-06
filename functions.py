@@ -331,7 +331,10 @@ def sum(tokens: Sequence[Any]) -> Any:
 @operands
 @memoize(foldable="reduce")
 def avg(tokens: Sequence[Any]) -> Any:
-    """``avg([t0, t1, ...])`` -- single ``plusMinusAverage`` node, op=3."""
+    """``avg([t0, t1, ...])`` -- Maya 2024+ uses the ``average`` node, and a
+    ``lerp`` when an operand is a literal (``_average_with_literals`` in
+    ``rig._internal.math_nodes``); older Maya uses a ``plusMinusAverage``
+    node, op=3."""
     if ContainerOptions.constant_folding and builtins.all(
         isinstance(x, numbers.Real) for x in tokens
     ):
@@ -339,11 +342,52 @@ def avg(tokens: Sequence[Any]) -> Any:
     return _plus_minus_average_op(*tokens, operation=3, name="avg1")
 
 
+# A bound no value reaches: the largest double itself would overflow to
+# infinity once rig writes it in a metre or kilometre scene's working units.
+_NO_BOUND = 1e300
+
+
+def _clamp_by_literals(tokens: Sequence[Any], *, largest: bool, name: str) -> Any:
+    """``max`` / ``min`` on Maya 2024+ when some operands are literals, with no
+    literal in the ``max`` / ``min`` node's ``input[]``: Maya does not save an
+    element of a numeric array that holds its default (0), so after a reopen
+    ``max([x, 0])`` would read ``x``.
+
+    The literals fold into one bound of a ``clampRange`` (plain double
+    attributes); the other bound is one no value reaches. The input is the
+    plug itself when there is one, else a ``max`` / ``min`` node of the plugs
+    alone. With no plug (``force_nodes()``), the first literal is the input.
+    """
+    plugs    = [x for x in tokens if not _is_real(x)]
+    literals = [x for x in tokens if _is_real(x)]
+    if not plugs:
+        plugs, literals = literals[:1], literals[1:]
+
+    if len(plugs) == 1:
+        value = plugs[0]
+    else:
+        node = container.createNode("max" if largest else "min", name=name)
+        for i, item in enumerate(plugs):
+            node.input[i] << item
+        value = node.output
+
+    node = container.createNode("clampRange", name=name)
+    node.input << value
+    if largest:
+        node.minimum << builtins.max(literals)
+        node.maximum << _NO_BOUND
+    else:
+        node.minimum << -_NO_BOUND
+        node.maximum << builtins.min(literals)
+    return node.output
+
+
 @operands
 @memoize(foldable="reduce")
 def max(tokens: Sequence[Any]) -> Any:
-    """``max([t0, t1, ...])`` -- Maya 2024+ uses ``max`` node; older folds
-    via nested ``condition``."""
+    """``max([t0, t1, ...])`` -- Maya 2024+ uses the ``max`` node, and a
+    ``clampRange`` when an operand is a literal (:func:`_clamp_by_literals`);
+    older Maya folds via nested ``condition``."""
     # Only short-circuit when EVERY input is a plain Python number.
     if ContainerOptions.constant_folding and builtins.all(_is_real(x) for x in tokens):
         return builtins.max(tokens)
@@ -351,6 +395,8 @@ def max(tokens: Sequence[Any]) -> Any:
         raise ValueError(f"max() requires >= 2 inputs; got {len(tokens)}")
 
     if is_at_least(2024) and not builtins.any(_is_compound(x) for x in tokens):
+        if builtins.any(_is_real(x) for x in tokens):
+            return _clamp_by_literals(tokens, largest=True, name="max1")
         node = container.createNode("max", name="max1")
         # ``input`` is a multi-attribute -- must index per element so each
         # connection lands in its own slot. Connecting to the parent
@@ -370,8 +416,9 @@ def max(tokens: Sequence[Any]) -> Any:
 @operands
 @memoize(foldable="reduce")
 def min(tokens: Sequence[Any]) -> Any:
-    """``min([t0, t1, ...])`` -- Maya 2024+ uses ``min`` node; older folds
-    via nested ``condition``."""
+    """``min([t0, t1, ...])`` -- Maya 2024+ uses the ``min`` node, and a
+    ``clampRange`` when an operand is a literal (:func:`_clamp_by_literals`);
+    older Maya folds via nested ``condition``."""
     # Only short-circuit when EVERY input is a plain Python number.
     if ContainerOptions.constant_folding and builtins.all(_is_real(x) for x in tokens):
         return builtins.min(tokens)
@@ -379,6 +426,8 @@ def min(tokens: Sequence[Any]) -> Any:
         raise ValueError(f"min() requires >= 2 inputs; got {len(tokens)}")
 
     if is_at_least(2024) and not builtins.any(_is_compound(x) for x in tokens):
+        if builtins.any(_is_real(x) for x in tokens):
+            return _clamp_by_literals(tokens, largest=False, name="min1")
         node = container.createNode("min", name="min1")
         # See ``max`` for why per-element indexing is required.
         for i, item in enumerate(tokens):

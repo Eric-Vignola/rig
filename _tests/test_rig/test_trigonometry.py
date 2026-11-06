@@ -25,10 +25,12 @@ class TestConversions(MayaTestCase):
     def test_degrees_plug_creates_multiplydivide(self):
         a      = Node.create("transform", name="a")
         result = trig.degrees(a.tx)
-        # Maya 2024+ may use native ``multiply`` node instead of ``multiplyDivide``.
+        # The factor is a literal: Maya 2024+ multiplies on a ``lerp`` (a literal
+        # stays out of ``multiply.input[]``, see test_literal_save), older Maya on
+        # a ``multiplyDivide``.
         self.assertIn(
             cmds.nodeType(str(result).split(".")[0]),
-            {"multiplyDivide", "multiply"},
+            {"multiplyDivide", "lerp"},
         )
 
     def test_radians_plug_creates_multiplydivide(self):
@@ -36,7 +38,7 @@ class TestConversions(MayaTestCase):
         result = trig.radians(a.tx)
         self.assertIn(
             cmds.nodeType(str(result).split(".")[0]),
-            {"multiplyDivide", "multiply"},
+            {"multiplyDivide", "lerp"},
         )
 
 
