@@ -161,7 +161,7 @@ Undo:
       function (the step is named after its ``__qualname__``), or
       ``@rig.undo_chunk("build arm")``.
 
-Running a file:
+Running a file, or a string of code:
     * ``rig.run("D:/chars/bob/arm.py", {"side": "L"})`` runs the file as
       ``__main__``, as if in a fresh Python: your own modules are read from
       disk again on every run (no reload), rig and the packages it uses are
@@ -172,6 +172,12 @@ Running a file:
       one after the other in one namespace, as one long file would: arm.py
       uses what lib.py defined, and the run is one undo step,
       ``rig.run lib.py, arm.py``.
+    * ``rig.exec("import arm; arm.build()")`` runs a string of code the same
+      way, as ``python -c`` runs it: ``__main__`` with no ``__file__``,
+      ``sys.argv[0] == "-c"``, the session's ``sys.path`` as it is, the code
+      dedented first. It returns a ``Run`` too, and the call is one undo
+      step, ``rig.exec import arm; arm.build()``. It is not in ``__all__``:
+      ``from rig import *`` leaves Python's built-in ``exec`` alone.
 
 Examples::
 
@@ -252,7 +258,7 @@ from rig._internal.node import lift, Node
 from rig._internal.node_ops import NodeOp
 from rig._internal.plug import InjectionError, Plug
 from rig._internal.undo import undo_chunk
-from rig._internal.run import Run, RunExitError, run
+from rig._internal.run import exec, Run, RunExitError, run  # exec: not in __all__ (see below)
 from rig.membership import Components, Default, Layer, Tag
 from rig.nodetypes.anim_curve import AnimCurve, AnimCurveTA, AnimCurveTL, AnimCurveTT, AnimCurveTU
 from rig.nodetypes.errors import (
@@ -329,7 +335,8 @@ __all__ = [
     "lift",
     # Undo
     "undo_chunk",
-    # A file as if in a fresh Python
+    # A file as if in a fresh Python (rig.exec, its twin for a string, stays
+    # out: ``from rig import *`` must leave the built-in ``exec`` alone)
     "run",
     "Run",
     "RunExitError",

@@ -60,6 +60,7 @@ for the node classes and their typed methods.
 | 38 | [Undo](#38-undo) | what one undo step is (a statement's connects and value sets are one), a lock's step, a keying statement's step, `rig.undo_chunk` as a context manager and a decorator, an error mid-statement, rig's undo plug-in: loading, unloading, working without it, a container's member add |
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate`; a `ClipData` built and keyed |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
+| 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
 
 ---
 
@@ -4178,6 +4179,60 @@ Limits:
   cannot).
 * **Tracebacks show the file as it is now.** A traceback of an earlier
   run's code shows the lines on disk now, as in Python after an edit.
+
+---
+
+## 41. `rig.exec`: a string of code as if in a fresh Python
+
+`rig.exec(source, inputs=None, *, argv=(), shared=())` runs a string of code
+the way `python -c` would, with everything `rig.run` does for a file
+(section 40): every module the code imports from **your own code** is
+executed again from the file on disk, on every call, and the session's own
+copies are never touched. It returns a `Run`, as `rig.run` does.
+
+```python
+import os, sys, tempfile
+import rig
+
+folder = tempfile.mkdtemp()
+sys.path.insert(0, folder)                       # where your package lives
+
+def write(text):
+    with open(os.path.join(folder, "armkit.py"), "w") as fh:
+        fh.write(text)
+
+write("def build(side):\n    return side + '_arm_ctl'\n")
+result = rig.exec("import armkit; name = armkit.build('L')")
+print(result["name"])           # L_arm_ctl
+print("armkit" in sys.modules)  # False  the run's modules stay with the run
+
+# edit the module, run the same string again: no reload
+write("def build(side):\n    return side + '_arm_CTL'\n")
+again = rig.exec("import armkit; name = armkit.build('L')")
+print(again["name"])                             # L_arm_CTL
+
+def both_sides():
+    return rig.exec("""
+        import armkit
+        names = [armkit.build(side) for side in SIDES]
+    """, {"SIDES": ("L", "R")})                  # indented: dedented first
+
+print(both_sides()["names"])                     # ['L_arm_CTL', 'R_arm_CTL']
+```
+
+| What | How |
+|---|---|
+| the code | runs as `__main__`, as `python -c` would: `__name__ == "__main__"`, no `__file__`, `sys.argv == ["-c", *argv]`, and `sys.modules["__main__"]` is the code's while it runs |
+| `sys.path` | the session's, as it is: nothing goes first (`python -c` puts the working folder there, `python -P` doesn't) |
+| indented code | dedented first (`textwrap.dedent`), as Python 3.14's `-c` does: a triple-quoted block indented inside a function runs as written, and a multi-line string in it loses that indent too |
+| `inputs`, `argv=`, `shared=` | as `rig.run`'s: `inputs` is copied in once, a module is skipped, and a dunder name (`globals()` as it is) raises `ValueError` |
+| what it returns | a `Run`: `result["name"]`, `result.call(...)`; `result.source` is the code that ran (dedented), `result.path` is `None` and `result.paths` is `()` |
+| undo | one step, `rig.exec` and the code's first line, 40 characters at most: `rig.exec import armkit; name = armkit.build('L')` |
+| errors | propagate with `err.rig_run`; a traceback names the code `<rig.exec 1a2b3c4d>` (its digest) and shows its line; `sys.exit(3)` raises `rig.RunExitError`: `rig.exec: the code called sys.exit(3)` |
+| `from rig import *` | leaves `exec` out (it is not in `__all__`), so a bare `exec` stays Python's: write `rig.exec` |
+
+What is shared and never executed again, what comes back after a run, and
+the limits are section 40's.
 
 ---
 

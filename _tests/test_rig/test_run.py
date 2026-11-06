@@ -8,11 +8,15 @@
   the 2026-10-27 handoff, and a compiled file); one path is a list of one.
 * `TestSharedImports`: a plain package that code of a ``shared=`` package imports for the first
   time during a run is the session's; the run's own imports stay the run's.
+* `TestExec`: ``rig.exec(source)``, a string of code as ``python -c`` runs it (the user's
+  decisions of 2026-11-05: outside ``__all__``, rig.run's inputs rule, a ``Run`` back, the
+  session's ``sys.path``, dedented first as Python 3.14's ``-c``).
 * `TestWeakRegistries`: ``_ALL_MEMOIZED`` / ``_ALL_NODEOP_CACHES`` hold their members weakly.
 
 The Maya side (undo, rig shared, cgmath, options, callbacks) is in ``test_run_maya.py``.
 """
 
+import builtins
 import contextlib
 import gc
 import getpass
@@ -33,6 +37,7 @@ import tempfile
 import textwrap
 import threading
 import time
+import traceback
 import types
 import unittest
 from unittest import mock
@@ -1140,6 +1145,219 @@ class TestSharedImports(_Tree):
         result, _ = _quiet(os.path.join(self.SCRIPTS, "plain.py"))
         self.assertIn("rsfourth", result.owned)
         self.assertNotIn("rsfourth", sys.modules)
+
+
+# ---------------------------------------------------------------------------------------------
+# rig.exec: a string of code, as python -c runs it
+
+_EXEC = {
+    "lib/rxpkg/__init__.py": "from rxpkg.helper import VALUE\n\ndef do_the_thing():\n    return VALUE\n",
+    "lib/rxpkg/helper.py":   'VALUE = "v1"\n',
+}
+
+# indented as written here: rig.exec dedents it first
+_SEEN = """
+    import sys
+    import rxpkg
+    RESULT = rxpkg.do_the_thing()
+    SEEN = {"name": __name__, "file": "__file__" in globals(), "argv": list(sys.argv), "path": list(sys.path),
+            "main_is_me": sys.modules["__main__"].__dict__ is globals(), "x": globals().get("X")}
+"""
+
+
+def _exec(*args, **kwargs):
+    """rig.exec(...) with its stderr captured: (run, stderr text)."""
+    err, saved = io.StringIO(), sys.stderr
+    sys.stderr = err
+    try:
+        return rig.exec(*args, **kwargs), err.getvalue()
+    finally:
+        sys.stderr = saved
+
+
+class TestExec(_Tree):
+    """``rig.exec(source)``: a string of code as ``python -c`` runs it, with rig.run's rules:
+    ``__main__`` with no ``__file__``, ``sys.argv[0] == "-c"``, the session's ``sys.path`` as it
+    is, the code dedented first, your own modules executed again on every call, a ``Run`` back."""
+
+    TOPS = {"rxpkg"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.make(_EXEC)
+        import rxpkg  # noqa: F401 -- the session has it
+        cls.HOST = {n: sys.modules[n] for n in ("rxpkg", "rxpkg.helper")}
+        cls.KEYS = set(sys.modules)
+        cls.PATH, cls.ARGV, cls.MAIN = list(sys.path), list(sys.argv), sys.modules["__main__"]
+        o = cls.o = {}
+        o["run1"], _ = _exec(_SEEN, {"X": 5}, argv=["a"])
+        o["main_after"] = sys.modules["__main__"]
+        o["path_after"], o["argv_after"] = list(sys.path), list(sys.argv)
+        time.sleep(0.02)
+        _edit(cls.WORK, "lib/rxpkg/helper.py", '"v1"', '"v2"')  # the same size: the digest sees it
+        o["run2"], _ = _exec(_SEEN)
+        o["leaks"] = cls.leaks(cls.KEYS)
+
+    def test_01_the_same_string_sees_every_edit(self):
+        self.assertEqual((self.o["run1"]["RESULT"], self.o["run2"]["RESULT"]), ("v1", "v2"))
+
+    def test_02_the_sessions_modules_untouched(self):
+        import rxpkg
+        self.assertEqual(rxpkg.do_the_thing(), "v1")
+        self.assertTrue(all(sys.modules[n] is m for n, m in self.HOST.items()))
+        self.assertEqual(self.o["leaks"], set())
+        self.assertEqual(set(self.o["run2"].modules), {"rxpkg", "rxpkg.helper"})
+
+    def test_03_main_with_no_file_argv0_is_dash_c(self):
+        s1, s2 = self.o["run1"]["SEEN"], self.o["run2"]["SEEN"]
+        self.assertEqual((s1["name"], s1["file"], s1["argv"], s1["main_is_me"]), ("__main__", False, ["-c", "a"], True))
+        self.assertEqual(s2["argv"], ["-c"])
+        self.assertIs(self.o["main_after"], self.MAIN)
+
+    def test_04_sys_path_is_the_sessions_and_argv_comes_back(self):
+        self.assertEqual(self.o["run1"]["SEEN"]["path"], self.PATH)  # nothing goes first, not the working folder
+        self.assertEqual(self.o["run1"].sys_path, self.PATH)
+        self.assertEqual((self.o["path_after"], self.o["argv_after"]), (self.PATH, self.ARGV))
+
+    def test_05_inputs_as_rig_run_takes_them(self):
+        self.assertEqual(self.o["run1"]["SEEN"]["x"], 5)
+        result, _ = _exec("X2 = X * 2", {"X": 21, "os": os})
+        self.assertEqual((result["X2"], "os" in result), (42, False))  # a module is skipped
+        with self.assertRaisesRegex(ValueError, r"^rig\.exec: the input '__name__' is a name Python sets for the code"):
+            rig.exec("pass", {"__name__": "__main__", "A": 1})  # globals() as it is: refused
+        with self.assertRaisesRegex(TypeError, r"^rig\.exec: inputs is a mapping"):
+            rig.exec("pass", [("A", 1)])
+        with self.assertRaisesRegex(TypeError, r"^rig\.exec: argv is a list of str"):
+            rig.exec("pass", argv="--fast")
+
+    def test_06_the_code_is_dedented_first(self):
+        def build():
+            return rig.exec("""
+                A = 1
+                if A:
+                    B = '''
+                    kept
+                    '''
+            """)
+        result = build()
+        self.assertEqual(result["A"],   1)
+        self.assertEqual(result["B"],   "\n    kept\n    ")  # a literal loses the common indent too, as in 3.14
+        self.assertEqual(result.source, "\nA = 1\nif A:\n    B = '''\n    kept\n    '''\n")
+
+    def test_07_a_traceback_names_the_code_and_shows_the_line(self):
+        try:                                                  # not assertRaises: it drops the traceback
+            rig.exec("A = 1\nraise ValueError('boom')\n")
+        except ValueError as exc:
+            frame, ran = traceback.extract_tb(exc.__traceback__)[-1], exc.rig_run
+        else:
+            self.fail("rig.exec raised nothing")
+        self.assertRegex(frame.filename, r"^<rig\.exec [0-9a-f]{8}>$")
+        self.assertEqual((frame.lineno, frame.line), (2, "raise ValueError('boom')"))
+        self.assertEqual(ran["A"], 1)  # what the code made before the error
+        self.assertEqual((sys.path, run_module._ACTIVE), (self.PATH, []))
+
+    def test_08_a_syntax_error_carries_the_run(self):
+        main = sys.modules["__main__"]
+        with self.assertRaises(SyntaxError) as caught:
+            rig.exec("A = (\n")
+        self.assertRegex(caught.exception.filename, r"^<rig\.exec [0-9a-f]{8}>$")
+        self.assertIsInstance(caught.exception.rig_run, run_module.Run)
+        self.assertIs(sys.modules["__main__"], main)
+
+    def test_09_sys_exit_ends_the_code(self):
+        result, _ = _exec("import sys\nA = 1\nsys.exit()\nB = 2\n")
+        self.assertEqual((result["A"], "B" in result), (1, False))
+        with self.assertRaises(rig.RunExitError) as caught:
+            rig.exec("import sys\nA = 1\nsys.exit(3)\n")
+        err = caught.exception
+        self.assertEqual((str(err), err.code, err.rig_run["A"]), ("rig.exec: the code called sys.exit(3)", 3, 1))
+        self.assertIsInstance(err.__cause__, SystemExit)
+
+    def test_10_the_run_it_returns(self):
+        source = "X = 1\ndef double(n):\n    return n * 2\n"
+        result, _ = _exec(source)
+        self.assertIsInstance(result, run_module.Run)
+        self.assertEqual((result["X"], result.call("double", 4)), (1, 8))
+        self.assertEqual((result.path, result.paths, result.source), (None, (), source))
+        self.assertEqual(repr(result), "<rig.exec 'X = 1': 0 modules of its own>")
+        self.assertNotIn(run_module._MARK, dict(result))
+        nothing, _ = _exec("")
+        self.assertEqual([name for name in nothing if not name.startswith("__")], [])
+
+    def test_11_one_undo_step_named_after_the_first_line(self):
+        names = []
+        with mock.patch.object(run_module, "undo_chunk", side_effect=lambda name: names.append(name) or
+                               contextlib.nullcontext()):
+            for source in ("X = 1", "\n\n    Y = 2\n    Z = 3\n", "VALUE = " + "1" * 50, ""):
+                _exec(source)
+        self.assertEqual(names, ["rig.exec X = 1", "rig.exec Y = 2", "rig.exec VALUE = " + "1" * 29 + "...",
+                                 "rig.exec"])
+
+    def test_12_shared_names_share_the_sessions_copy(self):
+        result, err = _exec("import rxpkg\nR = rxpkg.do_the_thing()\n", shared=("rxpkg",))
+        self.assertEqual(result["R"], "v1")  # the session's copy; the disk says v2
+        self.assertTrue(err.startswith("rig.exec: changed on disk, but shared with this session"), err)
+        self.assertIn("rxpkg.helper (shared)", err)
+        self.assertNotIn("rxpkg", result.owned)
+
+    def test_13_rounds_chain_both_ways(self):
+        script = _write(self.WORK, "scripts/chain.py", "GOT = SIDE\n")
+        first, _  = _exec("SIDE = 'L'\nimport rxpkg\n")
+        second, _ = _quiet(script, first)  # rig.run takes the Run of a rig.exec
+        third, _  = _exec("GOT = GOT * 2", second)  # and rig.exec the Run of a rig.run
+        self.assertEqual((second["GOT"], third["GOT"], "rxpkg" in second), ("L", "LL", False))
+
+    def test_14_a_run_inside_an_exec_and_an_exec_inside_a_run(self):
+        script = _write(self.WORK, "scripts/inner.py", "import rxpkg\nVALUE = rxpkg.do_the_thing()\n")
+        outer, _ = _exec("""
+            import rig, rxpkg
+            mine  = rxpkg
+            INNER = rig.run(SCRIPT)["VALUE"]
+            AFTER = rxpkg is mine
+        """, {"SCRIPT": script})
+        self.assertEqual((outer["INNER"], outer["AFTER"]), ("v2", True))
+        back = _write(self.WORK, "scripts/outer.py",
+                      "import rig\nVALUE = rig.exec('import rxpkg; V = rxpkg.do_the_thing()')['V']\n")
+        self.assertEqual(_quiet(back)[0]["VALUE"], "v2")
+        self.assertEqual(run_module._ACTIVE, [])
+
+    def test_15_the_code_is_a_str(self):
+        for source in (b"X = 1", compile("X = 1", "<s>", "exec"), None):
+            with self.subTest(source=type(source).__name__):
+                with self.assertRaisesRegex(TypeError, rf"^rig\.exec: the code is a str, not {type(source).__name__}$"):
+                    rig.exec(source)
+
+    def test_16_not_in_all_so_a_star_import_keeps_the_builtin(self):
+        self.assertIs(rig.exec, run_module.exec)
+        self.assertNotIn("exec", rig.__all__)
+        namespace = {}
+        builtins.exec("from rig import *", namespace)
+        self.assertNotIn("exec", namespace)
+        self.assertIn("run", namespace)
+
+    def test_17_from_another_thread_during_a_run(self):
+        result, _ = _exec("""
+            import threading, rig
+            box = []
+            def worker():
+                try:
+                    rig.exec("X = 1")
+                    box.append("ran")
+                except RuntimeError as err:
+                    box.append(str(err))
+            t = threading.Thread(target=worker, daemon=True)
+            t.start()
+            t.join(3.0)
+            alive = t.is_alive()
+        """)
+        self.assertFalse(result["alive"])
+        self.assertTrue(result["box"][0].startswith("rig.exec: a run is going on in another thread"), result["box"])
+
+    def test_18_rig_and_its_closure_shared(self):
+        result, _ = _exec("import rig, cgmath\nNODE = rig.Node\n")
+        self.assertIs(result["NODE"], rig.Node)
+        self.assertEqual((result.shared["rig"], result.shared["cgmath"]), ("rig", "rig"))
 
 
 class TestWeakRegistries(unittest.TestCase):

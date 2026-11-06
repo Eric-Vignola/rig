@@ -1,20 +1,25 @@
 """
 ``rig.run``: run a Python file as if in a fresh Python, without leaving Maya; or
-several files, one after the other, in one namespace.
+several files, one after the other, in one namespace. ``rig.exec``: the same for a
+string of code, as ``python -c`` runs it.
 
     import rig
     result = rig.run("D:/chars/bob/arm.py", {"side": "L"})   # the file runs as __main__
     result["ctrls"]                                          # its globals (read-only)
     result.call("main", lastBuildStep=None)                  # one of its functions, inside the run
     rig.run(["D:/chars/lib.py", "D:/chars/bob/arm.py"])      # in turn, in one namespace
+    rig.exec("import arm; arm.build()")                      # a string, as python -c runs it
 
 The file runs as ``__main__``, as ``python arm.py`` runs it: rig executes its code
 itself, as :func:`runpy.run_path` does, and never transforms it. Several files run
 one after the other in one ``__main__`` namespace, as one long file would, each
-with its own ``__file__`` and ``sys.argv[0]`` while it runs. Every module they
-import from your own code (plain ``.py`` outside an install) is executed again
-from the file's current bytes, so an edit is picked up with no reload, and the
-session's own copies are never touched. Shared with the session, never
+with its own ``__file__`` and ``sys.argv[0]`` while it runs. The code of a
+``rig.exec`` runs as ``__main__`` with no ``__file__``, ``sys.argv[0] == "-c"`` and
+the session's ``sys.path`` as it is, dedented first as Python 3.14's ``-c`` does;
+everything else is as for a file. Every module a run imports from your own code
+(plain ``.py`` outside an install) is executed again from the file's current
+bytes, so an edit is picked up with no reload, and the session's own copies are
+never touched. Shared with the session, never
 re-executed: the standard library, an install (site-packages, the interpreter,
 Maya, Program Files), a package with a compiled member, ``rig`` and the packages
 rig itself uses (cgmath), and the top-level names given in ``shared=``. A plain
@@ -30,7 +35,8 @@ the thread inside ``rig.run``) swaps modules in and out of ``sys.modules``; a
 ``rig.run`` from another thread while a run goes on raises RuntimeError.
 
 One run is one undo step, ``rig.run a.py`` (``rig.run a.py, b.py`` for several
-files); a run inside a run joins the outer step. Afterwards the session gets back
+files, ``rig.exec`` and the code's first line for a string); a run inside a run
+joins the outer step. Afterwards the session gets back
 ``sys.argv``, ``sys.path``, the std streams, ``sys.excepthook`` / ``displayhook``
 and rig's options.
 """
@@ -53,6 +59,7 @@ import pkgutil
 import re
 import sys
 import sysconfig
+import textwrap
 import threading
 import types
 
@@ -81,7 +88,8 @@ _original_reload        = importlib.reload
 
 
 class RunExitError(RuntimeError):
-    """The file called ``sys.exit()`` with a failure code (``.code``); the host keeps running."""
+    """The file (or the code of a ``rig.exec``) called ``sys.exit()`` with a failure code (``.code``); the
+    host keeps running."""
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +104,7 @@ def run(path, inputs=None, *, argv=(), shared=()):
     :meth:`Run.call` reaches every function they define. Each file sees its own ``__file__`` and
     ``sys.argv[0]`` while it runs; every file's folder is first on ``sys.path`` (once each, in
     order) for the whole run and for :meth:`Run.call`. ``rig.run("a.py")`` is
-    ``rig.run(["a.py"])``.
+    ``rig.run(["a.py"])``. A string of code runs the same way with :func:`exec`.
 
     ``inputs`` (a mapping, or the :class:`Run` of an earlier round) is copied into the starting
     globals, once: module objects are skipped, and a dunder name raises ValueError. ``argv``
@@ -117,25 +125,60 @@ def run(path, inputs=None, *, argv=(), shared=()):
     paths = _paths(path)
     names = _inputs(inputs)
     argv, shared = _strings("argv", argv), set(_strings("shared", shared))
-    with _LOCK:                                              # never held while the file's code runs
-        _check_thread()
+    folders = list(dict.fromkeys(os.path.normpath(os.path.dirname(p)) for p in paths))
+    return _start(Run(paths, shared), names, argv, folders, f"rig.run {', '.join(map(os.path.basename, paths))}")
+
+
+def exec(source, inputs=None, *, argv=(), shared=()):
+    """Run the code in ``source`` as ``python -c`` runs it, as if in a fresh Python, and return its :class:`Run`.
+
+    ``rig.exec("import arm; arm.build()")`` is :func:`run` for a string: the code runs as
+    ``__main__`` with no ``__file__``, ``sys.argv[0]`` is ``"-c"``, and every module it imports from
+    your own code is executed again from the file's current bytes, on every call. The session's
+    ``sys.path`` stays as it is: nothing goes first (``python -c`` puts the working folder there,
+    ``python -P`` doesn't). The code is dedented first (:func:`textwrap.dedent`), as Python 3.14's
+    ``-c`` dedents it, so a triple-quoted block indented inside a function runs as written.
+
+    ``inputs``, ``argv`` and ``shared`` are :func:`run`'s, and so is what comes back: a :class:`Run`
+    (``result["name"]``, ``result.call``), with ``result.source`` the code that ran (dedented),
+    ``result.path`` None and ``result.paths`` empty. A traceback names the code
+    ``<rig.exec 1a2b3c4d>`` (its digest) and shows its lines. The run is one undo step, named
+    ``rig.exec`` and the code's first line (40 characters at most). An error (a SyntaxError too)
+    propagates with ``err.rig_run``, the run so far; ``sys.exit()`` ends the code: normally with 0
+    or None, else as :class:`RunExitError` carrying ``.code``.
+
+    ``source`` is a str, else TypeError. ``rig.exec`` is not in ``rig.__all__``: ``from rig import *``
+    leaves Python's built-in ``exec`` alone.
+    """
+    if not isinstance(source, str):
+        raise TypeError(f"rig.exec: the code is a str, not {type(source).__name__}")
+    names = _inputs(inputs, "rig.exec", "code")
+    argv, shared = _strings("argv", argv, "rig.exec"), set(_strings("shared", shared, "rig.exec"))
+    code = textwrap.dedent(source)
+    return _start(Run((), shared, code), names, argv, [], f"rig.exec {_first_line(code)}".rstrip(), "rig.exec")
+
+
+def _start(result, names, argv, folders, label, who="rig.run"):
+    """The run of :func:`run` and :func:`exec`: ``folders`` go first on ``sys.path``, ``label`` names
+    the undo step; afterwards the session gets back what the module docstring lists."""
+    with _LOCK:                                              # never held while the run's code runs
+        _check_thread(who)
         _install()
         _stamp()
-    result          = Run(paths, shared)
-    result.sys_path = list(dict.fromkeys(os.path.normpath(os.path.dirname(p)) for p in paths)) + sys.path
+    result.sys_path = folders + sys.path
     options         = get_options()
     stdin           = _stdin_state()
     saved           = (sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook)
     entered         = False
     importlib.invalidate_caches()
     try:
-        with undo_chunk(f"rig.run {', '.join(map(os.path.basename, paths))}"):
+        with undo_chunk(label):
             with _LOCK:
-                _check_thread()                              # re-checked with the view entered atomically
+                _check_thread(who)                           # re-checked with the view entered atomically
                 _enter(result)
                 entered = True
             try:
-                _run_files(paths, names, result, argv)
+                _run_files(result, names, argv)
             finally:
                 with _LOCK:
                     _leave()
@@ -154,16 +197,19 @@ def run(path, inputs=None, *, argv=(), shared=()):
 
 
 class Run(collections.abc.Mapping):
-    """One run of a file, or of several in one namespace: its globals (``run["name"]``, read-only;
-    ``dict(run)`` for a copy), the very dict the files ran in, so what their functions set later
-    shows; the modules it executed (``run.modules``); and its files, ``run.path`` (the first) and
-    ``run.paths`` (every one given, in order: one for a single path)."""
+    """One run of a file, of several in one namespace, or of the code of a :func:`exec`: its globals
+    (``run["name"]``, read-only; ``dict(run)`` for a copy), the very dict the code ran in, so what its
+    functions set later shows; the modules it executed (``run.modules``); and what ran: its files,
+    ``run.path`` (the first) and ``run.paths`` (every one given, in order: one for a single path), or
+    ``run.source``, the code of a ``rig.exec`` (dedented), whose ``path`` is None and ``paths``
+    empty (``source`` is None for files)."""
 
     _rig_run_result = True           # a Run, whichever copy of this module made it (a reload, a purge)
 
-    def __init__(self, paths, shared):
-        self.path     = paths[0]
+    def __init__(self, paths, shared, source=None):
+        self.path     = paths[0] if paths else None
         self.paths    = paths
+        self.source   = source
         self.owned    = set()  # top-level packages this run executes itself
         self.shared   = {}     # top-level name -> why the session's copy is used
         self.modules  = {}     # this run's modules, while no view shows them
@@ -183,6 +229,8 @@ class Run(collections.abc.Mapping):
         return len(self._globals) - (_MARK in self._globals)
 
     def __repr__(self):
+        if self.source is not None:
+            return f"<rig.exec {_first_line(self.source)!r}: {len(self.modules)} modules of its own>"
         more = len(self.paths) - 1
         also = f" and {more} more file{'s' if more > 1 else ''}" if more else ""
         return f"<rig.run {self.path!r}{also}: {len(self.modules)} modules of its own>"
@@ -209,10 +257,16 @@ class Run(collections.abc.Mapping):
             return func(*args, **kwargs)
 
 
-def _check_thread():
+def _check_thread(who="rig.run"):
     if _ACTIVE and _OWNER[0] != threading.get_ident():
-        raise RuntimeError("rig.run: a run is going on in another thread; start runs from the thread that runs "
+        raise RuntimeError(f"{who}: a run is going on in another thread; start runs from the thread that runs "
                            "them (Maya's), one after the other")
+
+
+def _first_line(code, width=40):
+    """The first line of ``code`` that holds anything, at most ``width`` characters: what names a rig.exec."""
+    line = next((line.strip() for line in code.splitlines() if line.strip()), "")
+    return line if len(line) <= width else line[:width - 3] + "..."
 
 
 def _stdin_state():
@@ -241,37 +295,38 @@ def _reopen_stdin(state):
         sys.__stdin__ = fresh
 
 
-def _inputs(inputs):
+def _inputs(inputs, who="rig.run", what="file"):
     if inputs is None:
         return {}
     if not isinstance(inputs, collections.abc.Mapping):
-        raise TypeError(f"rig.run: inputs is a mapping of names (a dict, a Run), not {type(inputs).__name__}")
+        raise TypeError(f"{who}: inputs is a mapping of names (a dict, a Run), not {type(inputs).__name__}")
     names = {}
     is_run = getattr(type(inputs), "_rig_run_result", False) is True
     for key, value in inputs.items():
         if not isinstance(key, str):
-            raise TypeError(f"rig.run: an input name is a str, not {key!r}")
+            raise TypeError(f"{who}: an input name is a str, not {key!r}")
         if key.startswith("__") and key.endswith("__"):
             if is_run:
                 continue                                     # the earlier round's own __file__ ...
-            raise ValueError(f"rig.run: the input {key!r} is a name Python sets for the file; use another name")
+            raise ValueError(f"{who}: the input {key!r} is a name Python sets for the {what}; use another name")
         if not isinstance(value, types.ModuleType):          # a module rides along stale: the file imports it
             names[key] = value
     return names
 
 
-def _strings(what, values):
+def _strings(what, values, who="rig.run"):
     values = tuple(values) if not isinstance(values, (str, bytes)) else None
     if values is None or not all(isinstance(value, str) for value in values):
-        raise TypeError(f"rig.run: {what} is a list of str, as {what}=[\"name\"]")
+        raise TypeError(f"{who}: {what} is a list of str, as {what}=[\"name\"]")
     return values
 
 
-def _run_files(paths, names, result, argv):
-    """What :func:`runpy.run_path` does for a file, for each file in turn, in ONE namespace: the
-    ``__dict__`` of one ``__main__`` module, ``sys.modules["__main__"]`` for the whole run and put
-    back after, as runpy does for one file. ``sys.exit()`` ends the run in the file that calls it:
-    normally with 0 or None, else as :class:`RunExitError` naming that file."""
+def _run_files(result, names, argv):
+    """What :func:`runpy.run_path` does for a file, for each file in turn, in ONE namespace, or what
+    ``python -c`` does for the code of a :func:`exec`: the ``__dict__`` of one ``__main__`` module,
+    ``sys.modules["__main__"]`` for the whole run and put back after, as runpy does for one file.
+    ``sys.exit()`` ends the run in the file that calls it: normally with 0 or None, else as
+    :class:`RunExitError` naming that file (or the code)."""
     main  = types.ModuleType("__main__")
     saved = sys.modules.get("__main__")
     scope = result._globals = main.__dict__
@@ -279,16 +334,22 @@ def _run_files(paths, names, result, argv):
     scope[_MARK]            = result
     sys.modules["__main__"] = main
     try:
-        for path in paths:
-            sys.argv = [path, *argv]
-            scope.update(__name__="__main__", __file__=path, __cached__=None, __doc__=None, __loader__=None,
-                         __package__="", __spec__=None)
+        for path in result.paths or (None,):                 # no path: the code of a rig.exec
+            if path is None:
+                sys.argv, who = ["-c", *argv], "rig.exec: the code"
+                scope.update(__name__="__main__", __doc__=None, __loader__=None, __package__="", __spec__=None)
+                code = _code_of_source(result.source)
+            else:
+                sys.argv, who = [path, *argv], f"rig.run: {os.path.basename(path)}"
+                scope.update(__name__="__main__", __file__=path, __cached__=None, __doc__=None, __loader__=None,
+                             __package__="", __spec__=None)
+                code = _code_of(path)
             try:
-                exec(_code_of(path), scope)
+                builtins.exec(code, scope)                   # Python's: this module's exec is rig.exec
             except SystemExit as err:
                 if err.code in (None, 0):
                     return
-                exit_error      = RunExitError(f"rig.run: {os.path.basename(path)} called sys.exit({err.code!r})")
+                exit_error      = RunExitError(f"{who} called sys.exit({err.code!r})")
                 exit_error.code = err.code
                 raise exit_error from err
     finally:
@@ -308,6 +369,17 @@ def _code_of(path):
             fh.seek(0)
             code = compile(fh.read(), path, "exec", dont_inherit=True)
     return code
+
+
+def _code_of_source(source):
+    """The code of a rig.exec, compiled as ``python -c`` compiles it, without this module's
+    ``__future__`` flags, under a name its tracebacks show the lines of: ``<rig.exec 1a2b3c4d>``,
+    the code's digest (linecache keeps an entry with no mtime as it is)."""
+    digest = hashlib.blake2b(source.encode("utf-8", "surrogatepass"), digest_size=4).hexdigest()
+    name   = f"<rig.exec {digest}>"
+
+    linecache.cache[name] = (len(source), None, source.splitlines(True), name)
+    return compile(source, name, "exec", dont_inherit=True)
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +560,7 @@ def _claim(run, top):
             run.owned.add(top)
             return
     run.shared[top] = why
-    _report_stale(top, why)
+    _report_stale(run, top, why)
 
 
 _IMPORTS = re.compile(rb"^[ \t]*(?:from[ \t]+(\w+)[\w.]*[ \t]+import\b|import[ \t]+([\w.]+(?:[ \t]+as[ \t]+\w+)?"
@@ -557,7 +629,7 @@ def _stamp():
                 _STAMPS.setdefault(*found)
 
 
-def _report_stale(top, why):
+def _report_stale(run, top, why):
     if why == "stdlib":
         return
     stale = []
@@ -567,7 +639,8 @@ def _report_stale(top, why):
             stale.append(f"{name} ({why})")
     if stale:
         more = f" and {len(stale) - 8} more" if len(stale) > 8 else ""
-        sys.stderr.write("rig.run: changed on disk, but shared with this session, so this run uses the old code"
+        who  = "rig.run" if getattr(run, "source", None) is None else "rig.exec"
+        sys.stderr.write(f"{who}: changed on disk, but shared with this session, so this run uses the old code"
                          f" (restart to pick it up): {', '.join(stale[:8])}{more}\n")
 
 

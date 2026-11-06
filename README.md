@@ -90,6 +90,7 @@ listed in [CHEATSHEET section 2](CHEATSHEET.md#2-plug--read-set-connect).
 | `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes; `==` / `!=` of a Maya plug with itself fold to a bool | the output plug; `True` / `False` for one plug |
 | `a & b`, `a \| b`, `a ^ b` | logical AND / OR / XOR networks | the output plug |
 | `rig.run("arm.py", {"side": "L"})` | **run a file** as `__main__`, as if in a fresh Python: your own modules are read from disk again on every run (no reload), rig and the packages it uses are shared, the code is never transformed; a list, `rig.run(["lib.py", "arm.py"])`, runs the files in turn in one namespace; the run is one undo step, `rig.run arm.py` ([CHEATSHEET section 40](CHEATSHEET.md#40-rigrun-a-file-as-if-in-a-fresh-python)) | a read-only mapping of the file's globals (`result["ctrls"]`, `result.call("main")`) |
+| `rig.exec("import arm; arm.build()")` | **run a string of code** the same way, as `python -c` runs it: `__main__` with no `__file__`, the session's `sys.path`, the code dedented first; your own modules are read from disk again on every call; one undo step, `rig.exec import arm; arm.build()`; not in `__all__`, so `from rig import *` keeps Python's `exec` ([CHEATSHEET section 41](CHEATSHEET.md#41-rigexec-a-string-of-code-as-if-in-a-fresh-python)) | a `Run`, as `rig.run` returns |
 
 
 ---

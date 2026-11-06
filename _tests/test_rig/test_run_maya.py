@@ -5,8 +5,9 @@ callbacks a run made keep their modules.
   replaced); cgmath is shared even when the file imports it, so a session ``serialize()``
   after a run still works (the evaluation's cgmath poison: ``KeyError: '_scale'``).
 * `TestUndo`: a copy of ``examples/rail_spine.py`` with a typo after the build raises
-  NameError, and ONE undo goes back to the start; a run inside a run joins the outer step.
-* `TestOptions`, `TestCallbacks`.
+  NameError, and ONE undo goes back to the start; a run inside a run joins the outer step;
+  a ``rig.exec`` is one step too, named after the code's first line.
+* `TestOptions` (``rig.run`` and ``rig.exec``), `TestCallbacks`.
 """
 
 import os
@@ -108,6 +109,19 @@ class TestUndo(UndoWalk, _Folder):
         self.redo_steps(1)
         self.assertTrue(cmds.objExists("inner") and cmds.objExists("outer2"))
 
+    def test_rig_exec_is_one_undo_step(self):
+        before = self.scene_state()
+        rig.exec("""
+            from maya import cmds
+            for name in ("ex_a", "ex_b", "ex_c"):
+                cmds.createNode("transform", name=name)
+        """)
+        self.assertTrue(all(cmds.objExists(name) for name in ("ex_a", "ex_b", "ex_c")))
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.exec from maya import cmds")
+        self.undo_steps(1)
+        self.assertEqual(self.scene_state(), before)
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
 
 class TestOptions(_Folder):
     def test_rig_options_given_back(self):
@@ -123,6 +137,19 @@ class TestOptions(_Folder):
         failing = _write(self.folder, "opts_fail.py", "import rig\nrig.set_options(use_shorthand=False)\n1 / 0\n")
         with self.assertRaises(ZeroDivisionError):
             rig.run(failing)
+        self.assertEqual(rig.get_options(), before)
+
+    def test_rig_options_given_back_after_rig_exec(self):
+        before = rig.get_options()
+        result = rig.exec("""
+            import rig
+            rig.set_options(create_containers=False, constant_folding=False)
+            SEEN = rig.get_options()["create_containers"]
+        """)
+        self.assertFalse(result["SEEN"])
+        self.assertEqual(rig.get_options(), before)
+        with self.assertRaises(ZeroDivisionError):
+            rig.exec("import rig\nrig.set_options(use_shorthand=False)\n1 / 0\n")
         self.assertEqual(rig.get_options(), before)
 
 
