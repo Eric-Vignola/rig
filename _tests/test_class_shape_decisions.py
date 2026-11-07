@@ -31,11 +31,15 @@ Each test failed against the source files of 4c53f99 (negative control), except 
 `TestOnlyRealLocks`' against those of e949d38; `TestWorldSpaceDataBack`'s against commit 4's first
 version, which compared on the data's own points alone (e949d38 compared where they land: all but
 its last test pass there). The tests of commit 3 that pinned the old locks say "re-pinned".
+
+The four tests that read ``rig/nodetypes/README.md`` skip where it is not: the studio copy of rig
+carries no .md page.
 """
 
 import inspect
 import os
 import re
+import unittest
 from unittest import mock
 
 import numpy as np
@@ -66,7 +70,9 @@ from rig._tests.test_class_shape_under_transform import (
     _world,
 )
 
-README = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nodetypes", "README.md")
+README     = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nodetypes", "README.md")
+HAS_README = os.path.isfile(README)
+NO_README  = "no rig/nodetypes/README.md here: the studio copy of rig carries no .md page"
 
 # a mesh holds float32 points, a curve and a surface doubles
 ATOL = {Mesh: 1e-5, NurbsCurve: 1e-9, NurbsSurface: 1e-9}
@@ -249,6 +255,7 @@ class TestQ2AMeshUpdateTakesABool(_Case):
             with self.subTest(value=value):
                 self.assertIs(self.box.load(self.path, world_space=value), self.box)
 
+    @unittest.skipUnless(HAS_README, NO_README)
     def test_the_readme_says_it_of_the_mesh_too(self):
         with open(README, encoding="utf-8") as fh:
             text = " ".join(fh.read().split())
@@ -280,6 +287,7 @@ class TestQ3PerFaceVertexNormals(_Case):
         with self.assertRaisesRegex(TypeError, "takes 1 positional argument but 2 were given"):
             self.box.get_face_vertex_normals(True)
 
+    @unittest.skipUnless(HAS_README, NO_README)
     def test_the_readme_names_no_world_only_query(self):
         with open(README, encoding="utf-8") as fh:
             self.assertNotIn("one query is world space", fh.read())
@@ -737,6 +745,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         source.load(*args, world_space=True)
         self.assertEqual(_shading(source)[1], 0)
 
+    @unittest.skipUnless(HAS_README, NO_README)
     def test_the_readme_says_what_locks(self):
         """Re-pinned: the paragraph that said ``world_space=True`` can lock a mesh's normals."""
         with open(README, encoding="utf-8") as fh:
@@ -1163,6 +1172,7 @@ def uninitializePlugin(plugin):
         np.testing.assert_array_equal(_local(own), _local(source))
         np.testing.assert_allclose(_world(placed), _world(source), rtol=0, atol=1e-4)
 
+    @unittest.skipUnless(HAS_README, NO_README)
     def test_the_readme_says_so(self):
         with open(README, encoding="utf-8") as fh:
             text = " ".join(fh.read().split())
