@@ -81,6 +81,7 @@ _CODE      = {}                     # path -> (digest, code object)
 _STAMPS    = {}                     # path -> (mtime_ns, size) when first seen
 _SEEN      = set()                  # session module names already stamped
 _IMPORTER  = threading.local()      # .shared: code of a shared= package is importing, on this thread
+_REACHED   = [False]                # an import went through rig's hook (the trial of _wrapped_around_ours)
 _PASS, _SWAP = object(), object()
 _original_import        = builtins.__import__
 _original_import_module = importlib.import_module
@@ -779,11 +780,26 @@ def _leave():
 # ---------------------------------------------------------------------------
 # Import hooks: code a run made imports that run's modules
 
+def _wrapped_around_ours(previous):
+    """Whether ``previous``, ``builtins.__import__`` as found, is a foreign wrapper around rig's hook (a
+    debugger's, a reloader's): rig's hook was installed before, ``previous`` is no copy of it, and a
+    trial import reaches it. Installing on top of such a wrapper would make every import recurse."""
+    if not hasattr(_import, "_rig_run_original") or hasattr(previous, "_rig_run_original"):
+        return False
+    _REACHED[0] = False
+    try:
+        previous("sys")
+    except Exception:
+        return False
+    return _REACHED[0]
+
+
 def _install():
     global _original_import, _original_import_module, _original_reload, _ROOTS
-    if builtins.__import__ is _import:
-        return
-    previous, previous_module = builtins.__import__, importlib.import_module   # a reloaded copy's hooks
+    previous = builtins.__import__
+    if previous is _import or _wrapped_around_ours(previous):
+        return                                               # ours, or a foreign wrapper around ours: left as is
+    previous_module         = importlib.import_module         # a reloaded copy's hook, or a replacement
     _original_import        = getattr(previous, "_rig_run_original", previous)
     _original_import_module = getattr(previous_module, "_rig_run_original", previous_module)
     _original_reload        = getattr(importlib.reload, "_rig_run_original", importlib.reload)
@@ -833,8 +849,9 @@ def _imported(shared, do, *args):
 
 
 def _import(name, globals=None, locals=None, fromlist=(), level=0):
-    scope = globals or sys._getframe(1).f_globals
-    run   = scope.get(_MARK) if isinstance(scope, dict) else None
+    _REACHED[0] = True
+    scope       = globals or sys._getframe(1).f_globals
+    run         = scope.get(_MARK) if isinstance(scope, dict) else None
     if run is None:
         if _ACTIVE and _from_shared(scope):
             return _imported(True, _original_import, name, globals, locals, fromlist, level)
@@ -854,8 +871,9 @@ def _import(name, globals=None, locals=None, fromlist=(), level=0):
 
 
 def _import_module(name, package=None):
-    scope = sys._getframe(1).f_globals
-    run   = scope.get(_MARK)
+    _REACHED[0] = True
+    scope       = sys._getframe(1).f_globals
+    run         = scope.get(_MARK)
     if run is None:
         if _ACTIVE and _from_shared(scope):
             return _imported(True, _original_import_module, name, package)

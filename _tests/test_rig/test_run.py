@@ -8,6 +8,8 @@
   the 2026-10-27 handoff, and a compiled file); one path is a list of one.
 * `TestSharedImports`: a plain package that code of a ``shared=`` package imports for the first
   time during a run is the session's; the run's own imports stay the run's.
+* `TestHookGuard`: a foreign ``builtins.__import__`` wrapped around rig's hook is left in place, a
+  replacement is wrapped again, and no import recurses.
 * `TestExec`: ``rig.exec(source)``, a string of code as ``python -c`` runs it (the user's
   decisions of 2026-11-05: outside ``__all__``, rig.run's inputs rule, a ``Run`` back, the
   session's ``sys.path``, dedented first as Python 3.14's ``-c``).
@@ -1145,6 +1147,60 @@ class TestSharedImports(_Tree):
         result, _ = _quiet(os.path.join(self.SCRIPTS, "plain.py"))
         self.assertIn("rsfourth", result.owned)
         self.assertNotIn("rsfourth", sys.modules)
+
+
+# ---------------------------------------------------------------------------------------------
+# A foreign builtins.__import__ over rig's hook
+
+class TestHookGuard(_Tree):
+    """``_install`` and a ``builtins.__import__`` that is not rig's: a wrapper around rig's hook (a
+    debugger's, a reloader's) is left in place, since imports still reach the hook; a replacement that
+    never reaches it is wrapped again, as the original was. Before the guard, the first case made
+    ``_install`` take the wrapper for the original and every import of the session recurse."""
+
+    TOPS = {"rhpkg"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.make({"lib/rhpkg/__init__.py": 'VALUE = "v1"\n'})
+        import rhpkg  # noqa: F401 -- the session has it
+
+    def setUp(self):
+        rig.exec("pass")                                      # the hooks are installed
+        self.hooks = (builtins.__import__, run_module._original_import, importlib.import_module,
+                      run_module._original_import_module, run_module._import._rig_run_original)
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        (builtins.__import__, run_module._original_import, importlib.import_module,
+         run_module._original_import_module, run_module._import._rig_run_original) = self.hooks
+
+    def test_a_wrapper_around_rigs_hook_stays_and_nothing_recurses(self):
+        ours, names = builtins.__import__, []
+
+        def wrapper(name, globals=None, locals=None, fromlist=(), level=0):
+            names.append(name)
+            return ours(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = wrapper
+        result              = rig.exec("import rhpkg\nMOD = rhpkg\n")
+        self.assertIs(builtins.__import__, wrapper)  # left in place: rig's hook is underneath
+        self.assertIs(run_module._original_import, self.hooks[1])
+        self.assertIn("rhpkg", names)
+        self.assertIn("rhpkg", result.owned)         # and the run's imports still route
+        self.assertIsNot(result["MOD"], sys.modules["rhpkg"])
+
+    def test_a_replacement_is_wrapped_again(self):
+        def replacement(name, globals=None, locals=None, fromlist=(), level=0):
+            return importlib.__import__(name, globals, locals, fromlist, level)   # never reaches rig's hook
+
+        builtins.__import__ = replacement
+        result              = rig.exec("import rhpkg\nMOD = rhpkg\n")
+        self.assertIs(builtins.__import__, run_module._import)
+        self.assertIs(run_module._original_import, replacement)
+        self.assertIn("rhpkg", result.owned)
+        self.assertIsNot(result["MOD"], sys.modules["rhpkg"])
 
 
 # ---------------------------------------------------------------------------------------------
