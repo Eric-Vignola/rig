@@ -4,8 +4,7 @@ The user's two reports:
 
 * ``Transform.create(name)`` returns a ``Transform`` node, but ``Transform.create_hierarchy(data)``
   returned a list of str. It returns a ``List`` of the typed nodes it made (``Joint``,
-  ``Transform``, the locator's transform, the space_transform box), parents first, as
-  ``load_hierarchy`` does.
+  ``Transform``, the locator's transform), parents first, as ``load_hierarchy`` does.
 * ``List(Node("root").serialize_hierarchy())`` was a List of ``TransformData`` (``lst[1].tx``
   an AttributeError). A List holds numbers and rig objects: a str is cast as before, an
   OpenMaya object through ``Node()`` / ``Plug()``, any other object through its ``str``
@@ -47,17 +46,15 @@ from rig.nodetypes.errors import NodeNotFoundError
 
 
 def _skeleton():
-    """root (a transform) > pelvis (a joint, tx 3.5) > probe (a locator) and box (a
-    space_transform, from the data); the HierarchyData of it."""
+    """root (a transform) > pelvis (a joint, tx 3.5) > probe (a locator) and box (a plain
+    transform); the HierarchyData of it."""
     root   = Transform.create(name="root")
     pelvis = Joint.create(name="pelvis", parent=root)
     pelvis.tx << 3.5
     probe = cmds.spaceLocator(name="probe")[0]
     cmds.parent(probe, pelvis.get_long_name())
     Transform.create(name="box", parent=pelvis)
-    data = root.serialize_hierarchy()
-    data[3].node_type = "space_transform"
-    return data
+    return root.serialize_hierarchy()
 
 
 class _Case(MayaTestCase):
@@ -96,7 +93,7 @@ class TestCreateHierarchyReturn(_Case):
         self.assertIs(type(probe), Transform)
         self.assertEqual(cmds.nodeType(probe.get_shape().get_name()), "locator")
         self.assertIs(type(box), Transform)
-        self.assertEqual(cmds.nodeType(box.get_shape().get_name()), "mesh")
+        self.assertIsNone(box.get_shape())
         self.assertEqual(cmds.ls(selection=True, long=True), [x.get_long_name() for x in made])
 
     def test_parents_come_first(self):

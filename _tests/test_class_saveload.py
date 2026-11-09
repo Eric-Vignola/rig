@@ -393,7 +393,7 @@ class TestMesh(_Case):
             ("a node", lambda: Mesh.load(Node(t)), TypeError,
              "^Mesh.load: the mesh is a file \\(a path\\) or its data, not the node 'body'$"),
             ("a plug", lambda: Mesh.load(Node(t).tx), TypeError, "not the node 'body.translateX'"),
-            ("a curve file", lambda: Mesh.load(curve), TypeError, "holds a BSplineData"),
+            ("a curve file", lambda: Mesh.load(curve), TypeError, "holds a NurbsCurveData"),
             ("a missing file", lambda: Mesh.load(self.path("nope.npz")), FileNotFoundError,
              f"^Mesh.load: the mesh: no file {q(self.path('nope.npz'))}$"),
             ("a missing uv file", lambda: Mesh.load(path, self.path("nope.npz")), FileNotFoundError, "Mesh.load: uvs: no file"),
@@ -714,13 +714,13 @@ class TestNurbsCurve(_Case):
                     self.assertEqual(self.undo_name(), "rig.NurbsCurve.load")
 
     def test_world_space_false_loads_at_the_origin(self):
-        # an older cgmath's BSplineData has no matrix (3.0.1's, stood in here): an object-space
+        # an older cgmath's NurbsCurveData has no matrix (3.0.1's, stood in here): an object-space
         # file loads at the origin, save in world space there to keep where the curve is (re-pinned:
         # one with a matrix keeps it, test_class_shape_space)
         from rig._tests.test_class_nurbs_create import CURVE_FIELDS, _older_cgmath
 
         shape = cmds.ls(self.sources()["moved"], long=True)[0]
-        with _older_cgmath("BSplineData", CURVE_FIELDS):
+        with _older_cgmath("NurbsCurveData", CURVE_FIELDS):
             NurbsCurve(shape).save(self.path("local.npz"), world_space=False)
         curve = NurbsCurve.load(self.path("local.npz"))
         np.testing.assert_allclose(_cvs(curve.get_long_name()), _cvs(shape, world_space=False), atol=1e-9)
@@ -731,7 +731,7 @@ class TestNurbsCurve(_Case):
         NurbsCurve(shape).save(self.path("c.npz"))
         first = NurbsCurve.load(data)
         # re-pinned: the data's name names it (circShape: circ1, circ2) on a cgmath whose
-        # BSplineData has one, else Maya's curve<N>
+        # NurbsCurveData has one, else Maya's curve<N>
         stem = "circ" if getattr(data, "name", None) else "curve"
         self.assertEqual(str(first.get_parent()), f"{stem}1")
         self.assertEqual(str(NurbsCurve.load(pathlib.Path(self.path("c.npz"))).get_parent()), f"{stem}2")
@@ -744,7 +744,7 @@ class TestNurbsCurve(_Case):
         shape = self.sources()["circle"]
         Mesh(cmds.polyCube(name="m", constructionHistory=False)[0]).save(self.path("m.npz"))
         for label, call, error, text in (
-            ("a mesh file", lambda: NurbsCurve.load(self.path("m.npz")), TypeError, "holds a MeshData; the curve is a BSplineData$"),
+            ("a mesh file", lambda: NurbsCurve.load(self.path("m.npz")), TypeError, "holds a MeshData; the curve is a NurbsCurveData$"),
             ("a node", lambda: NurbsCurve.load(Node(shape)), TypeError, "not the node"),
             ("a missing file", lambda: NurbsCurve.load(self.path("nope.npz")), FileNotFoundError, "NurbsCurve.load: the curve: no file"),
         ):
@@ -856,13 +856,13 @@ class TestNurbsSurface(_Case):
     def test_names_flags_and_wrong_inputs(self):
         shape = self.sources()["plane"]
         NurbsSurface(shape).save(self.path("p.npz"))
-        # re-pinned: the data's name names it on a cgmath whose BSplinePatchData has one
+        # re-pinned: the data's name names it on a cgmath whose NurbsSurfaceData has one
         default = "plane1" if getattr(NurbsSurface(shape).serialize(), "name", None) else "surface1"
         self.assertEqual(str(NurbsSurface.load(self.path("p.npz")).get_parent()), default)
         self.assertEqual(str(NurbsSurface.load(self.path("p.npz"), name="patch").get_parent()), "patch")
         self.assertFalse(cmds.getAttr(f"{NurbsSurface.load(self.path('p.npz'), name='h', visibility=False)}.visibility"))
         NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)]).save(self.path("c.npz"))
-        self.assert_refused(TypeError, "holds a BSplineData; the surface is a BSplinePatchData$",
+        self.assert_refused(TypeError, "holds a NurbsCurveData; the surface is a NurbsSurfaceData$",
                             lambda: NurbsSurface.load(self.path("c.npz")))
         self.assert_refused(FileNotFoundError, "NurbsSurface.load: the surface: no file",
                             lambda: NurbsSurface.load(self.path("none.npz")))
@@ -893,7 +893,7 @@ class TestNurbsSurface(_Case):
 
     def test_the_node_form_keeps_its_knots(self):
         # an update keeps the surface's own knots (re-pinned: data that holds knots, on a cgmath
-        # whose BSplinePatchData takes them, holds these; an older one's holds none)
+        # whose NurbsSurfaceData takes them, holds these; an older one's holds none)
         shape = self.sources()["plane"]
         knots = np.array(NurbsSurface(shape).get_fn_set().knotsInU())
         NurbsSurface(shape).save(self.path("p.npz"))

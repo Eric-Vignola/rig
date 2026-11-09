@@ -151,7 +151,7 @@ class TestTheArguments(_Case):
         for cls, data in ((Mesh, md), (NurbsCurve, cd)):
             with self.subTest(cls=cls.__name__):
                 self.assertIsInstance(cls.load(data, world_space=False), cls)
-        self.assert_refused(TypeError, r"^NurbsSurface.load: the surface: got a BSplineData",
+        self.assert_refused(TypeError, r"^NurbsSurface.load: the surface: got a NurbsCurveData",
                             lambda: NurbsSurface.load(cd, world_space=True))
 
     def test_the_qualname_is_the_class_called(self):

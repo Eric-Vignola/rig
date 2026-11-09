@@ -61,9 +61,9 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
 
     The file is read, and what it holds checked, before anything is made: a
     missing file is a FileNotFoundError, a file of another class a TypeError
-    naming what it holds, a file from an older cgmath cgmath's
-    LegacyFileError, a NaN or an infinity in a column of a clip that is keyed
-    a ValueError, a missing undo plug-in, for a clip with keys, a RuntimeError.
+    naming what it holds, a NaN or an infinity in a column of a clip that is
+    keyed a ValueError, a missing undo plug-in, for a clip with keys, a
+    RuntimeError.
     Constraints and other types derived from transform are skipped with a
     warning (`create_hierarchy`'s).
 
@@ -160,14 +160,10 @@ def _make_from_data(data: TransformData, name: Any, parent: str | None) -> DAGNo
     """The node one TransformData describes, made at identity, named `name`,
     under `parent` (a long name; None: the world): a joint or a transform by
     its class's typed create (nested, see `_create_nested`), a locator's
-    transform by ``spaceLocator``, a space_transform's box by ``polyCube``.
-    `create_hierarchy`'s per-node create, which ``Transform.create(data)``
-    shares (the values are `_set_values`'s)."""
+    transform by ``spaceLocator``. `create_hierarchy`'s per-node create, which
+    ``Transform.create(data)`` shares (the values are `_set_values`'s)."""
     if data.node_type == "locator":
         obj = _cast(_cmds_edit.spaceLocator(name=name)[0])
-    elif data.node_type == "space_transform":
-        # an RTR space_transform box
-        obj = _cast(_cmds_edit.polyCube(name=name, w=100, h=100, d=100, ch=False)[0])
     else:
         return _create_nested(data.node_type, name=name, parent=parent)
     if parent is not None:
@@ -932,8 +928,8 @@ class Transform(DAGNode):
 
         Returns:
             A List of the new nodes, typed as ``Transform.create`` types its
-            node (``Joint`` for a joint, ``Transform`` for a transform, a
-            locator's transform and a space_transform box), parents first:
+            node (``Joint`` for a joint, ``Transform`` for a transform and a
+            locator's transform), parents first:
             ``nodes[0]`` is the first root. Maya renames a node whose name is
             taken (``root1``)::
 
@@ -1009,7 +1005,7 @@ class Transform(DAGNode):
         positional ``inputs`` of a create on a transform class.
 
         The node the data describes (its ``node_type``: a transform, a joint, a
-        locator's transform, a space_transform box), named the data's name
+        locator's transform), named the data's name
         (``name=`` / ``n=`` overrides it), made at identity under ``parent=`` /
         ``p=`` (None: the world; the data's own parent uuid is not used, nor its
         uuid: Maya gives the node a new one), then given the data's values (as
@@ -1272,12 +1268,15 @@ class Transform(DAGNode):
         world_space: bool                      = False,
         container:   bool | None               = None,
     ):
-        from cgmath.hierarchy import HierarchyData
+        from cgmath.hierarchy import ClipData, HierarchyData
 
         method      = f"{cls.__name__}.load_hierarchy"
         world_space = _files.space_flag(method, world_space, _HIERARCHY_SPACE)
-        data        = _files.read(hierarchy, (HierarchyData,), method, "the hierarchy")
-        kwargs      = {} if container is None else {"container": container}
+        data        = _files.read(hierarchy, (ClipData, HierarchyData), method, "the hierarchy")
+        if type(data) is ClipData and not data.frame_count and _files.is_path(hierarchy):
+            # a file names no class: a rig's file builds as a clip of no frames, so it is the rig
+            data = HierarchyData.load(os.path.expanduser(os.fspath(hierarchy)))
+        kwargs = {} if container is None else {"container": container}
         if isinstance(parent, DAGNode):
             parent = type(parent).get_long_name(parent)
         with _undo_chunk(f"rig.{cls.__name__}.load_hierarchy"):

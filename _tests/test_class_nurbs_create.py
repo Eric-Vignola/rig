@@ -1,5 +1,5 @@
 """``NurbsCurve.create`` builds a curve from control points, or from a cgmath
-``BSplineData``.
+``NurbsCurveData``.
 
 The curve rides a recorded ``createNode`` transform, as ``Mesh.create``'s mesh
 does: the shape is made under it through the API (``MFnNurbsCurve.create``),
@@ -35,20 +35,20 @@ PERIODIC = OpenMaya.MFnNurbsCurve.kPeriodic
 
 
 def _bspline_data(points, degree, periodic, **kwargs):
-    from cgmath.geometry import BSplineData
+    from cgmath.geometry import NurbsCurveData
 
-    return BSplineData(points=np.asarray(points, dtype=float), degree=degree, periodic=periodic, **kwargs)
+    return NurbsCurveData(points=np.asarray(points, dtype=float), degree=degree, periodic=periodic, **kwargs)
 
 
 def _takes_knots() -> bool:
-    """True when the installed cgmath's BSplineData takes custom ``knots``."""
-    from cgmath.geometry import BSplineData
+    """True when the installed cgmath's NurbsCurveData takes custom ``knots``."""
+    from cgmath.geometry import NurbsCurveData
 
-    return "knots" in BSplineData.__dataclass_fields__
+    return "knots" in NurbsCurveData.__dataclass_fields__
 
 
-class _BSplineDataWithoutKnots:
-    """A BSplineData without a ``knots`` field, as cgmath 1.0.4's: what serialize gives it."""
+class _NurbsCurveDataWithoutKnots:
+    """A NurbsCurveData without a ``knots`` field, as cgmath 1.0.4's: what serialize gives it."""
 
     __dataclass_fields__ = dict.fromkeys(("points", "degree", "periodic"))
 
@@ -378,8 +378,8 @@ class TestNurbsCurveCreateKeywords(_CurveCreateCase):
 
 
 # ---------------------------------------------------------------------------------------------
-class TestNurbsCurveCreateBSpline(_CurveCreateCase):
-    """A BSplineData gives its points, degree, knots and form; ``uniform`` / ``registered`` are not used."""
+class TestNurbsCurveCreateFromData(_CurveCreateCase):
+    """A NurbsCurveData gives its points, degree, knots and form; ``uniform`` / ``registered`` are not used."""
 
     def test_open_data(self):
         for degree in (1, 2, 3, 5):
@@ -459,13 +459,13 @@ class TestNurbsCurveCreateBSpline(_CurveCreateCase):
             ("degree and kv", dict(degree=2, kv=[0, 0, 1, 2, 3, 4, 4])),
         ):
             with self.subTest(label):
-                with self.assertRaisesRegex(TypeError, rf"got {label} with a BSplineData"):
+                with self.assertRaisesRegex(TypeError, rf"got {label} with a NurbsCurveData"):
                     NurbsCurve.create(data, **kwargs)
                 self.assertEqual(sorted(cmds.ls()), nodes)
 
     def test_serialize_round_trip(self):
         # re-pinned (user decision 2026-10-29): object-space data holds the transform's world
-        # matrix on a cgmath whose BSplineData has one, and the new transform takes it
+        # matrix on a cgmath whose NurbsCurveData has one, and the new transform takes it
         for degree in (1, 2, 3):
             with self.subTest(degree=degree):
                 cmds.file(new=True, force=True)
@@ -475,11 +475,11 @@ class TestNurbsCurveCreateBSpline(_CurveCreateCase):
                 data = NurbsCurve(source).serialize(world_space=False)
                 self.ready()
                 curve  = NurbsCurve.create(data, name="rebuilt")
-                matrix = cmds.getAttr("src.worldMatrix[0]") if _has_fields("BSplineData", CURVE_FIELDS) else None
+                matrix = cmds.getAttr("src.worldMatrix[0]") if _has_fields("NurbsCurveData", CURVE_FIELDS) else None
                 self.check(curve, "rebuilt", "rebuiltShape", matrix)
                 self.assertEqual(curve_state(curve), expected)
 
-    @unittest.skipUnless(_takes_knots(), "this cgmath's BSplineData takes no knots")
+    @unittest.skipUnless(_takes_knots(), "this cgmath's NurbsCurveData takes no knots")
     def test_data_with_its_own_knots(self):
         self.ready()
         uneven = (0.0, 0.0, 0.0, 0.5, 1.25, 3.0, 3.0, 3.0)
@@ -554,7 +554,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
                 self.assertEqual(curve_state(NurbsCurve.create(data)), curve_state(source))
 
     def test_periodic_curve_holds_its_own_points(self):
-        # Maya repeats a periodic curve's first `degree` CVs at its end; BSplineData wraps
+        # Maya repeats a periodic curve's first `degree` CVs at its end; NurbsCurveData wraps
         # its points itself, so they are left out (they used to be wrapped twice)
         ring = _ring(8)
         cases = [("circle", 3, lambda: cmds.circle(sections=8, degree=3, constructionHistory=False)[0])]
@@ -596,7 +596,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
         expected = np.array(NurbsCurve(source).get_points(world_space=True))[:, :3]
         self.assertEqual(_rows(data.points), _rows(expected))
 
-    @unittest.skipUnless(_takes_knots(), "this cgmath's BSplineData takes no knots")
+    @unittest.skipUnless(_takes_knots(), "this cgmath's NurbsCurveData takes no knots")
     def test_uneven_knots_travel(self):
         for label, xform in _uneven_curves().items():
             with self.subTest(label):
@@ -623,11 +623,11 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
                 NurbsCurve(source).serialize()
 
     def test_uneven_knots_on_a_cgmath_without_knots_warn(self):
-        # on a cgmath whose BSplineData takes knots (2.0.0) a stand-in without them (1.0.4's)
+        # on a cgmath whose NurbsCurveData takes knots (2.0.0) a stand-in without them (1.0.4's)
         # is patched in, so the test runs on both
         for label, xform in _uneven_curves().items():
             with self.subTest(label):
-                older = (mock.patch("cgmath.geometry.BSplineData", _BSplineDataWithoutKnots)
+                older = (mock.patch("cgmath.geometry.NurbsCurveData", _NurbsCurveDataWithoutKnots)
                          if _takes_knots() else contextlib.nullcontext())
                 with older, self.assertLogs("rig.nodetypes.nurbs", level="WARNING") as logs:
                     data = NurbsCurve(xform).serialize(world_space=False)
@@ -761,7 +761,7 @@ class TestNurbsCurveCreateUndo(_CurveCreateCase):
 
 # ---------------------------------------------------------------------------------------------
 class _UnwrappedRing:
-    """What `NurbsCurve.create` reads of a BSplineData, for a periodic curve whose
+    """What `NurbsCurve.create` reads of a NurbsCurveData, for a periodic curve whose
     CVs do not repeat: Maya refuses it, after the transform is made."""
 
     degree   = 3
@@ -778,9 +778,9 @@ class TestNurbsCurveCreateErrors(_CurveCreateCase):
         # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
         ("a name", ("grp", {}), TypeError, r"^NurbsCurve\.create\('grp'\): the name is a keyword: "
                                            r"NurbsCurve\.create\(points, name='grp'\) makes one; a positional "
-                                           r"argument is the points or BSplineData a curve is built from$"),
-        ("None", (None, {}), TypeError, r"takes \(N, 3\) points or a BSplineData, got NoneType"),
-        ("a number", (3.0, {}), TypeError, r"takes \(N, 3\) points or a BSplineData, got float"),
+                                           r"argument is the points or NurbsCurveData a curve is built from$"),
+        ("None", (None, {}), TypeError, r"takes \(N, 3\) points or a NurbsCurveData, got NoneType"),
+        ("a number", (3.0, {}), TypeError, r"takes \(N, 3\) points or a NurbsCurveData, got float"),
         ("ragged points", ([(0, 0, 0), (1, 0), (2, 0, 0), (3, 0, 0)], {}), TypeError, r"takes \(N, 3\) points"),
         ("no points", ([], {}), ValueError, r"must be \(N, 3\), got \(0,\)"),
         ("2-D points", ([(0, 0), (1, 1), (2, 0), (3, 1)], {}), ValueError, r"must be \(N, 3\), got \(4, 2\)"),
@@ -852,7 +852,7 @@ class TestNurbsCurveCreateErrors(_CurveCreateCase):
         for label, value in (("a curve", source), ("its transform", source.get_parent()),
                              ("its cv plug", source.cv), ("a translate plug", source.get_parent().t)):
             with self.subTest(label):
-                with self.assertRaisesRegex(TypeError, r"takes \(N, 3\) points or a BSplineData, got "):
+                with self.assertRaisesRegex(TypeError, r"takes \(N, 3\) points or a NurbsCurveData, got "):
                     NurbsCurve.create(value)
                 self.assertEqual(sorted(cmds.ls()), nodes)
 
@@ -935,7 +935,7 @@ def _periodic_loft():
 
 
 class TestNurbsSurfaceCreate(_CurveCreateCase):
-    """``NurbsSurface.create(data)``: the ride of ``NurbsCurve.create``, from a BSplinePatchData."""
+    """``NurbsSurface.create(data)``: the ride of ``NurbsCurve.create``, from a NurbsSurfaceData."""
 
     def sources(self):
         return {
@@ -964,10 +964,10 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
 
     def test_evenly_spaced_knots_come_back_on_0_to_spans(self):
         # a nurbsPlane's 0..1 comes back as 0..3: the same surface, another parameter range
-        # (re-pinned: on a cgmath whose BSplinePatchData takes no knots, 3.0.1's, stood in here;
+        # (re-pinned: on a cgmath whose NurbsSurfaceData takes no knots, 3.0.1's, stood in here;
         # one that takes them keeps the range, test_class_shape_space)
         shape = self.sources()["plane"]
-        with _older_cgmath("BSplinePatchData", PATCH_FIELDS):
+        with _older_cgmath("NurbsSurfaceData", PATCH_FIELDS):
             data = NurbsSurface(shape).serialize()
         surface = NurbsSurface.create(data)
         self.assertEqual(tuple(surface.get_fn_set().knotDomainInU), (0.0, 3.0))
@@ -975,7 +975,7 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
 
     def test_names_and_attributes(self):
         data = NurbsSurface(self.sources()["plane"]).serialize()
-        # re-pinned: the data's name names it, on a cgmath whose BSplinePatchData has one
+        # re-pinned: the data's name names it, on a cgmath whose NurbsSurfaceData has one
         default = "plane1" if getattr(data, "name", None) else "surface1"
         self.assertEqual(str(NurbsSurface.create(data).get_parent()), default)
         self.assertEqual(str(NurbsSurface.create(data, name="patch")), "patchShape")
@@ -1005,20 +1005,20 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
 
     def test_input_that_is_no_surface(self):
         data = NurbsSurface(self.sources()["plane"]).serialize()
-        from cgmath.geometry import BSplinePatchData
+        from cgmath.geometry import NurbsSurfaceData
 
-        few = BSplinePatchData(points=np.zeros((2, 5, 3)), degree_u=3, degree_v=3, periodic_u=False, periodic_v=False)
-        flat = BSplinePatchData(points=np.zeros((4, 4, 2)), degree_u=3, degree_v=3, periodic_u=False, periodic_v=False)
+        few = NurbsSurfaceData(points=np.zeros((2, 5, 3)), degree_u=3, degree_v=3, periodic_u=False, periodic_v=False)
+        flat = NurbsSurfaceData(points=np.zeros((4, 4, 2)), degree_u=3, degree_v=3, periodic_u=False, periodic_v=False)
         curve_data = NurbsCurve.create(POINTS).serialize()
         self.ready()
         for label, call, error, text in (
             ("points", lambda: NurbsSurface.create([[0, 0, 0]]), TypeError,
-             "^NurbsSurface.create\\(\\) takes a BSplinePatchData, got list \\(NurbsSurface.load\\(path\\) reads one from a file\\)$"),
-            ("a curve's data", lambda: NurbsSurface.create(curve_data), TypeError, "got BSplineData"),
+             "^NurbsSurface.create\\(\\) takes a NurbsSurfaceData, got list \\(NurbsSurface.load\\(path\\) reads one from a file\\)$"),
+            ("a curve's data", lambda: NurbsSurface.create(curve_data), TypeError, "got NurbsCurveData"),
             ("too few", lambda: NurbsSurface.create(few), ValueError,
              "^a surface of degree 3 in U takes 4 rows of points or more there, got 2$"),
             ("2D points", lambda: NurbsSurface.create(flat), ValueError, "points must be \\(Nu, Nv, 3\\), got \\(4, 4, 2\\)"),
-            ("a node", lambda: NurbsSurface.create(Node("plane")), TypeError, "takes a BSplinePatchData, got Transform"),
+            ("a node", lambda: NurbsSurface.create(Node("plane")), TypeError, "takes a NurbsSurfaceData, got Transform"),
             ("no input", lambda: Node.create("nurbsSurface"), TypeError,
              "needs the inputs a NurbsSurface is built from, after the type: Node.create\\('nurbsSurface', data, ...\\)"),
             ("a parent", lambda: NurbsSurface.create(data, parent="plane"), TypeError, "takes no parent="),
@@ -1065,18 +1065,18 @@ class TestNurbsSurfaceSerialize(_CurveCreateCase):
         self.assertEqual(tuple(data.points.shape[:2]), (fn.numCVsInU - wraps[0], fn.numCVsInV - wraps[1]))
 
     def test_uneven_knots_warn(self):
-        # re-pinned: on a cgmath whose BSplinePatchData takes no knots (3.0.1's, stood in here);
+        # re-pinned: on a cgmath whose NurbsSurfaceData takes no knots (3.0.1's, stood in here);
         # one that takes them keeps them and warns of nothing (test_class_shape_space); the
         # warning names each direction after "dropped: " (test_class_shape_space)
         rows = [cmds.curve(point=[(0, y, 0), (1, y, 0), (2, y, 0), (3, y, 0)]) for y in (0, 1, 5)]
         shape = _surface_shape(cmds.loft(*rows, constructionHistory=False, uniform=False, name="uneven")[0])
-        with _older_cgmath("BSplinePatchData", PATCH_FIELDS), self.assertLogs(
+        with _older_cgmath("NurbsSurfaceData", PATCH_FIELDS), self.assertLogs(
             "rig.nodetypes.nurbs", level="WARNING"
         ) as logs:
             NurbsSurface(shape).serialize()
         self.assertEqual(len(logs.output), 1)
         self.assertIn(
-            f"{shape}: this cgmath's BSplinePatchData takes no knots, so the surface's uneven knots are dropped: in ",
+            f"{shape}: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: in ",
             logs.output[0],
         )
 

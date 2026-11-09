@@ -256,17 +256,19 @@ class TestCreateFromData(MayaTestCase):
                 self.assertIs(made.ssc.get(), False)
                 np.testing.assert_allclose(made.t.get(), [1, 0, 0])
 
-    def test_a_locator_and_a_space_transform(self):
+    def test_a_locator_and_a_kind_cgmath_no_longer_has(self):
         from cgmath.hierarchy import TransformData
 
-        loc  = Node(cmds.spaceLocator(name="loc")[0])
+        loc = Node(cmds.spaceLocator(name="loc")[0])
         loc.tx << 4
         made = Transform.create(loc.serialize())
         self.assertEqual(cmds.listRelatives(str(made), shapes=True, type="locator"), ["loc1Shape"])
         self.assertEqual(made.tx.get(), 4)
-        box = Transform.create(TransformData("box", node_type="space_transform", translate=(0, 5, 0)))
-        self.assertEqual(cmds.listRelatives(str(box), shapes=True, type="mesh"), ["boxShape"])
-        self.assertEqual(box.ty.get(), 5)
+        before = cmds.ls()
+        with self.assertRaisesRegex(TypeError, r"a TransformData of a 'space_transform' cannot be built; "
+                                               r"it describes a transform, a joint, a locator"):
+            Transform.create(TransformData("box", node_type="space_transform", translate=(0, 5, 0)))
+        self.assertEqual(cmds.ls(), before)
 
     def test_name_parent_and_attribute_keywords(self):
         src  = self._source()

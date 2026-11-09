@@ -2,11 +2,12 @@
 
 cgmath writes and reads the files: its own ``.npz`` / ``.json`` / ``.pkl``, the
 format chosen by the extension on a save; on a load an npz or a json is read
-from the file's header, a pickle by its ``.pkl`` / ``.pickle`` extension on
-cgmath 3.0.0 (1.0.4 and 2.0.0 read any other file as a pickle); ``load`` also
-takes the assets the slot's cgmath class reads (``.obj``, ``.fbx``, ``.glb``,
-``.usd``). rig checks what a file holds before anything is made, and a save
-path before anything is serialized.
+from the file's header, a pickle by its ``.pkl`` / ``.pickle`` extension. A
+cgmath file names no class: a load builds it as the class the slot takes, the
+first of several whose fields the file holds (`read`). ``load`` also takes the
+assets the slot's cgmath class reads (``.obj``, ``.fbx``, ``.glb``, ``.usd``).
+rig checks what a file holds before anything is made, and a save path before
+anything is serialized.
 
 `load` is one name with two forms (`creates_or_updates`): from the class it is
 the creator, ``Mesh.load(path)`` (a new node, as ``create`` makes one); from a
@@ -19,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import warnings
 from types import FunctionType, MethodType
 
 from rig.nodetypes._base import Attribute, _name_of
@@ -110,31 +112,26 @@ def read(
     hints:    tuple = (),
     objects:  bool  = False,
 ):
-    """The data `src` names: a path is read by cgmath (its own files whatever
-    class they hold, an asset by the slot's first class), a data object is
-    taken as it is. Anything that is not one of `accepted` (or is one of
-    `refused`, a subclass the slot does not take) is a TypeError naming the
+    """The data `src` names: a path is read by cgmath (its own files as the
+    first class of `accepted` whose fields the file holds, since a cgmath file
+    names no class, `_load_own`; an asset by the slot's first class), a data
+    object is taken as it is. Anything that is not one of `accepted` (or is one
+    of `refused`, a subclass the slot does not take) is a TypeError naming the
     file, what it holds and what `slot` takes, with the hint of `hints`
     (``((classes, text), ...)``) that fits what it holds. With `objects`, a
     ``cgmath.render.scene.Object`` is accepted too. A node or a plug is a
-    TypeError (a node is no file). A missing file is a FileNotFoundError; a
-    file from an older cgmath raises cgmath's own LegacyFileError (a
-    ValueError). Nothing is made."""
+    TypeError (a node is no file). A missing file is a FileNotFoundError.
+    Nothing is made."""
     if _is_node(src):
         raise TypeError(f"{method}: {slot} is a file (a path) or its data, not the node {_name_of(src)!r}")
     if is_path(src):
-        from cgmath.geometry import Data
-
-        try:  # cgmath 3.0.0 has the file code in cgmath.data, 1.0.4 and 2.0.0 in cgmath.geometry._base
-            from cgmath.data import get_file_type
-        except ImportError:
-            from cgmath.geometry._base import get_file_type
+        from cgmath.data import get_file_type
 
         path = os.path.expanduser(os.fspath(src))
         if not os.path.isfile(path):
             raise FileNotFoundError(f"{method}: {slot}: no file {path!r}")
         if get_file_type(path) in OWN_TYPES:
-            data = Data.load(path)
+            data = _load_own(path, accepted, method, slot, _classes_of(refused, hints))
         else:
             data = accepted[0].load(path)  # an asset: the slot's own reader
         what = f"{path!r} holds a {type(data).__name__}"
@@ -150,6 +147,38 @@ def read(
         hint = next((f" ({text})" for classes, text in hints if isinstance(data, classes)), "")
         raise TypeError(f"{method}: {slot}: {what}; {slot} is a {names}{hint}")
     return data
+
+
+def _classes_of(refused: tuple, hints: tuple) -> tuple:
+    """The classes of `refused` and of `hints` (``((classes, text), ...)``, a class or a tuple
+    each), once each, in order: what `_load_own` tries after the accepted ones, so that an
+    error can still say what a file holds."""
+    classes = list(refused)
+    for group, _ in hints:
+        classes.extend(group if isinstance(group, tuple) else (group,))
+    return tuple(dict.fromkeys(classes))
+
+
+def _load_own(path: str, accepted: tuple, method: str, slot: str, others: tuple = ()):
+    """A cgmath file (``.npz`` / ``.json`` / ``.pkl``) as the first class of `accepted` that
+    builds from it: a cgmath file names no class, and a class whose fields the file does not
+    hold refuses it (the ValueError or TypeError of its ``from_dict``). `accepted` goes from
+    the most specific class down (a ``ClipData`` before its ``HierarchyData``, which would build
+    from a clip's file and drop its frames). Then `others`, the slot's refused and hinted
+    classes, quietly, so that `read`'s error names what the file holds (a UV file in the mesh's
+    slot). None fits: a TypeError naming the file, what `slot` takes and the first refusal."""
+    reason = None
+    for cls in accepted:
+        try:
+            return cls.load(path)
+        except (TypeError, ValueError) as error:
+            reason = reason or f"{cls.__name__}.load: {error}"
+    for cls in others:
+        with contextlib.suppress(TypeError, ValueError), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return cls.load(path)
+    names = " or a ".join(cls.__name__ for cls in accepted)
+    raise TypeError(f"{method}: {slot}: {path!r} holds no {names} ({reason})")
 
 
 def check_save_path(path, method: str) -> str:

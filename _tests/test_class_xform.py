@@ -241,21 +241,20 @@ class TestXformNodes(MayaTestCase):
         self.assertEqual(self._dag_paths(), expected)
 
     def test_hierarchy_duplicate_short_names_shapes(self):
-        # locators and space transforms are created by their own commands
-        for node_type in ("locator", "space_transform"):
-            self.new_scene()
-            root  = Node.create("transform", name="root")
-            child = Node.create("transform", name="child", parent=root)
-            Node.create("transform", name="child", parent=child)
+        # a locator's transform is created by its own command
+        self.new_scene()
+        root  = Node.create("transform", name="root")
+        child = Node.create("transform", name="child", parent=root)
+        Node.create("transform", name="child", parent=child)
 
-            expected  = self._dag_paths()
-            hierarchy = root.serialize_hierarchy()
+        expected  = self._dag_paths()
+        hierarchy = root.serialize_hierarchy()
 
-            hierarchy[2].node_type = node_type
+        hierarchy[2].node_type = "locator"
 
-            self.new_scene()
-            Transform.create_hierarchy(hierarchy)
-            self.assertEqual(self._dag_paths(), expected)
+        self.new_scene()
+        Transform.create_hierarchy(hierarchy)
+        self.assertEqual(self._dag_paths(), expected)
 
     def test_hierarchy_locator_round_trip(self):
         # a transform holding a locator shape serializes as a "locator"

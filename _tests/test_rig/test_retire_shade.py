@@ -233,12 +233,12 @@ class TestCreatePositionalName(MayaTestCase):
         self.assertNamed(
             lambda: NurbsCurve.create("c"),
             "NurbsCurve.create('c'): the name is a keyword: NurbsCurve.create(points, name='c') "
-            "makes one; a positional argument is the points or BSplineData a curve is built from",
+            "makes one; a positional argument is the points or NurbsCurveData a curve is built from",
         )
         self.assertNamed(
             lambda: NurbsSurface.create("s"),
             "NurbsSurface.create('s'): the name is a keyword: NurbsSurface.create(data, name='s') "
-            "makes one; a positional argument is the BSplinePatchData a surface is built from",
+            "makes one; a positional argument is the NurbsSurfaceData a surface is built from",
         )
         self.assertNamed(
             lambda: AnimCurveTL.create("k"),
@@ -289,12 +289,12 @@ class TestRetireShadeReview(MayaTestCase):
         self.assertNamed(
             lambda: NurbsCurve.create("c.json"),
             "NurbsCurve.create('c.json'): a file is read by NurbsCurve.load('c.json'); a "
-            "positional argument is the points or BSplineData a curve is built from",
+            "positional argument is the points or NurbsCurveData a curve is built from",
         )
         self.assertNamed(
             lambda: NurbsSurface.create("p.json"),
             "NurbsSurface.create('p.json'): a file is read by NurbsSurface.load('p.json'); a "
-            "positional argument is the BSplinePatchData a surface is built from",
+            "positional argument is the NurbsSurfaceData a surface is built from",
         )
 
     def test_material_names_the_given_type(self):

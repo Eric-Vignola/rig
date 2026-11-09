@@ -50,8 +50,8 @@ OPEN     = OpenMaya.MFnNurbsSurface.kOpen
 PERIODIC = OpenMaya.MFnNurbsSurface.kPeriodic
 
 # the B-spline data of the installed cgmath holds the new fields
-NEW_FIELDS = _has_fields("BSplineData", CURVE_FIELDS) and _has_fields("BSplinePatchData", PATCH_FIELDS)
-NO_FIELDS  = "this cgmath's BSplineData / BSplinePatchData hold no name, matrix or knots_u / knots_v (3.0.1)"
+NEW_FIELDS = _has_fields("NurbsCurveData", CURVE_FIELDS) and _has_fields("NurbsSurfaceData", PATCH_FIELDS)
+NO_FIELDS  = "this cgmath's NurbsCurveData / NurbsSurfaceData hold no name, matrix or knots_u / knots_v (3.0.1)"
 
 # the user's cylinder.ma, testShape: periodic of degree 3 in U, degree 1 in V with these knots
 CYLINDER_V_KNOTS = (0.0, 0.554097093776086, 1.554097093776086, 2.1081941875531793)
@@ -428,7 +428,7 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
         np.testing.assert_array_equal(_local(target), before)
         # re-pinned (user decision 2026-10-30, test_class_shape_decisions): data that holds no knots
         # (an older cgmath's) on a surface uneven at degree 3 is refused too, the same words
-        with _older_cgmath("BSplinePatchData", PATCH_FIELDS):
+        with _older_cgmath("NurbsSurfaceData", PATCH_FIELDS):
             data = source.serialize()
         with self.assertRaisesRegex(ValueError, refusal):
             target.load(data)
@@ -462,18 +462,18 @@ class TestTheDroppedKnotsWarning(_Case):
 
     def test_a_surface_names_each_direction(self):
         parent = cmds.createNode("transform", name="grp")
-        lines, _ = self.warnings("BSplinePatchData", PATCH_FIELDS, _uneven(parent))
+        lines, _ = self.warnings("NurbsSurfaceData", PATCH_FIELDS, _uneven(parent))
         self.assertEqual(lines, [
-            "srfShape: this cgmath's BSplinePatchData takes no knots, so the surface's uneven knots are dropped: "
+            "srfShape: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: "
             "in U, of degree 3, it comes back another shape; in V, of degree 1, it keeps its shape and is only "
             "reparametrized"
         ])
 
     def test_a_degree_1_direction_keeps_its_shape(self):
         cylinder = _cylinder(cmds.createNode("transform", name="grp"))
-        lines, data = self.warnings("BSplinePatchData", PATCH_FIELDS, cylinder)
+        lines, data = self.warnings("NurbsSurfaceData", PATCH_FIELDS, cylinder)
         self.assertEqual(lines, [
-            "cylShape: this cgmath's BSplinePatchData takes no knots, so the surface's uneven knots are dropped: "
+            "cylShape: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: "
             "in V, of degree 1, it keeps its shape and is only reparametrized"
         ])
         # the rebuilt surface (evenly spaced knots) is the cylinder reparametrized: span by span in
@@ -491,9 +491,9 @@ class TestTheDroppedKnotsWarning(_Case):
 
     def test_a_degree_3_direction_comes_back_another_shape(self):
         shape = _uneven(cmds.createNode("transform", name="grp"), knots_v=(0, 1, 2))
-        lines, data = self.warnings("BSplinePatchData", PATCH_FIELDS, shape)
+        lines, data = self.warnings("NurbsSurfaceData", PATCH_FIELDS, shape)
         self.assertEqual(lines, [
-            "srfShape: this cgmath's BSplinePatchData takes no knots, so the surface's uneven knots are dropped: "
+            "srfShape: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: "
             "in U, of degree 3, it comes back another shape"
         ])
         made   = NurbsSurface.create(data).get_fn_set()
@@ -503,7 +503,7 @@ class TestTheDroppedKnotsWarning(_Case):
         self.assertGreater(max(gaps), 1e-3)
 
     def test_a_curve_names_its_degree(self):
-        # a cgmath whose BSplineData takes no knots (1.0.4's)
+        # a cgmath whose NurbsCurveData takes no knots (1.0.4's)
         for degree, text in (
             (1, "of degree 1, it keeps its shape and is only reparametrized"),
             (3, "of degree 3, it comes back another shape"),
@@ -513,9 +513,9 @@ class TestTheDroppedKnotsWarning(_Case):
                 knots  = [0, 1, 4, 5, 9] if degree == 1 else [0, 0, 0, 1, 5, 5, 5]
                 curve  = cmds.curve(point=points, degree=degree, knot=knots, name=f"uneven{degree}")
                 shape  = cmds.listRelatives(curve, shapes=True, fullPath=True)[0]
-                lines, _ = self.warnings("BSplineData", ("knots",) + CURVE_FIELDS, shape)
+                lines, _ = self.warnings("NurbsCurveData", ("knots",) + CURVE_FIELDS, shape)
                 self.assertEqual(lines, [
-                    f"{cmds.ls(shape)[0]}: this cgmath's BSplineData takes no knots, so the curve's uneven knots "
+                    f"{cmds.ls(shape)[0]}: this cgmath's NurbsCurveData takes no knots, so the curve's uneven knots "
                     f"are dropped: {text}"
                 ])
 

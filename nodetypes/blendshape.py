@@ -62,9 +62,8 @@ _BLENDSHAPE_LOAD_DOC = """Loads blendShape targets from a cgmath file (a MorphLi
 
     The file is read, and what it holds checked, before anything is made or
     changed: a missing file is a FileNotFoundError, a file of another class a
-    TypeError naming what it holds, a file from an older cgmath cgmath's
-    LegacyFileError, a morph with no name, or with a new target's name Maya
-    refuses (`set_target_data`), a ValueError. A MorphData holds a target's
+    TypeError naming what it holds; a morph with no name, or with a new
+    target's name Maya refuses (`set_target_data`), a ValueError. A MorphData holds a target's
     sparse offsets and its name only: the weights come back 0, and in-betweens
     are not carried.
 

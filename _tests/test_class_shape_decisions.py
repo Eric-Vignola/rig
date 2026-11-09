@@ -80,7 +80,7 @@ ATOL = {Mesh: 1e-5, NurbsCurve: 1e-9, NurbsSurface: 1e-9}
 
 def _quiet_serialize(shape):
     """What `shape`'s serialize gives on a cgmath without the new fields, its warning unsaid."""
-    fields = {NurbsCurve: ("BSplineData", CURVE_FIELDS), NurbsSurface: ("BSplinePatchData", PATCH_FIELDS)}
+    fields = {NurbsCurve: ("NurbsCurveData", CURVE_FIELDS), NurbsSurface: ("NurbsSurfaceData", PATCH_FIELDS)}
     with _older_cgmath(*fields[type(shape)]), mock.patch("rig.nodetypes.nurbs.LOGGER"):
         return shape.serialize()
 
@@ -148,7 +148,7 @@ class TestQ1ASurfaceUpdateOfDataWithoutKnots(_Case):
         cvs = [cv for row in grid for cv in row]
         return NurbsSurface(_surface(name, cvs, knots_u, knots_v, degrees, forms, cmds.createNode("transform")))
 
-    def refused(self, surface, src="the BSplinePatchData", data=None):
+    def refused(self, surface, src="the NurbsSurfaceData", data=None):
         fn   = surface.get_fn_set()
         size = f"{fn.numCVsInU} x {fn.numCVsInV}"
         return self.assert_nothing_made(

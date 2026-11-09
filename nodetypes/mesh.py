@@ -94,8 +94,7 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
     Every file is read, and what it holds checked, before anything is made or
     changed: a missing file is a FileNotFoundError, a file of another class (a
-    UV file as the mesh, two files swapped) a TypeError naming what it holds,
-    a file from an older cgmath cgmath's LegacyFileError.
+    UV file as the mesh, two files swapped) a TypeError naming what it holds.
 
     Creating is ``create`` with the data: its normals bring back the hard edges
     and locked normals. Updating needs the same topology (the vertex count, the

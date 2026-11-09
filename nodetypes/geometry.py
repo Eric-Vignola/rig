@@ -152,7 +152,7 @@ def _shape_create_name(name: str | None) -> str | None:
 
 def _data_matrix(shape, world_space: bool) -> np.ndarray:
     """The ``matrix`` a shape's `serialize` writes (a MeshData's, and a cgmath
-    BSplineData's or BSplinePatchData's that has the field), ``(4, 4)``: the
+    NurbsCurveData's or NurbsSurfaceData's that has the field), ``(4, 4)``: the
     identity for world-space points, else the world matrix of the transform
     the object-space points are relative to, read through the shape's path,
     as the points are (no ``getAttr``): its ``worldMatrix[0]``, unless the

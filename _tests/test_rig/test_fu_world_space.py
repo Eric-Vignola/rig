@@ -1,7 +1,7 @@
 """Follow-up of the features run (the user's decision 2 of 2026-10-16): the instance forms
 ``NurbsCurve('x').load(...)`` and ``NurbsSurface('x').load(...)`` REQUIRE ``world_space=``.
 
-A BSplineData / BSplinePatchData holds no space: a file saved with ``world_space=False``
+A NurbsCurveData / NurbsSurfaceData holds no space: a file saved with ``world_space=False``
 and loaded with the old default (True) put its object-space CVs in the world, moved by the
 transform, silently. A load without ``world_space=``, or with anything but a bool, is now a
 TypeError naming the argument, raised before the file is read (nothing read, nothing
@@ -14,7 +14,7 @@ guards.
 Re-pinned for the user's decision of 2026-10-29 (one space rule: local / object space by
 default everywhere, world space by ``world_space=True`` alone, by keyword): the updates in
 place take ``world_space=False`` by default, as ``Mesh('x').load`` does, and save writes object
-space by default, so a default save and a default load pair up (and a BSplineData holds its
+space by default, so a default save and a default load pair up (and a NurbsCurveData holds its
 matrix, as a MeshData does, on the cgmath that adds it). The required keyword is gone; its bool
 check stays (anything but a bool is a TypeError, before the file is read): the tests pin the
 default, the keyword, the check and each space's round trip.
@@ -51,7 +51,7 @@ class _SpaceCase(_Case):
 
     def cases(self):
         """``[(class, shape, data class name)]``."""
-        return [(NurbsCurve, self.curve(), "BSplineData"), (NurbsSurface, self.surface(), "BSplinePatchData")]
+        return [(NurbsCurve, self.curve(), "NurbsCurveData"), (NurbsSurface, self.surface(), "NurbsSurfaceData")]
 
     def every_cv(self, cls, shape):
         return f"{shape}.cv[*]" if cls is NurbsCurve else f"{shape}.cv[*][*]"

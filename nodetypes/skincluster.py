@@ -63,9 +63,8 @@ _SKIN_LOAD_DOC = """Loads skin weights from a cgmath file (a SkinData): one name
 
     The file is read, and what it holds checked, before anything is made or
     changed: a missing file is a FileNotFoundError, a file of another class a
-    TypeError naming what it holds, a file from an older cgmath cgmath's
-    LegacyFileError; weights that do not fit the points, and a missing or
-    ambiguous joint, raise before any edit too. A SkinData holds the weights
+    TypeError naming what it holds; weights that do not fit the points, and a
+    missing or ambiguous joint, raise before any edit too. A SkinData holds the weights
     and the influences only: a new skin binds at the joints' current pose,
     with Maya's default settings (pass them again).
 

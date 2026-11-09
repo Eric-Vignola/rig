@@ -223,7 +223,7 @@ class TestNodeCreateTypedDispatch(_SceneCase):
 
     def test_a_node_that_takes_no_input_takes_no_positional_argument(self):
         # re-pinned (round features s7, F4): a nurbsSurface is built from its data now
-        # (NurbsSurface.create(data)): a str is refused as no BSplinePatchData, nothing made
+        # (NurbsSurface.create(data)): a str is refused as no NurbsSurfaceData, nothing made
         before = set(cmds.ls(long=True))
         for node_type in ("transform", "joint", "choice", "multiplyDivide"):
             with self.subTest(node_type=node_type):
@@ -234,7 +234,7 @@ class TestNodeCreateTypedDispatch(_SceneCase):
             # re-pinned (user decision 2026-10-22, "create() call shape"): the refusal says what to write
             with self.assertRaisesRegex(TypeError, r"^NurbsSurface\.create\('grp'\): the name is a keyword: "
                                                    r"NurbsSurface\.create\(data, name='grp'\) makes one; a positional "
-                                                   r"argument is the BSplinePatchData a surface is built from$"):
+                                                   r"argument is the NurbsSurfaceData a surface is built from$"):
                 Node.create("nurbsSurface", "grp")
             self.assertEqual(set(cmds.ls(long=True)), before)
 

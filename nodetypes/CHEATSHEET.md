@@ -1231,8 +1231,8 @@ Both are `Geometry`, so the tag methods above apply; their class data
 cmds.file(new=True, force=True)
 crv = Node(cmds.curve(point=[(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0)], name="crv")).get_shape()
 print(repr(crv), crv.get_cv_count(), crv.get_weight_point_count(), np.array(crv.get_points())[1, :3])   # NurbsCurve("curveShape1") 5 5 [1. 0. 0.]
-spline = crv.serialize()                                          # cgmath BSplineData
-print(type(spline).__name__, spline.points.shape, spline.degree, spline.periodic)  # BSplineData (5, 3) 3 False
+spline = crv.serialize()                                          # cgmath NurbsCurveData
+print(type(spline).__name__, spline.points.shape, spline.degree, spline.periodic)  # NurbsCurveData (5, 3) 3 False
 print(crv.cv, len(crv.cv[:]), crv.cv[[0, 2]])                                      # curveShape1.controlPoints 5 List([Plug("curveShape1.controlPoints[0]"), Plug("curveShape1.controlPoints[2]")])
 
 crv.add_tag("root")
@@ -1241,8 +1241,8 @@ print(crv.get_tag_contents("root"))                                             
 
 ball = Node(cmds.sphere(name="ball")[0]).get_shape()
 print(repr(ball), ball.get_cv_count(), ball.get_weight_point_count())   # NurbsSurface("ballShape") 77 56 -- periodic in V: 3 wrapped rows per column
-patch = ball.serialize()                                          # cgmath BSplinePatchData, wrapped CVs trimmed
-print(type(patch).__name__, patch.points.shape, patch.periodic_u, patch.periodic_v)  # BSplinePatchData (7, 8, 3) False True
+patch = ball.serialize()                                          # cgmath NurbsSurfaceData, wrapped CVs trimmed
+print(type(patch).__name__, patch.points.shape, patch.periodic_u, patch.periodic_v)  # NurbsSurfaceData (7, 8, 3) False True
 
 ball.add_tag("rim")
 ball.set_tag_contents("rim", np.array([[1, 0], [1, 1]]))
@@ -1252,14 +1252,14 @@ print(ball.get_tag_component_indices("rim").shape)                              
 
 `NurbsCurve.create` builds a curve from its control points, with a degree
 (3 unless given) and knots in Maya's layout (the ones `cmds.curve` gives
-when left out), or from a `cgmath` `BSplineData`, whose points, degree,
+when left out), or from a `cgmath` `NurbsCurveData`, whose points, degree,
 knots and form it takes (`uniform` and `registered` have no Maya
 equivalent). Like `Mesh.create` it is one undo step and leaves the
 selection alone; the points are stored as given, in Maya's internal unit
 (`cmds.curve` reads them in the scene's linear unit). `serialize` is its
 inverse: a periodic curve's own points (Maya's repeated CVs left out), and
 its knots when they are not Maya's default ones and the installed `cgmath`'s
-`BSplineData` takes them (as they are: the same curve over the same
+`NurbsCurveData` takes them (as they are: the same curve over the same
 parameter range):
 
 ```python
@@ -1268,11 +1268,11 @@ arc = NurbsCurve.create(points, name="arc")                                     
 print(repr(arc), arc.get_parent(), arc.get_fn_set().degree, list(arc.get_fn_set().knots()))   # NurbsCurve("arcShape") arc 3 [0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0]
 zig = NurbsCurve.create(points, degree=1, kv=[0, 1, 2, 4, 8], name="zig")         # a degree and knots of your own
 print(zig.get_fn_set().degree, list(zig.get_fn_set().knots()))                          # 1 [0.0, 1.0, 2.0, 4.0, 8.0]
-twin = NurbsCurve.create(crv.serialize(), name="twin")                            # from a BSplineData
+twin = NurbsCurve.create(crv.serialize(), name="twin")                            # from a NurbsCurveData
 print(repr(twin), twin.get_cv_count(), twin.get_fn_set().degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
 ```
 
-`NurbsSurface.create` builds a surface from a `BSplinePatchData`: its points,
+`NurbsSurface.create` builds a surface from a `NurbsSurfaceData`: its points,
 degrees, forms (a `kClosed` direction serializes open, keeping its CVs) and
 knots, `knots_u` / `knots_v` (`serialize` writes Maya's when they are not its
 default ones). As a `MeshData` does, the data of both classes holds the
@@ -1312,7 +1312,7 @@ print(repr(patch), patch.get_cv_count())                          # NurbsSurface
 try:
     NurbsSurface.load(saved)                                     # a curve's file
 except TypeError as e:
-    print(str(e).split(" holds ")[1])                            # a BSplineData; the surface is a BSplinePatchData
+    print(str(e).split(" holds ")[1])                            # a NurbsCurveData; the surface is a NurbsSurfaceData
 ```
 
 Both classes take `transform=` and `world_space=`, on `create` and on the
