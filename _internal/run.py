@@ -62,6 +62,7 @@ import sysconfig
 import textwrap
 import threading
 import types
+import weakref
 
 from rig._internal.container import get_options, set_options
 from rig._internal.undo import undo_chunk
@@ -82,6 +83,7 @@ _STAMPS    = {}                     # path -> (mtime_ns, size) when first seen
 _SEEN      = set()                  # session module names already stamped
 _IMPORTER  = threading.local()      # .shared: code of a shared= package is importing, on this thread
 _REACHED   = [False]                # an import went through rig's hook (the trial of _wrapped_around_ours)
+_SOURCES   = {}                     # <rig.exec digest> -> live Runs of that code (linecache keeps its lines)
 _PASS, _SWAP = object(), object()
 _original_import        = builtins.__import__
 _original_import_module = importlib.import_module
@@ -143,7 +145,8 @@ def exec(source, inputs=None, *, argv=(), shared=()):
     ``inputs``, ``argv`` and ``shared`` are :func:`run`'s, and so is what comes back: a :class:`Run`
     (``result["name"]``, ``result.call``), with ``result.source`` the code that ran (dedented),
     ``result.path`` None and ``result.paths`` empty. A traceback names the code
-    ``<rig.exec 1a2b3c4d>`` (its digest) and shows its lines. The run is one undo step, named
+    ``<rig.exec 1a2b3c4d>`` (its digest) and shows its lines, as long as a Run of that code lives
+    (the error's ``rig_run``, a callback the code made). The run is one undo step, named
     ``rig.exec`` and the code's first line (40 characters at most). An error (a SyntaxError too)
     propagates with ``err.rig_run``, the run so far; ``sys.exit()`` ends the code: normally with 0
     or None, else as :class:`RunExitError` carrying ``.code``.
@@ -337,7 +340,7 @@ def _run_files(result, names, argv):
         if path is None:
             sys.argv, who = ["-c", *argv], "rig.exec: the code"
             scope.update(__name__="__main__", __doc__=None, __loader__=None, __package__="", __spec__=None)
-            code = _code_of_source(result.source)
+            code = _code_of_source(result.source, result)
         else:
             sys.argv, who = [path, *argv], f"rig.run: {os.path.basename(path)}"
             scope.update(__name__="__main__", __file__=path, __cached__=None, __doc__=None, __loader__=None,
@@ -365,15 +368,33 @@ def _code_of(path):
     return code
 
 
-def _code_of_source(source):
+def _source_name(source):
+    """The name a rig.exec's code is compiled under, ``<rig.exec 1a2b3c4d>``: the code's digest."""
+    return f"<rig.exec {hashlib.blake2b(source.encode('utf-8', 'surrogatepass'), digest_size=4).hexdigest()}>"
+
+
+def _code_of_source(source, run):
     """The code of a rig.exec, compiled as ``python -c`` compiles it, without this module's
-    ``__future__`` flags, under a name its tracebacks show the lines of: ``<rig.exec 1a2b3c4d>``,
-    the code's digest (linecache keeps an entry with no mtime as it is)."""
-    digest = hashlib.blake2b(source.encode("utf-8", "surrogatepass"), digest_size=4).hexdigest()
-    name   = f"<rig.exec {digest}>"
+    ``__future__`` flags, under a name its tracebacks show the lines of (:func:`_source_name`).
+    linecache keeps the lines (an entry with no mtime, which ``checkcache`` leaves as it is) as long
+    as a Run of that code lives: ``run`` is counted in here, and out when it goes."""
+    name = _source_name(source)
 
     linecache.cache[name] = (len(source), None, source.splitlines(True), name)
+    _SOURCES[name]        = _SOURCES.get(name, 0) + 1
+    finalizer             = weakref.finalize(run, _drop_source, name)
+    finalizer.atexit      = False                            # nothing to do at interpreter exit
     return compile(source, name, "exec", dont_inherit=True)
+
+
+def _drop_source(name):
+    """One Run of the code ``name`` is gone: its lines go once no Run of that code is left."""
+    left = _SOURCES.get(name, 0) - 1
+    if left > 0:
+        _SOURCES[name] = left
+        return
+    _SOURCES.pop(name, None)
+    linecache.cache.pop(name, None)
 
 
 # ---------------------------------------------------------------------------

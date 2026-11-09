@@ -4228,7 +4228,7 @@ print(both_sides()["names"])                     # ['L_arm_CTL', 'R_arm_CTL']
 | `inputs`, `argv=`, `shared=` | as `rig.run`'s: `inputs` is copied in once, a module is skipped, and a dunder name (`globals()` as it is) raises `ValueError` |
 | what it returns | a `Run`: `result["name"]`, `result.call(...)`; `result.source` is the code that ran (dedented), `result.path` is `None` and `result.paths` is `()` |
 | undo | one step, `rig.exec` and the code's first line, 40 characters at most: `rig.exec import armkit; name = armkit.build('L')` |
-| errors | propagate with `err.rig_run`; a traceback names the code `<rig.exec 1a2b3c4d>` (its digest) and shows its line; `sys.exit(3)` raises `rig.RunExitError`: `rig.exec: the code called sys.exit(3)` |
+| errors | propagate with `err.rig_run`; a traceback names the code `<rig.exec 1a2b3c4d>` (its digest) and shows its line, as long as a `Run` of that code lives (the error's `rig_run`, a callback the code made); `sys.exit(3)` raises `rig.RunExitError`: `rig.exec: the code called sys.exit(3)` |
 | `from rig import *` | leaves `exec` out (it is not in `__all__`), so a bare `exec` stays Python's: write `rig.exec` |
 
 What is shared and never executed again, what comes back after a run, and

@@ -1437,6 +1437,29 @@ class TestExec(_Tree):
         self.assertIs(result["NODE"], rig.Node)
         self.assertEqual((result.shared["rig"], result.shared["cgmath"]), ("rig", "rig"))
 
+    def test_19_the_lines_live_as_long_as_a_run_of_the_code(self):
+        source = "A = 1\nB = A + 1\n"
+        name   = run_module._source_name(source)
+        first, _  = _exec(source)
+        second, _ = _exec(source)
+        gc.collect()
+        self.assertEqual(linecache.getline(name, 2), "B = A + 1\n")
+        del first
+        gc.collect()
+        self.assertEqual(linecache.getline(name, 2), "B = A + 1\n")  # the second run still lives
+        del second
+        gc.collect()
+        self.assertNotIn(name, linecache.cache)
+        self.assertNotIn(name, run_module._SOURCES)
+
+    def test_20_many_strings_leave_no_entries_behind(self):
+        entries = lambda: {name for name in linecache.cache if name.startswith("<rig.exec ")}
+        before  = entries()
+        for i in range(50):
+            _exec(f"X = {i}")
+        gc.collect()
+        self.assertEqual(entries() - before, set())
+
 
 class TestWeakRegistries(unittest.TestCase):
     """The memo registries hold their members weakly: a memoized function or a NodeOp that
