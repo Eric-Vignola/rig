@@ -805,6 +805,28 @@ class TestProbes(_Tree):
         self.assertEqual((nofunc["A"], run_module._MARK in nofunc), (1, False))
 
     # exit() / quit() close sys.stdin before raising SystemExit: the session gets an open stdin back
+    def test_call_shows_the_runs_main_too(self):
+        result = self.run_("mainclass", """
+            import pickle, sys
+
+            class Thing:
+                pass
+
+            def roundtrip():
+                return pickle.loads(pickle.dumps(Thing()))
+
+            def main_now():
+                return sys.modules["__main__"]
+        """)
+        main = sys.modules["__main__"]
+        with self.assertRaises(pickle.PicklingError):        # outside: Maya's __main__ has no Thing
+            pickle.dumps(result["Thing"]())
+        self.assertIsInstance(result.call("roundtrip"), result["Thing"])
+        self.assertIs(result.call("main_now").__dict__, result._globals)
+        data = result.call(pickle.dumps, result["Thing"]())
+        self.assertIsInstance(result.call(pickle.loads, data), result["Thing"])
+        self.assertIs(sys.modules["__main__"], main)
+
     def test_exit_keeps_stdin_open(self):
         read_fd, write_fd = os.pipe()
         stdin = open(read_fd, "r", encoding="utf-8", closefd=False)

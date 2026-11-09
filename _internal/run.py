@@ -72,7 +72,7 @@ _STDLIB    = frozenset(getattr(sys, "stdlib_module_names", ())) | frozenset(sys.
 _SITE_DIRS = {"site-packages", "dist-packages"}
 _SOURCE    = importlib.machinery.SourceFileLoader
 _LOCK      = threading.RLock()
-_ACTIVE    = []                     # (run, hidden modules, saved sys.path) per view shown, innermost last
+_ACTIVE    = []                     # (run, hidden modules, saved sys.path, saved __main__) per view shown, innermost last
 _OWNER     = [None]                 # the thread showing them
 _MAIN      = threading.main_thread().ident
 _RIG_TOPS  = set()                  # rig and the dev packages its modules use: always shared
@@ -211,12 +211,13 @@ class Run(collections.abc.Mapping):
         self.path     = paths[0] if paths else None
         self.paths    = paths
         self.source   = source
-        self.owned    = set()  # top-level packages this run executes itself
-        self.shared   = {}     # top-level name -> why the session's copy is used
-        self.modules  = {}     # this run's modules, while no view shows them
+        self.owned    = set()                         # top-level packages this run executes itself
+        self.shared   = {}                            # top-level name -> why the session's copy is used
+        self.modules  = {}                            # this run's modules, while no view shows them
         self.sys_path = None
         self._extra   = shared
-        self._globals = {}     # the files' namespace (with _MARK, hidden here)
+        self._main    = types.ModuleType("__main__")  # the files' module: sys.modules["__main__"] while shown
+        self._globals = self._main.__dict__           # the files' namespace (with _MARK, hidden here)
 
     def __getitem__(self, key):
         if key == _MARK:
@@ -238,7 +239,7 @@ class Run(collections.abc.Mapping):
 
     @contextlib.contextmanager
     def active(self):
-        """Show this run's modules in ``sys.modules`` (and its ``sys.path``) for the duration."""
+        """Show this run's modules and its ``__main__`` in ``sys.modules`` (and its ``sys.path``) for the duration."""
         with _LOCK:                                          # never held while the caller's code runs
             entered = _may_swap() and not (_ACTIVE and _ACTIVE[-1][0] is self)
             if entered:
@@ -251,7 +252,8 @@ class Run(collections.abc.Mapping):
                     _leave()
 
     def call(self, func, *args, **kwargs):
-        """Call ``func`` (a name in the files' globals, or any callable) with this run's modules shown."""
+        """Call ``func`` (a name in the files' globals, or any callable) with this run's modules and its
+        ``__main__`` shown: ``pickle`` and ``typing.get_type_hints`` find a class the files defined."""
         if isinstance(func, str):
             func = self[func]
         with self.active():
@@ -324,40 +326,31 @@ def _strings(what, values, who="rig.run"):
 
 def _run_files(result, names, argv):
     """What :func:`runpy.run_path` does for a file, for each file in turn, in ONE namespace, or what
-    ``python -c`` does for the code of a :func:`exec`: the ``__dict__`` of one ``__main__`` module,
-    ``sys.modules["__main__"]`` for the whole run and put back after, as runpy does for one file.
-    ``sys.exit()`` ends the run in the file that calls it: normally with 0 or None, else as
-    :class:`RunExitError` naming that file (or the code)."""
-    main  = types.ModuleType("__main__")
-    saved = sys.modules.get("__main__")
-    scope = result._globals = main.__dict__
+    ``python -c`` does for the code of a :func:`exec`: the ``__dict__`` of the run's ``__main__`` module,
+    which :func:`_enter` shows as ``sys.modules["__main__"]`` (for the run, and again in :meth:`Run.call`)
+    and :func:`_leave` puts back. ``sys.exit()`` ends the run in the file that calls it: normally with 0
+    or None, else as :class:`RunExitError` naming that file (or the code)."""
+    scope = result._globals
     scope.update(names)
-    scope[_MARK]            = result
-    sys.modules["__main__"] = main
-    try:
-        for path in result.paths or (None,):                 # no path: the code of a rig.exec
-            if path is None:
-                sys.argv, who = ["-c", *argv], "rig.exec: the code"
-                scope.update(__name__="__main__", __doc__=None, __loader__=None, __package__="", __spec__=None)
-                code = _code_of_source(result.source)
-            else:
-                sys.argv, who = [path, *argv], f"rig.run: {os.path.basename(path)}"
-                scope.update(__name__="__main__", __file__=path, __cached__=None, __doc__=None, __loader__=None,
-                             __package__="", __spec__=None)
-                code = _code_of(path)
-            try:
-                builtins.exec(code, scope)                   # Python's: this module's exec is rig.exec
-            except SystemExit as err:
-                if err.code in (None, 0):
-                    return
-                exit_error      = RunExitError(f"{who} called sys.exit({err.code!r})")
-                exit_error.code = err.code
-                raise exit_error from err
-    finally:
-        if saved is None:
-            sys.modules.pop("__main__", None)
+    scope[_MARK] = result
+    for path in result.paths or (None,):                     # no path: the code of a rig.exec
+        if path is None:
+            sys.argv, who = ["-c", *argv], "rig.exec: the code"
+            scope.update(__name__="__main__", __doc__=None, __loader__=None, __package__="", __spec__=None)
+            code = _code_of_source(result.source)
         else:
-            sys.modules["__main__"] = saved
+            sys.argv, who = [path, *argv], f"rig.run: {os.path.basename(path)}"
+            scope.update(__name__="__main__", __file__=path, __cached__=None, __doc__=None, __loader__=None,
+                         __package__="", __spec__=None)
+            code = _code_of(path)
+        try:
+            builtins.exec(code, scope)                       # Python's: this module's exec is rig.exec
+        except SystemExit as err:
+            if err.code in (None, 0):
+                return
+            exit_error      = RunExitError(f"{who} called sys.exit({err.code!r})")
+            exit_error.code = err.code
+            raise exit_error from err
 
 
 def _code_of(path):
@@ -756,7 +749,10 @@ def _enter(run):
     for name in hidden:
         del sys.modules[name]
     sys.modules.update(run.modules)
-    _ACTIVE.append((run, hidden, sys.path[:]))
+    main = sys.modules.get("__main__")                       # the session's (or the outer run's): back at _leave
+    if getattr(run, "_main", None) is not None:              # a Run of another copy of this module may have none
+        sys.modules["__main__"] = run._main
+    _ACTIVE.append((run, hidden, sys.path[:], main))
     if run.sys_path is not None:
         sys.path[:] = run.sys_path
     if sys.meta_path[:1] != [_Finder]:
@@ -766,11 +762,15 @@ def _enter(run):
 
 
 def _leave():
-    run, hidden, path = _ACTIVE.pop()
+    run, hidden, path, main = _ACTIVE.pop()
     run.modules = _harvest(run)
     for name in run.modules:
         sys.modules.pop(name, None)
     sys.modules.update(hidden)
+    if main is None:
+        sys.modules.pop("__main__", None)
+    else:
+        sys.modules["__main__"] = main
     run.sys_path = sys.path[:]
     sys.path[:]  = path
     if not _ACTIVE:
