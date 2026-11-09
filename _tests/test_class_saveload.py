@@ -289,6 +289,28 @@ class TestFiles(_Case):
             self.assert_refused(ValueError, "^MeshData has no reader for dat files: ",
                                 lambda: Mesh.load(self.path("pkl_as.dat")))
 
+    def test_an_older_cgmath_is_refused_naming_the_pin(self):
+        """A cgmath whose shapes carry no parent_uuid (3.0.1, 3.2.0): the first data path says which
+        cgmath rig needs, before anything is read or made."""
+        import sys
+        import types
+
+        t     = _cube()
+        data  = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c").serialize()
+        older = types.ModuleType("cgmath.hierarchy")  # no ShapeData in it
+        pin   = (r" needs cgmath r17-skeleton at 4724c39 \(2026-11-09\) or later, whose shapes carry a "
+                 r"parent_uuid; this cgmath is ")
+        for label, call, head in (
+            ("serialize", lambda: Mesh(t).serialize(), r"^Mesh\.serialize"),
+            ("load", lambda: Mesh.load(self.path("none.npz")), r"^Mesh\.load"),
+            ("create", lambda: NurbsCurve.create(data, world_space=True), r"^NurbsCurve\.create\(\)"),
+        ):
+            with self.subTest(label), mock.patch.dict(sys.modules, {"cgmath.hierarchy": older}):
+                before = cmds.ls()
+                with self.assertRaisesRegex(ImportError, head + pin):
+                    call()
+                self.assertEqual(cmds.ls(), before)
+
 
 # ---------------------------------------------------------------------------------------------
 class TestMesh(_Case):

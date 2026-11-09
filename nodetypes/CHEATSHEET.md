@@ -518,7 +518,7 @@ mesh data). A shape's own geometry plug gives back the shape serialised,
 a consumer's plug gives the consumer serialised, a dangling output gives an
 OpenMaya fn set. The space is the plug's: `worldMesh[0]` / `worldSpace[0]`
 world space, every other plug (`outMesh`, `local`, a deformer's output)
-object space, with the transform's world matrix.
+object space, under the transform's UUID (the data's `parent_uuid`).
 
 ```python
 data, uv_list = mesh.outMesh.get()                             # a Mesh's outMesh -> (MeshData, UVList)
@@ -624,10 +624,9 @@ except TypeError as err:
 cmds.delete("twin", "bone")
 ```
 
-`create_hierarchy` rebuilds it (needs `cgmath` 1.0.1 or later, for
-`SUPPORTED_NODE_TYPES`) and returns the new nodes as a `List`, typed as
+`create_hierarchy` rebuilds it and returns the new nodes as a `List`, typed as
 `Transform.create` types its node (`Joint`, `Transform`; a locator's
-transform and a space_transform box are `Transform`s), parents first.
+transform is a `Transform`), parents first.
 One undo step. (`List(skeleton)`, without a create, is the nodes the data
 was serialized from, found by their uuids; in another scene, by their names,
 a name that names several nodes a `TypeError`.)
@@ -667,7 +666,7 @@ print(under[0].get_long_name(), under[0].t.get(), kept[0].t.get())      # |grp|r
 try:
     Joint.load_hierarchy(cube.get_shape().save(os.path.join(folder, "cube.npz")))   # a mesh's file
 except TypeError as e:
-    print(str(e).split(" holds ")[1])                         # a MeshData; the hierarchy is a HierarchyData
+    print(str(e).split(" holds ")[1])                         # a MeshData; the hierarchy is a ClipData or a HierarchyData
 ```
 
 A `ClipData` (a `HierarchyData` that holds many frames) is built **and keyed**,
@@ -994,13 +993,14 @@ To and from `cgmath.geometry.MeshData`; `Mesh.create` is undoable and puts
 the new shape in `initialShadingGroup`:
 
 ```python
-data, uv_list = mesh.serialize()                                 # object space (and its matrix), every UV set
+data, uv_list = mesh.serialize()                                 # object space, under cube's UUID; every UV set
 print(type(data).__name__, data.point_count, data.face_count, type(uv_list).__name__, uv_list[0].name)  # MeshData 8 6 UVList map1
-# moved: the points stay, the matrix moves; in world space the points move
+print(data.parent_uuid == cube.get_uuid(), data.uuid == mesh.get_uuid())  # True True -- the transform it sits under, and its own
+# moved: the points stay and the transform they sit under moves; in world space the points move and none is named
 cube.t.set(0, 2, 0)
 local, world = mesh.serialize(include_uvs=False), mesh.serialize(include_uvs=False, world_space=True)
-print(local.points[0], local.matrix[3, :3])  # [-0.5 -0.5  0.5] [0. 2. 0.]
-print(world.points[0], world.matrix[3, :3])  # [-0.5  1.5  0.5] [0. 0. 0.]
+print(local.points[0], local.parent_uuid == cube.get_uuid())  # [-0.5 -0.5  0.5] True
+print(world.points[0], world.parent_uuid)                      # [-0.5  1.5  0.5] None
 cube.t.set(0, 0, 0)
 
 rebuilt = Mesh.create(data, uv_data=uv_list, name="rebuilt")
@@ -1010,8 +1010,8 @@ print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))         
 ```
 
 `create` also takes a `cgmath.render.scene.Object`, for the mesh and its UVs:
-its `mesh`, its `uv` (a `UVData` is one set, a `UVList` every set), its name and
-its transform; its render settings are not used.
+its `mesh`, its `uv` (one UV set, a `UVData`), its name and its transform; its
+render settings are not used.
 
 ```python
 from cgmath.render.scene import Object
@@ -1029,7 +1029,7 @@ selection and the hilite list, and the UV sets and the shading come as they
 do without it. `world_space=` (a keyword, False by default) says how the
 data's points go there: False takes them as the shape's own (an `Object`'s
 transform is not used), True puts them where the data puts them in the world
-(through its matrix, an `Object`'s transform), in the transform's space. A
+(where it sits, an `Object`'s transform), in the transform's space. A
 singular target (a scale of 0) with True is a `ValueError`: no object points
 land there.
 
@@ -1055,11 +1055,15 @@ except ValueError as e:
     print(str(e).split(", so ")[0])  # Mesh.create(): 'flat' is singular (its world scale is (1, 1e-12, 1))
 ```
 
-Without `transform=`, the new transform takes the data's matrix by default.
-`world_space=True` freezes the shape at its world positions instead: the
-matrix goes in the points and the new transform sits at the origin with
-identity channels. `Mesh.load(path, world_space=True)` is the same from a file.
-A normal locks, through the matrix's inverse transpose, only where Maya computes
+Without `transform=`, the new transform goes where the data sits by default:
+where the transform its `parent_uuid` names is, in `hierarchy=` when given
+(a `HierarchyData`, or a `ClipData` at the frame it is on), else in the scene
+by its UUID; a transform the scene lacks, as a file from another scene names,
+sits at identity. `world_space=True` freezes the shape at its world positions
+instead: the placement goes in the points and the new transform sits at the
+origin with identity channels. `Mesh.load(path, world_space=True)` is the same
+from a file. A normal locks, through the placement's inverse transpose, only
+where Maya computes
 another one on the data's own points and on the moved points too: the source's
 locks. Every other one is Maya's own for the moved points, as `makeIdentity`
 leaves them. Through a mirror every normal locks, as under `transform=`, and so
@@ -1070,8 +1074,8 @@ the numbers).
 ```python
 Node(cmds.polyCube(name="box", ch=False)[0]).t.set(0, 10, 0)
 box_data, box_uvs = Mesh("box").serialize()
-copy_a = Mesh.create(box_data, box_uvs, name="copyA")                    # the matrix on the transform
-copy_b = Mesh.create(box_data, box_uvs, name="copyB", world_space=True)  # the matrix in the points
+copy_a = Mesh.create(box_data, box_uvs, name="copyA")                    # placed where box is
+copy_b = Mesh.create(box_data, box_uvs, name="copyB", world_space=True)  # the placement in the points
 print(copy_a.get_parent().t.get(), first(copy_a), first(copy_a, world_space=True))  # [ 0. 10.  0.] [-0.5 -0.5  0.5] [-0.5  9.5  0.5]
 print(copy_b.get_parent().t.get(), first(copy_b), first(copy_b, world_space=True))  # [0. 0. 0.] [-0.5  9.5  0.5] [-0.5  9.5  0.5]
 under = Mesh.create(box_data, box_uvs, transform=ctl, world_space=True)  # unchanged: where the box is, under ctl
@@ -1275,19 +1279,18 @@ print(repr(twin), twin.get_cv_count(), twin.get_fn_set().degree, np.array(twin.g
 `NurbsSurface.create` builds a surface from a `NurbsSurfaceData`: its points,
 degrees, forms (a `kClosed` direction serializes open, keeping its CVs) and
 knots, `knots_u` / `knots_v` (`serialize` writes Maya's when they are not its
-default ones). As a `MeshData` does, the data of both classes holds the
-shape's name and, in object space (the default), its transform's world
-matrix, which `create` puts on its new transform. A `cgmath` without those
-fields (3.0.1) holds neither: save in world space there to keep where the
-shape is, and a surface's knots come back evenly spaced, over `0..spans`
-(`serialize` warns when they were not: a degree-1 direction keeps its shape,
-only reparametrized, one of degree 2 or more comes back another shape). Both
-classes save and load `cgmath` files: from the class `load` creates, from a
-shape it updates the CVs in place (the same CV layout; a surface keeps its
-own knots, and takes data without knots only in a direction whose own are
-even, or of degree 1: uneven ones of degree 2 or more are refused, the CVs
-would make another shape), object space by default, or where the data's
-matrix puts them in the world with `world_space=True`, a keyword.
+default ones, as they are). As a `MeshData` does, the data of both classes is
+a `cgmath` shape: it holds the shape's `uuid` and, in object space (the
+default), the `parent_uuid` of the transform its points are relative to, no
+name and no matrix; `create` puts its new transform where that one is (in
+`hierarchy=`, else in the scene by its UUID, else at identity, as `cgmath`
+places a shape). Both classes save and load `cgmath` files: from the class
+`load` creates (named `curve<N>` / `surface<N>`, or `name=`), from a shape it
+updates the CVs in place (the same CV layout; a surface keeps its own knots,
+and takes data without knots only in a direction whose own are even, or of
+degree 1: uneven ones of degree 2 or more are refused, the CVs would make
+another shape), object space by default, or where the data sits in the world
+with `world_space=True`, a keyword.
 
 ```python
 import os
@@ -1318,8 +1321,8 @@ except TypeError as e:
 Both classes take `transform=` and `world_space=`, on `create` and on the
 class-form `load`, as `Mesh.create` does: a shape under a joint, more shapes
 under one control, and without `transform=`, `world_space=True` freezes the
-CVs at their world positions, the new transform at the origin (data without
-a matrix, a `cgmath` without the field, has nothing to freeze).
+CVs at their world positions, the new transform at the origin (data that
+names no transform, world-space data, has nothing to freeze).
 
 ```python
 hand = Joint.create(name="hand", t=(2, 0, 0), r=(0, 0, 45))
@@ -1330,7 +1333,7 @@ print(repr(ring), repr(tip), repr(pad), ring.get_parent())  # NurbsCurve("handSh
 ends = np.round([np.array(ring.get_points(world_space=True))[1, :3], np.array(tip.get_points())[1, :3]], 6)
 print(ends[0], ends[1])  # [1. 0. 0.] [1. 0. 0.] -- crv's second CV in the world; the file's own, moved with hand
 frozen = NurbsCurve.create(again.serialize(), name="frozen", world_space=True)  # again is at (0, 0, 5)
-print(frozen.get_parent().t.get())  # [0. 0. 0.] -- its CVs hold the matrix
+print(frozen.get_parent().t.get())  # [0. 0. 0.] -- its CVs hold where again is
 ```
 
 ---

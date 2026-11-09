@@ -158,6 +158,7 @@ def _data_ids(shape, world_space: bool) -> dict:
     instanced shape, the path's own instance), or None for world-space points, which sit at
     identity. cgmath places a shape by the transform its ``parent_uuid`` names
     (`_data_placement`); the data itself holds no matrix."""
+    _files.require_pinned_cgmath(f"{type(shape).__name__}.serialize")
     path = OpenMaya.MDagPath(type(shape).get_mdagpath(shape))
     ids  = {"uuid": OpenMaya.MFnDependencyNode(path.node()).uuid().asString(), "parent_uuid": None}
     if not world_space:
@@ -175,6 +176,7 @@ def _data_placement(method: str, data: Any, hierarchy: Any = None) -> np.ndarray
     the node of that UUID, under which data serialized and created in one scene sits as its
     source did, and the identity when the scene has none. A scene node that is instanced is a
     ValueError naming `method`: the points would have no one place in the world."""
+    _files.require_pinned_cgmath(method)
     parent = getattr(data, "parent_uuid", None)
     if parent is None:
         return np.eye(4)

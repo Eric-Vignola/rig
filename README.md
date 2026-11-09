@@ -632,9 +632,12 @@ print(cmds.listConnections("ctl.ty", source=True))   # ['ctl_parentConstraint1']
 
 Autodesk Maya (the suite runs on 2025; version-keyed dispatch builds the
 legacy networks on older releases), with numpy and scipy installed for
-mayapy, and cgmath 1.0.4 or later for the data paths (`serialize`, `save` /
-`load`, `create(data)`; imported lazily, so `rig` loads without it; the
-suite runs on cgmath 2.0.0 and 3.0.0).
+mayapy, and, for the data paths (`serialize`, `save` / `load`,
+`create(data)`), cgmath's `r17-skeleton` branch at `4724c39` (2026-11-09) or
+later: its shape model (a `ShapeData`'s `uuid` and `parent_uuid`, no matrix).
+cgmath is imported lazily, so `rig` loads without it; an older cgmath (3.0.1,
+3.2.0) raises `ImportError` naming that pin on the first data path. Each
+round of rig names here the cgmath commit it was verified on.
 
 ## Author
 

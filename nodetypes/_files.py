@@ -7,7 +7,9 @@ cgmath file names no class: a load builds it as the class the slot takes, the
 first of several whose fields the file holds (`read`). ``load`` also takes the
 assets the slot's cgmath class reads (``.obj``, ``.fbx``, ``.glb``, ``.usd``).
 rig checks what a file holds before anything is made, and a save path before
-anything is serialized.
+anything is serialized. The data paths need the cgmath rig is pinned to
+(`CGMATH_PIN`, `require_pinned_cgmath`): an older one is an ImportError that
+names it.
 
 `load` is one name with two forms (`creates_or_updates`): from the class it is
 the creator, ``Mesh.load(path)`` (a new node, as ``create`` makes one); from a
@@ -34,6 +36,25 @@ ASSET_TYPES = ("obj", "fbx", "glb", "gltf", "usd", "usda", "usdc", "usdz")
 # what ``world_space=`` says on a shape's create and its class-form load, for the TypeError of a
 # value that is no bool (`space_flag`)
 CREATING_SPACE = "where the data's points land: in the world, or as the shape's own"
+
+# the cgmath the data paths are written against: r17-skeleton's shape model, a ShapeData's uuid and
+# parent_uuid, no matrix (README.md's requirements and the CHEATSHEET name it too)
+CGMATH_PIN = "cgmath r17-skeleton at 4724c39 (2026-11-09)"
+
+
+def require_pinned_cgmath(method: str) -> None:
+    """The data paths need the cgmath rig is pinned to (`CGMATH_PIN`) or later: one whose shapes
+    are ``ShapeData`` (``uuid``, ``parent_uuid``). An older cgmath (3.0.1, 3.2.0) raises
+    ImportError naming `method`, the pin and the cgmath found, before anything is read or made."""
+    try:
+        from cgmath.hierarchy import ShapeData  # noqa: F401
+    except ImportError:
+        import cgmath
+
+        raise ImportError(
+            f"{method} needs {CGMATH_PIN} or later, whose shapes carry a parent_uuid; this cgmath is "
+            f"{getattr(cgmath, '__version__', '?')} at {os.path.dirname(cgmath.__file__)}"
+        ) from None
 
 
 def is_path(src) -> bool:
@@ -120,8 +141,10 @@ def read(
     file, what it holds and what `slot` takes, with the hint of `hints`
     (``((classes, text), ...)``) that fits what it holds. With `objects`, a
     ``cgmath.render.scene.Object`` is accepted too. A node or a plug is a
-    TypeError (a node is no file). A missing file is a FileNotFoundError.
+    TypeError (a node is no file). A missing file is a FileNotFoundError. An
+    older cgmath than the pin is an ImportError first (`require_pinned_cgmath`).
     Nothing is made."""
+    require_pinned_cgmath(method)
     if _is_node(src):
         raise TypeError(f"{method}: {slot} is a file (a path) or its data, not the node {_name_of(src)!r}")
     if is_path(src):
