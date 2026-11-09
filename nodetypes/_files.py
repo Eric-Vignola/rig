@@ -131,7 +131,7 @@ def read(
         if not os.path.isfile(path):
             raise FileNotFoundError(f"{method}: {slot}: no file {path!r}")
         if get_file_type(path) in OWN_TYPES:
-            data = _load_own(path, accepted, method, slot, _classes_of(refused, hints))
+            data = _load_own(path, accepted, method, slot, _classes_of(refused, hints), objects)
         else:
             data = accepted[0].load(path)  # an asset: the slot's own reader
         what = f"{path!r} holds a {type(data).__name__}"
@@ -159,23 +159,66 @@ def _classes_of(refused: tuple, hints: tuple) -> tuple:
     return tuple(dict.fromkeys(classes))
 
 
-def _load_own(path: str, accepted: tuple, method: str, slot: str, others: tuple = ()):
-    """A cgmath file (``.npz`` / ``.json`` / ``.pkl``) as the first class of `accepted` that
-    builds from it: a cgmath file names no class, and a class whose fields the file does not
-    hold refuses it (the ValueError or TypeError of its ``from_dict``). `accepted` goes from
+def _known() -> tuple:
+    """cgmath's own data classes, the strictest first, to name what a file holds when the slot's
+    classes refuse it: an ``Object`` (a mesh with its UVs and its transform) among them,
+    ``NurbsCurveData`` last, since it builds from any points."""
+    from cgmath.geometry import (
+        GeomSubsetData,
+        MapData,
+        MeshData,
+        MorphData,
+        MorphList,
+        NurbsCurveData,
+        NurbsSurfaceData,
+        SkinData,
+        UVData,
+        UVList,
+    )
+    from cgmath.hierarchy import ClipData, HierarchyData
+
+    return (
+        MeshData, _object_class(), SkinData, ClipData, HierarchyData, NurbsSurfaceData, UVList, UVData,
+        MorphList, MorphData, MapData, GeomSubsetData, NurbsCurveData,
+    )
+
+
+def _object_class():
+    """``cgmath.render.scene.Object``, imported here only (see `is_object`)."""
+    from cgmath.render.scene import Object
+
+    return Object
+
+
+def _load_own(path: str, accepted: tuple, method: str, slot: str, others: tuple = (), objects: bool = False):
+    """A cgmath file (``.npz`` / ``.json`` / ``.pkl``) as the first class of `accepted` whose fields
+    it holds: a cgmath file names no class, and a class the file does not fit refuses it (the
+    ValueError or TypeError of its ``from_dict``; here a key naming no field, which a load only
+    warns about, refuses the class too, so a mesh's file is no curve's). `accepted` goes from
     the most specific class down (a ``ClipData`` before its ``HierarchyData``, which would build
-    from a clip's file and drop its frames). Then `others`, the slot's refused and hinted
-    classes, quietly, so that `read`'s error names what the file holds (a UV file in the mesh's
-    slot). None fits: a TypeError naming the file, what `slot` takes and the first refusal."""
+    from a clip's file and drop its frames). None fits: the file is read as the ``Object`` class
+    (taken with `objects`), `others` (the slot's refused and hinted classes) and every class of
+    `_known`, as strictly and quietly, so that `read`'s error names what it holds (a UV file in
+    the mesh's slot). Still none: `accepted` again, a key naming no field allowed, as a file a
+    later cgmath wrote loads with its warning; else a TypeError naming the file, what `slot`
+    takes and the first refusal."""
     reason = None
     for cls in accepted:
         try:
-            return cls.load(path)
-        except (TypeError, ValueError) as error:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                return cls.load(path)
+        except (TypeError, ValueError, Warning) as error:
             reason = reason or f"{cls.__name__}.load: {error}"
-    for cls in others:
-        with contextlib.suppress(TypeError, ValueError), warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+    candidates = ([_object_class()] if objects else []) + list(others) + list(_known())
+    for cls in dict.fromkeys(candidates):
+        if cls in accepted:
+            continue
+        with contextlib.suppress(Exception), warnings.catch_warnings():
+            warnings.simplefilter("error")
+            return cls.load(path)
+    for cls in accepted:
+        with contextlib.suppress(TypeError, ValueError):
             return cls.load(path)
     names = " or a ".join(cls.__name__ for cls in accepted)
     raise TypeError(f"{method}: {slot}: {path!r} holds no {names} ({reason})")

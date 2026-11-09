@@ -29,7 +29,14 @@ from rig.nodetypes._base import _cast
 from rig.nodetypes._base import _old_handle_name, _scene_predicate
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _positional_name, DGNode
-from rig.nodetypes.geometry import Geometry, _data_matrix, _shape_create_name, deformed_refusal, iter_component_tokens
+from rig.nodetypes.geometry import (
+    Geometry,
+    _data_ids,
+    _data_placement,
+    _shape_create_name,
+    deformed_refusal,
+    iter_component_tokens,
+)
 from rig.nodetypes.geometry import _discard, _put_under, _shape_name, _shape_target, _target_space
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
@@ -40,15 +47,16 @@ from scipy.spatial import cKDTree
 _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
     ``Mesh.load(mesh, uvs=None, *, name=None, container=None, normals=True,
-    transform=None, world_space=False, **attrs)``, from the class, CREATES a new
-    mesh, always (as `create` does: a second load of one file makes ``body1``;
-    with ``transform=``, a new shape under that transform)::
+    transform=None, world_space=False, hierarchy=None, **attrs)``, from the
+    class, CREATES a new mesh, always (as `create` does: a second load of one
+    file makes ``body1``; with ``transform=``, a new shape under that
+    transform)::
 
         body = Mesh.load("body_mesh.npz", "body_uv.npz", name="body")
         Mesh.load("body_mesh.npz", transform="body_ctl", world_space=True)
 
-    ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=False, normals=True)``,
-    from a mesh, UPDATES that mesh in place, the inverse of
+    ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=False, normals=True,
+    hierarchy=None)``, from a mesh, UPDATES that mesh in place, the inverse of
     ``Mesh('bodyShape').save(...)``::
 
         Mesh("bodyShape").load("body_mesh.npz", "body_uv.npz")
@@ -73,9 +81,10 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             before the files are read). Updating: False (the default): the
             data's points become the mesh's own, object space (the inverse of
             ``save()``). True: the points land where the data puts them in
-            the world (through its matrix, or an Object's transform; the
-            inverse of ``save(world_space=True)`` too); the transform is not
-            moved. Creating (as `create` takes it): False, the data's points
+            the world (where it sits: under the transform its ``parent_uuid``
+            names, in ``hierarchy=`` or in the scene; or an Object's
+            transform; the inverse of ``save(world_space=True)`` too); the
+            transform is not moved. Creating (as `create` takes it): False, the data's points
             become the new shape's own; True, they land where the data puts
             them in the world: under ``transform=``, or else frozen there, the
             new transform at the origin. In both forms True locks a normal
@@ -88,6 +97,9 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             data's normals bring back the hard edges and locked normals.
             False: skipped, for speed: a new mesh is all smooth, an updated
             one keeps its own hard edges and locked normals.
+        hierarchy: (both forms) By keyword only, as `create` takes it: the
+            HierarchyData or ClipData holding the transform the data sits
+            under. None: the scene's node of that UUID, else the identity.
 
     Returns:
         The new Mesh (creating), or this Mesh (updating).
@@ -242,7 +254,7 @@ class Mesh(Geometry):
 
     # the keywords ``_create`` takes (the restore flags among them); ``create``'s
     # other keywords are the mesh's attributes
-    _CREATE_FLAGS = frozenset({"name", "uv_data", "transform", "world_space", *_RESTORE_FLAGS})
+    _CREATE_FLAGS = frozenset({"name", "uv_data", "transform", "world_space", "hierarchy", *_RESTORE_FLAGS})
 
     _DEFINE_REFUSED = (
         "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
@@ -273,15 +285,16 @@ class Mesh(Geometry):
         normals:     bool                     = True,
         transform:   OpenMaya.MDagPath | None = None,
         world_space: bool                     = False,
+        hierarchy:   Any                      = None,
         **kwargs,
     ) -> str:
         """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uv_data`
         (a list, or None), its shading when `normals`, its points taken in
-        `world_space` or not, and returns the transform's name; with `transform`
-        (the DAG path of the transform `create` checked), the shape alone under
-        it, and returns the shape's full path. `Mesh.create` wraps it in its
-        undo chunk; see there."""
-        return _create_mesh(mesh_data, name, uv_data, normals, transform, world_space)
+        `world_space` or not (placed through `hierarchy` when given), and
+        returns the transform's name; with `transform` (the DAG path of the
+        transform `create` checked), the shape alone under it, and returns the
+        shape's full path. `Mesh.create` wraps it in its undo chunk; see there."""
+        return _create_mesh(mesh_data, name, uv_data, normals, transform, world_space, hierarchy)
 
     @classmethod
     def create(
@@ -294,16 +307,18 @@ class Mesh(Geometry):
         normals:     bool                                     = True,
         transform:   str      | DAGNode | None                = None,
         world_space: bool                                     = False,
+        hierarchy:   Any                                      = None,
         **kwargs,
     ) -> "Mesh":
         """Creates a mesh object from a mesh data object.
 
         Args:
             mesh_data: A MeshData object: its points are the new shape's own,
-                and its matrix (the world matrix of the transform they are
-                relative to, `serialize`'s by default; the identity for
-                world-space points) goes on the new transform node, so the
-                mesh lands where the data puts it in the world. Or a
+                and the new transform goes where the data sits (the world
+                matrix of the transform its ``parent_uuid`` names, found in
+                ``hierarchy=`` or in the scene; the identity for world-space
+                data: `serialize` writes it), so the mesh lands where the data
+                puts it in the world. Or a
                 ``cgmath.render.scene.Object``, which stands for the mesh and
                 its UVs: the mesh is built from its ``mesh``, with its ``uv``
                 (a UVData is one UV set, a UVList every set), named after it,
@@ -335,14 +350,23 @@ class Mesh(Geometry):
                 made (see below). None, the default: a new transform.
             world_space: By keyword only, a bool (anything else is a
                 TypeError). False (the default): the data's points and normals
-                become the shape's own, as they are: a new transform takes its
-                matrix (an Object's transform), and ``transform=`` does not use
-                it. True: the points land where the data puts them in the
-                world, through its matrix (an Object's transform): taken into
+                become the shape's own, as they are: a new transform goes where
+                the data sits (an Object's transform), and ``transform=`` does
+                not use it. True: the points land where the data puts them in
+                the world (where it sits; an Object's transform): taken into
                 the space of ``transform=``, or without it frozen there, and
                 the normals follow (see below). Without ``transform=``,
-                world-space data, its matrix the identity, comes out the same
+                world-space data, which sits at identity, comes out the same
                 either way.
+            hierarchy: By keyword only: a HierarchyData or ClipData (at the
+                frame it is on) holding the transform the data's
+                ``parent_uuid`` names: where the data sits, by cgmath's rule
+                (the identity for a transform it lacks). None, the default:
+                the scene's node of that UUID, under which data serialized and
+                created in one scene sits as its source did, and the identity
+                when the scene has none (data from another scene: save it in
+                world space, or give its hierarchy). An instanced scene node
+                is a ValueError.
             kwargs: attributes of the mesh, checked by type before anything
                 is made and set once it exists (see `DGNode.create`).
 
@@ -381,12 +405,12 @@ class Mesh(Geometry):
         ``Mesh('jnt')`` reads transforms only (a NodeTypeError).
 
         **With** ``world_space=True`` and no ``transform=`` the mesh is frozen
-        at its world positions: the data's matrix (an Object's transform) goes
-        into the points, and the new transform stays at the origin with
+        at its world positions: where the data sits (an Object's transform)
+        goes into the points, and the new transform stays at the origin with
         identity channels (an Object's rotate order and a lone Object's
         visibility, which move nothing, still go on it), where
         ``world_space=False`` gives the same world positions from the shape's
-        own points under a transform at the matrix.
+        own points under a transform placed there.
 
         **Locked normals**: with ``world_space=True``, under ``transform=`` or
         frozen, as in ``Mesh('x').load(path, world_space=True)``, data holds
@@ -465,7 +489,7 @@ class Mesh(Geometry):
         with _undo_chunk("rig.Mesh.create"):
             return super().create(
                 mesh_data, uv_data=uv_data, name=name, container=container, normals=normals,
-                transform=transform, world_space=world_space, **kwargs
+                transform=transform, world_space=world_space, hierarchy=hierarchy, **kwargs
             )
 
     # --- mesh geometry data methods
@@ -995,13 +1019,17 @@ class Mesh(Geometry):
     ) -> MeshData | tuple[MeshData, UVList]:
         """Serialize this mesh, the inverse of `create`.
 
+        The data is a cgmath shape: it holds the shape's name, its ``uuid`` (the
+        shape node's) and the ``parent_uuid`` of the transform it sits under, no
+        matrix of its own; cgmath places it by that transform.
+
         Args:
             world_space: By keyword only. False (the default): the points and
-                normals in object space, and in ``matrix`` the world matrix of
-                the transform they are relative to (its ``worldMatrix[0]``;
-                for an instanced shape, the instance the points are read
-                through): `create` puts it on its new transform. True: in
-                world space, with the identity matrix.
+                normals in object space, and in ``parent_uuid`` the UUID of the
+                transform they are relative to (for an instanced shape, the
+                instance the points are read through): `create` places its new
+                transform where that one is. True: in world space, with no
+                ``parent_uuid``: the data sits at identity.
             include_uvs: By keyword only. If True, serialize all uv sets.
                 Otherwise skip them.
 
@@ -1027,6 +1055,7 @@ class Mesh(Geometry):
             normals        = np.asarray(normals),
             normal_indices = np.asarray(normal_ids),
             name           = type(self).get_short_name(self, namespace=False),
+            **_data_ids(self, world_space),
         )
 
         # extract hole data from faces with interior boundaries
@@ -1038,9 +1067,6 @@ class Mesh(Geometry):
             mesh_data.hole_indices = np.concatenate(
                 [np.asarray(hv) for hv in hole_verts]
             )
-
-        # record desired matrix
-        mesh_data.matrix = _data_matrix(self, world_space)
 
         if include_uvs:
             uv_list = UVList([self.serialize_uv(x) for x in type(self).get_uv_sets(self)])
@@ -1069,8 +1095,8 @@ class Mesh(Geometry):
             uvs: The UVs' file (same rules), another path than `path`. None:
                 the UVs are not saved (a MeshData holds none).
             world_space: By keyword only. False (the default): object-space
-                points and the transform's world matrix; True: world-space
-                points (as `serialize`). The update in place,
+                points, with the UUID of the transform they sit under; True:
+                world-space points (as `serialize`). The update in place,
                 ``Mesh('x').load(path)``, takes the same one.
 
         Returns:
@@ -1099,7 +1125,8 @@ class Mesh(Geometry):
 
     @_statement
     def _load_new(
-        cls, mesh, uvs=None, *, name=None, container=None, normals=True, transform=None, world_space=False, **kwargs
+        cls, mesh, uvs=None, *, name=None, container=None, normals=True, transform=None, world_space=False,
+        hierarchy=None, **kwargs
     ):
         normals     = _restore_flag("Mesh.load", "normals", normals)
         world_space = _files.space_flag("Mesh.load", world_space, _files.CREATING_SPACE)
@@ -1109,21 +1136,21 @@ class Mesh(Geometry):
         with _undo_chunk("rig.Mesh.load"):
             return cls.create(
                 data, uv_data, name=name, container=container, normals=normals, transform=transform,
-                world_space=world_space, **kwargs
+                world_space=world_space, hierarchy=hierarchy, **kwargs
             )
 
     @_statement
-    def _load_into(self, mesh, uvs=None, *, world_space=False, normals=True, **kwargs):
+    def _load_into(self, mesh, uvs=None, *, world_space=False, normals=True, hierarchy=None, **kwargs):
         method = f"Mesh({_name_of(self)!r}).load"
         if kwargs:
             raise TypeError(
-                f"{method} updates the mesh in place: it takes the files, world_space= and normals= "
-                f"(got {', '.join(f'{k}=' for k in kwargs)}); Mesh.load(path, ...) makes a new mesh"
+                f"{method} updates the mesh in place: it takes the files, world_space=, normals= and "
+                f"hierarchy= (got {', '.join(f'{k}=' for k in kwargs)}); Mesh.load(path, ...) makes a new mesh"
             )
         normals     = _restore_flag(method, "normals", normals)
         world_space = _files.space_flag(method, world_space)
         data, uv_data = _read_mesh_files(method, mesh, uvs)
-        update = _mesh_update(self, method, mesh, data, uv_data, world_space, normals)
+        update = _mesh_update(self, method, mesh, data, uv_data, world_space, normals, hierarchy)
         with _undo_chunk("rig.Mesh.load"):
             _MeshUpdateCommand(self, *update[:3])
             names = set(type(self).get_uv_sets(self))
@@ -1971,7 +1998,7 @@ def _write_uv_set(
         fn.assignUVs(np.asarray(uv_data.counts).tolist(), indices.tolist(), uv_set)
 
 
-# the flat 4x4 identity: a MeshData.matrix that needs no xform
+# the flat 4x4 identity: a placement that needs no xform
 _IDENTITY_16 = np.eye(4).ravel()
 
 
@@ -2555,6 +2582,7 @@ def _create_mesh(
     normals:     bool                     = True,
     target:      OpenMaya.MDagPath | None = None,
     world_space: bool                     = False,
+    hierarchy:   Any                      = None,
 ) -> str:
     """`Mesh._create`'s body: the ride. Returns the transform's name, or with
     `target` the shape's full path.
@@ -2577,10 +2605,12 @@ def _create_mesh(
        into a new set of its name;
     5. ``cmds.sets`` into ``initialShadingGroup``, then ``cmds.rename`` of the
        transform (Maya renames the shape after it, as it always did) and
-       ``cmds.xform`` of the data's matrix (skipped for the identity, which
-       the new transform already has, and with `world_space`: it is in the
-       points); with `target` (``transform=``) instead, the shape moved under
-       it, the transform deleted and the shape named (`_put_under`).
+       ``cmds.xform`` of where the data sits (`_data_placement`: the world
+       matrix of the transform its ``parent_uuid`` names, in `hierarchy` or
+       in the scene; skipped for the identity, which the new transform
+       already has, and with `world_space`: it is in the points); with
+       `target` (``transform=``) instead, the shape moved under it, the
+       transform deleted and the shape named (`_put_under`).
 
     Any error after step 2 deletes what it made (`_discard`: the transform, or
     the shape under the target) before it propagates.
@@ -2590,7 +2620,7 @@ def _create_mesh(
     sets (`_restore_shading`). A
     ``cgmath.render.scene.Object`` in place of `mesh_data` is built from its
     mesh, its name (when `name` is None) and its transform (`_place_object`,
-    in place of the mesh's matrix); `Mesh.create` passes its UVs in `uv_data`.
+    in place of the mesh's placement); `Mesh.create` passes its UVs in `uv_data`.
     """
     obj = None
     if _files.is_object(mesh_data):
@@ -2600,7 +2630,7 @@ def _create_mesh(
     space  = None
     if world_space:
         # where the data puts its points in the world, in the target's space if any; the normals follow
-        placed = obj.world_matrix if obj is not None else mesh_data.matrix
+        placed = obj.world_matrix if obj is not None else _data_placement("Mesh.create()", mesh_data, hierarchy)
         space  = _target_space("Mesh.create()", placed, target)
         points = np.asarray(points, dtype=np.float64) @ space[:3, :3] + space[3, :3]
     shading = _shading_of(mesh_data, holes, space) if normals else None
@@ -2652,9 +2682,9 @@ def _create_mesh(
         if obj is not None:
             _place_object(xform, obj, world_space)
         elif not world_space:
-            matrix = mesh_data.matrix.ravel()
+            matrix = _data_placement("Mesh.create()", mesh_data, hierarchy).ravel()
             if not np.array_equal(matrix, _IDENTITY_16):
-                # a new transform is at rest already (world-space data has no matrix)
+                # a new transform is at rest already (world-space data sits at identity)
                 _cmds_edit.xform(xform, matrix=matrix)
     except BaseException:
         _discard(handle, moved)
@@ -2688,12 +2718,16 @@ def _source_label(src) -> str:
     return repr(os.fspath(src)) if _files.is_path(src) else f"the {type(src).__name__}"
 
 
-def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, normals: bool = True) -> tuple:
+def _mesh_update(
+    mesh: Mesh, method: str, src, data, uvs, world_space: bool, normals: bool = True, hierarchy: Any = None
+) -> tuple:
     """`Mesh('x').load`'s edit, checked before anything changes: ``(points, space,
     shading, uv_sets)`` for `_MeshUpdateCommand` and the UV sets (the shading None
-    without `normals`: the mesh keeps its own). Raises ValueError for a mesh with
-    history or data of another topology, and the errors of `_mesh_topology` /
-    `_target_space` / `_shading_of` / `_check_uv_fit`."""
+    without `normals`: the mesh keeps its own). With `world_space` the points come
+    from where the data sits (`_data_placement`, through `hierarchy` when given).
+    Raises ValueError for a mesh with history or data of another topology, and the
+    errors of `_mesh_topology` / `_data_placement` / `_target_space` /
+    `_shading_of` / `_check_uv_fit`."""
     obj = None
     if _files.is_object(data):
         obj, data, uvs = data, data.mesh, data.uv
@@ -2727,7 +2761,8 @@ def _mesh_update(mesh: Mesh, method: str, src, data, uvs, world_space: bool, nor
     points = np.asarray(data.points, dtype=np.float64).reshape(-1, 3)
     taken  = None
     if world_space:
-        matrix = np.asarray(obj.world_matrix if obj is not None else data.matrix, dtype=np.float64).reshape(4, 4)
+        placed = obj.world_matrix if obj is not None else _data_placement(method, data, hierarchy)
+        matrix = np.asarray(placed, dtype=np.float64).reshape(4, 4)
         points = points @ matrix[:3, :3] + matrix[3, :3]
         taken  = _target_space(method, matrix, type(mesh).get_mdagpath(mesh))
         space  = OpenMaya.MSpace.kWorld

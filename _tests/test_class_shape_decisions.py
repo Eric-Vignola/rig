@@ -49,8 +49,7 @@ from maya.api import OpenMaya
 from rig import container
 from rig.nodetypes import Mesh, NurbsCurve, NurbsSurface, Transform
 from rig._tests.test_class_mesh_create import _grid, _hard_edges, _locked_rows
-from rig._tests.test_class_nurbs_create import CURVE_FIELDS, PATCH_FIELDS, _older_cgmath
-from rig._tests.test_class_shape_space import NEW_FIELDS, NO_FIELDS, OPEN, PERIODIC, _cylinder, _surface, _uneven
+from rig._tests.test_class_shape_space import OPEN, PERIODIC, _cylinder, _surface, _uneven
 from rig._tests.test_class_shape_under_transform import (
     CLASSES,
     OBJECT,
@@ -78,11 +77,13 @@ NO_README  = "no rig/nodetypes/README.md here: the studio copy of rig carries no
 ATOL = {Mesh: 1e-5, NurbsCurve: 1e-9, NurbsSurface: 1e-9}
 
 
-def _quiet_serialize(shape):
-    """What `shape`'s serialize gives on a cgmath without the new fields, its warning unsaid."""
-    fields = {NurbsCurve: ("NurbsCurveData", CURVE_FIELDS), NurbsSurface: ("NurbsSurfaceData", PATCH_FIELDS)}
-    with _older_cgmath(*fields[type(shape)]), mock.patch("rig.nodetypes.nurbs.LOGGER"):
-        return shape.serialize()
+def _without_knots(shape):
+    """`shape`'s data with no knots in it: what says Maya's default, even ones, in every direction."""
+    data = shape.serialize()
+    for field in ("knots", "knots_u", "knots_v"):
+        if hasattr(data, field):
+            setattr(data, field, None)
+    return data
 
 
 def _new_transform(shape):
@@ -154,7 +155,7 @@ class TestQ1ASurfaceUpdateOfDataWithoutKnots(_Case):
         return self.assert_nothing_made(
             ValueError,
             self.REFUSAL.format(name=surface, src=src, size=size, degrees=f"{fn.degreeInU} x {fn.degreeInV}"),
-            lambda: surface.load(_quiet_serialize(surface) if data is None else data),
+            lambda: surface.load(_without_knots(surface) if data is None else data),
         )
 
     def test_an_uneven_direction_of_degree_2_or_more_refuses_it(self):
@@ -176,7 +177,7 @@ class TestQ1ASurfaceUpdateOfDataWithoutKnots(_Case):
     def test_a_degree_1_uneven_direction_stays_taken(self):
         """guard: it only reparametrizes: the CVs land, the surface keeps its knots."""
         cylinder = NurbsSurface(_cylinder(cmds.createNode("transform", name="grp")))
-        data     = _quiet_serialize(cylinder)
+        data     = _without_knots(cylinder)
         knots    = list(cylinder.get_fn_set().knotsInV())
         self.assertIsNone(getattr(data, "knots_v", None))
         cmds.xform(f"{cylinder}.cv[0][0]", translation=(5, 5, 5), objectSpace=True)
@@ -190,16 +191,14 @@ class TestQ1ASurfaceUpdateOfDataWithoutKnots(_Case):
         """A degree-1 uneven direction beside it does not save it."""
         self.refused(NurbsSurface(_uneven(cmds.createNode("transform", name="grp"))))
 
-    def test_the_file_of_an_older_cgmath(self):
+    def test_a_file_without_knots(self):
         surface = NurbsSurface(_uneven(cmds.createNode("transform", name="grp")))
         path    = os.path.join(self.folder(), "patch.npz")
-        _quiet_serialize(surface).save(path)
+        _without_knots(surface).save(path)
         self.refused(surface, re.escape(repr(path)), path)
 
-    def test_the_new_cgmath_s_data_of_another_direction(self):
+    def test_data_of_another_direction(self):
         """Data that holds knots in V alone (U is Maya's default there) on a surface uneven in U."""
-        if not NEW_FIELDS:
-            self.skipTest(NO_FIELDS)
         source = self.surface("src", (0, 0, 0, 1, 2, 2, 2), (0, 0, 0, 1, 5, 5, 5), (3, 3))
         target = self.surface("tgt", (0, 0, 0, 1, 5, 5, 5), (0, 0, 0, 1, 5, 5, 5), (3, 3))
         data   = source.serialize()
@@ -212,7 +211,7 @@ class TestQ1ASurfaceUpdateOfDataWithoutKnots(_Case):
         for label, knots in (("default", (0, 0, 0, 1, 2, 2, 2)), ("other_range", (0, 0, 0, 3, 6, 6, 6))):
             with self.subTest(label):
                 surface = self.surface(label, knots, (0, 1, 2), (3, 1))
-                data    = _quiet_serialize(surface)
+                data    = _without_knots(surface)
                 self.assertIs(surface.load(data), surface)
                 self.assertEqual(list(surface.get_fn_set().knotsInU()), list(knots))
 
@@ -433,8 +432,6 @@ class TestQ6FrozenAtWorldPositions(_Case):
 
     def source(self, cls):
         """`cls`'s moved, rotated, scaled source and the data it serializes, in object space."""
-        if cls is not Mesh and not NEW_FIELDS:
-            self.skipTest(NO_FIELDS)  # object-space B-spline data holds its matrix on the new cgmath only
         source = _source(cls)
         return source, _args(source)
 
@@ -505,13 +502,15 @@ class TestQ6FrozenAtWorldPositions(_Case):
                 self.assert_at_rest(frozen)
                 np.testing.assert_array_equal(_local(frozen), _local(cls.create(*args)))
 
-    def test_data_without_a_matrix_is_the_identity(self):
-        """An older cgmath's B-spline data, and points: the CVs as they are."""
+    def test_data_that_names_no_transform_is_the_identity(self):
+        """Data whose parent_uuid is None (world-space data, or one cleared by hand), and points:
+        the CVs as they are."""
         for maker, cls in ((_circle, NurbsCurve), (_ball, NurbsSurface)):
             with self.subTest(cls=cls.__name__):
-                source = maker()
-                data   = _quiet_serialize(source)
-                frozen = cls.create(data, world_space=True)
+                source           = maker()
+                data             = source.serialize()
+                data.parent_uuid = None
+                frozen           = cls.create(data, world_space=True)
                 self.assert_at_rest(frozen)
                 np.testing.assert_array_equal(_local(frozen), _local(source))
         points = [(0, 0, 0), (1, 2, 0), (2, 0, 1), (3, 1, 1), (4, 0, 0)]
@@ -519,19 +518,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         self.assert_at_rest(curve)
         np.testing.assert_array_equal(_local(curve), points)
 
-    def test_a_matrix_of_none_is_the_identity(self):
-        if not NEW_FIELDS:
-            self.skipTest(NO_FIELDS)
-        source      = _circle()
-        data        = source.serialize()
-        data.matrix = None
-        frozen      = NurbsCurve.create(data, world_space=True)
-        self.assert_at_rest(frozen)
-        np.testing.assert_array_equal(_local(frozen), _local(source))
-
     def test_knots_and_forms_come_through(self):
-        if not NEW_FIELDS:
-            self.skipTest(NO_FIELDS)
         parent = cmds.createNode("transform", name="grp")
         cmds.xform(parent, translation=(1, 2, 3), rotation=(10, 20, 30), scale=(2, 1, 0.5))
         for shape in (_uneven(parent, "srf"), _cylinder(parent, "cyl")):
@@ -565,8 +552,10 @@ class TestQ6FrozenAtWorldPositions(_Case):
             hole_counts  = np.array([3]),
             hole_indices = np.array([4, 5, 6]),
         )
-        data.matrix = np.array([(1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 5, 0, 1)], float)
-        shape       = Mesh.create(data, world_space=True)
+        under = cmds.createNode("transform", name="under")
+        cmds.xform(under, translation=(0, 5, 0))
+        data.parent_uuid = cmds.ls(under, uuid=True)[0]
+        shape            = Mesh.create(data, world_space=True)
         self.assertEqual(shape.get_fn_set().getHoles(), ((0, (4, 5, 6)),))
         np.testing.assert_allclose(_local(shape), data.points + (0, 5, 0), atol=1e-5)
         self.assert_at_rest(shape)
@@ -698,12 +687,11 @@ class TestQ6FrozenAtWorldPositions(_Case):
         np.testing.assert_allclose(_world(frozen), _world(source), rtol=0, atol=1e-5)
         np.testing.assert_allclose(_normals(frozen), _normals(source), rtol=0, atol=1e-5)
         self.assertEqual(_shading(frozen), (_shading(source)[0], frozen.get_fn_set().numNormals))
-        if NEW_FIELDS:
-            ball = _ball()
-            cmds.xform(ball.get_parent().get_long_name(), scale=(-1, 1, 1))
-            flipped = NurbsSurface.create(*_args(ball), world_space=True)
-            np.testing.assert_allclose(_world(flipped), _world(ball), rtol=0, atol=1e-9)
-            np.testing.assert_allclose(_surface_normals(flipped), -_surface_normals(ball), rtol=0, atol=1e-6)
+        ball = _ball()
+        cmds.xform(ball.get_parent().get_long_name(), scale=(-1, 1, 1))
+        flipped = NurbsSurface.create(*_args(ball), world_space=True)
+        np.testing.assert_allclose(_world(flipped), _world(ball), rtol=0, atol=1e-9)
+        np.testing.assert_allclose(_surface_normals(flipped), -_surface_normals(ball), rtol=0, atol=1e-6)
 
     def test_a_non_uniform_scale_locks_no_soft_normal(self):
         """Re-pinned (it locked nearly every soft normal): Maya computes other normals for the frozen
@@ -755,26 +743,30 @@ class TestQ6FrozenAtWorldPositions(_Case):
                       "non-uniform scale, a shear or float noise moved them", text)
         self.assertNotIn("can lock a mesh's normals", text)
 
-    def test_a_matrix_with_no_inverse(self):
-        """Exactly singular, which only data made by hand holds: a mesh's normals cannot follow it,
-        and without them it flattens, a transform-less scale of 0."""
-        data        = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
-        data.matrix = np.diag([0.0, 1.0, 1.0, 1.0])
-        self.assert_nothing_made(ValueError, r"^MeshData: the matrix has no inverse, which the normals go through",
-                                 lambda: Mesh.create(data, world_space=True))
-        flat = Mesh.create(data, world_space=True, normals=False)
-        self.assert_at_rest(flat)
-        np.testing.assert_array_equal(_local(flat)[:, 0], np.zeros(8))
+    def test_a_placement_with_no_inverse(self):
+        """Exactly singular, which only a hierarchy made by hand holds (Maya keeps 1e-12 for a scale
+        of 0): a mesh's normals cannot follow it, and without them it flattens, a transform-less
+        scale of 0."""
+        from cgmath.hierarchy import HierarchyData, TransformData
 
-    def test_a_matrix_that_is_not_finite(self):
-        data        = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
-        data.matrix = np.full((4, 4), np.nan)
-        refusal     = r"^Mesh\.create\(\): the data's matrix must be finite \(got nan or inf\)$"
+        data = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
+        flat = HierarchyData([TransformData("flat", uuid=data.parent_uuid, scale=[0.0, 1.0, 1.0])])
+        self.assert_nothing_made(ValueError, r"^MeshData: the matrix has no inverse, which the normals go through",
+                                 lambda: Mesh.create(data, world_space=True, hierarchy=flat))
+        made = Mesh.create(data, world_space=True, normals=False, hierarchy=flat)
+        self.assert_at_rest(made)
+        np.testing.assert_array_equal(_local(made)[:, 0], np.zeros(8))
+
+    def test_a_placement_that_is_not_finite(self):
+        """Pinned on the guard (`_target_space`), the placement stood in: no transform holds nan."""
+        data    = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
+        refusal = r"^Mesh\.create\(\): the data's matrix must be finite \(got nan or inf\)$"
         for label, keywords in (("frozen", {}), ("under a target", {"transform": _sheared()})):
-            with self.subTest(label):
+            with self.subTest(label), mock.patch("rig.nodetypes.mesh._data_placement",
+                                                 return_value=np.full((4, 4), np.nan)):
                 self.assert_nothing_made(ValueError, refusal, lambda: Mesh.create(data, world_space=True, **keywords))
 
-    def test_a_matrix_that_is_not_finite_in_an_update(self):
+    def test_a_placement_that_is_not_finite_in_an_update(self):
         """Its last column too, which no point goes through: the normals' matrix is read whole."""
         box     = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
         data    = box.serialize(include_uvs=False)
@@ -784,20 +776,18 @@ class TestQ6FrozenAtWorldPositions(_Case):
             with self.subTest(row=row, column=column):
                 matrix              = np.eye(4)
                 matrix[row, column] = np.nan
-                data.matrix         = matrix
-                with self.assertRaisesRegex(ValueError, refusal):
-                    box.load(data, world_space=True)
+                with mock.patch("rig.nodetypes.mesh._data_placement", return_value=matrix):
+                    with self.assertRaisesRegex(ValueError, refusal):
+                        box.load(data, world_space=True)
                 np.testing.assert_array_equal(_local(box), before)
 
-    def test_a_matrix_that_is_not_finite_on_nurbs_data(self):
-        if not NEW_FIELDS:
-            self.skipTest(NO_FIELDS)
+    def test_a_placement_that_is_not_finite_on_nurbs_data(self):
         for cls, source in ((NurbsCurve, _circle()), (NurbsSurface, _ball())):
             with self.subTest(cls=cls.__name__):
-                data        = source.serialize()
-                data.matrix = np.full((4, 4), np.inf)
-                self.assert_nothing_made(ValueError, rf"^{cls.__name__}\.create\(\): the data's matrix must be finite",
-                                         lambda: cls.create(data, world_space=True))
+                data = source.serialize()
+                with mock.patch("rig.nodetypes.nurbs._data_placement", return_value=np.full((4, 4), np.inf)):
+                    self.assert_nothing_made(ValueError, rf"^{cls.__name__}\.create\(\): the data's matrix must be finite",
+                                             lambda: cls.create(data, world_space=True))
 
 
 class TestOnlyRealLocks(_Case):

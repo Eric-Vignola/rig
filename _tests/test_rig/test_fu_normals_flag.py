@@ -196,8 +196,8 @@ class TestTheFlagIsABool(_NormalsCase):
         path = Mesh("body").save(self.path("body.npz"))
         self.assert_refused(
             TypeError,
-            "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files, world_space= and "
-            "normals= \\(got name=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
+            "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files, world_space=, "
+            "normals= and hierarchy= \\(got name=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
             lambda: Mesh("body").load(path, name="x"),
         )
 

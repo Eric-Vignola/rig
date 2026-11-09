@@ -52,6 +52,15 @@ def _cube_data(name=None):
     return data, list(uvs)
 
 
+def _where(data):
+    """Where `data` sits, as rig places it (16 numbers): the world matrix of the scene's transform of
+    its ``parent_uuid``, or the identity for data that names none, or one the scene lacks."""
+    found = cmds.ls(data.parent_uuid, long=True) if getattr(data, "parent_uuid", None) else []
+    if found:
+        return cmds.xform(found[0], query=True, matrix=True, worldSpace=True)
+    return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+
 def _uv_sets(map1):
     """``[custom, uv2]``: map1 renamed ``custom``, and a second, scaled set ``uv2``."""
     custom = map1.copy()
@@ -145,7 +154,8 @@ class _MeshCreateCase(UndoWalk, MayaTestCase):
 
 # ---------------------------------------------------------------------------------------------
 class TestMeshCreateNames(_MeshCreateCase):
-    """Names, selection, shading, history and matrix equal today's create (U0 reference)."""
+    """Names, selection, shading, history and placement equal today's create (U0 reference). The
+    data's source is deleted, so the data sits at identity (its transform is gone)."""
 
     def _check(self, mesh, xform, shape, data):
         self.assertEqual(str(mesh), shape)
@@ -157,7 +167,7 @@ class TestMeshCreateNames(_MeshCreateCase):
         )
         self.assert_no_history(mesh)
         matrix = cmds.xform(mesh.get_parent().get_long_name(), query=True, matrix=True, objectSpace=True)
-        for got, want in zip(matrix, data.matrix.ravel()):
+        for got, want in zip(matrix, _where(data)):
             self.assertAlmostEqual(got, float(want), places=6)
 
     def test_no_name_twice(self):
@@ -235,8 +245,8 @@ class TestMeshCreateNames(_MeshCreateCase):
                     self.assertTrue(abs(written.points - uv.points).max() < 1e-6)
 
     def test_world_space_data_leaves_the_transform_at_rest(self):
-        # world-space data carries the identity matrix: no xform, the points are world points
-        # (re-pinned, user decision 2026-10-29: object space by default, world by keyword)
+        # world-space data names no transform: it sits at identity, no xform, the points are world
+        # points (re-pinned, user decision 2026-10-29: object space by default, world by keyword)
         t = cmds.polyCube(name="src", constructionHistory=False)[0]
         cmds.xform(t, translation=(1, 2, 3), rotation=(10, 20, 30))
         data, uvs = Mesh(t).serialize(world_space=True)
@@ -289,7 +299,8 @@ class TestMeshCreateUndo(_MeshCreateCase):
         mesh = Mesh.create(data, uv_data=uvs)  # the name stored in the data
         self.assertEqual((str(mesh), cmds.ls(str(mesh.get_parent()))[0]), ("bodyShape", "body"))
         self.assertEqual(mesh_state("bodyShape"), source)
-        self.assertEqual(cmds.getAttr("body.translateY"), 1.0)
+        # the transform the data sat under is gone: the data sits at identity (cgmath's shape model)
+        self.assertEqual(cmds.getAttr("body.translateY"), 0.0)
         after = self.scene_state(meshes=["bodyShape"])
         self.undo_steps(1)
         self.assert_state_equal(self.scene_state(meshes=["bodyShape"]), before, "undo")
@@ -982,11 +993,13 @@ class TestMeshCreateObject(_MeshCreateCase):
         self.assertEqual(str(mesh.get_parent()), "other")
         self.assertEqual(len(mesh.get_uv_coords("map1")), 0)
 
-    def test_the_mesh_s_own_matrix_is_not_used(self):
-        # cgmath's renderer places the mesh by the Object: its MeshData's matrix is ignored
+    def test_the_mesh_s_own_placement_is_not_used(self):
+        # cgmath's renderer places the mesh by the Object: the transform its MeshData's parent_uuid
+        # names is ignored
         obj, _ = self.object(name="hero", translate=(1, 0, 0))
-        obj.mesh.matrix = np.diag([1.0, 1.0, 1.0, 1.0])
-        obj.mesh.matrix[3, :3] = (0, 7, 0)
+        under = cmds.createNode("transform", name="under")
+        cmds.xform(under, translation=(0, 7, 0))
+        obj.mesh.parent_uuid = cmds.ls(under, uuid=True)[0]
         mesh = Mesh.create(obj)
         self.assertEqual(cmds.getAttr("hero.t")[0], (1.0, 0.0, 0.0))
 

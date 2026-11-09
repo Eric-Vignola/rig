@@ -12,10 +12,8 @@ Undo tests check the scene (``rig._tests._undo``), never ``cmds.undo()``'s
 return value.
 """
 
-import contextlib
 import math
 import unittest
-from unittest import mock
 
 import numpy as np
 from maya import cmds
@@ -38,52 +36,6 @@ def _bspline_data(points, degree, periodic, **kwargs):
     from cgmath.geometry import NurbsCurveData
 
     return NurbsCurveData(points=np.asarray(points, dtype=float), degree=degree, periodic=periodic, **kwargs)
-
-
-def _takes_knots() -> bool:
-    """True when the installed cgmath's NurbsCurveData takes custom ``knots``."""
-    from cgmath.geometry import NurbsCurveData
-
-    return "knots" in NurbsCurveData.__dataclass_fields__
-
-
-class _NurbsCurveDataWithoutKnots:
-    """A NurbsCurveData without a ``knots`` field, as cgmath 1.0.4's: what serialize gives it."""
-
-    __dataclass_fields__ = dict.fromkeys(("points", "degree", "periodic"))
-
-    def __init__(self, points, degree, periodic):
-        self.points, self.degree, self.periodic = points, degree, periodic
-
-
-# the fields a later cgmath added to the B-spline data (rig/feat/shape-under-transform), which
-# serialize writes and create / load read where the installed cgmath has them
-CURVE_FIELDS = ("name", "matrix")
-PATCH_FIELDS = ("knots_u", "knots_v", "name", "matrix")
-
-
-def _has_fields(cls_name: str, fields: tuple) -> bool:
-    """True when the installed cgmath's ``cgmath.geometry.<cls_name>`` has every one of `fields`."""
-    import cgmath.geometry
-
-    return set(fields) <= set(getattr(cgmath.geometry, cls_name).__dataclass_fields__)
-
-
-def _older_cgmath(cls_name: str, fields: tuple):
-    """``mock.patch`` of ``cgmath.geometry.<cls_name>`` by a stand-in for an older cgmath's class,
-    one without `fields`: serialize finds none of them and writes none, and the stand-in builds
-    the installed class's data, which every other path reads as it is. Runs on any cgmath."""
-    import cgmath.geometry
-
-    real = getattr(cgmath.geometry, cls_name)
-
-    class Older:
-        __dataclass_fields__ = {k: v for k, v in real.__dataclass_fields__.items() if k not in fields}
-
-        def __new__(cls, **kwargs):
-            return real(**kwargs)
-
-    return mock.patch(f"cgmath.geometry.{cls_name}", Older)
 
 
 def _line(count):
@@ -464,8 +416,8 @@ class TestNurbsCurveCreateFromData(_CurveCreateCase):
                 self.assertEqual(sorted(cmds.ls()), nodes)
 
     def test_serialize_round_trip(self):
-        # re-pinned (user decision 2026-10-29): object-space data holds the transform's world
-        # matrix on a cgmath whose NurbsCurveData has one, and the new transform takes it
+        # re-pinned (user decision 2026-10-29, then 2026-11-09 on cgmath's shape model): object-space
+        # data names the transform its points sit under, and the new transform goes where that one is
         for degree in (1, 2, 3):
             with self.subTest(degree=degree):
                 cmds.file(new=True, force=True)
@@ -475,11 +427,10 @@ class TestNurbsCurveCreateFromData(_CurveCreateCase):
                 data = NurbsCurve(source).serialize(world_space=False)
                 self.ready()
                 curve  = NurbsCurve.create(data, name="rebuilt")
-                matrix = cmds.getAttr("src.worldMatrix[0]") if _has_fields("NurbsCurveData", CURVE_FIELDS) else None
+                matrix = cmds.getAttr("src.worldMatrix[0]")
                 self.check(curve, "rebuilt", "rebuiltShape", matrix)
                 self.assertEqual(curve_state(curve), expected)
 
-    @unittest.skipUnless(_takes_knots(), "this cgmath's NurbsCurveData takes no knots")
     def test_data_with_its_own_knots(self):
         self.ready()
         uneven = (0.0, 0.0, 0.0, 0.5, 1.25, 3.0, 3.0, 3.0)
@@ -596,7 +547,6 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
         expected = np.array(NurbsCurve(source).get_points(world_space=True))[:, :3]
         self.assertEqual(_rows(data.points), _rows(expected))
 
-    @unittest.skipUnless(_takes_knots(), "this cgmath's NurbsCurveData takes no knots")
     def test_uneven_knots_travel(self):
         for label, xform in _uneven_curves().items():
             with self.subTest(label):
@@ -618,21 +568,6 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
         rebuilt = NurbsCurve.create(NurbsCurve(source).serialize(world_space=False))
         self.assertEqual(curve_state(rebuilt)["cvs"], curve_state(source)["cvs"])
         self.assert_same_shape(rebuilt, NurbsCurve(source))
-        if not _takes_knots():
-            with self.assertNoLogs("rig.nodetypes.nurbs", level="WARNING"):
-                NurbsCurve(source).serialize()
-
-    def test_uneven_knots_on_a_cgmath_without_knots_warn(self):
-        # on a cgmath whose NurbsCurveData takes knots (2.0.0) a stand-in without them (1.0.4's)
-        # is patched in, so the test runs on both
-        for label, xform in _uneven_curves().items():
-            with self.subTest(label):
-                older = (mock.patch("cgmath.geometry.NurbsCurveData", _NurbsCurveDataWithoutKnots)
-                         if _takes_knots() else contextlib.nullcontext())
-                with older, self.assertLogs("rig.nodetypes.nurbs", level="WARNING") as logs:
-                    data = NurbsCurve(xform).serialize(world_space=False)
-                self.assertIn("uneven knots are dropped", logs.output[0])
-                self.assertEqual(data.degree, 3)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -962,22 +897,21 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
                 self.assertEqual(cmds.listHistory(str(surface)), [str(surface)])
                 self.assertEqual(self.undo_name(), SURFACE_CHUNK)
 
-    def test_evenly_spaced_knots_come_back_on_0_to_spans(self):
-        # a nurbsPlane's 0..1 comes back as 0..3: the same surface, another parameter range
-        # (re-pinned: on a cgmath whose NurbsSurfaceData takes no knots, 3.0.1's, stood in here;
-        # one that takes them keeps the range, test_class_shape_space)
+    def test_data_without_knots_comes_back_on_0_to_spans(self):
+        # a nurbsPlane's 0..1 comes back as 0..3 from data whose knots are None, Maya's default:
+        # the same surface, another parameter range (the knots kept keep the range,
+        # test_class_shape_space)
         shape = self.sources()["plane"]
-        with _older_cgmath("NurbsSurfaceData", PATCH_FIELDS):
-            data = NurbsSurface(shape).serialize()
+        data  = NurbsSurface(shape).serialize()
+        data.knots_u = data.knots_v = None
         surface = NurbsSurface.create(data)
         self.assertEqual(tuple(surface.get_fn_set().knotDomainInU), (0.0, 3.0))
         self.assertEqual(tuple(NurbsSurface(shape).get_fn_set().knotDomainInU), (0.0, 1.0))
 
     def test_names_and_attributes(self):
         data = NurbsSurface(self.sources()["plane"]).serialize()
-        # re-pinned: the data's name names it, on a cgmath whose NurbsSurfaceData has one
-        default = "plane1" if getattr(data, "name", None) else "surface1"
-        self.assertEqual(str(NurbsSurface.create(data).get_parent()), default)
+        # a NurbsSurfaceData holds no name: Maya's surface<N> (re-pinned on cgmath's shape model)
+        self.assertEqual(str(NurbsSurface.create(data).get_parent()), "surface1")
         self.assertEqual(str(NurbsSurface.create(data, name="patch")), "patchShape")
         self.assertEqual(str(NurbsSurface.create(data, name="patchShape3").get_parent()), "patch3")
         hidden = NurbsSurface.create(data, name="h", visibility=False)
@@ -1064,27 +998,14 @@ class TestNurbsSurfaceSerialize(_CurveCreateCase):
         wraps = (fn.degreeInU if periodic[0] else 0, fn.degreeInV if periodic[1] else 0)
         self.assertEqual(tuple(data.points.shape[:2]), (fn.numCVsInU - wraps[0], fn.numCVsInV - wraps[1]))
 
-    def test_uneven_knots_warn(self):
-        # re-pinned: on a cgmath whose NurbsSurfaceData takes no knots (3.0.1's, stood in here);
-        # one that takes them keeps them and warns of nothing (test_class_shape_space); the
-        # warning names each direction after "dropped: " (test_class_shape_space)
+    def test_uneven_knots_are_kept(self):
+        # re-pinned on cgmath's shape model: the knots travel as they are, nothing is said
         rows = [cmds.curve(point=[(0, y, 0), (1, y, 0), (2, y, 0), (3, y, 0)]) for y in (0, 1, 5)]
         shape = _surface_shape(cmds.loft(*rows, constructionHistory=False, uniform=False, name="uneven")[0])
-        with _older_cgmath("NurbsSurfaceData", PATCH_FIELDS), self.assertLogs(
-            "rig.nodetypes.nurbs", level="WARNING"
-        ) as logs:
-            NurbsSurface(shape).serialize()
-        self.assertEqual(len(logs.output), 1)
-        self.assertIn(
-            f"{shape}: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: in ",
-            logs.output[0],
-        )
-
-    def test_even_knots_do_not_warn(self):
-        for shape in (_surface_shape(cmds.nurbsPlane(name="p", constructionHistory=False, u=3, v=2)[0]),
-                      _surface_shape(cmds.sphere(name="s", constructionHistory=False)[0]),
-                      _closed_surface(), _periodic_loft()):
-            with self.subTest(shape):
-                with mock.patch("rig.nodetypes.nurbs.LOGGER") as logger:
-                    NurbsSurface(shape).serialize()
-                logger.warning.assert_not_called()
+        with self.assertNoLogs("rig.nodetypes.nurbs", level="WARNING"):
+            data = NurbsSurface(shape).serialize()
+        fn    = NurbsSurface(shape).get_fn_set()
+        kept  = {axis: knots for axis, knots in (("u", data.knots_u), ("v", data.knots_v)) if knots is not None}
+        self.assertTrue(kept)  # the loft's uneven direction
+        for axis, knots in kept.items():
+            self.assertEqual(list(knots), list(getattr(fn, f"knotsIn{axis.upper()}")()))

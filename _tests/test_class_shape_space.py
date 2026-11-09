@@ -12,15 +12,16 @@ shapes; the transforms are in test_class_xform.
   every other plug object space (``outMesh``, ``local``, a deformer's output through its
   shape, a choice's output through the plug it routes); a consumer that is no shape (a
   skinCluster) serializes as it does.
-* B-spline data holds what a MeshData holds, on the cgmath that adds the fields: the shape's
-  ``name`` and the ``matrix`` of the transform its object-space points are relative to, and
-  a surface's ``knots_u`` / ``knots_v``. create names the shape after the data and puts the
-  matrix on its new transform, the update in place puts the CVs where the matrix puts them
-  with ``world_space=True``, and a surface update refuses data that holds other knots. The
-  tests that need the fields skip on a cgmath without them.
-* On a cgmath whose data takes no knots, the warning says what comes back: a degree-1
-  direction keeps its shape and is only reparametrized (the user's cylinder.ma, testShape: V
-  of degree 1 with knots 0, 0.554, 1.554, 2.108), one of degree 2 or more another shape.
+* NURBS data is a cgmath shape, as a MeshData is (the user's decision of 2026-11-09, on
+  cgmath r17-skeleton's model): it holds the shape's ``uuid`` and the ``parent_uuid`` of the
+  transform its object-space points are relative to, no name and no matrix, and a surface its
+  ``knots_u`` / ``knots_v`` (uneven knots kept as they are, nothing said; the user's
+  cylinder.ma, testShape: V of degree 1 with knots 0, 0.554, 1.554, 2.108). create places its
+  new transform where the data sits, the update in place puts the CVs there with
+  ``world_space=True``, and a surface update refuses data that holds other knots.
+* Where data sits (`TestPlacement`): the world matrix of the transform its ``parent_uuid``
+  names, in ``hierarchy=`` when given (a ClipData at its frame), else in the scene by its UUID,
+  else the identity (a file from another scene); an instanced scene transform is refused.
 * rig's own callers that sample across meshes keep world space by keyword: transfer_from_meshes
   and a follicle's UV at a world position (the transfers' resampler: test_class_comptags).
 
@@ -31,7 +32,6 @@ import inspect
 import os
 import shutil
 import tempfile
-import unittest
 from unittest import mock
 
 import numpy as np
@@ -41,17 +41,12 @@ from maya.api import OpenMaya
 from rig import Node
 from rig.nodetypes import Follicle, Joint, Mesh, NurbsCurve, NurbsSurface, SkinCluster
 from rig._tests._base import MayaTestCase
-from rig._tests.test_class_nurbs_create import CURVE_FIELDS, PATCH_FIELDS, _has_fields, _older_cgmath
 
 OBJECT   = OpenMaya.MSpace.kObject
 WORLD    = OpenMaya.MSpace.kWorld
 
 OPEN     = OpenMaya.MFnNurbsSurface.kOpen
 PERIODIC = OpenMaya.MFnNurbsSurface.kPeriodic
-
-# the B-spline data of the installed cgmath holds the new fields
-NEW_FIELDS = _has_fields("NurbsCurveData", CURVE_FIELDS) and _has_fields("NurbsSurfaceData", PATCH_FIELDS)
-NO_FIELDS  = "this cgmath's NurbsCurveData / NurbsSurfaceData hold no name, matrix or knots_u / knots_v (3.0.1)"
 
 # the user's cylinder.ma, testShape: periodic of degree 3 in U, degree 1 in V with these knots
 CYLINDER_V_KNOTS = (0.0, 0.554097093776086, 1.554097093776086, 2.1081941875531793)
@@ -69,6 +64,11 @@ def _local(shape):
 
 def _world_matrix(node):
     return np.array(cmds.getAttr(f"{node}.worldMatrix[0]")).reshape(4, 4)
+
+
+def _uuid(node):
+    """Maya's UUID of `node` (a rig node or a name), as the data's ``uuid`` / ``parent_uuid`` hold it."""
+    return cmds.ls(str(node), uuid=True)[0]
 
 
 def _surface(name, cvs, knots_u, knots_v, degrees, forms, parent):
@@ -297,8 +297,8 @@ class TestTheQueriesReadObjectSpace(_Case):
 
 # ---------------------------------------------------------------------------------------------
 class TestAMeshsDataIsObjectSpace(_Case):
-    """Mesh.serialize / save by default: the object-space points and normals, and the world
-    matrix of the transform they are relative to; Mesh('x').load: the points as its own."""
+    """Mesh.serialize / save by default: the object-space points and normals, and the UUID of the
+    transform they are relative to; Mesh('x').load: the points as its own."""
 
     def setUp(self):
         super().setUp()
@@ -309,17 +309,17 @@ class TestAMeshsDataIsObjectSpace(_Case):
         data, _uvs = self.cube.serialize()
         np.testing.assert_array_equal(data.points, _xyz(fn.getPoints(OBJECT)))
         np.testing.assert_array_equal(np.asarray(data.normals), _xyz(fn.getNormals(OBJECT)))
-        np.testing.assert_allclose(data.matrix, _world_matrix(self.cube.get_parent()), rtol=0, atol=1e-12)
+        self.assertEqual((data.uuid, data.parent_uuid), (_uuid(self.cube), _uuid(self.cube.get_parent())))
         world = self.cube.serialize(world_space=True, include_uvs=False)
         np.testing.assert_array_equal(world.points, _xyz(fn.getPoints(WORLD)))
-        np.testing.assert_array_equal(world.matrix, np.eye(4))
+        self.assertEqual((world.uuid, world.parent_uuid), (_uuid(self.cube), None))
 
-    def test_the_matrix_is_read_through_the_shape_s_path(self):
+    def test_the_parent_is_read_through_the_shape_s_path(self):
         """No cmds.getAttr: a geometry plug's get() reads none (test_class_attribute)."""
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as get_attr:
             data = self.cube.serialize(world_space=False, include_uvs=False)
         get_attr.assert_not_called()
-        np.testing.assert_allclose(data.matrix, _world_matrix(self.cube.get_parent()), rtol=0, atol=1e-12)
+        self.assertEqual(data.parent_uuid, _uuid(self.cube.get_parent()))
 
     def test_the_default_save_and_create_put_it_back_where_it_was(self):
         made = Mesh.load(self.cube.save(self.path("cube.npz")), name="copy")
@@ -344,28 +344,117 @@ class TestAMeshsDataIsObjectSpace(_Case):
 
 
 # ---------------------------------------------------------------------------------------------
-@unittest.skipUnless(NEW_FIELDS, NO_FIELDS)
+class TestPlacement(_Case):
+    """Where data sits (the user's decision of 2026-11-09, on cgmath's shape model): the world
+    matrix of the transform its ``parent_uuid`` names, found in ``hierarchy=`` when given (a
+    ClipData at the frame it is on), else in the scene by its UUID, else the identity (a file from
+    another scene); an instanced scene transform is refused."""
+
+    def setUp(self):
+        super().setUp()
+        self.shapes = _scene()
+        self.cube   = Mesh(self.shapes["cube"])
+        self.curve  = NurbsCurve(self.shapes["curve"])
+
+    def test_a_transform_the_scene_lacks_sits_at_identity(self):
+        for label, node in (("cube", self.cube), ("curve", self.curve)):
+            with self.subTest(label):
+                data  = node.serialize(include_uvs=False)
+                local = _local(node)
+                cmds.delete(node.get_parent().get_long_name())
+                for world_space in (False, True):
+                    made = type(node).create(data, world_space=world_space)
+                    np.testing.assert_array_equal(_local(made), local)
+                    np.testing.assert_array_equal(_world_matrix(made.get_parent()), np.eye(4))
+
+    def test_a_hierarchy_places_the_data(self):
+        from cgmath.hierarchy import HierarchyData, TransformData
+
+        for label, node in (("cube", self.cube), ("curve", self.curve)):
+            with self.subTest(label):
+                data  = node.serialize(include_uvs=False)
+                under = TransformData("under", uuid=data.parent_uuid, translate=[10.0, 0.0, 0.0])
+                rig   = HierarchyData([under])
+                made  = type(node).create(data, hierarchy=rig)
+                np.testing.assert_allclose(_world_matrix(made.get_parent()), under.world_matrix, rtol=0, atol=1e-12)
+                np.testing.assert_array_equal(_local(made), _local(node))
+                frozen = type(node).create(data, world_space=True, hierarchy=rig)
+                np.testing.assert_allclose(_local(frozen), _local(node) + (10.0, 0.0, 0.0), rtol=0, atol=1e-5)
+                np.testing.assert_array_equal(_world_matrix(frozen.get_parent()), np.eye(4))
+                # a hierarchy that lacks the transform: identity, cgmath's rule, not the scene's node
+                other = HierarchyData([TransformData("other", translate=[5.0, 0.0, 0.0])])
+                np.testing.assert_array_equal(_world_matrix(type(node).create(data, hierarchy=other).get_parent()),
+                                              np.eye(4))
+
+    def test_the_update_in_place_takes_a_hierarchy(self):
+        from cgmath.hierarchy import HierarchyData, TransformData
+
+        path  = self.cube.save(self.path("cube.npz"))
+        data  = self.cube.serialize(include_uvs=False)
+        under = TransformData("under", uuid=data.parent_uuid, translate=[0.0, 10.0, 0.0])
+        copy  = Mesh.load(path, name="copy")
+        copy.load(path, world_space=True, hierarchy=HierarchyData([under]))
+        np.testing.assert_allclose(_xyz(copy.get_points(world_space=True)), _local(self.cube) + (0.0, 10.0, 0.0),
+                                   rtol=0, atol=1e-5)
+
+    def test_a_clip_places_at_the_frame_it_is_on(self):
+        from cgmath.hierarchy import ClipData, HierarchyData, TransformData
+
+        data  = self.curve.serialize()
+        under = TransformData("under", uuid=data.parent_uuid)
+        clip  = ClipData(HierarchyData([under]), frames=3, start_frame=0)
+        clip.frames.translate = np.array([[(0.0, 0.0, 0.0)], [(0.0, 5.0, 0.0)], [(0.0, 9.0, 0.0)]])
+        clip.frame            = 2
+        made = NurbsCurve.create(data, hierarchy=clip)
+        np.testing.assert_allclose(_world_matrix(made.get_parent())[3, :3], (0.0, 9.0, 0.0), rtol=0, atol=1e-12)
+
+    def test_an_instanced_transform_is_refused(self):
+        grp = cmds.group(self.cube.get_parent().get_long_name(), name="grp")
+        cmds.instance(grp, name="grp_copy")
+        data    = self.cube.serialize(include_uvs=False)
+        refusal = r"^Mesh\.create\(\): the data sits under '.*', which is instanced \(2 paths\), so its points have no one place in the world; give hierarchy=, or serialize the shape in world space$"
+        before  = cmds.ls()
+        for world_space in (False, True):
+            with self.subTest(world_space=world_space):
+                with self.assertRaisesRegex(ValueError, refusal):
+                    Mesh.create(data, world_space=world_space)
+                self.assertEqual(cmds.ls(), before)
+        target = cmds.createNode("transform", name="target")
+        under  = Mesh.create(data, transform=target)   # no placement to read: the points as its own
+        np.testing.assert_array_equal(_local(under), _local(self.cube))
+        world = self.cube.serialize(world_space=True, include_uvs=False)
+        np.testing.assert_array_equal(_world_matrix(Mesh.create(world).get_parent()), np.eye(4))
+
+
+# ---------------------------------------------------------------------------------------------
 class TestTheNurbsDataHoldsWhereItIs(_Case):
-    """A curve's and a surface's data hold their name and matrix (and a surface its knots), as a
-    MeshData does; create and load read them back."""
+    """A curve's and a surface's data hold their uuid and the parent_uuid of the transform they sit
+    under (and a surface its knots), as a MeshData does; create and load read them back."""
 
     def setUp(self):
         super().setUp()
         self.shapes = _scene()
         self.nurbs  = {label: Node(self.shapes[label]) for label in ("curve", "surface", "cylinder")}
 
-    def test_serialize_writes_the_name_and_the_matrix(self):
-        names = {"curve": "crvShape", "surface": "srfShape", "cylinder": "cylShape"}
+    def test_serialize_writes_the_uuids(self):
         for label, node in self.nurbs.items():
             with self.subTest(label):
                 data = node.serialize()
-                self.assertEqual(data.name, names[label])
-                np.testing.assert_allclose(data.matrix, _world_matrix(node.get_parent()), rtol=0, atol=1e-12)
+                self.assertEqual((data.uuid, data.parent_uuid), (_uuid(node), _uuid(node.get_parent())))
+                self.assertFalse(hasattr(data, "name") or hasattr(data, "matrix"))
                 np.testing.assert_array_equal(np.asarray(data.cv).reshape(-1, 3), _local(node))
                 world = node.serialize(world_space=True)
-                np.testing.assert_array_equal(world.matrix, np.eye(4))
+                self.assertEqual((world.uuid, world.parent_uuid), (_uuid(node), None))
                 np.testing.assert_allclose(np.asarray(world.cv).reshape(-1, 3), _xyz(node.get_points(world_space=True)),
                                            rtol=0, atol=1e-12)
+
+    def test_uneven_knots_are_kept_and_nothing_is_said(self):
+        parent = cmds.createNode("transform", name="grp")
+        for shape in (_uneven(parent), _cylinder(parent)):
+            with self.subTest(shape):
+                with self.assertNoLogs("rig.nodetypes.nurbs", level="WARNING"):
+                    data = NurbsSurface(shape).serialize()
+                self.assertIsNotNone(data.knots_v)
 
     def test_a_surface_s_knots_as_maya_has_them(self):
         for label, knots_u, knots_v in (
@@ -386,8 +475,10 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
                 source = node.get_fn_set()
                 made   = type(node).load(node.save(self.path(f"{label}.npz")))
                 got    = made.get_fn_set()
-                # named after the data, at the source's world matrix, its CVs as they were
-                self.assertEqual(made.get_parent().get_long_name(), "|" + node.get_parent().get_short_name())
+                # Maya's default name (the data holds none), at the source's world matrix (its
+                # transform places it), its CVs as they were
+                self.assertEqual(made.get_parent().get_long_name(),
+                                 {"curve": "|curve1", "surface": "|surface1", "cylinder": "|surface2"}[label])
                 np.testing.assert_allclose(_world_matrix(made.get_parent()), _world_matrix(node.get_parent()),
                                            rtol=0, atol=1e-12)
                 np.testing.assert_array_equal(_local(made), _local(node))
@@ -399,7 +490,7 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
                     np.testing.assert_array_equal(list(got.knotsInV()), list(source.knotsInV()))
                     np.testing.assert_allclose(_on_surface(got), _on_surface(source), rtol=0, atol=1e-9)
 
-    def test_the_update_in_world_space_goes_through_the_matrix(self):
+    def test_the_update_in_world_space_lands_where_the_data_sits(self):
         for label, node in self.nurbs.items():
             with self.subTest(label):
                 path = node.save(self.path(f"{label}.npz"))
@@ -427,9 +518,9 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
             target.load(path)
         np.testing.assert_array_equal(_local(target), before)
         # re-pinned (user decision 2026-10-30, test_class_shape_decisions): data that holds no knots
-        # (an older cgmath's) on a surface uneven at degree 3 is refused too, the same words
-        with _older_cgmath("NurbsSurfaceData", PATCH_FIELDS):
-            data = source.serialize()
+        # (even ones, by Maya's default) on a surface uneven at degree 3 is refused too, the same words
+        data         = source.serialize()
+        data.knots_u = data.knots_v = None
         with self.assertRaisesRegex(ValueError, refusal):
             target.load(data)
         np.testing.assert_array_equal(_local(target), before)
@@ -448,85 +539,6 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
         made = NurbsSurface.create(data).get_fn_set()
         self.assertEqual(list(made.knotsInV()), list(CYLINDER_V_KNOTS))
         np.testing.assert_allclose(_on_surface(made), _on_surface(cylinder.get_fn_set()), rtol=0, atol=1e-9)
-
-
-# ---------------------------------------------------------------------------------------------
-class TestTheDroppedKnotsWarning(_Case):
-    """A cgmath whose data takes no knots (stood in) drops uneven ones and says what comes back;
-    one that takes them keeps them and says nothing."""
-
-    def warnings(self, cls_name, fields, shape):
-        with _older_cgmath(cls_name, fields), self.assertLogs("rig.nodetypes.nurbs", level="WARNING") as logs:
-            data = Node(shape).serialize()
-        return [line.split(":", 2)[2] for line in logs.output], data
-
-    def test_a_surface_names_each_direction(self):
-        parent = cmds.createNode("transform", name="grp")
-        lines, _ = self.warnings("NurbsSurfaceData", PATCH_FIELDS, _uneven(parent))
-        self.assertEqual(lines, [
-            "srfShape: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: "
-            "in U, of degree 3, it comes back another shape; in V, of degree 1, it keeps its shape and is only "
-            "reparametrized"
-        ])
-
-    def test_a_degree_1_direction_keeps_its_shape(self):
-        cylinder = _cylinder(cmds.createNode("transform", name="grp"))
-        lines, data = self.warnings("NurbsSurfaceData", PATCH_FIELDS, cylinder)
-        self.assertEqual(lines, [
-            "cylShape: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: "
-            "in V, of degree 1, it keeps its shape and is only reparametrized"
-        ])
-        # the rebuilt surface (evenly spaced knots) is the cylinder reparametrized: span by span in
-        # V, the same points
-        made   = NurbsSurface.create(data).get_fn_set()
-        source = NurbsSurface(cylinder).get_fn_set()
-        self.assertEqual(tuple(made.knotDomainInV), (0.0, 3.0))
-        gaps = []
-        for u in np.linspace(*made.knotDomainInU, 17):
-            for v in np.linspace(0.0, 3.0, 31):
-                span = min(int(v), 2)
-                w    = CYLINDER_V_KNOTS[span] + (v - span) * (CYLINDER_V_KNOTS[span + 1] - CYLINDER_V_KNOTS[span])
-                gaps.append(made.getPointAtParam(u, v, WORLD).distanceTo(source.getPointAtParam(u, w, WORLD)))
-        self.assertLess(max(gaps), 1e-9)
-
-    def test_a_degree_3_direction_comes_back_another_shape(self):
-        shape = _uneven(cmds.createNode("transform", name="grp"), knots_v=(0, 1, 2))
-        lines, data = self.warnings("NurbsSurfaceData", PATCH_FIELDS, shape)
-        self.assertEqual(lines, [
-            "srfShape: this cgmath's NurbsSurfaceData takes no knots, so the surface's uneven knots are dropped: "
-            "in U, of degree 3, it comes back another shape"
-        ])
-        made   = NurbsSurface.create(data).get_fn_set()
-        source = NurbsSurface(shape).get_fn_set()
-        gaps = [source.closestPoint(OpenMaya.MPoint(p), space=WORLD)[0].distanceTo(OpenMaya.MPoint(p))
-                for p in _on_surface(made, samples=21)]
-        self.assertGreater(max(gaps), 1e-3)
-
-    def test_a_curve_names_its_degree(self):
-        # a cgmath whose NurbsCurveData takes no knots (1.0.4's)
-        for degree, text in (
-            (1, "of degree 1, it keeps its shape and is only reparametrized"),
-            (3, "of degree 3, it comes back another shape"),
-        ):
-            with self.subTest(degree=degree):
-                points = [(0, 0, 0), (1, 0, 1), (2, 0, 0), (3, 0, 1), (4, 0, 0)]
-                knots  = [0, 1, 4, 5, 9] if degree == 1 else [0, 0, 0, 1, 5, 5, 5]
-                curve  = cmds.curve(point=points, degree=degree, knot=knots, name=f"uneven{degree}")
-                shape  = cmds.listRelatives(curve, shapes=True, fullPath=True)[0]
-                lines, _ = self.warnings("NurbsCurveData", ("knots",) + CURVE_FIELDS, shape)
-                self.assertEqual(lines, [
-                    f"{cmds.ls(shape)[0]}: this cgmath's NurbsCurveData takes no knots, so the curve's uneven knots "
-                    f"are dropped: {text}"
-                ])
-
-    @unittest.skipUnless(NEW_FIELDS, NO_FIELDS)
-    def test_a_cgmath_that_takes_the_knots_says_nothing(self):
-        parent = cmds.createNode("transform", name="grp")
-        for shape in (_uneven(parent), _cylinder(parent)):
-            with self.subTest(shape):
-                with self.assertNoLogs("rig.nodetypes.nurbs", level="WARNING"):
-                    data = NurbsSurface(shape).serialize()
-                self.assertIsNotNone(data.knots_v)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -553,16 +565,14 @@ class TestAPlugReadFollowsThePlug(_Case):
                 data   = data[0] if isinstance(data, tuple) else data
                 points = np.asarray(data.cv if hasattr(data, "cv") else data.points).reshape(-1, 3)
                 np.testing.assert_allclose(points, _xyz(node.get_points(world_space=world)), rtol=0, atol=1e-12)
-                if hasattr(data, "matrix"):
-                    expected = np.eye(4) if world else _world_matrix(node.get_parent())
-                    np.testing.assert_allclose(data.matrix, expected, rtol=0, atol=1e-12)
+                self.assertEqual(data.parent_uuid, None if world else _uuid(node.get_parent()))
 
     def test_a_deformer_s_output_through_its_shape(self):
         cube = Mesh(self.shapes["cube"])
         skin = SkinCluster.create(cube.get_parent(), Joint.create(name="j1"))
         data, _uvs = skin.outputGeometry[0].get()
         np.testing.assert_allclose(data.points, _local(cube), rtol=0, atol=1e-6)
-        np.testing.assert_allclose(data.matrix, _world_matrix(cube.get_parent()), rtol=0, atol=1e-12)
+        self.assertEqual(data.parent_uuid, _uuid(cube.get_parent()))
 
     def test_a_choice_follows_the_plug_it_routes(self):
         cube, crv = Mesh(self.shapes["cube"]), NurbsCurve(self.shapes["curve"])

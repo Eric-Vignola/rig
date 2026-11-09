@@ -38,8 +38,7 @@ from rig.nodetypes import Joint, Mesh, NurbsCurve, NurbsSurface, Transform
 from rig.nodetypes.errors import NodeTypeError
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk, mesh_state, scene_nodes
-from rig._tests.test_class_nurbs_create import _takes_knots
-from rig._tests.test_class_shape_space import NEW_FIELDS, NO_FIELDS, _cylinder, _uneven
+from rig._tests.test_class_shape_space import _cylinder, _uneven
 
 WORLD   = OpenMaya.MSpace.kWorld
 OBJECT  = OpenMaya.MSpace.kObject
@@ -202,8 +201,6 @@ class TestBothSpaces(_Case):
         for cls in CLASSES:
             for space in (False, True):
                 with self.subTest(cls=cls.__name__, data_in_world_space=space):
-                    if cls is not Mesh and not space and not NEW_FIELDS:
-                        self.skipTest(NO_FIELDS)  # object-space B-spline data holds its matrix on the new cgmath only
                     source = _source(cls)
                     shape  = cls.create(*_args(source, space), transform=target, world_space=True)
                     atol   = 1e-5 if cls is Mesh else 1e-9  # a mesh holds float32 points
@@ -663,12 +660,9 @@ class TestWhatTheRideGives(_Case):
                 shape = NurbsCurve.create(source.serialize(), transform=target)
                 for read in ("form", "degree", "numCVs"):
                     self.assertEqual(getattr(shape.get_fn_set(), read), getattr(source.get_fn_set(), read))
-                if _takes_knots() or source.get_fn_set().form == OpenMaya.MFnNurbsCurve.kPeriodic:
-                    self.assertEqual(list(shape.get_fn_set().knots()), list(source.get_fn_set().knots()))
+                self.assertEqual(list(shape.get_fn_set().knots()), list(source.get_fn_set().knots()))
 
     def test_a_surface_s_uneven_knots(self):
-        if not NEW_FIELDS:
-            self.skipTest(NO_FIELDS)
         target = _sheared()
         for source in (NurbsSurface(_uneven(cmds.createNode("transform", name="s"))),
                        NurbsSurface(_cylinder(cmds.createNode("transform", name="c")))):

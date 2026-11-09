@@ -150,16 +150,52 @@ def _shape_create_name(name: str | None) -> str | None:
     return name or None
 
 
-def _data_matrix(shape, world_space: bool) -> np.ndarray:
-    """The ``matrix`` a shape's `serialize` writes (a MeshData's, and a cgmath
-    NurbsCurveData's or NurbsSurfaceData's that has the field), ``(4, 4)``: the
-    identity for world-space points, else the world matrix of the transform
-    the object-space points are relative to, read through the shape's path,
-    as the points are (no ``getAttr``): its ``worldMatrix[0]``, unless the
-    shape is instanced (the path's own instance then)."""
-    if world_space:
+def _data_ids(shape, world_space: bool) -> dict:
+    """The ``uuid`` and ``parent_uuid`` a shape's `serialize` writes (a MeshData's, a
+    NurbsCurveData's, a NurbsSurfaceData's: every cgmath shape is a ``ShapeData``), as keywords:
+    the shape node's own UUID, and the UUID of the transform the object-space points are relative
+    to, read through the shape's path, as the points are (the transform above the shape; for an
+    instanced shape, the path's own instance), or None for world-space points, which sit at
+    identity. cgmath places a shape by the transform its ``parent_uuid`` names
+    (`_data_placement`); the data itself holds no matrix."""
+    path = OpenMaya.MDagPath(type(shape).get_mdagpath(shape))
+    ids  = {"uuid": OpenMaya.MFnDependencyNode(path.node()).uuid().asString(), "parent_uuid": None}
+    if not world_space:
+        path.pop()
+        ids["parent_uuid"] = OpenMaya.MFnDependencyNode(path.node()).uuid().asString()
+    return ids
+
+
+def _data_placement(method: str, data: Any, hierarchy: Any = None) -> np.ndarray:
+    """Where `data` (a shape's, with a ``parent_uuid``; points have none) puts its points in the
+    world, ``(4, 4)`` with row vectors as Maya's: cgmath's rule, the world matrix of the transform
+    its ``parent_uuid`` names, the identity when it names none. With `hierarchy` (a HierarchyData,
+    or a ClipData at the frame it is on) the transform is looked for there, and cgmath's own
+    ``world_matrix`` answers (the identity for one the hierarchy lacks); without, in the scene,
+    the node of that UUID, under which data serialized and created in one scene sits as its
+    source did, and the identity when the scene has none. A scene node that is instanced is a
+    ValueError naming `method`: the points would have no one place in the world."""
+    parent = getattr(data, "parent_uuid", None)
+    if parent is None:
         return np.eye(4)
-    return np.array(type(shape).get_mdagpath(shape).inclusiveMatrix()).reshape(4, 4)
+    if hierarchy is not None:
+        return np.asarray(data.world_matrix(hierarchy), dtype=np.float64).reshape(4, 4)
+    sel = OpenMaya.MSelectionList()
+    try:
+        sel.add(OpenMaya.MUuid(parent))
+    except RuntimeError:                                     # no node of that UUID in the scene
+        return np.eye(4)
+    node = sel.getDependNode(0)
+    if not node.hasFn(OpenMaya.MFn.kDagNode):
+        return np.eye(4)
+    paths = OpenMaya.MDagPath.getAllPathsTo(node)
+    if len(paths) > 1:
+        raise ValueError(
+            f"{method}: the data sits under {paths[0].partialPathName()!r}, which is instanced "
+            f"({len(paths)} paths), so its points have no one place in the world; give hierarchy=, "
+            f"or serialize the shape in world space"
+        )
+    return np.array(paths[0].inclusiveMatrix()).reshape(4, 4)
 
 
 # --- a new shape under an existing transform: ``transform=`` of `Mesh.create`,
@@ -220,8 +256,8 @@ def _shape_target(method: str, transform: Any, world_space: bool) -> OpenMaya.MD
 
 
 def _target_space(method: str, matrix: Any, target: OpenMaya.MDagPath | None) -> np.ndarray:
-    """``(4, 4)``, row vectors as Maya's: from where data puts its points in the world, through
-    its `matrix` (None: the identity, data without one), into the space of `target`, a transform
+    """``(4, 4)``, row vectors as Maya's: from where data puts its points in the world, `matrix`
+    (`_data_placement`'s; None: the identity, points), into the space of `target`, a transform
     or the mesh an update lands on, ``matrix @ inverse(its world matrix)``; with no `target`, a
     new transform that stays at the origin, the world itself (``world_space=True``, either way).
     For a create `_shape_target` refused a target whose world matrix has no inverse to speak of

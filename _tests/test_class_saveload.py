@@ -256,30 +256,21 @@ class TestFiles(_Case):
             got = _files.check_save_path("~/x.npz", "X.save")
         self.assertEqual(os.path.normpath(got), os.path.join(self.dir, "x.npz"))
 
-    def test_a_path_load_reaches_cgmaths_reader_whichever_cgmath(self):
-        # rig takes get_file_type from the installed cgmath (cgmath.data on 3.0.0,
-        # cgmath.geometry._base on 1.0.4 and 2.0.0; the import is not mocked): a file of
-        # cgmath's own goes to cgmath's Data.load, an npz or a json under any name (by its
-        # first bytes), a pickle by its .pkl / .pickle name on 3.0.0, under any other name
-        # too before; an .obj goes to the slot's MeshData.load
+    def test_a_path_load_reaches_cgmaths_reader_whichever_name(self):
+        # rig takes get_file_type from cgmath.data: a file of cgmath's own goes to the slot's
+        # class's load (a file names no class), an npz or a json under any name (by its first
+        # bytes), a pickle by its .pkl / .pickle name; an .obj goes to the slot's MeshData.load too
         from cgmath.geometry import Data, MeshData
 
-        try:
-            from cgmath.data import get_file_type  # noqa: F401
-            pickle_by_name = True
-        except ImportError:
-            pickle_by_name = False
         data = Mesh(_cube()).serialize(include_uvs=False)
         data.save_obj(self.path("body.obj"))
         for fmt in FORMATS:
             data.save(self.path(f"b.{fmt}"))
             shutil.copy(self.path(f"b.{fmt}"), self.path(f"{fmt}_as.dat"))
         shutil.copy(self.path("b.pkl"), self.path("b.pickle"))
-        cases = [(f"b.{fmt}", Data) for fmt in FORMATS] + [
-            ("b.pickle", Data), ("npz_as.dat", Data), ("json_as.dat", Data), ("body.obj", MeshData)]
-        if not pickle_by_name:
-            cases.append(("pkl_as.dat", Data))
-        real = Data.load.__func__
+        cases = [(f"b.{fmt}", MeshData) for fmt in FORMATS] + [
+            ("b.pickle", MeshData), ("npz_as.dat", MeshData), ("json_as.dat", MeshData), ("body.obj", MeshData)]
+        real  = Data.load.__func__
         calls = []
 
         def spy(cls, path, *args, **kwargs):
@@ -294,10 +285,9 @@ class TestFiles(_Case):
                 self.assertIsInstance(got, MeshData)
                 self.assertEqual(len(got.points), len(data.points))
                 self.assertEqual(calls[0], (reader, self.path(name)))
-        if pickle_by_name:
-            with self.subTest(name="pkl_as.dat"):
-                self.assert_refused(ValueError, "^MeshData has no reader for dat files: ",
-                                    lambda: Mesh.load(self.path("pkl_as.dat")))
+        with self.subTest(name="pkl_as.dat"):  # a pickle goes by its name only
+            self.assert_refused(ValueError, "^MeshData has no reader for dat files: ",
+                                lambda: Mesh.load(self.path("pkl_as.dat")))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -406,13 +396,6 @@ class TestMesh(_Case):
         if not os.path.exists(self.path("c.npz")):
             NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)]).serialize().save(self.path("c.npz"))
         return self.path("c.npz")
-
-    def test_an_older_cgmath_file_raises_cgmaths_error(self):
-        from cgmath.geometry import LegacyFileError
-
-        t, path, _ = self.saved()
-        with mock.patch("cgmath.geometry.Data.load", side_effect=LegacyFileError("an older cgmath's file")):
-            self.assert_refused(LegacyFileError, "an older cgmath's file", lambda: Mesh.load(path))
 
     def test_save_checks_the_paths_before_it_serializes(self):
         t = _cube()
@@ -588,8 +571,8 @@ class TestMesh(_Case):
         _, path, _ = self.saved()
         self.assert_refused(
             TypeError,
-            "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files, world_space= and "
-            "normals= \\(got name=, container=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
+            "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files, world_space=, "
+            "normals= and hierarchy= \\(got name=, container=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
             lambda: Mesh("body").load(path, name="x", container=False),
         )
 
@@ -614,53 +597,48 @@ class TestMesh(_Case):
     # --- a cgmath Object (the user's addition C)
 
     def objects(self):
-        """``(an Object holding a UVData, one holding a UVList)``, from the moved cube."""
-        from cgmath.geometry import UVList
+        """An Object holding a UVData (cgmath's Object holds one UV set), from the moved cube."""
         from cgmath.render.scene import Object
 
         t = _cube()
         data, uvs = Mesh(t).serialize(world_space=False)
-        one = Object(name="hero", mesh=data, uv=uvs[0], translate=(5, 0, 0), rotate=(0, 45, 0))
-        # the UVList the next cgmath's Object holds (one takes it today: a stand-in)
-        every = Object(name="hero", mesh=data, uv=UVList(list(uvs)), translate=(5, 0, 0), rotate=(0, 45, 0))
-        return one, every
+        return Object(name="hero", mesh=data, uv=uvs[0], translate=(5, 0, 0), rotate=(0, 45, 0))
 
     def test_an_object_file(self):
-        one, every = self.objects()
-        for label, obj, sets in (("UVData", one, ["map1"]), ("UVList", every, ["map1", "second"])):
-            for ext in FORMATS:
-                with self.subTest(label=label, ext=ext):
-                    obj.save(self.path(f"hero_{label}.{ext}"))
-                    self.ready()
-                    mesh = Mesh.load(self.path(f"hero_{label}.{ext}"))
-                    self.assertEqual(list(mesh.get_uv_sets()), sets)
-                    self.assertEqual(str(mesh.get_parent()).rstrip("0123456789"), "hero")
-                    self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.t")[0], (5.0, 0.0, 0.0))
-                    self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.r")[0], (0.0, 45.0, 0.0))
-                    self.assertEqual(_hard_edges(str(mesh)), _hard_edges("bodyShape"))
-                    self.assertEqual(self.undo_name(), "rig.Mesh.load")
-                    self.assert_kept_selection()
+        obj = self.objects()
+        for ext in FORMATS:
+            with self.subTest(ext=ext):
+                obj.save(self.path(f"hero.{ext}"))
+                self.ready()
+                mesh = Mesh.load(self.path(f"hero.{ext}"))
+                self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
+                self.assertEqual(str(mesh.get_parent()).rstrip("0123456789"), "hero")
+                self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.t")[0], (5.0, 0.0, 0.0))
+                self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.r")[0], (0.0, 45.0, 0.0))
+                self.assertEqual(_hard_edges(str(mesh)), _hard_edges("bodyShape"))
+                self.assertEqual(self.undo_name(), "rig.Mesh.load")
+                self.assert_kept_selection()
 
     def test_an_object_file_updates_a_mesh(self):
-        one, every = self.objects()
-        every.save(self.path("hero.npz"))
+        obj = self.objects()
+        obj.save(self.path("hero.npz"))
         copy = Mesh.load(self.path("hero.npz"), name="copy")
         cmds.xform("copy.vtx[0]", translation=(0, 3, 0), relative=True)
-        cmds.polyUVSet("copy", delete=True, uvSet="second")
+        cmds.polyUVSet("copy", rename=True, uvSet="map1", newUVSet="other")
         cmds.delete("copy", constructionHistory=True)
         world = _world_points("copyShape")
         # re-pinned (user decision 2026-10-29): the world route by keyword, object space the default
         copy.load(self.path("hero.npz"), world_space=True)
-        self.assertEqual(list(copy.get_uv_sets()), ["map1", "second"])
+        self.assertEqual(list(copy.get_uv_sets()), ["other", "map1"])  # the file's set made again, the other kept
         # world space: the Object's transform places the points (the copy is where it is)
         self.assertFalse(np.allclose(_world_points("copyShape"), world, atol=1e-5))
         copy.load(self.path("hero.npz"), world_space=False)
         np.testing.assert_allclose(
-            np.array(copy.get_points(world_space=False))[:, :3], np.asarray(one.mesh.points), atol=1e-6
+            np.array(copy.get_points(world_space=False))[:, :3], np.asarray(obj.mesh.points), atol=1e-6
         )
 
     def test_an_object_takes_no_uvs(self):
-        one, _ = self.objects()
+        one = self.objects()
         one.save(self.path("hero.npz"))
         Mesh("body").save(self.path("b.npz"), uvs=self.path("u.npz"))
         for label, call, text in (
@@ -713,26 +691,27 @@ class TestNurbsCurve(_Case):
                     self.assert_kept_selection()
                     self.assertEqual(self.undo_name(), "rig.NurbsCurve.load")
 
-    def test_world_space_false_loads_at_the_origin(self):
-        # an older cgmath's NurbsCurveData has no matrix (3.0.1's, stood in here): an object-space
-        # file loads at the origin, save in world space there to keep where the curve is (re-pinned:
-        # one with a matrix keeps it, test_class_shape_space)
-        from rig._tests.test_class_nurbs_create import CURVE_FIELDS, _older_cgmath
-
+    def test_world_space_false_loads_at_the_origin_without_its_transform(self):
+        # an object-space file names the transform its CVs sat under; a scene without that
+        # transform (another scene, or the transform deleted) places it at identity: save in world
+        # space to carry where the curve is (re-pinned on cgmath's shape model, 2026-11-09; with
+        # the transform there, the curve sits under it, test_class_shape_space)
         shape = cmds.ls(self.sources()["moved"], long=True)[0]
-        with _older_cgmath("NurbsCurveData", CURVE_FIELDS):
-            NurbsCurve(shape).save(self.path("local.npz"), world_space=False)
+        NurbsCurve(shape).save(self.path("local.npz"), world_space=False)
+        local = _cvs(shape, world_space=False)
+        cmds.delete(cmds.listRelatives(shape, parent=True, fullPath=True)[0])
         curve = NurbsCurve.load(self.path("local.npz"))
-        np.testing.assert_allclose(_cvs(curve.get_long_name()), _cvs(shape, world_space=False), atol=1e-9)
+        np.testing.assert_allclose(_cvs(curve.get_long_name()), local, atol=1e-9)
+        self.assertEqual(cmds.xform(curve.get_parent().get_long_name(), query=True, matrix=True, worldSpace=True),
+                         [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
     def test_data_objects_paths_and_names(self):
         shape = self.sources()["circle"]
         data = NurbsCurve(shape).serialize()
         NurbsCurve(shape).save(self.path("c.npz"))
         first = NurbsCurve.load(data)
-        # re-pinned: the data's name names it (circShape: circ1, circ2) on a cgmath whose
-        # NurbsCurveData has one, else Maya's curve<N>
-        stem = "circ" if getattr(data, "name", None) else "curve"
+        # a NurbsCurveData holds no name: Maya's curve<N> (re-pinned on cgmath's shape model)
+        stem = "curve"
         self.assertEqual(str(first.get_parent()), f"{stem}1")
         self.assertEqual(str(NurbsCurve.load(pathlib.Path(self.path("c.npz"))).get_parent()), f"{stem}2")
         self.assertEqual(str(NurbsCurve.load(self.path("c.npz"), name="ctl").get_parent()), "ctl")
@@ -1264,7 +1243,8 @@ class TestHierarchy(_Case):
         Mesh(cmds.polyCube(name="m", constructionHistory=False)[0]).save(self.path("m.npz"))
         for label, call, error, text in (
             ("a mesh file", lambda: Transform.load_hierarchy(self.path("m.npz")), TypeError,
-             "^Transform.load_hierarchy: the hierarchy: .* holds a MeshData; the hierarchy is a HierarchyData$"),
+             "^Transform.load_hierarchy: the hierarchy: .* holds a MeshData; the hierarchy is a ClipData or a "
+             "HierarchyData$"),
             ("a missing file", lambda: Joint.load_hierarchy(self.path("x.npz")), FileNotFoundError,
              "^Joint.load_hierarchy: the hierarchy: no file"),
         ):
