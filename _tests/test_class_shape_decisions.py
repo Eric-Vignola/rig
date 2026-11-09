@@ -1,8 +1,8 @@
 """The user's decisions of 2026-10-30 on shapes and their spaces (feat/shape-under-transform,
 commits 3 and 4), one test class each:
 
-* Q1, a surface update: data without knots in a direction (an older cgmath's, or Maya's default
-  ones) says even knots there. It is refused, as other knots are, when the surface is uneven
+* Q1, a surface update: data without knots in a direction (Maya's default ones, or set to None)
+  says even knots there. It is refused, as other knots are, when the surface is uneven
   there at degree 2 or more (the shape would change); a degree-1 uneven direction stays taken
   (it only reparametrizes), and the surface keeps its knots.
 * Q2, ``Mesh('x').load(path, world_space=...)``: anything but a bool is a TypeError, before the
@@ -11,9 +11,10 @@ commits 3 and 4), one test class each:
 * Q5, ``serialize_hierarchy`` skips user attributes that hold geometry, with a warning: their
   value never loads back (no file takes it; it broke every save of the hierarchy).
 * Q6, ``world_space=True`` without ``transform=`` freezes the shape at its world positions, on
-  ``create`` and on the class-form ``load``: the data's matrix goes in the points, a mesh's locked
-  normals through its inverse transpose, and the new transform sits at the origin with identity
-  channels. False, the default, is the new transform at the matrix, the points the shape's own.
+  ``create`` and on the class-form ``load``: where the data sits goes in the points, a mesh's
+  locked normals through its inverse transpose, and the new transform sits at the origin with
+  identity channels. False, the default, is the new transform where the data sits, the points the
+  shape's own.
 * Q7, ``transform=`` takes any node derived from transform (the README says so).
 * Q8, ``transform=`` with ``world_space=True`` refuses a singular target (its world 3x3 scales some
   direction by less than 1e-9), before anything is built; ``world_space=False`` stays taken.

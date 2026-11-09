@@ -694,8 +694,8 @@ class TestNurbsCurve(_Case):
 
     def test_the_round_trip_in_each_format(self):
         # re-pinned (user decision 2026-10-29): a world-space file by keyword (the default, object
-        # space, round-trips through the data's matrix: test_class_shape_space); the sources by
-        # their paths, since a new curve takes the data's name (curveShape2 makes another one)
+        # space, round-trips under the transform the data names: test_class_shape_space); the
+        # sources by their paths (a new curve is Maya's curve<N>)
         for label, shape in self.sources().items():
             shape = cmds.ls(shape, long=True)[0]
             fn    = NurbsCurve(shape).get_fn_set()

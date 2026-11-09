@@ -5,7 +5,8 @@ A NurbsCurveData / NurbsSurfaceData holds no space: a file saved with ``world_sp
 and loaded with the old default (True) put its object-space CVs in the world, moved by the
 transform, silently. A load without ``world_space=``, or with anything but a bool, is now a
 TypeError naming the argument, raised before the file is read (nothing read, nothing
-changed, no undo step). ``Mesh('x').load`` keeps its default (a MeshData holds its matrix),
+changed, no undo step). ``Mesh('x').load`` keeps its default (a MeshData names the transform it
+sits under),
 and the class forms (creating) still take no ``world_space=`` without ``transform=``.
 
 Each test failed at fc692b9 (negative control: the default True moved the CVs), except the

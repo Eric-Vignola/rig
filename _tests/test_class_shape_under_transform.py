@@ -3,11 +3,11 @@ decision of 2026-10-29): ``transform=`` on ``Mesh.create``, ``NurbsCurve.create`
 ``NurbsSurface.create`` and their class-form ``load``. Only the shape is made, under the target,
 with ``world_space=`` (keyword-only, False by default) saying how the data's points go there:
 
-* False: the data's points (and a mesh's normals) become the shape's own, as they are; the
-  data's matrix is not used.
-* True: they land where the data puts them in the world, through its matrix, taken into the
-  target's space (the inverse of its world matrix; a mesh's locked normals through the inverse
-  transpose).
+* False: the data's points (and a mesh's normals) become the shape's own, as they are; where
+  the data sits is not used.
+* True: they land where the data puts them in the world (where it sits: under the transform its
+  ``parent_uuid`` names), taken into the target's space (the inverse of its world matrix; a
+  mesh's locked normals through the inverse transpose).
   Without ``transform=`` it freezes the shape there (test_class_shape_decisions, commit 3, as for
   a singular target and the shape's namespace).
 
