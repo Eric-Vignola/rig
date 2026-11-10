@@ -952,6 +952,23 @@ print(cmds.keyframe("ball_translateY", query=True, timeChange=True))  # [1001.0,
 print(cmds.getAttr("ball.ty", time=1002), made[0].tx.get())           # 4.0 0.0
 ```
 
+**`Transform.key_hierarchy(clip)` keys a clip onto nodes that exist**: each
+the node holding its data's uuid (what `create_hierarchy` made), else the
+one node of its name; a node neither finds, or a name of several, is a
+`ValueError` before any edit. The rows are `create_hierarchy`'s; a value a
+node holds already is left as it is, so a channel the clip does not change
+may be locked (a skinCluster locks its mesh's transform), and a locked
+channel it changes is a `ValueError` before any edit. A plain `HierarchyData`
+poses, no key. One undo step, the selection kept: a cgmath Scene binds its
+skins at `scene.hierarchy`, then takes the take's keys this way
+(`rig.create_scene`).
+
+```python
+cmds.delete("ball_translateY")                    # the keys gone, the node kept
+keyed = Transform.key_hierarchy(clip)             # found by its uuid
+print(keyed, cmds.getAttr("ball.ty", time=1002))  # List([Transform("ball")]) 4.0
+```
+
 `serialize_hierarchy(bindpose=True)` reads the hierarchy at its bind pose:
 the result is what `serialize_hierarchy()` would return after Maya's own
 Go to Bind Pose (`dagPose -restore -global`), and nothing is restored (the

@@ -66,6 +66,7 @@ of rig names the cgmath commit it was verified on here and in
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate`; a `ClipData` built and keyed |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
+| 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take, joined by uuid; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `Transform.key_hierarchy`), a second copy, what is left out |
 
 ---
 
@@ -4238,6 +4239,57 @@ print(both_sides()["names"])                     # ['L_arm_CTL', 'R_arm_CTL']
 
 What is shared and never executed again, what comes back after a run, and
 the limits are section 40's.
+
+---
+
+## 42. A cgmath Scene in Maya
+
+A cgmath `Scene` (`cgmath.render`) is what an fbx holds: the nodes at rest,
+the takes over them, and each mesh with what deforms it, joined by uuid
+(`scene.renderables()`). `rig.load_scene(path)` reads one by its extension
+(`.fbx`, `.obj`, `.glb`, or a cgmath `.npz` / `.json` / `.pkl`) and builds
+it; `rig.create_scene(scene)` builds one in memory. Each part is rig's own
+create, in the order a rig binds: the nodes, then mesh by mesh its shape
+under its node, its blendShape (in-betweens, weights) and its skin (bound at
+rest), then the active take keyed. One undo step; a `List` of what was made.
+Every node and shape takes its data's uuid, so a second build of the same
+scene is refused before anything is made: `scene.renew_uuids()` first.
+
+<!-- notest -->
+```python
+import rig
+from cgmath.render import Scene
+
+made  = rig.load_scene("hero.fbx", textures=False)  # Scene.load_fbx's flags pass through
+
+scene = Scene.load_fbx("hero.fbx")                  # the same, step by step
+rig.create_scene(scene)
+scene.renew_uuids()
+rig.create_scene(scene, parent="copy_grp")            # a second copy, its own uuids
+```
+
+By hand, the steps are the classes' creates; each part finds the others by
+uuid (an explicit target wins: `BlendShape.create(mesh, item)`):
+
+<!-- notest -->
+```python
+from rig.nodetypes import BlendShape, Mesh, SkinCluster, Transform
+
+Transform.create_hierarchy(scene.hierarchy)           # the bind pose, the data's uuids
+for item in scene.renderables():
+    Mesh.create(item)                                 # under the node its parent_uuid names
+    if len(item.morphs):
+        BlendShape.create(item)                       # on the mesh holding item.mesh.uuid
+    if item.skin is not None:
+        SkinCluster.create(item)                      # each influence the joint of its node's uuid
+Transform.key_hierarchy(scene.clip.active)            # the take, onto the nodes made
+```
+
+Left out, each with one warning naming the count: cameras and lights (rig
+has no class for them) and materials (a later release; the shapes join
+`initialShadingGroup`). A mesh with targets of two blendShape deformers is
+refused (`BlendShape.create(mesh, item, deformer=...)` builds each), and so
+is a skin in a scene of takes alone (no bind pose to bind at).
 
 ---
 

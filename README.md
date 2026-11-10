@@ -370,6 +370,8 @@ rig/
 │
 ├── membership.py        Tag (component tags), Layer (the DisplayLayer node class), Components,
 │                        Default (the initialShadingGroup engine)
+├── scene.py             create_scene / load_scene: a cgmath Scene (an fbx's nodes, meshes, blend
+│                        shapes, skins and take) built in Maya, joined by uuid
 │
 ├── nodetypes/           the node classes every node is: Node (the root), DGNode, Transform,
 │                        Mesh, the shaders (Material Blinn Lambert Phong PhongE SurfaceShader
@@ -393,6 +395,7 @@ The names most scripts start from:
 from rig import Node, Plug, List, Container, container, Components, Tag, Layer, Default, undo_chunk
 from rig import AnimCurve, AnimCurveTL, AnimCurveTA, AnimCurveTU, AnimCurveTT
 from rig import NodeNotFoundError, AmbiguousNodeError, NodeTypeError
+from rig import create_scene, load_scene                              # a cgmath Scene in Maya
 from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
 from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
 from rig import functions, trigonometry, matrix, vector, quaternion, euler, interpolate, tween
