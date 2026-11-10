@@ -260,6 +260,7 @@ from rig._internal.plug import InjectionError, Plug
 from rig._internal.undo import undo_chunk
 from rig._internal.run import exec, Run, RunExitError, run  # exec: not in __all__ (see below)
 from rig.membership import Components, Default, Layer, Tag
+from rig.scene import create_scene, load_scene
 from rig.nodetypes.anim_curve import AnimCurve, AnimCurveTA, AnimCurveTL, AnimCurveTT, AnimCurveTU
 from rig.nodetypes.errors import (
     AmbiguousNodeError,
@@ -366,6 +367,9 @@ __all__ = [
     "random",
     # Membership grammar
     "membership",
+    # A cgmath Scene in Maya
+    "create_scene",
+    "load_scene",
     # Cross-type dispatch verbs (Model A)
     "dist",
     "lerp",

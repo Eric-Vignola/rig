@@ -191,6 +191,26 @@ def _set_values(node: DAGNode, data: TransformData) -> None:
     node.set_attrs(skip_missing=True, **data.to_attributes())
 
 
+def _changed_values(node: DAGNode, values: dict) -> dict:
+    """The values of `values` (a TransformData's ``to_attributes()``) `node` does not hold
+    already (to 1e-12), each a plug it has: what `key_hierarchy` sets, so a channel it leaves
+    as it is may be locked (a skinCluster locks its mesh's transform)."""
+    changed = {}
+    for attr, value in values.items():
+        plug = node.find_attr(attr, quiet=True)
+        if plug is None:
+            continue
+        try:
+            held = np.asarray(plug.get(), dtype=float).ravel()
+            want = np.asarray(value, dtype=float).ravel()
+            same = held.shape == want.shape and np.allclose(held, want, rtol=0.0, atol=1e-12)
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            changed[attr] = value
+    return changed
+
+
 def _clip_rows(hierarchy: HierarchyData, solved: dict) -> list[tuple]:
     """The keys a ClipData needs, ``(node data, attribute, keys)`` per column of its (F, N, 3)
     blocks with any difference across the frames, each with a key on every frame. A flat
@@ -289,7 +309,9 @@ def _clip_inverse_scales(hierarchy: HierarchyData, solved: dict) -> None:
         elif held is not None:
             inverse.set(*held[0].tolist())
         elif getattr(parent, "node_type", None) == "joint":
-            parent.name.find_attr("scale").connect(inverse)
+            scale = parent.name.find_attr("scale")
+            if not cmds.isConnected(str(scale), str(inverse)):  # a node key_hierarchy keys may be wired
+                scale.connect(inverse)
 
 
 def _put_back_selection(before: list[str]) -> None:
@@ -1016,6 +1038,93 @@ class Transform(DAGNode):
         uuids       = _files.uuid_flag(f"{cls.__name__}.create_hierarchy", uuids)
         with _undo_chunk(f"rig.{cls.__name__}.create_hierarchy"):
             return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True, uuids=uuids))
+
+    @classmethod
+    def key_hierarchy(cls, clip: HierarchyData) -> List:
+        """Keys a ClipData onto the nodes in the scene it describes, the inverse
+        of `create_hierarchy` building them: what a cgmath Scene's take does to
+        the skeleton its skins were bound at (``create_hierarchy(scene.hierarchy)``,
+        the skins, then ``key_hierarchy(scene.clip.active)``).
+
+        Args:
+            clip: A ClipData, keyed as `create_hierarchy` keys one (the same
+                rows: a column that changes gets a curve with a key on every
+                frame, ``start_frame + k``; a flat one a plain value, the
+                tangents Maya's global default), or a plain HierarchyData, which
+                poses the nodes, no key. It is left as it was.
+
+        Each node of the data is the scene node holding its uuid (the node a
+        ``create_hierarchy`` with ``uuids=True`` made), else the one node of
+        its name. A node neither finds, or a name several nodes have, is a
+        ValueError naming every one before any edit; so are a NaN in a keyed
+        column and a missing undo plug-in (`create_hierarchy`'s checks). A
+        joint that compensates under a joint of the clip takes its parent's
+        scale (``parent.scale >> joint.inverseScale``, left as it is when
+        wired). Keys a channel holds already are replaced on the clip's frames.
+
+        Returns:
+            A List of the nodes keyed, typed, in the data's order (parents first).
+
+        One undo step named ``rig.<class>.key_hierarchy``; the selection is
+        left as it was. A path is a TypeError naming it.
+        """
+        from cgmath.hierarchy import HierarchyData
+        from rig._internal.list import List as _List
+
+        method = f"{cls.__name__}.key_hierarchy"
+        if isinstance(clip, (str, os.PathLike)):
+            raise TypeError(f"{method}() takes the data, not a file: ClipData.load(...) reads one")
+        if not isinstance(clip, HierarchyData):
+            raise TypeError(f"{method}() takes a ClipData or a HierarchyData, not a {type(clip).__name__}")
+
+        hierarchy = clip.copy()
+        missing   = []
+        for node in hierarchy:
+            found = _files.node_of_uuid(node.uuid)
+            if found is None:
+                named = cmds.ls(node.name, long=True, type="transform") or []
+                if len(named) != 1:
+                    missing.append(f"{node.name!r} ({'none' if not named else ', '.join(named)})")
+                    continue
+                found = named[0]
+            node.name = _cast(found)
+        if missing:
+            raise ValueError(
+                f"{method}: no node, or several, holds the uuid or the name of {len(missing)} node(s) of the data: "
+                f"{'; '.join(missing)}; build them first (create_hierarchy), nothing was keyed"
+            )
+
+        with _undo_chunk(f"rig.{method}"):
+            cls._key_found(hierarchy)
+        return _List([node.name for node in hierarchy])
+
+    @staticmethod
+    def _key_found(hierarchy: HierarchyData) -> None:
+        """[Internal] `key_hierarchy`'s edits, its nodes found: `hierarchy` a copy whose nodes'
+        names are the Maya nodes they key (``rig.scene.create_scene`` gives the nodes it made).
+        The keys are planned before the first edit (`_clip_rows`: a NaN, a missing plug-in)."""
+        from cgmath.hierarchy import ClipData
+
+        rows    = _clip_rows(hierarchy, {})
+        changes = [(node, _changed_values(node.name, node.to_attributes())) for node in hierarchy]
+        locked  = []
+        for node, values in changes:
+            held = set(cmds.listAttr(type(node.name).get_long_name(node.name), locked=True) or [])
+            keys = [attr for data, attr, _ in rows if data is node]
+            for attr in list(values) + keys:
+                if attr in held or any(attr + axis in held for axis in "XYZ"):
+                    locked.append(f"{node.name}.{attr}")
+        if locked:
+            raise ValueError(
+                f"key_hierarchy: the data changes {len(locked)} locked channel(s): {', '.join(locked)} "
+                f"(a skinCluster locks its mesh's transform); nothing was keyed"
+            )
+        for node, values in changes:
+            if values:
+                node.name.set_attrs(skip_missing=True, **values)
+        if isinstance(hierarchy, ClipData) and hierarchy.frame_count:
+            _clip_inverse_scales(hierarchy, {})
+        _key_rows(rows)
 
     @classmethod
     @_typed_creator
