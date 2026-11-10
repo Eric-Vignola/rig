@@ -44,7 +44,7 @@ from rig._internal.plug import Plug
 from rig.nodetypes import _base, AnimCurveTL, dg_node, DisplayLayer
 from rig.nodetypes.dg_node import _OLD_NODE_NAMES, DGNode
 from rig.nodetypes.transform import Transform
-from rig._tests._base import MayaTestCase, child_mayapy
+from rig._tests._base import MayaTestCase, own_interpreter
 
 # read by name, so that on a tree without the ban each test fails on its own
 # (the negative control) instead of the module failing to import
@@ -232,30 +232,10 @@ finally:
 
 
 def _in_own_mayapy(code):
-    """What `code` prints after ``RESULT `` (json), run in a new mayapy on this
-    rig (its file checked; "file" is dropped)."""
-    import json
-    import shutil
-    import subprocess
-
-    env = dict(os.environ)
-    # this rig's root only (the test process's whole path breaks mtoa's Qt import)
-    env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(rig.__file__)))
-    env["MAYA_DISABLE_CER"] = "1"
-    cwd = tempfile.mkdtemp(prefix="rig_node_ban_")
-    try:
-        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=600,
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    finally:
-        shutil.rmtree(cwd, ignore_errors=True)
-    output = proc.stdout.decode("utf-8", "replace")
-    lines  = [line for line in output.splitlines() if line.startswith("RESULT ")]
-    assert len(lines) == 1, f"exit {proc.returncode}: " + output[-2000:]
-    result = json.loads(lines[0][len("RESULT "):])
-    if isinstance(result, dict) and "file" in result:
-        here = os.path.normcase(os.path.dirname(rig.__file__))
-        assert os.path.normcase(os.path.dirname(result.pop("file"))) == here, output[-2000:]
-    return result
+    """What `code` prints after ``RESULT `` (json), which ran in a new mayapy on this rig (its
+    file checked; "file" dropped) until 2026-11-10: the suite runs in this session only now, so
+    the test is skipped (`own_interpreter`); the cases stay as they ran."""
+    own_interpreter("a case in a fresh mayapy (mtoa loaded here would stay loaded)")
 
 
 class TestRenamedReads(MayaTestCase):
@@ -472,7 +452,7 @@ class TestTheClashesTheBanFixes(MayaTestCase):
     def test_an_ai_aov_name(self):
         """In a mayapy of its own: mtoa loaded here would stay loaded for the rest
         of the suite (test_shade pins aiStandardSurface as unregistered). Skipped
-        without mtoa."""
+        without mtoa, and since 2026-11-10 skipped as a whole (`_in_own_mayapy`)."""
         result = _in_own_mayapy(_AOV_CODE)
         if result == "SKIP":
             self.skipTest("mtoa is not available")

@@ -8,10 +8,8 @@ never twice after a re-import, and not at all before Maya is initialised
 """
 
 import importlib
-import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from unittest import mock
@@ -23,7 +21,7 @@ from rig._internal import callbacks
 from rig._internal import memoize as memoize_module
 from rig._internal.memoize import memoize
 from rig.nodetypes import _base
-from rig._tests._base import MayaTestCase, child_mayapy
+from rig._tests._base import MayaTestCase, own_interpreter
 
 MEMO  = memoize_module.__name__
 BASE  = _base.__name__
@@ -406,49 +404,13 @@ class TestPendingRegistration(MayaTestCase):
         self.assertTrue(_base._STATIC_DATA_TYPE)
 
     def test_import_without_maya_initialised(self):
-        # d6ad8b2 crashed mayapy here: adding a scene callback before
-        # maya.standalone.initialize() is an access violation
-        mayapy = child_mayapy()
-        code = (
-            "import json, sys\n"
-            "try:\n"
-            f"    import {TOP}\n"
-            "except ImportError as err:\n"
-            "    print('RESULT ' + json.dumps({'import_error': repr(err)})); sys.exit(0)\n"
-            f"from {TOP}._internal import memoize\n"
-            f"from {TOP}.nodetypes import _base\n"
-            "from maya import cmds\n"
-            "print('RESULT ' + json.dumps({\n"
-            f"    'file': {TOP}.__file__,\n"
-            "    'initialised': hasattr(cmds, 'ls'),\n"
-            "    'registry': sorted(getattr(sys, '_rig_scene_callbacks', {}) or {}),\n"
-            "    'ready': [memoize._SCENE_CALLBACKS_READY, _base._PLUGIN_CALLBACKS_READY],\n"
-            "}))\n"
-            "sys.stdout.flush()\n"
-        )
-        env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
-        cwd = tempfile.mkdtemp(prefix="rig_noinit_")
-        try:
-            proc = subprocess.run([mayapy, "-c", code], cwd=cwd, env=env, timeout=300,
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        finally:
-            shutil.rmtree(cwd, ignore_errors=True)
-        output = proc.stdout.decode("utf-8", "replace")
-        self.assertEqual(proc.returncode, 0, output[-2000:])
-        lines = [line for line in output.splitlines() if line.startswith("RESULT ")]
-        self.assertEqual(len(lines), 1, output[-2000:])
-        result = json.loads(lines[0][len("RESULT "):])
-        if "import_error" in result:
-            self.skipTest(f"the uninitialised interpreter cannot import rig: {result}")
-        self.assertEqual(
-            os.path.normcase(os.path.dirname(result["file"])),
-            os.path.normcase(os.path.dirname(sys.modules[TOP].__file__)),
-        )
-        self.assertEqual(
-            {k: result[k] for k in ("initialised", "registry", "ready")},
-            {"initialised": False, "registry": [], "ready": [False, False]},
-        )
+        """d6ad8b2 crashed mayapy here: adding a scene callback before
+        ``maya.standalone.initialize()`` is an access violation. The check imported rig in a
+        mayapy that had not initialised Maya and read ``{'initialised': False, 'registry': [],
+        'ready': [False, False]}`` back, rig's file this one's, until 2026-11-10: it needs an
+        interpreter of its own (this session has initialised Maya), and the suite runs in this
+        session only now, so it is skipped (`own_interpreter`)."""
+        own_interpreter("an import before maya.standalone.initialize(), which this session has done")
 
 
 class TestReimport(MayaTestCase):

@@ -383,7 +383,8 @@ rig/
 ├── _defaults.toml       team-wide container option defaults
 ├── _internal/           private: node.py plug.py list.py container.py members.py memoize.py
 │                        node_ops.py shorthand.py maya_version.py anim_keys.py (AnimCurve's keys) ...
-└── _tests/              the suite, run with rig.utils.run_tests()
+└── _tests/              the suite, run with rig.utils.run_tests() in this Maya session (a test
+                         that needs an interpreter of its own, or another Maya, is skipped)
 ```
 
 The names most scripts start from:

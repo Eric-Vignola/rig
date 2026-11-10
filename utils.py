@@ -122,7 +122,10 @@ def run_tests(
         aborting the run.
 
         Maya is initialized on demand -- under ``mayapy`` that brings up
-        standalone; inside GUI Maya it is left alone.
+        standalone; inside GUI Maya it is left alone. The suite runs in the
+        session it was started in and starts no interpreter of its own: a
+        test that needs one (a fresh import, a crash it must survive) or
+        another Maya version is skipped, naming why (2026-11-10).
 
         >>> from rig.utils import run_tests
         >>> run_tests()                        # everything

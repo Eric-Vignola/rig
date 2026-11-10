@@ -3,7 +3,9 @@ A unit test case base class that provides shared functionality for Maya unit tes
 
 Vendored from the original ``unittest`` test-harness module, with the two
 environment helpers it needed (``is_standalone`` / ``initialize_standalone``)
-inlined here, and ``child_mayapy`` for the tests that start a child interpreter.
+inlined here, and ``own_interpreter`` for the tests that would need a child
+interpreter, which the suite does not start: it runs in the Maya session it was
+started in (the user's rule of 2026-11-10), and those tests are skipped.
 They live in the test tree rather than in :mod:`rig` because nothing in the
 shipped package uses them.
 
@@ -39,21 +41,15 @@ def initialize_standalone() -> None:
         standalone.initialize()
 
 
-def child_mayapy() -> str:
-    """The interpreter a test starts as a child: this one under mayapy; inside Maya,
-    where ``sys.executable`` is ``maya.exe`` and would open another Maya, the mayapy
-    beside it. No mayapy beside it: the test is skipped.
-
-    Start it with ``stdin=subprocess.DEVNULL``: a child inheriting a Maya process's own
-    stdin handle can fail on Windows (``WinError 50``), and no child reads it."""
-    if is_standalone():
-        return sys.executable
-    folder = os.path.dirname(sys.executable or "")
-    for name in ("mayapy.exe", "mayapy"):
-        path = os.path.join(folder, name)
-        if folder and os.path.isfile(path):
-            return path
-    raise unittest.SkipTest(f"no mayapy beside {sys.executable!r} to start a child interpreter")
+def own_interpreter(why: str) -> None:
+    """Skips the test that calls it: the test needs a Python of its own (`why`: ``"a raw Maya
+    case a crash must not take the suite with"``, ``"an import before
+    maya.standalone.initialize()"``), and the suite runs in the Maya session it was started
+    in, GUI or mayapy, never starting a child (the user's rule of 2026-11-10: a child mayapy
+    started from the GUI opened a second Maya and held the test, and a child of any kind is
+    not the session under test). A test for another Maya version skips the same way, with
+    ``unittest.TestCase.skipTest``."""
+    raise unittest.SkipTest(f"needs an interpreter of its own ({why}); the suite runs in this Maya session only")
 
 
 class MayaTestCase(unittest.TestCase):

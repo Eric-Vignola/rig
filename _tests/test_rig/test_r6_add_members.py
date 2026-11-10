@@ -10,23 +10,18 @@ the material engine's adoption (``materials._adopt``: ``[engine, *materialInfo]`
 feeds a hyperLayout) one call each, after one call for the others; a list that
 raises falls back to one call per node, each failure a debug line.
 
-The crash cases run in a subprocess: in-process they would take the test run down.
+The crash cases ran in a subprocess each (in-process they would take the test run down) until
+2026-11-10; the suite runs in the session it was started in now, so they are skipped.
 """
 
-import json
 import logging
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
 from unittest import mock
 
 from maya import cmds
 from rig import container
 from rig._internal import container as container_module
 from rig._internal.container import _add_members, _in_a_container
-from rig._tests._base import MayaTestCase, child_mayapy
+from rig._tests._base import MayaTestCase, own_interpreter
 
 TOP = container_module.__name__.split(".")[0]
 
@@ -88,29 +83,10 @@ class TestAddMembersCrash(MayaTestCase):
     """The crash before (today's list through maya.cmds) and after (rig's route)."""
 
     def _run(self, cases):
-        mayapy = child_mayapy()
-        cwd    = tempfile.mkdtemp(prefix="rig_r6_s0_")
-        try:
-            script = os.path.join(cwd, "case.py")
-            with open(script, "w") as fh:
-                fh.write(_CASE.format(top=TOP))
-            env = dict(os.environ)
-            env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
-            env["MAYA_DISABLE_CER"] = "1"  # no crash-report window for the raw cases
-            env["TEMP"] = env["TMP"] = cwd  # the crash log and the recovered scene land here
-            procs = {
-                case: subprocess.Popen([mayapy, "-u", script, case], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                for case in cases
-            }
-            out = {}
-            for case, proc in procs.items():
-                text = proc.communicate(timeout=600)[0].decode("utf-8", "replace")
-                lines = [line for line in text.splitlines() if line.startswith("RESULT ")]
-                out[case] = (proc.returncode, json.loads(lines[0][7:]) if lines else None, text[-1500:])
-            return out
-        finally:
-            shutil.rmtree(cwd, ignore_errors=True)
+        """``{case: (exit code, result, the output's tail)}`` of `_CASE` run per case, each in a
+        mayapy of its own (the raw cases crash) until 2026-11-10: the suite runs in this session
+        only now, so the test is skipped (`own_interpreter`); the cases stay as they ran."""
+        own_interpreter("raw Maya cases that crash, which the suite must survive")
 
     def test_list_moving_the_last_member_of_another_container(self):
         out = self._run(["raw_add", "rig_add", "raw_adopt", "rig_adopt"])

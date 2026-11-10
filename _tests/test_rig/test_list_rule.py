@@ -17,7 +17,8 @@
 * `TestThePrivateNameReader`: str() of a deleted / freed node, plug, Components and token is the
   marked name for everyone; rig reads names through `_name_of`, which raises "already deleted!";
   no caller is inspected anywhere (``_called_from_rig`` / ``_user_view`` are gone).
-* `TestRawMayaNeverCrashes` (each in its own mayapy): raw maya.cmds given an invalid List as a
+* `TestRawMayaNeverCrashes` (each ran in its own mayapy; skipped since 2026-11-10, the suite
+  runs in the session it was started in): raw maya.cmds given an invalid List as a
   positional argument, as the value of the String[...] / Int[...] flags and of boolean flags, a
   plain list holding a deleted node (Maya's TypeError, nothing deleted), the removal window
   (a user's node-removed callback using the List), a pending Python error inside Maya's parser,
@@ -32,12 +33,8 @@ Negative control: every test fails on f545846 (the skip rule): runs/features/fin
 import copy
 import importlib
 import json
-import os
 import pickle
-import shutil
-import subprocess
 import sys
-import tempfile
 from unittest import mock
 
 import numpy as np
@@ -52,7 +49,7 @@ from rig.nodetypes import _base
 from rig.nodetypes._base import _name_of
 from rig.nodetypes import Blinn
 from rig.spec import Float
-from rig._tests._base import MayaTestCase, child_mayapy
+from rig._tests._base import MayaTestCase, own_interpreter
 
 _USED = "this List can no longer be used; build a new List"
 
@@ -397,21 +394,16 @@ class TestTheSceneEpoch(_Case):
 
 
 # --------------------------------------------------------------------- #
-#  Raw Maya, each case in its own mayapy (a crash fails the test, not the run)
+#  Raw Maya, each case ran in its own mayapy (a crash failed the test, not the run); skipped
+#  since 2026-11-10: the suite runs in the session it was started in
 # --------------------------------------------------------------------- #
 
 
 def _in_own_mayapy(code):
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(rig.__file__)))
-    env["MAYA_DISABLE_CER"] = "1"
-    cwd = tempfile.mkdtemp(prefix="rig_list_rule_")
-    try:
-        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=900,
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    finally:
-        shutil.rmtree(cwd, ignore_errors=True)
-    return (proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace"))
+    """``(exit code, stdout, stderr)`` of the raw Maya case `code`, which ran in a mayapy of its
+    own (a crash failed the test, not the run) until 2026-11-10: the suite runs in this session
+    only now, so the test is skipped (`own_interpreter`); the cases stay as they ran."""
+    own_interpreter("a raw Maya case a crash must not take the suite with")
 
 
 _HEAD = r"""

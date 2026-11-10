@@ -1,58 +1,48 @@
 """The test harness itself, ``rig._tests._base``.
 
-* `TestChildMayapy`: the interpreter a test starts as a child is a mayapy everywhere. Under
-  mayapy it is this one. Inside Maya ``sys.executable`` is ``maya.exe``, which would open
-  another Maya and hold the test until that Maya closes (18 tests did, 2026-11-09): the
-  mayapy beside it is used, and none beside it skips the test.
+* `TestOwnInterpreter`: the suite runs in the Maya session it was started in, GUI or mayapy,
+  and starts no child (the user's rule of 2026-11-10; a child mayapy started from the GUI
+  opened a second Maya and held the test, 2026-11-09, and 70896c8's ``child_mayapy`` is
+  gone): a test that needs an interpreter of its own is skipped through `own_interpreter`,
+  naming why, and no test module starts a subprocess.
 """
 
 import os
-import shutil
-import sys
-import tempfile
+import re
 import unittest
-from unittest import mock
 
-from rig._tests._base import child_mayapy
+from rig._tests import _base
+from rig._tests._base import own_interpreter
+
+HERE  = os.path.dirname(os.path.abspath(__file__))
+TESTS = os.path.dirname(HERE)
 
 
-class TestChildMayapy(unittest.TestCase):
-    def _folder(self, *names):
-        """A temporary folder holding empty files of these names."""
-        folder = tempfile.mkdtemp(prefix="rig_harness_")
-        self.addCleanup(shutil.rmtree, folder, True)
-        for name in names:
-            with open(os.path.join(folder, name), "w"):
-                pass
-        return folder
+class TestOwnInterpreter(unittest.TestCase):
+    def test_it_skips_naming_why(self):
+        with self.assertRaises(unittest.SkipTest) as caught:
+            own_interpreter("a raw Maya case")
+        self.assertEqual(
+            str(caught.exception),
+            "needs an interpreter of its own (a raw Maya case); the suite runs in this Maya session only",
+        )
 
-    def test_under_mayapy_it_is_this_interpreter(self):
-        folder = self._folder()
-        for name in ("mayapy.exe", "mayapy"):
-            with self.subTest(name=name), mock.patch.object(sys, "executable", os.path.join(folder, name)):
-                self.assertEqual(child_mayapy(), os.path.join(folder, name))
+    def test_the_harness_starts_no_child(self):
+        self.assertFalse(hasattr(_base, "child_mayapy"))
+        self.assertNotIn("subprocess", open(_base.__file__, encoding="utf-8").read())
 
-    def test_inside_maya_it_is_the_mayapy_beside_maya_exe(self):
-        for maya, mayapy in (("maya.exe", "mayapy.exe"), ("maya", "mayapy")):
-            with self.subTest(mayapy=mayapy):
-                folder = self._folder(maya, mayapy)
-                with mock.patch.object(sys, "executable", os.path.join(folder, maya)):
-                    self.assertEqual(child_mayapy(), os.path.join(folder, mayapy))
-
-    def test_no_mayapy_beside_it_skips(self):
-        folder = self._folder("maya.exe")
-        exe    = os.path.join(folder, "maya.exe")
-        with mock.patch.object(sys, "executable", exe):
-            with self.assertRaises(unittest.SkipTest) as caught:
-                child_mayapy()
-        self.assertIn(repr(exe), str(caught.exception))
-        for unknown in ("", None):  # an interpreter that cannot name its own executable
-            with self.subTest(executable=unknown), mock.patch.object(sys, "executable", unknown):
-                with self.assertRaises(unittest.SkipTest):
-                    child_mayapy()
-
-    def test_this_session_has_one(self):
-        """mayapy or Maya: the 20 tests that start a child find a mayapy here."""
-        mayapy = child_mayapy()
-        self.assertTrue(os.path.isfile(mayapy), mayapy)
-        self.assertTrue(os.path.basename(mayapy).startswith("mayapy"), mayapy)
+    def test_no_test_module_starts_a_subprocess(self):
+        """A sweep over the test tree: a module that runs a subprocess would be starting an
+        interpreter of its own (this one's call is a string, not a call)."""
+        found = []
+        for folder, dirs, files in os.walk(TESTS):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for name in files:
+                path = os.path.join(folder, name)
+                if not name.endswith(".py") or os.path.samefile(path, __file__):
+                    continue
+                with open(path, encoding="utf-8") as fh:
+                    text = fh.read()
+                if re.search(r"subprocess\.(run|Popen|call|check_output|check_call)\(", text):
+                    found.append(os.path.relpath(path, TESTS))
+        self.assertEqual(found, [])

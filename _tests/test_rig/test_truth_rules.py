@@ -18,8 +18,9 @@ rewrites user code (no folding): the Script Editor and a sourced script behave t
 * `TestTheNodeStays` (10A): a refused comparison leaves its node, as an ordering always did.
 * `TestPlugEqualsNone` (11A): ``plug == None`` / ``!= None`` raise at once and build nothing.
 * `TestRigTestsWithIsNone`: rig's own code tests a plug with ``is None`` (a lint over its modules).
-* `TestRawMayaNeverAsksATruth` (in its own mayapy): Maya's boolean flags, OpenMaya's bool
-  arguments and Python callbacks given these objects raise cleanly; the session keeps working.
+* `TestRawMayaNeverAsksATruth` (ran in its own mayapy; skipped since 2026-11-10, the suite
+  runs in the session it was started in): Maya's boolean flags, OpenMaya's bool arguments and
+  Python callbacks given these objects raise cleanly; the session keeps working.
 
 Negative control: every test fails on 5ff3d86 (runs/features/final_impl/S2_truth).
 """
@@ -28,9 +29,6 @@ import ast
 import copy
 import json
 import os
-import shutil
-import subprocess
-import tempfile
 import unittest
 
 from maya import cmds
@@ -39,7 +37,7 @@ import rig
 from rig import List, Node, Plug, condition, force_nodes
 from rig import functions as rf
 from rig._internal import list as list_module
-from rig._tests._base import MayaTestCase, child_mayapy
+from rig._tests._base import MayaTestCase, own_interpreter
 
 _VALUE = r"the output of a comparison with a value"
 _PLAIN = r"^a plug has no truth value \('%s'\): read its value with \.get\(\), test for a missing plug with `is None`"
@@ -370,16 +368,10 @@ class TestRigTestsWithIsNone(MayaTestCase):
 
 
 def _in_own_mayapy(code):
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(rig.__file__)))
-    env["MAYA_DISABLE_CER"] = "1"
-    cwd = tempfile.mkdtemp(prefix="rig_truth_")
-    try:
-        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=900,
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    finally:
-        shutil.rmtree(cwd, ignore_errors=True)
-    return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")
+    """``(exit code, stdout, stderr)`` of the raw Maya case `code`, which ran in a mayapy of its
+    own until 2026-11-10: the suite runs in this session only now, so the test is skipped
+    (`own_interpreter`); the cases stay as they ran."""
+    own_interpreter("a raw Maya case a crash must not take the suite with")
 
 
 _RAW = r"""

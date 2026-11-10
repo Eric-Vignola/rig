@@ -44,7 +44,6 @@ runs/features/robust/fix/out/nc_base for the fix round's).
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from unittest import mock
@@ -58,22 +57,14 @@ from rig.nodetypes._base import _name_of
 from rig.nodetypes import Mesh
 from rig.nodetypes import Blinn
 from rig.spec import Float
-from rig._tests._base import MayaTestCase, child_mayapy
+from rig._tests._base import MayaTestCase, own_interpreter
 
 
 def _in_own_mayapy(code):
-    """(exit code, stdout, stderr) of `code` run in a new mayapy on this rig."""
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(rig.__file__)))
-    env["MAYA_DISABLE_CER"] = "1"
-    cwd = tempfile.mkdtemp(prefix="rig_robustness_")
-    try:
-        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=900,
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    finally:
-        shutil.rmtree(cwd, ignore_errors=True)
-    return (proc.returncode, proc.stdout.decode("utf-8", "replace"),
-            proc.stderr.decode("utf-8", "replace"))
+    """(exit code, stdout, stderr) of `code`, which ran in a new mayapy on this rig until
+    2026-11-10 (a crash failed the test, not the run): the suite runs in this session only now,
+    so the test is skipped (`own_interpreter`); the cases stay as they ran."""
+    own_interpreter("a raw Maya case a crash must not take the suite with")
 
 
 def _result(test, out, err):
