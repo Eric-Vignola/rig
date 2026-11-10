@@ -151,7 +151,7 @@ class TestTypedCreateInContainer(MayaTestCase):
         self.assertEqual(params[:3], ["mesh", "ref_object", "name"])
         self.assertIn("Creates a follicle", Follicle.create_on_mesh.__doc__)
         params = list(inspect.signature(Transform.create_hierarchy).parameters)
-        self.assertEqual(params, ["hierarchy", "parent", "world_space"])
+        self.assertEqual(params, ["hierarchy", "parent", "world_space", "uuids"])
 
     # -- 1 membership and prefix -- #
 

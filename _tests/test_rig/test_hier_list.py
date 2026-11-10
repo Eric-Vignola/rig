@@ -107,7 +107,7 @@ class TestCreateHierarchyReturn(_Case):
 
     def test_a_renamed_duplicate_is_the_node_maya_made(self):
         data  = _skeleton()
-        again = Transform.create_hierarchy(data)
+        again = Transform.create_hierarchy(data, uuids=False)
         self.assertEqual([x.get_short_name() for x in again], ["root1", "pelvis", "probe", "box"])
         self.assertEqual([x.get_long_name() for x in again],
                          ["|root1", "|root1|pelvis", "|root1|pelvis|probe", "|root1|pelvis|box"])
@@ -117,7 +117,7 @@ class TestCreateHierarchyReturn(_Case):
     def test_under_a_parent(self):
         data  = _skeleton()
         group = Transform.create(name="grp")
-        made  = Transform.create_hierarchy(data, parent="grp")
+        made  = Transform.create_hierarchy(data, parent="grp", uuids=False)
         self.assertEqual([x.get_long_name() for x in made],
                          ["|grp|root", "|grp|root|pelvis", "|grp|root|pelvis|probe", "|grp|root|pelvis|box"])
         self.assertEqual(made[0].get_parent(), group)
@@ -243,16 +243,16 @@ class TestUserCasting(_Case):
 
     def test_a_name_more_than_one_node_has(self):
         # (HL_FIX F1) each TransformData is found by its uuid: the node it was serialized from
-        Transform.create_hierarchy(self.data)  # a second pelvis
+        Transform.create_hierarchy(self.data, uuids=False)  # a second pelvis
         self.assertEqual([x.get_long_name() for x in List(self.data)],
                          ["|root", "|root|pelvis", "|root|pelvis|probe", "|root|pelvis|box"])
         # in another scene (no node has the uuid) the name decides, an ambiguous one raises
         self.new_scene()
         data = _skeleton_after_new_scene(self)
         self.assertFalse(any(cmds.ls(x.uuid) for x in data))
-        Transform.create_hierarchy(data)
+        Transform.create_hierarchy(data, uuids=False)
         self.assertEqual([x.get_long_name() for x in List(data[:1])], ["|root"])
-        Transform.create_hierarchy(data)
+        Transform.create_hierarchy(data, uuids=False)
         with self.assertRaisesRegex(TypeError, r"^List element \[1\] \(TransformData 'pelvis'\) .*ambiguous"):
             List(data)
 

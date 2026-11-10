@@ -261,7 +261,7 @@ class TestRestoreColors(_Case):
     def test_create_star_serialize(self):
         t       = _painted()
         corners = _corner_colors(_shape(t), "colorSet1")
-        self.assert_colours(Mesh.create(*Mesh(t).serialize(), name="twin"), corners)
+        self.assert_colours(Mesh.create(*Mesh(t).serialize(), name="twin", uuids=False), corners)
 
     def test_a_colour_a_vertex_goes_on_every_corner_of_its_vertex(self):
         data, uvs, _ = self.source(_cube("src"))
@@ -296,7 +296,7 @@ class TestRestoreColors(_Case):
         rolled               = data.copy()
         rolled.indices       = face
         rolled.color_indices = colour
-        self.assertEqual(placed(Mesh.create(rolled, name="o")), by_vertex)
+        self.assertEqual(placed(Mesh.create(rolled, name="o", uuids=False)), by_vertex)
 
     def test_data_without_colours_makes_no_set_and_false_reads_none(self):
         data, uvs, _ = self.source()
@@ -306,7 +306,7 @@ class TestRestoreColors(_Case):
         self.assertEqual(Mesh.create(plain, uvs=uvs, name="plain").get_color_sets(), [])
         with mock.patch.object(mesh_module, "_data_colors", wraps=mesh_module._data_colors) as read, \
                 mock.patch.object(mesh_module, "_restore_colors", wraps=mesh_module._restore_colors) as restore:
-            mesh = Mesh.create(data, uvs=uvs, name="m", colors=False)
+            mesh = Mesh.create(data, uvs=uvs, name="m", colors=False, uuids=False)
         read.assert_not_called()
         restore.assert_not_called()
         self.assertEqual(mesh.get_color_sets(), [])
@@ -336,11 +336,11 @@ class TestRestoreColors(_Case):
         made = Mesh.create(data, uvs=uvs, name="body")
         path, uv_path = made.save(self.path("body.npz"), uvs=self.path("body_uv.npz"))
         self.ready()
-        loaded = Mesh.load(path, uv_path, name="copy")
+        loaded = Mesh.load(path, uv_path, name="copy", uuids=False)
         self.assert_colours(loaded, corners)
         self.assertEqual(self.undo_name(), "rig.Mesh.load")
         self.assert_kept_selection()
-        self.assertEqual(Mesh.load(path, uv_path, name="plain", colors=False).get_color_sets(), [])
+        self.assertEqual(Mesh.load(path, uv_path, name="plain", colors=False, uuids=False).get_color_sets(), [])
 
     def test_the_update_writes_the_first_set(self):
         data, uvs, corners = self.source()

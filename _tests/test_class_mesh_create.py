@@ -174,7 +174,7 @@ class TestMeshCreateNames(_MeshCreateCase):
         data, _ = _cube_data()
         self.ready()
         self._check(Mesh.create(data), "polySurface1", "polySurfaceShape1", data)
-        self._check(Mesh.create(data), "polySurface2", "polySurfaceShape2", data)
+        self._check(Mesh.create(data, uuids=False), "polySurface2", "polySurfaceShape2", data)
 
     def test_explicit_names(self):
         data, _ = _cube_data()
@@ -188,7 +188,7 @@ class TestMeshCreateNames(_MeshCreateCase):
         data, _ = _cube_data()
         self.ready()
         self._check(Mesh.create(data, name="m"), "m", "mShape", data)
-        self._check(Mesh.create(data, name="m"), "m1", "mShape1", data)
+        self._check(Mesh.create(data, name="m", uuids=False), "m1", "mShape1", data)
         cmds.file(new=True, force=True)
         cmds.createNode("transform", name="m")
         self.ready()

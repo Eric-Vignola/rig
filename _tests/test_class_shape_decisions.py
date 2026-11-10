@@ -340,14 +340,14 @@ class TestQ5GeometryAttrsAreSkipped(_Case):
             with self.subTest(ext=ext):
                 with self.assertLogs("rig.nodetypes.transform", level="WARNING"):
                     path = Transform(self.root).save_hierarchy(os.path.join(folder, f"h.{ext}"))
-                made = Transform.load_hierarchy(path)[0]
+                made = Transform.load_hierarchy(path, uuids=False)[0]
                 self.assertEqual([str(a).partition(".")[2] for a in made.list_attr(ud=True)], ["note"])
                 self.assertEqual(cmds.getAttr(f"{made}.note"), "kept")
 
     def test_create_hierarchy_takes_the_data(self):
         with self.assertLogs("rig.nodetypes.transform", level="WARNING"):
             data = Transform(self.root).serialize_hierarchy()
-        made = Transform.create_hierarchy(data)[0]
+        made = Transform.create_hierarchy(data, uuids=False)[0]
         self.assertEqual([str(a).partition(".")[2] for a in made.list_attr(ud=True)], ["note"])
 
     def test_an_empty_one_is_skipped_too(self):
@@ -379,7 +379,7 @@ class TestQ5GeometryAttrsAreSkipped(_Case):
         self.assertEqual((sorted(kept), skipped), (["first", "group", "last"], ["geo"]))
         self.assertEqual(kept["group"]["numberOfChildren"], 2)
         data = Transform(node).serialize_hierarchy()
-        made = Transform.create_hierarchy(data)[0]
+        made = Transform.create_hierarchy(data, uuids=False)[0]
         self.assertEqual(cmds.attributeQuery("last", node=str(made), listParent=True), ["group"])
         self.assertEqual(cmds.getAttr(f"{made}.last"), 2.5)
 
@@ -449,10 +449,10 @@ class TestQ6FrozenAtWorldPositions(_Case):
             self.assertEqual(tuple(_local(shape)[0]), own)
             self.assertEqual(tuple(_world(shape)[0]), world)
 
-        copy_a = Mesh.create(data, uvs, name="copyA")
-        copy_b = Mesh.create(data, uvs, name="copyB", world_space=True)
-        loaded = Mesh.load(path, name="copyC", world_space=True)
-        under  = Mesh.create(data, uvs, transform="ctl", world_space=True)
+        copy_a = Mesh.create(data, uvs, name="copyA", uuids=False)
+        copy_b = Mesh.create(data, uvs, name="copyB", world_space=True, uuids=False)
+        loaded = Mesh.load(path, name="copyC", world_space=True, uuids=False)
+        under  = Mesh.create(data, uvs, transform="ctl", world_space=True, uuids=False)
         self.assertEqual(_new_transform(copy_a), "|copyA")
         self.assertEqual(_new_transform(copy_b), "|copyB")
         vertex(copy_a, (0.0, 10.0, 0.0), (-0.5, -0.5, 0.5), (-0.5, 9.5, 0.5))
@@ -464,7 +464,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 source, args = self.source(cls)
-                shape = cls.create(*args, world_space=True)
+                shape = cls.create(*args, world_space=True, uuids=False)
                 self.assert_at_rest(shape)
                 np.testing.assert_allclose(_local(shape), _world(source), rtol=0, atol=ATOL[cls])
                 np.testing.assert_allclose(_world(shape), _world(source), rtol=0, atol=ATOL[cls])
@@ -475,13 +475,13 @@ class TestQ6FrozenAtWorldPositions(_Case):
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 source, args = self.source(cls)
-                for shape in (cls.create(*args), cls.create(*args, world_space=False)):
+                for shape in (cls.create(*args, uuids=False), cls.create(*args, world_space=False, uuids=False)):
                     np.testing.assert_array_equal(_local(shape), _data_points(args[0]))
                     np.testing.assert_allclose(_world(shape), _world(source), rtol=0, atol=ATOL[cls])
 
     def test_a_mesh_s_normals_and_shading_follow(self):
         source = _cube()
-        shape  = Mesh.create(*_args(source), world_space=True)
+        shape  = Mesh.create(*_args(source), world_space=True, uuids=False)
         np.testing.assert_allclose(_normals(shape), _normals(source), rtol=0, atol=1e-5)
         np.testing.assert_allclose(_normals(shape, OBJECT), _normals(source), rtol=0, atol=1e-5)
         self.assertEqual(_shading(shape)[0], _shading(source)[0])
@@ -490,7 +490,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
 
     def test_normals_false_leaves_the_mesh_smooth(self):
         source = _cube()
-        shape  = Mesh.create(*_args(source), world_space=True, normals=False)
+        shape  = Mesh.create(*_args(source), world_space=True, normals=False, uuids=False)
         np.testing.assert_allclose(_local(shape), _world(source), rtol=0, atol=1e-5)
         self.assertEqual(_shading(shape), (0, 0))
 
@@ -499,9 +499,9 @@ class TestQ6FrozenAtWorldPositions(_Case):
             with self.subTest(cls=cls.__name__):
                 source = _source(cls)
                 args   = _args(source, True)
-                frozen = cls.create(*args, world_space=True)
+                frozen = cls.create(*args, world_space=True, uuids=False)
                 self.assert_at_rest(frozen)
-                np.testing.assert_array_equal(_local(frozen), _local(cls.create(*args)))
+                np.testing.assert_array_equal(_local(frozen), _local(cls.create(*args, uuids=False)))
 
     def test_data_that_names_no_transform_is_the_identity(self):
         """Data whose parent_uuid is None (world-space data, or one cleared by hand), and points:
@@ -511,7 +511,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
                 source           = maker()
                 data             = source.serialize()
                 data.parent_uuid = None
-                frozen           = cls.create(data, world_space=True)
+                frozen           = cls.create(data, world_space=True, uuids=False)
                 self.assert_at_rest(frozen)
                 np.testing.assert_array_equal(_local(frozen), _local(source))
         points = [(0, 0, 0), (1, 2, 0), (2, 0, 1), (3, 1, 1), (4, 0, 0)]
@@ -525,7 +525,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         for shape in (_uneven(parent, "srf"), _cylinder(parent, "cyl")):
             with self.subTest(shape=shape):
                 source = NurbsSurface(shape)
-                frozen = NurbsSurface.create(source.serialize(), world_space=True)
+                frozen = NurbsSurface.create(source.serialize(), world_space=True, uuids=False)
                 fn, own = frozen.get_fn_set(), source.get_fn_set()
                 self.assertEqual(list(fn.knotsInU()),      list(own.knotsInU()))
                 self.assertEqual(list(fn.knotsInV()),      list(own.knotsInV()))
@@ -536,7 +536,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         cmds.xform(uneven, translation=(1, 2, 3), rotation=(10, 20, 30), scale=(2, 1, 0.5))
         for source in (NurbsCurve(uneven), _circle()):
             with self.subTest(curve=str(source)):
-                frozen = NurbsCurve.create(source.serialize(), world_space=True)
+                frozen = NurbsCurve.create(source.serialize(), world_space=True, uuids=False)
                 self.assertEqual(frozen.get_fn_set().form, source.get_fn_set().form)
                 self.assertEqual(list(frozen.get_fn_set().knots()), list(source.get_fn_set().knots()))
                 np.testing.assert_allclose(_local(frozen), _world(source), rtol=0, atol=1e-9)
@@ -567,18 +567,18 @@ class TestQ6FrozenAtWorldPositions(_Case):
             with self.subTest(cls=cls.__name__):
                 source, _ = self.source(cls)
                 path   = source.save(os.path.join(folder, f"{cls.__name__}.npz"))
-                frozen = cls.load(path, world_space=True)
+                frozen = cls.load(path, world_space=True, uuids=False)
                 self.assertEqual(self.undo_name(), f"rig.{cls.__name__}.load")
                 self.assert_at_rest(frozen)
                 np.testing.assert_allclose(_local(frozen), _world(source), rtol=0, atol=ATOL[cls])
-                kept = cls.load(path, world_space=False)
+                kept = cls.load(path, world_space=False, uuids=False)
                 np.testing.assert_array_equal(_local(kept), _local(source))
                 np.testing.assert_allclose(_world(kept), _world(source), rtol=0, atol=ATOL[cls])
 
     def test_the_class_form_load_takes_the_data_too(self):
         source = _cube()
         data   = source.serialize(uvs=False)
-        shape  = Mesh.load(data, world_space=True)
+        shape  = Mesh.load(data, world_space=True, uuids=False)
         np.testing.assert_allclose(_local(shape), _world(source), rtol=0, atol=1e-5)
 
     def test_the_keyword_of_the_class_form_load(self):
@@ -614,7 +614,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
                 _, args = self.source(cls)
                 cmds.flushUndo()
                 before = self.scene_state()
-                shape  = cls.create(*args, world_space=True)
+                shape  = cls.create(*args, world_space=True, uuids=False)
                 path   = shape.get_long_name()
                 uuid   = cmds.ls(path, uuid=True)[0]
                 after  = self.scene_state(meshes=[path] if cls is Mesh else [])
@@ -632,14 +632,14 @@ class TestQ6FrozenAtWorldPositions(_Case):
             with self.subTest(cls=cls.__name__):
                 _, args = self.source(cls)
                 cmds.select("picked", replace=True)
-                cls.create(*args, world_space=True)
+                cls.create(*args, world_space=True, uuids=False)
                 self.assertEqual(cmds.ls(orderedSelection=True), ["picked"])
 
     def test_in_a_container(self):
         """The transform and the shape join, as without the keyword."""
         args = _args(_cube())
         with container("box"):
-            shape = Mesh.create(*args, name="frozen", world_space=True)
+            shape = Mesh.create(*args, name="frozen", world_space=True, uuids=False)
         self.assertEqual(sorted(cmds.container("box", query=True, nodeList=True)), ["frozen", "frozenShape"])
         self.assert_at_rest(shape)
 
@@ -649,13 +649,13 @@ class TestQ6FrozenAtWorldPositions(_Case):
         surface lands inside out against the source."""
         source = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
         cmds.xform("box", translation=(1, 2, 3), rotation=(10, 20, 30), scale=(-1, 1, 1))
-        frozen = Mesh.create(*_args(source), world_space=True)
+        frozen = Mesh.create(*_args(source), world_space=True, uuids=False)
         np.testing.assert_allclose(_world(frozen), _world(source), rtol=0, atol=1e-5)
         np.testing.assert_allclose(_normals(frozen), _normals(source), rtol=0, atol=1e-5)
         self.assertEqual(_shading(frozen), (_shading(source)[0], frozen.get_fn_set().numNormals))
         ball = _ball()
         cmds.xform(ball.get_parent().get_long_name(), scale=(-1, 1, 1))
-        flipped = NurbsSurface.create(*_args(ball), world_space=True)
+        flipped = NurbsSurface.create(*_args(ball), world_space=True, uuids=False)
         np.testing.assert_allclose(_world(flipped), _world(ball), rtol=0, atol=1e-9)
         np.testing.assert_allclose(_surface_normals(flipped), -_surface_normals(ball), rtol=0, atol=1e-6)
 
@@ -666,25 +666,25 @@ class TestQ6FrozenAtWorldPositions(_Case):
         plain create."""
         source = _soft_sphere(scale=(1, 2, 3))
         args   = _args(source)
-        frozen = Mesh.create(*args, world_space=True)
+        frozen = Mesh.create(*args, world_space=True, uuids=False)
         self.assertEqual(_shading(source)[1],             0)
-        self.assertEqual(_shading(Mesh.create(*args))[1], 0)
+        self.assertEqual(_shading(Mesh.create(*args, uuids=False))[1], 0)
         self.assertEqual(_shading(frozen)[1],             0)
         self.assertLess(_turn(_normals(frozen), _normals(source)), 0.5)
-        bare = Mesh.create(*args, world_space=True, normals=False)
+        bare = Mesh.create(*args, world_space=True, normals=False, uuids=False)
         self.assertEqual(_shading(bare)[1], 0)
         np.testing.assert_allclose(_normals(frozen), _normals(bare), rtol=0, atol=1e-6)
 
     def test_a_rigid_matrix_near_the_origin_locks_nothing(self):
         """guard: a move, a rotation and a uniform scale: Maya computes the data's normals, there."""
         source = _soft_sphere(translation=(1, 2, 3), rotation=(30, 40, 50), scale=(2, 2, 2))
-        self.assertEqual(_shading(Mesh.create(*_args(source), world_space=True))[1], 0)
+        self.assertEqual(_shading(Mesh.create(*_args(source), world_space=True, uuids=False))[1], 0)
 
     def test_a_hard_edged_cube_locks_nothing(self):
         """guard: a non-uniform scale and a shear: a flat face's normal is what Maya computes."""
         box = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
         cmds.xform("box", translation=(1, 2, 3), rotation=(10, 20, 30), scale=(1, 2, 3), shear=(0.5, 0.2, -0.3))
-        self.assertEqual(_shading(Mesh.create(*_args(box), world_space=True)), (12, 0))
+        self.assertEqual(_shading(Mesh.create(*_args(box), world_space=True, uuids=False)), (12, 0))
 
     def test_the_same_goes_under_a_target_and_in_an_update(self):
         """Re-pinned (both locked nearly every soft normal): whichever call takes the points there,
@@ -693,7 +693,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         args   = _args(source, True)
         target = cmds.createNode("transform", name="ctl")
         cmds.xform(target, scale=(1, 2, 3))
-        under = Mesh.create(*args, transform=target, world_space=True)
+        under = Mesh.create(*args, transform=target, world_space=True, uuids=False)
         self.assertEqual(_shading(under)[1], 0)
         cmds.xform("ball", scale=(1, 2, 3))
         source.load(*args, world_space=True)
@@ -719,7 +719,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         flat = HierarchyData([TransformData("flat", uuid=data.parent_uuid, scale=[0.0, 1.0, 1.0])])
         self.assert_nothing_made(ValueError, r"^MeshData: the matrix has no inverse, which the normals go through",
                                  lambda: Mesh.create(data, world_space=True, hierarchy=flat))
-        made = Mesh.create(data, world_space=True, normals=False, hierarchy=flat)
+        made = Mesh.create(data, world_space=True, normals=False, hierarchy=flat, uuids=False)
         self.assert_at_rest(made)
         np.testing.assert_array_equal(_local(made)[:, 0], np.zeros(8))
 
@@ -767,11 +767,11 @@ class TestOnlyRealLocks(_Case):
         args   = _args(source)
         target = _sheared()
         path   = source.save(os.path.join(self.folder(), "source.npz"))
-        yield "frozen", Mesh.create(*args, world_space=True)
-        yield "under a target", Mesh.create(*args, transform=target, world_space=True)
-        yield "the class-form load", Mesh.load(path, world_space=True)
-        yield "the class-form load under a target", Mesh.load(path, transform=target, world_space=True)
-        yield "an update", Mesh.create(*args, transform=target).load(*args, world_space=True)
+        yield "frozen", Mesh.create(*args, world_space=True, uuids=False)
+        yield "under a target", Mesh.create(*args, transform=target, world_space=True, uuids=False)
+        yield "the class-form load", Mesh.load(path, world_space=True, uuids=False)
+        yield "the class-form load under a target", Mesh.load(path, transform=target, world_space=True, uuids=False)
+        yield "an update", Mesh.create(*args, transform=target, uuids=False).load(*args, world_space=True)
 
     def assert_stays_soft(self, source):
         for label, shape in self.shapes(source):
@@ -791,7 +791,7 @@ class TestOnlyRealLocks(_Case):
         self.assert_stays_soft(_soft_sphere(translation=(100, 50, 30)))
 
     def test_float_noise_on_a_far_and_dense_mesh(self):
-        frozen = Mesh.create(*_args(_soft_sphere(128, translation=(100, 50, 30))), world_space=True)
+        frozen = Mesh.create(*_args(_soft_sphere(128, translation=(100, 50, 30))), world_space=True, uuids=False)
         self.assertEqual(_shading(frozen), (0, 0))
 
     def test_the_source_s_locks_are_the_ones_locked(self):
@@ -812,14 +812,14 @@ class TestOnlyRealLocks(_Case):
         data, uvs   = _args(source)
         normals     = np.asarray(data.normals)[np.asarray(data.normal_indices)]
         data.normals, data.normal_indices = normals, np.arange(len(normals))
-        frozen      = Mesh.create(data, uvs, world_space=True)
+        frozen = Mesh.create(data, uvs, world_space=True, uuids=False)
         self.assertEqual(_locked_rows(frozen.get_long_name()), _locked_rows(source.get_long_name()))
         self.assertEqual(_hard_edges(frozen.get_long_name()), _hard_edges(source.get_long_name()))
 
     def test_a_move_has_no_matrix_for_the_normals_to_go_through(self):
         """Its locks are the data's normals, as they are; float noise locks nothing more."""
         source = _locked_sphere(translation=(100, 50, 30))
-        frozen = Mesh.create(*_args(source), world_space=True)
+        frozen = Mesh.create(*_args(source), world_space=True, uuids=False)
         rows   = _locked_rows(source.get_long_name())
         self.assertEqual(_locked_rows(frozen.get_long_name()), rows)
         locked = _among(frozen, rows)
@@ -846,7 +846,7 @@ class TestOnlyRealLocks(_Case):
         """What it is for: the frozen mesh and the same mesh through makeIdentity, each under one
         cluster, turn their normals alike."""
         source = _soft_sphere(translation=(1, 2, 3), scale=(1, 2, 3))
-        frozen = Mesh.create(*_args(source), name="frozen", world_space=True)
+        frozen = Mesh.create(*_args(source), name="frozen", world_space=True, uuids=False)
         cmds.duplicate("ball", name="baked")
         cmds.makeIdentity("baked", apply=True, translate=True, rotate=True, scale=True)
         cmds.delete("baked", constructionHistory=True)
@@ -875,7 +875,7 @@ class TestOnlyRealLocks(_Case):
             with self.subTest(label):
                 cmds.flushUndo()
                 before = self.scene_state()
-                path   = Mesh.create(*args, world_space=True, **keywords).get_long_name()
+                path   = Mesh.create(*args, world_space=True, **keywords, uuids=False).get_long_name()
                 self.assertEqual(self.undo_name(), "rig.Mesh.create")
                 self.undo_steps(1)
                 self.assert_state_equal(self.scene_state(), before)
@@ -888,7 +888,7 @@ class TestOnlyRealLocks(_Case):
         source = _locked_sphere(scale=(1, 2, 3))
         args   = _args(source)
         rows   = _locked_rows(source.get_long_name())
-        mesh   = Mesh.create(*args, name="copy", normals=False)
+        mesh   = Mesh.create(*args, name="copy", normals=False, uuids=False)
         cmds.polyNormalPerVertex("copy.vtx[7]", xyz=(0.0, 0.0, 1.0))
         cmds.delete("copy", constructionHistory=True)
         cmds.xform("copy", scale=(2, 1, 1))
@@ -914,14 +914,14 @@ class TestOnlyRealLocks(_Case):
         cmds.xform(target, translation=(3, 0, 0), rotation=(0, 30, 0), scale=(-1, 1, 1))
         source = _soft_sphere(16, translation=(1, 2, 3), rotation=(10, 20, 30))
         args   = _args(source)
-        update = Mesh.create(*args, transform=target)
-        under  = Mesh.create(*args, transform=target, world_space=True)
+        update = Mesh.create(*args, transform=target, uuids=False)
+        under  = Mesh.create(*args, transform=target, world_space=True, uuids=False)
         for label, shape in (("under a target", under), ("an update", update.load(*args, world_space=True))):
             with self.subTest(label):
                 self.assertEqual(_shading(shape), (0, shape.get_fn_set().numNormals))
                 self.assertLess(_turn(_normals(shape), _normals(source)), 1e-3)
         cmds.xform("ball", scale=(-1, 1, 1))
-        frozen = Mesh.create(*_args(source), world_space=True)
+        frozen = Mesh.create(*_args(source), world_space=True, uuids=False)
         self.assertEqual(_shading(frozen), (0, frozen.get_fn_set().numNormals))
         self.assertLess(_turn(_normals(frozen), _normals(source)), 1e-3)
 
@@ -930,14 +930,14 @@ class TestOnlyRealLocks(_Case):
         target = cmds.createNode("transform", name="mirror")
         cmds.xform(target, translation=(3, 0, 0), rotation=(0, 30, 0), scale=(-1, 1, 1))
         source = _soft_sphere(scale=(-1, 1, 1))
-        self.assertEqual(_shading(Mesh.create(*_args(source), transform=target, world_space=True)), (0, 0))
+        self.assertEqual(_shading(Mesh.create(*_args(source), transform=target, world_space=True, uuids=False)), (0, 0))
 
     def test_the_identity_is_a_plain_create(self):
         """guard: the data's points are the mesh's, and what it locks is decided there, as ever."""
         source = _locked_sphere()
         args   = _args(source)
-        plain  = Mesh.create(*args)
-        frozen = Mesh.create(*args, world_space=True)
+        plain  = Mesh.create(*args, uuids=False)
+        frozen = Mesh.create(*args, world_space=True, uuids=False)
         self.assertEqual(_locked_rows(frozen.get_long_name()), _locked_rows(plain.get_long_name()))
         self.assertEqual(_shading(frozen), _shading(plain))
         np.testing.assert_allclose(_normals(frozen), _normals(plain), rtol=0, atol=1e-6)
@@ -946,14 +946,14 @@ class TestOnlyRealLocks(_Case):
         """guard: world_space=False takes the data's normals as the shape's own, as ever."""
         source = _locked_sphere(scale=(1, 2, 3))
         args   = _args(source)
-        shape  = Mesh.create(*args, transform=_sheared())
+        shape  = Mesh.create(*args, transform=_sheared(), uuids=False)
         self.assertEqual(_locked_rows(shape.get_long_name()), _locked_rows(source.get_long_name()))
         np.testing.assert_allclose(_normals(shape, OBJECT), _normals(source, OBJECT), rtol=0, atol=1e-5)
 
     def test_normals_false_locks_none_and_loses_the_hard_edges(self):
         """guard: nothing of the data's normals is read, as ever."""
         source = _locked_sphere(scale=(1, 2, 3))
-        self.assertEqual(_shading(Mesh.create(*_args(source), world_space=True, normals=False)), (0, 0))
+        self.assertEqual(_shading(Mesh.create(*_args(source), world_space=True, normals=False, uuids=False)), (0, 0))
 
     def test_nothing_else_comes_with_it(self):
         """guard: the copy is data: no node, no tweak, no cached input mesh on the shape (which the
@@ -961,7 +961,7 @@ class TestOnlyRealLocks(_Case):
         source = _locked_sphere(scale=(1, 2, 3))
         args   = _args(source)
         before = set(cmds.ls(long=True))
-        frozen = Mesh.create(*args, name="frozen", world_space=True)
+        frozen = Mesh.create(*args, name="frozen", world_space=True, uuids=False)
         self.assertEqual(set(cmds.ls(long=True)) - before, {"|frozen", "|frozen|frozenShape"})
         self.assertEqual(cmds.getAttr(f"{frozen.get_long_name()}.pnts", size=True), 0)
         with self.assertRaises(RuntimeError):
@@ -972,7 +972,7 @@ class TestOnlyRealLocks(_Case):
         points, wait for the compare on the mesh itself."""
         args = _args(_soft_sphere(translation=(1, 2, 3), rotation=(30, 40, 50), scale=(2, 2, 2)))
         with mock.patch("rig.nodetypes.mesh.OpenMaya.MFnMeshData", side_effect=AssertionError("a copy")):
-            self.assertEqual(_shading(Mesh.create(*args, world_space=True)), (0, 0))
+            self.assertEqual(_shading(Mesh.create(*args, world_space=True, uuids=False)), (0, 0))
 
 
 class TestWorldSpaceDataBack(_Case):
@@ -990,9 +990,9 @@ class TestWorldSpaceDataBack(_Case):
         path   = source.save(os.path.join(self.folder(), "world.npz"), world_space=True)
         target = cmds.createNode("transform", name="ctl")
         cmds.xform(target, matrix=cmds.xform(_new_transform(source), query=True, matrix=True))
-        other  = Mesh.create(*_args(source), name="other", normals=False)
-        yield "under a target at its matrix", Mesh.create(*args, transform=target, world_space=True)
-        yield "the class-form load under it", Mesh.load(path, transform=target, world_space=True)
+        other = Mesh.create(*_args(source), name="other", normals=False, uuids=False)
+        yield "under a target at its matrix", Mesh.create(*args, transform=target, world_space=True, uuids=False)
+        yield "the class-form load under it", Mesh.load(path, transform=target, world_space=True, uuids=False)
         yield "an update of a mesh at its matrix", other.load(*args, world_space=True)
         yield "an update of itself", source.load(*args, world_space=True)
         yield "an update of itself from its file", source.load(path, world_space=True)
@@ -1060,9 +1060,9 @@ class TestWorldSpaceDataBack(_Case):
         args   = _args(_soft_sphere(scale=(1, 2, 3)), True)
         target = cmds.createNode("transform", name="ctl")
         cmds.xform(target, translation=(1, 2, 3))
-        self.assertEqual(_shading(Mesh.create(*args, name="plain")), (0, 988))
-        self.assertEqual(_shading(Mesh.create(*args, name="frozen", world_space=True)), (0, 988))
-        self.assertEqual(_shading(Mesh.create(*args, transform=target, world_space=True)), (0, 988))
+        self.assertEqual(_shading(Mesh.create(*args, name="plain", uuids=False)), (0, 988))
+        self.assertEqual(_shading(Mesh.create(*args, name="frozen", world_space=True, uuids=False)), (0, 988))
+        self.assertEqual(_shading(Mesh.create(*args, transform=target, world_space=True, uuids=False)), (0, 988))
 
     def test_a_lock_maya_computes_where_it_lands_is_not_set(self):
         """What the compare where it lands gives up: one normal away from Maya's on the data's own
@@ -1071,15 +1071,15 @@ class TestWorldSpaceDataBack(_Case):
         data, uvs = _args(_soft_sphere())
         target    = cmds.createNode("transform", name="ctl")
         cmds.xform(target, scale=(1, 2, 3))
-        landed = Mesh.create(data, uvs, transform=target, world_space=True, normals=False)
+        landed = Mesh.create(data, uvs, transform=target, world_space=True, normals=False, uuids=False)
         taken  = np.array([list(n) for n in landed.get_fn_set().getNormals()]) / (1, 2, 3)
         taken /= np.linalg.norm(taken, axis=1, keepdims=True)
         away   = np.linalg.norm(taken - data.normals, axis=1)
         self.assertGreater(away.max(), 1e-3)
         data.normals                = np.array(data.normals)
         data.normals[away.argmax()] = taken[away.argmax()]
-        self.assertEqual(_shading(Mesh.create(data, uvs, name="plain")), (0, 1))
-        self.assertEqual(_shading(Mesh.create(data, uvs, transform=target, world_space=True)), (0, 0))
+        self.assertEqual(_shading(Mesh.create(data, uvs, name="plain", uuids=False)), (0, 1))
+        self.assertEqual(_shading(Mesh.create(data, uvs, transform=target, world_space=True, uuids=False)), (0, 0))
 
 
 class TestQ7AnyNodeDerivedFromTransform(_Case):
@@ -1115,8 +1115,8 @@ def uninitializePlugin(plugin):
     def check(self, target):
         source = _cube()
         args   = _args(source)
-        own    = Mesh.create(*args, transform=target)
-        placed = Mesh.create(*args, transform=target, world_space=True)
+        own    = Mesh.create(*args, transform=target, uuids=False)
+        placed = Mesh.create(*args, transform=target, world_space=True, uuids=False)
         self.assertEqual(own.get_parent().get_long_name(), cmds.ls(target, long=True)[0])
         np.testing.assert_array_equal(_local(own), _local(source))
         np.testing.assert_allclose(_world(placed), _world(source), rtol=0, atol=1e-4)
@@ -1245,7 +1245,7 @@ class TestQ8ASingularTarget(_Case):
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 args  = _args(_source(cls))
-                shape = cls.create(*args, transform=target)
+                shape = cls.create(*args, transform=target, uuids=False)
                 np.testing.assert_array_equal(_local(shape), _data_points(args[0]))
 
     def test_a_small_scale_stays_allowed(self):
@@ -1256,7 +1256,7 @@ class TestQ8ASingularTarget(_Case):
             for cls in CLASSES:
                 with self.subTest(target=name, cls=cls.__name__):
                     source = _source(cls)
-                    shape  = cls.create(*_args(source, True), transform=target, world_space=True)
+                    shape  = cls.create(*_args(source, True), transform=target, world_space=True, uuids=False)
                     self.assertGreater(np.abs(_local(shape)).max(), 1e5)
                     atol   = 2e-4 if cls is Mesh else 1e-6
                     np.testing.assert_allclose(_world(shape), _world(source), rtol=0, atol=atol)
@@ -1270,7 +1270,7 @@ class TestQ9TheTargetsNamespace(_Case):
         self.target = cmds.createNode("transform", name="char:ctl")
 
     def test_the_default_name_is_in_the_target_s_namespace(self):
-        made = [cls.create(*_args(_source(cls)), transform=self.target) for cls in CLASSES]
+        made = [cls.create(*_args(_source(cls)), transform=self.target, uuids=False) for cls in CLASSES]
         self.assertEqual(
             [shape.get_long_name() for shape in made],
             ["|char:ctl|char:ctlShape", "|char:ctl|char:ctlShape1", "|char:ctl|char:ctlShape2"],
@@ -1281,24 +1281,24 @@ class TestQ9TheTargetsNamespace(_Case):
         for current, name in ((":other", "char:ctlShape"), (":char", "char:ctlShape1")):
             with self.subTest(current=current):
                 cmds.namespace(set=current)
-                self.assertEqual(Mesh.create(*args, transform=self.target).get_long_name(), f"|char:ctl|{name}")
+                self.assertEqual(Mesh.create(*args, transform=self.target, uuids=False).get_long_name(), f"|char:ctl|{name}")
                 cmds.namespace(set=":")
 
     def test_a_target_at_the_root_from_another_namespace(self):
         args   = _args(_cube())
         target = cmds.createNode("transform", name="ctl")
         cmds.namespace(set=":other")
-        self.assertEqual(Mesh.create(*args, transform=target).get_long_name(), "|ctl|ctlShape")
+        self.assertEqual(Mesh.create(*args, transform=target, uuids=False).get_long_name(), "|ctl|ctlShape")
 
     def test_a_nested_namespace(self):
         cmds.namespace(add="a:b")
         target = cmds.createNode("transform", name="a:b:ctl")
-        self.assertEqual(Mesh.create(*_args(_cube()), transform=target).get_long_name(), "|a:b:ctl|a:b:ctlShape")
+        self.assertEqual(Mesh.create(*_args(_cube()), transform=target, uuids=False).get_long_name(), "|a:b:ctl|a:b:ctlShape")
 
     def test_undo_and_redo_keep_it(self):
         args = _args(_cube())
         cmds.flushUndo()
-        shape = Mesh.create(*args, transform=self.target)
+        shape = Mesh.create(*args, transform=self.target, uuids=False)
         uuid  = cmds.ls(shape.get_long_name(), uuid=True)[0]
         self.undo_steps(1)
         self.assertIsNone(cmds.listRelatives(self.target, children=True))
@@ -1309,20 +1309,20 @@ class TestQ9TheTargetsNamespace(_Case):
         args = _args(_cube())
         with container("leg"):
             with container("lower"):
-                shape = Mesh.create(*args, transform=self.target)
+                shape = Mesh.create(*args, transform=self.target, uuids=False)
         self.assertEqual(shape.get_long_name(), "|char:ctl|char:ctlShape")
         self.assertEqual(cmds.container("leg", query=True, nodeList=True), ["char:ctlShape"])
 
     def test_name_is_used_as_given(self):
         """guard: in the current namespace, as Maya renames, or in the one the name spells."""
         args = _args(_cube())
-        self.assertEqual(Mesh.create(*args, transform=self.target, name="petal").get_long_name(), "|char:ctl|petal")
+        self.assertEqual(Mesh.create(*args, transform=self.target, name="petal", uuids=False).get_long_name(), "|char:ctl|petal")
         self.assertEqual(
-            Mesh.create(*args, transform=self.target, name="char:petal").get_long_name(), "|char:ctl|char:petal"
+            Mesh.create(*args, transform=self.target, name="char:petal", uuids=False).get_long_name(), "|char:ctl|char:petal"
         )
         cmds.namespace(set=":other")
         self.assertEqual(
-            Mesh.create(*args, transform=self.target, name="petal").get_long_name(), "|char:ctl|other:petal"
+            Mesh.create(*args, transform=self.target, name="petal", uuids=False).get_long_name(), "|char:ctl|other:petal"
         )
 
     def referenced(self):
@@ -1343,7 +1343,7 @@ class TestQ9TheTargetsNamespace(_Case):
         self.referenced()
         source = _cube()
         args   = _args(source)
-        shape  = Mesh.create(*args, transform="ref:refctl", world_space=True)
+        shape  = Mesh.create(*args, transform="ref:refctl", world_space=True, uuids=False)
         self.assertEqual(shape.get_long_name(), "|ref:refctl|ref:refctlShape")
         self.assertFalse(cmds.referenceQuery(shape.get_long_name(), isNodeReferenced=True))
         np.testing.assert_allclose(_world(shape), _world(source), rtol=0, atol=1e-5)
@@ -1354,7 +1354,7 @@ class TestQ9TheTargetsNamespace(_Case):
     def test_the_referenced_file_comes_to_hold_the_name(self):
         """Maya numbers the local shape at the next open, as any clash, and nothing is lost."""
         folder = self.referenced()
-        shape  = Mesh.create(*_args(_cube()), transform="ref:refctl")
+        shape  = Mesh.create(*_args(_cube()), transform="ref:refctl", uuids=False)
         uuid   = cmds.ls(shape.get_long_name(), uuid=True)[0]
         scene  = os.path.join(folder, "scene.ma")
         cmds.file(rename=scene)
@@ -1371,7 +1371,7 @@ class TestQ9TheTargetsNamespace(_Case):
             with self.subTest(kind=kind):
                 folder = self.referenced()
                 source = _cube()
-                shape  = Mesh.create(*_args(source), transform="ref:refctl", world_space=True)
+                shape  = Mesh.create(*_args(source), transform="ref:refctl", world_space=True, uuids=False)
                 path   = shape.get_long_name()
                 uuid   = cmds.ls(path, uuid=True)[0]
                 world  = _world(shape)

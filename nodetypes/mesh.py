@@ -37,7 +37,7 @@ from rig.nodetypes.geometry import (
     deformed_refusal,
     iter_component_tokens,
 )
-from rig.nodetypes.geometry import _discard, _put_under, _shape_name, _shape_target, _target_space
+from rig.nodetypes.geometry import _discard, _put_under, _shape_name, _shape_path, _shape_target, _target_space
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
 from rig.nodetypes.plugins import _run_undoable
@@ -47,10 +47,10 @@ from scipy.spatial import cKDTree
 _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
     ``Mesh.load(mesh, uvs=None, *, name=None, container=None, normals=True,
-    colors=True, transform=None, world_space=False, hierarchy=None, **attrs)``,
-    from the class, CREATES a new mesh, always (as `create` does: a second load
-    of one file makes ``body1``; with ``transform=``, a new shape under that
-    transform)::
+    colors=True, transform=None, world_space=False, hierarchy=None, uuids=True,
+    **attrs)``, from the class, CREATES a new mesh, always (as `create` does: a
+    second load of one file makes ``body1``, with ``uuids=False``, or once the
+    first is gone; with ``transform=``, a new shape under that transform)::
 
         body = Mesh.load("body_mesh.npz", "body_uv.npz", name="body")
         Mesh.load("body_mesh.npz", transform="body_ctl", world_space=True)
@@ -104,6 +104,13 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
         hierarchy: (both forms) By keyword only, as `create` takes it: the
             HierarchyData or ClipData holding the transform the data sits
             under. None: the scene's node of that UUID, else the identity.
+        uuids: (creating) By keyword only, a bool (anything else is a
+            TypeError, before the files are read), as `create` takes it: True
+            (the default), the new shape takes the file's uuid, so a file
+            loaded twice is a ValueError on the second load, before anything
+            is made (give the data a fresh uuid first, or ``uuids=False``,
+            which leaves the shape the uuid Maya gives it). An updated mesh
+            keeps its own uuid.
 
     Returns:
         The new Mesh (creating), or this Mesh (updating).
@@ -169,6 +176,12 @@ def _restore_flag(method: str, name: str, value) -> bool:
 def _serialize_flag(method: str, name: str, value) -> bool:
     """The flag `name` of a serialize (`method`, ``"Mesh.serialize()"``), checked: a bool."""
     return _flag(method, name, value, f"True (the default: the mesh's {name} are serialized) or False (left out)")
+
+
+def _data_label(mesh_data) -> str:
+    """How `_files.free_uuids` names the data of a create: the MeshData, by its name when it has one."""
+    name = getattr(mesh_data, "name", None)
+    return f"the MeshData {name!r}" if name else "the MeshData"
 
 
 MAP_DATATYPE         = "doubleArray"
@@ -273,7 +286,7 @@ class Mesh(Geometry):
 
     # the keywords ``_create`` takes (the restore flags among them); ``create``'s
     # other keywords are the mesh's attributes
-    _CREATE_FLAGS = frozenset({"name", "uvs", "transform", "world_space", "hierarchy", *_RESTORE_FLAGS})
+    _CREATE_FLAGS = frozenset({"name", "uvs", "transform", "world_space", "hierarchy", "uuids", *_RESTORE_FLAGS})
 
     _DEFINE_REFUSED = (
         "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
@@ -306,16 +319,17 @@ class Mesh(Geometry):
         transform:   OpenMaya.MDagPath | None = None,
         world_space: bool                     = False,
         hierarchy:   Any                      = None,
+        uuids:       bool                     = True,
         **kwargs,
     ) -> str:
         """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uvs` (a
         list, or None), its shading when `normals`, its colours when `colors`,
         its points taken in `world_space` or not (placed through `hierarchy`
-        when given), and returns the transform's name; with `transform` (the DAG
-        path of the transform `create` checked), the shape alone under it, and
-        returns the shape's full path. `Mesh.create` wraps it in its undo chunk;
-        see there."""
-        return _create_mesh(mesh_data, name, uvs, normals, colors, transform, world_space, hierarchy)
+        when given), the shape given the data's uuid when `uuids`, and returns
+        the transform's name; with `transform` (the DAG path of the transform
+        `create` checked), the shape alone under it, and returns the shape's
+        full path. `Mesh.create` wraps it in its undo chunk; see there."""
+        return _create_mesh(mesh_data, name, uvs, normals, colors, transform, world_space, hierarchy, uuids)
 
     @classmethod
     def create(
@@ -330,6 +344,7 @@ class Mesh(Geometry):
         transform:   str      | DAGNode | None                = None,
         world_space: bool                                     = False,
         hierarchy:   Any                                      = None,
+        uuids:       bool                                     = True,
         **kwargs,
     ) -> "Mesh":
         """Creates a mesh object from a mesh data object.
@@ -391,6 +406,18 @@ class Mesh(Geometry):
                 when the scene has none (data from another scene: save it in
                 world space, or give its hierarchy). An instanced scene node
                 is a ValueError.
+            uuids: By keyword only, a bool (anything else is a TypeError
+                before anything is made). True (the default): the new shape
+                takes the data's ``uuid`` (a recorded ``rename -uuid``, in the
+                create's undo step), so ``Mesh.create(*m.serialize())`` gives a
+                mesh `serialize` reads back with the same uuid, and a scene
+                built from data is found by its uuids (``Node(uuid)``). A uuid
+                a scene node already holds is a ValueError before anything is
+                made, naming both: for a twin of a mesh that is in the scene
+                give the data a fresh uuid first (``data.uuid =
+                cgmath.hierarchy.generate_uuid()``; a Scene's
+                ``renew_uuids()``), or ``uuids=False`` leaves the shape the
+                uuid Maya gives it.
             kwargs: attributes of the mesh, checked by type before anything
                 is made and set once it exists (see `DGNode.create`).
 
@@ -509,6 +536,7 @@ class Mesh(Geometry):
         normals     = _restore_flag("Mesh.create()", "normals", normals)
         colors      = _restore_flag("Mesh.create()", "colors", colors)
         world_space = _files.space_flag("Mesh.create()", world_space, _files.CREATING_SPACE)
+        uuids       = _files.uuid_flag("Mesh.create()", uuids)
         if transform is not None:
             transform = _shape_target("Mesh.create()", transform, world_space)
         if uvs:
@@ -519,7 +547,7 @@ class Mesh(Geometry):
         with _undo_chunk("rig.Mesh.create"):
             return super().create(
                 mesh_data, uvs=uvs, name=name, container=container, normals=normals, colors=colors,
-                transform=transform, world_space=world_space, hierarchy=hierarchy, **kwargs
+                transform=transform, world_space=world_space, hierarchy=hierarchy, uuids=uuids, **kwargs
             )
 
     # --- mesh geometry data methods
@@ -1186,18 +1214,19 @@ class Mesh(Geometry):
     @_statement
     def _load_new(
         cls, mesh, uvs=None, *, name=None, container=None, normals=True, colors=True, transform=None,
-        world_space=False, hierarchy=None, **kwargs
+        world_space=False, hierarchy=None, uuids=True, **kwargs
     ):
         normals     = _restore_flag("Mesh.load", "normals", normals)
         colors      = _restore_flag("Mesh.load", "colors", colors)
         world_space = _files.space_flag("Mesh.load", world_space, _files.CREATING_SPACE)
+        uuids       = _files.uuid_flag("Mesh.load", uuids)
         if transform is not None:
             transform = _shape_target("Mesh.load", transform, world_space)  # before the files are read
         data, uv_data = _read_mesh_files("Mesh.load", mesh, uvs)
         with _undo_chunk("rig.Mesh.load"):
             return cls.create(
                 data, uv_data, name=name, container=container, normals=normals, colors=colors,
-                transform=transform, world_space=world_space, hierarchy=hierarchy, **kwargs
+                transform=transform, world_space=world_space, hierarchy=hierarchy, uuids=uuids, **kwargs
             )
 
     @_statement
@@ -2652,6 +2681,7 @@ def _create_mesh(
     target:      OpenMaya.MDagPath | None = None,
     world_space: bool                     = False,
     hierarchy:   Any                      = None,
+    uuids:       bool                     = True,
 ) -> str:
     """`Mesh._create`'s body: the ride. Returns the transform's name, or with
     `target` the shape's full path.
@@ -2680,7 +2710,10 @@ def _create_mesh(
        in the scene; skipped for the identity, which the new transform
        already has, and with `world_space`: it is in the points); with
        `target` (``transform=``) instead, the shape moved under it, the
-       transform deleted and the shape named (`_put_under`).
+       transform deleted and the shape named (`_put_under`);
+    6. with `uuids`, the shape takes the data's uuid (`_files.adopt_uuid`, a
+       recorded ``rename -uuid``), checked free last before step 2
+       (`_files.free_uuids`: the data's own refusals come first).
 
     Any error after step 2 deletes what it made (`_discard`: the transform, or
     the shape under the target) before it propagates.
@@ -2715,6 +2748,8 @@ def _create_mesh(
         name = _shape_name(target, name)
     else:
         name = _shape_create_name(name or mesh_data.name)
+    if uuids:
+        _files.free_uuids("Mesh.create()", [(_data_label(mesh_data), getattr(mesh_data, "uuid", None))], _files.FRESH_UUID)
 
     xform = cmds.createNode("transform", name="polySurface#", skipSelect=True)
     sel   = OpenMaya.MSelectionList()
@@ -2747,7 +2782,10 @@ def _create_mesh(
         _cmds_edit.sets(xform, forceElement="initialShadingGroup")
         if target is not None:
             moved = OpenMaya.MObjectHandle(shape)
-            return _put_under(shape, parent, target, name)
+            path  = _put_under(shape, parent, target, name)
+            if uuids:
+                _files.adopt_uuid(path, mesh_data.uuid)
+            return path
         if name:
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
             xform = _cmds_edit.rename(xform, name)
@@ -2756,6 +2794,8 @@ def _create_mesh(
             if not np.array_equal(matrix, _IDENTITY_16):
                 # a new transform is at rest already (world-space data sits at identity)
                 _cmds_edit.xform(xform, matrix=matrix)
+        if uuids:
+            _files.adopt_uuid(_shape_path(shape), mesh_data.uuid)
     except BaseException:
         _discard(handle, moved)
         raise

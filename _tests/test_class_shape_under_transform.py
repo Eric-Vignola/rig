@@ -191,7 +191,7 @@ class TestBothSpaces(_Case):
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 args  = _args(_source(cls))
-                shape = cls.create(*args, transform=target)
+                shape = cls.create(*args, transform=target, uuids=False)
                 self.assertEqual(shape.get_parent().get_long_name(), target)
                 np.testing.assert_array_equal(_local(shape), _data_points(args[0]))
         np.testing.assert_allclose(cmds.getAttr(f"{target}.translate")[0], (-2, 3, 1), atol=1e-12)
@@ -202,7 +202,7 @@ class TestBothSpaces(_Case):
             for space in (False, True):
                 with self.subTest(cls=cls.__name__, data_in_world_space=space):
                     source = _source(cls)
-                    shape  = cls.create(*_args(source, space), transform=target, world_space=True)
+                    shape  = cls.create(*_args(source, space), transform=target, world_space=True, uuids=False)
                     atol   = 1e-5 if cls is Mesh else 1e-9  # a mesh holds float32 points
                     np.testing.assert_allclose(_world(shape), _world(source), atol=atol)
                     cmds.delete(source.get_parent().get_long_name())
@@ -212,7 +212,7 @@ class TestBothSpaces(_Case):
         land where the source's are; a soft fan's is Maya's own for the points under the target."""
         target = _sheared()
         source = _cube()
-        shape  = Mesh.create(*_args(source), transform=target, world_space=True)
+        shape  = Mesh.create(*_args(source), transform=target, world_space=True, uuids=False)
         ids    = list(shape.get_fn_set().getNormalIds()[1])
         away   = np.abs(_normals(shape) - _normals(source)).max(axis=1) > 1e-5
         self.assertEqual(int(np.count_nonzero(away)), 6)
@@ -224,7 +224,7 @@ class TestBothSpaces(_Case):
         space, not moved with the target's shear)."""
         target = _sheared()
         source = _cube()
-        shape  = Mesh.create(*_args(source), transform=target)
+        shape  = Mesh.create(*_args(source), transform=target, uuids=False)
         np.testing.assert_allclose(_normals(shape, OBJECT), _normals(source, OBJECT), atol=1e-5)
         self.assertEqual(_shading(shape), _shading(source))
 
@@ -245,8 +245,8 @@ class TestAJointTarget(_Case):
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 source = _source(cls)
-                own    = cls.create(*_args(source), transform=Joint(jnt))
-                placed = cls.create(*_args(source, True), transform="jnt", world_space=True)
+                own    = cls.create(*_args(source), transform=Joint(jnt), uuids=False)
+                placed = cls.create(*_args(source, True), transform="jnt", world_space=True, uuids=False)
                 self.assertEqual([str(own.get_parent()), str(placed.get_parent())], ["jnt", "jnt"])
                 np.testing.assert_array_equal(_local(own), _local(source))
                 np.testing.assert_allclose(_world(placed), _world(source), atol=1e-5 if cls is Mesh else 1e-9)
@@ -255,7 +255,7 @@ class TestAJointTarget(_Case):
         """A joint is no transform to Geometry's lookup (it reads nodeType 'transform'): a shape under
         it is reached by its name."""
         cmds.createNode("joint", name="jnt")
-        shape = Mesh.create(*_args(_cube()), transform="jnt")
+        shape = Mesh.create(*_args(_cube()), transform="jnt", uuids=False)
         self.assertEqual(Mesh("jntShape"), shape)
         with self.assertRaises(NodeTypeError):
             Mesh("jnt")
@@ -269,7 +269,7 @@ class TestLockedAndReferencedTargets(_Case):
             with self.subTest(cls=cls.__name__):
                 args   = _args(_source(cls))
                 before = scene_nodes()
-                shape  = cls.create(*args, transform=target)
+                shape  = cls.create(*args, transform=target, uuids=False)
                 self.assertEqual(str(shape.get_parent()), "ctl")
                 self.assertEqual(cmds.lockNode(target, query=True, lock=True), [True])
                 made = scene_nodes()
@@ -287,7 +287,7 @@ class TestLockedAndReferencedTargets(_Case):
         cmds.file(path, reference=True, namespace="ref")
         source = _cube()
         cmds.flushUndo()
-        shape = Mesh.create(*_args(source), transform="ref:refctl", world_space=True)
+        shape = Mesh.create(*_args(source), transform="ref:refctl", world_space=True, uuids=False)
         # re-pinned (user decision 2026-10-30): the default name is in the target's namespace
         self.assertEqual(shape.get_long_name(), "|ref:refctl|ref:refctlShape")
         np.testing.assert_allclose(_world(shape), _world(source), atol=1e-5)
@@ -314,7 +314,7 @@ class TestAnInstancedTarget(_Case):
     def test_false_puts_the_shape_under_every_instance(self):
         target = self.instanced()
         source = _cube()
-        shape  = Mesh.create(*_args(source), transform=target)
+        shape  = Mesh.create(*_args(source), transform=target, uuids=False)
         paths  = cmds.ls(shape.get_long_name(), allPaths=True, long=True)
         self.assertEqual(sorted(paths), ["|g1|ictl|ictlShape", "|g2|ictl|ictlShape"])
         for path in paths:
@@ -328,7 +328,7 @@ class TestAnInstancedTarget(_Case):
         source = _cube()
         for target, offset in (("|g1|ictl", 0.0), ("|g2|ictl", 5.0)):
             with self.subTest(target=target):
-                shape = Mesh.create(*_args(source), transform=target)
+                shape = Mesh.create(*_args(source), transform=target, uuids=False)
                 self.assertEqual(shape.get_long_name().rpartition("|")[0], target)
                 np.testing.assert_allclose(_world(shape), _local(source) + (offset, 0, 0), atol=1e-5)
 
@@ -423,7 +423,7 @@ class TestALaterErrorLeavesNothing(_Case):
                 with self.assertRaisesRegex(
                     ValueError, r"^Cannot inject sequence of size 2 into scalar attribute 'ctlShape\.visibility'"
                 ):
-                    cls.create(*args, transform=target, visibility=(1, 2))
+                    cls.create(*args, transform=target, visibility=(1, 2), uuids=False)
                 self.assertEqual(scene_nodes(), before)
                 self.assertEqual((_children(target), _rides()), ([], []))
 
@@ -434,7 +434,7 @@ class TestALaterErrorLeavesNothing(_Case):
                 args   = _args(_source(cls))
                 before = scene_nodes()
                 with self.assertRaisesRegex(RuntimeError, "no legal characters"):
-                    cls.create(*args, transform=target, name="#")
+                    cls.create(*args, transform=target, name="#", uuids=False)
                 self.assertEqual(scene_nodes(), before)
                 self.assertEqual((_children(target), _rides()), ([], []))
 
@@ -447,7 +447,7 @@ class TestOneUndoStep(_Case):
                 args = _args(_source(cls))
                 cmds.flushUndo()
                 before = self.scene_state()
-                shape  = cls.create(*args, transform=target, world_space=True)
+                shape  = cls.create(*args, transform=target, world_space=True, uuids=False)
                 path   = shape.get_long_name()
                 uuid   = cmds.ls(path, uuid=True)[0]
                 after  = self.scene_state(meshes=[path] if cls is Mesh else [])
@@ -475,8 +475,8 @@ class TestTheSelectionIsKept(_Case):
             source = _source(cls)
             args   = _args(source)
             path   = source.save(os.path.join(folder, f"{cls.__name__}.npz"))
-            calls.append((f"{cls.__name__}.create", lambda c=cls, a=args: c.create(*a, transform=target)))
-            calls.append((f"{cls.__name__}.load", lambda c=cls, p=path: c.load(p, transform=target)))
+            calls.append((f"{cls.__name__}.create", lambda c=cls, a=args: c.create(*a, transform=target, uuids=False)))
+            calls.append((f"{cls.__name__}.load", lambda c=cls, p=path: c.load(p, transform=target, uuids=False)))
         return calls
 
     def test_create_load_undo_and_redo(self):
@@ -533,7 +533,7 @@ class TestTheSelectionIsKept(_Case):
                 cmds.select("picked", replace=True)
                 cmds.flushUndo()
                 before = scene_nodes()
-                shape  = cls.create(*args, transform=target)
+                shape  = cls.create(*args, transform=target, uuids=False)
                 self.assertEqual(cmds.ls(orderedSelection=True), ["picked"])
                 self.assertEqual(shape.get_long_name(), "|ctl|ctlShape")
                 self.assertEqual(self.undo_name(), f"rig.{cls.__name__}.create")
@@ -546,14 +546,14 @@ class TestTheSelectionIsKept(_Case):
 class TestTheShapeName(_Case):
     def test_after_the_target_and_numbered_by_maya(self):
         target = cmds.createNode("transform", name="ctl")
-        made   = [cls.create(*_args(_source(cls)), transform=target) for cls in CLASSES]
+        made   = [cls.create(*_args(_source(cls)), transform=target, uuids=False) for cls in CLASSES]
         self.assertEqual([str(s) for s in made], ["ctlShape", "ctlShape1", "ctlShape2"])
         self.assertEqual(_children(target), ["|ctl|ctlShape", "|ctl|ctlShape1", "|ctl|ctlShape2"])
 
     def test_name_names_the_shape_as_given(self):
         target = cmds.createNode("transform", name="ctl")
         args   = _args(_cube())
-        made   = [Mesh.create(*args, transform=target, name=name) for name in ("petal", "ctlShape7", "petal")]
+        made   = [Mesh.create(*args, transform=target, name=name, uuids=False) for name in ("petal", "ctlShape7", "petal")]
         self.assertEqual([s.get_long_name() for s in made], ["|ctl|petal", "|ctl|ctlShape7", "|ctl|petal1"])
 
     def test_the_target_s_namespace_goes_with_the_default_name(self):
@@ -561,9 +561,9 @@ class TestTheShapeName(_Case):
         cmds.namespace(add="char")
         target = cmds.createNode("transform", name="char:ctl")
         source = _cube()
-        self.assertEqual(Mesh.create(*_args(source), transform=target).get_long_name(), "|char:ctl|char:ctlShape")
+        self.assertEqual(Mesh.create(*_args(source), transform=target, uuids=False).get_long_name(), "|char:ctl|char:ctlShape")
         cmds.namespace(set=":char")
-        self.assertEqual(Mesh.create(*_args(source), transform=target).get_long_name(), "|char:ctl|char:ctlShape1")
+        self.assertEqual(Mesh.create(*_args(source), transform=target, uuids=False).get_long_name(), "|char:ctl|char:ctlShape1")
 
 
 class TestInAContainer(_Case):
@@ -571,7 +571,7 @@ class TestInAContainer(_Case):
         target = _sheared()
         args   = {cls: _args(_source(cls)) for cls in CLASSES}
         with container("box"):
-            made = [cls.create(*args[cls], transform=target) for cls in CLASSES]
+            made = [cls.create(*args[cls], transform=target, uuids=False) for cls in CLASSES]
         self.assertEqual(
             sorted(cmds.container("box", query=True, nodeList=True)), sorted(str(s) for s in made)
         )
@@ -583,7 +583,7 @@ class TestInAContainer(_Case):
         args   = _args(_cube())
         with container("leg"):
             with container("lower"):
-                shape = Mesh.create(*args, transform=target, name="petal")
+                shape = Mesh.create(*args, transform=target, name="petal", uuids=False)
         self.assertEqual(shape.get_long_name(), "|ctl|lower_petal")
         self.assertEqual(cmds.container("leg", query=True, nodeList=True), ["lower_petal"])
 
@@ -592,7 +592,7 @@ class TestInAContainer(_Case):
         args   = _args(_cube())
         with container("box"):
             Transform.create(name="other")
-            Mesh.create(*args, transform=target, container=False)
+            Mesh.create(*args, transform=target, container=False, uuids=False)
         self.assertEqual(cmds.container("box", query=True, nodeList=True), ["other"])
 
 
@@ -603,13 +603,13 @@ class TestWhatTheRideGives(_Case):
         target = _sheared()
         source = _cube()
         args   = _args(source)
-        ride   = Mesh.create(*args)
-        shape  = Mesh.create(*args, transform=target)
+        ride   = Mesh.create(*args, uuids=False)
+        shape  = Mesh.create(*args, transform=target, uuids=False)
         self.assertEqual(mesh_state(shape.get_long_name()), mesh_state(ride.get_long_name()))
         self.assertEqual(shape.get_uv_sets(), ("map1", "uv2"))
         self.assertEqual(_shading(shape), _shading(source))
         self.assertEqual([str(e) for e in shape.get_shading_engines()], ["initialShadingGroup"])
-        surface = NurbsSurface.create(*_args(_ball()), transform=target)
+        surface = NurbsSurface.create(*_args(_ball()), transform=target, uuids=False)
         self.assertEqual(cmds.listSets(object=surface.get_long_name()), ["initialShadingGroup"])
 
     def test_component_tags(self):
@@ -617,7 +617,7 @@ class TestWhatTheRideGives(_Case):
         for cls, ids, token in ((Mesh, [0, 1, 2], "vtx[0:2]"), (NurbsCurve, [0, 1], "cv[0:1]"),
                                 (NurbsSurface, np.array([[1, 0], [1, 1]]), "cv[1][0:1]")):
             with self.subTest(cls=cls.__name__):
-                shape = cls.create(*_args(_source(cls)), transform=target)
+                shape = cls.create(*_args(_source(cls)), transform=target, uuids=False)
                 shape.add_tag("cap")
                 shape.set_tag_contents("cap", ids)
                 self.assertEqual(shape.get_tag_contents("cap"), [token])
@@ -637,7 +637,7 @@ class TestWhatTheRideGives(_Case):
         target = _sheared()
         for space in (False, True):
             with self.subTest(world_space=space):
-                shape = Mesh.create(data, transform=target, world_space=space)
+                shape = Mesh.create(data, transform=target, world_space=space, uuids=False)
                 self.assertEqual(shape.get_fn_set().getHoles(), ((0, (4, 5, 6)),))
                 np.testing.assert_allclose(_world(shape) if space else _local(shape), data.points, atol=1e-5)
 
@@ -647,7 +647,7 @@ class TestWhatTheRideGives(_Case):
                             knot=[0, 0, 0, 1, 5, 5, 5], name="uneven")
         for source in (_circle(), NurbsCurve(uneven)):
             with self.subTest(curve=str(source)):
-                shape = NurbsCurve.create(source.serialize(), transform=target)
+                shape = NurbsCurve.create(source.serialize(), transform=target, uuids=False)
                 for read in ("form", "degree", "numCVs"):
                     self.assertEqual(getattr(shape.get_fn_set(), read), getattr(source.get_fn_set(), read))
                 self.assertEqual(list(shape.get_fn_set().knots()), list(source.get_fn_set().knots()))
@@ -657,7 +657,7 @@ class TestWhatTheRideGives(_Case):
         for source in (NurbsSurface(_uneven(cmds.createNode("transform", name="s"))),
                        NurbsSurface(_cylinder(cmds.createNode("transform", name="c")))):
             with self.subTest(surface=str(source)):
-                shape = NurbsSurface.create(source.serialize(), transform=target, world_space=True)
+                shape = NurbsSurface.create(source.serialize(), transform=target, world_space=True, uuids=False)
                 fn, own = shape.get_fn_set(), source.get_fn_set()
                 for read in ("knotsInU", "knotsInV"):
                     self.assertEqual(list(getattr(fn, read)()), list(getattr(own, read)()))
@@ -675,7 +675,7 @@ class TestAMirroredTarget(_Case):
         cmds.xform(target, translation=(3, 0, 0), rotation=(0, 30, 0), scale=(-1, 1, 1))
         source = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
         cmds.xform("box", translation=(1, 2, 3), rotation=(10, 20, 30))
-        shape  = Mesh.create(*_args(source), transform=target, world_space=True)
+        shape = Mesh.create(*_args(source), transform=target, world_space=True, uuids=False)
         np.testing.assert_allclose(_world(shape), _world(source), atol=1e-5)
         np.testing.assert_allclose(_normals(shape), _normals(source), atol=1e-5)
         self.assertEqual(_shading(shape), (_shading(source)[0], shape.get_fn_set().numNormals))
@@ -687,7 +687,7 @@ class TestAMirroredTarget(_Case):
         target = cmds.createNode("transform", name="mirror")
         cmds.xform(target, translation=(3, 0, 0), rotation=(0, 30, 0), scale=(-1, 1, 1))
         source = _ball()
-        shape  = NurbsSurface.create(*_args(source, True), transform=target, world_space=True)
+        shape  = NurbsSurface.create(*_args(source, True), transform=target, world_space=True, uuids=False)
         np.testing.assert_allclose(_world(shape), _world(source), atol=1e-9)
         np.testing.assert_allclose(_surface_normals(shape), -_surface_normals(source), atol=1e-6)
 
@@ -705,13 +705,13 @@ class TestTheClassFormLoad(_Case):
                     files.append(os.path.join(folder, "uv.npz"))
                 saved    = source.save(*files)
                 in_world = source.save(*placed, world_space=True)
-                own      = cls.load(*(saved if cls is Mesh else (saved,)), transform=target)
+                own      = cls.load(*(saved if cls is Mesh else (saved,)), transform=target, uuids=False)
                 self.assertEqual(self.undo_name(), f"rig.{cls.__name__}.load")
                 self.assertEqual(own.get_parent().get_long_name(), target)
                 np.testing.assert_array_equal(_local(own), _local(source))
                 if cls is Mesh:
                     self.assertEqual(own.get_uv_sets(), ("map1", "uv2"))
-                put  = cls.load(in_world, transform=target, world_space=True)
+                put  = cls.load(in_world, transform=target, world_space=True, uuids=False)
                 path = put.get_long_name()
                 np.testing.assert_allclose(_world(put), _world(source), atol=1e-5 if cls is Mesh else 1e-9)
                 self.undo_steps(1)
@@ -731,9 +731,9 @@ class TestTheKeywords(_Case):
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 args = _args(_source(cls))
-                self.assertIsInstance(cls.create(*args, world_space=True), cls)
-                self.assertIsInstance(cls.create(*args, world_space=False), cls)
-                np.testing.assert_array_equal(_local(cls.create(*args, world_space=False)), _local(cls.create(*args)))
+                self.assertIsInstance(cls.create(*args, world_space=True, uuids=False), cls)
+                self.assertIsInstance(cls.create(*args, world_space=False, uuids=False), cls)
+                np.testing.assert_array_equal(_local(cls.create(*args, world_space=False, uuids=False)), _local(cls.create(*args, uuids=False)))
 
     def test_the_class_form_load_takes_it_without_transform(self):
         """Re-pinned (user decision 2026-10-30): it was refused whatever its value."""
@@ -742,7 +742,7 @@ class TestTheKeywords(_Case):
             path = _source(cls).save(os.path.join(folder, f"{what}.npz"))
             for value in (False, True):
                 with self.subTest(cls=cls.__name__, world_space=value):
-                    self.assertIsInstance(cls.load(path, world_space=value), cls)
+                    self.assertIsInstance(cls.load(path, world_space=value, uuids=False), cls)
 
     def test_the_create_signatures(self):
         for cls in CLASSES:
@@ -765,5 +765,5 @@ class TestTheKeywords(_Case):
                     rf"^{cls.__name__}\.create\(\) takes no parent=: its command places the node; transform= "
                     r"makes the shape under an existing transform$",
                 ):
-                    cls.create(*data, parent="ctl")
+                    cls.create(*data, parent="ctl", uuids=False)
                 self.assertEqual(scene_nodes(), before)

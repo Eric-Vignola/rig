@@ -375,10 +375,10 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | Call | Builds with |
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
-| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')` |
-| `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
-| `NurbsCurve.create(points_or_NurbsCurveData, degree=, kv=, *, name=, transform=None, world_space=False, hierarchy=None)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `NurbsCurveData` brings its own and sits under the transform its `parent_uuid` names, as a `MeshData` does (it holds no name: `curve<N>`, or `name=`). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
-| `NurbsSurface.create(data, *, name=, transform=None, world_space=False, hierarchy=None)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `NurbsSurfaceData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; placed as a curve's, no name of its own). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
+| `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')`. `Transform.create(transform_data, uuids=True)` builds the data's node, with its uuid (below) |
+| `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
+| `NurbsCurve.create(points_or_NurbsCurveData, degree=, kv=, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `NurbsCurveData` brings its own and sits under the transform its `parent_uuid` names, as a `MeshData` does (it holds no name: `curve<N>`, or `name=`). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
+| `NurbsSurface.create(data, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `NurbsSurfaceData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; placed as a curve's, no name of its own). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
 | `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags, then the targets of a `MorphData` or a `MorphList` (`set_target_data`), one undo step; a morph with no name, or with a name Maya refuses, is a `ValueError` before anything is made |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
@@ -833,6 +833,29 @@ without colours leaves its sets alone. `serialize(colors=False)`,
 leaves out the normals, which skips the read of a normal id per face corner
 (about half the time of a 20k-face serialize). The transfers
 (`transfer_maps`, `transfer_tags`) and the blendShape reads never read them.
+
+**The uuids come back.** A node made from data takes the data's uuid:
+`uuids=True`, the default, on `Transform.create(data)` / `Joint.create(data)`,
+`create_hierarchy`, `load_hierarchy`, and on `create` and the class-form
+`load` of `Mesh`, `NurbsCurve` and `NurbsSurface` (the shape takes it, the
+transform made with it keeps Maya's). It is a recorded `rename -uuid` inside
+the create's one undo step (undo puts Maya's uuid back, redo the data's), and
+Maya spells it upper-case whatever the data holds. So `Node(uuid)` and
+`cmds.ls(uuid)` find the nodes a scene's data describes, a shape's
+`parent_uuid` names the transform built from the same scene, and
+`serialize_hierarchy()` / `serialize()` of the nodes give the data's uuids
+back. Two nodes cannot hold one uuid, so the uuids are checked before
+anything is made: a uuid a scene node already holds, or one the data holds
+twice, is a `ValueError` naming the record, the node and the way on. A second
+copy of a hierarchy takes fresh uuids first (`hierarchy.renew_uuids()`, a
+`Scene`'s `renew_uuids()`, which rewire the links too; a shape's data takes
+`data.uuid = cgmath.hierarchy.generate_uuid()`); the twin of a live source,
+whose data holds the source's uuids (`Transform.create_hierarchy(Node("root").serialize_hierarchy())`,
+`Mesh.create(*m.serialize())` beside `m`, a file loaded a second time), takes
+`uuids=False`, which leaves every node the uuid Maya gives it. Data without a
+uuid (a bare `TransformData`, a curve's points) leaves Maya's too. The flag is
+a `bool` (anything else is a `TypeError` before anything is read or made); a
+node's own `load`, an update, does not take it.
 `serialize`'s flags are `bool`s too: `uvs`, `normals`, `colors`, anything
 else a `TypeError` before anything is read.
 

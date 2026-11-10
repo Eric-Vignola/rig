@@ -14,7 +14,7 @@ for `maya.cmds` and the node factories, [`nodetypes/`](nodetypes/CHEATSHEET.md)
 for the node classes and their typed methods.
 
 The data paths (`serialize`, `save` / `load`, `create(data)`) are written
-against cgmath's `r17-skeleton` branch at `72dfec4` (2026-11-09); each round
+against cgmath's `r17-skeleton` branch at `9b28464` (2026-11-10); each round
 of rig names the cgmath commit it was verified on here and in
 [`README.md`](README.md#requirements).
 

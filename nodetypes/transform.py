@@ -54,6 +54,13 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
             frame of a clip.
         container: Inside ``with container()``, whether the new nodes join the
             scope (None: yes), as for every typed create.
+        uuids: A bool (anything else is a TypeError, before the file is read),
+            as `create_hierarchy` takes it: True (the default), every node
+            made takes its data's uuid, so a file loaded twice is a
+            ValueError on the second load, before anything is made (give the
+            data fresh uuids first, ``hierarchy.renew_uuids()``, or
+            ``uuids=False``, which leaves the nodes the uuids Maya gives
+            them).
 
     Returns:
         A List of the new nodes, typed (``Joint`` / ``Transform``), parents first:
@@ -86,7 +93,10 @@ _SOLVE_GRAIN = 1e-12
 
 # the keywords ``Transform.create(transform_data)`` reads itself (`_create_from_data`):
 # every other keyword is an attribute of the new node
-_DATA_CREATE_FLAGS = frozenset({"name", "n", "parent", "p"})
+_DATA_CREATE_FLAGS = frozenset({"name", "n", "parent", "p", "uuids"})
+
+# how a hierarchy's data takes fresh uuids (`_files.free_uuids`' advice)
+_RENEW = "hierarchy.renew_uuids()"
 
 # the exact Maya node types serialize_hierarchy() captures,
 # a locator is a "transform" holding a locator shape.
@@ -900,6 +910,7 @@ class Transform(DAGNode):
         parent:      Union[str, None] = None,
         *,
         world_space: bool             = False,
+        uuids:       bool             = True,
     ) -> List:
         """Creates a hierarchy from a HierarchyData object, and keys a ClipData.
 
@@ -925,15 +936,29 @@ class Transform(DAGNode):
                 and none is wired), and under a non-uniformly scaled one in any
                 case (it holds no shear); a ClipData's compensating joints hold
                 both, below.
+            uuids: By keyword only, a bool (anything else is a TypeError,
+                before anything is made). True (the default): every node made
+                takes its data's uuid (a recorded ``rename -uuid``, in the
+                call's undo step), so the nodes are found by it (``Node(uuid)``,
+                ``cmds.ls(uuid)``, a shape's ``parent_uuid``) and
+                `serialize_hierarchy` of them gives the same uuids back. A uuid
+                a scene node already holds, or one the data holds twice, is a
+                ValueError before anything is made, naming both: a second copy
+                of a hierarchy that is in the scene takes fresh uuids first
+                (``hierarchy.renew_uuids()``; a Scene's ``renew_uuids()``), or
+                ``uuids=False`` leaves every node the uuid Maya gives it, as
+                for a twin of a live hierarchy (below). A node whose data holds
+                no uuid keeps Maya's.
 
         Returns:
             A List of the new nodes, typed as ``Transform.create`` types its
             node (``Joint`` for a joint, ``Transform`` for a transform and a
             locator's transform), parents first:
             ``nodes[0]`` is the first root. Maya renames a node whose name is
-            taken (``root1``)::
+            taken (``root1``); a twin of a hierarchy that is in the scene
+            takes ``uuids=False`` (its data holds the live nodes' uuids)::
 
-                skel = Transform.create_hierarchy(Node("root").serialize_hierarchy())
+                skel = Transform.create_hierarchy(Node("root").serialize_hierarchy(), uuids=False)
                 skel[1].tx.get()
 
         A ClipData is built and keyed, no keyword: the type decides. Only what
@@ -988,16 +1013,18 @@ class Transform(DAGNode):
                 f"{cls.__name__}.load_hierarchy({os.fspath(hierarchy)!r}) reads one"
             )
         world_space = _files.space_flag(f"{cls.__name__}.create_hierarchy", world_space, _HIERARCHY_SPACE)
+        uuids       = _files.uuid_flag(f"{cls.__name__}.create_hierarchy", uuids)
         with _undo_chunk(f"rig.{cls.__name__}.create_hierarchy"):
-            return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True))
+            return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True, uuids=uuids))
 
     @classmethod
     @_typed_creator
     def _create_from_data(
         cls,
         inputs:   tuple,
-        name:     Any = None,
-        parent:   Any = None,
+        name:     Any   = None,
+        parent:   Any   = None,
+        uuids:    Any   = True,
         **kwargs: Any,
     ) -> DAGNode:
         """[Internal] ``Transform.create(transform_data)`` / ``Joint.create(
@@ -1007,8 +1034,11 @@ class Transform(DAGNode):
         The node the data describes (its ``node_type``: a transform, a joint, a
         locator's transform), named the data's name
         (``name=`` / ``n=`` overrides it), made at identity under ``parent=`` /
-        ``p=`` (None: the world; the data's own parent uuid is not used, nor its
-        uuid: Maya gives the node a new one), then given the data's values (as
+        ``p=`` (None: the world; the data's own parent uuid is not used), given
+        the data's uuid with ``uuids=True`` (the default, a checked bool, as
+        `create_hierarchy` takes it: a uuid a scene node holds is a ValueError
+        before anything is made; ``uuids=False``, or data without one, leaves
+        the node the uuid Maya gives it), then given the data's values (as
         local values: scale, rotate, translate, rotate order and axis,
         visibility; a joint's orient, segment scale compensate, radius and draw
         style), its user-defined attributes, and last the attribute keywords,
@@ -1044,7 +1074,8 @@ class Transform(DAGNode):
                 f"{call} takes name= and parent= as keywords, or one TransformData "
                 f"(got {_got(inputs)})"
             )
-        data = inputs[0]
+        data  = inputs[0]
+        uuids = _files.uuid_flag(call, uuids)
         for short, value in (("n", name), ("p", parent)):
             given = kwargs.pop(short, None)
             if given is not None:
@@ -1076,11 +1107,15 @@ class Transform(DAGNode):
         attrs.update(own)
         parent = None if parent is None else _parent_path(parent)
         name   = data.name if name is None else name
+        if uuids:
+            _files.free_uuids(call, [(f"the TransformData {data.name!r}", data.uuid)], _files.FRESH_UUID)
 
         before = cmds.ls(orderedSelection=True, long=True) or []
         with _undo_chunk(f"rig.{cls.__name__}.create"):
             node = _make_from_data(data, name, parent)
             try:
+                if uuids:
+                    _files.adopt_uuid(type(node).get_long_name(node), data.uuid)
                 _set_values(node, data)
                 if data.user_defined_attributes:
                     cls._create_user_attrs(node, data.user_defined_attributes)
@@ -1104,11 +1139,12 @@ class Transform(DAGNode):
         parent:      Union[str, None] = None,
         *,
         world_space: bool             = False,
+        uuids:       bool             = True,
     ) -> list:
         """[Internal] `load_hierarchy`'s create, a typed creator (so it joins the
         container scope as `create_hierarchy` does): the new nodes, typed,
         parents first; the selection is put back as it was."""
-        return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=False))
+        return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=False, uuids=uuids))
 
     @classmethod
     def _build_hierarchy(
@@ -1117,11 +1153,14 @@ class Transform(DAGNode):
         parent:      Union[str, None],
         world_space: bool,
         select:      bool,
+        uuids:       bool             = True,
     ) -> list[str]:
         """[Internal] The body of `create_hierarchy` and `load_hierarchy`: makes
         the nodes of `hierarchy` (a ClipData keyed, `_clip_rows`) and returns their
         names, parents first. With `select` they end selected; without, the
-        selection is put back as it was before (in its order)."""
+        selection is put back as it was before (in its order). With `uuids`
+        every node takes its data's uuid (`_files.adopt_uuid`), the uuids
+        checked free before any node is made (`_files.free_uuids`)."""
         from cgmath.hierarchy import SUPPORTED_NODE_TYPES, ClipData, HierarchyData, generate_uuid
 
         before = None if select else (cmds.ls(orderedSelection=True, long=True) or [])
@@ -1146,6 +1185,11 @@ class Transform(DAGNode):
             hierarchy.list[:] = [x for x in hierarchy.list if id(x) not in dropped]
             counts            = ", ".join(f"{v} {k}" for k, v in sorted(skipped.items()))
             LOGGER.warning(f"Skipped nodes that can't be created: {counts}")
+
+        # the data's uuids, free before any node is made
+        if uuids:
+            method = f"{cls.__name__}.{'create_hierarchy' if select else 'load_hierarchy'}"
+            _files.free_uuids(method, ((f"the node {node.name!r}", node.uuid) for node in hierarchy), _RENEW)
 
         # if a parent is specified, make set the transforms relative to it
         under  = {}  # id of a root -> the long name of the node outside the data it goes under
@@ -1205,6 +1249,8 @@ class Transform(DAGNode):
 
             # create node
             obj = _make_from_data(node, node.name, parent)
+            if uuids:
+                _files.adopt_uuid(type(obj).get_long_name(obj), node.uuid)
 
             # rename the node's string name with the node object
             # in case of scene duplicate during parenting.
@@ -1267,11 +1313,13 @@ class Transform(DAGNode):
         parent:      Union[str, DAGNode, None] = None,
         world_space: bool                      = False,
         container:   bool | None               = None,
+        uuids:       bool                      = True,
     ):
         from cgmath.hierarchy import ClipData, HierarchyData
 
         method      = f"{cls.__name__}.load_hierarchy"
         world_space = _files.space_flag(method, world_space, _HIERARCHY_SPACE)
+        uuids       = _files.uuid_flag(method, uuids)
         data        = _files.read(hierarchy, (ClipData, HierarchyData), method, "the hierarchy")
         if type(data) is ClipData and not data.frame_count and _files.is_path(hierarchy):
             # a file names no class: a rig's file builds as a clip of no frames, so it is the rig
@@ -1280,7 +1328,7 @@ class Transform(DAGNode):
         if isinstance(parent, DAGNode):
             parent = type(parent).get_long_name(parent)
         with _undo_chunk(f"rig.{cls.__name__}.load_hierarchy"):
-            return cls._load_built(data, parent, world_space=world_space, **kwargs)
+            return cls._load_built(data, parent, world_space=world_space, uuids=uuids, **kwargs)
 
     def _load_hierarchy_refused(self, *args, **kwargs):
         name = type(self).__name__

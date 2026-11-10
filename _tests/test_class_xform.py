@@ -1067,8 +1067,8 @@ class TestHierarchySpaces(MayaTestCase):
 
     def makers(self, **kwargs):
         return (
-            ("create_hierarchy", lambda parent: Transform.create_hierarchy(self.data, parent=parent, **kwargs)),
-            ("load_hierarchy", lambda parent: Transform.load_hierarchy(self.data, parent=parent, **kwargs)),
+            ("create_hierarchy", lambda parent: Transform.create_hierarchy(self.data, parent=parent, uuids=False, **kwargs)),
+            ("load_hierarchy", lambda parent: Transform.load_hierarchy(self.data, parent=parent, uuids=False, **kwargs)),
         )
 
     def test_by_default_the_values_are_local_under_the_parent(self):

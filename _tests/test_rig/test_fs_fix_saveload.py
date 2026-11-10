@@ -150,7 +150,7 @@ class TestTheArguments(_Case):
         cd = NurbsCurve("crvShape").serialize()
         for cls, data in ((Mesh, md), (NurbsCurve, cd)):
             with self.subTest(cls=cls.__name__):
-                self.assertIsInstance(cls.load(data, world_space=False), cls)
+                self.assertIsInstance(cls.load(data, world_space=False, uuids=False), cls)
         self.assert_refused(TypeError, r"^NurbsSurface.load: the surface: got a NurbsCurveData",
                             lambda: NurbsSurface.load(cd, world_space=True))
 
@@ -334,7 +334,7 @@ class TestTheShadingCost(_Case):
         self.assertIsNotNone(shading.hard[3])  # the dense route: guessed ids
         want = {frozenset(pair) for pair in shading.hard[0].tolist()}
         self.assertGreater(len(want), 100)
-        made = Mesh.create(data, uvs=uvs)
+        made = Mesh.create(data, uvs=uvs, uuids=False)
         fn = made.get_fn_set()
         got = {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
         self.assertEqual(got, want)

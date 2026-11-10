@@ -289,7 +289,7 @@ class TestNames(_Case):
     def test_a_name_maya_took(self):
         clip = _clip()
         Transform.create_hierarchy(clip)
-        again = Transform.create_hierarchy(clip)
+        again = Transform.create_hierarchy(clip, uuids=False)
         self.assertEqual(again[0].get_short_name(), "root1")
         self.assertEqual(len(_curves()), 2 * len(_moving_curves()))
         self.assert_worlds(again, clip)
@@ -435,7 +435,7 @@ class TestFrameForFrame(_Case):
         self.assert_worlds(nodes, clip)
         clip.fps = 24.0
         with self.assertLogs("rig.nodetypes.transform", level="WARNING") as logs:
-            Transform.create_hierarchy(clip)
+            Transform.create_hierarchy(clip, uuids=False)
         self.assertIn("24 fps", logs.records[0].getMessage())
         self.assertIn("30 fps", logs.records[0].getMessage())
 
@@ -768,7 +768,7 @@ class TestParent(_Case):
         clip.frames["spine"].rotate_y = [0, 30, 60, 90]
         clip.add_prefix("b_")
         cmds.setAttr("root.tx", 5)
-        nodes = Transform.create_hierarchy(clip, parent="spine", world_space=True)
+        nodes = Transform.create_hierarchy(clip, parent="spine", world_space=True, uuids=False)
         self.assertEqual(nodes[0].get_long_name(), "|root|spine|b_root")
         self.assert_worlds(nodes, clip)
 

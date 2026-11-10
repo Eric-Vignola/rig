@@ -233,7 +233,7 @@ class TestNames(_Case):
         self.assertEqual(repr(shape), 'Mesh("cubeShape")')
         data = shape.serialize(uvs=False)
         self.assertIsInstance(data, cgmath.geometry.MeshData)
-        copy = Mesh.create(data, name="copy")
+        copy = Mesh.create(data, name="copy", uuids=False)
         self.assertIsInstance(copy, Mesh)
         self.assertEqual(cmds.polyEvaluate(str(copy), vertex=True), 8)
         ctrl = Node.create("transform", name="ctrl")

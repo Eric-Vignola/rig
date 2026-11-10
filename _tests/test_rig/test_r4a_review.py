@@ -311,9 +311,9 @@ class TestContainerFalseHasOneMeaning(_SceneCase):
                     Node.create("joint", name="j", container=False),
                     Node.create("multiplyDivide", name="m", container=False),
                     Mesh.create(data, name="mesh", container=False),
-                    Node.create("mesh", data, name="nmesh", container=False),
+                    Node.create("mesh", data, name="nmesh", container=False, uuids=False),
                 ]
-                kept = Mesh.create(data, name="kept")
+                kept = Mesh.create(data, name="kept", uuids=False)
         self.assertEqual(
             [str(x) for x in made[:4]], ["inner_t", "inner_typed", "inner_j", "inner_m"]
         )

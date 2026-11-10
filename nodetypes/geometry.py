@@ -308,6 +308,12 @@ def _put_under(shape: OpenMaya.MObject, ride: OpenMaya.MObject, target: OpenMaya
     return path.fullPathName()
 
 
+def _shape_path(shape: OpenMaya.MObject) -> str:
+    """The full path of the new `shape` (under its ride, or under its target: the one path a new
+    shape has), as a recorded command takes it (`_files.adopt_uuid`)."""
+    return OpenMaya.MDagPath.getAPathTo(shape).fullPathName()
+
+
 def _discard(*handles: OpenMaya.MObjectHandle | None) -> None:
     """After an error in a shape's create, what it made that is still in the scene deleted, in
     the order of `handles`: the ride transform first (its shape goes with it while under it),

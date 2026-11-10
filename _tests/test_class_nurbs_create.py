@@ -426,7 +426,7 @@ class TestNurbsCurveCreateFromData(_CurveCreateCase):
                 expected = curve_state(source)
                 data = NurbsCurve(source).serialize(world_space=False)
                 self.ready()
-                curve  = NurbsCurve.create(data, name="rebuilt")
+                curve  = NurbsCurve.create(data, name="rebuilt", uuids=False)
                 matrix = cmds.getAttr("src.worldMatrix[0]")
                 self.check(curve, "rebuilt", "rebuiltShape", matrix)
                 self.assertEqual(curve_state(curve), expected)
@@ -502,7 +502,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
                 self.assertEqual(_rows(data.points), _rows(POINTS))
                 self.assertEqual((data.degree, data.periodic), (degree, False))
                 self.assertIsNone(getattr(data, "knots", None))  # nothing to carry
-                self.assertEqual(curve_state(NurbsCurve.create(data)), curve_state(source))
+                self.assertEqual(curve_state(NurbsCurve.create(data, uuids=False)), curve_state(source))
 
     def test_periodic_curve_holds_its_own_points(self):
         # Maya repeats a periodic curve's first `degree` CVs at its end; NurbsCurveData wraps
@@ -525,7 +525,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
                 self.assertEqual(_rows(data.points), source["cvs"][:8])
                 self.assertTrue(data.periodic)
                 self.assertIsNone(getattr(data, "knots", None))  # Maya's default periodic knots
-                self.assertEqual(curve_state(NurbsCurve.create(data)), source)
+                self.assertEqual(curve_state(NurbsCurve.create(data, uuids=False)), source)
 
     def test_closed_form_is_open(self):
         closed = _closed_form()
@@ -533,7 +533,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
         data = NurbsCurve(closed).serialize(world_space=False)
         self.assertFalse(data.periodic)
         self.assertEqual(_rows(data.points), _rows(POINTS + [POINTS[0]]))  # every CV
-        rebuilt = curve_state(NurbsCurve.create(data))
+        rebuilt = curve_state(NurbsCurve.create(data, uuids=False))
         source = curve_state(closed)
         self.assertEqual((rebuilt["cvs"], rebuilt["knots"], rebuilt["degree"]),
                          (source["cvs"], source["knots"], source["degree"]))
@@ -554,7 +554,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
                 state = curve_state(source)
                 data = source.serialize(world_space=False)
                 self.assertEqual(tuple(data.knots), state["knots"])  # Maya's own, as they are
-                rebuilt = NurbsCurve.create(data)
+                rebuilt = NurbsCurve.create(data, uuids=False)
                 got = curve_state(rebuilt)
                 self.assertEqual((got["cvs"], got["degree"], got["form"]),
                                  (state["cvs"], state["degree"], state["form"]))
@@ -565,7 +565,7 @@ class TestNurbsCurveSerialize(_CurveCreateCase):
     def test_evenly_spaced_knots_on_another_range(self):
         # rebuildCurve -keepRange 0 gives knots from 0 to 1: the same shape as the default ones
         source = cmds.curve(point=POINTS, degree=3, knot=[0, 0, 0, 1 / 3, 2 / 3, 1, 1, 1], name="unit")
-        rebuilt = NurbsCurve.create(NurbsCurve(source).serialize(world_space=False))
+        rebuilt = NurbsCurve.create(NurbsCurve(source).serialize(world_space=False), uuids=False)
         self.assertEqual(curve_state(rebuilt)["cvs"], curve_state(source)["cvs"])
         self.assert_same_shape(rebuilt, NurbsCurve(source))
 
@@ -885,7 +885,7 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
             with self.subTest(label):
                 data = NurbsSurface(shape).serialize()
                 self.ready()
-                surface = NurbsSurface.create(data)
+                surface = NurbsSurface.create(data, uuids=False)
                 self.assertIs(type(surface), NurbsSurface)
                 self.assertEqual(_surface_layout(str(surface)), _surface_layout(shape))
                 np.testing.assert_allclose(
@@ -904,29 +904,29 @@ class TestNurbsSurfaceCreate(_CurveCreateCase):
         shape = self.sources()["plane"]
         data  = NurbsSurface(shape).serialize()
         data.knots_u = data.knots_v = None
-        surface = NurbsSurface.create(data)
+        surface      = NurbsSurface.create(data, uuids=False)
         self.assertEqual(tuple(surface.get_fn_set().knotDomainInU), (0.0, 3.0))
         self.assertEqual(tuple(NurbsSurface(shape).get_fn_set().knotDomainInU), (0.0, 1.0))
 
     def test_names_and_attributes(self):
         data = NurbsSurface(self.sources()["plane"]).serialize()
         # a NurbsSurfaceData holds no name: Maya's surface<N> (re-pinned on cgmath's shape model)
-        self.assertEqual(str(NurbsSurface.create(data).get_parent()), "surface1")
-        self.assertEqual(str(NurbsSurface.create(data, name="patch")), "patchShape")
-        self.assertEqual(str(NurbsSurface.create(data, name="patchShape3").get_parent()), "patch3")
-        hidden = NurbsSurface.create(data, name="h", visibility=False)
+        self.assertEqual(str(NurbsSurface.create(data, uuids=False).get_parent()), "surface1")
+        self.assertEqual(str(NurbsSurface.create(data, name="patch", uuids=False)), "patchShape")
+        self.assertEqual(str(NurbsSurface.create(data, name="patchShape3", uuids=False).get_parent()), "patch3")
+        hidden = NurbsSurface.create(data, name="h", visibility=False, uuids=False)
         self.assertFalse(cmds.getAttr(f"{hidden}.visibility"))
         with container("outer"):
             with container("inner"):
-                self.assertEqual(str(NurbsSurface.create(data, name="s").get_parent()), "inner_s")
-        made = Node.create("nurbsSurface", data, name="by_node")
+                self.assertEqual(str(NurbsSurface.create(data, name="s", uuids=False).get_parent()), "inner_s")
+        made = Node.create("nurbsSurface", data, name="by_node", uuids=False)
         self.assertIs(type(made), NurbsSurface)
 
     def test_one_undo_step(self):
         data = NurbsSurface(self.sources()["sphere"]).serialize()
         self.ready()
         before = self.state()
-        surface = NurbsSurface.create(data, name="s")
+        surface = NurbsSurface.create(data, name="s", uuids=False)
         after = self.state()
         uuid = cmds.ls("s", uuid=True)
         self.assertEqual(self.undo_name(), SURFACE_CHUNK)
@@ -985,7 +985,7 @@ class TestNurbsSurfaceSerialize(_CurveCreateCase):
         data = NurbsSurface(shape).serialize()
         self.assertEqual((bool(data.periodic_u), bool(data.periodic_v)), (False, False))
         self.assertEqual(tuple(data.points.shape[:2]), (fn.numCVsInU, fn.numCVsInV))
-        surface = NurbsSurface.create(data)
+        surface = NurbsSurface.create(data, uuids=False)
         np.testing.assert_allclose(_surface_at(str(surface)), _surface_at(shape), atol=1e-9)
 
     def test_a_periodic_direction_trims_its_wrap(self):

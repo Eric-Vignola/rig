@@ -325,7 +325,7 @@ class TestAMeshsDataIsObjectSpace(_Case):
         self.assertEqual(data.parent_uuid, _uuid(self.cube.get_parent()))
 
     def test_the_default_save_and_create_put_it_back_where_it_was(self):
-        made = Mesh.load(self.cube.save(self.path("cube.npz")), name="copy")
+        made = Mesh.load(self.cube.save(self.path("cube.npz")), name="copy", uuids=False)
         np.testing.assert_array_equal(_local(made), _local(self.cube))
         np.testing.assert_allclose(_world_matrix(made.get_parent()), _world_matrix(self.cube.get_parent()),
                                    rtol=0, atol=1e-12)
@@ -335,7 +335,7 @@ class TestAMeshsDataIsObjectSpace(_Case):
 
     def test_the_update_takes_the_points_as_its_own(self):
         path = self.cube.save(self.path("cube.npz"))
-        copy = Mesh.load(path, name="copy")
+        copy = Mesh.load(path, name="copy", uuids=False)
         cmds.xform("copy", translation=(0, 10, 0), rotation=(0, 90, 0))
         cmds.xform("copy.vtx[0]", translation=(0, 3, 0), relative=True)
         copy.load(path)
@@ -366,7 +366,7 @@ class TestPlacement(_Case):
                 local = _local(node)
                 cmds.delete(node.get_parent().get_long_name())
                 for world_space in (False, True):
-                    made = type(node).create(data, world_space=world_space)
+                    made = type(node).create(data, world_space=world_space, uuids=False)
                     np.testing.assert_array_equal(_local(made), local)
                     np.testing.assert_array_equal(_world_matrix(made.get_parent()), np.eye(4))
 
@@ -378,15 +378,15 @@ class TestPlacement(_Case):
                 data  = node.serialize(uvs=False)
                 under = TransformData("under", uuid=data.parent_uuid, translate=[10.0, 0.0, 0.0])
                 rig   = HierarchyData([under])
-                made  = type(node).create(data, hierarchy=rig)
+                made  = type(node).create(data, hierarchy=rig, uuids=False)
                 np.testing.assert_allclose(_world_matrix(made.get_parent()), under.world_matrix, rtol=0, atol=1e-12)
                 np.testing.assert_array_equal(_local(made), _local(node))
-                frozen = type(node).create(data, world_space=True, hierarchy=rig)
+                frozen = type(node).create(data, world_space=True, hierarchy=rig, uuids=False)
                 np.testing.assert_allclose(_local(frozen), _local(node) + (10.0, 0.0, 0.0), rtol=0, atol=1e-5)
                 np.testing.assert_array_equal(_world_matrix(frozen.get_parent()), np.eye(4))
                 # a hierarchy that lacks the transform: identity, cgmath's rule, not the scene's node
                 other = HierarchyData([TransformData("other", translate=[5.0, 0.0, 0.0])])
-                np.testing.assert_array_equal(_world_matrix(type(node).create(data, hierarchy=other).get_parent()),
+                np.testing.assert_array_equal(_world_matrix(type(node).create(data, hierarchy=other, uuids=False).get_parent()),
                                               np.eye(4))
 
     def test_the_update_in_place_takes_a_hierarchy(self):
@@ -395,7 +395,7 @@ class TestPlacement(_Case):
         path  = self.cube.save(self.path("cube.npz"))
         data  = self.cube.serialize(uvs=False)
         under = TransformData("under", uuid=data.parent_uuid, translate=[0.0, 10.0, 0.0])
-        copy  = Mesh.load(path, name="copy")
+        copy  = Mesh.load(path, name="copy", uuids=False)
         copy.load(path, world_space=True, hierarchy=HierarchyData([under]))
         np.testing.assert_allclose(_xyz(copy.get_points(world_space=True)), _local(self.cube) + (0.0, 10.0, 0.0),
                                    rtol=0, atol=1e-5)
@@ -408,7 +408,7 @@ class TestPlacement(_Case):
         clip  = ClipData(HierarchyData([under]), frames=3, start_frame=0)
         clip.frames.translate = np.array([[(0.0, 0.0, 0.0)], [(0.0, 5.0, 0.0)], [(0.0, 9.0, 0.0)]])
         clip.frame            = 2
-        made = NurbsCurve.create(data, hierarchy=clip)
+        made = NurbsCurve.create(data, hierarchy=clip, uuids=False)
         np.testing.assert_allclose(_world_matrix(made.get_parent())[3, :3], (0.0, 9.0, 0.0), rtol=0, atol=1e-12)
 
     def test_an_instanced_transform_is_refused(self):
@@ -420,13 +420,13 @@ class TestPlacement(_Case):
         for world_space in (False, True):
             with self.subTest(world_space=world_space):
                 with self.assertRaisesRegex(ValueError, refusal):
-                    Mesh.create(data, world_space=world_space)
+                    Mesh.create(data, world_space=world_space, uuids=False)
                 self.assertEqual(cmds.ls(), before)
         target = cmds.createNode("transform", name="target")
-        under  = Mesh.create(data, transform=target)   # no placement to read: the points as its own
+        under  = Mesh.create(data, transform=target, uuids=False)   # no placement to read: the points as its own
         np.testing.assert_array_equal(_local(under), _local(self.cube))
         world = self.cube.serialize(world_space=True, uvs=False)
-        np.testing.assert_array_equal(_world_matrix(Mesh.create(world).get_parent()), np.eye(4))
+        np.testing.assert_array_equal(_world_matrix(Mesh.create(world, uuids=False).get_parent()), np.eye(4))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -476,7 +476,7 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
         for label, node in self.nurbs.items():
             with self.subTest(label):
                 source = node.get_fn_set()
-                made   = type(node).load(node.save(self.path(f"{label}.npz")))
+                made   = type(node).load(node.save(self.path(f"{label}.npz")), uuids=False)
                 got    = made.get_fn_set()
                 # Maya's default name (the data holds none), at the source's world matrix (its
                 # transform places it), its CVs as they were
@@ -497,7 +497,7 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
         for label, node in self.nurbs.items():
             with self.subTest(label):
                 path = node.save(self.path(f"{label}.npz"))
-                copy = type(node).load(path, name=f"{label}_copy")
+                copy = type(node).load(path, name=f"{label}_copy", uuids=False)
                 cmds.xform(str(copy.get_parent()), translation=(0, 10, 0), rotation=(0, 90, 0))
                 every = f"{copy}.cv[*]" if label == "curve" else f"{copy}.cv[*][*]"
                 cmds.xform(every, translation=(0, 3, 0), relative=True)
@@ -532,14 +532,14 @@ class TestTheNurbsDataHoldsWhereItIs(_Case):
         """The counterpart of test_class_nurbs_create's 0..spans: knots that take another range
         than Maya's default ones are kept, the range with them."""
         plane = cmds.nurbsPlane(name="plane", constructionHistory=False, u=3, v=2)[0]
-        made  = NurbsSurface.create(NurbsSurface(plane).serialize())
+        made  = NurbsSurface.create(NurbsSurface(plane).serialize(), uuids=False)
         self.assertEqual(tuple(made.get_fn_set().knotDomainInU), (0.0, 1.0))
 
     def test_the_cylinder_comes_back_exactly_and_says_nothing(self):
         cylinder = self.nurbs["cylinder"]
         with self.assertNoLogs("rig.nodetypes.nurbs", level="WARNING"):
             data = cylinder.serialize()
-        made = NurbsSurface.create(data).get_fn_set()
+        made = NurbsSurface.create(data, uuids=False).get_fn_set()
         self.assertEqual(list(made.knotsInV()), list(CYLINDER_V_KNOTS))
         np.testing.assert_allclose(_on_surface(made), _on_surface(cylinder.get_fn_set()), rtol=0, atol=1e-9)
 

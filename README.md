@@ -633,13 +633,13 @@ print(cmds.listConnections("ctl.ty", source=True))   # ['ctl_parentConstraint1']
 Autodesk Maya (the suite runs on 2025; version-keyed dispatch builds the
 legacy networks on older releases), with numpy and scipy installed for
 mayapy, and, for the data paths (`serialize`, `save` / `load`,
-`create(data)`), cgmath's `r17-skeleton` branch at `72dfec4` (2026-11-09) or
-later: its shape model (a `ShapeData`'s `uuid` and `parent_uuid`, no matrix)
-and a `MeshData`'s vertex colours (`colors` / `color_indices`). cgmath is
+`create(data)`), cgmath's `r17-skeleton` branch at `9b28464` (2026-11-10) or
+later: its shape model (a `ShapeData`'s `uuid` and `parent_uuid`, no matrix),
+a `MeshData`'s vertex colours (`colors` / `color_indices`), `renew_uuids()` on
+a hierarchy, a clip and a `Scene`, and a `MaterialData`'s `uuid`. cgmath is
 imported lazily, so `rig` loads without it; an older cgmath (3.0.1, 3.2.0, an
-`r17-skeleton` before its colours) raises `ImportError` naming that pin on the
-first data path. Each round of rig names here the cgmath commit it was
-verified on.
+`r17-skeleton` before those) raises `ImportError` naming that pin on the first
+data path. Each round of rig names here the cgmath commit it was verified on.
 
 ## Author
 

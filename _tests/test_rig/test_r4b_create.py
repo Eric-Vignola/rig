@@ -309,8 +309,8 @@ class TestCreateFlags(_SceneCase):
         self.assertEqual(ShadingEngine._CREATE_FLAGS, {"name", "n"})
         # normals and colors: the restore flags (FU 1; 2026-11-09); re-pinned (user decisions 2026-10-29:
         # transform= and world_space=; 2026-11-09: hierarchy=, where the data sits; uv_data= is uvs=)
-        self.assertEqual(Mesh._CREATE_FLAGS,       {"name", "uvs", "normals", "colors", "transform", "world_space", "hierarchy"})
-        self.assertEqual(NurbsCurve._CREATE_FLAGS, {"name", "degree", "kv", "transform", "world_space", "hierarchy"})
+        self.assertEqual(Mesh._CREATE_FLAGS,       {"name", "uvs", "normals", "colors", "transform", "world_space", "hierarchy", "uuids"})
+        self.assertEqual(NurbsCurve._CREATE_FLAGS, {"name", "degree", "kv", "transform", "world_space", "hierarchy", "uuids"})
         self.assertEqual(Reference._CREATE_FLAGS,  {"file_path", "namespace"})
         for cls in (SkinCluster, BlendShape):
             with self.subTest(cls=cls.__name__):

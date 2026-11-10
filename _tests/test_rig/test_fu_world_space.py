@@ -170,5 +170,5 @@ class TestTheOtherFormsKeepTheirRules(_SpaceCase):
                 path = cls(shape).save(self.path(f"{shape}.npz"))
                 self.assert_refused(TypeError, rf"^{cls.__name__}\.load: world_space= takes True or False",
                                     lambda: cls.load(path, world_space=None))
-                self.assertIsInstance(cls.load(path, world_space=True), cls)
-                self.assertIsInstance(cls.load(path), cls)
+                self.assertIsInstance(cls.load(path, world_space=True, uuids=False), cls)
+                self.assertIsInstance(cls.load(path, uuids=False), cls)

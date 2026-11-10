@@ -23,6 +23,7 @@ import contextlib
 import os
 import warnings
 from types import FunctionType, MethodType
+from typing import Iterable
 
 from rig.nodetypes._base import Attribute, _name_of
 
@@ -37,28 +38,33 @@ ASSET_TYPES = ("obj", "fbx", "glb", "gltf", "usd", "usda", "usdc", "usdz")
 CREATING_SPACE = "where the data's points land: in the world, or as the shape's own"
 
 # the cgmath the data paths are written against: r17-skeleton's shape model, a ShapeData's uuid and
-# parent_uuid, no matrix, and a MeshData's colors / color_indices (README.md's requirements and the
+# parent_uuid, no matrix, a MeshData's colors / color_indices, renew_uuids() on a hierarchy, a clip
+# and a Scene, a MaterialData's uuid and the lists of one mesh (README.md's requirements and the
 # CHEATSHEET name it too)
-CGMATH_PIN = "cgmath r17-skeleton at 72dfec4 (2026-11-09)"
+CGMATH_PIN = "cgmath r17-skeleton at 9b28464 (2026-11-10)"
 
 
 def require_pinned_cgmath(method: str) -> None:
     """The data paths need the cgmath rig is pinned to (`CGMATH_PIN`) or later: one whose shapes
-    are ``ShapeData`` (``uuid``, ``parent_uuid``) and whose ``MeshData`` holds ``colors``. An
-    older cgmath (3.0.1, 3.2.0, an r17-skeleton before its colours) raises ImportError naming
-    `method`, the pin and the cgmath found, before anything is read or made."""
+    are ``ShapeData`` (``uuid``, ``parent_uuid``), whose ``MeshData`` holds ``colors`` and whose
+    ``MaterialData`` holds a ``uuid`` (b0c991b, after ``renew_uuids()``). An older cgmath (3.0.1,
+    3.2.0, an r17-skeleton before those) raises ImportError naming `method`, the pin and the
+    cgmath found, before anything is read or made."""
     try:
-        from cgmath.geometry import MeshData
+        from cgmath.geometry import MaterialData, MeshData
         from cgmath.hierarchy import ShapeData  # noqa: F401
 
         if "colors" not in getattr(MeshData, "__dataclass_fields__", {}):
+            raise ImportError
+        if "uuid" not in getattr(MaterialData, "__dataclass_fields__", {}):
             raise ImportError
     except ImportError:
         import cgmath
 
         raise ImportError(
-            f"{method} needs {CGMATH_PIN} or later, whose shapes carry a parent_uuid and whose meshes hold "
-            f"colors; this cgmath is {getattr(cgmath, '__version__', '?')} at {os.path.dirname(cgmath.__file__)}"
+            f"{method} needs {CGMATH_PIN} or later, whose shapes carry a parent_uuid, whose meshes hold colors "
+            f"and whose scenes renew uuids; this cgmath is {getattr(cgmath, '__version__', '?')} at "
+            f"{os.path.dirname(cgmath.__file__)}"
         ) from None
 
 
@@ -111,6 +117,65 @@ def space_flag(method: str, world_space, meaning: str = "the space the file was 
     if not isinstance(world_space, (bool, np.bool_)):
         raise TypeError(f"{method}: world_space= takes True or False ({meaning}), not {world_space!r}")
     return bool(world_space)
+
+
+# what ``uuids=`` says on a create from data and its class-form load (`uuid_flag`)
+UUIDS_MEAN = "True (the default: a node made from data takes the data's uuid) or False (Maya's own)"
+
+# how a shape's data takes a fresh uuid (`free_uuids`' advice for a mesh, a curve, a surface)
+FRESH_UUID = "data.uuid = cgmath.hierarchy.generate_uuid()"
+
+
+def uuid_flag(method: str, uuids) -> bool:
+    """``uuids=`` of a create from data or its class-form load (`method`, ``"Mesh.create()"``) as a
+    bool: anything but a bool (None, ``1``) is a TypeError naming it, before anything is read or
+    made."""
+    import numpy as np
+
+    if not isinstance(uuids, (bool, np.bool_)):
+        raise TypeError(f"{method}: uuids= is {UUIDS_MEAN}, not {uuids!r}")
+    return bool(uuids)
+
+
+def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
+    """The uuids the data of `method` would give the nodes it makes, checked before anything is
+    made: `named` pairs ``(what, uuid)``, ``what`` naming the record for the error (``"the node
+    'spine'"``; a uuid of None is Maya's own, not checked). A uuid a scene node holds, or one the
+    data holds twice (two nodes cannot hold one uuid: Maya's ``rename -uuid`` refuses it) is a
+    ValueError naming them, `renew` (how the data takes fresh uuids: ``"hierarchy.renew_uuids()"``)
+    and ``uuids=False``. Maya spells a uuid upper-case: the check reads the data's so."""
+    from maya import cmds
+
+    seen = {}
+    for what, uuid in named:
+        if uuid is None:
+            continue
+        key = str(uuid).upper()
+        if key in seen:
+            raise ValueError(
+                f"{method}: {seen[key]} and {what} hold one uuid, {key}, which two nodes cannot; give the data "
+                f"fresh uuids ({renew}), or uuids=False keeps Maya's own"
+            )
+        seen[key] = what
+        found     = cmds.ls(key, long=True)
+        if found:
+            raise ValueError(
+                f"{method}: {what} has the uuid {key}, which {found[0]!r} holds, and two nodes cannot hold one; "
+                f"for a second copy give the data fresh uuids first ({renew}, or a Scene's renew_uuids()); "
+                f"uuids=False keeps Maya's own"
+            )
+
+
+def adopt_uuid(node: str, uuid) -> None:
+    """Gives the node `node` (a name or a path) the data's `uuid` (None: left as Maya made it): a
+    recorded ``rename -uuid``, so the create's undo puts Maya's uuid back and its redo the data's
+    (measured in Maya 2025: ``rename -uuid`` is undoable, the uuid survives a .ma and a .mb, and a
+    uuid another node holds is refused, which `free_uuids` has ruled out before the node was
+    made)."""
+    if uuid is not None:
+        from rig._internal.journal import cmds_edit
+
+        cmds_edit.rename(node, str(uuid), uuid=True)
 
 
 def _shown(value) -> str:

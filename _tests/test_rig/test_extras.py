@@ -229,7 +229,7 @@ class TestCreateFromData(MayaTestCase):
 
     def test_a_transform_from_its_data(self):
         src  = self._source()
-        made = Transform.create(src.serialize())
+        made = Transform.create(src.serialize(), uuids=False)
         self.assertIs(type(made), Transform)
         self.assertEqual(str(made), "src1")              # Maya renames a taken name
         for attr in ("t", "r", "s", "ra"):
@@ -249,7 +249,7 @@ class TestCreateFromData(MayaTestCase):
         data = src.serialize()
         for cls in (Joint, Transform):   # a joint's data on Transform makes a Joint
             with self.subTest(cls=cls.__name__):
-                made = cls.create(data)
+                made = cls.create(data, uuids=False)
                 self.assertIs(type(made), Joint)
                 np.testing.assert_allclose(made.jo.get(), [10, 20, 30])
                 self.assertEqual(made.radius.get(), 2.5)
@@ -261,7 +261,7 @@ class TestCreateFromData(MayaTestCase):
 
         loc = Node(cmds.spaceLocator(name="loc")[0])
         loc.tx << 4
-        made = Transform.create(loc.serialize())
+        made = Transform.create(loc.serialize(), uuids=False)
         self.assertEqual(cmds.listRelatives(str(made), shapes=True, type="locator"), ["loc1Shape"])
         self.assertEqual(made.tx.get(), 4)
         before = cmds.ls()
@@ -274,12 +274,12 @@ class TestCreateFromData(MayaTestCase):
         src  = self._source()
         grp  = Transform.create(name="grp")
         grp.t << (100, 0, 0)
-        made = Transform.create(src.serialize(), name="copy", parent=grp, tx=9, weight=0.5)
+        made = Transform.create(src.serialize(), name="copy", parent=grp, tx=9, weight=0.5, uuids=False)
         self.assertEqual(made.get_long_name(), "|grp|copy")
         # the data's values are local ones, the keywords set last
         np.testing.assert_allclose(made.t.get(), [9, 2, 3])
         self.assertAlmostEqual(made.weight.get(), 0.5)
-        short = Transform.create(src.serialize(), n="short", p="grp")
+        short = Transform.create(src.serialize(), n="short", p="grp", uuids=False)
         self.assertEqual(short.get_long_name(), "|grp|short")
 
     def test_refusals_before_anything_is_made(self):
@@ -315,7 +315,7 @@ class TestCreateFromData(MayaTestCase):
         tdata  = self._source().serialize()
         before = _scene()
         with self.assertRaises(Exception) as caught:
-            Transform.create(tdata, t=(1, 2))
+            Transform.create(tdata, t=(1, 2), uuids=False)
         # the value's own error, raised once the node existed (not a refusal of the data)
         self.assertNotIn("TransformData", str(caught.exception))
         self.assertEqual(_scene(), before)
@@ -325,7 +325,7 @@ class TestCreateFromData(MayaTestCase):
         cmds.select("src")
         before = _scene()
         cmds.flushUndo()
-        made = Transform.create(tdata, tx=5)
+        made = Transform.create(tdata, tx=5, uuids=False)
         self.assertEqual(cmds.ls(selection=True), ["src"])
         self.assertEqual(cmds.undoInfo(query=True, undoName=True), "rig.Transform.create")
         made_names = _scene() - before
@@ -341,9 +341,9 @@ class TestCreateFromData(MayaTestCase):
         with container("outer") as outer:
             with container("inner"):
                 plain = Transform.create(name="plain")
-                kept  = Transform.create(tdata)
-                named = Transform.create(tdata, name="named")
-                loc   = Transform.create(Node(cmds.spaceLocator(name="lc")[0]).serialize())
+                kept  = Transform.create(tdata, uuids=False)
+                named = Transform.create(tdata, name="named", uuids=False)
+                loc   = Transform.create(Node(cmds.spaceLocator(name="lc")[0]).serialize(), uuids=False)
         members = set(cmds.container(str(outer), query=True, nodeList=True) or [])
         made    = {str(plain), str(kept), str(named), str(loc), f"{loc}Shape"}
         self.assertTrue(made <= members, members)
@@ -360,15 +360,15 @@ class TestCreateFromData(MayaTestCase):
         kid.tx << 3
         loc = Node(cmds.spaceLocator(name="tip")[0])
         cmds.parent(str(loc), str(kid))
-        made = Transform.create_hierarchy(root.serialize_hierarchy())
+        made = Transform.create_hierarchy(root.serialize_hierarchy(), uuids=False)
         self.assertEqual([x.get_long_name() for x in made], ["|root1", "|root1|kid", "|root1|kid|tip"])
         self.assertEqual([type(x) for x in made], [Joint, Joint, Transform])
         self.assertEqual(made[1].tx.get(), 3)
         from rig.nodetypes import transform
 
         with mock.patch.object(transform, "_make_from_data", wraps=transform._make_from_data) as spy:
-            Transform.create_hierarchy(root.serialize_hierarchy())
-            Transform.create(root.serialize())
+            Transform.create_hierarchy(root.serialize_hierarchy(), uuids=False)
+            Transform.create(root.serialize(), uuids=False)
         self.assertEqual(spy.call_count, 4)
 
     def test_the_creator_is_a_statement(self):

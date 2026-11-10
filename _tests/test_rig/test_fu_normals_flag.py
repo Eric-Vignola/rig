@@ -70,7 +70,7 @@ class TestTheFlagOnCreate(_NormalsCase):
         data, uvs, hard, locked = self.source()
         for label, kwargs in (("default", {}), ("True", {"normals": True})):
             with self.subTest(label):
-                mesh = Mesh.create(data, uvs=uvs, **kwargs)
+                mesh = Mesh.create(data, uvs=uvs, **kwargs, uuids=False)
                 self.assertEqual(_hard_edges(str(mesh)), hard)
                 self.assertEqual(_locked_rows(str(mesh)), locked)
 
@@ -84,7 +84,7 @@ class TestTheFlagOnCreate(_NormalsCase):
         plain = data.copy()
         plain.normals = None
         plain.normal_indices = None
-        other = Mesh.create(plain, uvs=uvs, name="plain")
+        other                = Mesh.create(plain, uvs=uvs, name="plain", uuids=False)
         a, b = mesh_state(str(mesh)), mesh_state(str(other))
         for key in ("points", "uv_sets", "uvs"):
             self.assertEqual(a[key], b[key], key)
@@ -120,17 +120,17 @@ class TestTheFlagOnLoad(_NormalsCase):
     def test_the_class_form(self):
         path, uv_path, hard, locked = self.saved()
         self.ready()
-        smooth = self.assert_untouched_shading(lambda: Mesh.load(path, uv_path, name="smooth", normals=False))
+        smooth = self.assert_untouched_shading(lambda: Mesh.load(path, uv_path, name="smooth", normals=False, uuids=False))
         self.assertEqual((_hard_edges(str(smooth)), _locked_rows(str(smooth))), (set(), set()))
         self.assertEqual(list(smooth.get_uv_sets()), ["map1"])
         self.assertEqual(self.undo_name(), "rig.Mesh.load")
         self.assert_kept_selection()
-        shaded = Mesh.load(path, uv_path, name="shaded")
+        shaded = Mesh.load(path, uv_path, name="shaded", uuids=False)
         self.assertEqual((_hard_edges(str(shaded)), _locked_rows(str(shaded))), (hard, locked))
 
     def test_the_instance_form_keeps_the_mesh_s_own_shading(self):
         path, uv_path, hard, locked = self.saved()
-        copy = Mesh.load(path, uv_path, name="copy", normals=False)
+        copy = Mesh.load(path, uv_path, name="copy", normals=False, uuids=False)
         cmds.polySoftEdge("copy.e[20:23]", angle=0, constructionHistory=False)
         cmds.xform("copy.vtx[3]", translation=(0, 2, 0), relative=True)
         own = _hard_edges("copyShape"), _locked_rows("copyShape")
@@ -179,7 +179,7 @@ class TestTheFlagIsABool(_NormalsCase):
                         read.assert_not_called()
                         self.assertEqual(mesh_state("bodyShape"), before)
         # numpy's bool is a bool
-        Mesh.create(data, uvs=uvs, name="np", normals=np.bool_(False))
+        Mesh.create(data, uvs=uvs, name="np", normals=np.bool_(False), uuids=False)
         self.assertEqual(_hard_edges("npShape"), set())
 
     def test_the_instance_form_names_its_keywords(self):

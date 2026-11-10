@@ -300,8 +300,8 @@ class TestFiles(_Case):
         t     = _cube()
         data  = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c").serialize()
         older = types.ModuleType("cgmath.hierarchy")  # no ShapeData in it
-        pin   = (r" needs cgmath r17-skeleton at 72dfec4 \(2026-11-09\) or later, whose shapes carry a "
-                 r"parent_uuid and whose meshes hold colors; this cgmath is ")
+        pin   = (r" needs cgmath r17-skeleton at 9b28464 \(2026-11-10\) or later, whose shapes carry a "
+                 r"parent_uuid, whose meshes hold colors and whose scenes renew uuids; this cgmath is ")
         for label, call, head in (
             ("serialize", lambda: Mesh(t).serialize(), r"^Mesh\.serialize"),
             ("load", lambda: Mesh.load(self.path("none.npz")), r"^Mesh\.load"),
@@ -349,7 +349,7 @@ class TestMesh(_Case):
                 saved = Mesh(t).save(self.path(f"b.{ext}"), uvs=self.path(f"b_uv.{ext}"))
                 self.assertEqual(saved, (self.path(f"b.{ext}"), self.path(f"b_uv.{ext}")))
                 self.ready()
-                mesh = Mesh.load(self.path(f"b.{ext}"), self.path(f"b_uv.{ext}"), name=f"m_{ext}")
+                mesh = Mesh.load(self.path(f"b.{ext}"), self.path(f"b_uv.{ext}"), name=f"m_{ext}", uuids=False)
                 self.assertIsInstance(mesh, Mesh)
                 self.assertEqual(str(mesh.get_parent()), f"m_{ext}")
                 self.assert_same_mesh(str(mesh), *source)
@@ -366,14 +366,14 @@ class TestMesh(_Case):
     def test_save_without_uvs_writes_the_mesh_only(self):
         t = _cube()
         self.assertEqual(Mesh(t).save(self.path("only.npz")), self.path("only.npz"))
-        mesh = Mesh.load(self.path("only.npz"), name="m")
+        mesh = Mesh.load(self.path("only.npz"), name="m", uuids=False)
         self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
         self.assertEqual(len(mesh.get_uv_coords("map1")), 0)
 
     def test_world_space_false_brings_back_the_transform(self):
         t, path, uvs = self.saved(world_space=False)
         world = _world_points(cmds.listRelatives(t, shapes=True)[0])
-        mesh = Mesh.load(path, uvs, name="m")
+        mesh  = Mesh.load(path, uvs, name="m", uuids=False)
         np.testing.assert_allclose(_world_points(str(mesh)), world, atol=1e-5)
         np.testing.assert_allclose(cmds.getAttr("m.t")[0], (1, 2, 3), atol=1e-6)
 
@@ -381,11 +381,11 @@ class TestMesh(_Case):
         t, path, uvs = self.saved()
         data, uv_list = Mesh(t).serialize()
         made = [
-            Mesh.load(data, uv_list, name="from_data"),
-            Mesh.load(pathlib.Path(path), pathlib.Path(uvs), name="from_path"),
+            Mesh.load(data, uv_list, name="from_data", uuids=False),
+            Mesh.load(pathlib.Path(path), pathlib.Path(uvs), name="from_path", uuids=False),
         ]
         with mock.patch.dict(os.environ, {"USERPROFILE": self.dir, "HOME": self.dir}):
-            made.append(Mesh.load("~/body.npz", "~/body_uv.npz", name="from_tilde"))
+            made.append(Mesh.load("~/body.npz", "~/body_uv.npz", name="from_tilde", uuids=False))
         for mesh in made:
             with self.subTest(mesh=str(mesh)):
                 self.assertEqual(mesh_state(str(mesh))["uvs"], mesh_state(str(made[0]))["uvs"])
@@ -459,7 +459,7 @@ class TestMesh(_Case):
     def test_one_undo_step_and_redo(self):
         _, path, uvs = self.saved()
         self.ready()
-        mesh = Mesh.load(path, uvs, name="m")
+        mesh = Mesh.load(path, uvs, name="m", uuids=False)
         uuid = cmds.ls("m", uuid=True)
         self.assert_one_step("rig.Mesh.load", lambda: cmds.objExists("m"))
         self.assertEqual(cmds.ls("m", uuid=True), uuid)
@@ -469,23 +469,23 @@ class TestMesh(_Case):
     def test_the_names(self):
         _, path, uvs = self.saved()
         # the data's name, Shape dropped; Maya's suffix on a clash; name= wins
-        self.assertEqual(str(Mesh.load(path).get_parent()), "body1")
-        self.assertEqual(str(Mesh.load(path).get_parent()), "body2")
-        self.assertEqual(str(Mesh.load(path, name="hero").get_parent()), "hero")
+        self.assertEqual(str(Mesh.load(path, uuids=False).get_parent()), "body1")
+        self.assertEqual(str(Mesh.load(path, uuids=False).get_parent()), "body2")
+        self.assertEqual(str(Mesh.load(path, name="hero", uuids=False).get_parent()), "hero")
         data = Mesh("body").serialize(uvs=False)
         data.name = None
-        self.assertEqual(str(Mesh.load(data).get_parent()), "polySurface1")
+        self.assertEqual(str(Mesh.load(data, uuids=False).get_parent()), "polySurface1")
 
     def test_the_class_form_always_creates(self):
         # D2: Mesh.load() creates, as Mesh.create does (Mesh('x').load() updates)
         _, path, uvs = self.saved()
-        first = Mesh.load(path, uvs, name="m")
-        second = Mesh.load(path, uvs, name="m")
+        first  = Mesh.load(path, uvs, name="m", uuids=False)
+        second = Mesh.load(path, uvs, name="m", uuids=False)
         self.assertEqual((str(first.get_parent()), str(second.get_parent())), ("m", "m1"))
 
     def test_flags_and_attributes_pass_through(self):
         _, path, uvs = self.saved()
-        mesh = Mesh.load(path, uvs, name="m", visibility=False, castsShadows=False)
+        mesh = Mesh.load(path, uvs, name="m", visibility=False, castsShadows=False, uuids=False)
         self.assertEqual((cmds.getAttr("mShape.visibility"), cmds.getAttr("mShape.castsShadows")), (False, False))
         self.assert_refused(AttributeError, "nosuch", lambda: Mesh.load(path, uvs, name="x", nosuch=1))
         self.assertIsInstance(mesh, Mesh)
@@ -494,8 +494,8 @@ class TestMesh(_Case):
         _, path, uvs = self.saved()
         self.ready()
         with container("box") as box:
-            Mesh.load(path, uvs, name="m")
-            Mesh.load(path, uvs, name="out", container=False)
+            Mesh.load(path, uvs, name="m", uuids=False)
+            Mesh.load(path, uvs, name="out", container=False, uuids=False)
         # one scope adds no prefix (a nested one does: test_class_mesh_create)
         members = sorted(cmds.container(str(box), query=True, nodeList=True))
         self.assertEqual(members, ["m", "mShape"])
@@ -508,7 +508,7 @@ class TestMesh(_Case):
         source = mesh_state("bodyShape"), _world_points("bodyShape"), _fv_normals("bodyShape", OpenMaya.MSpace.kWorld)
         hard = _hard_edges("bodyShape")
         # the loaded copy is edited: points moved, every edge softened, a UV set renamed
-        copy = Mesh.load(path, uvs, name="copy")
+        copy = Mesh.load(path, uvs, name="copy", uuids=False)
         cmds.xform("copy.vtx[0:3]", translation=(0, 4, 0), relative=True, worldSpace=True)
         cmds.polySoftEdge("copy", angle=180, constructionHistory=False)
         cmds.polyNormalPerVertex("copy.vtx[5]", xyz=(1, 0, 0))
@@ -541,7 +541,7 @@ class TestMesh(_Case):
         # nothing locked, the mesh only softened: the edges come back hard (the update once kept
         # one MFnMesh across its setPoints and lost the edge flags)
         _, path, uvs = self.saved()
-        copy = Mesh.load(path, uvs, name="copy")
+        copy = Mesh.load(path, uvs, name="copy", uuids=False)
         cmds.polySoftEdge("copy", angle=180, constructionHistory=False)
         self.assertEqual(_hard_edges("copyShape"), set())
         copy.load(path, uvs)
@@ -554,7 +554,7 @@ class TestMesh(_Case):
     def test_the_node_form_world_space(self):
         t, path, uvs = self.saved()
         world = _world_points("bodyShape")
-        Mesh.load(path, uvs, name="copy")
+        Mesh.load(path, uvs, name="copy", uuids=False)
         cmds.xform("copy", translation=(0, 10, 0), rotation=(0, 90, 0))
         # world_space=True (re-pinned, user decision 2026-10-29: by keyword; object space is the
         # default): the points land where the file puts them
@@ -586,7 +586,7 @@ class TestMesh(_Case):
         # the same counts, other face lists
         data = Mesh("body").serialize(uvs=False)
         data.indices = np.roll(np.asarray(data.indices), 1)
-        copy = Mesh.load(path, name="copy")
+        copy         = Mesh.load(path, name="copy", uuids=False)
         self.assert_refused(ValueError, "holds another topology", lambda: copy.load(data))
 
     def test_the_node_form_refuses_a_mesh_with_history(self):
@@ -622,7 +622,7 @@ class TestMesh(_Case):
         data = Mesh("body").serialize(uvs=False)
         data.normals = None
         data.normal_indices = None
-        copy = Mesh.load(path, name="copy")
+        copy                = Mesh.load(path, name="copy", uuids=False)
         cmds.polySoftEdge("copy", angle=180, constructionHistory=False)
         Mesh("copy").load(data)
         self.assertEqual(_hard_edges("copyShape"), set())
@@ -656,7 +656,7 @@ class TestNurbsCurve(_Case):
                     path = self.path(f"{label}.{ext}")
                     self.assertEqual(NurbsCurve(shape).save(path, world_space=True), path)
                     self.ready()
-                    curve = NurbsCurve.load(path)
+                    curve = NurbsCurve.load(path, uuids=False)
                     self.assertIsInstance(curve, NurbsCurve)
                     got = curve.get_fn_set()
                     self.assertEqual((got.numCVs, got.degree, got.form), (fn.numCVs, fn.degree, fn.form))
@@ -683,14 +683,14 @@ class TestNurbsCurve(_Case):
         shape = self.sources()["circle"]
         data = NurbsCurve(shape).serialize()
         NurbsCurve(shape).save(self.path("c.npz"))
-        first = NurbsCurve.load(data)
+        first = NurbsCurve.load(data, uuids=False)
         # a NurbsCurveData holds no name: Maya's curve<N> (re-pinned on cgmath's shape model)
         stem = "curve"
         self.assertEqual(str(first.get_parent()), f"{stem}1")
-        self.assertEqual(str(NurbsCurve.load(pathlib.Path(self.path("c.npz"))).get_parent()), f"{stem}2")
-        self.assertEqual(str(NurbsCurve.load(self.path("c.npz"), name="ctl").get_parent()), "ctl")
-        self.assertEqual(str(NurbsCurve.load(self.path("c.npz"), name="ctl").get_parent()), "ctl1")
-        hidden = NurbsCurve.load(self.path("c.npz"), name="h", visibility=False)
+        self.assertEqual(str(NurbsCurve.load(pathlib.Path(self.path("c.npz")), uuids=False).get_parent()), f"{stem}2")
+        self.assertEqual(str(NurbsCurve.load(self.path("c.npz"), name="ctl", uuids=False).get_parent()), "ctl")
+        self.assertEqual(str(NurbsCurve.load(self.path("c.npz"), name="ctl", uuids=False).get_parent()), "ctl1")
+        hidden = NurbsCurve.load(self.path("c.npz"), name="h", visibility=False, uuids=False)
         self.assertFalse(cmds.getAttr(f"{hidden}.visibility"))
 
     def test_wrong_inputs_make_nothing(self):
@@ -714,17 +714,17 @@ class TestNurbsCurve(_Case):
         shape = self.sources()["circle"]
         NurbsCurve(shape).save(self.path("c.npz"))
         self.ready()
-        NurbsCurve.load(self.path("c.npz"), name="ctl")
+        NurbsCurve.load(self.path("c.npz"), name="ctl", uuids=False)
         self.assert_one_step("rig.NurbsCurve.load", lambda: cmds.objExists("ctl"))
         with container("box") as box:
-            NurbsCurve.load(self.path("c.npz"), name="ctl")
+            NurbsCurve.load(self.path("c.npz"), name="ctl", uuids=False)
         self.assertEqual(sorted(cmds.container(str(box), query=True, nodeList=True)), ["ctl1", "ctlShape1"])
 
     def test_the_node_form_updates_the_cvs(self):
         shape = self.sources()["circle"]
         NurbsCurve(shape).save(self.path("c.npz"))
         source = _cvs(shape)
-        copy = NurbsCurve.load(self.path("c.npz"), name="copy")
+        copy   = NurbsCurve.load(self.path("c.npz"), name="copy", uuids=False)
         cmds.xform("copy.cv[0:2]", translation=(0, 2, 0), relative=True)
         cmds.xform("copy", translation=(0, 0, 3))
         edited = _cvs(str(copy))
@@ -794,7 +794,7 @@ class TestNurbsSurface(_Case):
                     path = self.path(f"{label}.{ext}")
                     self.assertEqual(NurbsSurface(shape).save(path, world_space=True), path)
                     self.ready()
-                    surface = NurbsSurface.load(path)
+                    surface = NurbsSurface.load(path, uuids=False)
                     self.assertIsInstance(surface, NurbsSurface)
                     got = surface.get_fn_set()
                     self.assertEqual(
@@ -811,20 +811,20 @@ class TestNurbsSurface(_Case):
         NurbsSurface(shape).save(self.path("p.npz"))
         # re-pinned: the data's name names it on a cgmath whose NurbsSurfaceData has one
         default = "plane1" if getattr(NurbsSurface(shape).serialize(), "name", None) else "surface1"
-        self.assertEqual(str(NurbsSurface.load(self.path("p.npz")).get_parent()), default)
-        self.assertEqual(str(NurbsSurface.load(self.path("p.npz"), name="patch").get_parent()), "patch")
-        self.assertFalse(cmds.getAttr(f"{NurbsSurface.load(self.path('p.npz'), name='h', visibility=False)}.visibility"))
-        NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)]).save(self.path("c.npz"))
+        self.assertEqual(str(NurbsSurface.load(self.path("p.npz"), uuids=False).get_parent()), default)
+        self.assertEqual(str(NurbsSurface.load(self.path("p.npz"), name="patch", uuids=False).get_parent()), "patch")
+        self.assertFalse(cmds.getAttr(f"{NurbsSurface.load(self.path('p.npz'), name='h', visibility=False, uuids=False)}.visibility"))
+        NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], uuids=False).save(self.path("c.npz"))
         self.assert_refused(TypeError, "holds a NurbsCurveData; the surface is a NurbsSurfaceData$",
-                            lambda: NurbsSurface.load(self.path("c.npz")))
+                            lambda: NurbsSurface.load(self.path("c.npz"), uuids=False))
         self.assert_refused(FileNotFoundError, "NurbsSurface.load: the surface: no file",
-                            lambda: NurbsSurface.load(self.path("none.npz")))
+                            lambda: NurbsSurface.load(self.path("none.npz"), uuids=False))
 
     def test_one_undo_step(self):
         shape = self.sources()["sphere"]
         NurbsSurface(shape).save(self.path("s.npz"))
         self.ready()
-        NurbsSurface.load(self.path("s.npz"), name="copy")
+        NurbsSurface.load(self.path("s.npz"), name="copy", uuids=False)
         self.assert_one_step("rig.NurbsSurface.load", lambda: cmds.objExists("copy"))
 
     def test_the_node_form_updates_the_cvs(self):
@@ -832,7 +832,7 @@ class TestNurbsSurface(_Case):
         # re-pinned (user decision 2026-10-29): the world-space file the load below reads
         NurbsSurface(shape).save(self.path("s.npz"), world_space=True)
         source = _cvs(shape)
-        copy = NurbsSurface.load(self.path("s.npz"), name="copy")
+        copy   = NurbsSurface.load(self.path("s.npz"), name="copy", uuids=False)
         cmds.xform("copy.cv[0][0:3]", translation=(0, 2, 0), relative=True)
         edited = _cvs(str(copy))
         self.ready()
@@ -1151,13 +1151,13 @@ class TestHierarchy(_Case):
         self.assert_kept_selection()
         # an empty selection stays empty
         cmds.select(clear=True)
-        Transform.load_hierarchy(self.path("skel.npz"))
+        Transform.load_hierarchy(self.path("skel.npz"), uuids=False)
         self.assertEqual(cmds.ls(selection=True), [])
 
     def test_a_second_load_makes_another(self):
         root = _skeleton()
         root.save_hierarchy(self.path("skel.npz"))
-        nodes = Joint.load_hierarchy(self.path("skel.npz"))
+        nodes = Joint.load_hierarchy(self.path("skel.npz"), uuids=False)
         self.assertEqual(nodes[0].get_short_name(), "root1")
         self.assertEqual(nodes[1].get_long_name(), "|root1|spine")
 
@@ -1168,14 +1168,14 @@ class TestHierarchy(_Case):
         rig_grp = Transform.create(name="rig_grp")
         rig_grp.t.set(10, 0, 0)
         # re-pinned (user decision 2026-10-29: local by default): the world matrices by keyword
-        kept = Transform.load_hierarchy(self.path("skel.npz"), parent="rig_grp", world_space=True)
+        kept = Transform.load_hierarchy(self.path("skel.npz"), parent="rig_grp", world_space=True, uuids=False)
         self.assertEqual(kept[0].get_long_name(), "|rig_grp|root")
         np.testing.assert_allclose(_world_matrices([kept[1].get_long_name()])["spine"], matrices["spine"], atol=1e-9)
-        local = Transform.load_hierarchy(self.path("skel.npz"), parent=rig_grp, world_space=False)
+        local = Transform.load_hierarchy(self.path("skel.npz"), parent=rig_grp, world_space=False, uuids=False)
         self.assertEqual(local[0].get_long_name(), "|rig_grp|root1")
         self.assertEqual(cmds.getAttr(f"{local[0].get_long_name()}.t")[0], (0.0, 0.0, 0.0))
         # the default: the file's values as local values, the branch moved with rig_grp
-        moved = Transform.load_hierarchy(self.path("skel.npz"), parent=rig_grp)
+        moved = Transform.load_hierarchy(self.path("skel.npz"), parent=rig_grp, uuids=False)
         self.assertEqual(moved[0].get_long_name(), "|rig_grp|root2")
         self.assertEqual(cmds.getAttr(f"{moved[0].get_long_name()}.t")[0], (0.0, 0.0, 0.0))
         spine = _world_matrices([moved[1].get_long_name()])["spine"]
@@ -1197,19 +1197,19 @@ class TestHierarchy(_Case):
     def test_data_objects_paths_and_a_clip(self):
         root = _skeleton()
         data = root.serialize_hierarchy()
-        nodes = Transform.load_hierarchy(data)
+        nodes = Transform.load_hierarchy(data, uuids=False)
         self.assertEqual(nodes[0].get_short_name(), "root1")
         root.save_hierarchy(pathlib.Path(self.path("skel.npz")))
-        self.assertEqual(Transform.load_hierarchy(pathlib.Path(self.path("skel.npz")))[0].get_short_name(), "root2")
+        self.assertEqual(Transform.load_hierarchy(pathlib.Path(self.path("skel.npz")), uuids=False)[0].get_short_name(), "root2")
         from cgmath.hierarchy import ClipData
 
         # re-pinned (user decision 2026-10-30: a clip is built and keyed): one that stands still
         # is its plain values, one that moves has a curve for what moves
         clip = ClipData(data, frames=3)
-        self.assertEqual(Transform.load_hierarchy(clip)[0].get_short_name(), "root3")
+        self.assertEqual(Transform.load_hierarchy(clip, uuids=False)[0].get_short_name(), "root3")
         self.assertEqual(cmds.ls(type="animCurve"), [])
         clip.frames["spine"].translate_y = [5, 6, 7]
-        keyed                            = Transform.load_hierarchy(clip)
+        keyed                            = Transform.load_hierarchy(clip, uuids=False)
         self.assertEqual(keyed[0].get_short_name(), "root4")
         self.assertEqual(cmds.keyframe(str(AnimCurve.of(keyed[1])[0]), query=True, valueChange=True), [5, 6, 7])
 
@@ -1299,7 +1299,7 @@ class TestStatements(MayaTestCase):
                 return real(ops)
 
             with mock.patch.object(journal, "_register", spy):
-                Mesh.load(path, name="m", visibility=False)
+                Mesh.load(path, name="m", visibility=False, uuids=False)
             self.assertLessEqual(len(registered), 1)
         finally:
             shutil.rmtree(directory, ignore_errors=True)
