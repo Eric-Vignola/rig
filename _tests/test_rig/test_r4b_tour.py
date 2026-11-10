@@ -231,7 +231,7 @@ class TestNames(_Case):
         cmds.polyCube(name="cube", ch=False)
         shape = Mesh("cube")
         self.assertEqual(repr(shape), 'Mesh("cubeShape")')
-        data = shape.serialize(include_uvs=False)
+        data = shape.serialize(uvs=False)
         self.assertIsInstance(data, cgmath.geometry.MeshData)
         copy = Mesh.create(data, name="copy")
         self.assertIsInstance(copy, Mesh)

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import sys
 import warnings
 from types import FunctionType, MethodType
 
@@ -38,22 +37,28 @@ ASSET_TYPES = ("obj", "fbx", "glb", "gltf", "usd", "usda", "usdc", "usdz")
 CREATING_SPACE = "where the data's points land: in the world, or as the shape's own"
 
 # the cgmath the data paths are written against: r17-skeleton's shape model, a ShapeData's uuid and
-# parent_uuid, no matrix (README.md's requirements and the CHEATSHEET name it too)
-CGMATH_PIN = "cgmath r17-skeleton at 4724c39 (2026-11-09)"
+# parent_uuid, no matrix, and a MeshData's colors / color_indices (README.md's requirements and the
+# CHEATSHEET name it too)
+CGMATH_PIN = "cgmath r17-skeleton at 72dfec4 (2026-11-09)"
 
 
 def require_pinned_cgmath(method: str) -> None:
     """The data paths need the cgmath rig is pinned to (`CGMATH_PIN`) or later: one whose shapes
-    are ``ShapeData`` (``uuid``, ``parent_uuid``). An older cgmath (3.0.1, 3.2.0) raises
-    ImportError naming `method`, the pin and the cgmath found, before anything is read or made."""
+    are ``ShapeData`` (``uuid``, ``parent_uuid``) and whose ``MeshData`` holds ``colors``. An
+    older cgmath (3.0.1, 3.2.0, an r17-skeleton before its colours) raises ImportError naming
+    `method`, the pin and the cgmath found, before anything is read or made."""
     try:
+        from cgmath.geometry import MeshData
         from cgmath.hierarchy import ShapeData  # noqa: F401
+
+        if "colors" not in getattr(MeshData, "__dataclass_fields__", {}):
+            raise ImportError
     except ImportError:
         import cgmath
 
         raise ImportError(
-            f"{method} needs {CGMATH_PIN} or later, whose shapes carry a parent_uuid; this cgmath is "
-            f"{getattr(cgmath, '__version__', '?')} at {os.path.dirname(cgmath.__file__)}"
+            f"{method} needs {CGMATH_PIN} or later, whose shapes carry a parent_uuid and whose meshes hold "
+            f"colors; this cgmath is {getattr(cgmath, '__version__', '?')} at {os.path.dirname(cgmath.__file__)}"
         ) from None
 
 
@@ -66,14 +71,6 @@ def _is_node(src) -> bool:
     from rig.nodetypes._base import Node
 
     return isinstance(src, (Node, Attribute))
-
-
-def is_object(data) -> bool:
-    """True for a ``cgmath.render.scene.Object`` (a mesh with its UVs and its
-    transform). Read from the loaded module only: an Object exists only once
-    its module is imported, so nothing is imported here."""
-    scene = sys.modules.get("cgmath.render.scene")
-    return scene is not None and isinstance(data, scene.Object)
 
 
 def looks_like_file(src) -> bool:
@@ -131,7 +128,6 @@ def read(
     slot:     str,
     refused:  tuple = (),
     hints:    tuple = (),
-    objects:  bool  = False,
 ):
     """The data `src` names: a path is read by cgmath (its own files as the
     first class of `accepted` whose fields the file holds, since a cgmath file
@@ -139,8 +135,7 @@ def read(
     object is taken as it is. Anything that is not one of `accepted` (or is one
     of `refused`, a subclass the slot does not take) is a TypeError naming the
     file, what it holds and what `slot` takes, with the hint of `hints`
-    (``((classes, text), ...)``) that fits what it holds. With `objects`, a
-    ``cgmath.render.scene.Object`` is accepted too. A node or a plug is a
+    (``((classes, text), ...)``) that fits what it holds. A node or a plug is a
     TypeError (a node is no file). A missing file is a FileNotFoundError. An
     older cgmath than the pin is an ImportError first (`require_pinned_cgmath`).
     Nothing is made."""
@@ -154,20 +149,16 @@ def read(
         if not os.path.isfile(path):
             raise FileNotFoundError(f"{method}: {slot}: no file {path!r}")
         if get_file_type(path) in OWN_TYPES:
-            data = _load_own(path, accepted, method, slot, _classes_of(refused, hints), objects)
+            data = _load_own(path, accepted, method, slot, _classes_of(refused, hints))
         else:
             data = accepted[0].load(path)  # an asset: the slot's own reader
         what = f"{path!r} holds a {type(data).__name__}"
     else:
         data = src
         what = f"got a {type(data).__name__}"
-    if objects and is_object(data):
-        return data
     if not isinstance(data, accepted) or isinstance(data, refused):
         names = " or a ".join(cls.__name__ for cls in accepted)
-        if objects:
-            names += " or an Object"
-        hint = next((f" ({text})" for classes, text in hints if isinstance(data, classes)), "")
+        hint  = next((f" ({text})" for classes, text in hints if isinstance(data, classes)), "")
         raise TypeError(f"{method}: {slot}: {what}; {slot} is a {names}{hint}")
     return data
 
@@ -184,8 +175,7 @@ def _classes_of(refused: tuple, hints: tuple) -> tuple:
 
 def _known() -> tuple:
     """cgmath's own data classes, the strictest first, to name what a file holds when the slot's
-    classes refuse it: an ``Object`` (a mesh with its UVs and its transform) among them,
-    ``NurbsCurveData`` last, since it builds from any points."""
+    classes refuse it: ``NurbsCurveData`` last, since it builds from any points."""
     from cgmath.geometry import (
         GeomSubsetData,
         MapData,
@@ -201,30 +191,22 @@ def _known() -> tuple:
     from cgmath.hierarchy import ClipData, HierarchyData
 
     return (
-        MeshData, _object_class(), SkinData, ClipData, HierarchyData, NurbsSurfaceData, UVList, UVData,
+        MeshData, SkinData, ClipData, HierarchyData, NurbsSurfaceData, UVList, UVData,
         MorphList, MorphData, MapData, GeomSubsetData, NurbsCurveData,
     )
 
 
-def _object_class():
-    """``cgmath.render.scene.Object``, imported here only (see `is_object`)."""
-    from cgmath.render.scene import Object
-
-    return Object
-
-
-def _load_own(path: str, accepted: tuple, method: str, slot: str, others: tuple = (), objects: bool = False):
+def _load_own(path: str, accepted: tuple, method: str, slot: str, others: tuple = ()):
     """A cgmath file (``.npz`` / ``.json`` / ``.pkl``) as the first class of `accepted` whose fields
     it holds: a cgmath file names no class, and a class the file does not fit refuses it (the
     ValueError or TypeError of its ``from_dict``; here a key naming no field, which a load only
     warns about, refuses the class too, so a mesh's file is no curve's). `accepted` goes from
     the most specific class down (a ``ClipData`` before its ``HierarchyData``, which would build
-    from a clip's file and drop its frames). None fits: the file is read as the ``Object`` class
-    (taken with `objects`), `others` (the slot's refused and hinted classes) and every class of
-    `_known`, as strictly and quietly, so that `read`'s error names what it holds (a UV file in
-    the mesh's slot). Still none: `accepted` again, a key naming no field allowed, as a file a
-    later cgmath wrote loads with its warning; else a TypeError naming the file, what `slot`
-    takes and the first refusal."""
+    from a clip's file and drop its frames). None fits: the file is read as `others` (the slot's
+    refused and hinted classes) and every class of `_known`, as strictly and quietly, so that
+    `read`'s error names what it holds (a UV file in the mesh's slot). Still none: `accepted`
+    again, a key naming no field allowed, as a file a later cgmath wrote loads with its warning;
+    else a TypeError naming the file, what `slot` takes and the first refusal."""
     reason = None
     for cls in accepted:
         try:
@@ -233,7 +215,7 @@ def _load_own(path: str, accepted: tuple, method: str, slot: str, others: tuple 
                 return cls.load(path)
         except (TypeError, ValueError, Warning) as error:
             reason = reason or f"{cls.__name__}.load: {error}"
-    candidates = ([_object_class()] if objects else []) + list(others) + list(_known())
+    candidates = list(others) + list(_known())
     for cls in dict.fromkeys(candidates):
         if cls in accepted:
             continue

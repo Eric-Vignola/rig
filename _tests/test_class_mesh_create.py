@@ -234,7 +234,7 @@ class TestMeshCreateNames(_MeshCreateCase):
             with self.subTest(names=names, single=not isinstance(uvs, list)):
                 cmds.file(new=True, force=True)
                 self.ready()
-                mesh = Mesh.create(data, uv_data=uvs, name="m")
+                mesh = Mesh.create(data, uvs=uvs, name="m")
                 self._check(mesh, "m", "mShape", data)
                 self.assertEqual(list(mesh.get_uv_sets()), names)
                 self.assertEqual(mesh.get_current_uv_set(), names[0])
@@ -252,7 +252,7 @@ class TestMeshCreateNames(_MeshCreateCase):
         data, uvs = Mesh(t).serialize(world_space=True)
         cmds.delete(t)
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         self._check(mesh, "m", "mShape", data)
         identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
         self.assertEqual(cmds.xform("m", query=True, matrix=True, worldSpace=True), identity)
@@ -266,7 +266,7 @@ class TestMeshCreateNames(_MeshCreateCase):
 
     def test_no_uvs_leaves_map1_empty(self):
         data, _ = _cube_data()
-        mesh = Mesh.create(data, uv_data=[], name="m")
+        mesh = Mesh.create(data, uvs=[], name="m")
         self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
         self.assertEqual(len(mesh.get_uv_coords("map1")), 0)
 
@@ -279,7 +279,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         # the old wrapper segfaulted Maya here (exit 139 in TcommandContainer::undoIt)
         data, uvs = _cube_data()
         self.ready()
-        Mesh.create(data, uv_data=uvs, name="m")
+        Mesh.create(data, uvs=uvs, name="m")
         self.assertEqual(self.undo_name(), CHUNK)
         cmds.undo()
         self.assertFalse(cmds.objExists("m"))
@@ -296,7 +296,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         cmds.delete(t)
         self.ready()
         before = self.scene_state(meshes=["bodyShape"])
-        mesh = Mesh.create(data, uv_data=uvs)  # the name stored in the data
+        mesh = Mesh.create(data, uvs=uvs)  # the name stored in the data
         self.assertEqual((str(mesh), cmds.ls(str(mesh.get_parent()))[0]), ("bodyShape", "body"))
         self.assertEqual(mesh_state("bodyShape"), source)
         # the transform the data sat under is gone: the data sits at identity (cgmath's shape model)
@@ -311,7 +311,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         data, uvs = _cube_data()
         self.ready()
         nodes = set(cmds.ls())
-        Mesh.create(data, uv_data=_uv_sets(uvs[0]), name="m")
+        Mesh.create(data, uvs=_uv_sets(uvs[0]), name="m")
         self.assertEqual(set(cmds.ls()) - nodes, {"m", "mShape"})
         self.assertEqual(self.undo_name(), CHUNK)
         self.undo_steps(1)
@@ -340,7 +340,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
                 self.ready()
                 names = dict(meshes=["mShape"])
                 start = self.scene_state(**names)
-                Mesh.create(data, uv_data=uvs, name="m")
+                Mesh.create(data, uvs=uvs, name="m")
                 built = self.scene_state(**names)
                 self.assertIsNotNone(built["meshes"]["mShape"])
                 for cycle in range(3):
@@ -352,7 +352,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
     def test_redo_returns_the_same_node(self):
         data, uvs = _cube_data()
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         handle = OpenMaya.MObjectHandle(mesh.get_mobject())
         uuid = cmds.ls("mShape", uuid=True)[0]
         points = [tuple(p) for p in mesh.get_points(world_space=False)]
@@ -374,7 +374,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         cmds.undoInfo(openChunk=True, chunkName="user.step")
         try:
             cmds.setAttr("selprobe.translateX", 3.0)
-            Mesh.create(data, uv_data=uvs, name="m")
+            Mesh.create(data, uvs=uvs, name="m")
             cmds.setAttr("m.translateZ", 5.0)
             cmds.parent("m", "selprobe")
         finally:
@@ -395,7 +395,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         states = [self.scene_state(**names)]
         cmds.setAttr("selprobe.translateX", 3.0)
         states.append(self.scene_state(**names))
-        Mesh.create(data, uv_data=uvs, name="m")
+        Mesh.create(data, uvs=uvs, name="m")
         states.append(self.scene_state(**names))
         cmds.setAttr("m.translateZ", 5.0)
         states.append(self.scene_state(**names))
@@ -414,7 +414,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
             start = self.scene_state(**names)
             members_before = sorted(cmds.container(str(box), query=True, nodeList=True) or []) \
                 if cmds.objExists(str(box)) else None
-            Mesh.create(data, uv_data=uvs, name="m")
+            Mesh.create(data, uvs=uvs, name="m")
         box_name = str(box)
         built = self.scene_state(**names)
         self.assertEqual(sorted(cmds.container(box_name, query=True, nodeList=True)), ["m", "mShape"])
@@ -433,7 +433,7 @@ class TestMeshCreateUndo(_MeshCreateCase):
         data, uvs = _cube_data()
         cmds.undoInfo(state=False)
         try:
-            mesh = Mesh.create(data, uv_data=uvs, name="m")
+            mesh = Mesh.create(data, uvs=uvs, name="m")
         finally:
             cmds.undoInfo(state=True)
         self.assertEqual(str(mesh), "mShape")
@@ -449,7 +449,7 @@ class TestMeshCreateErrors(_MeshCreateCase):
         cmds.setAttr("selprobe.translateX", 7.0)  # the user's previous step
         nodes = sorted(cmds.ls())
         with self.assertRaisesRegex(RuntimeError, message):
-            Mesh.create(data, uv_data=uvs, name=name)
+            Mesh.create(data, uvs=uvs, name=name)
         self.assertEqual(sorted(cmds.ls()), nodes)
         self.assertEqual(cmds.ls(selection=True), ["selprobe"])
         return nodes
@@ -574,7 +574,7 @@ class TestMeshCreateErrors(_MeshCreateCase):
                 cmds.setAttr("selprobe.translateY", 3.0)
                 self.undo_steps(1)  # the user's step on the redo queue
                 with self.assertRaisesRegex(RuntimeError, rf"^UV set {names[-1]} already exists\.$"):
-                    Mesh.create(data, uv_data=uvs, name="m")
+                    Mesh.create(data, uvs=uvs, name="m")
                 self.assertFalse(cmds.ls(type="mesh"))
                 self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
                 self.redo_steps(1)
@@ -597,7 +597,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
         self.assertEqual(source["vertices"], FACET_SOURCE_VERTICES)
         self.assertEqual(source["holes"], FACET_SOURCE_HOLES)
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="copy")
+        mesh = Mesh.create(data, uvs=uvs, name="copy")
         got = mesh_state(str(mesh))
         self.assertEqual(got["points"], source["points"])
         self.assertEqual(got["vertices"], FACET_SOURCE_VERTICES)  # as the source lists it
@@ -615,7 +615,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
         self.assertEqual(source["vertices"][1][16:28], GRID_FACE4_SOURCE)
         self.assertEqual(source["holes"], GRID_SOURCE_HOLES)
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs)
+        mesh = Mesh.create(data, uvs=uvs)
         self.assertEqual(str(mesh), "gridShape")
         got = mesh_state(str(mesh))
         self.assertEqual(got["points"], source["points"])
@@ -643,7 +643,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
         data, uvs = _serialized(t)
         cmds.delete(t)
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         handle = OpenMaya.MObjectHandle(mesh.get_mobject())
         for _ in range(3):
             self.undo_steps(1)
@@ -709,7 +709,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
             self.assertEqual(np.asarray(uv.hole_counts).tolist(), [4, 4])
             self.assertEqual(np.asarray(uv.hole_indices).tolist(), hole_uvs[name])
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         for name in ("map1", "uv2", "uv3"):
             self.assertEqual(_uv_placement(str(mesh), name), placed[name])
 
@@ -723,7 +723,7 @@ class TestMeshCreateHoles(_MeshCreateCase):
         cmds.delete(t)
         data.hole_indices = np.array([22, 23, 20, 21, 17, 18, 19, 16])
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         got = mesh_state(str(mesh))
         self.assertEqual(got["vertices"], source["vertices"])
         self.assertEqual(got["holes"], GRID_SOURCE_HOLES)
@@ -792,7 +792,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         data, uvs, normals, hard, locked = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
         self.assertEqual(len(hard), 12)
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assert_shading(mesh, normals, hard, locked)
         self.assertEqual(locked, set())
 
@@ -801,7 +801,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         self.assertEqual(len(hard), 8)
         self.assertTrue(locked)  # vertex 0's face-vertices
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assert_shading(mesh, normals, hard, locked)
 
     def test_a_smooth_mesh_stays_smooth(self):
@@ -810,7 +810,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         cmds.delete(t, constructionHistory=True)
         data, uvs, normals, hard, locked = self.source(t)
         self.assertEqual((hard, locked), (set(), set()))
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assert_shading(mesh, normals, hard, locked)
 
     def test_data_without_normals_is_all_smooth(self):
@@ -818,7 +818,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         data, uvs, _, _, _ = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
         data.normals = None
         data.normal_indices = None
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assertEqual(_hard_edges(str(mesh)), set())
         self.assertEqual(_locked_rows(str(mesh)), set())
 
@@ -834,20 +834,20 @@ class TestMeshCreateShading(_MeshCreateCase):
         hard = _hard_edges(shape)
         data, uvs = Mesh(t).serialize(world_space=True)
         cmds.delete(t)
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assert_shading(mesh, world, hard, set())
 
     def test_a_holed_face(self):
         data, uvs, normals, _, locked = self.source(_facet())
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         # a border edge reads hard in the source, smooth when made: it shades nothing
         np.testing.assert_allclose(_fv_normals(str(mesh)), normals, rtol=0.0, atol=1e-5)
         self.assertEqual(_locked_rows(str(mesh)), locked)
 
     def test_the_round_trip_is_exact(self):
         data, uvs, *_ = self.source(_shaded_sphere())
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
-        again = mesh.serialize(world_space=False, include_uvs=False)
+        mesh = Mesh.create(data, uvs=uvs, name="m")
+        again = mesh.serialize(world_space=False, uvs=False)
         np.testing.assert_allclose(
             np.asarray(again.normals)[np.asarray(again.normal_indices)],
             np.asarray(data.normals)[np.asarray(data.normal_indices)],
@@ -857,7 +857,7 @@ class TestMeshCreateShading(_MeshCreateCase):
     def test_undo_and_redo_keep_the_shading(self):
         data, uvs, normals, hard, locked = self.source(_shaded_sphere())
         self.ready()
-        mesh = Mesh.create(data, uv_data=uvs, name="m")
+        mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assertEqual(self.undo_name(), CHUNK)
         self.undo_steps(1)
         self.assertFalse(cmds.objExists("m"))
@@ -875,7 +875,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         data.normals = np.asarray(data.normals)[order]
         data.normal_indices = renumber[np.asarray(data.normal_indices)]
         with mock.patch.object(mesh_module, "_normal_ids_now", wraps=mesh_module._normal_ids_now) as read:
-            mesh = Mesh.create(data, uv_data=uvs, name="m")
+            mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assertEqual(read.call_count, 1)
         self.assert_shading(mesh, normals, hard, locked)
 
@@ -884,7 +884,7 @@ class TestMeshCreateShading(_MeshCreateCase):
         # every one matches, the 80k ids of a 20k-face mesh are never read
         data, uvs, normals, hard, locked = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
         with mock.patch.object(mesh_module, "_normal_ids_now", wraps=mesh_module._normal_ids_now) as read:
-            mesh = Mesh.create(data, uv_data=uvs, name="m")
+            mesh = Mesh.create(data, uvs=uvs, name="m")
         read.assert_not_called()
         self.assert_shading(mesh, normals, hard, locked)
     def test_normals_that_do_not_fit_raise_with_nothing_made(self):
@@ -902,7 +902,7 @@ class TestMeshCreateShading(_MeshCreateCase):
                 object.__setattr__(data, "normal_indices", ids)
                 before = cmds.ls()
                 with self.assertRaisesRegex(RuntimeError, re.escape(text)):
-                    Mesh.create(data, uv_data=uvs, name="m")
+                    Mesh.create(data, uvs=uvs, name="m")
                 self.assertEqual(cmds.ls(), before)
 
 
@@ -928,7 +928,7 @@ class TestMeshCreateShadingCost(MayaTestCase):
             times = []
             for _ in range(runs):
                 start = time.perf_counter()
-                mesh = Mesh.create(source, uv_data=uvs)
+                mesh = Mesh.create(source, uvs=uvs)
                 times.append(time.perf_counter() - start)
                 cmds.delete(mesh.get_parent().get_long_name())
             return min(times)
@@ -936,82 +936,3 @@ class TestMeshCreateShadingCost(MayaTestCase):
         best(data, 2)  # warm up
         with_normals, without = best(data), best(plain)
         self.assertLess(with_normals, 1.5 * without, f"{with_normals * 1000:.1f} ms against {without * 1000:.1f} ms")
-
-
-# ---------------------------------------------------------------------------------------------
-#  A cgmath.render.scene.Object as the mesh and its UVs (the user's addition B, 2026-10-15)
-# ---------------------------------------------------------------------------------------------
-
-
-class TestMeshCreateObject(_MeshCreateCase):
-    """``Mesh.create(obj)``: the Object's mesh, its UVs (a UVData, or a UVList: every set), its
-    name and its transform; its render settings and its skin are not used."""
-
-    def object(self, **kwargs):
-        from cgmath.render.scene import Object
-
-        t = cmds.polyCube(name="src", constructionHistory=False)[0]
-        cmds.polyUVSet(t, create=True, uvSet="second")
-        cmds.delete(t, constructionHistory=True)
-        self.normals = _fv_normals(_shape(t))
-        data, uvs = Mesh(t).serialize(world_space=False)
-        cmds.delete(t)
-        kwargs.setdefault("uv", uvs[0])
-        return Object(mesh=data, **kwargs), list(uvs)
-
-    def test_the_mesh_its_uvs_its_name_and_its_transform(self):
-        obj, (map1, _) = self.object(
-            name="hero", translate=(5, 1, 2), rotate=(10, 45, 0), scale=(2, 2, 2), rotate_order=3,
-            texture=np.zeros((4, 4, 3), dtype=np.uint8), base_color=(1, 0, 0), wireframe=True,
-        )
-        self.ready()
-        mesh = Mesh.create(obj)
-        self.assertEqual((str(mesh), str(mesh.get_parent())), ("heroShape", "hero"))
-        self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
-        np.testing.assert_allclose(mesh.serialize_uv("map1").points, map1.points, atol=1e-6)
-        for attr, want in (("t", (5, 1, 2)), ("r", (10, 45, 0)), ("s", (2, 2, 2))):
-            np.testing.assert_allclose(cmds.getAttr(f"hero.{attr}")[0], want, atol=1e-9)
-        self.assertEqual(cmds.getAttr("hero.rotateOrder"), 3)
-        np.testing.assert_allclose(_fv_normals("heroShape"), self.normals, atol=1e-5)
-        self.assertEqual(cmds.ls(selection=True), ["selprobe"])
-        self.assertEqual(self.undo_name(), CHUNK)
-        self.undo_steps(1)
-        self.assertFalse(cmds.objExists("hero"))
-
-    def test_a_uvlist_is_every_set(self):
-        # the UVList the next cgmath's Object holds (an Object takes one today, as a stand-in)
-        obj, uvs = self.object(name="hero")
-        from cgmath.geometry import UVList
-
-        obj.uv = UVList(uvs)
-        mesh = Mesh.create(obj)
-        self.assertEqual(list(mesh.get_uv_sets()), ["map1", "second"])
-
-    def test_name_and_no_uvs(self):
-        obj, _ = self.object(name="hero", uv=None)
-        mesh = Mesh.create(obj, name="other")
-        self.assertEqual(str(mesh.get_parent()), "other")
-        self.assertEqual(len(mesh.get_uv_coords("map1")), 0)
-
-    def test_the_mesh_s_own_placement_is_not_used(self):
-        # cgmath's renderer places the mesh by the Object: the transform its MeshData's parent_uuid
-        # names is ignored
-        obj, _ = self.object(name="hero", translate=(1, 0, 0))
-        under = cmds.createNode("transform", name="under")
-        cmds.xform(under, translation=(0, 7, 0))
-        obj.mesh.parent_uuid = cmds.ls(under, uuid=True)[0]
-        mesh = Mesh.create(obj)
-        self.assertEqual(cmds.getAttr("hero.t")[0], (1.0, 0.0, 0.0))
-
-    def test_refusals(self):
-        obj, uvs = self.object(name="hero")
-        before = cmds.ls()
-        with self.assertRaisesRegex(TypeError, r"^Mesh\.create\(\): an Object carries its mesh and its UVs, so it takes no uv_data="):
-            Mesh.create(obj, uvs)
-        self.assertEqual(cmds.ls(), before)
-        empty, _ = self.object(name="empty")
-        empty.mesh = None
-        before = cmds.ls()
-        with self.assertRaisesRegex(TypeError, r"^Mesh\.create\(\): the Object 'empty' holds no mesh"):
-            Mesh.create(empty)
-        self.assertEqual(cmds.ls(), before)

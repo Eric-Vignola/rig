@@ -6,10 +6,10 @@ take ``normals=True``: the data's normals bring back the hard / soft edges and t
 normals, as before (the default). ``normals=False`` skips that restore, for speed: the data's
 normals are not read, a new mesh is all smooth, an updated mesh keeps its own shading.
 
-The pattern is named (``mesh._RESTORE_FLAGS``) so that a future vertex-colour flag follows
-it: one keyword per part of the data a create or a load restores at a cost of its own, the
-same on the three doors, True by default, a bool (anything else a TypeError before anything
-is read or made).
+The pattern is named (``mesh._RESTORE_FLAGS``), and the vertex-colour flag ``colors=``
+followed it (2026-11-09, test_class_mesh_colors): one keyword per part of the data a create or
+a load restores at a cost of its own, the same on the three doors, True by default, a bool
+(anything else a TypeError before anything is read or made).
 
 Each test failed at fe09f88 (negative control: ``normals=False`` was taken as the mesh's
 internal ``normals`` attribute), except the guards.
@@ -70,21 +70,21 @@ class TestTheFlagOnCreate(_NormalsCase):
         data, uvs, hard, locked = self.source()
         for label, kwargs in (("default", {}), ("True", {"normals": True})):
             with self.subTest(label):
-                mesh = Mesh.create(data, uv_data=uvs, **kwargs)
+                mesh = Mesh.create(data, uvs=uvs, **kwargs)
                 self.assertEqual(_hard_edges(str(mesh)), hard)
                 self.assertEqual(_locked_rows(str(mesh)), locked)
 
     def test_false_skips_the_restore(self):
         data, uvs, _hard, _locked = self.source()
         self.ready()
-        mesh = self.assert_untouched_shading(lambda: Mesh.create(data, uv_data=uvs, name="m", normals=False))
+        mesh = self.assert_untouched_shading(lambda: Mesh.create(data, uvs=uvs, name="m", normals=False))
         self.assertEqual(_hard_edges(str(mesh)), set())
         self.assertEqual(_locked_rows(str(mesh)), set())
         # the same mesh as the data without normals gives, its points and UVs the data's
         plain = data.copy()
         plain.normals = None
         plain.normal_indices = None
-        other = Mesh.create(plain, uv_data=uvs, name="plain")
+        other = Mesh.create(plain, uvs=uvs, name="plain")
         a, b = mesh_state(str(mesh)), mesh_state(str(other))
         for key in ("points", "uv_sets", "uvs"):
             self.assertEqual(a[key], b[key], key)
@@ -96,19 +96,9 @@ class TestTheFlagOnCreate(_NormalsCase):
         data, uvs, *_ = self.source()
         object.__setattr__(data, "normals", np.asarray(data.normals)[:, :2])
         with self.assertRaisesRegex(RuntimeError, re.escape("not (N, 3)")):
-            Mesh.create(data, uv_data=uvs, name="bad")
-        mesh = Mesh.create(data, uv_data=uvs, name="m", normals=False)
+            Mesh.create(data, uvs=uvs, name="bad")
+        mesh = Mesh.create(data, uvs=uvs, name="m", normals=False)
         self.assertEqual(_hard_edges(str(mesh)), set())
-
-    def test_an_object(self):
-        from cgmath.render.scene import Object
-
-        data, uvs, hard, _ = self.source()
-        obj = Object(name="hero", mesh=data, uv=uvs[0], translate=(5, 0, 0))
-        smooth = self.assert_untouched_shading(lambda: Mesh.create(obj, normals=False))
-        self.assertEqual(_hard_edges(str(smooth)), set())
-        self.assertEqual(cmds.getAttr(f"{smooth.get_parent()}.t")[0], (5.0, 0.0, 0.0))
-        self.assertEqual(_hard_edges(str(Mesh.create(obj))), hard)
 
     def test_not_the_mesh_attribute(self):
         # ``normals`` is also a mesh attribute (its internal normal array): the flag wins, and
@@ -116,14 +106,14 @@ class TestTheFlagOnCreate(_NormalsCase):
         self.assertTrue(cmds.attributeQuery("normals", type="mesh", exists=True))
         data, uvs, *_ = self.source()
         with mock.patch.object(dg_node, "_attribute_keywords", wraps=dg_node._attribute_keywords) as attrs:
-            Mesh.create(data, uv_data=uvs, name="m", normals=False)
+            Mesh.create(data, uvs=uvs, name="m", normals=False)
         attrs.assert_not_called()
 
 
 class TestTheFlagOnLoad(_NormalsCase):
     def saved(self):
         data, uvs, hard, locked = self.source()
-        Mesh.create(data, uv_data=uvs, name="body")
+        Mesh.create(data, uvs=uvs, name="body")
         path, uv_path = Mesh("body").save(self.path("body.npz"), uvs=self.path("body_uv.npz"))
         return path, uv_path, hard, locked
 
@@ -167,37 +157,39 @@ class TestTheFlagOnLoad(_NormalsCase):
 class TestTheFlagIsABool(_NormalsCase):
     def test_anything_else_is_a_type_error_before_anything_is_read(self):
         data, uvs, *_ = self.source()
-        Mesh.create(data, uv_data=uvs, name="body")
+        Mesh.create(data, uvs=uvs, name="body")
         path = Mesh("body").save(self.path("body.npz"))
-        for value in (None, 0, 1, "yes", [True]):
-            for label, method, call in (
-                ("create", "Mesh.create()", lambda: Mesh.create(data, uv_data=uvs, normals=value)),
-                ("class load", "Mesh.load", lambda: Mesh.load(path, normals=value)),
-                ("instance load", "Mesh('bodyShape').load", lambda: Mesh("body").load(path, normals=value)),
-            ):
-                with self.subTest(value=value, door=label):
-                    before = mesh_state("bodyShape")
-                    with mock.patch.object(_files, "read", wraps=_files.read) as read:
-                        self.assert_refused(
-                            TypeError,
-                            f"^{re.escape(method)}: normals= is a restore flag, True \\(the default: the "
-                            f"data's normals come back\\) or False \\(skipped\\), not {re.escape(repr(value))}$",
-                            call,
-                        )
-                    read.assert_not_called()
-                    self.assertEqual(mesh_state("bodyShape"), before)
+        for flag in mesh_module._RESTORE_FLAGS:
+            for value in (None, 0, 1, "yes", [True]):
+                given = {flag: value}
+                for label, method, call in (
+                    ("create", "Mesh.create()", lambda: Mesh.create(data, uvs=uvs, **given)),
+                    ("class load", "Mesh.load", lambda: Mesh.load(path, **given)),
+                    ("instance load", "Mesh('bodyShape').load", lambda: Mesh("body").load(path, **given)),
+                ):
+                    with self.subTest(flag=flag, value=value, door=label):
+                        before = mesh_state("bodyShape")
+                        with mock.patch.object(_files, "read", wraps=_files.read) as read:
+                            self.assert_refused(
+                                TypeError,
+                                f"^{re.escape(method)}: {flag}= is a restore flag, True \\(the default: the "
+                                f"data's {flag} come back\\) or False \\(skipped\\), not {re.escape(repr(value))}$",
+                                call,
+                            )
+                        read.assert_not_called()
+                        self.assertEqual(mesh_state("bodyShape"), before)
         # numpy's bool is a bool
-        Mesh.create(data, uv_data=uvs, name="np", normals=np.bool_(False))
+        Mesh.create(data, uvs=uvs, name="np", normals=np.bool_(False))
         self.assertEqual(_hard_edges("npShape"), set())
 
     def test_the_instance_form_names_its_keywords(self):
         data, uvs, *_ = self.source()
-        Mesh.create(data, uv_data=uvs, name="body")
+        Mesh.create(data, uvs=uvs, name="body")
         path = Mesh("body").save(self.path("body.npz"))
         self.assert_refused(
             TypeError,
             "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files, world_space=, "
-            "normals= and hierarchy= \\(got name=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
+            "normals=, colors= and hierarchy= \\(got name=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
             lambda: Mesh("body").load(path, name="x"),
         )
 
@@ -206,9 +198,9 @@ class TestThePattern(_NormalsCase):
     """The restore flags are one list, and every door takes each of them, True by default."""
 
     def test_every_door_takes_every_restore_flag(self):
-        self.assertEqual(mesh_module._RESTORE_FLAGS, ("normals",))
+        self.assertEqual(mesh_module._RESTORE_FLAGS, ("normals", "colors"))
         data, uvs, *_ = self.source()
-        mesh = Mesh.create(data, uv_data=uvs, name="body")
+        mesh = Mesh.create(data, uvs=uvs, name="body")
         doors = {
             "Mesh.create": Mesh.create,
             "Mesh.load": Mesh.load,

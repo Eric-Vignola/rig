@@ -296,7 +296,7 @@ class BlendShape(Deformer):
 
         # compute offsetted points
         org_mesh_data = self.get_original_geometries()[0].serialize(
-            world_space=False, include_uvs=False
+            world_space=False, uvs=False, normals=False, colors=False
         )
         points      = org_mesh_data.points
         target_data = self.get_target_data(target_id, original_mesh_data=org_mesh_data)
@@ -355,7 +355,8 @@ class BlendShape(Deformer):
         # read at once, never held: no handle of their nodes
         target_mesh = _connected_attrs(geom_attr, src=True, dst=False)
         if target_mesh:
-            kwargs           = {"include_uvs": False, "world_space": False}
+            # the points only: no UVs, normals or colours read
+            kwargs           = {"uvs": False, "normals": False, "colors": False, "world_space": False}
             target_mesh      = type(target_mesh[0])._raw_get_node(target_mesh[0])
             target_mesh_data = type(target_mesh).serialize(target_mesh, **kwargs)
             if not original_mesh_data:
@@ -504,7 +505,7 @@ class BlendShape(Deformer):
         # object space, as get_target_data reads a live target (a moved base
         # would otherwise offset every target by its move)
         if org_mesh:
-            org_mesh = org_mesh[0].serialize(include_uvs=False, world_space=False)
+            org_mesh = org_mesh[0].serialize(uvs=False, normals=False, colors=False, world_space=False)
 
         target_data_list = []
         for i in self.get_target_indices():

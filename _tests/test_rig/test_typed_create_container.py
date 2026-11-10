@@ -120,7 +120,7 @@ class TestTypedCreateInContainer(MayaTestCase):
 
     def _mesh_data(self):
         cube = self._cube("src_cube")
-        data = Mesh(cmds.listRelatives(cube, shapes=True)[0]).serialize(include_uvs=False)
+        data = Mesh(cmds.listRelatives(cube, shapes=True)[0]).serialize(uvs=False)
         cmds.delete(cube)
         return data
 

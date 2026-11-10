@@ -297,7 +297,7 @@ class TestContainerFalseHasOneMeaning(_SceneCase):
 
     def _mesh_data(self):
         cube = cmds.polyCube(name="src", ch=False)[0]
-        data = Mesh(cmds.listRelatives(cube, shapes=True)[0]).serialize(include_uvs=False)
+        data = Mesh(cmds.listRelatives(cube, shapes=True)[0]).serialize(uvs=False)
         cmds.delete(cube)
         return data
 

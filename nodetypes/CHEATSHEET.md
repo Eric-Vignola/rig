@@ -21,7 +21,7 @@ Concepts, the resolution rules and the verified behaviour live in [`README.md`](
 | 6 | [`Transform`](#6-transform) | shapes, matrices, pivots, `duplicate_geometry`, `serialize`, hierarchies, `save_hierarchy` / `load_hierarchy` (files), a `ClipData` built and keyed, `serialize_hierarchy(bindpose=True)` |
 | 7 | [`Joint`](#7-joint) | skeleton traversal, duplicate / rename a chain, orients, skinclusters |
 | 8 | [`Geometry` — component tags](#8-geometry--component-tags) | `get_injection_node()`, add / set / query / serialize, `tag_references` |
-| 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back; a `cgmath` `Object`; `transform=`: a shape under an existing transform), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
+| 9 | [`Mesh`](#9-mesh) | points, UV sets, `serialize` / `create` (the hard edges and locked normals back, the first colour set too; `transform=`: a shape under an existing transform), `save` / `load` (files: the class creates, a mesh updates), paintable maps, colour sets, materials, transfer |
 | 10 | [`NurbsCurve` and `NurbsSurface`](#10-nurbscurve-and-nurbssurface) | CV counts, points, `serialize`, 2-D tags, `NurbsCurve.create`, `NurbsSurface.create` (`transform=`: a shape under an existing transform), `save` / `load` (files) |
 | 11 | [`Deformer` and `SkinCluster`](#11-deformer-and-skincluster) | geometries, influences, weights as `(V, I)` arrays, `SkinData` round trips, `connect_bind_pre_matrix`, `save` / `load` (files) |
 | 12 | [`BlendShape`](#12-blendshape) | targets by name or index, `MorphData` and `MorphList` in and out, rebuild, `save` / `load` (files) |
@@ -998,26 +998,15 @@ print(type(data).__name__, data.point_count, data.face_count, type(uv_list).__na
 print(data.parent_uuid == cube.get_uuid(), data.uuid == mesh.get_uuid())  # True True -- the transform it sits under, and its own
 # moved: the points stay and the transform they sit under moves; in world space the points move and none is named
 cube.t.set(0, 2, 0)
-local, world = mesh.serialize(include_uvs=False), mesh.serialize(include_uvs=False, world_space=True)
+local, world = mesh.serialize(uvs=False), mesh.serialize(uvs=False, world_space=True)
 print(local.points[0], local.parent_uuid == cube.get_uuid())  # [-0.5 -0.5  0.5] True
 print(world.points[0], world.parent_uuid)                      # [-0.5  1.5  0.5] None
 cube.t.set(0, 0, 0)
 
-rebuilt = Mesh.create(data, uv_data=uv_list, name="rebuilt")
+rebuilt = Mesh.create(data, uvs=uv_list, name="rebuilt")
 print(repr(rebuilt), rebuilt.get_vertex_count(), rebuilt.get_parent(), rebuilt.get_uv_sets())  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
 print(rebuilt.get_shading_engines())                                                           # [ShadingEngine("initialShadingGroup")]
 print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                        # 12 -- the data's normals bring back the cube's hard edges
-```
-
-`create` also takes a `cgmath.render.scene.Object`, for the mesh and its UVs:
-its `mesh`, its `uv` (one UV set, a `UVData`), its name and its transform; its
-render settings are not used.
-
-```python
-from cgmath.render.scene import Object
-
-hero = Mesh.create(Object(name="hero", mesh=data, uv=uv_list[0], translate=(5, 0, 0)))
-print(repr(hero), hero.get_parent().t.get(), hero.get_uv_sets())   # Mesh("heroShape") [5. 0. 0.] ('map1',)
 ```
 
 `transform=` makes the shape alone, under any node derived from transform
@@ -1027,10 +1016,9 @@ namespace (`transform="char:ctl"` makes `|char:ctl|char:ctlShape`), or `name=`,
 as given, and returned by its path; the call is one undo step that keeps the
 selection and the hilite list, and the UV sets and the shading come as they
 do without it. `world_space=` (a keyword, False by default) says how the
-data's points go there: False takes them as the shape's own (an `Object`'s
-transform is not used), True puts them where the data puts them in the world
-(where it sits, an `Object`'s transform), in the transform's space. A
-singular target (a scale of 0) with True is a `ValueError`: no object points
+data's points go there: False takes them as the shape's own, True puts them
+where the data puts them in the world (where it sits), in the transform's
+space. A singular target (a scale of 0) with True is a `ValueError`: no object points
 land there.
 
 ```python
@@ -1040,7 +1028,7 @@ def first(shape, world_space=False):
 
 
 ctl = Transform.create(name="ctl", t=(0, 0, 4), r=(0, 90, 0))
-own = Mesh.create(data, uv_data=uv_list, transform=ctl)   # the data's points as the shape's own
+own = Mesh.create(data, uvs=uv_list, transform=ctl)       # the data's points as the shape's own
 put = Mesh.create(data, transform=ctl, world_space=True)  # where the data puts them in the world
 print(repr(own), repr(put), own.get_parent(), own.get_uv_sets())  # Mesh("ctlShape") Mesh("ctlShape1") ctl ('map1',)
 print(first(own), first(own, world_space=True))                   # [-0.5 -0.5  0.5] [ 0.5 -0.5  4.5] -- its own, moved with ctl
@@ -1093,7 +1081,9 @@ every file is read, and checked, before anything changes. `normals=False` (a
 skips the hard edges and locked normals, for speed: a new mesh is all smooth,
 an updated one keeps its own. Restoring them costs within 1.5x of a create
 without normals for a mostly smooth mesh, 1.75x to 2.6x for a faceted or
-heavily locked one.
+heavily locked one. `colors=False` skips the colours the same way (a file's
+go into the first colour set, `colorSet1` on a new mesh), and `save(path,
+normals=False, colors=False)` leaves them out of the file.
 
 ```python
 import os
@@ -1114,7 +1104,7 @@ print(frozen.get_parent().t.get(), first(frozen), first(frozen, world_space=True
 try:
     Mesh.load(paths[1], paths[0])                            # the two files swapped
 except TypeError as e:
-    print(str(e).split(" holds ")[1])                        # a UVList; the mesh is a MeshData or an Object (the UVs go in uvs=)
+    print(str(e).split(" holds ")[1])                        # a UVList; the mesh is a MeshData (the UVs go in uvs=)
 ```
 
 Paintable maps are `doubleArray` attributes in the `PaintableMap`
@@ -1160,6 +1150,9 @@ and `get_data()` / `set_data(colours)`, an `(V, 4)` array. `get_data()` is a
 read (the current colour set stays, the scene is not marked modified);
 `set_data` is one undo step. `is_valid()` answers as a node's does, False once
 the set or its mesh is gone, and `is_valid(failfast=True)` raises instead.
+`serialize()` writes the first set's colours into the data (`colors` /
+`color_indices`: the distinct RGBA colours, one named a face corner; an unset
+corner `(0, 0, 0, 0)`) and `create` brings them back as `colorSet1`.
 
 ```python
 print(mesh.get_color_sets())                                     # []
@@ -1167,6 +1160,11 @@ cset = mesh.add_color_set("tint", ColorSet.Representation.RGBA)   # Alpha, RGB o
 print(cset, cset.get_name(), cset.get_mesh(), cset.is_valid(), cset.get_representation())   # ColorSet<cubeShape.tint> tint cubeShape True Representation.RGBA
 cset.set_data(np.tile([1.0, 0.0, 0.0, 1.0], (8, 1)))
 print(cset.get_data().shape, cset.get_data()[0])   # (8, 4) [1. 0. 0. 1.]
+data = mesh.serialize(uvs=False)                   # the first colour set, as a MeshData holds colours
+print(data.colors.shape, data.color_indices.shape, data.colors[0])   # (1, 4) (24,) [1. 0. 0. 1.]
+twin = Mesh.create(data, name="twin")              # back as colorSet1, RGBA, one colour a face corner
+print([c.get_name() for c in twin.get_color_sets()], twin.get_color_sets()[0].get_data()[0])  # ['colorSet1'] [1. 0. 0. 1.]
+cmds.delete("twin")
 cset.delete()
 print(cset.is_valid(), mesh.get_color_sets())  # False []
 try:

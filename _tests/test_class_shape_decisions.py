@@ -577,7 +577,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
 
     def test_the_class_form_load_takes_the_data_too(self):
         source = _cube()
-        data   = source.serialize(include_uvs=False)
+        data   = source.serialize(uvs=False)
         shape  = Mesh.load(data, world_space=True)
         np.testing.assert_allclose(_local(shape), _world(source), rtol=0, atol=1e-5)
 
@@ -607,41 +607,6 @@ class TestQ6FrozenAtWorldPositions(_Case):
             with self.subTest(cls=cls.__name__):
                 self.assert_nothing_made(TypeError, "takes True or False",
                                          lambda: cls.load("no_such_file.npz", world_space=None))
-
-    def test_an_object_s_transform_goes_in_the_points(self):
-        from cgmath.render.scene import Object
-
-        data  = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
-        hero  = Object(name="hero", mesh=data, translate=(5, 1, 2), rotate=(10, 45, 0), scale=(2, 1, 3), rotate_order=3,
-                       rotate_axis=(0, 30, 0), visibility=False)
-        shape = Mesh.create(hero, world_space=True)
-        self.assert_at_rest(shape)
-        self.assertEqual(cmds.getAttr(f"{_new_transform(shape)}.rotateAxis")[0], (0.0, 0.0, 0.0))
-        placed = Mesh.create(hero)
-        np.testing.assert_allclose(_local(shape), _world(placed), rtol=0, atol=1e-5)
-        np.testing.assert_allclose(_normals(shape), _normals(placed), rtol=0, atol=1e-5)
-        # what moves nothing still goes on it
-        self.assertEqual(cmds.getAttr(f"{_new_transform(shape)}.rotateOrder"), 3)
-        self.assertFalse(cmds.getAttr(f"{_new_transform(shape)}.visibility"))
-
-    def test_an_object_under_a_parent(self):
-        """In a Scene: its world matrix goes in the points, its rotate order on the transform, and
-        no visibility (only a lone Object gives one, frozen or not)."""
-        from cgmath.hierarchy import TransformData
-        from cgmath.render.scene import Object, Scene
-
-        data  = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
-        group = TransformData(name="grp")
-        hero  = Object(name="hero", mesh=data, translate=(5, 0, 0), rotate=(0, 90, 0), rotate_order=2, visibility=False)
-        scene = Scene()
-        scene.append(group)
-        scene.append(hero)
-        hero.set_parent(group)
-        shape = Mesh.create(hero, world_space=True)
-        self.assert_at_rest(shape)
-        self.assertEqual(cmds.getAttr(f"{_new_transform(shape)}.rotateOrder"), 2)
-        self.assertTrue(cmds.getAttr(f"{_new_transform(shape)}.visibility"))
-        np.testing.assert_allclose(_local(shape), _world(Mesh.create(hero)), rtol=0, atol=1e-5)
 
     def test_one_undo_step(self):
         for cls in CLASSES:
@@ -750,7 +715,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         scale of 0."""
         from cgmath.hierarchy import HierarchyData, TransformData
 
-        data = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
+        data = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(uvs=False)
         flat = HierarchyData([TransformData("flat", uuid=data.parent_uuid, scale=[0.0, 1.0, 1.0])])
         self.assert_nothing_made(ValueError, r"^MeshData: the matrix has no inverse, which the normals go through",
                                  lambda: Mesh.create(data, world_space=True, hierarchy=flat))
@@ -760,7 +725,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
 
     def test_a_placement_that_is_not_finite(self):
         """Pinned on the guard (`_target_space`), the placement stood in: no transform holds nan."""
-        data    = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
+        data    = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(uvs=False)
         refusal = r"^Mesh\.create\(\): the data's matrix must be finite \(got nan or inf\)$"
         for label, keywords in (("frozen", {}), ("under a target", {"transform": _sheared()})):
             with self.subTest(label), mock.patch("rig.nodetypes.mesh._data_placement",
@@ -770,7 +735,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
     def test_a_placement_that_is_not_finite_in_an_update(self):
         """Its last column too, which no point goes through: the normals' matrix is read whole."""
         box     = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
-        data    = box.serialize(include_uvs=False)
+        data    = box.serialize(uvs=False)
         before  = _local(box)
         refusal = r"^Mesh\('boxShape'\)\.load: the data's matrix must be finite \(got nan or inf\)$"
         for row, column in ((0, 0), (0, 3)):
@@ -828,13 +793,6 @@ class TestOnlyRealLocks(_Case):
     def test_float_noise_on_a_far_and_dense_mesh(self):
         frozen = Mesh.create(*_args(_soft_sphere(128, translation=(100, 50, 30))), world_space=True)
         self.assertEqual(_shading(frozen), (0, 0))
-
-    def test_an_object_s_transform(self):
-        from cgmath.render.scene import Object
-
-        data = _soft_sphere().serialize(include_uvs=False)
-        hero = Object(name="hero", mesh=data, translate=(5, 1, 2), rotate=(10, 45, 0), scale=(2, 1, 3))
-        self.assertEqual(_shading(Mesh.create(hero, world_space=True)), (0, 0))
 
     def test_the_source_s_locks_are_the_ones_locked(self):
         """Exactly those, at the source's world normals, in every call; the hard edges come through."""

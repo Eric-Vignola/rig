@@ -317,7 +317,7 @@ class NurbsCurve(Geometry):
     # --- serialization
 
     def serialize(
-        self, *, world_space: bool = False, include_uvs: bool = True
+        self, *, world_space: bool = False, uvs: bool = True, normals: bool = True, colors: bool = True
     ) -> NurbsCurveData:
         """Serialize this nurbsCurve to NurbsCurveData, the inverse of `create`.
 
@@ -338,7 +338,8 @@ class NurbsCurve(Geometry):
         Args:
             world_space: By keyword only. False (the default): object-space
                 points, under the transform's UUID; True: world-space points.
-            include_uvs: Unused; kept for signature parity with `Mesh.serialize`.
+            uvs, normals, colors: Unused; kept for signature parity with
+                `Mesh.serialize` (a curve has none of the three).
 
         Returns:
             NurbsCurveData object.
@@ -574,7 +575,7 @@ class NurbsSurface(Geometry):
     # --- serialization
 
     def serialize(
-        self, *, world_space: bool = False, include_uvs: bool = True
+        self, *, world_space: bool = False, uvs: bool = True, normals: bool = True, colors: bool = True
     ) -> NurbsSurfaceData:
         """Serialize this nurbsSurface to NurbsSurfaceData, the inverse of `create`.
 
@@ -589,8 +590,9 @@ class NurbsSurface(Geometry):
         Args:
             world_space: By keyword only. False (the default): object-space
                 points, under the transform's UUID; True: world-space points.
-            include_uvs: Unused; kept for signature parity with `Mesh.serialize`
-                and `NurbsCurve.serialize`. NurbsSurfaceData does not store UVs.
+            uvs, normals, colors: Unused; kept for signature parity with
+                `Mesh.serialize` and `NurbsCurve.serialize`. NurbsSurfaceData
+                stores none of the three.
 
         Returns:
             A NurbsSurfaceData object.

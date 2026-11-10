@@ -19,8 +19,6 @@ the hierarchy.
   before ``serialize`` (mocked here, never called).
 * Each load is ONE undo step named ``rig.<Cls>.load`` / ``rig.<Cls>.load_hierarchy``,
   redo brings it back, and the selection is kept.
-* A ``cgmath.render.scene.Object`` file stands for a mesh and its UVs (the user's
-  addition C).
 
 Probes: runs\\features\\saveload\\probes (P1 to P7) and runs\\features\\s7-saveload\\probes.
 """
@@ -262,7 +260,7 @@ class TestFiles(_Case):
         # bytes), a pickle by its .pkl / .pickle name; an .obj goes to the slot's MeshData.load too
         from cgmath.geometry import Data, MeshData
 
-        data = Mesh(_cube()).serialize(include_uvs=False)
+        data = Mesh(_cube()).serialize(uvs=False)
         data.save_obj(self.path("body.obj"))
         for fmt in FORMATS:
             data.save(self.path(f"b.{fmt}"))
@@ -290,16 +288,20 @@ class TestFiles(_Case):
                                 lambda: Mesh.load(self.path("pkl_as.dat")))
 
     def test_an_older_cgmath_is_refused_naming_the_pin(self):
-        """A cgmath whose shapes carry no parent_uuid (3.0.1, 3.2.0): the first data path says which
-        cgmath rig needs, before anything is read or made."""
+        """A cgmath whose shapes carry no parent_uuid (3.0.1, 3.2.0), or whose MeshData holds no
+        colours (an r17-skeleton before 09a9544): the first data path says which cgmath rig needs,
+        before anything is read or made."""
+        import dataclasses
         import sys
         import types
+
+        import cgmath.geometry as geometry
 
         t     = _cube()
         data  = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c").serialize()
         older = types.ModuleType("cgmath.hierarchy")  # no ShapeData in it
-        pin   = (r" needs cgmath r17-skeleton at 4724c39 \(2026-11-09\) or later, whose shapes carry a "
-                 r"parent_uuid; this cgmath is ")
+        pin   = (r" needs cgmath r17-skeleton at 72dfec4 \(2026-11-09\) or later, whose shapes carry a "
+                 r"parent_uuid and whose meshes hold colors; this cgmath is ")
         for label, call, head in (
             ("serialize", lambda: Mesh(t).serialize(), r"^Mesh\.serialize"),
             ("load", lambda: Mesh.load(self.path("none.npz")), r"^Mesh\.load"),
@@ -310,6 +312,15 @@ class TestFiles(_Case):
                 with self.assertRaisesRegex(ImportError, head + pin):
                     call()
                 self.assertEqual(cmds.ls(), before)
+        # an r17-skeleton before its colours: the shapes carry a parent_uuid, a MeshData no colors
+        uncoloured = types.ModuleType("cgmath.geometry")
+        uncoloured.__dict__.update(geometry.__dict__)
+        uncoloured.MeshData = dataclasses.make_dataclass("MeshData", ["indices", "counts", "points"])
+        with self.subTest("no colours"), mock.patch.dict(sys.modules, {"cgmath.geometry": uncoloured}):
+            before = cmds.ls()
+            with self.assertRaisesRegex(ImportError, r"^Mesh\.serialize" + pin):
+                Mesh(t).serialize()
+            self.assertEqual(cmds.ls(), before)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -384,7 +395,7 @@ class TestMesh(_Case):
 
     def test_an_obj_asset(self):
         t = _cube()
-        data = Mesh(t).serialize(include_uvs=False)
+        data = Mesh(t).serialize(uvs=False)
         data.save_obj(self.path("body.obj"))
         mesh = Mesh.load(self.path("body.obj"), self.path("body.obj"), name="from_obj")
         self.assertEqual(mesh.get_vertex_count(), 8)
@@ -397,7 +408,7 @@ class TestMesh(_Case):
         q = lambda p: repr(p).replace("\\", "\\\\")  # noqa: E731
         for label, call, error, text in (
             ("swapped", lambda: Mesh.load(uvs, path), TypeError,
-             f"^Mesh.load: the mesh: {q(uvs)} holds a UVList; the mesh is a MeshData or an Object \\(the UVs go in uvs=\\)$"),
+             f"^Mesh.load: the mesh: {q(uvs)} holds a UVList; the mesh is a MeshData \\(the UVs go in uvs=\\)$"),
             ("the uvs alone", lambda: Mesh.load(uvs), TypeError, "holds a UVList"),
             ("a mesh as uvs", lambda: Mesh.load(path, path), TypeError,
              f"^Mesh.load: uvs: {q(path)} holds a MeshData; uvs is a UVList or a UVData \\(the mesh goes first\\)$"),
@@ -461,7 +472,7 @@ class TestMesh(_Case):
         self.assertEqual(str(Mesh.load(path).get_parent()), "body1")
         self.assertEqual(str(Mesh.load(path).get_parent()), "body2")
         self.assertEqual(str(Mesh.load(path, name="hero").get_parent()), "hero")
-        data = Mesh("body").serialize(include_uvs=False)
+        data = Mesh("body").serialize(uvs=False)
         data.name = None
         self.assertEqual(str(Mesh.load(data).get_parent()), "polySurface1")
 
@@ -573,7 +584,7 @@ class TestMesh(_Case):
         )
         self.assertEqual(mesh_state("ballShape"), before)
         # the same counts, other face lists
-        data = Mesh("body").serialize(include_uvs=False)
+        data = Mesh("body").serialize(uvs=False)
         data.indices = np.roll(np.asarray(data.indices), 1)
         copy = Mesh.load(path, name="copy")
         self.assert_refused(ValueError, "holds another topology", lambda: copy.load(data))
@@ -594,7 +605,7 @@ class TestMesh(_Case):
         self.assert_refused(
             TypeError,
             "^Mesh\\('bodyShape'\\).load updates the mesh in place: it takes the files, world_space=, "
-            "normals= and hierarchy= \\(got name=, container=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
+            "normals=, colors= and hierarchy= \\(got name=, container=\\); Mesh.load\\(path, ...\\) makes a new mesh$",
             lambda: Mesh("body").load(path, name="x", container=False),
         )
 
@@ -608,72 +619,13 @@ class TestMesh(_Case):
 
     def test_the_node_form_without_normals_keeps_the_shading(self):
         _, path, _ = self.saved()
-        data = Mesh("body").serialize(include_uvs=False)
+        data = Mesh("body").serialize(uvs=False)
         data.normals = None
         data.normal_indices = None
         copy = Mesh.load(path, name="copy")
         cmds.polySoftEdge("copy", angle=180, constructionHistory=False)
         Mesh("copy").load(data)
         self.assertEqual(_hard_edges("copyShape"), set())
-
-    # --- a cgmath Object (the user's addition C)
-
-    def objects(self):
-        """An Object holding a UVData (cgmath's Object holds one UV set), from the moved cube."""
-        from cgmath.render.scene import Object
-
-        t = _cube()
-        data, uvs = Mesh(t).serialize(world_space=False)
-        return Object(name="hero", mesh=data, uv=uvs[0], translate=(5, 0, 0), rotate=(0, 45, 0))
-
-    def test_an_object_file(self):
-        obj = self.objects()
-        for ext in FORMATS:
-            with self.subTest(ext=ext):
-                obj.save(self.path(f"hero.{ext}"))
-                self.ready()
-                mesh = Mesh.load(self.path(f"hero.{ext}"))
-                self.assertEqual(list(mesh.get_uv_sets()), ["map1"])
-                self.assertEqual(str(mesh.get_parent()).rstrip("0123456789"), "hero")
-                self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.t")[0], (5.0, 0.0, 0.0))
-                self.assertEqual(cmds.getAttr(f"{mesh.get_parent()}.r")[0], (0.0, 45.0, 0.0))
-                self.assertEqual(_hard_edges(str(mesh)), _hard_edges("bodyShape"))
-                self.assertEqual(self.undo_name(), "rig.Mesh.load")
-                self.assert_kept_selection()
-
-    def test_an_object_file_updates_a_mesh(self):
-        obj = self.objects()
-        obj.save(self.path("hero.npz"))
-        copy = Mesh.load(self.path("hero.npz"), name="copy")
-        cmds.xform("copy.vtx[0]", translation=(0, 3, 0), relative=True)
-        cmds.polyUVSet("copy", rename=True, uvSet="map1", newUVSet="other")
-        cmds.delete("copy", constructionHistory=True)
-        world = _world_points("copyShape")
-        # re-pinned (user decision 2026-10-29): the world route by keyword, object space the default
-        copy.load(self.path("hero.npz"), world_space=True)
-        self.assertEqual(list(copy.get_uv_sets()), ["other", "map1"])  # the file's set made again, the other kept
-        # world space: the Object's transform places the points (the copy is where it is)
-        self.assertFalse(np.allclose(_world_points("copyShape"), world, atol=1e-5))
-        copy.load(self.path("hero.npz"), world_space=False)
-        np.testing.assert_allclose(
-            np.array(copy.get_points(world_space=False))[:, :3], np.asarray(obj.mesh.points), atol=1e-6
-        )
-
-    def test_an_object_takes_no_uvs(self):
-        one = self.objects()
-        one.save(self.path("hero.npz"))
-        Mesh("body").save(self.path("b.npz"), uvs=self.path("u.npz"))
-        for label, call, text in (
-            ("class", lambda: Mesh.load(self.path("hero.npz"), self.path("u.npz")),
-             "^Mesh.load: an Object carries its mesh and its UVs, so it takes no uvs= \\(uvs= goes with a MeshData\\)$"),
-            ("node", lambda: Mesh("body").load(self.path("hero.npz"), self.path("u.npz")),
-             "^Mesh\\('bodyShape'\\).load: an Object carries its mesh and its UVs, so it takes no uvs="),
-            ("object", lambda: Mesh.load(one, self.path("u.npz")), "so it takes no uvs="),
-        ):
-            with self.subTest(label):
-                with mock.patch.object(_files, "read", wraps=_files.read) as read:
-                    self.assert_refused(TypeError, text, call)
-                    self.assertEqual(read.call_count, 1)  # the UVs' file is never read
 
 
 # ---------------------------------------------------------------------------------------------

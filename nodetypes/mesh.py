@@ -47,17 +47,17 @@ from scipy.spatial import cKDTree
 _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
     ``Mesh.load(mesh, uvs=None, *, name=None, container=None, normals=True,
-    transform=None, world_space=False, hierarchy=None, **attrs)``, from the
-    class, CREATES a new mesh, always (as `create` does: a second load of one
-    file makes ``body1``; with ``transform=``, a new shape under that
+    colors=True, transform=None, world_space=False, hierarchy=None, **attrs)``,
+    from the class, CREATES a new mesh, always (as `create` does: a second load
+    of one file makes ``body1``; with ``transform=``, a new shape under that
     transform)::
 
         body = Mesh.load("body_mesh.npz", "body_uv.npz", name="body")
         Mesh.load("body_mesh.npz", transform="body_ctl", world_space=True)
 
     ``Mesh('bodyShape').load(mesh, uvs=None, *, world_space=False, normals=True,
-    hierarchy=None)``, from a mesh, UPDATES that mesh in place, the inverse of
-    ``Mesh('bodyShape').save(...)``::
+    colors=True, hierarchy=None)``, from a mesh, UPDATES that mesh in place, the
+    inverse of ``Mesh('bodyShape').save(...)``::
 
         Mesh("bodyShape").load("body_mesh.npz", "body_uv.npz")
 
@@ -65,11 +65,9 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
         mesh: The mesh's file (a str or os.PathLike, ``~`` expanded; a cgmath
             ``.npz`` / ``.json`` / ``.pkl``, or an asset cgmath's MeshData
             reads, ``.obj`` / ``.fbx`` / ``.glb`` / ``.usd``), or the MeshData
-            itself. A file (or object) holding a ``cgmath.render.scene.Object``
-            stands for the mesh and its UVs, as in `create`.
+            itself.
         uvs: The UVs' file, or the UVList / UVData itself. None: no UVs (a
-            new mesh has none; an updated one keeps its own). An Object
-            carries its UVs: `uvs` with one is a TypeError.
+            new mesh has none; an updated one keeps its own).
         name, container, attrs: (creating) as `create` takes them. None: the
             data's name (``cubeShape`` names the transform ``cube``), else
             ``polySurface<N>``; with ``transform=``, ``<transform>Shape``, in
@@ -82,9 +80,8 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             data's points become the mesh's own, object space (the inverse of
             ``save()``). True: the points land where the data puts them in
             the world (where it sits: under the transform its ``parent_uuid``
-            names, in ``hierarchy=`` or in the scene; or an Object's
-            transform; the inverse of ``save(world_space=True)`` too); the
-            transform is not moved. Creating (as `create` takes it): False, the data's points
+            names, in ``hierarchy=`` or in the scene; the inverse of
+            ``save(world_space=True)`` too); the transform is not moved. Creating (as `create` takes it): False, the data's points
             become the new shape's own; True, they land where the data puts
             them in the world: under ``transform=``, or else frozen there, the
             new transform at the origin. In both forms True locks a normal
@@ -97,6 +94,13 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             data's normals bring back the hard edges and locked normals.
             False: skipped, for speed: a new mesh is all smooth, an updated
             one keeps its own hard edges and locked normals.
+        colors: (both forms) a restore flag, as `create` takes it. True: the
+            data's colours (``colors`` / ``color_indices``, which `serialize`
+            writes from the mesh's first colour set) come back as a colour
+            set: ``colorSet1`` on a new mesh, the first set of an updated one
+            (its representation kept; made as ``colorSet1`` when it has none).
+            Data without colours: a new mesh has no colour set, an updated one
+            keeps its own. False: skipped, not read.
         hierarchy: (both forms) By keyword only, as `create` takes it: the
             HierarchyData or ClipData holding the transform the data sits
             under. None: the scene's node of that UUID, else the identity.
@@ -109,16 +113,18 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
     UV file as the mesh, two files swapped) a TypeError naming what it holds.
 
     Creating is ``create`` with the data: its normals bring back the hard edges
-    and locked normals. Updating needs the same topology (the vertex count, the
-    face counts and every face's vertex list, the holes) and a mesh without
-    history (construction history or a deformer would compute over its
-    points), else a ValueError naming ``Mesh.load(...)`` for a new mesh; for a
-    deformed mesh (a skin, a blendShape ...) it names the mesh under its
-    deformers, ``Mesh('bodyShapeOrig').load(...)``, whose load the deformed
-    mesh follows. It sets every point, then, from data with normals (and
-    ``normals=True``), the hard edges and locked normals, then each UV set of
-    the file by name (made when the mesh has none of that name; its other
-    sets, and the current set, stay).
+    and locked normals, its colours a colour set. Updating needs the same
+    topology (the vertex count, the face counts and every face's vertex list,
+    the holes) and a mesh without history (construction history or a deformer
+    would compute over its points), else a ValueError naming
+    ``Mesh.load(...)`` for a new mesh; for a deformed mesh (a skin, a
+    blendShape ...) it names the mesh under its deformers,
+    ``Mesh('bodyShapeOrig').load(...)``, whose load the deformed mesh follows.
+    It sets every point, then, from data with normals (and ``normals=True``),
+    the hard edges and locked normals, then each UV set of the file by name
+    (made when the mesh has none of that name; its other sets, and the current
+    set, stay), then, from data with colours (and ``colors=True``), the
+    colours of its first colour set, one a face corner (its other sets stay).
 
     Each call is ONE undo step named ``rig.Mesh.load`` (redo brings it back)
     and leaves the selection as it was.
@@ -136,20 +142,33 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 # internal ``normals`` / ``colors`` arrays are never set that way).
 #
 # ``normals`` is the first: the hard / soft edges and the locked normals (`_shading_of`,
-# `_restore_shading`). A vertex-colour flag would follow it as ``colors=``: its name added
-# here, its keyword on the three doors, and its restore step run behind it in
-# `_create_mesh` and `_mesh_update` (`_restore_flag` checks each).
-_RESTORE_FLAGS = ("normals",)
+# `_restore_shading`). ``colors`` is the second: the data's colours as a colour set, the
+# first one of the mesh (`_data_colors`, `_restore_colors`, `_update_colors`). `serialize`
+# takes the same names, and ``uvs``, for the parts it writes (`_serialize_flag`):
+# ``serialize(colors=False)`` leaves them out, ``create(data, colors=False)`` leaves them
+# unread.
+_RESTORE_FLAGS = ("normals", "colors")
+
+
+def _flag(method: str, name: str, value, means: str) -> bool:
+    """The bool flag `name` of `method` (``"Mesh.create()"``), checked: a bool (numpy's
+    too); anything else is a TypeError naming what the flag `means`."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise TypeError(f"{method}: {name}= is {means}, not {value!r}")
 
 
 def _restore_flag(method: str, name: str, value) -> bool:
     """The restore flag `name` of `method` (``"Mesh.create()"``), checked: a bool."""
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-    raise TypeError(
-        f"{method}: {name}= is a restore flag, True (the default: the data's {name} come back) "
-        f"or False (skipped), not {value!r}"
+    return _flag(
+        method, name, value,
+        f"a restore flag, True (the default: the data's {name} come back) or False (skipped)",
     )
+
+
+def _serialize_flag(method: str, name: str, value) -> bool:
+    """The flag `name` of a serialize (`method`, ``"Mesh.serialize()"``), checked: a bool."""
+    return _flag(method, name, value, f"True (the default: the mesh's {name} are serialized) or False (left out)")
 
 
 MAP_DATATYPE         = "doubleArray"
@@ -254,7 +273,7 @@ class Mesh(Geometry):
 
     # the keywords ``_create`` takes (the restore flags among them); ``create``'s
     # other keywords are the mesh's attributes
-    _CREATE_FLAGS = frozenset({"name", "uv_data", "transform", "world_space", "hierarchy", *_RESTORE_FLAGS})
+    _CREATE_FLAGS = frozenset({"name", "uvs", "transform", "world_space", "hierarchy", *_RESTORE_FLAGS})
 
     _DEFINE_REFUSED = (
         "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
@@ -281,30 +300,33 @@ class Mesh(Geometry):
         cls,
         mesh_data:   MeshData,
         name:        str               | None = None,
-        uv_data:     list[UVData]      | None = None,
+        uvs:         list[UVData]      | None = None,
         normals:     bool                     = True,
+        colors:      bool                     = True,
         transform:   OpenMaya.MDagPath | None = None,
         world_space: bool                     = False,
         hierarchy:   Any                      = None,
         **kwargs,
     ) -> str:
-        """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uv_data`
-        (a list, or None), its shading when `normals`, its points taken in
-        `world_space` or not (placed through `hierarchy` when given), and
-        returns the transform's name; with `transform` (the DAG path of the
-        transform `create` checked), the shape alone under it, and returns the
-        shape's full path. `Mesh.create` wraps it in its undo chunk; see there."""
-        return _create_mesh(mesh_data, name, uv_data, normals, transform, world_space, hierarchy)
+        """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uvs` (a
+        list, or None), its shading when `normals`, its colours when `colors`,
+        its points taken in `world_space` or not (placed through `hierarchy`
+        when given), and returns the transform's name; with `transform` (the DAG
+        path of the transform `create` checked), the shape alone under it, and
+        returns the shape's full path. `Mesh.create` wraps it in its undo chunk;
+        see there."""
+        return _create_mesh(mesh_data, name, uvs, normals, colors, transform, world_space, hierarchy)
 
     @classmethod
     def create(
         cls,
         mesh_data:   MeshData,
-        uv_data:     UVData   | UVList  | list[UVData] | None = None,
+        uvs:         UVData   | UVList  | list[UVData] | None = None,
         *,
         name:        str      | None                          = None,
         container:   bool     | None                          = None,
         normals:     bool                                     = True,
+        colors:      bool                                     = True,
         transform:   str      | DAGNode | None                = None,
         world_space: bool                                     = False,
         hierarchy:   Any                                      = None,
@@ -318,22 +340,16 @@ class Mesh(Geometry):
                 matrix of the transform its ``parent_uuid`` names, found in
                 ``hierarchy=`` or in the scene; the identity for world-space
                 data: `serialize` writes it), so the mesh lands where the data
-                puts it in the world. Or a
-                ``cgmath.render.scene.Object``, which stands for the mesh and
-                its UVs: the mesh is built from its ``mesh``, with its ``uv``
-                (a UVData is one UV set, a UVList every set), named after it,
-                and its transform (scale, rotate, translate, rotate order,
-                rotate axis, visibility) goes on the new transform node. Its
-                render settings (texture, colours, wireframe ...) and its skin
-                are not used.
-            uv_data: One or more UVData objects. The first one fills the default
-                set (``map1``, renamed to its name when that differs); each
-                other one becomes a new set of its name, in order. Given with
-                an Object (which carries its UVs) it is a TypeError.
+                puts it in the world.
+            uvs: One or more UVData objects (a UVData, a UVList or a list; what
+                `serialize` returns beside the MeshData). The first one fills
+                the default set (``map1``, renamed to its name when that
+                differs); each other one becomes a new set of its name, in
+                order.
             name: The name of the mesh to create, a keyword (a trailing
                 ``Shape<digits>`` is dropped: ``"mShape2"`` names the transform
-                ``m2`` and the shape ``mShape2``). None: ``mesh_data.name``
-                (an Object's own name), else ``polySurface<N>``. With
+                ``m2`` and the shape ``mShape2``). None: ``mesh_data.name``,
+                else ``polySurface<N>``. With
                 ``transform=`` it names the shape, as given; None:
                 ``<transform>Shape`` in the transform's namespace, the data's
                 name unused.
@@ -344,6 +360,14 @@ class Mesh(Geometry):
                 bring back its hard / soft edges and locked normals. False:
                 they are skipped, for speed (not read: every edge smooth,
                 none locked, as for data without normals).
+            colors: A restore flag (see below). True: the data's colours
+                (``colors`` / ``color_indices``, which `serialize` writes from
+                the mesh's first colour set) become the colour set
+                ``colorSet1`` of the new mesh, RGBA and unclamped, one colour a
+                face corner (a colour held one a vertex goes on each corner of
+                its vertex). Data without colours makes no set. False: they
+                are skipped (not read: no colour set, as for data without
+                colours).
             transform: By keyword only: an existing transform (or any node
                 derived from one: a joint, an ikHandle, a constraint ...), by
                 name or node, that the new shape goes under; no transform is
@@ -351,10 +375,10 @@ class Mesh(Geometry):
             world_space: By keyword only, a bool (anything else is a
                 TypeError). False (the default): the data's points and normals
                 become the shape's own, as they are: a new transform goes where
-                the data sits (an Object's transform), and ``transform=`` does
-                not use it. True: the points land where the data puts them in
-                the world (where it sits; an Object's transform): taken into
-                the space of ``transform=``, or without it frozen there, and
+                the data sits, and ``transform=`` does not use it. True: the
+                points land where the data puts them in the world (where it
+                sits): taken into the space of ``transform=``, or without it
+                frozen there, and
                 the normals follow (see below). Without ``transform=``,
                 world-space data, which sits at identity, comes out the same
                 either way.
@@ -405,10 +429,8 @@ class Mesh(Geometry):
         ``Mesh('jnt')`` reads transforms only (a NodeTypeError).
 
         **With** ``world_space=True`` and no ``transform=`` the mesh is frozen
-        at its world positions: where the data sits (an Object's transform)
-        goes into the points, and the new transform stays at the origin with
-        identity channels (an Object's rotate order and a lone Object's
-        visibility, which move nothing, still go on it), where
+        at its world positions: where the data sits goes into the points, and
+        the new transform stays at the origin with identity channels, where
         ``world_space=False`` gives the same world positions from the shape's
         own points under a transform placed there.
 
@@ -440,7 +462,8 @@ class Mesh(Geometry):
         A face with holes is built as its outer loop, its hole loops added
         through the API (``MFnMesh.addHoles``, before any recorded command):
         every vertex keeps its number, the face lists its outer loop, then
-        each hole loop, as ``mesh_data`` does, and each UV stays on its vertex.
+        each hole loop, as ``mesh_data`` does, and each UV and each colour
+        stays on its vertex.
 
         The data's normals (``normals`` / ``normal_indices``, which
         `serialize` writes) bring back its shading, through the API before
@@ -457,16 +480,24 @@ class Mesh(Geometry):
         compare: 2.3x on a mostly smooth 20k-face mesh, 3x on 100k.
         ``normals=False`` skips it.
 
-        ``normals`` is a *restore flag*: one keyword per part of the data a
-        create or a load brings back at a cost of its own, the same on
-        ``Mesh.create``, ``Mesh.load`` and ``Mesh('x').load``, True by default
-        and a bool (anything else is a TypeError before anything is made). A
-        vertex-colour flag would be the next one (``colors=``).
+        The data's colours (``colors`` / ``color_indices``, which `serialize`
+        writes from the mesh's first colour set) come back as the colour set
+        ``colorSet1`` (Maya's name for a first set), RGBA and unclamped, one
+        colour a face corner, through the API before any recorded command, and
+        ``Mesh.create(*m.serialize())`` gives back ``m``'s first colour set
+        corner for corner. ``colors=False`` skips it.
 
-        Invalid mesh data (normals that do not fit the faces too, unless
-        ``normals=False``) raises RuntimeError before anything is made; an
-        error after the transform is made deletes what the call made (the
-        transform, or the shape under the target) before it propagates.
+        ``normals`` and ``colors`` are *restore flags*: one keyword per part of
+        the data a create or a load brings back at a cost of its own, the same
+        on ``Mesh.create``, ``Mesh.load`` and ``Mesh('x').load``, True by
+        default and a bool (anything else is a TypeError before anything is
+        made).
+
+        Invalid mesh data (normals or colours that do not fit the faces too,
+        unless ``normals=False`` / ``colors=False``) raises RuntimeError before
+        anything is made; an error after the transform is made deletes what
+        the call made (the transform, or the shape under the target) before it
+        propagates.
         """
         from cgmath.geometry import UVData
 
@@ -476,19 +507,18 @@ class Mesh(Geometry):
         if named is not None:
             raise named
         normals     = _restore_flag("Mesh.create()", "normals", normals)
+        colors      = _restore_flag("Mesh.create()", "colors", colors)
         world_space = _files.space_flag("Mesh.create()", world_space, _files.CREATING_SPACE)
         if transform is not None:
             transform = _shape_target("Mesh.create()", transform, world_space)
-        if _files.is_object(mesh_data):
-            uv_data = _object_uvs(mesh_data, uv_data)
-        if uv_data:
-            if isinstance(uv_data, UVData):
-                uv_data = [uv_data]
+        if uvs:
+            if isinstance(uvs, UVData):
+                uvs = [uvs]
         else:
-            uv_data = None
+            uvs = None
         with _undo_chunk("rig.Mesh.create"):
             return super().create(
-                mesh_data, uv_data=uv_data, name=name, container=container, normals=normals,
+                mesh_data, uvs=uvs, name=name, container=container, normals=normals, colors=colors,
                 transform=transform, world_space=world_space, hierarchy=hierarchy, **kwargs
             )
 
@@ -1015,7 +1045,7 @@ class Mesh(Geometry):
         )
 
     def serialize(
-        self, *, world_space: bool = False, include_uvs: bool = True
+        self, *, world_space: bool = False, uvs: bool = True, normals: bool = True, colors: bool = True
     ) -> MeshData | tuple[MeshData, UVList]:
         """Serialize this mesh, the inverse of `create`.
 
@@ -1030,31 +1060,54 @@ class Mesh(Geometry):
                 instance the points are read through): `create` places its new
                 transform where that one is. True: in world space, with no
                 ``parent_uuid``: the data sits at identity.
-            include_uvs: By keyword only. If True, serialize all uv sets.
-                Otherwise skip them.
+            uvs: By keyword only, a bool. True (the default): every UV set comes
+                too, a UVList beside the MeshData. False: the MeshData alone (it
+                holds no UVs).
+            normals: By keyword only, a bool. True (the default): Maya's normals,
+                one a face corner, as ``normals`` / ``normal_indices`` (`create`
+                brings back the hard edges and locked normals from them). False:
+                left out, which skips their read (about half of a 20k-face
+                serialize).
+            colors: By keyword only, a bool. True (the default): the colours of
+                the mesh's first colour set as ``colors`` / ``color_indices``:
+                the distinct RGBA colours, and the one each face corner names. An
+                unset corner is ``(0, 0, 0, 0)``, as Maya's own fbx exporter
+                writes it; an RGB or Alpha set gives its RGBA as Maya holds it. A
+                mesh with no colour set, or whose first set holds no colour,
+                gives None for both. False: left out.
+
+        A flag that is not a bool is a TypeError before anything is read.
 
         Returns:
-            A MeshData object or (MeshData, [UVData]).
+            A MeshData object or (MeshData, UVList).
         """
         from cgmath.geometry import MeshData, UVList
 
-        fn     = type(self)._raw_get_fn_set(self)
-        points = self.get_points(world_space=world_space)
+        method  = f"{type(self).__name__}.serialize()"
+        uvs     = _serialize_flag(method, "uvs",     uvs)
+        normals = _serialize_flag(method, "normals", normals)
+        colors  = _serialize_flag(method, "colors",  colors)
+        fn      = type(self)._raw_get_fn_set(self)
+        points  = self.get_points(world_space=world_space)
         vert_counts, vert_ids = fn.getVertices()
 
-        space      = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        normals    = fn.getNormals(space)
-        normal_ids = []
-        for face_id in range(fn.numPolygons):
-            normal_ids.extend(fn.getFaceNormalIds(face_id))
+        parts = {}
+        if normals:
+            space      = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
+            normal_ids = []
+            for face_id in range(fn.numPolygons):
+                normal_ids.extend(fn.getFaceNormalIds(face_id))
+            parts["normals"]        = np.asarray(fn.getNormals(space))
+            parts["normal_indices"] = np.asarray(normal_ids)
+        if colors:
+            parts["colors"], parts["color_indices"] = _first_set_colors(fn)
 
         mesh_data = MeshData(
-            indices        = np.asarray(vert_ids),
-            counts         = np.asarray(vert_counts),
-            points         = np.asarray(points)[:, :-1],
-            normals        = np.asarray(normals),
-            normal_indices = np.asarray(normal_ids),
-            name           = type(self).get_short_name(self, namespace=False),
+            indices = np.asarray(vert_ids),
+            counts  = np.asarray(vert_counts),
+            points  = np.asarray(points)[:, :-1],
+            name    = type(self).get_short_name(self, namespace=False),
+            **parts,
             **_data_ids(self, world_space),
         )
 
@@ -1068,7 +1121,7 @@ class Mesh(Geometry):
                 [np.asarray(hv) for hv in hole_verts]
             )
 
-        if include_uvs:
+        if uvs:
             uv_list = UVList([self.serialize_uv(x) for x in type(self).get_uv_sets(self)])
             if mesh_data.hole_faces is not None:
                 _propagate_holes_to_uvs(mesh_data, uv_list)
@@ -1083,6 +1136,8 @@ class Mesh(Geometry):
         uvs:         str  | os.PathLike | None = None,
         *,
         world_space: bool                      = False,
+        normals:     bool                      = True,
+        colors:      bool                      = True,
     ) -> str | tuple[str, str]:
         """Saves this mesh to a cgmath file: its MeshData (`serialize`), and with
         `uvs` its UV sets (a UVList) to a second file. The inverse of `load`.
@@ -1098,59 +1153,66 @@ class Mesh(Geometry):
                 points, with the UUID of the transform they sit under; True:
                 world-space points (as `serialize`). The update in place,
                 ``Mesh('x').load(path)``, takes the same one.
+            normals, colors: By keyword only, bools, as `serialize` takes them:
+                True (the default) writes the normals, and the first colour
+                set's colours; False leaves them out of the file.
 
         Returns:
             `path`, or ``(path, uvs)``, each as written (``~`` expanded).
 
-        A read of the scene: no undo step, the selection unchanged. Both paths
-        are checked before anything is serialized: an extension cgmath does not
-        save or the same path twice is a ValueError, a missing folder a
-        FileNotFoundError, and nothing is written. An existing file is
-        replaced; cgmath writes a file whole, so a save that fails leaves the
-        old one as it was.
+        A read of the scene: no undo step, the selection unchanged. The flags
+        and both paths are checked before anything is serialized: a flag that
+        is not a bool is a TypeError, an extension cgmath does not save or the
+        same path twice is a ValueError, a missing folder a FileNotFoundError,
+        and nothing is written. An existing file is replaced; cgmath writes a
+        file whole, so a save that fails leaves the old one as it was.
         """
-        path = _files.check_save_path(path, "Mesh.save")
+        normals = _serialize_flag("Mesh.save", "normals", normals)
+        colors  = _serialize_flag("Mesh.save", "colors", colors)
+        path    = _files.check_save_path(path, "Mesh.save")
         if uvs is not None:
             uvs = _files.check_save_path(uvs, "Mesh.save")
             if _files.same_file(path, uvs):
                 raise ValueError(
                     f"Mesh.save: the mesh and its UVs are two files: give uvs= another path than {path!r}"
                 )
-            mesh_data, uv_list = self.serialize(world_space=world_space)
+            mesh_data, uv_list = self.serialize(world_space=world_space, normals=normals, colors=colors)
             mesh_data.save(path)
             uv_list.save(uvs)
             return path, uvs
-        self.serialize(world_space=world_space, include_uvs=False).save(path)
+        self.serialize(world_space=world_space, uvs=False, normals=normals, colors=colors).save(path)
         return path
 
     @_statement
     def _load_new(
-        cls, mesh, uvs=None, *, name=None, container=None, normals=True, transform=None, world_space=False,
-        hierarchy=None, **kwargs
+        cls, mesh, uvs=None, *, name=None, container=None, normals=True, colors=True, transform=None,
+        world_space=False, hierarchy=None, **kwargs
     ):
         normals     = _restore_flag("Mesh.load", "normals", normals)
+        colors      = _restore_flag("Mesh.load", "colors", colors)
         world_space = _files.space_flag("Mesh.load", world_space, _files.CREATING_SPACE)
         if transform is not None:
             transform = _shape_target("Mesh.load", transform, world_space)  # before the files are read
         data, uv_data = _read_mesh_files("Mesh.load", mesh, uvs)
         with _undo_chunk("rig.Mesh.load"):
             return cls.create(
-                data, uv_data, name=name, container=container, normals=normals, transform=transform,
-                world_space=world_space, hierarchy=hierarchy, **kwargs
+                data, uv_data, name=name, container=container, normals=normals, colors=colors,
+                transform=transform, world_space=world_space, hierarchy=hierarchy, **kwargs
             )
 
     @_statement
-    def _load_into(self, mesh, uvs=None, *, world_space=False, normals=True, hierarchy=None, **kwargs):
+    def _load_into(self, mesh, uvs=None, *, world_space=False, normals=True, colors=True, hierarchy=None, **kwargs):
         method = f"Mesh({_name_of(self)!r}).load"
         if kwargs:
             raise TypeError(
-                f"{method} updates the mesh in place: it takes the files, world_space=, normals= and "
+                f"{method} updates the mesh in place: it takes the files, world_space=, normals=, colors= and "
                 f"hierarchy= (got {', '.join(f'{k}=' for k in kwargs)}); Mesh.load(path, ...) makes a new mesh"
             )
         normals     = _restore_flag(method, "normals", normals)
+        colors      = _restore_flag(method, "colors", colors)
         world_space = _files.space_flag(method, world_space)
         data, uv_data = _read_mesh_files(method, mesh, uvs)
-        update = _mesh_update(self, method, mesh, data, uv_data, world_space, normals, hierarchy)
+        update = _mesh_update(self, method, mesh, data, uv_data, world_space, normals, colors, hierarchy)
         with _undo_chunk("rig.Mesh.load"):
             _MeshUpdateCommand(self, *update[:3])
             names = set(type(self).get_uv_sets(self))
@@ -1158,6 +1220,8 @@ class Mesh(Geometry):
                 if uv.name not in names:
                     self.add_uv_set(uv.name)
                 self.set_uv_data(uv, uv.name)
+            if update[4] is not None:
+                _update_colors(self, *update[4])
         return self
 
     load = _files.creates_or_updates(_load_new, _load_into, _MESH_LOAD_DOC)
@@ -1656,12 +1720,16 @@ def _resampler(src, dst, mode=None):
     "UV data not supplied.")."""
     from cgmath.geometry.resample import MeshDataResampler, ResampleMode
 
-    # world space: cgmath samples the points as they are (it never reads a MeshData's matrix)
+    # world space: cgmath samples the points as they are (it never reads a MeshData's matrix); the
+    # colours are not read (the resampler may read the dst's normals)
     if mode != ResampleMode.UV:
         return MeshDataResampler(
-            src.serialize(world_space=True, include_uvs=False), dst.serialize(world_space=True, include_uvs=False)
+            src.serialize(world_space=True, uvs=False, colors=False),
+            dst.serialize(world_space=True, uvs=False, colors=False),
         )
-    (src_data, src_uvs), (dst_data, dst_uvs) = src.serialize(world_space=True), dst.serialize(world_space=True)
+    (src_data, src_uvs), (dst_data, dst_uvs) = (
+        src.serialize(world_space=True, colors=False), dst.serialize(world_space=True, colors=False)
+    )
     src_uv, dst_uv = (uvs[0] if uvs and np.size(uvs[0].points) else None for uvs in (src_uvs, dst_uvs))
     return MeshDataResampler(src_data, dst_data, src_uv, dst_uv)
 
@@ -2580,6 +2648,7 @@ def _create_mesh(
     name:        str               | None,
     uv_data:     list[UVData]      | None,
     normals:     bool                     = True,
+    colors:      bool                     = True,
     target:      OpenMaya.MDagPath | None = None,
     world_space: bool                     = False,
     hierarchy:   Any                      = None,
@@ -2602,7 +2671,8 @@ def _create_mesh(
        `_holed_mesh` builds (the outer loops, then ``addHoles``);
     4. the UV sets through the API (`_write_uv_set`): the first into the
        current set (renamed to its name when that differs), each other one
-       into a new set of its name;
+       into a new set of its name; then the shading, then the data's colours
+       as the colour set `_COLOR_SET` (`_restore_colors`);
     5. ``cmds.sets`` into ``initialShadingGroup``, then ``cmds.rename`` of the
        transform (Maya renames the shape after it, as it always did) and
        ``cmds.xform`` of where the data sits (`_data_placement`: the world
@@ -2617,23 +2687,23 @@ def _create_mesh(
 
     The data's normals (when it has them, and with `normals`, the restore flag)
     give the shape its hard edges and locked normals in step 4, after the UV
-    sets (`_restore_shading`). A
-    ``cgmath.render.scene.Object`` in place of `mesh_data` is built from its
-    mesh, its name (when `name` is None) and its transform (`_place_object`,
-    in place of the mesh's placement); `Mesh.create` passes its UVs in `uv_data`.
+    sets (`_restore_shading`); its colours (when it has them, and with `colors`)
+    its first colour set, after the shading (`_restore_colors`; on a holed face
+    each colour stays on its vertex, as the UVs do).
     """
-    obj = None
-    if _files.is_object(mesh_data):
-        obj, mesh_data = mesh_data, mesh_data.mesh
     counts, indices, holes = _mesh_topology(mesh_data)
     points = np.asarray(mesh_data.points)
     space  = None
     if world_space:
         # where the data puts its points in the world, in the target's space if any; the normals follow
-        placed = obj.world_matrix if obj is not None else _data_placement("Mesh.create()", mesh_data, hierarchy)
+        placed = _data_placement("Mesh.create()", mesh_data, hierarchy)
         space  = _target_space("Mesh.create()", placed, target)
         points = np.asarray(points, dtype=np.float64) @ space[:3, :3] + space[3, :3]
     shading = _shading_of(mesh_data, holes, space) if normals else None
+    # the data's corners (a holed face's hole corners too, which `indices` above leaves out)
+    colored = _data_colors(mesh_data, np.asarray(mesh_data.indices).size) if colors else None
+    if colored is not None and holes:
+        colored = (colored[0], colored[1][_built_corners(mesh_data, holes)])
     uv_sets = list(uv_data or ())
     names   = [uv.name for uv in uv_sets]
     for i, uv_name in enumerate(names):
@@ -2644,7 +2714,7 @@ def _create_mesh(
     if target is not None:
         name = _shape_name(target, name)
     else:
-        name = _shape_create_name(name or (obj.name if obj is not None else mesh_data.name))
+        name = _shape_create_name(name or mesh_data.name)
 
     xform = cmds.createNode("transform", name="polySurface#", skipSelect=True)
     sel   = OpenMaya.MSelectionList()
@@ -2672,6 +2742,8 @@ def _create_mesh(
                 _write_uv_set(fn, uv.name, uv, clear=False)
         if shading is not None:
             _restore_shading(fn, shading)
+        if colored is not None:
+            _restore_colors(fn, colored)
         _cmds_edit.sets(xform, forceElement="initialShadingGroup")
         if target is not None:
             moved = OpenMaya.MObjectHandle(shape)
@@ -2679,9 +2751,7 @@ def _create_mesh(
         if name:
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
             xform = _cmds_edit.rename(xform, name)
-        if obj is not None:
-            _place_object(xform, obj, world_space)
-        elif not world_space:
+        if not world_space:
             matrix = _data_placement("Mesh.create()", mesh_data, hierarchy).ravel()
             if not np.array_equal(matrix, _IDENTITY_16):
                 # a new transform is at rest already (world-space data sits at identity)
@@ -2694,18 +2764,13 @@ def _create_mesh(
 
 def _read_mesh_files(method: str, mesh, uvs) -> tuple:
     """`Mesh.load`'s inputs, read and checked (`_files.read`): ``(data, uvs)``, the
-    MeshData (or ``cgmath.render.scene.Object``) and the UVList / UVData or None.
-    An Object carries its UVs: it comes back with None, and `uvs` with it is a
-    TypeError (before the UVs' file is read)."""
+    MeshData and the UVList / UVData or None."""
     from cgmath.geometry import MeshData, UVData, UVList
 
     data = _files.read(
         mesh, (MeshData,), method, "the mesh", refused=(UVData,),
-        hints=(((UVData, UVList), "the UVs go in uvs="),), objects=True,
+        hints=(((UVData, UVList), "the UVs go in uvs="),),
     )
-    if _files.is_object(data):
-        _object_uvs(data, uvs, method, "uvs=")
-        return data, None
     if uvs is None:
         return data, None
     return data, _files.read(
@@ -2719,18 +2784,26 @@ def _source_label(src) -> str:
 
 
 def _mesh_update(
-    mesh: Mesh, method: str, src, data, uvs, world_space: bool, normals: bool = True, hierarchy: Any = None
+    mesh:        Mesh,
+    method:      str,
+    src,
+    data,
+    uvs,
+    world_space: bool,
+    normals:     bool = True,
+    colors:      bool = True,
+    hierarchy:   Any  = None,
 ) -> tuple:
     """`Mesh('x').load`'s edit, checked before anything changes: ``(points, space,
-    shading, uv_sets)`` for `_MeshUpdateCommand` and the UV sets (the shading None
-    without `normals`: the mesh keeps its own). With `world_space` the points come
-    from where the data sits (`_data_placement`, through `hierarchy` when given).
-    Raises ValueError for a mesh with history or data of another topology, and the
-    errors of `_mesh_topology` / `_data_placement` / `_target_space` /
-    `_shading_of` / `_check_uv_fit`."""
-    obj = None
-    if _files.is_object(data):
-        obj, data, uvs = data, data.mesh, data.uv
+    shading, uv_sets, colored)`` for `_MeshUpdateCommand`, the UV sets and
+    `_update_colors` (the shading None without `normals`, the colours None without
+    `colors` or for data without them: the mesh keeps its own). The data's corners
+    are the mesh's, in its order (the topology check), so its colours need no
+    reordering. With `world_space` the points come from where the data sits
+    (`_data_placement`, through `hierarchy` when given). Raises ValueError for a
+    mesh with history or data of another topology, and the errors of
+    `_mesh_topology` / `_data_placement` / `_target_space` / `_shading_of` /
+    `_data_colors` / `_check_uv_fit`."""
     fn = OpenMaya.MFnMesh(type(mesh).get_mdagpath(mesh))
     if _has_history(fn):
         raise ValueError(_history_refusal(method, mesh, fn))
@@ -2761,7 +2834,7 @@ def _mesh_update(
     points = np.asarray(data.points, dtype=np.float64).reshape(-1, 3)
     taken  = None
     if world_space:
-        placed = obj.world_matrix if obj is not None else _data_placement(method, data, hierarchy)
+        placed = _data_placement(method, data, hierarchy)
         matrix = np.asarray(placed, dtype=np.float64).reshape(4, 4)
         points = points @ matrix[:3, :3] + matrix[3, :3]
         taken  = _target_space(method, matrix, type(mesh).get_mdagpath(mesh))
@@ -2771,13 +2844,14 @@ def _mesh_update(
     if not np.isfinite(points).all():
         raise ValueError(f"{method}: the points must be finite (got nan or inf)")
     shading = _shading_of(data, holes, taken) if normals else None
+    colored = _data_colors(data, len(indices)) if colors else None
     uv_sets = [] if uvs is None else [uvs] if _is_uv_data(uvs) else list(uvs)
     names   = [uv.name for uv in uv_sets]
     for i, uv in enumerate(uv_sets):
         if uv.name in names[:i]:
             raise ValueError(f"{method}: two UV sets of the file are named {uv.name!r}")
         _check_uv_fit(fn, uv)
-    return OpenMaya.MPointArray(points.tolist()), space, shading, uv_sets
+    return OpenMaya.MPointArray(points.tolist()), space, shading, uv_sets, colored
 
 
 def _is_uv_data(uvs) -> bool:
@@ -2809,64 +2883,6 @@ def _check_uv_fit(fn: OpenMaya.MFnMesh, uv_data: UVData) -> None:
             f"UVData {name!r}: an index is not one of the {n_uvs} UVs "
             f"(indices range {int(indices.min())}..{int(indices.max())})"
         )
-
-
-def _object_uvs(obj, uv_data, method: str = "Mesh.create()", slot: str = "uv_data="):
-    """The UVs of the ``cgmath.render.scene.Object`` `obj` (its ``uv``: a UVData,
-    a UVList or None), checked: TypeError when `uv_data` is given too (an Object
-    carries its UVs) or the Object holds no mesh."""
-    if uv_data is not None:
-        raise TypeError(
-            f"{method}: an Object carries its mesh and its UVs, so it takes no {_name_of(slot)} "
-            f"({_name_of(slot)} goes with a MeshData)"
-        )
-    from cgmath.geometry import MeshData
-
-    if not isinstance(obj.mesh, MeshData):
-        raise TypeError(f"{method}: the Object {obj.name!r} holds no mesh (its mesh is {obj.mesh!r})")
-    return obj.uv
-
-
-# an Object's transform values a new transform takes, with their rest values (left unset)
-_OBJECT_PLACEMENT = (
-    ("rotateOrder", "rotate_order", 0),
-    ("rotateAxis",  "rotate_axis",  (0.0, 0.0, 0.0)),
-    ("scale",       "scale",        (1.0, 1.0, 1.0)),
-    ("rotate",      "rotate",       (0.0, 0.0, 0.0)),
-    ("translate",   "translate",    (0.0, 0.0, 0.0)),
-    ("visibility",  "visibility",   True),
-)
-
-# of those, what a frozen Object's new transform takes: they move nothing
-_OBJECT_AT_REST = ("rotateOrder", "visibility")
-
-
-def _place_object(xform: str, obj, frozen: bool = False) -> None:
-    """Puts the new transform `xform` where the ``cgmath.render.scene.Object``
-    `obj` is: its scale, rotate (in its rotate order), translate, rotate axis
-    and visibility, as a lone Object holds them (the mesh's own matrix is not
-    used: cgmath's renderer places the mesh by the Object). An Object under a
-    parent (in a Scene) gives its world matrix instead. With `frozen`
-    (``world_space=True``: the points hold its transform), `xform` stays at
-    the origin and takes only what moves nothing (`_OBJECT_AT_REST`; under a
-    parent, the rotate order alone, as without `frozen`)."""
-    node = _cast(xform)
-    if obj.get_parent() is not None:
-        node.find_attr("rotateOrder").set(int(obj.rotate_order))
-        if not frozen:
-            _cmds_edit.xform(xform, matrix=np.asarray(obj.world_matrix, dtype=float).ravel().tolist())
-        return
-    for attr, field, rest in _OBJECT_PLACEMENT:
-        if frozen and attr not in _OBJECT_AT_REST:
-            continue
-        value = getattr(obj, field)
-        if isinstance(rest, tuple):
-            value = [float(x) for x in np.asarray(value, dtype=float).ravel()]
-            if value != list(rest):
-                found = node.find_attr(attr)
-                type(found)._raw_set(found, *value)
-        elif value != rest:
-            node.find_attr(attr).set(type(rest)(value))
 
 
 def _build_hole_map(mesh_data: MeshData) -> dict[int, list[list[int]]]:
@@ -3479,6 +3495,152 @@ def _write_vertex_colors(
     finally:
         if current and current != color_set:
             fn.setCurrentColorSetName(current)
+
+
+# --- the data's colours: a MeshData's ``colors`` / ``color_indices`` to and from a colour set
+
+# the colour an unset face corner serializes as: what Maya's own fbx exporter writes for one
+# (``polyColorPerVertex -query`` reports it too); the API reads such a corner as (-1, -1, -1, -1)
+_UNSET_COLOR = OpenMaya.MColor((0.0, 0.0, 0.0, 0.0))
+
+# the colour set a create makes for the data's colours: Maya's name for a first set
+_COLOR_SET = "colorSet1"
+
+
+def _first_set_colors(fn: OpenMaya.MFnMesh) -> tuple:
+    """The colours of the first colour set of the mesh `fn` as a MeshData holds them:
+    ``(colors (K, 4) float64, color_indices (C,) int32)``, the distinct RGBA colours and
+    the one each face corner names (an unset corner `_UNSET_COLOR`), as Maya holds them
+    (an RGB set's alpha 1, an Alpha set's RGB as they are); ``(None, None)`` for a mesh
+    with no colour set, or whose first set holds no colour. One API call: a set's own
+    pool and indices would take a call per face."""
+    names = fn.getColorSetNames()
+    if not names or not fn.numColors(names[0]):
+        return None, None
+    held = fn.getFaceVertexColors(names[0], _UNSET_COLOR)
+    rows = np.fromiter(itertools.chain.from_iterable(held), dtype=np.float64, count=4 * len(held)).reshape(-1, 4)
+    rows += 0.0  # a -0.0 is 0.0 as a float, not as bytes
+    # the distinct rows by their bytes: 2 to 6x faster than np.unique(rows, axis=0) on 80k corners
+    keys = rows.view(np.dtype((np.void, rows.dtype.itemsize * 4))).ravel()
+    _, first, ids = np.unique(keys, return_index=True, return_inverse=True)
+    return rows[first], ids.astype(np.int32)
+
+
+def _data_colors(mesh_data: MeshData, n_rows: int) -> tuple | None:
+    """The data's colours and the colour of each of its `n_rows` face corners:
+    ``(colors (K, 4), ids (n_rows,))``, or None when the data holds no colours.
+    cgmath's two forms: ``color_indices`` names a colour a corner; without them the
+    colours are one a vertex, which each corner takes through ``indices``. Raises
+    RuntimeError for colours that fit neither, before anything is made."""
+    colors = getattr(mesh_data, "colors", None)
+    if colors is None:
+        return None
+    colors = np.asarray(colors, dtype=np.float64)
+    if colors.ndim != 2 or colors.shape[1] != 4:
+        raise RuntimeError(f"MeshData: the colors are {colors.shape}, not (N, 4) RGBA")
+    if not np.isfinite(colors).all():
+        raise RuntimeError("MeshData: the colors must be finite (got nan or inf)")
+    ids = getattr(mesh_data, "color_indices", None)
+    if ids is None:
+        n_points = len(mesh_data.points)
+        if colors.shape[0] != n_points:
+            raise RuntimeError(
+                f"MeshData: {colors.shape[0]} colors for {n_points} vertices and no color_indices "
+                f"(a colour a face-vertex names its face-vertices)"
+            )
+        ids = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
+    else:
+        ids = np.asarray(ids, dtype=np.int64).ravel()
+        if len(ids) != n_rows:
+            raise RuntimeError(f"MeshData: {len(ids)} color indices for {n_rows} face-vertices (one each)")
+    if not len(ids) and not colors.size:
+        return None
+    if len(ids) and (int(ids.min()) < 0 or int(ids.max()) >= len(colors)):
+        raise RuntimeError(
+            f"MeshData: a color index is not one of the {len(colors)} colors "
+            f"(indices range {int(ids.min())}..{int(ids.max())})"
+        )
+    return colors, ids
+
+
+def _built_corners(mesh_data: MeshData, holes: dict[int, list[list[int]]]) -> np.ndarray:
+    """For each face corner of the mesh `_holed_mesh` builds, in its order, the data's
+    corner it comes from: a holed face lists its outer loop, then each hole loop
+    (`_holed_uvs`' rule), every other face its corners as the data does. Indexes a
+    per-corner array of the data (the colour ids) into the built order."""
+    counts = np.asarray(mesh_data.counts, dtype=np.int64).ravel()
+    ids    = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
+    starts = np.concatenate(([0], np.cumsum(counts)))
+    order  = np.arange(len(ids), dtype=np.int64)
+    for face, loops in holes.items():
+        face_verts = ids[starts[face] : starts[face + 1]].tolist()
+        by_vertex  = {v: starts[face] + k for k, v in enumerate(face_verts)}
+        on_holes   = {v for loop in loops for v in loop}
+        built      = [v for v in face_verts if v not in on_holes] + [v for loop in loops for v in loop]
+        order[starts[face] : starts[face + 1]] = [by_vertex[v] for v in built]
+    return order
+
+
+def _restore_colors(fn: OpenMaya.MFnMesh, colored: tuple) -> None:
+    """The data's colours `colored` (`_data_colors`: ``(colors, ids)``, the ids in the
+    order `fn` lists its face corners) as the colour set `_COLOR_SET` of the new mesh
+    `fn`, RGBA and unclamped. Pure API: `Mesh.create` calls it while it builds the
+    shape, before any recorded command touches it."""
+    colors, ids = colored
+    fn.createColorSet(_COLOR_SET, False, rep=OpenMaya.MFnMesh.kRGBA)
+    _put_colors(fn, _COLOR_SET, (OpenMaya.MColorArray(colors.tolist()), ids.tolist()), OpenMaya.MFnMesh.kRGBA)
+
+
+def _update_colors(mesh: Mesh, colors: np.ndarray, ids: np.ndarray) -> None:
+    """`Mesh('x').load`'s colours: the data's (`_data_colors`) into the mesh's first
+    colour set, its representation kept; a mesh without one gets `_COLOR_SET` (RGBA,
+    unclamped) first. One or two undo steps, inside the load's chunk."""
+    sets      = type(mesh).get_color_sets(mesh)
+    color_set = sets[0] if sets else type(mesh).add_color_set(mesh, _COLOR_SET, ColorSet.Representation.RGBA)
+    _ColorSetCornersCommand(
+        mesh, color_set.get_name(), color_set.get_representation().value,
+        OpenMaya.MColorArray(colors.tolist()), ids.tolist(),
+    )
+
+
+class _ColorSetCornersCommand(_MeshSetsEdit):
+    """`Mesh('x').load`: the colours of a colour set replaced, one a face corner
+    (`_put_colors`: the set's pool and indices). Undo puts the set's colours back as
+    they were, pool and indices; the current colour set stays current."""
+
+    UNDO_EDIT = "Mesh.load"
+
+    def __init__(self, mesh: Mesh, name: str, rep: int, colors: OpenMaya.MColorArray, ids: list) -> None:
+        self._name    = name
+        self._rep     = rep
+        self._colors  = (colors, ids)
+        self._old     = None
+        self._current = ""
+        super().__init__(mesh)
+
+    def undoIt(self) -> None:
+        super().undoIt()
+        self._keep_current()
+
+    def redoIt(self) -> None:
+        super().redoIt()
+        self._keep_current()
+
+    def _keep_current(self) -> None:
+        fn = self.fn()
+        if self._current and fn.currentColorSetName() != self._current:
+            fn.setCurrentColorSetName(self._current)
+
+    def _capture(self, fn):
+        self._current = fn.currentColorSetName()
+        if self._modifier is None:
+            self._old = _capture_colors(fn, self._name)
+
+    def _apply(self, fn, modifier):
+        _put_colors(fn, self._name, self._colors, self._rep)
+
+    def _revert(self, fn):
+        _put_colors(fn, self._name, self._old, self._rep)
 
 
 class _MeshAddColorSetCommand(_MeshSetsEdit):

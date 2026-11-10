@@ -282,7 +282,7 @@ class TestSetPointsUndo(_UndoCase):
     def test_an_mpointarray_and_mesh_data_are_taken(self):
         cube   = make_mesh()
         points = OpenMaya.MPointArray(lifted(cube).tolist())
-        data   = cube.serialize(world_space=False, include_uvs=False)
+        data   = cube.serialize(world_space=False, uvs=False)
         data.points = np.asarray(data.points) * 3.0
         cmds.flushUndo()
         states = self.walk(cube, [lambda: cube.set_points(points), lambda: cube.set_points(data)])
@@ -960,7 +960,7 @@ class TestMeshEditsTogether(_UndoCase):
         ):
             with self.subTest(label):
                 before = self.scene_state()
-                mesh   = Mesh.create(data, uv_data=uvs, name="m")
+                mesh   = Mesh.create(data, uvs=uvs, name="m")
                 states = [self.scene_state(meshes=[mesh.get_long_name()])]
                 edits  = self.edits(mesh)
                 if uvs is None:

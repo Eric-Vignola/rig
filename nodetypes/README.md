@@ -116,7 +116,7 @@ from rig.nodetypes.plugins import load_plugin
 | `Transform` | `transform` | `get_shape(s)`, `iter_shapes` / `find_shape`, `get_matrix` / `set_matrix` / `match_matrix`, pivots, `freeze`, `iter_xform_attrs`, `set_xform_attrs_locked`, `duplicate_geometry`, `serialize` / `Transform.create(transform_data)` (one node; `Joint.create(joint_data)`), `serialize_hierarchy` / `create_hierarchy`, `save_hierarchy` / `Transform.load_hierarchy` (files; a `ClipData` is built and keyed) |
 | `Joint` | `joint` | `get_root_joint`, `get_parent_joint`, `iter_joints` / `find_joint`, `duplicate_skeleton`, `rename_skeleton`, `match_hierarchy`, `orient`, `orients_to_rotations` / `rotations_to_orients` (`hierarchy=True`: the joints below too), `find_skinclusters` |
 | `Geometry` | `geometryShape` | component tags: `get_injection_node`, `get_tag_names`, `add_tag` / `delete_tag` / `rename_tag`, `set_tag_contents` / `get_tag_contents`, `get_tag_component_indices` / `get_tag_category` / `get_tag_data` / `get_tag_history`, `serialize_tags`, `get_output_attr` (`world_space=True`: the world one), `get_component_mobject`, paintable attrs |
-| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`, or a `cgmath` `Object`; the data's hard edges and locked normals come back; `transform=`: the shape under an existing transform), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_tags`, `apply_skin_data` |
+| `Mesh` | `mesh` | counts, `get_points` / `set_points`, closest point, normals, UV sets, `serialize` / `Mesh.create` (`MeshData` + `UVList`; the data's hard edges and locked normals come back; `transform=`: the shape under an existing transform), `save` / `load` (files: `Mesh.load` creates, `Mesh('x').load` updates), paintable maps (`add_map`, `get_map_values`, `mirror_map`, `MapData`), colour sets (`ColorSet`), `get_materials` / `get_shading_engines` / `get_material_bindings`, `transfer_maps` / `transfer_tags`, `apply_skin_data` |
 | `NurbsCurve`, `NurbsSurface` | `nurbsCurve`, `nurbsSurface` | `get_cv_count`, `get_weight_point_count`, `get_points`, `serialize` (`NurbsCurveData` / `NurbsSurfaceData`), `NurbsCurve.create` (points, or a `NurbsCurveData`), `NurbsSurface.create` (a `NurbsSurfaceData`; both take `transform=`, as `Mesh.create`), `save` / `load` (files: the class creates, a node updates its CVs) |
 | `Deformer` | `geometryFilter` | `get_geometries`, `get_original_geometries`; module function `tag_references(name)` |
 | `SkinCluster` | `skinCluster` | `create(geo, influences | SkinData)`, influence add / remove / set, `get_weights` / `set_weights` as `(V, I)` arrays, `serialize` (`SkinData`), `save` / `load` (files: `SkinCluster.load(path, geo)` creates, `skin.load(path)` sets the weights), normalise / prune / max influences, `transfer_to_mesh`, `transfer_from_meshes`, `connect_bind_pre_matrix` (a mapping `{influence: driver}`, each slot found by its influence) |
@@ -376,7 +376,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')` |
-| `Mesh.create(mesh_data, uv_data=None, *, name=, normals=True, transform=None, world_space=False, hierarchy=None)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed); a `cgmath.render.scene.Object` stands for the mesh, its UVs, its name and its transform. With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
+| `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
 | `NurbsCurve.create(points_or_NurbsCurveData, degree=, kv=, *, name=, transform=None, world_space=False, hierarchy=None)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `NurbsCurveData` brings its own and sits under the transform its `parent_uuid` names, as a `MeshData` does (it holds no name: `curve<N>`, or `name=`). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `NurbsSurface.create(data, *, name=, transform=None, world_space=False, hierarchy=None)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `NurbsSurfaceData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; placed as a curve's, no name of its own). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
@@ -409,8 +409,8 @@ a keyword, says how the data's points go under it:
 
 | `world_space=` | The points (a mesh's locked normals with them) |
 |---|---|
-| `False` (the default) | the shape's own, as the data holds them; where it sits (an `Object`'s transform) is not used |
-| `True` | where the data puts them in the world (where it sits: the world matrix of the transform its `parent_uuid` names, in `hierarchy=` or in the scene; an `Object`'s transform; points are world positions as they are), taken into the transform's space: `placement @ inverse(its world matrix)`, a mesh's locked normals through the inverse transpose (below) |
+| `False` (the default) | the shape's own, as the data holds them; where it sits is not used |
+| `True` | where the data puts them in the world (where it sits: the world matrix of the transform its `parent_uuid` names, in `hierarchy=` or in the scene; points are world positions as they are), taken into the transform's space: `placement @ inverse(its world matrix)`, a mesh's locked normals through the inverse transpose (below) |
 
 The shape rides the same recorded transform as without it, then goes under
 the target (as `parent -shape -relative`, through the API: the selection and
@@ -461,9 +461,7 @@ world_space=True)` is `copyB` from a file), and so do `NurbsCurve` and
 `NurbsSurface`, their knots and forms kept. Data that sits at identity (points;
 world-space data, which names no transform; data whose transform the scene
 lacks and no `hierarchy=` holds) has nothing to freeze: the points stay as they
-are. An `Object`'s transform goes in the points the same way; its rotate order,
-and a lone `Object`'s visibility, which move nothing, still go on the new
-transform. From a mirrored placement (a negative scale) a surface comes out
+are. From a mirrored placement (a negative scale) a surface comes out
 inside out, as under a mirrored target. A placement that is exactly singular
 (only a hierarchy made by hand holds one: Maya keeps 1e-12 for a scale of 0)
 has no inverse for a mesh's normals: a `ValueError` before anything is made,
@@ -699,7 +697,7 @@ data to a `cgmath` file and `load` reads it back.
 | Node | `serialize()` | Back in | Save | Load |
 |---|---|---|---|---|
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create(transform_data)` / `Joint.create(joint_data)` (one node), `Transform.create_hierarchy` (a `ClipData`: built and keyed) | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=False, container=None)` creates, a typed `List`, parents first (a file that holds a `ClipData`: built and keyed) |
-| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `include_uvs=False`: object space, the shape's `uuid` and the transform's in `parent_uuid` (`world_space=True`: world space, no transform named); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, transform=None, world_space=False, hierarchy=None, **attrs)` creates (with `transform=`, the shape under it); `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True, hierarchy=None)` updates |
+| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `uvs=False`: object space, the shape's `uuid` and the transform's in `parent_uuid` (`world_space=True`: world space, no transform named), its normals and the colours of its first colour set (`normals=False` / `colors=False` leave them out); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False, normals=True, colors=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, **attrs)` creates (with `transform=`, the shape under it); `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True, colors=True, hierarchy=None)` updates |
 | `Geometry` | `serialize_tags()` -> `GeomSubsetData`s | `set_tag_contents` | | |
 | `NurbsCurve` / `NurbsSurface` | `NurbsCurveData` (a periodic curve's own points; its knots when not Maya's default ones) / `NurbsSurfaceData` (its knots likewise, `knots_u` / `knots_v`); each with its `uuid` and the transform's `parent_uuid` as a `MeshData`, and no name | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=False)` | `NurbsCurve.load(path, *, name=, container=, transform=None, world_space=False, hierarchy=None, **attrs)` creates (with `transform=`, the shape under it); `NurbsCurve('x').load(path, *, world_space=False, hierarchy=None)` updates its CVs (the same for `NurbsSurface`) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` | `skin.save(path, *, full_path=False, optimize=False)` | `SkinCluster.load(path, geo, **flags)` creates; `SkinCluster('x').load(path)` sets its weights |
@@ -708,17 +706,17 @@ data to a `cgmath` file and `load` reads it back.
 **One file per data object, its format by its extension.** `.npz`
 (compressed, recommended), `.json` (to read or diff; the slowest) or `.pkl`.
 Never load a `.pkl` you did not write: a pickle runs code when it is read. A
-mesh is two files, its `MeshData` and, with `uvs=`, its `UVList` (`save`
-without `uvs=` writes no UVs: a `MeshData` holds none). `load` reads a
+mesh is two files, its `MeshData` (with its normals and its first colour
+set's colours, unless `normals=False` / `colors=False`) and, with `uvs=`,
+its `UVList` (`save` without `uvs=` writes no UVs: a `MeshData` holds none).
+`load` reads a
 `cgmath` `.npz` or `.json` file whatever its extension (by its first bytes)
 and a pickle by its `.pkl` or `.pickle` extension (cgmath 3.0.0, which
 refuses a pickle under another name with its own `ValueError`; 1.0.4 and
 2.0.0 read any other file as a pickle), and for a mesh the
 assets `cgmath`'s `MeshData` reads (`.obj`, `.fbx`, `.glb`, `.usd`); in place
 of a path (a `str` or an `os.PathLike`, `~` expanded) it takes the data
-object itself, which it never changes. A file holding a
-`cgmath.render.scene.Object` is a mesh and its UVs, as `Mesh.create` takes
-one (its `uvs=` then a `TypeError`).
+object itself, which it never changes.
 
 **`load` has two forms, told apart by where it is called.** From the class
 it creates, always, as `create` does: `Mesh.load(...)` a second time makes
@@ -731,11 +729,12 @@ From a node it updates that node in place, the inverse of its `save`:
   vertex list, the holes) and no history gets every point (by default the
   file's points as its own, object space, the inverse of the default `save`;
   `world_space=True`: where the file puts them in the world, where the data
-  sits, in `hierarchy=` or in the scene, or an `Object`'s transform; the
-  transform is not moved), the
-  file's hard edges and locked normals (`normals=False`: its own stay), and
+  sits, in `hierarchy=` or in the scene; the transform is not moved), the
+  file's hard edges and locked normals (`normals=False`: its own stay),
   each UV set of the file by name (made when the mesh has none of that name;
-  its other sets stay);
+  its other sets stay), and the file's colours into its first colour set, its
+  representation kept (made as `colorSet1` when it has none; `colors=False`,
+  or a file without colours: its own stay);
 - a `NurbsCurve` of the same CV count, degree, form and knots, a
   `NurbsSurface` of the same CV counts, degrees and forms (it keeps its own
   knots: data that holds knots must hold these, and data that holds none in a
@@ -811,16 +810,31 @@ back; False skips it: the data's normals are not read, a new mesh is all
 smooth (2.0.0a5's create, its cost) and an updated mesh keeps its own hard
 edges and locked normals. A flag is a `bool` (anything else is a `TypeError`
 before anything is read or made), and it wins over a mesh attribute of the
-same name (the mesh's internal `normals` array is never set through
-`create`). `normals` is the first restore flag; a vertex-colour flag would be
-the next, `colors=`, on the same three doors (`mesh._RESTORE_FLAGS`).
+same name (the mesh's internal `normals` and `colors` arrays are never set
+through `create`). The restore flags are `normals` and `colors`, on the same
+three doors (`mesh._RESTORE_FLAGS`).
 
-A `cgmath.render.scene.Object` stands for a mesh and its
-UVs: `Mesh.create(obj)` builds its `mesh` with its `uv` (one UV set, a
-`UVData`), takes its name when `name=` is not given and puts the new transform
-where it is (scale, rotate, translate, rotate order, rotate axis, visibility; an
-`Object` under a parent: its world matrix); the transform the mesh's own
-`parent_uuid` names, the render settings and the skin are not used.
+**The colours go both ways.** `serialize()` writes the colours of the mesh's
+first colour set (`getColorSetNames()[0]`; the other sets are not written)
+into the data's `colors` / `color_indices`: the distinct RGBA colours, and the
+one each face corner names, as Maya holds them (an RGB set's alpha is 1, an
+Alpha set keeps the RGB Maya stores beside it); a corner with no colour is
+`(0, 0, 0, 0)`, what Maya's own fbx exporter writes for it. A mesh with no
+colour set, or whose first set holds no colour, writes None. `create` brings
+them back as the colour set `colorSet1` (Maya's name for a first set), RGBA
+and unclamped, one colour a face corner, through the API before any recorded
+command, so `Mesh.create(*m.serialize())` gives back `m`'s first colour set
+corner for corner; colours cgmath holds one a vertex (a glb's `COLOR_0`, data
+built by hand) go on every corner of their vertex. `Mesh('x').load(path)`
+writes them into the mesh's first colour set, its representation kept (an RGB
+set drops the alpha), and makes `colorSet1` when the mesh has none; data
+without colours leaves its sets alone. `serialize(colors=False)`,
+`save(path, colors=False)` leave them out; `normals=False` on the same two
+leaves out the normals, which skips the read of a normal id per face corner
+(about half the time of a 20k-face serialize). The transfers
+(`transfer_maps`, `transfer_tags`) and the blendShape reads never read them.
+`serialize`'s flags are `bool`s too: `uvs`, `normals`, `colors`, anything
+else a `TypeError` before anything is read.
 
 `serialize_hierarchy` captures `transform` and `joint` nodes (a transform
 holding a locator becomes a `locator`) and skips constraints and other
@@ -1121,8 +1135,8 @@ Verified on Maya 2025; not bugs to work around blindly.
   `MFnMatrixData`, as a typed matrix (`worldMatrix[0]`) does: Maya's data
   handle of one holds no data, so it is read from the plug's value.
 - **`Mesh.outMesh.get()` returns `(MeshData, UVList)`**: the shape's
-  `serialize()` with its default `include_uvs=True`, in object space
-  (`mesh.worldMesh[0].get()`: in world space).
+  `serialize()` with its defaults (every UV set, the normals, the first colour
+  set's colours), in object space (`mesh.worldMesh[0].get()`: in world space).
 - **`set_tag_category` converts nothing on a deformed mesh**: it
   hands the visible shape to Maya's converter while the tag lives on the
   `Orig`. Use `set_tag_contents(tag, ids, category=...)`, which

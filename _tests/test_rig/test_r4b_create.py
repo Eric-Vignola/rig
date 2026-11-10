@@ -307,9 +307,9 @@ class TestCreateFlags(_SceneCase):
             {"name", "n", "empty", "e", "noRecurse", "nr", "number", "num", "makeCurrent", "mc"},
         )
         self.assertEqual(ShadingEngine._CREATE_FLAGS, {"name", "n"})
-        # normals: a restore flag (FU 1); re-pinned (user decisions 2026-10-29: transform= and world_space=;
-        # 2026-11-09: hierarchy=, where the data sits)
-        self.assertEqual(Mesh._CREATE_FLAGS,       {"name", "uv_data", "normals", "transform", "world_space", "hierarchy"})
+        # normals and colors: the restore flags (FU 1; 2026-11-09); re-pinned (user decisions 2026-10-29:
+        # transform= and world_space=; 2026-11-09: hierarchy=, where the data sits; uv_data= is uvs=)
+        self.assertEqual(Mesh._CREATE_FLAGS,       {"name", "uvs", "normals", "colors", "transform", "world_space", "hierarchy"})
         self.assertEqual(NurbsCurve._CREATE_FLAGS, {"name", "degree", "kv", "transform", "world_space", "hierarchy"})
         self.assertEqual(Reference._CREATE_FLAGS,  {"file_path", "namespace"})
         for cls in (SkinCluster, BlendShape):
@@ -399,7 +399,7 @@ class TestCreateFlags(_SceneCase):
 
     def test_mesh(self):
         cube = cmds.polyCube(name="src", ch=False)[0]
-        data = Mesh(cmds.listRelatives(cube, shapes=True)[0]).serialize(include_uvs=False)
+        data = Mesh(cmds.listRelatives(cube, shapes=True)[0]).serialize(uvs=False)
         cmds.delete(cube)
         mesh = Mesh.create(data, name="m", displayColors=True)
         self.assertEqual(str(mesh), "mShape")

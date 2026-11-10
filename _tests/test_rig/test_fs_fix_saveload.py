@@ -89,7 +89,7 @@ class TestADeformedShape(_Case):
         self.assertIn("Deleting its history would delete the deformers", text)
         self.assertNotIn("delete the history", text)
         # the route it names works, and the deformed shape follows
-        data = Mesh("bodyShape").serialize(include_uvs=False, world_space=False)
+        data = Mesh("bodyShape").serialize(uvs=False, world_space=False)
         data.points = np.asarray(data.points) * 2.0
         Mesh("bodyShapeOrig").load(data, world_space=False)
         box = cmds.exactWorldBoundingBox("body")
@@ -98,7 +98,7 @@ class TestADeformedShape(_Case):
     def test_construction_history_names_the_delete(self):
         """guard: a polyCube with its history keeps the delete."""
         t = cmds.polyCube(name="live", constructionHistory=True)[0]
-        Mesh(cmds.listRelatives(t, shapes=True)[0]).serialize(include_uvs=False).save(self.path("m.npz"))
+        Mesh(cmds.listRelatives(t, shapes=True)[0]).serialize(uvs=False).save(self.path("m.npz"))
         self.assert_refused(
             ValueError, r"has history \(its inMesh is connected: construction history\).*delete the history",
             lambda: Mesh("liveShape").load(self.path("m.npz")),
@@ -144,7 +144,7 @@ class TestTheArguments(_Case):
         """Re-pinned (user decision 2026-10-30): world_space= of the class form says where a new
         shape's points land, so it names no other form: only what it holds is refused."""
         t = cmds.polyCube(name="body", ch=False)[0]
-        md = Mesh("bodyShape").serialize(include_uvs=False)
+        md = Mesh("bodyShape").serialize(uvs=False)
         crv = cmds.curve(name="crv", degree=1, point=[(0, 0, 0), (1, 0, 0)])
         cmds.rename(cmds.listRelatives(crv, shapes=True)[0], "crvShape")
         cd = NurbsCurve("crvShape").serialize()
@@ -287,7 +287,7 @@ class TestTheShadingCost(_Case):
         times = []
         for _ in range(runs):
             start = time.perf_counter()
-            mesh = Mesh.create(source, uv_data=uvs)
+            mesh = Mesh.create(source, uvs=uvs)
             times.append(time.perf_counter() - start)
             cmds.delete(mesh.get_parent().get_long_name())
         return min(times)
@@ -334,7 +334,7 @@ class TestTheShadingCost(_Case):
         self.assertIsNotNone(shading.hard[3])  # the dense route: guessed ids
         want = {frozenset(pair) for pair in shading.hard[0].tolist()}
         self.assertGreater(len(want), 100)
-        made = Mesh.create(data, uv_data=uvs)
+        made = Mesh.create(data, uvs=uvs)
         fn = made.get_fn_set()
         got = {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
         self.assertEqual(got, want)

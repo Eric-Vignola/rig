@@ -236,16 +236,6 @@ class TestBothSpaces(_Case):
         curve = NurbsCurve.create(points, transform=target)
         np.testing.assert_allclose(_local(curve), points, atol=0)
 
-    def test_an_object_s_transform(self):
-        from cgmath.render.scene import Object
-
-        target = _sheared()
-        data   = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(include_uvs=False)
-        obj    = Object(name="hero", mesh=data, translate=(5, 0, 0))
-        np.testing.assert_allclose(_local(Mesh.create(obj, transform=target)), data.points, atol=0)
-        placed = Mesh.create(obj, transform=target, world_space=True)
-        np.testing.assert_allclose(_world(placed), data.points + (5, 0, 0), atol=1e-5)
-
 
 class TestAJointTarget(_Case):
     def test_both_spaces_under_a_joint(self):

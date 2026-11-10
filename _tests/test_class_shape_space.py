@@ -171,10 +171,13 @@ class TestTheShapeSpaceKeyword(_Case):
                 parameter = inspect.signature(function).parameters["world_space"]
                 self.assertEqual(parameter.kind, inspect.Parameter.KEYWORD_ONLY)
                 self.assertIs(parameter.default, False)
+        # the parts a serialize writes: the same three flags on the three shapes, keyword-only, True
         for function in (Mesh.serialize, NurbsCurve.serialize, NurbsSurface.serialize):
-            with self.subTest(f"{function.__qualname__} include_uvs"):
-                parameter = inspect.signature(function).parameters["include_uvs"]
-                self.assertEqual(parameter.kind, inspect.Parameter.KEYWORD_ONLY)
+            for flag in ("uvs", "normals", "colors"):
+                with self.subTest(f"{function.__qualname__} {flag}"):
+                    parameter = inspect.signature(function).parameters[flag]
+                    self.assertEqual(parameter.kind, inspect.Parameter.KEYWORD_ONLY)
+                    self.assertIs(parameter.default, True)
 
     def test_a_bool_by_position_is_a_type_error(self):
         cube, crv, plane = self.nodes()
@@ -192,7 +195,7 @@ class TestTheShapeSpaceKeyword(_Case):
             ("Mesh.get_uv_at_point", lambda: cube.get_uv_at_point((0, 0, 0), None, True)),
             ("Mesh.get_vertex_normals", lambda: cube.get_vertex_normals(False, True)),
             ("Mesh.serialize", lambda: cube.serialize(True)),
-            ("Mesh.serialize include_uvs", lambda: cube.serialize(True, False)),
+            ("Mesh.serialize uvs", lambda: cube.serialize(True, False)),
             ("Mesh.save", lambda: cube.save(self.path("m.npz"), None, True)),
             ("Mesh('x').load", lambda: cube.load(paths[0], None, True)),
             ("NurbsCurve.get_points", lambda: crv.get_points(True)),
@@ -310,14 +313,14 @@ class TestAMeshsDataIsObjectSpace(_Case):
         np.testing.assert_array_equal(data.points, _xyz(fn.getPoints(OBJECT)))
         np.testing.assert_array_equal(np.asarray(data.normals), _xyz(fn.getNormals(OBJECT)))
         self.assertEqual((data.uuid, data.parent_uuid), (_uuid(self.cube), _uuid(self.cube.get_parent())))
-        world = self.cube.serialize(world_space=True, include_uvs=False)
+        world = self.cube.serialize(world_space=True, uvs=False)
         np.testing.assert_array_equal(world.points, _xyz(fn.getPoints(WORLD)))
         self.assertEqual((world.uuid, world.parent_uuid), (_uuid(self.cube), None))
 
     def test_the_parent_is_read_through_the_shape_s_path(self):
         """No cmds.getAttr: a geometry plug's get() reads none (test_class_attribute)."""
         with mock.patch.object(cmds, "getAttr", wraps=cmds.getAttr) as get_attr:
-            data = self.cube.serialize(world_space=False, include_uvs=False)
+            data = self.cube.serialize(world_space=False, uvs=False)
         get_attr.assert_not_called()
         self.assertEqual(data.parent_uuid, _uuid(self.cube.get_parent()))
 
@@ -359,7 +362,7 @@ class TestPlacement(_Case):
     def test_a_transform_the_scene_lacks_sits_at_identity(self):
         for label, node in (("cube", self.cube), ("curve", self.curve)):
             with self.subTest(label):
-                data  = node.serialize(include_uvs=False)
+                data  = node.serialize(uvs=False)
                 local = _local(node)
                 cmds.delete(node.get_parent().get_long_name())
                 for world_space in (False, True):
@@ -372,7 +375,7 @@ class TestPlacement(_Case):
 
         for label, node in (("cube", self.cube), ("curve", self.curve)):
             with self.subTest(label):
-                data  = node.serialize(include_uvs=False)
+                data  = node.serialize(uvs=False)
                 under = TransformData("under", uuid=data.parent_uuid, translate=[10.0, 0.0, 0.0])
                 rig   = HierarchyData([under])
                 made  = type(node).create(data, hierarchy=rig)
@@ -390,7 +393,7 @@ class TestPlacement(_Case):
         from cgmath.hierarchy import HierarchyData, TransformData
 
         path  = self.cube.save(self.path("cube.npz"))
-        data  = self.cube.serialize(include_uvs=False)
+        data  = self.cube.serialize(uvs=False)
         under = TransformData("under", uuid=data.parent_uuid, translate=[0.0, 10.0, 0.0])
         copy  = Mesh.load(path, name="copy")
         copy.load(path, world_space=True, hierarchy=HierarchyData([under]))
@@ -411,7 +414,7 @@ class TestPlacement(_Case):
     def test_an_instanced_transform_is_refused(self):
         grp = cmds.group(self.cube.get_parent().get_long_name(), name="grp")
         cmds.instance(grp, name="grp_copy")
-        data    = self.cube.serialize(include_uvs=False)
+        data    = self.cube.serialize(uvs=False)
         refusal = r"^Mesh\.create\(\): the data sits under '.*', which is instanced \(2 paths\), so its points have no one place in the world; give hierarchy=, or serialize the shape in world space$"
         before  = cmds.ls()
         for world_space in (False, True):
@@ -422,7 +425,7 @@ class TestPlacement(_Case):
         target = cmds.createNode("transform", name="target")
         under  = Mesh.create(data, transform=target)   # no placement to read: the points as its own
         np.testing.assert_array_equal(_local(under), _local(self.cube))
-        world = self.cube.serialize(world_space=True, include_uvs=False)
+        world = self.cube.serialize(world_space=True, uvs=False)
         np.testing.assert_array_equal(_world_matrix(Mesh.create(world).get_parent()), np.eye(4))
 
 
