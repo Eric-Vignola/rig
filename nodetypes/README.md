@@ -379,7 +379,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that); a `cgmath.render.Renderable` (one of `scene.renderables()`) stands for its mesh with its UV sets, under the scene node holding its `parent_uuid` (below). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
 | `NurbsCurve.create(points_or_NurbsCurveData, degree=, kv=, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `NurbsCurveData` brings its own and sits under the transform its `parent_uuid` names, as a `MeshData` does (it holds no name: `curve<N>`, or `name=`). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `NurbsSurface.create(data, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `NurbsSurfaceData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; placed as a curve's, no name of its own). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
-| `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
+| `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete, and its `name` names the node unless `name=` does. A `Renderable` alone binds its skin to its mesh by uuid, after a geometry to that geometry (below) |
 | `BlendShape.create(*geometries_or_morphs, deformer=None, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags, then the targets of a `MorphData` or a `MorphList` (`set_target_data`: a morph's `at` below or above 1 an in-between), each new target at its morph's weight, one undo step; a `Renderable` gives its `item.morphs` and, with no geometry given, its mesh by uuid (below). Morphs of one deformer name the node unless `name=` does; morphs of two or more are a `ValueError` unless `deformer=` picks one. A morph with no name, with a name Maya refuses or at a weight of a fourth decimal, is a `ValueError` before anything is made |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
 | `Blinn.create(name=, ...)`, `Material.create(type=, name=, ...)` | `cmds.shadingNode(asShader=True)`, its `<shader>SG` engine and materialInfo, out of a scope unless `container=True` |
@@ -894,6 +894,18 @@ shapes by `at`, with the weight, the node's name as `deformer` and the mesh's
 uuid; a list of one mesh takes records of that mesh alone (a morph appended
 gives `mesh_uuid=` the list's). A target a `set_target_data` or a `load` adds
 takes its morph's weight; one it sets keeps its own.
+
+**A `Renderable`'s skin binds its mesh to its joints by uuid.** `SkinCluster.create(item)`
+binds `item.skin` to the scene node holding its mesh's uuid; `SkinCluster.create(mesh, item)`
+to `mesh`, which wins. Each influence, a joint name in the data, is the scene
+node holding the uuid of its node in `item.joints` (the joint
+`Transform.create_hierarchy(scene.hierarchy)` made), else the joint of that
+name: a second copy of a scene (`scene.renew_uuids()` first) binds to its own
+joints, though their short names repeat the first copy's. The skin's `name`
+names the node, else `<transform>_skincluster`; `serialize` writes the
+`mesh_uuid` of the shape it deforms. An item with no skin, or a mesh no node
+holds, is a `ValueError`; an item with influences of its own, or a geometry
+with none, a `TypeError`; all before anything is made.
 `serialize`'s flags are `bool`s too: `uvs`, `normals`, `colors`, anything
 else a `TypeError` before anything is read.
 

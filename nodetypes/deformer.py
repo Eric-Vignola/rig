@@ -15,6 +15,7 @@ import fnmatch
 import re
 
 from maya import cmds
+from maya.api import OpenMaya
 from rig.nodetypes._base import _cast, _name_of
 from rig.nodetypes.dg_node import DGNode
 
@@ -67,6 +68,14 @@ class Deformer(DGNode):
         TODO support components
         """
         return [_cast(x) for x in cmds.deformer(_name_of(self), query=True, geometry=True)]
+
+    def _geometry_uuid(self) -> str | None:
+        """The uuid of the shape this deformer deforms (its first geometry), the
+        ``mesh_uuid`` its cgmath data names; None for none."""
+        geoms = self.get_geometries()
+        if not geoms:
+            return None
+        return OpenMaya.MFnDependencyNode(type(geoms[0])._raw_get_mobject(geoms[0])).uuid().asString()
 
     def get_original_geometries(self) -> list[DGNode]:
         """Returns a list of original geometry objects (pre-deformation)."""

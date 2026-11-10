@@ -242,14 +242,6 @@ class BlendShape(Deformer):
         items = groups.elementByLogicalIndex(index).child(fn.attribute("inputTargetItem"))
         return sorted(items.getExistingArrayAttributeIndices())
 
-    def _base_uuid(self) -> str | None:
-        """The uuid of the mesh this blendShape deforms (its first geometry), a morph's
-        ``mesh_uuid``; None for none."""
-        geoms = self.get_geometries()
-        if not geoms:
-            return None
-        return OpenMaya.MFnDependencyNode(type(geoms[0])._raw_get_mobject(geoms[0])).uuid().asString()
-
     def get_target_count(self) -> int:
         """Returns the number of targets"""
         weight = self.find_attr("weight")
@@ -423,7 +415,7 @@ class BlendShape(Deformer):
         target_data.weight    = float(self.get_target_weight_attr(target).get())
         target_data.at        = _at_of(_item_of(at))
         target_data.deformer  = _name_of(self)
-        target_data.mesh_uuid = self._base_uuid()
+        target_data.mesh_uuid = self._geometry_uuid()
         return target_data
 
     def _get_target_data(self, target, tolerance, neighbors, original_mesh_data, at) -> MorphData:
@@ -612,7 +604,7 @@ class BlendShape(Deformer):
         regex       = re.compile(r"|".join([rf"^{_name_of(x)}$" for x in names])) if names else None
         weight_attr = self.find_attr("weight")
         org_mesh    = self.get_original_geometries()
-        mesh_uuid   = self._base_uuid()
+        mesh_uuid   = self._geometry_uuid()
         deformer    = _name_of(self)
 
         # if there is an original mesh, use it to compute target data, in its

@@ -154,16 +154,26 @@ class SkinCluster(Deformer):
     # --- creation
 
     @classmethod
-    def _create(cls, geom: str, influences: _INF_TYPE | SkinData, **kwargs) -> str:
+    def _create(cls, geom: str, influences: _INF_TYPE | SkinData | None = None, **kwargs) -> str:
         """[Internal] Creates a skin cluster node and return its name.
 
         Args:
-            geom: A geometry to create the skincluster on.
+            geom: A geometry to create the skincluster on. Or a cgmath
+                Renderable (``scene.renderables()``) alone: its ``item.skin`` on
+                the scene node holding ``item.mesh.uuid`` (the shape a
+                ``Mesh.create(item)`` made).
             influences: A list of influence object names, or a SkinData object.
                 If a SkinData is given, its influences are used to create the
-                skincluster and its weights are applied immediately after.
+                skincluster and its weights are applied immediately after. Or a
+                Renderable, its ``item.skin`` on `geom`, which wins over the
+                uuid (the user's rule: an explicit target supersedes it).
             kwargs: the ``_CREATE_FLAGS`` given to ``create``, for
                 cmds.skinCluster().
+
+        A Renderable's influences are its skin's joint names, each the scene
+        node holding the uuid of its node in ``item.joints`` (the joint a
+        ``Transform.create_hierarchy`` of the scene made), else the joint of that
+        name. A SkinData's ``name`` names the node unless ``name=`` does.
 
         Returns:
             Name of the created skincluster node.
@@ -173,15 +183,22 @@ class SkinCluster(Deformer):
 
         Raises:
             ValueError: before any edit (the current skincluster is kept), when
-                a SkinData's weights are not one per point per influence.
+                a SkinData's weights are not one per point per influence, a
+                Renderable holds no skin, or no scene node holds its mesh's
+                uuid.
+            TypeError: before any edit, no influences, or a Renderable with
+                influences of its own.
         """
         from cgmath.geometry import SkinData
+
+        geom, influences, default_name = _renderable_inputs("SkinCluster.create", geom, influences)
 
         # if a SkinData is given, create from its influences and apply its
         # weights once the node exists
         skin_data = influences if isinstance(influences, SkinData) else None
         if skin_data is not None:
-            influences = skin_data.influences
+            influences   = skin_data.influences
+            default_name = skin_data.name or default_name
 
         influences = cls._sanitize_influences(influences)
 
@@ -203,7 +220,7 @@ class SkinCluster(Deformer):
         # set some default kwargs
         for ln, sn, dv in (
             ("toSelectedBones", "tsb", True),
-            ("name", "n", get_short_name(geom) + "_skincluster"),
+            ("name", "n", default_name or get_short_name(geom) + "_skincluster"),
         ):
             kwargs[ln] = kwargs.get(ln, kwargs.get(sn, dv))
             if sn in kwargs:
@@ -617,7 +634,8 @@ class SkinCluster(Deformer):
                 and removed unused influences.
 
         Returns:
-            A SkinData object.
+            A SkinData object, its ``mesh_uuid`` the uuid of the shape it
+            deforms (the mesh whose points its rows are).
         """
         from cgmath.geometry import SkinData
 
@@ -625,7 +643,7 @@ class SkinCluster(Deformer):
             x.fullPathName() if full_path else x.partialPathName()
             for x in type(self)._raw_get_fn_set(self).influenceObjects()
         ]
-        data = SkinData(influences=infs, weights=self.get_weights())
+        data = SkinData(influences=infs, weights=self.get_weights(), mesh_uuid=self._geometry_uuid())
 
         if optimize:
             data.prune(min_value=0.0001)
@@ -762,6 +780,54 @@ class SkinCluster(Deformer):
             raise RuntimeError(
                 f"Inpainting failed. Solution needs more than {iterations} iterations."
             )
+
+
+def _renderable_inputs(method: str, geom, influences) -> tuple:
+    """`SkinCluster.create`'s geometry and influences, a Renderable's resolved: (geometry,
+    influences or a SkinData, the default name or None). ``create(item)`` binds ``item.skin``
+    to the scene node holding ``item.mesh.uuid``; ``create(mesh, item)`` to `mesh`, which wins
+    over the uuid. Checked before any edit: no influences, or a Renderable with influences of
+    its own, a TypeError; a Renderable with no skin, or a mesh no node holds, a ValueError."""
+    if _files.is_renderable(influences):
+        item = influences
+    elif _files.is_renderable(geom):
+        item = geom
+        if influences is not None:
+            raise TypeError(
+                f"{method}(item, ...): a Renderable carries its skin's influences, so it goes alone, "
+                f"or after the mesh it binds: SkinCluster.create(mesh, item)"
+            )
+    elif influences is None:
+        raise TypeError(
+            f"{method}({_name_of(geom)!r}): a geometry takes its influences, or a SkinData: "
+            f"SkinCluster.create(geom, influences); a Renderable goes alone: SkinCluster.create(item)"
+        )
+    else:
+        return geom, influences, None
+
+    if item.skin is None:
+        raise ValueError(f"{method}: the Renderable {item.name!r} holds no skin (item.skin is None): nothing to bind")
+    name = None
+    if item is geom:
+        uuid = getattr(item.mesh, "uuid", None)
+        geom = _files.node_of_uuid(uuid)
+        if geom is None:
+            raise ValueError(
+                f"{method}: no scene node holds the uuid {uuid} of the Renderable {item.name!r}'s mesh: "
+                f"Mesh.create(item) builds it, or give the mesh: SkinCluster.create(mesh, item)"
+            )
+        parent = cmds.listRelatives(geom, parent=True, fullPath=True)
+        name   = get_short_name(parent[0] if parent else geom) + "_skincluster"
+
+    # each influence the scene node of its joint's uuid, else its name
+    nodes = {}
+    for joint in item.joints:
+        node = _files.node_of_uuid(getattr(joint, "uuid", None))
+        if node is not None:
+            nodes.setdefault(joint.name, node)
+    skin            = item.skin.copy()
+    skin.influences = [nodes.get(name_, name_) for name_ in item.skin.influences]
+    return geom, skin, name
 
 
 def _bind_point_count(geom: str) -> int | None:

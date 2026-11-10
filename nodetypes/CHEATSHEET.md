@@ -1540,6 +1540,31 @@ copied = third.get_shape().get_deformers()[0]
 print(copied.get_influence_objects(), copied.get_weights()[:, 1])              # [Joint("j1"), Joint("j2")] [0. 0. 0. 0. 1. 1. 1. 1.]
 ```
 
+`create` takes one mesh of a `cgmath` `Scene` too, a `Renderable`: its
+`item.skin` on the node holding its mesh's uuid, or on a mesh given, which
+wins; each influence the joint holding its node's uuid, else its name:
+
+```python
+from cgmath.geometry import SkinData
+from cgmath.hierarchy import TransformData
+from cgmath.render import Scene
+
+src  = cmds.polyCube(name="src", ch=False)[0]
+data = Mesh(src).serialize(uvs=False)
+cmds.delete(src)                                              # its uuid is free
+data.name, data.parent_uuid = "hero_geo", None
+scene = Scene("hero")
+hip   = TransformData("hip", node_type="joint")
+scene.add(hip)                                                # a node takes its uuid as it is added
+scene.add(TransformData("knee", node_type="joint", parent_uuid=hip.uuid, translate=(0, 2, 0)), data)
+scene.add(SkinData(weights=np.tile([0.5, 0.5], (8, 1)), influences=["hip", "knee"], name="leg_skin", mesh_uuid=data.uuid))
+item = scene.renderables()[0]
+Transform.create_hierarchy(scene.hierarchy)                   # the joints, with the data's uuids
+Mesh.create(item)
+leg = SkinCluster.create(item)                                # found by the mesh's uuid, named after the data
+print(repr(leg), leg.get_influence_objects(), leg.serialize().mesh_uuid == data.uuid)  # SkinCluster("leg_skin") [Joint("hip"), Joint("knee")] True
+```
+
 ---
 
 ## 12. `BlendShape`
