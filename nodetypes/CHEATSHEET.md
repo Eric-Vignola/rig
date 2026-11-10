@@ -1040,6 +1040,51 @@ print(rebuilt.get_shading_engines())                                            
 print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                        # 12 -- the data's normals bring back the cube's hard edges
 ```
 
+`create` also takes one mesh of a `cgmath` `Scene`, a `Renderable`
+(`scene.renderables()`: the mesh with its node, UV sets, skin, materials and
+targets, joined by uuid): the mesh with its UV sets, the shape under the scene
+node its `parent_uuid` names once `create_hierarchy` has built the nodes (they
+take the data's uuids), else a new transform where the scene's node is, else at
+identity; the shape takes the mesh's uuid. `uvs=` and `hierarchy=` with an item
+are a `TypeError`; `transform=` wins over the node.
+
+```python
+from cgmath.hierarchy import TransformData
+from cgmath.render import Scene
+
+src = cmds.polyCube(name="src", ch=False)[0]
+body, sets = Mesh(src).serialize()
+cmds.delete(src)                                        # the data outlives its source: its uuid is free
+scene = Scene("hero")
+grp   = TransformData("grp", translate=(0, 10, 0))
+scene.add(grp)
+hero = TransformData("hero", parent_uuid=grp.uuid, translate=(5, 0, 0), rotate=(0, 90, 0))
+scene.add(hero)
+body.name        = "hero_geo"
+body.parent_uuid = hero.uuid                            # the mesh sits on hero
+for uv in sets:
+    uv.mesh_uuid = body.uuid
+scene.add(body, *sets)
+item = scene.renderables()[0]
+print(item.name, item.node.name, len(item.uvs), item.skin, len(item.materials))   # hero_geo hero 1 None 0
+
+nodes = Transform.create_hierarchy(scene.hierarchy)  # grp and hero, with the data's uuids
+made  = Mesh.create(item)                            # the shape under hero, its UV set, the mesh's uuid
+print(repr(made), made.get_parent().get_long_name(), made.get_uuid() == body.uuid, made.get_uv_sets())  # Mesh("heroShape") |grp|hero True ('map1',)
+print(cmds.xform("hero", query=True, translation=True, worldSpace=True))                                # [5.0, 10.0, 0.0]
+cmds.delete("grp")
+alone = Mesh.create(item)                              # hero is not in Maya: a new transform where the scene puts it
+print(repr(alone), cmds.xform("hero_geo", query=True, translation=True, worldSpace=True))   # Mesh("hero_geoShape") [5.0, 10.0, 0.0]
+try:
+    Mesh.create(item)                                  # the mesh's uuid is alone's now
+except ValueError as e:
+    print(str(e).split(" has the uuid")[0])            # Mesh.create(): the MeshData 'hero_geo'
+scene.renew_uuids()                                    # a second copy: fresh uuids on every node and shape, the links rewired
+twin = Mesh.create(item)
+print(twin.get_uuid() == body.uuid, str(twin.get_parent()))   # True hero_geo1
+cmds.delete("hero_geo", "hero_geo1")
+```
+
 `transform=` makes the shape alone, under any node derived from transform
 that exists (a transform, a joint, an `ikHandle`, a constraint ...): no
 transform is made. The shape is named `<transform>Shape` in the target's

@@ -376,7 +376,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')`. `Transform.create(transform_data, uuids=True)` builds the data's node, with its uuid (below) |
-| `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
+| `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that); a `cgmath.render.Renderable` (one of `scene.renderables()`) stands for its mesh with its UV sets, under the scene node holding its `parent_uuid` (below). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
 | `NurbsCurve.create(points_or_NurbsCurveData, degree=, kv=, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `NurbsCurveData` brings its own and sits under the transform its `parent_uuid` names, as a `MeshData` does (it holds no name: `curve<N>`, or `name=`). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `NurbsSurface.create(data, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `NurbsSurfaceData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; placed as a curve's, no name of its own). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
@@ -856,6 +856,26 @@ whose data holds the source's uuids (`Transform.create_hierarchy(Node("root").se
 uuid (a bare `TransformData`, a curve's points) leaves Maya's too. The flag is
 a `bool` (anything else is a `TypeError` before anything is read or made); a
 node's own `load`, an update, does not take it.
+
+**A `Renderable` builds its mesh where its node is.** A cgmath `Scene` (the
+fbx bundle: `Scene.load_fbx(path)`) joins each mesh with what places, deforms
+and shades it: `scene.renderables()` gives one `Renderable` a mesh, a view with
+`mesh`, `node`, `uvs`, `skin`, `joints`, `materials`, `morphs` and a `name` (the
+mesh's, else its node's). `Mesh.create(item)` builds `item.mesh` with
+`item.uvs` as the UV sets and gives the shape the mesh's uuid, so a later
+create finds the mesh by it. Where it goes follows the links: build the
+scene's nodes first, `Transform.create_hierarchy(scene.hierarchy)`, and they
+hold the data's uuids, so the shape goes under the node `item.mesh.parent_uuid`
+names (as `transform=` puts a shape: named `<node>Shape`, the points its own);
+when the scene holds the node and Maya does not, a new transform named after
+the item (its mesh's name, else its node's) stands at the node's world matrix;
+a mesh on no node sits at identity. `transform=` wins over the node; `uvs=` and `hierarchy=` with an
+item are a `TypeError` (the item carries them); `name=`, `normals=`,
+`colors=`, `uuids=`, `world_space=` and the attribute keywords apply as for a
+`MeshData`. The item's materials, skin, joints and blend shape targets are
+left alone (the shape joins `initialShadingGroup`). A second copy of the
+scene takes `scene.renew_uuids()` first, as the uuid rule says; `Mesh.load`
+takes no item (a Renderable is no file).
 `serialize`'s flags are `bool`s too: `uvs`, `normals`, `colors`, anything
 else a `TypeError` before anything is read.
 

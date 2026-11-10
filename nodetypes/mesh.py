@@ -286,7 +286,7 @@ class Mesh(Geometry):
 
     # the keywords ``_create`` takes (the restore flags among them); ``create``'s
     # other keywords are the mesh's attributes
-    _CREATE_FLAGS = frozenset({"name", "uvs", "transform", "world_space", "hierarchy", "uuids", *_RESTORE_FLAGS})
+    _CREATE_FLAGS = frozenset({"name", "uvs", "transform", "world_space", "hierarchy", "uuids", "_placed", *_RESTORE_FLAGS})
 
     _DEFINE_REFUSED = (
         "a mesh is built from its data: Mesh.create(mesh_data, name='x') or "
@@ -320,16 +320,18 @@ class Mesh(Geometry):
         world_space: bool                     = False,
         hierarchy:   Any                      = None,
         uuids:       bool                     = True,
+        _placed:     Any                      = None,
         **kwargs,
     ) -> str:
         """[Internal] Builds the mesh of `mesh_data` with the UV sets of `uvs` (a
         list, or None), its shading when `normals`, its colours when `colors`,
         its points taken in `world_space` or not (placed through `hierarchy`
-        when given), the shape given the data's uuid when `uuids`, and returns
+        when given, or at `_placed`, the ``(4, 4)`` a Renderable's node gives
+        `create`), the shape given the data's uuid when `uuids`, and returns
         the transform's name; with `transform` (the DAG path of the transform
         `create` checked), the shape alone under it, and returns the shape's
         full path. `Mesh.create` wraps it in its undo chunk; see there."""
-        return _create_mesh(mesh_data, name, uvs, normals, colors, transform, world_space, hierarchy, uuids)
+        return _create_mesh(mesh_data, name, uvs, normals, colors, transform, world_space, hierarchy, uuids, _placed)
 
     @classmethod
     def create(
@@ -347,7 +349,8 @@ class Mesh(Geometry):
         uuids:       bool                                     = True,
         **kwargs,
     ) -> "Mesh":
-        """Creates a mesh object from a mesh data object.
+        """Creates a mesh object from a mesh data object, or from one mesh of a
+        cgmath Scene (a ``Renderable``).
 
         Args:
             mesh_data: A MeshData object: its points are the new shape's own,
@@ -355,7 +358,20 @@ class Mesh(Geometry):
                 matrix of the transform its ``parent_uuid`` names, found in
                 ``hierarchy=`` or in the scene; the identity for world-space
                 data: `serialize` writes it), so the mesh lands where the data
-                puts it in the world.
+                puts it in the world. Or a ``cgmath.render.Renderable``, one of
+                ``scene.renderables()``: its ``mesh`` is built with its ``uvs``
+                as the UV sets, named ``item.name`` (the mesh's name, else its
+                node's) unless ``name=`` says, and the shape goes under the
+                scene node holding ``item.mesh.parent_uuid`` (the node a
+                `Transform.create_hierarchy` of the same scene made: the nodes
+                take the data's uuids), as ``transform=`` puts it; when the
+                scene holds that node and Maya does not, a new transform at
+                the node's world matrix; with no node, at identity. Its
+                materials, skin, joints and blend shape targets are left
+                alone (the shape joins ``initialShadingGroup``; the deformers
+                are their classes' creates). ``uvs=`` or ``hierarchy=`` given
+                with an item is a TypeError (the item carries them);
+                ``transform=`` wins over the node; the other keywords apply.
             uvs: One or more UVData objects (a UVData, a UVList or a list; what
                 `serialize` returns beside the MeshData). The first one fills
                 the default set (``map1``, renamed to its name when that
@@ -537,6 +553,9 @@ class Mesh(Geometry):
         colors      = _restore_flag("Mesh.create()", "colors", colors)
         world_space = _files.space_flag("Mesh.create()", world_space, _files.CREATING_SPACE)
         uuids       = _files.uuid_flag("Mesh.create()", uuids)
+        placed      = None
+        if _files.is_renderable(mesh_data):
+            mesh_data, uvs, name, transform, placed = _renderable_inputs(mesh_data, uvs, name, transform, hierarchy)
         if transform is not None:
             transform = _shape_target("Mesh.create()", transform, world_space)
         if uvs:
@@ -547,7 +566,8 @@ class Mesh(Geometry):
         with _undo_chunk("rig.Mesh.create"):
             return super().create(
                 mesh_data, uvs=uvs, name=name, container=container, normals=normals, colors=colors,
-                transform=transform, world_space=world_space, hierarchy=hierarchy, uuids=uuids, **kwargs
+                transform=transform, world_space=world_space, hierarchy=hierarchy, uuids=uuids, _placed=placed,
+                **kwargs
             )
 
     # --- mesh geometry data methods
@@ -2682,9 +2702,12 @@ def _create_mesh(
     world_space: bool                     = False,
     hierarchy:   Any                      = None,
     uuids:       bool                     = True,
+    placed:      Any                      = None,
 ) -> str:
     """`Mesh._create`'s body: the ride. Returns the transform's name, or with
-    `target` the shape's full path.
+    `target` the shape's full path. `placed` is where the data sits when the
+    caller knows it (a Renderable's node, ``(4, 4)``): it stands in for
+    `_data_placement` in steps 1 and 5.
 
     In this order (`Mesh.create` holds the one undo chunk around it):
 
@@ -2729,8 +2752,8 @@ def _create_mesh(
     space  = None
     if world_space:
         # where the data puts its points in the world, in the target's space if any; the normals follow
-        placed = _data_placement("Mesh.create()", mesh_data, hierarchy)
-        space  = _target_space("Mesh.create()", placed, target)
+        sits   = placed if placed is not None else _data_placement("Mesh.create()", mesh_data, hierarchy)
+        space  = _target_space("Mesh.create()", sits, target)
         points = np.asarray(points, dtype=np.float64) @ space[:3, :3] + space[3, :3]
     shading = _shading_of(mesh_data, holes, space) if normals else None
     # the data's corners (a holed face's hole corners too, which `indices` above leaves out)
@@ -2790,7 +2813,8 @@ def _create_mesh(
             # the shape follows the transform (polySurfaceShape<N> -> <name>Shape)
             xform = _cmds_edit.rename(xform, name)
         if not world_space:
-            matrix = _data_placement("Mesh.create()", mesh_data, hierarchy).ravel()
+            sits   = placed if placed is not None else _data_placement("Mesh.create()", mesh_data, hierarchy)
+            matrix = np.asarray(sits, dtype=np.float64).ravel()
             if not np.array_equal(matrix, _IDENTITY_16):
                 # a new transform is at rest already (world-space data sits at identity)
                 _cmds_edit.xform(xform, matrix=matrix)
@@ -2800,6 +2824,31 @@ def _create_mesh(
         _discard(handle, moved)
         raise
     return xform
+
+
+def _renderable_inputs(item, uvs, name, transform, hierarchy) -> tuple:
+    """`Mesh.create(item)`'s inputs from the ``cgmath.render.Renderable`` `item`:
+    ``(mesh, uv sets, name, transform, placed)``. The mesh is ``item.mesh``, the
+    sets ``item.uvs``; where it goes: `transform` as given (the target wins),
+    else the scene node holding ``item.mesh.parent_uuid`` (`_files.node_of_uuid`:
+    the shape goes under it, named ``<node>Shape`` unless `name` says, as under
+    ``transform=``), else a new transform named ``item.name`` (the mesh's name,
+    else its node's) unless `name` says, at ``placed``, the node's world matrix
+    when the scene holds the node and Maya does not, else at identity (``placed``
+    None). `uvs` or `hierarchy` given with an item is a TypeError: the item
+    carries them."""
+    if uvs is not None:
+        raise TypeError("Mesh.create(): a Renderable carries its mesh's UV sets (item.uvs): uvs= goes with a MeshData")
+    if hierarchy is not None:
+        raise TypeError("Mesh.create(): a Renderable carries its node (item.node): hierarchy= goes with a MeshData")
+    placed = None
+    if transform is None:
+        transform = _files.node_of_uuid(getattr(item.mesh, "parent_uuid", None))
+    if transform is None:
+        name = item.name if name is None else name
+        if item.node is not None:
+            placed = np.asarray(item.node.world_matrix, dtype=np.float64).reshape(4, 4)
+    return item.mesh, list(item.uvs), name, transform, placed
 
 
 def _read_mesh_files(method: str, mesh, uvs) -> tuple:

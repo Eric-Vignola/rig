@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import warnings
 from types import FunctionType, MethodType
 from typing import Iterable
@@ -164,6 +165,25 @@ def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
                 f"for a second copy give the data fresh uuids first ({renew}, or a Scene's renew_uuids()); "
                 f"uuids=False keeps Maya's own"
             )
+
+
+def node_of_uuid(uuid) -> str | None:
+    """The long name of the scene node holding `uuid`, the Maya side of a cgmath link (a shape's
+    ``parent_uuid``: the transform it sits under); None for no uuid, or none holding it."""
+    if uuid is None:
+        return None
+    from maya import cmds
+
+    found = cmds.ls(str(uuid).upper(), long=True)
+    return found[0] if found else None
+
+
+def is_renderable(data) -> bool:
+    """True for a ``cgmath.render.Renderable``: one mesh of a Scene with what places, deforms and
+    shades it, joined by uuid (``scene.renderables()``). Read from the loaded module only: a
+    Renderable exists only once ``cgmath.render.scene`` is imported, so nothing is imported here."""
+    scene = sys.modules.get("cgmath.render.scene")
+    return scene is not None and isinstance(data, scene.Renderable)
 
 
 def adopt_uuid(node: str, uuid) -> None:
