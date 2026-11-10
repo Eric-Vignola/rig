@@ -23,7 +23,7 @@ from rig._internal import callbacks
 from rig._internal import memoize as memoize_module
 from rig._internal.memoize import memoize
 from rig.nodetypes import _base
-from rig._tests._base import MayaTestCase, is_standalone
+from rig._tests._base import MayaTestCase, child_mayapy
 
 MEMO  = memoize_module.__name__
 BASE  = _base.__name__
@@ -408,9 +408,7 @@ class TestPendingRegistration(MayaTestCase):
     def test_import_without_maya_initialised(self):
         # d6ad8b2 crashed mayapy here: adding a scene callback before
         # maya.standalone.initialize() is an access violation
-        if not is_standalone():
-            self.skipTest("needs mayapy to start an uninitialised interpreter")
-        mayapy = sys.executable
+        mayapy = child_mayapy()
         code = (
             "import json, sys\n"
             "try:\n"
@@ -433,7 +431,7 @@ class TestPendingRegistration(MayaTestCase):
         cwd = tempfile.mkdtemp(prefix="rig_noinit_")
         try:
             proc = subprocess.run([mayapy, "-c", code], cwd=cwd, env=env, timeout=300,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         finally:
             shutil.rmtree(cwd, ignore_errors=True)
         output = proc.stdout.decode("utf-8", "replace")

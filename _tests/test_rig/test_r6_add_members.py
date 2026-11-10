@@ -26,7 +26,7 @@ from maya import cmds
 from rig import container
 from rig._internal import container as container_module
 from rig._internal.container import _add_members, _in_a_container
-from rig._tests._base import MayaTestCase, is_standalone
+from rig._tests._base import MayaTestCase, child_mayapy
 
 TOP = container_module.__name__.split(".")[0]
 
@@ -88,8 +88,8 @@ class TestAddMembersCrash(MayaTestCase):
     """The crash before (today's list through maya.cmds) and after (rig's route)."""
 
     def _run(self, cases):
-        mayapy = sys.executable
-        cwd = tempfile.mkdtemp(prefix="rig_r6_s0_")
+        mayapy = child_mayapy()
+        cwd    = tempfile.mkdtemp(prefix="rig_r6_s0_")
         try:
             script = os.path.join(cwd, "case.py")
             with open(script, "w") as fh:
@@ -99,7 +99,7 @@ class TestAddMembersCrash(MayaTestCase):
             env["MAYA_DISABLE_CER"] = "1"  # no crash-report window for the raw cases
             env["TEMP"] = env["TMP"] = cwd  # the crash log and the recovered scene land here
             procs = {
-                case: subprocess.Popen([mayapy, "-u", script, case], cwd=cwd, env=env,
+                case: subprocess.Popen([mayapy, "-u", script, case], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 for case in cases
             }
@@ -113,8 +113,6 @@ class TestAddMembersCrash(MayaTestCase):
             shutil.rmtree(cwd, ignore_errors=True)
 
     def test_list_moving_the_last_member_of_another_container(self):
-        if not is_standalone():
-            self.skipTest("needs mayapy to start a child interpreter")
         out = self._run(["raw_add", "rig_add", "raw_adopt", "rig_adopt"])
         expected = {
             "add": {"B": ["f", "o"], "A": []},

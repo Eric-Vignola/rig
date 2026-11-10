@@ -11,6 +11,7 @@ import sys
 import unittest
 
 import rig
+from rig._tests._base import child_mayapy
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "call_site_forms.py")
@@ -25,7 +26,7 @@ def _run(python):
     env["MAYA_DISABLE_CER"] = "1"
     proc = subprocess.run(
         [python, "-I", SCRIPT, BASE], env=env, timeout=300,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
@@ -42,7 +43,7 @@ class TestCallSiteFormsOnEachInterpreter(unittest.TestCase):
         return out
 
     def test_this_interpreter(self):
-        out = self._check(sys.executable, "%d.%d" % sys.version_info[:2])
+        out = self._check(child_mayapy(), "%d.%d" % sys.version_info[:2])
         if sys.version_info[:2] == (3, 11):
             self.assertIn("'LOAD_METHOD': 1", out)
 

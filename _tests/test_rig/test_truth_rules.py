@@ -30,7 +30,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 
@@ -40,7 +39,7 @@ import rig
 from rig import List, Node, Plug, condition, force_nodes
 from rig import functions as rf
 from rig._internal import list as list_module
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, child_mayapy
 
 _VALUE = r"the output of a comparison with a value"
 _PLAIN = r"^a plug has no truth value \('%s'\): read its value with \.get\(\), test for a missing plug with `is None`"
@@ -376,8 +375,8 @@ def _in_own_mayapy(code):
     env["MAYA_DISABLE_CER"] = "1"
     cwd = tempfile.mkdtemp(prefix="rig_truth_")
     try:
-        proc = subprocess.run([sys.executable, "-c", code], cwd=cwd, env=env, timeout=900,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=900,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     finally:
         shutil.rmtree(cwd, ignore_errors=True)
     return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")

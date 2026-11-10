@@ -3,8 +3,9 @@ A unit test case base class that provides shared functionality for Maya unit tes
 
 Vendored from the original ``unittest`` test-harness module, with the two
 environment helpers it needed (``is_standalone`` / ``initialize_standalone``)
-inlined here. Both live in the test tree rather than in :mod:`rig` because
-nothing in the shipped package uses them.
+inlined here, and ``child_mayapy`` for the tests that start a child interpreter.
+They live in the test tree rather than in :mod:`rig` because nothing in the
+shipped package uses them.
 
 Deliberately NOT named ``unittest.py``: test runners put the test directory on
 ``sys.path``, and a local ``unittest`` module would shadow the stdlib one that
@@ -23,7 +24,7 @@ from maya import cmds, standalone
 
 def is_standalone() -> bool:
     """Checking if is a Maya standalone session."""
-    return os.path.basename(sys.executable).startswith("mayapy")
+    return os.path.basename(sys.executable or "").startswith("mayapy")
 
 
 def is_initialized() -> bool:
@@ -36,6 +37,23 @@ def initialize_standalone() -> None:
     """Initialize maya standalone if not already."""
     if is_standalone() and not is_initialized():
         standalone.initialize()
+
+
+def child_mayapy() -> str:
+    """The interpreter a test starts as a child: this one under mayapy; inside Maya,
+    where ``sys.executable`` is ``maya.exe`` and would open another Maya, the mayapy
+    beside it. No mayapy beside it: the test is skipped.
+
+    Start it with ``stdin=subprocess.DEVNULL``: a child inheriting a Maya process's own
+    stdin handle can fail on Windows (``WinError 50``), and no child reads it."""
+    if is_standalone():
+        return sys.executable
+    folder = os.path.dirname(sys.executable or "")
+    for name in ("mayapy.exe", "mayapy"):
+        path = os.path.join(folder, name)
+        if folder and os.path.isfile(path):
+            return path
+    raise unittest.SkipTest(f"no mayapy beside {sys.executable!r} to start a child interpreter")
 
 
 class MayaTestCase(unittest.TestCase):

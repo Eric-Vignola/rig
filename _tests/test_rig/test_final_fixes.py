@@ -35,7 +35,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 from collections import Counter
 from unittest import mock
@@ -50,7 +49,7 @@ from rig.nodetypes import DisplayLayer, ObjectSet, ShadingEngine, Transform
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes._base import Attribute
 from rig.nodetypes import Blinn
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, child_mayapy
 
 
 def _in_own_mayapy(code):
@@ -60,8 +59,8 @@ def _in_own_mayapy(code):
     env["MAYA_DISABLE_CER"] = "1"
     cwd = tempfile.mkdtemp(prefix="rig_final_fixes_")
     try:
-        proc = subprocess.run([sys.executable, "-c", code], cwd=cwd, env=env, timeout=600,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=600,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     finally:
         shutil.rmtree(cwd, ignore_errors=True)
     return (proc.returncode, proc.stdout.decode("utf-8", "replace"),

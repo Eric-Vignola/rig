@@ -52,7 +52,7 @@ from rig.nodetypes import _base
 from rig.nodetypes._base import _name_of
 from rig.nodetypes import Blinn
 from rig.spec import Float
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, child_mayapy
 
 _USED = "this List can no longer be used; build a new List"
 
@@ -407,8 +407,8 @@ def _in_own_mayapy(code):
     env["MAYA_DISABLE_CER"] = "1"
     cwd = tempfile.mkdtemp(prefix="rig_list_rule_")
     try:
-        proc = subprocess.run([sys.executable, "-c", code], cwd=cwd, env=env, timeout=900,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=900,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     finally:
         shutil.rmtree(cwd, ignore_errors=True)
     return (proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace"))

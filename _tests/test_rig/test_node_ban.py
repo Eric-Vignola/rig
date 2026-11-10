@@ -44,7 +44,7 @@ from rig._internal.plug import Plug
 from rig.nodetypes import _base, AnimCurveTL, dg_node, DisplayLayer
 from rig.nodetypes.dg_node import _OLD_NODE_NAMES, DGNode
 from rig.nodetypes.transform import Transform
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, child_mayapy
 
 # read by name, so that on a tree without the ban each test fails on its own
 # (the negative control) instead of the module failing to import
@@ -237,7 +237,6 @@ def _in_own_mayapy(code):
     import json
     import shutil
     import subprocess
-    import sys
 
     env = dict(os.environ)
     # this rig's root only (the test process's whole path breaks mtoa's Qt import)
@@ -245,8 +244,8 @@ def _in_own_mayapy(code):
     env["MAYA_DISABLE_CER"] = "1"
     cwd = tempfile.mkdtemp(prefix="rig_node_ban_")
     try:
-        proc = subprocess.run([sys.executable, "-c", code], cwd=cwd, env=env, timeout=600,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        proc = subprocess.run([child_mayapy(), "-c", code], cwd=cwd, env=env, timeout=600,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     finally:
         shutil.rmtree(cwd, ignore_errors=True)
     output = proc.stdout.decode("utf-8", "replace")

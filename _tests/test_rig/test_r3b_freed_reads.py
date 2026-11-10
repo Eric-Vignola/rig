@@ -28,7 +28,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import traceback
 
@@ -39,7 +38,7 @@ import rig
 from rig import Layer, List, Node, Plug, Tag, skip
 from rig.nodetypes._base import Attribute, _name_of
 from rig.nodetypes._base import Node as _NodeBase
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, child_mayapy
 from rig._tests.test_rig import test_r3b_unowned_plugs as r3b
 
 
@@ -487,8 +486,8 @@ class TestNoFreedReadWithArguments(MayaTestCase):
         env["MAYA_DISABLE_CER"] = "1"
         cwd = tempfile.mkdtemp(prefix="rig_freed_audit_cwd_")
         try:
-            proc = subprocess.run([sys.executable, "-c", _AUDIT], cwd=cwd, env=env, timeout=1200,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.run([child_mayapy(), "-c", _AUDIT], cwd=cwd, env=env, timeout=1200,
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         finally:
             shutil.rmtree(cwd, ignore_errors=True)
         out = proc.stdout.decode("utf-8", "replace")
