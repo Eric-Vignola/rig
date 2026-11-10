@@ -380,7 +380,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 | `NurbsCurve.create(points_or_NurbsCurveData, degree=, kv=, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `NurbsCurveData` brings its own and sits under the transform its `parent_uuid` names, as a `MeshData` does (it holds no name: `curve<N>`, or `name=`). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `NurbsSurface.create(data, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `NurbsSurfaceData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; placed as a curve's, no name of its own). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete |
-| `BlendShape.create(*geometries_or_morphs, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags, then the targets of a `MorphData` or a `MorphList` (`set_target_data`), one undo step; a morph with no name, or with a name Maya refuses, is a `ValueError` before anything is made |
+| `BlendShape.create(*geometries_or_morphs, deformer=None, **flags)` | `cmds.blendShape(frontOfChain=True)` with its create flags, then the targets of a `MorphData` or a `MorphList` (`set_target_data`: a morph's `at` below or above 1 an in-between), each new target at its morph's weight, one undo step; a `Renderable` gives its `item.morphs` and, with no geometry given, its mesh by uuid (below). Morphs of one deformer name the node unless `name=` does; morphs of two or more are a `ValueError` unless `deformer=` picks one. A morph with no name, with a name Maya refuses or at a weight of a fourth decimal, is a `ValueError` before anything is made |
 | `ShadingEngine.create(name=)` | `cmds.sets(renderable=True, noSurfaceShader=True, empty=True)` |
 | `Blinn.create(name=, ...)`, `Material.create(type=, name=, ...)` | `cmds.shadingNode(asShader=True)`, its `<shader>SG` engine and materialInfo, out of a scope unless `container=True` |
 | `DisplayLayer.create(*objects, name=, empty= / noRecurse= / number= / makeCurrent=)` | `cmds.createDisplayLayer`, empty unless objects are given, which join as themselves (`noRecurse`) |
@@ -876,6 +876,24 @@ item are a `TypeError` (the item carries them); `name=`, `normals=`,
 left alone (the shape joins `initialShadingGroup`). A second copy of the
 scene takes `scene.renew_uuids()` first, as the uuid rule says; `Mesh.load`
 takes no item (a Renderable is no file).
+
+**A `Renderable`'s targets find their mesh by its uuid.** `BlendShape.create(item)`
+makes a blendShape of `item.morphs` on the scene node holding its mesh's uuid
+(the shape `Mesh.create(item)` made); `BlendShape.create(mesh, item)` puts it on
+`mesh`, which wins over the uuid. A mesh no node holds, or an item with no
+targets, is a `ValueError` before anything is made. A target's shapes are its
+morphs of one name: `at` 1 the full target (Maya's `inputTargetItem[6000]`),
+another an in-between there (`5000 + 1000 × at`, three decimals as Maya holds
+them), each new target at its morph's `weight`. One blendShape takes one
+deformer's targets: the morphs' `deformer` names the node unless `name=` does,
+and morphs of two (Maya's fbx import deforms a mesh by its last blendShape
+alone, so cgmath's `save_fbx` refuses them) are a `ValueError` unless
+`deformer=` picks one, a create each. `serialize` gives the targets back as a
+`MorphList` of the mesh (`mesh_uuid`), target by target and each target's
+shapes by `at`, with the weight, the node's name as `deformer` and the mesh's
+uuid; a list of one mesh takes records of that mesh alone (a morph appended
+gives `mesh_uuid=` the list's). A target a `set_target_data` or a `load` adds
+takes its morph's weight; one it sets keeps its own.
 `serialize`'s flags are `bool`s too: `uvs`, `normals`, `colors`, anything
 else a `TypeError` before anything is read.
 
@@ -1230,8 +1248,11 @@ Verified on Maya 2025; not bugs to work around blindly.
   skinCluster's settings (`skinningMethod`, `maximumInfluences`,
   `normalizeWeights`, `bindPreMatrix` connections: pass them to `load` again)
   and its bind pose (a load binds at the joints' current pose, as
-  `cmds.skinCluster` does); a blendShape's weights (they come back 0), its
-  in-betweens and its live target meshes (they come back as offsets); a
+  `cmds.skinCluster` does); a blendShape's live target meshes (they come
+  back as offsets), its shapes at weight 0 or below (left out, with a
+  warning) and what Maya's `-inBetween` writes beside an in-between in
+  `inbetweenInfoGroup` (its Shape Editor entry: the deformation is Maya's own
+  without it, measured); a
   hierarchy's constraints and user attributes that hold geometry (both skipped
   with a warning), connections, and shapes other than locators.
 - **A mesh's shading comes back as normals, and an edge's smoothing flag where

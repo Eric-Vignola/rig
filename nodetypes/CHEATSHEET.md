@@ -1600,7 +1600,7 @@ print(morph.find_attr("weight")[:], morph.weight[:])     # [Attribute("morph2.sm
 ```
 
 To and from a `cgmath` file: `save` writes the `MorphList` (each target's
-sparse offsets and its name; not its weight nor its in-betweens).
+sparse offsets, its in-betweens, its name and its weight).
 `BlendShape.load(path, base, ...)` from the class creates, as `create` does (a
 second load stacks a second blendShape); a blendShape's own `load(path)` sets
 the file's targets by name in place (a missing one added, its others kept).
@@ -1620,6 +1620,42 @@ try:
     BlendShape.load(base, saved)                                  # the geometry first
 except TypeError as e:
     print(str(e).split(":")[0])                                   # BlendShape.load(targets, geometry) takes the file first, then the geometry
+```
+
+A morph's `at` is the weight its shape is reached at: 1 the full target, else
+an in-between of the target of its name (`inputTargetItem[5000 + 1000 × at]`,
+three decimals). `serialize` gives each target's shapes by `at`, with the
+target's weight, the node's name as `deformer` and the mesh's uuid:
+
+```python
+from cgmath.geometry import MorphData, MorphList
+
+cmds.file(new=True, force=True)
+base  = cmds.polyCube(name="base", ch=False)[0]
+smile = MorphData("smile", offsets=np.array([[0, 2, 0]], float), indices=np.array([0]), weight=0.25)
+half  = MorphData("smile", offsets=np.array([[1, 0, 0]], float), indices=np.array([0]), at=0.5)
+morph = BlendShape.create(MorphList([smile, half]), base)        # an in-between at 0.5, the target at 0.25
+print([(m.name, m.at, m.weight) for m in morph.serialize()])    # [('smile', 0.5, 0.25), ('smile', 1.0, 0.25)]
+print(morph.get_target_data("smile", at=0.5).offsets.tolist())  # [[1.0, 0.0, 0.0]]
+```
+
+`create` takes one mesh of a `cgmath` `Scene` too, a `Renderable`: its
+`item.morphs` on the node holding its mesh's uuid (`Mesh.create(item)` made
+it), or on a mesh given, which wins. Morphs of two deformers need `deformer=`:
+
+```python
+src  = cmds.polyCube(name="src", ch=False)[0]
+data = Mesh(src).serialize(uvs=False)
+cmds.delete(src)                                                  # its uuid is free
+scene = Scene("hero")
+data.name, data.parent_uuid = "hero_geo", None
+for m in (smile, half):
+    m.mesh_uuid, m.deformer = data.uuid, "face_bs"
+scene.add(data, smile, half)
+item = scene.renderables()[0]
+Mesh.create(item)
+face = BlendShape.create(item)                                    # found by the mesh's uuid, named after the deformer
+print(repr(face), face.get_targets(), face.smile.get())           # BlendShape("face_bs") ['smile'] 0.25
 ```
 
 ---

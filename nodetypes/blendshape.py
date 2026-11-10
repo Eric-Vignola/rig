@@ -29,6 +29,24 @@ LOGGER.setLevel(logging.INFO)
 # working names, a letter of the code page for one; a letter outside it stays Maya's own error.
 _NOT_AN_ALIAS = re.compile(r"^[-0-9]|.<|[ !-,./:;=-@\[-^`{-~]")
 
+# a target's shapes are the items of its inputTargetItem, each at index 5000 + 1000 x the weight
+# it is reached at: 6000 its full target (at 1), an in-between below (5500 at 0.5) or above
+# (7000 at 2). Maya holds a weight to three decimal places ("Blend shape weights can have only
+# three decimal places") and evaluates an item written there as its own -inBetween (measured,
+# eval/probe_inbetween.py); an item at or below 5000 is reached at 0 or less, which a MorphData
+# is not.
+_FULL_ITEM = 6000
+
+
+def _item_of(at: float) -> int:
+    """The inputTargetItem index of a shape reached at weight `at`."""
+    return int(round(5000 + 1000 * float(at)))
+
+
+def _at_of(item: int) -> float:
+    """The weight the shape at inputTargetItem index `item` is reached at."""
+    return (item - 5000) / 1000.0
+
 
 _BLENDSHAPE_LOAD_DOC = """Loads blendShape targets from a cgmath file (a MorphList): one name, two forms.
 
@@ -64,8 +82,9 @@ _BLENDSHAPE_LOAD_DOC = """Loads blendShape targets from a cgmath file (a MorphLi
     changed: a missing file is a FileNotFoundError, a file of another class a
     TypeError naming what it holds; a morph with no name, or with a new
     target's name Maya refuses (`set_target_data`), a ValueError. A MorphData holds a target's
-    sparse offsets and its name only: the weights come back 0, and in-betweens
-    are not carried.
+    sparse offsets, its name, its weight and the weight it is reached at (``at``: 1 for a full
+    target, else an in-between of the target of its name): a target the file adds takes the
+    file's weight, a target it replaces keeps its own.
 
     Each call is ONE undo step named ``rig.BlendShape.load`` and leaves the
     selection as it was.
@@ -88,10 +107,11 @@ class BlendShape(Deformer):
     # a create by runs/r4b/NC3/probe_flags_bs.py; the symmetry flags work only
     # in edit mode); ``create``'s other keywords are the blendShape's
     # attributes. ``envelope``, ``origin`` and ``topologyCheck`` are attributes
-    # too: the flag.
+    # too: the flag. ``deformer`` is rig's: which deformer's targets a create
+    # takes, of morphs naming two or more.
     _CREATE_FLAGS = frozenset(
         {
-            "after", "af", "afterReference", "ar", "automatic", "at", "before", "bf",
+            "after", "af", "afterReference", "ar", "automatic", "at", "before", "bf", "deformer",
             "envelope", "en", "exclusive", "ex", "frontOfChain", "foc", "ignoreSelected", "is",
             "inBetween", "ib", "inBetweenType", "ibt", "includeHiddenSelections", "ihs",
             "name", "n", "origin", "o", "parallel", "par", "split", "sp",
@@ -114,29 +134,65 @@ class BlendShape(Deformer):
             args: args supported by cmds.blendShape(). A MorphData or MorphList
                 can be given in place of a target geometry, in which case a
                 target is built for each morph and its offsets are applied
-                immediately after the node is created.
+                immediately after the node is created: a morph at ``at`` below
+                or above 1 an in-between of the target of its name. A cgmath
+                Renderable (``scene.renderables()``) gives its ``item.morphs``,
+                and its mesh when no geometry is given: the scene node holding
+                ``item.mesh.uuid`` (the shape a ``Mesh.create(item)`` made). A
+                geometry given wins over the uuid (the user's rule: an explicit
+                target supersedes it).
             kwargs: the ``_CREATE_FLAGS`` given to ``create``, for
-                cmds.blendShape()
+                cmds.blendShape(); ``deformer=``, rig's, takes the targets of
+                that deformer alone, of morphs naming two or more, and names the
+                node when ``name=`` does not. Morphs of one deformer name it
+                too.
 
         One undo step named ``rig.BlendShape.create``: the blendShape and the
-        morphs' targets. A morph with no name, or with a name Maya refuses
-        (`set_target_data`), is a ValueError before anything is made.
+        morphs' targets, each new target at its morph's weight. Before anything
+        is made: a morph with no name, with a name Maya refuses
+        (`set_target_data`) or reached at a weight Maya does not hold, morphs of
+        two or more deformers without ``deformer=`` (Maya's fbx import deforms a
+        mesh by its last blendShape alone, measured by cgmath, whose save_fbx
+        refuses them), a ``deformer=`` no morph names, a Renderable with no
+        targets, or one whose mesh no scene node holds, is a ValueError; two
+        Renderables a TypeError.
         """
         from cgmath.geometry import MorphData, MorphList
+
+        method   = "BlendShape.create"
+        deformer = kwargs.pop("deformer", None)
 
         # split the morph data out of the geometries, it is applied once the
         # node exists
         morphs = MorphList()
         geoms  = []
+        items  = []
         for arg in args:
             if isinstance(arg, MorphData):
                 morphs.append(arg)
             elif isinstance(arg, MorphList):
                 morphs.extend(arg)
+            elif _files.is_renderable(arg):
+                items.append(arg)
+                morphs.extend(arg.morphs)
             else:
                 geoms.append(arg)
-        _check_morph_names("BlendShape.create", morphs)
-        _check_target_names("BlendShape.create", [m.name for m in morphs], OpenMaya.MNodeClass(cls.NATIVE_NODE_TYPE))
+        if items:
+            geoms = _renderable_base(method, items, geoms)
+            if not morphs:
+                raise ValueError(
+                    f"{method}: the Renderable {items[0].name!r} holds no blend shape targets (item.morphs "
+                    f"is empty): nothing to make"
+                )
+        morphs = _one_deformer(method, morphs, deformer)
+        _check_morph_names(method, morphs)
+        _check_ats(method, morphs)
+        _check_target_names(method, [m.name for m in morphs], OpenMaya.MNodeClass(cls.NATIVE_NODE_TYPE))
+
+        # the deformer's name names the node, unless name= does
+        named = {m.deformer for m in morphs}
+        if "name" not in kwargs and "n" not in kwargs and len(named) == 1 and None not in named:
+            kwargs["name"] = named.pop()
 
         # default frontOfChain to True
         kwargs["frontOfChain"] = kwargs.get("frontOfChain", kwargs.get("foc", True))
@@ -153,8 +209,10 @@ class BlendShape(Deformer):
 
     # --- attr helpers
 
-    def get_target_data_attrs(self, index: int) -> tuple[Attribute, Attribute, Attribute]:
-        """Returns 2 attribute objects pointing to the 2 data attrs of a given target:
+    def get_target_data_attrs(self, index: int, at: float = 1.0) -> tuple[Attribute, Attribute, Attribute]:
+        """Returns 3 attribute objects pointing to the 3 data attrs of a given target's
+        shape reached at weight `at` (1, its full target: item 6000; an in-between at
+        0.5: item 5500):
 
         .inputTarget[0].inputTargetGroup[x].inputTargetItem[6000].inputGeomTarget
         .inputTarget[0].inputTargetGroup[x].inputTargetItem[6000].inputPointsTarget
@@ -162,7 +220,7 @@ class BlendShape(Deformer):
         """
         group_attr = self.find_attr("inputTarget")[0].inputTargetGroup
         group_attr = group_attr[index]
-        item_attr  = group_attr.inputTargetItem[6000]
+        item_attr  = group_attr.inputTargetItem[_item_of(at)]
         return (
             item_attr.inputGeomTarget,
             item_attr.inputPointsTarget,
@@ -170,6 +228,27 @@ class BlendShape(Deformer):
         )
 
     # --- target operations
+
+    def _target_items(self, index: int) -> list[int]:
+        """The inputTargetItem indices target `index` holds, ascending (6000 its full
+        target, the others its in-betweens), on the first base."""
+        fn     = OpenMaya.MFnDependencyNode(type(self)._raw_get_mobject(self))
+        inputs = fn.findPlug("inputTarget", False)
+        if 0 not in inputs.getExistingArrayAttributeIndices():
+            return []
+        groups = inputs.elementByLogicalIndex(0).child(fn.attribute("inputTargetGroup"))
+        if index not in groups.getExistingArrayAttributeIndices():
+            return []
+        items = groups.elementByLogicalIndex(index).child(fn.attribute("inputTargetItem"))
+        return sorted(items.getExistingArrayAttributeIndices())
+
+    def _base_uuid(self) -> str | None:
+        """The uuid of the mesh this blendShape deforms (its first geometry), a morph's
+        ``mesh_uuid``; None for none."""
+        geoms = self.get_geometries()
+        if not geoms:
+            return None
+        return OpenMaya.MFnDependencyNode(type(geoms[0])._raw_get_mobject(geoms[0])).uuid().asString()
 
     def get_target_count(self) -> int:
         """Returns the number of targets"""
@@ -316,6 +395,8 @@ class BlendShape(Deformer):
         tolerance:          float      | None = None,
         neighbors:          np.ndarray | None = None,
         original_mesh_data: MeshData   | None = None,
+        *,
+        at:                 float             = 1.0,
     ) -> MorphData:
         """Serialize a target.
         Using index is faster than name.
@@ -330,10 +411,23 @@ class BlendShape(Deformer):
                 source mesh this blendshape is applied to, used for computing target
                 data from a live mesh. If None, serialize a fresh mesh data (slower), and
                 if no original mesh data is provided, serialize directly from the blendshape node.
+            at: By keyword only, the weight the shape read is reached at: 1 (the
+                default) the full target, another its in-between there.
 
         Returns:
-            A `MorphData` object.
+            A `MorphData` object: the target's name, its offsets, its weight,
+            ``at``, ``deformer`` (this blendShape's name) and ``mesh_uuid`` (the
+            uuid of the mesh it deforms).
         """
+        target_data           = self._get_target_data(target, tolerance, neighbors, original_mesh_data, at)
+        target_data.weight    = float(self.get_target_weight_attr(target).get())
+        target_data.at        = _at_of(_item_of(at))
+        target_data.deformer  = _name_of(self)
+        target_data.mesh_uuid = self._base_uuid()
+        return target_data
+
+    def _get_target_data(self, target, tolerance, neighbors, original_mesh_data, at) -> MorphData:
+        """`get_target_data`'s name and offsets."""
         from cgmath.geometry import MeshData, MorphData
 
         if not isinstance(target, int):
@@ -345,7 +439,7 @@ class BlendShape(Deformer):
         weight_attr = self.get_target_weight_attr(target)
         target_name = type(weight_attr).get_alias(weight_attr)
         # get target attributes
-        geom_attr, offset_attr, comp_attr = self.get_target_data_attrs(target_id)
+        geom_attr, offset_attr, comp_attr = self.get_target_data_attrs(target_id, at)
 
         # if a live target mesh is connected, compute target data from mesh data
         # (the blendshape offsets attr is empty when a live mesh is connected)
@@ -428,7 +522,12 @@ class BlendShape(Deformer):
             force: If True, a new target will be added if no target exists. If
                 False, every name is checked before the first edit.
 
-        The data is copied: the caller's object is never changed. One undo step,
+        A morph's ``at`` says which of the target's shapes it sets: 1 its full
+        target, another weight its in-between there (Maya's inputTargetItem
+        5000 + 1000 x ``at``; (indices, offsets) set the full target). A target
+        the call adds takes the weight of its full target's morph (else of its
+        first); a target it sets keeps its own weight. The data is copied: the
+        caller's object is never changed. One undo step,
         named ``rig.BlendShape.set_target_data``, however many targets it sets.
 
         Raises:
@@ -440,22 +539,29 @@ class BlendShape(Deformer):
                 a new target's name Maya refuses: a space, a symbol, a digit
                 first, an attribute of the blendShape. ``weight[1]`` is one:
                 `serialize`'s name for a weight element with offsets and no
-                name.
+                name. A morph reached at a weight of a fourth decimal place,
+                which Maya does not hold.
             RuntimeError: before any edit: with ``force=False``, a name no
                 target has.
         """
         morphs = _target_morphs(target, data)
-        new    = []
+        _check_ats("BlendShape.set_target_data", [morph for _, morph in morphs])
+        new = {}
         for name, morph in morphs:
             # remove tiny offsets first
             morph.prune_offsets(tolerance=tolerance)
             if not isinstance(name, int) and self.get_target_index(name, failfast=not force) < 0:
-                new.append(name)
-        _check_target_names("BlendShape.set_target_data", new, type(self)._raw_get_fn_set(self))
+                # a new target takes its full target's weight, else its first shape's
+                if name not in new or _item_of(morph.at) == _FULL_ITEM:
+                    new[name] = morph.weight
+        _check_target_names("BlendShape.set_target_data", list(new), type(self)._raw_get_fn_set(self))
 
         with _undo_chunk("rig.BlendShape.set_target_data"):
             for name, morph in morphs:
                 self._set_target_morph(name, morph)
+            for name, weight in new.items():
+                if weight:
+                    self.set_target_weight(name, float(weight))
 
     def _set_target_morph(self, target: str | int, data: MorphData) -> None:
         """Writes the offsets of `data` to a target by name or index, added when
@@ -470,7 +576,7 @@ class BlendShape(Deformer):
         else:
             target_id = target
 
-        _, offset_attr, comp_attr = self.get_target_data_attrs(target_id)
+        _, offset_attr, comp_attr = self.get_target_data_attrs(target_id, data.at)
         offset_attr.set(len(data.offsets), *data.offsets.tolist(), type="pointArray")
 
         # convert indices to range strings
@@ -489,10 +595,16 @@ class BlendShape(Deformer):
                 If None, use all targets.
 
         Returns:
-            A list of `MorphData` objects. A weight element with no name and no
-            offsets, what the undo of a new target leaves, holds nothing and
-            is left out (`get_targets` still lists it). One with offsets comes
-            as ``weight[i]``, a name `set_target_data` and `load` refuse.
+            A MorphList of the mesh it deforms (its ``mesh_uuid``), target by
+            target, each target's shapes by the weight they are reached at: its
+            in-betweens (``at`` below or above 1) and its full target (``at``
+            1), each with the target's weight, ``deformer`` this blendShape's
+            name and ``mesh_uuid`` the mesh's. A weight element with no name
+            and no offsets, what the undo of a new target leaves, holds nothing
+            and is left out (`get_targets` still lists it). One with offsets
+            comes as ``weight[i]``, a name `set_target_data` and `load` refuse.
+            A shape Maya holds at weight 0 or below (an item at or below 5000)
+            is no MorphData's and is left out, with one warning naming it.
         """
         from cgmath.geometry import MorphList
 
@@ -500,6 +612,8 @@ class BlendShape(Deformer):
         regex       = re.compile(r"|".join([rf"^{_name_of(x)}$" for x in names])) if names else None
         weight_attr = self.find_attr("weight")
         org_mesh    = self.get_original_geometries()
+        mesh_uuid   = self._base_uuid()
+        deformer    = _name_of(self)
 
         # if there is an original mesh, use it to compute target data, in its
         # object space, as get_target_data reads a live target (a moved base
@@ -509,17 +623,33 @@ class BlendShape(Deformer):
 
         target_data_list = []
         for i in self.get_target_indices():
-            if regex:
-                target      = weight_attr[i]
-                target_name = type(target).get_alias(target)
-                if not regex.match(target_name):
-                    continue
+            target      = weight_attr[i]
+            target_name = type(target).get_alias(target)
+            if regex and not regex.match(target_name or ""):
+                continue
 
-            target_data = self.get_target_data(i, original_mesh_data=org_mesh)
-            if target_data.name != f"weight[{i}]" or len(target_data.indices):
+            items  = self._target_items(i) or [_FULL_ITEM]
+            weight = float(target.get())
+            below  = [item for item in items if item <= 5000]
+            if below:
+                LOGGER.warning(
+                    "BlendShape(%r).serialize: target %r holds shapes at weight %s, at or below 0, "
+                    "which no MorphData is reached at: left out", deformer, target_name,
+                    ", ".join(str(_at_of(item)) for item in below),
+                )
+            for item in items:
+                if item <= 5000:
+                    continue
+                target_data = self._get_target_data(i, None, None, org_mesh, _at_of(item))
+                if target_data.name == f"weight[{i}]" and not len(target_data.indices):
+                    continue
+                target_data.weight    = weight
+                target_data.at        = _at_of(item)
+                target_data.deformer  = deformer
+                target_data.mesh_uuid = mesh_uuid
                 target_data_list.append(target_data)
 
-        return MorphList(target_data_list)
+        return MorphList(target_data_list, mesh_uuid=mesh_uuid)
 
     # --- files
 
@@ -537,9 +667,10 @@ class BlendShape(Deformer):
         Returns:
             `path`, as written (``~`` expanded).
 
-        Each target's sparse offsets, its name and the order are saved; its
-        weight, its in-betweens and a live target mesh's connection are not (a
-        MorphData holds none of them). A read of the scene: no undo step, the
+        Each target's sparse offsets, its name, its weight, its in-betweens
+        (each a MorphData at its ``at``) and the order are saved, with the
+        blendShape's name (``deformer``) and the mesh's uuid; a live target
+        mesh's connection is not (a MorphData holds none). A read of the scene: no undo step, the
         selection unchanged. The path is checked before anything is serialized
         (an extension cgmath does not save: ValueError; a missing folder:
         FileNotFoundError).
@@ -624,6 +755,63 @@ def _check_morph_names(method: str, morphs) -> None:
                 f"{method}: the morph at position {i} has no name, so no target to go to: "
                 f"name it, or give its target: set_target_data(target, morph)"
             )
+
+
+def _check_ats(method: str, morphs) -> None:
+    """Maya holds a shape's weight to three decimal places (it refuses a fourth): a morph
+    reached at another is a ValueError from `method`, read before any edit."""
+    for morph in morphs:
+        at = float(morph.at)
+        if abs(1000 * at - round(1000 * at)) > 1e-6:
+            raise ValueError(
+                f"{method}: the morph {morph.name!r} is reached at weight {at}; Maya holds a "
+                f"target's weights to three decimal places (an in-between at {round(at, 3)} it takes)"
+            )
+
+
+def _one_deformer(method: str, morphs, deformer):
+    """The morphs a create takes: all of them when they name one deformer (or none), else
+    those of `deformer`. Morphs of two or more deformers without `deformer`, or a `deformer`
+    no morph names, is a ValueError from `method`, read before anything is made: one
+    blendShape takes one deformer's targets (Maya's fbx import deforms a mesh by its last
+    blendShape alone, measured by cgmath, whose save_fbx refuses two on one mesh)."""
+    from cgmath.geometry import MorphList
+
+    names = []
+    for morph in morphs:
+        if morph.deformer not in names:
+            names.append(morph.deformer)
+    if deformer is None:
+        if len(names) > 1:
+            raise ValueError(
+                f"{method}: the targets name {len(names)} deformers ({', '.join(repr(n) for n in names)}); "
+                f"one blendShape takes one deformer's targets: deformer= picks one, a create each"
+            )
+        return morphs
+    if deformer not in names:
+        held = ", ".join(repr(n) for n in names) or "none"
+        raise ValueError(f"{method}: deformer={deformer!r} names no target's deformer (they name {held})")
+    return MorphList([m for m in morphs if m.deformer == deformer])
+
+
+def _renderable_base(method: str, items: list, geoms: list) -> list:
+    """The geometries a create of a Renderable deforms: `geoms` when given (an explicit target
+    supersedes the uuid), else the scene node holding ``item.mesh.uuid``, the shape a
+    ``Mesh.create(item)`` made. Two Renderables are a TypeError, a mesh no node holds a
+    ValueError, both from `method` before anything is made."""
+    if len(items) > 1:
+        raise TypeError(f"{method}: a create takes one Renderable, its mesh's targets; got {len(items)}")
+    if geoms:
+        return geoms
+    item = items[0]
+    node = _files.node_of_uuid(getattr(item.mesh, "uuid", None))
+    if node is None:
+        raise ValueError(
+            f"{method}: no scene node holds the uuid {getattr(item.mesh, 'uuid', None)} of the Renderable "
+            f"{item.name!r}'s mesh: Mesh.create(item) builds it, or give the mesh: "
+            f"BlendShape.create(mesh, item)"
+        )
+    return [node]
 
 
 def _check_target_names(method: str, names: list[str], attrs) -> None:

@@ -1077,9 +1077,9 @@ class TestBlendShape(_Case):
         bs.set_target_data("smile", MorphData(name="smile", indices=np.array([0]), offsets=np.array([[0, 0, 2.0]])))
         bs.set_target_data("extra", MorphData(name="extra", indices=np.array([1]), offsets=np.array([[2.0, 0, 0]])))
         edited = self.offsets(bs)
-        # the file also holds a new target
+        # the file also holds a new target (of its mesh: a saved blendShape's list is one mesh's)
         data = MorphList.load(self.path("face.npz"))
-        data.append(MorphData(name="brow", indices=np.array([2]), offsets=np.array([[0, 3.0, 0]])))
+        data.append(MorphData(name="brow", indices=np.array([2]), offsets=np.array([[0, 3.0, 0]]), mesh_uuid=data.mesh_uuid))
         data.save(self.path("face2.npz"))
         self.ready()
         self.assertIs(bs.load(self.path("face2.npz")), bs)
