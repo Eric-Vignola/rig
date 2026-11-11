@@ -289,8 +289,8 @@ class TestFiles(_Case):
 
     def test_an_older_cgmath_is_refused_naming_the_pin(self):
         """A cgmath whose shapes carry no parent_uuid (3.0.1, 3.2.0), or whose MeshData holds no
-        colours (an r17-skeleton before 09a9544): the first data path says which cgmath rig needs,
-        before anything is read or made."""
+        colours (an r17-skeleton before 09a9544) or no hard edges (one before 6001ea6): the first
+        data path says which cgmath rig needs, before anything is read or made."""
         import dataclasses
         import sys
         import types
@@ -300,8 +300,9 @@ class TestFiles(_Case):
         t     = _cube()
         data  = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c").serialize()
         older = types.ModuleType("cgmath.hierarchy")  # no ShapeData in it
-        pin   = (r" needs cgmath r17-skeleton at 9b28464 \(2026-11-10\) or later, whose shapes carry a "
-                 r"parent_uuid, whose meshes hold colors and whose scenes renew uuids; this cgmath is ")
+        pin   = (r" needs cgmath r17-skeleton at 6001ea6 \(2026-11-11\) or later, whose shapes carry a "
+                 r"parent_uuid, whose meshes hold colors and hard_edges and whose scenes renew uuids; "
+                 r"this cgmath is ")
         for label, call, head in (
             ("serialize", lambda: Mesh(t).serialize(), r"^Mesh\.serialize"),
             ("load", lambda: Mesh.load(self.path("none.npz")), r"^Mesh\.load"),
@@ -312,15 +313,20 @@ class TestFiles(_Case):
                 with self.assertRaisesRegex(ImportError, head + pin):
                     call()
                 self.assertEqual(cmds.ls(), before)
-        # an r17-skeleton before its colours: the shapes carry a parent_uuid, a MeshData no colors
-        uncoloured = types.ModuleType("cgmath.geometry")
-        uncoloured.__dict__.update(geometry.__dict__)
-        uncoloured.MeshData = dataclasses.make_dataclass("MeshData", ["indices", "counts", "points"])
-        with self.subTest("no colours"), mock.patch.dict(sys.modules, {"cgmath.geometry": uncoloured}):
-            before = cmds.ls()
-            with self.assertRaisesRegex(ImportError, r"^Mesh\.serialize" + pin):
-                Mesh(t).serialize()
-            self.assertEqual(cmds.ls(), before)
+        # an r17-skeleton before its colours, then one before its hard edges: the shapes carry a
+        # parent_uuid, a MeshData no colors, or no hard_edges beside them
+        for label, fields in (
+            ("no colours",    ["indices", "counts", "points"]),
+            ("no hard edges", ["indices", "counts", "points", "colors"]),
+        ):
+            earlier = types.ModuleType("cgmath.geometry")
+            earlier.__dict__.update(geometry.__dict__)
+            earlier.MeshData = dataclasses.make_dataclass("MeshData", fields)
+            with self.subTest(label), mock.patch.dict(sys.modules, {"cgmath.geometry": earlier}):
+                before = cmds.ls()
+                with self.assertRaisesRegex(ImportError, r"^Mesh\.serialize" + pin):
+                    Mesh(t).serialize()
+                self.assertEqual(cmds.ls(), before)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -617,15 +623,24 @@ class TestMesh(_Case):
             Mesh("body").load(path, ball_uv)
         self.assertEqual(mesh_state("bodyShape"), before)
 
-    def test_the_node_form_without_normals_keeps_the_shading(self):
+    def test_the_node_form_without_normals_is_all_soft(self):
+        """Re-pinned (user decision 2026-11-11; it kept the mesh's own shading): data that stores no
+        normals and names no hard edge says every edge is soft, which the mesh becomes, its locks
+        released. ``normals=False`` keeps the mesh's own."""
         _, path, _ = self.saved()
         data = Mesh("body").serialize(uvs=False)
-        data.normals = None
-        data.normal_indices = None
-        copy                = Mesh.load(path, name="copy", uuids=False)
-        cmds.polySoftEdge("copy", angle=180, constructionHistory=False)
+        self.assertEqual((data.normals, data.normal_indices, len(data.hard_edges)), (None, None, 12))
+        data.hard_edges = None
+        Mesh.load(path, name="copy", uuids=False)
+        cmds.polyNormalPerVertex("copy.vtx[5]", xyz=(1, 0, 0))
+        own = _hard_edges("copyShape"), _locked_rows("copyShape")
+        self.assertEqual((len(own[0]), len(own[1])), (12, 3))
+        Mesh("copy").load(data, normals=False)
+        self.assertEqual((_hard_edges("copyShape"), _locked_rows("copyShape")), own)
         Mesh("copy").load(data)
-        self.assertEqual(_hard_edges("copyShape"), set())
+        self.assertEqual((_hard_edges("copyShape"), _locked_rows("copyShape")), (set(), set()))
+        self.undo_steps(1)
+        self.assertEqual((_hard_edges("copyShape"), _locked_rows("copyShape")), own)
 
 
 # ---------------------------------------------------------------------------------------------

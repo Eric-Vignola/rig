@@ -28,6 +28,12 @@ commits 3 and 4), one test class each:
 
 Q4 (a locked or driven segmentScaleCompensate keeps raising) changes nothing.
 
+Since the user's decisions of 2026-11-11 `serialize` stores a mesh's normals only when its points
+do not give them, and data that stores none locks nothing through any matrix but a mirror
+(test_fu_hard_edges). What stored normals lock is still decided as above, for a mesh with a
+locked normal, a file rig wrote through 2.0.0a11 and another program's: the tests of it take
+their data under `_stored`, which stores every mesh's normals as those hold them.
+
 Each test failed against the source files of 4c53f99 (negative control), except the guards;
 `TestOnlyRealLocks`' against those of e949d38; `TestWorldSpaceDataBack`'s against commit 4's first
 version, which compared on the data's own points alone (e949d38 compared where they land: all but
@@ -49,7 +55,7 @@ from maya.api import OpenMaya
 
 from rig import container
 from rig.nodetypes import Mesh, NurbsCurve, NurbsSurface, Transform
-from rig._tests.test_class_mesh_create import _grid, _hard_edges, _locked_rows
+from rig._tests.test_class_mesh_create import _grid, _hard_edges, _locked_rows, _stored
 from rig._tests.test_class_shape_space import OPEN, PERIODIC, _cylinder, _surface, _uneven
 from rig._tests.test_class_shape_under_transform import (
     CLASSES,
@@ -659,6 +665,7 @@ class TestQ6FrozenAtWorldPositions(_Case):
         np.testing.assert_allclose(_world(flipped), _world(ball), rtol=0, atol=1e-9)
         np.testing.assert_allclose(_surface_normals(flipped), -_surface_normals(ball), rtol=0, atol=1e-6)
 
+    @_stored()
     def test_a_non_uniform_scale_locks_no_soft_normal(self):
         """Re-pinned (it locked nearly every soft normal): Maya computes other normals for the frozen
         points than the inverse transpose gives the data's, and they stay Maya's own, those of
@@ -675,17 +682,20 @@ class TestQ6FrozenAtWorldPositions(_Case):
         self.assertEqual(_shading(bare)[1], 0)
         np.testing.assert_allclose(_normals(frozen), _normals(bare), rtol=0, atol=1e-6)
 
+    @_stored()
     def test_a_rigid_matrix_near_the_origin_locks_nothing(self):
         """guard: a move, a rotation and a uniform scale: Maya computes the data's normals, there."""
         source = _soft_sphere(translation=(1, 2, 3), rotation=(30, 40, 50), scale=(2, 2, 2))
         self.assertEqual(_shading(Mesh.create(*_args(source), world_space=True, uuids=False))[1], 0)
 
+    @_stored()
     def test_a_hard_edged_cube_locks_nothing(self):
         """guard: a non-uniform scale and a shear: a flat face's normal is what Maya computes."""
         box = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
         cmds.xform("box", translation=(1, 2, 3), rotation=(10, 20, 30), scale=(1, 2, 3), shear=(0.5, 0.2, -0.3))
         self.assertEqual(_shading(Mesh.create(*_args(box), world_space=True, uuids=False)), (12, 0))
 
+    @_stored()
     def test_the_same_goes_under_a_target_and_in_an_update(self):
         """Re-pinned (both locked nearly every soft normal): whichever call takes the points there,
         none locks."""
@@ -711,17 +721,25 @@ class TestQ6FrozenAtWorldPositions(_Case):
 
     def test_a_placement_with_no_inverse(self):
         """Exactly singular, which only a hierarchy made by hand holds (Maya keeps 1e-12 for a scale
-        of 0): a mesh's normals cannot follow it, and without them it flattens, a transform-less
-        scale of 0."""
+        of 0): a mesh's stored normals cannot follow it, and without them it flattens, a
+        transform-less scale of 0. So does the cube as it serializes, which stores none: its hard
+        edges come with it."""
         from cgmath.hierarchy import HierarchyData, TransformData
 
-        data = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0]).serialize(uvs=False)
+        box = Mesh(cmds.polyCube(name="box", constructionHistory=False)[0])
+        with _stored():
+            data = box.serialize(uvs=False)
         flat = HierarchyData([TransformData("flat", uuid=data.parent_uuid, scale=[0.0, 1.0, 1.0])])
         self.assert_nothing_made(ValueError, r"^MeshData: the matrix has no inverse, which the normals go through",
                                  lambda: Mesh.create(data, world_space=True, hierarchy=flat))
         made = Mesh.create(data, world_space=True, normals=False, hierarchy=flat, uuids=False)
         self.assert_at_rest(made)
         np.testing.assert_array_equal(_local(made)[:, 0], np.zeros(8))
+        self.assertEqual(_shading(made), (0, 0))
+        named = Mesh.create(box.serialize(uvs=False), world_space=True, hierarchy=flat, uuids=False)
+        self.assert_at_rest(named)
+        np.testing.assert_array_equal(_local(named)[:, 0], np.zeros(8))
+        self.assertEqual(_shading(named), (12, 0))
 
     def test_a_placement_that_is_not_finite(self):
         """Pinned on the guard (`_target_space`), the placement stood in: no transform holds nan."""
@@ -756,11 +774,12 @@ class TestQ6FrozenAtWorldPositions(_Case):
                                              lambda: cls.create(data, world_space=True))
 
 
+@_stored()
 class TestOnlyRealLocks(_Case):
     """"Lock only real locks": with ``world_space=True`` a normal the moved points alone put away from
     the data's, which Maya computes on the data's own points, stays Maya's own, and follows a
     deformer. At e949d38 a soft sphere's 994 normals locked 988 at a scale of (1, 2, 3), 192 at
-    (1, 1.1, 1), 2 at (100, 50, 30)."""
+    (1, 1.1, 1), 2 at (100, 50, 30). Every test takes its data with the normals stored (`_stored`)."""
 
     def shapes(self, source):
         """Each call that takes `source`'s data where it lands: ``(its label, the Mesh it gives)``."""
@@ -975,13 +994,16 @@ class TestOnlyRealLocks(_Case):
             self.assertEqual(_shading(Mesh.create(*args, world_space=True, uuids=False)), (0, 0))
 
 
+@_stored()
 class TestWorldSpaceDataBack(_Case):
     """World-space data (``serialize`` / ``save(world_space=True)``) holds normals through the source's
     matrix, which Maya does not compute from its world points, so the data's own points take nearly
     every soft one for a lock. Back on the points they were computed on, nothing differs, and only
     what the source locked locks. Compared on the data's own points alone, a file saved in world
     space and loaded with ``world_space=True``, which the README asks for, locked 988 of a soft
-    sphere's 994 normals at a scale of (1, 2, 3); at e949d38, none."""
+    sphere's 994 normals at a scale of (1, 2, 3); at e949d38, none. Every test takes its data with
+    the normals stored (`_stored`), as world-space data holds them through a non-uniform scale or a
+    shear, and as it held them through every matrix until 2.0.0a11."""
 
     def back(self, source):
         """Each call that lands `source`'s world-space data back on its points, `source` itself

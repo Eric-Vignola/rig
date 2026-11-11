@@ -39,15 +39,16 @@ ASSET_TYPES = ("obj", "fbx", "glb", "gltf", "usd", "usda", "usdc", "usdz")
 CREATING_SPACE = "where the data's points land: in the world, or as the shape's own"
 
 # the cgmath the data paths are written against: r17-skeleton's shape model, a ShapeData's uuid and
-# parent_uuid, no matrix, a MeshData's colors / color_indices, renew_uuids() on a hierarchy, a clip
-# and a Scene, a MaterialData's uuid and the lists of one mesh (README.md's requirements and the
-# CHEATSHEET name it too)
-CGMATH_PIN = "cgmath r17-skeleton at 9b28464 (2026-11-10)"
+# parent_uuid, no matrix, a MeshData's colors / color_indices and its hard_edges, renew_uuids() on
+# a hierarchy, a clip and a Scene, a MaterialData's uuid and the lists of one mesh (README.md's
+# requirements and the CHEATSHEET name it too)
+CGMATH_PIN = "cgmath r17-skeleton at 6001ea6 (2026-11-11)"
 
 
 def require_pinned_cgmath(method: str) -> None:
     """The data paths need the cgmath rig is pinned to (`CGMATH_PIN`) or later: one whose shapes
-    are ``ShapeData`` (``uuid``, ``parent_uuid``), whose ``MeshData`` holds ``colors`` and whose
+    are ``ShapeData`` (``uuid``, ``parent_uuid``), whose ``MeshData`` holds ``colors`` and
+    ``hard_edges`` (6001ea6: the hard edges of a mesh that stores no normals) and whose
     ``MaterialData`` holds a ``uuid`` (b0c991b, after ``renew_uuids()``). An older cgmath (3.0.1,
     3.2.0, an r17-skeleton before those) raises ImportError naming `method`, the pin and the
     cgmath found, before anything is read or made."""
@@ -55,7 +56,7 @@ def require_pinned_cgmath(method: str) -> None:
         from cgmath.geometry import MaterialData, MeshData
         from cgmath.hierarchy import ShapeData  # noqa: F401
 
-        if "colors" not in getattr(MeshData, "__dataclass_fields__", {}):
+        if not {"colors", "hard_edges"} <= set(getattr(MeshData, "__dataclass_fields__", {})):
             raise ImportError
         if "uuid" not in getattr(MaterialData, "__dataclass_fields__", {}):
             raise ImportError
@@ -64,7 +65,7 @@ def require_pinned_cgmath(method: str) -> None:
 
         raise ImportError(
             f"{method} needs {CGMATH_PIN} or later, whose shapes carry a parent_uuid, whose meshes hold colors "
-            f"and whose scenes renew uuids; this cgmath is {getattr(cgmath, '__version__', '?')} at "
+            f"and hard_edges and whose scenes renew uuids; this cgmath is {getattr(cgmath, '__version__', '?')} at "
             f"{os.path.dirname(cgmath.__file__)}"
         ) from None
 

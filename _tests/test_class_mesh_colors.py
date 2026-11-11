@@ -33,7 +33,7 @@ from rig.nodetypes import Mesh
 from rig.nodetypes import mesh as mesh_module
 from rig.nodetypes.mesh import ColorSet
 from rig._tests._undo import mesh_state
-from rig._tests.test_class_mesh_create import _facet
+from rig._tests.test_class_mesh_create import _facet, _stored
 from rig._tests.test_class_saveload import _Case
 
 RGBA  = ColorSet.Representation.RGBA
@@ -170,9 +170,14 @@ class TestSerializeColors(_Case):
         mesh = Mesh(_painted())
         data = mesh.serialize(uvs=False, colors=False)
         self.assertEqual((data.colors, data.color_indices), (None, None))
-        self.assertIsNotNone(data.normals)
+        self.assertEqual(len(data.hard_edges), 12)  # the cube's shading: its points give its normals
+        with _stored():  # a mesh that stores its normals, as one with a locked normal does
+            self.assertIsNotNone(mesh.serialize(uvs=False, colors=False).normals)
+            data = mesh.serialize(uvs=False, normals=False)
+        self.assertEqual((data.normals, data.normal_indices, data.hard_edges), (None, None, None))
+        self.assertIsNotNone(data.colors)
         data = mesh.serialize(uvs=False, normals=False)
-        self.assertEqual((data.normals, data.normal_indices), (None, None))
+        self.assertEqual((data.normals, data.normal_indices, data.hard_edges), (None, None, None))
         self.assertIsNotNone(data.colors)
         both = mesh.serialize()
         self.assertEqual((len(both), [uv.name for uv in both[1]]), (2, ["map1"]))
@@ -208,8 +213,10 @@ class TestSerializeColors(_Case):
             with self.subTest(ext):
                 back = MeshData.load(mesh.save(self.path(f"m.{ext}")))
                 np.testing.assert_allclose(_per_corner(back), corners, rtol=0.0, atol=1e-6)
-        self.assertIsNone(MeshData.load(mesh.save(self.path("plain.npz"), colors=False)).colors)
-        self.assertIsNone(MeshData.load(mesh.save(self.path("flat.npz"), normals=False)).normals)
+        plain = MeshData.load(mesh.save(self.path("plain.npz"), colors=False))
+        self.assertEqual((plain.colors, len(plain.hard_edges)), (None, 12))
+        flat = MeshData.load(mesh.save(self.path("flat.npz"), normals=False))
+        self.assertEqual((flat.normals, flat.hard_edges), (None, None))
         data, _ = mesh.outMesh.get()
         np.testing.assert_allclose(_per_corner(data), corners, rtol=0.0, atol=1e-6)
 

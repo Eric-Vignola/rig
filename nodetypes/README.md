@@ -376,7 +376,7 @@ Subclasses override `_create`, and that is where the signatures diverge:
 |---|---|
 | `DGNode` subclasses (`Choice.create(name=)`, ...) | `cmds.createNode` with `name` / `n` and `skipSelect` / `ss`; `parent=` or a positional argument is a `TypeError` |
 | `Transform.create(name=, parent=)`, `Joint.create(...)` | `cmds.createNode(parent=...)`: in the parent's space, at identity; `parent=` is read by the reference rule; `Transform.create("x")` is a `TypeError` that names `Transform.create(name='x')` and `Transform.define('x')`. `Transform.create(transform_data, uuids=True)` builds the data's node, with its uuid (below) |
-| `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's normals bring back its hard edges and locked normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that); a `cgmath.render.Renderable` (one of `scene.renderables()`) stands for its mesh with its UV sets, under the scene node holding its `parent_uuid` (below). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
+| `Mesh.create(mesh_data, uvs=None, *, name=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnMesh.create` under a recorded `cmds.createNode` transform, one undo step; the data's points are the shape's own and the transform goes where the data sits (the transform its `parent_uuid` names, as `serialize` writes it by default: in `hierarchy=`, else in the scene by its UUID, else the identity); the data's shading comes back, its `hard_edges` or the hard edges and locked normals of its stored normals (`normals=False` skips that, for speed), its colours a colour set, `colorSet1` (`colors=False` skips that); a `cgmath.render.Renderable` (one of `scene.renderables()`) stands for its mesh with its UV sets, under the scene node holding its `parent_uuid` (below). With `transform=`, the shape alone, under that transform; with `world_space=True` and no `transform=`, frozen at its world positions (both below) |
 | `NurbsCurve.create(points_or_NurbsCurveData, degree=, kv=, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsCurve.create` under a recorded `cmds.createNode` transform, one undo step; `degree` (3) and `kv` (Maya's default knots) go with points, a `NurbsCurveData` brings its own and sits under the transform its `parent_uuid` names, as a `MeshData` does (it holds no name: `curve<N>`, or `name=`). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `NurbsSurface.create(data, *, name=, transform=None, world_space=False, hierarchy=None, uuids=True)` | `MFnNurbsSurface.create` under a recorded `cmds.createNode` transform, in `initialShadingGroup`, one undo step; a `NurbsSurfaceData` (its points, degrees, forms and knots, `knots_u` / `knots_v`: evenly spaced when it holds none; placed as a curve's, no name of its own). `transform=`, `world_space=` and `hierarchy=` as `Mesh.create` takes them |
 | `SkinCluster.create(geo, influences_or_SkinData, **flags)` | `cmds.skinCluster(toSelectedBones=True)` with its create flags, the geometry's own existing skin deleted first (not a driving mesh's), one undo step; a `SkinData` whose weights do not fit the geometry is a `ValueError` before the delete, and its `name` names the node unless `name=` does. A `Renderable` alone binds its skin to its mesh by uuid, after a geometry to that geometry (below) |
@@ -464,15 +464,22 @@ lacks and no `hierarchy=` holds) has nothing to freeze: the points stay as they
 are. From a mirrored placement (a negative scale) a surface comes out
 inside out, as under a mirrored target. A placement that is exactly singular
 (only a hierarchy made by hand holds one: Maya keeps 1e-12 for a scale of 0)
-has no inverse for a mesh's normals: a `ValueError` before anything is made,
-and `normals=False` takes it. A placement that is not finite is a `ValueError`
+has no inverse for a mesh's stored normals: a `ValueError` before anything is
+made, and `normals=False` takes it. Data that stores none has none to take
+through it, and comes out flat with its hard edges. A placement that is not
+finite is a `ValueError`
 before anything is made, for every class, under `transform=` too, and in
 `Mesh('x').load(path, world_space=True)`. An instanced scene transform (two
 paths) is a `ValueError` too: its shape's points have no one place in the
 world; give `hierarchy=`, or serialize in world space.
 
 **`world_space=True` locks a normal that differs on both sets of points**, under
-a target, frozen, and in `Mesh('x').load(path, world_space=True)`. A `MeshData`
+a target, frozen, and in `Mesh('x').load(path, world_space=True)`. Only stored
+normals lock. Data that stores none, which is what a mesh with no locked normal
+serializes to (below: the shading is the fewest fields that say it), locks
+nothing through any matrix but a mirror: its hard edges come through, and every
+normal is Maya's own for the points where they land. For stored normals, a
+`MeshData`
 holds no lock flag, so a normal counts as locked when Maya computes it more
 than 1e-4 from the data's on the data's own points, as a plain create decides
 it, and where it lands too (what Maya computes there needs no lock). Only those
@@ -486,17 +493,22 @@ What the placement matrix changes:
 | The identity | as in a plain create | |
 | A move, a rotation, a uniform scale | the source's locked normals | Maya's own, within float noise of the source's: at most 0.6 degrees on a 300 x 300 `polySphere` at `(100, 50, 30)`, none of its 89,702 normals locked |
 | A non-uniform scale, a shear | the source's locked normals | a flat face's where the source's is; a soft one Maya's own, off the inverse transpose: at most 0.04 degrees on a 32 x 32 `polySphere` at a scale of `(1, 2, 1)`, 0.5 at `(1, 2, 3)`, 13 at a soft corner of a 2 x 2 x 2 `polyCube` under a shear |
-| A mirror (a negative scale) | every normal (54 of 54 on a 2 x 2 x 2 `polyCube`): Maya's own would face the other way, and the world normals stay the source's | |
+| A mirror (a negative scale) | every normal (54 of 54 on a 2 x 2 x 2 `polyCube`), from data that stores none too (the normals its points give are set): Maya's own would face the other way, and the world normals stay the source's | |
 
 That is data saved in object space (`save()`, `serialize()`). World-space data
-(`save(world_space=True)`) holds normals through the source's matrix, which
+(`save(world_space=True)`) of a mesh with no locked normal, under a move, a
+rotation and a uniform scale, stores no normals either and locks none wherever
+it lands (none of those 89,702). It stores them through a non-uniform scale, a
+shear or a mirror, and from a mesh with a locked normal: normals through the
+source's matrix, which
 Maya does not compute from its points, so only the points they were computed
 on tell them from locks. Landing back there (on the mesh it was saved from, or
 under a target at its matrix) only the source's locks lock. Anywhere else,
 frozen or under another target, the soft ones lock too where a non-uniform
 scale, a shear or float noise moved them: 988 of 994 on a 32 x 32 `polySphere`
 at a scale of `(1, 2, 3)`, about 54,000 of 89,702 on a 300 x 300 one at
-`(100, 50, 30)`, none on a rigid move near the origin. So do normals computed
+`(100, 50, 30)` with one normal locked, none but the source's on a rigid move
+near the origin. So do normals computed
 another way: a source on another
 `vertexNormalMethod` than a new mesh's 3 (960 of those 994 in a plain create;
 an update into the mesh itself computes as it does, and locks none).
@@ -697,7 +709,7 @@ data to a `cgmath` file and `load` reads it back.
 | Node | `serialize()` | Back in | Save | Load |
 |---|---|---|---|---|
 | `Transform` / `Joint` | `TransformData`; `serialize_hierarchy()` a `HierarchyData`, `serialize_hierarchy(bindpose=True \| "bindPose5")` at its bind pose | `Transform.create(transform_data)` / `Joint.create(joint_data)` (one node), `Transform.create_hierarchy` (a `ClipData`: built and keyed) | `node.save_hierarchy(path, *, bindpose=False)` | `Transform.load_hierarchy(path, *, parent=None, world_space=False, container=None)` creates, a typed `List`, parents first (a file that holds a `ClipData`: built and keyed) |
-| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `uvs=False`: object space, the shape's `uuid` and the transform's in `parent_uuid` (`world_space=True`: world space, no transform named), its normals and the colours of its first colour set (`normals=False` / `colors=False` leave them out); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False, normals=True, colors=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, **attrs)` creates (with `transform=`, the shape under it); `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True, colors=True, hierarchy=None)` updates |
+| `Mesh` | `(MeshData, UVList)`, or a `MeshData` with `uvs=False`: object space, the shape's `uuid` and the transform's in `parent_uuid` (`world_space=True`: world space, no transform named), its shading as the fewest fields that say it (`hard_edges`, or stored normals: below) and the colours of its first colour set (`normals=False` / `colors=False` leave them out); `serialize_uv()` a `UVData`; `serialize_maps()` `MapData`s | `Mesh.create`, `set_points`, `set_uv_data`, `set_map_values` | `mesh.save(path, uvs=None, *, world_space=False, normals=True, colors=True)`: two files, the mesh and the UVs | `Mesh.load(path, uvs=None, *, name=, container=, normals=True, colors=True, transform=None, world_space=False, hierarchy=None, **attrs)` creates (with `transform=`, the shape under it); `Mesh('x').load(path, uvs=None, *, world_space=False, normals=True, colors=True, hierarchy=None)` updates |
 | `Geometry` | `serialize_tags()` -> `GeomSubsetData`s | `set_tag_contents` | | |
 | `NurbsCurve` / `NurbsSurface` | `NurbsCurveData` (a periodic curve's own points; its knots when not Maya's default ones) / `NurbsSurfaceData` (its knots likewise, `knots_u` / `knots_v`); each with its `uuid` and the transform's `parent_uuid` as a `MeshData`, and no name | `NurbsCurve.create`, `NurbsSurface.create` | `shape.save(path, *, world_space=False)` | `NurbsCurve.load(path, *, name=, container=, transform=None, world_space=False, hierarchy=None, **attrs)` creates (with `transform=`, the shape under it); `NurbsCurve('x').load(path, *, world_space=False, hierarchy=None)` updates its CVs (the same for `NurbsSurface`) |
 | `SkinCluster` | `SkinData` (dense `(V, I)`, influences by short or full path) | `set_weights`, `SkinCluster.create`, `Mesh.apply_skin_data` | `skin.save(path, *, full_path=False, optimize=False)` | `SkinCluster.load(path, geo, **flags)` creates; `SkinCluster('x').load(path)` sets its weights |
@@ -706,8 +718,10 @@ data to a `cgmath` file and `load` reads it back.
 **One file per data object, its format by its extension.** `.npz`
 (compressed, recommended), `.json` (to read or diff; the slowest) or `.pkl`.
 Never load a `.pkl` you did not write: a pickle runs code when it is read. A
-mesh is two files, its `MeshData` (with its normals and its first colour
-set's colours, unless `normals=False` / `colors=False`) and, with `uvs=`,
+mesh is two files, its `MeshData` (with its shading and its first colour
+set's colours, unless `normals=False` / `colors=False`; a field that is None,
+as the normals of a mesh with no locked one, has no key in a `.json` or an
+`.npz`) and, with `uvs=`,
 its `UVList` (`save` without `uvs=` writes no UVs: a `MeshData` holds none).
 `load` reads a
 `cgmath` `.npz` or `.json` file whatever its extension (by its first bytes)
@@ -730,7 +744,10 @@ From a node it updates that node in place, the inverse of its `save`:
   file's points as its own, object space, the inverse of the default `save`;
   `world_space=True`: where the file puts them in the world, where the data
   sits, in `hierarchy=` or in the scene; the transform is not moved), the
-  file's hard edges and locked normals (`normals=False`: its own stay),
+  file's shading in place of its own (its hard edges, and the locked normals
+  of stored normals; from a file that stores none, no normal locked, and from
+  one with no `hard_edges` either, every edge soft; `normals=False`: its own
+  stay),
   each UV set of the file by name (made when the mesh has none of that name;
   its other sets stay), and the file's colours into its first colour set, its
   representation kept (made as `colorSet1` when it has none; `colors=False`,
@@ -790,23 +807,55 @@ the selection unchanged, and its path checked before anything is serialized
 `ValueError`; a missing folder: a `FileNotFoundError`). An existing file is
 replaced whole.
 
-**`Mesh.create` brings the data's shading back.** An edge is hard where its
+**The shading is the fewest fields that say it.** `serialize` and `save` write
+a mesh's shading in the least of the three forms a `MeshData` takes:
+
+| The mesh | `normals` / `normal_indices` | `hard_edges` |
+|---|---|---|
+| No locked normal, no hard edge between two faces | None | None |
+| No locked normal, hard edges | None | the two vertices of each hard edge that two or more faces share: `(n, 2)`, int32 |
+| A locked normal; a `vertexNormalMethod` other than Maya's default; with `world_space=True`, a non-uniform scale, a shear or a mirror above the shape | Maya's normals, one a face corner | None |
+
+The first two store no normals: they are the ones the points give (Maya's
+default, angle and area weighted), which the data's
+`get_face_vertex_normals()` computes for any reader, within 2e-6 of Maya's on
+a soft 32 x 32 `polySphere`. A stock `polyCube` is its 12 edges as 12 pairs (a
+`.json` of about 900 bytes, 1,600 with its 24 normals stored), and a soft
+sphere holds no shading field at all. A border edge shades nothing and is left
+out: Maya flags the 16 borders of a stock 4 x 4 `polyPlane` hard, and it
+writes None. A locked normal is the user's and keeps a deformer from
+recomputing it, so one lock stores every normal of the mesh, also a lock at
+the value Maya computes. The world normals of a mesh under a non-uniform
+scale, a shear or a mirror are not the ones its world points give, so
+`world_space=True` stores them there.
+
+**`Mesh.create` brings the data's shading back.** From `hard_edges`, those
+edges are hard, every other edge soft and no normal locked: the normals are
+Maya's own. Pairs that are not `(N, 2)` vertex indices, or that no face lists
+as an edge, are a `RuntimeError` before anything is made. From stored normals,
+which win over a `hard_edges` beside them (it is not read), an edge is hard
+where its
 two faces' normals in the data differ at one of its ends, and a normal Maya
 then computes away from the data's was locked in the source, so it is set and
-locked; data without normals (an `.obj`, a `MeshData` built by hand) is all
-smooth, as before. Its cost over a create without normals (a 20k-face sphere,
+locked. Data with neither (a smooth mesh, an `.obj`, a `MeshData` built by
+hand) is all
+smooth, as before. The cost of stored normals over a create without them (a
+20k-face sphere,
 best of 7, against 2.0.0a5's create of the same data, about 25 ms): all
 smooth 1.3x, 800 hard edges 1.45x, 30% of the edges hard 1.75x, every edge
 hard (faceted) 2.6x, 2000 vertices of locked normals 2.1x. Maya's normals and
 each locked normal cross from API 2.0's arrays one value at a time, which
-bounds a faceted or heavily locked mesh.
+bounds a faceted or heavily locked mesh. `hard_edges` costs less, nothing
+being compared or locked: all smooth 1.0x, 800 hard edges 1.2x, 30% of the
+edges hard 1.3x, every edge hard 1.6x.
 
 **`normals=False` skips it, for speed: a restore flag.** A part of the data
 that a create or a load brings back at a cost of its own has one keyword,
 named after the part, on every door that builds or updates a mesh from data:
 `Mesh.create(data, normals=False)`, `Mesh.load(path, normals=False)` and
 `Mesh('x').load(path, normals=False)`. True, the default, brings the part
-back; False skips it: the data's normals are not read, a new mesh is all
+back; False skips it: the data's normals and `hard_edges` are not read, a new
+mesh is all
 smooth (2.0.0a5's create, its cost) and an updated mesh keeps its own hard
 edges and locked normals. A flag is a `bool` (anything else is a `TypeError`
 before anything is read or made), and it wins over a mesh attribute of the
@@ -830,8 +879,10 @@ writes them into the mesh's first colour set, its representation kept (an RGB
 set drops the alpha), and makes `colorSet1` when the mesh has none; data
 without colours leaves its sets alone. `serialize(colors=False)`,
 `save(path, colors=False)` leave them out; `normals=False` on the same two
-leaves out the normals, which skips the read of a normal id per face corner
-(about half the time of a 20k-face serialize). The transfers
+leaves out the shading (`normals`, `normal_indices`, `hard_edges`), which
+skips its read: about half the time of a 20k-face serialize for a mesh that
+stores its normals (a normal id per face corner), a tenth or less for a mostly
+smooth one that stores none, about 40% with every edge hard. The transfers
 (`transfer_maps`, `transfer_tags`) and the blendShape reads never read them.
 
 **The uuids come back.** A node made from data takes the data's uuid:
@@ -1225,7 +1276,7 @@ Verified on Maya 2025; not bugs to work around blindly.
   `MFnMatrixData`, as a typed matrix (`worldMatrix[0]`) does: Maya's data
   handle of one holds no data, so it is read from the plug's value.
 - **`Mesh.outMesh.get()` returns `(MeshData, UVList)`**: the shape's
-  `serialize()` with its defaults (every UV set, the normals, the first colour
+  `serialize()` with its defaults (every UV set, the shading, the first colour
   set's colours), in object space (`mesh.worldMesh[0].get()`: in world space).
 - **`set_tag_category` converts nothing on a deformed mesh**: it
   hands the visible shape to Maya's converter while the tag lives on the
@@ -1284,13 +1335,20 @@ Verified on Maya 2025; not bugs to work around blindly.
   without it, measured); a
   hierarchy's constraints and user attributes that hold geometry (both skipped
   with a warning), connections, and shapes other than locators.
-- **A mesh's shading comes back as normals, and an edge's smoothing flag where
-  it shades nothing may not.** A border edge reads hard in Maya and comes back
-  smooth; a hard edge whose two faces' normals agree anyway comes back smooth.
-  The face-vertex normals are the source's (to 1e-5) either way.
-  `setFaceVertexNormals` hardens every edge at the vertices it sets: after it
-  rig makes the data's smooth edges there smooth again, which keeps the locked
-  normals.
+- **An edge's smoothing flag where it shades nothing may not come back.** A
+  border edge reads hard in Maya and comes back smooth, from either form of
+  the data: `serialize` leaves it out of `hard_edges`, and stored normals do
+  not say it. From stored normals (a mesh with a locked normal), a hard edge
+  whose two faces' normals agree anyway comes back smooth too; `hard_edges`
+  keeps that one. The face-vertex normals are the source's (to 1e-5) either
+  way. `setFaceVertexNormals` hardens every edge at the vertices it sets: after
+  it rig makes the data's smooth edges there smooth again, which keeps the
+  locked normals.
+- **A lock at the value Maya computes is stored, and comes back unlocked.** One
+  locked normal makes `serialize` store them all, but a `MeshData` holds no
+  lock flag: `create` locks a normal only where Maya computes another one. A
+  mesh after `polyNormalPerVertex(freezeNormal=True)` comes back with the same
+  normals and no lock.
 - **Undoing a target a blendShape load added keeps its weight element**: the
   blendShape keeps an unnamed `weight[i]` at 0 (as the undo of
   `set_target_data` on a new target always has). It holds nothing, so

@@ -91,9 +91,12 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             where it was saved, where a non-uniform scale, a shear or float
             noise moved them (`create` says how).
         normals: (both forms) a restore flag, as `create` takes it. True: the
-            data's normals bring back the hard edges and locked normals.
-            False: skipped, for speed: a new mesh is all smooth, an updated
-            one keeps its own hard edges and locked normals.
+            data's shading comes back: from stored normals the hard edges and
+            locked normals, else its ``hard_edges`` hard, every other edge
+            soft and no normal locked (an updated mesh's own hard edges and
+            locks give way to the data's, also to data with neither: all
+            soft). False: skipped, for speed: a new mesh is all smooth, an
+            updated one keeps its own hard edges and locked normals.
         colors: (both forms) a restore flag, as `create` takes it. True: the
             data's colours (``colors`` / ``color_indices``, which `serialize`
             writes from the mesh's first colour set) come back as a colour
@@ -119,16 +122,19 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
     changed: a missing file is a FileNotFoundError, a file of another class (a
     UV file as the mesh, two files swapped) a TypeError naming what it holds.
 
-    Creating is ``create`` with the data: its normals bring back the hard edges
-    and locked normals, its colours a colour set. Updating needs the same
+    Creating is ``create`` with the data: its shading comes back (the hard
+    edges, and the locked normals of stored normals), its colours a colour set.
+    Updating needs the same
     topology (the vertex count, the face counts and every face's vertex list,
     the holes) and a mesh without history (construction history or a deformer
     would compute over its points), else a ValueError naming
     ``Mesh.load(...)`` for a new mesh; for a deformed mesh (a skin, a
     blendShape ...) it names the mesh under its deformers,
     ``Mesh('bodyShapeOrig').load(...)``, whose load the deformed mesh follows.
-    It sets every point, then, from data with normals (and ``normals=True``),
-    the hard edges and locked normals, then each UV set of the file by name
+    It sets every point, then (with ``normals=True``) the data's shading in
+    place of the mesh's own: the hard edges and locked normals of stored
+    normals, else the data's ``hard_edges`` and no lock (data with neither:
+    every edge soft), then each UV set of the file by name
     (made when the mesh has none of that name; its other sets, and the current
     set, stay), then, from data with colours (and ``colors=True``), the
     colours of its first colour set, one a face corner (its other sets stay).
@@ -148,8 +154,9 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 # a mesh attribute of the same name (``create``'s other keywords are attributes; the mesh's
 # internal ``normals`` / ``colors`` arrays are never set that way).
 #
-# ``normals`` is the first: the hard / soft edges and the locked normals (`_shading_of`,
-# `_restore_shading`). ``colors`` is the second: the data's colours as a colour set, the
+# ``normals`` is the first: the hard / soft edges and the locked normals, from the data's stored
+# normals or its ``hard_edges`` (`_shading_of`, `_restore_shading`). Read, data with neither is
+# all soft, which an updated mesh takes too. ``colors`` is the second: the data's colours as a colour set, the
 # first one of the mesh (`_data_colors`, `_restore_colors`, `_update_colors`). `serialize`
 # takes the same names, and ``uvs``, for the parts it writes (`_serialize_flag`):
 # ``serialize(colors=False)`` leaves them out, ``create(data, colors=False)`` leaves them
@@ -387,10 +394,11 @@ class Mesh(Geometry):
             container: Inside ``with container()``, whether the transform and
                 the shape are registered with the scope (None: yes), as for
                 every typed create (see `DGNode.create`).
-            normals: A restore flag (see below). True: the data's normals
-                bring back its hard / soft edges and locked normals. False:
-                they are skipped, for speed (not read: every edge smooth,
-                none locked, as for data without normals).
+            normals: A restore flag (see below). True: the data's shading
+                comes back: its hard / soft edges and locked normals from
+                stored normals, else the edges its ``hard_edges`` names.
+                False: skipped, for speed (not read: every edge smooth, none
+                locked, as for data with neither).
             colors: A restore flag (see below). True: the data's colours
                 (``colors`` / ``color_indices``, which `serialize` writes from
                 the mesh's first colour set) become the colour set
@@ -477,8 +485,12 @@ class Mesh(Geometry):
         ``world_space=False`` gives the same world positions from the shape's
         own points under a transform placed there.
 
-        **Locked normals**: with ``world_space=True``, under ``transform=`` or
-        frozen, as in ``Mesh('x').load(path, world_space=True)``, data holds
+        **Locked normals**: data that stores no normals (what `serialize`
+        writes for a mesh with no locked normal) locks none through any
+        matrix but a mirror: its hard edges come through, and the normals are
+        Maya's own where the points land. Stored normals, with
+        ``world_space=True``, under ``transform=`` or
+        frozen, as in ``Mesh('x').load(path, world_space=True)``: data holds
         no lock flag, so a normal counts as locked when Maya computes it more
         than 1e-4 from the data's on the data's own points, as a plain create
         decides it, and where it lands too (what Maya computes there needs no
@@ -491,8 +503,9 @@ class Mesh(Geometry):
         sphere at a scale of (1, 2, 1), 0.5 at (1, 2, 3), 13 at a soft corner
         of a 2 x 2 x 2 cube under a shear). The hard edges come through.
         Through a mirror (a negative scale) every normal locks instead (54 of
-        54 on a 2 x 2 x 2 cube): Maya's own would face the other way, and the
-        world normals stay the source's. World-space data
+        54 on a 2 x 2 x 2 cube), also from data that stores none (the normals
+        its points give go through): Maya's own would face the other way, and
+        the world normals stay the source's. World-space data
         (``serialize(world_space=True)``) holds normals through the source's
         matrix, which Maya does not compute from its points: back on the
         source's own points only its locks lock, anywhere else the soft normals
@@ -508,15 +521,20 @@ class Mesh(Geometry):
         each hole loop, as ``mesh_data`` does, and each UV and each colour
         stays on its vertex.
 
-        The data's normals (``normals`` / ``normal_indices``, which
-        `serialize` writes) bring back its shading, through the API before
-        any recorded command: an edge is hard where the two faces' normals
+        The data's shading comes back through the API, before any recorded
+        command, from the form the data holds (`serialize` writes the least
+        one that says the mesh's). Stored normals (``normals`` /
+        ``normal_indices``): an edge is hard where the two faces' normals
         differ at one of its ends, and a normal Maya then computes away from
-        the data's is set and locked (a locked normal of the source). So
+        the data's is set and locked (a locked normal of the source); a
+        ``hard_edges`` beside them is not read. No normals: the edges
+        ``hard_edges`` names are hard (each by its two vertices; a pair no
+        face lists as an edge is a RuntimeError, before anything is made),
+        every other edge soft and no normal locked. Data with neither (a
+        smooth mesh, an ``.obj``, a MeshData built by hand) is all smooth. So
         ``Mesh.create(*m.serialize())`` gives back ``m``'s hard edges and
         locked normals, its points as ``m``'s own and its transform at ``m``'s
-        world matrix. Data without normals (an ``.obj``, a MeshData built by
-        hand) is all smooth. The restore costs, in a plain create, over one
+        world matrix. The restore of stored normals costs, in a plain create, over one
         without it (2.0.0a5's): within 1.5x for a mostly smooth mesh, 1.75x to
         2.6x for a faceted or heavily locked one; with ``world_space=True``
         through a matrix, whatever differs where it lands costs a second
@@ -1111,11 +1129,23 @@ class Mesh(Geometry):
             uvs: By keyword only, a bool. True (the default): every UV set comes
                 too, a UVList beside the MeshData. False: the MeshData alone (it
                 holds no UVs).
-            normals: By keyword only, a bool. True (the default): Maya's normals,
-                one a face corner, as ``normals`` / ``normal_indices`` (`create`
-                brings back the hard edges and locked normals from them). False:
-                left out, which skips their read (about half of a 20k-face
-                serialize).
+            normals: By keyword only, a bool. True (the default): the shading,
+                as the fewest fields that say it. A mesh whose normals are all
+                the ones its points give (none locked) writes no normals:
+                ``hard_edges`` holds the two vertices of each hard edge that
+                two or more faces share, and stays None when there is none (a
+                border edge shades nothing, and Maya flags the borders of a
+                stock plane hard: it is left out). Any other mesh writes
+                Maya's normals, one a face corner, as ``normals`` /
+                ``normal_indices``, and no ``hard_edges``: one with a locked
+                normal (also a lock that holds the value Maya would compute),
+                a shape on another ``vertexNormalMethod`` than Maya's default,
+                and with ``world_space=True`` a mesh under a non-uniform
+                scale, a shear or a mirror, whose world normals are not the
+                ones its world points give. `create` brings back the hard
+                edges and the locked normals from either form, and the data's
+                ``get_face_vertex_normals()`` gives the normals of both.
+                False: the three fields are left out, which skips their read.
             colors: By keyword only, a bool. True (the default): the colours of
                 the mesh's first colour set as ``colors`` / ``color_indices``:
                 the distinct RGBA colours, and the one each face corner names. An
@@ -1141,12 +1171,7 @@ class Mesh(Geometry):
 
         parts = {}
         if normals:
-            space      = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-            normal_ids = []
-            for face_id in range(fn.numPolygons):
-                normal_ids.extend(fn.getFaceNormalIds(face_id))
-            parts["normals"]        = np.asarray(fn.getNormals(space))
-            parts["normal_indices"] = np.asarray(normal_ids)
+            parts.update(_shading_fields(fn, type(self).get_mdagpath(self), world_space))
         if colors:
             parts["colors"], parts["color_indices"] = _first_set_colors(fn)
 
@@ -1202,8 +1227,10 @@ class Mesh(Geometry):
                 world-space points (as `serialize`). The update in place,
                 ``Mesh('x').load(path)``, takes the same one.
             normals, colors: By keyword only, bools, as `serialize` takes them:
-                True (the default) writes the normals, and the first colour
-                set's colours; False leaves them out of the file.
+                True (the default) writes the shading (the fewest fields that
+                say it: ``hard_edges``, or stored normals for a mesh with a
+                locked one) and the first colour set's colours; False leaves
+                them out of the file.
 
         Returns:
             `path`, or ``(path, uvs)``, each as written (``~`` expanded).
@@ -2121,8 +2148,18 @@ _IDENTITY_16 = np.eye(4).ravel()
 
 # --- the data's shading: hard / soft edges and locked normals ------------------------------
 #
-# A MeshData's normals are one per face-vertex (``normals[normal_indices]``). Its shading
-# comes back from them in two parts, through the API on the shape:
+# A MeshData says its shading in one of three forms (cgmath's), and `serialize` writes the least
+# one that says the mesh's (`_shading_fields`):
+#
+# * nothing: the normals are the ones the points give, every edge soft;
+# * ``hard_edges`` alone: the same, with the edges it lists hard, each as its two vertices;
+# * ``normals`` / ``normal_indices``: stored normals, one per face-vertex
+#   (``normals[normal_indices]``). A ``hard_edges`` beside them is not read: the normals say
+#   the edges.
+#
+# The first two come back as edges alone (`_data_hard_edges`, ``setEdgeSmoothings``): nothing is
+# locked, and the normals are Maya's own of the points. Stored normals come back in two parts,
+# through the API on the shape:
 #
 # * the edges: an edge between two faces is smooth when the two faces' normals agree at both
 #   its ends (to _SPLIT_TOL), else hard (``setEdgeSmoothings``);
@@ -2166,13 +2203,88 @@ _IDENTITY_16 = np.eye(4).ravel()
 #
 # A mirror is the exception: Maya's own normals of the mirrored points face the other way.
 # Nothing is copied (``own`` is None), every normal differs on the mesh itself and every one is
-# set, which keeps the world normals the source's.
+# set, which keeps the world normals the source's. Data that stores no normals goes the same way
+# through a mirror, and only there: the normals its points give (cgmath's
+# ``get_face_vertex_normals()``) are taken through and set. Through any other matrix it locks
+# none: its edges come through, and the normals are Maya's own where the points land.
 
 # two normals of one vertex further apart than this split the edge between their faces
 _SPLIT_TOL = 1e-5
 # a normal Maya computes this far from the data's differs (through a matrix, on both sets of
 # points: above), and is a locked one
 _LOCK_TOL = 1e-4
+
+
+# Maya's default ``vertexNormalMethod``, angle and area weighted: the normals cgmath derives
+_DERIVED_NORMAL_METHOD = 3
+# a world matrix whose rows are this near (relative to its scale) a rotation and one scale
+# leaves the normals the ones the points give
+_SIMILAR_TOL = 1e-9
+
+
+def _keeps_derived_normals(matrix) -> bool:
+    """True when the world matrix `matrix` (16 values, row vectors) is a rotation and
+    one positive scale, with any translation: the normals Maya holds in world space
+    are then the ones the world points give. A non-uniform scale or a shear turns a
+    normal another way than the points (the inverse transpose), and a mirror faces
+    the ones the points give the other way."""
+    linear = np.array(list(matrix), dtype=np.float64).reshape(4, 4)[:3, :3]
+    gram   = linear @ linear.T
+    scale  = float(np.trace(gram)) / 3.0
+    return (
+        scale > 0.0
+        and float(np.linalg.det(linear)) > 0.0
+        and bool(np.allclose(gram, scale * np.eye(3), rtol=0.0, atol=_SIMILAR_TOL * scale))
+    )
+
+
+def _stores_normals(fn: OpenMaya.MFnMesh, path: OpenMaya.MDagPath, world_space: bool) -> bool:
+    """True when the normals of the mesh `fn` (at `path`) are not the ones its points
+    give, so `Mesh.serialize` stores them:
+
+    * a locked normal, also one that holds the value Maya would compute: a lock is
+      the user's, and keeps a deformer from recomputing it;
+    * a shape on another ``vertexNormalMethod`` than Maya's default, the one cgmath
+      derives;
+    * with `world_space`, a world matrix that is more than a rotation and one scale
+      (`_keeps_derived_normals`).
+
+    The three reads take 0.4 ms on a 20,000-face sphere, 1.7 ms with its every edge
+    hard (79,600 normals)."""
+    return (
+        any(map(fn.isNormalLocked, range(fn.numNormals)))
+        or fn.findPlug("vertexNormalMethod", False).asInt() != _DERIVED_NORMAL_METHOD
+        or (world_space and not _keeps_derived_normals(path.inclusiveMatrix()))
+    )
+
+
+def _shading_fields(fn: OpenMaya.MFnMesh, path: OpenMaya.MDagPath, world_space: bool) -> dict:
+    """`Mesh.serialize`'s shading of the mesh `fn` (at `path`): the MeshData fields that
+    say it, the fewest that do (the section's comment).
+
+    * ``hard_edges`` alone, when the mesh's normals are the ones its points give:
+      the two vertices of each hard edge that two or more faces share (``(n, 2)``,
+      int32), or None when there is none. A border edge is left out: it shades
+      nothing, and Maya flags the borders of a stock plane hard.
+    * ``normals`` / ``normal_indices`` alone, when the points do not give them
+      (`_stores_normals`): Maya's normals (world space with `world_space`) and the
+      normal of each face corner.
+    """
+    if _stores_normals(fn, path, world_space):
+        space      = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
+        normal_ids = []
+        for face_id in range(fn.numPolygons):
+            normal_ids.extend(fn.getFaceNormalIds(face_id))
+        return {"normals": np.asarray(fn.getNormals(space)), "normal_indices": np.asarray(normal_ids)}
+    smooth = fn.isEdgeSmooth
+    edge   = OpenMaya.MItMeshEdge(fn.object())
+    pairs  = []
+    for edge_id in range(fn.numEdges):
+        if not smooth(edge_id):
+            edge.setIndex(edge_id)
+            if not edge.onBoundary():
+                pairs.append(fn.getEdgeVertices(edge_id))
+    return {"hard_edges": np.asarray(pairs, dtype=np.int32).reshape(-1, 2) if pairs else None}
 
 
 def _data_normals(mesh_data: MeshData, n_rows: int) -> tuple | None:
@@ -2409,8 +2521,51 @@ def _hard_edges_holed(counts, indices, holes, normals, ids, n_points, split_vert
     return np.stack((va[h1], vb[h1]), axis=1), face1, corners
 
 
+def _data_hard_edges(mesh_data: MeshData, counts: np.ndarray, indices: np.ndarray, holes: dict) -> tuple:
+    """The data's ``hard_edges`` (cgmath's field, read for data that stores no
+    normals: the two vertices of each hard edge), as `_hard_edges` gives them:
+    ``(pairs (H, 2), faces (H,), corners (H,), guess (H,) or None)``. The corners
+    are all -1 (`_edge_ids` finds such an edge by its vertices) and the guess each
+    edge's first-seen id (`_first_seen_edges`; None for holed data). Data that
+    names none gives no edge. Any edge of the faces may be hard: a border's flag
+    shades nothing, a non-manifold one splits the normals of its faces.
+
+    Raises RuntimeError, before anything is made, for pairs that are not ``(N, 2)``
+    vertex indices or that no face lists as an edge."""
+    none  = np.empty(0, dtype=np.int64)
+    pairs = getattr(mesh_data, "hard_edges", None)
+    if pairs is None or not np.size(pairs):
+        return np.empty((0, 2), dtype=np.int64), none, none, none
+    pairs = np.asarray(pairs)
+    if pairs.ndim != 2 or pairs.shape[1] != 2 or pairs.dtype.kind not in "iu":
+        raise RuntimeError(
+            f"MeshData: the hard edges are {pairs.dtype} {pairs.shape}, not (N, 2) vertex indices"
+        )
+    pairs = pairs.astype(np.int64)
+    if holes:
+        a, b   = _face_loops(counts, indices, holes)
+        va, vb = indices[a], indices[b]
+        n     = np.int64(max(int(indices.max()), int(pairs.max())) + 1)
+        keys  = np.unique(np.minimum(va, vb) * n + np.maximum(va, vb))
+        want  = pairs.min(axis=1) * n + pairs.max(axis=1)
+        found = keys[np.minimum(np.searchsorted(keys, want), len(keys) - 1)] == want
+        guess = None
+    else:
+        guess = _first_seen_edges(None, pairs, (counts, indices))
+        found = guess >= 0
+    if not found.all():
+        missing = np.flatnonzero(~found)
+        v0, v1  = pairs[missing[0]].tolist()
+        raise RuntimeError(
+            f"MeshData: {len(missing)} of the {len(pairs)} hard edges name two vertices that no face lists "
+            f"as an edge (the first: {v0} and {v1})"
+        )
+    return pairs, np.zeros(len(pairs), dtype=np.int64), np.full(len(pairs), -1, dtype=np.int64), guess
+
+
 def _edge_ids(fn: OpenMaya.MFnMesh, hard: tuple, shading: "_Shading | None" = None) -> list[int]:
-    """Maya's edge id of each hard edge of `hard` (`_hard_edges`) of the mesh `fn`.
+    """Maya's edge id of each hard edge of `hard` (`_hard_edges`, `_data_hard_edges`)
+    of the mesh `fn`.
 
     First from the mesh's face lists, in numpy (`_first_seen_edges`: Maya numbers
     the edges of a mesh it builds in the order its faces first list them), each
@@ -2640,28 +2795,39 @@ def _lock_differing(fn: OpenMaya.MFnMesh, shading: _Shading, hard: list[int]) ->
 
 
 # the data's shading, checked: its lists, its normals (where they land) and the normal of each
-# face-vertex, its hard edges as vertex pairs, and `own`: the data's own points and normals, when
-# what it locks is decided on a copy of the mesh at those points too; else None
+# face-vertex (both None for data that stores none, which locks nothing), its hard edges as vertex
+# pairs, and `own`: the data's own points and normals, when what it locks is decided on a copy of
+# the mesh at those points too; else None
 _Shading = namedtuple("_Shading", "counts indices holes normals ids hard own")
 
 
-def _shading_of(mesh_data: MeshData, holes: dict, space: np.ndarray | None = None) -> _Shading | None:
-    """The data's shading (`_Shading`), or None for data with no normals. Raises
-    RuntimeError, before anything is made, when its normals do not fit its faces.
+def _shading_of(mesh_data: MeshData, holes: dict, space: np.ndarray | None = None) -> _Shading:
+    """The data's shading (`_Shading`), from the form the data holds (the section's
+    comment): its stored normals and the hard edges they say, else its ``hard_edges``
+    and no normals (data with neither: no hard edge). Raises RuntimeError, before
+    anything is made, when its normals do not fit its faces, or its ``hard_edges``
+    are no edges of them (not read beside stored normals).
 
     With `space` (4x4, row vectors), the matrix that takes the data's points where
     they land (into another mesh's object space, or the world's), the normals are
     taken through it (as normals are: its inverse transpose, normalised) and the
     data's own points and normals stay in ``own``, unless it mirrors (the section's
     comment); a `space` with no inverse is a ValueError, before anything is made.
-    The identity takes nothing anywhere: the data's shading, as with no `space`."""
+    The identity takes nothing anywhere: the data's shading, as with no `space`.
+    Data that stores no normals has none to take through, but through a mirror:
+    the ones its points give then stand in, one a face-vertex."""
     counts  = np.asarray(mesh_data.counts, dtype=np.int64).ravel()
     indices = np.asarray(mesh_data.indices, dtype=np.int64).ravel()
     found   = _data_normals(mesh_data, len(indices))
-    if found is None:
-        return None
-    normals, ids = found
-    hard = _hard_edges(counts, indices, holes, normals, ids, len(mesh_data.points))
+    if found is not None:
+        normals, ids = found
+        hard = _hard_edges(counts, indices, holes, normals, ids, len(mesh_data.points))
+    else:
+        hard = _data_hard_edges(mesh_data, counts, indices, holes)
+        if space is None or np.linalg.det(space[:3, :3]) >= 0.0:
+            return _Shading(counts, indices, holes, None, None, hard, None)
+        normals = np.asarray(mesh_data.get_face_vertex_normals(), dtype=np.float64).reshape(-1, 3)
+        ids     = np.arange(len(indices), dtype=np.int64)
     if space is None or np.allclose(space.ravel(), _IDENTITY_16, rtol=0.0, atol=1e-12):
         return _Shading(counts, indices, holes, normals, ids, hard, None)
     own    = (np.array(mesh_data.points, dtype=np.float64).reshape(-1, 3), normals)
@@ -2682,12 +2848,18 @@ def _shading_of(mesh_data: MeshData, holes: dict, space: np.ndarray | None = Non
 
 def _restore_shading(fn: OpenMaya.MFnMesh, shading: _Shading) -> None:
     """The data's `shading` on the new mesh `fn` (all its edges smooth, no normal
-    locked): its hard edges, then its locked normals. Pure API: `Mesh.create`
-    calls it while it builds the shape, before any recorded command touches it."""
+    locked): its hard edges, then, from stored normals, its locked normals. Pure
+    API: `Mesh.create` calls it while it builds the shape, before any recorded
+    command touches it. Data with neither normals nor hard edges leaves the mesh
+    as it is."""
     hard = _edge_ids(fn, shading.hard, shading)
     if hard:
         fn.setEdgeSmoothings(hard, [False] * len(hard))
         fn.cleanupEdgeSmoothing()
+    if shading.normals is None:
+        if hard:
+            fn.updateSurface()
+        return
     fn.updateSurface()
     _lock_differing(fn, shading, hard)
 
@@ -2741,9 +2913,10 @@ def _create_mesh(
     Any error after step 2 deletes what it made (`_discard`: the transform, or
     the shape under the target) before it propagates.
 
-    The data's normals (when it has them, and with `normals`, the restore flag)
-    give the shape its hard edges and locked normals in step 4, after the UV
-    sets (`_restore_shading`); its colours (when it has them, and with `colors`)
+    The data's shading (with `normals`, the restore flag: its stored normals,
+    else its ``hard_edges``) gives the shape its hard edges and locked normals
+    in step 4, after the UV sets (`_restore_shading`); its colours (when it has
+    them, and with `colors`)
     its first colour set, after the shading (`_restore_colors`; on a holed face
     each colour stays on its vertex, as the UVs do).
     """
@@ -3238,8 +3411,10 @@ def _put_shading(fn: OpenMaya.MFnMesh, hard: list[int], unlock: tuple) -> None:
 class _MeshUpdateCommand(_MeshEdit):
     """`Mesh('x').load`: every point of the mesh, in one space, then, with the
     data's `shading` (`_shading_of`), its hard edges and locked normals in place
-    of the mesh's own. Undo puts back the points, then the old shading (its hard
-    edges and its locked normals); redo makes the edit again."""
+    of the mesh's own (data that stores no normals locks none: its ``hard_edges``
+    hard, every other edge soft, the mesh's own locks released). Undo puts back
+    the points, then the old shading (its hard edges and its locked normals);
+    redo makes the edit again."""
 
     UNDO_EDIT = "Mesh.load"
 
@@ -3268,7 +3443,8 @@ class _MeshUpdateCommand(_MeshEdit):
             fn   = OpenMaya.MFnMesh(self._path)
             hard = _edge_ids(fn, self._shading.hard, self._shading)
             _put_shading(fn, hard, self._old[1][1])
-            self._locked = _lock_differing(OpenMaya.MFnMesh(self._path), self._shading, hard)
+            if self._shading.normals is not None:
+                self._locked = _lock_differing(OpenMaya.MFnMesh(self._path), self._shading, hard)
 
     def undoIt(self) -> None:
         points, shading = self._old

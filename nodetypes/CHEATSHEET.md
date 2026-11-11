@@ -1027,6 +1027,7 @@ the new shape in `initialShadingGroup`:
 data, uv_list = mesh.serialize()                                 # object space, under cube's UUID; every UV set
 print(type(data).__name__, data.point_count, data.face_count, type(uv_list).__name__, uv_list[0].name)  # MeshData 8 6 UVList map1
 print(data.parent_uuid == cube.get_uuid(), data.uuid == mesh.get_uuid())  # True True -- the transform it sits under, and its own
+print(data.normals, data.hard_edges.shape)                                                              # None (12, 2) -- no normal stored: the 12 hard edges, two vertices each
 # moved: the points stay and the transform they sit under moves; in world space the points move and none is named
 cube.t.set(0, 2, 0)
 local, world = mesh.serialize(uvs=False), mesh.serialize(uvs=False, world_space=True)
@@ -1037,7 +1038,7 @@ cube.t.set(0, 0, 0)
 rebuilt = Mesh.create(data, uvs=uv_list, name="rebuilt", uuids=False)   # a twin beside cube, which holds the data's uuid
 print(repr(rebuilt), rebuilt.get_vertex_count(), rebuilt.get_parent(), rebuilt.get_uv_sets())  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
 print(rebuilt.get_shading_engines())                                                           # [ShadingEngine("initialShadingGroup")]
-print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                        # 12 -- the data's normals bring back the cube's hard edges
+print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                        # 12 -- the data's hard_edges bring back the cube's hard edges
 ```
 
 `create` also takes one mesh of a `cgmath` `Scene`, a `Renderable`
@@ -1126,12 +1127,16 @@ by its UUID; a transform the scene lacks, as a file from another scene names,
 sits at identity. `world_space=True` freezes the shape at its world positions
 instead: the placement goes in the points and the new transform sits at the
 origin with identity channels. `Mesh.load(path, world_space=True)` is the same
-from a file. A normal locks, through the placement's inverse transpose, only
+from a file. Data that stores no normals (a mesh with no locked one) locks
+none: its hard edges come through, and every normal is Maya's own for the
+moved points, as `makeIdentity` leaves them. A stored normal locks, through
+the placement's inverse transpose, only
 where Maya computes
 another one on the data's own points and on the moved points too: the source's
-locks. Every other one is Maya's own for the moved points, as `makeIdentity`
-leaves them. Through a mirror every normal locks, as under `transform=`, and so
-do the soft ones of world-space data landing anywhere but where it was saved,
+locks. Through a mirror every normal locks, as under `transform=` (from data
+that stores none too), and so
+do the soft ones of world-space data that stores normals, landing anywhere but
+where it was saved,
 where a non-uniform scale, a shear or float noise moved them (the README has
 the numbers).
 
@@ -1152,11 +1157,15 @@ extension). `Mesh.load(...)` from the class creates, as `create` does;
 `Mesh("x").load(...)` from a mesh updates it in place, the inverse of its
 `save`: the same topology, then its points, its hard edges and locked normals,
 and the file's UV sets by name. Each is one undo step and keeps the selection;
-every file is read, and checked, before anything changes. `normals=False` (a
+every file is read, and checked, before anything changes. The file holds the
+fewest fields that say the shading: a mesh with no locked normal stores no
+normals, only its hard edges as `hard_edges` (two vertices each; None without
+one), and a mesh with a locked normal stores Maya's normals. `normals=False` (a
 *restore flag*, the same on `create` and both `load` forms; True by default)
 skips the hard edges and locked normals, for speed: a new mesh is all smooth,
-an updated one keeps its own. Restoring them costs within 1.5x of a create
-without normals for a mostly smooth mesh, 1.75x to 2.6x for a faceted or
+an updated one keeps its own. Restoring them from `hard_edges` costs 1.0x to
+1.3x of a create without them, 1.6x for a faceted mesh; from stored normals
+within 1.5x for a mostly smooth mesh, 1.75x to 2.6x for a faceted or
 heavily locked one. `colors=False` skips the colours the same way (a file's
 go into the first colour set, `colorSet1` on a new mesh), and `save(path,
 normals=False, colors=False)` leaves them out of the file.

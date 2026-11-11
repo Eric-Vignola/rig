@@ -16,6 +16,7 @@ source (runs\\r5\\CG2). Undo tests check the scene
 (``rig._tests._undo``), never ``cmds.undo()``'s return value.
 """
 
+import contextlib
 import re
 import time
 from unittest import mock
@@ -734,6 +735,11 @@ class TestMeshCreateHoles(_MeshCreateCase):
 #  The data's shading (round features s7, F1, and the user's addition A of 2026-10-15): the
 #  normals bring back the hard edges and locked normals. On v2.0.0a5 a created cube was all
 #  smooth (runs\features\saveload\probes P2).
+#
+#  Since the user's decisions of 2026-11-11 `serialize` stores a mesh's normals only when its
+#  points do not give them (a locked normal): a cube's data holds its 12 hard edges
+#  (``hard_edges``) and no normals, a smooth sphere's neither. The tests of what stored normals
+#  bring back take them under `_stored`; the data as it is written is test_fu_hard_edges's.
 # ---------------------------------------------------------------------------------------------
 
 
@@ -759,6 +765,13 @@ def _locked_rows(shape):
     return {(int(f), int(v)) for f, v, n in zip(faces, verts, ids) if fn.isNormalLocked(n)}
 
 
+def _stored():
+    """A patch (a ``with`` block, or a decorator of a test or of a test class) under which
+    `serialize` and `save` store every mesh's normals: the data rig wrote through 2.0.0a11, and
+    what a mesh with a locked normal, or another program's file, holds still."""
+    return mock.patch.object(mesh_module, "_stores_normals", new=lambda fn, path, world_space: True)
+
+
 def _shaded_sphere(name="ball"):
     """A polySphere (8 x 6), all smooth, its first 8 edges hard and vertex 0's normal
     locked: the transform."""
@@ -771,15 +784,19 @@ def _shaded_sphere(name="ball"):
 
 
 class TestMeshCreateShading(_MeshCreateCase):
-    """The hard / soft edges and the locked normals come back from the data's normals."""
+    """The hard / soft edges and the locked normals come back from the data's shading: its
+    stored normals, or the hard edges it names beside none."""
 
-    def source(self, t, world_space=False):
+    def source(self, t, world_space=False, stored=False):
         """``(data, uvs, normals, hard edges, locked face-vertices)`` of the transform `t`,
-        then `t` deleted."""
+        then `t` deleted. With `stored` the data holds every normal (`_stored`)."""
         shape = _shape(t)
         state = (_fv_normals(shape), _hard_edges(shape), _locked_rows(shape))
-        data, uvs = Mesh(t).serialize(world_space=world_space)
+        with _stored() if stored else contextlib.nullcontext():
+            data, uvs = Mesh(t).serialize(world_space=world_space)
         cmds.delete(t)
+        if not world_space:  # which form the test reads
+            self.assertEqual(data.normals is not None, stored or bool(state[2]))
         return (data, list(uvs)) + state
 
     def assert_shading(self, mesh, normals, hard, locked):
@@ -789,12 +806,15 @@ class TestMeshCreateShading(_MeshCreateCase):
         self.assertEqual(_locked_rows(shape), locked)
 
     def test_a_cube_keeps_its_hard_edges(self):
-        data, uvs, normals, hard, locked = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
-        self.assertEqual(len(hard), 12)
-        self.ready()
-        mesh = Mesh.create(data, uvs=uvs, name="m")
-        self.assert_shading(mesh, normals, hard, locked)
-        self.assertEqual(locked, set())
+        for stored in (False, True):  # its 12 pairs, then its 24 normals
+            with self.subTest(stored=stored):
+                cube = cmds.polyCube(name="src", constructionHistory=False)[0]
+                data, uvs, normals, hard, locked = self.source(cube, stored=stored)
+                self.assertEqual(len(hard), 12)
+                self.ready()
+                mesh = Mesh.create(data, uvs=uvs, name=f"m{stored:d}")
+                self.assert_shading(mesh, normals, hard, locked)
+                self.assertEqual(locked, set())
 
     def test_a_sphere_with_hard_edges_and_a_locked_normal(self):
         data, uvs, normals, hard, locked = self.source(_shaded_sphere())
@@ -805,19 +825,22 @@ class TestMeshCreateShading(_MeshCreateCase):
         self.assert_shading(mesh, normals, hard, locked)
 
     def test_a_smooth_mesh_stays_smooth(self):
-        t = cmds.polySphere(name="src", sx=12, sy=8, constructionHistory=False)[0]
-        cmds.polySoftEdge(t, angle=180)
-        cmds.delete(t, constructionHistory=True)
-        data, uvs, normals, hard, locked = self.source(t)
-        self.assertEqual((hard, locked), (set(), set()))
-        mesh = Mesh.create(data, uvs=uvs, name="m")
-        self.assert_shading(mesh, normals, hard, locked)
+        for stored in (False, True):  # no shading field at all, then its normals
+            with self.subTest(stored=stored):
+                t = cmds.polySphere(name="src", sx=12, sy=8, constructionHistory=False)[0]
+                cmds.polySoftEdge(t, angle=180)
+                cmds.delete(t, constructionHistory=True)
+                data, uvs, normals, hard, locked = self.source(t, stored=stored)
+                self.assertEqual((hard, locked), (set(), set()))
+                mesh = Mesh.create(data, uvs=uvs, name=f"m{stored:d}")
+                self.assert_shading(mesh, normals, hard, locked)
 
     def test_data_without_normals_is_all_smooth(self):
-        # an .obj or a MeshData built by hand: today's result, every edge smooth, none locked
+        # an .obj or a MeshData built by hand, which names no hard edge either: every edge smooth,
+        # none locked
         data, uvs, _, _, _ = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
-        data.normals = None
-        data.normal_indices = None
+        self.assertEqual(len(data.hard_edges), 12)
+        data.hard_edges = None
         mesh = Mesh.create(data, uvs=uvs, name="m")
         self.assertEqual(_hard_edges(str(mesh)), set())
         self.assertEqual(_locked_rows(str(mesh)), set())
@@ -838,11 +861,14 @@ class TestMeshCreateShading(_MeshCreateCase):
         self.assert_shading(mesh, world, hard, set())
 
     def test_a_holed_face(self):
-        data, uvs, normals, _, locked = self.source(_facet())
-        mesh = Mesh.create(data, uvs=uvs, name="m")
-        # a border edge reads hard in the source, smooth when made: it shades nothing
-        np.testing.assert_allclose(_fv_normals(str(mesh)), normals, rtol=0.0, atol=1e-5)
-        self.assertEqual(_locked_rows(str(mesh)), locked)
+        for stored in (False, True):
+            with self.subTest(stored=stored):
+                data, uvs, normals, _, locked = self.source(_facet(), stored=stored)
+                mesh = Mesh.create(data, uvs=uvs, name=f"m{stored:d}")
+                # a border edge reads hard in the source, smooth when made: it shades nothing
+                np.testing.assert_allclose(_fv_normals(str(mesh)), normals, rtol=0.0, atol=1e-5)
+                self.assertEqual(_hard_edges(str(mesh)), set())
+                self.assertEqual(_locked_rows(str(mesh)), locked)
 
     def test_the_round_trip_is_exact(self):
         data, uvs, *_ = self.source(_shaded_sphere())
@@ -882,13 +908,15 @@ class TestMeshCreateShading(_MeshCreateCase):
     def test_nothing_locked_reads_no_normal_ids(self):
         # Maya numbers the normals of data a Maya mesh was serialized to as the data does: when
         # every one matches, the 80k ids of a 20k-face mesh are never read
-        data, uvs, normals, hard, locked = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
+        cube = cmds.polyCube(name="src", constructionHistory=False)[0]
+        data, uvs, normals, hard, locked = self.source(cube, stored=True)
         with mock.patch.object(mesh_module, "_normal_ids_now", wraps=mesh_module._normal_ids_now) as read:
             mesh = Mesh.create(data, uvs=uvs, name="m")
         read.assert_not_called()
         self.assert_shading(mesh, normals, hard, locked)
+
     def test_normals_that_do_not_fit_raise_with_nothing_made(self):
-        data, uvs, *_ = self.source(cmds.polyCube(name="src", constructionHistory=False)[0])
+        data, uvs, *_ = self.source(cmds.polyCube(name="src", constructionHistory=False)[0], stored=True)
         good_n, good_i = np.asarray(data.normals), np.asarray(data.normal_indices)
         for label, normals, ids, text in (
             ("ids short", good_n, good_i[:-1], "normal indices for 24 face-vertices"),
@@ -908,8 +936,9 @@ class TestMeshCreateShading(_MeshCreateCase):
 
 class TestMeshCreateShadingCost(MayaTestCase):
     """The budget of the shading restore: at most 1.5x the create of the same data without
-    normals (v2.0.0a5's create, which used no normals), on a mostly smooth 20k-face mesh
-    (runs\\features\\saveload\\probes\\p7_perf.py's: 800 hard edges of 39,800)."""
+    its shading (v2.0.0a5's create, which used no normals), on a mostly smooth 20k-face mesh
+    (runs\\features\\saveload\\probes\\p7_perf.py's: 800 hard edges of 39,800), from its
+    stored normals and from the hard edges it names."""
 
     TEST_START_NEW_SCENE = True
 
@@ -918,11 +947,14 @@ class TestMeshCreateShadingCost(MayaTestCase):
         cmds.polySoftEdge(t, angle=180)
         cmds.polySoftEdge(f"{t}.e[0:800]", angle=0)
         cmds.delete(t, constructionHistory=True)
-        data, uvs = Mesh(t).serialize(world_space=False)
+        with _stored():
+            data, uvs = Mesh(t).serialize(world_space=False)
+        named = Mesh(t).serialize(world_space=False, uvs=False)
         cmds.delete(t)
-        plain = data.copy()
-        plain.normals = None
-        plain.normal_indices = None
+        plain            = named.copy()
+        plain.hard_edges = None
+        self.assertEqual((data.normals is None, data.hard_edges), (False, None))
+        self.assertEqual((named.normals, len(named.hard_edges)), (None, 801))
 
         def best(source, runs=9):
             times = []
@@ -934,5 +966,6 @@ class TestMeshCreateShadingCost(MayaTestCase):
             return min(times)
 
         best(data, 2)  # warm up
-        with_normals, without = best(data), best(plain)
-        self.assertLess(with_normals, 1.5 * without, f"{with_normals * 1000:.1f} ms against {without * 1000:.1f} ms")
+        stored, edges, without = best(data), best(named), best(plain)
+        self.assertLess(stored, 1.5 * without, f"{stored * 1000:.1f} ms against {without * 1000:.1f} ms")
+        self.assertLess(edges, 1.5 * without, f"{edges * 1000:.1f} ms against {without * 1000:.1f} ms")

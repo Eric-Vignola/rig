@@ -24,6 +24,7 @@ Re-pinned for the user's decision of 2026-10-30: the class form takes ``world_sp
 freezes a new shape at its world positions), so it names no other form.
 """
 
+import contextlib
 import logging
 
 import numpy as np
@@ -31,6 +32,7 @@ from maya import cmds
 
 from rig import Bool, Float, List, Node, Plug
 from rig.nodetypes import BlendShape, Joint, Mesh, NurbsCurve, NurbsSurface, SkinCluster, Transform
+from rig._tests.test_class_mesh_create import _stored
 from rig._tests.test_class_saveload import _Case
 
 
@@ -279,7 +281,11 @@ class TestTheShadingCost(_Case):
     2.1x, 2000 vertices of locked normals 2.3x). The edge ids now come from the face lists
     in numpy, each checked by its vertices, and the smoothing is set in one call: about
     2.6x, 1.75x and 2.1x. The guards leave room for a busy machine; the 1.5x budget of a
-    mostly smooth mesh is test_class_mesh_create's."""
+    mostly smooth mesh is test_class_mesh_create's.
+
+    Since the user's decisions of 2026-11-11 such a sphere serializes with its hard edges named
+    and no normals (``hard_edges``): each budget holds for that data, and for the stored normals
+    a mesh with a locked normal or an older file holds (`_stored`)."""
 
     def best(self, source, uvs, runs=7):
         import time
@@ -292,21 +298,28 @@ class TestTheShadingCost(_Case):
             cmds.delete(mesh.get_parent().get_long_name())
         return min(times)
 
-    def ratio(self, prepare):
+    def ratio(self, prepare, stored):
+        """The create of a 200 x 100 sphere's data over the create of the same data without its
+        shading; with `stored` the data holds its normals, else the hard edges it names."""
         t = cmds.polySphere(name="src", sx=200, sy=100, constructionHistory=False)[0]
         prepare(t)
         cmds.delete(t, constructionHistory=True)
-        data, uvs = Mesh(t).serialize(world_space=False)
+        with _stored() if stored else contextlib.nullcontext():
+            data, uvs = Mesh(t).serialize(world_space=False)
         cmds.delete(t)
+        self.assertEqual((data.normals is None, data.hard_edges is None), (not stored, stored))
         plain = data.copy()
-        plain.normals = None
+        plain.normals        = None
         plain.normal_indices = None
+        plain.hard_edges     = None
         self.best(data, uvs, 2)  # warm up
         return self.best(data, uvs) / self.best(plain, uvs)
 
     def test_every_edge_hard(self):
-        ratio = self.ratio(lambda t: cmds.polySoftEdge(t, angle=0, ch=False))
-        self.assertLess(ratio, 3.3, f"{ratio:.2f}x")
+        for stored in (False, True):
+            with self.subTest(stored=stored):
+                ratio = self.ratio(lambda t: cmds.polySoftEdge(t, angle=0, ch=False), stored)
+                self.assertLess(ratio, 3.3, f"{ratio:.2f}x")
 
     def test_a_third_of_the_edges_hard(self):
         def prepare(t):
@@ -314,13 +327,19 @@ class TestTheShadingCost(_Case):
             n = cmds.polyEvaluate(t, edge=True)
             ids = sorted(np.random.default_rng(1).choice(n, int(n * 0.3), replace=False).tolist())
             cmds.polySoftEdge([f"{t}.e[{i}]" for i in ids], angle=0, ch=False)
-        ratio = self.ratio(prepare)
-        self.assertLess(ratio, 2.0, f"{ratio:.2f}x")
+        for stored in (False, True):
+            with self.subTest(stored=stored):
+                ratio = self.ratio(prepare, stored)
+                self.assertLess(ratio, 2.0, f"{ratio:.2f}x")
 
     def test_the_hard_edges_come_back(self):
         """guard: every edge the data makes hard (``_hard_edges``: its normals split at an
-        end) is hard on the new mesh, and no other one, on the dense route (the ids guessed
-        from the face lists, each checked)."""
+        end; ``_data_hard_edges``: the ones it names) is hard on the new mesh, and no other one,
+        on the dense route (the ids guessed from the face lists, each checked).
+
+        The edges it names are every one Maya flags. Stored normals say fewer: a hard edge among
+        soft ones, whose two faces share a normal at both its ends, splits none (12 of this
+        sphere's), so nothing in them tells it from a soft one."""
         t = cmds.polySphere(name="src", sx=40, sy=20, constructionHistory=False)[0]
         n = cmds.polyEvaluate(t, edge=True)
         ids = sorted(np.random.default_rng(2).choice(n, n // 2, replace=False).tolist())
@@ -329,12 +348,20 @@ class TestTheShadingCost(_Case):
         cmds.delete(t, constructionHistory=True)
         from rig.nodetypes import mesh as mesh_module
 
-        data, uvs = Mesh(t).serialize(world_space=False)
-        shading = mesh_module._shading_of(data, {})
-        self.assertIsNotNone(shading.hard[3])  # the dense route: guessed ids
-        want = {frozenset(pair) for pair in shading.hard[0].tolist()}
-        self.assertGreater(len(want), 100)
-        made = Mesh.create(data, uvs=uvs, uuids=False)
-        fn = made.get_fn_set()
-        got = {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
-        self.assertEqual(got, want)
+        source = Mesh(t).get_fn_set()
+        hard   = {frozenset(source.getEdgeVertices(e)) for e in range(source.numEdges) if not source.isEdgeSmooth(e)}
+        for stored in (False, True):
+            with self.subTest(stored=stored):
+                with _stored() if stored else contextlib.nullcontext():
+                    data, uvs = Mesh(t).serialize(world_space=False)
+                self.assertEqual(data.normals is not None, stored)
+                shading = mesh_module._shading_of(data, {})
+                self.assertIsNotNone(shading.hard[3])  # the dense route: guessed ids
+                want = {frozenset(pair) for pair in shading.hard[0].tolist()}
+                self.assertGreater(len(want), 100)
+                self.assertLessEqual(want, hard)
+                self.assertEqual(len(hard - want), 12 if stored else 0)
+                made = Mesh.create(data, uvs=uvs, uuids=False)
+                fn   = made.get_fn_set()
+                got  = {frozenset(fn.getEdgeVertices(e)) for e in range(fn.numEdges) if not fn.isEdgeSmooth(e)}
+                self.assertEqual(got, want)

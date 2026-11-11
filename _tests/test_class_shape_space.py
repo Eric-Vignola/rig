@@ -41,6 +41,7 @@ from maya.api import OpenMaya
 from rig import Node
 from rig.nodetypes import Follicle, Joint, Mesh, NurbsCurve, NurbsSurface, SkinCluster
 from rig._tests._base import MayaTestCase
+from rig._tests.test_class_mesh_create import _stored
 
 OBJECT   = OpenMaya.MSpace.kObject
 WORLD    = OpenMaya.MSpace.kWorld
@@ -300,8 +301,8 @@ class TestTheQueriesReadObjectSpace(_Case):
 
 # ---------------------------------------------------------------------------------------------
 class TestAMeshsDataIsObjectSpace(_Case):
-    """Mesh.serialize / save by default: the object-space points and normals, and the UUID of the
-    transform they are relative to; Mesh('x').load: the points as its own."""
+    """Mesh.serialize / save by default: the object-space points, the normals where it stores them,
+    and the UUID of the transform they are relative to; Mesh('x').load: the points as its own."""
 
     def setUp(self):
         super().setUp()
@@ -311,10 +312,18 @@ class TestAMeshsDataIsObjectSpace(_Case):
         fn = OpenMaya.MFnMesh(self.cube.get_mdagpath())
         data, _uvs = self.cube.serialize()
         np.testing.assert_array_equal(data.points, _xyz(fn.getPoints(OBJECT)))
-        np.testing.assert_array_equal(np.asarray(data.normals), _xyz(fn.getNormals(OBJECT)))
+        # the cube's points give its normals, so it stores none (user decisions of 2026-11-11): its
+        # 12 hard edges say them
+        self.assertEqual((data.normals, len(data.hard_edges)), (None, 12))
+        with _stored():  # a mesh that stores them, as one with a locked normal does: its own
+            stored = self.cube.serialize(uvs=False)
+        np.testing.assert_array_equal(np.asarray(stored.normals), _xyz(fn.getNormals(OBJECT)))
         self.assertEqual((data.uuid, data.parent_uuid), (_uuid(self.cube), _uuid(self.cube.get_parent())))
+        # the world's, through grp's uneven scale, are not the ones the world points give: stored
         world = self.cube.serialize(world_space=True, uvs=False)
         np.testing.assert_array_equal(world.points, _xyz(fn.getPoints(WORLD)))
+        np.testing.assert_array_equal(np.asarray(world.normals), _xyz(fn.getNormals(WORLD)))
+        self.assertIsNone(world.hard_edges)
         self.assertEqual((world.uuid, world.parent_uuid), (_uuid(self.cube), None))
 
     def test_the_parent_is_read_through_the_shape_s_path(self):
