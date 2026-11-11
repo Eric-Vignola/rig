@@ -288,9 +288,10 @@ class TestFiles(_Case):
                                 lambda: Mesh.load(self.path("pkl_as.dat")))
 
     def test_an_older_cgmath_is_refused_naming_the_pin(self):
-        """A cgmath whose shapes carry no parent_uuid (3.0.1, 3.2.0), or whose MeshData holds no
-        colours (an r17-skeleton before 09a9544) or no hard edges (one before 6001ea6): the first
-        data path says which cgmath rig needs, before anything is read or made."""
+        """A cgmath whose shapes carry no parent_uuid (3.0.1, 3.2.0), whose MeshData holds no
+        colours (an r17-skeleton before 09a9544) or no hard edges (one before 6001ea6), or whose
+        NurbsCurveData holds no weights (one before 8fb221e): the first data path says which
+        cgmath rig needs, before anything is read or made."""
         import dataclasses
         import sys
         import types
@@ -300,9 +301,9 @@ class TestFiles(_Case):
         t     = _cube()
         data  = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c").serialize()
         older = types.ModuleType("cgmath.hierarchy")  # no ShapeData in it
-        pin   = (r" needs cgmath r17-skeleton at 6001ea6 \(2026-11-11\) or later, whose shapes carry a "
-                 r"parent_uuid, whose meshes hold colors and hard_edges and whose scenes renew uuids; "
-                 r"this cgmath is ")
+        pin   = (r" needs cgmath r17-skeleton at 4599cf7 \(2026-11-11\) or later, whose shapes carry a "
+                 r"parent_uuid, whose meshes hold colors and hard_edges, whose curves and surfaces hold "
+                 r"weights and whose scenes renew uuids; this cgmath is ")
         for label, call, head in (
             ("serialize", lambda: Mesh(t).serialize(), r"^Mesh\.serialize"),
             ("load", lambda: Mesh.load(self.path("none.npz")), r"^Mesh\.load"),
@@ -313,15 +314,17 @@ class TestFiles(_Case):
                 with self.assertRaisesRegex(ImportError, head + pin):
                     call()
                 self.assertEqual(cmds.ls(), before)
-        # an r17-skeleton before its colours, then one before its hard edges: the shapes carry a
-        # parent_uuid, a MeshData no colors, or no hard_edges beside them
-        for label, fields in (
-            ("no colours",    ["indices", "counts", "points"]),
-            ("no hard edges", ["indices", "counts", "points", "colors"]),
+        # an r17-skeleton before its colours, one before its hard edges, then one before its
+        # weights: the shapes carry a parent_uuid, a MeshData no colors, or no hard_edges beside
+        # them, or a NurbsCurveData no weights
+        for label, name, fields in (
+            ("no colours",    "MeshData",       ["indices", "counts", "points"]),
+            ("no hard edges", "MeshData",       ["indices", "counts", "points", "colors"]),
+            ("no weights",    "NurbsCurveData", ["points", "degree", "periodic", "knots"]),
         ):
             earlier = types.ModuleType("cgmath.geometry")
             earlier.__dict__.update(geometry.__dict__)
-            earlier.MeshData = dataclasses.make_dataclass("MeshData", fields)
+            setattr(earlier, name, dataclasses.make_dataclass(name, fields))
             with self.subTest(label), mock.patch.dict(sys.modules, {"cgmath.geometry": earlier}):
                 before = cmds.ls()
                 with self.assertRaisesRegex(ImportError, r"^Mesh\.serialize" + pin):

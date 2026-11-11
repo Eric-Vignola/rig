@@ -1419,6 +1419,47 @@ frozen = NurbsCurve.create(again.serialize(), name="frozen", world_space=True, u
 print(frozen.get_parent().t.get())  # [0. 0. 0.] -- its CVs hold where again is
 ```
 
+A rational curve or surface holds a weight on each CV, the `w` of
+`get_points()`. `serialize` writes them as the data's `weights`, one per
+point (`(N,)`, a surface's `(Nu, Nv)`), when one is not exactly 1, and
+leaves the field `None` otherwise: a plain shape's data and files are as
+they were. `create` makes a rational shape from data that holds them, or
+from `(N, 4)` points, whose `w` is the weight; the in-place `load` sets
+them with the CVs, every weight back to 1 from data that holds none. A
+weight that is not finite and above zero is a `ValueError`. In world space
+a weighted CV reads where it is, its weight kept (Maya's own
+`cvPositions(kWorld)` moves it by the translation times its weight).
+
+```python
+bow = NurbsCurve.create([(0, 0, 0, 1), (1, 2, 0, 3), (2, 0, 0, 1)], degree=2, name="bow")   # (N, 4) points: w is the CV's weight
+print(np.array(bow.get_points())[:, 3], np.round(cmds.pointOnCurve(str(bow), parameter=0.5, position=True), 6))   # [1. 3. 1.] [1.  1.5 0. ] -- pulled toward the heavy CV
+data = bow.serialize()
+print(data.weights, data.points[1], crv.serialize().weights)   # [1. 3. 1.] [1. 2. 0.] None -- a plain curve holds none
+same = NurbsCurve.create(data, name="same", uuids=False)       # the data's weights make a rational curve
+print(repr(same), np.array(same.get_points())[1])              # NurbsCurve("sameShape") [1. 2. 0. 3.]
+
+flat  = NurbsCurve.create([(0, 0, 0), (1, 1, 0), (2, 0, 0)], degree=2, name="flat")
+plain = flat.serialize()
+flat.load(data)                        # in place: the CVs and their weights
+print(np.array(flat.get_points())[1])  # [1. 2. 0. 3.]
+flat.load(plain)                       # data without weights: every weight back to 1
+print(np.array(flat.get_points())[1])  # [1. 1. 0. 1.]
+
+# moved: in world space a weighted CV reads where it is, its weight kept
+cmds.xform("bow", translation=(0, 0, 5))
+print(np.array(bow.get_points(world_space=True))[1], bow.serialize(world_space=True).points[1])  # [1. 2. 5. 3.] [1. 2. 5.]
+
+bend = NurbsSurface(cmds.surface(degreeU=2, degreeV=1, knotU=[0, 0, 1, 1], knotV=[0, 1], pointWeight=[
+    (1, 0, 0, 1), (1, 0, 2, 1), (1, 1, 0, 0.5), (1, 1, 2, 0.5), (0, 1, 0, 1), (0, 1, 2, 1)]))   # a rational patch of Maya's
+print(bend.serialize().weights.tolist(), ball.serialize().weights)   # [[1.0, 1.0], [0.5, 0.5], [1.0, 1.0]] None
+wall = NurbsSurface.create(bend.serialize(), name="wall", uuids=False)
+print(repr(wall), np.array(wall.get_points())[2:4, 3])               # NurbsSurface("wallShape") [0.5 0.5]
+try:
+    NurbsCurve.create([(0, 0, 0, 1), (1, 2, 0, 0), (2, 0, 0, 1)], degree=2)   # no curve holds a zero weight
+except ValueError as e:
+    print(str(e).split(" points ")[1])                               # hold each CV's weight in w, which must be finite and above zero
+```
+
 ---
 
 ## 11. `Deformer` and `SkinCluster`

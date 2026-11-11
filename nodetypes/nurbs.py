@@ -84,6 +84,10 @@ _CURVE_LOAD_DOC ="""Loads a curve from a cgmath file (a NurbsCurveData): one nam
     deformers instead, ``NurbsCurve('ctlShapeOrig').load(path)``, whose
     update the deformed curve follows.
 
+    A rational curve's weights travel with its CVs: data that holds
+    ``weights`` makes a rational curve, and an update sets them with the CVs
+    (data that holds none puts every weight back to 1); undo restores both.
+
     Each call is ONE undo step named ``rig.NurbsCurve.load`` and leaves the
     selection as it was.
     """
@@ -140,7 +144,9 @@ _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a NurbsSurfaceData): 
     counts, the degrees and the forms in U and V, and those knots) and a
     surface without history, else a ValueError naming
     ``NurbsSurface.load(...)`` for a new surface (a deformed one names its
-    ``...Orig`` shape's load).
+    ``...Orig`` shape's load). The data's ``weights`` travel as
+    `NurbsCurve.load`'s do: a new surface is rational when it holds some, and
+    an update sets them with the CVs (none: every weight back to 1).
 
     Each call is ONE undo step named ``rig.NurbsSurface.load`` and leaves the
     selection as it was.
@@ -212,11 +218,15 @@ class NurbsCurve(Geometry):
 
         Args:
             points: The control points (CVs), as ``(N, 3)`` numbers (a list, an
-                array, MPoints or the ``MPointArray`` `get_points` returns), in
-                the curve's object space. Or a NurbsCurveData: the curve is built
-                from its ``points``, ``degree`` and ``kv``, and is periodic
-                when the data is (its first ``degree`` points are then repeated
-                at the end, as Maya stores a periodic curve); the new transform
+                array), in the curve's object space; or as ``(N, 4)`` ones
+                (MPoints, the ``MPointArray`` `get_points` returns), each CV's
+                weight in its ``w``: a weight other than 1 makes the curve
+                rational. Or a NurbsCurveData: the curve is built from its
+                ``points``, ``degree`` and ``kv``, is periodic when the data
+                is (its first ``degree`` points are then repeated at the end,
+                as Maya stores a periodic curve) and rational when it holds
+                ``weights`` other than 1 (a CV's weight in its ``w``, its
+                position as it is); the new transform
                 goes where the data sits (the world matrix of the transform its
                 ``parent_uuid`` names, `serialize`'s, found in ``hierarchy=``
                 or in the scene; the identity for world-space data), as
@@ -284,9 +294,10 @@ class NurbsCurve(Geometry):
 
         Input that is no curve (points that are not ``(N, 3)`` finite numbers,
         fewer than ``degree + 1`` of them, a degree under 1, knots of the wrong
-        count or order) raises TypeError or ValueError before anything is
-        made; an error after the transform is made deletes what the call made
-        (the transform, or the shape under the target) before it propagates.
+        count or order, a weight that is not finite and above zero) raises
+        TypeError or ValueError before anything is made; an error after the
+        transform is made deletes what the call made (the transform, or the
+        shape under the target) before it propagates.
         """
         named = _positional_name(
             cls, (points,), needs="points, ", built_from="points or NurbsCurveData", noun="curve", loads=True
@@ -327,10 +338,13 @@ class NurbsCurve(Geometry):
                 True: world space.
 
         Returns:
-            A MPointArray of the cvs.
+            A MPointArray of the cvs: each one's position, and in its ``w``
+            its weight (1 on a curve that is not rational). A weighted CV's
+            world position is its own through the curve's world matrix, as
+            ``cmds.pointPosition(world=True)`` reads it (Maya's
+            ``cvPositions(kWorld)`` adds the translation times ``w - 1``).
         """
-        space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return type(self)._raw_get_fn_set(self).cvPositions(space)
+        return _cv_positions(self, world_space)
 
     # --- serialization
 
@@ -345,7 +359,9 @@ class NurbsCurve(Geometry):
         first ones, and NurbsCurveData wraps them back itself. Knots other than
         Maya's default ones go in its ``knots``, as they are (to rounding):
         the same curve over the same parameter range; Maya's default ones
-        leave it None.
+        leave it None. A rational curve's weights (each CV's ``w``) go in its
+        ``weights``, one per point, beside the points as they are (not times
+        their weight); a curve whose weights are all 1 leaves it None.
 
         As a MeshData does, the data is a cgmath shape: it holds the shape's
         ``uuid`` and, in object space, the ``parent_uuid`` of the transform the
@@ -361,21 +377,29 @@ class NurbsCurve(Geometry):
 
         Returns:
             NurbsCurveData object.
+
+        Raises:
+            ValueError: a weight that is not finite and above zero (the API
+                makes such curves, and cgmath evaluates none), naming its CV.
         """
         from cgmath.geometry import NurbsCurveData
 
         fn       = type(self)._raw_get_fn_set(self)
         degree   = fn.degree
         periodic = fn.form == OpenMaya.MFnNurbsCurve.kPeriodic
-        points   = np.array(self.get_points(world_space=world_space))[:, :3]
+        held     = np.array(self.get_points(world_space=world_space))
         if periodic:
-            points = points[: len(points) - degree]
+            held = held[: len(held) - degree]
+        points  = held[:, :3]
 
         custom  = _placement(self, world_space)
         knots   = np.array(fn.knots())
         uniform = _default_knots(len(points), degree, periodic)
         if not np.array_equal(knots, uniform):
             custom["knots"] = knots
+        weights = _held_weights(self, held[:, 3])
+        if weights is not None:
+            custom["weights"] = weights
         return NurbsCurveData(points=points, degree=degree, periodic=periodic, **custom)
 
     # --- files
@@ -432,9 +456,9 @@ class NurbsCurve(Geometry):
         _updates_only(method, kwargs, "NurbsCurve.load(path, ...) makes a new curve")
         world_space = _files.space_flag(method, world_space)
         data        = _files.read(curve, (NurbsCurveData,), method, "the curve")
-        points      = _curve_update(self, method, curve, data, world_space, hierarchy)
+        points, weights = _curve_update(self, method, curve, data, world_space, hierarchy)
         with _undo_chunk("rig.NurbsCurve.load"):
-            _SetCVsCommand(self, points, world_space)
+            _SetCVsCommand(self, points, world_space, weights)
         return self
 
     load = _files.creates_or_updates(_load_new, _load_into, _CURVE_LOAD_DOC)
@@ -505,7 +529,9 @@ class NurbsSurface(Geometry):
                 columns repeated at its end, as Maya stores it), its degrees,
                 its forms (periodic or open) and its knots (``kv_u`` /
                 ``kv_v``: its ``knots_u`` / ``knots_v``, else evenly spaced
-                ones, the parameter range ``0..spans`` in each direction). The
+                ones, the parameter range ``0..spans`` in each direction); it
+                is rational when the data holds ``weights`` other than 1 (a
+                CV's weight in its ``w``, its position as it is). The
                 new transform goes where the data sits, as for
                 `NurbsCurve.create`. Its ``uniform`` and ``registered``
                 settings have no Maya equivalent and are not used.
@@ -550,9 +576,10 @@ class NurbsSurface(Geometry):
         ``NurbsSurface('x').load(path, world_space=True)`` does into a mirrored
         transform. Data that is no surface (not a NurbsSurfaceData, points that
         are not ``(Nu, Nv, 3)`` finite numbers, too few for a degree, a degree
-        under 1) raises TypeError or ValueError before anything is made; an
-        error after the transform is made deletes what the call made (the
-        transform, or the shape under the target) before it propagates.
+        under 1, weights that are not one finite number above zero per point)
+        raises TypeError or ValueError before anything is made; an error after
+        the transform is made deletes what the call made (the transform, or
+        the shape under the target) before it propagates.
         """
         named = _positional_name(
             cls, (data,), needs="data, ", built_from="NurbsSurfaceData", noun="surface", loads=True
@@ -594,10 +621,12 @@ class NurbsSurface(Geometry):
                 True: world space.
 
         Returns:
-            A MPointArray of the cvs.
+            A MPointArray of the cvs, V varying fastest: each one's position,
+            and in its ``w`` its weight (1 on a surface that is not rational).
+            A weighted CV's world position is its own through the surface's
+            world matrix, as `NurbsCurve.get_points` returns a curve's.
         """
-        space = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        return type(self)._raw_get_fn_set(self).cvPositions(space)
+        return _cv_positions(self, world_space)
 
     # --- serialization
 
@@ -610,7 +639,11 @@ class NurbsSurface(Geometry):
         form); a ``kClosed`` direction, whose ends only meet, is open and keeps
         every CV. Knots other than Maya's default ones go in its ``knots_u`` /
         ``knots_v``, as they are: the same surface over the same parameter
-        ranges; Maya's default ones leave a direction None. The ``uuid`` and
+        ranges; Maya's default ones leave a direction None. A rational
+        surface's weights go in its ``weights``, ``(Nu, Nv)`` as the points
+        are, and a surface whose weights are all 1 leaves it None, as
+        `NurbsCurve.serialize` writes a curve's (a weight that is not finite
+        and above zero is its ValueError, naming the CV). The ``uuid`` and
         the ``parent_uuid`` are written as `NurbsCurve.serialize` writes them:
         no name, no matrix.
 
@@ -626,7 +659,7 @@ class NurbsSurface(Geometry):
         """
         from cgmath.geometry import NurbsSurfaceData
 
-        points = self.get_points(world_space=world_space)
+        held = np.array(self.get_points(world_space=world_space))
 
         fn         = type(self)._raw_get_fn_set(self)
         num_cvs_u  = fn.numCVsInU
@@ -651,18 +684,24 @@ class NurbsSurface(Geometry):
         # numCVsInU * numCVsInV ordered with V varying fastest -- i.e.
         # flat[u * numCVsInV + v] == CV at grid position (u, v). A C-order
         # reshape into (numCVsInU, numCVsInV, 3) gives the expected
-        # `grid[u, v]` layout. The trailing homogeneous-w column from the
-        # MPointArray is dropped via `[:, :3]`.
-        grid = np.array(points)[:, :3].reshape(num_cvs_u, num_cvs_v, 3)
+        # `grid[u, v]` layout. The MPointArray's fourth column is each CV's
+        # weight (1 on a surface that is not rational), in the same layout.
+        grid    = held[:, :3].reshape(num_cvs_u, num_cvs_v, 3)
+        weights = held[:, 3].reshape(num_cvs_u, num_cvs_v)
 
         # For periodic directions Maya exposes wrapped CVs (the first
         # `degree` rows/cols repeated at the end). NurbsSurfaceData expects
         # only the unique CVs and re-applies the wrap internally via its
         # geometry index, so trim them here for periodic axes.
         if periodic_u:
-            grid = grid[: num_cvs_u - degree_u, :, :]
+            grid    = grid[: num_cvs_u - degree_u, :, :]
+            weights = weights[: num_cvs_u - degree_u, :]
         if periodic_v:
-            grid = grid[:, : num_cvs_v - degree_v, :]
+            grid    = grid[:, : num_cvs_v - degree_v, :]
+            weights = weights[:, : num_cvs_v - degree_v]
+        weights = _held_weights(self, weights)
+        if weights is not None:
+            custom["weights"] = weights
 
         return NurbsSurfaceData(
             points     = grid,
@@ -727,9 +766,9 @@ class NurbsSurface(Geometry):
         _updates_only(method, kwargs, "NurbsSurface.load(path, ...) makes a new surface")
         world_space = _files.space_flag(method, world_space)
         data        = _files.read(surface, (NurbsSurfaceData,), method, "the surface")
-        points      = _surface_update(self, method, surface, data, world_space, hierarchy)
+        points, weights = _surface_update(self, method, surface, data, world_space, hierarchy)
         with _undo_chunk("rig.NurbsSurface.load"):
-            _SetCVsCommand(self, points, world_space)
+            _SetCVsCommand(self, points, world_space, weights)
         return self
 
     load = _files.creates_or_updates(_load_new, _load_into, _SURFACE_LOAD_DOC)
@@ -765,6 +804,79 @@ def _label(src) -> str:
     return repr(os.fspath(src)) if _files.is_path(src) else f"the {type(src).__name__}"
 
 
+def _cv_positions(shape, world_space: bool) -> OpenMaya.MPointArray:
+    """`get_points`' read of a curve or a surface: each CV's position, its weight
+    in its ``w`` (1 on a shape that is not rational). In world space Maya's
+    ``cvPositions(kWorld)`` moves a weighted CV by the translation times its
+    weight: a shape that holds a weight other than 1 is read in object space
+    and taken through its world matrix here; any other is Maya's read, as it
+    is."""
+    fn = type(shape)._raw_get_fn_set(shape)
+    if not world_space:
+        return fn.cvPositions(OpenMaya.MSpace.kObject)
+    points = fn.cvPositions(OpenMaya.MSpace.kWorld)
+    if not len(points) or np.all(np.array(points)[:, 3] == 1.0):
+        return points
+    own        = np.array(fn.cvPositions(OpenMaya.MSpace.kObject))
+    matrix     = np.array(type(shape).get_mdagpath(shape).inclusiveMatrix()).reshape(4, 4)
+    own[:, :3] = own[:, :3] @ matrix[:3, :3] + matrix[3, :3]
+    return OpenMaya.MPointArray(own.tolist())
+
+
+def _held_weights(shape, weights: np.ndarray) -> np.ndarray | None:
+    """The ``weights`` `serialize` writes for `shape`: its CVs' weights (`weights`:
+    ``(N,)`` of a curve, ``(Nu, Nv)`` of a surface, a periodic direction's
+    repeats trimmed), or None when every one is 1, the field's default (a
+    shape that is not rational). A weight cgmath evaluates no shape with (zero,
+    negative, nan or inf: the API makes such shapes) is a ValueError naming its
+    CV."""
+    if np.all(weights == 1.0):
+        return None
+    bad = np.argwhere(~(np.isfinite(weights) & (weights > 0.0)))
+    if len(bad):
+        index = tuple(int(i) for i in bad[0])
+        kind  = "curve" if weights.ndim == 1 else "surface"
+        raise ValueError(
+            f"{type(shape).__name__}({_name_of(shape)!r}).serialize(): cv{''.join(f'[{i}]' for i in index)} "
+            f"holds the weight {float(weights[index])!r}, and a rational {kind}'s weights are finite and "
+            f"above zero"
+        )
+    return np.ascontiguousarray(weights, dtype=np.float64)
+
+
+def _data_weights(what: str, data, dims: int) -> np.ndarray | None:
+    """The ``weights`` of `data` (a NurbsCurveData: `dims` 1; a NurbsSurfaceData:
+    2), checked before anything is made or changed: one finite number above
+    zero per control point, as a float array of the points' shape. None when
+    the data holds none, or when every one is 1 (the shape is not rational).
+    `what` names them in the TypeError or the ValueError."""
+    weights = getattr(data, "weights", None)
+    if weights is None:
+        return None
+    try:
+        weights = np.asarray(weights, dtype=np.float64)
+    except (TypeError, ValueError):
+        raise TypeError(f"{what} must be numbers, got {type(weights).__name__}") from None
+    shape = np.shape(data.points)[:dims]
+    if weights.shape != shape:
+        raise ValueError(
+            f"{what} must hold one value per control point, shape {shape}, got shape {weights.shape}"
+        )
+    if not (np.isfinite(weights).all() and (weights > 0.0).all()):
+        raise ValueError(f"{what} must be finite and above zero")
+    return None if np.all(weights == 1.0) else weights
+
+
+def _weighted_cvs(cvs: np.ndarray, weights: np.ndarray | None) -> OpenMaya.MPointArray:
+    """The CVs as ``MFnNurbsCurve.create`` / ``MFnNurbsSurface.create`` take them:
+    the ``(N, 3)`` positions, each with its weight in its ``w`` when `weights`
+    are given (a rational shape: Maya holds a CV's position as it is, not times
+    its weight)."""
+    if weights is not None:
+        cvs = np.column_stack([cvs, weights])
+    return OpenMaya.MPointArray(cvs.tolist())
+
+
 def _cv_points(cvs: np.ndarray, method: str, placed: np.ndarray | None = None) -> OpenMaya.MPointArray:
     """The CVs `cvs` checked (3D, finite) as an MPointArray; with `placed`, where
     the data puts them in the world (`_data_placement`'s ``(4, 4)``, row vectors
@@ -782,13 +894,16 @@ def _cv_points(cvs: np.ndarray, method: str, placed: np.ndarray | None = None) -
 
 def _curve_update(
     curve: NurbsCurve, method: str, src, data, world_space: bool, hierarchy: Any = None
-) -> OpenMaya.MPointArray:
+) -> tuple[OpenMaya.MPointArray, np.ndarray | None]:
     """`NurbsCurve('x').load`'s CVs, checked before anything changes: the data's
     CV layout (count, degree, form, knots) is the curve's. With `world_space`,
     the CVs where the data sits in the world (`_data_placement`, through
-    `hierarchy` when given; `_cv_points`)."""
+    `hierarchy` when given; `_cv_points`). With them, the data's weights, one
+    per CV (a periodic curve's repeated as its CVs are); None when it holds
+    none, or all 1 (`_data_weights`)."""
     door = f"NurbsCurve.load({_label(src)}) makes a new curve"
     _no_history(curve, method, door)
+    weights  = _data_weights(f"{method}: the weights", data, 1)
     fn       = type(curve)._raw_get_fn_set(curve)
     cvs      = np.asarray(data.cv, dtype=np.float64)
     knots    = np.asarray(data.kv, dtype=np.float64)
@@ -808,19 +923,24 @@ def _curve_update(
             f"{fn.numCVs} of degree {fn.degree}, {'periodic' if fn.form == OpenMaya.MFnNurbsCurve.kPeriodic else 'open'}"
             f", or other knots); a load updates the CVs of the same layout: {_name_of(door)}"
         )
-    return _cv_points(cvs, method, _data_placement(method, data, hierarchy) if world_space else None)
+    if weights is not None:
+        weights = weights[np.asarray(data.geometry)]
+    return _cv_points(cvs, method, _data_placement(method, data, hierarchy) if world_space else None), weights
 
 
 def _surface_update(
     surface: NurbsSurface, method: str, src, data, world_space: bool, hierarchy: Any = None
-) -> OpenMaya.MPointArray:
+) -> tuple[OpenMaya.MPointArray, np.ndarray | None]:
     """`NurbsSurface('x').load`'s CVs, checked before anything changes: the data's
     CV layout (counts, degrees and forms in U and V, and the knots it holds or
     leaves even, `_same_knots`) is the surface's; the surface keeps its knots.
     With `world_space`, the CVs where the data sits in the world
-    (`_data_placement`, through `hierarchy` when given; `_cv_points`)."""
+    (`_data_placement`, through `hierarchy` when given; `_cv_points`). With
+    them, the data's weights, one per CV in the CVs' order; None when it holds
+    none, or all 1 (`_data_weights`)."""
     door = f"NurbsSurface.load({_label(src)}) makes a new surface"
     _no_history(surface, method, door)
+    weights = _data_weights(f"{method}: the weights", data, 2)
     fn  = type(surface)._raw_get_fn_set(surface)
     cvs = np.asarray(data.cv, dtype=np.float64)
     kp  = OpenMaya.MFnNurbsSurface.kPeriodic
@@ -840,7 +960,9 @@ def _surface_update(
             f"{fn.degreeInU} x {fn.degreeInV}, or other forms or knots); a load updates the CVs of "
             f"the same layout: {_name_of(door)}"
         )
-    return _cv_points(cvs, method, _data_placement(method, data, hierarchy) if world_space else None)
+    if weights is not None:
+        weights = weights[np.ix_(data.geometry_u, data.geometry_v)].reshape(-1)
+    return _cv_points(cvs, method, _data_placement(method, data, hierarchy) if world_space else None), weights
 
 
 def _same_knots(knots, now, count: int, degree: int, periodic: bool) -> bool:
@@ -860,42 +982,91 @@ def _same_knots(knots, now, count: int, degree: int, periodic: bool) -> bool:
 class _SetCVsCommand:
     """`NurbsCurve('x').load` / `NurbsSurface('x').load`: every CV of the shape, in
     one space (one undo step: rig's plug-in command). Undo puts back the old
-    CVs."""
+    CVs.
+
+    Two doors. Data without weights onto a shape whose weights are all 1:
+    ``setCVPositions`` in the load's space. Data with `weights` (one per CV, in
+    the CVs' order), or a shape that holds a weight other than 1: the CVs in
+    object space, each with its weight in its ``w`` (1 without `weights`), the
+    world ones taken through the shape's inverse world matrix here
+    (``setCVPositions(kWorld)`` moves a weighted CV by the translation times its
+    weight); undo puts back the old CVs and their weights the same way."""
 
     UNDO_EDIT = "NurbsCurve.load / NurbsSurface.load"
 
-    def __init__(self, node, points: OpenMaya.MPointArray, world_space: bool) -> None:
-        self._path   = OpenMaya.MDagPath(type(node).get_mdagpath(node))
-        self._fn_cls = type(node)._raw_FN_SET
-        self._points = points
-        self._space  = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
-        self._old    = None
+    def __init__(
+        self, node, points: OpenMaya.MPointArray, world_space: bool, weights: np.ndarray | None = None
+    ) -> None:
+        self._path    = OpenMaya.MDagPath(type(node).get_mdagpath(node))
+        self._fn_cls  = type(node)._raw_FN_SET
+        self._points  = points
+        self._weights = weights
+        self._world   = world_space
+        self._space   = OpenMaya.MSpace.kWorld if world_space else OpenMaya.MSpace.kObject
+        self._old     = None
+        self._new     = None  # the second door's CVs: (N, 4), object space
         _run_undoable(self)
 
-    def _put(self, points: OpenMaya.MPointArray) -> None:
-        fn = self._fn_cls(self._path)
-        fn.setCVPositions(points, self._space)
+    def _update(self, fn) -> None:
         if self._fn_cls is OpenMaya.MFnNurbsCurve:
             fn.updateCurve()
         else:
             fn.updateSurface()
 
+    def _put(self, points: OpenMaya.MPointArray) -> None:
+        fn = self._fn_cls(self._path)
+        fn.setCVPositions(points, self._space)
+        self._update(fn)
+
+    def _put_weighted(self, held: np.ndarray) -> None:
+        """Sets every CV from `held` (``(N, 4)``: object-space positions, each
+        CV's weight in its ``w``). ``setCVPositions`` takes the weights of a
+        shape that is or was rational and drops them on one that never was:
+        those go in through the shape's ``weights`` plugs, which make it one."""
+        fn = self._fn_cls(self._path)
+        fn.setCVPositions(OpenMaya.MPointArray(held.tolist()), OpenMaya.MSpace.kObject)
+        self._update(fn)
+        taken  = np.array(self._fn_cls(self._path).cvPositions(OpenMaya.MSpace.kObject))[:, 3]
+        missed = np.flatnonzero(taken != held[:, 3])
+        if len(missed):
+            plug = OpenMaya.MFnDependencyNode(self._path.node()).findPlug("weights", False)
+            for index in missed.tolist():
+                plug.elementByLogicalIndex(index).setDouble(float(held[index, 3]))
+
     def doIt(self) -> None:  # noqa: N802
-        self._old = self._fn_cls(self._path).cvPositions(self._space)
-        self._put(self._points)
+        own = np.array(self._fn_cls(self._path).cvPositions(OpenMaya.MSpace.kObject))
+        if self._weights is None and np.all(own[:, 3] == 1.0):
+            self._old = self._fn_cls(self._path).cvPositions(self._space)
+            self._put(self._points)
+            return
+        new = np.array(self._points)
+        if self._world:
+            inverse    = np.array(self._path.inclusiveMatrixInverse()).reshape(4, 4)
+            new[:, :3] = new[:, :3] @ inverse[:3, :3] + inverse[3, :3]
+        new[:, 3] = 1.0 if self._weights is None else self._weights
+        self._old = own
+        self._new = new
+        self._put_weighted(new)
 
     def undoIt(self) -> None:  # noqa: N802
-        self._put(self._old)
+        if self._new is None:
+            self._put(self._old)
+        else:
+            self._put_weighted(self._old)
 
     def redoIt(self) -> None:  # noqa: N802
-        self._put(self._points)
+        if self._new is None:
+            self._put(self._points)
+        else:
+            self._put_weighted(self._new)
 
 
 def _surface_inputs(data) -> tuple:
     """`NurbsSurface.create`'s input, checked, as ``MFnNurbsSurface.create`` takes
     it: ``(cvs (Nu * Nv, 3), knots U, knots V, degree U, degree V, form U, form
-    V)``. It makes nothing; input that is no surface raises TypeError or
-    ValueError."""
+    V, weights)``, the weights one per CV in the CVs' order, None for a surface
+    that is not rational (`_data_weights`). It makes nothing; input that is no
+    surface raises TypeError or ValueError."""
     # a NurbsSurfaceData, duck-typed so cgmath is never imported here; read on the
     # class, so a node or a plug (whose attributes are Maya's) is never asked
     if not (hasattr(type(data), "kv_u") and hasattr(type(data), "cv")):
@@ -924,7 +1095,11 @@ def _surface_inputs(data) -> tuple:
             )
     if not np.isfinite(points).all():
         raise ValueError("NurbsSurface.create() points must be finite (got nan or inf)")
-    cvs = np.asarray(data.cv, dtype=np.float64)
+    weights = _data_weights("NurbsSurface.create() weights", data, 2)
+    cvs     = np.asarray(data.cv, dtype=np.float64)
+    if weights is not None:
+        # as the CVs: a periodic direction's first rows or columns repeated at its end
+        weights = weights[np.ix_(data.geometry_u, data.geometry_v)].reshape(-1)
     kp, ko = OpenMaya.MFnNurbsSurface.kPeriodic, OpenMaya.MFnNurbsSurface.kOpen
     return (
         cvs.reshape(-1, 3),
@@ -934,6 +1109,7 @@ def _surface_inputs(data) -> tuple:
         degrees[1],
         kp if data.periodic_u else ko,
         kp if data.periodic_v else ko,
+        weights,
     )
 
 
@@ -956,7 +1132,8 @@ def _create_surface(
        nothing is made yet;
     2. ``cmds.createNode("transform", name="surface#", skipSelect=True)``, the
        recorded node the surface rides with;
-    3. ``MFnNurbsSurface.create(..., parent=<transform>)``: the shape, under it;
+    3. ``MFnNurbsSurface.create(..., parent=<transform>)``: the shape, under it
+       (rational, each CV's weight in its ``w``, when the data holds weights);
     4. ``cmds.sets`` into ``initialShadingGroup``, then ``cmds.rename`` of the
        transform (Maya renames the shape after it) and ``cmds.xform`` of where
        the data sits (skipped for the identity, which the new transform
@@ -969,7 +1146,7 @@ def _create_surface(
     Any error after step 2 deletes what it made (`_discard`) before it
     propagates.
     """
-    cvs, knots_u, knots_v, degree_u, degree_v, form_u, form_v = _surface_inputs(data)
+    cvs, knots_u, knots_v, degree_u, degree_v, form_u, form_v, weights = _surface_inputs(data)
     if world_space:
         space = _target_space("NurbsSurface.create()", _data_placement("NurbsSurface.create()", data, hierarchy), target)
         cvs   = cvs @ space[:3, :3] + space[3, :3]
@@ -990,14 +1167,14 @@ def _create_surface(
     try:
         try:
             shape = NurbsSurface.FN_SET().create(
-                OpenMaya.MPointArray(cvs.tolist()),
+                _weighted_cvs(cvs, weights),
                 OpenMaya.MDoubleArray(knots_u.tolist()),
                 OpenMaya.MDoubleArray(knots_v.tolist()),
                 degree_u,
                 degree_v,
                 form_u,
                 form_v,
-                False,  # not rational
+                weights is not None,  # rational: each CV's weight in its w
                 parent,
             )
         except RuntimeError as error:
@@ -1077,14 +1254,17 @@ def _new_transform_matrix(method: str, data, hierarchy) -> list | None:
 
 def _curve_inputs(
     points: ArrayLike | NurbsCurveData, degree: int | None, kv: ArrayLike | None
-) -> tuple[np.ndarray, np.ndarray, int, bool]:
+) -> tuple[np.ndarray, np.ndarray, int, bool, np.ndarray | None]:
     """`NurbsCurve.create`'s input, checked, as ``MFnNurbsCurve.create`` takes
-    it: ``(cvs (N, 3), knots (N + degree - 1,), degree, periodic)``. It makes
+    it: ``(cvs (N, 3), knots (N + degree - 1,), degree, periodic, weights)``,
+    the weights one per CV, None for a curve that is not rational. It makes
     nothing; input that is no curve raises TypeError or ValueError.
 
     A NurbsCurveData gives its ``cv`` (its points, a periodic curve's first
-    ``degree`` repeated at the end), ``degree`` and ``kv``. Points take
-    `degree` (None: 3) and `kv` (None: Maya's default knots)."""
+    ``degree`` repeated at the end), ``degree``, ``kv`` and ``weights``
+    (`_data_weights`, repeated as the points are). Points take `degree` (None:
+    3) and `kv` (None: Maya's default knots); ``(N, 4)`` ones hold each CV's
+    weight in their ``w``."""
     # a NurbsCurveData, duck-typed so cgmath is never imported here; read on the
     # class, so a node or a plug (whose attributes are Maya's) is never asked
     if hasattr(type(points), "kv") and hasattr(type(points), "cv"):
@@ -1095,11 +1275,17 @@ def _curve_inputs(
                 f"{type(points).__name__}, which carries its own degree and knots "
                 f"(degree= and kv= describe points)"
             )
+        data     = points
+        weights  = _data_weights("NurbsCurve.create() weights", data, 1)
         periodic = bool(getattr(points, "periodic", False))
         degree   = points.degree
         kv       = points.kv
         points   = points.cv
+        if weights is not None:
+            weights = weights[np.asarray(data.geometry)]
     else:
+        data     = None
+        weights  = None
         periodic = False
         if degree is None:
             degree = 3
@@ -1120,9 +1306,20 @@ def _curve_inputs(
             f"{type(points).__name__}"
         )
     if cvs.ndim == 2 and cvs.shape[1] == 4:
-        # homogeneous points (MPoints, an MPointArray): a non-rational curve's w is 1
+        # homogeneous points (MPoints, an MPointArray): w is the CV's weight, 1 on a curve
+        # that is not rational
         if not np.all(cvs[:, 3] == 1.0):
-            raise ValueError("NurbsCurve.create() makes non-rational curves: (N, 4) points take w = 1")
+            if data is not None:
+                raise ValueError(
+                    "NurbsCurve.create() takes a NurbsCurveData of (N, 3) points: this one's are (N, 4) "
+                    "with a w other than 1 (a rational curve's weights go in its weights field)"
+                )
+            weights = cvs[:, 3]
+            if not (np.isfinite(weights).all() and (weights > 0.0).all()):
+                raise ValueError(
+                    "NurbsCurve.create() (N, 4) points hold each CV's weight in w, which must be "
+                    "finite and above zero"
+                )
         cvs = cvs[:, :3]
     if cvs.ndim != 2 or cvs.shape[1] != 3:
         raise ValueError(f"NurbsCurve.create() points must be (N, 3), got {cvs.shape}")
@@ -1136,7 +1333,7 @@ def _curve_inputs(
 
     size = count + degree - 1
     if kv is None:
-        return cvs, _default_knots(count, degree, False), degree, periodic
+        return cvs, _default_knots(count, degree, False), degree, periodic, weights
 
     try:
         knots = np.asarray(kv, dtype=np.float64)
@@ -1164,7 +1361,7 @@ def _curve_inputs(
         )
     if not knots[size - degree] > knots[degree - 1]:
         raise ValueError("NurbsCurve.create() kv must cover a parameter range longer than zero")
-    return cvs, knots, degree, periodic
+    return cvs, knots, degree, periodic, weights
 
 
 def _create_curve(
@@ -1188,7 +1385,8 @@ def _create_curve(
        the target's space when there is one: nothing is made yet;
     2. ``cmds.createNode("transform", name="curve#", skipSelect=True)``, the
        recorded node the curve rides with (``cmds.curve``'s default name);
-    3. ``MFnNurbsCurve.create(..., parent=<transform>)``: the shape, under it;
+    3. ``MFnNurbsCurve.create(..., parent=<transform>)``: the shape, under it
+       (rational, each CV's weight in its ``w``, when the input holds weights);
     4. ``cmds.rename`` of the transform (Maya renames the shape after it) and
        ``cmds.xform`` of where a NurbsCurveData sits (skipped for points, the
        identity or `world_space`, as `_create_surface` does); with `target`
@@ -1203,7 +1401,7 @@ def _create_curve(
     """
     data = points if hasattr(type(points), "kv") and hasattr(type(points), "cv") else None
     uuid = getattr(data, "uuid", None)
-    cvs, knots, degree, periodic = _curve_inputs(points, degree, kv)
+    cvs, knots, degree, periodic, weights = _curve_inputs(points, degree, kv)
     if world_space:
         placed = _data_placement("NurbsCurve.create()", data, hierarchy) if data is not None else None
         space  = _target_space("NurbsCurve.create()", placed, target)
@@ -1226,12 +1424,12 @@ def _create_curve(
     try:
         try:
             shape = NurbsCurve.FN_SET().create(
-                OpenMaya.MPointArray(cvs.tolist()),
+                _weighted_cvs(cvs, weights),
                 OpenMaya.MDoubleArray(knots.tolist()),
                 degree,
                 form,
                 False,  # not 2D
-                False,  # not rational
+                weights is not None,  # rational: each CV's weight in its w
                 parent,
             )
         except RuntimeError as error:

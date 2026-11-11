@@ -719,7 +719,14 @@ class TestNurbsCurveCreateErrors(_CurveCreateCase):
         ("ragged points", ([(0, 0, 0), (1, 0), (2, 0, 0), (3, 0, 0)], {}), TypeError, r"takes \(N, 3\) points"),
         ("no points", ([], {}), ValueError, r"must be \(N, 3\), got \(0,\)"),
         ("2-D points", ([(0, 0), (1, 1), (2, 0), (3, 1)], {}), ValueError, r"must be \(N, 3\), got \(4, 2\)"),
-        ("weighted points", ([(0, 0, 0, 2)] * 4, {}), ValueError, r"non-rational curves: \(N, 4\) points take w = 1"),
+        # re-pinned (weights round, 2026-11-11): an (N, 4) point's w is its CV's weight, and a weight
+        # other than 1 makes a rational curve (test_fv_weights); one no curve holds is refused
+        ("a zero weight", ([(0, 0, 0, 1), (1, 0, 0, 0), (2, 1, 0, 1), (3, 0, 0, 1)], {}), ValueError,
+         r"\(N, 4\) points hold each CV's weight in w, which must be finite and above zero$"),
+        ("a negative weight", ([(0, 0, 0, 1), (1, 0, 0, -2), (2, 1, 0, 1), (3, 0, 0, 1)], {}), ValueError,
+         r"\(N, 4\) points hold each CV's weight in w, which must be finite and above zero$"),
+        ("a nan weight", ([(0, 0, 0, 1), (1, 0, 0, float("nan")), (2, 1, 0, 1), (3, 0, 0, 1)], {}), ValueError,
+         r"\(N, 4\) points hold each CV's weight in w, which must be finite and above zero$"),
         ("5-D points", ([(0, 0, 0, 1, 0)] * 4, {}), ValueError, r"must be \(N, 3\), got \(4, 5\)"),
         ("flat points", ([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], {}), ValueError, r"must be \(N, 3\), got \(6,\)"),
         ("too few points", (POINTS[:3], {}), ValueError, r"degree 3 takes 4 points or more, got 3"),
