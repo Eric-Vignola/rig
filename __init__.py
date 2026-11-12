@@ -203,7 +203,7 @@ Examples::
 
 from __future__ import annotations
 
-__version__ = "2.0.0a11"
+__version__ = "2.0.0a12"
 
 # Function-library submodules -- imported AFTER the core types so they
 # can reference Node / Plug / etc. when their public functions run.
