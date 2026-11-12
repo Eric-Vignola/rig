@@ -13,7 +13,7 @@ shapes; the transforms are in test_class_xform.
   shape, a choice's output through the plug it routes); a consumer that is no shape (a
   skinCluster) serializes as it does.
 * NURBS data is a cgmath shape, as a MeshData is (the user's decision of 2026-11-09, on
-  cgmath r17-skeleton's model): it holds the shape's ``uuid`` and the ``parent_uuid`` of the
+  cgmath 4.0.0's model): it holds the shape's ``uuid`` and the ``parent_uuid`` of the
   transform its object-space points are relative to, no name and no matrix, and a surface its
   ``knots_u`` / ``knots_v`` (uneven knots kept as they are, nothing said; the user's
   cylinder.ma, testShape: V of degree 1 with knots 0, 0.554, 1.554, 2.108). create places its

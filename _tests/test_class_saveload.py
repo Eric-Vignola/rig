@@ -289,7 +289,7 @@ class TestFiles(_Case):
 
     def test_an_older_cgmath_is_refused_naming_the_pin(self):
         """A cgmath whose shapes carry no parent_uuid (3.0.1, 3.2.0), whose MeshData holds no
-        colours (an r17-skeleton before 09a9544) or no hard edges (one before 6001ea6), or whose
+        colours (a commit before 09a9544) or no hard edges (one before 6001ea6), or whose
         NurbsCurveData holds no weights (one before 8fb221e): the first data path says which
         cgmath rig needs, before anything is read or made."""
         import dataclasses
@@ -301,7 +301,7 @@ class TestFiles(_Case):
         t     = _cube()
         data  = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c").serialize()
         older = types.ModuleType("cgmath.hierarchy")  # no ShapeData in it
-        pin   = (r" needs cgmath r17-skeleton at 4599cf7 \(2026-11-11\) or later, whose shapes carry a "
+        pin   = (r" needs cgmath 4\.0\.0rc1 \(02b8b75, 2026-11-11\) or later, whose shapes carry a "
                  r"parent_uuid, whose meshes hold colors and hard_edges, whose curves and surfaces hold "
                  r"weights and whose scenes renew uuids; this cgmath is ")
         for label, call, head in (
@@ -314,7 +314,7 @@ class TestFiles(_Case):
                 with self.assertRaisesRegex(ImportError, head + pin):
                     call()
                 self.assertEqual(cmds.ls(), before)
-        # an r17-skeleton before its colours, one before its hard edges, then one before its
+        # a cgmath before its colours, one before its hard edges, then one before its
         # weights: the shapes carry a parent_uuid, a MeshData no colors, or no hard_edges beside
         # them, or a NurbsCurveData no weights
         for label, name, fields in (

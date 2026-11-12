@@ -1,6 +1,6 @@
 """Vertex colours both ways (the user's decisions of 2026-11-09): ``Mesh.serialize`` writes
 the colours of the mesh's first colour set into the data's ``colors`` / ``color_indices``
-(cgmath r17-skeleton 72dfec4), and ``Mesh.create``, ``Mesh.load`` and ``Mesh('x').load``
+(cgmath 72dfec4), and ``Mesh.create``, ``Mesh.load`` and ``Mesh('x').load``
 bring them back as a colour set, the restore flag ``colors=`` beside ``normals=``.
 
 * serialize: the first set (``getColorSetNames()[0]``), in one API call: the distinct RGBA

@@ -1,7 +1,7 @@
 """The weights round (the user's request of 2026-11-11, calls A to F): a rational curve's or
 surface's weights travel with its CVs.
 
-cgmath's ``NurbsCurveData`` and ``NurbsSurfaceData`` hold an optional ``weights`` (r17-skeleton
+cgmath's ``NurbsCurveData`` and ``NurbsSurfaceData`` hold an optional ``weights`` (cgmath
 8fb221e): one per control point, ``(N,)`` or ``(Nu, Nv)``, beside the points as they are (not
 times their weight).
 

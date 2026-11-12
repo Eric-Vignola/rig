@@ -38,12 +38,12 @@ ASSET_TYPES = ("obj", "fbx", "glb", "gltf", "usd", "usda", "usdc", "usdz")
 # value that is no bool (`space_flag`)
 CREATING_SPACE = "where the data's points land: in the world, or as the shape's own"
 
-# the cgmath the data paths are written against: r17-skeleton's shape model, a ShapeData's uuid and
+# the cgmath the data paths are written against: 4.0.0's shape model, a ShapeData's uuid and
 # parent_uuid, no matrix, a MeshData's colors / color_indices and its hard_edges, a NurbsCurveData's
 # and a NurbsSurfaceData's weights, renew_uuids() on a hierarchy, a clip and a Scene, a
 # MaterialData's uuid and the lists of one mesh (README.md's requirements and the CHEATSHEET name
 # it too)
-CGMATH_PIN = "cgmath r17-skeleton at 4599cf7 (2026-11-11)"
+CGMATH_PIN = "cgmath 4.0.0rc1 (02b8b75, 2026-11-11)"
 
 
 def require_pinned_cgmath(method: str) -> None:
@@ -52,7 +52,7 @@ def require_pinned_cgmath(method: str) -> None:
     ``hard_edges`` (6001ea6: the hard edges of a mesh that stores no normals), whose
     ``NurbsCurveData`` and ``NurbsSurfaceData`` hold ``weights`` (8fb221e: a rational shape's)
     and whose ``MaterialData`` holds a ``uuid`` (b0c991b, after ``renew_uuids()``). An older
-    cgmath (3.0.1, 3.2.0, an r17-skeleton before those) raises ImportError naming `method`, the
+    cgmath (3.0.1, 3.2.0, a commit before those) raises ImportError naming `method`, the
     pin and the cgmath found, before anything is read or made."""
     try:
         from cgmath.geometry import MaterialData, MeshData, NurbsCurveData
