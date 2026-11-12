@@ -331,6 +331,41 @@ class TestFiles(_Case):
                     Mesh(t).serialize()
                 self.assertEqual(cmds.ls(), before)
 
+    def test_a_cgmath_without_nurbs_data_is_refused_naming_the_pin(self):
+        """A cgmath whose geometry holds no NurbsCurveData and no NurbsSurfaceData (3.0.1, 3.2.0):
+        each NURBS data path names the pin, as a mesh's does, where the import of the class it reads
+        or writes would only say that cgmath has no such name. Nothing is read, made or written."""
+        import sys
+        import types
+
+        import cgmath.geometry as geometry
+
+        curve   = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c")
+        plane   = cmds.nurbsPlane(name="plane", constructionHistory=False, u=3, v=2)[0]
+        surface = NurbsSurface(cmds.listRelatives(plane, shapes=True)[0])
+        missing = ("NurbsCurveData", "NurbsSurfaceData")
+        older   = types.ModuleType("cgmath.geometry")
+        older.__dict__.update({name: value for name, value in geometry.__dict__.items() if name not in missing})
+        pin = (r" needs cgmath 4\.0\.0rc1 \(02b8b75, 2026-11-11\) or later, whose shapes carry a "
+               r"parent_uuid, whose meshes hold colors and hard_edges, whose curves and surfaces hold "
+               r"weights and whose scenes renew uuids; this cgmath is ")
+        for label, call, head in (
+            ("curve serialize", lambda: curve.serialize(), r"^NurbsCurve\.serialize"),
+            ("curve save", lambda: curve.save(self.path("c.npz")), r"^NurbsCurve\.serialize"),
+            ("curve load", lambda: NurbsCurve.load(self.path("none.npz")), r"^NurbsCurve\.load"),
+            ("curve load in place", lambda: curve.load(self.path("none.npz")), r"^NurbsCurve\('[^']+'\)\.load"),
+            ("surface serialize", lambda: surface.serialize(), r"^NurbsSurface\.serialize"),
+            ("surface save", lambda: surface.save(self.path("s.npz")), r"^NurbsSurface\.serialize"),
+            ("surface load", lambda: NurbsSurface.load(self.path("none.npz")), r"^NurbsSurface\.load"),
+            ("surface load in place", lambda: surface.load(self.path("none.npz")), r"^NurbsSurface\('[^']+'\)\.load"),
+        ):
+            with self.subTest(label), mock.patch.dict(sys.modules, {"cgmath.geometry": older}):
+                before = cmds.ls()
+                with self.assertRaisesRegex(ImportError, head + pin):
+                    call()
+                self.assertEqual(cmds.ls(), before)
+                self.assertEqual(os.listdir(self.dir), [])
+
 
 # ---------------------------------------------------------------------------------------------
 class TestMesh(_Case):

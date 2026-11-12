@@ -382,6 +382,8 @@ class NurbsCurve(Geometry):
             ValueError: a weight that is not finite and above zero (the API
                 makes such curves, and cgmath evaluates none), naming its CV.
         """
+        # the pin first: a cgmath before it has no NurbsCurveData to import
+        _files.require_pinned_cgmath(f"{type(self).__name__}.serialize")
         from cgmath.geometry import NurbsCurveData
 
         fn       = type(self)._raw_get_fn_set(self)
@@ -435,6 +437,8 @@ class NurbsCurve(Geometry):
         cls, curve, *, name=None, container=None, transform=None, world_space=False, hierarchy=None, uuids=True,
         **kwargs
     ):
+        # the pin first: a cgmath before it has no NurbsCurveData to import
+        _files.require_pinned_cgmath("NurbsCurve.load")
         from cgmath.geometry import NurbsCurveData
 
         world_space = _files.space_flag("NurbsCurve.load", world_space, _files.CREATING_SPACE)
@@ -450,9 +454,11 @@ class NurbsCurve(Geometry):
 
     @_statement
     def _load_into(self, curve, *, world_space=False, hierarchy=None, **kwargs):
+        method = f"NurbsCurve({_name_of(self)!r}).load"
+        # the pin first: a cgmath before it has no NurbsCurveData to import
+        _files.require_pinned_cgmath(method)
         from cgmath.geometry import NurbsCurveData
 
-        method = f"NurbsCurve({_name_of(self)!r}).load"
         _updates_only(method, kwargs, "NurbsCurve.load(path, ...) makes a new curve")
         world_space = _files.space_flag(method, world_space)
         data        = _files.read(curve, (NurbsCurveData,), method, "the curve")
@@ -657,6 +663,8 @@ class NurbsSurface(Geometry):
         Returns:
             A NurbsSurfaceData object.
         """
+        # the pin first: a cgmath before it has no NurbsSurfaceData to import
+        _files.require_pinned_cgmath(f"{type(self).__name__}.serialize")
         from cgmath.geometry import NurbsSurfaceData
 
         held = np.array(self.get_points(world_space=world_space))
@@ -745,6 +753,8 @@ class NurbsSurface(Geometry):
         cls, surface, *, name=None, container=None, transform=None, world_space=False, hierarchy=None, uuids=True,
         **kwargs
     ):
+        # the pin first: a cgmath before it has no NurbsSurfaceData to import
+        _files.require_pinned_cgmath("NurbsSurface.load")
         from cgmath.geometry import NurbsSurfaceData
 
         world_space = _files.space_flag("NurbsSurface.load", world_space, _files.CREATING_SPACE)
@@ -760,9 +770,11 @@ class NurbsSurface(Geometry):
 
     @_statement
     def _load_into(self, surface, *, world_space=False, hierarchy=None, **kwargs):
+        method = f"NurbsSurface({_name_of(self)!r}).load"
+        # the pin first: a cgmath before it has no NurbsSurfaceData to import
+        _files.require_pinned_cgmath(method)
         from cgmath.geometry import NurbsSurfaceData
 
-        method = f"NurbsSurface({_name_of(self)!r}).load"
         _updates_only(method, kwargs, "NurbsSurface.load(path, ...) makes a new surface")
         world_space = _files.space_flag(method, world_space)
         data        = _files.read(surface, (NurbsSurfaceData,), method, "the surface")
