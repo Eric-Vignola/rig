@@ -381,7 +381,9 @@ rig/
 │                        plugins/ (the undo plug-in)
 ├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
 │                        perspective_image_planes.py, ye_olde_lerp.gif
-├── utils.py             run_tests()
+├── utils.py             run_tests(): the suite, logged to rig_run_tests.log in the temp folder
+│                        (log=<path> for another file, log=False for none); the line of a test
+│                        is on disk before the test runs, so a crash names its test
 ├── _defaults.toml       team-wide container option defaults
 ├── _internal/           private: node.py plug.py list.py container.py members.py memoize.py
 │                        node_ops.py shorthand.py maya_version.py anim_keys.py (AnimCurve's keys) ...
