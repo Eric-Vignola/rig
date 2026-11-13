@@ -608,15 +608,15 @@ name (`name=` overrides it; Maya renames a taken one), its values as local
 values, its user-defined attributes and a joint's orient, segment scale
 compensate, radius and draw style. `parent=` and the attribute keywords
 are `create`'s (a keyword may also name one of the data's own attributes);
-the data's parent is not used, its uuid goes on the node (`uuids=`, below).
+the data's parent is not used, and its uuid only with `uuids=True` (below).
 `Joint.create(joint_data)` is the same, and refuses a transform's data.
 Every refusal comes before anything is made; one undo step; the selection
 is kept.
 
 ```python
-twin = Transform.create(data, name="twin", tx=2, uuids=False)   # cube's data, without its mesh: a transform beside cube
+twin = Transform.create(data, name="twin", tx=2)                # cube's data, without its mesh: a transform beside cube
 print(repr(twin), twin.tx.get(), twin.weight.get())             # Transform("twin") 2.0 0.5
-bone = Joint.create(child.serialize(), name="bone", uuids=False)   # a joint's orient, radius ... come too
+bone = Joint.create(child.serialize(), name="bone")             # a joint's orient, radius ... come too
 print(repr(bone), bone.ty.get())                                # Joint("bone") 5.0
 try:
     Joint.create(data)                                          # a transform's data
@@ -625,28 +625,28 @@ except TypeError as err:
 cmds.delete("twin", "bone")
 ```
 
-A node made from data takes the data's uuid: `uuids=True`, the default, on
-`create(data)`, `create_hierarchy`, `load_hierarchy` and on the shape
-classes' `create` and class-form `load`, so `Node(uuid)` finds it and a
+A node made from data keeps the uuid Maya gives it, so one piece of data
+builds any number of copies (`twin` and `bone` above, beside `cube` and
+`child`). `uuids=True`, on `create(data)`, `create_hierarchy`,
+`load_hierarchy` and on the shape classes' `create` and class-form `load`,
+gives the node the data's uuid instead, so `Node(uuid)` finds it and a
 serialize of it gives the same uuids back. Two nodes cannot hold one uuid:
-data whose uuid a scene node holds is a `ValueError` before anything is made,
-naming both. A twin beside its source takes `uuids=False` (Maya's own uuids,
-as `twin` and `bone` above: `cube` and `child` hold the data's); a second
-copy of a hierarchy takes fresh uuids first (`renew_uuids()`, the links
-rewired).
+with `uuids=True`, data whose uuid a scene node holds is a `ValueError`
+before anything is made, naming both, and a second copy takes fresh uuids
+first (`renew_uuids()`, the links rewired).
 
 ```python
 from cgmath.hierarchy import generate_uuid
 
 fresh      = data.copy()
 fresh.uuid = generate_uuid()
-made       = Transform.create(fresh, name="made")
+made       = Transform.create(fresh, name="made", uuids=True)
 print(made.get_uuid() == fresh.uuid, repr(Node(fresh.uuid)))   # True Transform("made")
 try:
-    Transform.create(fresh, name="again")                     # fresh's uuid is made's now
+    Transform.create(fresh, name="again", uuids=True)         # fresh's uuid is made's now
 except ValueError as e:
     print(str(e).split(" has the uuid")[0])                   # Transform.create(): the TransformData 'cube'
-again = Transform.create(fresh, name="again", uuids=False)    # Maya's own uuid
+again = Transform.create(fresh, name="again")                 # the default: Maya's own uuid
 print(again.get_uuid() != fresh.uuid)                         # True
 copy = skeleton.copy()
 copy.renew_uuids()                                                 # fresh uuids on every node, the links rewired
@@ -667,7 +667,7 @@ a name that names several nodes a `TypeError`.)
 cmds.file(new=True, force=True)
 made = Transform.create_hierarchy(skeleton)
 print(repr(made), made[1].ty.get(), cmds.listRelatives("probe", shapes=True))   # List([Joint("root"), Joint("child"), Transform("probe")]) 5.0 ['probeShape']
-print(repr(Transform.create_hierarchy(skeleton, parent=Transform.create(name="rig"), uuids=False)))  # List([Joint("rig|root"), Joint("rig|root|child"), Transform("rig|root|child|probe")]) -- made holds the data's uuids
+print(repr(Transform.create_hierarchy(skeleton, parent=Transform.create(name="rig"))))  # List([Joint("rig|root"), Joint("rig|root|child"), Transform("rig|root|child|probe")])
 ```
 
 `save_hierarchy` / `load_hierarchy` put that data in a `cgmath` file
@@ -685,14 +685,14 @@ folder = tempfile.mkdtemp()                                   # the files of thi
 path   = root.save_hierarchy(os.path.join(folder, "skeleton.npz"))
 print(os.path.basename(path))                                 # skeleton.npz
 cmds.select("grp")
-made = Joint.load_hierarchy(path, uuids=False)                # creates beside root (which holds the file's uuids): root is taken, so root1
+made = Joint.load_hierarchy(path)                             # creates, beside root: root is taken, so root1
 print(made[0], [x.get_short_name() for x in made], cmds.ls(selection=True))  # root1 ['root1', 'child', 'probe'] ['grp']
 try:
     root.load_hierarchy(path)                                 # from a node: never an update in place
 except TypeError as e:
     print(str(e).split(";")[1].strip())                       # Joint.load_hierarchy(path, parent='root') makes a new one under it
-under = Transform.load_hierarchy(path, parent="grp", uuids=False)                    # the file's values, local under grp
-kept  = Transform.load_hierarchy(path, parent="grp", world_space=True, uuids=False)  # the root's world matrix in the file kept
+under = Transform.load_hierarchy(path, parent="grp")                    # the file's values, local under grp
+kept  = Transform.load_hierarchy(path, parent="grp", world_space=True)  # the root's world matrix in the file kept
 print(under[0].get_long_name(), under[0].t.get(), kept[0].t.get())      # |grp|root [0. 0. 0.] [-1. -2. -3.]
 try:
     Joint.load_hierarchy(cube.get_shape().save(os.path.join(folder, "cube.npz")))   # a mesh's file
@@ -747,11 +747,11 @@ print(cmds.listConnections("child.inverseScale", plugs=True))                   
 tangent = cmds.keyTangent(query=True, g=True, outTangentType=True)
 print(cmds.keyTangent(str(curve), query=True, outTangentType=True)[:1] == tangent)  # True
 grp  = Transform.create(name="grp", tx=10)
-kept = Transform.create_hierarchy(clip, parent=grp, world_space=True, uuids=False)  # the roots solved on every frame (made holds the clip's uuids)
+kept = Transform.create_hierarchy(clip, parent=grp, world_space=True)      # the roots solved on every frame
 print(kept[0].get_long_name(), kept[0].tx.get(), len(AnimCurve.of(kept)))  # |grp|root -10.0 2
 path = clip.save(os.path.join(folder, "walk.npz"))
-print(len(AnimCurve.of(Joint.load_hierarchy(path, uuids=False))))  # 2
-still = Transform.create_hierarchy(pose, uuids=False)  # a plain HierarchyData, as clip.rest_pose is: no keys
+print(len(AnimCurve.of(Joint.load_hierarchy(path))))   # 2
+still = Transform.create_hierarchy(pose)               # a plain HierarchyData, as clip.rest_pose is: no keys
 print(still[1].ty.get(), AnimCurve.of(still))  # 5.0 List([])
 ```
 
@@ -787,7 +787,7 @@ except ValueError as e:
     print(e)  # 'root' is in bind poses that disagree (bindPose1, bindPose2): 'root' differs between 'bindPose1' and 'bindPose2'; name one: bindpose='bindPose1'
 
 saved = root.save_hierarchy(os.path.join(folder, "bind.npz"), bindpose="bindPose1")   # bindpose= as serialize_hierarchy takes it
-print(Joint.load_hierarchy(saved, uuids=False)[1].r.get(), arm.r.get())  # [0. 0. 0.] [30.  0.  0.] -- a new arm at the bind rotation, beside root
+print(Joint.load_hierarchy(saved)[1].r.get(), arm.r.get())  # [0. 0. 0.] [30.  0.  0.] -- a new arm at the bind rotation, beside root
 ```
 
 Agreeing bind poses (another influence set bound at the same pose) are
@@ -1035,7 +1035,7 @@ print(local.points[0], local.parent_uuid == cube.get_uuid())  # [-0.5 -0.5  0.5]
 print(world.points[0], world.parent_uuid)                      # [-0.5  1.5  0.5] None
 cube.t.set(0, 0, 0)
 
-rebuilt = Mesh.create(data, uvs=uv_list, name="rebuilt", uuids=False)   # a twin beside cube, which holds the data's uuid
+rebuilt = Mesh.create(data, uvs=uv_list, name="rebuilt")   # a twin beside cube
 print(repr(rebuilt), rebuilt.get_vertex_count(), rebuilt.get_parent(), rebuilt.get_uv_sets())  # Mesh("rebuiltShape") 8 rebuilt ('map1',)
 print(rebuilt.get_shading_engines())                                                           # [ShadingEngine("initialShadingGroup")]
 print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))                        # 12 -- the data's hard_edges bring back the cube's hard edges
@@ -1044,10 +1044,11 @@ print(sum(not rebuilt.get_fn_set().isEdgeSmooth(e) for e in range(12)))         
 `create` also takes one mesh of a `cgmath` `Scene`, a `Renderable`
 (`scene.renderables()`: the mesh with its node, UV sets, skin, materials and
 targets, joined by uuid): the mesh with its UV sets, the shape under the scene
-node its `parent_uuid` names once `create_hierarchy` has built the nodes (they
-take the data's uuids), else a new transform where the scene's node is, else at
-identity; the shape takes the mesh's uuid. `uvs=` and `hierarchy=` with an item
-are a `TypeError`; `transform=` wins over the node.
+node its `parent_uuid` names once `create_hierarchy(..., uuids=True)` has built
+the nodes (they hold the data's uuids), else a new transform where the scene's
+node is, else at identity; with `uuids=True` the shape takes the mesh's uuid.
+`uvs=` and `hierarchy=` with an item are a `TypeError`; `transform=` wins over
+the node.
 
 ```python
 from cgmath.hierarchy import TransformData
@@ -1069,19 +1070,19 @@ scene.add(body, *sets)
 item = scene.renderables()[0]
 print(item.name, item.node.name, len(item.uvs), item.skin, len(item.materials))   # hero_geo hero 1 None 0
 
-nodes = Transform.create_hierarchy(scene.hierarchy)  # grp and hero, with the data's uuids
-made  = Mesh.create(item)                            # the shape under hero, its UV set, the mesh's uuid
+nodes = Transform.create_hierarchy(scene.hierarchy, uuids=True)  # grp and hero, with the data's uuids
+made  = Mesh.create(item, uuids=True)                            # the shape under hero, its UV set, the mesh's uuid
 print(repr(made), made.get_parent().get_long_name(), made.get_uuid() == body.uuid, made.get_uv_sets())  # Mesh("heroShape") |grp|hero True ('map1',)
 print(cmds.xform("hero", query=True, translation=True, worldSpace=True))                                # [5.0, 10.0, 0.0]
 cmds.delete("grp")
-alone = Mesh.create(item)                              # hero is not in Maya: a new transform where the scene puts it
+alone = Mesh.create(item, uuids=True)                  # hero is not in Maya: a new transform where the scene puts it
 print(repr(alone), cmds.xform("hero_geo", query=True, translation=True, worldSpace=True))   # Mesh("hero_geoShape") [5.0, 10.0, 0.0]
 try:
-    Mesh.create(item)                                  # the mesh's uuid is alone's now
+    Mesh.create(item, uuids=True)                      # the mesh's uuid is alone's now
 except ValueError as e:
     print(str(e).split(" has the uuid")[0])            # Mesh.create(): the MeshData 'hero_geo'
 scene.renew_uuids()                                    # a second copy: fresh uuids on every node and shape, the links rewired
-twin = Mesh.create(item)
+twin = Mesh.create(item, uuids=True)
 print(twin.get_uuid() == body.uuid, str(twin.get_parent()))   # True hero_geo1
 cmds.delete("hero_geo", "hero_geo1")
 ```
@@ -1105,8 +1106,8 @@ def first(shape, world_space=False):
 
 
 ctl = Transform.create(name="ctl", t=(0, 0, 4), r=(0, 90, 0))
-own = Mesh.create(data, uvs=uv_list, transform=ctl, uuids=False)       # the data's points as the shape's own
-put = Mesh.create(data, transform=ctl, world_space=True, uuids=False)  # where the data puts them in the world
+own = Mesh.create(data, uvs=uv_list, transform=ctl)       # the data's points as the shape's own
+put = Mesh.create(data, transform=ctl, world_space=True)  # where the data puts them in the world
 print(repr(own), repr(put), own.get_parent(), own.get_uv_sets())  # Mesh("ctlShape") Mesh("ctlShape1") ctl ('map1',)
 print(first(own), first(own, world_space=True))                   # [-0.5 -0.5  0.5] [ 0.5 -0.5  4.5] -- its own, moved with ctl
 print(first(put, world_space=True), first(put))                   # [-0.5 -0.5  0.5] [ 3.5 -0.5 -0.5] -- where the cube is
@@ -1143,11 +1144,11 @@ the numbers).
 ```python
 Node(cmds.polyCube(name="box", ch=False)[0]).t.set(0, 10, 0)
 box_data, box_uvs = Mesh("box").serialize()
-copy_a = Mesh.create(box_data, box_uvs, name="copyA", uuids=False)                    # placed where box is
-copy_b = Mesh.create(box_data, box_uvs, name="copyB", world_space=True, uuids=False)  # the placement in the points
+copy_a = Mesh.create(box_data, box_uvs, name="copyA")                    # placed where box is
+copy_b = Mesh.create(box_data, box_uvs, name="copyB", world_space=True)  # the placement in the points
 print(copy_a.get_parent().t.get(), first(copy_a), first(copy_a, world_space=True))  # [ 0. 10.  0.] [-0.5 -0.5  0.5] [-0.5  9.5  0.5]
 print(copy_b.get_parent().t.get(), first(copy_b), first(copy_b, world_space=True))  # [0. 0. 0.] [-0.5  9.5  0.5] [-0.5  9.5  0.5]
-under = Mesh.create(box_data, box_uvs, transform=ctl, world_space=True, uuids=False)  # unchanged: where the box is, under ctl
+under = Mesh.create(box_data, box_uvs, transform=ctl, world_space=True)             # unchanged: where the box is, under ctl
 print(first(under, world_space=True))                                              # [-0.5  9.5  0.5]
 ```
 
@@ -1177,14 +1178,14 @@ import tempfile
 folder = tempfile.mkdtemp()
 paths  = mesh.save(os.path.join(folder, "cube.npz"), uvs=os.path.join(folder, "cube_uv.npz"))
 print([os.path.basename(p) for p in paths])                  # ['cube.npz', 'cube_uv.npz']
-copy = Mesh.load(*paths, name="copy", uuids=False)           # creates (beside cube, which holds the file's uuid)
+copy = Mesh.load(*paths, name="copy")                        # creates, beside cube
 print(repr(copy), copy.get_uv_sets())                        # Mesh("copyShape") ('map1',)
 cmds.polySoftEdge("copy", angle=180, constructionHistory=False)   # softened ...
 copy.load(*paths)                                            # ... and updated in place from the files
 print(sum(not copy.get_fn_set().isEdgeSmooth(e) for e in range(12)))    # 12
-fast = Mesh.load(*paths, name="fast", normals=False, uuids=False)   # creates, the shading skipped
+fast = Mesh.load(*paths, name="fast", normals=False)         # creates, the shading skipped
 print(sum(not fast.get_fn_set().isEdgeSmooth(e) for e in range(12)))    # 0
-frozen = Mesh.load(Mesh("box").save(os.path.join(folder, "box.npz")), world_space=True, uuids=False)  # copyB, from a file
+frozen = Mesh.load(Mesh("box").save(os.path.join(folder, "box.npz")), world_space=True)  # copyB, from a file
 print(frozen.get_parent().t.get(), first(frozen), first(frozen, world_space=True))       # [0. 0. 0.] [-0.5  9.5  0.5] [-0.5  9.5  0.5]
 try:
     Mesh.load(paths[1], paths[0])                            # the two files swapped
@@ -1247,7 +1248,7 @@ cset.set_data(np.tile([1.0, 0.0, 0.0, 1.0], (8, 1)))
 print(cset.get_data().shape, cset.get_data()[0])   # (8, 4) [1. 0. 0. 1.]
 data = mesh.serialize(uvs=False)                   # the first colour set, as a MeshData holds colours
 print(data.colors.shape, data.color_indices.shape, data.colors[0])   # (1, 4) (24,) [1. 0. 0. 1.]
-twin = Mesh.create(data, name="twin", uuids=False)   # back as colorSet1, RGBA, one colour a face corner
+twin = Mesh.create(data, name="twin")              # back as colorSet1, RGBA, one colour a face corner
 print([c.get_name() for c in twin.get_color_sets()], twin.get_color_sets()[0].get_data()[0])  # ['colorSet1'] [1. 0. 0. 1.]
 cmds.delete("twin")
 cset.delete()
@@ -1355,7 +1356,7 @@ arc = NurbsCurve.create(points, name="arc")                                     
 print(repr(arc), arc.get_parent(), arc.get_fn_set().degree, list(arc.get_fn_set().knots()))   # NurbsCurve("arcShape") arc 3 [0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0]
 zig = NurbsCurve.create(points, degree=1, kv=[0, 1, 2, 4, 8], name="zig")         # a degree and knots of your own
 print(zig.get_fn_set().degree, list(zig.get_fn_set().knots()))                          # 1 [0.0, 1.0, 2.0, 4.0, 8.0]
-twin = NurbsCurve.create(crv.serialize(), name="twin", uuids=False)               # from a NurbsCurveData, beside crv
+twin = NurbsCurve.create(crv.serialize(), name="twin")                            # from a NurbsCurveData, beside crv
 print(repr(twin), twin.get_cv_count(), twin.get_fn_set().degree, np.array(twin.get_points())[1, :3])   # NurbsCurve("twinShape") 5 3 [1. 0. 0.]
 ```
 
@@ -1379,12 +1380,12 @@ with `world_space=True`, a keyword.
 import os
 import tempfile
 
-sheet = NurbsSurface.create(ball.serialize(), name="sheet", uuids=False)   # beside ball
+sheet = NurbsSurface.create(ball.serialize(), name="sheet")   # beside ball
 print(repr(sheet), sheet.get_cv_count(), sheet.get_fn_set().knotDomainInU)    # NurbsSurface("sheetShape") 77 (0.0, 4.0)
 
 folder = tempfile.mkdtemp()
 saved  = crv.save(os.path.join(folder, "crv.json"))  # object space, the default
-again  = NurbsCurve.load(saved, name="again", uuids=False)  # creates, beside crv
+again  = NurbsCurve.load(saved, name="again")        # creates, beside crv
 cmds.xform("again.cv[0]", translation=(0, 3, 0))
 again.load(saved)                                        # the CVs back from the file, as its own
 print(repr(again), np.array(again.get_points())[0, :3])  # NurbsCurve("againShape") [0. 0. 0.]
@@ -1393,7 +1394,7 @@ cmds.xform("again", translation=(0, 0, 5))
 again.load(saved, world_space=True)
 print(np.array(again.get_points())[0, :3])                  # [ 0.  0. -5.]
 print(np.array(again.get_points(world_space=True))[0, :3])  # [0. 0. 0.]
-patch = NurbsSurface.load(ball.save(os.path.join(folder, "ball.npz")), name="patch", uuids=False)
+patch = NurbsSurface.load(ball.save(os.path.join(folder, "ball.npz")), name="patch")
 print(repr(patch), patch.get_cv_count())                          # NurbsSurface("patchShape") 77
 try:
     NurbsSurface.load(saved)                                     # a curve's file
@@ -1409,13 +1410,13 @@ names no transform, world-space data, has nothing to freeze).
 
 ```python
 hand = Joint.create(name="hand", t=(2, 0, 0), r=(0, 0, 45))
-ring = NurbsCurve.create(crv.serialize(world_space=True), transform=hand, world_space=True, uuids=False)  # where crv is
-tip  = NurbsCurve.load(saved, transform=hand, uuids=False)                                                # the file's CVs as its own
-pad  = NurbsSurface.create(ball.serialize(), transform="hand", name="pad", uuids=False)                   # name= names the shape
+ring = NurbsCurve.create(crv.serialize(world_space=True), transform=hand, world_space=True)  # where crv is
+tip  = NurbsCurve.load(saved, transform=hand)                                                # the file's CVs as its own
+pad  = NurbsSurface.create(ball.serialize(), transform="hand", name="pad")                   # name= names the shape
 print(repr(ring), repr(tip), repr(pad), ring.get_parent())  # NurbsCurve("handShape") NurbsCurve("handShape1") NurbsSurface("pad") hand
 ends = np.round([np.array(ring.get_points(world_space=True))[1, :3], np.array(tip.get_points())[1, :3]], 6)
 print(ends[0], ends[1])  # [1. 0. 0.] [1. 0. 0.] -- crv's second CV in the world; the file's own, moved with hand
-frozen = NurbsCurve.create(again.serialize(), name="frozen", world_space=True, uuids=False)  # again is at (0, 0, 5)
+frozen = NurbsCurve.create(again.serialize(), name="frozen", world_space=True)  # again is at (0, 0, 5)
 print(frozen.get_parent().t.get())  # [0. 0. 0.] -- its CVs hold where again is
 ```
 
@@ -1435,7 +1436,7 @@ bow = NurbsCurve.create([(0, 0, 0, 1), (1, 2, 0, 3), (2, 0, 0, 1)], degree=2, na
 print(np.array(bow.get_points())[:, 3], np.round(cmds.pointOnCurve(str(bow), parameter=0.5, position=True), 6))   # [1. 3. 1.] [1.  1.5 0. ] -- pulled toward the heavy CV
 data = bow.serialize()
 print(data.weights, data.points[1], crv.serialize().weights)   # [1. 3. 1.] [1. 2. 0.] None -- a plain curve holds none
-same = NurbsCurve.create(data, name="same", uuids=False)       # the data's weights make a rational curve
+same = NurbsCurve.create(data, name="same")                    # the data's weights make a rational curve
 print(repr(same), np.array(same.get_points())[1])              # NurbsCurve("sameShape") [1. 2. 0. 3.]
 
 flat  = NurbsCurve.create([(0, 0, 0), (1, 1, 0), (2, 0, 0)], degree=2, name="flat")
@@ -1452,7 +1453,7 @@ print(np.array(bow.get_points(world_space=True))[1], bow.serialize(world_space=T
 bend = NurbsSurface(cmds.surface(degreeU=2, degreeV=1, knotU=[0, 0, 1, 1], knotV=[0, 1], pointWeight=[
     (1, 0, 0, 1), (1, 0, 2, 1), (1, 1, 0, 0.5), (1, 1, 2, 0.5), (0, 1, 0, 1), (0, 1, 2, 1)]))   # a rational patch of Maya's
 print(bend.serialize().weights.tolist(), ball.serialize().weights)   # [[1.0, 1.0], [0.5, 0.5], [1.0, 1.0]] None
-wall = NurbsSurface.create(bend.serialize(), name="wall", uuids=False)
+wall = NurbsSurface.create(bend.serialize(), name="wall")
 print(repr(wall), np.array(wall.get_points())[2:4, 3])               # NurbsSurface("wallShape") [0.5 0.5]
 try:
     NurbsCurve.create([(0, 0, 0, 1), (1, 2, 0, 0), (2, 0, 0, 1)], degree=2)   # no curve holds a zero weight
@@ -1591,8 +1592,9 @@ print(copied.get_influence_objects(), copied.get_weights()[:, 1])              #
 ```
 
 `create` takes one mesh of a `cgmath` `Scene` too, a `Renderable`: its
-`item.skin` on the node holding its mesh's uuid, or on a mesh given, which
-wins; each influence the joint holding its node's uuid, else its name:
+`item.skin` on the node holding its mesh's uuid (`Mesh.create(item, uuids=True)`
+made it), or on a mesh given, which wins; each influence the joint holding its
+node's uuid, else its name:
 
 ```python
 from cgmath.geometry import SkinData
@@ -1609,8 +1611,8 @@ scene.add(hip)                                                # a node takes its
 scene.add(TransformData("knee", node_type="joint", parent_uuid=hip.uuid, translate=(0, 2, 0)), data)
 scene.add(SkinData(weights=np.tile([0.5, 0.5], (8, 1)), influences=["hip", "knee"], name="leg_skin", mesh_uuid=data.uuid))
 item = scene.renderables()[0]
-Transform.create_hierarchy(scene.hierarchy)                   # the joints, with the data's uuids
-Mesh.create(item)
+Transform.create_hierarchy(scene.hierarchy, uuids=True)       # the joints, with the data's uuids
+Mesh.create(item, uuids=True)
 leg = SkinCluster.create(item)                                # found by the mesh's uuid, named after the data
 print(repr(leg), leg.get_influence_objects(), leg.serialize().mesh_uuid == data.uuid)  # SkinCluster("leg_skin") [Joint("hip"), Joint("knee")] True
 ```
@@ -1715,8 +1717,9 @@ print(morph.get_target_data("smile", at=0.5).offsets.tolist())  # [[1.0, 0.0, 0.
 ```
 
 `create` takes one mesh of a `cgmath` `Scene` too, a `Renderable`: its
-`item.morphs` on the node holding its mesh's uuid (`Mesh.create(item)` made
-it), or on a mesh given, which wins. Morphs of two deformers need `deformer=`:
+`item.morphs` on the node holding its mesh's uuid (`Mesh.create(item, uuids=True)`
+made it), or on a mesh given, which wins. Morphs of two deformers need
+`deformer=`:
 
 ```python
 src  = cmds.polyCube(name="src", ch=False)[0]
@@ -1728,7 +1731,7 @@ for m in (smile, half):
     m.mesh_uuid, m.deformer = data.uuid, "face_bs"
 scene.add(data, smile, half)
 item = scene.renderables()[0]
-Mesh.create(item)
+Mesh.create(item, uuids=True)
 face = BlendShape.create(item)                                    # found by the mesh's uuid, named after the deformer
 print(repr(face), face.get_targets(), face.smile.get())           # BlendShape("face_bs") ['smile'] 0.25
 ```

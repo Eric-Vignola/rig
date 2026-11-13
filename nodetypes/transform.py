@@ -55,12 +55,12 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
         container: Inside ``with container()``, whether the new nodes join the
             scope (None: yes), as for every typed create.
         uuids: A bool (anything else is a TypeError, before the file is read),
-            as `create_hierarchy` takes it: True (the default), every node
-            made takes its data's uuid, so a file loaded twice is a
-            ValueError on the second load, before anything is made (give the
-            data fresh uuids first, ``hierarchy.renew_uuids()``, or
-            ``uuids=False``, which leaves the nodes the uuids Maya gives
-            them).
+            as `create_hierarchy` takes it: False (the default), the nodes
+            keep the uuids Maya gives them, so a file loads any number of
+            times; True, every node made takes its data's uuid, so a file
+            loaded twice is a ValueError on the second load, before anything
+            is made (give the data fresh uuids first,
+            ``hierarchy.renew_uuids()``).
 
     Returns:
         A List of the new nodes, typed (``Joint`` / ``Transform``), parents first:
@@ -932,7 +932,7 @@ class Transform(DAGNode):
         parent:      Union[str, None] = None,
         *,
         world_space: bool             = False,
-        uuids:       bool             = True,
+        uuids:       bool             = False,
     ) -> List:
         """Creates a hierarchy from a HierarchyData object, and keys a ClipData.
 
@@ -959,28 +959,29 @@ class Transform(DAGNode):
                 case (it holds no shear); a ClipData's compensating joints hold
                 both, below.
             uuids: By keyword only, a bool (anything else is a TypeError,
-                before anything is made). True (the default): every node made
-                takes its data's uuid (a recorded ``rename -uuid``, in the
-                call's undo step), so the nodes are found by it (``Node(uuid)``,
-                ``cmds.ls(uuid)``, a shape's ``parent_uuid``) and
-                `serialize_hierarchy` of them gives the same uuids back. A uuid
-                a scene node already holds, or one the data holds twice, is a
-                ValueError before anything is made, naming both: a second copy
-                of a hierarchy that is in the scene takes fresh uuids first
-                (``hierarchy.renew_uuids()``; a Scene's ``renew_uuids()``), or
-                ``uuids=False`` leaves every node the uuid Maya gives it, as
-                for a twin of a live hierarchy (below). A node whose data holds
-                no uuid keeps Maya's.
+                before anything is made). False (the default): every node
+                keeps the uuid Maya gives it, so one hierarchy builds any
+                number of times, a twin of a live hierarchy too (below). True:
+                every node made takes its data's uuid (a recorded
+                ``rename -uuid``, in the call's undo step), so the nodes are
+                found by it (``Node(uuid)``, ``cmds.ls(uuid)``, a shape's
+                ``parent_uuid``) and `serialize_hierarchy` of them gives the
+                same uuids back. A uuid a scene node already holds, or one the
+                data holds twice, is then a ValueError before anything is
+                made, naming both: a second copy of a hierarchy that is in the
+                scene takes fresh uuids first (``hierarchy.renew_uuids()``; a
+                Scene's ``renew_uuids()``). A node whose data holds no uuid
+                keeps Maya's.
 
         Returns:
             A List of the new nodes, typed as ``Transform.create`` types its
             node (``Joint`` for a joint, ``Transform`` for a transform and a
             locator's transform), parents first:
             ``nodes[0]`` is the first root. Maya renames a node whose name is
-            taken (``root1``); a twin of a hierarchy that is in the scene
-            takes ``uuids=False`` (its data holds the live nodes' uuids)::
+            taken (``root1``), as for a twin of a hierarchy that is in the
+            scene::
 
-                skel = Transform.create_hierarchy(Node("root").serialize_hierarchy(), uuids=False)
+                skel = Transform.create_hierarchy(Node("root").serialize_hierarchy())
                 skel[1].tx.get()
 
         A ClipData is built and keyed, no keyword: the type decides. Only what
@@ -1133,7 +1134,7 @@ class Transform(DAGNode):
         inputs:   tuple,
         name:     Any   = None,
         parent:   Any   = None,
-        uuids:    Any   = True,
+        uuids:    Any   = False,
         **kwargs: Any,
     ) -> DAGNode:
         """[Internal] ``Transform.create(transform_data)`` / ``Joint.create(
@@ -1144,16 +1145,16 @@ class Transform(DAGNode):
         locator's transform), named the data's name
         (``name=`` / ``n=`` overrides it), made at identity under ``parent=`` /
         ``p=`` (None: the world; the data's own parent uuid is not used), given
-        the data's uuid with ``uuids=True`` (the default, a checked bool, as
+        the data's uuid with ``uuids=True`` (a checked bool, as
         `create_hierarchy` takes it: a uuid a scene node holds is a ValueError
-        before anything is made; ``uuids=False``, or data without one, leaves
-        the node the uuid Maya gives it), then given the data's values (as
-        local values: scale, rotate, translate, rotate order and axis,
-        visibility; a joint's orient, segment scale compensate, radius and draw
-        style), its user-defined attributes, and last the attribute keywords,
-        as ``create`` sets them (a keyword names an attribute of the node type,
-        or one of the data's user-defined attributes). `create_hierarchy`'s
-        per-node code builds it.
+        before anything is made; the default, ``uuids=False``, or data without
+        one, leaves the node the uuid Maya gives it), then given the data's
+        values (as local values: scale, rotate, translate, rotate order and
+        axis, visibility; a joint's orient, segment scale compensate, radius
+        and draw style), its user-defined attributes, and last the attribute
+        keywords, as ``create`` sets them (a keyword names an attribute of the
+        node type, or one of the data's user-defined attributes).
+        `create_hierarchy`'s per-node code builds it.
 
         Refused before anything is made: anything but one TransformData
         (TypeError, naming the keyword form: a name given there,
@@ -1248,7 +1249,7 @@ class Transform(DAGNode):
         parent:      Union[str, None] = None,
         *,
         world_space: bool             = False,
-        uuids:       bool             = True,
+        uuids:       bool             = False,
     ) -> list:
         """[Internal] `load_hierarchy`'s create, a typed creator (so it joins the
         container scope as `create_hierarchy` does): the new nodes, typed,
@@ -1262,7 +1263,7 @@ class Transform(DAGNode):
         parent:      Union[str, None],
         world_space: bool,
         select:      bool,
-        uuids:       bool             = True,
+        uuids:       bool             = False,
     ) -> list[str]:
         """[Internal] The body of `create_hierarchy` and `load_hierarchy`: makes
         the nodes of `hierarchy` (a ClipData keyed, `_clip_rows`) and returns their
@@ -1422,7 +1423,7 @@ class Transform(DAGNode):
         parent:      Union[str, DAGNode, None] = None,
         world_space: bool                      = False,
         container:   bool | None               = None,
-        uuids:       bool                      = True,
+        uuids:       bool                      = False,
     ):
         from cgmath.hierarchy import ClipData, HierarchyData
 

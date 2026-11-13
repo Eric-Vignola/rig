@@ -161,7 +161,7 @@ class SkinCluster(Deformer):
             geom: A geometry to create the skincluster on. Or a cgmath
                 Renderable (``scene.renderables()``) alone: its ``item.skin`` on
                 the scene node holding ``item.mesh.uuid`` (the shape a
-                ``Mesh.create(item)`` made).
+                ``Mesh.create(item, uuids=True)`` made).
             influences: A list of influence object names, or a SkinData object.
                 If a SkinData is given, its influences are used to create the
                 skincluster and its weights are applied immediately after. Or a
@@ -172,8 +172,9 @@ class SkinCluster(Deformer):
 
         A Renderable's influences are its skin's joint names, each the scene
         node holding the uuid of its node in ``item.joints`` (the joint a
-        ``Transform.create_hierarchy`` of the scene made), else the joint of that
-        name. A SkinData's ``name`` names the node unless ``name=`` does.
+        ``Transform.create_hierarchy`` of the scene made with ``uuids=True``),
+        else the joint of that name. A SkinData's ``name`` names the node unless
+        ``name=`` does.
 
         Returns:
             Name of the created skincluster node.
@@ -785,9 +786,10 @@ class SkinCluster(Deformer):
 def _renderable_inputs(method: str, geom, influences) -> tuple:
     """`SkinCluster.create`'s geometry and influences, a Renderable's resolved: (geometry,
     influences or a SkinData, the default name or None). ``create(item)`` binds ``item.skin``
-    to the scene node holding ``item.mesh.uuid``; ``create(mesh, item)`` to `mesh`, which wins
-    over the uuid. Checked before any edit: no influences, or a Renderable with influences of
-    its own, a TypeError; a Renderable with no skin, or a mesh no node holds, a ValueError."""
+    to the scene node holding ``item.mesh.uuid`` (a ``Mesh.create(item, uuids=True)`` made
+    it); ``create(mesh, item)`` to `mesh`, which wins over the uuid. Checked before any edit:
+    no influences, or a Renderable with influences of its own, a TypeError; a Renderable with
+    no skin, or a mesh no node holds, a ValueError."""
     if _files.is_renderable(influences):
         item = influences
     elif _files.is_renderable(geom):
@@ -814,7 +816,7 @@ def _renderable_inputs(method: str, geom, influences) -> tuple:
         if geom is None:
             raise ValueError(
                 f"{method}: no scene node holds the uuid {uuid} of the Renderable {item.name!r}'s mesh: "
-                f"Mesh.create(item) builds it, or give the mesh: SkinCluster.create(mesh, item)"
+                f"Mesh.create(item, uuids=True) builds it, or give the mesh: SkinCluster.create(mesh, item)"
             )
         parent = cmds.listRelatives(geom, parent=True, fullPath=True)
         name   = get_short_name(parent[0] if parent else geom) + "_skincluster"

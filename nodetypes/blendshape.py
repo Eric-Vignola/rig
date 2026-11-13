@@ -138,9 +138,9 @@ class BlendShape(Deformer):
                 or above 1 an in-between of the target of its name. A cgmath
                 Renderable (``scene.renderables()``) gives its ``item.morphs``,
                 and its mesh when no geometry is given: the scene node holding
-                ``item.mesh.uuid`` (the shape a ``Mesh.create(item)`` made). A
-                geometry given wins over the uuid (the user's rule: an explicit
-                target supersedes it).
+                ``item.mesh.uuid`` (the shape a ``Mesh.create(item,
+                uuids=True)`` made). A geometry given wins over the uuid (the
+                user's rule: an explicit target supersedes it).
             kwargs: the ``_CREATE_FLAGS`` given to ``create``, for
                 cmds.blendShape(); ``deformer=``, rig's, takes the targets of
                 that deformer alone, of morphs naming two or more, and names the
@@ -789,8 +789,8 @@ def _one_deformer(method: str, morphs, deformer):
 def _renderable_base(method: str, items: list, geoms: list) -> list:
     """The geometries a create of a Renderable deforms: `geoms` when given (an explicit target
     supersedes the uuid), else the scene node holding ``item.mesh.uuid``, the shape a
-    ``Mesh.create(item)`` made. Two Renderables are a TypeError, a mesh no node holds a
-    ValueError, both from `method` before anything is made."""
+    ``Mesh.create(item, uuids=True)`` made. Two Renderables are a TypeError, a mesh no node
+    holds a ValueError, both from `method` before anything is made."""
     if len(items) > 1:
         raise TypeError(f"{method}: a create takes one Renderable, its mesh's targets; got {len(items)}")
     if geoms:
@@ -800,7 +800,7 @@ def _renderable_base(method: str, items: list, geoms: list) -> list:
     if node is None:
         raise ValueError(
             f"{method}: no scene node holds the uuid {getattr(item.mesh, 'uuid', None)} of the Renderable "
-            f"{item.name!r}'s mesh: Mesh.create(item) builds it, or give the mesh: "
+            f"{item.name!r}'s mesh: Mesh.create(item, uuids=True) builds it, or give the mesh: "
             f"BlendShape.create(mesh, item)"
         )
     return [node]

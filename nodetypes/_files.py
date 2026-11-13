@@ -126,7 +126,7 @@ def space_flag(method: str, world_space, meaning: str = "the space the file was 
 
 
 # what ``uuids=`` says on a create from data and its class-form load (`uuid_flag`)
-UUIDS_MEAN = "True (the default: a node made from data takes the data's uuid) or False (Maya's own)"
+UUIDS_MEAN = "True (a node made from data takes the data's uuid) or False (the default: Maya's own)"
 
 # how a shape's data takes a fresh uuid (`free_uuids`' advice for a mesh, a curve, a surface)
 FRESH_UUID = "data.uuid = cgmath.hierarchy.generate_uuid()"
@@ -149,7 +149,8 @@ def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
     'spine'"``; a uuid of None is Maya's own, not checked). A uuid a scene node holds, or one the
     data holds twice (two nodes cannot hold one uuid: Maya's ``rename -uuid`` refuses it) is a
     ValueError naming them, `renew` (how the data takes fresh uuids: ``"hierarchy.renew_uuids()"``)
-    and ``uuids=False``. Maya spells a uuid upper-case: the check reads the data's so."""
+    and the default, which keeps Maya's own. Only a call with ``uuids=True`` comes here. Maya spells
+    a uuid upper-case: the check reads the data's so."""
     from maya import cmds
 
     seen = {}
@@ -160,7 +161,7 @@ def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
         if key in seen:
             raise ValueError(
                 f"{method}: {seen[key]} and {what} hold one uuid, {key}, which two nodes cannot; give the data "
-                f"fresh uuids ({renew}), or uuids=False keeps Maya's own"
+                f"fresh uuids ({renew}), or leave uuids=True out to keep Maya's own"
             )
         seen[key] = what
         found     = cmds.ls(key, long=True)
@@ -168,7 +169,7 @@ def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
             raise ValueError(
                 f"{method}: {what} has the uuid {key}, which {found[0]!r} holds, and two nodes cannot hold one; "
                 f"for a second copy give the data fresh uuids first ({renew}, or a Scene's renew_uuids()); "
-                f"uuids=False keeps Maya's own"
+                f"without uuids=True the nodes keep Maya's own"
             )
 
 

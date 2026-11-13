@@ -1,15 +1,17 @@
-"""A node made from data takes the data's uuid (the Renderable round, 1 of 6; the user's decision
-of 2026-11-10: "on everywhere but if a target is given, the target supersedes the uuid").
+"""A node made from data takes the data's uuid when asked (the Renderable round, 1 of 6; the
+user's decisions of 2026-11-10, "if a target is given, the target supersedes the uuid", and of
+2026-11-13, "I want uuids to be False by default").
 
-* ``uuids=True``, the default, on ``Transform.create_hierarchy`` and ``load_hierarchy``,
+* ``uuids=False``, the default, on ``Transform.create_hierarchy`` and ``load_hierarchy``,
   ``Transform.create(data)`` and ``Joint.create(data)``, and on ``create`` and the class-form
-  ``load`` of ``Mesh``, ``NurbsCurve`` and ``NurbsSurface``: every node made takes its data's
-  uuid (a recorded ``rename -uuid``), so ``cmds.ls(uuid)`` and ``Node(uuid)`` find it and a
-  serialize of it gives the same uuids back.
-* Two nodes cannot hold one uuid: a uuid a scene node holds, or one the data holds twice, is a
-  ValueError before anything is made, naming both and how to go on (fresh uuids on the data,
-  ``hierarchy.renew_uuids()`` or ``data.uuid = generate_uuid()``; or ``uuids=False``).
-* ``uuids=False`` leaves every node the uuid Maya gives it: the twin of a live source.
+  ``load`` of ``Mesh``, ``NurbsCurve`` and ``NurbsSurface``: every node made keeps the uuid Maya
+  gives it, so one data builds any number of copies, and the twin of a live source.
+* ``uuids=True``: every node made takes its data's uuid (a recorded ``rename -uuid``), so
+  ``cmds.ls(uuid)`` and ``Node(uuid)`` find it and a serialize of it gives the same uuids back.
+* Two nodes cannot hold one uuid: under ``uuids=True`` a uuid a scene node holds, or one the
+  data holds twice, is a ValueError before anything is made, naming both and how to go on
+  (fresh uuids on the data, ``hierarchy.renew_uuids()`` or ``data.uuid = generate_uuid()``; or
+  no ``uuids=True``).
 * Data without a uuid (a bare TransformData, a curve's points) leaves Maya's too.
 * The flag is a checked bool on every door, before anything is read or made; a node's own
   ``load`` (an update) does not take it.
@@ -34,10 +36,10 @@ from rig.nodetypes import Joint, Mesh, NurbsCurve, NurbsSurface, Transform
 from rig.nodetypes import _files
 
 # the text of a refusal, after the method and the record
-_HELD      = r" has the uuid [0-9A-F-]{36}, which '%s' holds, and two nodes cannot hold one; for a second copy give the data fresh uuids first \(%s, or a Scene's renew_uuids\(\)\); uuids=False keeps Maya's own$"
+_HELD      = r" has the uuid [0-9A-F-]{36}, which '%s' holds, and two nodes cannot hold one; for a second copy give the data fresh uuids first \(%s, or a Scene's renew_uuids\(\)\); without uuids=True the nodes keep Maya's own$"
 _FRESH     = r"data\.uuid = cgmath\.hierarchy\.generate_uuid\(\)"
 _RENEW     = r"hierarchy\.renew_uuids\(\)"
-_FLAG      = r": uuids= is True \(the default: a node made from data takes the data's uuid\) or False \(Maya's own\), not %s$"
+_FLAG      = r": uuids= is True \(a node made from data takes the data's uuid\) or False \(the default: Maya's own\), not %s$"
 _NOT_BOOLS = (None, 1, "yes")
 
 
@@ -115,7 +117,7 @@ class TestHierarchy(_Case):
 
     def test_every_node_takes_its_data_s_uuid(self):
         data = _skeleton()
-        made = Transform.create_hierarchy(data)
+        made = Transform.create_hierarchy(data, uuids=True)
         self.assertEqual([_uuid(node) for node in made], [node.uuid for node in data])
         for node in data:
             self.assertEqual(cmds.ls(node.uuid, long=True), [Node(node.uuid).get_long_name()])
@@ -124,7 +126,7 @@ class TestHierarchy(_Case):
 
     def test_serialize_gives_the_same_uuids_back(self):
         data  = _skeleton()
-        again = Transform.create_hierarchy(data)[0].serialize_hierarchy()
+        again = Transform.create_hierarchy(data, uuids=True)[0].serialize_hierarchy()
         self.assertEqual([node.uuid for node in again], [node.uuid for node in data])
         self.assertEqual([node.parent_uuid for node in again], [node.parent_uuid for node in data])
 
@@ -132,25 +134,27 @@ class TestHierarchy(_Case):
         data = _skeleton()
         clip = ClipData(data, frames=3, start_frame=1)
         clip.frames["arm"].rotate_z = [0, 10, 20]
-        made = Transform.create_hierarchy(clip)
+        made = Transform.create_hierarchy(clip, uuids=True)
         self.assertEqual([_uuid(node) for node in made], [node.uuid for node in clip])
         self.assertEqual(cmds.ls(type="animCurve"), ["arm_rotateZ"])
 
     def test_load_hierarchy_adopts(self):
         data = _skeleton()
         path = data.save(os.path.join(self.folder(), "skel.npz"))
-        made = Joint.load_hierarchy(path)
+        made = Joint.load_hierarchy(path, uuids=True)
         self.assertEqual([_uuid(node) for node in made], [node.uuid for node in data])
 
     def test_a_uuid_a_scene_node_holds_is_refused_before_anything_is_made(self):
         data = _skeleton()
         path = data.save(os.path.join(self.folder(), "skel.npz"))
-        Transform.create_hierarchy(data)
+        Transform.create_hierarchy(data, uuids=True)
         for label, call, head in (
-            ("create", lambda: Transform.create_hierarchy(data), r"^Transform\.create_hierarchy: the node 'root'"),
-            ("Joint", lambda: Joint.create_hierarchy(data), r"^Joint\.create_hierarchy: the node 'root'"),
-            ("load", lambda: Transform.load_hierarchy(path), r"^Transform\.load_hierarchy: the node 'root'"),
-            ("under a parent", lambda: Transform.create_hierarchy(data, parent="grp"),
+            ("create", lambda: Transform.create_hierarchy(data, uuids=True),
+             r"^Transform\.create_hierarchy: the node 'root'"),
+            ("Joint", lambda: Joint.create_hierarchy(data, uuids=True), r"^Joint\.create_hierarchy: the node 'root'"),
+            ("load", lambda: Transform.load_hierarchy(path, uuids=True),
+             r"^Transform\.load_hierarchy: the node 'root'"),
+            ("under a parent", lambda: Transform.create_hierarchy(data, parent="grp", uuids=True),
              r"^Transform\.create_hierarchy: the node 'root'"),
         ):
             with self.subTest(label):
@@ -163,28 +167,30 @@ class TestHierarchy(_Case):
         cmds.rename(other, data[2].uuid, uuid=True)
         self.assert_nothing_made(
             ValueError, r"^Transform\.create_hierarchy: the node 'arm'" + _HELD % (r"\|other", _RENEW),
-            lambda: Transform.create_hierarchy(data),
+            lambda: Transform.create_hierarchy(data, uuids=True),
         )
 
     def test_renew_uuids_builds_a_second_copy_beside_the_first(self):
         data = _skeleton()
-        made = Transform.create_hierarchy(data)
+        made = Transform.create_hierarchy(data, uuids=True)
         copy = data.copy()
         copy.renew_uuids()
-        again = Transform.create_hierarchy(copy)
+        again = Transform.create_hierarchy(copy, uuids=True)
         self.assertEqual([_uuid(node) for node in again], [node.uuid for node in copy])
         self.assertTrue(all(new.uuid != old.uuid for new, old in zip(copy, data)))
         self.assertEqual(again[1].get_parent().get_long_name(), again[0].get_long_name())  # the links rewired
         self.assertEqual((len(cmds.ls(type="joint")), len(cmds.ls("grp*"))), (6, 2))
         self.assertEqual([_uuid(node) for node in made], [node.uuid for node in data])     # the first untouched
 
-    def test_false_leaves_maya_s_own(self):
+    def test_the_default_leaves_maya_s_own(self):
         data = _skeleton()
-        made = Transform.create_hierarchy(data)
+        made = Transform.create_hierarchy(data, uuids=True)
         path = data.save(os.path.join(self.folder(), "skel.npz"))
         for label, call in (
-            ("create", lambda: Transform.create_hierarchy(data, uuids=False)),
-            ("load", lambda: Transform.load_hierarchy(path, uuids=False)),
+            ("create", lambda: Transform.create_hierarchy(data)),
+            ("load", lambda: Transform.load_hierarchy(path)),
+            ("create, False", lambda: Transform.create_hierarchy(data, uuids=False)),
+            ("load, False", lambda: Transform.load_hierarchy(path, uuids=False)),
         ):
             with self.subTest(label):
                 twin = call()
@@ -193,30 +199,40 @@ class TestHierarchy(_Case):
                 self.assertFalse(set(_uuid(node) for node in twin) & set(node.uuid for node in data))
         self.assertEqual([_uuid(node) for node in made], [node.uuid for node in data])
 
-    def test_the_documented_twin(self):
-        # the create_hierarchy docstring's example: a twin of a live hierarchy
+    def test_one_data_builds_any_number_of_copies(self):
+        # the user, 2026-11-13: "I want uuids to be False by default"
         data = _skeleton()
-        Transform.create_hierarchy(data)
+        made = [Transform.create_hierarchy(data) for _ in range(3)]
+        self.assertEqual([nodes[0].get_short_name() for nodes in made], ["root", "root1", "root2"])
+        held = [_uuid(node) for nodes in made for node in nodes]
+        self.assertEqual(len(set(held)), 3 * len(data))
+        self.assertFalse(set(held) & set(node.uuid for node in data))
+
+    def test_the_documented_twin(self):
+        # the create_hierarchy docstring's example: a twin of a live hierarchy, with no flag
+        data = _skeleton()
+        Transform.create_hierarchy(data, uuids=True)
         live = Node("root").serialize_hierarchy()
         self.assertEqual([node.uuid for node in live], [node.uuid for node in data])
-        self.assert_nothing_made(ValueError, r"^Transform\.create_hierarchy: the node 'root' has the uuid",
-                                 lambda: Transform.create_hierarchy(live))
-        twin = Transform.create_hierarchy(live, uuids=False)
+        twin = Transform.create_hierarchy(live)
         self.assertEqual(twin[0].get_short_name(), "root1")
+        # the live nodes hold the data's uuids: asking for them is the refusal
+        self.assert_nothing_made(ValueError, r"^Transform\.create_hierarchy: the node 'root' has the uuid",
+                                 lambda: Transform.create_hierarchy(live, uuids=True))
 
     def test_a_lower_case_uuid_is_maya_s_upper_case(self):
         data = _skeleton()
         for node in data:
             node.uuid = node.uuid.lower()
-        made = Transform.create_hierarchy(data)
+        made = Transform.create_hierarchy(data, uuids=True)
         self.assertEqual([_uuid(node) for node in made], [node.uuid.upper() for node in data])
         self.assert_nothing_made(ValueError, r"^Transform\.create_hierarchy: the node 'root' has the uuid",
-                                 lambda: Transform.create_hierarchy(data))
+                                 lambda: Transform.create_hierarchy(data, uuids=True))
 
     def test_undo_frees_the_uuid_and_redo_takes_it_back(self):
         data = _skeleton()
         self.undo_queue_on()
-        made = Transform.create_hierarchy(data)
+        made = Transform.create_hierarchy(data, uuids=True)
         self.assertEqual(self.undo_name(), "rig.Transform.create_hierarchy")
         self.undo_steps(1)
         self.assertEqual([cmds.ls(node.uuid) for node in data], [[]] * len(data))
@@ -224,7 +240,7 @@ class TestHierarchy(_Case):
         self.assertEqual([_uuid(node) for node in made], [node.uuid for node in data])
         # and the uuid is free again for a second build once the first is undone
         self.undo_steps(1)
-        Transform.create_hierarchy(data)
+        Transform.create_hierarchy(data, uuids=True)
 
     def test_the_flag_is_a_checked_bool(self):
         data = _skeleton()
@@ -247,40 +263,43 @@ class TestTransformCreate(_Case):
         for cls, node_type in ((Transform, "transform"), (Joint, "joint")):
             with self.subTest(cls=cls.__name__):
                 data = TransformData(f"{node_type}_data", node_type=node_type, uuid=generate_uuid())
-                made = cls.create(data)
+                made = cls.create(data, uuids=True)
                 self.assertEqual(_uuid(made), data.uuid)
                 self.assertEqual(repr(Node(data.uuid)), repr(made))
 
     def test_a_uuid_a_scene_node_holds_is_refused_before_anything_is_made(self):
         data = TransformData("x", uuid=generate_uuid())
-        Transform.create(data)
+        Transform.create(data, uuids=True)
         self.assert_nothing_made(
             ValueError, r"^Transform\.create\(\): the TransformData 'x'" + _HELD % (r"\|x", _FRESH),
-            lambda: Transform.create(data, name="again"),
+            lambda: Transform.create(data, name="again", uuids=True),
         )
         # a fresh uuid on the data, and it builds beside
         data.uuid = generate_uuid()
-        self.assertEqual(_uuid(Transform.create(data, name="again")), data.uuid)
+        self.assertEqual(_uuid(Transform.create(data, name="again", uuids=True)), data.uuid)
 
-    def test_false_and_data_without_a_uuid_leave_maya_s_own(self):
-        data = TransformData("x", uuid=generate_uuid())
-        made = Transform.create(data)
-        twin = Transform.create(data, name="twin", uuids=False)
-        self.assertNotEqual(_uuid(twin), data.uuid)
+    def test_the_default_and_data_without_a_uuid_leave_maya_s_own(self):
+        data  = TransformData("x", uuid=generate_uuid())
+        made  = Transform.create(data, uuids=True)
+        twins = [Transform.create(data, name="twin"), Transform.create(data, name="twin", uuids=False)]
+        self.assertNotIn(data.uuid, [_uuid(twin) for twin in twins])
+        self.assertEqual(len(set(_uuid(twin) for twin in twins)), 2)
         self.assertEqual(_uuid(made), data.uuid)
         bare = TransformData("bare")  # no uuid: a node gets one when it joins a hierarchy
         self.assertIsNone(bare.uuid)
-        self.assertEqual(Transform.create(bare).get_short_name(), "bare")
+        self.assertEqual(Transform.create(bare, uuids=True).get_short_name(), "bare")
 
     def test_the_documented_twin(self):
-        # the cheatsheet's form: a live node's data, built beside it
+        # the cheatsheet's form: a live node's data, built beside it with no flag
         cube = Transform.create(name="cube", tx=1)
         data = cube.serialize()
         self.assertEqual(data.uuid, _uuid(cube))
-        self.assert_nothing_made(ValueError, r"^Transform\.create\(\): the TransformData 'cube' has the uuid",
-                                 lambda: Transform.create(data, name="twin"))
-        twin = Transform.create(data, name="twin", tx=2, uuids=False)
+        twin = Transform.create(data, name="twin", tx=2)
         self.assertEqual((twin.get_short_name(), twin.tx.get()), ("twin", 2.0))
+        self.assertNotEqual(_uuid(twin), data.uuid)
+        # the live node holds the data's uuid: asking for it is the refusal
+        self.assert_nothing_made(ValueError, r"^Transform\.create\(\): the TransformData 'cube' has the uuid",
+                                 lambda: Transform.create(data, name="held", uuids=True))
 
     def test_the_flag_is_a_checked_bool_and_no_attribute(self):
         data = TransformData("x", uuid=generate_uuid())
@@ -294,7 +313,7 @@ class TestTransformCreate(_Case):
     def test_one_undo_step(self):
         data = TransformData("x", uuid=generate_uuid())
         self.undo_queue_on()
-        made = Transform.create(data)
+        made = Transform.create(data, uuids=True)
         self.assertEqual(self.undo_name(), "rig.Transform.create")
         self.undo_steps(1)
         self.assertEqual(cmds.ls(data.uuid), [])
@@ -304,14 +323,14 @@ class TestTransformCreate(_Case):
 
 # ---------------------------------------------------------------------------------------------
 class TestShapes(_Case):
-    """``create`` and the class-form ``load`` of Mesh, NurbsCurve and NurbsSurface: the shape takes
-    the data's uuid, the transform keeps Maya's."""
+    """``create`` and the class-form ``load`` of Mesh, NurbsCurve and NurbsSurface: with
+    ``uuids=True`` the shape takes the data's uuid, the transform keeps Maya's."""
 
     def test_the_shape_takes_the_data_s_uuid(self):
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 data  = _shape_data(cls)
-                shape = cls.create(data, name="made")
+                shape = cls.create(data, name="made", uuids=True)
                 self.assertEqual(_uuid(shape), data.uuid)
                 self.assertEqual(cmds.ls(data.uuid, long=True), [shape.get_long_name()])
                 self.assertNotEqual(_uuid(shape.get_parent()), data.uuid)
@@ -322,7 +341,7 @@ class TestShapes(_Case):
             with self.subTest(cls=cls.__name__):
                 data  = _shape_data(cls)
                 ctl   = Transform.create(name=f"ctl_{cls.__name__}")
-                shape = cls.create(data, transform=ctl)
+                shape = cls.create(data, transform=ctl, uuids=True)
                 self.assertEqual(_uuid(shape), data.uuid)
                 self.assertEqual(shape.get_parent().get_long_name(), ctl.get_long_name())
 
@@ -332,7 +351,7 @@ class TestShapes(_Case):
             with self.subTest(cls=cls.__name__):
                 data  = _shape_data(cls)
                 path  = data.save(os.path.join(folder, f"{cls.__name__}.npz"))
-                shape = cls.load(path, name="loaded")
+                shape = cls.load(path, name="loaded", uuids=True)
                 self.assertEqual(_uuid(shape), data.uuid)
                 again = shape.serialize(uvs=False) if cls is Mesh else shape.serialize()
                 self.assertEqual(again.uuid, data.uuid)
@@ -345,29 +364,39 @@ class TestShapes(_Case):
             with self.subTest(cls=cls.__name__):
                 data  = _shape_data(cls)
                 path  = data.save(os.path.join(folder, f"{cls.__name__}.npz"))
-                shape = cls.create(data, name="made")
+                shape = cls.create(data, name="made", uuids=True)
                 held  = _HELD % (__import__("re").escape(shape.get_long_name()), _FRESH)
                 self.assert_nothing_made(ValueError, rf"^{cls.__name__}\.create\(\): {what}" + held,
-                                         lambda: cls.create(data, name="again"))
+                                         lambda: cls.create(data, name="again", uuids=True))
                 self.assert_nothing_made(ValueError, rf"^{cls.__name__}\.create\(\): {what}" + held,
-                                         lambda: cls.load(path, name="again"))
+                                         lambda: cls.load(path, name="again", uuids=True))
                 ctl = Transform.create(name=f"ctl_{cls.__name__}")
                 self.assert_nothing_made(ValueError, rf"^{cls.__name__}\.create\(\): {what}" + held,
-                                         lambda: cls.create(data, transform=ctl))
+                                         lambda: cls.create(data, transform=ctl, uuids=True))
                 # a fresh uuid on the data, and it builds beside
                 data.uuid = generate_uuid()
-                self.assertEqual(_uuid(cls.create(data, name="again")), data.uuid)
+                self.assertEqual(_uuid(cls.create(data, name="again", uuids=True)), data.uuid)
 
-    def test_false_leaves_maya_s_own(self):
+    def test_the_default_leaves_maya_s_own(self):
         folder = self.folder()
         for cls in CLASSES:
             with self.subTest(cls=cls.__name__):
                 data  = _shape_data(cls)
                 path  = data.save(os.path.join(folder, f"{cls.__name__}.npz"))
-                shape = cls.create(data, name="made")
-                for twin in (cls.create(data, name="twin", uuids=False), cls.load(path, name="twin", uuids=False)):
+                shape = cls.create(data, name="made", uuids=True)
+                for twin in (cls.create(data, name="twin"), cls.load(path, name="twin"),
+                             cls.create(data, name="twin", uuids=False), cls.load(path, name="twin", uuids=False)):
                     self.assertNotEqual(_uuid(twin), data.uuid)
                 self.assertEqual(_uuid(shape), data.uuid)
+
+    def test_one_data_builds_any_number_of_copies(self):
+        # the user, 2026-11-13: "I want uuids to be False by default"
+        for cls in CLASSES:
+            with self.subTest(cls=cls.__name__):
+                data = _shape_data(cls)
+                held = [_uuid(cls.create(data, name="copy")) for _ in range(3)]
+                self.assertEqual(len(set(held)), 3)
+                self.assertNotIn(data.uuid, held)
 
     def test_points_hold_no_uuid(self):
         curve = NurbsCurve.create([(0, 0, 0), (1, 0, 1), (2, 0, 0), (3, 0, 1)], name="pts")
@@ -389,7 +418,7 @@ class TestShapes(_Case):
         folder = self.folder()
         data, _ = _mesh_data()
         path = data.save(os.path.join(folder, "mesh.npz"))
-        mesh = Mesh.create(data, name="made")
+        mesh = Mesh.create(data, name="made", uuids=True)
         with self.assertRaisesRegex(TypeError, r"takes the files, world_space=, normals=, colors= and hierarchy= \(got uuids=\)"):
             mesh.load(path, uuids=False)
         self.assertEqual(_uuid(mesh), data.uuid)
@@ -399,7 +428,7 @@ class TestShapes(_Case):
             with self.subTest(cls=cls.__name__):
                 data = _shape_data(cls)
                 self.undo_queue_on()
-                shape = cls.create(data, name="made")
+                shape = cls.create(data, name="made", uuids=True)
                 self.assertEqual(self.undo_name(), f"rig.{cls.__name__}.create")
                 self.undo_steps(1)
                 self.assertEqual(cmds.ls(data.uuid), [])
@@ -417,7 +446,7 @@ class TestTheCheck(_Case):
         with self.assertRaisesRegex(
             ValueError,
             r"^X: the node 'a' and the node 'b' hold one uuid, " + uuid + r", which two nodes cannot; give the data "
-            r"fresh uuids \(r\(\)\), or uuids=False keeps Maya's own$",
+            r"fresh uuids \(r\(\)\), or leave uuids=True out to keep Maya's own$",
         ):
             _files.free_uuids("X", [("the node 'a'", uuid), ("the node 'b'", uuid)], "r()")
 

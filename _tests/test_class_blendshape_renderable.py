@@ -7,9 +7,10 @@ of 2026-11-09 and the user's decisions of 2026-11-10).
 * ``serialize`` gives a MorphList of the mesh (``mesh_uuid``), target by target, each target's
   shapes by ``at``, with the target's weight, ``deformer`` the node's name, ``mesh_uuid`` the
   mesh's. A target a call adds takes its morphs' weight; a target it sets keeps its own.
-* ``BlendShape.create(item)``: the mesh is the scene node holding ``item.mesh.uuid``; a mesh
-  given wins. Morphs of two deformers are a ValueError unless ``deformer=`` picks one; a single
-  deformer's name names the node unless ``name=`` does.
+* ``BlendShape.create(item)``: the mesh is the scene node holding ``item.mesh.uuid`` (the shape
+  a ``Mesh.create(item, uuids=True)`` made); a mesh given wins, and is the way for a mesh holding
+  Maya's own uuid (the default create's). Morphs of two deformers are a ValueError unless
+  ``deformer=`` picks one; a single deformer's name names the node unless ``name=`` does.
 """
 
 import importlib.util
@@ -212,7 +213,7 @@ class TestCreateFromARenderable(_Case):
     def test_the_mesh_is_found_by_its_uuid(self):
         scene = _scene(*_smile())
         item  = scene.renderables()[0]
-        mesh  = Mesh.create(item)
+        mesh  = Mesh.create(item, uuids=True)
         bs    = BlendShape.create(item)
         self.assertEqual(str(bs), "face_bs")
         self.assertEqual([str(g) for g in bs.get_geometries()], [str(mesh)])
@@ -225,7 +226,7 @@ class TestCreateFromARenderable(_Case):
     def test_a_mesh_given_wins(self):
         scene = _scene(*_smile())
         item  = scene.renderables()[0]
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         other = _cube("other")
         bs    = BlendShape.create(other, item)
         self.assertEqual([str(g.get_parent()) for g in bs.get_geometries()], ["other"])
@@ -234,7 +235,7 @@ class TestCreateFromARenderable(_Case):
     def test_no_targets_is_refused(self):
         scene = _scene()
         item  = scene.renderables()[0]
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         self.assert_nothing_made(
             ValueError, r"^BlendShape\.create: the Renderable 'hero_geo' holds no blend shape targets", lambda: BlendShape.create(item)
         )
@@ -245,14 +246,26 @@ class TestCreateFromARenderable(_Case):
         self.assert_nothing_made(
             ValueError,
             r"^BlendShape\.create: no scene node holds the uuid [0-9A-F-]{36} of the Renderable 'hero_geo''s mesh: "
-            r"Mesh\.create\(item\) builds it, or give the mesh",
+            r"Mesh\.create\(item, uuids=True\) builds it, or give the mesh: BlendShape\.create\(mesh, item\)$",
             lambda: BlendShape.create(item),
         )
+
+    def test_a_mesh_of_maya_s_own_uuid_is_given(self):
+        # the default Mesh.create keeps Maya's uuid: the item's mesh uuid finds no node, so the mesh is given
+        scene = _scene(*_smile())
+        item  = scene.renderables()[0]
+        mesh  = Mesh.create(item)
+        self.assert_nothing_made(
+            ValueError, r"Mesh\.create\(item, uuids=True\) builds it, or give the mesh", lambda: BlendShape.create(item)
+        )
+        bs = BlendShape.create(mesh, item)
+        self.assertEqual([str(g) for g in bs.get_geometries()], [str(mesh)])
+        self.assertEqual(bs.serialize(), _shapes(item.morphs))
 
     def test_two_renderables_are_refused(self):
         scene = _scene(*_smile())
         item  = scene.renderables()[0]
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         self.assert_nothing_made(
             TypeError, r"^BlendShape\.create: a create takes one Renderable, its mesh's targets; got 2$",
             lambda: BlendShape.create(item, item),
@@ -261,13 +274,13 @@ class TestCreateFromARenderable(_Case):
     def test_name_wins_over_the_deformer_s(self):
         scene = _scene(*_smile())
         item  = scene.renderables()[0]
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         self.assertEqual(str(BlendShape.create(item, name="mine")), "mine")
 
     def test_one_undo_step(self):
         scene = _scene(*_smile())
         item  = scene.renderables()[0]
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         self.undo_queue_on()
         BlendShape.create(item)
         self.assertEqual(self.undo_name(), "rig.BlendShape.create")
@@ -313,7 +326,7 @@ class TestOneDeformer(_Case):
         a.deformer = b.deformer = "face_bs"
         scene      = _scene(a, b, c, deformer=None)
         item       = scene.renderables()[0]
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         self.assert_nothing_made(ValueError, r"name 2 deformers \('face_bs', 'other'\)", lambda: BlendShape.create(item))
         self.assertEqual(BlendShape.create(item, deformer="other").get_targets(), ["brow"])
 
@@ -333,7 +346,7 @@ class TestThroughAnFbx(_Case):
         again = Scene.load_fbx(path)
         item  = again.renderables()[0]
         self.assertEqual([(m.name, m.at) for m in item.morphs], [("smile", 0.5), ("smile", 1.0), ("brow", 1.0)])
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         bs = BlendShape.create(item)
         self.assertEqual(str(bs), "face_bs")
         self.assertEqual(bs.serialize(), item.morphs)

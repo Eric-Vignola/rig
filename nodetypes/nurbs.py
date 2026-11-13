@@ -26,7 +26,7 @@ from rig.nodetypes.plugins import _run_undoable
 _CURVE_LOAD_DOC ="""Loads a curve from a cgmath file (a NurbsCurveData): one name, two forms.
 
     ``NurbsCurve.load(curve, *, name=None, container=None, transform=None,
-    world_space=False, hierarchy=None, uuids=True, **attrs)``, from the class,
+    world_space=False, hierarchy=None, uuids=False, **attrs)``, from the class,
     CREATES a new curve, always (as `create` does; with ``transform=``, a new
     shape under that transform)::
 
@@ -65,12 +65,12 @@ _CURVE_LOAD_DOC ="""Loads a curve from a cgmath file (a NurbsCurveData): one nam
             transform the data sits under. None: the scene's node of that
             UUID, else the identity.
         uuids: (creating) By keyword only, a bool (anything else is a
-            TypeError, before the file is read), as `create` takes it: True
-            (the default), the new shape takes the file's uuid, so a file
-            loaded twice is a ValueError on the second load, before anything
-            is made (a fresh uuid on the data first, or ``uuids=False``, which
-            leaves the shape the uuid Maya gives it). An updated curve keeps
-            its own uuid.
+            TypeError, before the file is read), as `create` takes it: False
+            (the default), the new shape keeps the uuid Maya gives it, so a
+            file loads any number of times; True, it takes the file's uuid, so
+            a file loaded twice is a ValueError on the second load, before
+            anything is made (a fresh uuid on the data first). An updated
+            curve keeps its own uuid.
 
     Returns:
         The new NurbsCurve (creating), or this NurbsCurve (updating).
@@ -95,7 +95,7 @@ _CURVE_LOAD_DOC ="""Loads a curve from a cgmath file (a NurbsCurveData): one nam
 _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a NurbsSurfaceData): one name, two forms.
 
     ``NurbsSurface.load(surface, *, name=None, container=None, transform=None,
-    world_space=False, hierarchy=None, uuids=True, **attrs)``, from the class,
+    world_space=False, hierarchy=None, uuids=False, **attrs)``, from the class,
     CREATES a new surface, always (as `create` does; with ``transform=``, a new
     shape under that transform)::
 
@@ -127,7 +127,8 @@ _SURFACE_LOAD_DOC = """Loads a surface from a cgmath file (a NurbsSurfaceData): 
             the origin.
         hierarchy: (both forms) By keyword only, as for `NurbsCurve.load`.
         uuids: (creating) By keyword only, as for `NurbsCurve.load`: the new
-            shape takes the file's uuid (True, the default), or Maya's own.
+            shape keeps Maya's own uuid (False, the default), or takes the
+            file's (True).
 
     Returns:
         The new NurbsSurface (creating), or this NurbsSurface (updating).
@@ -186,7 +187,7 @@ class NurbsCurve(Geometry):
         transform:   OpenMaya.MDagPath | None           = None,
         world_space: bool                               = False,
         hierarchy:   Any                                = None,
-        uuids:       bool                               = True,
+        uuids:       bool                               = False,
         **kwargs,
     ) -> str:
         """[Internal] Builds the curve of `points` (control points with their
@@ -210,7 +211,7 @@ class NurbsCurve(Geometry):
         transform:   str       | DAGNode | None = None,
         world_space: bool                       = False,
         hierarchy:   Any                        = None,
-        uuids:       bool                       = True,
+        uuids:       bool                       = False,
         **kwargs,
     ) -> "NurbsCurve":
         """Creates a curve object from its control points, or from a
@@ -267,11 +268,12 @@ class NurbsCurve(Geometry):
                 transform the data's ``parent_uuid`` names, where the data
                 sits. None, the default: the scene's node of that UUID, else
                 the identity.
-            uuids: By keyword only, a bool, as `Mesh.create` takes it: True
-                (the default), the new shape takes a NurbsCurveData's ``uuid``
-                (points hold none: the shape keeps Maya's); a uuid a scene node
-                already holds is a ValueError before anything is made (a fresh
-                uuid on the data first, or ``uuids=False``).
+            uuids: By keyword only, a bool, as `Mesh.create` takes it: False
+                (the default), the new shape keeps the uuid Maya gives it;
+                True, it takes a NurbsCurveData's ``uuid`` (points hold none:
+                the shape keeps Maya's), and a uuid a scene node already holds
+                is a ValueError before anything is made (a fresh uuid on the
+                data first).
             kwargs: attributes of the curve, checked by type before anything
                 is made and set once it exists (see `DGNode.create`).
 
@@ -434,7 +436,7 @@ class NurbsCurve(Geometry):
 
     @_statement
     def _load_new(
-        cls, curve, *, name=None, container=None, transform=None, world_space=False, hierarchy=None, uuids=True,
+        cls, curve, *, name=None, container=None, transform=None, world_space=False, hierarchy=None, uuids=False,
         **kwargs
     ):
         # the pin first: a cgmath before it has no NurbsCurveData to import
@@ -503,7 +505,7 @@ class NurbsSurface(Geometry):
         transform:   OpenMaya.MDagPath | None = None,
         world_space: bool                     = False,
         hierarchy:   Any                      = None,
-        uuids:       bool                     = True,
+        uuids:       bool                     = False,
         **kwargs,
     ) -> str:
         """[Internal] Builds the surface of `data` (a NurbsSurfaceData), its CVs
@@ -524,7 +526,7 @@ class NurbsSurface(Geometry):
         transform:   str              | DAGNode | None = None,
         world_space: bool                              = False,
         hierarchy:   Any                               = None,
-        uuids:       bool                              = True,
+        uuids:       bool                              = False,
         **kwargs,
     ) -> "NurbsSurface":
         """Creates a surface object from a NurbsSurfaceData.
@@ -562,10 +564,11 @@ class NurbsSurface(Geometry):
             hierarchy: By keyword only, as for `NurbsCurve.create`: the
                 HierarchyData or ClipData holding the transform the data sits
                 under. None: the scene's node of that UUID, else the identity.
-            uuids: By keyword only, a bool, as `Mesh.create` takes it: True
-                (the default), the new shape takes the data's ``uuid``; a uuid
-                a scene node already holds is a ValueError before anything is
-                made (a fresh uuid on the data first, or ``uuids=False``).
+            uuids: By keyword only, a bool, as `Mesh.create` takes it: False
+                (the default), the new shape keeps the uuid Maya gives it;
+                True, it takes the data's ``uuid``, and a uuid a scene node
+                already holds is a ValueError before anything is made (a fresh
+                uuid on the data first).
             kwargs: attributes of the surface, checked by type before anything
                 is made and set once it exists (see `DGNode.create`).
 
@@ -750,7 +753,7 @@ class NurbsSurface(Geometry):
 
     @_statement
     def _load_new(
-        cls, surface, *, name=None, container=None, transform=None, world_space=False, hierarchy=None, uuids=True,
+        cls, surface, *, name=None, container=None, transform=None, world_space=False, hierarchy=None, uuids=False,
         **kwargs
     ):
         # the pin first: a cgmath before it has no NurbsSurfaceData to import
@@ -1131,7 +1134,7 @@ def _create_surface(
     target:      OpenMaya.MDagPath | None = None,
     world_space: bool                     = False,
     hierarchy:   Any                      = None,
-    uuids:       bool                     = True,
+    uuids:       bool                     = False,
 ) -> str:
     """`NurbsSurface._create`'s body: the ride, as `_create_curve`'s. Returns the
     transform's name, or with `target` the shape's full path.
@@ -1384,7 +1387,7 @@ def _create_curve(
     target:      OpenMaya.MDagPath | None           = None,
     world_space: bool                               = False,
     hierarchy:   Any                                = None,
-    uuids:       bool                               = True,
+    uuids:       bool                               = False,
 ) -> str:
     """`NurbsCurve._create`'s body: the ride, as `Mesh.create`'s. Returns the
     transform's name, or with `target` the shape's full path.

@@ -2,10 +2,12 @@
 4 of 6; the plan of 2026-11-09 and the user's decisions of 2026-11-10).
 
 * ``create(item)`` binds ``item.skin`` to the scene node holding the mesh's uuid (the shape a
-  ``Mesh.create(item)`` made); ``create(mesh, item)`` to ``mesh``, which wins over the uuid.
+  ``Mesh.create(item, uuids=True)`` made); ``create(mesh, item)`` to ``mesh``, which wins over
+  the uuid, and is the way for a mesh holding Maya's own uuid (the default create's).
 * Each influence, a joint name, is the scene node holding the uuid of its node in
-  ``item.joints`` (a ``Transform.create_hierarchy`` of the scene made it), else the joint of that
-  name: a second copy of a scene binds to its own joints, whose short names repeat the first's.
+  ``item.joints`` (a ``Transform.create_hierarchy`` of the scene made it with ``uuids=True``),
+  else the joint of that name: a second copy of a scene made with its uuids binds to its own
+  joints, whose short names repeat the first's.
 * A SkinData's ``name`` names the node unless ``name=`` does; ``serialize`` writes ``mesh_uuid``.
 * An item with no skin, or a mesh no node holds: ValueError; an item with influences of its own,
   or a geometry with none: TypeError; all before anything is made.
@@ -73,8 +75,8 @@ class _Case(UndoWalk, MayaTestCase):
     def built(self, scene=None):
         scene = scene or _scene()
         item  = _item(scene)
-        Transform.create_hierarchy(scene.hierarchy)
-        return scene, item, Mesh.create(item)
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)
+        return scene, item, Mesh.create(item, uuids=True)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -103,16 +105,16 @@ class TestCreateFromARenderable(_Case):
         SkinCluster.create(item)
         scene.renew_uuids()
         again = _item(scene)
-        Transform.create_hierarchy(scene.hierarchy)
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)
         self.assertEqual(len(cmds.ls("tip")), 2)           # tip names two joints now: by name, ambiguous
-        Mesh.create(again)
+        Mesh.create(again, uuids=True)
         skin = SkinCluster.create(again)
         self.assertEqual(_influences(skin), ["|root1", "|root1|tip"])
 
     def test_a_joint_the_scene_does_not_hold_is_found_by_name(self):
         scene = _scene()
         item  = _item(scene)
-        Mesh.create(item)
+        Mesh.create(item, uuids=True)
         cmds.select(clear=True)
         cmds.joint(name="root")
         cmds.joint(name="tip", position=(0, 2, 0))
@@ -154,13 +156,29 @@ class TestTheRefusals(_Case):
     def test_a_mesh_no_node_holds(self):
         scene = _scene()
         item  = _item(scene)
-        Transform.create_hierarchy(scene.hierarchy)
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)
         self.assert_nothing_made(
             ValueError,
             r"^SkinCluster\.create: no scene node holds the uuid [0-9A-F-]{36} of the Renderable 'hero_geo''s mesh: "
-            r"Mesh\.create\(item\) builds it, or give the mesh: SkinCluster\.create\(mesh, item\)$",
+            r"Mesh\.create\(item, uuids=True\) builds it, or give the mesh: SkinCluster\.create\(mesh, item\)$",
             lambda: SkinCluster.create(item),
         )
+
+    def test_a_mesh_of_maya_s_own_uuid_is_given(self):
+        # the default creates keep Maya's uuids: the item's mesh uuid finds no node, so the mesh is
+        # given, and the influences are the joints of their names
+        scene = _scene()
+        item  = _item(scene)
+        Transform.create_hierarchy(scene.hierarchy)
+        mesh = Mesh.create(item)
+        self.assertNotEqual(_uuid(mesh), item.mesh.uuid)
+        self.assert_nothing_made(
+            ValueError, r"Mesh\.create\(item, uuids=True\) builds it, or give the mesh", lambda: SkinCluster.create(item)
+        )
+        skin = SkinCluster.create(mesh, item)
+        self.assertEqual([str(g) for g in skin.get_geometries()], [str(mesh)])
+        self.assertEqual(_influences(skin), ["|root", "|root|tip"])
+        np.testing.assert_allclose(skin.get_weights(), item.skin.weights, atol=1e-9)
 
     def test_an_item_with_influences(self):
         _, item, _ = self.built()

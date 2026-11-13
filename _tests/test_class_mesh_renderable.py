@@ -2,11 +2,13 @@
 2 of 6; the plan of 2026-11-09 and the user's decisions of 2026-11-10).
 
 * ``item.mesh`` is built with ``item.uvs`` as the UV sets, named ``item.name`` (the mesh's name,
-  else its node's) unless ``name=`` says; the shape takes ``item.mesh.uuid``.
+  else its node's) unless ``name=`` says; with ``uuids=True`` the shape takes ``item.mesh.uuid``
+  (the default keeps Maya's own: the user's decision of 2026-11-13).
 * Where it goes: under the scene node holding ``item.mesh.parent_uuid`` (the node a
-  ``Transform.create_hierarchy`` of the same scene made, which took the data's uuid), as
-  ``transform=`` puts a shape; when the scene holds the node and Maya does not, a new transform
-  at the node's world matrix; with no node, at identity. ``transform=`` wins over the node.
+  ``Transform.create_hierarchy(scene.hierarchy, uuids=True)`` of the same scene made), as
+  ``transform=`` puts a shape; when the scene holds the node and no Maya node holds its uuid, a
+  new transform at the node's world matrix; with no node, at identity. ``transform=`` wins over
+  the node.
 * ``uvs=`` or ``hierarchy=`` with an item is a TypeError before anything is made: the item
   carries them. The other keywords apply (``name=``, ``normals=``, ``colors=``, ``uuids=``,
   ``world_space=``, attributes).
@@ -75,9 +77,9 @@ class TestWhereItGoes(_Case):
     def test_under_the_scene_node_maya_holds(self):
         scene = _scene()
         item  = _item(scene)
-        nodes = Transform.create_hierarchy(scene.hierarchy)
+        nodes = Transform.create_hierarchy(scene.hierarchy, uuids=True)
         self.assertEqual([n.get_long_name() for n in nodes], ["|grp", "|grp|hero"])
-        made = Mesh.create(item)
+        made = Mesh.create(item, uuids=True)
         self.assertEqual((repr(made), made.get_parent().get_long_name()), ('Mesh("heroShape")', "|grp|hero"))
         self.assertEqual(_uuid(made), item.mesh.uuid)
         self.assertEqual(list(made.get_uv_sets()), [uv.name for uv in item.uvs])
@@ -95,13 +97,27 @@ class TestWhereItGoes(_Case):
     def test_a_new_transform_where_the_scene_s_node_is_when_maya_lacks_it(self):
         scene = _scene()
         item  = _item(scene)
-        made  = Mesh.create(item)
+        made  = Mesh.create(item, uuids=True)
         self.assertEqual((repr(made), str(made.get_parent())), ('Mesh("hero_geoShape")', "hero_geo"))
         self.assertEqual(_uuid(made), item.mesh.uuid)
         np.testing.assert_allclose(
             np.reshape(cmds.xform("hero_geo", query=True, matrix=True, worldSpace=True), (4, 4)), np.asarray(item.node.world_matrix), atol=1e-9,
         )
         np.testing.assert_allclose(np.array(made.get_points(world_space=False))[:, :3], np.asarray(item.mesh.points), atol=1e-6)
+
+    def test_a_node_of_maya_s_own_uuid_is_not_the_scene_s(self):
+        # the default create_hierarchy keeps Maya's uuids: no node holds the mesh's parent_uuid, so
+        # the mesh takes a new transform where the scene's node is, and Maya's own uuid
+        scene = _scene()
+        item  = _item(scene)
+        Transform.create_hierarchy(scene.hierarchy)
+        made = Mesh.create(item)
+        self.assertEqual(made.get_long_name(), "|hero_geo|hero_geoShape")
+        self.assertNotEqual(_uuid(made), item.mesh.uuid)
+        self.assertEqual(cmds.listRelatives("|grp|hero", shapes=True), None)
+        np.testing.assert_allclose(
+            np.reshape(cmds.xform("hero_geo", query=True, matrix=True, worldSpace=True), (4, 4)), np.asarray(item.node.world_matrix), atol=1e-9,
+        )
 
     def test_no_node_sits_at_identity(self):
         scene = _scene(on_node=False)
@@ -113,9 +129,9 @@ class TestWhereItGoes(_Case):
     def test_transform_wins_over_the_node(self):
         scene = _scene()
         item  = _item(scene)
-        Transform.create_hierarchy(scene.hierarchy)
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)
         ctl  = Transform.create(name="ctl", t=(1, 2, 3))
-        made = Mesh.create(item, transform=ctl)
+        made = Mesh.create(item, transform=ctl, uuids=True)
         self.assertEqual((repr(made), made.get_parent().get_long_name()), ('Mesh("ctlShape")', "|ctl"))
         self.assertEqual(_uuid(made), item.mesh.uuid)
         self.assertEqual(cmds.listRelatives("hero", shapes=True), None)
@@ -123,9 +139,10 @@ class TestWhereItGoes(_Case):
     def test_world_space_true_lands_the_same_under_the_node(self):
         scene = _scene()
         item  = _item(scene)
-        Transform.create_hierarchy(scene.hierarchy)
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)
         own = Mesh.create(item)
-        put = Mesh.create(item, world_space=True, uuids=False)
+        put = Mesh.create(item, world_space=True)
+        self.assertEqual([m.get_parent().get_long_name() for m in (own, put)], ["|grp|hero", "|grp|hero"])
         np.testing.assert_allclose(_world(put), _world(own), atol=1e-5)
 
     def test_an_unnamed_mesh_takes_its_node_s_name(self):
@@ -134,16 +151,16 @@ class TestWhereItGoes(_Case):
         self.assertEqual((item.mesh.name, item.name), (None, "hero"))
         made = Mesh.create(item)
         self.assertEqual((repr(made), str(made.get_parent())), ('Mesh("heroShape")', "hero"))
-        Transform.create_hierarchy(scene.hierarchy)   # |grp|hero beside |hero: the item's uuid points at it
-        under = Mesh.create(item, uuids=False)
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)   # |grp|hero beside |hero: the item's uuid points at it
+        under = Mesh.create(item)
         self.assertEqual(under.get_long_name(), "|grp|hero|heroShape")
 
     def test_name_overrides(self):
         scene = _scene()
         item  = _item(scene)
         self.assertEqual(str(Mesh.create(item, name="geo").get_parent()), "geo")
-        Transform.create_hierarchy(scene.hierarchy)
-        self.assertEqual(Mesh.create(item, name="petal", uuids=False).get_long_name(), "|grp|hero|petal")
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)
+        self.assertEqual(Mesh.create(item, name="petal").get_long_name(), "|grp|hero|petal")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -163,17 +180,17 @@ class TestTheKeywords(_Case):
     def test_the_uuid_rule_holds(self):
         scene = _scene()
         item  = _item(scene)
-        made  = Mesh.create(item)
+        made  = Mesh.create(item, uuids=True)
         self.assert_nothing_made(
             ValueError, r"^Mesh\.create\(\): the MeshData 'hero_geo' has the uuid [0-9A-F-]{36}, which '\|hero_geo\|hero_geoShape' holds",
-            lambda: Mesh.create(item),
+            lambda: Mesh.create(item, uuids=True),
         )
-        twin = Mesh.create(item, uuids=False)
+        twin = Mesh.create(item)   # the default: Maya's own uuid, any number of copies
         self.assertNotEqual(_uuid(twin), item.mesh.uuid)
         self.assertEqual(_uuid(made), item.mesh.uuid)
-        # a second copy the scene's way: fresh uuids, the links rewired, the node not in Maya any more
+        # a second copy holding the data's uuid, the scene's way: fresh uuids, the links rewired
         scene.renew_uuids()
-        again = Mesh.create(item)
+        again = Mesh.create(item, uuids=True)
         self.assertEqual(_uuid(again), item.mesh.uuid)
         self.assertEqual(str(again.get_parent()), "hero_geo2")
 
@@ -199,10 +216,10 @@ class TestTheKeywords(_Case):
     def test_one_undo_step_and_the_selection(self):
         scene = _scene()
         item  = _item(scene)
-        Transform.create_hierarchy(scene.hierarchy)
+        Transform.create_hierarchy(scene.hierarchy, uuids=True)
         cmds.select("grp")
         self.undo_queue_on()
-        made = Mesh.create(item)
+        made = Mesh.create(item, uuids=True)
         self.assertEqual(cmds.ls(selection=True), ["grp"])
         self.assertEqual(self.undo_name(), "rig.Mesh.create")
         self.undo_steps(1)

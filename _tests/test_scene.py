@@ -6,8 +6,10 @@ round, 5 of 6; the plan of 2026-11-09 and the user's decisions of 2026-11-10).
   HierarchyData poses, no key. One undo step.
 * ``create_scene(scene)``: the nodes, each mesh under its node, its blendShape, its skin bound at
   rest, then the active take keyed; a List of what was made, one undo step, the selection kept.
-  Every refusal before anything is made: a uuid the Maya scene holds, two deformers on a mesh,
-  a skin in a scene of takes alone. ``uuids=False`` joins the parts by what the call made.
+  The parts are joined by what the call made, so the nodes keep Maya's own uuids and one scene
+  builds any number of times (the user's decision of 2026-11-13); ``uuids=True`` gives every
+  node and shape its data's uuid. Every refusal before anything is made: with ``uuids=True`` a
+  uuid the Maya scene holds, two deformers on a mesh, a skin in a scene of takes alone.
   Cameras, lights and materials left out with a warning.
 * ``load_scene(path)`` reads by extension and builds.
 """
@@ -91,7 +93,7 @@ class _Case(UndoWalk, MayaTestCase):
 class TestKeyHierarchy(_Case):
     def test_keys_the_nodes_it_describes(self):
         clip  = _clip()
-        nodes = Transform.create_hierarchy(clip)          # wired, keyed; the keys taken off
+        nodes = Transform.create_hierarchy(clip, uuids=True)   # wired, keyed; the keys taken off
         cmds.delete(cmds.ls(type="animCurve"))
         keyed = Transform.key_hierarchy(clip)
         self.assertEqual([n.get_long_name() for n in keyed], [n.get_long_name() for n in nodes])
@@ -100,7 +102,7 @@ class TestKeyHierarchy(_Case):
 
     def test_found_by_name_when_no_node_holds_the_uuid(self):
         clip  = _clip()
-        nodes = Transform.create_hierarchy(clip, uuids=False)
+        nodes = Transform.create_hierarchy(clip)
         cmds.delete(cmds.ls(type="animCurve"))
         Transform.key_hierarchy(clip)
         self.assertEqual(sorted(cmds.ls(type="animCurve")), _moving_curves())
@@ -120,8 +122,8 @@ class TestKeyHierarchy(_Case):
 
     def test_a_name_of_two_nodes_is_refused(self):
         clip = _clip()
-        Transform.create_hierarchy(clip, uuids=False)
-        Transform.create_hierarchy(clip, uuids=False)
+        Transform.create_hierarchy(clip)
+        Transform.create_hierarchy(clip)
         with self.assertRaisesRegex(ValueError, r"'spine' \(\|root1\|spine, \|root\|spine\)"):
             Transform.key_hierarchy(clip)
 
@@ -168,10 +170,9 @@ class TestCreateScene(_Case):
             ['Joint("root")', 'Joint("tip")', 'Transform("geo")', 'Mesh("geoShape")', 'BlendShape("face_bs")', 'SkinCluster("geo_skin")'],
         )
         self.assertEqual(cmds.ls(selection=True), [])
-        # the nodes and the mesh take the data's uuids; the mesh sits under its node
-        for data in scene.hierarchy:
-            self.assertEqual(_uuid(cmds.ls(data.uuid.upper())[0]), data.uuid.upper())
-        self.assertEqual(_uuid(made[3]), item.mesh.uuid.upper())
+        # the nodes and the mesh keep Maya's own uuids; the mesh sits under its node all the same
+        held = [data.uuid.upper() for data in scene.hierarchy] + [item.mesh.uuid.upper()]
+        self.assertEqual(cmds.ls(held), [])
         self.assertEqual(made[3].get_parent().get_long_name(), "|geo")
         # the targets, the skin bound at rest, then the take keyed
         self.assertEqual(made[4].serialize(), item.morphs)
@@ -189,24 +190,46 @@ class TestCreateScene(_Case):
         self.redo_steps(1)
         self.assertEqual(len(cmds.ls(type="skinCluster")), 1)
 
-    def test_a_second_copy_takes_fresh_uuids(self):
+    def test_uuids_true_gives_the_data_s_uuids(self):
         scene = _scene()
-        create_scene(scene)
+        item  = scene.renderables()[0]
+        made  = create_scene(scene, uuids=True)
+        for data in scene.hierarchy:
+            self.assertEqual(_uuid(cmds.ls(data.uuid.upper())[0]), data.uuid.upper())
+        self.assertEqual(_uuid(made[3]), item.mesh.uuid.upper())
+        self.assertEqual(repr(rig.Node(item.mesh.uuid)), 'Mesh("geoShape")')
+        self.assertEqual(made[3].get_parent().get_long_name(), "|geo")
+        self.assertEqual(cmds.ls(type="animCurve"), ["tip_translateY"])
+
+    def test_a_second_copy_with_its_uuids_takes_fresh_uuids(self):
+        scene = _scene()
+        create_scene(scene, uuids=True)
         self.assert_nothing_made(
-            ValueError, r"^create_scene\(\): the node 'root' has the uuid .*, which '\|root' holds", lambda: create_scene(scene)
+            ValueError,
+            r"^create_scene\(\): the node 'root' has the uuid .*, which '\|root' holds, and two nodes cannot hold one; for a "
+            r"second copy give the data fresh uuids first \(scene\.renew_uuids\(\), or a Scene's renew_uuids\(\)\); without "
+            r"uuids=True the nodes keep Maya's own$",
+            lambda: create_scene(scene, uuids=True),
         )
         scene.renew_uuids()
-        again = create_scene(scene)
+        again = create_scene(scene, uuids=True)
         self.assertEqual(again[0].get_long_name(), "|root1")
         self.assertEqual(cmds.skinCluster(str(again[5]), query=True, influence=True), ["root1", "root1|tip"])
 
-    def test_uuids_false_joins_by_what_it_made(self):
+    def test_any_number_of_copies_by_default(self):
+        # no flag: each copy keeps Maya's own uuids and joins its parts by what it made
         scene = _scene()
-        create_scene(scene)
-        twin = create_scene(scene, uuids=False)
+        first = create_scene(scene)
+        twin  = create_scene(scene)
+        third = create_scene(scene, uuids=False)
+        self.assertEqual([c[0].get_long_name() for c in (first, twin, third)], ["|root", "|root1", "|root2"])
         self.assertEqual(twin[3].get_parent().get_long_name(), "|geo1")
         self.assertEqual(cmds.skinCluster(str(twin[5]), query=True, influence=True), ["root1", "root1|tip"])
-        self.assertEqual(sorted(cmds.ls(type="animCurve")), ["tip_translateY", "tip_translateY1"])
+        self.assertEqual(cmds.skinCluster(str(third[5]), query=True, influence=True), ["root2", "root2|tip"])
+        self.assertEqual(sorted(cmds.ls(type="animCurve")), ["tip_translateY", "tip_translateY1", "tip_translateY2"])
+        uuids = [_uuid(n) for copy in (first, twin, third) for n in copy[:4]]
+        self.assertEqual(len(set(uuids)), 12)
+        self.assertFalse(set(uuids) & {d.uuid.upper() for d in scene.hierarchy})
 
     def test_under_a_parent(self):
         scene                       = _scene(take=False)

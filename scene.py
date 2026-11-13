@@ -6,7 +6,8 @@ A cgmath ``Scene`` (``cgmath.render``) is what an fbx holds: the nodes at rest (
 the takes over them (``clip``), and the meshes with what deforms them, joined by uuid
 (``scene.renderables()``). The build is rig's own creates, in the order a rig binds:
 
-1. the nodes, ``Transform.create_hierarchy(scene.hierarchy)``, each taking its data's uuid;
+1. the nodes, ``Transform.create_hierarchy(scene.hierarchy)`` (with ``uuids=True`` each takes
+   its data's uuid);
 2. each mesh, ``Mesh.create(item)``, under the node its ``parent_uuid`` names;
 3. its blend shape targets, ``BlendShape.create(mesh, item)``, in-betweens and weights;
 4. its skin, ``SkinCluster.create(mesh, item)``, bound at the nodes' rest values;
@@ -23,8 +24,8 @@ Usage::
 
     built = load_scene("hero.fbx")          # cgmath's Scene.load_fbx, then create_scene
     built = create_scene(scene)             # a Scene in memory
-    scene.renew_uuids()
     again = create_scene(scene)             # a second copy beside the first
+    found = create_scene(scene, uuids=True) # its nodes and shapes hold the data's uuids
 
 The word "scene" in these docstrings is the cgmath Scene; Maya's open file is "the Maya scene".
 """
@@ -55,7 +56,7 @@ _READERS = {
 }
 
 
-def create_scene(scene, parent=None, *, uuids: bool = True):
+def create_scene(scene, parent=None, *, uuids: bool = False):
     """Builds a cgmath Scene in the Maya scene: its nodes, meshes, blend shapes and skins, and
     its active take keyed (the module's steps).
 
@@ -64,22 +65,23 @@ def create_scene(scene, parent=None, *, uuids: bool = True):
         parent: An existing node to build the roots under (``create_hierarchy``'s
             ``parent``); a mesh on no node goes under it too. None: the world.
         uuids: By keyword only, a bool (anything else is a TypeError before anything is
-            made). True (the default): every node and shape takes its data's uuid, so the
-            parts find one another by it, and a later ``Node(uuid)`` finds them; a uuid the
-            Maya scene holds already, or one the data holds twice, is a ValueError before
-            anything is made (a second copy takes ``scene.renew_uuids()`` first). False:
-            Maya's own uuids; the parts are joined by what this call made.
+            made). False (the default): Maya's own uuids, so one scene builds any number
+            of times; the parts are joined by what this call made. True: every node and
+            shape takes its data's uuid, so a later ``Node(uuid)`` finds them; a uuid the
+            Maya scene holds already, or one the data holds twice, is then a ValueError
+            before anything is made (a second copy takes ``scene.renew_uuids()`` first).
 
     Returns:
         A List of what was made: the nodes, parents first, then mesh by mesh its shape, its
         blendShape when it has targets and its skinCluster when it has a skin.
 
-    Checked before anything is made: the uuids, a mesh's targets naming two blendShape
-    deformers (one blendShape takes one deformer's: ``BlendShape.create(mesh, item,
-    deformer=...)`` builds each), a target with no name or at a weight Maya does not hold,
-    a skin influence no node of the scene and no joint of the Maya scene carries, a node of
-    the take neither the scene's nodes nor the Maya scene holds, and a skin in a scene of
-    takes alone. One undo step named ``rig.create_scene``; the selection is left as it was.
+    Checked before anything is made: the uuids (with ``uuids=True``), a mesh's targets naming
+    two blendShape deformers (one blendShape takes one deformer's: ``BlendShape.create(mesh,
+    item, deformer=...)`` builds each), a target with no name or at a weight Maya does not
+    hold, a skin influence no node of the scene and no joint of the Maya scene carries, a
+    node of the take neither the scene's nodes nor the Maya scene holds, and a skin in a
+    scene of takes alone. One undo step named ``rig.create_scene``; the selection is left as
+    it was.
     """
     from cgmath.render import Scene
     from rig._internal.list import List
@@ -133,7 +135,7 @@ def create_scene(scene, parent=None, *, uuids: bool = True):
     return List(made)
 
 
-def load_scene(path, parent=None, *, uuids: bool = True, **flags):
+def load_scene(path, parent=None, *, uuids: bool = False, **flags):
     """Reads a cgmath Scene from `path` and builds it (`create_scene`).
 
     Args:
