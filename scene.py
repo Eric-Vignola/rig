@@ -11,7 +11,7 @@ the takes over them (``clip``), and the meshes with what deforms them, joined by
 2. each mesh, ``Mesh.create(item)``, under the node its ``parent_uuid`` names;
 3. its blend shape targets, ``BlendShape.create(mesh, item)``, in-betweens and weights;
 4. its skin, ``SkinCluster.create(mesh, item)``, bound at the nodes' rest values;
-5. the active take, ``Transform.key_hierarchy(scene.clip.active)``, keyed onto the nodes.
+5. the active take, keyed onto the nodes as ``node.key_hierarchy(clip)`` keys one.
 
 A scene of takes alone (no ``hierarchy``) builds its nodes from the active take, keyed; a skin
 in one is refused (it holds no bind pose to bind at). Cameras, lights and materials are left

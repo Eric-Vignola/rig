@@ -66,7 +66,7 @@ of rig names the cgmath commit it was verified on here and in
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate`; a `ClipData` built and keyed |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
-| 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `Transform.key_hierarchy`), what is left out |
+| 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
 
 ---
 
@@ -4280,14 +4280,14 @@ target wins: `BlendShape.create(mesh, item)`):
 ```python
 from rig.nodetypes import BlendShape, Mesh, SkinCluster, Transform
 
-Transform.create_hierarchy(scene.hierarchy, uuids=True)   # the bind pose, the data's uuids
+nodes = Transform.create_hierarchy(scene.hierarchy, uuids=True)   # the bind pose, the data's uuids
 for item in scene.renderables():
-    Mesh.create(item, uuids=True)                         # under the node its parent_uuid names
+    Mesh.create(item, uuids=True)                                 # under the node its parent_uuid names
     if len(item.morphs):
-        BlendShape.create(item)                           # on the mesh holding item.mesh.uuid
+        BlendShape.create(item)                                   # on the mesh holding item.mesh.uuid
     if item.skin is not None:
-        SkinCluster.create(item)                          # each influence the joint of its node's uuid
-Transform.key_hierarchy(scene.clip.active)                # the take, onto the nodes made
+        SkinCluster.create(item)                                  # each influence the joint of its node's uuid
+nodes[0].key_hierarchy(scene.clip.active, uuids=True)             # the take, by uuid: the first root and what is below it
 ```
 
 Left out, each with one warning naming the count: cameras and lights (rig

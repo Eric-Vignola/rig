@@ -1011,21 +1011,27 @@ print(cmds.keyframe("ball_translateY", query=True, timeChange=True))  # [1001.0,
 print(cmds.getAttr("ball.ty", time=1002), made[0].tx.get())           # 4.0 0.0
 ```
 
-**`Transform.key_hierarchy(clip)` keys a clip onto nodes that exist**: each
-the node holding its data's uuid (what `create_hierarchy(clip, uuids=True)`
-made), else the one node of its name; a node neither finds, or a name of several, is a
-`ValueError` before any edit. The rows are `create_hierarchy`'s; a value a
-node holds already is left as it is, so a channel the clip does not change
-may be locked (a skinCluster locks its mesh's transform), and a locked
-channel it changes is a `ValueError` before any edit. A plain `HierarchyData`
-poses, no key. One undo step, the selection kept: a cgmath Scene binds its
-skins at `scene.hierarchy`, then takes the take's keys this way
-(`rig.create_scene`).
+**`node.key_hierarchy(clip)` keys a clip onto nodes that exist.** It is
+called on a node, as `serialize_hierarchy` is: the node and the transforms
+and joints below it take the keys. The rows are `create_hierarchy`'s; a
+plain `HierarchyData` poses, no key.
+
+| | |
+|---|---|
+| By order (the default) | node i of the data keys node i of the node and what is below it, in `serialize_hierarchy`'s order (parents first), so the data's first node lands on the node called. No name and no uuid is read: a second copy takes the clip as the first does. The counts need not agree: the keys stop where the nodes or the data run out, with one warning naming both counts, and a transform or a joint more or less below the node shifts every later one, with no error |
+| `index=False` | by name: each node of the data keys the one node of its name, at or below the node |
+| `uuids=True` | by uuid: each node of the data keys the node holding its uuid, at or below the node (what `create_hierarchy(clip, uuids=True)` made, whatever its name and its place are now); `index` is not read |
+| A branch | by name and by uuid the nodes are looked for at or below the node only, so two copies of a skeleton each take the clip. Called on a node the data holds (`Transform("left_clavicle").key_hierarchy(clip, uuids=True)`), only that node and the ones under it in the data are keyed; on a node it does not hold (a group above the skeleton), every one. By order the data's first node lands on the node whatever it is: a branch takes `uuids=True`, `index=False` or a clip of its own |
+| `strict=True` (the default) | a `ValueError` naming every one, before any edit: a node of the data with no node to key (by uuid, no node holds it; by name, none or several have it), an attribute its node lacks (a joint's data on a node that is no joint) and a locked channel the clip changes or keys |
+| `strict=False` | each of those is skipped and the rest keyed, with one warning naming every skip; a locked axis is skipped alone, the node's other axes and channels set and keyed. Refused all the same: a NaN in a column that is keyed, a missing undo plug-in |
+| Locks | a value a node holds already is left as it is, so a channel the clip does not change may be locked (a skinCluster locks its mesh's transform) |
+| Returns, undo, selection | a `List` of the nodes keyed, typed, in the data's order. One undo step, `rig.<class>.key_hierarchy`, the class the node's; the selection kept. A cgmath Scene binds its skins at `scene.hierarchy`, then takes the take's keys (`rig.create_scene`) |
 
 ```python
-cmds.delete("ball_translateY")                    # the keys gone, the node kept
-keyed = Transform.key_hierarchy(clip)             # found by its name
-print(keyed, cmds.getAttr("ball.ty", time=1002))  # List([Transform("ball")]) 4.0
+cmds.delete("ball_translateY")                              # the keys gone, the node kept
+keyed = Transform("ball").key_hierarchy(clip)               # by order: the data's first node keys ball
+print(keyed, cmds.getAttr("ball.ty", time=1002))            # List([Transform("ball")]) 4.0
+keyed = Transform("ball").key_hierarchy(clip, index=False)  # by name, at or below ball
 ```
 
 `serialize_hierarchy(bindpose=True)` reads the hierarchy at its bind pose:

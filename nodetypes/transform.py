@@ -211,7 +211,98 @@ def _changed_values(node: DAGNode, values: dict) -> dict:
     return changed
 
 
-def _clip_rows(hierarchy: HierarchyData, solved: dict) -> list[tuple]:
+def _free_values(node: DAGNode, changed: dict, rows: list[tuple]) -> tuple[dict, list, list]:
+    """What the locks of `node` leave of `changed` (`_changed_values`) and of its key `rows`
+    (`_clip_rows`): ``(values, rows left out, locked names)``. A locked scalar or compound is
+    left out whole. A compound with a locked axis gives its free axes one by one (it takes no
+    value while a child is locked), and the locked axis counts only where the data changes it.
+    A key on a locked axis is left out too."""
+    long_name = type(node).get_long_name(node)
+    held      = set(cmds.listAttr(long_name, locked=True) or [])
+    if not held:
+        return changed, [], []
+    free, locked = {}, []
+    for attr, value in changed.items():
+        if attr in held:  # a scalar, or the compound itself (its children are listed with it)
+            locked.append(attr)
+            continue
+        children = cmds.attributeQuery(attr, node=long_name, listChildren=True) or []
+        if held.isdisjoint(children):
+            free[attr] = value
+            continue
+        axes = dict(zip(children, np.asarray(value, dtype=float).ravel().tolist()))
+        for child, axis in _changed_values(node, axes).items():
+            if child in held:
+                locked.append(child)
+            else:
+                free[child] = axis
+    left = [row for row in rows if row[1] in held]
+    for _, attr, _ in left:
+        above = cmds.attributeQuery(attr, node=long_name, listParent=True) or []
+        if attr not in locked and not set(above).intersection(locked):
+            locked.append(attr)
+    return free, left, locked
+
+
+def _key_plan(
+    hierarchy: HierarchyData,
+    keyed:     set           | None = None,
+    strict:    bool          | None = None,
+    method:    str                  = "key_hierarchy",
+) -> tuple[list, list, list]:
+    """What `key_hierarchy` writes, checked before the first edit: ``(rows, changes, left)``.
+    `hierarchy` is a copy whose nodes' names are the Maya nodes they key; with `keyed` (the
+    ids of the nodes it paired) only those are read, the rest of the data keys nothing.
+    ``rows`` are the keys (`_clip_rows`: a NaN, a missing plug-in) and ``changes`` the
+    ``(node, values)`` to set, each a value its node does not hold already.
+
+    `strict` says what a channel that cannot be written is. True: an attribute a joint's data
+    sets and its node lacks (the node is no joint), and a locked channel the data changes or
+    keys, are each a ValueError naming every one. False: they are left out, the node's other
+    channels written (`_free_values`), and ``left`` describes them for the caller's one
+    warning. None (``rig.create_scene``, whose nodes were made from the data): a lock is the
+    ValueError, and an attribute a node lacks is left out, as `_set_values` leaves it."""
+    rows = _clip_rows(hierarchy, {}, only=keyed)
+    keys = {}
+    for row in rows:
+        keys.setdefault(id(row[0]), []).append(row)
+
+    lacking, locked, changes, dropped = [], [], [], set()
+    for data in hierarchy:
+        if keyed is not None and id(data) not in keyed:
+            continue
+        node   = data.name
+        values = data.to_attributes()
+        if strict is not None and data.node_type == "joint":  # a transform's data sets nothing a joint lacks
+            absent = [attr for attr in values if node.find_attr(attr, quiet=True) is None]
+            if absent:
+                lacking.append(f"{node} ({', '.join(absent)})")
+        free, left, held = _free_values(node, _changed_values(node, values), keys.get(id(data), []))
+        changes.append((node, free))
+        dropped.update(id(row) for row in left)
+        locked.extend(f"{node}.{attr}" for attr in held)
+
+    if strict is not False:
+        hint = "strict=False skips them, " if strict else ""
+        if lacking:
+            raise ValueError(
+                f"{method}: {len(lacking)} node(s) lack attributes their data sets (a joint's data, a node that "
+                f"is no joint): {', '.join(lacking)}; {hint}nothing was keyed"
+            )
+        if locked:
+            raise ValueError(
+                f"{method}: the data changes {len(locked)} locked channel(s): {', '.join(locked)} "
+                f"(a skinCluster locks its mesh's transform); {hint}nothing was keyed"
+            )
+    left = []
+    if lacking:
+        left.append(f"{len(lacking)} node(s) lacking attributes a joint's data sets: {', '.join(lacking)}")
+    if locked:
+        left.append(f"{len(locked)} locked channel(s): {', '.join(locked)}")
+    return [row for row in rows if id(row) not in dropped], changes, left
+
+
+def _clip_rows(hierarchy: HierarchyData, solved: dict, only: set | None = None) -> list[tuple]:
     """The keys a ClipData needs, ``(node data, attribute, keys)`` per column of its (F, N, 3)
     blocks with any difference across the frames, each with a key on every frame. A flat
     column has no row: `_set_values` sets it as a plain value (so a one-frame clip has
@@ -219,6 +310,8 @@ def _clip_rows(hierarchy: HierarchyData, solved: dict) -> list[tuple]:
     parent (`_build_hierarchy`), whose round-off is no difference: a turning root's scale, 1
     in the clip, comes back 1 give or take 1e-15 (`_SOLVE_GRAIN`). A joint that has to take
     out a scale no plug gives it (`_held_scale`) has its own rows, on ``inverseScale``.
+    `only` (the ids of the nodes `key_hierarchy` paired) leaves every other node without a
+    row, so a NaN in a node that takes no key is no error.
 
     Key k lands on frame ``start_frame + k`` whatever the scene's rate: another rate logs
     one warning, keys or none, and the scene's time unit and playback range are not touched.
@@ -244,9 +337,13 @@ def _clip_rows(hierarchy: HierarchyData, solved: dict) -> list[tuple]:
         block = getattr(frames, channel.lstrip("_"))
         moved = ~(np.abs(block - block[0]) <= grain * (1.0 + np.abs(block[0])))
         for node, axis in np.argwhere(moved.any(axis=0)).tolist():
+            if only is not None and id(hierarchy[node]) not in only:
+                continue
             keys = AnimCurve(block[:, node, axis], times=times, **tangents)
             rows.append((hierarchy[node], f"{attr}{'XYZ'[axis]}", keys))
     for node in hierarchy:
+        if only is not None and id(node) not in only:
+            continue
         held = _held_scale(node, solved)
         for axis in () if held is None else np.flatnonzero(np.ptp(held, axis=0)).tolist():
             keys = AnimCurve(held[:, axis], times=times, **tangents)
@@ -289,7 +386,7 @@ def _held_scale(node: Any, solved: dict) -> np.ndarray | None:
     return solved[id(parent)][1] if node.node_type == "joint" and node.segment_scale_compensate else None
 
 
-def _clip_inverse_scales(hierarchy: HierarchyData, solved: dict) -> None:
+def _clip_inverse_scales(hierarchy: HierarchyData, solved: dict, only: set | None = None) -> None:
     """Makes the joints of a ClipData evaluate what its world matrices hold (its nodes made):
     cgmath takes the parent's scale out of a joint whose segment scale compensate is on, on
     every frame, and Maya only out of a joint whose ``inverseScale`` holds it. A joint under
@@ -297,21 +394,132 @@ def _clip_inverse_scales(hierarchy: HierarchyData, solved: dict) -> None:
     wires one, or takes `_held_scale` as its plain value (its keys are `_clip_rows`'). A root
     solved under a node outside the clip takes that node's world scale: the value its solve
     took out, which no plug of that node holds when the scale comes from above it. A joint
-    under a transform of the clip is left as Maya leaves it, unwired."""
+    under a transform of the clip is left as Maya leaves it, unwired.
+
+    `only` (the ids of the nodes `key_hierarchy` paired, on nodes it did not make) leaves out a
+    joint that is not keyed or whose node has no ``inverseScale`` (it is no joint), and wires
+    one only to a keyed parent whose node is its parent in Maya."""
     for node in hierarchy:
         if node.node_type != "joint" or not node.segment_scale_compensate:
             continue
-        inverse = node.name.find_attr("inverseScale")
-        parent  = node.get_parent()
-        held    = _held_scale(node, solved)
+        if only is not None and id(node) not in only:
+            continue
+        inverse = node.name.find_attr("inverseScale", quiet=only is not None)
+        if inverse is None:
+            continue
+        parent = node.get_parent()
+        held   = _held_scale(node, solved)
         if id(node) in solved:
             inverse.set(*solved[id(node)][0].tolist())
         elif held is not None:
             inverse.set(*held[0].tolist())
         elif getattr(parent, "node_type", None) == "joint":
+            if only is not None and (id(parent) not in only or not _is_parent(parent.name, node.name)):
+                continue
             scale = parent.name.find_attr("scale")
             if not cmds.isConnected(str(scale), str(inverse)):  # a node key_hierarchy keys may be wired
                 scale.connect(inverse)
+
+
+def _is_parent(parent: DAGNode, child: DAGNode) -> bool:
+    """True when `parent` is the node `child` sits under in Maya."""
+    above = cmds.listRelatives(type(child).get_long_name(child), parent=True, fullPath=True) or []
+    return above == [type(parent).get_long_name(parent)]
+
+
+def _walk_hierarchy(root: DAGNode) -> tuple[list, dict]:
+    """`root` and the transforms and joints below it, parents first, typed: the nodes
+    `serialize_hierarchy` reads and `key_hierarchy` pairs by order, in the one order. With
+    them, the count per type of the nodes left out: ``type="transform"`` also lists every
+    type derived from it (constraints, ikHandles...), which no TransformData describes, so
+    each is skipped with what is under it."""
+    nodes   = [root]
+    skipped = {}
+
+    def _recurse(leaf):
+        # a hierarchy the way it should be, unlike listRelatives(ad=True), whose order is its own
+        for child in leaf.get_children(c=True, noIntermediate=True, type="transform") or []:
+            if cmds.nodeType(_name_of(child)) not in SERIALIZED_NODE_TYPES:
+                below = cmds.listRelatives(_name_of(child), ad=True, type="transform", f=True)
+                for name in [_name_of(child)] + (below or []):
+                    node_type          = cmds.nodeType(name)
+                    skipped[node_type] = skipped.get(node_type, 0) + 1
+                continue
+            nodes.append(child)
+            _recurse(child)
+
+    _recurse(root)
+    return nodes, skipped
+
+
+# what `key_hierarchy`'s flags say (`_key_flag`)
+_KEY_FLAGS = _MappingProxyType({
+    "uuids":  "True (a node of the data keys the node holding its uuid) or False (the default: by index)",
+    "index":  "True (the default: node i of the data keys node i, in order) or False (the one node of its name)",
+    "strict": "True (the default: what cannot be keyed is a ValueError) or False (it is skipped, with a warning)",
+})
+
+
+def _key_flag(method: str, flag: str, value: Any) -> bool:
+    """A flag of `key_hierarchy` (`method`, ``"Joint.key_hierarchy"``) as a bool: anything but a
+    bool (None, ``1``) is a TypeError naming it and what it says, before anything is read."""
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{method}: {flag}= is {_KEY_FLAGS[flag]}, not {value!r}")
+    return bool(value)
+
+
+def _own_rows(hierarchy: HierarchyData, own: Any) -> list:
+    """The nodes of `hierarchy` a node keys by uuid or by name: `own`, the node of the data
+    that is the node itself, with the ones under it in the data, in the data's order; every
+    one when the data does not hold the node (`own` None: a group above the skeleton)."""
+    if own is None:
+        return list(hierarchy)
+    below = {id(data) for data in own.get_branch()} | {id(own)}
+    return [data for data in hierarchy if id(data) in below]
+
+
+def _pair_by_uuid(top: DAGNode, hierarchy: HierarchyData) -> tuple[list, list]:
+    """``key_hierarchy(uuids=True)``: ``(pairs, missed)``, a ``(node data, Maya node)`` per
+    expected node of `hierarchy` (`_own_rows`) whose uuid one node at or below `top` holds,
+    and the others described."""
+    long_top = type(top).get_long_name(top)
+    held     = type(top)._raw_get_uuid(top).upper()
+    own      = next((data for data in hierarchy if data.uuid and str(data.uuid).upper() == held), None)
+    pairs, missed = [], []
+    for data in _own_rows(hierarchy, own):
+        found = cmds.ls(str(data.uuid).upper(), long=True) if data.uuid else []
+        found = [path for path in found if path == long_top or path.startswith(long_top + "|")]
+        if len(found) == 1:
+            pairs.append((data, _cast(found[0])))
+        else:
+            missed.append(f"{data.name!r} ({', '.join(sorted(found)) or 'none'})")
+    return pairs, missed
+
+
+def _pair_by_name(top: DAGNode, hierarchy: HierarchyData) -> tuple[list, list]:
+    """``key_hierarchy(index=False)``: ``(pairs, missed)``, a ``(node data, Maya node)`` per
+    expected node of `hierarchy` (`_own_rows`: `top` is the one node of the data of its name,
+    or none of them) whose name one node at or below `top` has, and the others described: no
+    node, several, or a name several expected nodes of the data share."""
+    long_top = type(top).get_long_name(top)
+    named    = {}
+    for path in [long_top] + (cmds.listRelatives(long_top, allDescendents=True, type="transform", fullPath=True) or []):
+        named.setdefault(path.rsplit("|", 1)[-1], []).append(path)
+    mine = [data for data in hierarchy if data.name == long_top.rsplit("|", 1)[-1]]
+    rows = _own_rows(hierarchy, mine[0] if len(mine) == 1 else None)
+    held = {}
+    for data in rows:
+        held[data.name] = held.get(data.name, 0) + 1
+    pairs, missed = [], []
+    for data in rows:
+        found = named.get(data.name, [])
+        if held[data.name] > 1:
+            missed.append(f"{data.name!r} ({held[data.name]} nodes of the data have the name)")
+        elif len(found) == 1:
+            pairs.append((data, _cast(found[0])))
+        else:
+            missed.append(f"{data.name!r} ({', '.join(sorted(found)) or 'none'})")
+    return pairs, missed
 
 
 def _put_back_selection(before: list[str]) -> None:
@@ -878,39 +1086,14 @@ class Transform(DAGNode):
                     f"bindpose= takes False, True or a dagPose name, not {bindpose!r}"
                 )
 
-        def _recurse(leaf):
-            # this function returns a hierarchy the way it should be
-            # unlike listRelatives(ad=True) which returns some really weird order
-            children = (
-                leaf.get_children(c=True, noIntermediate=True, type="transform") or []
-            )
-
-            for child in children:
-                # type="transform" also lists every type derived from it
-                # (constraints, ikHandles, etc.), a TransformData can't describe
-                # those, skip them along with what is under them.
-                if cmds.nodeType(_name_of(child)) not in SERIALIZED_NODE_TYPES:
-                    below = cmds.listRelatives(
-                        _name_of(child), ad=True, type="transform", f=True
-                    )
-                    for name in [_name_of(child)] + (below or []):
-                        node_type          = cmds.nodeType(name)
-                        skipped[node_type] = skipped.get(node_type, 0) + 1
-                    continue
-
-                tree.append(child.serialize())
-                objs.append(type(child)._raw_get_mobject(child))
-                _recurse(child)
-
         # serialize the root
         root = self.serialize()
         _set_parent_uuid(root, None)
 
-        # recurse through the hierarchy
-        tree    = [root]
-        objs    = [type(self)._raw_get_mobject(self)]  # the serialized nodes' MObjects, for the bind pose
-        skipped = {}
-        _recurse(self)
+        # then the nodes below it, in the walk's order
+        nodes, skipped = _walk_hierarchy(self)
+        tree = [root] + [node.serialize() for node in nodes[1:]]
+        objs = [type(node)._raw_get_mobject(node) for node in nodes]  # their MObjects, for the bind pose
 
         if bindpose is not False:
             from rig.nodetypes import _bindpose
@@ -965,13 +1148,14 @@ class Transform(DAGNode):
                 every node made takes its data's uuid (a recorded
                 ``rename -uuid``, in the call's undo step), so the nodes are
                 found by it (``Node(uuid)``, ``cmds.ls(uuid)``, a shape's
-                ``parent_uuid``) and `serialize_hierarchy` of them gives the
-                same uuids back. A uuid a scene node already holds, or one the
-                data holds twice, is then a ValueError before anything is
-                made, naming both: a second copy of a hierarchy that is in the
-                scene takes fresh uuids first (``hierarchy.renew_uuids()``; a
-                Scene's ``renew_uuids()``). A node whose data holds no uuid
-                keeps Maya's.
+                ``parent_uuid``, ``key_hierarchy(clip, uuids=True)``) and
+                `serialize_hierarchy` of them gives the same uuids back. A
+                uuid a scene node already holds, or one the data holds twice,
+                is then a ValueError before anything is made, naming both: a
+                second copy of a hierarchy that is in the scene takes fresh
+                uuids first (``hierarchy.renew_uuids()``; a Scene's
+                ``renew_uuids()``). A node whose data holds no uuid keeps
+                Maya's.
 
         Returns:
             A List of the new nodes, typed as ``Transform.create`` types its
@@ -1040,12 +1224,23 @@ class Transform(DAGNode):
         with _undo_chunk(f"rig.{cls.__name__}.create_hierarchy"):
             return _typed_nodes(cls._build_hierarchy(hierarchy, parent, world_space, select=True, uuids=uuids))
 
-    @classmethod
-    def key_hierarchy(cls, clip: HierarchyData) -> List:
-        """Keys a ClipData onto the nodes in the scene it describes, the inverse
-        of `create_hierarchy` building them: what a cgmath Scene's take does to
-        the skeleton its skins were bound at (``create_hierarchy(scene.hierarchy)``,
-        the skins, then ``key_hierarchy(scene.clip.active)``).
+    def key_hierarchy(
+        self,
+        clip:   HierarchyData,
+        *,
+        uuids:  bool          = False,
+        index:  bool          = True,
+        strict: bool          = True,
+    ) -> List:
+        """Keys a ClipData onto this node and the nodes below it, the inverse of
+        `create_hierarchy` building them. Called on a node, as
+        `serialize_hierarchy` is::
+
+            root  = Transform("root")
+            keyed = root.key_hierarchy(clip)                  # by order: node i takes the data's node i
+            keyed = root.key_hierarchy(clip, index=False)     # by name
+            keyed = root.key_hierarchy(clip, uuids=True)      # by uuid
+            keyed = root.key_hierarchy(clip, strict=False)    # what cannot be keyed is skipped
 
         Args:
             clip: A ClipData, keyed as `create_hierarchy` keys one (the same
@@ -1053,78 +1248,135 @@ class Transform(DAGNode):
                 frame, ``start_frame + k``; a flat one a plain value, the
                 tangents Maya's global default), or a plain HierarchyData, which
                 poses the nodes, no key. It is left as it was.
+            uuids: By keyword only, a bool. False (the default): the nodes are
+                paired as `index` says. True: each node of the data keys the
+                node holding its uuid, at or below this one (what a
+                `create_hierarchy` with ``uuids=True`` made, whatever its name
+                and its place are now); `index` is not read.
+            index: By keyword only, a bool, read when `uuids` is False. True
+                (the default): by order, one to one. Node i of the data keys
+                node i of this node and the transforms and joints below it,
+                in `serialize_hierarchy`'s order (parents first), so the
+                data's first node lands on this one; no name and no uuid is
+                read. The counts need not agree: the keys stop where the
+                nodes or the data run out, with one warning naming both
+                counts. False: each node of the data keys the one node of its
+                name, at or below this one.
+            strict: By keyword only, a bool. True (the default): a node of the
+                data with no node to key, an attribute its node lacks and a
+                locked channel are each a ValueError naming every one, before
+                any edit. False: each is skipped, the rest is keyed, and one
+                warning names every skip.
 
-        Each node of the data is the scene node holding its uuid (the node a
-        ``create_hierarchy`` with ``uuids=True`` made), else the one node of
-        its name. A node neither finds, or a name several nodes have, is a
-        ValueError naming every one before any edit; so are a NaN in a keyed
-        column and a missing undo plug-in (`create_hierarchy`'s checks). A
-        joint that compensates under a joint of the clip takes its parent's
-        scale (``parent.scale >> joint.inverseScale``, left as it is when
-        wired). Keys a channel holds already are replaced on the clip's frames.
+        By uuid and by name the nodes are looked for at or below this node
+        only, so two copies of a skeleton each take the clip by name, and a
+        branch is keyed alone: when this node is itself a node of the data
+        (it holds its uuid; by name, it alone in the data has its name), only
+        that node and the ones under it in the data are keyed::
+
+            Transform("left_clavicle").key_hierarchy(clip, uuids=True)   # the clavicle and below
+
+        On a node the data does not hold (a group above the skeleton) every
+        node of the data is expected. By order there is no such rule: the
+        data's first node lands on this one whatever it is, so a branch takes
+        ``uuids=True``, ``index=False`` or a clip of its own, and a transform
+        or a joint more or less below this node shifts every later one, with
+        no error.
+
+        What `strict` refuses, or skips, is of two kinds. A node: by uuid,
+        no node at or below this one holds it; by name, none or several have
+        it, or several expected nodes of the data share it. A channel: an
+        attribute the node lacks, which is a joint's data on a node that is
+        no joint (its joint orient, segment scale compensate, radius and draw
+        style; a transform's data sets nothing a joint lacks), and a locked
+        channel the data changes or keys. A locked axis is skipped alone: the
+        node's other axes and channels are set and keyed. Whatever `strict`
+        is, a NaN in a column that is keyed is a ValueError and a missing
+        undo plug-in a RuntimeError (`create_hierarchy`'s checks), a flag
+        that is no bool, a path and anything that is no HierarchyData a
+        TypeError, all before any edit.
+
+        A joint that compensates takes its parent's scale
+        (``parent.scale >> joint.inverseScale``, left as it is when wired)
+        when its parent in the data is a joint keyed onto its parent in Maya.
+        Keys a channel holds already are replaced on the clip's frames.
 
         Returns:
             A List of the nodes keyed, typed, in the data's order (parents first).
 
-        One undo step named ``rig.<class>.key_hierarchy``; the selection is
-        left as it was. A path is a TypeError naming it.
+        One undo step named ``rig.<class>.key_hierarchy``, the class this
+        node's (``rig.Joint.key_hierarchy`` on a joint); the selection is
+        left as it was.
         """
         from cgmath.hierarchy import HierarchyData
         from rig._internal.list import List as _List
 
-        method = f"{cls.__name__}.key_hierarchy"
+        method = f"{type(self).__name__}.key_hierarchy"
         if isinstance(clip, (str, os.PathLike)):
             raise TypeError(f"{method}() takes the data, not a file: ClipData.load(...) reads one")
         if not isinstance(clip, HierarchyData):
             raise TypeError(f"{method}() takes a ClipData or a HierarchyData, not a {type(clip).__name__}")
+        uuids  = _key_flag(method, "uuids",  uuids)
+        index  = _key_flag(method, "index",  index)
+        strict = _key_flag(method, "strict", strict)
 
         hierarchy = clip.copy()
-        missing   = []
-        for node in hierarchy:
-            found = _files.node_of_uuid(node.uuid)
-            if found is None:
-                named = cmds.ls(node.name, long=True, type="transform") or []
-                if len(named) != 1:
-                    missing.append(f"{node.name!r} ({'none' if not named else ', '.join(named)})")
-                    continue
-                found = named[0]
-            node.name = _cast(found)
-        if missing:
+        missed    = []
+        notes     = []
+        skips     = []
+        if uuids:
+            pairs, missed = _pair_by_uuid(self, hierarchy)
+            sought = "holding their uuid"
+        elif index:
+            nodes = _walk_hierarchy(self)[0]
+            pairs = list(zip(hierarchy, nodes))
+            if len(nodes) != len(hierarchy):
+                notes.append(
+                    f"{method}: the data holds {len(hierarchy)} node(s), {self} and what is below it "
+                    f"{len(nodes)}: the first {len(pairs)} were keyed, in order"
+                )
+        else:
+            pairs, missed = _pair_by_name(self, hierarchy)
+            sought = "of their name"
+        if missed and strict:
             raise ValueError(
-                f"{method}: no node, or several, holds the uuid or the name of {len(missing)} node(s) of the data: "
-                f"{'; '.join(missing)}; build them first (create_hierarchy), nothing was keyed"
+                f"{method}: {len(missed)} node(s) of the data have no one node {sought} at or below {self}: "
+                f"{', '.join(missed)}; strict=False skips them, nothing was keyed"
+            )
+        if missed:
+            skips.append(
+                f"{len(missed)} node(s) of the data with no one node {sought} at or below {self}: {', '.join(missed)}"
             )
 
+        for data, node in pairs:
+            data.name = node
+        keyed = {id(data) for data, _ in pairs}
+        plan  = _key_plan(hierarchy, keyed, strict, method)
         with _undo_chunk(f"rig.{method}"):
-            cls._key_found(hierarchy)
-        return _List([node.name for node in hierarchy])
+            type(self)._key_found(hierarchy, plan, keyed)
+
+        skips.extend(plan[2])
+        if skips:
+            notes.append(f"{method}: strict=False skipped {'; '.join(skips)}")
+        for note in notes:
+            LOGGER.warning(note)
+        return _List([node for _, node in pairs])
 
     @staticmethod
-    def _key_found(hierarchy: HierarchyData) -> None:
+    def _key_found(hierarchy: HierarchyData, plan: tuple | None = None, keyed: set | None = None) -> None:
         """[Internal] `key_hierarchy`'s edits, its nodes found: `hierarchy` a copy whose nodes'
-        names are the Maya nodes they key (``rig.scene.create_scene`` gives the nodes it made).
-        The keys are planned before the first edit (`_clip_rows`: a NaN, a missing plug-in)."""
+        names are the Maya nodes they key (``rig.scene.create_scene`` gives the nodes it made,
+        every one keyed). `plan` is `_key_plan`'s, made here when not given: the keys and the
+        values are planned before the first edit (a NaN, a missing plug-in, a locked channel).
+        `keyed` holds the ids of the nodes of `hierarchy` that are keyed, None for all."""
         from cgmath.hierarchy import ClipData
 
-        rows    = _clip_rows(hierarchy, {})
-        changes = [(node, _changed_values(node.name, node.to_attributes())) for node in hierarchy]
-        locked  = []
-        for node, values in changes:
-            held = set(cmds.listAttr(type(node.name).get_long_name(node.name), locked=True) or [])
-            keys = [attr for data, attr, _ in rows if data is node]
-            for attr in list(values) + keys:
-                if attr in held or any(attr + axis in held for axis in "XYZ"):
-                    locked.append(f"{node.name}.{attr}")
-        if locked:
-            raise ValueError(
-                f"key_hierarchy: the data changes {len(locked)} locked channel(s): {', '.join(locked)} "
-                f"(a skinCluster locks its mesh's transform); nothing was keyed"
-            )
+        rows, changes, _ = _key_plan(hierarchy) if plan is None else plan
         for node, values in changes:
             if values:
-                node.name.set_attrs(skip_missing=True, **values)
+                node.set_attrs(skip_missing=True, **values)
         if isinstance(hierarchy, ClipData) and hierarchy.frame_count:
-            _clip_inverse_scales(hierarchy, {})
+            _clip_inverse_scales(hierarchy, {}, only=keyed)
         _key_rows(rows)
 
     @classmethod

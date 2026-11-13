@@ -1,9 +1,13 @@
 """``Transform.key_hierarchy`` and ``rig.create_scene`` / ``rig.load_scene`` (the Renderable
 round, 5 of 6; the plan of 2026-11-09 and the user's decisions of 2026-11-10).
 
-* ``key_hierarchy(clip)`` keys a ClipData onto the nodes it describes, found by uuid, else by
-  name; a miss or a name of several nodes is a ValueError before any edit; a plain
-  HierarchyData poses, no key. One undo step.
+* ``node.key_hierarchy(clip)`` keys a ClipData onto a node and what is below it (the user's
+  decisions of 2026-11-13): by order by default, node i of the data on node i, the counts free
+  to differ; ``index=False`` by name and ``uuids=True`` by uuid, both at or below the node, a
+  node of the data keying its own branch alone. A node of the data with no node, an attribute
+  its node lacks and a locked channel are each a ValueError before any edit, or, with
+  ``strict=False``, skipped with one warning. A plain HierarchyData poses, no key. One undo
+  step.
 * ``create_scene(scene)``: the nodes, each mesh under its node, its blendShape, its skin bound at
   rest, then the active take keyed; a List of what was made, one undo step, the selection kept.
   The parts are joined by what the call made, so the nodes keep Maya's own uuids and one scene
@@ -17,9 +21,11 @@ round, 5 of 6; the plan of 2026-11-09 and the user's decisions of 2026-11-10).
 import importlib.util
 import logging
 import os
+import re
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 import rig
@@ -27,11 +33,13 @@ from cgmath.geometry import MaterialData, MorphData, SkinData
 from cgmath.hierarchy import ClipData, HierarchyData, TransformData
 from cgmath.render import Scene
 from maya import cmds
+from maya.api import OpenMaya
 from rig import create_scene, load_scene
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
-from rig._tests.test_class_hierarchy_clip import _clip, _moving_curves, _worlds
-from rig.nodetypes import Mesh, Transform
+from rig._tests.test_class_hierarchy_clip import _clip as _film_clip
+from rig._tests.test_class_hierarchy_clip import _curves, _moving_curves, _worlds
+from rig.nodetypes import Joint, Mesh, Transform, plugins
 
 
 def _uuid(node):
@@ -90,72 +98,518 @@ class _Case(UndoWalk, MayaTestCase):
 
 
 # ---------------------------------------------------------------------------------------------
-class TestKeyHierarchy(_Case):
-    def test_keys_the_nodes_it_describes(self):
-        clip  = _clip()
-        nodes = Transform.create_hierarchy(clip, uuids=True)   # wired, keyed; the keys taken off
-        cmds.delete(cmds.ls(type="animCurve"))
-        keyed = Transform.key_hierarchy(clip)
-        self.assertEqual([n.get_long_name() for n in keyed], [n.get_long_name() for n in nodes])
-        self.assertEqual(sorted(cmds.ls(type="animCurve")), _moving_curves())
+_LOG    = "rig.nodetypes.transform"
+_JOINTS = "jointOrient, segmentScaleCompensate, radius, drawStyle"   # what a joint's data sets and a transform lacks
+
+
+def _fps():
+    """The scene's own rate. A clip at it logs no fps warning into what these tests read, whatever
+    the session's time unit: a Maya with preferences of its own is not at film."""
+    return OpenMaya.MTime(1.0, OpenMaya.MTime.kSeconds).asUnits(OpenMaya.MTime.uiUnit())
+
+
+def _clip():
+    """`test_class_hierarchy_clip`'s clip, at the scene's own rate."""
+    return _film_clip(fps=_fps())
+
+
+def _bare(clip, parent=None, **kwargs):
+    """The nodes of `clip` made, the keys `create_hierarchy` gave them taken off."""
+    nodes = Transform.create_hierarchy(clip, parent, **kwargs)
+    cmds.delete(cmds.ls(type="animCurve"))
+    return nodes
+
+
+def _curves_of(*names):
+    """`_moving_curves` of the nodes `names` alone."""
+    return [curve for curve in _moving_curves() if curve.split("_")[0] in names]
+
+
+def _transforms():
+    """`_clip`'s names and places, every node a transform at its defaults; the top one."""
+    made = {"root": Transform.create(name="root")}
+    for name, parent in (("spine", "root"), ("arm", "spine"), ("grp", "root"), ("probe", "grp")):
+        made[name] = Transform.create(name=name, parent=made[parent])
+    return made["root"]
+
+
+def _values():
+    return [
+        cmds.getAttr(f"{node}.{attr}")
+        for node in cmds.ls(type="transform", long=True)
+        for attr in ("translate", "rotate", "scale")
+    ]
+
+
+def _exact(message):
+    return f"^{re.escape(message)}$"
+
+
+def _wired(parent, joint):
+    return cmds.isConnected(f"{parent}.scale", f"{joint}.inverseScale")
+
+
+class _KeyCase(_Case):
+    def warnings(self, call):
+        """The warnings `call` logs, its result in ``self.keyed``."""
+        with self.assertLogs(_LOG, logging.WARNING) as logs:
+            self.keyed = call()
+        return [record.getMessage() for record in logs.records]
+
+    def assert_worlds(self, nodes, clip):
+        """Every node's world matrix on every frame is the clip's."""
         self.assertLessEqual(np.abs(_worlds(nodes, clip) - clip.frames.world_matrix).max(), 1e-9)
 
-    def test_found_by_name_when_no_node_holds_the_uuid(self):
+    def assert_refused(self, message, call, error=ValueError):
+        """`error` with `message`, before any edit: no node, no value, no undo step."""
+        self.undo_queue_on()
+        before = _values()
+        self.assert_nothing_made(error, _exact(message), call)
+        self.assertEqual(_values(), before)
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
+
+
+class TestKeyHierarchyByOrder(_KeyCase):
+    """The default: node i of the data keys node i of the node and what is below it."""
+
+    def test_node_i_of_the_data_keys_node_i(self):
         clip  = _clip()
-        nodes = Transform.create_hierarchy(clip)
-        cmds.delete(cmds.ls(type="animCurve"))
-        Transform.key_hierarchy(clip)
-        self.assertEqual(sorted(cmds.ls(type="animCurve")), _moving_curves())
-        self.assertLessEqual(np.abs(_worlds(nodes, clip) - clip.frames.world_matrix).max(), 1e-9)
+        nodes = _bare(clip)
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = Transform("root").key_hierarchy(clip)
+        self.assertIsInstance(keyed, rig.List)
+        self.assertEqual(
+            [repr(node) for node in keyed],
+            ['Joint("root")', 'Joint("spine")', 'Joint("arm")', 'Transform("grp")', 'Transform("probe")'],
+        )
+        self.assertEqual(_curves(), _moving_curves())
+        self.assert_worlds(nodes, clip)
+
+    def test_no_name_and_no_uuid_is_read(self):
+        clip  = _clip()
+        nodes = _bare(clip)   # Maya's own uuids
+        for name in ("probe", "grp", "arm", "spine", "root"):
+            cmds.rename(name, f"x_{name}")
+        keyed = Transform("x_root").key_hierarchy(clip)
+        self.assertEqual([str(node) for node in keyed], ["x_root", "x_spine", "x_arm", "x_grp", "x_probe"])
+        self.assertEqual(_curves(), sorted(f"x_{curve}" for curve in _moving_curves()))
+        self.assert_worlds(nodes, clip)
+
+    def test_a_second_copy_takes_the_clip_too(self):
+        clip = _clip()
+        one  = _bare(clip)
+        two  = _bare(clip)   # Maya names its top node root1
+        Transform("root").key_hierarchy(clip)
+        Transform("root1").key_hierarchy(clip)
+        self.assertEqual(len(_curves()), 2 * len(_moving_curves()))
+        self.assert_worlds(one, clip)
+        self.assert_worlds(two, clip)
+
+    def test_more_nodes_in_the_data_than_below_the_node(self):
+        clip = _clip()
+        _bare(clip)
+        cmds.delete("probe")
+        said = self.warnings(lambda: Transform("root").key_hierarchy(clip))
+        self.assertEqual(said, [
+            "Joint.key_hierarchy: the data holds 5 node(s), root and what is below it 4: the first 4 were keyed, in order",
+        ])
+        self.assertEqual([str(node) for node in self.keyed], ["root", "spine", "arm", "grp"])
+        self.assertEqual(_curves(), _curves_of("root", "spine", "arm", "grp"))
+
+    def test_more_nodes_below_the_node_than_in_the_data(self):
+        clip  = _clip()
+        nodes = _bare(clip)
+        Transform.create(name="extra", parent=Transform("probe"))
+        said = self.warnings(lambda: Transform("root").key_hierarchy(clip))
+        self.assertEqual(said, [
+            "Joint.key_hierarchy: the data holds 5 node(s), root and what is below it 6: the first 5 were keyed, in order",
+        ])
+        self.assertEqual([str(node) for node in self.keyed], ["root", "spine", "arm", "grp", "probe"])
+        self.assertEqual(_curves(), _moving_curves())
+        self.assert_worlds(nodes, clip)
+
+    def test_a_node_more_shifts_every_later_one(self):
+        clip = _clip()
+        _bare(clip)
+        Transform.create(name="extra", parent=Transform("arm"))   # root, spine, arm, extra, grp, probe
+        said = self.warnings(lambda: Transform("root").key_hierarchy(clip))
+        self.assertEqual(len(said), 1)
+        self.assertEqual([str(node) for node in self.keyed], ["root", "spine", "arm", "extra", "grp"])
+        self.assertEqual(
+            _curves(),
+            sorted(_curves_of("root", "spine", "arm") + ["extra_rotateY", "extra_scaleX", "grp_rotateZ", "grp_translateY"]),
+        )
+
+    def test_on_a_branch_the_first_node_of_the_data_lands_on_it(self):
+        clip = _clip()
+        _bare(clip)
+        said = self.warnings(lambda: Transform("spine").key_hierarchy(clip))
+        self.assertEqual(said, [
+            "Joint.key_hierarchy: the data holds 5 node(s), spine and what is below it 2: the first 2 were keyed, in order",
+        ])
+        self.assertEqual([str(node) for node in self.keyed], ["spine", "arm"])
+        self.assertEqual(   # root's columns on spine, spine's on arm
+            _curves(),
+            ["arm_jointOrientY", "arm_rotateX", "arm_rotateZ", "spine_rotateY", "spine_translateX", "spine_translateZ"],
+        )
+
+    def test_a_branch_takes_a_clip_of_its_own(self):
+        _bare(_clip())
+        branch                        = ClipData(Transform("spine").serialize_hierarchy(), frames=3, start_frame=1, fps=_fps())
+        branch.frames["arm"].rotate_x = np.array([0.0, 20.0, 40.0])
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = Transform("spine").key_hierarchy(branch)
+        self.assertEqual([str(node) for node in keyed], ["spine", "arm"])
+        self.assertEqual(_curves(), ["arm_rotateX"])
+        self.assertAlmostEqual(cmds.getAttr("arm.rotateX", time=2), 20.0, places=9)
+
+
+class TestKeyHierarchyByUuid(_KeyCase):
+    """``uuids=True``: a node of the data keys the node holding its uuid, at or below the node."""
+
+    def test_each_node_keys_the_node_holding_its_uuid(self):
+        clip  = _clip()
+        nodes = _bare(clip, uuids=True)
+        cmds.reorder("grp", front=True)   # another order, other names
+        for name in ("probe", "grp", "arm", "spine", "root"):
+            cmds.rename(name, f"x_{name}")
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = Transform("x_root").key_hierarchy(clip, uuids=True)
+        self.assertIsInstance(keyed, rig.List)
+        self.assertEqual(   # the data's order, typed
+            [repr(node) for node in keyed],
+            ['Joint("x_root")', 'Joint("x_spine")', 'Joint("x_arm")', 'Transform("x_grp")', 'Transform("x_probe")'],
+        )
+        self.assertEqual(_curves(), sorted(f"x_{curve}" for curve in _moving_curves()))
+        self.assert_worlds(nodes, clip)
+
+    def test_index_is_not_read(self):
+        clip = _clip()
+        _bare(clip, uuids=True)
+        cmds.rename("probe", "other")   # by name, a miss
+        keyed = Transform("root").key_hierarchy(clip, uuids=True, index=False)
+        self.assertEqual([str(node) for node in keyed], ["root", "spine", "arm", "grp", "other"])
+
+    def test_a_branch_keys_the_branch_alone(self):
+        clip = _clip()
+        _bare(clip, uuids=True)
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = Transform("spine").key_hierarchy(clip, uuids=True)
+        self.assertEqual([repr(node) for node in keyed], ['Joint("spine")', 'Joint("arm")'])
+        self.assertEqual(_curves(), _curves_of("spine", "arm"))
+
+    def test_a_node_above_the_data_keys_every_node(self):
+        clip  = _clip()
+        nodes = _bare(clip, uuids=True)
+        cmds.parent("root", str(Transform.create(name="above")))
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = Transform("above").key_hierarchy(clip, uuids=True)
+        self.assertEqual([str(node) for node in keyed], ["root", "spine", "arm", "grp", "probe"])
+        self.assertEqual(_curves(), _moving_curves())
+        self.assert_worlds(nodes, clip)
 
     def test_a_miss_is_refused_before_any_edit(self):
         clip = _clip()
-        Transform.create_hierarchy(clip)
-        cmds.delete(cmds.ls(type="animCurve"))
-        cmds.delete("probe")
-        before = cmds.getAttr("root.translate")
-        self.assert_nothing_made(
-            ValueError, r"^Transform\.key_hierarchy: no node, or several, holds the uuid or the name of 1 node\(s\) of the data: 'probe' \(none\)",
-            lambda: Transform.key_hierarchy(clip),
+        _bare(clip)   # Maya's own uuids: no node holds the data's
+        self.assert_refused(
+            "Joint.key_hierarchy: 5 node(s) of the data have no one node holding their uuid at or below root: "
+            "'root' (none), 'spine' (none), 'arm' (none), 'grp' (none), 'probe' (none); "
+            "strict=False skips them, nothing was keyed",
+            lambda: Transform("root").key_hierarchy(clip, uuids=True),
         )
-        self.assertEqual(cmds.getAttr("root.translate"), before)
+        self.assertEqual(_curves(), [])
 
-    def test_a_name_of_two_nodes_is_refused(self):
+    def test_a_node_outside_is_a_miss(self):
         clip = _clip()
-        Transform.create_hierarchy(clip)
-        Transform.create_hierarchy(clip)
-        with self.assertRaisesRegex(ValueError, r"'spine' \(\|root1\|spine, \|root\|spine\)"):
-            Transform.key_hierarchy(clip)
+        _bare(clip, uuids=True)
+        cmds.parent("grp", world=True)   # it holds its uuid, and is not at or below root
+        self.assert_refused(
+            "Joint.key_hierarchy: 2 node(s) of the data have no one node holding their uuid at or below root: "
+            "'grp' (none), 'probe' (none); strict=False skips them, nothing was keyed",
+            lambda: Transform("root").key_hierarchy(clip, uuids=True),
+        )
 
+    def test_strict_false_keys_the_rest(self):
+        clip = _clip()
+        _bare(clip, uuids=True)
+        cmds.delete("probe")
+        said = self.warnings(lambda: Transform("root").key_hierarchy(clip, uuids=True, strict=False))
+        self.assertEqual(said, [
+            "Joint.key_hierarchy: strict=False skipped 1 node(s) of the data with no one node holding their uuid "
+            "at or below root: 'probe' (none)",
+        ])
+        self.assertEqual([str(node) for node in self.keyed], ["root", "spine", "arm", "grp"])
+        self.assertEqual(_curves(), _curves_of("root", "spine", "arm", "grp"))
+
+
+class TestKeyHierarchyByName(_KeyCase):
+    """``index=False``: a node of the data keys the one node of its name, at or below the node."""
+
+    def test_each_node_keys_the_one_node_of_its_name(self):
+        clip  = _clip()
+        nodes = _bare(clip)
+        cmds.reorder("grp", front=True)   # another order
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = Transform("root").key_hierarchy(clip, index=False)
+        self.assertIsInstance(keyed, rig.List)
+        self.assertEqual(
+            [repr(node) for node in keyed],
+            ['Joint("root")', 'Joint("spine")', 'Joint("arm")', 'Transform("grp")', 'Transform("probe")'],
+        )
+        self.assertEqual(_curves(), _moving_curves())
+        self.assert_worlds(nodes, clip)
+
+    def test_two_copies_each_take_the_clip(self):
+        clip = _clip()
+        Transform.create(name="a")
+        below = Transform.create(name="b")
+        one   = _bare(clip, "a")
+        two   = _bare(clip, "b")
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            first  = Transform("|a|root").key_hierarchy(clip, index=False)
+            second = below.key_hierarchy(clip, index=False)   # from the group above
+        self.assertEqual([node.get_long_name() for node in first], [node.get_long_name() for node in one])
+        self.assertEqual([node.get_long_name() for node in second], [node.get_long_name() for node in two])
+        self.assertEqual(len(_curves()), 2 * len(_moving_curves()))
+        self.assert_worlds(one, clip)
+        self.assert_worlds(two, clip)
+
+    def test_a_branch_keys_the_branch_alone(self):
+        clip = _clip()
+        _bare(clip)
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = Transform("grp").key_hierarchy(clip, index=False)
+        self.assertEqual([repr(node) for node in keyed], ['Transform("grp")', 'Transform("probe")'])
+        self.assertEqual(_curves(), _curves_of("grp", "probe"))
+
+    def test_a_name_no_node_or_several_have_is_refused(self):
+        clip = _clip()
+        _bare(clip)
+        Transform.create(name="spine", parent=Transform("grp"))
+        cmds.delete("probe")
+        self.assert_refused(
+            "Joint.key_hierarchy: 2 node(s) of the data have no one node of their name at or below root: "
+            "'spine' (|root|grp|spine, |root|spine), 'probe' (none); strict=False skips them, nothing was keyed",
+            lambda: Transform("root").key_hierarchy(clip, index=False),
+        )
+        self.assertEqual(_curves(), [])
+
+    def test_a_name_two_nodes_of_the_data_share(self):
+        top = Transform.create(name="base")
+        for side in ("l", "r"):
+            Transform.create(name="end", parent=Transform.create(name=side, parent=top))
+        clip = ClipData(top.serialize_hierarchy(), frames=3, start_frame=1)
+        self.assert_refused(
+            "Transform.key_hierarchy: 2 node(s) of the data have no one node of their name at or below base: "
+            "'end' (2 nodes of the data have the name), 'end' (2 nodes of the data have the name); "
+            "strict=False skips them, nothing was keyed",
+            lambda: top.key_hierarchy(clip, index=False),
+        )
+        # a branch holds the name once
+        keyed = Transform("|base|l").key_hierarchy(clip, index=False)
+        self.assertEqual([node.get_long_name() for node in keyed], ["|base|l", "|base|l|end"])
+
+    def test_strict_false_keys_the_rest(self):
+        clip = _clip()
+        _bare(clip)
+        cmds.delete("probe")
+        said = self.warnings(lambda: Transform("root").key_hierarchy(clip, index=False, strict=False))
+        self.assertEqual(said, [
+            "Joint.key_hierarchy: strict=False skipped 1 node(s) of the data with no one node of their name "
+            "at or below root: 'probe' (none)",
+        ])
+        self.assertEqual([str(node) for node in self.keyed], ["root", "spine", "arm", "grp"])
+        self.assertEqual(_curves(), _curves_of("root", "spine", "arm", "grp"))
+
+
+class TestKeyHierarchyChannels(_KeyCase):
+    """What a node cannot take: an attribute it lacks, a locked channel."""
+
+    def test_a_joints_data_on_a_node_that_is_no_joint_is_refused(self):
+        clip = _clip()
+        top  = _transforms()
+        self.assert_refused(
+            "Transform.key_hierarchy: 3 node(s) lack attributes their data sets (a joint's data, a node that is "
+            f"no joint): root ({_JOINTS}), spine ({_JOINTS}), arm ({_JOINTS}); "
+            "strict=False skips them, nothing was keyed",
+            lambda: top.key_hierarchy(clip),
+        )
+        self.assertEqual(_curves(), [])
+
+    def test_a_transforms_data_on_a_joint_keys(self):
+        top = _transforms()
+        top.t.set(1, 2, 3)
+        clip                             = ClipData(top.serialize_hierarchy(), frames=3, start_frame=1, fps=_fps())
+        clip.frames["probe"].translate_y = np.array([0.0, 1.0, 2.0])
+        cmds.delete("root")
+        made = [Joint.create(name="root")]
+        for name, parent in (("spine", 0), ("arm", 1), ("grp", 0), ("probe", 3)):
+            made.append(Joint.create(name=name, parent=made[parent]))
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            keyed = made[0].key_hierarchy(clip)
+        self.assertEqual([repr(node) for node in keyed][::4], ['Joint("root")', 'Joint("probe")'])
+        self.assertEqual(_curves(), ["probe_translateY"])
+        self.assertEqual(cmds.getAttr("root.translate"), [(1.0, 2.0, 3.0)])
+
+    def test_a_locked_channel_is_refused(self):
+        clip = _clip()
+        _bare(clip)
+        cmds.setAttr("spine.rotateX", lock=True)
+        self.assert_refused(
+            "Joint.key_hierarchy: the data changes 1 locked channel(s): spine.rotateX (a skinCluster locks its "
+            "mesh's transform); strict=False skips them, nothing was keyed",
+            lambda: Transform("root").key_hierarchy(clip),
+        )
+        self.assertEqual(_curves(), [])
+
+    def test_a_lock_the_data_leaves_alone_is_no_error(self):
+        clip  = _clip()
+        nodes = _bare(clip)
+        cmds.setAttr("grp.translate", lock=True)    # a compound, an axis: values the nodes hold already
+        cmds.setAttr("arm.translateY", lock=True)
+        with self.assertNoLogs(_LOG, level="WARNING"):
+            Transform("root").key_hierarchy(clip)
+        self.assertEqual(_curves(), _moving_curves())
+        self.assert_worlds(nodes, clip)
+
+    def test_strict_false_skips_a_locked_axis_alone(self):
+        clip = _clip()
+        _bare(clip)
+        cmds.setAttr("grp.translate", 5, 5, 5)
+        cmds.setAttr("grp.translateY", lock=True)  # an axis the data sets
+        cmds.setAttr("spine.rotateX", lock=True)   # an axis the clip keys
+        said = self.warnings(lambda: Transform("root").key_hierarchy(clip, strict=False))
+        self.assertEqual(said, [
+            "Joint.key_hierarchy: strict=False skipped 2 locked channel(s): spine.rotateX, grp.translateY",
+        ])
+        self.assertEqual(len(self.keyed), 5)
+        self.assertEqual(_curves(), [curve for curve in _moving_curves() if curve != "spine_rotateX"])
+        np.testing.assert_allclose(cmds.getAttr("grp.translate")[0], (-2.0, 5.0, 0.0), atol=1e-9)   # x and z set
+
+    def test_strict_false_names_both_kinds_in_one_warning(self):
+        clip = _clip()
+        top  = _transforms()
+        cmds.setAttr("grp.rotateY", lock=True)
+        said = self.warnings(lambda: top.key_hierarchy(clip, strict=False))
+        self.assertEqual(said, [
+            "Transform.key_hierarchy: strict=False skipped 3 node(s) lacking attributes a joint's data sets: "
+            f"root ({_JOINTS}), spine ({_JOINTS}), arm ({_JOINTS}); 1 locked channel(s): grp.rotateY",
+        ])
+        self.assertEqual(len(self.keyed), 5)
+        self.assertEqual(   # every channel the nodes have, but the locked one
+            _curves(),
+            [curve for curve in _moving_curves() if curve not in ("spine_jointOrientY", "grp_rotateY")],
+        )
+        np.testing.assert_allclose(cmds.getAttr("spine.translate")[0], (0.0, 5.0, 0.0), atol=1e-9)
+
+    def test_what_strict_false_does_not_skip(self):
+        clip = _clip()
+        _bare(clip, uuids=True)
+        with mock.patch.object(plugins, "_fast_path_ready", return_value=False):
+            self.assert_refused(
+                "rig needs its undo plug-in 'undoable_api_command' to key a clip, and it could not be loaded "
+                f"({plugins._plugin_whereabouts()}); nothing was made",
+                lambda: Transform("root").key_hierarchy(clip, strict=False),
+                error=RuntimeError,
+            )
+        clip.frames["probe"].translate_y = [0, 1, np.nan, 3, 4, 5]
+        for strict in (True, False):
+            with self.subTest(strict=strict):
+                self.assert_nothing_made(
+                    ValueError, "AnimCurve values must be finite",
+                    lambda: Transform("root").key_hierarchy(clip, strict=strict),
+                )
+        self.assertEqual(_curves(), [])
+        # a node that takes no key: its NaN is not read
+        Transform("spine").key_hierarchy(clip, uuids=True)
+        self.assertEqual(_curves(), _curves_of("spine", "arm"))
+
+    def test_a_compensating_joint_takes_the_scale_of_its_keyed_parent(self):
+        clip = _clip()
+        _bare(clip, uuids=True)
+        self.assertEqual((_wired("root", "spine"), _wired("spine", "arm")), (True, True))   # create_hierarchy's
+        cmds.disconnectAttr("root.scale", "spine.inverseScale")
+        cmds.disconnectAttr("spine.scale", "arm.inverseScale")
+        Transform("spine").key_hierarchy(clip, uuids=True)   # root takes no key: spine is left as it is
+        self.assertEqual((_wired("root", "spine"), _wired("spine", "arm")), (False, True))
+        Transform("root").key_hierarchy(clip)
+        self.assertEqual((_wired("root", "spine"), _wired("spine", "arm")), (True, True))
+
+
+class TestKeyHierarchy(_KeyCase):
     def test_a_hierarchy_poses_no_key(self):
         clip = _clip()
-        Transform.create_hierarchy(clip)
-        cmds.delete(cmds.ls(type="animCurve"))
+        _bare(clip)
         cmds.setAttr("root.translate", 9, 9, 9)
-        pose = clip.at(clip.start_frame + 2)
-        Transform.key_hierarchy(pose)
-        self.assertEqual(cmds.ls(type="animCurve"), [])
+        pose  = clip.at(clip.start_frame + 2)
+        keyed = Transform("root").key_hierarchy(pose)
+        self.assertEqual(len(keyed), 5)
+        self.assertEqual(_curves(), [])
         np.testing.assert_allclose(cmds.getAttr("root.translate")[0], pose["root"].translate, atol=1e-9)
+
+    def test_keys_held_already_are_replaced(self):
+        clip  = _clip()
+        nodes = _bare(clip)
+        Transform("root").key_hierarchy(clip)
+        cmds.setKeyframe("arm.rotateX", time=clip.start_frame + 1, value=77.0)
+        Transform("root").key_hierarchy(clip)
+        self.assertEqual(_curves(), _moving_curves())
+        self.assert_worlds(nodes, clip)
+
+    def test_the_clip_is_left_as_it_was(self):
+        clip   = _clip()
+        before = ([node.name for node in clip], clip.frames.world_matrix.copy())
+        _bare(clip)
+        Transform("root").key_hierarchy(clip)
+        self.assertEqual([node.name for node in clip], before[0])
+        np.testing.assert_array_equal(clip.frames.world_matrix, before[1])
 
     def test_one_undo_step_and_the_selection(self):
         clip = _clip()
-        Transform.create_hierarchy(clip)
-        cmds.delete(cmds.ls(type="animCurve"))
+        _bare(clip)
         cmds.select("grp")
         self.undo_queue_on()
-        Transform.key_hierarchy(clip)
-        self.assertEqual(self.undo_name(), "rig.Transform.key_hierarchy")
+        Transform("root").key_hierarchy(clip)
+        self.assertEqual(self.undo_name(), "rig.Joint.key_hierarchy")   # the node's class
         self.assertEqual(cmds.ls(selection=True), ["grp"])
         self.undo_steps(1)
-        self.assertEqual(cmds.ls(type="animCurve"), [])
+        self.assertEqual(_curves(), [])
+        self.assertTrue(cmds.undoInfo(query=True, undoQueueEmpty=True))
         self.redo_steps(1)
-        self.assertEqual(sorted(cmds.ls(type="animCurve")), _moving_curves())
+        self.assertEqual(_curves(), _moving_curves())
+        # keys a channel holds already are no edit, and no undo step: undone first
+        self.undo_steps(1)
+        Transform("grp").key_hierarchy(clip, index=False)
+        self.assertEqual(self.undo_name(), "rig.Transform.key_hierarchy")
 
     def test_the_guards(self):
+        top = Transform.create(name="above")
         with self.assertRaisesRegex(TypeError, r"^Transform\.key_hierarchy\(\) takes the data, not a file"):
-            Transform.key_hierarchy("walk.npz")
+            top.key_hierarchy("walk.npz")
         with self.assertRaisesRegex(TypeError, r"^Transform\.key_hierarchy\(\) takes a ClipData or a HierarchyData, not a int$"):
-            Transform.key_hierarchy(3)
+            top.key_hierarchy(3)
+
+    def test_the_flags_take_a_bool(self):
+        clip = _clip()
+        _bare(clip)
+        root = Transform("root")
+        for flag, value in (("uuids", 1), ("index", None), ("strict", "no")):
+            with self.subTest(flag=flag):
+                self.assert_nothing_made(
+                    TypeError,
+                    rf"^Joint\.key_hierarchy: {flag}= is True \(.+\) or False \(.+\), not {re.escape(repr(value))}$",
+                    lambda: root.key_hierarchy(clip, **{flag: value}),
+                )
+        with self.assertRaises(TypeError):   # by keyword only
+            root.key_hierarchy(clip, True)
+        self.assertEqual(_curves(), [])
+
+    def test_called_on_the_class_it_is_pythons_own_typeerror(self):
+        clip = _clip()
+        _bare(clip)
+        with self.assertRaisesRegex(TypeError, r"key_hierarchy\(\) missing 1 required positional argument: 'clip'"):
+            Transform.key_hierarchy(clip)
+        self.assertEqual(_curves(), [])
 
 
 # ---------------------------------------------------------------------------------------------
