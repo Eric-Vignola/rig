@@ -26,7 +26,7 @@ from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _files
 from rig.nodetypes._base import Attribute, _name_of
 from rig.nodetypes._base import _cast
-from rig.nodetypes._base import _old_handle_name, _scene_predicate
+from rig.nodetypes._base import _old_handle_name, _scene_predicate, _unnetworked
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.dg_node import _positional_name, DGNode
 from rig.nodetypes.geometry import (
@@ -3314,9 +3314,15 @@ def _set_element(fn: OpenMaya.MFnMesh, array: str, name: str) -> OpenMaya.MPlug 
 
 def _links(fn: OpenMaya.MFnMesh, array: str, name: str) -> tuple:
     """What `_relink` makes again for the set `name`: ``(element index,
-    [(child, [destination plugs])])``."""
+    [(child, [destination plugs])])``. The destinations are kept across the
+    delete of the set, which removes their connections, so each is the
+    non-networked twin of the plug the query gives (see `_base._unnetworked`:
+    Maya frees a networked one with its connection)."""
     element  = _set_element(fn, array, name)
-    children = [(c, list(element.child(c).destinations())) for c in range(element.numChildren())]
+    children = [
+        (c, [_unnetworked(d) if d.isNetworked else d for d in element.child(c).destinations()])
+        for c in range(element.numChildren())
+    ]
     return element.logicalIndex(), children
 
 

@@ -1701,6 +1701,39 @@ def _attr_handle(mplug: OpenMaya.MPlug, extension: bool = False) -> Any:
         return None
 
 
+def _unnetworked(mplug: OpenMaya.MPlug) -> OpenMaya.MPlug:
+    """A non-networked MPlug of the plug `mplug` names: the same node, attribute
+    and element indices, equal to it (``==``), with the same name.
+
+    Maya keeps a *networked* plug inside the node for a connected plug
+    (`MPlug.isNetworked`), and that is the one its connection queries hand out:
+    `connectedTo`, `source`, `sourceWithConversion`, `destinations`,
+    `MFnDependencyNode.getConnections`, and `elementByLogicalIndex` /
+    `elementByPhysicalIndex` of a connected element. Maya frees it when the
+    connection goes (a disconnect, a delete of the attribute, an undo), and a
+    read of that MPlug is then an access violation in ``MPlug::node``, which no
+    ``except`` catches. Measured 2026-11-12 in Maya 2025 on a dynamic attribute
+    (a top-level source, a source element, a destination element, a destination
+    child; after a disconnect, a delete to the undo queue, an undo): the
+    networked plug crashes 12 times of 12, this one 0 of 16. A plug found by name
+    (`MSelectionList.getPlug`, `findPlug(name, False)`) is not networked.
+
+    So no MPlug rig keeps is a networked one: `_attr_state` and `_new_attr`, the
+    two places a plug takes its MPlug, and the two that rebind an element
+    (`_rebind_element`, `_rebind_held_elements`) swap it on the way in. The
+    `isNetworked` test costs about 30 ns a plug, the swap 0.8 to 1.4 us."""
+    twin = OpenMaya.MPlug(mplug.node(), mplug.attribute())
+    cur  = mplug
+    while True:
+        if cur.isElement:
+            twin.selectAncestorLogicalIndex(cur.logicalIndex(), cur.attribute())
+            cur = cur.array()
+        elif cur.isChild:
+            cur = cur.parent()
+        else:
+            return twin
+
+
 def _attr_state(mplug: OpenMaya.MPlug, handle: Any, attr_handle: Any = None) -> dict:
     """The `__dict__` of a fresh Attribute of `mplug` with no owner, checked
     through `handle` (the handle of its node, or None) and `attr_handle` (the
@@ -1709,7 +1742,11 @@ def _attr_state(mplug: OpenMaya.MPlug, handle: Any, attr_handle: Any = None) -> 
     `__dict__` store instead of one `Plug.__setattr__` call per field; a
     subclass property named like one of these keys would be bypassed. The
     caches of queried child attributes are made on first use (see
-    `Attribute.__getattr__` and `Attribute.child`)."""
+    `Attribute.__getattr__` and `Attribute.child`). A networked `mplug` is kept
+    as its non-networked twin (see `_unnetworked`); None gives the state of no
+    plug, for its keys."""
+    if mplug is not None and mplug.isNetworked:
+        mplug = _unnetworked(mplug)
     return {
         "_mplug":                      mplug,
         "_mobject":                    None,
@@ -1739,7 +1776,11 @@ def _new_attr(
     that binds an owner hands the owner's handle), with the handle of its
     attribute (`attr_handle`, see `_attr_handle`). `cls` is `Attribute` or
     `Plug`, whose `__init__` does nothing else for an MPlug. It builds
-    `_attr_state`'s state inline: it is the owned plugs' hot path."""
+    `_attr_state`'s state inline: it is the owned plugs' hot path. A networked
+    `mplug` (what a connection query gives) is kept as its non-networked twin
+    (see `_unnetworked`)."""
+    if mplug.isNetworked:
+        mplug = _unnetworked(mplug)
     attr = str.__new__(cls, mplug)
     attr.__dict__.update(
         {
@@ -2036,7 +2077,8 @@ def _rebind_element(attr: Any, path: Any) -> None:
     cur, steps = path
     for is_element, key in steps:
         cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
-    attr.__dict__["_mplug"] = cur
+    # a connected element comes back networked (see `_unnetworked`)
+    attr.__dict__["_mplug"] = _unnetworked(cur) if cur.isNetworked else cur
 
 
 # The element plugs rig hands out, found again after an undo or a redo. An
@@ -2189,7 +2231,8 @@ def _rebind_held_elements(*_args: Any) -> None:
             cur = OpenMaya.MPlug(handle.object(), top)
             for is_element, key in steps:
                 cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
-            d["_mplug"] = cur
+            # a connected element comes back networked (see `_unnetworked`)
+            d["_mplug"] = _unnetworked(cur) if cur.isNetworked else cur
         except Exception:  # noqa: BLE001 -- a callback never raises
             continue
 

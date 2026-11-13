@@ -1185,6 +1185,18 @@ Verified on Maya 2025; not bugs to work around blindly.
   string constructor takes real plugs only. Reach components through the
   node, `mesh.vtx[0]`, or build the DSL `Plug("cubeShape.vtx[0]")`; both
   resolve the alias.
+- **A plug got from a connection stays good when the connection goes.**
+  Maya's connection queries (`connectedTo`, `source`, `destinations`,
+  `elementByLogicalIndex` of a connected element) hand out a *networked*
+  `MPlug` (`isNetworked`), one Maya keeps inside the node and frees with
+  the connection: a disconnect, a delete of the attribute, an undo. A
+  read of it after that took Maya down, with nothing for an `except` to
+  see. rig keeps the non-networked twin instead, so what `get_inputs()`,
+  `get_outputs()`, `get_connected_attrs()`, `iter_connected_attrs()` and
+  `node.attr[i]` return reads afterwards as a plug made by name does:
+  its name, its node and its value, `is_connected()` `False`. After a
+  delete of its attribute `get()` is a `ValueError` (`No object matches
+  name`) until an undo brings the attribute back.
 - **`Joint.get_root_joint()` walks parents only**, so on a root joint it
   returns `None`. `match_hierarchy` takes a root as its own root, so it
   works from any joint of either chain, the root included.

@@ -142,6 +142,7 @@ from rig.nodetypes._base import (
     _MISSING,
     _PLUG_STATE,
     _undeclared_plug_state,
+    _unnetworked,
     _class_data_hint,
     _dg_named_owner,
     _element_path,
@@ -2296,12 +2297,14 @@ def _plug_path(mplug: Any) -> tuple:
 
 
 def _plug_at(path: tuple) -> Any:
-    """A fresh, non-networked MPlug for a `_plug_path`."""
+    """A fresh, non-networked MPlug for a `_plug_path`. The walk down gives a
+    networked one for a connected element (`elementByLogicalIndex`), which
+    `_unnetworked` swaps."""
     node, attribute, steps = path
     cur = OpenMaya.MPlug(node, attribute)
     for is_element, key in steps:
         cur = cur.elementByLogicalIndex(key) if is_element else cur.child(key)
-    return cur
+    return _unnetworked(cur) if cur.isNetworked else cur
 
 
 def _check_whole_wire(dst: Any, what: str) -> bool:
