@@ -42,10 +42,12 @@ chunk named ``rig.Material.astype``:
 * PREPARE / COMMIT: raw ``createNode`` (no ``__rig__`` tag, no scope
   enrolment, no second ``defaultShaderList1`` entry), dynamic attributes
   cloned, ``copyAttr`` for values then for connections (parents union
-  leaves, ``message`` included so the materialInfo, the
+  leaves), ``message`` moved by hand so the materialInfo, the
   ``defaultShaderList1`` index and the container membership move exactly
-  once), locks re-applied, the result verified BEFORE the old node is
-  deleted, then the rename back to the old name asserted.
+  once (one destination at a time, read again after each: ``copyAttr``
+  lists a plug's destinations once, and a GUI Maya has crashed in that
+  loop on ``message``), locks re-applied, the result verified BEFORE the
+  old node is deleted, then the rename back to the old name asserted.
 * RE-POINT: the node object the conversion was called on is re-pointed to
   the new node -- its node state, and its class (``type(red)`` is then
   ``Phong``) -- through rig's undo command, inside the chunk (`_Repoint`):
@@ -460,6 +462,16 @@ def _scan_wires_out(scan: _Scan) -> None:
     for src_plug, dst_plug in zip(pairs[0::2], pairs[1::2]):
         leaf = src_plug.split(".", 1)[1]
         if leaf == "message":
+            if _is_published(dst_plug):
+                # A container's alias on ``message``: unbound before the
+                # move and bound again on the new node, like every alias
+                # (the hand move has no connection to disconnect there).
+                node, _, attr = dst_plug.partition(".")
+                scan.bindings.append((node, leaf, attr, True))
+                continue
+            # moved by hand at commit: a locked one is refused here, before
+            # any write
+            moved.append(dst_plug)
             node = dst_plug.split(".", 1)[0]
             kind = cmds.nodeType(node)
             if kind == "materialInfo" and dst_plug.endswith(".material"):
@@ -645,14 +657,17 @@ def _commit(scan: _Scan, new: str, park: bool) -> str:
     """Move the wires, verify, delete the old node, take its name back,
     restore what an earlier park held, and return the final name."""
     old, dst = scan.old, scan.dst
-    names    = set(scan.wires) | set(scan.outs) | {"message"}
+    names = set(scan.wires) | set(scan.outs)
     for name in scan.dynamic:
         names.add(name)
         names.update(_q(name, "listChildren", node=old) or [])
     _unbind(scan)
-    cmds_edit.copyAttr(
-        old, new, inConnections=True, outConnections=True, attribute=sorted(names)
-    )
+    _move_message(old, new)
+    # guarded: copyAttr reads an empty list as every attribute
+    if names:
+        cmds_edit.copyAttr(
+            old, new, inConnections=True, outConnections=True, attribute=sorted(names)
+        )
     for name in scan.dynamic:
         if _q(name, "multi", node=old):
             _move_element_wires(old, new, name)
@@ -685,6 +700,31 @@ def _commit(scan: _Scan, new: str, park: bool) -> str:
     _rebind(scan, got)
     cmds_edit.delete(aside)
     return got
+
+
+def _move_message(old: str, new: str) -> None:
+    """Move every destination of ``old.message`` onto ``new.message`` by
+    hand, one at a time, reading the destinations again after each move.
+    ``copyAttr`` lists a plug's destinations once and then walks that list;
+    a GUI Maya, which links a shader's ``message`` to its materialInfo by
+    itself, has crashed inside that walk (Maya 2025.3, an access violation
+    on the third of three destinations). Each destination gets the new node
+    on the same explicit plug (the ``defaultShaderList1`` index is kept),
+    and only when nothing took that plug meanwhile."""
+    source = f"{old}.message"
+    tried  = set()
+    while True:
+        plugs = cmds.listConnections(source, source=False, destination=True, plugs=True) or []
+        todo  = [plug for plug in plugs if plug not in tried]
+        if not todo:
+            return
+        plug = todo[0]
+        tried.add(plug)
+        cmds_edit.disconnectAttr(source, plug)
+        # connectionInfo reads the one plug: no listConnections ever names
+        # defaultShaderList1, which holds every shader of the scene
+        if not cmds.connectionInfo(plug, isDestination=True):
+            cmds_edit.connectAttr(f"{new}.message", plug)
 
 
 def _move_element_wires(old: str, new: str, name: str) -> None:

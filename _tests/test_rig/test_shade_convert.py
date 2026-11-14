@@ -19,6 +19,7 @@ import tempfile
 from unittest import mock
 
 from maya import cmds
+from maya.api import OpenMaya
 from rig import container, lock, memoize, Node, NodeTypeError
 from rig.bridges import nodes as rn
 from rig import Default
@@ -69,6 +70,39 @@ def _info(engine):
 
 def _visible(node):
     return cmds.listAttr(node, scalar=True, multi=True, read=True, visible=True) or []
+
+
+def _leftovers():
+    return cmds.ls("*__rigconvert*") + cmds.ls("*__rigold*")
+
+
+class _Listener:
+    """Stands in for a GUI Maya's own upkeep of a shader's links: the first
+    time the conversion's new node feeds ``trigger`` from its ``message``,
+    ``act(<new node>.message)`` runs, inside the connection callback."""
+
+    def __init__(self, trigger, act):
+        self.trigger = trigger
+        self.act     = act
+        self.heard   = None
+        self.error   = None
+        self.id      = OpenMaya.MDGMessage.addConnectionCallback(self._on_connection)
+
+    def _on_connection(self, source, destination, made, _data):
+        name = source.name()
+        if self.heard or not made or destination.name() != self.trigger:
+            return
+        if not name.endswith(f"{shade_convert.SUFFIX}.message"):
+            return
+        self.heard = name
+        try:
+            self.act(name)
+        except Exception as error:
+            # Maya prints a callback's exception and goes on: kept for the test
+            self.error = error
+
+    def close(self):
+        OpenMaya.MMessage.removeCallback(self.id)
 
 
 # --------------------------------------------------------------------- #
@@ -153,7 +187,9 @@ class TestConversion(MayaTestCase):
         mat = Blinn.define("red", color=[1, 0, 0])
         self.cube << mat
         info = _info("redSG")
-        cmds.connectAttr("red.message", f"{info}.material")
+        # a GUI Maya has made this link already, when the material was assigned
+        if not cmds.isConnected("red.message", f"{info}.material"):
+            cmds.connectAttr("red.message", f"{info}.material")
         slot   = _dsl1_index("red")
         before = set(cmds.ls())
         with mock.patch.object(cmds, "warning") as warn:
@@ -395,6 +431,220 @@ class TestConversion(MayaTestCase):
         self.assertEqual(cmds.container(asset, query=True, publishName=True), ["tint", "tintR", "tintG", "tintB"])
         self.assertEqual(cmds.container(query=True, findContainer=["red"]), asset)
 
+    # ``message`` moves by hand, one destination at a time (2026-11-13: a GUI
+    # Maya crashed inside copyAttr's walk of the destinations of ``message``)
+
+    def _fanned_red(self):
+        """A blinn whose ``message`` feeds its materialInfo (a GUI Maya makes
+        that link by itself), two custom attributes of the cube -- ``look``
+        and the element ``links[0]`` of a multi -- and a container, beside
+        its ``defaultShaderList1`` slot. No ``materialInfo.texture[]`` link:
+        a GUI Maya owns those (it makes one for a rampShader only) and
+        removes one made by a script."""
+        red = Blinn.define("red", color=[1, 0, 0])
+        self.cube << red
+        info = _info("redSG")
+        cmds.addAttr("cube", longName="look", attributeType="message")
+        cmds.addAttr("cube", longName="links", attributeType="message", multi=True)
+        for plug in (f"{info}.material", "cube.look", "cube.links[0]"):
+            # a GUI Maya has made the materialInfo link already
+            if not cmds.isConnected("red.message", plug):
+                cmds.connectAttr("red.message", plug)
+        cmds.container(name="asset", addNode=["red"])
+        cmds.flushUndo()
+        return red, info
+
+    def _convert_heard(self, red, trigger, act):
+        """``red.astype(Phong)`` with a listener standing in for the GUI."""
+        listener = _Listener(trigger, act)
+        try:
+            with mock.patch.object(cmds, "warning") as warn:
+                red.astype(Phong)
+        finally:
+            listener.close()
+        self.assertIsNotNone(listener.heard)
+        self.assertIsNone(listener.error)
+        self.assertEqual(warn.call_count,      0)
+        self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertEqual(_leftovers(),         [])
+
+    def test_every_message_destination_moves_and_never_through_copyattr(self):
+        red, info = self._fanned_red()
+        wiring = _wiring("red")
+        slots  = sorted(_destinations("red.message"))
+        self.assertLessEqual(
+            {f"{info}.material", "cube.look", "cube.links[0]", _dsl1_index("red")}, set(slots)
+        )
+        calls = []
+        real  = cmds.copyAttr
+
+        def spy(*args, **kwargs):
+            if kwargs.get("inConnections") or kwargs.get("outConnections"):
+                calls.append(kwargs["attribute"])
+            return real(*args, **kwargs)
+
+        with mock.patch.object(cmds, "copyAttr", spy):
+            with mock.patch.object(cmds, "warning") as warn:
+                red.astype(Phong)
+            self.assertEqual(warn.call_count, 0)
+            self.assertEqual(cmds.nodeType("red"), "phong")
+            self.assertEqual(sorted(_destinations("red.message")), slots)
+            self.assertEqual(_wiring("red"), wiring)
+            self.assertEqual(cmds.container("asset", query=True, nodeList=True).count("red"), 1)
+            self.assertEqual(_leftovers(), [])
+            # copyAttr lists a plug's destinations once, then walks that list:
+            # ``message`` no longer goes through it
+            self.assertEqual(calls, [["outColor"]])
+            cmds.undo()
+            self.assertEqual(cmds.nodeType("red"), "blinn")
+            self.assertEqual(_wiring("red"), wiring)
+            cmds.redo()
+            self.assertEqual(cmds.nodeType("red"), "phong")
+            self.assertEqual(_wiring("red"), wiring)
+            # nothing but ``message`` to move: no connections copyAttr at all
+            # (it reads an empty attribute list as every attribute)
+            cmds.shadingNode("blinn", asShader=True, name="lone")
+            slot = _dsl1_index("lone")
+            with mock.patch.object(cmds, "warning") as warn:
+                Material("lone").astype("phong")
+            self.assertEqual(warn.call_count, 0)
+            self.assertEqual(cmds.nodeType("lone"), "phong")
+            self.assertEqual(_destinations("lone.message"), [slot])
+            self.assertEqual(len(calls), 1)
+
+    def test_a_destination_added_while_message_moves_is_moved_too(self):
+        red, info = self._fanned_red()
+        wiring = _wiring("red")
+
+        def add(_new):
+            cmds.addAttr("cube", longName="late", attributeType="message")
+            cmds.connectAttr("red.message", "cube.late")
+
+        self._convert_heard(red, f"{info}.material", add)
+        self.assertEqual(_sources("cube.late"), ["red.message"])
+        cmds.undo()
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(_wiring("red"), wiring)
+        cmds.redo()
+        self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertEqual(_sources("cube.late"), ["red.message"])
+
+    def test_a_destination_dropped_while_message_moves_is_left_dropped(self):
+        red, info = self._fanned_red()
+        wiring = _wiring("red")
+
+        def drop(_new):
+            cmds.removeMultiInstance("cube.links[0]", b=True)
+
+        self._convert_heard(red, f"{info}.material", drop)
+        self.assertEqual(_sources(f"{info}.material"), ["red.message"])
+        self.assertNotIn("cube.links[0]", _destinations("red.message"))
+        cmds.undo()
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(_wiring("red"), wiring)
+        cmds.redo()
+        self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertNotIn("cube.links[0]", _destinations("red.message"))
+
+    def test_a_destination_taken_by_the_new_node_while_message_moves_is_kept(self):
+        red, info = self._fanned_red()
+        wiring = _wiring("red")
+
+        def take(new):
+            if not cmds.isConnected(new, "cube.links[0]"):
+                cmds.connectAttr(new, "cube.links[0]", force=True)
+
+        self._convert_heard(red, f"{info}.material", take)
+        self.assertEqual(_wiring("red"), wiring)
+        cmds.undo()
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(_wiring("red"), wiring)
+        cmds.redo()
+        self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertEqual(_wiring("red"), wiring)
+
+    def test_the_old_node_linked_again_while_message_moves_is_refused(self):
+        red, _ = self._fanned_red()
+        before = set(cmds.ls())
+        wiring = _wiring("red")
+        moved  = []
+
+        def relink_after(plug):
+            # whichever of the two custom plugs moves second links the old
+            # node to the first again: the order Maya lists them in does not
+            # matter (a GUI Maya heals a relinked ``materialInfo.material``
+            # by itself, so the relinked plug is never that one)
+            def act(_new):
+                moved.append(plug)
+                if len(moved) == 2:
+                    cmds.connectAttr("red.message", moved[0], force=True)
+
+            return act
+
+        listeners = [
+            _Listener(plug, relink_after(plug)) for plug in ("cube.look", "cube.links[0]")
+        ]
+        try:
+            with mock.patch.object(cmds, "warning"):
+                with self.assertRaisesRegex(RuntimeError, "still has connections after the move"):
+                    red.astype(Phong)
+        finally:
+            for listener in listeners:
+                listener.close()
+        for listener in listeners:
+            self.assertIsNotNone(listener.heard)
+            self.assertIsNone(listener.error)
+        self.assertEqual(set(cmds.ls()),       before)
+        self.assertEqual(_wiring("red"),       wiring)
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
+        self.assertIs(type(red), Blinn)
+        self.assertTrue(red.is_valid())
+
+    def test_a_published_message_alias_is_kept(self):
+        red = Blinn.define("red")
+        self.cube << red
+        asset = cmds.container(name="asset", addNode=["red"])
+        cmds.container(asset, edit=True, publishName="link")
+        cmds.container(asset, edit=True, bindAttr=["red.message", "link"])
+        bound = cmds.container(asset, query=True, bindAttr=True)
+        self.assertEqual(bound, ["red.message", "link"])
+        with mock.patch.object(cmds, "warning") as warn:
+            red.astype(Phong)
+        self.assertEqual(warn.call_count, 0)
+        self.assertEqual(cmds.nodeType("red"), "phong")
+        self.assertEqual(cmds.container(asset, query=True, bindAttr=True), bound)
+        self.assertEqual(cmds.container(asset, query=True, nodeList=True).count("red"), 1)
+        self.assertEqual(_leftovers(), [])
+        cmds.undo()
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(cmds.container(asset, query=True, bindAttr=True), bound)
+
+    def test_a_locked_message_destination_is_refused_before_any_write(self):
+        red, info = self._fanned_red()
+        cmds.setAttr(f"{info}.material", lock=True)
+        before = set(cmds.ls())
+        wiring = _wiring("red")
+        with mock.patch.object(cmds, "createNode", wraps=cmds.createNode) as made:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                rf"^'{info}\.material' is locked and the link from 'red' into it must move onto "
+                r"the new phong; unlock it first$",
+            ):
+                red.astype(Phong)
+        self.assertEqual(made.call_count, 0)
+        self.assertEqual(set(cmds.ls()),       before)
+        self.assertEqual(_wiring("red"),       wiring)
+        self.assertEqual(cmds.nodeType("red"), "blinn")
+        self.assertEqual(cmds.undoInfo(query=True, undoName=True), "")
+        self.assertIs(type(red), Blinn)
+        self.assertTrue(red.is_valid())
+        cmds.setAttr(f"{info}.material", lock=False)
+        with mock.patch.object(cmds, "warning") as warn:
+            red.astype(Phong)
+        self.assertEqual(warn.call_count, 0)
+        self.assertEqual(_sources(f"{info}.material"), ["red.message"])
+
     def test_namespace_is_kept_and_the_temp_name_never_survives(self):
         cmds.namespace(add="look")
         cmds.namespace(set="look")
@@ -565,8 +815,10 @@ class TestConversion(MayaTestCase):
         self.cube << red
         before = set(cmds.ls())
         wiring = _wiring("red")
+        # a name no plug-in registers ('aiStandardSurface' is registered as
+        # soon as mtoa is loaded)
         with self.assertRaisesRegex(ValueError, "not a registered surface shader"):
-            red.astype("aiStandardSurface")
+            red.astype("noSuchShader")
         self.assertEqual(cmds.ls(type="unknown"), [])
         with self.assertRaisesRegex(TypeError, "not a surface shader"):
             red.astype("ramp")
@@ -642,7 +894,9 @@ class TestConversion(MayaTestCase):
         red   = self._lossy_red()
         asset = cmds.container(name="asset", addNode=["red"])
         info  = _info("redSG")
-        cmds.connectAttr("red.message", f"{info}.material")
+        # a GUI Maya has made this link already, when the material was assigned
+        if not cmds.isConnected("red.message", f"{info}.material"):
+            cmds.connectAttr("red.message", f"{info}.material")
         uuid   = cmds.ls("red", uuid=True)[0]
         before = set(cmds.ls())
         wiring = _wiring("red")
