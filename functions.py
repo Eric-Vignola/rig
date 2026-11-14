@@ -30,7 +30,7 @@ from maya import cmds
 from rig._internal.journal import cmds_edit as _cmds_edit
 from rig.nodetypes._base import Attribute, _name_of
 from rig.nodetypes.dg_node import _keeps_query
-from rig._internal.container import container, ContainerOptions
+from rig._internal.container import _publish_tokens, container, ContainerOptions
 from rig._internal.list import List
 from rig._internal.math_nodes import (
     _constant,
@@ -406,7 +406,7 @@ def max(tokens: Sequence[Any]) -> Any:
         return node.output
 
     with container("max1"):
-        tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens = _publish_tokens(tokens, "input")
         output = tokens[0]
         for obj in tokens[1:]:
             output = condition(output > obj, output, obj)
@@ -435,7 +435,7 @@ def min(tokens: Sequence[Any]) -> Any:
         return node.output
 
     with container("min1"):
-        tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens = _publish_tokens(tokens, "input")
         output = tokens[0]
         for obj in tokens[1:]:
             output = condition(output < obj, output, obj)
@@ -588,7 +588,7 @@ def searchsorted(
         raise ValueError(f"side must be 'left' or 'right'; got {side!r}")
     with container("searchsorted1"):
         n      = len(tokens)
-        tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens = _publish_tokens(tokens, "input")
         if side == "left":
             if not return_index:
                 result: Any = tokens[0]
@@ -625,7 +625,7 @@ def all(tokens: Sequence[Any]) -> Any:
 
     with container("all1"):
         n      = len(tokens)
-        tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens = _publish_tokens(tokens, "input")
         # Slice with [:] so iteration works whether tokens is a list
         # (passthrough mode) or a published multi-attr Plug (active mode).
         # Plug[:] returns List; list[:] returns a copy; both iterable.
@@ -643,7 +643,7 @@ def any(tokens: Sequence[Any]) -> Any:
         return builtins.any(tokens)
 
     with container("any1"):
-        tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens = _publish_tokens(tokens, "input")
         # See ``all`` for why we slice with [:] before iterating.
         total = sum([(1 - (x == 0)) for x in tokens[:]])
         return container.publish_output(condition(total > 0, True, False), "output")
@@ -659,7 +659,7 @@ def argmin(tokens: Sequence[Any]) -> Any:
         return tokens.index(builtins.min(tokens))
 
     with container("argmin1"):
-        tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens = _publish_tokens(tokens, "input")
         # Slice with [:] so ``min`` and per-element iteration work whether
         # tokens is a list (passthrough mode) or a published multi-attr
         # Plug (active mode).
@@ -681,7 +681,7 @@ def argmax(tokens: Sequence[Any]) -> Any:
         return tokens.index(builtins.max(tokens))
 
     with container("argmax1"):
-        tokens = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens = _publish_tokens(tokens, "input")
         # See ``argmin`` for why we slice with [:] before calling ``max``
         # and iterating.
         tokens = tokens[:]
@@ -700,7 +700,7 @@ def diff(tokens: Sequence[Any]) -> Any:
 
     with container("diff1"):
         n       = len(tokens) - 1
-        tokens  = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens  = _publish_tokens(tokens, "input")
         results = List()
         for a, b in zip(tokens[:n], tokens[1 : n + 1]):
             results.append(b - a)
@@ -714,7 +714,7 @@ def cumsum(tokens: Sequence[Any]) -> Any:
     :class:`List`."""
 
     with container("cumsum1"):
-        tokens  = container.publish_input(list(tokens), "input", at="double", multi=True)
+        tokens  = _publish_tokens(tokens, "input")
         results = List([0 + tokens[0]])
         for obj in tokens[1:]:
             results.append(obj + results[-1])

@@ -346,12 +346,46 @@ def _is_control_point(obj: Any) -> bool:
 def _get_compound(obj: Any) -> list:
     """Return the compound children of ``obj`` as a list, or ``[obj]`` if
     not a compound (or ``obj`` itself if it's already a sequence).
+
+    A generic plug that carries 3-channel data (a ``choice`` node's output
+    fed vectors) has no children of its own: its channels are read through
+    a ``plusMinusAverage`` that passes the value on (`_generic_channels`).
     """
     if _is_compound(obj):
-        return [obj.child(i) for i in range(type(obj)._raw_get_child_count(obj))]
+        try:
+            count = type(obj)._raw_get_child_count(obj)
+        except TypeError:  # a generic plug has no children of its own
+            count = 0
+        if count:
+            return [obj.child(i) for i in range(count)]
+        return _generic_channels(obj)
     if _is_sequence(obj):
         return list(obj)
     return [obj]
+
+
+def _generic_channels(plug: Any) -> list:
+    """The channels of a generic plug that carries 3-channel data, as the
+    ``output3D`` children of a ``plusMinusAverage`` fed the whole value
+    (its default operation, a sum of one input, passes it on unchanged).
+
+    Maya types a generic attribute (``choice.output``, ...) by its first
+    connection but gives it no child plugs, so a per-channel consumer
+    (`rig.lerp` on vectors, a scalar op fanned out per channel) cannot reach
+    them. 4-channel data (a quaternion) has no such pass-through node: it
+    raises, naming the plug.
+    """
+    data_type = type(plug)._raw_get_data_type(plug)
+    if data_type not in ("double3", "float3", "long3", "short3"):
+        raise TypeError(
+            f"{plug} carries {data_type} data on a generic attribute, which rig cannot "
+            f"split into channels; feed the operation the source plugs instead"
+        )
+    from rig._internal.container import container
+
+    node = container.createNode("plusMinusAverage")
+    node.input3D[0] << plug
+    return [node.output3D.child(i) for i in range(3)]
 
 
 # ---------- Operation-first dispatch resolver --------------------------- #

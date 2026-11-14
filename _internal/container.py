@@ -1191,6 +1191,31 @@ class _ContainerStack:
 container = _ContainerStack()
 
 
+def _publish_tokens(tokens: Any, name: str) -> Any:
+    """Publish a list of tokens on the active container as one multi input,
+    typed by its elements: scalars as a ``double`` multi, vectors as a
+    ``double3`` multi. Any other list (quaternions, matrices, eulers, a mix)
+    is not published, so its tokens reach the network as they were given.
+
+    Publishing never changes what the network computes: a list of vectors
+    published as ``double`` would hand on only each vector's first channel,
+    so a function called at the top level (its container real) would compute
+    something else than the same call inside a ``with container()`` block.
+    """
+    from rig._internal.types import math_type
+
+    tokens = list(tokens)
+    try:
+        kinds = {math_type(token) for token in tokens}
+    except ValueError:  # a literal sequence of no known length
+        return tokens
+    if kinds == {"scalar"}:
+        return container.publish_input(tokens, name, at="double", multi=True)
+    if kinds == {"vector"}:
+        return container.publish_input(tokens, name, at="double3", multi=True)
+    return tokens
+
+
 # --------------------------------------------------------------------- #
 #  Typed creators (D13): ``Transform.create()`` & co. inside a scope
 # --------------------------------------------------------------------- #

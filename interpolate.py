@@ -20,7 +20,7 @@ from __future__ import annotations
 import numbers
 from typing import Any
 
-from rig._internal.container import container, ContainerOptions
+from rig._internal.container import _publish_tokens, container, ContainerOptions
 from rig._internal.journal import user_call as _user_call
 from rig._internal.maya_version import is_at_least
 from rig._internal.memoize import memoize, vectorize
@@ -67,11 +67,11 @@ def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp) -> Any:
         # stop) doesn't work on a multi-Plug, so we use positive indices.
         n = len(xp) - 1
         x = container.publish_input(x, "x")
-        # xp / yp are sequences of scalars -- explicitly type them as
-        # scalar multi so _infer_attr_type doesn't ambiguously interpret
-        # short lists as compound (vec3 / double4).
-        xp = container.publish_input(xp, "xp", at="double", multi=True)
-        yp = container.publish_input(yp, "yp", at="double", multi=True)
+        # xp / yp are typed by their elements (scalars or vectors), never
+        # inferred: a short list of scalars would otherwise read as one
+        # compound (vec3 / double4).
+        xp = _publish_tokens(xp, "xp")
+        yp = _publish_tokens(yp, "yp")
         # Locate the segment via searchsorted; clamp by slicing xp[:n].
         i  = searchsorted(xp[:n], x, return_index=True, side="left")
         x0 = choice(xp[:n],        selector=i)
