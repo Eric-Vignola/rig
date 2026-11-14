@@ -2694,14 +2694,20 @@ print(seq >> None)                            # 60.0 -- extrapolated past the la
 runs the weight through a `tween` first.
 
 `smoothstep` / `smootherstep` take the two edges and the sample
-position as `weight`; `inverse_lerp` is the `t` that `lerp` would need.
+position as `weight`, as GLSL's `smoothstep(edge0, edge1, x)` does, and
+return the 0-1 value; `normalize=True` remaps it into the edges' range.
+Literals, scalar plugs and vector plugs give the same answer.
+`inverse_lerp` is the `t` that `lerp` would need.
 
 ```python
 wt = Node.create("transform", name="wt")
 wt.tx << 0.25
 print(kind(ip.smoothstep(0.0, 1.0, weight=wt.tx)),   ip.smoothstep(0.0, 1.0, weight=wt.tx) >> None)    # smoothStep 0.15625
-print(kind(ip.smootherstep(0.0, 1.0, weight=wt.tx)), ip.smootherstep(0.0, 1.0, weight=wt.tx) >> None)  # sum 0.103515625
+print(kind(ip.smootherstep(0.0, 1.0, weight=wt.tx)), ip.smootherstep(0.0, 1.0, weight=wt.tx) >> None)  # multiply 0.103515625
 print(ip.smoothstep(0.0, 1.0, weight=0.25),          ip.smootherstep(0.0, 1.0, weight=0.25))           # 0.15625 0.103515625 -- literals fold
+
+wt.tx << 12.5
+print(ip.smoothstep(10.0, 20.0, weight=wt.tx) >> None, ip.smoothstep(10.0, 20.0, weight=wt.tx, normalize=True) >> None)   # 0.15625 11.5625
 
 wt.tx << 2.5
 print(kind(ip.inverse_lerp(0.0, 10.0, wt.tx)), ip.inverse_lerp(0.0, 10.0, wt.tx) >> None)   # inverseLerp 0.25

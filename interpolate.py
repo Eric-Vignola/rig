@@ -94,8 +94,14 @@ def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp) -> Any:
 def smoothstep(
     input1: Any, input2: Any, weight: Any = 0.5, normalize: bool = False
 ) -> Any:
-    """``smoothstep(a, b, weight=0.5, normalize=False)`` -- Perlin
-    smoothstep ``3w^2 - 2w^3`` between ``a`` and ``b``.
+    """``smoothstep(a, b, weight=0.5, normalize=False)`` -- the smoothstep
+    ``3x^2 - 2x^3`` of ``x``, where ``weight`` sits between the edges ``a``
+    and ``b`` (``x = clamp((weight - a) / (b - a), 0, 1)``), as GLSL's
+    ``smoothstep(a, b, weight)`` and Maya's ``smoothStep`` node.
+
+    Returns that 0-1 value; ``normalize=True`` remaps it into ``[a, b]``
+    (``x * (b - a) + a``). Literals, scalar plugs and vector plugs give the
+    same answer.
 
     Maya 2024+ uses the native ``smoothStep`` node when inputs are scalar
     and ``normalize=False``. Otherwise builds the formula manually.
@@ -127,7 +133,7 @@ def smoothstep(
         weight = container.publish_input(weight, "weight")
         x      = clamp((weight - input1) / (input2 - input1), 0.0, 1.0)
         output = x * x * (3.0 - 2.0 * x)
-        if not normalize:
+        if normalize:
             output = output * (input2 - input1) + input1
         return container.publish_output(output, "output")
 
@@ -139,8 +145,13 @@ def smootherstep(
     input1: Any, input2: Any, weight: Any = 0.5, normalize: bool = False
 ) -> Any:
     """``smootherstep(a, b, weight=0.5, normalize=False)`` -- Perlin
-    smootherstep ``6w^5 - 15w^4 + 10w^3`` (continuous 1st AND 2nd
-    derivatives at endpoints, unlike smoothstep which is only C1)."""
+    smootherstep ``6x^5 - 15x^4 + 10x^3`` of ``x``, where ``weight`` sits
+    between the edges ``a`` and ``b`` (``x = clamp((weight - a) / (b - a),
+    0, 1)``); continuous 1st AND 2nd derivatives at the edges, unlike
+    smoothstep which is only C1.
+
+    Returns that 0-1 value; ``normalize=True`` remaps it into ``[a, b]``,
+    as `smoothstep` does."""
 
     if ContainerOptions.constant_folding and all(
         isinstance(x, numbers.Real) for x in (weight, input1, input2)
@@ -157,7 +168,7 @@ def smootherstep(
         weight = container.publish_input(weight, "weight")
         x      = clamp((weight - input1) / (input2 - input1), 0.0, 1.0)
         output = x * x * x * (x * (x * 6 - 15) + 10)
-        if not normalize:
+        if normalize:
             output = output * (input2 - input1) + input1
         return container.publish_output(output, "output")
 

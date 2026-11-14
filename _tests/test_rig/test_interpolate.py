@@ -77,6 +77,40 @@ class TestSmoothstepValue(MayaTestCase):
         self.assertAlmostEqual(_eval(out.ty), 0.5, places=3)
 
 
+class TestNormalizeMeansOneThing(MayaTestCase):
+    """``normalize=False`` is the 0-1 value and ``normalize=True`` remaps it
+    into the edges, for literals, scalar plugs and vector plugs alike. The
+    node paths had it the other way round; edges of 0 and 1, where both
+    readings agree, hid it."""
+
+    TEST_START_NEW_SCENE = True
+
+    # edges 10 and 20, sample 12.5: x = 0.25
+    EXPECTED = {
+        ("smoothstep", False): 0.15625,     ("smoothstep", True): 11.5625,
+        ("smootherstep", False): 0.103515625, ("smootherstep", True): 11.03515625,
+    }
+
+    def test_every_input_kind_gives_the_same_answer(self):
+        for (name, normalize), expected in self.EXPECTED.items():
+            fn = getattr(i, name)
+            with self.subTest(function=name, normalize=normalize, inputs="literals"):
+                self.assertAlmostEqual(fn(10.0, 20.0, 12.5, normalize=normalize), expected, places=6)
+            cmds.file(new=True, force=True)
+            edges = Node.create("transform", name="edges")
+            edges.t << [10, 10, 10]
+            edges.s << [20, 20, 20]
+            sample = Node.create("transform", name="sample")
+            sample.t << [12.5, 12.5, 12.5]
+            with self.subTest(function=name, normalize=normalize, inputs="scalar plugs"):
+                out = fn(edges.tx, edges.sx, sample.tx, normalize=normalize)
+                self.assertAlmostEqual(_eval(out), expected, places=5)
+            with self.subTest(function=name, normalize=normalize, inputs="vector plugs"):
+                out = fn(edges.t, edges.s, sample.t, normalize=normalize)
+                for value in _eval(out):
+                    self.assertAlmostEqual(value, expected, places=5)
+
+
 # --------------------------------------------------------------------- #
 #  v3.A -- inverse_lerp
 # --------------------------------------------------------------------- #
