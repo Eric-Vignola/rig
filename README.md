@@ -364,7 +364,7 @@ rig/
 ├── euler.py             reorder
 ├── _dispatch.py         dist lerp slerp blend elerp normalize inverse angle to_euler to_matrix ...
 │                        the cross-type verbs, re-exported flat from rig
-├── interpolate.py       sequence smoothstep smootherstep inverse_lerp
+├── interpolate.py       sequence interp smoothstep smootherstep inverse_lerp
 ├── tween.py             Penner easing curves: in_quad, out_bounce, in_out_elastic ...
 ├── random.py            LCG networks that live inside the DG
 │

@@ -261,10 +261,10 @@ class TestInterpolateAll(MayaTestCase):
     def test_public_surface(self):
         # Full T/R/S/shear ``transform`` moved to ``matrix.blend`` (matrix
         # ``slerp`` is orientation only); scalar/vector lerp/slerp/elerp
-        # live in ``vector``.
+        # live in ``vector``. ``interp`` is numpy.interp (also ``rig.interp``).
         self.assertEqual(
             set(i.__all__),
-            {"sequence", "smoothstep", "smootherstep", "inverse_lerp"},
+            {"sequence", "interp", "smoothstep", "smootherstep", "inverse_lerp"},
         )
         self.assertFalse(hasattr(i, "transform"))
 

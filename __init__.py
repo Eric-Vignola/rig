@@ -240,6 +240,9 @@ from rig._dispatch import (
     to_quaternion,
 )
 
+# numpy.interp, beside numpy's other names (rig.interpolate.interp)
+from rig.interpolate import interp
+
 # Core types -- must come first.
 from rig._internal.container import (
     cleanup,
@@ -383,6 +386,8 @@ __all__ = [
     "to_euler",
     "to_quaternion",
     "to_matrix",
+    # numpy.interp (rig.interpolate.interp)
+    "interp",
     # Spec types (v4.T -- re-exported from rig.spec for ergonomic imports)
     "Angle",
     "Bool",

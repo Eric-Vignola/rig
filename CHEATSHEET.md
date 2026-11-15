@@ -52,7 +52,7 @@ of rig names the cgmath commit it was verified on here and in
 | 25 | [`vector`](#25-vector) | `X` `Y` `Z`, `dot` / `cross` / `triple_product`, `length` / `normalize` / `dist`, `angle`, `rotate`, `lerp` / `slerp` / `elerp` |
 | 26 | [`quaternion`](#26-quaternion) | Hamilton arithmetic, `angle`, conversions, `slerp` / `pow`, axis-angle both ways |
 | 27 | [`euler`](#27-euler) | `reorder`, `to_matrix` / `to_quaternion`, `slerp`, rotate-order names and numbers, on functions and on plugs |
-| 28 | [`interpolate`](#28-interpolate) | `sequence` and its `method=`, `smoothstep` / `smootherstep`, `inverse_lerp` |
+| 28 | [`interpolate`](#28-interpolate) | `sequence` and its `method=` / `ends=`, `interp` (numpy.interp), `smoothstep` / `smootherstep`, `inverse_lerp` |
 | 29 | [`tween`](#29-tween) | the 42 easing curves by family, extrapolation |
 | 30 | [`random`](#30-random) | `value` / `uniform` / `randint` and the `3D` variants, `seed`, `trigger` |
 | 31 | [The cross-type verbs at `rig.*`](#31-the-cross-type-verbs-at-rig) | `dist` `lerp` `slerp` `blend` `elerp` `normalize` `inverse` `angle` `to_euler` `to_quaternion` `to_matrix`, the routing table |
@@ -2056,7 +2056,7 @@ print(repr(f.abs(List([src.tx, src.ty]))))      # List([Plug("abs1.output"), Plu
 | `rig.vector` | `v` | `dot` / `cross` / `length` / `normalize` / `dist` / `angle` / `rotate`, `lerp` / `slerp` / `elerp`, the `X` `Y` `Z` constants |
 | `rig.quaternion` | `q` | Hamilton arithmetic, `slerp` / `pow`, axis-angle, conversions |
 | `rig.euler` | `e` | `reorder`, `to_matrix` / `to_quaternion` / `slerp` |
-| `rig.interpolate` | `ip` | `sequence`, `smoothstep` / `smootherstep`, `inverse_lerp` |
+| `rig.interpolate` | `ip` | `sequence`, `interp`, `smoothstep` / `smootherstep`, `inverse_lerp` |
 | `rig.tween` | `tw` | 42 Penner easing curves |
 | `rig.random` | `r` | LCG pseudo-random networks, scalar and 3D |
 | `rig.*` verbs | flat | `dist` `lerp` `slerp` `blend` `elerp` `normalize` `inverse` `angle` `angle_degrees` `to_euler` `to_quaternion` `to_matrix` — type-dispatched |
@@ -2669,9 +2669,11 @@ land somewhere as an euler, call `to_euler` on a quaternion or a matrix.
 `sequence(x, xp, yp)` samples a piecewise curve: `searchsorted` picks
 the segment, `choice` nodes pull its ends, and `method` (default
 `rig.lerp`, any callable; a name such as `"lerp"` is a `TypeError` before
-anything is built) blends them. `xp` and `yp` are lists of scalars. Past
-either end the end segment keeps going — clamp `x` first if you want a
-hold.
+anything is built) blends them. `xp` is a list of scalars, `yp` a list of
+scalars or of vectors. Past either end the end segment keeps going
+(`ends="extrapolate"`, the default); `ends="hold"` keeps the end values,
+as `numpy.interp` does, and a plug for `ends` holds while it is non-zero,
+so the mode can switch live (`ends=ctrl.holdEnds`).
 
 ```python
 xs = Node.create("transform", name="xs")
@@ -2687,6 +2689,25 @@ xs.tx << 2.25
 print(eased >> None)                          # 31.25 -- in_out_quad(0.25) is 0.125
 xs.tx << 5.0
 print(seq >> None)                            # 60.0 -- extrapolated past the last knot
+held = ip.sequence(xs.tx, knots, [10.0, 20.0, 30.0, 40.0], ends="hold")
+print(held >> None)                           # 40.0 -- held at the last knot, as numpy.interp does
+```
+
+`interp(x, xp, fp, left=None, right=None, period=None)` (also
+`rig.interp`) is `numpy.interp`: the same signature and the same
+semantics. Beyond the ends it holds `fp[0]` / `fp[-1]`, or `left` /
+`right` when given, and `period` wraps `x` and `xp`. Numbers fold to
+numpy's own result; plugs build `sequence(..., ends="hold")`, with a
+`choice` per `left` / `right` (a `choice` keeps doubles). The values are
+scalars, as numpy's are; vectors go through `sequence`. A list of `x`
+gives one value per `x`.
+
+```python
+print(ip.interp(2.5, [1, 2, 3], [3, 2, 0]))                          # 1.0 -- numbers fold to numpy's result
+xs.tx << 7.0
+print(ip.interp(xs.tx, [1, 2, 3], [3, 2, 0]) >> None)                # 0.0 -- held at fp[-1]
+print(ip.interp(xs.tx, [1, 2, 3], [3, 2, 0], right=-1.0) >> None)    # -1.0
+print(ip.interp(-185.0, [190, -190, 350, -350], [5, 10, 3, 4], period=360))   # 8.75 -- numpy's period example
 ```
 
 `method` is any callable with the shape `method(y0, y1, weight=w)`:
@@ -2715,7 +2736,8 @@ print(kind(ip.inverse_lerp(0.0, 10.0, wt.tx)), ip.inverse_lerp(0.0, 10.0, wt.tx)
 
 | Function | Maya 2024+ | Older Maya |
 |---|---|---|
-| `sequence` | `condition` ladder + `choice` + `method` | same |
+| `sequence` | `condition` ladder + `choice` + `method` (+ `clampRange` for `ends="hold"`) | same |
+| `interp` | `sequence` with `ends="hold"`, + a `choice` per `left` / `right` | same |
 | `smoothstep` | `smoothStep` when all inputs are scalar | `clamp` + arithmetic (also for vector inputs on any version) |
 | `smootherstep` | `clamp` + arithmetic | same |
 | `inverse_lerp` | `inverseLerp` when all inputs are scalar | `(x - a) / (b - a)` |
