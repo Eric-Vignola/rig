@@ -43,6 +43,7 @@ from rig._internal.memoize import memoize, vectorize
 from rig._internal.operands import operands
 from rig._internal.types import (
     _fills_one_element,
+    _get_compound,
     _is_compound,
     _is_real,
     _is_scalar_value,
@@ -157,6 +158,13 @@ def clamp(token: Any, min_value: Any, max_value: Any) -> Any:
         node.maximum << max_value
         return node.output
 
+    if is_at_least(2024):
+        # vectors: one clampRange per channel, exact in doubles (the condition
+        # network below holds floats and is 12 nodes); the same rule as the
+        # network and as clampRange: x > hi gives hi, then x < lo gives lo
+        return _per_channel("clamp1", _clamp_channel, token, min_value, max_value,
+                            names=("input", "min", "max"))
+
     with container("clamp1"):
         token     = container.publish_input(token,     "input")
         min_value = container.publish_input(min_value, "min")
@@ -165,6 +173,31 @@ def clamp(token: Any, min_value: Any, max_value: Any) -> Any:
         return container.publish_output(
             condition(token > max_value, max_value, less_than), "output"
         )
+
+
+def _clamp_channel(token: Any, min_value: Any, max_value: Any) -> Any:
+    node = container.createNode("clampRange", name="clamp1")
+    node.input   << token
+    node.minimum << min_value
+    node.maximum << max_value
+    return node.output
+
+
+def _per_channel(name: str, scalar_fn: Any, *args: Any, names: Any = None) -> Any:
+    """``scalar_fn`` on each channel of the vector arguments (a scalar argument
+    broadcasts), gathered on one double3 value: the native scalar node per
+    channel, exact in doubles."""
+    from rig._internal.node_ops import _publish_channels
+
+    count = builtins.max(len(_get_compound(a)) for a in args)
+    with container(name):
+        names = names or ["input" if i == 0 else f"input{i + 1}" for i in range(len(args))]
+        args = [_publish_channels(a, n) for a, n in zip(args, names)]
+        channels = [_get_compound(a) for a in args]
+        rows = [[c[k] if len(c) > 1 else c[0] for c in channels] for k in range(count)]
+        output = _constant([0] * count, name="output_plug1")
+        output << [scalar_fn(*row) for row in rows]
+        return container.publish_output(output, "output")
 
 
 @operands
@@ -193,6 +226,9 @@ def int(token: Any) -> Any:
     """``int(x)`` -- truncate-toward-zero via ``_constant`` long cast."""
     if ContainerOptions.constant_folding and isinstance(token, numbers.Real):
         return builtins.int(token)
+
+    if is_at_least(2024):
+        return trunc(token)        # toward zero, on native truncate nodes (exact, fewer nodes)
 
     with container("int1"):
         token = container.publish_input(token, "input")
@@ -262,6 +298,12 @@ def floor(token: Any) -> Any:
         node.input << token
         return node.output
 
+    if is_at_least(2024):
+        # vectors: one native floor per channel. The offset below (Maya rounds a
+        # float piped into an int attribute) runs in a float plusMinusAverage on
+        # vectors, where -4 - 0.4999999 is -4.5: floor(-4) was -5
+        return _per_channel("floor1", floor, token)
+
     with container("floor1"):
         token = container.publish_input(token, "input")
         return container.publish_output(
@@ -281,6 +323,9 @@ def ceil(token: Any) -> Any:
         node = container.createNode("ceil", name="ceil1")
         node.input << token
         return node.output
+
+    if is_at_least(2024):
+        return _per_channel("ceil1", ceil, token)     # one native ceil per channel (as floor)
 
     with container("ceil1"):
         token = container.publish_input(token, "input")
@@ -302,6 +347,9 @@ def trunc(token: Any) -> Any:
         node = container.createNode("truncate", name="trunc1")
         node.input << token
         return node.output
+
+    if is_at_least(2024):
+        return _per_channel("trunc1", trunc, token)   # one native truncate per channel (fewer nodes)
 
     with container("trunc1"):
         token = container.publish_input(token, "input")
@@ -513,6 +561,14 @@ def choice(tokens: Sequence[Any], selector: Any = None) -> Any:
     auto-wrapped in ``_constant()`` so they connect-as-output rather
     than failing on ``set()`` for the untyped slot. (v3.U fix.)
     """
+    if isinstance(selector, List):
+        # one choice per selector: a List selector (``ctrls.upAxis``) used to be
+        # cut to its first plug, so every row picked with the first row's selector.
+        # Literal tokens become their constant nodes once, shared by every row.
+        tokens = [_sequence_to_node(t) for t in tokens]
+        tokens = [t if isinstance(t, Attribute) else _constant(t) for t in tokens]
+        return List([choice(tokens, selector=s) for s in selector])
+
     node = container.createNode("choice")
     if selector is not None:
         node.selector << selector
@@ -593,23 +649,26 @@ def searchsorted(
             if not return_index:
                 result: Any = tokens[0]
                 for t in tokens[1:]:
-                    result = condition(t <= query, t, result)
+                    # t <= query, as the opposite strict test with the branches
+                    # swapped: a native greaterThan (exact in doubles) instead of a
+                    # condition node (floats), for the same one node
+                    result = condition(t > query, result, t)
             else:
                 result = 0
                 i      = 1
                 for t in tokens[1:]:
-                    result = condition(t <= query, i, result)
+                    result = condition(t > query, result, i)
                     i += 1
         else:
             if not return_index:
                 result = tokens[n - 1]
                 for t in list(tokens[: n - 1])[::-1]:
-                    result = condition(t >= query, t, result)
+                    result = condition(t < query, result, t)     # t >= query, swapped
             else:
                 result = n - 1
                 i      = n - 2
                 for t in list(tokens[: n - 1])[::-1]:
-                    result = condition(t >= query, i, result)
+                    result = condition(t < query, result, i)
                     i -= 1
         return container.publish_output(result, "output")
 

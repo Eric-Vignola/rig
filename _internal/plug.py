@@ -3331,6 +3331,14 @@ def _inject_value(
         _set_or_connect(src, dst, _dst_compound=compound_dst)
         return
 
+    # a list holding plugs ([a.tx, a.ty]) into a scalar: the error a list of
+    # numbers gets, never a silent connect of its first plug
+    if not compound_src and not compound_dst and types._is_sequence(src) and len(src) > 1:
+        raise ValueError(
+            f"Cannot inject sequence of size {len(src)} into scalar attribute "
+            f"{_name_of(dst)!r} (expected 1 element)."
+        )
+
     # compound->compound, or attr->attr.
     if (compound_src and compound_dst) or (not compound_src and not compound_dst):
         _set_or_connect(src, dst, _dst_compound=compound_dst)
@@ -3365,6 +3373,14 @@ def _inject_value(
         dst_channels = types._get_compound(dst)
 
     if len(dst_channels) < len(src_channels):
+        if types._is_sequence(src) and not compound_src:
+            # a list holding plugs into fewer channels: the error a list of
+            # numbers gets, never a silent cut to the first ones
+            raise ValueError(
+                f"Cannot inject sequence of size {len(src_channels)} into "
+                f"{len(dst_channels)}-channel attribute {_name_of(dst)!r} "
+                f"(expected {len(dst_channels)} elements)."
+            )
         src_channels = src_channels[: len(dst_channels)]
 
     # a compound connected whole (``c.t`` into ``cube.t``) that every channel is

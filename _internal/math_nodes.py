@@ -182,8 +182,9 @@ def _plus_minus_average_2024(*args: Any, operation: int = 1, name: str = "add1")
     """
 
     # Bail on compound inputs -- fall through to legacy impl which
-    # returns a clean ``plusMinusAverage.output3D`` Plug.
-    if any(_is_compound(a) for a in args):
+    # returns a clean ``plusMinusAverage.output3D`` Plug. A plain list of
+    # values ([a.tx, a.ty, a.tz]) is a vector as well.
+    if any(_is_compound(a) or _is_channels(a) for a in args):
         raise NotImplementedError("compound inputs use legacy plusMinusAverage")
 
     if operation == 1:  # sum
@@ -272,7 +273,7 @@ def _plus_minus_average_legacy(
     # `_fills_one_element`); from the first other operand on, every operand
     # takes the auto-index.
     explicit = True
-    if any(_is_compound(a) for a in args):
+    if any(_is_compound(a) or _is_channels(a) for a in args):
         for i, obj in enumerate(args):
             # A non-scalar literal vector ([x, y, z]) is NOT an Attribute, so
             # _is_compound is False for it; a bare ``input3D << [x, y, z]`` then
@@ -327,7 +328,8 @@ def _multiply_divide_2024(
 
     # Bail on compound inputs -- legacy ``multiplyDivide`` handles them
     # natively via ``input1`` / ``input2`` compounds returning ``output``.
-    if _is_compound(input1) or _is_compound(input2):
+    # A plain list of values ([a.tx, a.ty, a.tz]) is a vector as well.
+    if _is_compound(input1) or _is_compound(input2) or _is_channels(input1) or _is_channels(input2):
         raise NotImplementedError("compound inputs use legacy multiplyDivide")
 
     if operation == 1 and (_is_real(input1) or _is_real(input2)):
@@ -365,7 +367,7 @@ def _multiply_divide_legacy(
     node = container.createNode("multiplyDivide", name=name)
     node.operation << operation
 
-    if _is_compound(input1) or _is_compound(input2):
+    if _is_compound(input1) or _is_compound(input2) or _is_channels(input1) or _is_channels(input2):
         node.input1 << input1
         node.input2 << input2
         return node.output
@@ -687,6 +689,13 @@ def _quaternion_subtract(quat1: Any, quat2: Any) -> Any:
 #  Conditions  (==, !=, >, >=, <, <=)
 # --------------------------------------------------------------------- #
 
+def _is_channels(value: Any) -> bool:
+    """A plain list / tuple of several values ([a.tx, a.ty, a.tz], [1, 2, 3]): a vector."""
+    from rig._internal.node_ops import _is_channel_list
+
+    return _is_channel_list(value)
+
+
 _CONDITION_OPERATORS = {"==": 0, "!=": 1, ">": 2, ">=": 3, "<": 4, "<=": 5}
 _CONDITION_NAMES = {
     "==": "equal1",
@@ -892,6 +901,13 @@ def _floor_div(input1: Any, input2: Any) -> Any:
     with container("floordiv1"):
         input1 = container.publish_input(input1, "input1")
         input2 = container.publish_input(input2, "input2")
+        if is_at_least(2024):
+            # the floor of the division, on native floor nodes (one per channel on a
+            # vector): exact at the integers. The offset below runs in a float
+            # plusMinusAverage on vectors, where -4 - 0.4999999 is -4.5: -4 // 1 was -5
+            from rig.functions import floor
+
+            return container.publish_output(floor(input1 / input2), "output")
         return container.publish_output(
             _constant(input1 / input2 - 0.4999999, dtype="long"), "output"
         )

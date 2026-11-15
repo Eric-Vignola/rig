@@ -1208,7 +1208,7 @@ print(repr(a.tx + b.tx),     (a.tx + b.tx) >> None)        # Plug("add1.output")
 print((a.tx - b.tx) >> None, (10 - a.tx) >> None)          # 2.0 4.0
 print((a.tx * b.tx) >> None, (a.tx / b.tx) >> None)        # 24.0 1.5
 print((a.tx ** 2) >> None,   (2 ** b.tx) >> None)          # 36.0 16.0
-print((a.tx // 4) >> None,   (a.tx % 4) >> None)           # 1 2.0
+print((a.tx // 4) >> None,   (a.tx % 4) >> None)           # 1.0 2.0
 print((-a.tx) >> None,       cmds.nodeType((-a.tx).get_node()))  # -6.0 negate
 ```
 
@@ -1339,6 +1339,11 @@ comparison builds a comparison node (`==` / `!=` of one Maya plug fold,
 section 4). On a compound they fan out per channel inside a published
 container and return its assembled output.
 
+A list of plugs is a vector, as a compound plug is: `s * [a.tx, a.ty, a.tz]`
+is three products, for every operator and every function that fans out per
+channel. A list into a scalar attribute raises, as a list of numbers does
+(`a.tx << [b.tx, b.ty]`).
+
 ```python
 cmds.file(new=True, force=True)
 a = Node.create("transform", name="a")
@@ -1356,6 +1361,7 @@ a.t << [0, 1, 0]
 zero = a.t == 0                                  # three equal nodes in a condition1 container
 print(repr(zero), zero >> None)  # Plug("output_plug1.value") [1. 0. 1.]
 print(repr(zero.input1))         # Plug("condition1_attributes.input1")  -- the published interface
+print((b.tx * [a.tx, a.ty, a.tz]) >> None)   # [0. 4. 0.] -- a list of plugs is a vector
 ```
 
 An ordering result (`<`, `<=`, `>`, `>=`) has no truth value, as a numpy
@@ -2083,8 +2089,10 @@ container with a published `input` / `output` (or `input1` / `input2` /
 
 ## 18. `functions` — scalar math
 
-Rounding, truncation and sign. `int` is a long cast; `trunc` / `floor`
-/ `ceil` are the 2024+ nodes of the same name.
+Rounding, truncation and sign. `int` truncates toward zero, as `trunc`;
+`trunc` / `floor` / `ceil` are the 2024+ nodes of the same name, one per
+channel on a vector (exact at the integers: Maya rounds a float piped into
+an int attribute, so the older path offsets by 0.4999999).
 
 ```python
 x = Node.create("transform", name="x")
@@ -2094,15 +2102,16 @@ for name in ("abs", "int", "trunc", "floor", "ceil", "sign"):
     out = getattr(f, name)(x.tx)
     print(f"{name:6s} {kind(out):10s} {out >> None}")
 # abs    absolute   3.7
-# int    network    -3
+# int    truncate   -3.0
 # trunc  truncate   -3.0
 # floor  floor      -4.0
 # ceil   ceil       -3.0
 # sign   condition  -1.0
 ```
 
-`round` takes a digit count; `clamp` is `clampRange` when everything
-is scalar.
+`round` takes a digit count; `clamp` is `clampRange`, one per channel on
+a vector. With `lo > hi`, a value above `hi` gives `hi` and any other gives
+`lo` (clampRange's rule).
 
 ```python
 x.tx << 3.14159
@@ -2127,12 +2136,12 @@ print(f.sqrt(16), f.pow(2, 8), f.log(100, base=10))           # 4.0 256 2.0 -- l
 | Function | Maya 2024+ | Older Maya |
 |---|---|---|
 | `abs` | `absolute` | `condition(x < 0, -x, x)` |
-| `clamp` | `clampRange` | two nested `condition` |
+| `clamp` | `clampRange` (one per channel on a vector) | two nested `condition` |
 | `round` | `round` (`digits=0`), or scale → `round` → divide | long cast trick |
-| `floor` / `ceil` / `trunc` | `floor` / `ceil` / `truncate` | long cast / `condition(ceil, floor)` |
+| `floor` / `ceil` / `trunc` | `floor` / `ceil` / `truncate` (one per channel on a vector) | long cast / `condition(ceil, floor)` |
 | `sqrt` / `pow` / `exp` | `power` | `multiplyDivide` op 3 |
 | `log` | `log` | raises `RuntimeError` |
-| `int` / `sign` / `rev` | long-cast `network` / `condition` / `reverse` | same |
+| `int` / `sign` / `rev` | `truncate` / `condition` / `reverse` | long-cast `network` / same / same |
 
 ---
 
@@ -2163,7 +2172,7 @@ for name in ("sum", "avg", "max", "min", "argmax", "argmin", "all", "any"):
 `diff` and `cumsum` return a `List`, one plug per output:
 
 ```python
-print(repr(f.diff(chans)))                   # List([Plug("sub8.output"), Plug("sub9.output")])
+print(repr(f.diff(chans)))                   # List([Plug("sub7.output"), Plug("sub8.output")])
 print([d >> None for d in f.diff(chans)])    # [4.0, -2.0]
 print([c >> None for c in f.cumsum(chans)])  # [1.0, 6.0, 9.0]
 ```
@@ -2291,18 +2300,18 @@ print(kind(trig.asind(h.tx)),        trig.asind(h.tx) >> None)                  
 print(kind(trig.acosd(h.tx)),        trig.acosd(h.tx) >> None)                  # acos 0.0
 print(kind(trig.atand(h.tx)),        trig.atand(h.tx) >> None)                  # atan 45.0
 print(kind(trig.atan2d(h.tx, h.ty)), trig.atan2d(h.tx, h.ty) >> None)           # atan2 90.0
-print(kind(trig.asin(h.tx)),         round(trig.asin(h.tx) >> None, 6))         # multiply 1.570796
-print(kind(trig.acos(h.tx)),         trig.acos(h.tx) >> None)                   # multiply 0.0
-print(kind(trig.atan(h.tx)),         round(trig.atan(h.tx) >> None, 6))         # multiply 0.785398
-print(kind(trig.atan2(h.tx, h.ty)),  round(trig.atan2(h.tx, h.ty) >> None, 6))  # multiply 1.570796
+print(kind(trig.asin(h.tx)),         round(trig.asin(h.tx) >> None, 6))         # lerp 1.570796
+print(kind(trig.acos(h.tx)),         trig.acos(h.tx) >> None)                   # lerp 0.0
+print(kind(trig.atan(h.tx)),         round(trig.atan(h.tx) >> None, 6))         # lerp 0.785398
+print(kind(trig.atan2(h.tx, h.ty)),  round(trig.atan2(h.tx, h.ty) >> None, 6))  # lerp 1.570796
 ```
 
 `degrees` and `radians` are a multiply by `180/pi` or `pi/180`;
 literals fold everywhere.
 
 ```python
-print(kind(trig.degrees(h.tx)), round(trig.degrees(h.tx) >> None, 4))  # multiply 57.2958
-print(kind(trig.radians(h.tx)), round(trig.radians(h.tx) >> None, 6))  # multiply 0.017453
+print(kind(trig.degrees(h.tx)), round(trig.degrees(h.tx) >> None, 4))  # lerp 57.2958
+print(kind(trig.radians(h.tx)), round(trig.radians(h.tx) >> None, 6))  # lerp 0.017453
 print(trig.sind(90), trig.atan2(1, 1), trig.degrees(math.pi))          # 1.0 0.7853981633974483 180.0
 ```
 
@@ -2517,7 +2526,7 @@ print(v.length([3, 4, 0]))                                                # 5.0 
 `doubleAngle` output; `rotate` spins a vector by an euler.
 
 ```python
-print(kind(v.angle(ex.t, ey.t)),         round(v.angle(ex.t, ey.t) >> None, 6))  # multiply 1.570796
+print(kind(v.angle(ex.t, ey.t)),         round(v.angle(ex.t, ey.t) >> None, 6))  # lerp 1.570796
 print(kind(v.angle_degrees(ex.t, ey.t)), v.angle_degrees(ex.t, ey.t) >> None)    # atan2 90.0
 
 spin = Node.create("transform", name="spin")
@@ -2594,8 +2603,8 @@ The shortest-arc angle between two quaternions, and the conversions
 out:
 
 ```python
-print(kind(q.angle(qa, qb)), round(q.angle(qa, qb) >> None, 6))                      # multiply 1.570796
-print(kind(q.angle_degrees(qa, qb)), q.angle_degrees(qa, qb) >> None)                # multiply 90.0
+print(kind(q.angle(qa, qb)), round(q.angle(qa, qb) >> None, 6))                      # lerp 1.570796
+print(kind(q.angle_degrees(qa, qb)), q.angle_degrees(qa, qb) >> None)                # lerp 90.0
 print(repr(q.to_euler(qb, rotate_order=3)), q.to_euler(qb, rotate_order=3) >> None)  # Plug("quatToEuler2.outputRotate") [ 0.  0. 90.]
 print(kind(q.to_matrix(qb)), m.rotation(q.to_matrix(qb)) >> None)                    # composeMatrix [ 0. -0. 90.]
 print(kind(q.to_vector(qb)), (q.to_vector(qb) >> None).round(4))                     # network [0.     0.     0.7071]
@@ -2815,7 +2824,7 @@ independent stream every call.
 ```python
 cmds.currentTime(1)
 rnd = r.value(seed=42)
-print(repr(rnd), kind(rnd))               # Plug("div9.output") divide
+print(repr(rnd), kind(rnd))               # Plug("div12.output") divide
 print(0.0 <= (rnd >> None) < 1.0)         # True
 print(str(r.value(seed=42)) == str(rnd))  # True  -- explicit seed: one network
 print(str(r.value()) == str(r.value()))   # False -- no seed: a new stream each call
@@ -2846,10 +2855,10 @@ v3 = r.value3D(seed=[1, 2, 3])
 u3 = r.uniform3D([0, 0, 0], [10, 10, 10], seed=[1, 2, 3])
 i3 = r.randint3D([0, 0, 0], [10, 10, 10], seed=[1, 2, 3])
 
-print(repr(u),  kind(u),  5 <= (u >> None) < 15)          # Plug("add34.output") sum True
+print(repr(u),  kind(u),  5 <= (u >> None) < 15)          # Plug("add33.output") sum True
 print(repr(i),  kind(i),  float(i >> None).is_integer())  # Plug("constant7.value") network True
 print(repr(v3), kind(v3), (v3 >> None).shape)             # Plug("constant8.value") network (3,)
-print(repr(u3), kind(u3), (u3 >> None).shape)             # Plug("add35.output3D") plusMinusAverage (3,)
+print(repr(u3), kind(u3), (u3 >> None).shape)             # Plug("add34.output3D") plusMinusAverage (3,)
 print(repr(i3), kind(i3), (i3 >> None).dtype)             # Plug("constant9.value") network int32
 ```
 
@@ -2891,7 +2900,7 @@ print(kind(slerp(p0.t, p1.t)), kind(slerp(qa, qb)), kind(slerp(p0.r, spin.r)), k
 print(kind(blend(rest.matrix, drv.matrix)), kind(elerp(p0.tx, p1.tx)))                                                # blendMatrix multiply
 print(kind(normalize(leg.t)), kind(normalize(qb)), kind(normalize(drv.matrix)))                                       # normalize quatNormalize composeMatrix
 print(kind(inverse(drv.matrix)), kind(inverse(qb)))                                                                   # inverseMatrix quatInvert
-print(kind(angle(ex.t, ey.t)), kind(angle_degrees(ex.t, ey.t)), kind(angle(qa, qb)), kind(angle_degrees(qa, qb)))     # multiply atan2 multiply multiply
+print(kind(angle(ex.t, ey.t)), kind(angle_degrees(ex.t, ey.t)), kind(angle(qa, qb)), kind(angle_degrees(qa, qb)))     # lerp atan2 lerp lerp
 print(repr(to_euler(qb)),          repr(to_euler(drv.matrix)))                                                        # Plug("quatToEuler10.outputRotate") Plug("decomposeMatrix1.outputRotate")
 print(repr(to_quaternion(spin.r)), repr(to_quaternion(drv.matrix)))                                                   # Plug("eulerToQuat3.outputQuat") Plug("decomposeMatrix1.outputQuat")
 print(repr(to_matrix(spin.r)),     repr(to_matrix(qb)))                                                               # Plug("composeMatrix9.outputMatrix") Plug("composeMatrix5.outputMatrix")
