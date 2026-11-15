@@ -741,5 +741,6 @@ class TestTheBuild(_ApiCase):
         # plan_D V10: at most 860 (R5 D3 journals the value sets, so few set barriers are left)
         self.assertLessEqual(counts["register"], 860)
         self.assertLessEqual(counts["register"] - counts["set barriers"], 860)
-        self.assertGreater(counts["api"], 4500)
+        # 4,401 API connections (4,559 before sequence(ends=) took over the per-rider clamps)
+        self.assertGreater(counts["api"], 4300)
         self.assertLess(cmds_connect.call_count, 100)

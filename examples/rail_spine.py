@@ -392,19 +392,16 @@ def create_rail(
                 if len(scale_controls) == 1:
                     rider_matrix.inputScale << scale_vectors
                 else:
+                    # Clamped (2) holds the end values: sequence's ends.
                     frozen = condition(
                         rail.scaleProjection == 0, u_default, u_translate
                     )
-                    clamped = condition(
-                        rail.scaleProjection == 2,
-                        rf.clamp(frozen, scale_weights[0], scale_weights[-1]),
-                        frozen,
-                    )
                     rider_matrix.inputScale << interpolate.sequence(
-                        clamped,
+                        frozen,
                         scale_weights,
                         scale_vectors,
                         method=elerp,
+                        ends=rail.scaleProjection == 2,
                     )
 
             # Plug rotation.
@@ -416,16 +413,12 @@ def create_rail(
                     frozen = condition(
                         rail.rotateProjection == 0, u_default, u_translate
                     )
-                    clamped = condition(
-                        rail.rotateProjection == 2,
-                        rf.clamp(frozen, orient_weights[0], orient_weights[-1]),
-                        frozen,
-                    )
                     rider_path.worldUpVector << interpolate.sequence(
-                        clamped,
+                        frozen,
                         orient_weights,
                         orient_vectors,
                         method=slerp,
+                        ends=rail.rotateProjection == 2,
                     )
 
             # Plug translation (with end-tangent extrapolation for open rails).
