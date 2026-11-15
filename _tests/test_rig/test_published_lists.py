@@ -11,7 +11,8 @@ their elements (`rig._internal.container._publish_tokens`).
 A generic plug that carries a vector (a ``choice`` node's output) has no child
 plugs, so a per-channel consumer (``rig.lerp`` on vectors, ``abs``, ``clamp``,
 ``max``) raised "Plug is not a compound parent". Its channels are now read
-through a ``plusMinusAverage`` (`rig._internal.types._generic_channels`).
+through a ``network`` node's ``double3`` attribute
+(`rig._internal.types._generic_channels`), which keeps doubles.
 """
 
 import numpy as np
@@ -184,16 +185,38 @@ class TestGenericVectorChannels(_Options):
             with self.subTest(consumer=name):
                 np.testing.assert_allclose(_value(out), expected, atol=1e-6)
 
-    def test_the_channels_come_from_one_plus_minus_average(self):
+    def test_the_channels_come_from_one_node_and_keep_doubles(self):
         _, _, ch = self.choice_of_vectors()
-        before = set(cmds.ls(type="plusMinusAverage"))
+        before = set(cmds.ls())
         channels = _get_compound(ch)
-        made = set(cmds.ls(type="plusMinusAverage")) - before
-        self.assertEqual(len(made), 1)
+        made = set(cmds.ls()) - before
+        self.assertEqual([cmds.nodeType(n) for n in made], ["network"])
         self.assertEqual([c.get() for c in channels], [1.0, 2.0, 3.0])
         cmds.setAttr("C.t", 7, 8, 9)
         cmds.setAttr(f"{ch.get_node()}.selector", 1)
         self.assertEqual([c.get() for c in channels], [7.0, 8.0, 9.0])
+        # values a float cannot hold come through exactly (a plusMinusAverage
+        # held floats: 1.7 read 1.7000000476837158)
+        cmds.setAttr("C.t", 0.1, 1.3, 1.7)
+        self.assertEqual([c.get() for c in channels], [0.1, 1.3, 1.7])
+
+    def test_a_vector_sequence_keeps_doubles(self):
+        points = []
+        for k, value in enumerate(([0.1, 0.2, 0.3], [0.7, 0.11, 0.13], [1.1, 1.3, 1.7])):
+            n = Node.create("transform", name=f"p{k}")
+            n.t << value
+            points.append(n)
+        drv = Node.create("transform", name="drv")
+        for place in PLACES:
+            with self.subTest(place=place):
+                if place == "top level":
+                    out = interpolate.sequence(drv.tx, [0.0, 0.5, 1.0], [p.t for p in points])
+                else:
+                    with container("user1"):
+                        out = interpolate.sequence(drv.tx, [0.0, 0.5, 1.0], [p.t for p in points])
+                for x, k in ((0.0, 0), (0.5, 1), (1.0, 2)):
+                    drv.tx << x
+                    self.assertEqual(list(out.get()), list(points[k].t.get()), f"x={x}")
 
     def test_a_compound_plug_and_a_scalar_plug_make_no_node(self):
         a = Node.create("transform", name="A")

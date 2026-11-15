@@ -349,7 +349,7 @@ def _get_compound(obj: Any) -> list:
 
     A generic plug that carries 3-channel data (a ``choice`` node's output
     fed vectors) has no children of its own: its channels are read through
-    a ``plusMinusAverage`` that passes the value on (`_generic_channels`).
+    a ``network`` node's ``double3`` attribute fed the value (`_generic_channels`).
     """
     if _is_compound(obj):
         try:
@@ -366,14 +366,16 @@ def _get_compound(obj: Any) -> list:
 
 def _generic_channels(plug: Any) -> list:
     """The channels of a generic plug that carries 3-channel data, as the
-    ``output3D`` children of a ``plusMinusAverage`` fed the whole value
-    (its default operation, a sum of one input, passes it on unchanged).
+    children of a ``double3`` attribute on a ``network`` node fed the whole
+    value: a plain attribute, no compute, and doubles kept (a
+    ``plusMinusAverage``, the pass-through used before, holds floats, so it
+    rounded every value to float precision).
 
     Maya types a generic attribute (``choice.output``, ...) by its first
     connection but gives it no child plugs, so a per-channel consumer
     (`rig.lerp` on vectors, a scalar op fanned out per channel) cannot reach
-    them. 4-channel data (a quaternion) has no such pass-through node: it
-    raises, naming the plug.
+    them. 4-channel data (a quaternion) has no such holder: it raises, naming
+    the plug.
     """
     data_type = type(plug)._raw_get_data_type(plug)
     if data_type not in ("double3", "float3", "long3", "short3"):
@@ -383,9 +385,12 @@ def _generic_channels(plug: Any) -> list:
         )
     from rig._internal.container import container
 
-    node = container.createNode("plusMinusAverage")
-    node.input3D[0] << plug
-    return [node.output3D.child(i) for i in range(3)]
+    node = container.createNode("network", name="channels1")
+    node.add_attr("value", at="double3")
+    for suffix in "XYZ":
+        node.add_attr(f"value{suffix}", at="double", p="value")
+    node.value << plug
+    return [node.value.child(i) for i in range(3)]
 
 
 # ---------- Operation-first dispatch resolver --------------------------- #
