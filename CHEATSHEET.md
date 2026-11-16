@@ -4363,19 +4363,26 @@ print(cmds.getAttr("demo_fused1.notes").splitlines()[-1])
 # - `vectorOut[0] = (normalize((a.translate - b.translate)) * clamp(scalarOut[0], 0, 5))`
 ```
 
-Where a value goes:
+Where a value goes: a block is one node. Every value materialized in the
+block goes into the block's first node that can take it:
 
-* values materialized together (the fused arguments of one call, the fused
-  elements of one list) go into one node;
-* a value joins the node made just before it when it uses what that node
-  computes and no input it adds is downstream of that node (it would be a
-  cycle), in the same container; otherwise it gets a new node. A value
-  another node already outputs is read from that output;
-* a value made once (before a loop, say) and needed by a second node gets a
-  node of its own, which every later use reads: the passes of a loop stay
-  independent. `examples/rail_spine.py` inside `with rig.fuse():` builds 2
-  `rigExpr` nodes per rider, its `interpolate.sequence` calls included:
-  1,075 nodes at 100 riders (rig's own network: 8,283).
+* a node cannot take a value that would close a ring through nodes outside
+  it, by connections that can change: a cycle, or a loop the evaluation
+  manager evaluates serially. A value reading what the node drives (a
+  `motionPath`'s position, when the node drives its `uValue`) goes to the
+  block's next node, or starts one. A setting nothing drives (a rider's
+  `uDefault`, a dynamic attribute nobody connects or keys) closes no ring,
+  even on a node the block drives;
+* a node holds up to 10,000 instructions: a bigger block gets one more node;
+* a value another node already outputs is read from that output.
+
+So the block decides how many nodes: `examples/rail_spine.py` inside one
+`with rig.fuse():` builds 3 `rigExpr` nodes for its 20 riders, 206 nodes in
+all (rig's own network: 1,723). One node computing many riders runs on one
+thread: a block around each rider instead gives a node or two per rider,
+which play back in parallel. With `set_options(fuse=True)` and no block, a
+value joins the node made just before it when it uses what that node
+computes, else it gets a new node.
 
 What fuses: the operators (`+ - * / // % **`, unary `-`, `< <= > >= == !=`,
 `& | ^ ~`), `.x` / `.y` / `.z` of a vector, a `[a, b, c]` vector, and
@@ -4388,11 +4395,27 @@ normalize dist lerp slerp elerp angle angle_degrees triple_product`), `slerp`
 `interpolate` (`sequence interp smoothstep smootherstep inverse_lerp`).
 rig's own multi-node functions fuse inside: `sequence` runs its own body on
 the fused values, its `searchsorted`, its `choice`s and its `method` (yours
-too) all in the node. Anything else (matrices, quaternions, eulers, a `List`,
-any other function) builds rig's nodes as without the block, from the fused
-values' plugs; so does a function given something its body cannot fuse (a
-`sequence` of matrices builds its network). A block never fails because of
-what it holds.
+too) all in the node. A `List` fuses row by row, as rig broadcasts it: an
+operator on Lists (`lefts.t + rights.t`) or a function given one
+(`V.normalize(points)`, `F.clamp(lst.tx, 0, 1)`) is every row in the block's
+node, and a row that does not fuse leaves every row to rig's nodes. Anything
+else (matrices, quaternions, eulers, any other function) builds rig's nodes
+as without the block, from the fused values' plugs; so does a function given
+something its body cannot fuse (a `sequence` of matrices builds its
+network). A block never fails because of what it holds.
+
+```python
+from rig import List
+
+lefts  = List(Node.create("transform", name=f"left{i}") for i in range(3))
+rights = List(Node.create("transform", name=f"right{i}") for i in range(3))
+mids   = List(Node.create("transform", name=f"mid{i}") for i in range(3))
+lefts.tx << [0, 1, 2]
+rights.tx << [4, 5, 6]
+with rig.fuse("mid"):
+    mids.t << (lefts.t + rights.t) * 0.5          # 3 rows, one node
+print(cmds.ls("mid_*"), [cmds.getAttr(f"mid{i}.tx") for i in range(3)])   # ['mid_fused1'] [2.0, 3.0, 4.0]
+```
 
 ```python
 from rig import interpolate, tween

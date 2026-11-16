@@ -144,11 +144,49 @@ class TestNodes(_Case):
         self.assertEqual(self.fused_nodes(), ["demo_fused1"])
         self.assertEqual(cmds.getAttr("out.t")[0], (7.0, 8.0, 3.25))
 
-    def test_unrelated_values_get_their_own_node(self):
+    def test_a_block_is_one_node(self):
         with rig.fuse():
             self.out.tx << self.a.tx * 2
-            self.out.ty << self.b.ty * 2
+            self.out.ty << self.b.ty * 2                  # unrelated: the block's node all the same
+        self.assertEqual(len(self.fused_nodes()), 1)
+        with rig.fuse():
+            self.out.tz << self.a.tz * 2                  # another block: another node
         self.assertEqual(len(self.fused_nodes()), 2)
+        self.assertEqual([cmds.getAttr(f"out.t{c}") for c in "xyz"], [3.0, 8.0, 6.5])
+
+    def test_a_setting_on_a_node_the_block_drives_joins_its_node(self):
+        # out.k is a setting nothing drives: reading it closes no ring with out.tx
+        cmds.addAttr("out", longName="k", attributeType="double", keyable=True)
+        cmds.setAttr("out.k", 4.0)
+        with rig.fuse():
+            self.out.tx << self.a.tx * 2
+            self.out.ty << self.out.k * self.a.tx
+        self.assertEqual(len(self.fused_nodes()), 1)
+        self.assertEqual(cmds.getAttr("out.ty"), 6.0)
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_a_driven_attribute_on_a_node_the_block_drives_starts_a_node(self):
+        # out.k driven by b.tx: the node would drive out and read out (a ring the
+        # evaluation manager evaluates serially)
+        cmds.addAttr("out", longName="k", attributeType="double", keyable=True)
+        cmds.connectAttr("b.tx", "out.k")
+        with rig.fuse():
+            self.out.tx << self.a.tx * 2
+            self.out.ty << self.out.k * self.a.tx
+        self.assertEqual(len(self.fused_nodes()), 2)
+        self.assertEqual(cmds.getAttr("out.ty"), 0.75)
+
+    def test_a_world_input_below_a_transform_the_block_drives_starts_a_node(self):
+        # the child's world position follows its parent's matrix: no join
+        loc = cmds.spaceLocator(name="loc")[0]
+        cmds.parent(loc, "out")
+        cmds.setAttr("loc.ty", 1.0)
+        with rig.fuse():
+            self.out.tx << self.a.tx * 2
+            self.b.r << Node("locShape").worldPosition[0] * 2
+        self.assertEqual(len(self.fused_nodes()), 2)
+        np.testing.assert_allclose(cmds.getAttr("b.r")[0], [6.0, 2.0, 0.0])
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
 
     def test_no_cycle_through_a_node_downstream(self):
         # out.tx is driven by the first node; a value reading out's matrix cannot join it
@@ -162,20 +200,65 @@ class TestNodes(_Case):
         self.assertEqual(cmds.getAttr("out.ty"), 6.0)
         self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
 
-    def test_a_value_shared_by_two_nodes_gets_its_own_node(self):
+    def test_a_block_per_pass_is_a_node_per_pass(self):
+        shared = None
         with rig.fuse():
             shared = self.a.tx * self.a.k + self.a.w      # made once, used by every pass
             for i in range(3):
                 driver = Node.create("transform", name=f"d{i}")
                 driver.tx << i
                 driven = Node.create("transform", name=f"o{i}")
-                u = driver.tx * 2
-                driven.tx << u                             # the pass's node
-                driven.ty << u + shared                    # joins it (it uses u)
-        # pass 0 computes `shared` inside its node; pass 1 gives it a node of its own,
-        # which pass 1 and pass 2 read: 3 pass nodes and 1 shared node
-        self.assertEqual(len(self.fused_nodes()), 4)
+                with rig.fuse():                           # the pass's own node
+                    u = driver.tx * 2
+                    driven.tx << u
+                    driven.ty << u + shared                # computes `shared` itself
+        self.assertEqual(len(self.fused_nodes()), 3)
         self.assertEqual(cmds.getAttr("o2.ty"), 4 + (1.5 * 2 + 0.25))
+
+    def test_the_graph_is_watched_only_while_fusing(self):
+        import sys
+
+        self.assertIsNone(getattr(sys, "_rig_fuse_watch", None))
+        with rig.fuse():
+            self.out.tx << self.a.tx * 2
+            self.assertIsNotNone(sys._rig_fuse_watch)
+        self.assertIsNone(sys._rig_fuse_watch)
+        self.assertEqual([len(c) for c in _fuse._GRAPH.values()], [0, 0, 0])
+
+    def test_the_kept_graph_answers_as_a_fresh_one(self):
+        # what the block learns of the graph, kept up to date by Maya's messages (a
+        # connection, a reparent, a removal), answers every ring test as a walk from scratch
+        tests = []
+        original = _fuse._loops
+
+        def both(record, plugs):
+            kept = original(record, plugs)
+            saved = {k: dict(v) for k, v in _fuse._GRAPH.items()}
+            _fuse._forget_graph()
+            fresh = original(record, plugs)
+            for k, v in saved.items():
+                _fuse._GRAPH[k].clear()
+                _fuse._GRAPH[k].update(v)
+            tests.append((kept, fresh))
+            return kept
+
+        from unittest import mock
+        with mock.patch.object(_fuse, "_loops", both):
+            with rig.fuse():
+                self.out.tx << self.a.tx * 2
+                mp = Node.create("plusMinusAverage", name="pma")
+                mp.input1D[0] << self.out.tx
+                self.out.ty << self.a.ty + mp.output1D       # a ring: a second node
+                grp = Node.create("transform", name="grp")
+                cmds.parent("b", "grp")
+                grp.tx << self.a.tx * 3                       # the block drives b's parent
+                self.out.tz << Node("b").tx + self.a.tz       # b.tx is a setting: joins
+                cmds.disconnectAttr("out.tx", "pma.input1D[0]")   # the ring is cut: pma is a setting
+                self.out.sx << mp.output1D + 1
+        self.assertGreaterEqual(len(tests), 3)
+        self.assertEqual({kept for kept, _ in tests}, {True, False})   # a ring found, and a join
+        self.assertEqual([kept for kept, _ in tests], [fresh for _, fresh in tests])
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
 
     def test_a_value_using_what_the_last_node_computes_joins_it(self):
         with rig.fuse():
@@ -217,6 +300,83 @@ class TestNodes(_Case):
             "- `scalarOut[0] = ((t1 * t1) + 1)`",
             "- `vectorOut[0] = (a.translate * t1)`",
         ]))
+
+
+class TestLists(_Case):
+    """a List operator, and a function given a List, fuse row by row into the block's node"""
+
+    def setUp(self):
+        super().setUp()
+        # the reference is rig's network (fuse off, even under the option), built without
+        # containers: rig's own network of a List in one can fail to connect
+        # (rig_network_fixes_todo.md, item 8)
+        set_options(fuse=False, create_containers=False)
+
+    def inputs(self):
+        super().inputs()
+        self.l0, self.l1, self.targets = List(), List(), List()
+        for i in range(4):
+            v, w = 0.5 * i + 0.25, 3.1 - i
+            for lst, name, t in ((self.l0, "p", [v, v * 2, -v]), (self.l1, "q", [w, -w, w * 0.5])):
+                node = Node.create("transform", name=f"{name}{i}")
+                node.t << t
+                lst.append(node)
+            self.targets.append(Node.create("transform", name=f"t{i}"))
+
+    def built(self, build, read="t"):
+        """(the node types `build` makes, the targets' ``read`` values), rig's network then
+        fused, each in a new scene"""
+        out = []
+        for fused in (False, True):
+            cmds.file(new=True, force=True)     # (a new scene clears memoize: both build)
+            self.inputs()
+            before = set(cmds.ls())
+            if fused:
+                with rig.fuse():
+                    build()
+            else:
+                build()
+            made = sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before})
+            values = [cmds.getAttr(f"{t}.{read}") for t in self.targets]
+            out.append((made, np.array([v[0] if isinstance(v, list) and read == "t" else v for v in values])))
+        return out
+
+    def test_an_operator_on_lists_is_one_node(self):
+        (net, expected), (fused, got) = self.built(lambda: self.targets.ty << self.l0.tx + self.l1.tx)
+        self.assertEqual(net, ["sum"])
+        self.assertEqual(fused, ["rigExpr"])
+        self.assertEqual(len(self.fused_nodes()), 1)
+        np.testing.assert_allclose(got, expected)
+
+    def test_a_chain_on_a_lists_result_stays_in_the_node(self):
+        # the first operator's plugs are its node's outputs: the next one computes on
+        # their expressions in that node, it does not read them
+        (_, expected), (fused, got) = self.built(
+            lambda: self.targets.ty << rig.condition((self.l0.tx + self.l1.tx) * 2 > 5, self.l0.ty, -self.l1.ty))
+        self.assertEqual(fused, ["rigExpr"])
+        self.assertEqual(len(self.fused_nodes()), 1)
+        np.testing.assert_allclose(got, expected)
+
+    def test_a_function_given_a_list(self):
+        for name, build in (
+            ("vectorized", lambda: self.targets.t << V.normalize(self.l0.t - self.l1.t) * 2),
+            ("dispatch", lambda: self.targets.t << rig.normalize(self.l1.t)),
+            ("elementwise", lambda: self.targets.ty << F.clamp(self.l0.tx - 1, 0, 0.75)
+             + F.logical_not(self.l1.tx > 2)),
+        ):
+            with self.subTest(name):
+                (_, expected), (fused, got) = self.built(build)
+                self.assertEqual(fused, ["rigExpr"])
+                np.testing.assert_allclose(got, expected, atol=1e-6)
+
+    def test_rows_that_do_not_fuse_build_rigs_nodes(self):
+        # matrices: no row fuses, rig's network as without the block
+        (net, expected), (fused, got) = self.built(
+            lambda: self.targets.offsetParentMatrix << self.l0.worldMatrix[0] * self.l1.worldInverseMatrix[0],
+            read="offsetParentMatrix")
+        self.assertEqual(fused, net)
+        self.assertNotIn("rigExpr", fused)
+        np.testing.assert_allclose(got, expected)
 
 
 class TestRig(_Case):
@@ -457,10 +617,20 @@ class TestRigFunctions(_Case):
         cmds.setAttr("a.k", 0)
         self.assertAlmostEqual(cmds.getAttr("out.tx"), 14.0)   # extrapolated
 
-    def test_what_does_not_fuse_builds_rigs_network(self):
+    def test_a_list_broadcasts_row_by_row(self):
         from rig import tween
+        build = lambda: tween.in_quad(List([self.a.tx * 0.2, self.b.tx * 0.5]))  # noqa: E731
+        network = [self.value(p) for p in build()]
+        cmds.file(new=True, force=True)
+        self.inputs()
+        before = set(cmds.ls())
+        with rig.fuse():
+            fused = build()
+        self.assertEqual(sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before}), ["rigExpr"])
+        np.testing.assert_allclose([self.value(p) for p in fused], network, rtol=1e-6)
+
+    def test_what_does_not_fuse_builds_rigs_network(self):
         cases = {
-            "a List broadcasts": lambda: tween.in_quad(List([self.a.tx, self.b.tx])),
             "matrices": lambda: interpolate.sequence(self.a.w, [0, 1], [self.a.worldMatrix[0], self.b.worldMatrix[0]],
                                                      method=rig.blend),
             "a choice without a selector": lambda: F.choice([self.a.tx, self.b.tx]),

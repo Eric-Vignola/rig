@@ -1095,11 +1095,18 @@ class List(list):
 
 
 # each broadcast operator is one journal statement
-def _plug_operands(method: Callable[..., Any]) -> Callable[..., Any]:
-    """`method` (a List operator) with a fused operand a plug (`rig._internal.fuse`)"""
+def _plug_operands(method: Callable[..., Any], dunder: str) -> Callable[..., Any]:
+    """`method` (a List operator) fused row by row in a ``rig.fuse()`` block (every row
+    in the block's node, `fuse.list_operator`), or with a fused operand a plug"""
 
     @functools.wraps(method)
     def operator_method(self: "List", *other: Any) -> Any:
+        if _FUSE.on and not _journal._S.open:
+            if other and isinstance(other[0], _fuse._ITERATOR):
+                other = (list(other[0]),)   # read once: rig's operator reads it into a list too
+            fused = _fuse.list_operator(dunder, self, other)
+            if fused is not NotImplemented:
+                return fused
         if _FUSE.alive and other and _fuse._has_fused(other[0]):
             other = (_fuse.materialized(other[0]),)
         return method(self, *other)
@@ -1114,7 +1121,7 @@ for _operator in (
     "__ror__", "__xor__", "__rxor__", "__neg__", "__invert__",
     "__eq__", "__ne__", "__ge__", "__le__", "__gt__", "__lt__",
 ):
-    setattr(List, _operator, _plug_operands(statement(List.__dict__[_operator])))
+    setattr(List, _operator, _plug_operands(statement(List.__dict__[_operator]), _operator))
 del _operator
 
 
