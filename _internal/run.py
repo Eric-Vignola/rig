@@ -39,6 +39,10 @@ files, ``rig.exec`` and the code's first line for a string); a run inside a run
 joins the outer step. Afterwards the session gets back
 ``sys.argv``, ``sys.path``, the std streams, ``sys.excepthook`` / ``displayhook``
 and rig's options.
+
+A run fuses as what runs it does: inside ``with rig.fuse():`` the code's math goes
+into the block's node, and a ``rig.set_options(fuse=False)`` the code calls turns
+fusing off for the rest of the run only.
 """
 
 from __future__ import annotations
@@ -169,34 +173,39 @@ def _start(result, names, argv, folders, label, who="rig.run"):
         _check_thread(who)
         _install()
         _stamp()
+    from rig._internal import fuse as _fuse
     result.sys_path = folders + sys.path
     options         = get_options()
     stdin           = _stdin_state()
     saved           = (sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook)
     entered         = False
     importlib.invalidate_caches()
-    try:
-        with undo_chunk(label):
-            with _LOCK:
-                _check_thread(who)                           # re-checked with the view entered atomically
-                _enter(result)
-                entered = True
-            try:
-                _run_files(result, names, argv)
-            finally:
+    # the run's scope of rig.fuse(): the code fuses as what runs it does, and a
+    # set_options(fuse=...) it calls holds for the rest of the run (the options put back
+    # below are put back inside it, so they leave the scope outside as it was)
+    with _fuse.scope():
+        try:
+            with undo_chunk(label):
                 with _LOCK:
-                    _leave()
-    except BaseException as err:
-        if entered:
-            with contextlib.suppress(Exception):
-                err.rig_run = result                       # post-mortem: sys.last_value.rig_run
-        raise
-    finally:
-        if entered:
-            sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook = saved
-            _reopen_stdin(stdin)
-            if get_options() != options:
-                set_options(**options)
+                    _check_thread(who)                       # re-checked with the view entered atomically
+                    _enter(result)
+                    entered = True
+                try:
+                    _run_files(result, names, argv)
+                finally:
+                    with _LOCK:
+                        _leave()
+        except BaseException as err:
+            if entered:
+                with contextlib.suppress(Exception):
+                    err.rig_run = result                   # post-mortem: sys.last_value.rig_run
+            raise
+        finally:
+            if entered:
+                sys.argv, sys.stdin, sys.stdout, sys.stderr, sys.displayhook, sys.excepthook = saved
+                _reopen_stdin(stdin)
+                if get_options() != options:
+                    set_options(**options)
     return result
 
 

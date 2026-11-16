@@ -1393,6 +1393,76 @@ class TestScene(_Case):
         self.assertEqual(cmds.getAttr("out.tx"), 3.0)
 
 
+class TestScopes(_Case):
+    """set_options(fuse=...) inside a block or a rig.run: the rest of that scope"""
+
+    def driver(self, plug):
+        return cmds.nodeType(cmds.listConnections(plug, source=True, destination=False)[0])
+
+    def script(self, text):
+        path = os.path.join(tempfile.mkdtemp(), "script.py")
+        with open(path, "w") as handle:
+            handle.write(text)
+        return path
+
+    def tearDown(self):
+        self.assertEqual(_fuse.FUSE.frames, [])      # no scope left open
+        super().tearDown()
+
+    def test_off_inside_a_block_for_the_rest_of_it(self):
+        with rig.fuse():
+            self.out.tx << self.a.tx * 2
+            set_options(fuse=False)
+            self.out.ty << self.a.ty * 3              # rig's network from here
+            with rig.fuse():
+                self.out.tz << self.a.tz * 4          # a block opened after it fuses
+            self.out.sx << self.a.tx + 1
+        self.assertEqual(self.driver("out.tx"), "rigExpression")
+        self.assertNotEqual(self.driver("out.ty"), "rigExpression")
+        self.assertEqual(self.driver("out.tz"), "rigExpression")
+        self.assertNotEqual(self.driver("out.sx"), "rigExpression")
+        self.assertEqual([cmds.getAttr(f"out.{c}") for c in ("tx", "ty", "tz", "sx")], [3.0, -6.0, 13.0, 2.5])
+        self.assertFalse(get_options()["fuse"])
+
+    def test_on_again_inside_a_block(self):
+        with rig.fuse():
+            set_options(fuse=False)
+            self.out.tx << self.a.tx * 2
+            set_options(fuse=True)
+            self.out.ty << self.a.ty * 3
+        set_options(fuse=False)
+        self.assertNotEqual(self.driver("out.tx"), "rigExpression")
+        self.assertEqual(self.driver("out.ty"), "rigExpression")
+
+    def test_a_run_and_an_exec_fuse_in_a_block_and_turn_it_off_for_themselves(self):
+        fusing = self.script("from rig import Node\nNode('out').tx << Node('a').tx * 2\n")
+        off = self.script("import rig\nfrom rig import Node\nrig.set_options(fuse=False)\n"
+                          "Node('out').ty << Node('a').ty * 3\n")
+        option = get_options()["fuse"]
+        with rig.fuse():
+            rig.run(fusing)
+            rig.run(off)
+            rig.exec("from rig import Node\nNode('out').sx << Node('a').tz * 2\n")
+            self.out.tz << self.a.tz * 4              # the block fuses on after the run
+        self.assertEqual(self.driver("out.tx"), "rigExpression")
+        self.assertNotEqual(self.driver("out.ty"), "rigExpression")
+        self.assertEqual(self.driver("out.sx"), "rigExpression")
+        self.assertEqual(self.driver("out.tz"), "rigExpression")
+        self.assertEqual([cmds.getAttr(f"out.{c}") for c in ("tx", "ty", "tz", "sx")], [3.0, -6.0, 13.0, 6.5])
+        self.assertEqual(get_options()["fuse"], option)    # the runs gave the option back
+
+    def test_a_run_under_the_option(self):
+        off = self.script("import rig\nfrom rig import Node\nrig.set_options(fuse=False)\n"
+                          "Node('out').ty << Node('a').ty * 3\n")
+        set_options(fuse=True)
+        rig.run(off)
+        self.assertTrue(get_options()["fuse"])         # a run gives the options back
+        self.out.tz << self.a.tz * 4
+        set_options(fuse=False)
+        self.assertNotEqual(self.driver("out.ty"), "rigExpression")
+        self.assertEqual(self.driver("out.tz"), "rigExpression")
+
+
 class TestNoPlugin(MayaTestCase):
     TEST_START_NEW_SCENE = True
 

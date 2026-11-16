@@ -58,6 +58,7 @@ did. A function that makes its nodes by hand has a fused form in `FORMS` instead
 from __future__ import annotations
 
 import collections.abc
+import contextlib
 import itertools
 import math
 import numbers
@@ -131,7 +132,7 @@ class _State:
     outputs of the nodes of the open blocks (or of the session, with the option)."""
 
     __slots__ = ("on", "alive", "depth", "names", "blocks", "option", "plugin", "warned", "owners", "serial",
-                 "leaves", "dirty", "last", "inlined", "warned_target", "tracing", "outputs")
+                 "leaves", "dirty", "last", "inlined", "warned_target", "tracing", "outputs", "frames")
 
     def __init__(self) -> None:
         self.on      = False
@@ -143,6 +144,9 @@ class _State:
         self.names   = []
         # the open blocks, innermost last: each the list of its nodes' records (`_place`)
         self.blocks  = []
+        # whether each open scope fuses, innermost last: a block (True as it opens), a
+        # rig.run / rig.exec (as what runs it); set_options(fuse=...) sets the innermost
+        self.frames  = []
         self.option  = False
         self.plugin  = None
         self.warned  = False
@@ -166,12 +170,15 @@ FUSE = _State()
 
 
 def _refresh() -> None:
-    wanted = FUSE.depth > 0 or FUSE.option
+    # fusing: as the innermost open scope says (a block, a run), else as the option. A
+    # block's state is kept while it is open, also when its code turned fusing off
+    wanted = FUSE.frames[-1] if FUSE.frames else FUSE.option
+    kept = FUSE.depth > 0 or FUSE.option
     if wanted and FUSE.plugin is None:
         FUSE.plugin = _load_plugin()
     FUSE.on = bool(wanted and FUSE.plugin and _for_this_maya())
     _watch(FUSE.on and FUSE.depth > 0)      # (the option alone: no message is watched)
-    if not wanted:
+    if not kept:
         FUSE.owners.clear()
         FUSE.outputs.clear()
         FUSE.leaves.clear()
@@ -198,9 +205,25 @@ def _for_this_maya() -> bool:
 
 
 def set_option(value: bool) -> None:
-    """``rig.set_options(fuse=value)``"""
+    """``rig.set_options(fuse=value)``: the option, and the rest of the innermost open
+    scope (a ``rig.fuse()`` block, a ``rig.run``): ``False`` there turns fusing off until
+    it ends, and a block opened after it fuses"""
     FUSE.option = bool(value)
+    if FUSE.frames:
+        FUSE.frames[-1] = bool(value)
     _refresh()
+
+
+@contextlib.contextmanager
+def scope():
+    """the scope of a ``rig.run`` / ``rig.exec``: it fuses as what runs it does, and a
+    ``set_options(fuse=...)`` its code calls holds for the rest of the run only"""
+    FUSE.frames.append(FUSE.frames[-1] if FUSE.frames else FUSE.option)
+    try:
+        yield
+    finally:
+        FUSE.frames.pop()
+        _refresh()
 
 
 def _plugin_version() -> tuple:
@@ -3197,7 +3220,9 @@ class fuse:
     """``with rig.fuse():`` -- fuse rig's scalar and vector math in the block into
     ``rigExpression`` nodes (see `rig._internal.fuse`). ``rig.fuse("arm")`` names its nodes
     ``arm_fused1`` ... The block is one undo step. Without the rig plug-in (rig.mll), the
-    block builds rig's nodes, with one warning per session."""
+    block builds rig's nodes, with one warning per session. Inside it,
+    ``rig.set_options(fuse=False)`` turns fusing off for the rest of the block (a block
+    opened after it fuses); code a ``rig.run`` / ``rig.exec`` runs fuses as the block does."""
 
     __slots__ = ("name", "chunk")
 
@@ -3217,6 +3242,7 @@ class fuse:
         FUSE.depth += 1
         FUSE.names.append(self.name)
         FUSE.blocks.append([])
+        FUSE.frames.append(True)       # (a set_options(fuse=False) inside turns it off)
         _refresh()
         return self
 
@@ -3224,6 +3250,7 @@ class fuse:
         FUSE.depth -= 1
         FUSE.names.pop()
         FUSE.blocks.pop()
+        FUSE.frames.pop()
         try:
             try:
                 if not FUSE.depth:

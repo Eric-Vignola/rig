@@ -4534,6 +4534,13 @@ A fused value is built when it is used, not when it is written, so:
   `arm_fused1`, ...
 * `rig.set_options(fuse=True)` fuses everywhere, as one endless block (and
   `fuse = true` in `_defaults.toml`).
+* Inside a block, `rig.set_options(fuse=False)` turns fusing off for the
+  rest of it (a block opened after it fuses), and `fuse=True` back on.
+* A file given to `rig.run`, or code given to `rig.exec`, fuses as what runs
+  it does: `with rig.fuse(): rig.run("arm.py")` fuses the file's math into
+  the block's node. A `rig.set_options(fuse=False)` in the file holds for
+  the rest of the run only, as every option a run sets (a run gives them
+  back).
 * rig's plug-in, `rig.mll`, is loaded on first use: already loaded, from
   `RIG_PLUGIN` (its path), or by name from `MAYA_PLUG_IN_PATH`.
   Without it, the block builds rig's nodes, with one warning per session.
