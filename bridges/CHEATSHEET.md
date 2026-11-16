@@ -13,7 +13,7 @@ Concepts and the file map live in [`README.md`](README.md).
 |---|---|---|
 | — | [Setup](#setup) | mayapy / Maya init, the three imports |
 | 1 | [Import surface](#1-import-surface) | lazy wrappers, caching, `dir()`, unknown names |
-| 2 | [Commands return `Node` and `List`](#2-commands-return-node-and-list) | `createNode`, `polyCube`, `ls`, `listRelatives`, empty results, broadcasting |
+| 2 | [Commands return `Node` and `List`](#2-commands-return-node-and-list) | `createNode`, `polyCube`, `ls`, `listRelatives` (full paths), empty results, broadcasting |
 | 3 | [Values pass through](#3-values-pass-through) | `getAttr`, `objExists`, `nodeType`, `xform`, `listAttr`, the two wrap traps |
 | 4 | [Arguments go in as strings](#4-arguments-go-in-as-strings) | `Node` / list-of-`Node` / `Plug` arguments, in args and kwargs |
 | 5 | [The `_NO_COERCE` list](#5-the-_no_coerce-list) | nine commands whose arguments reach Maya untouched |
@@ -101,6 +101,17 @@ A `List` broadcasts, so a query result takes `<<` directly:
 ```python
 sel.ty << 2
 print(sel.ty, cmds.getAttr("box.ty"))            # List([Plug("cube.translateY"), Plug("box.translateY")]) 2.0
+```
+
+`rc.listRelatives` asks Maya for full paths, whatever `fullPath=` or `path=`
+say. Maya's own answer is each node's name, which nodes under different
+parents share, and no node is cast from a shared name:
+
+```python
+for side in ("left", "right"):                # a "part" under each: two nodes, one name
+    rc.parent(rc.polyCube(name="part")[0], rc.createNode("transform", name=side))
+print(cmds.listRelatives("left", c=True))     # ['part']
+print(rc.listRelatives("left", c=True))       # List([Transform("left|part")])
 ```
 
 ---

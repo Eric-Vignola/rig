@@ -17,6 +17,13 @@ string-formatted code, no ~700 wrappers materialized eagerly.
 Studio plugins that register commands on ``maya.cmds`` are picked up
 automatically -- they appear after the plugin loads, on first call.
 
+``rc.listRelatives`` asks Maya for full paths, whatever the call passes for
+``fullPath`` / ``path``. Without them ``listRelatives`` answers each node's own
+DAG name, which nodes under different parents share (a setup built twice in
+one scene), and no node can be cast from a shared name. Every other command
+answers names that are unique. A full path names one node, and a node is the
+same whichever path named it.
+
 For occasional use without going through this module, use
 :meth:`Node.wrap` to convert a ``maya.cmds`` result manually::
 
@@ -59,6 +66,11 @@ _NO_COERCE = frozenset(
         "error",
     }
 )
+
+
+# listRelatives' flags for the form of the names it answers: the bridge drops
+# them and asks for full paths (see the module docstring)
+_PATH_FLAGS = frozenset({"fullPath", "f", "path", "pa"})
 
 
 def _coerce(value: _Any) -> _Any:
@@ -141,6 +153,7 @@ def _make_wrapper(name: str) -> _Callable:
     one, and calling the old one crashes Maya."""
     original    = getattr(_mc, name)
     coerce_args = name not in _NO_COERCE
+    full_paths  = name == "listRelatives"
 
     def wrapper(*args, **kwargs):
         fn = getattr(_mc, name, None)
@@ -150,6 +163,11 @@ def _make_wrapper(name: str) -> _Callable:
         # Opt-out of auto-container-add via ``container=False`` kwarg.
         # (Pop BEFORE the cmds call so it doesn't reach Maya.)
         add_to_container = kwargs.pop("container", True)
+
+        # listRelatives answers names that cast to one node each: full paths
+        if full_paths:
+            kwargs = {k: v for k, v in kwargs.items() if k not in _PATH_FLAGS}
+            kwargs["fullPath"] = True
 
         # the List rule: a List argument (or flag value) holding a deleted or
         # freed element raises rig's error first (`journal.check_lists`)

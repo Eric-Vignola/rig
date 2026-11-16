@@ -573,12 +573,13 @@ Verified on Maya 2025; not bugs to work around blindly.
   a counter, the transform gets your name with its trailing digits
   stripped and Maya's own counter appended (`name="cam7"` gives `cam1` and
   `cam7Shape1`). Use `setup.camera`, not the string you passed in.
-- A second `create_setup` in the same scene needs another `name=`. With
-  the same name the new plane's shape shares its short name with the
-  first setup's, `rc.listRelatives` hands back a plain string for it,
-  and `shape << material` raises `TypeError`. `image_loop.create_plane`
-  can be called twice with the same name (`loop_container1`, material
-  `loop1`).
+- A second `create_setup` in the same scene builds a second setup, under
+  the same `name=` or another. With the same name its planes take the
+  first setup's names, each under its own camera
+  (`camera4|mesh_STICKER_LAYER_0`), and Maya numbers its materials and its
+  container on (`sticker_layer_2`, `sticker_layer_container1`).
+  `image_loop.create_plane` can be called twice with the same name too
+  (`loop_container1`, material `loop1`).
 - The riders of both rails are created with `container=False` and then
   `rc.parent`ed under the rail. Maya renames a node when it is reparented,
   which would confuse the container's membership tracking; the maths sits

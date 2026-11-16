@@ -113,7 +113,7 @@ def create_plane(image_dir, name="image_loop", target_size=10.0):
             container = False,      # transform stays at scene root
         )
         container.add(plane)  # but the polyPlane node is rig-owned
-        shape = rc.listRelatives(transform, type="mesh")[0]
+        shape = transform.get_shape()  # the plane's mesh
 
         # ---- Animated file texture ------------------------------------------
         texture = rn.file()
