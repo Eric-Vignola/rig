@@ -735,6 +735,401 @@ class TestStandIns(_MatrixCase):
                                    [3.0, -4.0, 6.5], atol=1e-9)
 
 
+class TestEveryFunction(_MatrixCase):
+    """every public function of rig's math libraries (`fuse.MODULES`) is mapped: a form, a
+    traced body, or a reason it is neither (`fuse.NOT_FUSED`); each one, called in a block,
+    fuses into rigExpression nodes alone and computes what rig's network computes"""
+
+    @staticmethod
+    def public_functions() -> dict:
+        import importlib
+        import inspect
+        found = {}
+        for name in _fuse.MODULES:
+            module = importlib.import_module(name)
+            names = getattr(module, "__all__", None) or [n for n in vars(module) if not n.startswith("_")]
+            for attr in names:
+                obj = getattr(module, attr, None)
+                if not callable(obj) or inspect.isclass(obj):
+                    continue
+                inner = inspect.unwrap(obj)
+                if not hasattr(inner, "__qualname__"):     # an object with a __call__ (math_nodes' container)
+                    continue
+                key = f"{inner.__module__}.{inner.__qualname__}"
+                if key.startswith(name + "."):        # the module's own, not what it imports
+                    found[key] = obj
+        return found
+
+    def test_every_public_function_is_mapped(self):
+        functions = self.public_functions()
+        self.assertEqual(sorted(k for k in functions if k not in _fuse.FORMS and k not in _fuse.RAW
+                                and k not in _fuse.NOT_FUSED), [])
+        self.assertEqual(sorted(set(_fuse.NOT_FUSED) - set(functions)), [])
+
+    def test_every_mapped_function_has_a_call_here(self):
+        mapped = {k for k in self.public_functions() if k not in _fuse.NOT_FUSED}
+        own = {"rig.functions.pi"} | {k for k in mapped if k.startswith("rig.random.")}    # (their own tests)
+        self.assertEqual(sorted(mapped - set(self.calls()) - own), [])
+
+    def test_pi_is_the_number(self):
+        """rig's intent (its docstring: ``node.tx << pi()`` gives 3.14159...): a number that
+        folds into what uses it. rig's network differs: its native pi node is a doubleAngle,
+        read in degrees (180)"""
+        with rig.fuse():
+            self.assertEqual(F.pi(), np.pi)
+            self.out.tx << F.pi() * self.a.tx
+        self.assertEqual(len(self.fused_nodes()), 1)
+        self.assertAlmostEqual(cmds.getAttr("out.tx"), np.pi * 1.5, places=12)
+
+    def test_each_fuses_and_gives_rigs_values(self):
+        for key, builds in self.calls().items():
+            for i, build in enumerate(builds):
+                with self.subTest(key, call=i):
+                    network, fused, made = self.built(build)
+                    self.assertEqual(made, ["rigExpression"])
+                    np.testing.assert_allclose(fused, network, atol=1e-5, rtol=0)
+
+    def calls(self) -> dict:
+        """{function: [a build calling it]} (each build reads the scene's nodes when it runs:
+        `built` makes it twice, each in a new scene)"""
+        from rig import tween
+        from rig._internal.math_nodes import constant
+        M, Q, Eu, I = rig.matrix, rig.quaternion, rig.euler, rig.interpolate
+        s = self
+
+        def appended(*values):          # a List built as rig's examples build one
+            out = List()
+            for v in values:
+                out.append(v)
+            return out
+
+        def three():
+            return [s.a.tx * 2, s.b.tx + 1, s.a.ty - s.b.ty]
+
+        calls = {
+            "rig.functions.frame": [lambda: F.frame() * 2 + s.a.tx],
+            "rig.functions.clamp": [lambda: F.clamp(s.a.tz, 0, 2), lambda: F.clamp(s.a.t, -1, [0, 1, 2])],
+            "rig.functions.abs": [lambda: F.abs(s.a.ty * 1.3)],
+            "rig.functions.int": [lambda: F.int(s.a.ty * 1.3)],
+            "rig.functions.round": [lambda: F.round(s.a.tz * 1.3)],
+            "rig.functions.floor": [lambda: F.floor(s.a.ty * 1.3)],
+            "rig.functions.ceil": [lambda: F.ceil(s.a.ty * 1.3)],
+            "rig.functions.trunc": [lambda: F.trunc(s.a.ty * 1.3)],
+            "rig.functions.sum": [lambda: F.sum(three()), lambda: F.sum(appended(*three()))],
+            "rig.functions.avg": [lambda: F.avg(three()), lambda: F.avg(appended(*three()))],
+            "rig.functions.max": [lambda: F.max(three()), lambda: F.max(appended(*three()))],
+            "rig.functions.min": [lambda: F.min(three()), lambda: F.min(appended(*three()))],
+            "rig.functions.exp": [lambda: F.exp(s.a.w)],
+            "rig.functions.sign": [lambda: F.sign(s.a.ty)],
+            "rig.functions.sqrt": [lambda: F.sqrt(s.a.k)],
+            "rig.functions.pow": [lambda: F.pow(s.a.k, s.a.w)],
+            "rig.functions.log": [lambda: F.log(s.a.k), lambda: F.log(s.a.k, 10)],
+            "rig.functions.choice": [lambda: F.choice([s.a.tx, s.b.tx, s.a.ty], selector=s.a.k),
+                                     lambda: F.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]], selector=s.a.k)],
+            "rig.functions.rev": [lambda: F.rev(s.a.w)],
+            "rig.functions.searchsorted": [lambda: F.searchsorted([s.b.tx, s.a.tx, s.a.k + 1], s.a.w * 4)],
+            "rig.functions.all": [lambda: F.all([s.a.tx > 0, s.b.ty > 0])],
+            "rig.functions.any": [lambda: F.any([s.a.tx < 0, s.b.ty > 0])],
+            "rig.functions.argmin": [lambda: F.argmin(three())],
+            "rig.functions.argmax": [lambda: F.argmax(three())],
+            "rig.functions.diff": [lambda: tuple(F.diff(three())), lambda: tuple(F.diff([s.a.t, s.b.t]))],
+            "rig.functions.cumsum": [lambda: tuple(F.cumsum(three())), lambda: tuple(F.cumsum(appended(s.a.t, s.b.t)))],
+            "rig.functions.equal": [lambda: F.equal(s.a.tx, s.b.tx + 1)],
+            "rig.functions.not_equal": [lambda: F.not_equal(s.a.tx, s.b.tx)],
+            "rig.functions.greater_than": [lambda: F.greater_than(s.a.tx, s.b.tx)],
+            "rig.functions.less_than": [lambda: F.less_than(s.a.tx, s.b.tx)],
+            "rig.functions.greater_or_equal": [lambda: F.greater_or_equal(s.a.tx, s.b.tx + 1)],
+            "rig.functions.less_or_equal": [lambda: F.less_or_equal(s.a.tx, s.b.tx)],
+            "rig.functions.logical_and": [lambda: F.logical_and(s.a.tx > 0, s.b.ty > 0)],
+            "rig.functions.logical_or": [lambda: F.logical_or(s.a.tx < 0, s.b.ty > 0)],
+            "rig.functions.logical_xor": [lambda: F.logical_xor(s.a.tx > 0, s.b.ty > 0)],
+            "rig.functions.logical_not": [lambda: F.logical_not(s.a.tx > 0)],
+            "rig.interpolate.sequence": [lambda: interpolate.sequence(s.a.w, [0, 0.5, 1], [s.a.t, s.b.t, s.a.t * 2])],
+            "rig.interpolate.interp": [lambda: interpolate.interp(s.a.w * 2, [0, 0.5, 1], [s.a.tx, s.b.tx, 1])],
+            "rig.interpolate.smoothstep": [lambda: interpolate.smoothstep(0, 1, s.a.w)],
+            "rig.interpolate.smootherstep": [lambda: interpolate.smootherstep(0, 1, s.a.w)],
+            "rig.interpolate.inverse_lerp": [lambda: interpolate.inverse_lerp(s.b.tx, s.a.tx, s.a.w + 1)],
+            "rig.trigonometry.degrees": [lambda: T.degrees(s.a.w)],
+            "rig.trigonometry.radians": [lambda: T.radians(s.a.k * 30)],
+            "rig.trigonometry.sind": [lambda: T.sind(s.a.tx * 20)],
+            "rig.trigonometry.cosd": [lambda: T.cosd(s.a.tx * 20)],
+            "rig.trigonometry.tand": [lambda: T.tand(s.a.tx * 20)],
+            "rig.trigonometry.sin": [lambda: T.sin(s.a.w)],
+            "rig.trigonometry.cos": [lambda: T.cos(s.a.w)],
+            "rig.trigonometry.tan": [lambda: T.tan(s.a.w)],
+            "rig.trigonometry.asind": [lambda: T.asind(s.a.w)],
+            "rig.trigonometry.asin": [lambda: T.asin(s.a.w)],
+            "rig.trigonometry.acosd": [lambda: T.acosd(s.a.w)],
+            "rig.trigonometry.acos": [lambda: T.acos(s.a.w)],
+            "rig.trigonometry.atand": [lambda: T.atand(s.a.w)],
+            "rig.trigonometry.atan": [lambda: T.atan(s.a.w)],
+            "rig.trigonometry.atan2d": [lambda: T.atan2d(s.a.ty, s.b.ty)],
+            "rig.trigonometry.atan2": [lambda: T.atan2(s.a.ty, s.b.ty)],
+            "rig.vector.triple_product": [lambda: V.triple_product(s.a.t, s.b.t, s.a.t + s.b.t * 2)],
+            "rig.vector.angle": [lambda: V.angle(s.a.t, s.b.t)],
+            "rig.vector.angle_degrees": [lambda: V.angle_degrees(s.a.t, s.b.t)],
+            "rig.vector.dot": [lambda: V.dot(s.a.t, s.b.t), lambda: V.dot(s.a.t, s.b.t, normalize=True)],
+            "rig.vector.cross": [lambda: V.cross(s.a.t, s.b.t), lambda: V.cross(s.a.t, s.b.t, normalize=True)],
+            "rig.vector.length": [lambda: V.length(s.a.t)],
+            "rig.vector.normalize": [lambda: V.normalize(s.a.t)],
+            "rig.vector.dist": [lambda: V.dist(s.a.t, s.b.t)],
+            "rig.vector.rotate": [lambda: V.rotate(s.a.t, s.b.r), lambda: V.rotate(s.a.t, [30, 45, 60], rotate_order=2)],
+            "rig.vector.lerp": [lambda: V.lerp(s.a.t, s.b.t, s.a.w)],
+            "rig.vector.slerp": [lambda: V.slerp(s.a.t, s.b.t, s.a.w)],
+            "rig.vector.elerp": [lambda: V.elerp(s.a.t, s.b.t, s.a.w)],
+            "rig._internal.math_nodes.constant": [lambda: constant([s.a.tx, s.b.ty, 1])],
+            "rig._internal.math_nodes.condition": [lambda: condition(s.a.tx > 1, s.a.ty, s.b.ty)],
+        }
+        # matrices, quaternions and eulers: TestMatrices' cases, by function
+        cases = self.matrix_cases()
+        named = {
+            "rig.matrix.decompose": ["decompose", "decompose, a rotate order", "decompose's quaternion"],
+            "rig.matrix.inverse": ["inverse"], "rig.matrix.transpose": ["transpose"],
+            "rig.matrix.to_quaternion": ["to_quaternion"], "rig.matrix.to_euler": ["to_euler"],
+            "rig.matrix.compose": ["compose", "compose, a quaternion"], "rig.matrix.fourbyfour": ["fourbyfour"],
+            "rig.matrix.aim": ["aim", "aim, axes"], "rig.matrix.multiply": ["multiply, a chain", "multiply, local"],
+            "rig.matrix.add": ["add", "add, weights"], "rig.matrix.lerp": ["lerp"], "rig.matrix.blend": ["blend"],
+            "rig.matrix.slerp": ["slerp"], "rig.matrix.pow": ["pow"], "rig.matrix.normalize": ["normalize"],
+            "rig.matrix.determinant": ["determinant"], "rig.matrix.translation": ["translation"],
+            "rig.matrix.rotation": ["rotation"], "rig.matrix.scale_of": ["scale_of"], "rig.matrix.axis": ["axis y"],
+            "rig.matrix.column": ["column 1"], "rig.matrix.row": ["row 3", "row of a plug"],
+            "rig.matrix.transform_point": ["transform_point"], "rig.matrix.transform_vector": ["transform_vector"],
+            "rig.matrix.dist": ["dist"],
+            "rig.euler.reorder": ["euler reorder"], "rig.euler.to_matrix": ["euler to_matrix"],
+            "rig.euler.to_quaternion": ["euler to_quaternion"], "rig.euler.slerp": ["euler slerp"],
+            "rig.quaternion.add": ["quaternion add"], "rig.quaternion.multiply": ["quaternion multiply"],
+            "rig.quaternion.subtract": ["quaternion subtract"], "rig.quaternion.negate": ["quaternion negate"],
+            "rig.quaternion.normalize": ["quaternion normalize"], "rig.quaternion.inverse": ["quaternion inverse"],
+            "rig.quaternion.conjugate": ["quaternion conjugate"], "rig.quaternion.angle": ["quaternion angle"],
+            "rig.quaternion.angle_degrees": ["quaternion angle_degrees"], "rig.quaternion.to_euler": ["quaternion to_euler"],
+            "rig.quaternion.to_matrix": ["quaternion to_matrix"], "rig.quaternion.to_vector": ["quaternion to_vector"],
+            "rig.quaternion.slerp": ["quaternion slerp"], "rig.quaternion.pow": ["quaternion pow"],
+            "rig.quaternion.from_axis_angle": ["from_axis_angle", "from_axis_angle, an angle plug"],
+            "rig.quaternion.to_axis_angle": ["to_axis_angle"],
+        }
+        for key, names in named.items():
+            calls[key] = [cases[n] for n in names]
+        # every easing curve
+        for key, f in self.public_functions().items():
+            if key.startswith("rig.tween."):
+                calls[key] = [lambda f=f: f(s.a.w * 0.8 + 0.1)]      # (in_linear is t itself)
+        return calls
+
+    # -- the four calls rig's examples left as rig's nodes, and the new ops
+    def both(self, network_build, fused_build):
+        """`built`, rig's network built otherwise than the fused one"""
+        names = (lambda r: tuple(str(x) for x in r) if type(r) is tuple else str(r))
+        cmds.file(new=True, force=True)
+        self.inputs()
+        network = self.read(names(network_build()))
+        cmds.file(new=True, force=True)
+        self.inputs()
+        before = set(cmds.ls())
+        with rig.fuse():
+            plugs = names(fused_build())
+        made = sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before})
+        return network, self.read(plugs), made
+
+    def test_a_list_selector_is_one_choice_per_row(self):
+        """rail_spine's per-control up axis: one choice per selector, the tokens shared (rig's
+        network makes one node per row, feat/network-fixes)"""
+        tokens = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        selectors = lambda: [self.a.k, self.a.w * 4, self.b.tx - 0.5]        # 2, 1, 0
+        network, fused, made = self.both(
+            lambda: tuple(F.choice(tokens, selector=x) for x in selectors()),
+            lambda: tuple(F.choice(tokens, selector=List(selectors()))))
+        self.assertEqual(made, ["rigExpression"])
+        np.testing.assert_allclose(fused, network, atol=1e-9, rtol=0)
+        np.testing.assert_allclose(fused, [0, 0, 1, 0, 1, 0, 1, 0, 0], atol=1e-9)
+
+    def test_a_list_of_fused_values_fuses_into_a_list_function(self):
+        """perspective_image_planes' camera aperture: rf.max of a List the values were
+        appended to (each made a plug of the block's node, read back as its value)"""
+        with rig.fuse():
+            values = List()
+            for v in (self.a.tx * 2, self.b.tx + 1, self.a.ty - self.b.ty):
+                values.append(v)
+            self.out.tx << F.max(values)
+            self.out.ty << F.min(values) + F.sum(values) * F.avg(values)
+        self.assertEqual(cmds.ls(type=("max", "min", "sum", "average", "plusMinusAverage")), [])
+        self.assertEqual(len(self.fused_nodes()), 1)
+        x = [3.0, 1.5, -6.0]
+        np.testing.assert_allclose([cmds.getAttr("out.tx"), cmds.getAttr("out.ty")],
+                                   [max(x), min(x) + sum(x) * sum(x) / 3], atol=1e-12)
+
+    def test_frame_reads_the_time(self):
+        with rig.fuse():
+            self.out.tx << F.frame() * 2 + 1
+        self.assertEqual(cmds.ls(type="animCurve"), [])
+        node = self.fused_nodes()[0]
+        self.assertEqual(cmds.listConnections(node + ".timeIn", source=True, destination=False), ["time1"])
+        for t in (1.0, 7.0, -3.5):
+            cmds.currentTime(t)
+            self.assertAlmostEqual(cmds.getAttr("out.tx"), t * 2 + 1, places=12)
+
+    def test_angle_between_is_mayas_node(self):
+        """rail_spine_simple's turn: rn.angleBetween() made by hand, fused; Maya's own
+        MQuaternion(v1, v2) (Q_ARC), its rule for parallel, opposite and short vectors too"""
+        from rig.bridges import nodes as rn
+        pairs = [((1, 2, 3), (-2, 0.5, 1)), ((0.3, -1, 0.2), (2, 2, -1)), ((1, 0, 0), (3, 0, 0)), ((1, 0, 0), (-2, 0, 0)),
+                 ((0, 1, 0), (0, -1, 0)), ((1, 1, 0), (-1, -1, 0)), ((0, 0, 0), (1, 2, 3)), ((2, -1, 0.5), (-4, 2, -1)),
+                 ((5, -3, 2), (5.0000001, -3, 2)), ((-3, 1, 2), (6, -2, -4.000001)), ((0.0303, 0.001, 0), (-0.0003, 0.0002, 0.0001)),
+                 ((2, -1, 0.5), (-2.0000003, 1.0000007, -0.5000002))]
+        for v1, v2 in pairs:
+            with self.subTest(v1=v1, v2=v2):
+                cmds.file(new=True, force=True)
+                self.inputs()
+                cmds.setAttr("a.t", *v1)
+                cmds.setAttr("b.t", *v2)
+                real = cmds.createNode("angleBetween")
+                cmds.connectAttr("a.t", real + ".vector1")
+                cmds.connectAttr("b.t", real + ".vector2")
+                holder = cmds.createNode("network", name="fusedAngle")
+                with rig.fuse():
+                    ab = rn.angleBetween()
+                    ab.vector1 << self.a.t
+                    ab.vector2 << self.b.t
+                    plugs = [_sink(holder, "axis", ab.axis), _sink(holder, "angle", ab.angle),
+                             _sink(holder, "euler", ab.euler), _sink(holder, "channel", ab.axisY * 1)]
+                self.assertEqual(cmds.ls(type="angleBetween"), [real])
+                want = np.concatenate([self.read(f"{real}.axis"), self.read(f"{real}.angle"), self.read(f"{real}.euler"),
+                                       self.read(f"{real}.axisY")])
+                np.testing.assert_allclose(self.read(tuple(plugs)), want, atol=1e-12, rtol=0)
+
+    def test_the_new_ops_unfuse(self):
+        """Q_ARC back into an angleBetween, TIME into frame()'s animCurve"""
+        from rig.bridges import nodes as rn
+        cmds.currentTime(5)
+        with rig.fuse("calc"):
+            ab = rn.angleBetween()
+            ab.vector1 << self.a.t
+            ab.vector2 << self.b.t
+            self.out.t << ab.axis * 2
+            self.out.ry << ab.angle + F.frame()
+            self.out.rz << rig.quaternion.to_euler(rig.quaternion.from_axis_angle(ab.axis, ab.angle)).z
+        before = [self.read("out.t"), self.read("out.r")]
+        made = rig.unfuse("calc_fused1")
+        self.assertEqual(self.fused_nodes(), [])
+        types = {cmds.nodeType(str(n)) for n in made}
+        self.assertIn("angleBetween", types)
+        self.assertIn("animCurveTL", types)
+        np.testing.assert_allclose([self.read("out.t"), self.read("out.r")], before, atol=1e-6)
+        cmds.currentTime(9)
+        self.assertAlmostEqual(cmds.getAttr("out.ry") - before[1][1], 4.0, places=6)
+
+
+def _random01(seed, trigger):
+    """rig.mll's RAND in Python (rig_math.h's random01): splitmix64's finalizer over the bits of
+    the seed and of the trigger, 53 bits in [0, 1)"""
+    import struct
+    m = (1 << 64) - 1
+
+    def mix(z):
+        z = (z + 0x9E3779B97F4A7C15) & m
+        z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & m
+        z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & m
+        return z ^ (z >> 31)
+    a = struct.unpack("<Q", struct.pack("<d", float(seed) + 0.0))[0]
+    b = struct.unpack("<Q", struct.pack("<d", float(trigger) + 0.0))[0]
+    return (mix(mix(a) ^ b) >> 11) * 2.0 ** -53
+
+
+def _round_away(x):
+    """Maya's double into a long: half away from zero"""
+    return float(np.sign(x) * np.floor(abs(x) + 0.5))
+
+
+class TestRandom(_Case):
+    """rig.random fused: a value per seed and trigger (the scene's time by default), rig.mll's
+    integer hash; the seed held in one of the node's float inputs, editable after the build.
+    rig's network gives other numbers (an LCG stepped through a DG cycle at each evaluation)."""
+
+    def at(self, plug, frames):
+        out = []
+        for f in frames:
+            cmds.currentTime(f)
+            got = cmds.getAttr(plug)
+            out.append(list(got[0]) if isinstance(got, list) else got)
+        return out
+
+    def test_a_value_per_seed_and_frame(self):
+        from rig import random as R
+        before = set(cmds.ls())
+        with rig.fuse():
+            self.out.tx << R.value(seed=42)
+        self.assertEqual(sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before}), ["rigExpression"])
+        frames = list(range(1, 41)) + [7, 3, 30]           # played, then scrubbed back
+        got = self.at("out.tx", frames)
+        self.assertEqual(got, [_random01(42, f) for f in frames])
+        self.assertTrue(all(0 <= v < 1 for v in got))
+        self.assertEqual(len(set(got[:40])), 40)
+
+    def test_the_seed_is_an_input_of_the_node(self):
+        from rig import random as R
+        with rig.fuse():
+            self.out.tx << R.value(seed=42)
+        node = self.fused_nodes()[0]
+        held = [i for i in cmds.getAttr(node + ".scalarIn", multiIndices=True) or []
+                if not cmds.listConnections(f"{node}.scalarIn[{i}]", source=True, destination=False)]
+        self.assertEqual([cmds.getAttr(f"{node}.scalarIn[{i}]") for i in held], [42.0])
+        self.assertIn("42 (a seed, set here)", cmds.getAttr(node + ".notes"))
+        cmds.setAttr(f"{node}.scalarIn[{held[0]}]", 7)
+        self.assertEqual(self.at("out.tx", [1, 2]), [_random01(7, 1), _random01(7, 2)])
+
+    def test_uniform_randint_and_the_3d_ones(self):
+        from rig import random as R
+        o3 = Node.create("transform", name="o3")
+        with rig.fuse():
+            self.out.tx << R.uniform(-2, 3, seed=1)
+            self.out.ty << R.randint(-2, 3, seed=1)
+            self.out.tz << R.value(seed=1)
+            o3.t << R.value3D(seed=[1, 2, 3])
+            o3.s << R.uniform3D(-10, 10, seed=[4, 5, 6])
+            self.out.r << R.randint3D(1, 4, seed=[7, 8, 9])
+        self.assertEqual(len(self.fused_nodes()), 1)
+        for f in (1, 2, 9, 4):
+            cmds.currentTime(f)
+            v = _random01(1, f)
+            self.assertAlmostEqual(cmds.getAttr("out.tx"), 5 * v - 2, places=12)
+            self.assertEqual(cmds.getAttr("out.ty"), _round_away(5 * v - 2))
+            np.testing.assert_allclose(cmds.getAttr("o3.t")[0], [_random01(k, f) for k in (1, 2, 3)], atol=1e-15)
+            np.testing.assert_allclose(cmds.getAttr("o3.s")[0], [20 * _random01(k, f) - 10 for k in (4, 5, 6)],
+                                       atol=1e-12)
+            np.testing.assert_allclose(cmds.getAttr("out.r")[0], [_round_away(3 * _random01(k, f) + 1) for k in (7, 8, 9)],
+                                       atol=1e-9)
+            self.assertTrue(-2 <= cmds.getAttr("out.ty") <= 3)
+
+    def test_a_trigger(self):
+        from rig import random as R
+        with rig.fuse():
+            self.out.tx << R.value(trigger=self.a.tx, seed=5)
+            self.out.ty << R.value(trigger=self.a.t, seed=5)      # a compound: its channels summed
+        for x in (0.5, 2.0, 0.5):
+            cmds.setAttr("a.tx", x)
+            self.assertEqual(cmds.getAttr("out.tx"), _random01(5, x))
+            self.assertEqual(cmds.getAttr("out.ty"), _random01(5, (x + -2.0) + 3.25))
+        self.assertEqual(cmds.listConnections(self.fused_nodes()[0] + ".timeIn", source=True, destination=False), None)
+
+    def test_no_seed_draws_a_fresh_one(self):
+        from rig import random as R
+        with rig.fuse():
+            self.out.tx << R.value()
+            self.out.ty << R.value()
+        self.assertNotEqual(cmds.getAttr("out.tx"), cmds.getAttr("out.ty"))
+
+    def test_unfuse_rebuilds_rigs_random(self):
+        """rig's own random network, for the seed and the trigger: other numbers (its LCG)"""
+        from rig import random as R
+        with rig.fuse("dice"):
+            self.out.tx << R.uniform(0, 6, seed=3)
+        made = rig.unfuse("dice_fused1")
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertTrue(any("CYCLE_SAFE_RANDOM_GENERATOR" in str(n) for n in made), [str(n) for n in made])
+        for f in (1, 2, 3):
+            cmds.currentTime(f)
+            self.assertTrue(0 <= cmds.getAttr("out.tx") < 6)
+
+
 def _sink(holder: str, name: str, value) -> str:
     """an attribute of ``value``'s type on ``holder`` (a network node), driven by it"""
     from rig._internal.types import math_type

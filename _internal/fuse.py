@@ -87,7 +87,7 @@ OP = dict(LOAD_S=1, LOAD_V=2, LOAD_A=3, CONST_S=4, CONST_V=5, SPLAT=6, COMP=7, M
           Q_BIN=34, Q_UN=35, Q_SLERP=36, Q_EULER=37, E_QUAT=38, AXIS_Q=39, Q_AXIS=40, Q_ANGLE=41, M_BIN=42,
           M_SCALE=43, M_INV=44, M_T=45, M_DET=46, PT_MUL=47, VEC_MUL=48, M_ROW=49, M_COL=50, M_AXIS=51,
           M_TRANS=52, M_SCALE_OF=53, M_SHEAR_OF=54, M_ROT=55, R_EULER=56, R_QUAT=57, E_MATRIX=58, Q_MATRIX=59,
-          COMPOSE=60, M_SETROW=61, BLEND=62, AIM=63, NOP=64, MOVE=65)
+          COMPOSE=60, M_SETROW=61, BLEND=62, AIM=63, NOP=64, MOVE=65, Q_ARC=66, TIME=67, RAND=68)
 # the kinds of fused values: s a scalar, a a scalar written as an angle (angleOut), v a
 # vector, e an euler (a vector of degrees, written as a rotation: eulerOut), q a
 # quaternion, m a matrix. Their register file, output attribute, input slot and load
@@ -125,8 +125,9 @@ ONE_OP_NODES = 1
 _ONE_OP_INSTRUCTIONS = 8
 PLUGIN      = "rig"              # rig.mll: every node type rig builds
 NODE_TYPE   = "rigExpression"
-# rig.mll's lowest version this program format runs on (version 2: matrices and quaternions)
-MIN_VERSION = (1, 1)
+# rig.mll's lowest version this program format runs on (version 2: matrices and quaternions;
+# 1.2: Q_ARC, angleBetween's turn, TIME, rig.functions.frame(), and RAND, rig.random)
+MIN_VERSION = (1, 2)
 
 
 _ITERATOR = collections.abc.Iterator
@@ -699,6 +700,7 @@ _TAKES = {
     "compose": ("m", "mvvv"), "setrow": ("m", "mv"), "blend": ("m", "mms"), "aim": ("m", "vvvv"),
     "qbin": ("q", "qq"), "qun": ("q", "q"), "qslerp": ("q", "qqs"), "qeuler": ("e", "qs"), "equat": ("q", "vs"),
     "axisq": ("q", "vs"), "qaxis": ("v", "q"), "qangle": ("s", "q"), "qvec": ("v", "q"),
+    "qarc": ("q", "vv"), "rand": ("s", "ss"),
 }
 
 
@@ -849,7 +851,7 @@ def _f_clamp(token, min_value, max_value):
 
 
 def _scalars_of(tokens) -> list:
-    if type(tokens) not in (list, tuple) or len(tokens) < 2:
+    if type(tokens) not in (list, tuple, _bind()[3]) or len(tokens) < 2:
         raise _Refused("a list of 2 or more")
     parts = _operands(*tokens)
     if any(p.kind != "s" for p in parts):
@@ -942,6 +944,157 @@ def _f_constant(values, name="constant1", dtype="double"):
     return v
 
 
+def _f_pi():
+    """``pi()``: the number (rig's network: a pi node); a number folds into what uses it"""
+    return math.pi
+
+
+def _f_frame():
+    """``frame()``: the scene's time in frames, which the node reads itself (rig.mll's TIME,
+    its timeIn connected to time1.outTime), where rig's network keys an animCurveTL 1:1"""
+    return Fused("s", "time", key="time")
+
+
+def _tokens(tokens, name: str) -> list:
+    """the fused values of a list of tokens (a list, a tuple or a List): scalars or vectors"""
+    if type(tokens) not in (list, tuple, _bind()[3]) or not len(tokens):
+        raise _Refused(f"{name}: a list of tokens")
+    parts = _operands(*tokens)
+    _sv(*parts)
+    return parts
+
+
+def _rows(values: list):
+    """the values of a list function's rows, made plugs together (the block's node), in the
+    List rig's function returns (a number stays a number, a plug a plug)"""
+    from rig._internal.list import _values_list
+    fused = [v for v in values if type(v) is Fused]
+    plugs = iter(materialize_all(fused))
+    return _values_list([next(plugs) if type(v) is Fused else v for v in values])
+
+
+def _f_cumsum(tokens):
+    """``cumsum(tokens)``: the running sums, ``token + the sum before`` as rig's network adds"""
+    parts = _tokens(tokens, "cumsum")
+    out = [parts[0]]
+    for p in parts[1:]:
+        out.append(_bin("add", p, out[-1]))
+    return _rows(out)
+
+
+def _f_diff(tokens):
+    """``diff(tokens)``: each token minus the one before"""
+    parts = _tokens(tokens, "diff")
+    if len(parts) < 2:
+        raise _Refused("diff: two tokens or more")
+    return _rows([_bin("sub", b, a) for a, b in zip(parts[:-1], parts[1:])])
+
+
+def _f_v_rotate(vector_in, rotate_vec, rotate_order=0):
+    """``rotate(v, euler, rotate_order)``: v times the euler's rotation (rotateVector)"""
+    v, e = _operand(vector_in), _operand(rotate_vec)
+    if v is None or e is None or v.kind not in VECTORS or e.kind not in VECTORS:
+        raise _Refused("rotate: a vector and an euler")
+    _live_parts(v, e)
+    return _mq("vecmul", v, _mq("ematrix", e, _order(rotate_order)))
+
+
+class _Held:
+    """a number a fused node holds in one of its inputs, set and not connected (rig.random's
+    seed): `_commit` sets it, the Notes show it, rig.unfuse reads it as the number"""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __str__(self) -> str:
+        return f"{self.value:g} (a seed, set here)"
+
+
+_SEED_RANGE_MAX = 123456789          # rig.random's range for a seed it picks itself
+
+
+def _seed_of(seed) -> Fused:
+    """a random generator's seed: a number held in one of the node's float inputs (set, not
+    connected: editable on the node), an input per seed; None: one rig picks at build time,
+    as its network does"""
+    if seed is None:
+        import random as _python_random
+        seed = _python_random.randint(0, _SEED_RANGE_MAX)
+    if not _number(seed):
+        raise _Refused("a seed: a number")
+    v = float(seed)
+    return Fused("s", "held_s", extra=v, key=("seed", v.hex()))
+
+
+def _trigger_of(trigger) -> Fused:
+    """what a generator draws with: the scene's time (rig's network: frame()), or a plug's
+    value, a compound's channels summed, as rig sums them"""
+    if trigger is None:
+        return _f_frame()
+    t = _operand(trigger)
+    if t is None:
+        raise _Refused("a trigger rig.fuse() cannot read")
+    if t.kind in VECTORS:
+        x, y, z = (_component(t, c) for c in range(3))
+        return _bin("add", _bin("add", x, y), z)
+    if t.kind not in SCALARS:
+        raise _Refused(f"a trigger: a scalar or a vector, not a {t.math_type}")
+    return t
+
+
+def _f_r_value(trigger=None, seed=None):
+    """``random.value()``: a float in [0, 1) for this seed and trigger (rig.mll's RAND, an
+    integer hash: the same frame gives the same value; rig's network steps an LCG through a
+    DG cycle at each evaluation instead, other numbers)"""
+    return _mq("rand", _seed_of(seed), _trigger_of(trigger))
+
+
+def _scaled(value: Fused, start, end) -> Fused:
+    """(end - start) * value + start, as rig's uniform computes it"""
+    s, e = _operand(start), _operand(end)
+    if s is None or e is None:
+        raise _Refused("start and end: values rig.fuse() reads")
+    return _bin("add", _bin("mul", _bin("sub", e, s), value), s)
+
+
+def _round_away(x: Fused) -> Fused:
+    """Maya's double into a long (randint's cast): to the nearest, half away from zero"""
+    return _bin("mul", _un("sign", x), _un("floor", _bin("add", _un("abs", x), _constant(0.5))))
+
+
+def _f_r_uniform(start, end, trigger=None, seed=None):
+    return _scaled(_f_r_value(trigger, seed), start, end)
+
+
+def _f_r_randint(start, end, trigger=None, seed=None):
+    return _round_away(_f_r_uniform(start, end, trigger, seed))
+
+
+def _seeds3(seed) -> list:
+    """a 3D generator's seeds: three, one per component, or None (three fresh ones); anything
+    else is rig's TypeError"""
+    if seed is None:
+        return [None, None, None]
+    if isinstance(seed, (str, bytes)) or not hasattr(seed, "__len__") or len(seed) != 3:
+        raise _Refused("three seeds")
+    return list(seed)
+
+
+def _f_r_value3d(trigger=None, seed=None):
+    t = _trigger_of(trigger)
+    return Fused("v", "make", tuple(_mq("rand", _seed_of(s), t) for s in _seeds3(seed)))
+
+
+def _f_r_uniform3d(start, end, trigger=None, seed=None):
+    return _scaled(_f_r_value3d(trigger, seed), start, end)
+
+
+def _f_r_randint3d(start, end, trigger=None, seed=None):
+    return _round_away(_f_r_uniform3d(start, end, trigger, seed))
+
+
 def _f_scale(factor: float):
     def form(token):
         (x,) = _operands(token)
@@ -963,6 +1116,10 @@ def _f_choice(tokens, selector=None):
     or the last token, where Maya's node keeps the value it had."""
     if selector is None:
         raise _Refused("choice without a selector: rig's node, whose selector can be wired later")
+    if isinstance(selector, _bind()[3]):
+        # a List selector (``ctrls.upAxis``): one choice per row, the tokens shared by
+        # every row, as rig.functions.choice makes one node per row
+        return _rows([_f_choice(tokens, selector=s) for s in selector])
     if type(tokens) not in (list, tuple, _bind()[3]):
         raise _Refused("choice: a list of tokens")
     tokens = list(tokens)
@@ -1440,6 +1597,11 @@ FORMS = {
     "rig.functions.choice": _f_choice, "rig.vector.slerp": _f_slerp,
     "rig.vector.triple_product": _f_triple_product, "rig.interpolate.smoothstep": _f_smoothstep,
     "rig.interpolate.inverse_lerp": _f_inverse_lerp,
+    "rig.functions.cumsum": _f_cumsum, "rig.functions.diff": _f_diff, "rig.functions.pi": _f_pi,
+    "rig.functions.frame": _f_frame, "rig.vector.rotate": _f_v_rotate,
+    "rig.random.value": _f_r_value, "rig.random.uniform": _f_r_uniform, "rig.random.randint": _f_r_randint,
+    "rig.random.value3D": _f_r_value3d, "rig.random.uniform3D": _f_r_uniform3d,
+    "rig.random.randint3D": _f_r_randint3d,
 }
 for _name in ("sin", "cos", "tan", "asin", "acos", "atan", "sind", "cosd", "tand", "asind", "acosd", "atand"):
     FORMS[f"rig.trigonometry.{_name}"] = _f_trig(_name)
@@ -1574,6 +1736,15 @@ TRACE = frozenset({
     "rig._dispatch.inverse", "rig._dispatch.to_euler", "rig._dispatch.to_quaternion", "rig._dispatch.to_matrix",
 })
 TRACE_MODULES = ("rig.tween.",)      # every easing curve
+
+# rig's public math functions rig.fuse() does not compute in a node, and why: every public
+# function of the modules below is a form (`FORMS`), a traced body (`TRACE`) or here
+# (test_fuse.TestEveryFunction checks it)
+MODULES = ("rig.functions", "rig.matrix", "rig.interpolate", "rig.euler", "rig.quaternion", "rig.random",
+           "rig.trigonometry", "rig.tween", "rig.vector", "rig._internal.math_nodes")
+NOT_FUSED = {
+    "rig.functions.inf": "a number (inf): nothing to compute",
+}
 
 # {key: (the function's own body, under its @memoize / @vectorize; vectorized)}
 RAW: dict = {}
@@ -1951,7 +2122,8 @@ _MQ_OPS = {
     "mrot": ("M_ROT", 1), "reuler": ("R_EULER", 2), "rquat": ("R_QUAT", 1), "ematrix": ("E_MATRIX", 2),
     "qmatrix": ("Q_MATRIX", 1), "blend": ("BLEND", 3), "qslerp": ("Q_SLERP", 3), "qeuler": ("Q_EULER", 2),
     "equat": ("E_QUAT", 2), "axisq": ("AXIS_Q", 2), "qaxis": ("Q_AXIS", 1), "qangle": ("Q_ANGLE", 1),
-    "qvec": ("Q_VEC", 1), "qmake": ("Q_MAKE", 2),
+    "qvec": ("Q_VEC", 1), "qmake": ("Q_MAKE", 2), "qarc": ("Q_ARC", 2),
+    "rand": ("RAND", 2),
 }
 _MQ_IMMEDIATE = {"mbin": ("M_BIN", M_BIN_OPS), "qbin": ("Q_BIN", Q_BIN_OPS), "qun": ("Q_UN", Q_UN_OPS)}
 
@@ -2057,6 +2229,12 @@ def _compile(record: _Record, new: dict, inline: bool = False) -> _Compiled:
         elif op == "standin":
             # a stand-in's output: a register of its own, which `_redirect` can make a load
             emit(OP["MOVE"], new_register(e), args[0], 0, FILE[e.kind])
+        elif op == "time":
+            emit(OP["TIME"], new_register(e))   # the node's timeIn (`_commit` connects it)
+        elif op == "held_s":
+            # a number in one of the node's float inputs, set and not connected (rig.random's
+            # seed): editable on the node after the build
+            emit(OP["LOAD_S"], new_register(e), load("s", ("held", e.key), _Held(e.extra)))
         elif op in _MQ_OPS:
             code, n = _MQ_OPS[op]
             emit(OP[code], new_register(e), *args[:n])
@@ -2760,7 +2938,13 @@ def _commit(record: _Record, c: _Compiled, own: bool = True) -> None:
         _set_array(record, "constants", record.consts, False) or edit.setAttr(
             f"{name}.constants", record.consts, type="doubleArray")
     for slot, i, plug in c.new_inputs:
-        edit.connectAttr(str(plug), f"{name}.{_SLOT_ATTR[slot]}[{i}]", force=True)
+        if type(plug) is _Held:
+            edit.setAttr(f"{name}.{_SLOT_ATTR[slot]}[{i}]", plug.value)
+        else:
+            edit.connectAttr(str(plug), f"{name}.{_SLOT_ATTR[slot]}[{i}]", force=True)
+    if OP["TIME"] in c.body[::5] and not cmds.listConnections(f"{name}.timeIn", source=True,
+                                                            destination=False):
+        edit.connectAttr("time1.outTime", f"{name}.timeIn", force=True)    # frame()
     if own:
         for k in OUT_KINDS:
             outs = record.outs[k]
@@ -2799,10 +2983,12 @@ STAND_INS = {
         "inputQuat": ("q", (0.0, 0.0, 0.0, 1.0)), "inputRotateOrder": ("s", 0.0), "useEulerRotation": ("s", 1.0),
     },
     "decomposeMatrix": {"inputMatrix": ("m", IDENTITY_M), "inputRotateOrder": ("s", 0.0)},
+    "angleBetween": {"vector1": ("v", (0.0, 1.0, 0.0)), "vector2": ("v", (0.0, 0.0, 1.0))},
 }
 _STAND_IN_OUTPUTS = {
     "composeMatrix": ("outputMatrix",),
     "decomposeMatrix": ("outputTranslate", "outputRotate", "outputScale", "outputShear", "outputQuat"),
+    "angleBetween": ("axis", "angle", "euler"),
 }
 _LONG_NAMES: dict = {}
 
@@ -3014,6 +3200,22 @@ def _stand_in_output(node_type: str, inputs: dict, name: str) -> "Fused | None":
     if node_type == "decomposeMatrix":
         t = _mq("dec_t", inputs["inputMatrix"], inputs["inputRotateOrder"])
         return t if name == "outputTranslate" else _decomposed(t, name)
+    if node_type == "angleBetween":
+        # the turn of vector1 onto vector2 (Maya's MQuaternion(a, b)), read as the node reads
+        # it: its axis and angle (degrees), and its euler (xyz)
+        base, channel = name, None
+        if name[-1:] in ("X", "Y", "Z") and name[:-1] in ("axis", "euler"):
+            base, channel = name[:-1], "XYZ".index(name[-1])
+        q = _mq("qarc", inputs["vector1"], inputs["vector2"])
+        if base == "axis":
+            value = _mq("qaxis", q)
+        elif base == "angle":
+            value = _mq("qangle", q)
+        elif base == "euler":
+            value = _mq("qeuler", q, _constant(0))
+        else:
+            return None
+        return value if channel is None else _component(value, channel)
     return None
 
 
@@ -3170,6 +3372,7 @@ _NAMES = {
     "mrot": "rotation_of", "rquat": "to_quaternion", "ematrix": "euler_matrix", "qmatrix": "quaternion_matrix",
     "blend": "blend", "aim": "aim", "qslerp": "slerp", "qeuler": "to_euler", "equat": "to_quaternion",
     "axisq": "from_axis_angle", "qaxis": "axis_of", "qangle": "angle_of", "mscale": "scale",
+    "qarc": "arc", "rand": "random",
 }
 
 
@@ -3180,6 +3383,10 @@ def _text(e: Fused, names: dict, top: bool = False) -> str:
     if op.startswith("in_"):
         return str(n)
     if op == "const_s":
+        return f"{n:g}"
+    if op == "time":
+        return "frame()"
+    if op == "held_s":
         return f"{n:g}"
     if op in ("const_v", "const_q"):
         return "(" + ", ".join(f"{v:g}" for v in n) + ")"

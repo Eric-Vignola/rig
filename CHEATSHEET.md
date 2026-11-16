@@ -4490,7 +4490,7 @@ is `1.75`), `round` is half to even, `sign(0)` is `0`, a division by zero is
 Maya's node rules (see `rig_network_fixes_todo.md`), so the two can differ
 there, and in rig's float32 stages (under 1e-6). Matrices, quaternions and
 eulers follow Maya's nodes, in doubles: `decompose` gives `decomposeMatrix`'s
-euler (of two solutions, the one whose angles add up to less), its
+euler (Maya's own decomposition: a half turn about y is `(0, 180, 0)`), its
 quaternion's sign and its negative scale (on z), `slerp` goes the shortest
 way, `blend` is `blendMatrix`'s, `aim` is `aimMatrix`'s. They differ from
 rig's network only where it has a float stage (`fourbyfour`'s rows, `lerp`'s
@@ -4549,7 +4549,27 @@ A fused value is built when it is used, not when it is written, so:
   the block's node. A `rig.set_options(fuse=False)` in the file holds for
   the rest of the run only, as every option a run sets (a run gives them
   back).
-* rig's plug-in, `rig.mll`, is loaded on first use: already loaded, from
+* Every public function of rig's math libraries fuses, or says why it does
+  not (`rig._internal.fuse.NOT_FUSED`: `inf()`, a number). `rig.random`'s
+  generators draw a value per seed and trigger (the scene's time by default)
+  with rig.mll's integer hash: the same frame always gives the same value.
+  rig's network steps an LCG through a DG cycle at each evaluation instead,
+  so its numbers are others, and `rig.unfuse` rebuilds that network. The
+  seed is one of the node's float inputs, set and not connected: editable
+  on the node after the build. `frame()` is the node's own time input (no
+  animCurve), `pi()` the number pi (rig's network's native `pi` node gives
+  180 on Maya 2024 and later: an angle read in degrees), and `cumsum`,
+  `diff` and `vector.rotate` fuse, so does a `choice` whose selector is a
+  List: one choice per row, the tokens shared.
+* A List the values of a block are appended to holds them as plugs of the
+  block's node; a list function given it (`max`, `min`, `sum`, `avg`,
+  `cumsum` ...) reads them back as the values they are, in the node.
+* `rn.angleBetween()` made by hand is a stand-in, as `rn.composeMatrix()`
+  is: its `axis`, `angle` and `euler` are Maya's own turn of `vector1` onto
+  `vector2` (`MQuaternion(a, b)`), for parallel and opposite vectors too.
+* `constant([plug, ...])` fuses; `constant(numbers)` stays rig's node, a
+  value to edit after the build.
+* rig's plug-in, `rig.mll` (1.2), is loaded on first use: already loaded, from
   `RIG_PLUGIN` (its path), or by name from `MAYA_PLUG_IN_PATH`.
   Without it, the block builds rig's nodes, with one warning per session.
 * A saved scene needs only the plug-in: the program is an int array and the

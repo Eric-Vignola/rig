@@ -161,7 +161,8 @@ _MQ = {
     "PT_MUL": ("ptmul", "vm"), "VEC_MUL": ("vecmul", "vm"), "M_ROW": ("mrow", "ms"), "M_COL": ("mcol", "ms"),
     "M_TRANS": ("mtrans", "m"), "M_SCALE_OF": ("mscaleof", "m"), "M_SHEAR_OF": ("mshear", "m"),
     "M_ROT": ("mrot", "m"), "R_EULER": ("reuler", "ms"), "R_QUAT": ("rquat", "m"), "E_MATRIX": ("ematrix", "vs"),
-    "Q_MATRIX": ("qmatrix", "q"), "BLEND": ("blend", "mms"),
+    "Q_MATRIX": ("qmatrix", "q"), "BLEND": ("blend", "mms"), "Q_ARC": ("qarc", "vv"),
+    "RAND": ("rand", "ss"),
 }
 _RESULT = {"qmake": "q"}
 
@@ -238,6 +239,8 @@ def decompile(node) -> dict:
             kind = _RESULT.get(fused_op) or F._TAKES[fused_op][0]
             operands = tuple(reg({"m": 2, "q": 1}.get(t, 0), r) for t, r in zip(takes, (a, b, c)))
             value, file = Fused(kind, fused_op, operands), FILE[kind]
+        elif op == "TIME":
+            value, file = Fused("s", "time", key="time"), 0     # frame()
         elif op == "MOVE":
             value, file = reg(c, a), c          # a stand-in's output: its value
         elif op == "NOP":
@@ -301,9 +304,11 @@ _FOLD_UN = {
 def _rig():
     import rig
     from rig import euler, functions, matrix, quaternion, trigonometry, vector
+    from rig import random as random_
     from rig._internal import math_nodes
+    from rig.bridges import nodes
     return types.SimpleNamespace(rig=rig, E=euler, RF=functions, M=matrix, Q=quaternion, T=trigonometry, V=vector,
-                                 mn=math_nodes)
+                                 mn=math_nodes, rn=nodes, RND=random_)
 
 
 def _binary(R, name):
@@ -386,6 +391,7 @@ class _Rebuild:
         self.memo: dict = {}
         self.decompositions: dict = {}     # (matrix key, order key) -> decomposeMatrix's outputTranslate
         self.axis_angles: dict = {}
+        self.betweens: dict = {}           # a turn (Q_ARC) -> its angleBetween
         # the parts of each matrix a decomposition gives (several parts: one decomposeMatrix),
         # and the rotate orders its eulers are read in (the first: the other parts' node)
         self.parts: dict = {}
@@ -420,6 +426,8 @@ class _Rebuild:
         a = e.args
         if op.startswith("in_"):
             return (lambda: x), ()
+        if op == "time":
+            return (lambda: self.R.RF.frame()), ()        # rig's frame(): an animCurveTL 1:1
         if op == "const_s":
             return (lambda: float(x)), ()
         if op in ("const_v", "const_q"):
@@ -529,6 +537,18 @@ class _Rebuild:
             if _is_identity(a[0], "q"):
                 return (lambda q, w: Q.pow(q, w)), (a[1], a[2])
             return (lambda p, q, w: Q.slerp(p, q, w)), a
+        # rig.random fused (RAND): rig's random network for this seed and trigger, its LCG stream
+        # (other numbers than the fused hash: rig_fuse_design.md)
+        if op == "rand":
+            return (lambda seed, t: self.R.RND.value(trigger=t, seed=int(round(seed)) if _numbers(seed) else seed)), a
+        # a turn of one vector onto another (Q_ARC): an angleBetween, its outputs read off it
+        if op == "qarc":
+            return (lambda v1, v2: Q.from_axis_angle(self.between(e, v1, v2).axis,
+                                                     self.between(e, v1, v2).angle)), a
+        if op in ("qaxis", "qangle", "qeuler") and a[0].op == "qarc" and (
+                op != "qeuler" or (a[1].op == "const_s" and a[1].extra == 0)):
+            arc, out = a[0], {"qaxis": "axis", "qangle": "angle", "qeuler": "euler"}[op]
+            return (lambda v1, v2: getattr(self.between(arc, v1, v2), out)), arc.args
         if op in ("qaxis", "qangle"):
             index = 0 if op == "qaxis" else 1
             return (lambda q: self.axis_angle(a[0].key, q)[index]), a
@@ -655,6 +675,19 @@ class _Rebuild:
         if mkey is not None:
             self.decompositions[k] = made
         return made
+
+    def between(self, arc: Fused, v1, v2):
+        """the angleBetween of the turn ``arc`` (Q_ARC: Maya's MQuaternion(v1, v2), the node's
+        own), one per turn: its axis, angle and euler read off it"""
+        found = self.betweens.get(arc.key)
+        if found is None:
+            # made as rig's functions make their nodes (``rn.angleBetween()`` would be a stand-in
+            # while the block that unfuses is still fusing: the one-op rule's trial)
+            from rig._internal.container import container
+            found = self.betweens[arc.key] = container.createNode("angleBetween", name="angleBetween1")
+            found.vector1 << v1
+            found.vector2 << v2
+        return found
 
     def axis_angle(self, qkey, q):
         found = self.axis_angles.get(qkey)
