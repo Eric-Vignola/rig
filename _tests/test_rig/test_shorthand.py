@@ -6,6 +6,7 @@ from unittest import mock
 from maya import cmds
 from rig import Node, set_options
 from rig._internal.container import ContainerOptions
+from rig._internal.plug import InjectionError
 from rig._internal.shorthand import _Facts, shorthand
 from rig._internal.types import _is_compound, _is_matrix, _is_quaternion, _is_vector
 from rig._tests._base import MayaTestCase
@@ -39,6 +40,34 @@ class TestMatrixToTransform(MayaTestCase):
         self.assertTrue(connections)
         types = [cmds.nodeType(c) for c in connections]
         self.assertIn("decomposeMatrix", types)
+
+    def test_an_attribute_it_does_not_route_leaves_no_decompose(self):
+        """A matrix into a transform attribute that is no channel connects as
+        it is (``offsetParentMatrix``, a matrix added to it), and raises
+        into ``rotatePivot``: no decomposeMatrix is left behind either way."""
+        a = Node.create("transform", name="src")
+        b = Node.create("transform", name="other")
+        t = Node.create("transform", name="dst")
+        cmds.addAttr("dst", longName="custom", attributeType="matrix")
+        t.offsetParentMatrix << a.wm * b.wim
+        source = cmds.listConnections("dst.offsetParentMatrix", source=True, destination=False)
+        self.assertEqual([cmds.nodeType(n) for n in source], ["multMatrix"])
+        t.custom << a.wm
+        self.assertEqual(cmds.listConnections("dst.custom", source=True, destination=False), ["src"])
+        with self.assertRaises(InjectionError):
+            t.rotatePivot << a.wm
+        self.assertEqual(cmds.ls(type="decomposeMatrix"), [])
+
+    def test_every_channel_it_routes_reads_one_decompose(self):
+        for attr in (None, "matrix", "tx", "ry", "s", "shearXY"):
+            with self.subTest(attr):
+                cmds.file(new=True, force=True)
+                a = Node.create("transform", name="src")
+                t = Node.create("transform", name="dst")
+                (t if attr is None else getattr(t, attr)) << a.wm
+                decomposes = cmds.ls(type="decomposeMatrix")
+                self.assertEqual(len(decomposes), 1)
+                self.assertTrue(cmds.listConnections(decomposes[0], source=False, destination=True))
 
 
 class TestVectorToMatrix(MayaTestCase):

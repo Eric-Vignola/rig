@@ -256,9 +256,34 @@ class _Facts:
 # ---------- matrix -> ... ----------------------------------------------- #
 
 
+# a transform channel the matrix -> transform shorthand drives: the decomposeMatrix
+# output it reads
+_TRANSFORM_CHANNELS = {
+    name: output
+    for output, names in (
+        ("outputScale",     ("scale", "scaleX", "scaleY", "scaleZ")),
+        ("outputRotate",    ("rotate", "rotateX", "rotateY", "rotateZ")),
+        ("outputTranslate", ("translate", "translateX", "translateY", "translateZ")),
+        ("outputShear",     ("shear", "shearXY", "shearXZ", "shearYZ")),
+    )
+    for name in names
+}
+
+
 def _matrix_to_transform(src: Any, dst: Any) -> bool:
-    """matrix -> transform: insert decomposeMatrix and route the channels."""
+    """matrix -> transform: insert decomposeMatrix and route the channels.
+
+    Any other attribute of a transform (``offsetParentMatrix``, a matrix
+    added to it, ``rotatePivot`` ...) is no shorthand: False, before a
+    decomposeMatrix is made, so none is left behind when the caller
+    connects the matrix as it is (or raises).
+    """
     attr = _attr_path(dst)
+    # Bare transform (no `.attr`) OR `.matrix` plug on a transform --
+    # all four channels; otherwise the one channel ``attr`` names
+    whole = not attr or attr in ("matrix", "m")
+    if not whole and attr not in _TRANSFORM_CHANNELS:
+        return False
     # Try `dst.ro` first; if dst is typed-atomic (e.g. transform.matrix) or
     # otherwise has no `.ro`, fall back to the owning node's rotateOrder.
     # (a plug has no truth value, user decision 8A: a missing one is None)
@@ -268,31 +293,17 @@ def _matrix_to_transform(src: Any, dst: Any) -> bool:
     decomposed      = _decompose_matrix(src, rotate_order=rotate_order)
     decomposed_node = type(decomposed)._raw_get_node(decomposed)
 
-    # Bare transform (no `.attr`) OR `.matrix` plug on a transform --
-    # wire all four channels via the decomposeMatrix outputs. The sibling
-    # fallback in Plug.__getattr__ makes ``dst.s/.r/.t/.shear`` resolve
-    # to the owning node's channels even when ``dst`` is ``transform.matrix``.
-    if not attr or attr in ("matrix", "m"):
+    # The sibling fallback in Plug.__getattr__ makes ``dst.s/.r/.t/.shear``
+    # resolve to the owning node's channels even when ``dst`` is
+    # ``transform.matrix``.
+    if whole:
         _bare_inject(decomposed_node.outputScale,     dst.s)
         _bare_inject(decomposed_node.outputRotate,    dst.r)
         _bare_inject(decomposed_node.outputTranslate, dst.t)
         _bare_inject(decomposed_node.outputShear,     dst.shear)
         return True
-
-    if attr in ("scale", "scaleX", "scaleY", "scaleZ"):
-        _bare_inject(decomposed_node.outputScale, dst)
-        return True
-    if attr in ("rotate", "rotateX", "rotateY", "rotateZ"):
-        _bare_inject(decomposed_node.outputRotate, dst)
-        return True
-    if attr in ("translate", "translateX", "translateY", "translateZ"):
-        _bare_inject(decomposed_node.outputTranslate, dst)
-        return True
-    if attr in ("shear", "shearXY", "shearXZ", "shearYZ"):
-        _bare_inject(decomposed_node.outputShear, dst)
-        return True
-
-    return False
+    _bare_inject(getattr(decomposed_node, _TRANSFORM_CHANNELS[attr]), dst)
+    return True
 
 
 def _matrix_to_quaternion(src: Any, dst: Any) -> bool:
